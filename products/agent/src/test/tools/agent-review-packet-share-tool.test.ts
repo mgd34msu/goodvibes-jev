@@ -1,7 +1,10 @@
+import { executeAdmitted } from '../helpers/admitted-tool.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { ArtifactDescriptor, ArtifactRecord, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
+import type { PermissionMode } from '@goodvibes-jev/engine/sdk/platform/config';
+import { getSessionUntrustedContentLedger, resetSessionUntrustedContentLedgerForTests } from '../../trust/untrusted-content.ts';
 import type { ChannelDeliveryRequest } from '@goodvibes-jev/engine/sdk/platform/channels';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import {
@@ -10,8 +13,9 @@ import {
 } from '../../tools/agent-review-packet-share-tool.ts';
 
 function fakeRouter(requests: ChannelDeliveryRequest[]) {
+  const strategies = [{ id: 'fake-channel', canHandle: () => true, deliver: async () => ({}) }];
   return {
-    listStrategies: () => [{ id: 'fake-channel', canHandle: () => true, deliver: async () => ({}) }],
+    listStrategies: () => strategies,
     deliver: async (request: ChannelDeliveryRequest) => {
       requests.push(request);
       return 'review-packet-share-1';
@@ -72,13 +76,17 @@ describe('agent_review_packet_share tool', () => {
   let previousPort: ReturnType<typeof installJudgmentPort>;
   let readings: ReturnType<typeof fakePort>;
   let cardProbability: number;
+  let onCardRead: (() => void) | undefined;
 
   beforeEach(() => {
     cardProbability = 0.03;
+    onCardRead = undefined;
+    resetSessionUntrustedContentLedgerForTests();
     readings = fakePort((name, _question, state) => {
       if (name !== 'security_code') throw new Error(`Unexpected packet-share question: ${name}`);
       expect(String(state)).toContain('Reviewer packet evidence:');
       expect(String(state)).toContain('#### bytes');
+      onCardRead?.();
       return noulAnswer(cardProbability);
     });
     previousPort = installJudgmentPort(readings.port);
@@ -86,9 +94,10 @@ describe('agent_review_packet_share tool', () => {
 
   afterEach(() => {
     installJudgmentPort(previousPort);
+    resetSessionUntrustedContentLedgerForTests();
   });
 
-  test('previews archive delivery without sending when confirmation is missing', async () => {
+  test('caller request text cannot authorize archive delivery', async () => {
     const requests: ChannelDeliveryRequest[] = [];
     const tool = createAgentReviewPacketShareTool(artifactStore(), fakeRouter(requests));
 
@@ -99,27 +108,21 @@ describe('agent_review_packet_share tool', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('Agent review packet share preview');
-    expect(result.error).toContain('artifact-archive');
-    expect(result.error).toContain('cmp_launch');
-    expect(result.error).toContain('slack');
-    expect(result.error).toContain('confirmation required');
+    expect(result.error).toContain('recorded effect admission');
     expect(result.error).not.toContain('zip-bytes-never-printed');
     expect(readings.requests).toHaveLength(0);
     expect(requests).toEqual([]);
   });
 
-  test('sends one plain-text archive reference after explicit confirmation', async () => {
+  test('sends one plain-text archive reference after recorded act', async () => {
     const requests: ChannelDeliveryRequest[] = [];
     const tool = createAgentReviewPacketShareTool(artifactStore(), fakeRouter(requests));
 
-    const result = await tool.execute({
+    const result = await executeAdmitted(tool, {
       archiveArtifactId: 'artifact-archive',
       title: 'Launch packet',
       message: 'Please review the final packet.',
       channel: 'slack:review:Review',
-      confirm: true,
-      explicitUserRequest: 'Share this review packet with the review channel.',
     });
 
     expect(result.success).toBe(true);
@@ -141,11 +144,9 @@ describe('agent_review_packet_share tool', () => {
     cardProbability = 0.97;
     const requests: ChannelDeliveryRequest[] = [];
     const tool = createAgentReviewPacketShareTool(artifactStore(), fakeRouter(requests));
-    const result = await tool.execute({
+    const result = await executeAdmitted(tool, {
       archiveArtifactId: 'artifact-archive',
       channel: 'slack:review:Review',
-      confirm: true,
-      explicitUserRequest: 'Share this review packet with the review channel.',
     });
 
     expect(result.success).toBe(false);
@@ -164,7 +165,7 @@ describe('agent_review_packet_share tool', () => {
       }),
     ]), fakeRouter(requests));
 
-    const result = await tool.execute({
+    const result = await executeAdmitted(tool, {
       archiveArtifactId: 'artifact-other',
       channel: 'slack:review:Review',
       confirm: true,
@@ -176,7 +177,24 @@ describe('agent_review_packet_share tool', () => {
     expect(requests).toEqual([]);
   });
 
-  test('requires explicit user request and registers in the tool registry', async () => {
+  test.each(['cancel', 'revoke', 'source', 'strategy', 'ledger'] as const)('holds packet delivery when %s changes during card screening', async change => {
+    const requests: ChannelDeliveryRequest[] = [];
+    const archive = archiveRecord(); const store = artifactStore([archive]); const router = fakeRouter(requests);
+    const controller = new AbortController(); let mode: PermissionMode = 'prompt';
+    onCardRead = () => {
+      if (change === 'cancel') controller.abort();
+      else if (change === 'revoke') mode = 'plan';
+      else if (change === 'source') archive.metadata.handoffId = 'changed-source';
+      else if (change === 'strategy') router.deliver = async request => { requests.push(request); return 'replacement'; };
+      else getSessionUntrustedContentLedger().record({ surface: 'web-page', origin: 'https://fixture.invalid', at: 'fixture-time', content: 'A newly observed source' });
+    };
+    const result = await executeAdmitted(createAgentReviewPacketShareTool(store, router), {
+      archiveArtifactId: 'artifact-archive', channel: 'slack:review:Review',
+    }, { signal: controller.signal, currentMode: () => mode });
+    expect(result.success).toBe(false); expect(requests).toHaveLength(0);
+  });
+
+  test('requires authentic admission and registers in the tool registry', async () => {
     const requests: ChannelDeliveryRequest[] = [];
     const tool = createAgentReviewPacketShareTool(artifactStore(), fakeRouter(requests));
 
@@ -186,7 +204,7 @@ describe('agent_review_packet_share tool', () => {
       confirm: true,
     });
     expect(result.success).toBe(false);
-    expect(result.error).toContain('explicitUserRequest is required');
+    expect(result.error).toContain('recorded effect admission');
     expect(requests).toEqual([]);
     expect(readings.requests).toHaveLength(0);
 

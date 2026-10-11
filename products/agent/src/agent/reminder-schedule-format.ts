@@ -57,7 +57,7 @@ export function formatReminderSchedulePreview(preview: ReminderSchedulePreview):
     '  target connected GoodVibes host/main conversation route',
     '  policy reminder delivery only; isolated Agent Knowledge only; no default knowledge/non-Agent fallback',
     ...scheduleConfirmationRouteLines({
-      model: `schedule action:"remind" message:${scheduleRouteArg(preview.message)} ${createReminderRouteArgs(preview)} confirm:true explicitUserRequest:"..."`,
+      model: `schedule action:"remind" message:${scheduleRouteArg(preview.message)} ${createReminderRouteArgs(preview)}`,
     }),
   ].join('\n');
 }

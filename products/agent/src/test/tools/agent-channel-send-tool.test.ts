@@ -1,5 +1,8 @@
-import { useSecurityReadings } from '../helpers/security-readings.ts';
-import { describe, expect, test } from 'bun:test';
+import { recordedEffectFixture } from '../helpers/recorded-effect-admission.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { ChannelDeliveryRequest } from '@goodvibes-jev/engine/sdk/platform/channels';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { createShellPathService } from '@/runtime/index.ts';
@@ -11,36 +14,51 @@ import {
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 function fakeRouter(requests: ChannelDeliveryRequest[]) {
+  const strategies = [{ id: 'fake-channel', canHandle: () => true, deliver: async () => ({}) }];
   return {
-    listStrategies: () => [{ id: 'fake-channel', canHandle: () => true, deliver: async () => ({}) }],
+    listStrategies: () => strategies,
     deliver: async (request: ChannelDeliveryRequest) => {
+      request.signal?.throwIfAborted(); request.assertCurrent?.();
       requests.push(request);
       return 'channel-response-1';
     },
   };
 }
 
-useSecurityReadings();
+let prior: ReturnType<typeof installJudgmentPort>, log: SqliteDecisionLog;
+beforeEach(() => {
+  log = new SqliteDecisionLog(':memory:');
+  const fake = fakePort((name, question) => {
+    if (question.type === 'choice') {
+      const label = name === 'disposition' ? 'act' : name === 'kind' ? 'read' : name === 'family' || name === 'capability' ? 'generic' : undefined;
+      if (!label) throw new Error(`Unexpected fixture question ${name}`);
+      return choiceAnswer(question, label, 0.999);
+    }
+    if (question.type === 'noul') return noulAnswer(0.001);
+    throw new Error(`Unexpected fixture question ${name}`);
+  });
+  prior = installJudgmentPort(withDecisionLog(fake.port, log));
+});
+afterEach(() => { installJudgmentPort(prior); log[Symbol.dispose](); });
 
 describe('agent_channel_send tool', () => {
-  test('previews without sending when confirmation is missing', async () => {
+  test('explicit preview stays read-only without recorded admission', async () => {
     const requests: ChannelDeliveryRequest[] = [];
     const tool = createAgentChannelSendTool(fakeRouter(requests));
 
     const result = await tool.execute({
       message: 'Review the approvals',
       channel: 'slack:ops:Ops',
-      confirm: false,
+      preview: true,
       explicitUserRequest: 'Send a Slack message to ops.',
     });
 
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('Agent channel delivery preview');
-    expect(result.error).toContain('confirmation required');
+    expect(result.success).toBe(true);
+    expect(result.output).toContain('Agent channel delivery preview');
     expect(requests).toEqual([]);
   });
 
-  test('requires explicit user request before sending', async () => {
+  test('caller flags cannot grant delivery admission', async () => {
     const requests: ChannelDeliveryRequest[] = [];
     const tool = createAgentChannelSendTool(fakeRouter(requests));
 
@@ -51,20 +69,18 @@ describe('agent_channel_send tool', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('explicitUserRequest is required');
+    expect(result.error).toContain('held');
     expect(requests).toEqual([]);
   });
 
-  test('sends one message after explicit confirmation', async () => {
+  test('sends one message under recorded synthetic admission without caller flags', async () => {
     const requests: ChannelDeliveryRequest[] = [];
     const tool = createAgentChannelSendTool(fakeRouter(requests));
 
-    const result = await tool.execute({
+    const result = await recordedEffectFixture(tool).run({
       message: 'Review the approvals',
       title: 'Approvals',
       channel: 'slack:ops:Ops',
-      confirm: true,
-      explicitUserRequest: 'Send a Slack message to ops.',
     });
 
     expect(result.success).toBe(true);
@@ -81,7 +97,7 @@ describe('agent_channel_send tool', () => {
     const shellPaths = createShellPathService({ workingDirectory: root, homeDirectory: root });
     const tool = createAgentChannelSendTool(fakeRouter(requests), { shellPaths });
 
-    const result = await tool.execute({
+    const result = await recordedEffectFixture(tool).run({
       message: 'Review token=super-secret-value before posting',
       title: 'Webhook Delivery',
       webhook: 'https://hooks.example.test/services/T000/B000/secret-token',

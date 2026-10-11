@@ -2,6 +2,8 @@ import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings
 
 const qualityReadings = useKnowledgeAnswerReadings();
 beforeEach(() => { qualityReadings.set({
+  pagePriority: [['LG webOS Smart TV', 0.99], ['LG webOS Smart TV passport', 0.99]],
+  pagePriorityDefault: 0.01,
   initialEvidenceCandidates: [
     ['source', 'House', 0.01],
     ['node', 'House', 0.01], ['node', 'Kitchen', 0.01], ['node', 'Front Door Sensor', 0.01],

@@ -13,6 +13,7 @@ import { ConfigError } from '../types/errors.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
 import { readUnknownSettingForms } from './settings-unknown-forms.js';
+import { CONFIG_SCHEMA } from './schema.js';
 import {
   SettingsIngestionRefusal,
   announceIngestionNotice,
@@ -127,10 +128,20 @@ export function toConfigLoadFailure(
   err: unknown,
   sink: IngestionNoticeSink,
 ): ConfigError {
+  let refusedKey: string | undefined;
+  if (err instanceof SettingsIngestionRefusal) {
+    const notice = Object.getOwnPropertyDescriptor(err, 'notice');
+    const value: unknown = notice && 'value' in notice ? notice.value : undefined;
+    if (value !== null && typeof value === 'object') {
+      const key = Object.getOwnPropertyDescriptor(value, 'key');
+      const candidate: unknown = key && 'value' in key ? key.value : undefined;
+      if (typeof candidate === 'string' && CONFIG_SCHEMA.some(setting => setting.key === candidate)) refusedKey = candidate;
+    }
+  }
   if (!(err instanceof SettingsIngestionRefusal)) {
     const entry = unreadableSettingsFileNotice(file, summarizeError(err), sink.diagnosticMode);
     announceIngestionNotice(entry);
     sink.record(entry);
   }
-  return new ConfigError(`${label} config load failed for ${file}: ${summarizeError(err)}`);
+  return new ConfigError(`${label} config load failed for ${file}${refusedKey ? ` at ${refusedKey}` : ''}: ${summarizeError(err)}`);
 }

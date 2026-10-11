@@ -367,12 +367,15 @@ describe('a cursor-store write that fails does not end inbound mail in silence',
       );
       expect(sink.uids).toEqual([102]);
 
-      // 1. It is caught and named, rather than unwinding into silence.
+      // 1. It is caught and disclosed without publishing private failure text.
       await waitFor(
-        () => observer.transitions.some((entry) => entry.to.reason === 'reconnecting'
-          && entry.to.detail.includes('ENOSPC')),
-        'a transition naming the refused write',
+        () => observer.transitions.some((entry) => entry.to.reason === 'reconnecting'),
+        'a transition after the refused write',
       );
+      const retry = observer.transitions.find((entry) => entry.to.reason === 'reconnecting');
+      expect(retry?.to.detail).toContain('Attempt 1 of');
+      expect(retry?.to.detail).not.toContain('ENOSPC');
+      expect(retry?.to.detail).not.toContain('no space left on device');
       expect(sources[0]?.status.verdict.state).not.toBe('healthy');
 
       // 2. Transient, so it waits and tries again rather than exiting.

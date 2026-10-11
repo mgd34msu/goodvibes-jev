@@ -12,6 +12,10 @@ import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 
 export interface AtomicWriteOptions {
+  /** Optional operation lifetime restriction, checked at each physical write. */
+  readonly assertCurrent?: (() => void) | undefined;
+  /** Trusted owner advances its captured write target after this operation's effect. */
+  readonly onEffect?: ((published?: boolean) => void) | undefined;
   /**
    * File permission mode for the written file. Defaults to 0o600 (owner read/write only).
    */
@@ -41,15 +45,18 @@ export function atomicWriteFileSync(
   opts: AtomicWriteOptions = {},
 ): void {
   const mode = opts.mode ?? 0o600;
-
-  if (opts.mkdirp) {
-    mkdirSync(dirname(path), { recursive: true });
-  }
-
   const tmp = `${path}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
 
+  if (opts.mkdirp) {
+    opts.assertCurrent?.();
+    mkdirSync(dirname(path), { recursive: true });
+    opts.onEffect?.();
+  }
+
   try {
+    opts.assertCurrent?.();
     writeFileSync(tmp, data, { mode });
+    opts.onEffect?.();
 
     // fsync the temp file to flush OS write buffers before rename.
     const fd = openSync(tmp, 'r+');
@@ -59,7 +66,9 @@ export function atomicWriteFileSync(
       closeSync(fd);
     }
 
+    opts.assertCurrent?.();
     renameSync(tmp, path);
+    opts.onEffect?.(true);
 
     // fsync the parent directory to ensure the renamed directory entry is
     // flushed. Without this, a hard crash immediately after rename could lose

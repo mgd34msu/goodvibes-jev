@@ -119,12 +119,15 @@ export class BrowserJudgmentService {
       routeSignal = route.signal;
       routeSignal?.addEventListener('abort', routeRevoked, { once: true });
       if (routeSignal?.aborted) routeRevoked();
+      const endpointKinds = new Set([route.kind, ...route.endpointKinds ?? []]);
       const authorized = () => {
         const actor = authenticate();
         requireSynchronousAssertion(() => resolved.assertCurrent(), 'JUDGMENT_REFERENCE_HELD');
         requireSynchronousAssertion(() => route.assertCurrent(), 'JUDGMENT_PERMISSION_HELD');
-        if (!granted(this.options.authorize({ principal: actor, battery: request.battery, batteryVersion: 1, sourceBinding: resolved.sourceBinding,
-          route: { revision: route.revision, kind: route.kind } }))) throw new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD');
+        for (const kind of endpointKinds) {
+          if (!granted(this.options.authorize({ principal: actor, battery: request.battery, batteryVersion: 1, sourceBinding: resolved.sourceBinding,
+            route: { revision: route.revision, kind } }))) throw new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD');
+        }
       };
       authorized();
       if (!route.port.recorder) throw new BrowserJudgmentError('JUDGMENT_UNRECORDED');

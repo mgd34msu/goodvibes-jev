@@ -7,6 +7,7 @@ import turnQuestions from '../fixtures/e2e-judgments/turn-questions.json';
 import unavailableModelRoutes from '../fixtures/e2e-judgments/unavailable-model-routes.json';
 import cancelledTurnTimings from '../fixtures/e2e-judgments/cancelled-turn-timings.json';
 import cancelledTurnPending from '../fixtures/e2e-judgments/cancelled-turn-pending.json';
+import privacyNegative from '../fixtures/e2e-judgments/privacy-negative.json';
 
 const prompts = ['first words in a brand new workspace', 'please answer the e2e marmot question'] as const;
 const stable = (value: unknown): string => JSON.stringify(value, (_key, entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
@@ -71,11 +72,23 @@ export function e2eJudgmentAnswers(body: unknown): { kind: 'tier' | 'identity' |
   return undefined;
 }
 
-export function startE2EJudgments() {
+function expectedPrivacyRefusal(body: unknown, ownedRoot: string | undefined): boolean {
+  let serialized = stable(body);
+  // Recorded path bytes belong to this independently created E2E fixture.
+  // Never normalize arbitrary paths or accept a caller-supplied placeholder.
+  const marker = '<owned-fixture-root>';
+  if (serialized.includes(marker)) return false;
+  if (ownedRoot) serialized = serialized.split(JSON.stringify(ownedRoot).slice(1, -1)).join(marker);
+  return privacyNegative.contracts.some(contract => contract.states.some(state =>
+    serialized === stable({ model: contract.model, questions: contract.questions, state })));
+}
+
+export function startE2EJudgments(options: { readonly ownedRoot?: string } = {}) {
   const accepted: string[] = [];
   const rejected: unknown[] = [];
   const unexpected: unknown[] = [];
   const unavailableDiagnostics: unknown[] = [];
+  const unavailablePrivacy: unknown[] = [];
   let rejectCancellationTimings = false;
   // Captured background registry probes intentionally receive no synthetic
   // classification. They stay unavailable; any new semantic request is a failure.
@@ -87,7 +100,8 @@ export function startE2EJudgments() {
     const reading = e2eJudgmentAnswers(body);
     if (!reading) {
       rejected.push(body);
-      if (!expectedNegative.has(stable(body))) unexpected.push(body);
+      if (expectedPrivacyRefusal(body, options.ownedRoot)) unavailablePrivacy.push(body);
+      else if (!expectedNegative.has(stable(body))) unexpected.push(body);
       return Response.json({ error: { message: 'Unknown deterministic E2E judgment; rejected' } }, { status: 422 });
     }
     if (rejectCancellationTimings && reading.kind === 'cancelled-turn-timing') {
@@ -97,7 +111,7 @@ export function startE2EJudgments() {
     accepted.push(reading.kind);
     return Response.json({ model: conversationRoute.model, answers: reading.answers, usage: { input_tokens: 10, output_tokens: 3 } });
   } });
-  return { baseURL: `http://127.0.0.1:${server.port}`, accepted, rejected, unexpected, unavailableDiagnostics,
+  return { baseURL: `http://127.0.0.1:${server.port}`, accepted, rejected, unexpected, unavailableDiagnostics, unavailablePrivacy,
     rejectRecordedCancellationTimings() { rejectCancellationTimings = true; },
     assertNoUnexpected: () => { if (unexpected.length) throw new Error(`E2E encountered ${unexpected.length} unknown judgment request(s): ${JSON.stringify(unexpected)}`); },
     stop: () => { void server.stop(true); },

@@ -19,6 +19,7 @@
  */
 
 import { encryptPushPayload } from './encryption.js';
+import { assertDeliveryCurrent, runDeliveryPublication, type DeliveryLifetime } from '../utils/delivery-lifetime.js';
 import type { VapidManager } from './vapid.js';
 import type { PushSubscriptionStore } from './subscription-store.js';
 import type {
@@ -30,7 +31,7 @@ import type {
 /** The `fetch` slice used to POST an encrypted payload. Injectable for tests. */
 export type PushTransport = (
   url: string,
-  init: { method: string; headers: Record<string, string>; body: Buffer },
+  init: { method: string; headers: Record<string, string>; body: Buffer; signal?: AbortSignal | undefined },
 ) => Promise<{ status: number }>;
 
 const DEFAULT_TTL_SECONDS = 24 * 60 * 60;
@@ -50,6 +51,7 @@ function defaultTransport(): PushTransport {
       method: init.method,
       headers: init.headers,
       body: new Uint8Array(init.body),
+      ...(init.signal ? { signal: init.signal } : {}),
     });
     return { status: res.status };
   };
@@ -100,12 +102,15 @@ export async function deliverToSubscription(
   subscription: StoredPushSubscription,
   message: PushMessage,
   deps: DeliveryDeps,
+  lifetime: DeliveryLifetime = {},
 ): Promise<PushDeliveryReceipt> {
   const origin = endpointOrigin(subscription.endpoint);
   const transport = deps.transport ?? defaultTransport();
 
   let httpStatus: number;
+  let dispatched = false;
   try {
+    assertDeliveryCurrent(lifetime);
     const encrypted = encryptPushPayload(subscription.keys, messagePlaintext(message));
     const authorization = await deps.vapid.buildAuthorizationHeader(subscription.endpoint);
     const headers: Record<string, string> = {
@@ -115,13 +120,20 @@ export async function deliverToSubscription(
       urgency: message.urgency ?? 'normal',
       authorization,
     };
-    const result = await transport(subscription.endpoint, {
-      method: 'POST',
-      headers,
-      body: encrypted.body,
+    const result = await runDeliveryPublication(lifetime, () => {
+      dispatched = true;
+      return transport(subscription.endpoint, {
+        method: 'POST', headers, body: encrypted.body,
+        ...(lifetime.signal ? { signal: lifetime.signal } : {}),
+      });
     });
     httpStatus = result.status;
   } catch (error) {
+    // Revocation before dispatch is not evidence that the endpoint failed.
+    if (!dispatched) {
+      assertDeliveryCurrent(lifetime);
+      if (lifetime.withPublication) throw error;
+    }
     const failures = await deps.store.recordOutcome(subscription.id, 'failed');
     const reason = `delivery request failed: ${error instanceof Error ? error.message : String(error)}`;
     return prunedOrFailed(subscription, origin, deps, failures, reason);
@@ -191,11 +203,12 @@ async function prunedOrFailed(
 export async function deliverToAll(
   message: PushMessage,
   deps: DeliveryDeps,
+  lifetime: DeliveryLifetime = {},
 ): Promise<PushDeliveryReceipt[]> {
   const subscriptions = await deps.store.all();
   const receipts: PushDeliveryReceipt[] = [];
   for (const subscription of subscriptions) {
-    receipts.push(await deliverToSubscription(subscription, message, deps));
+    receipts.push(await deliverToSubscription(subscription, message, deps, lifetime));
   }
   return receipts;
 }

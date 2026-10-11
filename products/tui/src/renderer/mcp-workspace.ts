@@ -23,13 +23,6 @@ import { drawList, type KitRow } from './surface-kit-list.ts';
 import { inset } from './surface-kit-parts.ts';
 import { drawTextBlock, splitListDetail, textBlockHeight, type TextLine } from './surface-kit-extra.ts';
 
-function statusColor(text: string): string {
-  const t = activeTokens();
-  if (text.includes('failed')) return t.error;
-  if (text.includes('attention') || text.includes('quarantine')) return t.warning;
-  return t.textMuted;
-}
-
 function browseRows(workspace: McpWorkspace): KitRow[] {
   const t = activeTokens();
   const rows: KitRow[] = [];
@@ -161,7 +154,7 @@ export function renderMcpWorkspace(workspace: McpWorkspace, screenWidth: number,
   const f = beginModal(screenWidth, screenHeight, { title: 'MCP servers', crumbs, hints: hintsFor(workspace) });
 
   // Status sits under both sides, wrapped in full.
-  const status: TextLine[] = [{ text: `Status: ${workspace.status}`, style: { fg: statusColor(workspace.status) } }];
+  const status: TextLine[] = [{ text: `Status: ${workspace.status}`, style: { fg: workspace.statusTone === 'error' ? t.error : workspace.statusTone === 'warning' ? t.warning : t.textMuted } }];
   const statusRows = textBlockHeight(status, f.r - f.l + 1);
   const bodyBottom = f.bottom - statusRows - 1;
   drawTextBlock(f.canvas, f.l, bodyBottom + 2, f.r - f.l + 1, status, f.bottom);

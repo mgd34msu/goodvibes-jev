@@ -158,7 +158,10 @@ export function channelDeliveriesInFlight(): number {
 export async function deliverAgentChannelMessage(
   router: AgentChannelDeliveryRouter,
   input: AgentChannelDeliveryInput,
+  options: { readonly signal?: AbortSignal; readonly assertCurrent?: () => void } = {},
 ): Promise<AgentChannelDeliveryResult> {
+  const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); };
+  assertCurrent();
   const preview = buildAgentChannelDeliveryPreview(input);
 
   // Card material never leaves this program toward a remote channel. This is
@@ -174,13 +177,17 @@ export async function deliverAgentChannelMessage(
     surface: resolveDeliverySurfaceName(preview.target),
     message: preview.message,
     title: preview.title,
-  });
+  }, options);
   if (refusal) throw new CardMaterialRefusedError(refusal);
+  assertCurrent();
 
   inFlightDeliveries += 1;
   let responseId: string | undefined;
   try {
-    responseId = await router.deliver(preview.request as ChannelDeliveryRequest);
+    responseId = await router.deliver({ ...preview.request,
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.assertCurrent ? { assertCurrent } : {}),
+    } as ChannelDeliveryRequest);
   } finally {
     // Decremented on the failure path too: a delivery that threw is finished,
     // and a leaked counter would pin the agent "busy" forever.
@@ -214,7 +221,7 @@ export function formatAgentChannelDeliveryPreview(preview: AgentChannelDeliveryP
     `  target ${formatTarget(preview.target)}`,
     `  strategies ${strategyCount}`,
     `  message ${preview.message}`,
-    '  policy external delivery requires an explicit user request and confirmation',
+    '  policy external delivery requires current authority and destination checks',
   ].join('\n');
 }
 

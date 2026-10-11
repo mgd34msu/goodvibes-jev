@@ -146,6 +146,7 @@ function provisionStatusFor(deps: WakeRuntimeDeps): WakeProvisionSnapshot {
 
 export function wireWakeRuntime(deps: WakeRuntimeDeps): WakeRuntime {
   let listener: WakeListener | null = null;
+  let lifetime: AbortController | null = null;
   let phase: WakeListenerState['phase'] = 'idle';
   let deviceLabel: string | null = null;
   let detail: string | undefined;
@@ -177,7 +178,8 @@ export function wireWakeRuntime(deps: WakeRuntimeDeps): WakeRuntime {
     }
   };
 
-  const transcribeUtterance = async (utterance: CapturedUtterance, settings: WakeRuntimeSettings): Promise<void> => {
+  const transcribeUtterance = async (utterance: CapturedUtterance, settings: WakeRuntimeSettings, signal: AbortSignal): Promise<void> => {
+    if (signal.aborted) return;
     if (settings.retainAudio === 'session-temp') retainClip(utterance);
     if (utterance.silent) {
       deps.notify('[Wake] Heard the wake phrase but nothing above the silence floor followed it.');
@@ -191,7 +193,8 @@ export function wireWakeRuntime(deps: WakeRuntimeDeps): WakeRuntime {
       return;
     }
     try {
-      const text = (await resolution.gateway.transcribe(utteranceToAudioArtifact(utterance))).trim();
+      const text = (await resolution.gateway.transcribe(utteranceToAudioArtifact(utterance), { signal })).trim();
+      if (signal.aborted) return;
       if (text.length === 0) {
         deps.notify('[Wake] Speech-to-text returned no words for what followed the wake phrase.');
         deps.render();
@@ -204,6 +207,7 @@ export function wireWakeRuntime(deps: WakeRuntimeDeps): WakeRuntime {
         deps.render();
       }
     } catch (error) {
+      if (signal.aborted) return;
       deps.notify(`[Wake] Transcription failed: ${describeTranscriptionFailure(error)}`);
       deps.render();
     }
@@ -235,6 +239,9 @@ export function wireWakeRuntime(deps: WakeRuntimeDeps): WakeRuntime {
       // Worth saying out loud: these bytes were never checksum-verified.
       deps.notify(`[Wake] Loading ${unpinned.length} custom model${unpinned.length === 1 ? '' : 's'} that ${unpinned.length === 1 ? 'is' : 'are'} not checksum-pinned: ${unpinned.map((model) => `${model.id} (${model.path})`).join(', ')}`);
     }
+    const controller = new AbortController();
+    lifetime = controller;
+    const current = (): boolean => listener === active && !controller.signal.aborted;
     const active = new WakeListener({
       settings,
       openCapture: deps.openCapture,
@@ -258,17 +265,20 @@ export function wireWakeRuntime(deps: WakeRuntimeDeps): WakeRuntime {
       }),
       handlers: {
         onStateChange: (state) => {
+          if (!current()) return;
           phase = state.phase;
           deviceLabel = state.deviceLabel;
           if (state.phase === 'latched') detail = state.latchReason ?? undefined;
           deps.render();
         },
         onWake: (event) => {
+          if (!current()) return;
           deps.playActivationSound(event.activationSound);
           deps.render();
         },
-        onUtterance: (utterance) => { void transcribeUtterance(utterance, settings); },
+        onUtterance: (utterance) => { if (current()) void transcribeUtterance(utterance, settings, controller.signal); },
         onFailure: (error, restarting, failureDetail) => {
+          if (!current()) return;
           detail = failureDetail;
           // Reported to the user, not only logged: a detector that stopped
           // listening is exactly the thing a silent log entry hides.
@@ -285,7 +295,10 @@ export function wireWakeRuntime(deps: WakeRuntimeDeps): WakeRuntime {
     });
     listener = active;
     const outcome = await active.start();
+    if (!current()) return;
     if (!outcome.started) {
+      controller.abort();
+      lifetime = null;
       listener = null;
       phase = 'idle';
       deps.notify(`[Wake] The wake-word detector did not start (${outcome.refusal}): ${outcome.detail}`);
@@ -300,6 +313,8 @@ export function wireWakeRuntime(deps: WakeRuntimeDeps): WakeRuntime {
 
   const stop = async (): Promise<void> => {
     const active = listener;
+    lifetime?.abort();
+    lifetime = null;
     listener = null;
     phase = 'idle';
     deviceLabel = null;

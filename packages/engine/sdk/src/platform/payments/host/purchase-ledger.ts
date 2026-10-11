@@ -67,9 +67,9 @@ export interface PurchaseListQuery {
 /**
  * The daemon's purchase ledger.
  *
- * Implements the SDK's `PurchaseLedger` write port, so the checkout flow can be
- * handed this object unchanged once `payments.checkout.begin` has a page driver
- * to run against, and adds the read half the `payments.purchases.list` verb needs.
+ * Implements the SDK's `PurchaseLedger` write port used by the registered
+ * checkout service, and adds the read half the `payments.purchases.list` verb
+ * needs.
  */
 export class DaemonPurchaseLedger implements PurchaseLedger {
   private readonly filePath: string;

@@ -47,7 +47,7 @@
  * send" should find it.
  */
 
-import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { assertDeliveryCurrent, logger, runDeliveryPublication, type DeliveryLifetime } from '@goodvibes-jev/engine/sdk/platform/utils';
 import type {
   AgentConversationMessage,
   AgentConversationSender,
@@ -114,7 +114,8 @@ export function createAgentConversationSender(
 
   return {
     id: AGENT_CONVERSATION_SENDER_ID,
-    send: async (message: AgentConversationMessage): Promise<string | undefined> => {
+    supportsGuardedDelivery: true,
+    send: async (message: AgentConversationMessage, lifetime: DeliveryLifetime = {}): Promise<string | undefined> => {
       const target = conversationFor(message);
       // Throwing is the contract's honest answer: the router logs the surface,
       // the strategy and the reason, and the caller is told rather than left with
@@ -123,7 +124,13 @@ export function createAgentConversationSender(
       // item unstamped so the pull still raises it.
       if (typeof target === 'string') throw new Error(target);
 
-      target.conversation.addAssistantMessage(message.body);
+      const addMessage = target.conversation.addAssistantMessage;
+      await runDeliveryPublication({ ...lifetime, assertCurrent() {
+        assertDeliveryCurrent(lifetime);
+        const current = conversationFor(message);
+        if (typeof current === 'string' || current.conversation !== target.conversation
+          || current.conversation.addAssistantMessage !== addMessage) throw new Error('Agent delivery conversation changed.');
+      } }, () => addMessage.call(target.conversation, message.body));
       deps.requestRender();
       // Counts and ids only. The body is not logged at any level: a push
       // addressed here can carry closed-tier content (an occasion nudge names a

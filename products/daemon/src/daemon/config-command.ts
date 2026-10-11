@@ -98,9 +98,22 @@ export async function renderConfigValue(key: string, value: unknown): Promise<st
   if (value === undefined) return 'unset';
   if (value !== null && typeof value === 'object') {
     const redacted = await redactConfig({ [key]: value });
-    return JSON.stringify(redacted.value[key]);
+    const printable = JSON.stringify(readRedactedEntry(redacted, key));
+    redacted.assertCurrent();
+    return printable;
   }
   return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+/** A redactor may replace the document; only an own data field can be consumed. */
+function readRedactedEntry(redacted: Awaited<ReturnType<typeof redactConfig>>, key: string): unknown {
+  redacted.assertCurrent();
+  const document = redacted.value;
+  if (document === null || typeof document !== 'object' || Array.isArray(document)) return REDACTED_VALUE;
+  const descriptor = Object.getOwnPropertyDescriptor(document, key);
+  if (!descriptor || !('value' in descriptor)) return REDACTED_VALUE;
+  const value: unknown = descriptor.value;
+  return value;
 }
 
 function schemaFor(deps: ConfigCommandDeps, key: string): ConfigSetting | undefined {
@@ -119,13 +132,17 @@ function writeFailure(key: string, error: unknown, deps: ConfigCommandDeps): Con
 }
 
 /** Finish classification before mutation; a refused reader must leave settings alone. */
-async function prepareWrite(deps: ConfigCommandDeps, key: string, value: unknown): Promise<ConfigCommandResult | undefined> {
+type PreparedWrite =
+  | { readonly kind: 'ready'; readonly assertCurrent: () => void }
+  | { readonly kind: 'refused'; readonly result: ConfigCommandResult };
+
+async function prepareWrite(deps: ConfigCommandDeps, key: string, value: unknown): Promise<PreparedWrite> {
   try {
-    if (deps.json) await redactConfig({ [key]: value });
-    else await renderConfigValue(key, value);
-    return undefined;
+    const redacted = await redactConfig({ [key]: value });
+    redacted.assertCurrent();
+    return { kind: 'ready', assertCurrent: redacted.assertCurrent };
   } catch {
-    return failure(`could not prepare safe output for ${key}; settings were not changed.`, deps);
+    return { kind: 'refused', result: failure(`could not prepare safe output for ${key}; settings were not changed.`, deps) };
   }
 }
 
@@ -136,7 +153,7 @@ async function writtenValue(deps: ConfigCommandDeps, key: string): Promise<unkno
     const stored = deps.configManager.get(key);
     if (!deps.json) return await renderConfigValue(key, stored);
     const redacted = await redactConfig({ [key]: stored });
-    return redacted.value[key];
+    return readRedactedEntry(redacted, key);
   } catch {
     return REDACTED_VALUE;
   }
@@ -164,8 +181,9 @@ async function listResult(deps: ConfigCommandDeps): Promise<ConfigCommandResult>
     // per-key render, so a secret nested inside an object-valued setting is
     // caught by its own path rather than only by its parent's name.
     const redacted = await redactConfig(
-      Object.fromEntries(rows.map((row) => [row.key, row.value])) as Record<string, unknown>,
+      Object.fromEntries(rows.map((row) => [row.key, row.value])),
     );
+    redacted.assertCurrent();
     return {
       exitCode: 0,
       lines: [JSON.stringify({
@@ -200,14 +218,14 @@ async function getResult(deps: ConfigCommandDeps, key: string): Promise<ConfigCo
   }
   const value = readValue(deps, key);
   if (deps.json) {
-    const redacted = await redactConfig({ [key]: value } as Record<string, unknown>);
+    const redacted = await redactConfig({ [key]: value });
     return {
       exitCode: 0,
       lines: [JSON.stringify({
         ok: true,
         data: {
           key,
-          value: (redacted.value as Record<string, unknown>)[key],
+          value: readRedactedEntry(redacted, key),
           type: setting.type,
           redacted: redacted.redactedPaths.length > 0,
         },
@@ -222,8 +240,10 @@ async function setResult(deps: ConfigCommandDeps, key: string, rawValue: string)
     return failure(`not a settings key. Run \`${deps.binary ?? 'goodvibes-daemon'} config list\` to see them.`, deps);
   }
   const value = parseConfigValueText(rawValue);
-  const preparationFailure = await prepareWrite(deps, key, value);
-  if (preparationFailure) return preparationFailure;
+  const preparation = await prepareWrite(deps, key, value);
+  if (preparation.kind === 'refused') return preparation.result;
+  try { preparation.assertCurrent(); }
+  catch { return failure(`could not prepare safe output for ${key}; settings were not changed.`, deps); }
   try {
     deps.configManager.set(key, value as never);
   } catch (error) {
@@ -253,8 +273,10 @@ async function unsetResult(deps: ConfigCommandDeps, key: string): Promise<Config
   if (!isKnownConfigKey(key, deps.configManager.getSchema())) {
     return failure(`not a settings key. Run \`${deps.binary ?? 'goodvibes-daemon'} config list\` to see them.`, deps);
   }
-  const preparationFailure = await prepareWrite(deps, key, schemaFor(deps, key)?.default);
-  if (preparationFailure) return preparationFailure;
+  const preparation = await prepareWrite(deps, key, schemaFor(deps, key)?.default);
+  if (preparation.kind === 'refused') return preparation.result;
+  try { preparation.assertCurrent(); }
+  catch { return failure(`could not prepare safe output for ${key}; settings were not changed.`, deps); }
   try {
     deps.configManager.reset(key);
   } catch {

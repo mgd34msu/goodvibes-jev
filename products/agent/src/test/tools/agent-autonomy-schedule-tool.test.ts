@@ -1,3 +1,6 @@
+import { scheduleEffectAdmission } from '../helpers/schedule-effect-admission.ts';
+import { createScheduleInputProjector } from '../../tools/agent-schedule-effect.ts';
+import { registerAgentOperatorMethodTool } from '../../tools/agent-operator-method-tool.ts';
 import { mockFetch } from '../helpers/typed-fetch-mock.ts';
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -108,10 +111,18 @@ function scheduleResponse(): Response {
   });
 }
 
+function admittedTool(paths: ShellPaths) {
+  const fixture = scheduleEffectAdmission(paths.workingDirectory), config = configManager(paths);
+  registerAgentOperatorMethodTool(fixture.registry, paths, config);
+  const raw = createAgentAutonomyScheduleTool(paths, config, fixture.registry);
+  fixture.registry.register(raw, { inputProjection: createScheduleInputProjector(paths, config) });
+  return { definition: raw.definition, execute: (args: Record<string, unknown>, options?: Parameters<typeof raw.execute>[1]) => fixture.run(raw, args, options) };
+}
+
 describe('agent_autonomy_schedule tool', () => {
-  test('previews without calling the connected host when confirmation is missing', async () => {
+  test('holds an unadmitted caller without calling the connected host', async () => {
     const paths = shellPaths();
-    const tool = createAgentAutonomyScheduleTool(paths, configManager(paths));
+    const tool = createAgentAutonomyScheduleTool(paths, configManager(paths), new ToolRegistry());
     const originalFetch = globalThis.fetch;
     let calls = 0;
     globalThis.fetch = mockFetch(async () => {
@@ -130,21 +141,16 @@ describe('agent_autonomy_schedule tool', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('GoodVibes schedule preview for autonomous Agent work');
-      expect(result.error).toContain('confirmation required');
-      expect(result.error).toContain('confirmationRoutes');
-      expect(result.error).toContain('schedule action:"create" task:"Review the ops queue and summarize blockers"');
-      expect(result.error).toContain('successCriteria:"Report blocker count and the highest priority next action."');
-      expect(result.error).toContain('scheduleKind:"every" scheduleValue:"1d" confirm:true explicitUserRequest:"..."');
+      expect(result.error).toContain('recorded effect admission');
       expect(calls).toBe(0);
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 
-  test('requires explicit user request provenance before scheduling', async () => {
+  test('holds forged caller confirmation without recorded admission', async () => {
     const paths = shellPaths();
-    const tool = createAgentAutonomyScheduleTool(paths, configManager(paths));
+    const tool = createAgentAutonomyScheduleTool(paths, configManager(paths), new ToolRegistry());
     const originalFetch = globalThis.fetch;
     let calls = 0;
     globalThis.fetch = mockFetch(async () => {
@@ -162,16 +168,16 @@ describe('agent_autonomy_schedule tool', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('explicitUserRequest is required');
+      expect(result.error).toContain('recorded effect admission');
       expect(calls).toBe(0);
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 
-  test('creates a connected autonomous schedule after explicit confirmation', async () => {
+  test('creates a connected autonomous schedule under recorded admission', async () => {
     const paths = shellPaths();
-    const tool = createAgentAutonomyScheduleTool(paths, configManager(paths));
+    const tool = admittedTool(paths);
     const requests: ScheduleRequest[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch(async (input, init) => {
@@ -190,16 +196,15 @@ describe('agent_autonomy_schedule tool', () => {
         scheduleKind: 'every',
         scheduleValue: '1d',
         deliveryChannel: 'slack:ops:Ops',
-        confirm: true,
         explicitUserRequest: 'Run an ops queue review every day.',
       });
 
-      expect(result.success).toBe(true);
+      expect(result).toEqual(expect.objectContaining({ success: true }));
       expect(result.output).toContain('Created GoodVibes schedule for autonomous Agent work');
       expect(result.output).toContain('nextRoutes');
       expect(result.output).toContain('schedule action:"list" query:"sched-autonomy-1"');
       expect(result.output).toContain('autonomy action:"item" queueItemId:"connected-schedules" includeParameters:true');
-      expect(result.output).toContain('schedule action:"pause" scheduleId:"sched-autonomy-1" confirm:true explicitUserRequest:"..."');
+      expect(result.output).toContain('schedule action:"pause" scheduleId:"sched-autonomy-1"');
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url).toBe('http://127.0.0.1:3421/api/automation/schedules');
       expect(requests[0]?.method).toBe('POST');
@@ -219,7 +224,7 @@ describe('agent_autonomy_schedule tool', () => {
       expect(payload.prompt).toContain('Run an ops queue review every day.');
       expect(payload.prompt).toContain('Report blocker count and the highest priority next action.');
       expect(payload.prompt).toContain('never use default knowledge or non-Agent knowledge spaces');
-      expect(payload.prompt).toContain('Do not perform destructive, costly, externally visible, or secret-handling actions without explicit approval');
+      expect(payload.prompt).toContain('Perform each effect only under current recorded effect admission');
     } finally {
       globalThis.fetch = originalFetch;
     }

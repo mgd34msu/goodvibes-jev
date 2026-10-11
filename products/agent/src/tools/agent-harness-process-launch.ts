@@ -31,6 +31,7 @@ export async function spawnClassifiedBackgroundProcess(
     if (manager.spawn !== spawn) throw new ToolInputProjectionError('held');
     const result = await spawn.call(manager, command, cwd, undefined, {
       timeout_ms: timeoutMs, sigterm_grace_ms: 5_000, kill_on_timeout: killOnTimeout,
+      stdin: 'pipe',
       signal: options.signal, assertCurrent,
     });
     return { processClass, killOnTimeout, result };

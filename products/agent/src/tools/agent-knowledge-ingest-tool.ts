@@ -1,8 +1,13 @@
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolEffect, assertProjectionExecution, ToolInputProjectionError, type ToolRegistry, type ToolInputProjector } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureStrictJudgmentJson } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync, type BigIntStats } from 'node:fs';
+import { dirname } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import { captureOperatorConnection } from '../agent/operator-connection-owner.ts';
+import { captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
 import type { ShellPathService } from '@/runtime/index.ts';
 import type { AgentConnectedHostConfigReader } from '../agent/routine-schedule-promotion.ts';
-import { resolveAgentConnectedHostConnection } from '../agent/routine-schedule-promotion.ts';
 import {
   classifyKnowledgeError,
   postAgentKnowledgeJson,
@@ -63,7 +68,8 @@ const SOURCE_KINDS: readonly AgentKnowledgeIngestSourceKind[] = [
 ];
 
 function isSourceKind(value: unknown): value is AgentKnowledgeIngestSourceKind {
-  return typeof value === 'string' && SOURCE_KINDS.includes(value as AgentKnowledgeIngestSourceKind);
+  return value === 'url' || value === 'file' || value === 'artifact' || value === 'urls_file'
+    || value === 'bookmarks_file' || value === 'browser_history' || value === 'connector';
 }
 
 function readString(value: unknown): string {
@@ -125,7 +131,7 @@ function formatKnowledgeFailure(failureResult: AgentKnowledgeFailure): string {
 function preview(request: AgentKnowledgeIngestRequest): string {
   return [
     `Agent Knowledge ${request.label} preview`,
-    `  target ${request.target}`,
+    `  source ${request.targetLabel}`,
     `  route ${request.method.route}`,
     '  policy isolated Agent Knowledge only; no default knowledge or non-Agent fallback',
   ].join('\n');
@@ -283,6 +289,101 @@ function requestForArgs(args: AgentKnowledgeIngestToolArgs): AgentKnowledgeInges
   };
 }
 
+interface IngestCapture {
+  readonly shellPaths: ShellPathService;
+  readonly configManager: AgentConnectedHostConfigReader;
+  readonly connection: ReturnType<typeof captureOperatorConnection>;
+  readonly request: AgentKnowledgeIngestRequest;
+  readonly assertCurrent: () => void;
+}
+const ingestCaptures = new WeakMap<object, IngestCapture>();
+
+function fileSignature(stat: BigIntStats): string {
+  return `${stat.dev}:${stat.ino}:${stat.mode}:${stat.uid}:${stat.gid}:${stat.nlink}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+}
+function captureIngestFile(path: string): () => void {
+  const before = lstatSync(path, { bigint: true });
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) throw new ToolInputProjectionError('held');
+  const signature = fileSignature(before);
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+  let bytes: Buffer;
+  try {
+    if (fileSignature(fstatSync(fd, { bigint: true })) !== signature) throw new ToolInputProjectionError('stale');
+    bytes = readFileSync(fd);
+    if (fileSignature(fstatSync(fd, { bigint: true })) !== signature
+      || fileSignature(lstatSync(path, { bigint: true })) !== signature) throw new ToolInputProjectionError('stale');
+  } finally { closeSync(fd); }
+  const parents: Array<{ readonly path: string; readonly identity: string }> = [];
+  for (let current = dirname(path); ; current = dirname(current)) {
+    const stat = lstatSync(current, { bigint: true });
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new ToolInputProjectionError('held');
+    parents.push({ path: current, identity: `${stat.dev}:${stat.ino}:${stat.mode}` });
+    if (current === dirname(current)) break;
+  }
+  return () => {
+    for (const parent of parents) {
+      const stat = lstatSync(parent.path, { bigint: true });
+      if (!stat.isDirectory() || stat.isSymbolicLink()
+        || `${stat.dev}:${stat.ino}:${stat.mode}` !== parent.identity) throw new ToolInputProjectionError('stale');
+    }
+    const current = lstatSync(path, { bigint: true });
+    if (!current.isFile() || current.isSymbolicLink() || fileSignature(current) !== signature) throw new ToolInputProjectionError('stale');
+    const checkFd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+    try {
+      if (fileSignature(fstatSync(checkFd, { bigint: true })) !== signature
+        || !readFileSync(checkFd).equals(bytes)
+        || fileSignature(fstatSync(checkFd, { bigint: true })) !== signature
+        || fileSignature(lstatSync(path, { bigint: true })) !== signature) throw new ToolInputProjectionError('stale');
+    } finally { closeSync(checkFd); }
+  };
+}
+
+/** Capture the complete original acquisition selection before admission; this grants no effects. */
+export function createAgentKnowledgeIngestInputProjector(shellPaths: ShellPathService,
+  configManager: AgentConnectedHostConfigReader): ToolInputProjector {
+  return { async project(request) {
+    request.assertCurrent(); request.signal?.throwIfAborted();
+    const original = captureStrictJudgmentJson(request.args);
+    const ingest = requestForArgs(original);
+    const method = ingest.method, methodSnapshot = captureStrictJudgmentJson(method);
+    const assertMethods = captureCatalogMethods(AGENT_KNOWLEDGE_METHODS, ['ingestUrl', 'ingestArtifact', 'ingestUrls', 'ingestBookmarks', 'ingestBrowserHistory', 'ingestConnector']);
+    const assertShellPaths = captureCatalogMethods(shellPaths, ['workingDirectory', 'homeDirectory', 'resolveWorkspacePath']);
+    const workspace = shellPaths.workingDirectory, home = shellPaths.homeDirectory;
+    const physicalWorkspace = realpathSync(workspace), workspaceStat = lstatSync(physicalWorkspace, { bigint: true });
+    if (!workspaceStat.isDirectory()) throw new ToolInputProjectionError('held');
+    const workspaceIdentity = `${workspaceStat.dev}:${workspaceStat.ino}:${workspaceStat.mode}:${workspaceStat.ctimeNs}`;
+    const resolveWorkspacePath = shellPaths.resolveWorkspacePath;
+    const selectedPath = readOptionalString(ingest.payload.path);
+    const localPath = selectedPath ? resolveWorkspacePath.call(shellPaths, selectedPath) : undefined;
+    const assertFile = localPath ? captureIngestFile(localPath) : undefined;
+    const retainedRequest = captureStrictJudgmentJson({ ...ingest,
+      payload: { ...ingest.payload, ...(localPath ? { path: localPath } : {}) } });
+    let released = false;
+    const assertSelection = () => {
+      request.assertCurrent(); request.signal?.throwIfAborted(); assertShellPaths(); assertMethods();
+      const current = lstatSync(physicalWorkspace, { bigint: true });
+      if (released || shellPaths.workingDirectory !== workspace || shellPaths.homeDirectory !== home
+        || realpathSync(workspace) !== physicalWorkspace || !current.isDirectory()
+        || `${current.dev}:${current.ino}:${current.mode}:${current.ctimeNs}` !== workspaceIdentity
+        || (selectedPath && resolveWorkspacePath.call(shellPaths, selectedPath) !== localPath)
+        || !isDeepStrictEqual(captureStrictJudgmentJson(method), methodSnapshot)) throw new ToolInputProjectionError('stale');
+      assertFile?.(); assertShellPaths(); request.assertCurrent();
+    };
+    const connection = captureOperatorConnection(shellPaths, configManager, assertSelection);
+    const assertCurrent = () => { assertSelection(); connection.assertCurrent(); assertSelection(); };
+    assertCurrent();
+    const context = Object.freeze({});
+    ingestCaptures.set(context, { shellPaths, configManager, connection, request: retainedRequest, assertCurrent });
+    return { status: 'projected', args: request.args, executionContext: context, assertCurrent,
+      assertRepairedArgs(args) {
+        if (!isDeepStrictEqual(captureStrictJudgmentJson(args), original)) throw new ToolInputProjectionError('binding-changed');
+        assertCurrent();
+      },
+      async release() { released = true; ingestCaptures.delete(context); },
+    };
+  } };
+}
+
 export function createAgentKnowledgeIngestTool(
   shellPaths: ShellPathService,
   configManager: AgentConnectedHostConfigReader,
@@ -290,7 +391,7 @@ export function createAgentKnowledgeIngestTool(
   return {
     definition: {
       name: 'agent_knowledge_ingest',
-      description: 'Ingest one confirmed source into isolated Agent Knowledge.',
+      description: 'Ingest one source into isolated Agent Knowledge after recorded effect admission.',
       parameters: {
         type: 'object',
         properties: {
@@ -363,61 +464,56 @@ export function createAgentKnowledgeIngestTool(
           },
           confirm: {
             type: 'boolean',
-            description: 'Required true only when the user explicitly asked to ingest this source.',
+            description: 'Optional audit annotation; does not grant effect authority.',
           },
           explicitUserRequest: {
             type: 'string',
-            description: 'User request authorizing this ingest.',
+            description: 'Optional request provenance; does not grant effect authority.',
           },
         },
-        required: ['confirm', 'explicitUserRequest'],
+        required: [],
         additionalProperties: false,
       },
-      sideEffects: ['network', 'state'],
+      sideEffects: ['read_fs', 'network', 'state'],
     },
-    execute: async (rawArgs: unknown) => {
-      const args = rawArgs as AgentKnowledgeIngestToolArgs;
+    execute: async (rawArgs, options) => {
       let request: AgentKnowledgeIngestRequest;
+      try { request = requestForArgs(captureStrictJudgmentJson(rawArgs)); }
+      catch { return failure('Agent Knowledge ingest input is invalid.'); }
+      const context = options?.inputProjectionContext;
+      const capture = context && ingestCaptures.get(context);
+      const assertCurrent = () => {
+        options?.signal?.throwIfAborted();
+        if (!assertCurrentToolEffect(rawArgs, options, 'write') || !assertCurrentToolEffect(rawArgs, options, 'send')
+          || !context || !capture || capture.shellPaths !== shellPaths || capture.configManager !== configManager) {
+          throw new ToolInputProjectionError('held');
+        }
+        assertProjectionExecution(context, rawArgs); capture.assertCurrent();
+      };
+      try { assertCurrent(); }
+      catch { return failure(`${preview(request)}\n\nIngestion requires current recorded effect admission and unchanged sources.`); }
+      if (!capture) return failure('Agent Knowledge ingest held.');
+      request = capture.request;
+      const connection = capture.connection;
+      if (!connection.token) return failure(formatKnowledgeFailure({ ok: false, kind: 'auth_required',
+        error: 'No connected-host operator token found.', baseUrl: connection.baseUrl, route: request.method.route }));
+      const restrictions = { signal: options?.signal, assertCurrent };
       try {
-        request = requestForArgs(args);
+        const data = await postAgentKnowledgeJson(connection, request.method.route, request.payload, restrictions);
+        assertCurrent();
+        const text = request.batch ? formatBatchIngest(data, request.label)
+          : formatIngest(data, request.target, request.label, request.method.route, request.targetLabel);
+        assertCurrent();
+        return output(text);
       } catch (error) {
-        return failure(error instanceof Error ? error.message : String(error));
-      }
-      if (!readString(args.explicitUserRequest)) {
-        return failure('explicitUserRequest is required so Agent Knowledge ingest stays tied to a direct user request.');
-      }
-      if (!readBoolean(args.confirm)) {
-        return failure([
-          preview(request),
-          '',
-          'Model tool confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to ingest this source.',
-        ].join('\n'));
-      }
-
-      const connection = resolveAgentConnectedHostConnection(configManager, shellPaths.homeDirectory);
-      if (!connection.token) {
-        return failure(formatKnowledgeFailure({
-          ok: false,
-          kind: 'auth_required',
-          error: `No connected-host operator token found at ${connection.tokenPath}`,
-          baseUrl: connection.baseUrl,
-          route: request.method.route,
-        }));
-      }
-
-      try {
-        const data = await postAgentKnowledgeJson(connection, request.method.route, request.payload);
-        return output(request.batch
-          ? formatBatchIngest(data, request.label)
-          : formatIngest(
-            data,
-            request.target,
-            request.label,
-            request.method.route,
-            request.targetLabel,
-          ));
-      } catch (error) {
-        return failure(formatKnowledgeFailure(await classifyKnowledgeError(error, connection, request.method.route)));
+        try {
+          assertCurrent();
+          const classified = await classifyKnowledgeError(error, connection, request.method.route, restrictions);
+          assertCurrent();
+          const text = formatKnowledgeFailure(classified);
+          assertCurrent();
+          return failure(text);
+        } catch { return failure('Agent Knowledge ingest held: admission, request, or source is no longer current.'); }
       }
     },
   };
@@ -428,5 +524,7 @@ export function registerAgentKnowledgeIngestTool(
   shellPaths: ShellPathService,
   configManager: AgentConnectedHostConfigReader,
 ): void {
-  registry.register(createAgentKnowledgeIngestTool(shellPaths, configManager));
+  registry.register(createAgentKnowledgeIngestTool(shellPaths, configManager), {
+    inputProjection: createAgentKnowledgeIngestInputProjector(shellPaths, configManager),
+  });
 }

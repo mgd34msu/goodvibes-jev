@@ -19,6 +19,7 @@
     "test:changed": "bun ../../packages/engine/scripts/test.ts --cwd ../../products/webui --changed=origin/main --isolate",
     "pretest:live": "bun run scripts/sweep-stale-temp.ts",
     "test:live": "bun run scripts/live-daemon-smoke-runner.ts",
+    "test:connected-browser": "bun run scripts/connected-browser-smoke.ts",
     "e2e": "playwright test",
     "e2e:phone": "playwright test --project=phone",
     "e2e:desktop": "playwright test --project=desktop",

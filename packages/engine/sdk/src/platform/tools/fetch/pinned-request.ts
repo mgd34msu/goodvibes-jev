@@ -1,4 +1,4 @@
-import { assertDeliveryCurrent } from '../../utils/delivery-lifetime.js';
+import { assertDeliveryCurrent, runDeliveryPublication, type DeliveryLifetime } from '../../utils/delivery-lifetime.js';
 /**
  * Resolve, check and pin one fetch hop.
  *
@@ -97,16 +97,17 @@ export async function pinnedFetch(
   addresses: readonly ResolvedAddress[],
   diagnosticMode: 'default' | 'opaque-url' = 'default',
   assertCurrent?: () => void,
+  withPublication?: DeliveryLifetime['withPublication'],
 ): Promise<Response> {
   const host = bareHost(new URL(url));
-  const lifetime = { signal: init.signal ?? undefined, assertCurrent };
+  const lifetime = { signal: init.signal ?? undefined, assertCurrent, withPublication };
   assertDeliveryCurrent(lifetime);
-  if (isIP(host)) return instrumentedFetch(url, init, diagnosticMode);
+  if (isIP(host)) return runDeliveryPublication(lifetime, () => instrumentedFetch(url, init, diagnosticMode));
   let lastError: unknown;
   for (const address of addresses) {
     assertDeliveryCurrent(lifetime);
     try {
-      return await fetchAddress(url, init, host, address, diagnosticMode);
+      return await runDeliveryPublication(lifetime, () => fetchAddress(url, init, host, address, diagnosticMode));
     } catch (error) {
       if (init.signal?.aborted) throw error;
       lastError = error;

@@ -1,4 +1,6 @@
-import { describe, expect, test } from 'bun:test';
+import { resetSessionUntrustedContentLedgerForTests } from '../../trust/untrusted-content.ts';
+import { executeAdmitted } from '../helpers/admitted-tool.ts';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import type { ArtifactCreateInput, ArtifactDescriptor } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import { MediaProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/media';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -68,24 +70,26 @@ function fixture(): MediaToolFixture {
   };
 }
 
+beforeEach(() => resetSessionUntrustedContentLedgerForTests());
+
 describe('agent_media_generate tool', () => {
-  test('previews without calling providers when confirmation is missing', async () => {
+  test('explicit preview lists providers without generation', async () => {
     const item = fixture();
 
     const result = await item.tool.execute({
       prompt: 'Create a friendly home screen illustration',
-      confirm: false,
+      preview: true,
       explicitUserRequest: 'Generate a home screen image.',
     });
 
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('Agent media generation preview');
-    expect(result.error).toContain('confirmation required');
+    expect(result.success).toBe(true);
+    expect(result.output).toContain('Agent media generation preview');
+    expect(result.output).toContain('current recorded effect admission');
     expect(item.prompts).toEqual([]);
     expect(item.storeCreates).toEqual([]);
   });
 
-  test('requires explicit user request before generation', async () => {
+  test('raw caller confirmation cannot grant generation', async () => {
     const item = fixture();
 
     const result = await item.tool.execute({
@@ -94,20 +98,18 @@ describe('agent_media_generate tool', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('explicitUserRequest is required');
+    expect(result.error).toContain('held');
     expect(item.prompts).toEqual([]);
     expect(item.storeCreates).toEqual([]);
   });
 
-  test('generates media artifacts after explicit confirmation', async () => {
+  test('recorded admission generates artifacts without confirmation fields', async () => {
     const item = fixture();
 
-    const result = await item.tool.execute({
+    const result = await executeAdmitted(item.tool, {
       prompt: 'Create a friendly home screen illustration',
       modelId: 'fast-model',
       outputMimeType: 'image/png',
-      confirm: true,
-      explicitUserRequest: 'Generate a home screen image.',
     });
 
     expect(result.success).toBe(true);
@@ -133,10 +135,8 @@ describe('agent_media_generate tool', () => {
       },
     });
 
-    const result = await tool.execute({
+    const result = await executeAdmitted(tool, {
       prompt: 'Create a thing',
-      confirm: true,
-      explicitUserRequest: 'Generate an image.',
     });
 
     expect(result.success).toBe(false);

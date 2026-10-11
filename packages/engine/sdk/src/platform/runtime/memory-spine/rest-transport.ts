@@ -44,6 +44,7 @@
  * agent), that is each consumer's own daemon-adoption composition, not part
  * of the transport itself.
  */
+import { captureMemoryOperation, assertMemoryOperationCurrent, awaitMemoryOperation, type MemoryOperationOptions } from '../../state/memory-operation.js';
 import { buildUrl, createJsonRequestInit, requestJsonRaw } from '@goodvibes-jev/engine/transport-http';
 import type {
   MemoryAddOptions,
@@ -89,148 +90,168 @@ export interface MemorySpineRestTransportOptions {
  */
 export function createMemorySpineRestTransport(options: MemorySpineRestTransportOptions): MemoryTransport {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const token = options.authToken;
-  const url = (path: string): string => buildUrl(options.baseUrl, path);
+  const token = options.authToken, baseUrl = options.baseUrl, originalFetch = options.fetchImpl;
+  const current = () => {
+    if (options.baseUrl !== baseUrl || options.authToken !== token || options.fetchImpl !== originalFetch) {
+      throw new Error('Memory REST connection changed');
+    }
+  };
+  const url = (path: string): string => buildUrl(baseUrl, path);
+  const request = <T>(lifecycle: MemoryOperationOptions | undefined, target: string, init: RequestInit): Promise<T> => {
+    const caller = captureMemoryOperation(lifecycle);
+    const operation = captureMemoryOperation({ signal: caller.signal, assertCurrent: () => {
+      assertMemoryOperationCurrent(caller); current();
+    } });
+    const checkedFetch: Parameters<typeof requestJsonRaw>[0] = (input, requestInit) => {
+      assertMemoryOperationCurrent(operation);
+      return fetchImpl(input, requestInit);
+    };
+    return awaitMemoryOperation(() => requestJsonRaw<T>(checkedFetch, target, {
+      ...init, ...(operation.signal === undefined ? {} : { signal: operation.signal }),
+      ...(lifecycle?.assertCurrent ? { redirect: 'error' } : {}),
+    }), operation);
+  };
   return {
-    add: async (opts: MemoryAddOptions): Promise<MemoryRecord> => {
-      const response = await requestJsonRaw<{ record: MemoryRecord }>(
-        fetchImpl, url('/api/memory/records'), createJsonRequestInit(token, opts, 'POST'),
+    captureOperationScope: () => current,
+    add: async (opts: MemoryAddOptions, operation?: MemoryOperationOptions): Promise<MemoryRecord> => {
+      const response = await request<{ record: MemoryRecord }>(
+        operation, url('/api/memory/records'), createJsonRequestInit(token, opts, 'POST'),
       );
       return response.record;
     },
-    honestSearch: async (filter?: MemorySearchFilter, searchOptions?: HonestMemorySearchOptions): Promise<HonestMemorySearchResult> => {
+    honestSearch: async (filter?: MemorySearchFilter, searchOptions?: HonestMemorySearchOptions, operation?: MemoryOperationOptions): Promise<HonestMemorySearchResult> => {
       const body = { ...(filter ?? {}), ...(searchOptions?.recall !== undefined ? { recall: searchOptions.recall } : {}) };
-      return await requestJsonRaw<HonestMemorySearchResult>(
-        fetchImpl, url('/api/memory/records/search'), createJsonRequestInit(token, body, 'POST'),
+      return await request<HonestMemorySearchResult>(
+        operation, url('/api/memory/records/search'), createJsonRequestInit(token, body, 'POST'),
       );
     },
-    get: async (id: string): Promise<MemoryRecord | null> => {
+    get: async (id: string, operation?: MemoryOperationOptions): Promise<MemoryRecord | null> => {
       try {
-        const response = await requestJsonRaw<{ record: MemoryRecord }>(
-          fetchImpl, url(`/api/memory/records/${encodeURIComponent(id)}`), createJsonRequestInit(token),
+        const response = await request<{ record: MemoryRecord }>(
+          operation, url(`/api/memory/records/${encodeURIComponent(id)}`), createJsonRequestInit(token),
         );
         return response.record;
       } catch (error) {
         return foldNullableMemoryWire404('get', error);
       }
     },
-    updateReview: async (id: string, patch: MemoryReviewPatch): Promise<MemoryRecord | null> => {
+    updateReview: async (id: string, patch: MemoryReviewPatch, operation?: MemoryOperationOptions): Promise<MemoryRecord | null> => {
       try {
-        const response = await requestJsonRaw<{ record: MemoryRecord }>(
-          fetchImpl, url(`/api/memory/records/${encodeURIComponent(id)}/review`), createJsonRequestInit(token, patch, 'POST'),
+        const response = await request<{ record: MemoryRecord }>(
+          operation, url(`/api/memory/records/${encodeURIComponent(id)}/review`), createJsonRequestInit(token, patch, 'POST'),
         );
         return response.record;
       } catch (error) {
         return foldNullableMemoryWire404('updateReview', error);
       }
     },
-    delete: async (id: string): Promise<boolean> => {
-      const response = await requestJsonRaw<{ id: string; deleted: boolean }>(
-        fetchImpl, url(`/api/memory/records/${encodeURIComponent(id)}`), createJsonRequestInit(token, undefined, 'DELETE'),
+    delete: async (id: string, operation?: MemoryOperationOptions): Promise<boolean> => {
+      const response = await request<{ id: string; deleted: boolean }>(
+        operation, url(`/api/memory/records/${encodeURIComponent(id)}`), createJsonRequestInit(token, undefined, 'DELETE'),
       );
       return response.deleted;
     },
 
     // ── Extended verbs (1.2.0 full-detach) ──────────────────────────────────
 
-    list: async (filter?: MemorySearchFilter): Promise<readonly MemoryRecord[]> => {
+    list: async (filter?: MemorySearchFilter, operation?: MemoryOperationOptions): Promise<readonly MemoryRecord[]> => {
       try {
-        const response = await requestJsonRaw<{ records: readonly MemoryRecord[] }>(
-          fetchImpl, url('/api/memory/records/list'), createJsonRequestInit(token, filter ?? {}, 'POST'),
+        const response = await request<{ records: readonly MemoryRecord[] }>(
+          operation, url('/api/memory/records/list'), createJsonRequestInit(token, filter ?? {}, 'POST'),
         );
         return response.records;
       } catch (error) {
         return rethrowMemoryWire404('list', error);
       }
     },
-    searchSemantic: async (filter?: MemorySearchFilter): Promise<readonly MemorySemanticSearchResult[]> => {
+    searchSemantic: async (filter?: MemorySearchFilter, operation?: MemoryOperationOptions): Promise<readonly MemorySemanticSearchResult[]> => {
       try {
-        const response = await requestJsonRaw<{ results: readonly MemorySemanticSearchResult[] }>(
-          fetchImpl, url('/api/memory/records/search-semantic'), createJsonRequestInit(token, filter ?? {}, 'POST'),
+        const response = await request<{ results: readonly MemorySemanticSearchResult[] }>(
+          operation, url('/api/memory/records/search-semantic'), createJsonRequestInit(token, filter ?? {}, 'POST'),
         );
         return response.results;
       } catch (error) {
         return rethrowMemoryWire404('searchSemantic', error);
       }
     },
-    update: async (id: string, patch: MemoryUpdatePatch): Promise<MemoryRecord | null> => {
+    update: async (id: string, patch: MemoryUpdatePatch, operation?: MemoryOperationOptions): Promise<MemoryRecord | null> => {
       try {
-        const response = await requestJsonRaw<{ record: MemoryRecord }>(
-          fetchImpl, url(`/api/memory/records/${encodeURIComponent(id)}/update`), createJsonRequestInit(token, patch, 'POST'),
+        const response = await request<{ record: MemoryRecord }>(
+          operation, url(`/api/memory/records/${encodeURIComponent(id)}/update`), createJsonRequestInit(token, patch, 'POST'),
         );
         return response.record;
       } catch (error) {
         return foldNullableMemoryWire404('update', error);
       }
     },
-    link: async (fromId: string, toId: string, relation: string): Promise<MemoryLink | null> => {
+    link: async (fromId: string, toId: string, relation: string, operation?: MemoryOperationOptions): Promise<MemoryLink | null> => {
       try {
-        const response = await requestJsonRaw<{ link: MemoryLink }>(
-          fetchImpl, url(`/api/memory/records/${encodeURIComponent(fromId)}/links`), createJsonRequestInit(token, { toId, relation }, 'POST'),
+        const response = await request<{ link: MemoryLink }>(
+          operation, url(`/api/memory/records/${encodeURIComponent(fromId)}/links`), createJsonRequestInit(token, { toId, relation }, 'POST'),
         );
         return response.link;
       } catch (error) {
         return foldNullableMemoryWire404('link', error);
       }
     },
-    linksFor: async (id: string): Promise<readonly MemoryLink[]> => {
+    linksFor: async (id: string, operation?: MemoryOperationOptions): Promise<readonly MemoryLink[]> => {
       try {
-        const response = await requestJsonRaw<{ links: readonly MemoryLink[] }>(
-          fetchImpl, url(`/api/memory/records/${encodeURIComponent(id)}/links`), createJsonRequestInit(token),
+        const response = await request<{ links: readonly MemoryLink[] }>(
+          operation, url(`/api/memory/records/${encodeURIComponent(id)}/links`), createJsonRequestInit(token),
         );
         return response.links;
       } catch (error) {
         return rethrowMemoryWire404('linksFor', error);
       }
     },
-    reviewQueue: async (limit?: number, scope?: MemoryScope): Promise<readonly MemoryRecord[]> => {
+    reviewQueue: async (limit?: number, scope?: MemoryScope, operation?: MemoryOperationOptions): Promise<readonly MemoryRecord[]> => {
       const params = new URLSearchParams();
       if (limit !== undefined) params.set('limit', String(limit));
       if (scope !== undefined) params.set('scope', scope);
       const query = params.toString();
       try {
-        const response = await requestJsonRaw<{ records: readonly MemoryRecord[] }>(
-          fetchImpl, url(`/api/memory/review-queue${query ? `?${query}` : ''}`), createJsonRequestInit(token),
+        const response = await request<{ records: readonly MemoryRecord[] }>(
+          operation, url(`/api/memory/review-queue${query ? `?${query}` : ''}`), createJsonRequestInit(token),
         );
         return response.records;
       } catch (error) {
         return rethrowMemoryWire404('reviewQueue', error);
       }
     },
-    exportBundle: async (filter?: MemorySearchFilter): Promise<MemoryBundle> => {
+    exportBundle: async (filter?: MemorySearchFilter, operation?: MemoryOperationOptions): Promise<MemoryBundle> => {
       try {
-        const response = await requestJsonRaw<{ bundle: MemoryBundle }>(
-          fetchImpl, url('/api/memory/records/export'), createJsonRequestInit(token, filter ?? {}, 'POST'),
+        const response = await request<{ bundle: MemoryBundle }>(
+          operation, url('/api/memory/records/export'), createJsonRequestInit(token, filter ?? {}, 'POST'),
         );
         return response.bundle;
       } catch (error) {
         return rethrowMemoryWire404('exportBundle', error);
       }
     },
-    importBundle: async (bundle: MemoryBundle): Promise<MemoryImportResult> => {
+    importBundle: async (bundle: MemoryBundle, operation?: MemoryOperationOptions): Promise<MemoryImportResult> => {
       try {
-        const response = await requestJsonRaw<{ result: MemoryImportResult }>(
-          fetchImpl, url('/api/memory/records/import'), createJsonRequestInit(token, { bundle }, 'POST'),
+        const response = await request<{ result: MemoryImportResult }>(
+          operation, url('/api/memory/records/import'), createJsonRequestInit(token, { bundle }, 'POST'),
         );
         return response.result;
       } catch (error) {
         return rethrowMemoryWire404('importBundle', error);
       }
     },
-    vectorStats: async (): Promise<MemoryVectorStats> => {
+    vectorStats: async (operation?: MemoryOperationOptions): Promise<MemoryVectorStats> => {
       try {
-        const response = await requestJsonRaw<{ vector: MemoryVectorStats }>(
-          fetchImpl, url('/api/memory/vector'), createJsonRequestInit(token),
+        const response = await request<{ vector: MemoryVectorStats }>(
+          operation, url('/api/memory/vector'), createJsonRequestInit(token),
         );
         return response.vector;
       } catch (error) {
         return rethrowMemoryWire404('vectorStats', error);
       }
     },
-    doctor: async (): Promise<MemoryDoctorReport> => {
+    doctor: async (operation?: MemoryOperationOptions): Promise<MemoryDoctorReport> => {
       try {
-        return await requestJsonRaw<MemoryDoctorReport>(
-          fetchImpl, url('/api/memory/doctor'), createJsonRequestInit(token),
+        return await request<MemoryDoctorReport>(
+          operation, url('/api/memory/doctor'), createJsonRequestInit(token),
         );
       } catch (error) {
         return rethrowMemoryWire404('doctor', error);

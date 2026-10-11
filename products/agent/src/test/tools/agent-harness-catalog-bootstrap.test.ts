@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from 'bun:test';
+import { afterAll, expect, spyOn, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
@@ -22,6 +22,12 @@ test('actual default Agent registration fits full protected schema bounds before
   const configManager = new ConfigManager({ surfaceRoot: 'agent', workingDir: root, homeDir: root, configDir: join(root, '.goodvibes', 'agent') });
   const services = createRuntimeServices({ configManager, runtimeBus: new RuntimeEventBus(), runtimeStore: createRuntimeStore(), workingDir: root, homeDirectory: root, modelDiscovery: 'skip' });
   const screening = researchScreeningFixture();
+  const screen = screening.owner.screen.bind(screening.owner);
+  const screeningStatus = spyOn(screening.owner, 'screen').mockImplementation(async handle => {
+    const result = await screen(handle);
+    expect(result).toMatchObject({ status: 'settled' });
+    return result;
+  });
   try {
     const registry = new ToolRegistry();
     bindAgentResearchSourceOwner(registry, screening.owner);
@@ -43,12 +49,13 @@ test('actual default Agent registration fits full protected schema bounds before
     expect(output.tools[0].name).toBe('agent_harness');
     expect(output.tools[0].parameters).toEqual(registry.getToolDefinitions().find(tool => tool.name === 'agent_harness')!.parameters);
     expect(registry.list().length).toBeGreaterThan(25);
-    expect(fake.requests).toHaveLength(registry.list().length);
+    expect(fake.requests.filter(request => request.context?.site === 'agent.harness.tools')).toHaveLength(registry.list().length);
     const batches = screening.calls.filter(call => call.path === '/v1/chat/completions').map(call => JSON.parse((call.body.messages as { content: string }[])[1]!.content) as { parts: string[] });
     expect(batches.length).toBeGreaterThan(1);
     expect(Math.max(...batches.flatMap(batch => batch.parts.map(part => part.length)))).toBeLessThanOrEqual(40_000);
     expect(batches.every(batch => batch.parts.length <= 8 && batch.parts.reduce((sum, part) => sum + part.length, 0) <= 40_000)).toBe(true);
   } finally {
+    screeningStatus.mockRestore();
     services.dispose();
     await Promise.resolve();
     await Promise.resolve();

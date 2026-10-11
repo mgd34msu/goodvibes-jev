@@ -1,4 +1,16 @@
 import type { CommandContext } from '../input/command-registry.ts';
+import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureCatalogData, captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
+import { dirname } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { captureHarnessLocalEffect } from './agent-harness-local-effect.ts';
+import { captureAgentExportPath } from './agent-artifact-effect.ts';
+import { harnessCatalogInvocationAuthority, retainHarnessCatalogCurrent } from './agent-harness-catalog-ingress.ts';
+import { resolveChannelDraftNativeReference } from './agent-channel-draft-reference.ts';
+import { captureOperatorConnection } from '../agent/operator-connection-owner.ts';
+import { evaluateOutwardEffect, getSessionUntrustedContentLedger } from '../trust/untrusted-content.ts';
+import { screenOutboundForCardMaterial, CardMaterialRefusedError } from '../agent/payments-channel-guard.ts';
 import {
   aggregateUnifiedInbox,
   fetchInboundChannelFeed,
@@ -15,6 +27,8 @@ import {
   mergeDraftViews,
   formatChannelDraftList,
   formatChannelDraft,
+  channelDraftFilePath,
+  CHANNEL_DRAFTS_SAVE_METHOD,
 } from '../agent/channel-draft.ts';
 import {
   listChannelProfileRoutes,
@@ -23,6 +37,7 @@ import {
   removeChannelProfileRoute,
   formatChannelProfileRoutes,
   CHANNEL_ROUTING_ASSIGN_METHOD,
+  channelProfileRouteFilePath,
 } from '../agent/channel-profile-routing.ts';
 import { buildAgentWorkspaceChannelTriage } from '../input/agent-workspace-channel-triage.ts';
 import { deliverAgentChannelMessage } from '../agent/channel-delivery.ts';
@@ -47,6 +62,81 @@ function commsDaemonInvoke(context: CommandContext): DaemonOperatorInvoke | null
   if (!configManager || !homeDirectory) return null;
   return createDaemonOperatorInvoke(() =>
     resolveDaemonOperatorConnection(configManager, homeDirectory));
+}
+
+function captureCommsEffect(context: CommandContext, args: Record<string, unknown>, options: Parameters<Tool['execute']>[1],
+  target: typeof channelDraftFilePath, outward = false) {
+  const assertContext = captureCatalogMethods(context, ['workspace', 'platform']);
+  const workspace = context.workspace, platform = context.platform;
+  const assertWorkspace = captureCatalogMethods(workspace, ['shellPaths']);
+  const assertPlatform = captureCatalogMethods(platform, ['configManager', 'channelDeliveryRouter']);
+  const paths = workspace.shellPaths;
+  if (!paths) throw new ToolInputProjectionError('held');
+  const assertPaths = captureCatalogMethods(paths, ['homeDirectory', 'workingDirectory', 'resolveUserPath', 'resolveProjectPath']);
+  const local = captureHarnessLocalEffect(context, args, options, source => [target(source)]);
+  const home = paths.homeDirectory, directory = paths.workingDirectory;
+  const resolveUserPath = paths.resolveUserPath, resolveProjectPath = paths.resolveProjectPath, destination = target(paths);
+  const parent = captureAgentExportPath(home, dirname(destination));
+  const ledger = getSessionUntrustedContentLedger();
+  captureCatalogMethods(ledger, ['originsThisTurn', 'exposuresThisTurn', 'taintSourcesThisTurn']);
+  const assertLedger = captureCatalogMethods(ledger, [...Object.getOwnPropertyNames(ledger),
+    ...Object.getOwnPropertyNames(Object.getPrototypeOf(ledger))]);
+  const ledgerRevision = ledger.getPublicationRevision();
+  const signature = () => JSON.stringify(captureCatalogData([ledger.originsThisTurn(), ledger.exposuresThisTurn(), ledger.taintSourcesThisTurn()]));
+  const source = signature();
+  const assertSourceCurrent = () => {
+    assertContext(); assertWorkspace(); assertPlatform(); assertPaths(); assertLedger();
+    options?.signal?.throwIfAborted();
+    if (context.workspace !== workspace || workspace.shellPaths !== paths || paths.homeDirectory !== home || paths.workingDirectory !== directory
+      || paths.resolveUserPath !== resolveUserPath || paths.resolveProjectPath !== resolveProjectPath || target(paths) !== destination
+      || getSessionUntrustedContentLedger() !== ledger || ledger.getPublicationRevision() !== ledgerRevision
+      || signature() !== source) throw new ToolInputProjectionError('stale');
+    parent.assertCurrent(destination);
+  };
+  const assertCurrent = () => {
+    assertContext(); assertWorkspace(); assertPlatform(); assertPaths();
+    local();
+    if (outward && !harnessCatalogInvocationAuthority(args, options, 'send')) throw new ToolInputProjectionError('held');
+    assertSourceCurrent();
+  };
+  assertCurrent();
+  retainHarnessCatalogCurrent(args)(assertSourceCurrent, 'agent.comms.effect-owner');
+  return { assertCurrent, assertSourceCurrent, ledger, paths };
+}
+
+function guardedCommsInvoke(context: CommandContext, args: Record<string, unknown>, options: Parameters<Tool['execute']>[1],
+  owner: ReturnType<typeof captureCommsEffect>, nativeReference?: ReturnType<typeof resolveChannelDraftNativeReference>): DaemonOperatorInvoke | null {
+  owner.assertCurrent();
+  const platform = context.platform, config = platform?.configManager, paths = context.workspace.shellPaths;
+  if (!config || !paths) return null;
+  const assertCurrent = () => {
+    owner.assertCurrent();
+    if (context.platform !== platform || platform.configManager !== config || context.workspace.shellPaths !== paths
+      || !harnessCatalogInvocationAuthority(args, options, 'send')) throw new ToolInputProjectionError('held');
+  };
+  const connection = captureOperatorConnection(paths, config, assertCurrent);
+  const invoke = createDaemonOperatorInvoke(() => connection);
+  return async (method, input = {}, supplied = {}) => {
+    assertCurrent();
+    if (method !== CHANNEL_DRAFTS_SAVE_METHOD && method !== CHANNEL_ROUTING_ASSIGN_METHOD) throw new ToolInputProjectionError('held');
+    const { confirm: _confirm, explicitUserRequest: _request, admission: _admission, ...request } = input;
+    if (nativeReference && (method !== CHANNEL_DRAFTS_SAVE_METHOD || request.id !== nativeReference.draftId)) {
+      throw new ToolInputProjectionError('held');
+    }
+    const nativeInput = { ...request, ...(nativeReference ? { id: nativeReference.reference } : {}), admission: 'autonomous' };
+    assertCurrent();
+    const payload = JSON.stringify(nativeInput);
+    const refusal = await screenOutboundForCardMaterial({ surface: 'connected-host', message: payload }, { signal: options?.signal, assertCurrent });
+    assertCurrent();
+    if (refusal) throw new CardMaterialRefusedError(refusal);
+    const decision = await evaluateOutwardEffect({ request: { toolName: 'agent_harness', action: method, description: 'synchronizing a channel draft or routing assignment' },
+      ledger: owner.ledger, content: { payload }, taintOptions: { signal: options?.signal } });
+    assertCurrent();
+    if (!decision.allowed) throw new Error(decision.reason ?? 'Outward channel synchronization held.');
+    const { explicitUserRequest: _userRequest, ...restrictions } = supplied;
+    return invoke(method, nativeInput, { ...restrictions, signal: options?.signal,
+      assertCurrent: () => { supplied.assertCurrent?.(); assertCurrent(); } });
+  };
 }
 
 /** Redact a draft's webhook (which can embed a token) in any structured display payload. */
@@ -211,18 +301,18 @@ export async function channelDraftsSummary(
 
 export async function channelDraftSaveHandoff(
   context: CommandContext,
-  args: AgentHarnessCommsArgs,
+  args: Record<string, unknown>,
+  options?: Parameters<Tool['execute']>[1],
 ): Promise<Record<string, unknown> | string> {
-  const confirmationError = requireConfirmedAction(args, 'Channel draft save');
+  const confirmationError = requireConfirmedAction(args, options, 'Channel draft save');
   if (confirmationError) return confirmationError;
-
-  const shellPaths = context.workspace?.shellPaths;
-  if (!shellPaths) return 'Channel draft save requires an active workspace.';
 
   const message = readString(args.draftMessage);
   if (!message) return 'channel_draft_save requires draftMessage.';
 
-  const invoke = commsDaemonInvoke(context);
+  const owner = captureCommsEffect(context, args, options, channelDraftFilePath);
+  const shellPaths = owner.paths;
+  const invoke = guardedCommsInvoke(context, args, options, owner);
   const result = await saveDraft(
     shellPaths,
     {
@@ -235,8 +325,9 @@ export async function channelDraftSaveHandoff(
       link: readOptString(args.draftLink),
       tags: readStringArray(args.draftTags),
     },
-    invoke ? { invoke } : {},
+    { ...(invoke ? { invoke } : {}), signal: options?.signal, assertCurrent: owner.assertCurrent, explicitUserRequest: false },
   );
+  owner.assertCurrent();
 
   return {
     mode: 'channel_draft_save',
@@ -248,8 +339,8 @@ export async function channelDraftSaveHandoff(
       list: 'agent_harness mode:"channel_drafts"',
     },
     policy: result.daemon.synced
-      ? 'Draft held by the daemon and mirrored locally, so it is visible on every surface. Use channel_draft_send with confirm:true and explicitUserRequest to deliver.'
-      : `Draft saved locally; the daemon does not hold it yet (${result.daemon.error}), so other surfaces cannot see it. Use channel_draft_send with confirm:true and explicitUserRequest to deliver.`,
+      ? 'Draft held by the daemon and mirrored locally. Use channel_draft_send under current recorded admission to deliver.'
+      : `Draft saved locally; the daemon does not hold it yet (${result.daemon.error}). Use channel_draft_send under current recorded admission to deliver.`,
   };
 }
 
@@ -259,60 +350,126 @@ export async function channelDraftSaveHandoff(
 
 export async function channelDraftSendHandoff(
   context: CommandContext,
-  args: AgentHarnessCommsArgs,
+  args: Record<string, unknown>,
+  options?: Parameters<Tool['execute']>[1],
 ): Promise<Record<string, unknown> | string> {
-  const confirmationError = requireConfirmedAction(args, 'Channel draft send');
+  const confirmationError = requireConfirmedAction(args, options, 'Channel draft send');
   if (confirmationError) return confirmationError;
+  const nativeReference = resolveChannelDraftNativeReference(args, options);
 
-  const shellPaths = context.workspace?.shellPaths;
-  if (!shellPaths) return 'Channel draft send requires an active workspace.';
-
-  const draftId = readString(args.draftId || args.target);
+  const draftId = nativeReference?.draftId ?? readString(args.draftId || args.target);
   if (!draftId) return 'channel_draft_send requires draftId.';
+  const publicReference = nativeReference?.reference ?? draftId;
+  const publicText = (text: string) => nativeReference?.publicText(text) ?? text;
+  const publicDraft = (draft: NonNullable<ReturnType<typeof getDraft>>) => ({
+    ...redactDraftWebhook(draft), id: publicReference,
+    ...(draft.syncError ? { syncError: publicText(draft.syncError) } : {}),
+    ...(draft.sendError ? { sendError: publicText(draft.sendError) } : {}),
+    ...(draft.sentResponseId ? { sentResponseId: publicText(draft.sentResponseId) } : {}),
+  });
 
-  const router = context.platform?.channelDeliveryRouter;
+  const owner = captureCommsEffect(context, args, options, channelDraftFilePath, true);
+  const shellPaths = owner.paths;
+  const router = context.platform.channelDeliveryRouter;
   if (!router) {
     return 'Channel delivery router is not available. Ensure the Agent is connected to a channel delivery service.';
   }
 
-  const invoke = commsDaemonInvoke(context);
+  const assertRouter = captureCatalogMethods(router, ['deliver', 'listStrategies']);
+  const deliver = router.deliver, listStrategies = router.listStrategies;
+  const listed = listStrategies.call(router);
+  captureCatalogMethods(listed, ['length', 'map']);
+  const assertListed = captureCatalogMethods(listed, ['length', 'map', ...Object.getOwnPropertyNames(listed)]);
+  const strategies = listed.map(strategy => {
+    const assertMethods = captureCatalogMethods(strategy, ['deliver', 'canHandle']);
+    return { strategy, assertMethods, deliver: strategy.deliver, canHandle: strategy.canHandle };
+  });
+  let expectedDraft = JSON.stringify(getDraft(shellPaths, draftId));
+  const assertSelectedSourceCurrent = () => {
+    owner.assertSourceCurrent();
+    assertRouter(); assertListed();
+    for (const strategy of strategies) strategy.assertMethods();
+    if (context.platform.channelDeliveryRouter !== router || router.deliver !== deliver || router.listStrategies !== listStrategies
+      || JSON.stringify(getDraft(shellPaths, draftId)) !== expectedDraft) throw new ToolInputProjectionError('stale');
+    const current = listStrategies.call(router);
+    captureCatalogMethods(current, ['length']);
+    captureCatalogMethods(current, ['length', ...Object.getOwnPropertyNames(current)]);
+    if (current.length !== strategies.length || strategies.some((source, index) => current[index] !== source.strategy
+      || source.strategy.deliver !== source.deliver || source.strategy.canHandle !== source.canHandle)) throw new ToolInputProjectionError('stale');
+  };
+  const assertCurrent = () => { owner.assertCurrent(); assertSelectedSourceCurrent(); };
+  assertCurrent();
+  retainHarnessCatalogCurrent(args)(assertSelectedSourceCurrent, `agent.comms.draft:${publicReference}`);
+  const invoke = guardedCommsInvoke(context, args, options, { ...owner, assertCurrent }, nativeReference);
+  const preparePublication = (path: string, contents: string) => {
+    assertCurrent();
+    if (path !== channelDraftFilePath(shellPaths)) throw new ToolInputProjectionError('stale');
+    const planned: unknown = JSON.parse(contents);
+    if (!planned || typeof planned !== 'object' || !('drafts' in planned) || !Array.isArray(planned.drafts)
+      || !planned.drafts.some((draft: unknown) => draft && typeof draft === 'object' && 'id' in draft && draft.id === draftId)) {
+      throw new ToolInputProjectionError('held');
+    }
+    const adoptReference = nativeReference?.preparePublication(path, contents);
+    return () => {
+      options?.signal?.throwIfAborted(); owner.assertSourceCurrent();
+      if (readFileSync(path, 'utf8') !== contents) throw new ToolInputProjectionError('stale');
+      expectedDraft = JSON.stringify(getDraft(shellPaths, draftId));
+      adoptReference?.();
+      assertCurrent();
+    };
+  };
+  const storeOptions = { ...(invoke ? { invoke } : {}), signal: options?.signal, assertCurrent, preparePublication, explicitUserRequest: false };
   let queueResult: Awaited<ReturnType<typeof queueDraftToSend>>;
   try {
-    queueResult = await queueDraftToSend(shellPaths, draftId, invoke ? { invoke } : {});
+    queueResult = await queueDraftToSend(shellPaths, draftId, storeOptions);
+    assertCurrent();
   } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+    return publicText(err instanceof Error ? err.message : String(err));
   }
 
   try {
-    const result = await deliverAgentChannelMessage(router, queueResult.deliveryInput);
-    const sentDraft = markDraftSent(shellPaths, draftId, result.responseId);
+    const decision = await evaluateOutwardEffect({ request: { toolName: 'agent_harness', action: 'channel_draft_send', description: 'delivering the captured channel draft' },
+      ledger: owner.ledger, content: { ...queueResult.deliveryInput },
+      taintOptions: { signal: options?.signal, exactMatchFields: ['channel', 'route', 'webhook', 'link'] } });
+    assertCurrent();
+    if (!decision.allowed) throw new Error(decision.reason ?? 'Channel draft delivery held.');
+    const result = await deliverAgentChannelMessage(router, queueResult.deliveryInput, { signal: options?.signal, assertCurrent });
+    assertCurrent();
+    const sentDraft = markDraftSent(shellPaths, draftId, result.responseId, storeOptions);
     return {
       mode: 'channel_draft_send',
       status: 'sent',
-      draftId,
-      responseId: result.responseId ?? null,
-      draft: sentDraft ? redactDraftWebhook(sentDraft) : sentDraft,
+      draftId: publicReference,
+      responseId: result.responseId ? publicText(result.responseId) : null,
+      draft: sentDraft ? publicDraft(sentDraft) : sentDraft,
       delivery: {
-        message: result.message,
-        title: result.title,
-        target: result.target,
+        message: publicText(result.message),
+        title: publicText(result.title),
+        target: { ...result.target,
+          ...(result.target.address ? { address: publicText(result.target.address) } : {}),
+          ...(result.target.routeId ? { routeId: publicText(result.target.routeId) } : {}),
+          ...(result.target.label ? { label: publicText(result.target.label) } : {}),
+        },
         strategyCount: result.strategyCount,
       },
       policy: 'Draft delivered and marked sent. Receipt recorded via delivery path.',
     };
   } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
+    const errorMessage = publicText(err instanceof Error ? err.message : String(err));
+    let markedFailed = false;
     try {
-      markDraftFailed(shellPaths, draftId, errorMessage);
+      assertCurrent(); markDraftFailed(shellPaths, draftId, errorMessage, storeOptions); markedFailed = true;
     } catch {
       // best-effort
     }
     return {
       mode: 'channel_draft_send',
-      status: 'failed',
-      draftId,
+      status: markedFailed ? 'failed' : 'held',
+      draftId: publicReference,
       error: errorMessage,
-      policy: 'Delivery failed. Draft marked failed. Retry with channel_draft_send or use agent_channel_send directly.',
+      policy: markedFailed
+        ? 'Delivery failed and the current draft was marked failed.'
+        : 'Delivery or its receipt was held after authority or source changed. The draft status was preserved; check the delivery before retrying.',
     };
   }
 }
@@ -372,20 +529,20 @@ export function channelRoutingSummary(
 
 export async function channelRoutingAssignHandoff(
   context: CommandContext,
-  args: AgentHarnessCommsArgs,
+  args: Record<string, unknown>,
+  options?: Parameters<Tool['execute']>[1],
 ): Promise<Record<string, unknown> | string> {
-  const confirmationError = requireConfirmedAction(args, 'Channel routing assignment');
+  const confirmationError = requireConfirmedAction(args, options, 'Channel routing assignment');
   if (confirmationError) return confirmationError;
-
-  const shellPaths = context.workspace?.shellPaths;
-  if (!shellPaths) return 'Channel routing assign requires an active workspace.';
 
   const surfaceKind = readString(args.surfaceKind);
   if (!surfaceKind) return 'channel_routing_assign requires surfaceKind.';
   const profileId = readString(args.profileId);
   if (!profileId) return 'channel_routing_assign requires profileId.';
 
-  const invoke = commsDaemonInvoke(context);
+  const owner = captureCommsEffect(context, args, options, channelProfileRouteFilePath);
+  const shellPaths = owner.paths;
+  const invoke = guardedCommsInvoke(context, args, options, owner);
   const result = await assignChannelToProfile(
     shellPaths,
     {
@@ -394,8 +551,9 @@ export async function channelRoutingAssignHandoff(
       profileId,
       label: readOptString(args.routeLabel),
     },
-    invoke ? { invoke } : {},
+    { ...(invoke ? { invoke } : {}), signal: options?.signal, assertCurrent: owner.assertCurrent, explicitUserRequest: false },
   );
+  owner.assertCurrent();
 
   return {
     mode: 'channel_routing_assign',
@@ -419,18 +577,18 @@ export async function channelRoutingAssignHandoff(
 
 export function channelRoutingRemoveHandoff(
   context: CommandContext,
-  args: AgentHarnessCommsArgs,
+  args: Record<string, unknown>,
+  options?: Parameters<Tool['execute']>[1],
 ): Record<string, unknown> | string {
-  const confirmationError = requireConfirmedAction(args, 'Channel routing removal');
+  const confirmationError = requireConfirmedAction(args, options, 'Channel routing removal');
   if (confirmationError) return confirmationError;
-
-  const shellPaths = context.workspace?.shellPaths;
-  if (!shellPaths) return 'Channel routing remove requires an active workspace.';
 
   const routeId = readString(args.draftRoute || args.target);
   if (!routeId) return 'channel_routing_remove requires draftRoute (the route id to remove).';
 
-  const removed = removeChannelProfileRoute(shellPaths, routeId);
+  const owner = captureCommsEffect(context, args, options, channelProfileRouteFilePath);
+  const shellPaths = owner.paths;
+  const removed = removeChannelProfileRoute(shellPaths, routeId, { signal: options?.signal, assertCurrent: owner.assertCurrent });
   return {
     mode: 'channel_routing_remove',
     removed,

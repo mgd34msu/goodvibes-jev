@@ -1,4 +1,5 @@
 import { BatteryRegistry } from '@goodvibes-jev/judgment';
+import { autonomyIntake } from './autonomy-intake.js';
 import { taskRouteNamedId } from './named-ids.js';
 import { taskRoutePick } from './route-selector.js';
 import { taskRouteSlots } from './slots.js';
@@ -14,3 +15,5 @@ export const registry = new BatteryRegistry();
 registry.register(taskRoutePick);
 registry.register(taskRouteSlots);
 registry.register(taskRouteNamedId);
+
+registry.register(autonomyIntake);

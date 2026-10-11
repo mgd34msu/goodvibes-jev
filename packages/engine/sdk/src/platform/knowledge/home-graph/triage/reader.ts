@@ -1,5 +1,5 @@
 import { judgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
-import { toJson, type JudgmentPort, type YesNoReading, type JsonValue } from '@goodvibes-jev/judgment';
+import { checkAnswers, toJson, type JudgmentPort, type YesNoReading, type JsonValue } from '@goodvibes-jev/judgment';
 import { assertJudgmentInput } from '../../../gate/judgment-input.js';
 import { freezeSupport } from '../../semantic/verification/projection.js';
 import { homeGraphTriageApplicability, homeGraphBatteryFacts, homeGraphManualFact } from './batteries.js';
@@ -47,22 +47,8 @@ function validatedPort(port: JudgmentPort): JudgmentPort {
     if (!result?.answers || typeof result.model !== 'string' || !result.model
       || typeof result.requestedModel !== 'string' || !result.requestedModel
       || (result.decisionId !== undefined && (typeof result.decisionId !== 'string' || !result.decisionId.trim()))) throw new Held('malformed');
-    for (const [name, question] of Object.entries(request.questions)) {
-      const answer: unknown = result.answers[name];
-      if (!record(answer) || answer.type !== question.type) throw new Held('malformed');
-      if (question.type === 'noul') {
-        if (typeof answer.noul !== 'number' || !Number.isFinite(answer.noul) || answer.noul < 0 || answer.noul > 1) throw new Held('malformed');
-      } else if (question.type === 'choice') {
-        if (typeof answer.choice !== 'string' || !Object.hasOwn(question.criteria, answer.choice)
-          || typeof answer.confidence !== 'number' || !Number.isFinite(answer.confidence) || answer.confidence < 0 || answer.confidence > 1
-          || !record(answer.probabilities)) throw new Held('malformed');
-        const probabilityMap = answer.probabilities;
-        const probabilities = Object.keys(question.criteria).map((key) => probabilityMap[key]);
-        if (probabilities.some((value) => typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1)
-          || Math.abs((probabilities as number[]).reduce((sum, value) => sum + value, 0) - 1) > 0.00001
-          || Math.abs(Number(probabilityMap[answer.choice]) - answer.confidence) > 0.00001) throw new Held('malformed');
-      }
-    }
+    try { checkAnswers(request.questions, result.answers); }
+    catch { throw new Held('malformed'); }
     return result;
   } };
 }

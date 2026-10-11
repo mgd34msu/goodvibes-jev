@@ -18,10 +18,13 @@ import { readConnectedHostOperatorToken } from '../runtime/connected-host-auth.t
  */
 
 import { connectedHostBaseUrl } from '../config/connected-host-dial.ts';
+import { captureStrictJudgmentJson } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { isDeepStrictEqual } from 'node:util';
 import {
   READ_ONLY_HTTP_METHODS,
   operatorRequestPath,
   prepareOperatorRequest,
+  findOperatorContractMethod,
   type JsonRecord,
 } from './operator-contract-routes.ts';
 
@@ -50,6 +53,8 @@ export interface DaemonInvokeFailure {
 export type DaemonInvokeResult = DaemonInvokeSuccess | DaemonInvokeFailure;
 
 export interface DaemonInvokeOptions {
+  readonly signal?: AbortSignal | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
   /**
    * Whether a person asked for this, right now.
    *
@@ -76,6 +81,7 @@ export interface DaemonOperatorConnection {
   readonly baseUrl: string;
   readonly token: string | null;
   readonly tokenPath?: string;
+  readonly assertCurrent?: (() => void) | undefined;
 }
 
 export interface DaemonOperatorConfigReader {
@@ -83,14 +89,6 @@ export interface DaemonOperatorConfigReader {
 }
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
-
-function isRecord(value: unknown): value is JsonRecord {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function summarize(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /**
  * Where the daemon is and what proves this process may talk to it.
@@ -139,20 +137,31 @@ export function createDaemonOperatorInvoke(
 ): DaemonOperatorInvoke {
   return async (methodId, input = {}, options = {}) => {
     let request: ReturnType<typeof prepareOperatorRequest>;
+    let method: ReturnType<typeof findOperatorContractMethod>;
+    let methodSnapshot: ReturnType<typeof findOperatorContractMethod>;
+    let inputSnapshot: JsonRecord;
+    const signal = options.signal, ownerCurrent = options.assertCurrent;
     try {
-      request = prepareOperatorRequest(methodId, input);
-    } catch (error) {
+      signal?.throwIfAborted(); ownerCurrent?.();
+      method = findOperatorContractMethod(methodId);
+      methodSnapshot = captureStrictJudgmentJson(method);
+      inputSnapshot = captureStrictJudgmentJson(input);
+      request = prepareOperatorRequest(methodId, inputSnapshot);
+    } catch {
       return {
         ok: false,
         methodId,
         route: methodId,
         kind: 'connected_host_route_unavailable',
-        error: summarize(error),
+        error: 'Connected-host method input or authority is unavailable.',
       };
     }
     const requestPath = operatorRequestPath(request);
     const route = `${request.httpMethod} ${requestPath}`;
-    const connection = resolveConnection();
+    let connection: DaemonOperatorConnection;
+    try { connection = resolveConnection(); } catch {
+      return { ok: false, methodId, route, kind: 'connected_host_unavailable', error: 'Connected-host connection is no longer current.' };
+    }
     if (!connection.token) {
       return {
         ok: false,
@@ -165,8 +174,23 @@ export function createDaemonOperatorInvoke(
       };
     }
     const isRead = READ_ONLY_HTTP_METHODS.has(request.httpMethod);
+    const selected = { baseUrl: connection.baseUrl, token: connection.token, tokenPath: connection.tokenPath, assertCurrent: connection.assertCurrent };
+    const assertCurrent = () => {
+      signal?.throwIfAborted(); ownerCurrent?.();
+      if (options.signal !== signal || options.assertCurrent !== ownerCurrent
+        || findOperatorContractMethod(methodId) !== method
+        || !isDeepStrictEqual(captureStrictJudgmentJson(method), methodSnapshot)
+        || !isDeepStrictEqual(captureStrictJudgmentJson(input), inputSnapshot)
+        || connection.baseUrl !== selected.baseUrl || connection.token !== selected.token
+        || connection.tokenPath !== selected.tokenPath || connection.assertCurrent !== selected.assertCurrent) {
+        throw new Error('Connected-host invocation is no longer current.');
+      }
+      selected.assertCurrent?.(); signal?.throwIfAborted(); ownerCurrent?.();
+    };
     try {
-      const response = await fetchImpl(`${connection.baseUrl}${requestPath}`, {
+      const init: RequestInit = {
+        signal,
+        redirect: 'error',
         method: request.httpMethod,
         headers: {
           authorization: `Bearer ${connection.token}`,
@@ -176,26 +200,29 @@ export function createDaemonOperatorInvoke(
             : { [EXPLICIT_USER_REQUEST_HEADER]: String(options.explicitUserRequest) }),
         },
         ...(isRead ? {} : { body: JSON.stringify(request.payload) }),
-      });
+      };
+      assertCurrent();
+      const response = await fetchImpl(`${selected.baseUrl}${requestPath}`, init);
+      assertCurrent();
       const body = await readResponseBody(response);
+      assertCurrent();
       if (!response.ok) {
-        const detail = isRecord(body) && typeof body.error === 'string' ? body.error : '';
         return {
           ok: false,
           methodId,
           route,
           kind: classifyStatus(response.status),
-          error: `HTTP ${response.status}${detail ? `: ${detail}` : ''}`,
+          error: `HTTP ${response.status}`,
         };
       }
       return { ok: true, methodId, route, body };
-    } catch (error) {
+    } catch {
       return {
         ok: false,
         methodId,
         route,
         kind: 'connected_host_unavailable',
-        error: summarize(error),
+        error: 'Connected-host invocation failed or its authority changed.',
       };
     }
   };

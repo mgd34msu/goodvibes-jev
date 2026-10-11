@@ -31,7 +31,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import type { ShellPathService } from '@/runtime/index.ts';
-import { writeStoreJson } from '@/utils/store-file.ts';
+import { writeStoreFile } from '@/utils/store-file.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { retainChannelStoreSource, type ChannelStoreEffectOptions } from './channel-store-lifetime.ts';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../config/surface.ts';
 import type { AgentChannelDeliveryInput } from './channel-delivery.ts';
 import type { DaemonInvokeFailureKind, DaemonOperatorInvoke } from './daemon-operator-client.ts';
@@ -231,17 +233,30 @@ export function readChannelDrafts(shellPaths: ShellPaths): ChannelDraftSnapshot 
   }
 }
 
-function writeDrafts(path: string, drafts: readonly ChannelDraft[]): void {
+function writeDrafts(path: string, drafts: readonly ChannelDraft[], assertCurrent?: () => void,
+  options: ChannelStoreEffectOptions = {}): void {
   const file: ChannelDraftFile = {
     version: DRAFT_FILE_VERSION,
     drafts: drafts.slice(0, DRAFT_LIMIT).map(persistableDraft),
   };
-  writeStoreJson(path, file);
+  const contents = `${JSON.stringify(file, null, 2)}\n`, prepare = options.preparePublication;
+  assertCurrent?.();
+  const adoption = prepare?.(path, contents);
+  if (prepare && typeof adoption !== 'function') throw new ToolInputProjectionError('held');
+  const assertOwner = () => {
+    if (options.preparePublication !== prepare) throw new ToolInputProjectionError('stale');
+    assertCurrent?.();
+  };
+  writeStoreFile(path, contents, { assertCurrent: assertOwner, onEffect(published) {
+    if (!published) return;
+    if (options.preparePublication !== prepare) throw new ToolInputProjectionError('stale');
+    const outcome: unknown = adoption?.();
+    if (outcome !== undefined) throw new ToolInputProjectionError('held');
+  } });
 }
 
 function generateDraftId(): string {
-  const ts = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
-  return `draft-${ts}-${randomUUID().slice(0, 8)}`;
+  return `draft-${randomUUID().replaceAll('-', '_')}`;
 }
 
 function draftDigest(message: string): string {
@@ -261,20 +276,20 @@ const NOT_ATTEMPTED: ChannelDraftSyncOutcome = {
 /**
  * Offer a draft to the daemon's store, so other surfaces can see it.
  *
- * `confirm: true` plus the explicit-user-request claim is the daemon's
- * confirmation gate. Honest here: a draft only reaches this path through the
- * harness's confirmed-action gate, where the operator asked for the save.
+ * Manual callers use the native confirmation protocol. The admitted model
+ * transport replaces that envelope with a request for fresh native admission.
  */
 async function offerDraftToDaemon(
   invoke: DaemonOperatorInvoke | undefined,
   draft: ChannelDraft,
+  options: ChannelStoreEffectOptions = {},
 ): Promise<ChannelDraftSyncOutcome> {
   if (!invoke) return NOT_ATTEMPTED;
   const { daemonSyncState: _state, syncError: _error, origin: _origin, ...wire } = draft;
   const result = await invoke(
     CHANNEL_DRAFTS_SAVE_METHOD,
     { ...wire, confirm: true },
-    { explicitUserRequest: true },
+    { signal: options.signal, assertCurrent: options.assertCurrent, explicitUserRequest: options.explicitUserRequest ?? true },
   );
   return result.ok ? { synced: true } : { synced: false, kind: result.kind, error: result.error };
 }
@@ -311,13 +326,15 @@ export async function saveDraft(
     readonly tags?: readonly string[];
     readonly status?: ChannelDraftStatus;
   },
-  options: { readonly invoke?: DaemonOperatorInvoke } = {},
+  options: ChannelStoreEffectOptions = {},
 ): Promise<ChannelDraftSaveResult> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
   const message = input.message.trim();
   if (!message) throw new Error('Draft message is required.');
 
-  const snapshot = readChannelDrafts(shellPaths);
   const path = channelDraftFilePath(shellPaths);
+  const assertCurrent = retainChannelStoreSource(path, options);
+  const snapshot = readChannelDrafts(shellPaths);
   const now = new Date().toISOString();
 
   const existingIndex = input.id ? snapshot.drafts.findIndex((d) => d.id === input.id) : -1;
@@ -338,7 +355,8 @@ export async function saveDraft(
     ...(input.tags && input.tags.length > 0 ? { tags: input.tags } : {}),
   };
 
-  const daemon = await offerDraftToDaemon(options.invoke, drafted);
+  const daemon = await offerDraftToDaemon(options.invoke, drafted, { ...options, assertCurrent });
+  assertCurrent();
   const draft = withDraftSyncOutcome(drafted, daemon);
 
   let updatedDrafts: readonly ChannelDraft[];
@@ -349,7 +367,7 @@ export async function saveDraft(
     updatedDrafts = [draft, ...snapshot.drafts];
   }
 
-  writeDrafts(path, updatedDrafts);
+  writeDrafts(path, updatedDrafts, assertCurrent, options);
   return { draft, path, daemon };
 }
 
@@ -504,8 +522,9 @@ export async function syncChannelDrafts(
 export async function queueDraftToSend(
   shellPaths: ShellPaths,
   draftId: string,
-  options: { readonly invoke?: DaemonOperatorInvoke } = {},
+  options: ChannelStoreEffectOptions = {},
 ): Promise<ChannelDraftQueueResult> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
   const draft = getDraft(shellPaths, draftId);
   if (!draft) throw new Error(`Draft not found: ${draftId}`);
   if (draft.status === 'sent') throw new Error(`Draft ${draftId} is already sent.`);
@@ -541,7 +560,9 @@ export function markDraftSent(
   shellPaths: ShellPaths,
   draftId: string,
   responseId?: string,
+  options: ChannelStoreEffectOptions = {},
 ): ChannelDraft {
+  const assertCurrent = retainChannelStoreSource(channelDraftFilePath(shellPaths), options);
   const snapshot = readChannelDrafts(shellPaths);
   const existing = snapshot.drafts.find((d) => d.id === draftId);
   if (!existing) throw new Error(`Draft not found: ${draftId}`);
@@ -553,7 +574,7 @@ export function markDraftSent(
     ...(responseId ? { sentResponseId: responseId } : {}),
   };
   const updatedDrafts = snapshot.drafts.map((d) => (d.id === draftId ? patched : d));
-  writeDrafts(channelDraftFilePath(shellPaths), updatedDrafts);
+  writeDrafts(channelDraftFilePath(shellPaths), updatedDrafts, assertCurrent, options);
   return patched;
 }
 
@@ -564,7 +585,9 @@ export function markDraftFailed(
   shellPaths: ShellPaths,
   draftId: string,
   error: string,
+  options: ChannelStoreEffectOptions = {},
 ): ChannelDraft {
+  const assertCurrent = retainChannelStoreSource(channelDraftFilePath(shellPaths), options);
   const snapshot = readChannelDrafts(shellPaths);
   const existing = snapshot.drafts.find((d) => d.id === draftId);
   if (!existing) throw new Error(`Draft not found: ${draftId}`);
@@ -576,7 +599,7 @@ export function markDraftFailed(
     sendError: error,
   };
   const updatedDrafts = snapshot.drafts.map((d) => (d.id === draftId ? patched : d));
-  writeDrafts(channelDraftFilePath(shellPaths), updatedDrafts);
+  writeDrafts(channelDraftFilePath(shellPaths), updatedDrafts, assertCurrent, options);
   return patched;
 }
 

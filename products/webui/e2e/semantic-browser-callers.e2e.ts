@@ -88,7 +88,8 @@ test("real provider detail highlights exact OpenAI and judged custom names witho
   });
   await openSettings(page, "models");
   await page.getByRole("button", { name: /^openai:/i }).click();
-  const panel = page.locator(".credential-status");
+  const panel = page.locator("#settings-section-models .credential-status");
+  await expect(panel).toHaveCount(1);
   const row = (key: string) =>
     panel
       .getByRole("listitem")
@@ -137,7 +138,8 @@ test("leaving a pending provider detail discards its reply before another provid
     await expect.poll(() => requests.length).toBe(2);
     release.resolve(undefined);
     await nextFrames(page);
-    const panel = page.locator(".credential-status");
+    const panel = page.locator("#settings-section-models .credential-status");
+    await expect(panel).toHaveCount(1);
     await expect(panel.getByRole("listitem")).toHaveCount(4);
     await expect(panel.locator("[aria-current]")).toHaveCount(0);
     expect(requests.map((request) => request.input.providerId)).toEqual(["openai", "anthropic"]);

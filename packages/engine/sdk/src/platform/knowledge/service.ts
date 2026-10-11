@@ -1,6 +1,7 @@
 import type { KnowledgeIngestOwnership } from './ingest-context.js';
 import { randomUUID } from 'node:crypto';
 import { snapshotNodeInput } from './activation/projection.js';
+import { knowledgeRecordVersion } from './store-record-representation.js';
 import {
   type AutomationScheduleDefinition,
 } from '../automation/schedules.js';
@@ -11,6 +12,7 @@ import type { MemoryRegistry } from '../state/index.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
 import { createDefaultKnowledgeConnectorRegistry, KnowledgeConnectorRegistry } from './connectors.js';
 import { renderKnowledgeMap, type KnowledgeMapRenderOptions } from './map.js';
+import { normalizeKnowledgeMapFilters } from './map-filters.js';
 import { KnowledgeProjectionService } from './projections.js';
 import { KnowledgeSemanticService } from './semantic/index.js';
 import { KnowledgeStore } from './store.js';
@@ -43,7 +45,6 @@ import type {
   KnowledgeNodeRecord,
   KnowledgeNodeRevisionRecord,
   KnowledgePacket,
-  KnowledgePacketDetail,
   KnowledgeProjectionBundle,
   KnowledgeProjectionTarget,
   KnowledgeProjectionTargetKind,
@@ -106,13 +107,12 @@ import {
 } from './shared.js';
 import { isGeneratedKnowledgeSource } from './generated-projections.js';
 import {
-  type KnowledgeScopeLookup,
-  knowledgeIssueMatchesScope,
-  knowledgeNodeMatchesScope,
-  knowledgeSourceMatchesScope,
-} from './scope-records.js';
+  prepareKnowledgeScopeSelection,
+  KnowledgeScopeSelectionHeldError,
+  type KnowledgeScopeSelection,
+  type KnowledgeScopeSelectionOptions,
+} from './scope-selection.js';
 import {
-  isInKnowledgeSpaceScope,
   resolveKnowledgeSpaceScope,
   type KnowledgeSpaceScopeInput,
 } from './spaces.js';
@@ -210,25 +210,26 @@ export class KnowledgeService {
     if (runtimeBus) this.runtimeBus = runtimeBus;
   }
 
-  async getStatus(scope: KnowledgeSpaceScopeInput = {}): Promise<KnowledgeServiceStatus> {
-    await this.store.init();
+  async getStatus(scope: KnowledgeSpaceScopeInput = {}, options: KnowledgeScopeSelectionOptions = {}): Promise<KnowledgeServiceStatus> {
+    const selection = await prepareKnowledgeScopeSelection(this.store, scope, options);
     const allStatus = this.store.status();
     const spaceId = resolveKnowledgeSpaceScope(scope);
-    if (spaceId === null) {
-      return {
-        ...allStatus,
-        note: 'Structured knowledge uses SQL-backed sources, nodes, edges, issues, extractions, and job runs. Markdown is an optional projection, not the source of truth.',
-      };
-    }
-    const scoped = { knowledgeSpaceId: spaceId };
+    const extractionCount = this.selectedExtractions(selection, Number.MAX_SAFE_INTEGER).length;
+    const refinementTaskCount = spaceId === null ? allStatus.refinementTaskCount
+      : this.store.listRefinementTasks(Number.MAX_SAFE_INTEGER, { spaceId }).length;
+    const edgeCount = selection.edges.filter((edge) => this.edgeInKnowledgeSpaceScope(edge, selection)).length;
+    const assertEdges = selection.retainEdges(selection.edges);
+    const nodeCount = queryKnowledgeNodes(selection, { limit: Number.MAX_SAFE_INTEGER }).total;
+    selection.assertCurrent();
+    assertEdges();
     return {
       ...allStatus,
-      sourceCount: this.querySources({ limit: Number.MAX_SAFE_INTEGER, ...scoped }).total,
-      nodeCount: this.queryNodes({ limit: Number.MAX_SAFE_INTEGER, ...scoped }).total,
-      edgeCount: this.store.listEdges().filter((edge) => this.edgeInKnowledgeSpaceScope(edge, scoped)).length,
-      issueCount: this.queryIssues({ limit: Number.MAX_SAFE_INTEGER, ...scoped }).total,
-      extractionCount: this.listExtractions(Number.MAX_SAFE_INTEGER, undefined, scoped).length,
-      refinementTaskCount: this.store.listRefinementTasks(Number.MAX_SAFE_INTEGER, { spaceId }).length,
+      sourceCount: selection.sources.length,
+      nodeCount,
+      edgeCount,
+      issueCount: selection.issues.length,
+      extractionCount,
+      refinementTaskCount,
       note: 'Structured knowledge uses SQL-backed sources, nodes, edges, issues, extractions, and job runs. Markdown is an optional projection, not the source of truth.',
     };
   }
@@ -275,11 +276,11 @@ export class KnowledgeService {
     return this.store.getSchedule(id);
   }
 
-  listSources(limit = 100): KnowledgeSourceRecord[] {
-    return this.querySources({ limit }).items;
+  async listSources(limit = 100, options: KnowledgeScopeSelectionOptions = {}): Promise<KnowledgeSourceRecord[]> {
+    return (await this.querySources({ limit }, options)).items;
   }
 
-  querySources(input: {
+  async querySources(input: {
     readonly limit?: number | undefined;
     readonly offset?: number | undefined;
     readonly knowledgeSpaceId?: string | undefined;
@@ -289,16 +290,18 @@ export class KnowledgeService {
     readonly sourceType?: string | undefined;
     readonly tag?: string | undefined;
     readonly query?: string | undefined;
-  } = {}): { total: number; items: KnowledgeSourceRecord[] } {
-    const limit = Math.max(1, input.limit ?? 100);
-    const offset = Math.max(0, input.offset ?? 0);
-    const queryTokens = tokenize(input.query ?? '');
-    const items = this.store.listSources(Number.MAX_SAFE_INTEGER).filter((source) => {
-      if (!knowledgeSourceMatchesScope(source, input)) return false;
-      if (input.status && source.status !== input.status) return false;
-      if (input.connectorId && source.connectorId !== input.connectorId) return false;
-      if (input.sourceType && source.sourceType !== input.sourceType) return false;
-      if (input.tag && !source.tags.includes(input.tag)) return false;
+  } = {}, options: KnowledgeScopeSelectionOptions = {}): Promise<{ total: number; items: KnowledgeSourceRecord[] }> {
+    const request = snapshotNodeInput(input);
+    const selection = await prepareKnowledgeScopeSelection(this.store, input, options);
+    const limit = Math.max(1, request.limit ?? 100);
+    const offset = Math.max(0, request.offset ?? 0);
+    const queryTokens = tokenize(request.query ?? '');
+    const items = selection.sources.filter((source) => {
+      if (!selection.source(source)) return false;
+      if (request.status && source.status !== request.status) return false;
+      if (request.connectorId && source.connectorId !== request.connectorId) return false;
+      if (request.sourceType && source.sourceType !== request.sourceType) return false;
+      if (request.tag && !source.tags.includes(request.tag)) return false;
       if (queryTokens.length === 0) return true;
       const extraction = this.store.getExtractionBySourceId(source.id);
       const haystack = [
@@ -315,14 +318,15 @@ export class KnowledgeService {
       ].join(' ').toLowerCase();
       return queryTokens.every((token) => haystack.includes(token));
     });
+    selection.assertCurrent();
     return {
       total: items.length,
       items: items.slice(offset, offset + limit),
     };
   }
 
-  listNodes(limit = 100): KnowledgeNodeRecord[] {
-    return this.queryNodes({ limit }).items;
+  async listNodes(limit = 100, options: KnowledgeScopeSelectionOptions = {}): Promise<KnowledgeNodeRecord[]> {
+    return (await this.queryNodes({ limit }, options)).items;
   }
 
   /** The append-only revision history of a node, oldest first. (Defect 1.) */
@@ -350,31 +354,41 @@ export class KnowledgeService {
     return reviewKnowledgeNodeRecord(this.store, input);
   }
 
-  queryNodes(input: KnowledgeNodeQueryInput = {}): { total: number; items: KnowledgeNodeRecord[] } {
-    return queryKnowledgeNodes(this.store, this.getScopeLookup(), input);
+  async queryNodes(input: KnowledgeNodeQueryInput = {}, options: KnowledgeScopeSelectionOptions = {}): Promise<{ total: number; items: KnowledgeNodeRecord[] }> {
+    const request = snapshotNodeInput(input);
+    const selection = await prepareKnowledgeScopeSelection(this.store, input, options);
+    return queryKnowledgeNodes(selection, request);
   }
 
-  listIssues(limit = 100): KnowledgeIssueRecord[] {
-    return this.queryIssues({ limit }).items;
+  async listIssues(limit = 100, options: KnowledgeScopeSelectionOptions = {}): Promise<KnowledgeIssueRecord[]> {
+    return (await this.queryIssues({ limit }, options)).items;
   }
 
-  queryIssues(input: KnowledgeIssueQueryInput = {}): { total: number; items: KnowledgeIssueRecord[] } {
-    return queryKnowledgeIssues(this.store, this.getScopeLookup(), input);
+  async queryIssues(input: KnowledgeIssueQueryInput = {}, options: KnowledgeScopeSelectionOptions = {}): Promise<{ total: number; items: KnowledgeIssueRecord[] }> {
+    const request = snapshotNodeInput(input);
+    const selection = await prepareKnowledgeScopeSelection(this.store, input, options);
+    return queryKnowledgeIssues(selection, request);
   }
 
   async reviewIssue(input: KnowledgeIssueReviewInput): Promise<KnowledgeIssueReviewResult> {
     return reviewKnowledgeIssue(this.store, input);
   }
 
-  listExtractions(limit = 100, sourceId?: string, scope: KnowledgeSpaceScopeInput = {}): KnowledgeExtractionRecord[] {
-    const records = this.store.listExtractions(sourceId ? 10_000 : limit);
-    return records
+  async listExtractions(limit = 100, sourceId?: string, scope: KnowledgeSpaceScopeInput = {}, options: KnowledgeScopeSelectionOptions = {}): Promise<KnowledgeExtractionRecord[]> {
+    const selection = await prepareKnowledgeScopeSelection(this.store, scope, options);
+    return this.selectedExtractions(selection, limit, sourceId);
+  }
+
+  private selectedExtractions(selection: KnowledgeScopeSelection, limit: number, sourceId?: string): KnowledgeExtractionRecord[] {
+    const records = this.store.listExtractions(Number.MAX_SAFE_INTEGER)
       .filter((entry) => !sourceId || entry.sourceId === sourceId)
       .filter((entry) => {
         const source = this.store.getSource(entry.sourceId);
-        return source ? knowledgeSourceMatchesScope(source, scope) : isInKnowledgeSpaceScope(entry, scope);
+        return Boolean(source && selection.source(source));
       })
       .slice(0, Math.max(1, limit));
+    selection.assertCurrent();
+    return records;
   }
 
   getExtraction(id: string): KnowledgeExtractionRecord | null {
@@ -409,70 +423,115 @@ export class KnowledgeService {
     return item;
   }
 
-  getItemScoped(id: string, scope: KnowledgeSpaceScopeInput = {}): KnowledgeItemView | null {
+  async getItemScoped(id: string, scope: KnowledgeSpaceScopeInput = {}, options: KnowledgeScopeSelectionOptions = {}): Promise<KnowledgeItemView | null> {
+    const selection = await prepareKnowledgeScopeSelection(this.store, scope, options);
+    return this.getSelectedItem(id, selection);
+  }
+
+  private getSelectedItem(id: string, selection: KnowledgeScopeSelection, recordUsage = true): KnowledgeItemView | null {
     const item = this.store.getItem(id);
     const primary = item?.source ?? item?.node ?? item?.issue;
-    if (!item || !primary || !this.recordMatchesKnowledgeSpaceScope(primary, scope)) return null;
+    if (!item || !primary || !this.recordMatchesKnowledgeSpaceScope(primary, selection)) {
+      selection.assertCurrent();
+      return null;
+    }
+    const primaryKind = item.source ? 'source' : item.node ? 'node' : undefined;
+    const incidentEdges = primaryKind ? selection.edges.filter((edge) => (edge.fromKind === primaryKind && edge.fromId === primary.id)
+      || (edge.toKind === primaryKind && edge.toId === primary.id)) : [];
+    const assertEdges = selection.retainEdges(incidentEdges, {
+      incidentTo: item.source ? [{ kind: 'source', id: item.source.id }] : item.node ? [{ kind: 'node', id: item.node.id }] : [],
+    });
+    const assertCurrent = () => { selection.assertCurrent(); assertEdges(); };
     const scoped: KnowledgeItemView = {
       ...item,
-      linkedSources: item.linkedSources.filter((source) => knowledgeSourceMatchesScope(source, scope)),
-      linkedNodes: item.linkedNodes.filter((node) => this.nodeMatchesKnowledgeSpaceScope(node, scope)),
-      relatedEdges: item.relatedEdges.filter((edge) => this.edgeInKnowledgeSpaceScope(edge, scope)),
+      linkedSources: item.linkedSources.filter((source) => selection.source(source)),
+      linkedNodes: item.linkedNodes.filter((node) => selection.node(node)),
+      relatedEdges: selection.edges.filter((edge) => item.relatedEdges.some((related) => related.id === edge.id)
+        && this.edgeInKnowledgeSpaceScope(edge, selection)),
     };
-    if (scoped.source) this.deferUsage({ targetKind: 'source', targetId: scoped.source.id, usageKind: 'item-open' });
-    if (scoped.node) this.deferUsage({ targetKind: 'node', targetId: scoped.node.id, usageKind: 'item-open' });
-    if (scoped.issue) this.deferUsage({ targetKind: 'issue', targetId: scoped.issue.id, usageKind: 'item-open' });
+    assertCurrent();
+    if (recordUsage) {
+      if (scoped.source) this.deferUsage({ targetKind: 'source', targetId: scoped.source.id, usageKind: 'item-open' }, assertCurrent);
+      if (scoped.node) this.deferUsage({ targetKind: 'node', targetId: scoped.node.id, usageKind: 'item-open' }, assertCurrent);
+      if (scoped.issue) this.deferUsage({ targetKind: 'issue', targetId: scoped.issue.id, usageKind: 'item-open' }, assertCurrent);
+    }
+    assertCurrent();
     return scoped;
   }
 
-  getItems(ids: readonly string[]): KnowledgeItemView[] {
-    return ids.map((id) => this.getItem(id)).filter((item): item is KnowledgeItemView => Boolean(item));
+  async getItems(ids: readonly string[], scope: KnowledgeSpaceScopeInput = {}, options: KnowledgeScopeSelectionOptions = {}): Promise<KnowledgeItemView[]> {
+    const request = snapshotNodeInput(ids);
+    const version = knowledgeRecordVersion(request);
+    const callerCurrent = options.assertCurrent;
+    const signal = options.signal;
+    const shouldStop = options.shouldStop;
+    const preparedCurrent = options.assertPreparedInputCurrent;
+    const bounds = () => knowledgeRecordVersion(snapshotNodeInput({ kinds: options.kinds, sourceIds: options.sourceIds, nodeIds: options.nodeIds, issueIds: options.issueIds }));
+    const boundsVersion = bounds();
+    const assertRequestCurrent = () => {
+      if (knowledgeRecordVersion(snapshotNodeInput(ids)) !== version || options.assertCurrent !== callerCurrent
+        || options.signal !== signal || options.shouldStop !== shouldStop
+        || options.assertPreparedInputCurrent !== preparedCurrent || bounds() !== boundsVersion) throw new KnowledgeScopeSelectionHeldError('stale');
+    };
+    const selection = await prepareKnowledgeScopeSelection(this.store, scope, {
+      ...options, signal, shouldStop, assertCurrent: () => {
+        assertRequestCurrent();
+        const current: unknown = callerCurrent?.();
+        if (current !== undefined) {
+          void Promise.resolve(current).catch(() => {});
+          throw new KnowledgeScopeSelectionHeldError('stale');
+        }
+        assertRequestCurrent();
+      },
+    });
+    const items = request.map((id) => this.getSelectedItem(id, selection, false)).filter((item): item is KnowledgeItemView => Boolean(item));
+    const incidentTo: { kind: 'source' | 'node'; id: string }[] = [];
+    for (const item of items) {
+      if (item.source) incidentTo.push({ kind: 'source', id: item.source.id });
+      else if (item.node) incidentTo.push({ kind: 'node', id: item.node.id });
+    }
+    const edges = selection.edges.filter(edge => incidentTo.some(item => (edge.fromKind === item.kind && edge.fromId === item.id)
+      || (edge.toKind === item.kind && edge.toId === item.id)));
+    const assertEdges = selection.retainEdges(edges, { incidentTo });
+    const assertCurrent = () => { selection.assertCurrent(); assertEdges(); };
+    assertCurrent();
+    for (const item of items) {
+      if (item.source) this.deferUsage({ targetKind: 'source', targetId: item.source.id, usageKind: 'item-open' }, assertCurrent);
+      if (item.node) this.deferUsage({ targetKind: 'node', targetId: item.node.id, usageKind: 'item-open' }, assertCurrent);
+      if (item.issue) this.deferUsage({ targetKind: 'issue', targetId: item.issue.id, usageKind: 'item-open' }, assertCurrent);
+    }
+    assertCurrent();
+    return items;
   }
 
-  private edgeInKnowledgeSpaceScope(edge: { readonly fromKind: string; readonly fromId: string; readonly toKind: string; readonly toId: string }, scope: KnowledgeSpaceScopeInput): boolean {
-    return this.recordReferenceInKnowledgeSpaceScope(edge.fromKind, edge.fromId, scope)
-      && this.recordReferenceInKnowledgeSpaceScope(edge.toKind, edge.toId, scope);
+  private edgeInKnowledgeSpaceScope(edge: { readonly fromKind: string; readonly fromId: string; readonly toKind: string; readonly toId: string }, selection: KnowledgeScopeSelection): boolean {
+    return this.recordReferenceInKnowledgeSpaceScope(edge.fromKind, edge.fromId, selection)
+      && this.recordReferenceInKnowledgeSpaceScope(edge.toKind, edge.toId, selection);
   }
 
-  private recordReferenceInKnowledgeSpaceScope(kind: string, id: string, scope: KnowledgeSpaceScopeInput): boolean {
+  private recordReferenceInKnowledgeSpaceScope(kind: string, id: string, selection: KnowledgeScopeSelection): boolean {
     if (kind === 'source') {
       const source = this.store.getSource(id);
-      return Boolean(source && knowledgeSourceMatchesScope(source, scope));
+      return Boolean(source && selection.source(source));
     }
     if (kind === 'node') {
       const node = this.store.getNode(id);
-      return Boolean(node && this.nodeMatchesKnowledgeSpaceScope(node, scope));
+      return Boolean(node && selection.node(node));
     }
     if (kind === 'issue') {
       const issue = this.store.getIssue(id);
-      return Boolean(issue && this.issueMatchesKnowledgeSpaceScope(issue, scope));
+      return Boolean(issue && selection.issue(issue));
     }
     return true;
   }
 
   private recordMatchesKnowledgeSpaceScope(
     record: KnowledgeSourceRecord | KnowledgeNodeRecord | KnowledgeIssueRecord,
-    scope: KnowledgeSpaceScopeInput,
+    selection: KnowledgeScopeSelection,
   ): boolean {
-    if ('sourceType' in record) return knowledgeSourceMatchesScope(record, scope);
-    if ('kind' in record) return this.nodeMatchesKnowledgeSpaceScope(record, scope);
-    return this.issueMatchesKnowledgeSpaceScope(record, scope);
-  }
-
-  private nodeMatchesKnowledgeSpaceScope(node: KnowledgeNodeRecord, scope: KnowledgeSpaceScopeInput): boolean {
-    return knowledgeNodeMatchesScope(node, scope, this.getScopeLookup());
-  }
-
-  private issueMatchesKnowledgeSpaceScope(issue: KnowledgeIssueRecord, scope: KnowledgeSpaceScopeInput): boolean {
-    return knowledgeIssueMatchesScope(issue, scope, this.getScopeLookup());
-  }
-
-  private getScopeLookup(): KnowledgeScopeLookup {
-    return {
-      getSource: (id) => this.store.getSource(id),
-      getNode: (id) => this.store.getNode(id),
-      edges: this.store.listEdges(),
-    };
+    if ('sourceType' in record) return selection.source(record);
+    if ('kind' in record) return selection.node(record);
+    return selection.issue(record);
   }
 
   async recordUsage(input: {
@@ -489,25 +548,39 @@ export class KnowledgeService {
     return this.store.upsertUsageRecord(input, assertCurrent);
   }
 
-  getNeighbors(
+  async getNeighbors(
     kind: 'source' | 'node',
     id: string,
-    input: { readonly relation?: string | undefined; readonly limit?: number | undefined } = {},
-  ): {
+    input: KnowledgeSpaceScopeInput & { readonly relation?: string | undefined; readonly limit?: number | undefined } = {},
+    options: KnowledgeScopeSelectionOptions = {},
+  ): Promise<{
     readonly edges: readonly KnowledgeEdgeRecord[];
     readonly sources: readonly KnowledgeSourceRecord[];
     readonly nodes: readonly KnowledgeNodeRecord[];
-  } {
-    const limit = Math.max(1, input.limit ?? 20);
-    const edges = this.store.edgesFor(kind, id)
-      .filter((edge) => !input.relation || edge.relation === input.relation)
+  }> {
+    const request = snapshotNodeInput(input);
+    const selection = await prepareKnowledgeScopeSelection(this.store, input, options);
+    const primary = kind === 'source' ? this.store.getSource(id) : this.store.getNode(id);
+    if (!primary || !this.recordMatchesKnowledgeSpaceScope(primary, selection)) {
+      selection.assertCurrent();
+      return { edges: [], sources: [], nodes: [] };
+    }
+    const limit = Math.max(1, request.limit ?? 20);
+    const incidentEdges = selection.edges
+      .filter((edge) => (edge.fromKind === kind && edge.fromId === id) || (edge.toKind === kind && edge.toId === id));
+    const assertEdges = selection.retainEdges(incidentEdges, { incidentTo: [{ kind, id }] });
+    const assertCurrent = () => { selection.assertCurrent(); assertEdges(); };
+    const edges = incidentEdges
+      .filter((edge) => this.edgeInKnowledgeSpaceScope(edge, selection))
+      .filter((edge) => !request.relation || edge.relation === request.relation)
       .slice(0, limit);
+    assertCurrent();
     this.deferUsage({
       targetKind: kind,
       targetId: id,
       usageKind: 'neighbor-open',
-      metadata: input.relation ? { relation: input.relation } : {},
-    });
+      metadata: request.relation ? { relation: request.relation } : {},
+    }, assertCurrent);
     const sources: KnowledgeSourceRecord[] = [];
     const nodes: KnowledgeNodeRecord[] = [];
     for (const edge of edges) {
@@ -515,12 +588,13 @@ export class KnowledgeService {
       const otherId = edge.fromKind === kind && edge.fromId === id ? edge.toId : edge.fromId;
       if (otherKind === 'source') {
         const source = this.store.getSource(otherId);
-        if (source) sources.push(source);
+        if (source && selection.source(source)) sources.push(source);
       } else if (otherKind === 'node') {
         const node = this.store.getNode(otherId);
-        if (node) nodes.push(node);
+        if (node && selection.node(node)) nodes.push(node);
       }
     }
+    assertCurrent();
     return { edges, sources, nodes };
   }
 
@@ -620,8 +694,8 @@ export class KnowledgeService {
     return ingestBrowserKnowledge(this.getIngestContext(), input);
   }
 
-  async listProjectionTargets(limit = 25, scope: KnowledgeSpaceScopeInput = {}): Promise<KnowledgeProjectionTarget[]> {
-    return this.projectionService.listTargets(limit, scope);
+  async listProjectionTargets(limit = 25, scope: KnowledgeSpaceScopeInput = {}, options: KnowledgeScopeSelectionOptions = {}): Promise<KnowledgeProjectionTarget[]> {
+    return this.projectionService.listTargets(limit, scope, options);
   }
 
   async renderProjection(input: {
@@ -630,8 +704,9 @@ export class KnowledgeService {
     readonly limit?: number | undefined;
     readonly knowledgeSpaceId?: string | undefined;
     readonly includeAllSpaces?: boolean | undefined;
-  }): Promise<KnowledgeProjectionBundle> {
-    const bundle = await this.projectionService.render(input);
+  }, options: KnowledgeScopeSelectionOptions = {}): Promise<KnowledgeProjectionBundle> {
+    const bundle = await this.projectionService.render(input, options);
+    options.assertCurrent?.();
     this.emitIfReady((bus, ctx) => emitKnowledgeProjectionRendered(bus, ctx, {
       targetId: bundle.target.targetId,
       pageCount: bundle.pageCount,
@@ -646,8 +721,9 @@ export class KnowledgeService {
     readonly filename?: string | undefined;
     readonly knowledgeSpaceId?: string | undefined;
     readonly includeAllSpaces?: boolean | undefined;
-  }): Promise<KnowledgeMaterializedProjection> {
-    const materialized = await this.projectionService.materialize(input);
+  }, options: KnowledgeScopeSelectionOptions = {}): Promise<KnowledgeMaterializedProjection> {
+    const materialized = await this.projectionService.materialize(input, options);
+    options.assertCurrent?.();
     this.emitIfReady((bus, ctx) => emitKnowledgeProjectionMaterialized(bus, ctx, {
       targetId: materialized.bundle.target.targetId,
       artifactId: materialized.artifact.id,
@@ -656,15 +732,40 @@ export class KnowledgeService {
     return materialized;
   }
 
-  async map(input: KnowledgeMapRenderOptions = {}): Promise<KnowledgeMapResult> {
-    await this.store.init();
+  async map(input: KnowledgeMapRenderOptions = {}, options: KnowledgeScopeSelectionOptions = {}): Promise<KnowledgeMapResult> {
+    const request = snapshotNodeInput(input);
+    const version = knowledgeRecordVersion(request);
+    const filters = normalizeKnowledgeMapFilters(request);
+    const callerCurrent = options.assertCurrent;
+    const signal = options.signal;
+    const shouldStop = options.shouldStop;
+    const preparedCurrent = options.assertPreparedInputCurrent;
+    const bounds = () => knowledgeRecordVersion(snapshotNodeInput({ kinds: options.kinds, sourceIds: options.sourceIds, nodeIds: options.nodeIds, issueIds: options.issueIds }));
+    const boundsVersion = bounds();
+    const assertRequestCurrent = () => {
+      if (knowledgeRecordVersion(snapshotNodeInput(input)) !== version || options.assertCurrent !== callerCurrent
+        || options.signal !== signal || options.shouldStop !== shouldStop
+        || options.assertPreparedInputCurrent !== preparedCurrent || bounds() !== boundsVersion) throw new KnowledgeScopeSelectionHeldError('stale');
+    };
+    const selection = await prepareKnowledgeScopeSelection(this.store, {
+      knowledgeSpaceId: filters.knowledgeSpaceId,
+      includeAllSpaces: filters.includeAllSpaces,
+    }, { ...options, signal, shouldStop, assertCurrent: () => {
+      assertRequestCurrent();
+      const current: unknown = callerCurrent?.();
+      if (current !== undefined) {
+        void Promise.resolve(current).catch(() => {});
+        throw new KnowledgeScopeSelectionHeldError('stale');
+      }
+      assertRequestCurrent();
+    } });
     return renderKnowledgeMap({
       title: 'Knowledge Map',
-      sources: this.store.listSources(Number.MAX_SAFE_INTEGER),
-      nodes: this.store.listNodes(Number.MAX_SAFE_INTEGER),
-      edges: this.store.listEdges(),
-      issues: this.store.listIssues(Number.MAX_SAFE_INTEGER),
-    }, input);
+      sources: selection.sources,
+      nodes: selection.nodes,
+      edges: selection.edges,
+      issues: selection.issues,
+    }, selection, request);
   }
 
   async reindex(): Promise<{ status: KnowledgeStatus; issues: readonly KnowledgeIssueRecord[] }> {
@@ -688,9 +789,9 @@ export class KnowledgeService {
     readonly limit?: number | undefined;
     readonly knowledgeSpaceId?: string | undefined;
     readonly includeAllSpaces?: boolean | undefined;
-  }): Promise<KnowledgeSearchResult[]> {
+  }, scopeOptions: Parameters<typeof searchKnowledge>[4] = {}): Promise<KnowledgeSearchResult[]> {
     const request = snapshotNodeInput(input);
-    return searchKnowledge(this.getPacketContext(), request.query, request.limit ?? 10, input);
+    return searchKnowledge(this.getPacketContext(), request.query, request.limit ?? 10, input, scopeOptions);
   }
 
   async ask(input: {
@@ -709,7 +810,7 @@ export class KnowledgeService {
     task: string,
     writeScope: readonly string[] = [],
     limit = DEFAULT_PACKET_LIMIT,
-    options: { readonly detail?: KnowledgePacketDetail; readonly budgetLimit?: number; readonly signal?: AbortSignal } & KnowledgeSpaceScopeInput = {},
+    options: Parameters<typeof buildKnowledgePacket>[4] = {},
   ): Promise<KnowledgePacket> {
     return buildKnowledgePacket(this.getPacketContext(), task, writeScope, limit, options);
   }
@@ -718,7 +819,7 @@ export class KnowledgeService {
     task: string,
     writeScope: readonly string[] = [],
     limit = DEFAULT_PACKET_LIMIT,
-    options: { readonly detail?: KnowledgePacketDetail; readonly budgetLimit?: number; readonly signal?: AbortSignal } & KnowledgeSpaceScopeInput = {},
+    options: Parameters<typeof prepareKnowledgePromptPacket>[4] = {},
   ): Promise<PreparedKnowledgePromptPacket> {
     return prepareKnowledgePromptPacket(this.getPacketContext(), task, writeScope, limit, options);
   }
@@ -727,7 +828,7 @@ export class KnowledgeService {
     task: string,
     writeScope: readonly string[] = [],
     limit = DEFAULT_PACKET_LIMIT,
-    options: { readonly detail?: KnowledgePacketDetail; readonly budgetLimit?: number; readonly signal?: AbortSignal } & KnowledgeSpaceScopeInput = {},
+    options: Parameters<typeof buildKnowledgePromptPacket>[4] = {},
   ): Promise<string | null> {
     return buildKnowledgePromptPacket(this.getPacketContext(), task, writeScope, limit, options);
   }
@@ -875,9 +976,9 @@ export class KnowledgeService {
     readonly sessionId?: string | undefined;
     readonly score?: number | undefined;
     readonly metadata?: Record<string, unknown> | undefined;
-  }): void {
+  }, assertCurrent?: () => void): void {
     queueMicrotask(() => {
-      void this.recordUsage(input).catch((error: unknown) => {
+      void this.recordUsage(input, assertCurrent).catch((error: unknown) => {
         logger.warn('Knowledge usage recording failed', {
           targetKind: input.targetKind,
           targetId: input.targetId,

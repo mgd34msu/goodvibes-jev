@@ -457,7 +457,8 @@ for (const clockMode of ['runtime', 'collision'] as const) test(`actual /project
     expect(state.state?.metadata).toMatchObject({ active: false, owner: 'tui', dismissedFrom: 'plan-command' });
     const dismissedAt = state.state?.metadata?.dismissedAt;
     expect(typeof dismissedAt).toBe('string');
-    expect(new Date(dismissedAt as string).toISOString()).toBe(dismissedAt);
+    if (typeof dismissedAt !== 'string') throw new Error('Dismissal did not persist its timestamp');
+    expect(new Date(dismissedAt).toISOString()).toBe(dismissedAt);
     if (clockMode === 'collision') {
       expect(dismissedAt).toBe(new Date(1700000000004).toISOString());
       expect(state.state?.createdAt).toBe(1700000000004);
@@ -492,6 +493,7 @@ for (const mode of ['missing', 'stale'] as const) {
       };
       f.service.upsertState = async () => { throw new Error('Dismissal must not submit a numeric public view'); };
       await registry.execute('project-plan', ['dismiss'], makeContext(f.service, out, []));
+      if (expectedBytes === undefined) throw new Error('Dismissal did not read the selected planning revision');
       expect(readFileSync(f.path)).toEqual(expectedBytes); expect(f.requests()).toBe(requests);
       const after = await new ProjectPlanningService(f.openStore()).getState({ projectId: 'proj' });
       expect(after.state?.metadata?.active).toBe(true);

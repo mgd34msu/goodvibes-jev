@@ -70,6 +70,29 @@ describe('shared attempt ownership', () => {
     expect(calls).toBe(0);
   });
 
+  test.each([false, true, 0, null, {}])('non-void synchronous guard result %j prevents transmission', async (value) => {
+    let calls = 0;
+    const port = createSystemOnePort(config(async () => { calls++; return good(); }));
+    await expect(port.ask({ ...request, beforeAttempt: () => value })).rejects.toMatchObject({ kind: 'invalid-request' });
+    expect(calls).toBe(0);
+  });
+
+  test('rejecting a returned thenable does not invoke its getter', async () => {
+    let calls = 0, getters = 0;
+    const returned = Object.defineProperty({}, 'then', { get() { getters++; throw new Error('must not read'); } });
+    const port = createSystemOnePort(config(async () => { calls++; return good(); }));
+    await expect(port.ask({ ...request, beforeAttempt: () => returned })).rejects.toMatchObject({ kind: 'invalid-request' });
+    expect(calls).toBe(0); expect(getters).toBe(0);
+  });
+
+  test.each([false, true, null])('non-void asynchronous guard result %j prevents transmission', async (value) => {
+    let calls = 0;
+    const port = createSystemOnePort(config(async () => { calls++; return good(); }));
+    const input = Object.defineProperty({ ...request }, 'beforeAsyncAttempt', { value: async () => value });
+    await expect(port.ask(input)).rejects.toMatchObject({ kind: 'invalid-request' });
+    expect(calls).toBe(0);
+  });
+
   test('cancellation by the attempt guard prevents the initial transmission', async () => {
     let calls = 0;
     const controller = new AbortController();

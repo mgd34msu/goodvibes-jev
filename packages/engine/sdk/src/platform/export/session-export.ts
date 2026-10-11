@@ -1,13 +1,15 @@
 import { join } from 'node:path';
 import type { ContentPart } from '../providers/interface.js';
 import { exportToMarkdown, extractText, type ExportMessage, type ExportMetadata } from './markdown.js';
-import { redactSensitiveData } from '../utils/redaction.js';
+import { redactSensitiveDataAsync, redactStructuredDataAsync, type RedactionOptions } from '../utils/redaction.js';
+import { captureOwnedJson } from '../gate/judgment-input.js';
+import { types } from 'node:util';
 
 // ── Public Types ─────────────────────────────────────────────────────────────
 
 export type { ExportMessage, ExportMetadata };
 
-export interface ExportOptions {
+export interface ExportOptions extends RedactionOptions {
   /** Redact API keys, absolute file paths, and other sensitive data. */
   redact?: boolean | undefined;
 }
@@ -27,27 +29,48 @@ export interface SessionExportData {
  * redactMessage - Deep-clone a message and redact all string fields that may
  * contain sensitive data (content, reasoning, tool arguments).
  */
-export function redactMessage(msg: ExportMessage): ExportMessage {
-  const clone = structuredClone(msg) as ExportMessage;
-  if (typeof clone.content === 'string') {
-    clone.content = redactSensitiveData(clone.content);
-  } else if (Array.isArray(clone.content)) {
-    clone.content = (clone.content as ContentPart[]).map(part => {
-      if (part.type === 'text') {
-        return { ...part, text: redactSensitiveData(part.text) };
-      }
-      return part;
-    });
-  }
-  if (clone.reasoningContent) clone.reasoningContent = redactSensitiveData(clone.reasoningContent);
-  if (clone.reasoningSummary) clone.reasoningSummary = redactSensitiveData(clone.reasoningSummary);
-  if (clone.toolCalls) {
-    clone.toolCalls = clone.toolCalls.map(tc => ({
-      ...tc,
-      arguments: redactArgs(tc.arguments),
-    }));
-  }
+export async function redactMessage(msg: ExportMessage, options: RedactionOptions = {}): Promise<ExportMessage> {
+  const source = captureExportSource(msg, options);
+  const captured = source.value;
+  const reading = { ...options, purpose: 'export' as const, assertCurrent: source.assertCurrent };
+  const clone: ExportMessage = { role: captured.role, content: typeof captured.content === 'string'
+    ? await redactSensitiveDataAsync(captured.content, reading)
+    : await Promise.all(captured.content.map(async (part): Promise<ContentPart> => ({ type: 'text',
+      text: part.type === 'text' ? await redactSensitiveDataAsync(part.text, reading) : '[REDACTED_ATTACHMENT]',
+    }))) };
+  if (captured.reasoningContent !== undefined) clone.reasoningContent = await redactSensitiveDataAsync(captured.reasoningContent, reading);
+  if (captured.reasoningSummary !== undefined) clone.reasoningSummary = await redactSensitiveDataAsync(captured.reasoningSummary, reading);
+  if (captured.toolName !== undefined) clone.toolName = await redactSensitiveDataAsync(captured.toolName, reading);
+  if (captured.callId !== undefined) clone.callId = await redactSensitiveDataAsync(captured.callId, reading);
+  if (captured.toolCalls) clone.toolCalls = await Promise.all(captured.toolCalls.map(async (tc) => ({
+    id: await redactSensitiveDataAsync(tc.id, reading), name: await redactSensitiveDataAsync(tc.name, reading),
+    arguments: await redactArgs(tc.arguments, reading),
+  })));
+  if (captured.usage) clone.usage = {
+    inputTokens: captured.usage.inputTokens, outputTokens: captured.usage.outputTokens,
+    ...(captured.usage.cacheReadTokens !== undefined ? { cacheReadTokens: captured.usage.cacheReadTokens } : {}),
+    ...(captured.usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: captured.usage.cacheWriteTokens } : {}),
+  };
+  if (captured.cancelled !== undefined) clone.cancelled = captured.cancelled;
+  source.assertCurrent();
   return clone;
+}
+
+/** Capture every consumed field before awaiting, and bind reads to that exact source. */
+function captureExportSource<T>(input: T, options: RedactionOptions) {
+  const original = JSON.stringify(captureOwnedJson(input, types.isProxy));
+  const value = structuredClone(input);
+  if (JSON.stringify(captureOwnedJson(value, types.isProxy)) !== original) throw new Error('Export source changed during capture');
+  const signal = options.signal, ownerCurrent = options.assertCurrent;
+  const purpose = options.purpose, secrets = JSON.stringify(captureOwnedJson(options.secretValues ?? []));
+  const assertCurrent = () => {
+    if (signal?.aborted || options.signal !== signal || options.assertCurrent !== ownerCurrent
+      || options.purpose !== purpose || JSON.stringify(captureOwnedJson(options.secretValues ?? [])) !== secrets
+      || JSON.stringify(captureOwnedJson(input, types.isProxy)) !== original) throw new Error('Export source is no longer current');
+    ownerCurrent?.();
+  };
+  assertCurrent();
+  return { value, assertCurrent };
 }
 
 // ── JSON export ───────────────────────────────────────────────────────────────
@@ -56,13 +79,17 @@ export function redactMessage(msg: ExportMessage): ExportMessage {
  * exportToJSON - Serialize a session to machine-readable JSON.
  *
  * Output includes metadata (model, provider, session ID, timestamp, token
- * usage totals, cost), then the full message array with all fields preserved.
+ * usage totals, cost), then the message array. Redacted messages contain only
+ * declared export fields; undeclared source properties are withheld.
  */
-export function exportToJSON(
+export async function exportToJSON(
   messages: ExportMessage[],
   metadata?: ExportMetadata,
   options: ExportOptions & { cost?: number } = {},
-): string {
+): Promise<string> {
+  const source = captureExportSource({ messages, metadata }, options);
+  messages = source.value.messages; metadata = source.value.metadata;
+  const reading = { ...options, purpose: 'export' as const, assertCurrent: source.assertCurrent };
   const { redact = false, cost } = options;
 
   let totalInput = 0;
@@ -70,7 +97,7 @@ export function exportToJSON(
   let totalCacheRead = 0;
   let totalCacheWrite = 0;
 
-  const processedMessages = messages.map(msg => {
+  const processedMessages = await Promise.all(messages.map(async (msg) => {
     if (msg.usage) {
       totalInput     += msg.usage.inputTokens  ?? 0;
       totalOutput    += msg.usage.outputTokens ?? 0;
@@ -79,8 +106,8 @@ export function exportToJSON(
     }
 
     if (!redact) return msg;
-    return redactMessage(msg);
-  });
+    return redactMessage(msg, reading);
+  }));
 
   const usage = {
     inputTokens: totalInput,
@@ -94,34 +121,33 @@ export function exportToJSON(
     exportedAt: new Date().toISOString(),
     redacted: redact,
     metadata: {
-      ...((redact ? redactMetadata(metadata) : metadata) ?? {}),
+      ...((redact ? await redactMetadata(metadata, reading) : metadata) ?? {}),
       ...(cost !== undefined ? { costUsd: cost } : {}),
     },
     tokenUsage: usage,
     messages: processedMessages,
   };
 
+  source.assertCurrent();
   return JSON.stringify(payload, null, 2);
 }
 
-/** Recursively redact string values inside tool arguments, at any depth of objects and arrays. */
-function redactArgValue(value: unknown): unknown {
-  if (typeof value === 'string') return redactSensitiveData(value);
-  if (Array.isArray(value)) return value.map(redactArgValue);
-  if (value !== null && typeof value === 'object') return redactArgs(value as Record<string, unknown>);
-  return value;
+/** The shared helper owns field-role reading, structure and protection. */
+async function redactArgs(args: Record<string, unknown>, options: RedactionOptions): Promise<Record<string, unknown>> {
+  const result = await redactStructuredDataAsync(args, options);
+  if (result === null || typeof result !== 'object' || Array.isArray(result)) return { withheld: '[REDACTED_ARGUMENTS]' };
+  return Object.fromEntries(Object.entries(result));
 }
 
-function redactArgs(args: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(args)) out[k] = redactArgValue(v);
-  return out;
-}
-
-/** The session title is free text taken from the conversation, so it is redacted with the messages. */
-function redactMetadata(metadata: ExportMetadata | undefined): ExportMetadata | undefined {
-  if (metadata?.title === undefined) return metadata;
-  return { ...metadata, title: redactSensitiveData(metadata.title) };
+/** Every metadata string is outgoing source text. */
+async function redactMetadata(metadata: ExportMetadata | undefined, options: RedactionOptions): Promise<ExportMetadata | undefined> {
+  if (metadata === undefined) return undefined;
+  const output: ExportMetadata = {};
+  for (const key of ['model', 'provider', 'sessionId', 'title'] as const) {
+    const value = metadata[key];
+    if (value !== undefined) output[key] = await redactSensitiveDataAsync(value, options);
+  }
+  return output;
 }
 
 // ── Markdown export (extended wrapper) ───────────────────────────────────────
@@ -130,16 +156,20 @@ function redactMetadata(metadata: ExportMetadata | undefined): ExportMetadata | 
  * exportToMarkdownExtended - Wrapper around markdown.ts exportToMarkdown that
  * adds cost information and optional redaction.
  */
-export function exportToMarkdownExtended(
+export async function exportToMarkdownExtended(
   messages: ExportMessage[],
   metadata?: ExportMetadata,
   options: ExportOptions & { cost?: number } = {},
-): string {
+): Promise<string> {
+  const source = captureExportSource({ messages, metadata }, options);
+  messages = source.value.messages; metadata = source.value.metadata;
+  const reading = { ...options, purpose: 'export' as const, assertCurrent: source.assertCurrent };
   const { redact = false, cost } = options;
 
-  const processedMessages = redact ? messages.map(redactMessage) : messages;
+  const processedMessages = redact ? await Promise.all(messages.map((message) => redactMessage(message, reading))) : messages;
 
-  const md = exportToMarkdown(processedMessages, redact ? redactMetadata(metadata) : metadata);
+  const md = exportToMarkdown(processedMessages, redact ? await redactMetadata(metadata, reading) : metadata);
+  source.assertCurrent();
 
   // Append cost if provided
   if (cost !== undefined && cost > 0) {
@@ -173,11 +203,14 @@ const MAX_TOOL_RESULT_LENGTH = 4000;
  * - Metadata table in the header
  * - Token usage and cost summary at the foot
  */
-export function exportToHTML(
+export async function exportToHTML(
   messages: ExportMessage[],
   metadata?: ExportMetadata,
   options: ExportOptions & { cost?: number } = {},
-): string {
+): Promise<string> {
+  const source = captureExportSource({ messages, metadata }, options);
+  messages = source.value.messages; metadata = source.value.metadata;
+  const reading = { ...options, purpose: 'export' as const, assertCurrent: source.assertCurrent };
   const { redact = false, cost } = options;
 
   let totalInput = 0;
@@ -187,17 +220,18 @@ export function exportToHTML(
 
   const now = new Date();
   const dateStr = now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
-  const shown = redact ? redactMetadata(metadata) : metadata;
+  const shown = redact ? await redactMetadata(metadata, reading) : metadata;
   const title = shown?.title || shown?.sessionId || 'Conversation';
 
   const sections: string[] = [];
+  const processedMessages = redact ? await Promise.all(messages.map((message) => redactMessage(message, reading))) : messages;
 
-  for (const msg of messages) {
+  for (const msg of processedMessages) {
     if (msg.role === 'system') continue; // skip system messages in HTML
 
     if (msg.role === 'user') {
       const rawContent = extractText(msg.content);
-      const content = redact ? redactSensitiveData(rawContent) : rawContent;
+      const content = rawContent;
       const images: Array<{ type: 'image'; data: string; mediaType: string }> = Array.isArray(msg.content)
         ? (msg.content as ContentPart[]).filter((p): p is { type: 'image'; data: string; mediaType: string } => p.type === 'image')
         : [];
@@ -219,7 +253,7 @@ export function exportToHTML(
 
     if (msg.role === 'assistant') {
       const rawContent = extractText(msg.content);
-      const content = redact ? redactSensitiveData(rawContent) : rawContent;
+      const content = rawContent;
 
       if (msg.usage) {
         totalInput     += msg.usage.inputTokens  ?? 0;
@@ -233,7 +267,7 @@ export function exportToHTML(
       html += `<div class="message-body">`;
 
       if (msg.reasoningSummary) {
-        const summary = redact ? redactSensitiveData(msg.reasoningSummary) : msg.reasoningSummary;
+        const summary = msg.reasoningSummary;
         html += `<details class="reasoning">`;
         html += `<summary>Reasoning summary</summary>`;
         html += `<div class="details-body">${escapeHtml(summary)}</div>`;
@@ -248,10 +282,10 @@ export function exportToHTML(
         for (const tc of msg.toolCalls) {
           let args: string;
           try {
-            const processedArgs = redact ? redactArgs(tc.arguments) : tc.arguments;
+            const processedArgs = tc.arguments;
             args = JSON.stringify(processedArgs, null, 2);
           } catch {
-            args = String(tc.arguments);
+            args = '[REDACTED_ARGUMENTS]';
           }
           html += `<details class="tool-call">`;
           html += `<summary>Tool call: <code>${escapeHtml(tc.name)}</code></summary>`;
@@ -267,7 +301,7 @@ export function exportToHTML(
 
     if (msg.role === 'tool') {
       const rawContent = typeof msg.content === 'string' ? msg.content : extractText(msg.content);
-      const content = redact ? redactSensitiveData(rawContent) : rawContent;
+      const content = rawContent;
       const toolLabel = msg.toolName ? `Tool result: ${escapeHtml(msg.toolName)}` : 'Tool result';
       const truncated = content.length > MAX_TOOL_RESULT_LENGTH ? content.slice(0, MAX_TOOL_RESULT_LENGTH) + '\n...(truncated)' : content;
 
@@ -286,9 +320,9 @@ export function exportToHTML(
   const metaRows: string[] = [
     `<tr><th>Date</th><td>${escapeHtml(dateStr)}</td></tr>`,
   ];
-  if (metadata?.model)     metaRows.push(`<tr><th>Model</th><td>${escapeHtml(metadata.model)}</td></tr>`);
-  if (metadata?.provider)  metaRows.push(`<tr><th>Provider</th><td>${escapeHtml(metadata.provider)}</td></tr>`);
-  if (metadata?.sessionId) metaRows.push(`<tr><th>Session</th><td>${escapeHtml(metadata.sessionId)}</td></tr>`);
+  if (shown?.model)     metaRows.push(`<tr><th>Model</th><td>${escapeHtml(shown.model)}</td></tr>`);
+  if (shown?.provider)  metaRows.push(`<tr><th>Provider</th><td>${escapeHtml(shown.provider)}</td></tr>`);
+  if (shown?.sessionId) metaRows.push(`<tr><th>Session</th><td>${escapeHtml(shown.sessionId)}</td></tr>`);
   if (redact)              metaRows.push(`<tr><th>Redacted</th><td>Yes</td></tr>`);
 
   // Build usage rows
@@ -309,6 +343,7 @@ export function exportToHTML(
     ? `<section class="usage"><h2>Usage</h2><table>${usageRows.join('')}</table></section>`
     : '';
 
+  source.assertCurrent();
   return `<!DOCTYPE html>
 <html lang="en">
 <head>

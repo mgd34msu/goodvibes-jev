@@ -3,6 +3,7 @@ import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { SOURCE_SCREENING_LIMITS } from '@goodvibes-jev/engine/sdk/platform/security';
 import { ToolInputProjectionError, type ToolInputProjector, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
+import { captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
 
 const MODES = new Set(['personal_ops_queue', 'personal_ops_intake', 'personal_ops_lane', 'run_personal_ops_read']);
 export function isPersonalOpsJudgmentMode(args: Record<string, unknown>): boolean {
@@ -28,31 +29,34 @@ export function createPersonalOpsInputProjector(registry: ToolRegistry, fallback
     const args = snapshotJudgmentInput(request.args) as Record<string, unknown>;
     const owner = agentResearchSourceOwner(registry);
     if (!owner) return { status: 'held' };
+    const assertOwnerMethods = captureCatalogMethods(owner, ['capture', 'screen', 'project', 'release']);
+    const capture = owner.capture, screen = owner.screen, project = owner.project, releaseHandle = owner.release;
     const serialized = JSON.stringify(args);
     if (serialized.length > SOURCE_SCREENING_LIMITS.characters) return { status: 'held' };
-    request.assertCurrent(); request.signal?.throwIfAborted();
-    const handle = owner.capture([serialized]);
+    request.assertCurrent(); request.signal?.throwIfAborted(); assertOwnerMethods();
+    const handle = capture.call(owner, [serialized]);
     let released = false;
     let releasing: Promise<void> | undefined;
     const release = (): Promise<void> => {
       if (releasing) return releasing;
       released = true; request.signal?.removeEventListener('abort', abort);
-      releasing = owner.release(handle); return releasing;
+      releasing = releaseHandle.call(owner, handle); return releasing;
     };
     const abort = () => { void release().catch(() => {}); };
     const assertCurrent = () => {
       request.assertCurrent(); request.signal?.throwIfAborted();
+      assertOwnerMethods();
       if (released || agentResearchSourceOwner(registry) !== owner) throw new ToolInputProjectionError('held');
     };
     try {
       request.signal?.addEventListener('abort', abort, { once: true });
       assertCurrent();
-      const result = await owner.screen(handle);
+      const result = await screen.call(owner, handle);
       assertCurrent();
       if (result.status !== 'settled') { await release(); return { status: 'held' }; }
       const assertBound = () => {
         assertCurrent();
-        const projected = owner.project(result.receipt);
+        const projected = project.call(owner, result.receipt);
         // Never silently rewrite an execution target, confirmation, or payload.
         // Protected invocation material remains held for its owning secure route.
         if (projected.length !== 1 || projected[0] !== serialized) throw new ToolInputProjectionError('held');

@@ -39,6 +39,7 @@ import {
 } from './exec-env-scrub-config.ts';
 import {
   SETTINGS_CATEGORIES,
+  type BuiltinSettingEntry,
   type FlagEntry,
   type HostSettingEntry,
   type McpEntry,
@@ -153,13 +154,12 @@ export function refreshSettingsPolicyAvailability(groups: Map<string, SettingEnt
         sourceLabel: undefined, lockReason: undefined, metadataUnavailable: POLICY_METADATA_UNAVAILABLE,
       });
     } else if (entry.kind !== 'host' && entry.metadataUnavailable) {
-      const display = readConfigSettingForDisplay(() => configManager.get(entry.setting.key));
+      refreshBuiltinSettingValue(entry, configManager);
       const resolved = getResolvedSettingLookup(configManager, entry.setting.key)?.entry;
       Object.assign(entry, {
         effectiveSource: resolved?.effectiveSource, locked: resolved?.locked,
         conflict: resolved?.conflict, sourceLabel: resolved?.sourceLabel, lockReason: resolved?.lockReason,
         metadataUnavailable: undefined,
-        valueUnavailable: display.held,
       });
     }
   }
@@ -656,53 +656,7 @@ export function refreshEntryValues(
         refreshHostSettingEntry(entry, configManager);
         continue;
       }
-      // worktree.setup.* read through a defensive array-normalizing helper (see worktree-setup-config.ts).
-      if (isWorktreeSetupListConfigKey(entry.setting.key)) {
-        entry.currentValue = readWorktreeSetupList(configManager, entry.setting.key);
-        entry.isDefault = (entry.currentValue as string[]).length === 0;
-        continue;
-      }
-      // sandbox.* list leaves normalize an unset undefined to [] (see sandbox-exec-config.ts).
-      if (isSandboxExecListConfigKey(entry.setting.key)) {
-        entry.currentValue = readSandboxExecList(configManager, entry.setting.key);
-        entry.isDefault = (entry.currentValue as string[]).length === 0;
-        continue;
-      }
-      // permissions.execEnvScrubAllowlist: same array-normalizing read (see exec-env-scrub-config.ts).
-      if (isExecEnvScrubAllowlistConfigKey(entry.setting.key)) {
-        entry.currentValue = readExecEnvScrubAllowlist(configManager);
-        entry.isDefault = (entry.currentValue as string[]).length === 0;
-        continue;
-      }
-      // 'memory' has no DEFAULT_CONFIG entry, its synthetic leaves read defensively below.
-      if (entry.setting.key === MEMORY_PROJECTION_DIR_CONFIG_KEY) {
-        const refreshed = buildMemoryProjectionDirSyntheticEntry(configManager);
-        entry.currentValue = refreshed.currentValue; entry.isDefault = refreshed.isDefault;
-        continue;
-      }
-      // memory.showProvenance: same 'memory'-has-no-DEFAULT_CONFIG trap, read defensively.
-      if (entry.setting.key === (MEMORY_SHOW_PROVENANCE_CONFIG_KEY as ConfigKey)) {
-        const refreshed = buildMemoryProvenanceSyntheticEntry(configManager);
-        entry.currentValue = refreshed.currentValue; entry.isDefault = refreshed.isDefault;
-        continue;
-      }
-      // payments.* synthetic sub-keys (card material + addresses, see
-      // payments-config.ts): real configManager-backed now, but still
-      // defensively normalized (undefined -> '') the same way the initial
-      // build does, so isDefault stays consistent between build and refresh.
-      if (isPaymentsSyntheticConfigKey(entry.setting.key)) {
-        refreshPaymentsSyntheticEntry(entry, configManager);
-        continue;
-      }
-      const display = readConfigSettingForDisplay(() => configManager.get(entry.setting.key as ConfigKey));
-      const raw = display.value;
-      entry.valueUnavailable = display.held;
-      // Synthetic entries that have no SDK schema key return undefined from
-      // configManager; the schema-driven entries above already normalize on
-      // their own read paths, so the raw value is used as-is here.
-      entry.currentValue = raw;
-      entry.isDefault = deepEqual(entry.currentValue, entry.setting.default);
-      refreshHostSettingEntry(entry, configManager);
+      refreshBuiltinSettingValue(entry, configManager);
     }
   }
 }
@@ -723,38 +677,52 @@ export function updateEntryForKey(
         refreshHostSettingEntry(entry, configManager);
         continue;
       }
-      if (key === MEMORY_PROJECTION_DIR_CONFIG_KEY) {
-        const refreshed = buildMemoryProjectionDirSyntheticEntry(configManager);
-        entry.currentValue = refreshed.currentValue; entry.isDefault = refreshed.isDefault;
-        continue;
-      }
-      if (key === (MEMORY_SHOW_PROVENANCE_CONFIG_KEY as ConfigKey)) {
-        const refreshed = buildMemoryProvenanceSyntheticEntry(configManager);
-        entry.currentValue = refreshed.currentValue; entry.isDefault = refreshed.isDefault;
-        continue;
-      }
-      if (isPaymentsSyntheticConfigKey(key)) {
-        refreshPaymentsSyntheticEntry(entry, configManager);
-        continue;
-      }
-      if (isSandboxExecListConfigKey(entry.setting.key)) {
-        entry.currentValue = readSandboxExecList(configManager, entry.setting.key);
-        entry.isDefault = (entry.currentValue as string[]).length === 0;
-        continue;
-      }
-      if (isExecEnvScrubAllowlistConfigKey(entry.setting.key)) {
-        entry.currentValue = readExecEnvScrubAllowlist(configManager);
-        entry.isDefault = (entry.currentValue as string[]).length === 0;
-        continue;
-      }
-      const display = readConfigSettingForDisplay(() => configManager.get(entry.setting.key));
-      const raw = display.value;
-      entry.valueUnavailable = display.held;
-      entry.currentValue = raw;
-      entry.isDefault = deepEqual(entry.currentValue, entry.setting.default);
-      refreshHostSettingEntry(entry, configManager);
+      refreshBuiltinSettingValue(entry, configManager);
     }
   }
+}
+
+/** Synthetic rows retain their declared reader during refresh and policy recovery. */
+function refreshBuiltinSettingValue(entry: BuiltinSettingEntry, configManager: ConfigManager): void {
+  const key: string = entry.setting.key;
+  if (isWorktreeSetupListConfigKey(entry.setting.key)) {
+    const value = readWorktreeSetupList(configManager, entry.setting.key);
+    entry.currentValue = value;
+    entry.isDefault = value.length === 0;
+    return;
+  }
+  if (isSandboxExecListConfigKey(entry.setting.key)) {
+    const value = readSandboxExecList(configManager, entry.setting.key);
+    entry.currentValue = value;
+    entry.isDefault = value.length === 0;
+    return;
+  }
+  if (isExecEnvScrubAllowlistConfigKey(entry.setting.key)) {
+    const value = readExecEnvScrubAllowlist(configManager);
+    entry.currentValue = value;
+    entry.isDefault = value.length === 0;
+    return;
+  }
+  if (key === MEMORY_PROJECTION_DIR_CONFIG_KEY) {
+    const refreshed = buildMemoryProjectionDirSyntheticEntry(configManager);
+    entry.currentValue = refreshed.currentValue;
+    entry.isDefault = refreshed.isDefault;
+    return;
+  }
+  if (key === MEMORY_SHOW_PROVENANCE_CONFIG_KEY) {
+    const refreshed = buildMemoryProvenanceSyntheticEntry(configManager);
+    entry.currentValue = refreshed.currentValue;
+    entry.isDefault = refreshed.isDefault;
+    return;
+  }
+  if (isPaymentsSyntheticConfigKey(key)) {
+    refreshPaymentsSyntheticEntry(entry, configManager);
+    return;
+  }
+  const display = readConfigSettingForDisplay(() => configManager.get(entry.setting.key));
+  entry.valueUnavailable = display.held;
+  entry.currentValue = display.value;
+  entry.isDefault = deepEqual(entry.currentValue, entry.setting.default);
 }
 
 // ---------------------------------------------------------------------------

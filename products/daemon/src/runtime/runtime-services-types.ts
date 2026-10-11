@@ -118,6 +118,7 @@ export interface RuntimeServicesOptions {
 }
 
 export interface RuntimeServices {
+  readonly nativeMutationHost?: import('@goodvibes-jev/engine/sdk/platform/control-plane').NativeMutationHost | undefined;
   /** Absent when the host did not supply the pending product boot composition. */
   readonly bootTasks?: DaemonBootController | undefined;
   readonly workingDirectory: string;

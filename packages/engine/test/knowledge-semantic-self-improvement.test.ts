@@ -1088,6 +1088,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
   });
 
   test('deterministic profile enrichment ignores generic extension docs in default knowledge', async () => {
+    answerReadings.set({ scope: [['source', 'Navigation Menu', 0.01]] });
     const { store } = createStores();
     const source = await store.upsertSource({
       id: 'source-goodvibes-homeassistant-doc',

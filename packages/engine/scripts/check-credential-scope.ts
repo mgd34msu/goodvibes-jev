@@ -44,6 +44,8 @@ import {
 } from '../sdk/src/platform/config/credential-scope-registry.ts';
 import { daemonSecretKeyFor, listDaemonOwnedSecretKeys } from '../sdk/src/platform/config/daemon-secret-keys.ts';
 import { credentialReadingStanding, loadCredentialKeyReadings, undeclaredSchemaKeys } from './credential-key-readings.ts';
+import { CONFIG_SCHEMA } from '../sdk/src/platform/config/schema.ts';
+import { structuredCredentialConfigSchemaFailures } from '../sdk/src/platform/config/structured-credential-config.ts';
 
 const REPO_ROOT = process.env['CREDENTIAL_SCOPE_ROOT'] ?? resolve(import.meta.dir, '..');
 const DEFAULT_DIRS = ['sdk/src'];
@@ -356,7 +358,8 @@ function checkFile(path: string, constants: ReadonlyMap<string, string>): Findin
 /**
  * Every schema key that holds a credential must be declared.
  *
- * `secret-bearing-config-keys.ts` decides by the declared list alone. Whether
+ * Scalar secrets use the declared list; structured references require their
+ * exact canonical schema, validator and default. Whether
  * a schema key the list does not name holds a credential anyway is read
  * through Jev (`config.credential-key`) by `bun run credential-keys:read`,
  * which stores each reading with the description it was read from in
@@ -368,7 +371,9 @@ function checkFile(path: string, constants: ReadonlyMap<string, string>): Findin
 function checkDeclarationsCoverCredentials(): Finding[] {
   const file = 'etc/credential-key-readings.json';
   const stored = loadCredentialKeyReadings();
-  const findings: Finding[] = [];
+  const findings: Finding[] = structuredCredentialConfigSchemaFailures(CONFIG_SCHEMA).map(({ key, reason }) => ({
+    file: 'sdk/src/platform/config/structured-credential-config.ts', line: 0, snippet: key, reason,
+  }));
   for (const { key, description } of undeclaredSchemaKeys()) {
     const reading = stored?.readings[key];
     if (reading === undefined || reading.description !== description) {

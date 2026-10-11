@@ -65,6 +65,8 @@ registry.register(trustNoteCaution);
 // Utils: error display.
 import { displayPayload } from '../utils/batteries/display-payload.js';
 registry.register(displayPayload);
+import { fieldKind } from '../utils/batteries/field-kind.js';
+registry.register(fieldKind);
 
 // Types: the wait a provider error's message states before retrying.
 import { retryWait } from '../types/batteries/retry-wait.js';

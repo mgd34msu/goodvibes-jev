@@ -17,17 +17,17 @@ export function scheduleNextRouteLines(scheduleId: string, options: { readonly d
   ];
   if (options.deleted) {
     lines.push(
-      routeLine('createAutonomousSchedule', 'schedule action:"create" task:"..." successCriteria:"..." every:"..." confirm:true explicitUserRequest:"..."'),
-      routeLine('createReminder', 'schedule action:"remind" message:"..." at:"..." confirm:true explicitUserRequest:"..."'),
+      routeLine('createAutonomousSchedule', 'schedule action:"create" task:"..." successCriteria:"..." every:"..."'),
+      routeLine('createReminder', 'schedule action:"remind" message:"..." at:"..."'),
     );
     return lines;
   }
   lines.push(
-    routeLine('runNow', `schedule action:"run" ${scheduleIdArg} confirm:true explicitUserRequest:"..."`),
-    routeLine('editSchedule', `schedule action:"edit" ${scheduleIdArg} confirm:true explicitUserRequest:"..."`),
-    routeLine('pauseSchedule', `schedule action:"pause" ${scheduleIdArg} confirm:true explicitUserRequest:"..."`),
-    routeLine('resumeSchedule', `schedule action:"resume" ${scheduleIdArg} confirm:true explicitUserRequest:"..."`),
-    routeLine('deleteSchedule', `schedule action:"delete" ${scheduleIdArg} confirm:true explicitUserRequest:"..."`),
+    routeLine('runNow', `schedule action:"run" ${scheduleIdArg}`),
+    routeLine('editSchedule', `schedule action:"edit" ${scheduleIdArg}`),
+    routeLine('pauseSchedule', `schedule action:"pause" ${scheduleIdArg}`),
+    routeLine('resumeSchedule', `schedule action:"resume" ${scheduleIdArg}`),
+    routeLine('deleteSchedule', `schedule action:"delete" ${scheduleIdArg}`),
   );
   return lines;
 }

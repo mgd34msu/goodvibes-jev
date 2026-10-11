@@ -1,5 +1,7 @@
 import { postalConfigKey, POSTAL_PARTS, PostalAddressHeldError, type ProfilePostalReader, type PostalKind, type PostalReadOptions, type PreparedPostalAddress, type PostalParts } from './postal-address.js';
 import { DurablePolicyEpochOwner } from './durable-policy-epoch.js';
+import { observeImportFile } from './prepared-import.js';
+import { PreparedSettingsTarget } from './prepared-target.js';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { writeJsonFileAtomic } from '../utils/atomic-json-store.js';
@@ -470,7 +472,9 @@ export class ConfigManager {
 
   /** Capture every companion before admission; never re-prepare after an earlier effect. */
   prepareSettingMutationPlan(requests: readonly PreparedConfigMutationRequest[]): PreparedConfigMutation {
-    if (requests.length < 1 || requests.length > 16 || new Set(requests.map(request => request.key)).size !== requests.length) {
+    const knownKeys = new Set([...this.getSchema(), ...this.getHostSettingsSchema()].map(setting => setting.key));
+    if (requests.length < 1 || requests.length > knownKeys.size || new Set(requests.map(request => request.key)).size !== requests.length
+      || requests.some(request => !knownKeys.has(request.key))) {
       throw new ConfigError('Invalid prepared settings plan.');
     }
     if (requests.length === 1) return this.prepareSettingMutation(requests[0]!);
@@ -527,10 +531,62 @@ export class ConfigManager {
 
   assertPreparedMutationTransition(handle: PreparedConfigMutation, transition: PreparedConfigMutationTransition): void {
     const record = this.preparedRecord(handle);
-    if ((record.phase !== 'begun' && !(record.steps && record.phase === 'committing')) || record.transition !== transition || this.#preparedTransitions.get(transition) !== handle) {
+    if ((record.phase !== 'begun' && record.phase !== 'committing') || record.transition !== transition || this.#preparedTransitions.get(transition) !== handle) {
       throw new ConfigError('Prepared mutation transition is not authentic or has been spent.');
     }
     this.assertPreparedCurrent(record, record.facts.incarnation + 1);
+  }
+
+  /** Exact native result, including physical stores, remains restrictive after publication. */
+  inspectCompletedMutation(handle: PreparedConfigMutation): PreparedConfigMutationTransitionFacts {
+    this.assertCompletedMutation(handle);
+    const record = this.#preparedMutations.get(handle)!;
+    return Object.freeze({ beforeIncarnation: record.facts.incarnation, afterIncarnation: record.completion!.incarnation });
+  }
+
+  /** Compound credential/subscription effects retain this settings owner's read-only restriction. */
+  assertSettingsWritable(): void { this.requireWritable(); }
+
+  /** Registration adds a source restriction; bare legacy prepared writes retain their merge contract. */
+  protectPreparedMutationTargets(handle: PreparedConfigMutation): void {
+    this.assertPreparedMutation(handle);
+    const record = this.preparedRecord(handle);
+    if (record.targets) return;
+    const records = record.steps ? record.steps.map(step => this.preparedRecord(step)) : [record];
+    const paths = new Map<string, string[]>();
+    for (const step of records) for (const destination of step.facts.destinations) {
+      const keys = paths.get(destination.path) ?? []; keys.push(step.facts.key); paths.set(destination.path, keys);
+    }
+    const targets = Object.freeze([...paths].map(([path, keys]) => new PreparedSettingsTarget(path, keys)));
+    record.targets = targets;
+    for (const step of records) step.targets = targets;
+    this.assertPreparedMutation(handle);
+  }
+
+  assertCompletedMutation(handle: PreparedConfigMutation): void {
+    const record = this.#preparedMutations.get(handle), completion = record?.completion;
+    if (!record || record.phase !== 'spent' || !completion || completion.receipt.status !== 'committed'
+      || completion.incarnation !== record.facts.incarnation + 1 || this.permissionIncarnation !== completion.incarnation
+      || JSON.stringify(this.config) !== completion.runtimeJson) throw new ConfigError('Prepared mutation completion is stale.');
+    this.assertPreparedCurrent(record, completion.incarnation);
+    if (record.steps) for (const step of record.steps) {
+      const child = this.#preparedMutations.get(step);
+      if (child?.phase !== 'spent' || child.completion?.receipt.status !== 'committed'
+        || child.completion.incarnation !== completion.incarnation) throw new ConfigError('Prepared plan completion is stale.');
+    }
+    for (const store of completion.stores) if (observeImportFile(store.path).stamp !== store.stamp) {
+      throw new ConfigError('Prepared mutation completion store changed.');
+    }
+  }
+
+  private capturePreparedCompletion(record: PreparedMutationRecord, receipt: PreparedConfigMutationReceipt): void {
+    if (receipt.status !== 'committed' || this.permissionIncarnation !== record.facts.incarnation + 1) return;
+    try {
+      record.completion = { receipt, incarnation: this.permissionIncarnation, runtimeJson: JSON.stringify(this.config),
+        stores: [...new Set([this.configPath, this.projectConfigPath, this.sharedTierPath, this.daemonTierPath,
+          ...record.facts.destinations.map(destination => destination.path)].filter((path): path is string => path !== null))]
+          .map(path => ({ path, stamp: observeImportFile(path).stamp })) };
+    } catch { /* A receipt remains honest when resulting owner currentness cannot be retained. */ }
   }
 
   /**
@@ -560,7 +616,7 @@ export class ConfigManager {
           const childTransition = Object.freeze({}) as PreparedConfigMutationTransition;
           child.phase = 'begun'; child.transition = childTransition;
           this.#preparedTransitions.set(childTransition, step);
-          receipt = this.finishPreparedMutation(step, childTransition);
+          receipt = this.finishPreparedMutation(step, childTransition, beforeEffect);
         } catch {
           record.phase = 'spent';
           return freezePreparedData({ status: completedPaths.length ? 'partial' : 'unknown', completedPaths,
@@ -571,7 +627,9 @@ export class ConfigManager {
           status: completedPaths.length ? 'partial' : 'unknown', completedPaths }); }
       }
       record.phase = 'spent';
-      return freezePreparedData({ status: 'committed', completedPaths });
+      const receipt: PreparedConfigMutationReceipt = freezePreparedData({ status: 'committed', completedPaths });
+      this.capturePreparedCompletion(record, receipt);
+      return receipt;
     }
     let stores: Map<string, Record<string, unknown>>;
     try {
@@ -586,7 +644,7 @@ export class ConfigManager {
       }
       this.assertPreparedMutationTransition(handle, transition);
     } catch (error) { record.phase = 'spent'; throw error; }
-    record.phase = 'spent';
+    record.phase = 'committing';
     const { key, value, destinations } = record.facts;
     const previousValue = this.resolvePath(key).parent[this.resolvePath(key).field];
     const previousHost = this.hostSettings.has(key) ? this.hostSettings.snapshot(this.config) : null;
@@ -612,9 +670,12 @@ export class ConfigManager {
         continue;
       }
       try {
-        writeJsonFileAtomic(destination.path, candidate, { cleanupStaleTemps: false });
+        writeJsonFileAtomic(destination.path, candidate, { cleanupStaleTemps: false, assertCurrent: () => {
+          beforeEffect?.(); this.assertPreparedMutationTransition(handle, transition);
+        } });
         stores.set(destination.path, candidate);
         completedPaths.push(destination.path);
+        record.targets?.find(target => target.path === destination.path)?.acceptPublication(key, destination.operation === 'set', value);
         if (destination.tier === 'daemon') {
           if (destination.operation === 'set') this.daemonKeysPresent.add(key);
           else this.daemonKeysPresent.delete(key);
@@ -631,6 +692,7 @@ export class ConfigManager {
       status: uncertainPath === undefined ? 'committed' : completedPaths.length > 0 ? 'partial' : 'unknown',
       completedPaths, ...(uncertainPath === undefined ? {} : { uncertainPath }),
     });
+    record.phase = 'spent';
     if (receipt.status === 'committed' || completedPaths.length > 0) {
       if (previousHost) {
         const values = this.hostSettings.defaults();
@@ -639,10 +701,12 @@ export class ConfigManager {
         this.hostSettings.apply(staged.nonRuntime, values);
         const hostDefaultOrigins = this.updateHostSources(staged, stores);
         this.publishState(staged, staged.compose());
+        this.capturePreparedCompletion(record, receipt);
         // No callback may escape after persistence, including logging failures.
         try { this.applyHostValues(values, previousHost, true, hostDefaultOrigins); } catch { /* Receipt remains truthful. */ }
       } else {
         this.publishState(staged, effective);
+        this.capturePreparedCompletion(record, receipt);
         try {
           this.notifyPersistedChange(key, previousValue);
         } catch { /* Publication already completed; never report a false refusal. */ }
@@ -685,6 +749,7 @@ export class ConfigManager {
 
   private assertPreparedCurrent(record: PreparedMutationRecord, incarnation: number): void {
     this.requireWritable();
+    for (const target of record.targets ?? []) target.assertCurrent();
     if (record.steps) {
       for (const step of record.steps) this.assertPreparedCurrent(this.#preparedMutations.get(step)!, incarnation);
       return;
@@ -772,6 +837,7 @@ export class ConfigManager {
     value = coerceSchemaValue(key, schema, value);
     if (schema?.validate && !schema.validate(value)) {
       const hint = schema.validationHint ? ` (${schema.validationHint})` : '';
+      if (key === 'judgment.fallbacks') throw new ConfigError(`Invalid value for ${key}${hint}`);
       throw new ConfigError(`Invalid value for ${key}: ${String(value)}${hint}`);
     }
     if (schema?.type === 'enum' && schema.enumValues && !schema.enumValues.includes(value as string)) {

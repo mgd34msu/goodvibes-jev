@@ -206,7 +206,7 @@ export function createAgentModelsTool(deps: AgentModelsToolDeps): Tool {
 export function isModelsReadinessCall(input: Record<string, unknown>): boolean {
   const args = captureModelReadingInput(input) as AgentModelsToolArgs;
   const action = readAction(args);
-  return action === 'status' || action === 'route' || action === 'local';
+  return action === 'status' || action === 'route' || action === 'local' || action === 'smoke';
 }
 
 export function registerAgentModelsTool(

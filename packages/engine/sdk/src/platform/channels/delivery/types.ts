@@ -71,7 +71,7 @@ export interface ChannelDeliveryResult {
 
 export interface ChannelDeliveryStrategy {
   readonly id: string;
-  /** Promises to enforce signal/assertCurrent at the actual send boundary, after async preparation. */
+  /** Enforces lifetime restrictions, including publication, at the send boundary after preparation. */
   readonly supportsGuardedDelivery?: boolean | undefined;
   canHandle(request: ChannelDeliveryRequest): boolean;
   deliver(request: ChannelDeliveryRequest): Promise<ChannelDeliveryResult>;

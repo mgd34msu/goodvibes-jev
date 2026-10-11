@@ -1,3 +1,4 @@
+import { captureMemoryOperation, assertMemoryOperationCurrent, awaitMemoryOperation, type MemoryOperationOptions } from './memory-operation.js';
 /**
  * memory-recall-contract.ts, the CROSS-SURFACE recall-honesty contract (see CHANGELOG 1.0.0).
  *
@@ -138,9 +139,9 @@ export function describeMemoryIndexCaveat(stats: MemoryVectorStats): string | nu
  * class so it can run over any store that exposes the three read paths.
  */
 export interface HonestSearchStore {
-  search(filter: MemorySearchFilter): Promise<MemoryRecord[]>;
-  searchSemantic(filter: MemorySearchFilter): Promise<MemorySemanticSearchResult[]>;
-  vectorStats(): MemoryVectorStats;
+  search(filter: MemorySearchFilter, options?: MemoryOperationOptions): Promise<MemoryRecord[]>;
+  searchSemantic(filter: MemorySearchFilter, options?: MemoryOperationOptions): Promise<MemorySemanticSearchResult[]>;
+  vectorStats(options?: MemoryOperationOptions): MemoryVectorStats;
 }
 
 export interface HonestMemorySearchOptions {
@@ -202,7 +203,10 @@ export async function runHonestMemorySearch(
   store: HonestSearchStore,
   filter: MemorySearchFilter = {},
   options: HonestMemorySearchOptions = {},
+  lifecycle?: MemoryOperationOptions,
 ): Promise<HonestMemorySearchResult> {
+  const operation = captureMemoryOperation(lifecycle);
+  assertMemoryOperationCurrent(operation);
   const requestedSemantic = filter.semantic === true;
   let mode: 'literal' | 'semantic' = 'literal';
   let indexUnavailableReason: string | null = null;
@@ -210,21 +214,22 @@ export async function runHonestMemorySearch(
   let baseRecords: MemoryRecord[];
 
   if (requestedSemantic) {
-    const stats = store.vectorStats();
+    const stats = store.vectorStats(operation);
     indexUnavailableReason = describeMemoryIndexUnavailable(stats);
     if (indexUnavailableReason !== null) {
       // Honest degrade: the index cannot be consulted, so fall back to a literal
       // scan and SAY SO via indexUnavailableReason.
-      baseRecords = await store.search({ ...filter, semantic: false });
+      baseRecords = await awaitMemoryOperation(() => store.search({ ...filter, semantic: false }, operation), operation);
     } else {
       mode = 'semantic';
       caveat = describeMemoryIndexCaveat(stats);
-      baseRecords = (await store.searchSemantic(filter)).map((entry) => entry.record);
+      baseRecords = (await awaitMemoryOperation(() => store.searchSemantic(filter, operation), operation)).map((entry) => entry.record);
     }
   } else {
-    baseRecords = await store.search(filter);
+    baseRecords = await awaitMemoryOperation(() => store.search(filter, operation), operation);
   }
 
+  assertMemoryOperationCurrent(operation);
   const totalBeforeRecallFilter = baseRecords.length;
   if (!options.recall) {
     return {
@@ -263,6 +268,7 @@ export async function runHonestMemorySearch(
       excludedBelowFloorCount += 1;
     }
   }
+  assertMemoryOperationCurrent(operation);
   return {
     records: kept,
     mode,

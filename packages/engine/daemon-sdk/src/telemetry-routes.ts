@@ -26,6 +26,7 @@ interface TelemetryFilter {
 }
 
 interface TelemetryApiLike {
+  isRawEnabled(): boolean;
   getSnapshot(filter: TelemetryFilter, view: TelemetryViewMode, rawAccessible: boolean): {
     readonly generatedAt: number;
     readonly view: TelemetryViewMode;
@@ -268,6 +269,7 @@ function unavailable(): Response {
 }
 
 function invalidCursor(error: unknown): Response {
+  if (error instanceof Error && 'code' in error && error.code === 'TELEMETRY_RAW_DISABLED') return rawDisabled();
   return jsonErrorResponse({
     error: error instanceof Error ? error.message : 'Invalid telemetry cursor',
     code: 'INVALID_CURSOR',
@@ -277,6 +279,18 @@ function invalidCursor(error: unknown): Response {
     hint: 'Use the nextCursor returned by the previous telemetry page, or omit cursor to start from the newest records.',
     status: 400,
   }, { status: 400 });
+}
+
+function rawDisabled(): Response {
+  return jsonErrorResponse({
+    error: 'Raw telemetry is disabled',
+    code: 'TELEMETRY_RAW_DISABLED',
+    category: DaemonErrorCategory.AUTHORIZATION,
+    source: 'permission',
+    recoverable: false,
+    hint: 'Enable telemetry.includeRawPrompts in the serving daemon configuration, then authenticate with read:telemetry-sensitive or an admin session.',
+    status: 403,
+  }, { status: 403 });
 }
 
 function authenticateTelemetryRequest(
@@ -311,8 +325,8 @@ function authenticateTelemetryRequest(
     }, { status: 403 });
   }
 
-  const rawAccessible = principal.admin || principal.scopes.includes('read:telemetry-sensitive');
-  if (requestedView === 'raw' && !rawAccessible) {
+  const rawAuthorized = principal.admin || principal.scopes.includes('read:telemetry-sensitive');
+  if (requestedView === 'raw' && !rawAuthorized) {
     return jsonErrorResponse({
       error: 'Raw telemetry view requires elevated telemetry scope',
       code: 'MISSING_SCOPE',
@@ -323,6 +337,9 @@ function authenticateTelemetryRequest(
       status: 403,
     }, { status: 403 });
   }
+
+  const rawAccessible = rawAuthorized && context.telemetryApi?.isRawEnabled() === true;
+  if (requestedView === 'raw' && !rawAccessible) return rawDisabled();
 
   return {
     principal,

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { HandlerSqliteStore } from '../../state/daemon-handler-sqlite-store.js';
 import { GatewayVerbError as HandlerError } from '../../control-plane/routes/gateway-verb-error.js';
+import { retainMutationStorage } from '../../control-plane/native-mutation.js';
+import { captureMutationDescriptors, type MutationPublication } from '../../utils/file-mutation.js';
 
 /**
  * A persisted channel-to-profile routing assignment, in the exact shape the
@@ -169,8 +171,11 @@ export class RouteStore {
   private initializing: Promise<void> | null = null;
   private closing: Promise<void> | null = null;
   private readonly active = new Set<Promise<unknown>>();
+  private readonly generations = new Map<string, number>();
+  private readonly workingDirectory: string;
 
   constructor(options: { workingDirectory: string }) {
+    this.workingDirectory = options.workingDirectory;
     this.store = new HandlerSqliteStore({
       workingDirectory: options.workingDirectory,
       fileName: 'channel-routes.sqlite',
@@ -284,12 +289,13 @@ export class RouteStore {
    * when an existing row was updated. The assignmentId is stable across updates
    * (it is preserved from the existing row). Persists to disk after the write.
    */
-  upsert(input: RouteUpsertInput): Promise<RouteUpsertResult> {
-    return this.own(() => this.writeRoute(input));
+  upsert(input: RouteUpsertInput, assertCurrent?: () => void, withPublication?: MutationPublication): Promise<RouteUpsertResult> {
+    return this.own(() => this.writeRoute(input, assertCurrent, withPublication));
   }
 
-  private async writeRoute(input: RouteUpsertInput): Promise<RouteUpsertResult> {
+  private async writeRoute(input: RouteUpsertInput, assertCurrent?: () => void, withPublication?: MutationPublication): Promise<RouteUpsertResult> {
     this.requireInit();
+    assertCurrent?.();
     const profileId = typeof input.profileId === 'string' ? input.profileId.trim() : '';
     if (profileId.length === 0) {
       throw new HandlerError('profileId is required', 'ROUTING_INVALID_PROFILE_ID', 400);
@@ -300,6 +306,22 @@ export class RouteStore {
       ? input.label.trim()
       : null;
     const now = new Date().toISOString();
+
+    if (assertCurrent) {
+      const result = await this.store.persistTransaction(transaction => {
+        const existing = transaction.get<RouteRow>('SELECT * FROM routes WHERE channelId = ?', [channelId]);
+        const assignmentId = existing?.assignmentId ?? randomUUID();
+        if (existing) transaction.run('UPDATE routes SET profileId = ?, label = ?, surfaceKind = ?, routeId = ?, updatedAt = ? WHERE assignmentId = ?',
+          [profileId, label, surfaceKind, routeId ?? null, now, assignmentId]);
+        else transaction.run('INSERT INTO routes (assignmentId, channelId, surfaceKind, routeId, profileId, label, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          [assignmentId, channelId, surfaceKind, routeId ?? null, profileId, label, now, now]);
+        const row = transaction.get<RouteRow>('SELECT * FROM routes WHERE assignmentId = ?', [assignmentId]);
+        if (!row) throw new HandlerError('Failed to read admitted route', 'ROUTING_WRITE_FAILED', 500);
+        return { route: rowToRoute(row), created: existing === null };
+      }, assertCurrent, withPublication);
+      this.markMutation(result.route);
+      return result;
+    }
 
     const existing = this.findByChannelId(channelId);
     if (existing) {
@@ -316,6 +338,7 @@ export class RouteStore {
         throw new HandlerError('Failed to read back updated route', 'ROUTING_WRITE_FAILED', 500);
       }
       await this.store.save();
+      this.markMutation(route);
       return { route, created: false };
     }
 
@@ -331,27 +354,52 @@ export class RouteStore {
       throw new HandlerError('Failed to read back inserted route', 'ROUTING_WRITE_FAILED', 500);
     }
     await this.store.save();
+    this.markMutation(route);
     return { route, created: true };
+  }
+
+  private markMutation(route: RoutingChannelRoute): void {
+    for (const key of [`channel:${route.channelId}`, `assignment:${route.assignmentId}`]) {
+      this.generations.set(key, (this.generations.get(key) ?? 0) + 1);
+    }
+  }
+
+  retainTarget(kind: 'channel' | 'assignment', id: string): { readonly target: RoutingChannelRoute | null; readonly assertCurrent: () => void } {
+    this.requireInit();
+    const key = `${kind}:${id}`, generation = this.generations.get(key) ?? 0;
+    const current = () => kind === 'channel' ? this.findByChannelId(id) : this.findById(id);
+    const target = current(), before = JSON.stringify(target);
+    const storage = retainMutationStorage(this.store.dbPath, this.workingDirectory);
+    const ownerCurrent = captureMutationDescriptors(this, ['store', 'findByChannelId', 'findById', 'upsertRoute', 'deleteRoute']);
+    const storeCurrent = captureMutationDescriptors(this.store, ['get', 'run', 'persistTransaction']);
+    return { target, assertCurrent: () => {
+      this.requireInit(); ownerCurrent(); storeCurrent(); storage();
+      if ((this.generations.get(key) ?? 0) !== generation || JSON.stringify(current()) !== before) {
+        throw new HandlerError('Native routing target changed', 'NATIVE_MUTATION_STALE', 409);
+      }
+    } };
   }
 
   /**
    * Delete an assignment by assignmentId. Returns true when a row was removed,
    * false when no matching assignment existed. Persists to disk after a delete.
    */
-  delete(assignmentId: string): Promise<boolean> {
-    return this.own(() => this.deleteRoute(assignmentId));
+  delete(assignmentId: string, assertCurrent?: () => void, withPublication?: MutationPublication): Promise<boolean> {
+    return this.own(() => this.deleteRoute(assignmentId, assertCurrent, withPublication));
   }
 
-  private async deleteRoute(assignmentId: string): Promise<boolean> {
+  private async deleteRoute(assignmentId: string, assertCurrent?: () => void, withPublication?: MutationPublication): Promise<boolean> {
     this.requireInit();
+    assertCurrent?.();
     const id = typeof assignmentId === 'string' ? assignmentId.trim() : '';
     if (id.length === 0) {
       throw new HandlerError('assignmentId is required', 'ROUTING_INVALID_ASSIGNMENT_ID', 400);
     }
     const existing = this.findById(id);
     if (!existing) return false;
-    this.store.run('DELETE FROM routes WHERE assignmentId = ?', [id]);
-    await this.store.save();
+    if (assertCurrent) await this.store.persistTransaction(transaction => transaction.run('DELETE FROM routes WHERE assignmentId = ?', [id]), assertCurrent, withPublication);
+    else { this.store.run('DELETE FROM routes WHERE assignmentId = ?', [id]); await this.store.save(); }
+    this.markMutation(existing);
     return true;
   }
 }

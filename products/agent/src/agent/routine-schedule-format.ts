@@ -88,7 +88,7 @@ export function formatRoutineSchedulePreview(preview: RoutineSchedulePromotionPr
     '  target connected GoodVibes host/main conversation route',
     '  policy isolated Agent Knowledge only; no default knowledge/non-Agent fallback; no delegated review unless explicitly requested',
     ...scheduleConfirmationRouteLines({
-      workspace: 'workspace action:"run" actionId:"schedule-promote-routine" confirm:true explicitUserRequest:"..."',
+      workspace: 'workspace action:"run" actionId:"schedule-promote-routine"',
       cli: routineScheduleConfirmCommand(preview),
     }),
   ].join('\n');

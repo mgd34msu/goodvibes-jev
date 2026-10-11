@@ -270,9 +270,6 @@ export function presetName(args: AgentReviewPacketPresetsToolArgs, packet: Revie
 
 export function buildPresetRecord(args: AgentReviewPacketPresetsToolArgs): ReviewPacketPresetRecord {
   const explicitUserRequest = readString(args.explicitUserRequest);
-  if (!explicitUserRequest) {
-    throw new Error('explicitUserRequest is required so saved packet presets stay tied to a direct user request.');
-  }
   const packet = readPresetPacket(args);
   return {
     schema: REVIEW_PACKET_PRESET_SCHEMA,

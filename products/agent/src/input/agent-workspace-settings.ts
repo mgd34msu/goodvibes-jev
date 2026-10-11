@@ -1,4 +1,5 @@
-import { postalConfigKey, readConfigSettingForDisplay } from '@goodvibes-jev/engine/sdk/platform/config';
+import { postalConfigKey, readConfigSettingForDisplay, observeImportFile, assertImportFileCurrent, type SubscriptionImportEntry } from '@goodvibes-jev/engine/sdk/platform/config';
+import { captureStrictJudgmentJson } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { existsSync, readFileSync } from 'node:fs';
 import { getAgentSettingsSchema, readAgentSettingValue, type AgentConfigSetting } from '../config/settings-catalog.ts';
 import type { PendingSubscriptionLogin, ProviderSubscription } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -614,6 +615,58 @@ function buildTuiSettingsImportPlan(context: CommandContext | null): TuiSettings
   }
   const subscriptions = planTuiSubscriptions(context, parseErrors);
   return { sources, settings, subscriptions, parseErrors };
+}
+
+/** Private source capture for registered model admission. Never serialize this record. */
+export function captureAgentWorkspaceTuiSettingsImport(context: CommandContext): {
+  readonly settings: readonly { readonly key: string; readonly value: unknown; readonly source: string }[];
+  readonly subscriptions: readonly SubscriptionImportEntry[];
+  readonly sources: readonly { readonly path: string; readonly present: boolean }[];
+  readonly skippedSubscriptions: number;
+  readonly assertCurrent: () => void;
+} {
+  const paths = context.workspace.shellPaths, config = context.platform.configManager;
+  if (!paths || !config) throw new Error('Settings import source is unavailable.');
+  const methods = [paths.resolveUserPath, paths.resolveProjectPath];
+  const sourcePaths = [paths.resolveUserPath('tui', 'settings.json'), paths.resolveProjectPath('tui', 'settings.json'), paths.resolveUserPath('tui', 'subscriptions.json')];
+  const captured = sourcePaths.map(path => ({ path, observation: observeImportFile(path) }));
+  const records = captured.map(({ observation }) => {
+    if (observation.raw === null) return null;
+    try {
+      const value: unknown = captureStrictJudgmentJson(JSON.parse(observation.raw));
+      if (!isRecord(value)) throw new Error('Invalid source');
+      return value;
+    } catch { throw new Error('Settings import source is invalid.'); }
+  });
+  const settings = new Map<string, { readonly key: string; readonly value: unknown; readonly source: string }>();
+  for (let index = 0; index < 2; index++) {
+    const record = records[index]; if (!record) continue;
+    for (const setting of config.getSchema()) {
+      if (!canImportTuiSetting(setting.key)) continue;
+      const value = readNestedSettingValue(record, setting.key);
+      if (value !== undefined) settings.set(setting.key, { key: setting.key, value, source: index === 0 ? 'user-settings' : 'project-settings' });
+    }
+  }
+  const subscriptions: SubscriptionImportEntry[] = []; let skippedSubscriptions = 0;
+  const store = records[2];
+  if (store) {
+    for (const value of readRecordMap(store, 'subscriptions')) {
+      if (isProviderSubscription(value)) subscriptions.push({ kind: 'active', value }); else skippedSubscriptions++;
+    }
+    for (const value of readRecordMap(store, 'pending')) {
+      if (isPendingSubscriptionLogin(value)) subscriptions.push({ kind: 'pending', value }); else skippedSubscriptions++;
+    }
+  }
+  const assertCurrent = () => {
+    if (context.workspace.shellPaths !== paths || context.platform.configManager !== config
+      || paths.resolveUserPath !== methods[0] || paths.resolveProjectPath !== methods[1]
+      || paths.resolveUserPath('tui', 'settings.json') !== sourcePaths[0] || paths.resolveProjectPath('tui', 'settings.json') !== sourcePaths[1]
+      || paths.resolveUserPath('tui', 'subscriptions.json') !== sourcePaths[2]) throw new Error('Settings import source changed.');
+    for (const source of captured) assertImportFileCurrent(source.path, source.observation);
+  };
+  assertCurrent();
+  return { settings: Object.freeze([...settings.values()]), subscriptions: Object.freeze(subscriptions),
+    sources: Object.freeze(captured.map(source => Object.freeze({ path: source.path, present: source.observation.raw !== null }))), skippedSubscriptions, assertCurrent };
 }
 
 export function previewAgentWorkspaceTuiSettingsImport(context: CommandContext | null): TuiSettingsImportPreview | null {

@@ -122,7 +122,7 @@ describe('the daemon composition installs the judgment port', () => {
 
 describe('the settings the port is built from', () => {
   const source = (settings: Record<string, unknown>, env: Record<string, string | undefined>, stored: string | null = null): JudgmentSettingsSource => ({
-    config: { get: (key) => settings[key] ?? { 'judgment.keySource': 'env', 'judgment.endpoint': '', 'judgment.model': '', 'judgment.timeoutMs': 10_000 }[key] },
+    config: { get: (key) => settings[key] ?? { 'judgment.keySource': 'env', 'judgment.endpoint': '', 'judgment.model': '', 'judgment.timeoutMs': 10_000, 'judgment.fallbacks': [] }[key] },
     secrets: { get: async () => stored },
     env,
   });

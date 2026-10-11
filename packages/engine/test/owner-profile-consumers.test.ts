@@ -493,7 +493,7 @@ describe('at-rest admission uses the installed profile read lifetime', () => {
       expect(store.status()).toBe(loaded);
       // A new read while loading must refuse before reaching the provider.
       await readAtRestCredentialSpans([JSON.stringify({ body: `another ${candidate}` })], 'test.profile-at-rest');
-      expect(fake.requests).toHaveLength(1);
+      expect(fake.requests.filter((request) => request.context?.battery === 'engine.runtime.at-rest-credential')).toHaveLength(1);
       release.resolve();
       await expect(reading).rejects.toThrow('unavailable');
       // The old generation reader alone still sees the same adopted state.
@@ -501,16 +501,18 @@ describe('at-rest admission uses the installed profile read lifetime', () => {
       expect(record).not.toHaveBeenCalled();
       expect(attach).not.toHaveBeenCalled();
       expect(log.query()).toEqual([]);
-      expect(redactAtRestLine(line)).not.toContain(candidate);
+      // An active profile replacement has no current source lease. Refuse the
+      // synchronous projection rather than inventing a non-JSONL replacement.
+      expect(() => redactAtRestLine(line)).toThrow('unavailable');
       finishRead.resolve();
       await loading;
       expect(redactAtRestLine(line)).not.toContain(candidate);
       // A genuinely current lease permits a fresh reading and its reuse.
       await readAtRestCredentialSpans([line], 'test.profile-at-rest');
-      expect(fake.requests).toHaveLength(2);
+      expect(fake.requests.filter((request) => request.context?.battery === 'engine.runtime.at-rest-credential')).toHaveLength(2);
       expect(redactAtRestLine(line)).toContain(candidate);
       await readAtRestCredentialSpans([line], 'test.profile-at-rest');
-      expect(fake.requests).toHaveLength(2);
+      expect(fake.requests.filter((request) => request.context?.battery === 'engine.runtime.at-rest-credential')).toHaveLength(2);
       writeFileSync(store.path, FIXTURE.replace('owner@example.com', 'changed@example.com'));
       store.loadSync();
       writeFileSync(store.path, FIXTURE);
@@ -570,21 +572,23 @@ describe('at-rest admission uses the installed profile read lifetime', () => {
       await writingStarted.promise;
       expect(store.status()).toBe(loaded);
       await readAtRestCredentialSpans([JSON.stringify({ body: `another ${candidate}` })], 'test.profile-at-rest');
-      expect(fake.requests).toHaveLength(1);
+      expect(fake.requests.filter((request) => request.context?.battery === 'engine.runtime.at-rest-credential')).toHaveLength(1);
       release.resolve();
       await expect(reading).rejects.toThrow('unavailable');
       expect(store.status()).toBe(loaded);
       expect(record).not.toHaveBeenCalled();
       expect(attach).not.toHaveBeenCalled();
       expect(log.query()).toEqual([]);
-      expect(redactAtRestLine(line)).not.toContain(candidate);
+      // Accepted write intent retires the source before the persisted bytes
+      // change, so no synchronous JSONL projection may use that lease.
+      expect(() => redactAtRestLine(line)).toThrow('unavailable');
       finishWrite.resolve();
       expect((await writing).ok).toBe(true);
       writeFileSync(store.path, FIXTURE);
       store.loadSync();
       expect(redactAtRestLine(line)).not.toContain(candidate);
       await readAtRestCredentialSpans([line], 'test.profile-at-rest');
-      expect(fake.requests).toHaveLength(2);
+      expect(fake.requests.filter((request) => request.context?.battery === 'engine.runtime.at-rest-credential')).toHaveLength(2);
       expect(redactAtRestLine(line)).toContain(candidate);
     } finally {
       release.resolve();

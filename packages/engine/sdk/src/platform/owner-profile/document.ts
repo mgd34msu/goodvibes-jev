@@ -129,6 +129,19 @@ export function splitProvenanceSuffix(line: string): ProvenanceSplit {
   while (searchFrom > 0) {
     const at = line.lastIndexOf(PROVENANCE_MARKER, searchFrom - 1);
     if (at < 0) break;
+    const autonomous = /^ — ([a-z-]+), (\d{4}-\d{2}-\d{2}), autonomous (.+)$/.exec(line.slice(at));
+    const recordedSurface = autonomous?.[1], recordedDate = autonomous?.[2], recordedSource = autonomous?.[3];
+    if (recordedSurface && recordedDate && recordedSource && isProfileSurface(recordedSurface)) {
+      try {
+        const source: unknown = JSON.parse(recordedSource);
+        if (source !== null && typeof source === 'object' && 'goal' in source && typeof source.goal === 'string'
+          && 'criteria' in source && Array.isArray(source.criteria) && source.criteria.every((criterion: unknown) => typeof criterion === 'string')
+          && Object.keys(source).length === 2) {
+          return { text: line.slice(0, at), provenance: { origin: 'autonomous', surface: recordedSurface,
+            date: recordedDate, said: '', source: { goal: source.goal, criteria: source.criteria } } };
+        }
+      } catch { /* Malformed provenance remains ordinary source text. */ }
+    }
     const match = PROVENANCE_SUFFIX.exec(line.slice(at));
     const surface = match?.[1];
     const date = match?.[2];
@@ -143,6 +156,7 @@ export function splitProvenanceSuffix(line: string): ProvenanceSplit {
 
 /** Render a provenance suffix. The inverse of {@link splitProvenanceSuffix}. */
 export function renderProvenanceSuffix(provenance: ProfileProvenance): string {
+  if (provenance.origin === 'autonomous') return `${PROVENANCE_MARKER}${provenance.surface}, ${provenance.date}, autonomous ${JSON.stringify(provenance.source)}`;
   return `${PROVENANCE_MARKER}${provenance.surface}, ${provenance.date}, "${provenance.said}"`;
 }
 

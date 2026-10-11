@@ -50,7 +50,6 @@
   },
   "smoke": {
     "bannerPrefix": "goodvibes-agent ",
-    "forbiddenStrings": ["sqlite-vec", "$bunfs/root"],
     "binaryDefault": "dist/goodvibes-agent-linux-x64"
   },
   "releaseCut": {

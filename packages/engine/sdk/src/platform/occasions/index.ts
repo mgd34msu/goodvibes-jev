@@ -184,3 +184,4 @@ export type {
 } from './capture.js';
 
 export { OccasionReadingWork, OccasionReadingHeldError } from './readings.js';
+export type { OccasionMutationOptions } from './operation.js';

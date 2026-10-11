@@ -39,9 +39,11 @@
  */
 import { statSync } from 'node:fs';
 import { captureRemoteSettingsPrecondition } from '@goodvibes-jev/engine/sdk/platform/runtime/client';
+import { assertProjectionCurrent } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { agentHostPairingStorePath } from '../connected-host-pairing-store.ts';
 import { connectedHostOperatorTokenPath } from '../connected-host-auth.ts';
-import { resolveConnectedHostDialEnabled } from '@goodvibes-jev/engine/sdk/platform/config';
+import { resolveConnectedHostDialEnabled, captureRemoteSettingsImportPrecondition, observeImportFile,
+  assertImportFileCurrent } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { DaemonReachability, DaemonVerbCaller } from '@goodvibes-jev/engine/sdk/platform/runtime/client';
 import { readConnectedHostOperatorToken, connectedHostTokenRequiredMessage } from '../connected-host-auth.ts';
@@ -183,6 +185,30 @@ export function createAgentDaemonVerbCaller(options: AgentDaemonVerbCallerOption
 
   return {
     probe,
+    captureSettingsImportPrecondition: async (request, restriction) => {
+      const signal = restriction?.signal, restrictCurrent = restriction?.assertCurrent;
+      const manager = options.configManager, get = manager.get, homeSelection = options.homeDirectory;
+      const home = typeof homeSelection === 'function' ? homeSelection() : homeSelection;
+      const sources = [connectedHostOperatorTokenPath(home), agentHostPairingStorePath(home)]
+        .map(path => ({ path, observation: observeImportFile(path) }));
+      const resolved = resolveConnection(options);
+      if ('reason' in resolved) throw new Error('Settings connection owner unavailable.');
+      const assertCurrent = () => {
+        if (restriction?.signal !== signal || restriction?.assertCurrent !== restrictCurrent) throw new Error('Settings connection restriction changed.');
+        signal?.throwIfAborted(); assertProjectionCurrent(restrictCurrent);
+        if (options.configManager !== manager || manager.get !== get || options.homeDirectory !== homeSelection
+          || (typeof homeSelection === 'function' ? homeSelection() : homeSelection) !== home) throw new Error('Settings connection owner changed.');
+        for (const source of sources) assertImportFileCurrent(source.path, source.observation);
+        const current = resolveConnection(options);
+        if ('reason' in current || current.baseUrl !== resolved.baseUrl || current.token !== resolved.token
+          || current.selectionIdentity !== resolved.selectionIdentity || current.expectedPrincipalId !== resolved.expectedPrincipalId) throw new Error('Settings connection owner changed.');
+      };
+      // The registry/native settings plan owns config incarnation. This source
+      // binds the actual endpoint selection and its complete physical credentials.
+      assertCurrent();
+      return await captureRemoteSettingsImportPrecondition({ baseUrl: resolved.baseUrl, token: resolved.token, source: 'installed connected host' }, request,
+        { fetchImpl, ...(signal ? { signal } : {}), assertCurrent });
+    },
     captureSettingsPrecondition: async (request) => {
       const manager = options.configManager;
       // An unversioned embed cannot prove connection ABA, so it must not offer

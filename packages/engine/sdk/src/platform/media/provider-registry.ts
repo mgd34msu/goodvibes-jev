@@ -1,4 +1,5 @@
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
+import type { DeliveryLifetime } from '../utils/delivery-lifetime.js';
 
 export type MediaProviderCapability = 'metadata' | 'understand' | 'transform' | 'generate' | 'attachment-store';
 export type MediaProviderState = 'healthy' | 'degraded' | 'disabled' | 'unconfigured';
@@ -75,7 +76,7 @@ export interface MediaProvider {
   status?(): Promise<MediaProviderStatus> | MediaProviderStatus;
   analyze?(request: MediaAnalysisRequest): Promise<MediaAnalysisResult>;
   transform?(request: MediaTransformRequest): Promise<MediaTransformResult>;
-  generate?(request: MediaGenerationRequest): Promise<MediaGenerationResult>;
+  generate?(request: MediaGenerationRequest, lifetime?: DeliveryLifetime): Promise<MediaGenerationResult>;
 }
 
 export interface MediaProviderDescriptor {
@@ -86,6 +87,9 @@ export interface MediaProviderDescriptor {
 
 export class MediaProviderRegistry {
   private readonly providers = new Map<string, MediaProvider>();
+  private incarnation = 0;
+
+  getIncarnation(): number { return this.incarnation; }
 
   register(provider: MediaProvider, options: { readonly replace?: boolean } = {}): () => void {
     const id = provider.id.trim();
@@ -98,13 +102,16 @@ export class MediaProviderRegistry {
         ? provider
         : Object.assign(Object.create(Object.getPrototypeOf(provider)), provider, { id });
     this.providers.set(id, registered);
+    this.incarnation++;
     return () => {
       if (this.providers.get(id) === registered) this.unregister(id);
     };
   }
 
   unregister(id: string): boolean {
-    return this.providers.delete(id);
+    const removed = this.providers.delete(id);
+    if (removed) this.incarnation++;
+    return removed;
   }
 
   get(id: string): MediaProvider | null {

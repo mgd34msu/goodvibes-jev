@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, test } from 'bun:test';
-import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ManagedServiceStatus } from '@goodvibes-jev/engine/sdk/platform/daemon';
@@ -10,6 +10,9 @@ import {
   resolveGoodVibesDaemonExecutable,
 } from '../../cli/service-posture.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 
 function makeExecutable(path: string): void {
   writeFileSync(path, '#!/bin/sh\nexit 0\n', 'utf-8');
@@ -40,6 +43,80 @@ describe('CLI service posture', () => {
 
   afterEach(() => {
     rmSync(root, { recursive: true, force: true });
+  });
+
+  test('log posture masks locally retained credentials without modifying the log or sending its values', async () => {
+    const projectRoot = join(root, 'project'), homeRoot = join(root, 'home');
+    mkdirSync(projectRoot, { recursive: true }); mkdirSync(homeRoot, { recursive: true });
+    const config = new ConfigManager({ surfaceRoot: 'tui', workingDir: projectRoot, homeDir: homeRoot });
+    const logPath = join(root, 'service.log');
+    const original = 'daemon ready\npassword=private-log-value\n';
+    writeFileSync(logPath, original); const before = statSync(logPath);
+    const recorded = fakePort((_, question, state) => question.type === 'choice' ? choiceAnswer(question,
+      state !== null && typeof state === 'object' && !Array.isArray(state) && state.field === 'password' ? 'secret' : 'other', 0.99)
+      : noulAnswer(0.03));
+    const previous = installJudgmentPort(recorded.port);
+    try {
+      const posture = await buildCliServicePosture({ configManager: config, workingDirectory: projectRoot, homeDirectory: homeRoot },
+        { manager: { status: () => createManagedStatus({ platform: 'manual', logPath }) } });
+      expect(posture.log.tail).toContain('daemon ready');
+      expect(posture.log.tail).not.toContain('private-log-value');
+      expect(JSON.stringify(recorded.requests)).not.toContain('private-log-value');
+      expect(readFileSync(logPath, 'utf8')).toBe(original);
+      expect(statSync(logPath).mtimeMs).toBe(before.mtimeMs);
+    } finally { installJudgmentPort(previous); }
+  });
+
+  test('log posture rejects cancellation while a reader ignores its signal', async () => {
+    const projectRoot = join(root, 'project'), homeRoot = join(root, 'home');
+    mkdirSync(projectRoot, { recursive: true }); mkdirSync(homeRoot, { recursive: true });
+    const config = new ConfigManager({ surfaceRoot: 'tui', workingDir: projectRoot, homeDir: homeRoot });
+    const logPath = join(root, 'service.log'); writeFileSync(logPath, 'daemon ready');
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    const recorded = fakePort(() => noulAnswer(0.03));
+    const port: JudgmentPort = { model: recorded.port.model, async ask(request) {
+      entered.resolve(); await release.promise; return recorded.port.ask(request);
+    } };
+    const previous = installJudgmentPort(port), controller = new AbortController();
+    try {
+      const work = buildCliServicePosture({ configManager: config, workingDirectory: projectRoot, homeDirectory: homeRoot },
+        { signal: controller.signal, manager: { status: () => createManagedStatus({ platform: 'manual', logPath }) } });
+      await entered.promise; controller.abort();
+      await expect(work).rejects.toThrow();
+    } finally { release.resolve(); installJudgmentPort(previous); }
+  });
+
+  test('log posture rejects a file replaced while classification is pending', async () => {
+    const projectRoot = join(root, 'project'), homeRoot = join(root, 'home');
+    mkdirSync(projectRoot, { recursive: true }); mkdirSync(homeRoot, { recursive: true });
+    const config = new ConfigManager({ surfaceRoot: 'tui', workingDir: projectRoot, homeDir: homeRoot });
+    const logPath = join(root, 'service.log'); writeFileSync(logPath, 'daemon ready');
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    const recorded = fakePort(() => noulAnswer(0.03));
+    const port: JudgmentPort = { model: recorded.port.model, async ask(request) {
+      entered.resolve(); await release.promise; return recorded.port.ask(request);
+    } };
+    const previous = installJudgmentPort(port);
+    try {
+      const work = buildCliServicePosture({ configManager: config, workingDirectory: projectRoot, homeDirectory: homeRoot },
+        { manager: { status: () => createManagedStatus({ platform: 'manual', logPath }) } });
+      await entered.promise; rmSync(logPath); writeFileSync(logPath, 'changed daemon ready'); release.resolve();
+      await expect(work).rejects.toThrow('Service log changed');
+    } finally { release.resolve(); installJudgmentPort(previous); }
+  });
+
+  test('service manager failure text cannot publish an inline credential', async () => {
+    const projectRoot = join(root, 'project'), homeRoot = join(root, 'home');
+    mkdirSync(projectRoot, { recursive: true }); mkdirSync(homeRoot, { recursive: true });
+    const config = new ConfigManager({ surfaceRoot: 'tui', workingDir: projectRoot, homeDir: homeRoot });
+    const recorded = fakePort((_, question) => question.type === 'choice' ? choiceAnswer(question, 'secret', 0.99) : noulAnswer(0.97));
+    const previous = installJudgmentPort(recorded.port);
+    try {
+      const posture = await buildCliServicePosture({ configManager: config, workingDirectory: projectRoot, homeDirectory: homeRoot },
+        { manager: { status: () => createManagedStatus({ platform: 'manual', actionError: 'password=private-manager-value' }) } });
+      expect(JSON.stringify(posture)).not.toContain('private-manager-value');
+      expect(JSON.stringify(recorded.requests)).not.toContain('private-manager-value');
+    } finally { installJudgmentPort(previous); }
   });
 
   test('resolves the daemon executable from package artifacts before PATH or source fallbacks', () => {

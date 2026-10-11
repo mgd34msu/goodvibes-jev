@@ -107,7 +107,7 @@ export interface PersonalOpsLiveRecord {
 }
 
 export interface PersonalOpsRecordCertification {
-  readonly schemaStatus: 'certified' | 'legacy';
+  readonly schemaStatus: 'legacy';
   readonly schemaVersion?: string;
   readonly publicationGuarantee?: string;
   readonly publisher?: string;

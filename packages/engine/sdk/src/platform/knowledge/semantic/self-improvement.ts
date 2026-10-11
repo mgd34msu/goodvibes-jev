@@ -126,8 +126,10 @@ export async function runKnowledgeSemanticSelfImprovement(
   const createdGaps = gapIdFilter ? 0 : await discoverIntrinsicGaps(context.store, spaceId, sourceIdFilter, objectProfiles, input.signal, context.shouldStop);
   if (input.signal?.aborted) return emptySelfImproveResult(spaceId, 'Run was cancelled after intrinsic gap discovery.');
   if (context.shouldStop?.()) return emptySelfImproveResult(spaceId, 'Run was stopped after intrinsic gap discovery: background knowledge work is paused for memory pressure.');
-  const candidates = collectCandidateGaps(context.store, spaceId, sourceIdFilter, gapIdFilter);
-  const plan = createSelfImproveRunPlan(candidates, input);
+  const candidates = await collectCandidateGaps(context.store, spaceId, sourceIdFilter, gapIdFilter,
+    { signal: input.signal, shouldStop: context.shouldStop });
+  candidates.assertCurrent();
+  const plan = createSelfImproveRunPlan(candidates.gaps, input);
   const state = createSelfImproveRunState(plan);
 
   for (const gap of plan.gaps) {

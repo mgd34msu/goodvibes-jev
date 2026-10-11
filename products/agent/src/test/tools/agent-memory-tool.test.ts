@@ -1,8 +1,11 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { CommandContext, CommandRegistry } from '../../input/command-registry.ts';
 import { createAgentMemoryTool, registerAgentMemoryTool } from '../../tools/agent-memory-tool.ts';
+import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
+import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
+afterAll(cleanupResearchScreeningFixtures);
 
 function fakeTool(name: string, calls: Record<string, unknown>[]): Tool {
   return {
@@ -22,10 +25,11 @@ function makeTool(
   harnessCalls: Record<string, unknown>[] = [],
   localCalls: Record<string, unknown>[] = [],
 ): Tool {
+  const registry = new ToolRegistry(); bindAgentResearchSourceOwner(registry, ordinaryResearchOwner());
   return createAgentMemoryTool({
     commandRegistry: {} as CommandRegistry,
     commandContext: { workspace: {}, platform: {}, session: { runtime: {} } } as CommandContext,
-    toolRegistry: new ToolRegistry(),
+    toolRegistry: registry,
     harnessTool: fakeTool('agent_harness', harnessCalls),
     localRegistryTool: fakeTool('agent_local_registry', localCalls),
   });

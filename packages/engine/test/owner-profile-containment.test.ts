@@ -19,8 +19,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  redactSensitiveData,
-  redactStructuredData,
+  redactSensitiveDataAsync as redactSensitiveData,
+  redactStructuredDataAsync as redactStructuredData,
   registerProfileRedactionValues,
 } from '../sdk/src/platform/utils/redaction.ts';
 import { redactedErrorMessage } from '../sdk/src/platform/utils/error-display.ts';
@@ -147,17 +147,17 @@ async function installedStore(text: string = FIXTURE): Promise<OwnerProfileStore
 }
 
 describe('§11.3: closed-tier values are redacted wherever redaction runs', () => {
-  test('with nothing registered, redaction behaves exactly as it did before', () => {
-    expect(redactSensitiveData('ship to 200 Office Way, Lansing, MI 48933, US'))
+  test('with nothing registered, redaction behaves exactly as it did before', async () => {
+    expect(await redactSensitiveData('ship to 200 Office Way, Lansing, MI 48933, US'))
       .toBe('ship to 200 Office Way, Lansing, MI 48933, US');
-    expect(redactSensitiveData('token sk-ABCDEFGHIJKLMNOPQRSTUVWX'))
+    expect(await redactSensitiveData('token sk-ABCDEFGHIJKLMNOPQRSTUVWX'))
       .toBe('token [REDACTED_API_KEY]');
   });
 
   test('every closed-tier value becomes [REDACTED_PROFILE] in free text', async () => {
     await installedStore();
     for (const value of CLOSED_VALUES) {
-      const redacted = redactSensitiveData(`the answer is ${value} ok`);
+      const redacted = await redactSensitiveData(`the answer is ${value} ok`);
       expect(redacted, `not redacted: ${value}`).not.toContain(value);
       expect(redacted).toContain('[REDACTED_PROFILE]');
     }
@@ -165,13 +165,13 @@ describe('§11.3: closed-tier values are redacted wherever redaction runs', () =
 
   test('open-tier values are NOT redacted: they are already in context by design', async () => {
     await installedStore();
-    expect(redactSensitiveData('timezone America/Detroit')).toContain('America/Detroit');
-    expect(redactSensitiveData('he goes by Avery')).toContain('Avery');
+    expect(await redactSensitiveData('timezone America/Detroit')).toContain('America/Detroit');
+    expect(await redactSensitiveData('he goes by Avery')).toContain('Avery');
   });
 
   test('a profile-shaped object key is redacted whatever it holds', async () => {
     await installedStore();
-    const redacted = redactStructuredData({
+    const redacted = await redactStructuredData({
       shippingAddress: '200 Office Way, Lansing, MI 48933, US',
       billing_address: { line1: '401 Home St', city: 'Lansing' },
       quietHours: '22:00-07:00',
@@ -195,11 +195,11 @@ describe('§11.3: closed-tier values are redacted wherever redaction runs', () =
       consumerFallbackEnabled: () => true,
       injectOpenTierEnabled: () => true,
     });
-    expect(redactSensitiveData('at 200 Office Way, Lansing, MI 48933, US')).toContain('[REDACTED_PROFILE]');
+    expect(await redactSensitiveData('at 200 Office Way, Lansing, MI 48933, US')).toContain('[REDACTED_PROFILE]');
 
     writeFileSync(path, FIXTURE.replace('200 Office Way', '300 Other Way'), 'utf-8');
     await store.load();
-    expect(redactSensitiveData('at 300 Other Way, Lansing, MI 48933, US')).toContain('[REDACTED_PROFILE]');
+    expect(await redactSensitiveData('at 300 Other Way, Lansing, MI 48933, US')).toContain('[REDACTED_PROFILE]');
   });
 });
 
@@ -208,9 +208,9 @@ describe('the footgun: a short or common value must never become a pattern', () 
     await installedStore();
     // All four are closed-tier or open-tier values that are ordinary words.
     // Redacting them would destroy the diagnostic an export exists to carry.
-    expect(redactSensitiveData('the USD amount was standard')).toBe('the USD amount was standard');
-    expect(redactSensitiveData('sent over telegram')).toBe('sent over telegram');
-    expect(redactSensitiveData('imperial units, iso dates')).toBe('imperial units, iso dates');
+    expect(await redactSensitiveData('the USD amount was standard')).toBe('the USD amount was standard');
+    expect(await redactSensitiveData('sent over telegram')).toBe('sent over telegram');
+    expect(await redactSensitiveData('imperial units, iso dates')).toBe('imperial units, iso dates');
   });
 
   test('a profile of only short values registers no patterns at all', async () => {
@@ -226,10 +226,10 @@ describe('the footgun: a short or common value must never become a pattern', () 
       '',
     ].join('\n'));
     const corpus = 'USD std sms a b c the quick brown fox';
-    expect(redactSensitiveData(corpus)).toBe(corpus);
+    expect(await redactSensitiveData(corpus)).toBe(corpus);
   });
 
-  test('an empty or one-character value cannot blank the corpus', async () => {
+  test('a one-character identifying value is contained at whole-token boundaries', async () => {
     await installedStore([
       '## Identity',
       '',
@@ -238,7 +238,7 @@ describe('the footgun: a short or common value must never become a pattern', () 
       '',
     ].join('\n'));
     const corpus = 'M is a letter that appears in Many words';
-    expect(redactSensitiveData(corpus)).toBe(corpus);
+    expect(await redactSensitiveData(corpus)).toBe('[REDACTED_PROFILE] is a letter that appears in Many words');
   });
 });
 
@@ -256,8 +256,8 @@ describe('§14 #10: a session export redacts profile values', () => {
 
   test('markdown and JSON exports both redact when redaction is on', async () => {
     await installedStore();
-    const markdown = exportToMarkdownExtended(messages, undefined, { redact: true });
-    const json = exportToJSON(messages, undefined, { redact: true });
+    const markdown = await exportToMarkdownExtended(messages, undefined, { redact: true });
+    const json = await exportToJSON(messages, undefined, { redact: true });
     for (const text of [markdown, json]) {
       expect(text).not.toContain('200 Office Way');
       expect(text).not.toContain('owner@example.com');
@@ -332,12 +332,12 @@ describe('§11.2 / §14 #12: the open tier is injected, the closed tier never is
     expect(withOpenTierProfileBlock('base prompt')).toBe('base prompt');
   });
 
-  test('no profile at all leaves the prompt byte-identical, with no placeholder', () => {
+  test('no profile at all leaves the prompt byte-identical, with no placeholder', async () => {
     expect(openTierContextBlock()).toBe('');
     expect(withOpenTierProfileBlock('base prompt')).toBe('base prompt');
   });
 
-  test('an unavailable profile renders nothing rather than an error line', () => {
+  test('an unavailable profile renders nothing rather than an error line', async () => {
     const store = new OwnerProfileStore({ path: join(mkTemp(), 'missing-dir', 'owner-profile.md') });
     expect(renderOpenTierBlock(store)).toBe('');
     expect(store.status().kind).toBe('unavailable');
@@ -359,7 +359,7 @@ describe('§10 / §14 #19: third-party personal data', () => {
     expect(renderOpenTierBlock(store)).not.toContain('Sarah');
 
     // Not in an export.
-    const exported = exportToJSON(
+    const exported = await exportToJSON(
       [{ role: 'user' as const, content: 'Sarah Whitfield, sister, sarah@example.com' }],
       undefined,
       { redact: true },
@@ -383,14 +383,14 @@ describe('closed-tier prose is redacted from EVERY closed section, not four of t
     // heading except Style closed, and an earlier version collected prose only
     // from People/Places/Work/Notes, so this line left an export in the clear
     // while the People lines beside it were redacted.
-    const redacted = redactSensitiveData('log: Home is the blue house on the corner of Elm');
+    const redacted = await redactSensitiveData('log: Home is the blue house on the corner of Elm');
     expect(redacted).not.toContain('blue house on the corner of Elm');
     expect(redacted).toContain('[REDACTED_PROFILE]');
   });
 
   test('it is gone from a session export too', async () => {
     await installedStore();
-    const exported = exportToJSON(
+    const exported = await exportToJSON(
       [{ role: 'user' as const, content: 'Home is the blue house on the corner of Elm' }],
       undefined,
       { redact: true },
@@ -400,7 +400,7 @@ describe('closed-tier prose is redacted from EVERY closed section, not four of t
 
   test('Style prose stays in the clear: it is the one open section', async () => {
     await installedStore();
-    expect(redactSensitiveData('Keep replies short unless I ask for detail'))
+    expect(await redactSensitiveData('Keep replies short unless I ask for detail'))
       .toContain('Keep replies short unless I ask for detail');
   });
 });
@@ -408,20 +408,20 @@ describe('closed-tier prose is redacted from EVERY closed section, not four of t
 describe('§10 is absolute: a short People line is redacted despite the floor', () => {
   test('a seven-character People line does not survive redactSensitiveData', async () => {
     await installedStore();
-    const redacted = redactSensitiveData('cc Bob Lee on the thread');
+    const redacted = await redactSensitiveData('cc Bob Lee on the thread');
     expect(redacted).not.toContain('Bob Lee');
     expect(redacted).toContain('[REDACTED_PROFILE]');
   });
 
   test('and not redactStructuredData either', async () => {
     await installedStore();
-    const redacted = redactStructuredData({ note: 'ask Bob Lee about it' }) as { note: string };
+    const redacted = await redactStructuredData({ note: 'ask Bob Lee about it' }) as { note: string };
     expect(redacted.note).not.toContain('Bob Lee');
   });
 
   test('and not a session export', async () => {
     await installedStore();
-    const exported = exportToJSON(
+    const exported = await exportToJSON(
       [{ role: 'assistant' as const, content: 'I will ask Bob Lee.' }],
       undefined,
       { redact: true },
@@ -438,9 +438,9 @@ describe('§10 is absolute: a short People line is redacted despite the floor', 
     ].join('\n'));
     // `Al` must not blank the "Al" out of "Already" / "Although".
     const corpus = 'Already although Alberta';
-    expect(redactSensitiveData(corpus)).toBe(corpus);
+    expect(await redactSensitiveData(corpus)).toBe(corpus);
     // But the name itself, standing alone, is redacted.
-    expect(redactSensitiveData('ask Al about it')).not.toContain(' Al ');
+    expect(await redactSensitiveData('ask Al about it')).not.toContain(' Al ');
   });
 });
 
@@ -468,12 +468,12 @@ describe('the redaction value set is not rebuilt on every call', () => {
       injectOpenTierEnabled: () => true,
     });
 
-    for (let i = 0; i < 50; i++) redactSensitiveData(`line ${i} with no profile value in it`);
+    for (let i = 0; i < 50; i++) await redactSensitiveData(`line ${i} with no profile value in it`);
     expect(reads).toBe(1);
 
     // A reload is a new generation, so exactly one more read happens.
     await store.load();
-    redactSensitiveData('another line');
+    await redactSensitiveData('another line');
     expect(reads).toBe(2);
   });
 });

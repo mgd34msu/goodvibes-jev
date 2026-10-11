@@ -90,3 +90,33 @@ test('array-coerced language and outcome cannot select a grammar', () => {
     expect(readCodeLanguageResponse(request, raw)).toBeUndefined();
   }
 });
+
+test('an admitted approximate-unit Choice reaches the actual Markdown grammar unchanged', async () => {
+  transport = async request => {
+    const raw = response(request);
+    raw.readings.language.probabilities.typescript = 0.99;
+    const original = structuredClone(raw);
+    expect(readCodeLanguageResponse(request, raw)).toEqual({ status: 'ready', language: 'typescript' });
+    expect(raw).toEqual(original);
+    return raw;
+  };
+  const el = render(); await wait(() => !!el.querySelector('.hljs-keyword'));
+  expect(el.querySelector('.markdown-code-label')?.textContent).toBe('typescript');
+  expect(el.querySelector('code')?.textContent).toBe('const count: number = 2;');
+});
+
+test.each(['negative', 'over-one', 'non-finite', 'non-maximal', 'unknown-choice', 'extra-option', 'outside-total', 'invalid-confidence'])(
+  'rejects %s code-language Choice evidence', kind => {
+    const request: Request = { protocolVersion: 1, requestId: crypto.randomUUID(), battery: 'webui.code.language', batteryVersion: 1,
+      input: { ...source, start: 0, end: 5, contentDigest: 'a'.repeat(64) } };
+    const raw = response(request); const reading = raw.readings.language;
+    if (kind === 'negative') reading.probabilities.python = -0.001;
+    if (kind === 'over-one') reading.probabilities.typescript = 1.001;
+    if (kind === 'non-finite') reading.probabilities.typescript = Infinity;
+    if (kind === 'non-maximal') { reading.probabilities.typescript = 0.5; reading.probabilities.python = 0.5000000001; }
+    if (kind === 'unknown-choice') { reading.choice = 'invented'; Object.assign(raw, { value: { language: 'invented' } }); }
+    if (kind === 'extra-option') reading.probabilities.invented = 0;
+    if (kind === 'outside-total') reading.probabilities.typescript = 0.98;
+    if (kind === 'invalid-confidence') reading.confidence = 1.001;
+    expect(readCodeLanguageResponse(request, raw)).toBeUndefined();
+  });

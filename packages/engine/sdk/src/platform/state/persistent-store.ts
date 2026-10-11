@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { promises as fs, existsSync } from 'fs';
+import { promises as fs, existsSync, lstatSync, realpathSync, renameSync, rmSync } from 'fs';
 import { basename, dirname, join, resolve } from 'path';
 import { summarizeError } from '../utils/error-display.js';
 import { confirmFileDurable } from '../utils/atomic-json-store.js';
+import { captureMutationDescriptors, capturePreparedFilePublication, publishFileMutation, type MutationPublication } from '../utils/file-mutation.js';
 
 /**
  * PersistentStore, generic JSON file persistence with atomic writes.
@@ -93,6 +94,26 @@ const TEMP_SWEEP_INTERVAL_MS = 60_000;
  * files a process writes, which is a fixed, small set.
  */
 const lastTempSweepAt = new Map<string, number>();
+
+/** Retain an owner's already-created private staging directory across native awaits. */
+function captureTemporaryDirectory(directory: string, parent: string): () => void {
+  const stage = resolve(directory), targetParent = resolve(parent);
+  if (dirname(stage) !== targetParent) throw new Error('PersistentStore temporary directory must be a direct child of its parent.');
+  const snapshot = () => {
+    const stat = lstatSync(stage, { bigint: true, throwIfNoEntry: false });
+    const parentStat = lstatSync(targetParent, { bigint: true, throwIfNoEntry: false });
+    if (!stat?.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o777n) !== 0o700n
+      || !parentStat?.isDirectory() || parentStat.isSymbolicLink() || parentStat.dev !== stat.dev
+      || (process.geteuid && stat.uid !== BigInt(process.geteuid()))) {
+      throw new Error('PersistentStore temporary directory is not private.');
+    }
+    const physical = realpathSync(stage);
+    if (dirname(physical) !== realpathSync(targetParent)) throw new Error('PersistentStore temporary directory escaped its parent.');
+    return `${stat.dev}:${stat.ino}:${stat.mode}:${stat.uid}:${stat.gid}:${physical}`;
+  };
+  const captured = snapshot();
+  return () => { if (snapshot() !== captured) throw new Error('PersistentStore temporary directory changed.'); };
+}
 
 /**
  * How many orphaned temp files this process has reclaimed.
@@ -242,34 +263,65 @@ export class PersistentStore<T extends Record<string, unknown>> {
    * failures propagate, and file plus full path ancestry are confirmed after
    * publication. Rejection may follow rename; new bytes are never rolled back.
    */
-  async persist(data: T, options: { readonly durable?: boolean; readonly beforePublish?: (() => void) | undefined; readonly afterPublish?: (() => void) | undefined } = {}): Promise<void> {
+  async persist(data: T, options: { readonly durable?: boolean; readonly synchronousPublish?: boolean; readonly temporaryDirectory?: string | undefined; readonly withPublication?: MutationPublication | undefined; readonly beforePublish?: (() => void) | undefined; readonly afterPublish?: (() => void) | undefined; readonly assertCurrent?: (() => void) | undefined; readonly onEffect?: ((published?: boolean) => void) | undefined } = {}): Promise<void> {
+    const withPublication = options.withPublication;
+    const temporaryDirectory = options.temporaryDirectory;
+    if (temporaryDirectory !== undefined && typeof temporaryDirectory !== 'string') throw new Error('PersistentStore temporary directory is unavailable.');
+    const assertOptions = temporaryDirectory === undefined ? undefined : captureMutationDescriptors(options,
+      ['temporaryDirectory', 'assertCurrent', 'onEffect', 'beforePublish', 'afterPublish', 'withPublication', 'synchronousPublish', 'durable']);
+    const outerCurrent = options.assertCurrent;
+    const publicationPath = temporaryDirectory === undefined ? this.filePath : resolve(this.filePath);
+    const publicationDirectory = temporaryDirectory === undefined ? this.dir : dirname(publicationPath);
+    const tempDir = temporaryDirectory === undefined ? this.dir : resolve(temporaryDirectory);
+    const assertTemporaryCurrent = temporaryDirectory === undefined ? undefined : captureTemporaryDirectory(tempDir, publicationDirectory);
+    const assertCurrent = () => { assertOptions?.(); if (outerCurrent) Reflect.apply(outerCurrent, options, []); assertOptions?.(); assertTemporaryCurrent?.(); };
     if (this.inMemory) {
-      options.beforePublish?.();
-      this.memoryData = structuredClone(data);
-      options.afterPublish?.();
+      await publishFileMutation(withPublication, assertPublicationCurrent => {
+        assertCurrent(); options.beforePublish?.(); assertCurrent(); assertPublicationCurrent();
+        this.memoryData = structuredClone(data);
+        options.afterPublish?.(); assertCurrent(); assertPublicationCurrent();
+      });
       return;
     }
-    await fs.mkdir(this.dir, { recursive: true, mode: DIR_MODE });
-    await this.reapOrphanedTempFiles();
-    const tmpPath = `${this.filePath}.tmp.${process.pid}.${randomUUID()}`;
+    assertCurrent();
+    await fs.mkdir(publicationDirectory, { recursive: true, mode: DIR_MODE });
+    options.onEffect?.(); assertCurrent();
+    await this.reapOrphanedTempFiles(assertCurrent, options.onEffect, tempDir);
+    assertCurrent();
+    const tmpPath = join(tempDir, `${basename(this.filePath)}.tmp.${process.pid}.${randomUUID()}`);
     const content = JSON.stringify(data, null, 2) + '\n';
     try {
       // `wx` + an explicit mode: the file is owner-only from the instant it
       // exists, never 0644-then-chmod, which is a window a reader can hit.
+      assertCurrent();
       const handle = await fs.open(tmpPath, 'wx', FILE_MODE);
       try {
+        options.onEffect?.(); assertCurrent();
         await handle.writeFile(content, 'utf-8');
+        assertCurrent();
         await handle.sync();
+        assertCurrent();
       } finally {
         await handle.close();
       }
-      options.beforePublish?.();
-      await fs.rename(tmpPath, this.filePath);
-      options.afterPublish?.();
-      await syncDirectory(this.dir, options.durable === true);
-      if (options.durable === true) confirmFileDurable(this.filePath);
+      await publishFileMutation(withPublication, assertPublicationCurrent => {
+        assertCurrent(); options.beforePublish?.(); assertCurrent(); assertPublicationCurrent();
+        const assertPublished = options.assertCurrent || withPublication ? capturePreparedFilePublication(tmpPath) : undefined;
+        const published = () => {
+          assertPublished?.(publicationPath);
+          options.onEffect?.(true); options.afterPublish?.();
+          assertCurrent(); assertPublicationCurrent();
+        };
+        if (options.synchronousPublish === true) { renameSync(tmpPath, publicationPath); published(); return; }
+        return fs.rename(tmpPath, publicationPath).then(published);
+      });
+      await syncDirectory(publicationDirectory, options.durable === true);
+      assertCurrent();
+      if (options.durable === true) confirmFileDurable(publicationPath);
     } catch (error) {
-      await fs.rm(tmpPath, { force: true }).catch(() => undefined);
+      if (assertTemporaryCurrent) {
+        try { assertTemporaryCurrent(); rmSync(tmpPath, { force: true }); } catch { /* Preserve retired or replaced stages. */ }
+      } else await fs.rm(tmpPath, { force: true }).catch(() => undefined);
       throw error;
     }
   }
@@ -283,8 +335,9 @@ export class PersistentStore<T extends Record<string, unknown>> {
    * never at risk. Entirely best-effort: this is litter collection, and a write
    * must not fail because a directory listing did.
    */
-  private async reapOrphanedTempFiles(): Promise<void> {
+  private async reapOrphanedTempFiles(assertCurrent?: () => void, onEffect?: () => void, directory = this.dir): Promise<void> {
     const now = Date.now();
+    assertCurrent?.();
     const last = lastTempSweepAt.get(this.filePath);
     if (last !== undefined && now - last < TEMP_SWEEP_INTERVAL_MS) return;
     lastTempSweepAt.set(this.filePath, now);
@@ -292,20 +345,23 @@ export class PersistentStore<T extends Record<string, unknown>> {
     const prefix = `${basename(this.filePath)}.tmp.`;
     let names: string[];
     try {
-      names = await fs.readdir(this.dir);
+      names = await fs.readdir(directory);
     } catch {
       return;
     }
+    assertCurrent?.();
     for (const name of names) {
       if (!name.startsWith(prefix)) continue;
-      const path = join(this.dir, name);
+      const path = join(directory, name);
       try {
         const stat = await fs.stat(path);
         if (now - stat.mtimeMs <= ORPHANED_TEMP_AFTER_MS) continue;
       } catch {
         continue; // vanished between the listing and the stat
       }
+      assertCurrent?.();
       const removed = await fs.rm(path, { force: true }).then(() => true, () => false);
+      onEffect?.(); assertCurrent?.();
       if (removed) orphanedTempFilesReclaimed += 1;
     }
   }

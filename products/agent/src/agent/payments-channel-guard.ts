@@ -112,7 +112,9 @@ export async function screenOutboundForCardMaterial(input: {
   readonly surface: string;
   readonly message: string;
   readonly title?: string;
-}): Promise<CardMaterialRefusal | null> {
+}, options: { readonly signal?: AbortSignal; readonly assertCurrent?: () => void } = {}): Promise<CardMaterialRefusal | null> {
+  const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); };
+  assertCurrent();
   if (mayEnterCardDetails(input.surface)) return null;
 
   const parts = [input.message, input.title ?? ''];
@@ -121,6 +123,7 @@ export async function screenOutboundForCardMaterial(input: {
 
   for (const part of parts) {
     if (part.length === 0) continue;
+    assertCurrent();
     // The allowed:true branch is unreachable here, mayEnterCardDetails already
     // returned above for every surface that would produce it, so this reads
     // only `matched` and `reason`, which is what evaluateCardEntry yields for a
@@ -131,10 +134,12 @@ export async function screenOutboundForCardMaterial(input: {
     // sends would make the channel unusable. A CVV typed as part of real card
     // entry arrives alongside a PAN or an expiry, which do match.
     const decision = await evaluateCardEntry({ surface: input.surface, text: part });
+    assertCurrent();
     for (const shape of decision.matched) matched.add(shape);
     if (decision.reason !== null) reason = decision.reason;
   }
 
+  assertCurrent();
   if (reason === null || matched.size === 0) return null;
   return { surface: input.surface, matched: [...matched], reason };
 }

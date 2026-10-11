@@ -3,16 +3,20 @@ import type { CommandContext } from '../input/command-registry.ts';
 import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
 import { types as nodeTypes } from 'node:util';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import { assertCurrentToolExecution, ToolInputProjectionError, type ToolInputProjector, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolExecution, assertCurrentToolInvocation, assertCurrentToolEffect, ToolInputProjectionError, type ToolInputProjector, type ToolRegistry, type ToolExecutionEffect } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { captureModelReadingInput, assertModelReadingInputCurrent, modelReadingServicePath } from './agent-harness-model-reading-source.ts';
 import { captureCatalogData } from './agent-harness-catalog-ranking.ts';
 import { createPersonalOpsInputProjector } from './agent-personal-ops-ingress.ts';
+import { createChannelDraftReferenceCapture } from './agent-channel-draft-reference.ts';
 
 type ToolExecuteOptions = NonNullable<Parameters<Tool['execute']>[1]>;
 
-const CATALOG_MODES = new Set(['modes', 'mode', 'commands', 'command', 'run_command', 'tools', 'tool', 'operator_methods', 'operator_method']);
+const PRESERVED_CATALOG_MODES = new Set(['route_decision', 'browser_control_route', 'run_local_model_smoke', 'autonomy_intake', 'autonomy_queue', 'autonomy_queue_item', 'learning_curator', 'learning_candidate', 'background_processes', 'background_process', 'cli_commands', 'cli_command', 'shortcuts', 'keybindings', 'keybinding', 'set_keybinding', 'reset_keybinding', 'run_keybinding', 'agent_orchestration', 'agent_orchestration_agent', 'execution_posture', 'execution_route', 'execution_history', 'execution_history_item', 'document_ops_lane', 'delegation_posture', 'delegation_route']);
+const CATALOG_MODES = new Set(['modes', 'mode', 'commands', 'command', 'run_command', 'tools', 'tool', 'operator_methods', 'operator_method', ...PRESERVED_CATALOG_MODES]);
+const PERSONAL_OPS_MODES = new Set(['personal_ops_briefing', 'personal_ops', 'personal_ops_queue', 'personal_ops_intake', 'personal_ops_lane', 'run_personal_ops_read']);
+const PROTECTED_COMMS_EFFECT_MODES = new Set(['channel_draft_save', 'channel_draft_send', 'channel_routing_assign', 'channel_routing_remove']);
 const projectionGuards = new WeakMap<object, () => void>();
-const forwardedGuards = new WeakMap<object, { readonly options: ToolExecuteOptions | undefined; readonly assertCurrent: () => void }>();
+const forwardedGuards = new WeakMap<object, { readonly options: ToolExecuteOptions | undefined; readonly assertCurrent: () => void; readonly assertInvocation: () => boolean; readonly assertEffect: (effect: ToolExecutionEffect) => boolean }>();
 const publicationGuards = new WeakMap<object, Map<string | (() => void), () => void>>();
 function retainedGuards(args: object): Map<string | (() => void), () => void> {
   let guards = publicationGuards.get(args);
@@ -41,7 +45,9 @@ export function catalogRoutingInput(input: Record<string, unknown>): Record<stri
 
 export function isHarnessCatalogQuery(input: Record<string, unknown>): boolean {
   const routing = catalogRoutingInput(input);
+  if (typeof routing.mode === 'string' && (PERSONAL_OPS_MODES.has(routing.mode) || PROTECTED_COMMS_EFFECT_MODES.has(routing.mode))) { captureCatalogData(input); return true; }
   if (routing.mode === 'model_routing' || routing.mode === 'model_route') { captureCatalogData(input); return true; }
+  if (typeof routing.mode === 'string' && PRESERVED_CATALOG_MODES.has(routing.mode)) captureCatalogData(input);
   return typeof routing.mode === 'string' && CATALOG_MODES.has(routing.mode)
     && [routing.query, routing.target].some((value) => typeof value === 'string' && value.trim().length > 0);
 }
@@ -89,7 +95,7 @@ function catalogContextGuard(registry: ToolRegistry, context?: CommandContext, s
 export function createHarnessCatalogInputProjector(registry: ToolRegistry, fallback?: ToolInputProjector,
   selected = isHarnessCatalogQuery, context?: CommandContext): ToolInputProjector {
   const projector = createPersonalOpsInputProjector(registry, fallback, selected);
-  return { async project(request) {
+  return { captureNativeReferences: createChannelDraftReferenceCapture(context), async project(request) {
     const protectedQuery = selected(request.args);
     const retained = retainedGuards(request.args);
     const routing = catalogRoutingInput(request.args);
@@ -121,7 +127,15 @@ export function createHarnessCatalogInputProjector(registry: ToolRegistry, fallb
         // A structural copy cannot inherit a protected invocation's lifetime.
         projectionGuards.set(candidate, assertCurrent); publicationGuards.set(candidate, retained);
       },
-      async release() { released = true; await result.release?.(); guarded.assertCurrent(); for (const guard of retained.values()) guard(); },
+      async release() {
+        // Engine cleanup retires the one-use execution before releasing its
+        // projection. Only retained source/backend facts survive that lease.
+        released = true;
+        await result.release?.();
+        assertContext();
+        if (original) assertModelReadingInputCurrent(request.args, originalJson);
+        for (const guard of retained.values()) guard();
+      },
     };
   } };
 }
@@ -145,15 +159,34 @@ export function harnessCatalogExecutionGuard(args: Record<string, unknown>, opti
   };
 }
 
+/** Trusted translations retain the original engine proof; arguments never mint it. */
+export function harnessCatalogInvocationAuthority(args: Record<string, unknown>, options?: ToolExecuteOptions, effect?: ToolExecutionEffect): boolean {
+  const inherited = forwardedGuards.get(args);
+  if (inherited) {
+    if (inherited.options !== options) throw new ToolInputProjectionError('stale');
+    inherited.assertCurrent();
+    return effect ? inherited.assertEffect(effect) : inherited.assertInvocation();
+  }
+  harnessCatalogExecutionGuard(args, options)();
+  return effect ? assertCurrentToolEffect(args, options, effect) : assertCurrentToolInvocation(args, options);
+}
+
 /** Argument translation retains the exact options capability and original guard. */
 export async function forwardHarnessCatalogCall(tool: Tool, original: Record<string, unknown>, forwarded: Record<string, unknown>, options?: ToolExecuteOptions,
   additionalGuard?: () => void) {
   const originalGuard = harnessCatalogExecutionGuard(original, options);
+  const inherited = forwardedGuards.get(original);
+  const previousForwarded = forwardedGuards.get(forwarded);
+  const originalInvocation = inherited ? inherited.assertInvocation : () => assertCurrentToolInvocation(original, options);
+  const originalEffect = inherited ? inherited.assertEffect : (effect: ToolExecutionEffect) => assertCurrentToolEffect(original, options, effect);
   const assertCurrent = () => { originalGuard(); additionalGuard?.(); };
   assertCurrent(); publicationGuards.set(forwarded, retainedGuards(original));
-  forwardedGuards.set(forwarded, { options, assertCurrent });
+  forwardedGuards.set(forwarded, { options, assertCurrent, assertInvocation: () => { assertCurrent(); return originalInvocation(); }, assertEffect: effect => { assertCurrent(); return originalEffect(effect); } });
   try { const result = await tool.execute(forwarded, options); assertCurrent(); return result; }
-  finally { forwardedGuards.delete(forwarded); }
+  finally {
+    if (previousForwarded) forwardedGuards.set(forwarded, previousForwarded);
+    else forwardedGuards.delete(forwarded);
+  }
 }
 
 /** Raw factory callers use the same full-source boundary as registered callers. */

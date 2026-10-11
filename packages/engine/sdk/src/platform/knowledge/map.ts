@@ -2,6 +2,7 @@ import {
   applyKnowledgeMapFilters,
   buildKnowledgeMapFacets,
 } from './map-filters.js';
+import type { KnowledgeScopeSelection } from './scope-selection.js';
 import {
   isGeneratedKnowledgeSource,
 } from './generated-projections.js';
@@ -51,6 +52,7 @@ export interface KnowledgeMapRenderOptions {
 
 export function renderKnowledgeMap(
   state: KnowledgeMapRenderState,
+  selection: KnowledgeScopeSelection,
   options: KnowledgeMapRenderOptions = {},
 ): KnowledgeMapResult {
   const limit = sanitizeMapLimit(options.limit);
@@ -59,7 +61,8 @@ export function renderKnowledgeMap(
     nodes: state.nodes,
     edges: state.edges,
     issues: state.issues ?? [],
-  }, options);
+  }, selection, options);
+  const assertEdgesCurrent = selection.retainEdges(filtered.edges);
   const filteredEdges = filtered.edges.filter((edge) => edge.fromId !== edge.toId);
   const nodes = [...filtered.nodes]
     .sort(compareRecordTitle)
@@ -133,7 +136,7 @@ export function renderKnowledgeMap(
   const width = 1280;
   const height = 920;
   const title = options.title ?? state.title ?? 'Knowledge Map';
-  return {
+  const result: KnowledgeMapResult = {
     ok: true,
     ...(options.spaceId ? { spaceId: options.spaceId } : {}),
     title,
@@ -149,6 +152,9 @@ export function renderKnowledgeMap(
     edges: visibleEdges,
     svg: renderMapSvg({ width, height, title, nodes: mapNodes, edges: visibleEdges }),
   };
+  selection.assertCurrent();
+  assertEdgesCurrent();
+  return result;
 }
 
 function layoutMapNodes(nodes: readonly KnowledgeMapNode[]): readonly KnowledgeMapNode[] {

@@ -1,3 +1,4 @@
+import { captureMemoryOperation, assertMemoryOperationCurrent, awaitMemoryOperation, type MemoryOperationOptions } from './memory-operation.js';
 /**
  * memory-search-ranking.ts, the ranking half of memory search. Retrieval (the
  * SQL filter and the vector index in memory-store.ts) builds a shortlist; the
@@ -16,14 +17,16 @@ const REVIEW_SITE = 'state.memory-review-queue';
 const REVIEW_CONCURRENCY = 8;
 
 /** The rerank's probability for each record against the query, by record id. */
-export async function rerankProbabilities(query: string, records: readonly MemoryRecord[]): Promise<Map<string, number>> {
+export async function rerankProbabilities(query: string, records: readonly MemoryRecord[], options?: MemoryOperationOptions): Promise<Map<string, number>> {
+  const operation = captureMemoryOperation(options);
+  assertMemoryOperationCurrent(operation);
   if (records.length === 0) return new Map();
-  const { ranked } = await memorySearchRerank.rerank(
+  const { ranked } = await awaitMemoryOperation(() => memorySearchRerank.rerank(
     judgmentPort(SEARCH_SITE),
     query,
     records.map((record) => ({ id: record.id, content: rerankContent(record) })),
-    { site: SEARCH_SITE },
-  );
+    { site: SEARCH_SITE, ...(operation.signal === undefined ? {} : { signal: operation.signal }), beforeAttempt: () => assertMemoryOperationCurrent(operation) },
+  ), operation);
   return new Map(ranked.map((entry) => [entry.id, entry.probability]));
 }
 
@@ -36,10 +39,13 @@ export async function rerankRetrieved(
   query: string,
   retrieved: readonly MemoryRecord[],
   limit: number | undefined,
+  options?: MemoryOperationOptions,
 ): Promise<Array<{ readonly record: MemoryRecord; readonly probability: number | undefined }>> {
+  const operation = captureMemoryOperation(options);
+  assertMemoryOperationCurrent(operation);
   const size = rerankShortlistSize(limit);
   const shortlist = retrieved.slice(0, size);
-  const probabilities = await rerankProbabilities(query, shortlist);
+  const probabilities = await awaitMemoryOperation(() => rerankProbabilities(query, shortlist, operation), operation);
   const ranked = shortlist
     .map((record) => ({ record, probability: probabilities.get(record.id) }))
     .sort((a, b) => (b.probability ?? 0) - (a.probability ?? 0));
@@ -48,8 +54,8 @@ export async function rerankRetrieved(
 
 /** The two retrieval paths a semantic search ranks over; MemoryStore provides both. */
 export interface SemanticRetrieval {
-  retrieve(filter: MemorySearchFilter): MemoryRecord[];
-  semanticCandidates(filter: MemorySearchFilter): MemorySemanticSearchResult[];
+  retrieve(filter: MemorySearchFilter, options?: MemoryOperationOptions): MemoryRecord[];
+  semanticCandidates(filter: MemorySearchFilter, options?: MemoryOperationOptions): MemorySemanticSearchResult[];
 }
 
 /**
@@ -63,10 +69,12 @@ export interface SemanticRetrieval {
  * returns nothing the literal search runs instead, reranked, with similarity
  * 0; records past its shortlist carry no reading and score 0.
  */
-export async function rankSemanticSearch(store: SemanticRetrieval, filter: MemorySearchFilter): Promise<MemorySemanticSearchResult[]> {
+export async function rankSemanticSearch(store: SemanticRetrieval, filter: MemorySearchFilter, options?: MemoryOperationOptions): Promise<MemorySemanticSearchResult[]> {
+  const operation = captureMemoryOperation(options);
+  assertMemoryOperationCurrent(operation);
   const query = filter.query?.trim();
   if (!query) {
-    return store.retrieve({ ...filter, semantic: false }).map((record) => ({
+    return store.retrieve({ ...filter, semantic: false }, operation).map((record) => ({
       record,
       distance: Number.POSITIVE_INFINITY,
       similarity: 0,
@@ -74,9 +82,9 @@ export async function rankSemanticSearch(store: SemanticRetrieval, filter: Memor
     }));
   }
 
-  const candidates = store.semanticCandidates(filter);
+  const candidates = store.semanticCandidates(filter, operation);
   if (candidates.length === 0) {
-    const ranked = await rerankRetrieved(query, store.retrieve({ ...filter, semantic: false, limit: undefined }), filter.limit);
+    const ranked = await awaitMemoryOperation(() => rerankRetrieved(query, store.retrieve({ ...filter, semantic: false, limit: undefined }, operation), filter.limit, operation), operation);
     const results = ranked.map(({ record, probability }) => ({
       record,
       distance: Number.POSITIVE_INFINITY,
@@ -88,7 +96,7 @@ export async function rankSemanticSearch(store: SemanticRetrieval, filter: Memor
 
   const requestedLimit = Math.max(1, filter.limit ?? 10);
   const shortlist = candidates.slice(0, rerankShortlistSize(requestedLimit));
-  const probabilities = await rerankProbabilities(query, shortlist.map((entry) => entry.record));
+  const probabilities = await awaitMemoryOperation(() => rerankProbabilities(query, shortlist.map((entry) => entry.record), operation), operation);
   return shortlist
     .map((entry) => ({ ...entry, score: (probabilities.get(entry.record.id) ?? 0) * 100 }))
     .sort((a, b) => b.score - a.score || a.distance - b.distance || b.record.updatedAt - a.record.updatedAt)
@@ -101,16 +109,19 @@ export async function rankSemanticSearch(store: SemanticRetrieval, filter: Memor
  * in need of a person first, ties to the most recently updated; the rest
  * follow in the order given. Returns at most `limit` records.
  */
-export async function rankReviewQueue(candidates: readonly MemoryRecord[], limit: number): Promise<MemoryRecord[]> {
+export async function rankReviewQueue(candidates: readonly MemoryRecord[], limit: number, options?: MemoryOperationOptions): Promise<MemoryRecord[]> {
+  const operation = captureMemoryOperation(options);
+  assertMemoryOperationCurrent(operation);
   const size = rerankShortlistSize(limit);
   const shortlist = candidates.slice(0, size);
   if (shortlist.length === 0) return [];
   const port = judgmentPort(REVIEW_SITE);
-  const read = await mapLimit(shortlist, REVIEW_CONCURRENCY, async (record) => {
-    const run = await memoryReviewPriority.run(port, reviewPriorityState(record), { site: REVIEW_SITE });
+  const read = await awaitMemoryOperation(() => mapLimit(shortlist, REVIEW_CONCURRENCY, async (record) => {
+    assertMemoryOperationCurrent(operation);
+    const run = await awaitMemoryOperation(() => memoryReviewPriority.run(port, reviewPriorityState(record), { site: REVIEW_SITE, ...(operation.signal === undefined ? {} : { signal: operation.signal }), beforeAttempt: () => assertMemoryOperationCurrent(operation) }), operation);
     run.recordAction('queued');
     return { record, probability: run.readings.needs_review.probability };
-  });
+  }), operation);
   const ranked = read
     .sort((a, b) => b.probability - a.probability || b.record.updatedAt - a.record.updatedAt || b.record.createdAt - a.record.createdAt)
     .map((entry) => entry.record);

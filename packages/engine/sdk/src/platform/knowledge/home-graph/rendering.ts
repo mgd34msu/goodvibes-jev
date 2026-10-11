@@ -1,3 +1,5 @@
+import type { KnowledgeScopeSelection } from '../scope-selection.js';
+import { sameKnowledgeRecord } from '../store-record-representation.js';
 import { GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
 import type {
   KnowledgeEdgeRecord,
@@ -11,7 +13,7 @@ import { REPAIRS_GAP_RELATION } from './types.js';
 import { countFacet, normalizeStringArray, readString } from '../map-filters.js';
 import { edgeIsActive, factSourceIds, isGeneratedPageSource, uniqueStrings } from './helpers.js';
 import type { HomeGraphMapHaFilterInput, HomeGraphMapInput, HomeGraphMapResult } from './types.js';
-import { isHomeGraphPageFactCandidate, assertHomeGraphPageFactPlan, createHomeGraphPageSourceReader, type HomeGraphPageSourceReader, type HomeGraphPageFactReader, type HomeGraphPageFactPlan } from './page-quality.js';
+import { isHomeGraphPageFactCandidate, assertHomeGraphPageFactPlan, createHomeGraphPageSourceReader, type HomeGraphPageFactReader, type HomeGraphPageFactPlan } from './page-quality.js';
 
 export interface HomeGraphRenderState {
   readonly spaceId: string;
@@ -22,7 +24,7 @@ export interface HomeGraphRenderState {
   readonly issues: readonly KnowledgeIssueRecord[];
 }
 
-export async function renderRoomPage(state: HomeGraphRenderState, areaId?: string, sourceReader = createHomeGraphPageSourceReader(), createFactReader?: (subjects: readonly KnowledgeNodeRecord[]) => HomeGraphPageFactReader): Promise<string> {
+export async function renderRoomPage(state: HomeGraphRenderState, areaId?: string, sourceReader = createHomeGraphPageSourceReader(), createFactReader?: (subjects: readonly KnowledgeNodeRecord[], sources: readonly KnowledgeSourceRecord[]) => HomeGraphPageFactReader): Promise<string> {
   const area = areaId
     ? findNodeByHaId(state.nodes, 'ha_area', areaId) ?? findNodeByHaId(state.nodes, 'ha_room', areaId)
     : undefined;
@@ -50,11 +52,13 @@ export async function renderRoomPage(state: HomeGraphRenderState, areaId?: strin
     ...scenes.map((node) => node.id),
     ...scripts.map((node) => node.id),
   ]);
-  const sources = await relatedSources(state.sources, state.edges, state.nodes, relatedNodeIds, sourceReader);
   if (!createFactReader) throw new GoodVibesSdkError('Home Graph room rendering requires a fact quality reader.', {
     category: 'bad_request', source: 'runtime', operation: 'homegraph.generateRoomPage',
   });
-  const factReader = createFactReader(state.nodes.filter((node) => relatedNodeIds.has(node.id)));
+  const sourceIds = relatedNodeIds.size > 0 ? sourceIdsLinkedToNodes(state.edges, state.nodes, relatedNodeIds) : null;
+  const sourceCandidates = state.sources.filter(source => !isGeneratedPageSource(source) && (!sourceIds || sourceIds.has(source.id)));
+  const factReader = createFactReader(state.nodes.filter((node) => relatedNodeIds.has(node.id)), sourceCandidates);
+  const sources = (await sourceReader.rank(sourceCandidates)).map(item => item.source);
   const factPlan = await factReader.prepare(semanticFactsLinkedToSources(sources, state.nodes, state.edges, relatedNodeIds));
   assertHomeGraphPageFactPlan(factPlan);
   const semanticFacts = factPlan.facts.filter((fact) => factPlan.accepts(fact));
@@ -140,20 +144,35 @@ export function renderPacketPage(state: HomeGraphRenderState, options: {
   ].filter(Boolean).join('\n');
 }
 
-export function renderHomeGraphMap(state: HomeGraphRenderState, options: HomeGraphMapInput = {}): HomeGraphMapResult {
-  const filtered = applyHomeGraphMapFilters(state, options.ha);
-  const result = renderKnowledgeMap(filtered, {
+export function renderHomeGraphMap(state: HomeGraphRenderState, selection: KnowledgeScopeSelection, options: HomeGraphMapInput = {}): HomeGraphMapResult {
+  selection.assertCurrent();
+  const admittedEdges = new Map(selection.edges.map(edge => [edge.id, edge]));
+  const scoped = { ...state, sources: state.sources.filter(selection.source), nodes: state.nodes.filter(selection.node), issues: state.issues.filter(selection.issue),
+    edges: state.edges.filter(edge => sameKnowledgeRecord(edge, admittedEdges.get(edge.id))) };
+  const filtered = applyHomeGraphMapFilters(scoped, options.ha);
+  const result = renderKnowledgeMap(filtered, selection, {
     ...options,
     title: state.title,
     spaceId: state.spaceId,
   });
+  selection.assertCurrent();
   return {
     ...result,
+    spaceId: state.spaceId,
     facets: {
-      ...result.facets,
-      homeAssistant: buildHomeAssistantMapFacets(state),
+      recordKinds: result.facets?.recordKinds ?? [],
+      nodeKinds: result.facets?.nodeKinds ?? [],
+      sourceTypes: result.facets?.sourceTypes ?? [],
+      sourceStatuses: result.facets?.sourceStatuses ?? [],
+      nodeStatuses: result.facets?.nodeStatuses ?? [],
+      issueCodes: result.facets?.issueCodes ?? [],
+      issueStatuses: result.facets?.issueStatuses ?? [],
+      issueSeverities: result.facets?.issueSeverities ?? [],
+      edgeRelations: result.facets?.edgeRelations ?? [],
+      tags: result.facets?.tags ?? [],
+      homeAssistant: buildHomeAssistantMapFacets(scoped),
     },
-  } as HomeGraphMapResult;
+  };
 }
 
 function applyHomeGraphMapFilters(
@@ -640,18 +659,6 @@ function isIssueRelation(relation: string): boolean {
 
 function renderMetadataField(label: string, value: unknown): string {
   return typeof value === 'string' && value.trim().length > 0 ? `- ${label}: ${value.trim()}` : '';
-}
-
-async function relatedSources(
-  sources: readonly KnowledgeSourceRecord[],
-  edges: readonly KnowledgeEdgeRecord[],
-  nodes: readonly KnowledgeNodeRecord[],
-  nodeIds: ReadonlySet<string>,
-  reader: HomeGraphPageSourceReader,
-): Promise<KnowledgeSourceRecord[]> {
-  const sourceIds = nodeIds.size > 0 ? sourceIdsLinkedToNodes(edges, nodes, nodeIds) : null;
-  const scoped = sources.filter((source) => !isGeneratedPageSource(source) && (!sourceIds || sourceIds.has(source.id)));
-  return (await reader.rank(scoped)).map((item) => item.source);
 }
 
 function filterNodesForArea(

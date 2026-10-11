@@ -21,7 +21,7 @@ and a thin CLI (`bin` entry):
 - **coverage-gate.** Aggregates coverage and enforces a per-repo floor that only increases.
 - **verification-ledger.** Totals math and JSON and Markdown rendering of a
   repo-collected verification inventory.
-- **post-build-smoke.** Boots a compiled binary and checks its version banner.
+- **post-build-smoke.** Boots a compiled binary and checks its version protocol and emitted module initialization.
 - **package-install-check.** Static `npm pack` tarball plus bin-shim policy check.
 - **publish-package.** Idempotent `npm publish` plus a propagation poll.
 - **per-job-green.** Verifies a commit's push-CI run concluded with every job
@@ -32,6 +32,14 @@ and a thin CLI (`bin` entry):
 - **train-status.** Read-only: one table per release-train cycle across the
   family's local checkouts (versions, SDK pin drift, unreleased/unpushed
   commits, suggested action). Never mutates anything.
+
+`runPostBuildSmoke` returns `Promise<SmokeResult>`. An exact version banner with
+empty stderr passes its deterministic protocol check offline. Any additional
+output requires an explicitly composed `diagnosticSourceOwner` and an installed
+judgment port. The owner screens both complete streams before the registered
+`toolchain.smoke.load-failure` battery reads their projection. Failure,
+uncertainty, stale ownership, or unavailable screening withholds qualification.
+The default CLI sends no diagnostic output to a provider.
 
 ## Config
 

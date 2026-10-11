@@ -1,8 +1,7 @@
-import { useSecurityReadings } from '../helpers/security-readings.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { createAgentAccountsTool } from '../../tools/agent-accounts-tool.ts';
+import { createAgentAccountsTool, registerAgentAccountsTool } from '../../tools/agent-accounts-tool.ts';
 import { AgentAccountRegistry } from '@goodvibes-jev/engine/sdk/platform/google';
 import { containsSecretLikeText } from '../../agent/memory-safety.ts';
 import {
@@ -10,6 +9,11 @@ import {
   resetSessionUntrustedContentLedgerForTests,
 } from '../../trust/untrusted-content.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { recordedEffectFixture } from '../helpers/recorded-effect-admission.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { resetSessionExpectationBookForTests } from '../../agent/signup/session-expectations.ts';
 
 /**
  * Creating accounts autonomously is authorized; doing it invisibly is not.
@@ -20,9 +24,12 @@ import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 let home = '';
 let tool: ReturnType<typeof createAgentAccountsTool>;
+let fixture: ReturnType<typeof recordedEffectFixture>;
+let previous: ReturnType<typeof installJudgmentPort>;
+let log: SqliteDecisionLog;
 
 function run(args: Record<string, unknown>) {
-  return tool.execute(args) as Promise<{ success: boolean; output?: string; error?: string }>;
+  return fixture.run(args);
 }
 
 const VALID = {
@@ -34,19 +41,28 @@ const VALID = {
   credentialSecretKey: 'GOODVIBES_ACCOUNT_EXAMPLE_COM',
 };
 
-useSecurityReadings();
-
 describe('the account register', () => {
   beforeEach(() => {
     home = makeProjectTempDir('accounts-tool');
-    resetSessionUntrustedContentLedgerForTests();
-    tool = createAgentAccountsTool({
+    resetSessionUntrustedContentLedgerForTests(); resetSessionExpectationBookForTests();
+    log = new SqliteDecisionLog(':memory:');
+    const fake = fakePort((name, question) => {
+      if (question.type === 'noul') return noulAnswer(0.001);
+      if (question.type === 'choice') return choiceAnswer(question, name === 'disposition' ? 'act' : name === 'kind' ? 'read' : 'generic', 0.999);
+      throw new Error(`Unexpected question ${name}`);
+    });
+    previous = installJudgmentPort(withDecisionLog(fake.port, log));
+    const options = {
       registry: new AgentAccountRegistry({ storePath: join(home, 'accounts.json'), containsSecretLikeText }),
       baseAddress: () => 'owner@example.com',
-    });
+    };
+    tool = createAgentAccountsTool(options);
+    fixture = recordedEffectFixture(tool, 'prompt', {}, home);
+    fixture.registry.unregister('accounts'); registerAgentAccountsTool(fixture.registry, options);
   });
 
   afterEach(() => {
+    installJudgmentPort(previous); log[Symbol.dispose](); resetSessionExpectationBookForTests();
     rmSync(home, { recursive: true, force: true });
     resetSessionUntrustedContentLedgerForTests();
   });

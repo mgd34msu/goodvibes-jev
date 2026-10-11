@@ -11,33 +11,29 @@
  *
  * - Egress boundary: `listEvents({view: 'safe'})` (the default) runs records
  *   through `sanitizeRecord` → `redactStructuredData` (see
- *   `utils/redaction.ts`). Any string value whose key matches
- *   `CONTENT_KEY_PATTERN` (prompt, response, content, accumulated, reasoning,
- *   body, text, stdout, stderr, output, input, transcript, command,
- *   arguments, query, detail, summary, message) is replaced with
- *   `[REDACTED_TEXT length=N]`. Values carrying specific secret shapes
- *   (API keys, tokens) are pattern-redacted regardless of key.
+ *   `utils/redaction.ts`). The canonical structured redactor masks content,
+ *   secrets, and fields without a settled safe reading. Record messages,
+ *   error display text, and span display text use the same redactor.
  *
- * - `listEvents({view: 'raw'})` skips redaction and is gated at the HTTP
- *   boundary on the `admin` or `read:telemetry-sensitive` scope (see
- *   daemon/telemetry-routes.ts).
+ * - Raw reads require the serving TelemetryApiService's live
+ *   `telemetry.includeRawPrompts` opt-in. The HTTP boundary additionally
+ *   requires `admin` or `read:telemetry-sensitive`, plus `read:telemetry`.
+ *   Disabled raw reads fail with TELEMETRY_RAW_DISABLED; they never fall back
+ *   to safe data labeled as raw. Raw SSE streams recheck the opt-in before
+ *   every event and heartbeat and terminate when it is revoked.
  *
- * This module owns the `telemetry.includeRawPrompts` config flag. The flag
- * is wired at daemon bootstrap by `facade-composition.ts` via
- * `setTelemetryIncludeRawPrompts(configManager.get('telemetry.includeRawPrompts'))`.
- * Opt-in (true) emits a startup WARN so operators can see the configuration.
- *
- * Known gap: `listEvents({view: 'raw'})` does not yet consult the flag, raw
- * view access is gated by scope only. The flag is available for future
- * hardening (e.g. refuse raw view regardless of scope when the flag is off).
+ * This module records the bootstrap setting and emits the opt-in warning.
+ * DaemonHttpRouter gives each service a getter for its own config manager;
+ * this bootstrap value grants no access to another daemon's telemetry.
+ * A service constructed without an owning config getter disables raw reads.
  */
 import { logger } from '../../utils/logger.js';
 
-/** Module-scoped flag. Wired once at daemon bootstrap. */
+/** Bootstrap reporting only; raw-read authorization belongs to each service. */
 let _includeRawPrompts = false;
 
 /**
- * Configure telemetry redaction behavior. Called once at daemon bootstrap from
+ * Record telemetry configuration. Called once at daemon bootstrap from
  * config.telemetry.includeRawPrompts. When true, a WARN log is emitted so ops
  * can see the opt-in is active.
  */
@@ -45,13 +41,13 @@ export function setTelemetryIncludeRawPrompts(value: boolean): void {
   _includeRawPrompts = value;
   if (value) {
     logger.warn(
-      'telemetry.includeRawPrompts is ENABLED, raw prompt/response content will appear in telemetry events. '
+      'telemetry.includeRawPrompts is ENABLED, authorized raw telemetry reads may expose prompt/response content. '
       + 'This setting is for debugging only. Disable in production to avoid PII/secret exfiltration.'
     );
   }
 }
 
-/** Read the current flag. Reserved for future view='raw' gating. */
+/** Read the recorded bootstrap setting; this is not a raw-read authorization. */
 export function getTelemetryIncludeRawPrompts(): boolean {
   return _includeRawPrompts;
 }

@@ -103,8 +103,8 @@ describe('runtime knowledge store isolation', () => {
       expect(existsSync(join(controlPlaneDir, 'knowledge-agent.sqlite'))).toBe(true);
       expect(existsSync(join(controlPlaneDir, 'knowledge-home-graph.sqlite'))).toBe(true);
 
-      const regularNodes = services.knowledgeService.queryNodes({ includeAllSpaces: true, limit: 100 }).items;
-      const agentNodes = services.agentKnowledgeService.queryNodes({ includeAllSpaces: true, limit: 100 }).items;
+      const regularNodes = (await services.knowledgeService.queryNodes({ includeAllSpaces: true, limit: 100 })).items;
+      const agentNodes = (await services.agentKnowledgeService.queryNodes({ includeAllSpaces: true, limit: 100 })).items;
       const regularMap = await services.knowledgeService.map({ includeAllSpaces: true, limit: 100 });
       expect(regularNodes.some((node) => node.title.includes('Isolation Light') || node.id.includes('isolation'))).toBe(false);
       expect(agentNodes.some((node) => node.title.includes('Isolation Light') || node.id.includes('isolation'))).toBe(false);

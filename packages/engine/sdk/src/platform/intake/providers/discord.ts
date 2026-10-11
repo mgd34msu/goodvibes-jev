@@ -27,7 +27,7 @@ export interface DiscordInboxCatalogSnapshot {
   /** A positive assertion of gap-free discovery through beforeMs, not a cache. */
   readonly complete: boolean;
   readonly accountId: string;
-  readonly channels: readonly { readonly id: string; readonly type: 1 | 3 }[];
+  readonly channels: readonly { readonly id: string; readonly type: 1 }[];
 }
 /**
  * Required because no supported bot REST DM-list endpoint is documented.
@@ -179,7 +179,7 @@ export function createDiscordInboxAdapter(ctx: AdapterContext, ports: DiscordInb
         for (const entry of rows(snapshot.channels, MAX_CHANNELS)) {
           const channel = record(entry);
           const type = channel.type;
-          if (type !== 1 && type !== 3) fail('Discord DM catalog channel invalid');
+          if (type !== 1) fail('Discord DM catalog channel invalid');
           channels.add(snowflake(channel.id).id);
         }
         // Only the oldest limit+1 distinct candidates are retained, but ALL

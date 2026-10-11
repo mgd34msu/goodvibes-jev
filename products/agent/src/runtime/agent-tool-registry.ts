@@ -1,4 +1,5 @@
 import { buildAgentConfigRouting } from '../config/daemon-config-routing.ts';
+import { randomUUID } from 'node:crypto';
 import { ToolRegistry, registerAllTools } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { installAgentToolPolicyGuard } from '../tools/agent-tool-policy-guard.ts';
 import { installAgentPlatformBoundaryGuard } from '../tools/agent-platform-boundary-policy.ts';
@@ -156,6 +157,7 @@ export function composeAgentToolRegistry(deps: AgentToolRegistryDeps): AgentTool
   // signup is authorized; doing it invisibly is not, and this is what makes it
   // enumerable and revocable.
   registerAgentAccountsTool(toolRegistry, {
+    shellPaths: services.shellPaths,
     // The platform registry takes its store path and its "does this look like a
     // credential" rule as inputs rather than deriving either: the path so no
     // product writes into another's storage root, the predicate because the
@@ -188,9 +190,13 @@ export function composeAgentToolRegistry(deps: AgentToolRegistryDeps): AgentTool
     modelCatalog: services.providerRegistry,
     providerRegistry: services.providerRegistry,
     artifactStore: services.artifactStore,
-    applyModelRoute: (registryKey) => {
+    applyModelRoute: async (registryKey, parentOptions, ownership) => {
       const previousModel = String(configManager.get('provider.model') ?? '').trim();
-      configManager.set('provider.model', registryKey);
+      const applied = await toolRegistry.executeNested(`model-route-${randomUUID()}`, 'settings',
+        { action: 'set', key: 'provider.model', value: registryKey }, parentOptions, ownership);
+      let verified = false;
+      try { verified = applied.success && JSON.parse(applied.output ?? '{}').verifiedInOwningStore === true; } catch { /* Value-free refusal below. */ }
+      if (!verified || configManager.get('provider.model') !== registryKey) throw new Error('Model route transition did not verify in its owning store.');
       return {
         ...(previousModel ? { previousModel } : {}),
         selectedModel: registryKey,

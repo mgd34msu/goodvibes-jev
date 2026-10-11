@@ -4,6 +4,7 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { assertCurrentToolExecution, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext } from '../input/command-registry.ts';
 import { backgroundProcessSummary, describeBackgroundProcess, runBackgroundProcessAction } from './agent-harness-background-processes.ts';
+import { harnessCatalogExecutionGuard, retainHarnessCatalogCurrent } from './agent-harness-catalog-ingress.ts';
 
 const READ_ONLY_PROCESS_ACTIONS = new Set(['list', 'status', 'poll', 'log', 'output', 'capabilities', 'doctor', 'parity']);
 
@@ -89,8 +90,8 @@ export function createAgentTerminalTool(commandContext: CommandContext, registry
           },
           killOnTimeout: { type: 'boolean', description: 'Overrides processClass: true terminates this process when timeoutMs expires, false leaves it running. Set true deliberately before a timeout may destroy something the user is using.' },
           pty: { type: 'boolean', description: 'Request PTY mode; returns unsupported until the SDK publishes a typed PTY contract.' },
-          confirm: { type: 'boolean', description: 'Required true for starting a process.' },
-          explicitUserRequest: { type: 'string', description: 'The user request authorizing the background command.' },
+          confirm: { type: 'boolean', description: 'Optional historical provenance; does not grant process authority.' },
+          explicitUserRequest: { type: 'string', description: 'Optional human request provenance; does not grant process authority.' },
         },
         required: ['command', 'background'],
         additionalProperties: false,
@@ -103,12 +104,12 @@ export function createAgentTerminalTool(commandContext: CommandContext, registry
     execute: async (args: Record<string, unknown>, options) => {
       const input = args as AgentTerminalToolArgs;
       if (!readBoolean(input.background)) {
-        return error('terminal is the tracked-background adapter. Use exec for bounded foreground shell commands, or call terminal with background:true, confirm:true, and explicitUserRequest.');
+        return error('terminal is the tracked-background adapter. Use exec for bounded foreground shell commands, or call terminal with background:true. Launch requires current recorded effect admission.');
       }
       return output(await runBackgroundProcessAction(commandContext, {
         ...input,
         processAction: 'start',
-      }, processClassificationOptions(commandContext, registry, options?.signal, () => { assertCurrentToolExecution(args, options); })));
+      }, processClassificationOptions(commandContext, registry, options?.signal, () => { assertCurrentToolExecution(args, options); }), args, options));
     },
   };
 }
@@ -124,7 +125,7 @@ export function createAgentProcessTool(commandContext: CommandContext, registry?
           action: {
             type: 'string',
             enum: ['list', 'poll', 'status', 'wait', 'log', 'output', 'kill', 'stop', 'cancel', 'write', 'start', 'capabilities', 'doctor', 'parity'],
-            description: 'Process lifecycle action. list/poll/log are read-only; wait/kill/write/start require confirmation.',
+            description: 'list/poll/log/wait observe processes. kill/start/write require current recorded effect admission; writes target a running tracked native stdin pipe.',
           },
           processAction: { type: 'string', description: 'Alias for action.' },
           processId: { type: 'string', description: 'Tracked background process id.' },
@@ -137,13 +138,13 @@ export function createAgentProcessTool(commandContext: CommandContext, registry?
           processClass: { type: 'string', enum: ['command', 'long_lived'], description: 'Explicit lifetime class for action:start; otherwise Jev reads the complete command.' },
           killOnTimeout: { type: 'boolean', description: 'Explicit timeout termination override for action:start.' },
           pty: { type: 'boolean', description: 'Request PTY mode; reports unsupported until a typed contract exists.' },
-          data: { type: 'string', description: 'Input data for confirmed action:write when supported by the SDK.' },
+          data: { type: 'string', description: 'Input data for action:write to a running tracked native stdin pipe.' },
           query: { type: 'string', description: 'Search text for list or process lookup.' },
           target: { type: 'string', description: 'Process lookup text.' },
           limit: { type: 'number', description: 'Maximum list rows.' },
           includeParameters: { type: 'boolean', description: 'Include full bounded command/output metadata.' },
-          confirm: { type: 'boolean', description: 'Required true for wait/kill/write/start.' },
-          explicitUserRequest: { type: 'string', description: 'The user request authorizing side-effecting process actions.' },
+          confirm: { type: 'boolean', description: 'Optional historical provenance; does not grant process authority.' },
+          explicitUserRequest: { type: 'string', description: 'Optional human request provenance; does not grant process authority.' },
         },
         additionalProperties: false,
       },
@@ -155,13 +156,16 @@ export function createAgentProcessTool(commandContext: CommandContext, registry?
     execute: async (args: Record<string, unknown>, options) => {
       const input = args as AgentProcessToolArgs;
       const action = readProcessAction(input);
+      const assertCurrent = harnessCatalogExecutionGuard(args, options);
+      const reading = { ...processClassificationOptions(commandContext, registry, options?.signal, assertCurrent), retainCurrent: retainHarnessCatalogCurrent(args) };
 
-      if (action === 'list') return output(backgroundProcessSummary(commandContext, input));
+      if (action === 'list') { const result = await backgroundProcessSummary(commandContext, input, reading); assertCurrent(); return output(result); }
       if (isReadOnlyProcessAction(action) && action !== 'capabilities' && action !== 'doctor' && action !== 'parity') {
-        const resolved = describeBackgroundProcess(commandContext, {
+        const resolved = await describeBackgroundProcess(commandContext, {
           ...input,
           processAction: action,
-        });
+        }, reading);
+        assertCurrent();
         if (resolved.status === 'found') return output(resolved.process);
         if (resolved.status === 'ambiguous') return error(`Ambiguous process ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
         return error(resolved.usage);
@@ -170,7 +174,7 @@ export function createAgentProcessTool(commandContext: CommandContext, registry?
       return output(await runBackgroundProcessAction(commandContext, {
         ...input,
         processAction: action,
-      }, processClassificationOptions(commandContext, registry, options?.signal, () => { assertCurrentToolExecution(args, options); })));
+      }, reading, args, options));
     },
   };
 }

@@ -302,7 +302,6 @@ export async function operatorMethodSummary(args: AgentHarnessOperatorMethodArgs
       all.length,
       catalogFilters(args, CATALOG_QUERIES.methods.filters),
       CATALOG_QUERIES.methods.discovery,
-      { relaxedQuery: false },
     ),
     policy: 'Dynamic GoodVibes daemon operator catalog. Prefer simpler first-class tools when available; use agent_operator_method for exact contract parity.',
   };

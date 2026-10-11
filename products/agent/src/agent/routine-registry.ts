@@ -184,10 +184,10 @@ export function routineStorePath(shellPaths: AgentLocalStorePaths): string {
 }
 
 export class AgentRoutineRegistry {
-  public constructor(private readonly storePath: string) {}
+  public constructor(private readonly storePath: string, private readonly effects?: Parameters<typeof writeStoreFile>[2]) {}
 
-  public static fromShellPaths(shellPaths: AgentLocalStorePaths): AgentRoutineRegistry {
-    return new AgentRoutineRegistry(routineStorePath(shellPaths));
+  public static fromShellPaths(shellPaths: AgentLocalStorePaths, effects?: Parameters<typeof writeStoreFile>[2]): AgentRoutineRegistry {
+    return new AgentRoutineRegistry(routineStorePath(shellPaths), effects);
   }
 
   public snapshot(): AgentRoutineSnapshot {
@@ -395,7 +395,7 @@ export class AgentRoutineRegistry {
   }
 
   private writeStore(store: RoutineStoreFile): void {
-    writeStoreFile(this.storePath, formatStore(store));
+    writeStoreFile(this.storePath, formatStore(store), this.effects);
   }
 }
 

@@ -1,7 +1,11 @@
 import type { ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { MediaProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/media';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolEffect, ToolInputProjectionError, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { snapshotJudgmentInput, captureStrictJudgmentJson } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { evaluateOutwardEffect, getSessionUntrustedContentLedger } from '../trust/untrusted-content.ts';
+import { CardMaterialRefusedError, screenOutboundForCardMaterial } from '../agent/payments-channel-guard.ts';
+import { retainSurfaceMethods } from './agent-surface-effect.ts';
 import {
   formatAgentMediaGenerationResult,
   generateAgentMedia,
@@ -14,6 +18,7 @@ export interface AgentMediaGenerateToolArgs {
   readonly outputMimeType?: unknown;
   readonly confirm?: unknown;
   readonly explicitUserRequest?: unknown;
+  readonly preview?: unknown;
 }
 
 function readString(value: unknown): string {
@@ -41,7 +46,7 @@ function preview(args: AgentMediaGenerateToolArgs, providerCount: number): strin
     `  model ${readString(args.modelId) || '(provider default)'}`,
     `  output mime ${readString(args.outputMimeType) || '(provider default)'}`,
     `  generation providers ${providerCount}`,
-    '  policy media generation requires an explicit user request and confirm:true',
+    '  policy media generation requires current recorded effect admission',
   ].join('\n');
 }
 
@@ -52,7 +57,7 @@ export function createAgentMediaGenerateTool(
   return {
     definition: {
       name: 'agent_media_generate',
-      description: 'Generate one confirmed image or video artifact.',
+      description: 'Preview or generate one image or video artifact through current recorded effect admission.',
       parameters: {
         type: 'object',
         properties: {
@@ -74,42 +79,49 @@ export function createAgentMediaGenerateTool(
           },
           confirm: {
             type: 'boolean',
-            description: 'Required true only when user requested this media.',
+            description: 'Optional historical provenance; does not grant generation authority.',
           },
           explicitUserRequest: {
             type: 'string',
-            description: 'User request authorizing this media generation.',
+            description: 'Optional request provenance; does not grant generation authority.',
           },
+          preview: { type: 'boolean', description: 'Return a read-only preview without generation.' },
         },
-        required: ['prompt', 'confirm', 'explicitUserRequest'],
+        required: ['prompt'],
         additionalProperties: false,
       },
       sideEffects: ['network', 'state'],
     },
-    execute: async (rawArgs: Record<string, unknown>) => {
-      const args = rawArgs as AgentMediaGenerateToolArgs;
+    execute: async (rawArgs, executionOptions) => {
+      const args = captureStrictJudgmentJson(rawArgs); snapshotJudgmentInput(args);
       const prompt = readString(args.prompt);
-      const explicitUserRequest = readString(args.explicitUserRequest);
       const generationProviderCount = mediaProviderRegistry.list()
         .filter((provider) => provider.capabilities.includes('generate')).length;
       if (!prompt) return failure('prompt is required.');
-      if (!explicitUserRequest) {
-        return failure('explicitUserRequest is required so media generation stays tied to a direct user request.');
-      }
-      if (!readBoolean(args.confirm)) {
-        return failure([
-          preview(args, generationProviderCount),
-          '',
-          'Model tool confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to generate this media.',
-        ].join('\n'));
-      }
+      if (readBoolean(args.preview)) return output(preview(args, generationProviderCount));
       try {
+        const ledger = getSessionUntrustedContentLedger();
+        const ledgerMethods = retainSurfaceMethods(ledger, ['getPublicationRevision', 'originsThisTurn', 'exposuresThisTurn', 'taintSourcesThisTurn']);
+        const ledgerCurrent = () => JSON.stringify([ledger.getPublicationRevision(), ledger.originsThisTurn(), ledger.exposuresThisTurn(), ledger.taintSourcesThisTurn()]);
+        const sources = ledgerCurrent();
+        const assertCurrent = () => {
+          executionOptions?.signal?.throwIfAborted();
+          if (!assertCurrentToolEffect(rawArgs, executionOptions, 'send') || !assertCurrentToolEffect(rawArgs, executionOptions, 'write')) throw new ToolInputProjectionError('held');
+          ledgerMethods();
+          if (getSessionUntrustedContentLedger() !== ledger || ledgerCurrent() !== sources) throw new ToolInputProjectionError('stale');
+        };
+        assertCurrent();
+        const outward = await evaluateOutwardEffect({ request: { toolName: 'agent_media_generate', action: 'media.generate', description: 'sending the media generation prompt' },
+          ledger, content: { prompt }, taintOptions: { signal: executionOptions?.signal } });
+        assertCurrent(); if (!outward.allowed) return failure(outward.reason ?? 'Media prompt content was refused.');
+        const card = await screenOutboundForCardMaterial({ surface: 'media-provider', message: prompt }, { signal: executionOptions?.signal, assertCurrent });
+        assertCurrent(); if (card) throw new CardMaterialRefusedError(card);
         const result = await generateAgentMedia(mediaProviderRegistry, artifactStore, {
           prompt,
           ...(readString(args.providerId) ? { providerId: readString(args.providerId) } : {}),
           ...(readString(args.modelId) ? { modelId: readString(args.modelId) } : {}),
           ...(readString(args.outputMimeType) ? { outputMimeType: readString(args.outputMimeType) } : {}),
-        });
+        }, { signal: executionOptions?.signal, assertCurrent });
         return output(formatAgentMediaGenerationResult(result));
       } catch (error) {
         return failure(error instanceof Error ? error.message : String(error));

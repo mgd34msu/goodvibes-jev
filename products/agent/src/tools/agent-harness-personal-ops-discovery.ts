@@ -1,3 +1,8 @@
+import { assertPersonalOpsDataCurrent, capturePersonalOpsData } from './agent-harness-personal-ops-source.ts';
+import { modelReadingServicePath } from './agent-harness-model-reading-source.ts';
+import { captureCatalogData, captureCatalogMethods, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { personalOpsLaneMembers, readPersonalOpsSampleField, readPersonalOpsTool, type DiscoveryLane, type PersonalOpsToolContract } from './agent-harness-personal-ops-readings.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { getOperatorContract } from '@goodvibes-jev/engine/sdk/contracts';
 import type { CommandContext } from '../input/command-registry.ts';
 import type { McpSchemaSummary, McpToolRecord, McpToolSchema, OperatorContractMethod, PersonalOpsConnectorSignal, PersonalOpsConnectorTool, PersonalOpsWorkflow, PersonalOpsWorkflowStatus } from './agent-harness-personal-ops-types.ts';
@@ -12,67 +17,38 @@ export function readLimit(value: unknown, fallback: number): number {
   return Math.max(1, Math.min(12, Math.trunc(parsed)));
 }
 
-export function hasAny(text: string, tokens: readonly string[]): boolean {
-  return tokens.some((token) => text.includes(token));
-}
-
 export function operatorContractMethods(): readonly OperatorContractMethod[] {
-  const contract = getOperatorContract();
-  const methods = Array.isArray(contract.operator?.methods)
-    ? contract.operator.methods as OperatorContractMethod[]
-    : [];
-  return methods.filter((method) => method.id);
+  return getOperatorContract().operator.methods.filter(method => Boolean(method.id));
 }
 
-export function methodSearchText(method: OperatorContractMethod): string {
-  return [
-    method.id,
-    method.title,
-    method.description,
-    method.category,
-    method.http?.method,
-    method.http?.path,
-  ].filter(Boolean).join('\n').toLowerCase();
-}
-
-/**
- * Capability honesty: a method whose contract entry carries
- * invokable:false is cataloged but NOT dispatchable, no daemon route or
- * handler serves it. Counting it toward "workflow ready" would repeat the
- * dogfood finding (a lane card claiming readiness backed only by methods a
- * caller cannot actually invoke). Absent flag = invokable (older contracts).
- */
 export function isInvokableContractMethod(method: OperatorContractMethod): boolean {
   return method.invokable !== false;
 }
 
-function matchingContractMethods(tokens: readonly string[]): readonly OperatorContractMethod[] {
-  if (tokens.length === 0) return [];
-  return operatorContractMethods().filter((method) => {
-    const text = methodSearchText(method);
-    return tokens.some((token) => text.includes(token));
-  });
+export function partitionInvokableMethods(methods: readonly OperatorContractMethod[]): {
+  readonly available: readonly string[]; readonly unavailable: readonly string[];
+} {
+  const ids = (invokable: boolean) => methods.filter(method => isInvokableContractMethod(method) === invokable)
+    .map(method => method.id).sort((left, right) => left.localeCompare(right));
+  return { available: ids(true), unavailable: ids(false) };
 }
 
-/**
- * Method ids matching the tokens that are actually DISPATCHABLE. Readiness
- * (workflowStatus, lane status, capability counts) must be computed from
- * this list only, advertised-but-unavailable methods are returned
- * separately by unavailableMethodIdsMatching for honest degraded wording.
- */
-export function methodIdsMatching(tokens: readonly string[]): readonly string[] {
-  return matchingContractMethods(tokens)
-    .filter(isInvokableContractMethod)
-    .map((method) => method.id)
-    .sort((left, right) => left.localeCompare(right));
-}
-
-/** Method ids matching the tokens that are cataloged but NOT dispatchable (invokable:false). */
-export function unavailableMethodIdsMatching(tokens: readonly string[]): readonly string[] {
-  return matchingContractMethods(tokens)
-    .filter((method) => !isInvokableContractMethod(method))
-    .map((method) => method.id)
-    .sort((left, right) => left.localeCompare(right));
+export async function contractMethodsForLane(lane: DiscoveryLane, options: CatalogRankingOptions): Promise<{
+  readonly available: readonly string[]; readonly unavailable: readonly string[];
+}> {
+  const original = operatorContractMethods();
+  const captured = captureCatalogData(original);
+  const sourceSnapshot = capturePersonalOpsData(captured);
+  const assertSource = () => {
+    options.signal?.throwIfAborted();
+    assertPersonalOpsDataCurrent(operatorContractMethods(), sourceSnapshot);
+  };
+  const assertCurrent = () => { options.assertCurrent?.(); assertSource(); };
+  const methods = await personalOpsLaneMembers(original, lane, method => ({
+    id: method.id, description: method.description ?? method.title ?? '', evidence: method,
+  }), { ...options, assertCurrent });
+  assertCurrent(); options.retainCurrent?.(assertSource, `personal-ops-contract:${lane}`);
+  return partitionInvokableMethods(methods);
 }
 
 /**
@@ -85,60 +61,113 @@ export function unavailableMethodsNote(unavailableMethodIds: readonly string[]):
   return `${unavailableMethodIds.length} advertised method(s) are unavailable (route not served by this daemon) and cannot be dispatched: ${unavailableMethodIds.join(', ')}.`;
 }
 
+function mcpApi(context: CommandContext): object | null {
+  const api = modelReadingServicePath(context, ['clients', 'mcpApi']) ?? modelReadingServicePath(context, ['extensions', 'mcpRegistry']);
+  if (api === undefined || api === null) return null;
+  if (typeof api !== 'object') throw new ToolInputProjectionError('invalid');
+  return api;
+}
+
 export function mcpServerRecords(context: CommandContext): readonly {
-  readonly name: string;
-  readonly connected: boolean;
-  readonly trustMode: string;
-  readonly role: string;
-  readonly schemaFreshness: string;
-  readonly allowedHosts: readonly string[];
+  readonly name: string; readonly connected: boolean; readonly trustMode: string; readonly role: string;
+  readonly schemaFreshness: string; readonly allowedHosts: readonly string[];
 }[] {
-  const api = context.clients?.mcpApi ?? context.extensions?.mcpRegistry;
-  if (!api || typeof api.listServerSecurity !== 'function') return [];
-  try {
-    return api.listServerSecurity();
-  } catch {
-    return [];
-  }
+  const api = mcpApi(context);
+  if (!api) return [];
+  const list = modelReadingServicePath(api, ['listServerSecurity']);
+  if (typeof list !== 'function') return [];
+  const raw: unknown = list.call(api);
+  const captured = captureCatalogData(raw);
+  if (!Array.isArray(captured)) throw new ToolInputProjectionError('invalid');
+  return captured.map(value => {
+    const server = schemaObject(value);
+    if (!server || typeof server.name !== 'string' || typeof server.connected !== 'boolean' || typeof server.trustMode !== 'string'
+      || typeof server.role !== 'string' || typeof server.schemaFreshness !== 'string' || !Array.isArray(server.allowedHosts)
+      || !server.allowedHosts.every((host: unknown) => typeof host === 'string')) throw new ToolInputProjectionError('invalid');
+    return { ...server, name: server.name, connected: server.connected, trustMode: server.trustMode, role: server.role,
+      schemaFreshness: server.schemaFreshness, allowedHosts: server.allowedHosts.filter((host: unknown): host is string => typeof host === 'string') };
+  });
 }
 
-export async function mcpToolRecords(context: CommandContext): Promise<readonly McpToolRecord[]> {
-  const api = context.clients?.mcpApi ?? context.extensions?.mcpRegistry;
-  if (!api || typeof (api as { readonly listAllTools?: unknown }).listAllTools !== 'function') return [];
-  try {
-    return await (api as { listAllTools: () => Promise<readonly McpToolRecord[]> }).listAllTools();
-  } catch {
-    return [];
-  }
+export async function mcpToolRecords(context: CommandContext, options: CatalogRankingOptions = {}): Promise<readonly McpToolRecord[]> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const api = mcpApi(context);
+  if (!api) return [];
+  const list = modelReadingServicePath(api, ['listAllTools']);
+  if (typeof list !== 'function') return [];
+  const methodGuard = captureCatalogMethods(api, ['listAllTools']);
+  const assertSource = () => {
+    options.signal?.throwIfAborted(); methodGuard();
+    if (mcpApi(context) !== api) throw new ToolInputProjectionError('held');
+  };
+  const raw: unknown = await list.call(api);
+  options.assertCurrent?.(); assertSource();
+  const tools = captureCatalogData(raw);
+  if (!Array.isArray(tools)) throw new ToolInputProjectionError('invalid');
+  const result = tools.map(value => {
+    const tool = schemaObject(value);
+    if (!tool || typeof tool.serverName !== 'string' || typeof tool.toolName !== 'string'
+      || (tool.description !== undefined && typeof tool.description !== 'string')
+      || (tool.qualifiedName !== undefined && typeof tool.qualifiedName !== 'string')) throw new ToolInputProjectionError('invalid');
+    return { ...tool, serverName: tool.serverName, toolName: tool.toolName,
+      ...(typeof tool.description === 'string' ? { description: tool.description } : {}),
+      ...(typeof tool.qualifiedName === 'string' ? { qualifiedName: tool.qualifiedName } : {}),
+    };
+  });
+  const sourceSnapshot = capturePersonalOpsData(raw);
+  const assertCompleteSource = () => { assertSource(); assertPersonalOpsDataCurrent(raw, sourceSnapshot); };
+  options.retainCurrent?.(assertCompleteSource, 'personal-ops-mcp-tools');
+  return result;
 }
 
-export function mcpSchemaReader(context: CommandContext): ((qualifiedName: string) => Promise<McpToolSchema | null>) | null {
-  const api = context.clients?.mcpApi ?? context.extensions?.mcpRegistry;
-  if (!api || typeof (api as { readonly getToolSchema?: unknown }).getToolSchema !== 'function') return null;
-  return (qualifiedName) => (api as { getToolSchema: (qualifiedName: string) => Promise<McpToolSchema | null> }).getToolSchema(qualifiedName);
+export function mcpSchemaReader(context: CommandContext, options: CatalogRankingOptions = {}): ((qualifiedName: string) => Promise<McpToolSchema | null>) | null {
+  const api = mcpApi(context);
+  if (!api) return null;
+  const read = modelReadingServicePath(api, ['getToolSchema']);
+  if (typeof read !== 'function') return null;
+  const methodsCurrent = captureCatalogMethods(api, ['getToolSchema']);
+  return async qualifiedName => {
+    const assertSource = () => {
+      options.signal?.throwIfAborted(); methodsCurrent();
+      if (mcpApi(context) !== api) throw new ToolInputProjectionError('held');
+    };
+    const assertCurrent = () => { options.assertCurrent?.(); assertSource(); };
+    assertCurrent(); const raw: unknown = await read.call(api, qualifiedName); assertCurrent();
+    if (raw === null || raw === undefined) return null;
+    const captured = captureCatalogData(raw);
+    const schema = schemaObject(captured);
+    if (!schema) throw new ToolInputProjectionError('invalid');
+    const sourceSnapshot = capturePersonalOpsData(raw);
+    const assertCompleteSource = () => { assertSource(); assertPersonalOpsDataCurrent(raw, sourceSnapshot); };
+    assertCompleteSource(); options.retainCurrent?.(assertCompleteSource, `personal-ops-mcp-schema:${qualifiedName}`);
+    return { ...schema, inputSchema: schema.inputSchema };
+  };
 }
 
 export function mcpToolCaller(context: CommandContext): ((qualifiedName: string, input: Readonly<Record<string, unknown>>, options?: { readonly signal?: AbortSignal | undefined }) => Promise<unknown>) | null {
-  const api = context.clients?.mcpApi ?? context.extensions?.mcpRegistry;
-  if (!api || typeof (api as { readonly callTool?: unknown }).callTool !== 'function') return null;
-  return (qualifiedName, input, options) => (api as { callTool: (qualifiedName: string, input: Readonly<Record<string, unknown>>, options?: { readonly signal?: AbortSignal | undefined }) => Promise<unknown> }).callTool(qualifiedName, input, options);
+  const api = mcpApi(context);
+  if (!api) return null;
+  const call = modelReadingServicePath(api, ['callTool']);
+  if (typeof call !== 'function') return null;
+  return async (qualifiedName, input, options) => {
+    options?.signal?.throwIfAborted();
+    if (mcpApi(context) !== api || modelReadingServicePath(api, ['callTool']) !== call) throw new ToolInputProjectionError('held');
+    const raw: unknown = await call.call(api, qualifiedName, input, options);
+    options?.signal?.throwIfAborted();
+    if (mcpApi(context) !== api || modelReadingServicePath(api, ['callTool']) !== call) throw new ToolInputProjectionError('held');
+    return raw;
+  };
 }
 
 export function qualifiedToolName(tool: McpToolRecord): string {
   return tool.qualifiedName ?? `mcp:${tool.serverName}:${tool.toolName}`;
 }
 
-export function isPersonalOpsTool(tool: McpToolRecord): boolean {
-  return /(mail|email|gmail|imap|smtp|inbox|message|thread|calendar|caldav|agenda|event|freebusy|availability|meeting)/i.test([
-    tool.serverName,
-    tool.toolName,
-    tool.description ?? '',
-  ].join(' '));
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-
 export function schemaObject(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
+  return isObjectRecord(value) ? value : null;
 }
 
 export function schemaRequiredFields(schema: Record<string, unknown>): readonly string[] {
@@ -154,71 +183,49 @@ export function schemaOptionalFields(schema: Record<string, unknown>, requiredFi
   return Object.keys(properties).filter((field) => !required.has(field)).sort((left, right) => left.localeCompare(right));
 }
 
-export function sampleFieldValue(field: string, capability: string, effect: PersonalOpsConnectorTool['effect']): unknown {
-  const normalized = field.toLowerCase();
-  if (/(limit|max|count|page|size)/.test(normalized)) return 10;
-  if (/(dry|preview)/.test(normalized)) return effect === 'confirmed-effect';
-  if (/(unread|important|include)/.test(normalized)) return true;
-  if (/(start|from|after|time_min|timemin|begin)/.test(normalized)) return capability.startsWith('calendar') ? '<start-iso>' : '<since>';
-  if (/(end|to|before|time_max|timemax|until)/.test(normalized)) return capability.startsWith('calendar') ? '<end-iso>' : '<until>';
-  if (/(thread|message|mail|email).*id|id$/.test(normalized)) return capability.startsWith('calendar') ? '<event-id>' : '<message-or-thread-id>';
-  if (/(event).*id|calendar.*id/.test(normalized)) return '<calendar-or-event-id>';
-  if (/(query|search|q|filter)/.test(normalized)) return capability.startsWith('calendar') ? 'today' : 'is:unread newer_than:7d';
-  if (/(mailbox|folder|label)/.test(normalized)) return capability.startsWith('calendar') ? '<calendar-name>' : '<mailbox-or-label>';
-  if (/(calendar|account|profile)/.test(normalized)) return '<account-or-calendar>';
-  if (/(subject|title|summary)/.test(normalized)) return '<reviewed subject>';
-  if (/(body|text|message|content|reply|draft|description|note)/.test(normalized)) return '<reviewed draft text>';
-  if (/(attendee|participant|invitee)/.test(normalized)) return ['<attendee@example.com>'];
-  return `<${field}>`;
-}
-
-export function sampleInputForFields(
-  requiredFields: readonly string[],
-  optionalFields: readonly string[],
-  capability: string,
-  effect: PersonalOpsConnectorTool['effect'],
-): Readonly<Record<string, unknown>> {
-  const fields = [...requiredFields, ...optionalFields.slice(0, Math.max(0, 4 - requiredFields.length))];
-  const sample: Record<string, unknown> = {};
-  for (const field of fields) sample[field] = sampleFieldValue(field, capability, effect);
-  return sample;
-}
-
-export function summarizeInputSchema(
+export async function summarizeInputSchema(
   qualifiedName: string,
-  inputSchema: unknown,
-  capability: string,
+  contract: PersonalOpsToolContract,
+  lane: 'inbox' | 'calendar',
   effect: PersonalOpsConnectorTool['effect'],
-): McpSchemaSummary | null {
-  const schema = schemaObject(inputSchema);
+  options: CatalogRankingOptions,
+): Promise<McpSchemaSummary | null> {
+  const schema = schemaObject(contract.inputSchema);
   if (!schema) return null;
   const requiredFields = schemaRequiredFields(schema);
   const optionalFields = schemaOptionalFields(schema, requiredFields);
-  return {
-    schemaRoute: `mcp schema qualifiedName:"${qualifiedName}"`,
-    requiredFields,
-    optionalFields,
-    sampleInput: sampleInputForFields(requiredFields, optionalFields, capability, effect),
-  };
+  const fields = [...requiredFields, ...optionalFields.slice(0, Math.max(0, 4 - requiredFields.length))];
+  const sampleInput: Record<string, unknown> = {};
+  for (const field of fields) sampleInput[field] = await readPersonalOpsSampleField({ field, inputSchema: contract.inputSchema, contract, lane, effect }, options);
+  return { schemaRoute: `mcp schema qualifiedName:"${qualifiedName}"`, requiredFields, optionalFields, sampleInput };
 }
 
 export async function mcpToolSchemas(
   context: CommandContext,
   tools: readonly McpToolRecord[],
+  options: CatalogRankingOptions = {},
 ): Promise<ReadonlyMap<string, McpToolSchema>> {
-  const readSchema = mcpSchemaReader(context);
-  if (!readSchema) return new Map();
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const api = mcpApi(context);
+  const read = mcpSchemaReader(context, options);
+  if (!api || !read) return new Map();
+  const source = captureCatalogData(tools);
+  const sourceJson = JSON.stringify(source);
+  const methodsCurrent = captureCatalogMethods(api, ['getToolSchema']);
+  const assertSource = () => {
+    options.signal?.throwIfAborted(); methodsCurrent();
+    if (mcpApi(context) !== api
+      || JSON.stringify(captureCatalogData(tools)) !== sourceJson) throw new ToolInputProjectionError('held');
+  };
+  const assertCurrent = () => { options.assertCurrent?.(); assertSource(); };
   const schemas = new Map<string, McpToolSchema>();
-  const candidates = tools.filter(isPersonalOpsTool).slice(0, 50);
-  for (const tool of candidates) {
-    const qualifiedName = qualifiedToolName(tool);
-    try {
-      const schema = await readSchema(qualifiedName);
-      if (schema) schemas.set(qualifiedName, schema);
-    } catch {
-      // Schema lookup is best-effort. Personal Ops must keep connector readiness usable even when one MCP server fails schema expansion.
-    }
+  for (const tool of source) {
+    assertCurrent();
+    const schema = await read(qualifiedToolName(tool));
+    assertCurrent();
+    if (schema) schemas.set(qualifiedToolName(tool), captureCatalogData(schema));
   }
+  options.retainCurrent?.(assertSource, 'personal-ops-mcp-schema');
   return schemas;
 }
 
@@ -232,117 +239,57 @@ export function toolsByServer(tools: readonly McpToolRecord[]): ReadonlyMap<stri
   return grouped;
 }
 
-export function mcpServerSearchText(server: ReturnType<typeof mcpServerRecords>[number]): string {
-  return [
-    server.name,
-    server.connected ? 'connected' : 'disconnected',
-    server.trustMode,
-    server.role,
-    server.schemaFreshness,
-    ...server.allowedHosts,
-  ].join('\n').toLowerCase();
-}
-
-export function toolCapability(tool: McpToolRecord, lane: 'inbox' | 'calendar'): PersonalOpsConnectorTool | null {
-  const text = [tool.toolName, tool.description ?? ''].join(' ').toLowerCase();
-  const record = (effect: PersonalOpsConnectorTool['effect'], capability: string): PersonalOpsConnectorTool => ({
-    name: tool.toolName,
-    qualifiedName: qualifiedToolName(tool),
-    ...(tool.description ? { description: tool.description } : {}),
-    effect,
-    capability,
-  });
-  if (lane === 'inbox') {
-    if (/(send|reply|draft|compose|archive|label|delete|trash|mark|move)/.test(text)) {
-      return record('confirmed-effect', 'inbox-write');
-    }
-    if (/(mail|email|gmail|imap|smtp|inbox|message|thread)/.test(text) && /(list|search|get|read|fetch|find|unread|query)/.test(text)) {
-      return record('read-only', 'inbox-read');
-    }
-  } else {
-    if (/(create|update|edit|delete|cancel|invite|rsvp|move|reschedule)/.test(text)) {
-      return record('confirmed-effect', 'calendar-write');
-    }
-    if (/(calendar|caldav|agenda|event|freebusy|availability|meeting)/.test(text) && /(list|search|get|read|fetch|find|query|window|upcoming)/.test(text)) {
-      return record('read-only', 'calendar-read');
-    }
-  }
-  return null;
-}
-
-export function connectorToolSummary(tools: readonly McpToolRecord[], lane: 'inbox' | 'calendar'): {
-  readonly readTools: readonly PersonalOpsConnectorTool[];
-  readonly writeTools: readonly PersonalOpsConnectorTool[];
-  readonly capabilityTags: readonly string[];
-} {
-  const classified = tools
-    .map((tool) => toolCapability(tool, lane))
-    .filter((tool): tool is PersonalOpsConnectorTool => tool !== null)
-    .sort((left, right) => left.name.localeCompare(right.name));
-  const readTools = classified.filter((tool) => tool.effect === 'read-only');
-  const writeTools = classified.filter((tool) => tool.effect === 'confirmed-effect');
-  const capabilityTags = [...new Set(classified.map((tool) => tool.capability))].sort((left, right) => left.localeCompare(right));
-  return { readTools, writeTools, capabilityTags };
-}
-
-export function enrichConnectorToolsWithSchemas(
-  tools: readonly PersonalOpsConnectorTool[],
-  schemasByQualifiedName: ReadonlyMap<string, McpToolSchema>,
-): readonly PersonalOpsConnectorTool[] {
-  return tools.map((tool) => {
-    if (!tool.qualifiedName) return tool;
-    const schema = schemasByQualifiedName.get(tool.qualifiedName);
-    const summary = summarizeInputSchema(tool.qualifiedName, schema?.inputSchema, tool.capability, tool.effect);
-    if (!summary) return tool;
-    return {
-      ...tool,
-      schemaRoute: summary.schemaRoute,
-      requiredFields: summary.requiredFields,
-      optionalFields: summary.optionalFields,
-      sampleInput: summary.sampleInput,
-    };
-  });
-}
-
-export function connectorSignalsMatching(
+export async function connectorSignalsMatching(
   context: CommandContext,
-  tokens: readonly string[],
-  options: {
+  options: CatalogRankingOptions & {
     readonly lane: 'inbox' | 'calendar';
     readonly toolsByServer: ReadonlyMap<string, readonly McpToolRecord[]>;
     readonly schemasByQualifiedName: ReadonlyMap<string, McpToolSchema>;
   },
-): readonly PersonalOpsConnectorSignal[] {
-  if (tokens.length === 0) return [];
-  return mcpServerRecords(context)
-    .filter((server) => {
-      const text = mcpServerSearchText(server);
-      return tokens.some((token) => text.includes(token));
-    })
-    .map((server) => {
-      const ready = server.connected && server.schemaFreshness === 'fresh' && server.trustMode !== 'blocked';
-      const serverTools = options.toolsByServer.get(server.name) ?? [];
-      const toolSummary = connectorToolSummary(serverTools, options.lane);
-      const readTools = enrichConnectorToolsWithSchemas(toolSummary.readTools, options.schemasByQualifiedName);
-      const writeTools = enrichConnectorToolsWithSchemas(toolSummary.writeTools, options.schemasByQualifiedName);
-      return {
-        id: `mcp:${server.name}`,
-        kind: 'mcp-server' as const,
-        label: server.name,
-        status: ready ? 'ready' as const : 'attention' as const,
-        summary: [
-          `${server.connected ? 'connected' : 'disconnected'} ${server.trustMode} ${server.schemaFreshness}`,
-          serverTools.length > 0 ? `${serverTools.length} tool(s)` : '',
-          toolSummary.capabilityTags.length > 0 ? toolSummary.capabilityTags.join(', ') : '',
-        ].filter(Boolean).join('; '),
-        modelRoute: `agent_harness mode:"mcp_server" mcpServerId:"${server.name}"`,
-        toolCount: serverTools.length,
-        capabilityTags: toolSummary.capabilityTags,
-        ...(readTools.length > 0 ? { readTools: readTools.slice(0, 8) } : {}),
-        ...(writeTools.length > 0 ? { writeTools: writeTools.slice(0, 8) } : {}),
-      };
-    })
-    .sort((left, right) => left.label.localeCompare(right.label));
+): Promise<readonly PersonalOpsConnectorSignal[]> {
+  const servers = mcpServerRecords(context);
+  const source = servers.map(server => ({ server, tools: (options.toolsByServer.get(server.name) ?? []).map(tool => ({
+    ...tool, schema: options.schemasByQualifiedName.get(qualifiedToolName(tool)) ?? null,
+  })) }));
+  const serialized = JSON.stringify(captureCatalogData(source));
+  const assertSource = () => {
+    options.signal?.throwIfAborted();
+    const current = mcpServerRecords(context).map(server => ({ server, tools: (options.toolsByServer.get(server.name) ?? []).map(tool => ({
+      ...tool, schema: options.schemasByQualifiedName.get(qualifiedToolName(tool)) ?? null,
+    })) }));
+    if (JSON.stringify(captureCatalogData(current)) !== serialized) throw new ToolInputProjectionError('held');
+  };
+  const assertCurrent = () => { options.assertCurrent?.(); assertSource(); };
+  const currentOptions = { ...options, assertCurrent };
+  const matches = await personalOpsLaneMembers(source, options.lane, entry => ({
+    id: entry.server.name, description: entry.tools.map(tool => tool.description ?? '').join('\n'), evidence: entry,
+  }), currentOptions);
+  const signals: PersonalOpsConnectorSignal[] = [];
+  for (const { server, tools } of matches) {
+    assertCurrent();
+    const classified: PersonalOpsConnectorTool[] = [];
+    for (const tool of tools) {
+      const contract = { server: tool.serverName, tool: tool.toolName, description: tool.description ?? '', inputSchema: tool.schema?.inputSchema ?? null };
+      const reading = await readPersonalOpsTool(contract, currentOptions);
+      assertCurrent();
+      if (!reading || reading.lane !== options.lane) continue;
+      const summary = await summarizeInputSchema(qualifiedToolName(tool), contract, reading.lane, reading.effect, currentOptions);
+      assertCurrent();
+      classified.push({ name: tool.toolName, qualifiedName: qualifiedToolName(tool), ...(tool.description ? { description: tool.description } : {}),
+        effect: reading.effect, capability: `${reading.lane}-${reading.effect === 'read-only' ? 'read' : 'write'}`,
+        ...(summary ?? {}),
+      });
+    }
+    const ready = server.connected && server.schemaFreshness === 'fresh' && server.trustMode !== 'blocked';
+    const capabilityTags = [...new Set(classified.map(tool => tool.capability))].sort();
+    signals.push({ id: `mcp:${server.name}`, kind: 'mcp-server', label: server.name, status: ready ? 'ready' : 'attention',
+      summary: `${server.connected ? 'connected' : 'disconnected'} ${server.trustMode} ${server.schemaFreshness}; ${tools.length} tool(s); ${capabilityTags.join(', ')}`,
+      modelRoute: `agent_harness mode:"mcp_server" mcpServerId:"${server.name}"`, toolCount: tools.length, capabilityTags,
+      readTools: classified.filter(tool => tool.effect === 'read-only'), writeTools: classified.filter(tool => tool.effect === 'confirmed-effect'),
+    });
+  }
+  assertCurrent(); options.retainCurrent?.(assertSource, `personal-ops-connectors:${options.lane}`);
+  return signals.sort((left, right) => left.label.localeCompare(right.label));
 }
 
 export function connectorReady(signals: readonly PersonalOpsConnectorSignal[]): boolean {

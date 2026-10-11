@@ -2,9 +2,11 @@ import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { PairingTokenManager, PairingTokenStoreBusyError, type NativeContinuationAuthority } from '../sdk/src/platform/pairing/pairing-token-store.js';
 import * as atomic from '../sdk/src/platform/utils/atomic-json-store.js';
+
+function ownerLockPath(file: string): string { return join(dirname(file), '.pairing-owner-locks', `${basename(file)}.lock`); }
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -111,19 +113,19 @@ describe('private pairing native continuation ownership', () => {
   });
 
   test('a crash-left writer lock is never stolen by age or construction', async () => {
-    const item = fixture(); const grant = item.issue(); mkdirSync(`${item.file}.owner-lock`);
+    const item = fixture(); const grant = item.issue(); mkdirSync(ownerLockPath(item.file));
     const restarted = new PairingTokenManager(item.file);
     await expect(restarted.withNativeContinuation(grant, item.authority, current)).rejects.toThrow(PairingTokenStoreBusyError);
-    expect(existsSync(`${item.file}.owner-lock`)).toBe(true);
+    expect(existsSync(ownerLockPath(item.file))).toBe(true);
   });
 
   test('replaced lock cannot be released as though it were still owned', async () => {
     const item = fixture(); const grant = item.issue(); let launched = false;
     await expect(item.manager.withNativeContinuation(grant, item.authority, assertCurrent => {
-      renameSync(`${item.file}.owner-lock`, `${item.file}.old-lock`); mkdirSync(`${item.file}.owner-lock`);
+      renameSync(ownerLockPath(item.file), `${item.file}.old-lock`); mkdirSync(ownerLockPath(item.file));
       assertCurrent(); launched = true;
     })).rejects.toThrow(PairingTokenStoreBusyError);
-    expect(launched).toBe(false); expect(existsSync(`${item.file}.owner-lock`)).toBe(true);
+    expect(launched).toBe(false); expect(existsSync(ownerLockPath(item.file))).toBe(true);
   });
 
   test('missing/corrupt persisted state refuses without repairing a lookup', () => {

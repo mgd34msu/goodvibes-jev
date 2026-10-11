@@ -1,4 +1,5 @@
 import ts from 'typescript';
+import { captureStaticInputs, staticInputStanding, type SourceAnchor, type StaticSourceReadings } from './static-source-readings.ts';
 
 export interface SourceMarkerFinding {
   readonly line: number;
@@ -14,10 +15,8 @@ function unwrap(expression: ts.Expression): ts.Expression {
   return expression;
 }
 
-/** Literal fixture data may deliberately demonstrate unfinished code. */
-export function sourceMarkerFindings(path: string, text: string): SourceMarkerFinding[] {
-  const matches = [...text.matchAll(/\b(TODO|FIXME|XXX|HACK|STUB)\b/g)];
-  if (matches.length === 0) return [];
+/** Lexical anchors define candidates. Their meaning is decided only by recorded observations. */
+export function sourceMarkerAnchors(path: string, text: string): SourceAnchor[] {
   const filename = `/marker-input${/\.[cm]?[jt]sx?$/.exec(path)?.[0] ?? '.ts'}`;
   const file = ts.createSourceFile(filename, text, ts.ScriptTarget.Latest, true);
   const host: ts.CompilerHost = {
@@ -92,11 +91,64 @@ export function sourceMarkerFindings(path: string, text: string): SourceMarkerFi
     ts.forEachChild(node, findLiterals);
   };
   findLiterals(file);
-  const lines = text.split('\n');
-  return matches.flatMap((match) => {
-    const offset = match.index!;
-    if (literalRanges.some(([start, end]) => offset >= start && offset + match[0].length <= end)) return [];
-    const { line, character } = file.getLineAndCharacterOfPosition(offset);
-    return [{ line: line + 1, col: character + 1, marker: match[0], text: lines[line]?.trimEnd() ?? '' }];
+  const anchors = new Map<number, SourceAnchor>();
+  const commentRanges = new Map<number, ts.CommentRange>();
+  const add = (start: number, end: number): void => {
+    const { line, character } = file.getLineAndCharacterOfPosition(start);
+    anchors.set(start, { id: `anchor_${start}`, line: line + 1, col: character + 1, text: text.slice(start, end) });
+  };
+  const comments = (ranges: readonly ts.CommentRange[] | undefined): void => {
+    for (const range of ranges ?? []) commentRanges.set(range.pos, range);
+  };
+  const implementationString = (node: ts.Node): boolean => {
+    if (/\b(TODO|FIXME|XXX|HACK|STUB)\b/.test(text.slice(node.getStart(file), node.end))) return true;
+    let expression = node;
+    while (expression.parent && (ts.isAsExpression(expression.parent) || ts.isTypeAssertionExpression(expression.parent)
+      || ts.isParenthesizedExpression(expression.parent) || ts.isSatisfiesExpression(expression.parent)
+      || ts.isNonNullExpression(expression.parent))) expression = expression.parent;
+    if (ts.isReturnStatement(expression.parent) || ts.isThrowStatement(expression.parent)) return true;
+    const parent = expression.parent;
+    return (ts.isNewExpression(parent) || ts.isCallExpression(parent)) && parent.arguments?.some(argument => argument === expression) === true
+      && (ts.isIdentifier(parent.expression) && parent.expression.text.endsWith('Error'));
+  };
+  const capture = (node: ts.Node): void => {
+    comments(ts.getLeadingCommentRanges(text, node.getFullStart()));
+    comments(ts.getTrailingCommentRanges(text, node.end));
+    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)
+      || ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node))
+      && implementationString(node)
+      && !literalRanges.some(([start, end]) => node.getStart(file) >= start && node.end <= end)) {
+      add(node.getStart(file), node.end);
+    }
+    // Token children retain comments between operators, inside empty bodies
+    // and between declarations without treating string contents as comments.
+    for (const child of node.getChildren(file)) capture(child);
+  };
+  capture(file);
+  comments(ts.getLeadingCommentRanges(text, 0));
+  // Contiguous line comments form one lexical statement. Keeping the complete
+  // unit prevents a historical clause from losing the present-tense conclusion.
+  const ranges = [...commentRanges.values()].sort((a, b) => a.pos - b.pos);
+  for (let index = 0; index < ranges.length; index++) {
+    const first = ranges[index]!;
+    let last = first;
+    while (first.kind === ts.SyntaxKind.SingleLineCommentTrivia) {
+      const next = ranges[index + 1];
+      if (!next || next.kind !== ts.SyntaxKind.SingleLineCommentTrivia
+        || !/^[\t ]*\r?\n[\t ]*$/.test(text.slice(last.end, next.pos))) break;
+      last = next; index++;
+    }
+    add(first.pos, last.end);
+  }
+  return [...anchors.values()].sort((a, b) => a.line - b.line || a.col - b.col);
+}
+
+export function sourceMarkerFindings(path: string, text: string, readings: StaticSourceReadings | null = null): SourceMarkerFinding[] {
+  const inputs = captureStaticInputs('deferred-work', path, text, sourceMarkerAnchors(path, text));
+  return inputs.flatMap(input => {
+    const standing = staticInputStanding(input, readings);
+    if (standing.kind === 'clear') return [];
+    if (standing.kind === 'held') return [{ line: input.firstLine, col: 1, marker: 'evidence-held', text: `${standing.reason}; run static-source:read` }];
+    return [{ line: standing.anchor.line, col: standing.anchor.col, marker: 'deferred-work', text: standing.anchor.text }];
   });
 }

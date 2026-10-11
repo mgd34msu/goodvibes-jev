@@ -1,22 +1,25 @@
+import { useSecurityReadings } from './helpers/security-readings.ts';
 import { describe, expect, test } from 'bun:test';
 
 /**
  * Bearer/token redaction, verifies that redactSensitiveData strips
  * Bearer tokens and API keys from error strings before they appear in logs.
  */
+useSecurityReadings();
+
 describe('bearer redaction', () => {
   test('redactSensitiveData removes Bearer tokens', async () => {
-    const { redactSensitiveData } = await import('../sdk/src/platform/utils/redaction.js');
+    const { redactSensitiveDataAsync: redactSensitiveData } = await import('../sdk/src/platform/utils/redaction.js');
     const input = 'Authorization: Bearer sk-ant-abc123def456';
-    const result = redactSensitiveData(input);
+    const result = await redactSensitiveData(input);
     expect(result).not.toContain('sk-ant-abc123def456');
     expect(result).toContain('[REDACTED_TOKEN]');
   });
 
   test('redactSensitiveData is case-insensitive for Bearer prefix', async () => {
-    const { redactSensitiveData } = await import('../sdk/src/platform/utils/redaction.js');
+    const { redactSensitiveDataAsync: redactSensitiveData } = await import('../sdk/src/platform/utils/redaction.js');
     const input = 'auth header: bearer MYTOKEN12345';
-    const result = redactSensitiveData(input);
+    const result = await redactSensitiveData(input);
     expect(result).not.toContain('MYTOKEN12345');
   });
 
@@ -36,9 +39,9 @@ describe('bearer redaction', () => {
   });
 
   test('redactSensitiveData preserves non-sensitive content', async () => {
-    const { redactSensitiveData } = await import('../sdk/src/platform/utils/redaction.js');
+    const { redactSensitiveDataAsync: redactSensitiveData } = await import('../sdk/src/platform/utils/redaction.js');
     const input = 'Connection refused to localhost:3000';
-    const result = redactSensitiveData(input);
+    const result = await redactSensitiveData(input);
     expect(result).toBe(input);
   });
 });

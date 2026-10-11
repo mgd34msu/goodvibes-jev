@@ -1,3 +1,4 @@
+import { KNOWLEDGE_SCHEMA_VERSION } from '../sdk/src/platform/knowledge/store-schema.js';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -209,7 +210,7 @@ describe('stored work plans written before the contract rename', () => {
     // Inject only the historical field-name shape. A generic source upsert would
     // rewrite canonical source clocks through its numeric compatibility view.
     const raw = new SQLiteStore(store.storagePath, { coordinated: true });
-    await raw.init(() => {}, { schemaVersion: 9 });
+    await raw.init(() => {}, { schemaVersion: KNOWLEDGE_SCHEMA_VERSION });
     raw.run('UPDATE knowledge_sources SET metadata = ? WHERE id = ?',
       [JSON.stringify({ ...source.metadata, value: { ...value, tasks: legacyTasks } }), source.id]);
     await raw.save(); raw.close();

@@ -209,6 +209,9 @@ export { createNativeInboundSourceOwner, NativeInboundSourceError, sameNativeInb
 export type { NativeInboundBrokerIdentity, NativeInboundSourceRef, NativeInboundOrigin, NativeInboundOriginal, NativeInboundSourceHandle, NativeInboundResolvedSource, NativeInboundSourceResolver } from './native-inbound-source.js';
 
 export { createNativeInboundHandoff } from './native-inbound-handoff.js';
+export type { NativeMutationHost } from './native-mutation.js';
+export { captureOccasionsGatewayTarget } from './routes/native-profile-mutation.js';
+export { registerNativeAutomationGatewayMethods } from '../daemon/http/native-automation.js';
 export type { NativeInboundDisposition, NativeInboundAcceptance, NativeInboundProcessingOwner, NativeInboundReceiver } from './native-inbound-handoff.js';
 export type { DelegatedSessionInputBinding, DelegatedSessionTransferReceipt, DelegatedSessionSubmission } from './session-broker-delegated.js';
 export type { OwnerApprovalGuard, RaisedOwnerApproval, ResolveOwnerApprovalInput, ResolveSharedApprovalInput } from './approval-broker-owner.js';

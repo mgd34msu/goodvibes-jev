@@ -2,6 +2,8 @@ import { bindJudgmentPortAuthority, installJudgmentPort, restoreJudgmentPort } f
 import { createJudgmentSourceLifetime } from './judgment-source-lifetime.js';
 import {
   createSystemOnePort,
+  endpointKind,
+  isPinnedJudgmentModel,
   JudgmentError,
   judgmentConfigFromEnv,
   PINNED_MODEL,
@@ -14,6 +16,8 @@ import {
   type SqliteDecisionLog,
 } from '@goodvibes-jev/judgment';
 import type { JudgmentKeySource } from '../config/schema-types-judgment.js';
+import type { SecretsManager } from '../config/secrets.js';
+import { captureJudgmentFallbackSettings } from '../config/judgment-fallback-settings.js';
 import { openStateDecisionLog } from '../state/decision-log.js';
 import type { DisposalRegistry } from './disposal.js';
 
@@ -23,7 +27,7 @@ export const JUDGMENT_KEY_NAME = 'TYPESAFE_API_KEY';
 /** What the judgment settings are read from. */
 export interface JudgmentSettingsSource {
   readonly config: {
-    get(key: 'judgment.endpoint' | 'judgment.keySource' | 'judgment.model' | 'judgment.timeoutMs'): unknown;
+    get(key: 'judgment.endpoint' | 'judgment.keySource' | 'judgment.model' | 'judgment.timeoutMs' | 'judgment.fallbacks'): unknown;
     getConfigurationIncarnation?(): number;
     onDidChangeIncarnation?(listener: () => void): () => void;
   };
@@ -31,6 +35,8 @@ export interface JudgmentSettingsSource {
     get(key: string): Promise<string | null>;
     getCredentialMutationState?(): Readonly<{ generation: number; pending: boolean }>;
     onDidInvalidateCredentials?(listener: () => void): () => void;
+    /** Local alias/scope observation; its value and revision stay private. */
+    readonly resolveLocalCredentialSnapshot?: SecretsManager['resolveLocalCredentialSnapshot'];
   };
   /** The process environment; TYPESAFE_API_KEY, TYPESAFE_BASE_URL and TYPESAFE_DEFAULT_MODEL. */
   readonly env: Readonly<Record<string, string | undefined>>;
@@ -68,16 +74,38 @@ export async function judgmentConfigFromSettings(source: JudgmentSettingsSource)
   const model = settingsModel(source);
   const timeoutMs = source.config.get('judgment.timeoutMs');
   const keySource = source.config.get('judgment.keySource') as JudgmentKeySource;
+  let targets: ReturnType<typeof captureJudgmentFallbackSettings>;
+  try { targets = captureJudgmentFallbackSettings(source.config.get('judgment.fallbacks')); }
+  catch { throw new JudgmentError('invalid-request', 'Invalid judgment fallback settings'); }
+  if (targets.length > 0 && !isPinnedJudgmentModel(model)) {
+    throw new JudgmentError('invalid-request', 'judgment failover requires a pinned primary model');
+  }
+  const environmentKeys = targets.map(target => target.keySource === 'env' ? source.env[target.keyName] : undefined);
   env.TYPESAFE_API_KEY = await settingsKey(source.secrets, keySource, env.TYPESAFE_API_KEY);
+  const fallbacks: NonNullable<JudgmentConfig['fallbacks']>[number][] = [];
+  for (const [index, target] of targets.entries()) {
+    let key: string | null | undefined;
+    try { key = target.keySource === 'env' ? environmentKeys[index] : await source.secrets.get(target.keyName); }
+    catch { throw new JudgmentError('invalid-request', `judgment fallback ${index + 1} credential resolution failed`); }
+    if (typeof key !== 'string' || !key.trim()) throw new JudgmentError('invalid-request', `judgment fallback ${index + 1} has no resolved credential`);
+    fallbacks.push({ endpoint: { kind: endpointKind(target.endpoint), baseURL: target.endpoint, apiKey: key.trim() }, model: target.model });
+  }
   return judgmentConfigFromEnv(env, {
     model,
     ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
+    ...(targets.length > 0 ? { fallbacks } : {}),
   });
 }
 
 /** Whether two configs reach the same endpoint with the same key, model and timeout. */
 const sameConfig = (a: JudgmentConfig, b: JudgmentConfig): boolean =>
-  a.endpoint.baseURL === b.endpoint.baseURL && a.endpoint.apiKey === b.endpoint.apiKey && a.model === b.model && a.timeoutMs === b.timeoutMs;
+  a.endpoint.baseURL === b.endpoint.baseURL && a.endpoint.apiKey === b.endpoint.apiKey && a.model === b.model && a.timeoutMs === b.timeoutMs
+  && (a.fallbacks?.length ?? 0) === (b.fallbacks?.length ?? 0)
+  && (a.fallbacks ?? []).every((target, index) => {
+    const other = b.fallbacks?.[index];
+    return other !== undefined && target.model === other.model && target.endpoint.baseURL === other.endpoint.baseURL
+      && target.endpoint.apiKey === other.endpoint.apiKey && target.endpoint.kind === other.endpoint.kind;
+  });
 
 /** A secret-store read cannot strand runtime cancellation or its decision log. */
 async function activeSettings(source: JudgmentSettingsSource, signal?: AbortSignal): Promise<JudgmentConfig> {

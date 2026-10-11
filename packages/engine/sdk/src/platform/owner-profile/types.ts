@@ -27,16 +27,20 @@ export function isProfileSurface(value: string): value is ProfileSurface {
 /**
  * Where a line came from: which surface, when, and the owner's exact words.
  *
- * `said` is verbatim and is what makes "where did you get that" answerable. A
+ * Human `said` is verbatim. Autonomous records retain their admitted source
+ * separately and carry an empty quote, so they never impersonate a speaker. A
  * line with no provenance is one the owner wrote or edited by hand, and is
  * reported as such rather than dressed up as a recorded source.
  */
-export interface ProfileProvenance {
+interface ProfileProvenanceBase {
   readonly surface: ProfileSurface;
   /** ISO calendar date, `YYYY-MM-DD`. */
   readonly date: string;
-  readonly said: string;
 }
+export type ProfileProvenance = ProfileProvenanceBase & (
+  | { readonly origin?: 'owner-direct'; readonly said: string }
+  | { readonly origin: 'autonomous'; readonly said: ''; readonly source: { readonly goal: string; readonly criteria: readonly string[] } }
+);
 
 /** One line of the document, as projected. */
 export interface ProfileLine {

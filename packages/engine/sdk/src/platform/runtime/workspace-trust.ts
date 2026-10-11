@@ -31,9 +31,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { JsonFileStore } from '../state/index.js';
 import type { PermissionCategory } from '../permissions/index.js';
-import type { PermissionPromptRequest, PermissionPromptDecision } from '../permissions/index.js';
-
-type AskCallback = (request: PermissionPromptRequest) => Promise<PermissionPromptDecision>;
+import type { PermissionRequestHandler } from '../permissions/index.js';
 
 /**
  * Wrap the permission machinery's final ask callback with the workspace trust
@@ -54,21 +52,24 @@ type AskCallback = (request: PermissionPromptRequest) => Promise<PermissionPromp
  */
 export function trustGatedAsk(
   manager: Pick<WorkspaceTrustManager, 'isCategoryAllowed' | 'isDecided' | 'setLevel'>,
-  ask: AskCallback,
+  ask: PermissionRequestHandler,
   requestTrustDecision: () => Promise<WorkspaceTrustLevel>,
-): AskCallback {
+): PermissionRequestHandler {
   let pendingDecision: Promise<WorkspaceTrustLevel> | null = null;
-  return async (request) => {
-    if (manager.isCategoryAllowed(request.category)) return ask(request);
+  return async (request, options) => {
+    assertPermissionActive(options?.signal);
+    if (manager.isCategoryAllowed(request.category)) return ask(request, options);
     if (!manager.isDecided()) {
       if (!pendingDecision) {
         pendingDecision = requestTrustDecision().finally(() => {
           pendingDecision = null;
         });
       }
-      const level = await pendingDecision;
+      const decision = pendingDecision;
+      const level = await awaitPermission(() => decision, options?.signal);
       await manager.setLevel(level);
-      if (manager.isCategoryAllowed(request.category)) return ask(request);
+      assertPermissionActive(options?.signal);
+      if (manager.isCategoryAllowed(request.category)) return ask(request, options);
     }
     return { approved: false };
   };

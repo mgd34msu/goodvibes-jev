@@ -1,3 +1,4 @@
+import { rankHomeGraphPageCandidates, HomeGraphPagePriorityHeldError } from './page-priority.js';
 import type { ArtifactStore } from '../../artifacts/index.js';
 import {
   listGeneratedKnowledgePages,
@@ -15,8 +16,16 @@ export async function listHomeGraphPages(input: {
   readonly edges: readonly KnowledgeEdgeRecord[];
   readonly limit: number;
   readonly includeMarkdown: boolean;
+  readonly signal?: AbortSignal;
+  readonly assertCurrent?: () => void;
 }): Promise<HomeGraphPageListResult> {
-  return listGeneratedKnowledgePages<HomeGraphPageGraphNode>({
+  const state = () => JSON.stringify({ sources: input.sources, nodes: input.nodes, edges: input.edges });
+  const original = state();
+  const assertCurrent = () => {
+    input.assertCurrent?.();
+    if (state() !== original) throw new HomeGraphPagePriorityHeldError('stale');
+  };
+  const result = await listGeneratedKnowledgePages<HomeGraphPageGraphNode>({
     artifactStore: input.artifactStore,
     spaceId: input.spaceId,
     sources: input.sources,
@@ -28,8 +37,20 @@ export async function listHomeGraphPages(input: {
     isPageSubjectNode,
     resolvePageSubject,
     projectNode: pageGraphNode,
-    compareGeneratedPages,
+    rankGeneratedPages: (sources, graph) => rankHomeGraphPageCandidates({
+      candidates: sources, purpose: 'Order useful generated home references for the owner',
+      signal: input.signal, assertCurrent,
+      content: source => {
+        const target = graph.targetBySourceId.get(source.id);
+        const subject = target ? resolvePageSubject(target, graph) : undefined;
+        return { title: source.title, summary: source.summary, projectionKind: source.metadata.projectionKind,
+          ...(target ? { target: prioritySubject(target) } : {}),
+          ...(subject ? { subject: prioritySubject(subject) } : {}) };
+      },
+    }),
   });
+  assertCurrent();
+  return result;
 }
 
 function resolvePageSubject(target: KnowledgeNodeRecord, graph: GeneratedKnowledgePageGraph): KnowledgeNodeRecord | undefined {
@@ -67,34 +88,11 @@ function pageGraphNode(node: KnowledgeNodeRecord): HomeGraphPageGraphNode {
   };
 }
 
-function compareGeneratedPages(left: KnowledgeSourceRecord, right: KnowledgeSourceRecord, graph: GeneratedKnowledgePageGraph): number {
-  const leftKind = typeof left.metadata.projectionKind === 'string' ? left.metadata.projectionKind : '';
-  const rightKind = typeof right.metadata.projectionKind === 'string' ? right.metadata.projectionKind : '';
-  return generatedPagePriority(right, graph) - generatedPagePriority(left, graph)
-    || leftKind.localeCompare(rightKind)
-    || (left.title ?? left.id).localeCompare(right.title ?? right.id)
-    || left.id.localeCompare(right.id);
-}
-
-function generatedPagePriority(source: KnowledgeSourceRecord, graph: GeneratedKnowledgePageGraph): number {
-  const target = graph.targetBySourceId.get(source.id);
-  const subject = target ? resolvePageSubject(target, graph) : undefined;
-  const projectionKind = typeof source.metadata.projectionKind === 'string' ? source.metadata.projectionKind : '';
-  const subjectMetadata = subject?.metadata ?? {};
-  const text = [
-    source.title,
-    source.summary,
-    subject?.title,
-    subject?.summary,
-    typeof subjectMetadata.manufacturer === 'string' ? subjectMetadata.manufacturer : undefined,
-    typeof subjectMetadata.model === 'string' ? subjectMetadata.model : undefined,
-  ].filter(Boolean).join(' ').toLowerCase();
-  let score = 0;
-  if (projectionKind === 'device-passport') score += 30;
-  if (projectionKind === 'room-page') score += 18;
-  if (subject?.kind === 'ha_device') score += 24;
-  if (subject?.kind === 'ha_area' || subject?.kind === 'ha_room') score += 16;
-  if (/\b(tv|television|webos|iphone|phone|router|printer|camera|thermostat|lock|garage|espresso|appliance|esp32|proxy|speaker|receiver)\b/.test(text)) score += 12;
-  if (/\b(home assistant|plugin|theme|card|conversation|tts|stt|task|backup)\b/.test(text)) score -= 10;
-  return score;
+export function prioritySubject(node: KnowledgeNodeRecord) {
+  const ha = readRecord(node.metadata.homeAssistant);
+  return {
+    kind: node.kind, title: node.title, summary: node.summary,
+    manufacturer: node.metadata.manufacturer, model: node.metadata.model,
+    objectKind: ha.objectKind, domain: ha.domain ?? node.metadata.domain,
+  };
 }

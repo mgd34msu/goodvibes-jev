@@ -9,6 +9,7 @@ import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
 import { isNotifySuppressed } from '../utils/notify.js';
 import { workstreamLabel } from '../channels/workstream-labels.js';
 import { HttpStatusError } from '@goodvibes-jev/engine/errors';
+import { assertDeliveryCurrent, type DeliveryLifetime } from '../utils/delivery-lifetime.js';
 
 const WEBHOOK_POLICY_ERRORS = {
   blocked: 'WebhookNotifier: blocked URL',
@@ -134,8 +135,8 @@ export class WebhookNotifier {
    * URLs are delivered with bounded concurrency; individual failures are
    * logged and returned but do not throw, remaining URLs still receive the notification.
    */
-  send(text: string): Promise<WebhookNotifierSendResult> {
-    return this.dispatch(() => NotificationEnvelope.legacy(text, this.metadataOnly));
+  send(text: string, lifetime: DeliveryLifetime = {}): Promise<WebhookNotifierSendResult> {
+    return this.dispatch(() => NotificationEnvelope.legacy(text, this.metadataOnly), lifetime);
   }
 
   /** Snapshot typed facts once; each recipient independently checks current privacy. */
@@ -143,11 +144,12 @@ export class WebhookNotifier {
     return this.dispatch(() => NotificationEnvelope.typed(delivery, this.metadataOnly));
   }
 
-  private dispatch(create: () => NotificationEnvelope): Promise<WebhookNotifierSendResult> {
+  private dispatch(create: () => NotificationEnvelope, lifetime: DeliveryLifetime = {}): Promise<WebhookNotifierSendResult> {
+    assertDeliveryCurrent(lifetime);
     const urls = [...this.urls];
     if (this.closed) return Promise.resolve(this.closedReceipt(urls));
     // Register before privacy readers, formatters or transport can reenter close.
-    return this.own(() => this.sendEnvelope(create(), urls));
+    return this.own(() => this.sendEnvelope(create(), urls, lifetime));
   }
 
   private closedReceipt(urls: readonly string[]): WebhookNotifierSendResult {
@@ -155,12 +157,12 @@ export class WebhookNotifier {
       results: urls.map((url) => ({ url, ok: false, error: WEBHOOK_POLICY_ERRORS.closed })) };
   }
 
-  private async sendEnvelope(envelope: NotificationEnvelope, urls: readonly string[]): Promise<WebhookNotifierSendResult> {
+  private async sendEnvelope(envelope: NotificationEnvelope, urls: readonly string[], lifetime: DeliveryLifetime): Promise<WebhookNotifierSendResult> {
     if (urls.length === 0) {
       return { attempted: 0, delivered: 0, failed: 0, results: [] };
     }
 
-    const results = await mapSettledWithConcurrency(urls, this.maxConcurrent, (url) => this.postOne(url, envelope));
+    const results = await mapSettledWithConcurrency(urls, this.maxConcurrent, (url) => this.postOne(url, envelope, lifetime));
     const deliveries = urls.map((url, i): WebhookNotifierDeliveryResult => {
       const result = results[i]!;
       if (result.status === 'fulfilled') {
@@ -307,7 +309,8 @@ export class WebhookNotifier {
   // Private helpers
   // -------------------------------------------------------------------------
 
-  private async postOne(url: string, envelope: NotificationEnvelope): Promise<void> {
+  private async postOne(url: string, envelope: NotificationEnvelope, lifetime: DeliveryLifetime): Promise<void> {
+    assertDeliveryCurrent(lifetime);
     this.assertOpen();
     // SSRF tier filter, block requests to internal/private hosts.
     const hostname = extractHostname(url);
@@ -332,6 +335,9 @@ export class WebhookNotifier {
 
     this.assertOpen();
     const controller = new AbortController();
+    const abort = () => controller.abort(lifetime.signal?.reason);
+    lifetime.signal?.addEventListener('abort', abort, { once: true });
+    if (lifetime.signal?.aborted) abort();
     this.requests.add(controller);
     const timer = setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), this.timeoutMs);
     timer.unref?.();
@@ -340,6 +346,7 @@ export class WebhookNotifier {
       // recipient observed restriction, discard that body/signature pair and
       // prepare/sign the redacted body once. No unbounded retry is possible.
       for (let preparation = 0; preparation < 2; preparation += 1) {
+        assertDeliveryCurrent(lifetime);
         this.assertOpen(controller.signal);
         const prepared = envelope.prepare();
         this.assertOpen(controller.signal);
@@ -352,6 +359,7 @@ export class WebhookNotifier {
         const current = envelope.isCurrent(prepared.revision);
         this.assertOpen(controller.signal);
         if (!current) continue;
+        assertDeliveryCurrent(lifetime);
         const res = await instrumentedFetch(url, {
           method: 'POST', headers, body, signal: controller.signal,
         });
@@ -368,7 +376,7 @@ export class WebhookNotifier {
       throw new WebhookPolicyError('privacy');
     } finally {
       try { envelope.refreshPrivacy(); }
-      finally { clearTimeout(timer); this.requests.delete(controller); }
+      finally { clearTimeout(timer); this.requests.delete(controller); lifetime.signal?.removeEventListener('abort', abort); }
     }
   }
 

@@ -246,8 +246,8 @@ export interface DaemonCardStoreOptions {
 /**
  * The daemon's card store: metadata on disk, material in the secret tier.
  *
- * Implements the SDK's `CardMaterialStore` so the checkout flow can be handed
- * this object unchanged the day `payments.checkout.*` is wired to a page driver.
+ * Implements the SDK's `CardMaterialStore` used by the registered checkout
+ * service through its browser checkout seam.
  */
 export class DaemonCardStore implements CardMaterialStore {
   private readonly filePath: string;

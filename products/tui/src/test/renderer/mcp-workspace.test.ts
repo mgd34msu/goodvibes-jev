@@ -5,6 +5,33 @@ import { activeTokens } from '../../renderer/theme.ts';
 import { layerText, layerTextBlock } from '../helpers/surface-frame.ts';
 
 describe('renderMcpWorkspace (modal surface kit, list and detail)', () => {
+  test('a server name cannot turn an ordinary removal prompt into an error notice', () => {
+    const workspace = new McpWorkspace();
+    workspace.active = true;
+    workspace.requestDelete('failed-attention-quarantine');
+    expect(workspace.statusTone).toBe('info');
+    const layer = renderMcpWorkspace(workspace, 140, 36);
+    const statusCells = layer.lines.find(line => line.map(cell => cell.char).join('').includes('Status:'));
+    expect(statusCells).toBeDefined();
+    if (!statusCells) throw new Error('MCP removal prompt omitted its status row');
+    const label = statusCells.map(cell => cell.char).join('');
+    expect(label).toContain('failed-attention-quarantine');
+    expect(statusCells[label.indexOf('Status:')]?.fg).toBe(activeTokens().textMuted);
+  });
+
+  test('a runtime-only server edit is a typed warning even when its name contains failed', () => {
+    const workspace = new McpWorkspace();
+    workspace.active = true;
+    workspace.openEditForm('failed-server');
+    expect(workspace.statusTone).toBe('warning');
+    const layer = renderMcpWorkspace(workspace, 140, 36);
+    const statusCells = layer.lines.find(line => line.map(cell => cell.char).join('').includes('Status:'));
+    if (!statusCells) throw new Error('MCP missing-config warning omitted its status row');
+    const label = statusCells.map(cell => cell.char).join('');
+    expect(label).toContain('failed-server');
+    expect(statusCells[label.indexOf('Status:')]?.fg).toBe(activeTokens().warning);
+  });
+
   test('browse: server and action groups on the left, the selected row\'s details in an element inset on the right', () => {
     const workspace = new McpWorkspace();
     workspace.active = true;

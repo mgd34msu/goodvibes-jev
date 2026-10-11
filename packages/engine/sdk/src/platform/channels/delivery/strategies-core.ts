@@ -1,4 +1,4 @@
-import { assertDeliveryCurrent } from '../../utils/delivery-lifetime.js';
+import { assertDeliveryCurrent, runDeliveryPublication } from '../../utils/delivery-lifetime.js';
 import { retireDeliveryResponse } from '../../integrations/delivery-diagnostics.js';
 import { ArtifactStore } from '../../artifacts/index.js';
 import { ConfigManager } from '../../config/manager.js';
@@ -72,7 +72,7 @@ export function createWebhookDeliveryStrategy(
           attachments,
           artifacts: attachments,
         }),
-      }, { ...options, assertCurrent: request.assertCurrent });
+      }, { ...options, assertCurrent: request.assertCurrent, withPublication: request.withPublication });
       if (!response.ok) {
         throw new HttpStatusError(`HTTP ${response.status}: ${await response.text().catch(() => '')}`, { status: response.status });
       }
@@ -237,6 +237,7 @@ export function createNtfyDeliveryStrategy(
         allowDuplicate: request.allowDuplicate === true,
         signal: request.signal,
         assertCurrent: request.assertCurrent,
+        withPublication: request.withPublication,
       });
       return success(topic);
     },
@@ -261,7 +262,7 @@ export function createWebControlPlaneDeliveryStrategy(
         throw new Error('Web control-plane gateway unavailable');
       }
       assertDeliveryCurrent(request);
-      const published = gateway.publishSurfaceMessage({
+      const published = await runDeliveryPublication(request, () => gateway.publishSurfaceMessage({
         surface: 'web',
         title: request.target.label ?? request.title,
         body: request.body,
@@ -274,7 +275,7 @@ export function createWebControlPlaneDeliveryStrategy(
           runId: request.runId,
           agentId: request.agentId,
         },
-      });
+      }));
       return success(published.id);
     },
   };

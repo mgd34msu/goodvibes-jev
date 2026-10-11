@@ -384,6 +384,7 @@ export async function initializeBootstrapCore(
   });
 
   const bootstrapUnsubs: Array<() => void> = [];
+  bootstrapUnsubs.push(() => conversation.setNoticeSink(null));
   await memoryStore.init();
   bootstrapUnsubs.push(() => {
     void memoryStore.save();

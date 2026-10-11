@@ -46,6 +46,45 @@ function installFalFetchStub(
 }
 
 describe('media generation providers', () => {
+  test('credential replacement after submission fences every later poll', async () => {
+    process.env.FAL_KEY = 'synthetic-original-key';
+    const calls: string[] = [];
+    globalThis.fetch = (async input => {
+      calls.push(String(input)); process.env.FAL_KEY = 'synthetic-replacement-key';
+      return Response.json({ status_url: 'https://queue.fal.run/status/task-1', response_url: 'https://queue.fal.run/result/task-1' });
+    }) as typeof globalThis.fetch;
+    await expect(getFalProvider().generate!({ prompt: 'synthetic fixture', options: { image: true }, metadata: {} })).rejects.toThrow('owner changed');
+    expect(calls).toHaveLength(1);
+  });
+  test('cancellation interrupts a provider polling delay before the next request', async () => {
+    process.env.FAL_KEY = 'synthetic-key'; const controller = new AbortController();
+    const calls: string[] = [];
+    globalThis.fetch = (async input => {
+      const url = String(input); calls.push(url);
+      if (url.includes('/status/')) {
+        setImmediate(() => controller.abort());
+        return Response.json({ status: 'IN_PROGRESS' });
+      }
+      return Response.json({ status_url: 'https://queue.fal.run/status/task-1', response_url: 'https://queue.fal.run/result/task-1' });
+    }) as typeof globalThis.fetch;
+    await expect(getFalProvider().generate!({ prompt: 'synthetic fixture', options: { image: true }, metadata: {} }, { signal: controller.signal })).rejects.toThrow();
+    expect(calls).toHaveLength(2);
+  });
+  test('cancellation during HEAD failure prevents the GET recovery request', async () => {
+    process.env.FAL_KEY = 'synthetic-key'; const controller = new AbortController();
+    const calls = installFalFetchStub(async (_input, init) => {
+      expect(init?.method).toBe('HEAD'); controller.abort(); throw new Error('synthetic failed probe');
+    });
+    await expect(getFalProvider().generate!({ prompt: 'synthetic fixture', options: { image: true }, metadata: {} }, { signal: controller.signal })).rejects.toThrow();
+    expect(calls.filter(call => call.url.includes('cdn.example')).map(call => call.method)).toEqual(['HEAD']);
+  });
+  test('source replacement during HEAD fences artifact retrieval', async () => {
+    process.env.FAL_KEY = 'synthetic-key'; let current = true;
+    const calls = installFalFetchStub(async () => { current = false; return new Response(null, { headers: { 'Content-Type': 'image/png' } }); });
+    await expect(getFalProvider().generate!({ prompt: 'synthetic fixture', options: { image: true }, metadata: {} }, { assertCurrent() { if (!current) throw new Error('Synthetic source retired'); } })).rejects.toThrow('source retired');
+    expect(calls.filter(call => call.url.includes('cdn.example')).map(call => call.method)).toEqual(['HEAD']);
+  });
+
   test('records explicit HEAD-to-GET transport recovery for inlined generated artifacts', async () => {
     process.env.FAL_KEY = 'test-key';
     const calls = installFalFetchStub(async (_input, init) => {
@@ -74,12 +113,12 @@ describe('media generation providers', () => {
       transportRecovery: {
         from: 'HEAD',
         to: 'GET',
-        reason: 'HEAD not supported by provider CDN',
+        reason: 'Media artifact HEAD probe failed.',
       },
       headProbe: {
         attempted: true,
         ok: false,
-        error: 'HEAD not supported by provider CDN',
+        error: 'Media artifact HEAD probe failed.',
       },
     });
     expect(calls.some((call) => call.url === 'https://cdn.example/generated.png' && call.method === 'GET')).toBe(true);

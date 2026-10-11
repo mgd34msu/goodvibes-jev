@@ -1,5 +1,5 @@
 import { judgmentPort, captureJudgmentPort, JudgmentAuthorityRetiredError, JudgmentPortMissingError, type JudgmentPortCapture } from '@goodvibes-jev/engine/errors';
-import type { JsonValue, JudgmentPort } from '@goodvibes-jev/judgment';
+import { checkAnswers, type JsonValue, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { assertJudgmentInput, JudgmentInputError } from '../../../gate/judgment-input.js';
 import { freezeSupport } from '../verification/projection.js';
 import { repairSourceAuthority } from './battery.js';
@@ -116,11 +116,9 @@ export function createRepairSourceAuthorityReader(options: RepairSourceAuthority
         if (typeof choice !== 'string' || !choices.some((item) => item === choice) || typeof confidence !== 'number'
           || !Number.isFinite(confidence) || confidence < 0 || confidence > 1 || !record(probabilities)
           || Object.keys(probabilities).length !== choices.length || !keys(probabilities, choices)) throw new Held('malformed');
+        try { checkAnswers(request.questions, result.answers); }
+        catch { throw new Held('malformed'); }
         const copied = Object.fromEntries(choices.map((key) => [key, probabilities[key]]));
-        const scores = Object.values(copied);
-        if (scores.some((score) => typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 1)
-          || Math.abs((scores as number[]).reduce((sum, score) => sum + score, 0) - 1) > 0.00001
-          || Math.abs(Number(copied[choice]) - confidence) > 0.00001 || (scores as number[]).some((score) => score > confidence)) throw new Held('malformed');
         if (requestedModel !== configuredModel || (resultModel !== undefined && model !== resultModel)) throw new Held('stale');
         resultModel = model;
         return { ...result, model, requestedModel, answers: { ...result.answers,

@@ -82,6 +82,12 @@ function assertCatalogBackendSlots(before: ReturnType<typeof catalogBackendSlots
       || field?.descriptor.writable !== current?.descriptor.writable) throw new ToolInputProjectionError('held');
   }
 }
+/** Retain descriptor and prototype identity without invoking replacement accessors. */
+export function captureCatalogMethods(subject: object, keys: readonly string[]): () => void {
+  const names = [...keys];
+  const captured = catalogBackendSlots(subject, names);
+  return () => assertCatalogBackendSlots(captured, catalogBackendSlots(subject, names));
+}
 function captureCatalogBackend(port: ReturnType<typeof judgmentPort>, decision: Rerank) {
   const decisionKeys = ['name', 'version', 'description', 'accuracyFloor', 'model', 'fixtureCount', 'checkFixtures', 'rerank'];
   const definition = catalogBackendSlots(decision, decisionKeys);
@@ -106,6 +112,7 @@ export async function rankHarnessCatalog<T>(
   describe: (entry: T) => { readonly id: string; readonly description: string; readonly evidence?: unknown },
   site: string,
   options: CatalogRankingOptions = {},
+  decisionName = 'engine.tools.registry-rank',
 ): Promise<{ readonly matches: readonly { readonly entry: T; readonly judgment: Ranked }[]; readonly judgments: readonly Ranked[] }> {
   options.signal?.throwIfAborted(); options.assertCurrent?.();
   if (!Array.isArray(entries) || nodeTypes.isProxy(entries) || Object.getPrototypeOf(entries) !== Array.prototype
@@ -132,6 +139,9 @@ export async function rankHarnessCatalog<T>(
   if (new Set(source.catalog.map(({ id }) => id)).size !== catalog.length) throw new ToolInputProjectionError('held');
   const owner = options.sourceOwner;
   if (!owner) throw new ToolInputProjectionError('held');
+  const assertOwnerMethods = captureCatalogMethods(owner, ['capture', 'screen', 'project', 'release']);
+  const ownerMethods = { capture: owner.capture, screen: owner.screen, project: owner.project, release: owner.release };
+  options.retainCurrent?.(assertOwnerMethods, `agent.catalog.owner:${site}`);
   // A whole candidate is one protected part, so the complete operator catalog
   // fits the owner's bounded source count without a lexical shortlist. JSON
   // framing is parsed only after screening; damaged framing holds the reading.
@@ -160,7 +170,7 @@ export async function rankHarnessCatalog<T>(
     if (releasing) return releasing;
     released = true;
     signal?.removeEventListener('abort', abort);
-    releasing = Promise.resolve().then(async () => { await Promise.all(handles.map(handle => Promise.resolve().then(() => owner.release(handle)))); });
+    releasing = Promise.resolve().then(async () => { await Promise.all(handles.map(handle => Promise.resolve().then(() => ownerMethods.release.call(owner, handle)))); });
     return releasing;
   };
   const abort = () => { void release().catch(() => {}); };
@@ -169,13 +179,13 @@ export async function rankHarnessCatalog<T>(
   const assertPublicationCurrent = () => {
     if (options.signal !== signal || options.sourceOwner !== owner || options.assertCurrent !== originalAssert
       || options.retainCurrent !== retainCurrent || options.requirePreservedSource !== requirePreservedSource) throw new ToolInputProjectionError('held');
-    signal?.throwIfAborted(); originalAssert?.(); assertBackend?.();
+    signal?.throwIfAborted(); originalAssert?.(); assertOwnerMethods(); assertBackend?.();
   };
   const assertCurrent = () => {
     assertPublicationCurrent();
     if (released) throw new ToolInputProjectionError('held');
     for (const { receipt, projection } of receipts) {
-      const current = owner.project(receipt);
+      const current = ownerMethods.project.call(owner, receipt);
       if (current.length !== projection.length || current.some((part, index) => part !== projection[index])) throw new ToolInputProjectionError('held');
     }
     signal?.throwIfAborted();
@@ -183,17 +193,17 @@ export async function rankHarnessCatalog<T>(
   try {
     assertCurrent();
     for (const batch of batches) {
-      assertCurrent(); handles.push(owner.capture(batch));
+      assertCurrent(); handles.push(ownerMethods.capture.call(owner, batch));
     }
     signal?.addEventListener('abort', abort, { once: true });
     assertCurrent();
     const projected: string[] = [];
     for (const handle of handles) {
       assertCurrent();
-      const result = await owner.screen(handle);
+      const result = await ownerMethods.screen.call(owner, handle);
       assertCurrent();
       if (result.status !== 'settled') throw new ToolInputProjectionError('held');
-      const projection = owner.project(result.receipt);
+      const projection = ownerMethods.project.call(owner, result.receipt);
       receipts.push({ receipt: result.receipt, projection }); projected.push(...projection);
     }
     assertCurrent();
@@ -202,11 +212,13 @@ export async function rankHarnessCatalog<T>(
       let value: unknown;
       try { value = JSON.parse(part); } catch { throw new ToolInputProjectionError('held'); }
       if (!Array.isArray(value) || value.length !== 3 || typeof value[0] !== 'string' || typeof value[1] !== 'string') throw new ToolInputProjectionError('held');
-      return value as [string, string, unknown];
+      const evidenceJson = JSON.stringify(value[2]);
+      if (typeof evidenceJson !== 'string') throw new ToolInputProjectionError('held');
+      return { name: value[0], description: value[1], evidenceJson };
     });
     // No hosted port lookup, log, cache, or request precedes full screening.
     const port = judgmentPort(site);
-    const decision = gateJudgmentRegistry.get('engine.tools.registry-rank');
+    const decision = gateJudgmentRegistry.get(decisionName);
     if (!decision) throw new ToolInputProjectionError('unavailable');
     const backend = captureCatalogBackend(port, decision as Rerank);
     const { model, recorder, rerank } = backend;
@@ -214,9 +226,9 @@ export async function rankHarnessCatalog<T>(
     assertBackend = () => {
       backend.assertCurrent();
       installation.assertCurrent();
-      if (judgmentPort(site) !== port || gateJudgmentRegistry.get('engine.tools.registry-rank') !== decision) throw new ToolInputProjectionError('held');
+      if (judgmentPort(site) !== port || gateJudgmentRegistry.get(decisionName) !== decision) throw new ToolInputProjectionError('held');
     };
-    retainCurrent?.(assertBackend, `engine.tools.registry-rank:${site}`);
+    retainCurrent?.(assertBackend, `${decisionName}:${site}`);
     assertCurrent();
     const guardedPort: typeof port = { model, ...(recorder ? { recorder: {
       recordReadings: (...args: Parameters<typeof recorder.recordReadings>) => { assertCurrent(); recorder.recordReadings(...args); assertCurrent(); },
@@ -231,7 +243,7 @@ export async function rankHarnessCatalog<T>(
     } };
     // Opaque request ids prevent catalog identity from bypassing source screening in logs.
     const { ranked } = await rerank.call(decision, guardedPort, projected[0]!, source.catalog.map((_entry, index) => ({
-      id: String(index), content: { type: 'tool', name: projectedCatalog[index]![0], description: projectedCatalog[index]![1].slice(0, 600) },
+      id: String(index), content: { type: 'tool', ...projectedCatalog[index]! },
     })), { site, ...(signal ? { signal } : {}) });
     assertCurrent();
     if (ranked.length !== catalog.length || new Set(ranked.map(({ id }) => id)).size !== ranked.length
@@ -239,12 +251,13 @@ export async function rankHarnessCatalog<T>(
     for (const judgment of ranked) {
       assertCurrent();
       if (judgment.decisionId) guardedPort.recorder?.recordAction(judgment.decisionId,
-        judgment.reading.verdict === 'yes' ? 'catalog candidate matched'
+        judgment.reading.outcome !== 'act' ? 'catalog candidate held: unresolved reading'
+          : judgment.reading.verdict === 'yes' ? 'catalog candidate matched'
           : judgment.reading.verdict === 'no' ? 'catalog candidate rejected' : 'catalog candidate held: uncertain');
     }
     const judgments = ranked.map((judgment) => ({ ...judgment, id: source.catalog[Number(judgment.id)]!.id }));
     return {
-      matches: ranked.flatMap((judgment, index) => judgment.reading.verdict === 'no' ? [] : [{ entry: catalog[Number(judgment.id)]!.entry, judgment: judgments[index]! }]),
+      matches: ranked.flatMap((judgment, index) => judgment.reading.verdict === 'no' && judgment.reading.outcome === 'act' ? [] : [{ entry: catalog[Number(judgment.id)]!.entry, judgment: judgments[index]! }]),
       judgments,
     };
   } finally { await release(); assertPublicationCurrent(); }

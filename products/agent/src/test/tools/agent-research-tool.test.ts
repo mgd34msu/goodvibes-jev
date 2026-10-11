@@ -1,3 +1,4 @@
+import { effectAdmissionFixture } from '../helpers/effect-admission.ts';
 import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
 import { afterAll, describe, expect, test } from 'bun:test';
 afterAll(cleanupResearchScreeningFixtures);
@@ -8,8 +9,11 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { CommandContext, CommandRegistry } from '../../input/command-registry.ts';
 import { AgentResearchRunRegistry } from '../../agent/research-run-registry.ts';
 import { AgentResearchSourceRegistry } from '../../agent/research-source-registry.ts';
-import { createAgentResearchTool, registerAgentResearchTool } from '../../tools/agent-research-tool.ts';
+import { createAgentResearchTool as rawResearchTool, registerAgentResearchTool } from '../../tools/agent-research-tool.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+
+import { createAgentResearchReportProjector } from '../../agent/protected-research-report.ts';
+function createAgentResearchTool(...[deps]: Parameters<typeof rawResearchTool>) { const admission = effectAdmissionFixture(); return admission.tool(rawResearchTool({ ...deps, toolRegistry: admission.registry }), { inputProjection: createAgentResearchReportProjector(deps.sourceOwner, args => args.action === 'report') }); }
 
 function fakeTool(name: string, calls: Record<string, unknown>[], output?: unknown): Tool {
   return {
@@ -83,7 +87,7 @@ describe('research adapter', () => {
         { title: `See ${unsafe}`, url: unsafe, note: `Before ${unsafe} after.` },
         { title: 'Safe source', url: safe, note: 'Ordinary prose.' },
       ] });
-      expect(result.success).toBe(true);
+      expect(result.success, result.error).toBe(true);
       expect(JSON.stringify(calls)).not.toContain('sentinel');
       expect(calls[0]?.sources).toMatchObject([
         { title: 'See [source URL withheld]', urlOmitted: true, note: 'Before [source URL withheld] after.' },
@@ -120,7 +124,7 @@ describe('research adapter', () => {
       commandContext: { workspace: {}, platform: {} } as CommandContext,
       toolRegistry: new ToolRegistry(), reportTool });
     const result = await tool.execute({ action: 'report', title: 'Report', sources: [source] });
-    expect(result.success).toBe(true);
+    expect(result.success, result.error).toBe(true);
     expect(captured?.sources).toEqual([{ title: 'Original source', url: 'https://example.test/article?id=123#section-2', credibility: 'unreviewed' }]);
     expect(JSON.stringify(captured)).not.toContain('sentinel');
     expect(Object.isFrozen(captured?.sources)).toBe(true);
@@ -162,8 +166,8 @@ describe('research adapter', () => {
     const calls: Record<string, unknown>[] = [];
     const tool = makeTool(calls);
 
-    await tool.execute({ action: 'runner' });
-    await tool.execute({ action: 'browser', query: 'authenticated market research', includeParameters: false });
+    await tool.execute({ action: 'runner', preview: true });
+    await tool.execute({ action: 'browser', preview: true, query: 'authenticated market research', includeParameters: false });
 
     expect(calls).toEqual([
       { tool: 'agent_harness', mode: 'research_workflow', query: 'browser-backed research runner', includeParameters: true },
@@ -197,7 +201,7 @@ describe('research adapter', () => {
       readonly sourceCandidates: readonly {
         readonly title: string;
         readonly url: string;
-        readonly captureArgs: { readonly action: string; readonly confirm: boolean; readonly explicitUserRequest: string };
+        readonly captureArgs: { readonly action: string; readonly confirm?: boolean; readonly explicitUserRequest?: string };
         readonly captureRoute: string;
       }[];
     };
@@ -210,8 +214,8 @@ describe('research adapter', () => {
     expect(packet.sourceCandidates[0]?.title).toBe('Browser Agent Report');
     expect(packet.sourceCandidates[0]?.url).toBe('https://example.test/report?api_key=%3Credacted%3E');
     expect(packet.sourceCandidates[0]?.captureArgs.action).toBe('add_source');
-    expect(packet.sourceCandidates[0]?.captureArgs.confirm).toBe(true);
-    expect(packet.sourceCandidates[0]?.captureArgs.explicitUserRequest).toBe('...');
+    expect(packet.sourceCandidates[0]?.captureArgs.confirm).toBeUndefined();
+    expect(packet.sourceCandidates[0]?.captureArgs.explicitUserRequest).toBeUndefined();
     expect(packet.sourceCandidates[0]?.captureRoute).toContain('research action:"add_source"');
   });
 
@@ -257,7 +261,7 @@ describe('research adapter', () => {
     }
   });
 
-  test('requires explicit confirmation before the research runner mutates visible run state', async () => {
+  test('caller confirmation cannot authorize a raw research runner write', async () => {
     const root = makeProjectTempDir('goodvibes-agent-research-runner-confirm');
     const shellPaths = {
       resolveProjectPath: (...parts: string[]) => join(root, '.goodvibes', ...parts),
@@ -266,10 +270,10 @@ describe('research adapter', () => {
       const calls: Record<string, unknown>[] = [];
       const tool = makeTool(calls, { workspace: { shellPaths }, platform: {} } as CommandContext);
 
-      const result = await tool.execute({ action: 'runner', query: 'browser agents', confirm: true });
+      const result = await rawResearchTool({ commandRegistry: {} as CommandRegistry, commandContext: { workspace: { shellPaths }, platform: {} } as CommandContext, toolRegistry: new ToolRegistry() }).execute({ action: 'runner', query: 'browser agents', confirm: true, explicitUserRequest: 'Caller assertion' });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('explicitUserRequest');
+      expect(result.error).toContain('recorded effect admission');
       expect(calls).toEqual([]);
       expect(AgentResearchRunRegistry.fromShellPaths(shellPaths).list()).toEqual([]);
       expect(AgentResearchSourceRegistry.fromShellPaths(shellPaths).list()).toEqual([]);
@@ -278,7 +282,7 @@ describe('research adapter', () => {
     }
   });
 
-  test('confirmed research runner starts a visible run, saves source candidates, and checkpoints next review routes', async () => {
+  test('admitted research runner starts a visible run, saves source candidates, and checkpoints next review routes', async () => {
     const root = makeProjectTempDir('goodvibes-agent-research-runner');
     const shellPaths = {
       resolveProjectPath: (...parts: string[]) => join(root, '.goodvibes', ...parts),
@@ -348,7 +352,7 @@ describe('research adapter', () => {
         credibility: 'unreviewed',
       });
       expect(packet.sources[0]?.inspectRoute).toContain(`sourceId:"${packet.sources[0]?.sourceId}"`);
-      expect(packet.sources[0]?.reviewRoute).toContain('confirm:true');
+      expect(packet.sources[0]?.reviewRoute).toContain('action:"review_source"');
       expect(packet.sources[0]?.reportLine).toContain('https://example.test/report?api_key=%3Credacted%3E');
       expect(packet.nextRoutes.run).toContain(`runId:"${packet.run.id}"`);
       expect(packet.nextRoutes.sources).toContain('includeReportLines:true');

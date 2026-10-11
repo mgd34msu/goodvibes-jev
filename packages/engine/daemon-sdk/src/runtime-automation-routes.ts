@@ -39,16 +39,28 @@ export function createDaemonRuntimeAutomationRouteHandlers(
     postAutomationHeartbeat: async (request) => withAdmin(context, request, () => handlePostAutomationHeartbeat(context, request)),
     automationRunAction: async (runId, action, request) => withAdmin(context, request, () => handleAutomationRunAction(context, runId, action, request)),
     patchAutomationJob: async (jobId, request) => withAdmin(context, request, () => handlePatchSchedule(context, jobId, request)),
-    deleteAutomationJob: async (jobId, request) => withAdmin(context, request, () => handleDeleteSchedule(context, jobId)),
-    setAutomationJobEnabled: async (jobId, enabled, request) => withAdmin(context, request, () => handleSetScheduleEnabled(context, jobId, enabled)),
+    deleteAutomationJob: async (jobId, request) => withAdmin(context, request, () => rejectNativeFallback(request, () => handleDeleteSchedule(context, jobId))),
+    setAutomationJobEnabled: async (jobId, enabled, request) => withAdmin(context, request, () => rejectNativeFallback(request, () => handleSetScheduleEnabled(context, jobId, enabled))),
     runAutomationJobNow: async (jobId, request) => withAdmin(context, request, () => handleRunScheduleNow(context, jobId)),
     getSchedules: () => handleGetSchedules(context),
     postSchedule: (request) => withAdmin(context, request, () => handlePostSchedule(context, request)),
-    deleteSchedule: async (scheduleId, request) => withAdmin(context, request, () => handleDeleteSchedule(context, scheduleId)),
-    setScheduleEnabled: (scheduleId, enabled, request) => withAdmin(context, request, () => handleSetScheduleEnabled(context, scheduleId, enabled)),
+    deleteSchedule: async (scheduleId, request) => withAdmin(context, request, () => rejectNativeFallback(request, () => handleDeleteSchedule(context, scheduleId))),
+    setScheduleEnabled: (scheduleId, enabled, request) => withAdmin(context, request, () => rejectNativeFallback(request, () => handleSetScheduleEnabled(context, scheduleId, enabled))),
     runScheduleNow: (scheduleId, request) => withAdmin(context, request, () => handleRunScheduleNow(context, scheduleId)),
     getSchedulerCapacity: (req) => withAdmin(context, req, () => Response.json(context.automationManager.getSchedulerCapacity())),
   };
+}
+
+function nativeFallbackError(): Response {
+  return jsonErrorResponse({ error: 'Autonomous automation requires the registered native handler.', code: 'NATIVE_MUTATION_AUTH_REQUIRED' }, { status: 403 });
+}
+
+async function rejectNativeFallback(request: Request, effect: () => Promise<Response>): Promise<Response> {
+  request.signal.throwIfAborted();
+  const body: unknown = await request.clone().json().catch(() => null);
+  request.signal.throwIfAborted();
+  if (body !== null && typeof body === 'object' && 'admission' in body && body.admission === 'autonomous') return nativeFallbackError();
+  return await effect();
 }
 
 
@@ -98,6 +110,7 @@ function readScheduleTimeoutMs(value: unknown): number | Response | undefined {
 async function handlePostSchedule(context: DaemonRuntimeRouteContext, req: Request): Promise<Response> {
   const body = await context.parseJsonBody(req);
   if (body instanceof Response) return body;
+  if (body.admission === 'autonomous') return nativeFallbackError();
   const input = automationBodySchemas.schedule.parse(body);
   if (input instanceof Response) return input;
   try {
@@ -149,6 +162,7 @@ async function handlePatchSchedule(context: DaemonRuntimeRouteContext, id: strin
   if (!job) return jsonErrorResponse({ error: `Schedule not found: ${id}` }, { status: 404 });
   const body = await context.parseJsonBody(req);
   if (body instanceof Response) return body;
+  if (body.admission === 'autonomous') return nativeFallbackError();
   try {
     const updated = await context.automationManager.updateJob(job.id, body as Record<string, unknown>);
     return updated

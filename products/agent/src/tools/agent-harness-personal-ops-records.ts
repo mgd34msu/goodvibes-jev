@@ -1,8 +1,12 @@
+import { readPersonalOpsReceiptStatus } from './agent-harness-personal-ops-readings.ts';
+import { captureCatalogMethods, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { assertPersonalOpsDataCurrent, capturePersonalOpsData, protectPersonalOpsData } from './agent-harness-personal-ops-source.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { readRecord } from './agent-harness-model-routing-utils.ts';
 import type { ArtifactDescriptor } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { buildAgentWorkspaceRuntimeSnapshot } from '../input/agent-workspace-snapshot.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
-import { redactedPersonalOpsText } from './agent-harness-personal-ops-runner.ts';
 import { personalOpsRecordCertification } from './agent-harness-personal-ops-certification.ts';
 import type { PersonalOpsConnectorSignal, PersonalOpsConnectorTool, PersonalOpsLane, PersonalOpsLaneId, PersonalOpsLiveRecord, PersonalOpsRecordFreshness, PersonalOpsStatus, PersonalOpsWorkflow, PersonalOpsWorkflowStatus } from './agent-harness-personal-ops-types.ts';
 
@@ -285,9 +289,9 @@ export function artifactMetadataStringArray(artifact: ArtifactDescriptor, key: s
   if (Array.isArray(value)) {
     return value
       .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
-      .map((entry) => previewHarnessText(redactedPersonalOpsText(entry.trim()), 120));
+      .map((entry) => previewHarnessText(entry.trim(), 120));
   }
-  if (typeof value === 'string' && value.trim()) return [previewHarnessText(redactedPersonalOpsText(value.trim()), 120)];
+  if (typeof value === 'string' && value.trim()) return [previewHarnessText(value.trim(), 120)];
   return [];
 }
 
@@ -325,52 +329,58 @@ function metadataCreatedAtIso(artifact: ArtifactDescriptor): string {
   return artifactCreatedAtIso(artifact);
 }
 
-export function savedReviewArtifacts(context: CommandContext, laneId: 'inbox' | 'calendar'): readonly ArtifactDescriptor[] {
-  const store = context.platform.artifactStore;
-  if (!store?.list) return [];
-  try {
-    return store.list(100)
-      .filter((artifact) => artifactMetadataString(artifact, 'purpose') === 'personal-ops-review-cards')
-      .filter((artifact) => artifactMetadataString(artifact, 'laneId') === laneId)
-      .sort((left, right) => {
-        const leftCreated = typeof left.createdAt === 'number' ? left.createdAt : 0;
-        const rightCreated = typeof right.createdAt === 'number' ? right.createdAt : 0;
-        return rightCreated - leftCreated;
-      })
-      .slice(0, 5);
-  } catch {
-    return [];
-  }
+async function personalOpsArtifacts(context: CommandContext, options: CatalogRankingOptions): Promise<readonly ArtifactDescriptor[]> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const contextCurrent = captureCatalogMethods(context, ['platform']);
+  const platform = context.platform;
+  const platformCurrent = captureCatalogMethods(platform, ['artifactStore']);
+  const store = platform.artifactStore;
+  if (!store) return [];
+  const methodGuard = captureCatalogMethods(store, ['list']);
+  const list = store.list;
+  if (!list) return [];
+  const originals = list.call(store, 100);
+  const originalSnapshot = capturePersonalOpsData(originals);
+  const assertSource = () => {
+    options.signal?.throwIfAborted(); contextCurrent(); platformCurrent(); methodGuard();
+    if (context.platform !== platform || platform.artifactStore !== store) throw new ToolInputProjectionError('held');
+    assertPersonalOpsDataCurrent(list.call(store, 100), originalSnapshot);
+  };
+  const assertCurrent = () => { options.assertCurrent?.(); assertSource(); };
+  const protectedValues = await protectPersonalOpsData(originals, { signal: options.signal, assertCurrent });
+  assertCurrent();
+  if (!Array.isArray(protectedValues) || protectedValues.length !== originals.length) throw new ToolInputProjectionError('held');
+  const result = originals.map((artifact, index) => {
+    const safe = readRecord(protectedValues[index]);
+    // Native identities, clocks and schema discriminants are authorities. Masking
+    // one holds the record instead of silently changing its dispatch provenance.
+    for (const key of ['id', 'kind', 'mimeType', 'sizeBytes', 'sha256', 'createdAt', 'expiresAt', 'acquisitionMode', 'fetchMode'] as const)
+      if (safe[key] !== artifact[key]) throw new ToolInputProjectionError('held');
+    const metadata = readRecord(safe.metadata);
+    for (const key of ['purpose', 'laneId']) if (metadata[key] !== artifact.metadata[key]) throw new ToolInputProjectionError('held');
+    return { id: artifact.id, kind: artifact.kind, mimeType: artifact.mimeType, sizeBytes: artifact.sizeBytes,
+      sha256: artifact.sha256, createdAt: artifact.createdAt, expiresAt: artifact.expiresAt,
+      acquisitionMode: artifact.acquisitionMode, fetchMode: artifact.fetchMode, metadata,
+      filename: typeof safe.filename === 'string' ? safe.filename : undefined,
+      sourceUri: typeof safe.sourceUri === 'string' ? safe.sourceUri : undefined,
+    };
+  });
+  options.retainCurrent?.(assertSource, 'personal-ops-artifacts');
+  return result;
 }
 
-function savedProviderEffectReceiptArtifacts(context: CommandContext, laneId: PersonalOpsEffectReceiptLaneId): readonly ArtifactDescriptor[] {
-  const store = context.platform.artifactStore;
-  if (!store?.list) return [];
-  try {
-    return store.list(100)
-      .filter((artifact) => PERSONAL_OPS_EFFECT_RECEIPT_PURPOSES.has(artifactMetadataString(artifact, 'purpose')))
-      .filter((artifact) => artifactMetadataString(artifact, 'laneId') === laneId)
-      .sort((left, right) => {
-        const leftCreated = typeof left.createdAt === 'number' ? left.createdAt : 0;
-        const rightCreated = typeof right.createdAt === 'number' ? right.createdAt : 0;
-        return rightCreated - leftCreated;
-      })
-      .slice(0, 10);
-  } catch {
-    return [];
-  }
+export async function savedReviewArtifacts(context: CommandContext, laneId: 'inbox' | 'calendar', options: CatalogRankingOptions = {}): Promise<readonly ArtifactDescriptor[]> {
+  return (await personalOpsArtifacts(context, options))
+    .filter(artifact => artifactMetadataString(artifact, 'purpose') === 'personal-ops-review-cards')
+    .filter(artifact => artifactMetadataString(artifact, 'laneId') === laneId)
+    .sort((left, right) => right.createdAt - left.createdAt).slice(0, 5);
 }
 
-function normalizedEffectReceiptStatus(artifact: ArtifactDescriptor): string {
-  const raw = (artifactMetadataString(artifact, 'status')
-    || artifactMetadataString(artifact, 'outcome')
-    || artifactMetadataString(artifact, 'result')).toLowerCase();
-  if (!raw) return 'unknown';
-  if (['ok', 'ready', 'success', 'succeeded', 'complete', 'completed', 'sent', 'archived', 'labeled', 'updated', 'accepted', 'declined'].includes(raw)) return 'succeeded';
-  if (['blocked', 'needs-review', 'needs_setup', 'needs-setup'].includes(raw)) return 'blocked';
-  if (['fail', 'failed', 'error', 'errored'].includes(raw)) return 'failed';
-  if (['running', 'pending', 'in-progress', 'in_progress'].includes(raw)) return 'running';
-  return raw;
+async function savedProviderEffectReceiptArtifacts(context: CommandContext, laneId: PersonalOpsEffectReceiptLaneId, options: CatalogRankingOptions): Promise<readonly ArtifactDescriptor[]> {
+  return (await personalOpsArtifacts(context, options))
+    .filter(artifact => PERSONAL_OPS_EFFECT_RECEIPT_PURPOSES.has(artifactMetadataString(artifact, 'purpose')))
+    .filter(artifact => artifactMetadataString(artifact, 'laneId') === laneId)
+    .sort((left, right) => right.createdAt - left.createdAt).slice(0, 10);
 }
 
 function providerEffectSubjectId(artifact: ArtifactDescriptor): string {
@@ -399,16 +409,17 @@ function effectReceiptCapability(laneId: PersonalOpsEffectReceiptLaneId): string
   return 'reminder-effect-receipt';
 }
 
-export function savedProviderEffectReceiptRecords(
+export async function savedProviderEffectReceiptRecords(
   context: CommandContext,
   laneId: PersonalOpsEffectReceiptLaneId,
-): readonly PersonalOpsLiveRecord[] {
-  return savedProviderEffectReceiptArtifacts(context, laneId).map((artifact) => {
+  options: CatalogRankingOptions = {},
+): Promise<readonly PersonalOpsLiveRecord[]> {
+  return Promise.all((await savedProviderEffectReceiptArtifacts(context, laneId, options)).map(async (artifact) => {
     const laneLabel = effectReceiptLaneLabel(laneId);
     const lowerLaneLabel = laneLabel.toLowerCase();
     const providerId = artifactMetadataString(artifact, 'providerId') || artifactMetadataString(artifact, 'provider') || 'provider';
     const operation = artifactMetadataString(artifact, 'operation') || artifactMetadataString(artifact, 'action') || `${laneId}-effect`;
-    const status = normalizedEffectReceiptStatus(artifact);
+    const status = await readPersonalOpsReceiptStatus(artifact, options);
     const sourceTool = artifactMetadataString(artifact, 'sourceTool') || artifactMetadataString(artifact, 'qualifiedName');
     const subjectId = providerEffectSubjectId(artifact);
     const receiptId = artifactMetadataString(artifact, 'receiptId') || artifact.id;
@@ -434,9 +445,9 @@ export function savedProviderEffectReceiptRecords(
       summary: [
         `Confirmed ${lowerLaneLabel} provider-effect receipt ${receiptId} reports ${operation} ${status}.`,
         providerId ? `Provider ${providerId}.` : '',
-        subjectId ? `Subject ${previewHarnessText(redactedPersonalOpsText(subjectId), 96)}.` : '',
+        subjectId ? `Subject ${previewHarnessText(subjectId, 96)}.` : '',
         `Redaction ${redaction}.`,
-        failureReason ? `Failure ${previewHarnessText(redactedPersonalOpsText(failureReason), 140)}.` : '',
+        failureReason ? `Failure ${previewHarnessText(failureReason, 140)}.` : '',
         sourceTool ? `Source ${sourceTool}.` : '',
         createdAt ? `Recorded ${createdAt}.` : '',
       ].filter(Boolean).join(' '),
@@ -475,7 +486,7 @@ export function savedProviderEffectReceiptRecords(
         },
       ],
     };
-  });
+  }));
 }
 
 export function matchingReadTool(
@@ -532,12 +543,13 @@ export function refreshableSavedRecordCount(records: readonly PersonalOpsLiveRec
   return records.filter((record) => record.freshness?.status === 'saved-review-refreshable').length;
 }
 
-export function savedReviewQueueRecords(
+export async function savedReviewQueueRecords(
   context: CommandContext,
   laneId: 'inbox' | 'calendar',
   connectors: readonly PersonalOpsConnectorSignal[],
-): readonly PersonalOpsLiveRecord[] {
-  return savedReviewArtifacts(context, laneId)
+  options: CatalogRankingOptions = {},
+): Promise<readonly PersonalOpsLiveRecord[]> {
+  return (await savedReviewArtifacts(context, laneId, options))
     .flatMap((artifact) => {
       const reviewLabels = artifactMetadataStringArray(artifact, 'reviewLabels').slice(0, 5);
       const reviewRecordIds = artifactMetadataStringArray(artifact, 'reviewRecordIds').slice(0, reviewLabels.length);
@@ -637,12 +649,13 @@ export function savedReviewQueueRecords(
     .slice(0, 10);
 }
 
-export function savedReviewArtifactRecords(
+export async function savedReviewArtifactRecords(
   context: CommandContext,
   laneId: 'inbox' | 'calendar',
   connectors: readonly PersonalOpsConnectorSignal[],
-): readonly PersonalOpsLiveRecord[] {
-  return savedReviewArtifacts(context, laneId).map((artifact) => {
+  options: CatalogRankingOptions = {},
+): Promise<readonly PersonalOpsLiveRecord[]> {
+  return (await savedReviewArtifacts(context, laneId, options)).map((artifact) => {
     const reviewRecordCount = artifactMetadataNumber(artifact, 'reviewRecordCount') ?? 0;
     const reviewLabels = artifactMetadataStringArray(artifact, 'reviewLabels').slice(0, 5);
     const sourceTool = artifactMetadataString(artifact, 'sourceTool') || artifactMetadataString(artifact, 'sourceRecordId');

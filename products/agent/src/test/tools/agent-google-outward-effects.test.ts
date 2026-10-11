@@ -1,3 +1,4 @@
+import { executeAdmitted } from '../helpers/admitted-tool.ts';
 import { useSecurityReadings } from '../helpers/security-readings.ts';
 /**
  * agent-google-outward-effects.test.ts, the boundary, exercised through the
@@ -171,7 +172,7 @@ function googleTool(fixture: GmailFixture = {}) {
 }
 
 function run(tool: ReturnType<typeof createAgentGoogleTool>, args: Record<string, unknown>) {
-  return tool.execute(args) as Promise<{ success: boolean; output?: string; error?: string }>;
+  return executeAdmitted(tool, args);
 }
 
 /** The owner types something. This is what begins a turn. */

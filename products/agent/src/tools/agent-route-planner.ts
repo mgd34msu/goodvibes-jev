@@ -1,5 +1,4 @@
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { gateJudgmentRegistry } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import {
   channelTargetNamedIds,
   modelProviderNamedIds,
@@ -10,9 +9,11 @@ import {
   type TaskRouteDraft,
   type TaskRoutePlan,
 } from '@goodvibes-jev/engine/sdk/platform/routing';
-import type { Rerank } from '@goodvibes-jev/judgment';
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import type { CommandContext } from '../input/command-registry.ts';
-import { listHarnessModes } from './agent-harness-mode-catalog.ts';
+import { HARNESS_MODE_DESCRIPTORS, listHarnessModes } from './agent-harness-mode-catalog.ts';
+import { rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureModelReadingInput, captureModelReadingSnapshotGuard, withModelReadingSource } from './agent-harness-model-reading-source.ts';
 import { listWorkspaceActions } from './agent-harness-workspace-actions.ts';
 import { externalMemoryLiveProviderRecords, externalMemoryProviderCatalog, externalMemoryReceiptEvidence } from './agent-harness-memory-external-providers.ts';
 
@@ -25,32 +26,17 @@ export interface AgentTaskRouteSources {
   readonly channelRegistry?: Parameters<typeof channelTargetNamedIds>[0];
 }
 
-/** Use the public decision registry, without copying its battery or its bands. */
-function registryRank(): Rerank {
-  const decision = gateJudgmentRegistry.get('engine.tools.registry-rank');
-  if (!decision || !('rerank' in decision) || typeof decision.rerank !== 'function') {
-    throw new Error('Task-route catalog ranking is unavailable: engine.tools.registry-rank is not installed.');
-  }
-  return decision as Rerank;
-}
-
+/** Rank complete locally screened catalogs through the canonical public reader. */
 async function rankCatalog(
   request: string,
   records: readonly Record<string, unknown>[],
-  _limit: number,
-  signal?: AbortSignal,
+  options: CatalogRankingOptions,
 ): Promise<TaskRouteCatalogRanking> {
-  const byId = new Map(records.map((record) => [String(record.id), record]));
-  const site = 'agent.task-route.catalog';
-  const result = await registryRank().rerank(judgmentPort(site), request, [...byId].map(([id, record]) => ({
-    id,
-    content: {
-      type: 'tool',
-      name: id,
-      description: [record.label, record.summary, record.family, record.modelRoute].filter((value) => typeof value === 'string').join(' ').slice(0, 600),
-    },
-  })), { site, ...(signal ? { signal } : {}) });
-  return { records: [...byId.values()], ranked: result.ranked };
+  const result = await rankHarnessCatalog(records, request, record => {
+    if (typeof record.id !== 'string') throw new ToolInputProjectionError('held');
+    return { id: record.id, description: JSON.stringify(record), evidence: record };
+  }, 'agent.task-route.catalog', { ...options, requirePreservedSource: true });
+  return { records, ranked: result.judgments };
 }
 
 /** The installed runtime judgment port owns every reading; never install a fallback here. */
@@ -58,33 +44,51 @@ export async function planAgentTaskRoute(
   context: CommandContext,
   args: AgentRoutePlannerArgs,
   sources: AgentTaskRouteSources = {},
-  options: { readonly signal?: AbortSignal } = {},
+  options: CatalogRankingOptions = {},
 ): Promise<TaskRoutePlan> {
-  const request = (typeof args.query === 'string' ? args.query.trim() : '') || (typeof args.target === 'string' ? args.target.trim() : '');
-  if (!request) return planTaskRoute(args);
-  options.signal?.throwIfAborted();
+  const captured = captureModelReadingInput(args);
+  const request = (typeof captured.query === 'string' ? captured.query.trim() : '') || (typeof captured.target === 'string' ? captured.target.trim() : '');
+  if (!request) return planTaskRoute(captured);
+  const modes = captureModelReadingInput(HARNESS_MODE_DESCRIPTORS);
+  const workspace = captureModelReadingInput(listWorkspaceActions(context, { limit: 1000 }));
+  const assertArgs = captureModelReadingSnapshotGuard(captured);
+  const assertModes = captureModelReadingSnapshotGuard(modes);
+  const assertWorkspace = captureModelReadingSnapshotGuard(workspace);
   const providers = context.provider?.providerRegistry;
-  const memory = externalMemoryProviderCatalog(await externalMemoryLiveProviderRecords(context, options), externalMemoryReceiptEvidence(context));
-  options.signal?.throwIfAborted();
-  const matchLimit = args.includeParameters === true ? 6 : 3;
-  const modes = (await listHarnessModes({ limit: 1000 })).modes as readonly Record<string, unknown>[];
-  // List the whole catalog, with no local substring shortlist or hand-scored ranking.
-  const workspace = rankCatalog(request, listWorkspaceActions(context, { limit: 1000 }), matchLimit, options.signal);
-  const harness = rankCatalog(request, modes, matchLimit, options.signal);
-  // Keep every reading and its decision provenance through engine composition.
-  const [plan] = await Promise.all([
-    planTaskRoute(args, {
+  const assertSourcesCurrent = () => {
+    assertArgs(args); assertModes(HARNESS_MODE_DESCRIPTORS);
+    assertWorkspace(listWorkspaceActions(context, { limit: 1000 }));
+    if (context.provider?.providerRegistry !== providers) throw new ToolInputProjectionError('held');
+  };
+  options.retainCurrent?.(assertSourcesCurrent, 'agent.task-route.sources');
+  const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); assertSourcesCurrent(); };
+  assertCurrent();
+  return withModelReadingSource(captured, { ...options, assertCurrent }, async (protectedArgs, readingOptions) => {
+    assertCurrent();
+    const memory = externalMemoryProviderCatalog(await externalMemoryLiveProviderRecords(context, readingOptions), externalMemoryReceiptEvidence(context));
+    readingOptions.assertCurrent?.();
+    const envelope = await listHarnessModes({ limit: 1000 });
+    readingOptions.assertCurrent?.();
+    const modes: Record<string, unknown>[] = [];
+    if (!Array.isArray(envelope.modes)) throw new ToolInputProjectionError('held');
+    for (const mode of envelope.modes) {
+      if (!mode || typeof mode !== 'object' || Array.isArray(mode)) throw new ToolInputProjectionError('held');
+      modes.push(Object.fromEntries(Object.entries(mode)));
+    }
+    const rankOptions = (current: JudgmentReadingOptions = {}): CatalogRankingOptions => ({ ...readingOptions,
+      ...(current.signal ? { signal: current.signal } : {}), assertCurrent: () => {
+        readingOptions.assertCurrent?.(); current.assertCurrent?.();
+      } });
+    const plan = await planTaskRoute(protectedArgs, {
       namedIds: {
         ...(providers ? { modelProvider: () => modelProviderNamedIds(providers) } : {}),
         ...(sources.channelRegistry ? { channelTarget: () => channelTargetNamedIds(sources.channelRegistry!) } : {}),
         memoryProvider: () => memory.map(({ id, label }) => ({ id, names: [label, id] })),
       },
-      workspaceMatches: () => workspace,
-      modeMatches: () => harness,
-    }, options),
-    workspace,
-    harness,
-  ]);
-  options.signal?.throwIfAborted();
-  return plan;
+      workspaceMatches: (currentRequest, _limit, current) => rankCatalog(currentRequest, workspace, rankOptions(current)),
+      modeMatches: (currentRequest, _limit, current) => rankCatalog(currentRequest, modes, rankOptions(current)),
+    }, readingOptions);
+    readingOptions.assertCurrent?.();
+    return plan;
+  });
 }

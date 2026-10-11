@@ -33,7 +33,10 @@ async function held(promise: Promise<unknown>, reason: KnowledgeAnswerQualityHel
 describe('answer fidelity, sufficiency and confidence readings', () => {
   test('registers versioned fixture-bearing batteries', () => {
     expect(registry.list()).toHaveLength(3);
-    for (const battery of registry.list()) { expect(battery.version).toBe(1); expect(battery.accuracyFloor).toBeGreaterThanOrEqual(0.9); }
+    for (const battery of registry.list()) {
+      expect(battery.version).toBe(battery.name === 'engine.knowledge.answer-candidate-quality' ? 2 : 1);
+      expect(battery.accuracyFloor).toBeGreaterThanOrEqual(0.9);
+    }
   });
   test('display confidence is the supported fidelity probability on the stated 0–100 scale', async () => {
     const fake = readings({ confidence: 0.91, preference: 'rendered' });

@@ -3,6 +3,8 @@ import { asRecord } from "./object";
 import {
   SECRET_BEARING_CONFIG_PATHS,
   isSecretBearingConfigKey,
+  isStructuredCredentialReferenceConfigKey,
+  captureStructuredCredentialReferenceConfigValue,
 } from "@goodvibes-jev/engine/sdk/platform/judgment-browser/catalogs";
 import { CONFIG_SCHEMA_ENTRIES } from "./generated/config-schema";
 
@@ -27,6 +29,13 @@ export function maskSecretValue(value: string): string {
 
 /** Render a config value for display, masking declared secrets and unresolved names. */
 export function displayConfigValue(key: string, value: unknown, cleared = false): string {
+  if (isStructuredCredentialReferenceConfigKey(key)) {
+    try {
+      return JSON.stringify(captureStructuredCredentialReferenceConfigValue(key, value));
+    } catch {
+      return "••••";
+    }
+  }
   if (isUnresolvedConfigKey(key) && !cleared) return "••••";
   if (
     isSecretBearingConfigKey(key) &&
@@ -158,9 +167,10 @@ export function flattenConfig(value: unknown, prefix = ''): ConfigEntry[] {
   const entries: ConfigEntry[] = [];
   for (const key of keys) {
     const fullKey = prefix ? `${prefix}.${key}` : key;
-    const item = record[key];
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    const item: unknown = descriptor && 'value' in descriptor ? descriptor.value : undefined;
     const isPlainObject = item !== null && typeof item === 'object' && !Array.isArray(item);
-    if (isPlainObject && !SECRET_CONFIG_KEYS.has(fullKey)) {
+    if (isPlainObject && !SECRET_CONFIG_KEYS.has(fullKey) && !isStructuredCredentialReferenceConfigKey(fullKey)) {
       entries.push(...flattenConfig(item, fullKey));
     } else {
       entries.push({ key: fullKey, value: item, category: categoryLabelForKey(fullKey) });

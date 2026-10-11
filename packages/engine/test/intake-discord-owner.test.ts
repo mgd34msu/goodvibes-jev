@@ -14,12 +14,12 @@ async function fixture(options: { credentialGate?: Promise<void>; screeningGate?
   let token: string | null = 'synthetic-discord-token';
   let actualId = account.userId, bot = true, readable = true, current = true, channelType = 1, channelId = channel;
   let credentialReads = 0, credentialRevision = 0; let pendingCredential = false;
-  const calls: { path: string; authorization: string | null }[] = [], sourceCalls: string[] = [];
+  const calls: { path: string; authorization: string | null; userAgent: string | null }[] = [], sourceCalls: string[] = [];
   const receivedAt = Date.now() - 2_000, id = snowflake(receivedAt);
   const text = 'Contact person@example.test, keep the build notes.';
   const remote = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {
     const path = new URL(request.url).pathname;
-    calls.push({ path, authorization: request.headers.get('authorization') });
+    calls.push({ path, authorization: request.headers.get('authorization'), userAgent: request.headers.get('user-agent') });
     if (path === '/api/v10/users/@me') return Response.json({ id: actualId, bot });
     if (path === `/api/v10/channels/${channel}`) return readable
       ? Response.json({ id: channelId, type: channelType, recipients: [{ id: sender }] }) : new Response(null, { status: 403 });
@@ -73,6 +73,7 @@ test('construction is inert; authenticated channel/history transport maps a real
     provider: 'discord', kind: 'dm', fromDigest: digestSender(sender), subjectPreview: 'Direct message',
     bodyPreview: 'Contact [redacted], keep the build notes.', routeId: 'synthetic-profile' }] });
   expect(f.calls.map(call => call.path)).toEqual(['/api/v10/users/@me', `/api/v10/channels/${channel}`, `/api/v10/channels/${channel}/messages`]);
+  expect(f.calls.every(call => /^DiscordBot \(https:\/\/github\.com\/mgd34msu\/goodvibes-jev, \d+\.\d+\.\d+\)$/.test(call.userAgent ?? ''))).toBe(true);
   expect(f.sourceCalls.length).toBeGreaterThan(1); expect(JSON.stringify(result)).not.toContain('person@example.test');
   expect(() => f.owner.adapter.assertCurrent!()).not.toThrow();
 });
@@ -81,7 +82,7 @@ test.each(['reassign', 'nonBot'] as const)('unverified account %s refuses before
   expect(await f.owner.adapter.poll({ limit: 10 })).toMatchObject({ state: 'unavailable', items: [] });
   expect(f.calls.map(call => call.path)).toEqual(['/api/v10/users/@me']); expect(f.sourceCalls).toEqual([]);
 });
-test.each([0, 2, 4, 15])('guild or unsupported channel type %d never becomes an admitted DM', async type => {
+test.each([0, 2, 3, 4, 15])('group, guild or unsupported channel type %d never becomes an admitted bot DM', async type => {
   const f = await fixture(); f.changeType(type);
   expect((await f.owner.adapter.poll({ limit: 10 })).items).toEqual([]);
   expect(f.calls.some(call => call.path.endsWith('/messages'))).toBe(false); expect(f.sourceCalls).toEqual([]);

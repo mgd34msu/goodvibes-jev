@@ -1,4 +1,4 @@
-import { assertDeliveryCurrent, type DeliveryLifetime } from '../utils/delivery-lifetime.js';
+import { assertDeliveryCurrent, runDeliveryPublication, type DeliveryLifetime } from '../utils/delivery-lifetime.js';
 import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
@@ -191,14 +191,14 @@ export class HomeAssistantIntegration {
       throw new Error(`Absolute path not allowed in Home Assistant request: ${path}`);
     }
     assertDeliveryCurrent(options.lifetime ?? {});
-    return instrumentedFetch(new URL(path, `${this.baseUrl}/`).toString(), {
+    return runDeliveryPublication(options.lifetime ?? {}, () => instrumentedFetch(new URL(path, `${this.baseUrl}/`).toString(), {
       method: options.method ?? 'GET',
       headers,
       ...(options.body ? { body: JSON.stringify(options.body) } : {}),
       signal: options.lifetime?.signal
         ? AbortSignal.any([options.lifetime.signal, AbortSignal.timeout(this.timeoutMs)])
         : AbortSignal.timeout(this.timeoutMs),
-    });
+    }));
   }
 }
 

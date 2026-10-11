@@ -33,6 +33,7 @@ async function topic(store: KnowledgeStore, id: string, extra: Partial<Knowledge
 }
 function readings(values: Readonly<Record<string, number>> = {}, excerpt = 0.99) {
   const fake = fakePort((name, _question, state) => {
+    if (name === 'included') return noulAnswer(0.99);
     if (name === 'excerptUseful') return noulAnswer(excerpt);
     if (name !== 'useful') throw new Error(`Unexpected public retrieval reading: ${name}`);
     return noulAnswer(values[(state as { candidate: { title: string } }).candidate.title] ?? 0.01);
@@ -52,7 +53,7 @@ describe('generic public retrieval through shared readings', () => {
     const result = await select(store);
     expect(result.accepted.map((row) => row.id)).toEqual(['a-recovery', 'z-recovery']);
     expect(result.accepted.map((row) => row.probability)).toEqual([0.99, 0.99]);
-    expect(fake.requests).toHaveLength(3); expect(store.listUsageRecords()).toEqual([]);
+    expect(fake.requests.filter((request) => 'useful' in request.questions)).toHaveLength(3); expect(store.listUsageRecords()).toEqual([]);
     result.assertCurrent();
   });
   test('reads every candidate beyond 100 and a multi-megabyte corpus without a global protection cap', async () => {
@@ -61,7 +62,7 @@ describe('generic public retrieval through shared readings', () => {
     expect(store.listSources(Number.MAX_SAFE_INTEGER).findIndex((row) => row.id === 'last-useful')).toBeGreaterThanOrEqual(100);
     const fake = readings({ 'last-useful': 0.99 });
     const result = await select(store);
-    expect(result.accepted.map((row) => row.id)).toEqual(['last-useful']); expect(fake.requests).toHaveLength(105);
+    expect(result.accepted.map((row) => row.id)).toEqual(['last-useful']); expect(fake.requests.filter((request) => 'useful' in request.questions)).toHaveLength(105);
     expect(fake.requests.every((request) => JSON.stringify(request.state).length < 160_000)).toBe(true);
   });
   test('default, all-space and structurally related scope retain generic admission', async () => {
@@ -90,7 +91,7 @@ describe('generic public retrieval through shared readings', () => {
     await source(store, 'late', `${'x'.repeat(128 * 1024)} Authorization: Bearer synthetic-late`);
     const next = readings({ good: 0.99 });
     await expect(select(store)).rejects.toBeInstanceOf(JudgmentInputError); expect(next.requests).toHaveLength(0);
-    expect(fake.requests).toHaveLength(1);
+    expect(fake.requests.filter((request) => 'useful' in request.questions)).toHaveLength(1);
   });
   test.each(['summary', 'nested', 'section'] as const)('hidden protected %s content cannot disappear during capture', async (field) => {
     const store = await fixture(); const row = await source(store, 'hidden');
@@ -161,6 +162,7 @@ describe('generic public retrieval through shared readings', () => {
     const store = await fixture(); const row = await source(store, 'first', 'x'.repeat(128 * 1024));
     await source(store, 'second', 'x'.repeat(128 * 1024)); const fake = readings({ first: 0.99, second: 0.99 }); let invalid = false;
     installJudgmentPort({ ...fake.port, async ask(request) {
+      if (!('useful' in request.questions)) return fake.port.ask(request);
       if (changed === 'source') (row as { summary: string }).summary = 'Concurrent correction.';
       if (changed === 'extraction') (store.getExtractionBySourceId(row.id)! as { excerpt: string }).excerpt = 'Concurrent correction.';
       if (changed === 'scope-edge') await store.upsertEdge({ fromKind: 'source', fromId: row.id, toKind: 'node', toId: 'missing', relation: 'documents' });
@@ -170,7 +172,7 @@ describe('generic public retrieval through shared readings', () => {
     await expect(readPublicKnowledgeSelection(store, { query, scope: {}, mode: 'search' }, {
       assertCurrent() { if (changed === 'caller' && invalid) throw new Error('Caller options changed'); },
     })).rejects.toMatchObject({ reason: 'stale' });
-    expect(fake.requests).toHaveLength(1); expect(store.listUsageRecords()).toEqual([]);
+    expect(fake.requests.filter((request) => 'useful' in request.questions)).toHaveLength(1); expect(store.listUsageRecords()).toEqual([]);
   });
   test('caller cancellation aborts an ignored-signal provider and revokes completed selections', async () => {
     const store = await fixture(); await source(store, 'cancel'); const fake = readings({ cancel: 0.99 });

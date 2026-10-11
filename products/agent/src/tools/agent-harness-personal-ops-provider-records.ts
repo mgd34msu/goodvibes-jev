@@ -1,7 +1,11 @@
+import { readPersonalOpsBoolean } from './agent-harness-personal-ops-readings.ts';
+import { captureCatalogMethods, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { assertPersonalOpsDataCurrent, capturePersonalOpsData, protectPersonalOpsData } from './agent-harness-personal-ops-source.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { modelReadingServicePath } from './agent-harness-model-reading-source.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 import { readRecord, readString } from './agent-harness-model-routing-utils.ts';
-import { redactedPersonalOpsText } from './agent-harness-personal-ops-runner.ts';
 import { personalOpsRecordCertification } from './agent-harness-personal-ops-certification.ts';
 import { safeRecordIdPart } from './agent-harness-personal-ops-records.ts';
 import type { PersonalOpsFollowUpRoute, PersonalOpsLaneId, PersonalOpsLiveRecord, PersonalOpsRecordFreshness } from './agent-harness-personal-ops-types.ts';
@@ -38,16 +42,6 @@ function firstString(record: Record<string, unknown>, keys: readonly string[]): 
   return '';
 }
 
-function readBoolean(value: unknown): boolean | null {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (['true', 'yes', '1', 'unread', 'conflict', 'conflicted'].includes(normalized)) return true;
-    if (['false', 'no', '0', 'read', 'clear'].includes(normalized)) return false;
-  }
-  return null;
-}
-
 function readStringArray(value: unknown): readonly string[] {
   if (Array.isArray(value)) {
     return [...new Set(value.map((entry) => readString(entry)).filter(Boolean))].slice(0, 12);
@@ -61,7 +55,7 @@ function readIso(value: unknown): string {
   const text = readString(value);
   if (!text) return '';
   const timestamp = Date.parse(text);
-  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : previewHarnessText(redactedPersonalOpsText(text), 80);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : previewHarnessText(text, 80);
 }
 
 function readRoute(value: unknown): string {
@@ -90,44 +84,31 @@ function routeFromKeys(record: Record<string, unknown>, keys: readonly string[])
 }
 
 function providerReadModelSources(context: CommandContext, laneId: ProviderBackedLaneId): readonly ProviderReadModelSource[] {
-  const platform = context.platform as unknown as Record<string, unknown>;
-  const clients = readRecord(context.clients);
-  const readModels = readRecord(platform.readModels);
-  const personalOps = readRecord(readModels.personalOps);
-  const email = readRecord(readModels.email);
-  const mail = readRecord(readModels.mail);
-  const calendar = readRecord(readModels.calendar);
-  const platformPersonalOps = readRecord(platform.personalOps);
-  const operator = readRecord(clients.operator);
-  const operatorPersonalOps = readRecord(operator.personalOps);
-  if (laneId === 'inbox') {
-    return [
-      { path: 'context.platform.readModels.personalOps.inboxThreads', source: personalOps.inboxThreads, kind: 'daemon-read-model' },
-      { path: 'context.platform.readModels.personalOps.emailThreads', source: personalOps.emailThreads, kind: 'daemon-read-model' },
-      { path: 'context.platform.readModels.inboxThreads', source: readModels.inboxThreads, kind: 'daemon-read-model' },
-      { path: 'context.platform.readModels.emailThreads', source: readModels.emailThreads, kind: 'daemon-read-model' },
-      { path: 'context.platform.readModels.email.threads', source: email.threads, kind: 'daemon-read-model' },
-      { path: 'context.platform.readModels.email.messages', source: email.messages, kind: 'daemon-read-model' },
-      { path: 'context.platform.readModels.mail.threads', source: mail.threads, kind: 'daemon-read-model' },
-      { path: 'context.platform.personalOps.inboxThreads', source: platformPersonalOps.inboxThreads, kind: 'daemon-read-model' },
-      { path: 'context.clients.operator.personalOps.inboxThreads', source: operatorPersonalOps.inboxThreads, kind: 'sdk-read-model' },
-      { path: 'context.clients.operator.personalOps.emailThreads', source: operatorPersonalOps.emailThreads, kind: 'sdk-read-model' },
-    ];
-  }
-  return [
-    { path: 'context.platform.readModels.personalOps.calendarEvents', source: personalOps.calendarEvents, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.calendarEvents', source: readModels.calendarEvents, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.calendar.events', source: calendar.events, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.calendar.agenda', source: calendar.agenda, kind: 'daemon-read-model' },
-    { path: 'context.platform.personalOps.calendarEvents', source: platformPersonalOps.calendarEvents, kind: 'daemon-read-model' },
-    { path: 'context.clients.operator.personalOps.calendarEvents', source: operatorPersonalOps.calendarEvents, kind: 'sdk-read-model' },
+  const paths = laneId === 'inbox' ? [
+    { path: 'context.platform.readModels.personalOps.inboxThreads', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.readModels.personalOps.emailThreads', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.readModels.inboxThreads', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.readModels.emailThreads', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.readModels.email.threads', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.readModels.email.messages', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.readModels.mail.threads', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.personalOps.inboxThreads', kind: 'daemon-read-model' as const },
+    { path: 'context.clients.operator.personalOps.inboxThreads', kind: 'sdk-read-model' as const },
+    { path: 'context.clients.operator.personalOps.emailThreads', kind: 'sdk-read-model' as const },
+  ] : [
+    { path: 'context.platform.readModels.personalOps.calendarEvents', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.readModels.calendarEvents', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.readModels.calendar.events', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.readModels.calendar.agenda', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.personalOps.calendarEvents', kind: 'daemon-read-model' as const },
+    { path: 'context.clients.operator.personalOps.calendarEvents', kind: 'sdk-read-model' as const },
   ];
+  return paths.map(entry => ({ ...entry, source: modelReadingServicePath(context, entry.path.split('.').slice(1)) }));
 }
-
 function readProviderSnapshot(source: unknown, laneId: ProviderBackedLaneId): unknown {
   if (typeof source === 'function') {
     try {
-      const result = (source as () => unknown)();
+      const result: unknown = source();
       return result instanceof Promise ? undefined : result;
     } catch {
       return undefined;
@@ -138,10 +119,10 @@ function readProviderSnapshot(source: unknown, laneId: ProviderBackedLaneId): un
     ? ['getSnapshot', 'snapshot', 'listEvents', 'getEvents', 'list']
     : ['getSnapshot', 'snapshot', 'listThreads', 'getThreads', 'listMessages', 'getMessages', 'list'];
   for (const methodName of methodNames) {
-    const method = record[methodName];
+    const method = modelReadingServicePath(source, [methodName]);
     if (typeof method !== 'function') continue;
     try {
-      const result = (method as () => unknown).call(source);
+      const result: unknown = method.call(source);
       return result instanceof Promise ? undefined : result;
     } catch {
       return undefined;
@@ -221,13 +202,13 @@ function followUp(
   };
 }
 
-function normalizeInboxRecord(source: ProviderReadModelSource, raw: unknown, index: number): PersonalOpsLiveRecord | null {
+async function normalizeInboxRecord(source: ProviderReadModelSource, raw: unknown, index: number, options: CatalogRankingOptions): Promise<PersonalOpsLiveRecord | null> {
   const record = readRecord(raw);
   const providerId = firstString(record, ['providerId', 'provider', 'accountId', 'service', 'mailbox']) || 'provider';
   const threadId = firstString(record, ['threadId', 'conversationId', 'messageThreadId', 'id', 'messageId', 'uid', 'providerRecordId']) || `${index + 1}`;
   const subject = firstString(record, ['subject', 'title', 'summary', 'name']) || `Inbox thread ${index + 1}`;
   const status = firstString(record, ['status', 'state', 'reviewState'])
-    || (readBoolean(record.needsReply) === true ? 'needs-reply' : readBoolean(record.unread) === true ? 'unread' : 'current');
+    || (await readPersonalOpsBoolean({ parameter: 'needsReply', value: record.needsReply, record }, options) === true ? 'needs-reply' : await readPersonalOpsBoolean({ parameter: 'unread', value: record.unread, record }, options) === true ? 'unread' : 'current');
   const sender = firstString(record, ['from', 'sender', 'author', 'participant']);
   const receivedAt = readIso(record.receivedAt ?? record.updatedAt ?? record.timestamp ?? record.date);
   const labels = readStringArray(record.labels ?? record.tags ?? record.mailboxLabels).slice(0, 6);
@@ -246,14 +227,14 @@ function normalizeInboxRecord(source: ProviderReadModelSource, raw: unknown, ind
   const currentAt = readIso(record.currentAt ?? record.readAt ?? record.syncedAt ?? record.updatedAt ?? record.receivedAt);
   return {
     id: `provider-thread:${safeRecordIdPart(source.path)}:${safeRecordIdPart(threadId)}`,
-    label: `Fresh thread: ${previewHarnessText(redactedPersonalOpsText(subject), 96)}`,
-    status: previewHarnessText(redactedPersonalOpsText(status), 48),
+    label: `Fresh thread: ${previewHarnessText(subject, 96)}`,
+    status: previewHarnessText(status, 48),
     summary: [
-      `Provider ${previewHarnessText(redactedPersonalOpsText(providerId), 64)} published current inbox thread ${previewHarnessText(redactedPersonalOpsText(threadId), 80)} from ${source.path}.`,
-      sender ? `From ${previewHarnessText(redactedPersonalOpsText(sender), 80)}.` : '',
-      labels.length > 0 ? `Labels ${labels.map((label) => previewHarnessText(redactedPersonalOpsText(label), 40)).join(', ')}.` : '',
+      `Provider ${previewHarnessText(providerId, 64)} published current inbox thread ${previewHarnessText(threadId, 80)} from ${source.path}.`,
+      sender ? `From ${previewHarnessText(sender, 80)}.` : '',
+      labels.length > 0 ? `Labels ${labels.map((label) => previewHarnessText(label, 40)).join(', ')}.` : '',
       receivedAt ? `Updated ${receivedAt}.` : '',
-      snippet ? `Preview ${previewHarnessText(redactedPersonalOpsText(snippet), 160)}.` : '',
+      snippet ? `Preview ${previewHarnessText(snippet, 160)}.` : '',
       followUpRoutes.some((route) => route.effect === 'confirmed-effect') ? 'Published provider effects are separated into confirmed follow-up routes.' : 'No provider mutation route is published for this thread.',
     ].filter(Boolean).join(' '),
     userRoute: 'Agent Workspace -> Personal Ops -> Review queue',
@@ -277,7 +258,7 @@ function normalizeInboxRecord(source: ProviderReadModelSource, raw: unknown, ind
   };
 }
 
-function normalizeCalendarRecord(source: ProviderReadModelSource, raw: unknown, index: number): PersonalOpsLiveRecord | null {
+async function normalizeCalendarRecord(source: ProviderReadModelSource, raw: unknown, index: number, options: CatalogRankingOptions): Promise<PersonalOpsLiveRecord | null> {
   const record = readRecord(raw);
   const providerId = firstString(record, ['providerId', 'provider', 'accountId', 'service', 'calendarProvider']) || 'provider';
   const eventId = firstString(record, ['eventId', 'uid', 'id', 'providerRecordId']) || `${index + 1}`;
@@ -285,7 +266,7 @@ function normalizeCalendarRecord(source: ProviderReadModelSource, raw: unknown, 
   const title = firstString(record, ['title', 'summary', 'subject', 'name']) || `Calendar event ${index + 1}`;
   const start = readIso(record.start ?? record.startAt ?? record.startTime ?? record.when);
   const end = readIso(record.end ?? record.endAt ?? record.endTime);
-  const conflictCount = Array.isArray(record.conflicts) ? record.conflicts.length : readBoolean(record.conflict ?? record.hasConflict) === true ? 1 : 0;
+  const conflictCount = Array.isArray(record.conflicts) ? record.conflicts.length : await readPersonalOpsBoolean({ parameter: 'conflict', value: record.conflict ?? record.hasConflict, record }, options) === true ? 1 : 0;
   const status = conflictCount > 0
     ? 'conflict'
     : firstString(record, ['status', 'state', 'reviewState']) || 'current';
@@ -306,16 +287,16 @@ function normalizeCalendarRecord(source: ProviderReadModelSource, raw: unknown, 
   const currentAt = readIso(record.currentAt ?? record.readAt ?? record.syncedAt ?? record.updatedAt ?? record.start);
   return {
     id: `provider-event:${safeRecordIdPart(source.path)}:${safeRecordIdPart(eventId)}`,
-    label: `Fresh event: ${previewHarnessText(redactedPersonalOpsText(title), 96)}`,
-    status: previewHarnessText(redactedPersonalOpsText(status), 48),
+    label: `Fresh event: ${previewHarnessText(title, 96)}`,
+    status: previewHarnessText(status, 48),
     summary: [
-      `Provider ${previewHarnessText(redactedPersonalOpsText(providerId), 64)} published current calendar event ${previewHarnessText(redactedPersonalOpsText(eventId), 80)} from ${source.path}.`,
-      calendarId ? `Calendar ${previewHarnessText(redactedPersonalOpsText(calendarId), 64)}.` : '',
+      `Provider ${previewHarnessText(providerId, 64)} published current calendar event ${previewHarnessText(eventId, 80)} from ${source.path}.`,
+      calendarId ? `Calendar ${previewHarnessText(calendarId, 64)}.` : '',
       start || end ? `Window ${[start, end].filter(Boolean).join(' -> ')}.` : '',
-      location ? `Location ${previewHarnessText(redactedPersonalOpsText(location), 80)}.` : '',
+      location ? `Location ${previewHarnessText(location, 80)}.` : '',
       attendeeCount !== null ? `${attendeeCount} attendee(s).` : '',
       conflictCount > 0 ? `${conflictCount} conflict signal(s).` : '',
-      snippet ? `Preview ${previewHarnessText(redactedPersonalOpsText(snippet), 160)}.` : '',
+      snippet ? `Preview ${previewHarnessText(snippet, 160)}.` : '',
       followUpRoutes.some((route) => route.effect === 'confirmed-effect') ? 'Published provider effects are separated into confirmed follow-up routes.' : 'No provider mutation route is published for this event.',
     ].filter(Boolean).join(' '),
     userRoute: 'Agent Workspace -> Personal Ops -> Review queue',
@@ -339,15 +320,28 @@ function normalizeCalendarRecord(source: ProviderReadModelSource, raw: unknown, 
   };
 }
 
-export function providerBackedQueueRecords(context: CommandContext, laneId: ProviderBackedLaneId): readonly PersonalOpsLiveRecord[] {
+export async function providerBackedQueueRecords(context: CommandContext, laneId: ProviderBackedLaneId, options: CatalogRankingOptions = {}): Promise<readonly PersonalOpsLiveRecord[]> {
   const records: PersonalOpsLiveRecord[] = [];
   const seen = new Set<string>();
   for (const source of providerReadModelSources(context, laneId)) {
-    const snapshot = readProviderSnapshot(source.source, laneId);
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    const original = readProviderSnapshot(source.source, laneId);
+    if (original === undefined || original === null) continue;
+    const originalSnapshot = capturePersonalOpsData(original);
+    const sourceMethods = source.source !== null && typeof source.source === 'object'
+      ? captureCatalogMethods(source.source, ['getSnapshot', 'snapshot', 'list', 'listEvents', 'getEvents', 'listThreads', 'getThreads', 'listMessages', 'getMessages', 'listTasks', 'listReminders']) : () => {};
+    const assertSource = () => {
+      options.signal?.throwIfAborted(); sourceMethods();
+      if (providerReadModelSources(context, laneId).find(entry => entry.path === source.path)?.source !== source.source) throw new ToolInputProjectionError('held');
+      assertPersonalOpsDataCurrent(readProviderSnapshot(source.source, laneId), originalSnapshot);
+    };
+    const assertCurrent = () => { options.assertCurrent?.(); assertSource(); };
+    const snapshot = await protectPersonalOpsData(original, { signal: options.signal, assertCurrent });
+    assertCurrent(); options.retainCurrent?.(assertSource, source.path);
     for (const [index, raw] of recordsFromSnapshot(snapshot, laneId).entries()) {
       const record = laneId === 'calendar'
-        ? normalizeCalendarRecord(source, raw, index)
-        : normalizeInboxRecord(source, raw, index);
+        ? await normalizeCalendarRecord(source, raw, index, { ...options, assertCurrent })
+        : await normalizeInboxRecord(source, raw, index, { ...options, assertCurrent });
       if (!record || seen.has(record.id)) continue;
       seen.add(record.id);
       records.push(record);

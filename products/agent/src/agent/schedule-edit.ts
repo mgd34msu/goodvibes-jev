@@ -46,6 +46,7 @@ export interface ParsedScheduleEditArgs {
 
 export interface ParseScheduleEditOptions {
   readonly defaultExplicitUserRequest?: string;
+  readonly requireExplicitUserRequest?: boolean;
 }
 
 export interface ScheduleEditPreview {
@@ -314,7 +315,7 @@ export function parseScheduleEditArgs(
   }
 
   if (!scheduleId) errors.push('Schedule id is required.');
-  if (!explicitUserRequest) errors.push('Explicit user request is required: use --explicit-user-request <authorizing request>.');
+  if (options.requireExplicitUserRequest !== false && !explicitUserRequest) errors.push('Explicit user request is required: use --explicit-user-request <authorizing request>.');
   pushRequiredPairErrors({ prompt, task, successCriteria }, errors);
   if (!schedule && !name && !prompt && !task && !successCriteria) {
     errors.push('At least one edit is required: --cron, --every, --at, --name, --prompt, or --task with --success-criteria.');
@@ -330,7 +331,7 @@ export function parseScheduleEditArgs(
 
 function schedulePatchPrompt(parsed: ParsedScheduleEditArgs): string | undefined {
   if (parsed.prompt) return parsed.prompt;
-  if (!parsed.task || !parsed.successCriteria || !parsed.explicitUserRequest) return undefined;
+  if (!parsed.task || !parsed.successCriteria) return undefined;
   return buildAutonomySchedulePrompt({
     task: parsed.task,
     successCriteria: parsed.successCriteria,
@@ -359,12 +360,11 @@ export function buildScheduleEditPayload(parsed: ParsedScheduleEditArgs): Schedu
 
 export function buildScheduleEditPreview(parsed: ParsedScheduleEditArgs): ScheduleEditPreview {
   if (!parsed.scheduleId) throw new Error('Schedule id is required.');
-  if (!parsed.explicitUserRequest) throw new Error('Explicit user request is required.');
   return {
     scheduleId: parsed.scheduleId,
     route: SCHEDULE_EDIT_ROUTE,
     method: SCHEDULE_EDIT_METHOD,
-    explicitUserRequest: parsed.explicitUserRequest,
+    explicitUserRequest: parsed.explicitUserRequest ?? '',
     changes: changeList(parsed),
     payload: buildScheduleEditPayload(parsed),
   };

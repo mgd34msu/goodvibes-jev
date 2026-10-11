@@ -221,6 +221,7 @@ export function createDaemonSystemRouteHandlers(
     },
     postConfig: async (req) => {
       const requestLifetime = context.settingsPrecondition?.lifetime() ?? null;
+      const importLifetime = context.settingsImportPrecondition?.lifetime() ?? null;
       const admin = context.requireAdmin(req);
       if (admin) return admin;
       const payload = await context.parseJsonBody(req);
@@ -228,6 +229,10 @@ export function createDaemonSystemRouteHandlers(
       // Body parsing yields. Reacquire current admin before either effect path.
       const currentAdmin = context.requireAdmin(req);
       if (currentAdmin) return currentAdmin;
+      if (Object.hasOwn(payload, 'settingsImportPrecondition')) {
+        return context.settingsImportPrecondition?.handle(req, payload, importLifetime)
+          ?? jsonErrorResponse({ error: 'Settings import owner unavailable', code: 'SETTINGS_IMPORT_PRECONDITION_UNSUPPORTED' }, { status: 409 });
+      }
       if (Object.hasOwn(payload, 'settingsPrecondition')) {
         return context.settingsPrecondition?.handle(req, payload, requestLifetime)
           ?? jsonErrorResponse({ error: 'Settings owner precondition unavailable', code: 'SETTINGS_PRECONDITION_UNSUPPORTED' }, { status: 409 });

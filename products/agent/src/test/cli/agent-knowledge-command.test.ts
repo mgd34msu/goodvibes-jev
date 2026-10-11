@@ -874,38 +874,26 @@ describe('Agent Knowledge CLI route isolation', () => {
     }
   });
 
-  test('classifies missing Agent Knowledge route without legacy daemon fields or default knowledge fallback', async () => {
+  test('classifies a genuine missing Agent route without legacy fields or default knowledge fallback', async () => {
     const requests: CapturedRequest[] = [];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockFetch(async (input, init) => {
-      const url = inputUrl(input);
-      requests.push({
-        url,
-        method: init?.method ?? 'GET',
-        body: typeof init?.body === 'string' ? init.body : null,
-      });
-      throw new Error('Route not found: /api/goodvibes-agent/knowledge/status (404)');
-    });
-
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+      requests.push({ url: request.url, method: request.method, body: await request.text() || null });
+      return Response.json({ error: 'Isolated fixture route unavailable' }, { status: 404 });
+    } });
+    const runtime = createRuntime(['status']);
+    runtime.configManager.set('controlPlane.port', server.port!);
     try {
-      const result = await handleAgentKnowledgeCommand(createRuntime(['status']));
+      const result = await handleAgentKnowledgeCommand(runtime);
       const parsed = JSON.parse(result.output) as unknown;
-
       expect(result.exitCode).toBe(1);
-      expect(requests.map((request) => request.url)).toEqual([
-        'http://127.0.0.1:3421/api/goodvibes-agent/knowledge/status',
-        'http://127.0.0.1:3421/status',
+      expect(requests.map(request => new URL(request.url).pathname)).toEqual([
+        '/api/goodvibes-agent/knowledge/status', '/status',
       ]);
-      expect(parsed).toMatchObject({
-        ok: false,
-        kind: 'connected_host_route_unavailable',
-        route: '/api/goodvibes-agent/knowledge/status',
-      });
+      expect(parsed).toMatchObject({ ok: false, kind: 'connected_host_route_unavailable',
+        route: '/api/goodvibes-agent/knowledge/status' });
       expect(Object.prototype.hasOwnProperty.call(parsed as object, 'daemonVersion')).toBe(false);
       expect(result.output).not.toContain('daemon_');
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    } finally { server.stop(true); }
   });
 });
 

@@ -1,8 +1,18 @@
 import { mockFetch } from '../helpers/typed-fetch-mock.ts';
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { recordedEffectFixture } from '../helpers/recorded-effect-admission.ts';
+import { registerAgentAutonomyScheduleTool } from '../../tools/agent-autonomy-schedule-tool.ts';
+import { registerAgentReminderScheduleTool } from '../../tools/agent-reminder-schedule-tool.ts';
+import { registerAgentScheduleEditTool } from '../../tools/agent-schedule-edit-tool.ts';
+import { registerAgentOperatorActionTool } from '../../tools/agent-operator-action-tool.ts';
+import { registerAgentOperatorMethodTool } from '../../tools/agent-operator-method-tool.ts';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { ConfigManager } from '../../config/index.ts';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../../config/surface.ts';
 import { createShellPathService } from '@/runtime/index.ts';
@@ -14,6 +24,34 @@ import {
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 type ShellPaths = ShellPathService;
+
+// Authored synthetic response fields only; these are not production classifications.
+const ordinaryFields = new Set(['methodId', 'status', 'ok', 'route', 'effect', 'id', 'name', 'labels',
+  'createdAt', 'updatedAt', 'enabled', 'schedule', 'kind', 'expression', 'timezone', 'execution',
+  'target', 'delivery', 'mode', 'targets', 'fallbackTargets', 'includeSummary', 'includeTranscript',
+  'includeLinks', 'failure', 'action', 'maxConsecutiveFailures', 'cooldownMs', 'retryPolicy',
+  'maxAttempts', 'delayMs', 'strategy', 'source', 'label', 'metadata', 'runCount', 'successCount',
+  'failureCount', 'deleteAfterRun', 'jobs', 'runs', 'method', 'host', 'query', 'queueItemId',
+  'includeParameters', 'scheduleId', 'mutationRevision']);
+const contentFields = new Set(['body', 'prompt']);
+let prior: ReturnType<typeof installJudgmentPort>, log: SqliteDecisionLog;
+beforeEach(() => {
+  log = new SqliteDecisionLog(':memory:');
+  const scripted = fakePort((name, question, state) => {
+    if (question.type === 'noul') return noulAnswer(0.001);
+    if (question.type !== 'choice') throw new Error(`Unexpected synthetic schedule question ${name}`);
+    const field = state && typeof state === 'object' && !Array.isArray(state) ? state.field : undefined;
+    if (name === 'kind' && Object.hasOwn(question.criteria, 'other') && field !== undefined) {
+      if (typeof field !== 'string' || (!ordinaryFields.has(field) && !contentFields.has(field)))
+        throw new Error('Unexpected synthetic schedule response field');
+      return choiceAnswer(question, contentFields.has(field) ? 'content' : 'other', 0.999);
+    }
+    return choiceAnswer(question, name === 'disposition' ? Object.hasOwn(question.criteria, 'act') ? 'act' : 'reject'
+      : name === 'kind' ? 'read' : 'generic', 0.999);
+  });
+  prior = installJudgmentPort(withDecisionLog(scripted.port, log));
+});
+afterEach(() => { installJudgmentPort(prior); log[Symbol.dispose](); });
 
 interface CapturedRequest {
   readonly url: string;
@@ -35,6 +73,20 @@ function configManager(paths: ShellPaths): ConfigManager {
     workingDir: paths.workingDirectory,
     homeDir: paths.homeDirectory,
   });
+}
+
+function admittedSchedule(paths: ShellPaths) {
+  const config = configManager(paths);
+  const placeholder: Tool = { definition: { name: 'schedule', description: 'Replaced by the actual schedule facade.', parameters: {} }, execute: async () => ({ success: false }) };
+  const fixture = recordedEffectFixture(placeholder, 'prompt', {}, paths.workingDirectory);
+  registerAgentOperatorActionTool(fixture.registry, paths, config);
+  registerAgentOperatorMethodTool(fixture.registry, paths, config);
+  registerAgentAutonomyScheduleTool(fixture.registry, paths, config);
+  registerAgentReminderScheduleTool(fixture.registry, paths, config);
+  registerAgentScheduleEditTool(fixture.registry, paths, config);
+  const tool = createAgentScheduleTool(paths, config, fixture.registry);
+  placeholder.definition = tool.definition; placeholder.execute = tool.execute;
+  return { definition: tool.definition, execute: (args: Record<string, unknown>) => fixture.run(args) };
 }
 
 function inputUrl(input: Parameters<typeof fetch>[0]): string {
@@ -84,6 +136,7 @@ function schedulesListResponse(): Response {
     jobs: [
       {
         id: 'sched-1',
+        mutationRevision: 'schedule-tool-revision',
         name: 'Daily queue review',
         labels: [],
         createdAt: 1,
@@ -123,7 +176,7 @@ function schedulesListResponse(): Response {
 describe('schedule adapter tool', () => {
   test('lists schedules through the read-only automation.schedules.list operator method', async () => {
     const paths = shellPaths();
-    const tool = createAgentScheduleTool(paths, configManager(paths));
+    const tool = admittedSchedule(paths);
     const requests: CapturedRequest[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch(async (input, init) => {
@@ -138,7 +191,7 @@ describe('schedule adapter tool', () => {
     try {
       const result = await tool.execute({ action: 'list' });
 
-      expect(result.success).toBe(true);
+      expect(result).toMatchObject({ success: true });
       expect(result.output).toContain('"methodId": "automation.schedules.list"');
       expect(result.output).toContain('"sched-1"');
       expect(requests).toEqual([{ url: 'http://127.0.0.1:3421/api/automation/schedules', method: 'GET', body: '' }]);
@@ -147,7 +200,7 @@ describe('schedule adapter tool', () => {
     }
   });
 
-  test('previews autonomous schedule creation without calling the connected host', async () => {
+  test('unadmitted create flags cannot call the connected host', async () => {
     const paths = shellPaths();
     const tool = createAgentScheduleTool(paths, configManager(paths));
     const originalFetch = globalThis.fetch;
@@ -163,13 +216,12 @@ describe('schedule adapter tool', () => {
         task: 'Review the ops queue',
         successCriteria: 'Report blockers and the next action.',
         every: '1d',
-        confirm: false,
+        confirm: true,
         explicitUserRequest: 'Review the ops queue every day.',
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('GoodVibes schedule preview for autonomous Agent work');
-      expect(result.error).toContain('confirmation required');
+      expect(result.error).toContain('recorded tool admission');
       expect(calls).toBe(0);
     } finally {
       globalThis.fetch = originalFetch;
@@ -178,7 +230,7 @@ describe('schedule adapter tool', () => {
 
   test('creates reminders through existing reminder schedule safety gates', async () => {
     const paths = shellPaths();
-    const tool = createAgentScheduleTool(paths, configManager(paths));
+    const tool = admittedSchedule(paths);
     const requests: CapturedRequest[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch(async (input, init) => {
@@ -195,11 +247,9 @@ describe('schedule adapter tool', () => {
         action: 'remind',
         message: 'Review open approvals',
         every: '1d',
-        confirm: true,
-        explicitUserRequest: 'Remind me every day to review open approvals.',
       });
 
-      expect(result.success).toBe(true);
+      expect(result).toMatchObject({ success: true });
       expect(result.output).toContain('Created GoodVibes schedule for Agent reminder');
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url).toBe('http://127.0.0.1:3421/api/automation/schedules');
@@ -212,7 +262,7 @@ describe('schedule adapter tool', () => {
     }
   });
 
-  test('previews schedule edits with the existing read-only current-state diff', async () => {
+  test('unadmitted edit flags cannot dispatch a connected schedule mutation', async () => {
     const paths = shellPaths();
     const tool = createAgentScheduleTool(paths, configManager(paths));
     const originalFetch = globalThis.fetch;
@@ -228,15 +278,13 @@ describe('schedule adapter tool', () => {
         scheduleId: 'sched-1',
         cron: '0 9 * * *',
         timezone: 'America/Chicago',
-        confirm: false,
+        confirm: true,
         explicitUserRequest: 'Move the review to 9 AM.',
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('GoodVibes schedule edit preview');
-      expect(result.error).toContain('current source automation.schedules.list GET /api/automation/schedules');
-      expect(result.error).toContain('0 8 * * * [America/Chicago] -> 0 9 * * * [America/Chicago]');
-      expect(calls).toBe(1);
+      expect(result.error).toContain('recorded tool admission');
+      expect(calls).toBe(0);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -244,7 +292,7 @@ describe('schedule adapter tool', () => {
 
   test('routes schedule lifecycle actions through allowlisted operator actions', async () => {
     const paths = shellPaths();
-    const tool = createAgentScheduleTool(paths, configManager(paths));
+    const tool = admittedSchedule(paths);
     const requests: CapturedRequest[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch(async (input, init) => {
@@ -253,6 +301,7 @@ describe('schedule adapter tool', () => {
         method: init?.method ?? 'GET',
         body: typeof init?.body === 'string' ? init.body : '',
       });
+      if ((init?.method ?? 'GET') === 'GET') return schedulesListResponse();
       return new Response(JSON.stringify({ id: 'sched-1', enabled: false }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -263,19 +312,20 @@ describe('schedule adapter tool', () => {
       const result = await tool.execute({
         action: 'pause',
         scheduleId: 'sched-1',
-        confirm: true,
-        explicitUserRequest: 'Pause sched-1.',
       });
 
-      expect(result.success).toBe(true);
+      expect(result).toMatchObject({ success: true });
       expect(result.output).toContain('method: automation.schedules.disable');
       expect(result.output).toContain('nextRoutes');
       expect(result.output).toContain('schedule action:"list" query:"sched-1"');
-      expect(result.output).toContain('schedule action:"resume" scheduleId:"sched-1" confirm:true explicitUserRequest:"..."');
       expect(requests).toEqual([{
+        url: 'http://127.0.0.1:3421/api/automation/schedules',
+        method: 'GET',
+        body: '',
+      }, {
         url: 'http://127.0.0.1:3421/api/automation/schedules/sched-1/disable',
         method: 'POST',
-        body: '',
+        body: JSON.stringify({ admission: 'autonomous', expectedMutationRevision: 'schedule-tool-revision' }),
       }]);
     } finally {
       globalThis.fetch = originalFetch;

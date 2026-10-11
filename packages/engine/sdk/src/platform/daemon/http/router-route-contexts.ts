@@ -149,6 +149,7 @@ export function buildChannelRouteContext(input: {
 
 export function buildSystemRouteContext(input: {
   readonly settingsPrecondition?: DaemonSystemRouteContext['settingsPrecondition'] | undefined;
+  readonly settingsImportPrecondition?: DaemonSystemRouteContext['settingsImportPrecondition'] | undefined;
   readonly approvalBroker: ApprovalBroker;
   readonly configManager: ConfigManager;
   readonly credentialStatus: DaemonSystemRouteContext['credentialStatus'];
@@ -190,6 +191,7 @@ export function buildSystemRouteContext(input: {
     approvalBroker: input.approvalBroker,
     configManager: input.configManager,
     settingsPrecondition: input.settingsPrecondition,
+    settingsImportPrecondition: input.settingsImportPrecondition,
     credentialStatus: input.credentialStatus,
     integrationHelpers: input.integrationHelpers,
     inspectInboundTls: input.inspectInboundTls,
@@ -262,36 +264,43 @@ export function buildKnowledgeRouteContext(input: {
     requireAdmin: input.requireAdmin,
     resolveAuthenticatedPrincipal: input.resolveAuthenticatedPrincipal,
     knowledgeService: {
-      getStatus: (scope) => input.knowledgeService.getStatus(
+      getStatus: (scope, options) => input.knowledgeService.getStatus(
         scope as Parameters<KnowledgeService['getStatus']>[0],
+        options,
       ),
-      querySources: (query) => input.knowledgeService.querySources(
+      querySources: (query, options) => input.knowledgeService.querySources(
         query as Parameters<KnowledgeService['querySources']>[0],
+        options,
       ),
-      queryNodes: (query) => input.knowledgeService.queryNodes(
+      queryNodes: (query, options) => input.knowledgeService.queryNodes(
         query as Parameters<KnowledgeService['queryNodes']>[0],
+        options,
       ),
-      queryIssues: (query) => input.knowledgeService.queryIssues(
+      queryIssues: (query, options) => input.knowledgeService.queryIssues(
         query as Parameters<KnowledgeService['queryIssues']>[0],
+        options,
       ),
       reviewIssue: (body) => input.knowledgeService.reviewIssue(
         body as unknown as Parameters<KnowledgeService['reviewIssue']>[0],
       ),
-      getItemScoped: (id, scope) => input.knowledgeService.getItemScoped(
+      getItemScoped: (id, scope, options) => input.knowledgeService.getItemScoped(
         id,
         scope as Parameters<KnowledgeService['getItemScoped']>[1],
+        options,
       ),
       listConnectors: () => input.knowledgeService.listConnectors(),
       getConnector: (id) => input.knowledgeService.getConnector(id),
       doctorConnector: (id) => input.knowledgeService.doctorConnector(id),
-      listProjectionTargets: (limit, scope) => input.knowledgeService.listProjectionTargets(
+      listProjectionTargets: (limit, scope, options) => input.knowledgeService.listProjectionTargets(
         limit,
         scope as Parameters<KnowledgeService['listProjectionTargets']>[1],
+        options,
       ),
-      listExtractions: (limit, sourceId, scope) => input.knowledgeService.listExtractions(
+      listExtractions: (limit, sourceId, scope, options) => input.knowledgeService.listExtractions(
         limit,
         sourceId,
         scope as Parameters<KnowledgeService['listExtractions']>[2],
+        options,
       ),
       listUsageRecords: (limit, filter) => input.knowledgeService.listUsageRecords(
         limit,
@@ -304,8 +313,6 @@ export function buildKnowledgeRouteContext(input: {
       getConsolidationCandidate: (id) => input.knowledgeService.getConsolidationCandidate(id),
       listConsolidationReports: (limit) => input.knowledgeService.listConsolidationReports(limit),
       getConsolidationReport: (id) => input.knowledgeService.getConsolidationReport(id),
-      getExtraction: (id) => input.knowledgeService.getExtraction(id),
-      getSourceExtraction: (id) => input.knowledgeService.getSourceExtraction(id),
       listJobs: () => input.knowledgeService.listJobs(),
       getJob: (jobId) => input.knowledgeService.getJob(jobId),
       listJobRuns: (limit, jobId) => input.knowledgeService.listJobRuns(limit, jobId),
@@ -372,8 +379,9 @@ export function buildKnowledgeRouteContext(input: {
       materializeProjection: (projection) => input.knowledgeService.materializeProjection(
         projection as Parameters<KnowledgeService['materializeProjection']>[0],
       ),
-      map: (mapInput) => input.knowledgeService.map(
+      map: (mapInput, options) => input.knowledgeService.map(
         mapInput as Parameters<KnowledgeService['map']>[0],
+        options,
       ),
     },
     knowledgeGraphqlService: input.knowledgeGraphqlService,

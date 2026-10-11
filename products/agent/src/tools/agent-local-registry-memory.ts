@@ -36,7 +36,7 @@ import {
   type MemorySemanticSearchResult,
   type MemoryVectorStats,
 } from '@goodvibes-jev/engine/sdk/platform/state';
-import type { MemoryAccess } from '@goodvibes-jev/engine/sdk/platform/runtime/memory-spine';
+import type { MemoryAccess, MemoryOperationOptions } from '@goodvibes-jev/engine/sdk/platform/runtime/memory-spine';
 import { assertNoSecretLikeMemoryText } from '../agent/memory-safety.ts';
 import { formatAgentRecordReference, formatAgentRecordReviewState } from '../agent/record-labels.ts';
 import {
@@ -45,7 +45,6 @@ import {
   readOptionalConfidence,
   readString,
   readStringList,
-  requireConfirmedDelete,
   requireId,
   requireSummary,
 } from './agent-local-registry-args.ts';
@@ -125,11 +124,18 @@ export async function handleMemory(
   memorySpine: MemoryAccess,
   action: AgentLocalRegistryAction,
   args: AgentLocalRegistryToolArgs,
+  options: MemoryOperationOptions,
 ): Promise<string> {
+  const run = async <T>(body: () => Promise<T>): Promise<T> => {
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    const result = await body();
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    return result;
+  };
   if (action === 'list') {
     // list() is a 1.2.0 extended verb, routes through the spine (no filter =
     // getAll semantics, matching the previous registry.getAll() call exactly).
-    const records = await memorySpine.list();
+    const records = await run(() => memorySpine.list(undefined, options));
     return records.length === 0
       ? 'Agent-local memory\nNo Agent-local memory records.'
       : ['Agent-local memory', ...records.map(formatMemory)].join('\n');
@@ -141,7 +147,7 @@ export async function handleMemory(
       // Literal search IS wire-covered, routes through the spine (honestSearch
       // with no `semantic` flag is exactly a literal scan; see
       // runHonestMemorySearch in the SDK).
-      const { records } = await memorySpine.honestSearch({ query, limit: 10 });
+      const { records } = await run(() => memorySpine.honestSearch({ query, limit: 10 }, undefined, options));
       return renderMemorySearch('literal, explicitly requested', query, records.map(formatMemory));
     }
     // SEMANTIC BY DEFAULT: natural-language recall must not depend on the query text
@@ -155,10 +161,10 @@ export async function handleMemory(
     const stats = registry.vectorStats();
     const unavailable = describeMemoryIndexUnavailable(stats);
     if (unavailable) {
-      const records = await registry.search({ query, limit: 10 });
+      const { records } = await run(() => memorySpine.honestSearch({ query, limit: 10 }, undefined, options));
       return renderMemorySearch(`literal fallback, ${unavailable}`, query, records.map(formatMemory));
     }
-    const results = await memorySpine.searchSemantic({ query, limit: 10 });
+    const results = await run(() => memorySpine.searchSemantic({ query, limit: 10 }, options));
     const consultedSemanticIndex = query.length > 0 && results.some((entry) => entry.similarity > 0);
     const caveat = describeMemoryIndexCaveat(stats);
     const mode = !consultedSemanticIndex && query.length > 0
@@ -169,7 +175,7 @@ export async function handleMemory(
     return renderMemorySearch(mode, query, results.map(formatMemoryMatch));
   }
   if (action === 'get') {
-    const record = await memorySpine.get(requireId(args));
+    const record = await run(() => memorySpine.get(requireId(args), options));
     if (!record) return `Unknown Agent-local memory ${readString(args.id)}`;
     return [
       formatMemory(record),
@@ -187,7 +193,7 @@ export async function handleMemory(
     const tags = readStringList(args.tags);
     const confidence = readOptionalConfidence(args.confidence);
     assertNoSecretLikeMemoryText([summary, detail, ...tags]);
-    const record = await memorySpine.add({
+    const record = await run(() => memorySpine.add({
       scope: readMemoryScope(args),
       cls: requireMemoryClass(args),
       summary,
@@ -195,7 +201,7 @@ export async function handleMemory(
       tags: [...tags],
       ...(confidence === undefined ? {} : { review: { state: 'fresh' as const, confidence } }),
       provenance: [{ kind: 'event', ref: readString(args.provenance) || AGENT_TOOL_PROVENANCE }],
-    });
+    }, options));
     return [
       'Created Agent-local memory',
       `  id ${record.id}`,
@@ -209,12 +215,12 @@ export async function handleMemory(
     const detail = readString(args.detail || args.body);
     const tags = args.tags === undefined ? undefined : [...readStringList(args.tags)];
     assertNoSecretLikeMemoryText([summary, detail, ...(tags ?? [])]);
-    const record = await memorySpine.update(requireId(args), {
+    const record = await run(() => memorySpine.update(requireId(args), {
       summary: summary || undefined,
       detail: detail || undefined,
       tags,
       scope: args.scope === undefined ? undefined : readMemoryScope(args),
-    });
+    }, options));
     if (!record) return `Unknown Agent-local memory ${readString(args.id)}`;
     return [
       'Updated Agent-local memory',
@@ -223,11 +229,11 @@ export async function handleMemory(
     ].join('\n');
   }
   if (action === 'review') {
-    const record = await memorySpine.updateReview(requireId(args), {
+    const record = await run(() => memorySpine.updateReview(requireId(args), {
       state: 'reviewed',
       confidence: readOptionalConfidence(args.confidence),
       reviewedBy: 'agent',
-    });
+    }, options));
     if (!record) return `Unknown Agent-local memory ${readString(args.id)}`;
     return [
       'Reviewed Agent-local memory',
@@ -235,10 +241,10 @@ export async function handleMemory(
     ].join('\n');
   }
   if (action === 'stale') {
-    const record = await memorySpine.updateReview(requireId(args), {
+    const record = await run(() => memorySpine.updateReview(requireId(args), {
       state: 'stale',
       staleReason: readString(args.reason) || 'Marked stale by Agent.',
-    });
+    }, options));
     if (!record) return `Unknown Agent-local memory ${readString(args.id)}`;
     return [
       'Marked Agent-local memory stale',
@@ -247,8 +253,7 @@ export async function handleMemory(
   }
   if (action === 'delete') {
     const id = requireId(args);
-    requireConfirmedDelete(args, 'Agent-local memory');
-    if (!(await memorySpine.delete(id))) return `Unknown Agent-local memory ${id}`;
+    if (!(await run(() => memorySpine.delete(id, options)))) return `Unknown Agent-local memory ${id}`;
     return [
       'Deleted Agent-local memory',
       `  id ${id}`,

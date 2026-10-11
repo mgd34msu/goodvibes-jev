@@ -146,6 +146,7 @@ describe('private Discord adapter admission and catalog', () => {
   test.each([
     { ...catalog(), complete: false }, { ...catalog(), accountId: OTHER },
     { ...catalog(), channels: [{ id: CHANNEL, type: 0 }] },
+    { ...catalog(), channels: [{ id: CHANNEL, type: 3 }] },
     { ...catalog(), channels: [{ id: 'not-a-channel', type: 1 }] },
     { ...catalog(), channels: Array.from({ length: 201 }, (_, i) => ({ id: String(i + 1), type: 1 })) },
     null,
@@ -156,7 +157,7 @@ describe('private Discord adapter admission and catalog', () => {
   });
   test('catalog gets self/horizon/signal but no credential; duplicate DMs scanned once', async () => {
     const controller = new AbortController();
-    const f = fixture({ listDmChannels: async () => ({ ...catalog(), channels: [{ id: CHANNEL, type: 1 }, { id: CHANNEL, type: 3 }] }) });
+    const f = fixture({ listDmChannels: async () => ({ ...catalog(), channels: [{ id: CHANNEL, type: 1 }, { id: CHANNEL, type: 1 }] }) });
     expect((await f.adapter.poll({ limit: 50, signal: controller.signal })).state).toBe('ready');
     expect(f.catalogs).toEqual([{ selfId: SELF, beforeMs: NOW, signal: controller.signal }]);
     expect(f.calls).toHaveLength(2);

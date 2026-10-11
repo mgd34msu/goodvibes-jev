@@ -165,7 +165,7 @@ describe('UI product surface gate', () => {
     expect(getOverlayWidthClass(140)).toBe('wide');
   });
 
-  test('model-facing catalogs cover current user-facing settings, surfaces, and keybindings', () => {
+  test('model-facing catalogs cover current user-facing settings, surfaces, and keybindings', async () => {
     const context = modelCatalogContext();
     const managers = createTestManagers();
 
@@ -189,7 +189,7 @@ describe('UI product surface gate', () => {
       expectNonempty(surface.policy?.boundary);
     }
 
-    const keybindings = listHarnessKeybindings(context, { limit: 500 }) as {
+    const keybindings = await listHarnessKeybindings(context, { limit: 500 }) as {
       readonly keybindings: readonly {
         readonly action?: string;
         readonly description?: string;

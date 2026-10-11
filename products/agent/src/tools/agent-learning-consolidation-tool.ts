@@ -1,5 +1,9 @@
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
+import { resolveAndValidatePath } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { GOODVIBES_AGENT_SURFACE_ROOT } from '../config/surface.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolExecution, ToolInputProjectionError, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { MemoryBundle, MemoryRecord, MemoryRegistry } from '@goodvibes-jev/engine/sdk/platform/state';
 import type { ShellPathService } from '@/runtime/index.ts';
 import { AgentPersonaRegistry } from '../agent/persona-registry.ts';
@@ -7,6 +11,9 @@ import { AgentRoutineRegistry } from '../agent/routine-registry.ts';
 import { AgentSkillRegistry } from '../agent/skill-registry.ts';
 import { MEMORY_CLASSES, MEMORY_REVIEW_STATES, MEMORY_SCOPES, MODES, WRITE_MODES, cloneRecord, deleteDuplicate, domainForCandidate, failure, getRecord, markDuplicateStale, nextGeneratedId, output, readLimit, readMode, readReceiptFile, readString, receiptId, receiptIdFromReceipt, receiptPath, requireConfirmedWrite, resolveCandidate, updateSurvivor, writeReceipt, type AgentLearningConsolidationDomain, type AgentLearningConsolidationToolArgs, type LearningConsolidationReceipt } from './agent-learning-consolidation-core.ts';
 import type { LearningCandidate } from './agent-harness-learning-curator.ts';
+import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
+import { captureCatalogData, captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
+import { createHarnessCatalogInputProjector, protectHarnessCatalogTool } from './agent-harness-catalog-ingress.ts';
 function arrayField(snapshot: Record<string, unknown>, key: string): string[] {
   const value = snapshot[key];
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
@@ -295,8 +302,8 @@ function recreateGuidance(
   });
   return {
     automaticRollback: false,
-    recreateRoute: `agent_learning_consolidation mode:"recreate" receiptId:"${receipt.id}" confirm:true explicitUserRequest:"..."`,
-    policy: 'Delete remains the final phase. Recreate is a separate confirmed recovery action and refuses when exact ids are not currently safe.',
+    recreateRoute: `agent_learning_consolidation mode:"recreate" receiptId:"${receipt.id}" `,
+    policy: 'Delete remains the final phase. Recreate is a separate admitted recovery action and refuses when exact ids are not currently safe.',
     records,
   };
 }
@@ -315,10 +322,10 @@ function receiptSummary(
     survivorId: receipt.survivorId,
     duplicateIds: receipt.duplicateIds,
     rollbackRoute: receipt.phase === 'merge' || receipt.phase === 'stale'
-      ? `agent_learning_consolidation mode:"rollback" receiptId:"${receipt.id}" confirm:true explicitUserRequest:"..."`
+      ? `agent_learning_consolidation mode:"rollback" receiptId:"${receipt.id}" `
       : null,
     recreateRoute: receipt.phase === 'delete'
-      ? `agent_learning_consolidation mode:"recreate" receiptId:"${receipt.id}" confirm:true explicitUserRequest:"..."`
+      ? `agent_learning_consolidation mode:"recreate" receiptId:"${receipt.id}" `
       : null,
     ...(deleteRecovery ? { deleteRecovery } : {}),
   };
@@ -340,22 +347,22 @@ function previewCandidate(candidate: LearningCandidate): Record<string, unknown>
     phases: [
       {
         id: 'merge',
-        route: `agent_learning_consolidation mode:"merge" candidateId:"${candidate.id}" confirm:true explicitUserRequest:"..."`,
+        route: `agent_learning_consolidation mode:"merge" candidateId:"${candidate.id}" `,
         effect: 'Update the survivor with merged visible fields and write a rollback receipt.',
       },
       {
         id: 'stale',
-        route: `agent_learning_consolidation mode:"stale" candidateId:"${candidate.id}" confirm:true explicitUserRequest:"..."`,
+        route: `agent_learning_consolidation mode:"stale" candidateId:"${candidate.id}" `,
         effect: 'Mark duplicates stale before deletion and write a rollback receipt.',
       },
       {
         id: 'delete',
-        route: `agent_learning_consolidation mode:"delete" candidateId:"${candidate.id}" confirm:true explicitUserRequest:"..."`,
+        route: `agent_learning_consolidation mode:"delete" candidateId:"${candidate.id}" `,
         effect: 'Delete only duplicates that are already stale. Exact-id rollback is not automatic after delete.',
       },
     ],
     inspectRoute: `memory action:"candidate" candidateId:"${candidate.id}"`,
-    policy: 'Preview is read-only. Merge, stale, delete, and rollback each require confirm:true plus explicitUserRequest.',
+    policy: 'Preview is read-only. Every mutation requires current recorded effect admission.',
   };
 }
 
@@ -364,11 +371,13 @@ function applyMerge(
   memoryRegistry: MemoryRegistry,
   candidate: LearningCandidate,
   explicitUserRequest: string,
+  beforeWrite: () => void,
 ): Record<string, unknown> {
   const domain = domainForCandidate(candidate);
   const plan = candidate.consolidation;
   if (!plan?.updateFields) throw new Error(`Candidate ${candidate.id} has no survivor merge fields.`);
   const beforeSurvivor = cloneRecord(getRecord(shellPaths, memoryRegistry, domain, plan.survivorId));
+  beforeWrite();
   const afterSurvivor = updateSurvivor(shellPaths, memoryRegistry, domain, plan.survivorId, plan.updateFields);
   const receipt: LearningConsolidationReceipt = {
     id: receiptId(candidate, 'merge'),
@@ -382,6 +391,7 @@ function applyMerge(
     beforeSurvivor,
     beforeDuplicates: [],
   };
+  beforeWrite();
   writeReceipt(shellPaths, receipt);
   return {
     status: 'applied',
@@ -399,12 +409,13 @@ function applyStale(
   memoryRegistry: MemoryRegistry,
   candidate: LearningCandidate,
   explicitUserRequest: string,
+  beforeWrite: () => void,
 ): Record<string, unknown> {
   const domain = domainForCandidate(candidate);
   const plan = candidate.consolidation;
   if (!plan) throw new Error(`Candidate ${candidate.id} is not a duplicate consolidation candidate.`);
   const beforeDuplicates = plan.duplicateIds.map((id) => cloneRecord(getRecord(shellPaths, memoryRegistry, domain, id)));
-  const afterDuplicates = plan.duplicateIds.map((id) => markDuplicateStale(shellPaths, memoryRegistry, domain, id, plan.survivorId));
+  const afterDuplicates = plan.duplicateIds.map((id) => { beforeWrite(); return markDuplicateStale(shellPaths, memoryRegistry, domain, id, plan.survivorId); });
   const receipt: LearningConsolidationReceipt = {
     id: receiptId(candidate, 'stale'),
     createdAt: new Date().toISOString(),
@@ -416,6 +427,7 @@ function applyStale(
     duplicateIds: plan.duplicateIds,
     beforeDuplicates,
   };
+  beforeWrite();
   writeReceipt(shellPaths, receipt);
   return {
     status: 'applied',
@@ -425,7 +437,7 @@ function applyStale(
     duplicateIds: plan.duplicateIds,
     receipt: receiptSummary(receipt),
     afterDuplicates,
-    next: 'Re-run the curator and delete only if the user confirms the stale duplicates are no longer needed.',
+    next: 'Re-run the curator and delete only after current recorded effect admission approves deleting the stale duplicates.',
   };
 }
 
@@ -434,6 +446,7 @@ function applyDelete(
   memoryRegistry: MemoryRegistry,
   candidate: LearningCandidate,
   explicitUserRequest: string,
+  beforeWrite: () => void,
 ): Record<string, unknown> {
   const domain = domainForCandidate(candidate);
   const plan = candidate.consolidation;
@@ -454,7 +467,7 @@ function applyDelete(
       throw new Error(`Delete refused. Duplicate skill records are still referenced by bundles: ${references.join(', ')}. Inspect or update bundles before deleting.`);
     }
   }
-  for (const id of plan.duplicateIds) deleteDuplicate(shellPaths, memoryRegistry, domain, id);
+  for (const id of plan.duplicateIds) { beforeWrite(); deleteDuplicate(shellPaths, memoryRegistry, domain, id); }
   const receipt: LearningConsolidationReceipt = {
     id: receiptId(candidate, 'delete'),
     createdAt: new Date().toISOString(),
@@ -466,6 +479,7 @@ function applyDelete(
     duplicateIds: plan.duplicateIds,
     beforeDuplicates,
   };
+  beforeWrite();
   writeReceipt(shellPaths, receipt);
   return {
     status: 'applied',
@@ -475,7 +489,7 @@ function applyDelete(
     deletedDuplicateIds: plan.duplicateIds,
     receipt: receiptSummary(receipt, { shellPaths, memoryRegistry }),
     recreateGuidance: recreateGuidance(shellPaths, memoryRegistry, receipt),
-    next: 'Deletion is intentionally last. The receipt stores deleted record snapshots and exposes a separate confirmed recreate route when exact ids are still safe.',
+    next: 'Deletion is intentionally last. The receipt stores deleted record snapshots and exposes a separate admitted recreate route when exact ids are still safe.',
   };
 }
 
@@ -484,6 +498,7 @@ async function applyRecreate(
   memoryRegistry: MemoryRegistry,
   args: AgentLearningConsolidationToolArgs,
   explicitUserRequest: string,
+  beforeWrite: () => void,
 ): Promise<Record<string, unknown>> {
   const deleteReceipt = findDeleteReceipt(shellPaths, args);
   if (deleteReceipt.phase !== 'delete') {
@@ -515,7 +530,9 @@ async function applyRecreate(
       records: memoryRecords,
       links: [],
     };
+    beforeWrite();
     const importResult = await memoryRegistry.importBundle(bundle);
+    beforeWrite();
     const receipt: LearningConsolidationReceipt = {
       id: receiptIdFromReceipt(deleteReceipt, 'recreate'),
       createdAt: new Date().toISOString(),
@@ -527,7 +544,8 @@ async function applyRecreate(
       duplicateIds: deleteReceipt.duplicateIds,
       beforeDuplicates: deleteReceipt.beforeDuplicates,
     };
-    writeReceipt(shellPaths, receipt);
+    beforeWrite();
+  writeReceipt(shellPaths, receipt);
     return {
       status: 'applied',
       phase: 'recreate',
@@ -546,6 +564,7 @@ async function applyRecreate(
     if (!previousId) throw new Error('Delete receipt snapshot is missing id.');
     if (deleteReceipt.domain === 'persona') {
       const registry = AgentPersonaRegistry.fromShellPaths(shellPaths);
+      beforeWrite();
       const created = registry.create({
         name: stringField(snapshot, 'name') ?? '',
         description: stringField(snapshot, 'description') ?? '',
@@ -556,10 +575,11 @@ async function applyRecreate(
         provenance: stringField(snapshot, 'provenance') ?? `recreated-from-learning-consolidation:${deleteReceipt.id}`,
       });
       if (created.id !== previousId) throw new Error(`Exact-id recreate failed for ${previousId}; created ${created.id}.`);
-      if (stringField(snapshot, 'reviewState') !== 'fresh') restoreReviewState(shellPaths, memoryRegistry, deleteReceipt.domain, created.id, snapshot);
+      if (stringField(snapshot, 'reviewState') !== 'fresh') { beforeWrite(); restoreReviewState(shellPaths, memoryRegistry, deleteReceipt.domain, created.id, snapshot); }
       recreated.push(cloneRecord(getRecord(shellPaths, memoryRegistry, deleteReceipt.domain, created.id)));
     } else if (deleteReceipt.domain === 'skill') {
       const registry = AgentSkillRegistry.fromShellPaths(shellPaths);
+      beforeWrite();
       const created = registry.create({
         name: stringField(snapshot, 'name') ?? '',
         description: stringField(snapshot, 'description') ?? '',
@@ -572,10 +592,11 @@ async function applyRecreate(
         provenance: stringField(snapshot, 'provenance') ?? `recreated-from-learning-consolidation:${deleteReceipt.id}`,
       });
       if (created.id !== previousId) throw new Error(`Exact-id recreate failed for ${previousId}; created ${created.id}.`);
-      if (stringField(snapshot, 'reviewState') !== 'fresh') restoreReviewState(shellPaths, memoryRegistry, deleteReceipt.domain, created.id, snapshot);
+      if (stringField(snapshot, 'reviewState') !== 'fresh') { beforeWrite(); restoreReviewState(shellPaths, memoryRegistry, deleteReceipt.domain, created.id, snapshot); }
       recreated.push(cloneRecord(getRecord(shellPaths, memoryRegistry, deleteReceipt.domain, created.id)));
     } else {
       const registry = AgentRoutineRegistry.fromShellPaths(shellPaths);
+      beforeWrite();
       const created = registry.create({
         name: stringField(snapshot, 'name') ?? '',
         description: stringField(snapshot, 'description') ?? '',
@@ -588,7 +609,7 @@ async function applyRecreate(
         provenance: stringField(snapshot, 'provenance') ?? `recreated-from-learning-consolidation:${deleteReceipt.id}`,
       });
       if (created.id !== previousId) throw new Error(`Exact-id recreate failed for ${previousId}; created ${created.id}.`);
-      if (stringField(snapshot, 'reviewState') !== 'fresh') restoreReviewState(shellPaths, memoryRegistry, deleteReceipt.domain, created.id, snapshot);
+      if (stringField(snapshot, 'reviewState') !== 'fresh') { beforeWrite(); restoreReviewState(shellPaths, memoryRegistry, deleteReceipt.domain, created.id, snapshot); }
       recreated.push(cloneRecord(getRecord(shellPaths, memoryRegistry, deleteReceipt.domain, created.id)));
     }
   }
@@ -604,6 +625,7 @@ async function applyRecreate(
     duplicateIds: deleteReceipt.duplicateIds,
     beforeDuplicates: deleteReceipt.beforeDuplicates,
   };
+  beforeWrite();
   writeReceipt(shellPaths, receipt);
   return {
     status: 'applied',
@@ -643,12 +665,14 @@ function applyRollback(
   shellPaths: ShellPathService,
   memoryRegistry: MemoryRegistry,
   args: AgentLearningConsolidationToolArgs,
+  beforeWrite: () => void,
 ): Record<string, unknown> {
   const receipt = findReceipt(shellPaths, args);
   if (receipt.phase === 'delete') {
-    throw new Error(`Receipt ${receipt.id} is from a delete phase. Automatic rollback is unavailable after delete; use agent_learning_consolidation mode:"recreate" receiptId:"${receipt.id}" confirm:true explicitUserRequest:"..." to recreate deleted records only when the user asks and exact ids are still safe.`);
+    throw new Error(`Receipt ${receipt.id} is from a delete phase. Automatic rollback is unavailable after delete; use agent_learning_consolidation mode:"recreate" receiptId:"${receipt.id}"  to recreate deleted records only when the user asks and exact ids are still safe.`);
   }
   if (receipt.phase === 'merge') {
+    beforeWrite();
     return {
       status: 'applied',
       phase: 'rollback',
@@ -660,6 +684,7 @@ function applyRollback(
   for (const snapshot of receipt.beforeDuplicates) {
     const id = stringField(snapshot, 'id');
     if (!id) continue;
+    beforeWrite();
     restoreReviewState(shellPaths, memoryRegistry, receipt.domain, id, snapshot);
   }
   return {
@@ -671,11 +696,16 @@ function applyRollback(
   };
 }
 
-export function createAgentLearningConsolidationTool(shellPaths: ShellPathService, memoryRegistry: MemoryRegistry): Tool {
-  return {
+function isConsolidationCandidateCall(args: Record<string, unknown>): boolean {
+  const mode = readMode(captureCatalogData(args).mode);
+  return mode === 'preview' || mode === 'merge' || mode === 'stale' || mode === 'delete';
+}
+
+export function createAgentLearningConsolidationTool(shellPaths: ShellPathService, memoryRegistry: MemoryRegistry, registry?: ToolRegistry): Tool {
+  const tool: Tool = {
     definition: {
       name: 'agent_learning_consolidation',
-      description: 'Manage confirmed local duplicate learning phases.',
+      description: 'Manage admitted local duplicate learning phases.',
       parameters: {
         type: 'object',
         properties: {
@@ -702,11 +732,11 @@ export function createAgentLearningConsolidationTool(shellPaths: ShellPathServic
           },
           confirm: {
             type: 'boolean',
-            description: 'Required true for merge, stale, delete, and rollback.',
+            description: 'Legacy caller annotation; it grants no effect authority.',
           },
           explicitUserRequest: {
             type: 'string',
-            description: 'Exact user request or faithful short summary authorizing the phase.',
+            description: 'Optional audit text for the phase; current recorded effect admission supplies authority.',
           },
         },
         required: ['mode'],
@@ -714,10 +744,56 @@ export function createAgentLearningConsolidationTool(shellPaths: ShellPathServic
       },
       sideEffects: ['state'],
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs, options) => {
+      const args = captureCatalogData(rawArgs);
+      const originalJson = JSON.stringify(args);
+      const signal = options?.signal;
+      const sourceOwner = agentResearchSourceOwner(registry);
+      const assertPathMethods = captureCatalogMethods(shellPaths, ['workingDirectory', 'homeDirectory', 'resolveUserPath']);
+      const assertMemoryMethods = captureCatalogMethods(memoryRegistry, ['getStore', 'get', 'update', 'review', 'delete', 'importBundle']);
+      const workingDirectory = shellPaths.workingDirectory;
+      const homeDirectory = shellPaths.homeDirectory;
+      const homeReal = realpathSync(homeDirectory);
+      const resolveUserPath = shellPaths.resolveUserPath;
+      const store = memoryRegistry.getStore();
+      const databasePath = store.dbPath;
+      const storagePaths = [receiptPath(shellPaths),
+        shellPaths.resolveUserPath(GOODVIBES_AGENT_SURFACE_ROOT, 'skills', 'skills.json'),
+        shellPaths.resolveUserPath(GOODVIBES_AGENT_SURFACE_ROOT, 'personas', 'personas.json'),
+        shellPaths.resolveUserPath(GOODVIBES_AGENT_SURFACE_ROOT, 'routines', 'routines.json'),
+        ...(databasePath ? [databasePath] : [])];
+      const assertStorageCurrent = () => {
+        assertPathMethods(); assertMemoryMethods();
+        if (shellPaths.homeDirectory !== homeDirectory || shellPaths.resolveUserPath !== resolveUserPath
+          || realpathSync(homeDirectory) !== homeReal || memoryRegistry.getStore() !== store || store.dbPath !== databasePath) throw new ToolInputProjectionError('stale');
+        for (const path of storagePaths) {
+          const target = resolveAndValidatePath(path, homeDirectory);
+          const parts = relative(homeReal, target).split(sep);
+          let component = homeReal;
+          for (const part of parts) {
+            component = join(component, part);
+            if (lstatSync(component, { throwIfNoEntry: false })?.isSymbolicLink()) throw new ToolInputProjectionError('held');
+          }
+        }
+      };
+      const assertAuthorityCurrent = () => {
+        signal?.throwIfAborted(); assertCurrentToolExecution(rawArgs, options); assertStorageCurrent();
+        if (options?.signal !== signal || agentResearchSourceOwner(registry) !== sourceOwner
+          || shellPaths.workingDirectory !== workingDirectory || JSON.stringify(captureCatalogData(rawArgs)) !== originalJson) throw new ToolInputProjectionError('stale');
+      };
       try {
-        const args = rawArgs as AgentLearningConsolidationToolArgs;
+        assertAuthorityCurrent();
         const mode = readMode(args.mode);
+        const receiptSource = () => lstatSync(receiptPath(shellPaths), { throwIfNoEntry: false }) ? readFileSync(receiptPath(shellPaths), 'utf8') : null;
+        const receiptsJson = receiptSource();
+        const assertReceiptsCurrent = () => {
+          if (receiptSource() !== receiptsJson) throw new ToolInputProjectionError('stale');
+        };
+        const beforeWrite = () => {
+          assertAuthorityCurrent(); assertReceiptsCurrent();
+          if (mode !== 'merge' && mode !== 'stale' && mode !== 'delete' && mode !== 'rollback' && mode !== 'recreate') throw new ToolInputProjectionError('held');
+          requireConfirmedWrite(rawArgs, mode, options);
+        };
         if (mode === 'receipts') {
           // `total` and the note exist because the default page is 20 and the
           // receipt file holds far more: without them, "here are the receipts"
@@ -736,25 +812,38 @@ export function createAgentLearningConsolidationTool(shellPaths: ShellPathServic
           });
         }
         if (mode === 'rollback') {
-          requireConfirmedWrite(args, mode);
-          return output(applyRollback(shellPaths, memoryRegistry, args));
+          requireConfirmedWrite(rawArgs, mode, options);
+          return output(applyRollback(shellPaths, memoryRegistry, args, beforeWrite));
         }
         if (mode === 'recreate') {
-          const explicitUserRequest = requireConfirmedWrite(args, mode);
-          return output(await applyRecreate(shellPaths, memoryRegistry, args, explicitUserRequest));
+          const explicitUserRequest = requireConfirmedWrite(rawArgs, mode, options);
+          return output(await applyRecreate(shellPaths, memoryRegistry, args, explicitUserRequest, beforeWrite));
         }
-        const candidate = resolveCandidate(shellPaths, memoryRegistry, args);
+        const candidateGuards = new Map<string | (() => void), () => void>();
+        const candidate = await resolveCandidate(shellPaths, memoryRegistry, args, {
+          signal, sourceOwner, assertCurrent: assertAuthorityCurrent,
+          retainCurrent(guard, key) { if (!candidateGuards.has(key ?? guard)) candidateGuards.set(key ?? guard, guard); },
+        });
+        assertAuthorityCurrent();
+        // Check the complete retained source immediately before the phase.
+        // The authorized phase itself changes that collection, so publication
+        // continues to check authority rather than the pre-write revision.
+        for (const guard of candidateGuards.values()) guard();
         if (mode === 'preview') return output(previewCandidate(candidate));
         if (!WRITE_MODES.has(mode)) return failure(`Unknown mode. Valid values ${MODES.join(', ')}.`);
-        const explicitUserRequest = requireConfirmedWrite(args, mode);
-        if (mode === 'merge') return output(applyMerge(shellPaths, memoryRegistry, candidate, explicitUserRequest));
-        if (mode === 'stale') return output(applyStale(shellPaths, memoryRegistry, candidate, explicitUserRequest));
-        return output(applyDelete(shellPaths, memoryRegistry, candidate, explicitUserRequest));
+        if (mode !== 'merge' && mode !== 'stale' && mode !== 'delete') throw new ToolInputProjectionError('held');
+        const explicitUserRequest = requireConfirmedWrite(rawArgs, mode, options);
+        if (mode === 'merge') return output(applyMerge(shellPaths, memoryRegistry, candidate, explicitUserRequest, beforeWrite));
+        if (mode === 'stale') return output(applyStale(shellPaths, memoryRegistry, candidate, explicitUserRequest, beforeWrite));
+        return output(applyDelete(shellPaths, memoryRegistry, candidate, explicitUserRequest, beforeWrite));
       } catch (error) {
+        assertAuthorityCurrent();
+        if (error instanceof ToolInputProjectionError) throw error;
         return failure(error instanceof Error ? error.message : String(error));
       }
     },
   };
+  return registry ? protectHarnessCatalogTool(tool, registry, isConsolidationCandidateCall) : tool;
 }
 
 export function registerAgentLearningConsolidationTool(
@@ -762,5 +851,5 @@ export function registerAgentLearningConsolidationTool(
   shellPaths: ShellPathService,
   memoryRegistry: MemoryRegistry,
 ): void {
-  registry.register(createAgentLearningConsolidationTool(shellPaths, memoryRegistry));
+  registry.register(createAgentLearningConsolidationTool(shellPaths, memoryRegistry, registry), { inputProjection: createHarnessCatalogInputProjector(registry, undefined, isConsolidationCandidateCall) });
 }

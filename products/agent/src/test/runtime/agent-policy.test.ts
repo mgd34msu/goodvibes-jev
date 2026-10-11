@@ -15,6 +15,36 @@ import {
 import { operatorMethodCatalogStatus } from '../../tools/agent-harness-operator-methods.ts';
 import { createAgentOperatorMethodTool } from '../../tools/agent-operator-method-tool.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { recordedEffectFixture } from '../helpers/recorded-effect-admission.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
+import { createOperatorInputProjector } from '../../tools/agent-operator-input-projector.ts';
+import { createShellPathService } from '@/runtime/index.ts';
+import type { ShellPathService } from '@/runtime/index.ts';
+import type { AgentConnectedHostConfigReader } from '../../agent/routine-schedule-promotion.ts';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+
+async function withOperatorReadings<T>(body: () => Promise<T>): Promise<T> {
+  const log = new SqliteDecisionLog(':memory:');
+  const fake = fakePort((name, question) => {
+    if (question.type === 'choice') return choiceAnswer(question, name === 'disposition' ? 'act'
+      : name === 'kind' ? Object.hasOwn(question.criteria, 'other') ? 'other' : 'read' : 'generic', 0.999);
+    if (question.type === 'noul') return noulAnswer(0.001);
+    throw new Error(`Unexpected question ${name}`);
+  });
+  const previous = installJudgmentPort(withDecisionLog(fake.port, log));
+  try { return await body(); }
+  finally { installJudgmentPort(previous); log[Symbol.dispose](); }
+}
+function recordedOperatorEffect(tool: Tool, args: Record<string, unknown>, paths: ShellPathService, config: AgentConnectedHostConfigReader) {
+  return withOperatorReadings(() => {
+    const fixture = recordedEffectFixture(tool, 'prompt', {}, paths.workingDirectory);
+    fixture.registry.unregister(tool.definition.name);
+    fixture.registry.register(tool, { inputProjection: createOperatorInputProjector(paths, config, 'method') });
+    return fixture.run(args);
+  });
+}
 
 describe('Agent user-first autonomy policy', () => {
   let root = '';
@@ -142,7 +172,7 @@ describe('Agent user-first autonomy policy', () => {
     expect(status.policy).toContain('agent_operator_method');
   });
 
-  test('generic operator method bridge previews and confirmation-gates write routes', async () => {
+  test('generic operator method bridge previews and requires recorded write admission', async () => {
     // Not migrated to makeProjectTempDir: `root` is empty for this specific
     // test (makeRuntimeServices() is never called here), so `tmpdir()` is
     // genuinely reached, but every call below is dryRun:true or a write
@@ -153,10 +183,10 @@ describe('Agent user-first autonomy policy', () => {
       {} as never,
     );
 
-    const readPreview = await tool.execute({
+    const readPreview = await withOperatorReadings(() => tool.execute({
       methodId: 'services.status',
       dryRun: true,
-    });
+    }));
     expect(readPreview.success).toBe(true);
     expect(readPreview.output).toContain('"methodId": "services.status"');
     expect(readPreview.output).toContain('"confirmationRequired": false');
@@ -168,14 +198,13 @@ describe('Agent user-first autonomy policy', () => {
       input: { prompt: 'Summarize my inbox every morning.' },
     });
     expect(writePreview.success).toBe(false);
-    expect(writePreview.error).toContain('"confirm": true');
-    expect(writePreview.error).toContain('"confirmationRequired": true');
+    expect(writePreview.error).toContain('recorded effect admission');
 
-    const watcherPreview = await tool.execute({
+    const watcherPreview = await withOperatorReadings(() => tool.execute({
       methodId: 'watchers.create',
       input: { label: 'Billing webhook triage', kind: 'webhook' },
       dryRun: true,
-    });
+    }));
     expect(watcherPreview.success).toBe(true);
     expect(watcherPreview.output).toContain('"expectedOutcome"');
     expect(watcherPreview.output).toContain('"created-visible-watcher"');
@@ -213,21 +242,18 @@ describe('Agent user-first autonomy policy', () => {
     });
 
     try {
-      const tool = createAgentOperatorMethodTool(
-        { homeDirectory: root } as never,
-        {
-          get: (key: string) => key === 'controlPlane.port'
-            ? 3429
-            : key === 'controlPlane.host'
-              ? '127.0.0.1'
-              : undefined,
-        },
-      );
-      const result = await tool.execute({
+      const paths = createShellPathService({ workingDirectory: root, homeDirectory: root });
+      const config = {
+        get: (key: string) => key === 'controlPlane.port'
+          ? 3429
+          : key === 'controlPlane.host'
+            ? '127.0.0.1'
+            : undefined,
+      };
+      const tool = createAgentOperatorMethodTool(paths, config);
+      const result = await recordedOperatorEffect(tool, {
         methodId: 'services.start',
-        confirm: true,
-        explicitUserRequest: 'Start the GoodVibes service.',
-      });
+      }, paths, config);
       expect(result.success).toBe(true);
       if (!result.success) throw new Error(result.error);
       const output = JSON.parse(result.output!) as {
@@ -275,16 +301,15 @@ describe('Agent user-first autonomy policy', () => {
     });
 
     try {
-      const tool = createAgentOperatorMethodTool(
-        { homeDirectory: root } as never,
-        {
-          get: (key: string) => key === 'controlPlane.port'
-            ? 3429
-            : key === 'controlPlane.host'
-              ? '127.0.0.1'
-              : undefined,
-        },
-      );
+      const paths = createShellPathService({ workingDirectory: root, homeDirectory: root });
+      const config = {
+        get: (key: string) => key === 'controlPlane.port'
+          ? 3429
+          : key === 'controlPlane.host'
+            ? '127.0.0.1'
+            : undefined,
+      };
+      const tool = createAgentOperatorMethodTool(paths, config);
       const decisions: Array<{
         readonly status: string;
         readonly action: string;
@@ -292,7 +317,7 @@ describe('Agent user-first autonomy policy', () => {
         readonly modelRoute: string;
       }> = [];
       for (let index = 0; index < 4; index += 1) {
-        const result = await tool.execute({ methodId: 'services.status' });
+        const result = await withOperatorReadings(() => tool.execute({ methodId: 'services.status' }));
         expect(result.success).toBe(true);
         if (!result.success) throw new Error(result.error);
         const output = JSON.parse(result.output!) as {
@@ -351,22 +376,19 @@ describe('Agent user-first autonomy policy', () => {
     }), { status: 200, headers: { 'content-type': 'application/json' } }));
 
     try {
-      const tool = createAgentOperatorMethodTool(
-        { homeDirectory: root } as never,
-        {
-          get: (key: string) => key === 'controlPlane.port'
-            ? 3429
-            : key === 'controlPlane.host'
-              ? '127.0.0.1'
-              : undefined,
-        },
-      );
-      const result = await tool.execute({
+      const paths = createShellPathService({ workingDirectory: root, homeDirectory: root });
+      const config = {
+        get: (key: string) => key === 'controlPlane.port'
+          ? 3429
+          : key === 'controlPlane.host'
+            ? '127.0.0.1'
+            : undefined,
+      };
+      const tool = createAgentOperatorMethodTool(paths, config);
+      const result = await recordedOperatorEffect(tool, {
         methodId: 'watchers.create',
         input: { label: 'Billing webhook triage', kind: 'webhook' },
-        confirm: true,
-        explicitUserRequest: 'Create a billing webhook watcher.',
-      });
+      }, paths, config);
       expect(result.success).toBe(true);
       if (!result.success) throw new Error(result.error);
       const output = JSON.parse(result.output!) as {

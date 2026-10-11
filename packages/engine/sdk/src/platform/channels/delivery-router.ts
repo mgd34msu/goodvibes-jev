@@ -226,7 +226,7 @@ export class ChannelDeliveryRouter {
       throw new Error('Unsupported channel delivery target');
     }
     try {
-      const guarded = request.signal !== undefined || request.assertCurrent !== undefined;
+      const guarded = request.signal !== undefined || request.assertCurrent !== undefined || request.withPublication !== undefined;
       const registration = this.strategyRegistrations.get(strategy);
       if (guarded && registration?.guarded !== true) {
         throw new Error('Channel delivery strategy does not support guarded delivery');

@@ -1,6 +1,9 @@
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { AgentPersonaRegistry } from '../agent/persona-registry.ts';
+import { assertCurrentToolExecution, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { dirname } from 'node:path';
+import { captureCatalogData, captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
+import { agentLocalStateWrite, assertAgentLocalStateCurrent, createAgentLocalStateInputProjector } from './agent-local-state-admission.ts';
+import { AgentPersonaRegistry, personaStorePath } from '../agent/persona-registry.ts';
 import {
   discoverVibeFiles,
   initVibeFile,
@@ -8,10 +11,6 @@ import {
   resolveVibePathReference,
   type AgentVibeFile,
 } from '../agent/vibe-file.ts';
-import {
-  vibeImportPersonaConfirmationRoutes,
-  vibeInitConfirmationRoutes,
-} from '../agent/vibe-confirmation-routes.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { requireShellPaths } from '../input/commands/runtime-services.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
@@ -82,13 +81,6 @@ function readScope(args: AgentVibeToolArgs): 'project' | 'global' {
   return readString(args.scope).toLowerCase() === 'global' ? 'global' : 'project';
 }
 
-function requiresConfirmedUserIntent(args: AgentVibeToolArgs, action: AgentVibeAction): string | null {
-  if (!readBoolean(args.confirm)) return `vibe action:"${action}" requires confirm:true after the user asks for this personality change.`;
-  const explicitUserRequest = readString(args.explicitUserRequest);
-  if (!explicitUserRequest) return `vibe action:"${action}" requires explicitUserRequest when confirm is true.`;
-  return null;
-}
-
 function describeVibeFile(file: AgentVibeFile): Record<string, unknown> {
   return {
     scope: file.scope,
@@ -121,26 +113,27 @@ export function createAgentVibeTool(commandContext: CommandContext): Tool {
           query: { type: 'string', description: 'Alias for reference.' },
           name: { type: 'string', description: 'Persona name when importing.' },
           description: { type: 'string', description: 'Persona description when importing.' },
-          force: { type: 'boolean', description: 'Replace existing VIBE.md on confirmed init.' },
+          force: { type: 'boolean', description: 'Replace existing VIBE.md on admitted init.' },
           review: { type: 'boolean', description: 'Mark imported persona reviewed.' },
           use: { type: 'boolean', description: 'Set imported persona active.' },
           includeParameters: { type: 'boolean', description: 'Include searched paths and route details.' },
-          confirm: { type: 'boolean', description: 'Required true for init/import_persona.' },
-          explicitUserRequest: { type: 'string', description: 'User request authorizing confirmed personality effects.' },
+          confirm: { type: 'boolean', description: 'Optional provenance; never grants write authority.' },
+          explicitUserRequest: { type: 'string', description: 'Optional request provenance; never grants write authority.' },
         },
         additionalProperties: false,
       },
       sideEffects: ['state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: unknown) => {
-      const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentVibeToolArgs;
-      const shellPaths = requireShellPaths(commandContext);
-      const action = readAction(args);
-
+    execute: async (rawArgs, options) => {
       try {
+        const args = captureCatalogData(rawArgs);
+        options?.signal?.throwIfAborted(); assertCurrentToolExecution(rawArgs, options);
+        const shellPaths = requireShellPaths(commandContext);
+        const action = readAction(args);
         if (action === 'status') {
           const snapshot = discoverVibeFiles(shellPaths);
+          assertAgentLocalStateCurrent(rawArgs, options);
           return output({
             status: snapshot.blocked.length > 0 || snapshot.files.some((file) => file.truncated)
               ? 'check'
@@ -162,8 +155,8 @@ export function createAgentVibeTool(commandContext: CommandContext): Tool {
             routes: {
               showProject: 'vibe action:"show" scope:"project"',
               showGlobal: 'vibe action:"show" scope:"global"',
-              initProject: 'vibe action:"init" scope:"project" confirm:true explicitUserRequest:"..."',
-              importProjectPersona: 'vibe action:"import_persona" scope:"project" review:true use:true confirm:true explicitUserRequest:"..."',
+              initProject: 'vibe action:"init" scope:"project"',
+              importProjectPersona: 'vibe action:"import_persona" scope:"project" review:true use:true',
               promptContext: 'context action:"prompt" includeParameters:true',
             },
             ...(readBoolean(args.includeParameters) ? { searchedPaths: snapshot.searchedPaths } : {}),
@@ -173,6 +166,7 @@ export function createAgentVibeTool(commandContext: CommandContext): Tool {
         if (action === 'show') {
           const reference = readReference(args);
           const source = loadVibeImportSource(shellPaths, reference);
+          assertAgentLocalStateCurrent(rawArgs, options);
           return output({
             status: 'ready',
             action: 'vibe_show',
@@ -190,21 +184,8 @@ export function createAgentVibeTool(commandContext: CommandContext): Tool {
 
         if (action === 'init') {
           const scope = readScope(args);
-          const path = resolveVibePathReference(shellPaths, scope);
-          if (!readBoolean(args.confirm)) {
-            return output({
-              status: 'confirmation_required',
-              action: 'vibe_init',
-              scope,
-              path,
-              force: readBoolean(args.force),
-              next: 'Run with confirm:true and explicitUserRequest after the user asks to create or replace this VIBE.md file.',
-              confirmationRoutes: vibeInitConfirmationRoutes(scope, readBoolean(args.force)),
-            });
-          }
-          const intentError = requiresConfirmedUserIntent(args, 'init');
-          if (intentError) return error(intentError);
-          const result = initVibeFile(shellPaths, { scope, force: readBoolean(args.force) });
+          const effects = agentLocalStateWrite(rawArgs, options);
+          const result = initVibeFile(shellPaths, { scope, force: readBoolean(args.force), ...effects });
           return output({
             status: result.created ? 'created' : 'already_exists',
             action: 'vibe_init',
@@ -213,7 +194,7 @@ export function createAgentVibeTool(commandContext: CommandContext): Tool {
             created: result.created,
             next: result.created ? 'Edit this VIBE.md with the personality instructions the user wants.' : 'Use force:true only when the user asks to replace the existing file.',
             policy: {
-              confirmation: 'confirmed',
+              admission: 'act',
               explicitUserRequest: readString(args.explicitUserRequest),
               boundary: 'Wrote only the scoped VIBE.md starter file.',
             },
@@ -225,30 +206,8 @@ export function createAgentVibeTool(commandContext: CommandContext): Tool {
           const source = loadVibeImportSource(shellPaths, reference);
           const name = readString(args.name) || source.name;
           const description = readString(args.description) || source.description;
-          if (!readBoolean(args.confirm)) {
-            return output({
-              status: 'confirmation_required',
-              action: 'vibe_import_persona',
-              source: source.scope,
-              path: source.path,
-              name,
-              description,
-              review: readBoolean(args.review),
-              use: readBoolean(args.use),
-              bodyCharacters: source.body.length,
-              next: 'Run with confirm:true and explicitUserRequest after the user asks to import VIBE.md into Agent-local personas.',
-              confirmationRoutes: vibeImportPersonaConfirmationRoutes({
-                reference,
-                name,
-                description,
-                review: readBoolean(args.review),
-                use: readBoolean(args.use),
-              }),
-            });
-          }
-          const intentError = requiresConfirmedUserIntent(args, 'import_persona');
-          if (intentError) return error(intentError);
-          const personaRegistry = AgentPersonaRegistry.fromShellPaths(shellPaths);
+          const effects = agentLocalStateWrite(rawArgs, options);
+          const personaRegistry = AgentPersonaRegistry.fromShellPaths(shellPaths, effects);
           const created = personaRegistry.create({
             name,
             description,
@@ -277,7 +236,7 @@ export function createAgentVibeTool(commandContext: CommandContext): Tool {
               promptContext: 'context action:"prompt" includeParameters:true',
             },
             policy: {
-              confirmation: 'confirmed',
+              admission: 'act',
               explicitUserRequest: readString(args.explicitUserRequest),
               boundary: 'Created only one Agent-local persona from secret-scanned VIBE.md content; no default Knowledge write.',
             },
@@ -293,5 +252,26 @@ export function createAgentVibeTool(commandContext: CommandContext): Tool {
 }
 
 export function registerAgentVibeTool(registry: ToolRegistry, commandContext: CommandContext): void {
-  if (!registry.has('vibe')) registry.register(createAgentVibeTool(commandContext));
+  if (!registry.has('vibe')) registry.register(createAgentVibeTool(commandContext), { inputProjection: createAgentLocalStateInputProjector(args => {
+    const workspace = commandContext.workspace;
+    const shellPaths = requireShellPaths(commandContext);
+    const contextCurrent = captureCatalogMethods(commandContext, ['workspace']);
+    const workspaceCurrent = captureCatalogMethods(workspace, ['shellPaths']);
+    const pathsCurrent = captureCatalogMethods(shellPaths, ['homeDirectory', 'workingDirectory', 'resolveUserPath', 'expandHomePath', 'resolveWorkspacePath']);
+    const personaCurrent = captureCatalogMethods(AgentPersonaRegistry.prototype, Object.getOwnPropertyNames(AgentPersonaRegistry.prototype));
+    const factoryCurrent = captureCatalogMethods(AgentPersonaRegistry, ['fromShellPaths']);
+    const action = readAction(args);
+    const assertDescriptors = () => { contextCurrent(); workspaceCurrent(); pathsCurrent(); personaCurrent(); factoryCurrent(); };
+    assertDescriptors();
+    if (action === 'init') {
+      const root = readScope(args) === 'global' ? shellPaths.homeDirectory : shellPaths.workingDirectory;
+      return { targets: [{ root, path: resolveVibePathReference(shellPaths, readScope(args)), access: 'write' }], assertDescriptors };
+    }
+    if (action === 'import_persona') {
+      const path = resolveVibePathReference(shellPaths, readReference(args));
+      return { targets: [{ root: dirname(path), path, access: 'read' },
+        { root: shellPaths.homeDirectory, path: personaStorePath(shellPaths), access: 'write' }], assertDescriptors };
+    }
+    return { targets: [], assertDescriptors };
+  }, args => ['status', 'show'].includes(readAction(args))) });
 }

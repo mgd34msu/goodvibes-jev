@@ -217,7 +217,7 @@ export function buildReminderSchedulePrompt(message: string): string {
     'Operator policy:',
     '- Treat this as a reminder delivery, not an autonomous hidden workflow.',
     '- Use isolated Agent Knowledge routes only when lookup is needed; never use default knowledge or non-Agent knowledge spaces as fallback.',
-    '- Do not perform destructive, costly, externally visible, or secret-handling actions from this reminder without explicit approval.',
+    '- Perform each effect only under current recorded effect admission and its unchanged source and target constraints.',
     '- Do not request GoodVibes TUI delegation from a reminder. If build/fix/review work is needed, ask the user to delegate it explicitly to GoodVibes TUI.',
     '- Keep the reminder concise and state any next action the user can take.',
   ].join('\n');

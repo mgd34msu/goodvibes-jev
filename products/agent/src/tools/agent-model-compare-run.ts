@@ -135,11 +135,25 @@ export async function runCandidate(
   prompt: string,
   systemPrompt: string,
   maxTokens: number,
+  assertSend: () => void,
+  signal?: AbortSignal,
 ): Promise<CompareCandidateResult> {
   const startedAt = Date.now();
+  let assertProviderCurrent = assertSend;
   try {
+    assertSend();
     const provider = deps.providerRegistry.getForModel(model.modelId, model.providerId);
-    const response = await provider.chat(createPromptRequest(model, prompt, systemPrompt, maxTokens));
+    const chat = provider.chat;
+    assertProviderCurrent = () => {
+      assertSend();
+      if (deps.providerRegistry.getForModel(model.modelId, model.providerId) !== provider || provider.chat !== chat) {
+        throw new Error('Comparison provider owner changed.');
+      }
+      assertSend();
+    };
+    assertProviderCurrent();
+    const response = await chat.call(provider, { ...createPromptRequest(model, prompt, systemPrompt, maxTokens), signal });
+    assertProviderCurrent();
     return {
       blindId,
       model,
@@ -151,6 +165,7 @@ export async function runCandidate(
       toolCallCount: response.toolCalls.length,
     };
   } catch (error) {
+    assertProviderCurrent();
     return {
       blindId,
       model,
@@ -346,7 +361,7 @@ export function formatReview(comparison: StoredComparison, reveal: boolean): str
     'Decision worksheet',
     '  winner: (user chooses after reading the blinded outputs)',
     '  reasons: capture strengths, weaknesses, factuality, tone, and fit to rubric',
-    '  route update: separate confirmed model-routing action only',
+    '  route update: separately admitted model-routing action only',
   ];
   if (reveal) {
     lines.push('');
@@ -408,7 +423,7 @@ export function formatPreview(
     ...(documentId ? [`  document ${documentId}`] : []),
     `  reveal ${readBoolean(args.reveal) ? 'immediate' : 'delayed'}`,
     `  artifact ${readOptionalBoolean(args.saveArtifact, true) ? 'save local JSON review' : 'do not save'}`,
-    '  policy model comparison sends the same prompt to each candidate and requires confirm:true plus explicitUserRequest',
+    '  policy model comparison sends the same prompt to each candidate and requires current recorded send admission',
   ].join('\n');
 }
 

@@ -1,5 +1,7 @@
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolExecution, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureCatalogData, captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
+import { agentLocalStateWrite, assertAgentLocalStateCurrent, createAgentLocalStateInputProjector } from './agent-local-state-admission.ts';
 import {
   WORK_PLAN_STATUSES,
   type WorkPlanItem,
@@ -60,19 +62,15 @@ const ACTIONS: readonly AgentWorkPlanAction[] = [
 ];
 
 function isAction(value: unknown): value is AgentWorkPlanAction {
-  return typeof value === 'string' && ACTIONS.includes(value as AgentWorkPlanAction);
+  return typeof value === 'string' && ACTIONS.some(action => action === value);
 }
 
 function isStatus(value: unknown): value is WorkPlanItemStatus {
-  return typeof value === 'string' && WORK_PLAN_STATUSES.includes(value as WorkPlanItemStatus);
+  return typeof value === 'string' && WORK_PLAN_STATUSES.some(status => status === value);
 }
 
 function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function readBoolean(value: unknown): boolean {
-  return value === true || value === 'true' || value === 'yes';
 }
 
 function failure(error: string): { readonly success: false; readonly error: string } {
@@ -176,7 +174,7 @@ function formatItemDetail(item: WorkPlanItem): string {
 function resolveItem(store: WorkPlanStore, idOrPrefix: string): WorkPlanItem {
   const needle = idOrPrefix.trim();
   if (!needle) throw new Error('id is required.');
-  const items = store.listItems();
+  const items = store.listItems({ readOnly: true });
   const exact = items.find((item) => item.id === needle);
   if (exact) return exact;
   const matches = items.filter((item) => item.id.startsWith(needle));
@@ -188,7 +186,7 @@ function resolveItem(store: WorkPlanStore, idOrPrefix: string): WorkPlanItem {
 }
 
 function listOutput(store: WorkPlanStore): string {
-  const plan = store.getActivePlan();
+  const plan = store.getActivePlan({ readOnly: true });
   const counts = new Map<WorkPlanItemStatus, number>(WORK_PLAN_STATUSES.map((status) => [status, 0]));
   for (const item of plan.items) counts.set(item.status, (counts.get(item.status) ?? 0) + 1);
   const lines = [
@@ -206,19 +204,6 @@ function listOutput(store: WorkPlanStore): string {
   if (plan.items.length > 20) lines.push(`${plan.items.length - 20} more item(s) omitted.`);
   lines.push('', 'Native owner route: /work submit-file <JSON-path>; submission does not start execution.');
   return lines.join('\n');
-}
-
-function requireDestructiveConfirmation(args: AgentWorkPlanToolArgs, action: string): string | null {
-  const explicitUserRequest = readString(args.explicitUserRequest);
-  if (!explicitUserRequest) return `explicitUserRequest is required before ${action}.`;
-  if (!readBoolean(args.confirm)) {
-    return [
-      `Agent work plan ${action} preview`,
-      '  policy destructive local work-plan changes require confirm:true and an explicit user request',
-      `  request ${explicitUserRequest}`,
-    ].join('\n');
-  }
-  return null;
 }
 
 function updatePatch(args: AgentWorkPlanToolArgs): Parameters<WorkPlanStore['updateItem']>[1] {
@@ -247,28 +232,32 @@ export function createAgentWorkPlanTool(store: WorkPlanStore, _options: AgentWor
           owner: { type: 'string', description: 'Optional owner label.' },
           source: { type: 'string', description: 'Optional source/provenance label.' },
           notes: { type: 'string', description: 'Optional work-plan notes.' },
-          confirm: { type: 'boolean', description: 'Required true for remove and clear_completed.' },
-          explicitUserRequest: { type: 'string', description: 'Required for remove and clear_completed; never native owner authority.' },
+          confirm: { type: 'boolean', description: 'Optional caller provenance; never grants write authority.' },
+          explicitUserRequest: { type: 'string', description: 'Optional request provenance; never grants write authority.' },
         },
         required: ['action'],
         additionalProperties: false,
       },
       sideEffects: ['state'],
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs, options) => {
       try {
-        const args = rawArgs as AgentWorkPlanToolArgs;
+        const args = captureCatalogData(rawArgs);
+        options?.signal?.throwIfAborted(); assertCurrentToolExecution(rawArgs, options);
         if (!isAction(args.action)) return failure(`Unknown Agent work plan action. Valid values ${ACTIONS.join(', ')}.`);
-        if (args.action === 'list') return output(listOutput(store));
-        if (args.action === 'get') return output(formatItemDetail(resolveItem(store, requireId(args))));
+        if (args.action === 'list' || args.action === 'get') {
+          const result = args.action === 'list' ? listOutput(store) : formatItemDetail(resolveItem(store, requireId(args)));
+          assertAgentLocalStateCurrent(rawArgs, options); return output(result);
+        }
         if (args.action === 'dispatch_agents') return failure('Legacy work-plan dispatch is unavailable: model fields, labels, and explicitUserRequest are not original owner authority. Keep this as a local todo, or have the owner submit exact source through /work submit-file <JSON-path> (recover with /work submission-status or /work submission-retry). Submission does not start execution.');
+        const effects = agentLocalStateWrite(rawArgs, options);
         if (args.action === 'create') {
           const item = store.addItem(requireTitle(args), {
             status: readOptionalStatus(args.status) ?? 'pending',
             owner: readString(args.owner) || 'agent',
             source: readString(args.source) || 'main-conversation',
             notes: readString(args.notes) || undefined,
-          });
+          }, effects);
           return output([
             'Created Agent work plan item',
             '  Local todo only; no native work was submitted or executed.',
@@ -277,7 +266,7 @@ export function createAgentWorkPlanTool(store: WorkPlanStore, _options: AgentWor
           ].join('\n'));
         }
         if (args.action === 'update') {
-          const item = store.updateItem(requireId(args), updatePatch(args));
+          const item = store.updateItem(requireId(args), updatePatch(args), effects);
           return output([
             'Updated Agent work plan item',
             '  Local record only; no execution. Local done is not native verified completion.',
@@ -288,7 +277,7 @@ export function createAgentWorkPlanTool(store: WorkPlanStore, _options: AgentWor
         if (args.action === 'set_status') {
           const status = readOptionalStatus(args.status);
           if (!status) throw new Error('status is required.');
-          const item = store.setItemStatus(requireId(args), status);
+          const item = store.setItemStatus(requireId(args), status, effects);
           return output([
             'Set Agent work plan item status',
             '  Local status only; done is not native verified completion.',
@@ -298,18 +287,14 @@ export function createAgentWorkPlanTool(store: WorkPlanStore, _options: AgentWor
           ].join('\n'));
         }
         if (args.action === 'remove') {
-          const denied = requireDestructiveConfirmation(args, `remove ${readString(args.id) || '(missing id)'}`);
-          if (denied) return failure(denied);
-          const item = store.removeItem(requireId(args));
+          const item = store.removeItem(requireId(args), effects);
           return output([
             'Removed Agent work plan item',
             `  id ${item.id}`,
             `  title ${item.title}`,
           ].join('\n'));
         }
-        const denied = requireDestructiveConfirmation(args, 'clear completed');
-        if (denied) return failure(denied);
-        const count = store.clearCompleted();
+        const count = store.clearCompleted(effects);
         return output([
           `Cleared ${count} completed/cancelled Agent work plan items`,
           `  count ${count}`,
@@ -322,5 +307,9 @@ export function createAgentWorkPlanTool(store: WorkPlanStore, _options: AgentWor
 }
 
 export function registerAgentWorkPlanTool(registry: ToolRegistry, store: WorkPlanStore): void {
-  registry.register(createAgentWorkPlanTool(store));
+  registry.register(createAgentWorkPlanTool(store), { inputProjection: createAgentLocalStateInputProjector(() => {
+    const assertDescriptors = captureCatalogMethods(store, ['filePath', 'homeDirectory', 'options', ...Object.getOwnPropertyNames(Object.getPrototypeOf(store))]);
+    assertDescriptors();
+    return { targets: [{ root: store.homeDirectory, path: store.filePath, access: 'write' }], assertDescriptors };
+  }, args => args.action === 'list' || args.action === 'get') });
 }

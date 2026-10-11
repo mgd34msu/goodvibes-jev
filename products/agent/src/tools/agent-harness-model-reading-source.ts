@@ -4,7 +4,7 @@ import { SOURCE_SCREENING_LIMITS, type ProtectedSource, type ProtectedSourceOwne
 import { ToolInputProjectionError, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
 import type { CommandContext } from '../input/command-registry.ts';
-import { captureCatalogData } from './agent-harness-catalog-ranking.ts';
+import { captureCatalogData, captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
 import type { ProviderApiLike, ArtifactListLike } from './agent-harness-model-routing-types.ts';
 import { contextWindowFor, modelRegistryKey } from './agent-harness-model-catalog.ts';
 
@@ -62,6 +62,56 @@ export function assertModelReadingInputCurrent(value: unknown, serialized: strin
   if (JSON.stringify(captureModelReadingData(value)) !== serialized) throw new ToolInputProjectionError('held');
 }
 
+/** Compare every original slot with its captured data without rebuilding JSON.
+ * The snapshot has already passed complete structural and privacy capture. */
+export function captureModelReadingSnapshotGuard(captured: unknown): (value: unknown) => void {
+  type Snapshot = { readonly kind: 'value'; readonly value: unknown }
+    | { readonly kind: 'object'; readonly array: boolean; readonly slots: readonly { readonly key: string; readonly snapshot: Snapshot }[] };
+  const changed = (): never => { throw new ToolInputProjectionError('held'); };
+  let capturedNodes = 0;
+  const capture = (value: unknown, depth: number): Snapshot => {
+    if (++capturedNodes > 20_000 || depth > 64) changed();
+    if (value === null || typeof value !== 'object') return { kind: 'value', value };
+    if (nodeTypes.isProxy(value)) changed();
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const slots = Reflect.ownKeys(descriptors).map(key => {
+      if (typeof key !== 'string') return changed();
+      const descriptor = descriptors[key];
+      if (!descriptor || !('value' in descriptor)) return changed();
+      return { key, snapshot: capture(descriptor.value, depth + 1) };
+    });
+    return { kind: 'object', array: Array.isArray(value), slots };
+  };
+  const original = capture(captured, 0);
+  return value => {
+    let nodes = 0;
+    const ancestors = new Set<object>();
+    const compare = (current: unknown, snapshot: Snapshot, depth: number): void => {
+      if (++nodes > 20_000 || depth > 64) changed();
+      if (snapshot.kind === 'value') {
+        if (!Object.is(current, snapshot.value)) changed();
+        return;
+      }
+      if (current === null || typeof current !== 'object' || nodeTypes.isProxy(current) || ancestors.has(current)) return changed();
+      if (Array.isArray(current) !== snapshot.array) changed();
+      const prototype: unknown = Object.getPrototypeOf(current);
+      if (snapshot.array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) changed();
+      const descriptors = Object.getOwnPropertyDescriptors(current);
+      if (Reflect.ownKeys(descriptors).length !== snapshot.slots.length) changed();
+      ancestors.add(current);
+      try {
+        for (const slot of snapshot.slots) {
+          if (!Object.hasOwn(descriptors, slot.key)) changed();
+          const descriptor = descriptors[slot.key];
+          if (!descriptor || !('value' in descriptor)) return changed();
+          compare(descriptor.value, slot.snapshot, depth + 1);
+        }
+      } finally { ancestors.delete(current); }
+    };
+    compare(value, original, 0);
+  };
+}
+
 /** Whole semantic values are batched, never truncated or split inside strings.
  * Large collections retain their complete key path and every entry. */
 function screeningBatches(captured: unknown, serialized: string): readonly (readonly string[])[] {
@@ -94,8 +144,10 @@ function screeningBatches(captured: unknown, serialized: string): readonly (read
 /** A projection is authority to use these exact captured facts, never to rewrite identity. */
 export async function withModelReadingSource<T, R>(source: T, options: ModelReadingOptions,
   consume: (captured: T, options: ModelReadingOptions) => Promise<R>): Promise<R> {
+  const assertOptions = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'retainCurrent']);
   options.signal?.throwIfAborted(); options.assertCurrent?.();
   const captured = captureModelReadingInput(source);
+  const assertSourceSnapshot = captureModelReadingSnapshotGuard(captured);
   const serialized = JSON.stringify(captured);
   if (typeof serialized !== 'string') throw new ToolInputProjectionError('held');
   const batches = screeningBatches(captured, serialized);
@@ -104,27 +156,31 @@ export async function withModelReadingSource<T, R>(source: T, options: ModelRead
   const retainCurrent = (guard: () => void, key?: string) => { if (!retained.has(key ?? guard)) retained.set(key ?? guard, guard); originalRetain?.(guard, key); };
   const owner = options.sourceOwner;
   if (!owner) throw new ToolInputProjectionError('unavailable');
+  const assertOwnerMethods = captureCatalogMethods(owner, ['capture', 'screen', 'project', 'release']);
+  const capture = owner.capture, screen = owner.screen, project = owner.project, releaseHandle = owner.release;
+  retainCurrent(assertOwnerMethods, 'model-reading.owner-methods');
   const handles: ProtectedSource[] = [];
   const receipts: { readonly receipt: SourceScreeningReceipt; readonly parts: readonly string[] }[] = [];
   let released = false, releasing: Promise<void> | undefined;
   const release = (): Promise<void> => {
     if (releasing) return releasing;
     released = true; signal?.removeEventListener('abort', abort);
-    releasing = Promise.resolve().then(async () => { await Promise.all(handles.map(handle => Promise.resolve().then(() => owner.release(handle)))); });
+    releasing = Promise.resolve().then(async () => { await Promise.all(handles.map(handle => Promise.resolve().then(() => releaseHandle.call(owner, handle)))); });
     return releasing;
   };
   const abort = () => { void release().catch(() => {}); };
   const assertPublicationCurrent = () => {
+    assertOptions(); assertOwnerMethods();
     if (options.signal !== signal || options.sourceOwner !== owner || options.assertCurrent !== originalAssert || options.retainCurrent !== originalRetain) throw new ToolInputProjectionError('held');
     signal?.throwIfAborted(); originalAssert?.();
     for (const guard of retained.values()) guard();
-    assertModelReadingInputCurrent(source, serialized);
+    assertSourceSnapshot(source);
   };
   const assertCurrent = () => {
     assertPublicationCurrent();
     if (released) throw new ToolInputProjectionError('held');
     for (const { receipt, parts } of receipts) {
-      const projection = owner.project(receipt);
+      const projection = project.call(owner, receipt);
       if (projection.length !== parts.length || projection.some((part, index) => part !== parts[index])) throw new ToolInputProjectionError('held');
     }
     options.assertCurrent?.(); signal?.throwIfAborted();
@@ -132,9 +188,9 @@ export async function withModelReadingSource<T, R>(source: T, options: ModelRead
   try {
     signal?.addEventListener('abort', abort, { once: true });
     assertCurrent();
-    for (const batch of batches) { assertCurrent(); handles.push(owner.capture(batch)); }
+    for (const batch of batches) { assertCurrent(); handles.push(capture.call(owner, batch)); }
     for (const [index, handle] of handles.entries()) {
-      assertCurrent(); const screened = await owner.screen(handle); assertCurrent();
+      assertCurrent(); const screened = await screen.call(owner, handle); assertCurrent();
       if (screened.status !== 'settled') throw new ToolInputProjectionError('held');
       receipts.push({ receipt: screened.receipt, parts: batches[index]! }); assertCurrent();
     }

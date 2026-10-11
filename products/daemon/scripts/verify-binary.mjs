@@ -66,7 +66,7 @@ try {
     GOODVIBES_HOME: tree, GOODVIBES_DAEMON_HOME: daemon, GOODVIBES_WORKING_DIR: work, NO_COLOR: '1' };
   const probe = spawnSync('bwrap', [...boundary, '/usr/bin/test', '!', '-e', product], { env, encoding: 'utf8', timeout: 10_000 });
   assert.ifError(probe.error); assert.equal(probe.status, 0, `Filesystem containment unavailable: ${probe.stderr}`);
-  const smoke = runPostBuildSmoke({ binary, config: config.smoke, exec: (file, argv) => {
+  const smoke = await runPostBuildSmoke({ binary, config: config.smoke, exec: (file, argv) => {
     const result = spawnSync('bwrap', [...boundary, file, ...argv], { env, encoding: 'utf8', timeout: 20_000, killSignal: 'SIGKILL' });
     assert.ifError(result.error);
     return { status: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };

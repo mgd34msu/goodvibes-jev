@@ -20,10 +20,16 @@
 import {
   CONFIG_SCHEMA,
   configKeyDescription,
+  captureStructuredCredentialReferenceConfigValue,
+  isStructuredCredentialReferenceConfigKey,
   isDeclaredSecretBearingConfigKey,
   readCredentialKey,
 } from '@goodvibes-jev/engine/sdk/platform/config';
 import { mapLimit } from '@goodvibes-jev/judgment';
+import { captureJudgmentPort, type JudgmentPortCapture, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { captureStrictJudgmentJson } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { redactSensitiveDataAsync, redactStructuredDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { isDeepStrictEqual } from 'node:util';
 
 export const REDACTED_VALUE = '<redacted>';
 
@@ -35,32 +41,46 @@ const PATH_READING_CONCURRENCY = 8;
 
 const SCHEMA_KEYS: ReadonlySet<string> = new Set(CONFIG_SCHEMA.map((setting) => setting.key));
 
-/** Readings are asked once per path for the life of the process. */
-const pathReadings = new Map<string, Promise<boolean>>();
-
-/** Whether a config path holds a credential: the declaration for schema keys, else the reading. */
-export function isSensitiveConfigPath(path: string): Promise<boolean> {
-  if (SCHEMA_KEYS.has(path)) return Promise.resolve(isDeclaredSecretBearingConfigKey(path));
-  let reading = pathReadings.get(path);
-  if (reading === undefined) {
-    reading = readCredentialKey({ key: path, description: configKeyDescription(path) }, CONFIG_PATH_CREDENTIAL_SITE)
-      .then((answer) => !(answer.verdict === 'no' && answer.outcome === 'act'));
-    reading.catch(() => pathReadings.delete(path));
-    pathReadings.set(path, reading);
-  }
-  return reading;
+/** Unknown config paths keep values private unless a current reading confidently excludes credentials. */
+export async function isSensitiveConfigPath(path: string, options: JudgmentReadingOptions = {}): Promise<boolean> {
+  const source = captureConfig(path, options);
+  source.assertCurrent();
+  if (SCHEMA_KEYS.has(path)) return isDeclaredSecretBearingConfigKey(path);
+  const reading = await readCredentialKey({ key: path, description: configKeyDescription(path) }, CONFIG_PATH_CREDENTIAL_SITE,
+    { ...options, assertCurrent: source.assertCurrent });
+  source.assertCurrent();
+  return !(reading.verdict === 'no' && reading.outcome === 'act');
 }
 
-const SECRET_LIKE_TEXT_PATTERNS: readonly RegExp[] = [
-  /\bsk-[A-Za-z0-9_-]{16,}\b/g,
-  /\bghp_[A-Za-z0-9_]{16,}\b/g,
-  /\bgho_[A-Za-z0-9_]{16,}\b/g,
-  /\bghu_[A-Za-z0-9_]{16,}\b/g,
-  /\bghs_[A-Za-z0-9_]{16,}\b/g,
-  /\bgithub_pat_[A-Za-z0-9_]{24,}\b/g,
-  /\b(?:xoxb|xapp|xoxp|xoxa)-[A-Za-z0-9-]{16,}\b/g,
-  /\b[A-Za-z0-9._%+-]+:[A-Za-z0-9._%+-]{8,}@/g,
-];
+function captureConfig(config: unknown, options: JudgmentReadingOptions) {
+  // Raw values stay local. This structural capture does not authorize transmission.
+  const snapshot = captureStrictJudgmentJson(config);
+  const signal = options.signal, callerCurrent = options.assertCurrent;
+  const sourceCurrent = () => {
+    signal?.throwIfAborted();
+    if (options.signal !== signal || options.assertCurrent !== callerCurrent
+      || !isDeepStrictEqual(captureStrictJudgmentJson(config), snapshot)) throw new Error('Config changed during redaction.');
+  };
+  const assertSource = () => {
+    sourceCurrent();
+    const result: unknown = callerCurrent?.();
+    if (result !== undefined) {
+      void Promise.resolve(result).catch(() => {});
+      throw new Error('Config ownership must be synchronous.');
+    }
+    sourceCurrent();
+  };
+  let owner: JudgmentPortCapture | undefined;
+  const assertCurrent = () => { if (owner) owner.assertCurrent(); else assertSource(); };
+  const readingOptions = () => {
+    assertSource();
+    owner ??= captureJudgmentPort(CONFIG_PATH_CREDENTIAL_SITE, { ...options, assertCurrent: assertSource });
+    owner.assertCurrent();
+    return { ...options, signal: owner.signal, assertCurrent: owner.assertCurrent };
+  };
+  assertSource();
+  return { snapshot, assertCurrent, readingOptions };
+}
 
 // Redaction rule for sensitive config paths:
 // - Non-string values: redact if truthy (i.e. non-null, non-undefined, non-zero, non-false).
@@ -73,8 +93,17 @@ function holdsValue(value: unknown): boolean {
   return !value.startsWith('goodvibes://secrets/');
 }
 
+function structuredReferenceValue(path: string, value: unknown): boolean {
+  try { captureStructuredCredentialReferenceConfigValue(path, value); return true; }
+  catch { return false; }
+}
+
 /** Every path in the tree whose value would be masked if the path is sensitive, with that value. */
 function valuePaths(value: unknown, path: string, out: Map<string, unknown>): void {
+  if (isStructuredCredentialReferenceConfigKey(path)) {
+    if (!structuredReferenceValue(path, value)) out.set(path, value);
+    return;
+  }
   if (path && holdsValue(value)) out.set(path, value);
   if (Array.isArray(value)) {
     value.forEach((item, index) => valuePaths(item, `${path}.${index}`, out));
@@ -84,11 +113,14 @@ function valuePaths(value: unknown, path: string, out: Map<string, unknown>): vo
 }
 
 /** The sensitive paths of a config tree, asked once for the whole tree. */
-async function sensitivePaths(config: unknown): Promise<ReadonlySet<string>> {
+async function sensitivePaths(source: ReturnType<typeof captureConfig>): Promise<ReadonlySet<string>> {
   const candidates = new Map<string, unknown>();
-  valuePaths(config, '', candidates);
+  valuePaths(source.snapshot, '', candidates);
   const paths = [...candidates.keys()];
-  const sensitive = await mapLimit(paths, PATH_READING_CONCURRENCY, (path) => isSensitiveConfigPath(path));
+  const sensitive = await mapLimit(paths, PATH_READING_CONCURRENCY, async (path) =>
+    isStructuredCredentialReferenceConfigKey(path) ? true
+      : isSensitiveConfigPath(path, SCHEMA_KEYS.has(path) ? { assertCurrent: source.assertCurrent } : source.readingOptions()));
+  source.assertCurrent();
   return new Set(paths.filter((_path, index) => sensitive[index]));
 }
 
@@ -97,13 +129,14 @@ function redactUnknown(value: unknown, path: string, sensitive: ReadonlySet<stri
     redactedPaths.push(path);
     return REDACTED_VALUE;
   }
+  if (isStructuredCredentialReferenceConfigKey(path)) return captureStructuredCredentialReferenceConfigValue(path, value);
   if (Array.isArray(value)) {
     return value.map((item, index) => redactUnknown(item, `${path}.${index}`, sensitive, redactedPaths));
   }
   if (value && typeof value === 'object') {
     const result: Record<string, unknown> = {};
     for (const [key, nested] of Object.entries(value)) {
-      result[key] = redactUnknown(nested, path ? `${path}.${key}` : key, sensitive, redactedPaths);
+      Object.defineProperty(result, key, { value: redactUnknown(nested, path ? `${path}.${key}` : key, sensitive, redactedPaths), enumerable: true });
     }
     return result;
   }
@@ -111,45 +144,33 @@ function redactUnknown(value: unknown, path: string, sensitive: ReadonlySet<stri
 }
 
 export function isRedactedValue(value: unknown): boolean {
-  return value === REDACTED_VALUE;
+  return value === REDACTED_VALUE || value === '[REDACTED]' || value === '[REDACTED_PROFILE]' || value === '[REDACTED_TEXT]';
 }
 
-export interface RedactedConfigResult<T> {
-  readonly value: T;
+export interface RedactedConfigResult {
+  readonly value: unknown;
   readonly redactedPaths: readonly string[];
+  readonly assertCurrent: () => void;
 }
 
-export async function redactConfig<T>(config: T): Promise<RedactedConfigResult<T>> {
-  const sensitive = await sensitivePaths(config);
+export async function redactConfig(config: unknown, options: JudgmentReadingOptions = {}): Promise<RedactedConfigResult> {
+  const source = captureConfig(config, options);
+  const sensitive = await sensitivePaths(source);
   const redactedPaths: string[] = [];
-  return {
-    value: redactUnknown(config, '', sensitive, redactedPaths) as T,
-    redactedPaths,
-  };
+  const value = redactUnknown(source.snapshot, '', sensitive, redactedPaths);
+  source.assertCurrent();
+  return { value, redactedPaths, assertCurrent: source.assertCurrent };
 }
 
-export function redactText(input: string): string {
-  // Assignment form: keyword=value, anchored so 'monkey=' and 'donkey=' do NOT match.
-  // Matches: token=, access_token=, api_key=, api-key=, secret=, password= and colon form token: value
-  let output = input
-    .replace(
-      /(?<![A-Za-z])(?:access_token|api[_-]?key|secret|password|token)\s*=\s*([^ \t\r\n"'`]+)/gi,
-      (m, val) => m.slice(0, m.length - val.length) + REDACTED_VALUE,
-    )
-    .replace(
-      /(?<![A-Za-z])(?:access_token|api[_-]?key|secret|password|token)\s*:\s*([^ \t\r\n"'`]+)/gi,
-      (m, val) => m.slice(0, m.length - val.length) + REDACTED_VALUE,
-    );
-  for (const pattern of SECRET_LIKE_TEXT_PATTERNS) {
-    output = output.replace(pattern, REDACTED_VALUE);
-  }
-  return output;
+export function redactText(input: string, options: JudgmentReadingOptions = {}): Promise<string> {
+  return redactSensitiveDataAsync(input, options);
 }
 
-export async function collectSensitiveConfigValues(config: unknown): Promise<readonly string[]> {
+export async function collectSensitiveConfigValues(config: unknown, options: JudgmentReadingOptions = {}): Promise<readonly string[]> {
+  const source = captureConfig(config, options);
   const candidates = new Map<string, unknown>();
-  valuePaths(config, '', candidates);
-  const sensitive = await sensitivePaths(config);
+  valuePaths(source.snapshot, '', candidates);
+  const sensitive = await sensitivePaths(source);
   // A sensitive container's strings are all masked with it; collect them too.
   const values: string[] = [];
   const collect = (value: unknown): void => {
@@ -157,17 +178,24 @@ export async function collectSensitiveConfigValues(config: unknown): Promise<rea
     else if (Array.isArray(value)) value.forEach(collect);
     else if (value && typeof value === 'object') Object.values(value).forEach(collect);
   };
-  for (const [path, value] of candidates) if (sensitive.has(path)) collect(value);
+  for (const [path, value] of candidates) if (sensitive.has(path) && !isStructuredCredentialReferenceConfigKey(path)) collect(value);
+  source.assertCurrent();
   return [...new Set(values.filter((value) => holdsValue(value)))].sort((left, right) => right.length - left.length);
 }
 
-export function redactSerializedSecrets(serialized: string, secretValues: readonly string[]): string {
-  let output = redactText(serialized);
+export async function redactSerializedSecrets(serialized: string, secretValues: readonly string[], options: JudgmentReadingOptions = {}): Promise<string> {
+  let output = serialized;
   for (const secret of secretValues) {
     if (!secret) continue;
     const encoded = JSON.stringify(secret).slice(1, -1);
     output = output.split(encoded).join(REDACTED_VALUE);
     output = output.split(secret).join(REDACTED_VALUE);
   }
-  return output;
+  let parsed: unknown;
+  try { parsed = JSON.parse(output); }
+  catch { return redactSensitiveDataAsync(output, { ...options, secretValues }); }
+  const protectedValue = await redactStructuredDataAsync(parsed, { ...options, secretValues });
+  const result = JSON.stringify(protectedValue, null, 2);
+  if (result === undefined) throw new Error('Redacted bundle is not JSON.');
+  return result;
 }

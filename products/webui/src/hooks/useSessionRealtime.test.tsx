@@ -105,6 +105,25 @@ describe('useSessionRealtime', () => {
     unmount();
   });
 
+  test('hosted lifecycle frames invalidate the hosted list on the shared session stream', () => {
+    const { invalidate, unmount } = renderHook();
+    capturedHandlers?.onEvent?.('hosted-session-update', {
+      event: 'hosted-session-created', session: { id: 'hosted-1' }, createdAt: 1,
+    });
+    expect(openCalls).toHaveLength(1);
+    expect(invalidate.mock.calls).toEqual([[{ queryKey: ['hosted-sessions'] }]]);
+    unmount();
+  });
+
+  test('a relay overflow revalidates both ordinary and hosted session lists', () => {
+    const { invalidate, unmount } = renderHook();
+    capturedHandlers?.onEvent?.('relay-overflow', { dropped: 2 });
+    expect(invalidate.mock.calls).toEqual([
+      [{ queryKey: ['sessions'] }], [{ queryKey: ['hosted-sessions'] }],
+    ]);
+    unmount();
+  });
+
   test('an UNKNOWN future wire event still invalidates defensively (never dropped)', () => {
     const { invalidate, unmount } = renderHook();
     capturedHandlers?.onEvent?.('session-update', { event: 'session-teleported', payload: {} });

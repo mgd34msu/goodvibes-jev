@@ -4,6 +4,8 @@ import { interactiveRuntimeCapabilitySummary, interactiveRuntimeParityStatus } f
 import { isAgentMcpCallRouteInstalled } from './agent-mcp-call-route.ts';
 import { toolsDeclaringCapability } from './agent-tool-capability-declarations.ts';
 import type { AgentHarnessInteractiveRuntimeRecord } from './agent-harness-interactive-runtime-records.ts';
+import { captureCatalogData, captureCatalogMethods, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 
 type BrowserControlStatus = 'ready' | 'attention' | 'setup-needed';
 type BrowserControlDecisionStatus = 'ready-to-inspect-tool' | 'review-connector-first' | 'setup-needed';
@@ -108,7 +110,7 @@ function safeToolDefinitions(toolRegistry: ToolRegistry | undefined): readonly R
   try {
     return toolRegistry.getToolDefinitions();
   } catch {
-    return [];
+    throw new ToolInputProjectionError('unavailable');
   }
 }
 
@@ -117,7 +119,7 @@ function safeMcpServers(context: CommandContext): readonly McpServerRecord[] {
     const api = context.clients?.mcpApi ?? context.extensions?.mcpRegistry;
     return api?.listServerSecurity?.() ?? [];
   } catch {
-    return [];
+    throw new ToolInputProjectionError('unavailable');
   }
 }
 
@@ -300,30 +302,19 @@ function workflowSearchText(workflow: BrowserControlWorkflow): string {
     workflow.summary,
     workflow.next,
     workflow.safety,
-  ].join('\n').toLowerCase();
+  ].join('\n');
 }
 
-function selectBrowserControlWorkflow(posture: BrowserControlPosture, input: string): BrowserControlWorkflow {
-  const normalized = input.toLowerCase();
-  if (!normalized) return posture.workflows[0]!;
-  const tokens = normalized.split(/[^a-z0-9]+/).filter(Boolean);
-  const scored = posture.workflows
-    .map((workflow, index) => {
-      let score = 0;
-      const text = workflowSearchText(workflow);
-      if (workflow.id.includes(normalized) || workflow.label.toLowerCase().includes(normalized)) score += 1_000;
-      for (const token of tokens) {
-        if (workflow.id.includes(token)) score += 250;
-        if (workflow.label.toLowerCase().includes(token)) score += 200;
-        if (text.includes(token)) score += 40;
-      }
-      if (workflow.id === 'browser-navigation' && /browse|browser|navigate|url|page|click|form|login|web/.test(normalized)) score += 450;
-      if (workflow.id === 'screenshot-observation' && /screenshot|screen|observe|record|capture|visual|see/.test(normalized)) score += 450;
-      if (workflow.id === 'desktop-control' && /desktop|computer|app|window|keyboard|mouse|type|os/.test(normalized)) score += 450;
-      return { workflow, score, index };
-    })
-    .sort((left, right) => right.score - left.score || left.index - right.index);
-  return scored[0]?.workflow ?? posture.workflows[0]!;
+async function selectBrowserControlWorkflow(posture: BrowserControlPosture, input: string, options: CatalogRankingOptions): Promise<BrowserControlWorkflow | undefined> {
+  if (!input) return posture.workflows[0];
+  const exact = posture.workflows.find(workflow => workflow.id === input);
+  if (exact) return exact;
+  const ranked = await rankHarnessCatalog(posture.workflows, input, workflow => ({
+    id: workflow.id, description: workflowSearchText(workflow), evidence: workflow,
+  }), 'agent.browser-control.workflow', { ...options, requirePreservedSource: true });
+  const selected = ranked.matches[0];
+  if (selected && (selected.judgment.reading.outcome !== 'act' || selected.judgment.reading.verdict !== 'yes')) throw new ToolInputProjectionError('held');
+  return selected?.entry;
 }
 
 function toolCandidateRoutes(toolMatches: readonly string[]): readonly Record<string, unknown>[] {
@@ -394,15 +385,40 @@ function browserControlDecision(
   };
 }
 
-export function browserControlRouteSummary(
+export async function browserControlRouteSummary(
   context: CommandContext,
   toolRegistry: ToolRegistry,
   args: BrowserControlRouteArgs,
-): Record<string, unknown> {
+  options: CatalogRankingOptions = {},
+): Promise<Record<string, unknown>> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const source = JSON.stringify(captureCatalogData(args));
   const input = readString(args.query) || readString(args.target);
   const includeParameters = args.includeParameters === true;
+  const assertRegistryCurrent = captureCatalogMethods(toolRegistry, ['getToolDefinitions']);
+  const mcp = context.clients?.mcpApi ?? context.extensions?.mcpRegistry;
+  const assertMcpCurrent = mcp ? captureCatalogMethods(mcp, ['listServerSecurity']) : () => {};
+  const assertBackendsCurrent = () => {
+    assertRegistryCurrent(); assertMcpCurrent();
+    if ((context.clients?.mcpApi ?? context.extensions?.mcpRegistry) !== mcp) throw new ToolInputProjectionError('stale');
+  };
+  assertBackendsCurrent();
   const posture = browserControlPosture(context, toolRegistry);
-  const workflow = selectBrowserControlWorkflow(posture, input);
+  const originalPosture = JSON.stringify(captureCatalogData(posture));
+  const assertSourceCurrent = () => {
+    options.signal?.throwIfAborted();
+    assertBackendsCurrent();
+    if (JSON.stringify(captureCatalogData(args)) !== source
+      || JSON.stringify(captureCatalogData(browserControlPosture(context, toolRegistry))) !== originalPosture) throw new ToolInputProjectionError('stale');
+  };
+  options.retainCurrent?.(assertSourceCurrent, 'agent.browser-control.workflow.sources');
+  const assertCurrent = () => { options.assertCurrent?.(); assertSourceCurrent(); };
+  const workflow = await selectBrowserControlWorkflow(posture, input, { ...options, assertCurrent });
+  assertCurrent();
+  if (!workflow) return {
+    mode: 'browser_control_route', request: input, status: 'no-matching-workflow', workflow: null, decision: null,
+    candidates: posture.workflows, note: 'No browser or desktop workflow was established for this request.',
+  };
   const toolRoutes = toolCandidateRoutes(posture.toolMatches);
   const mcpRoutes = mcpCandidateRoutes(posture.mcpServers);
   const decision = browserControlDecision(posture, workflow, toolRoutes, mcpRoutes);

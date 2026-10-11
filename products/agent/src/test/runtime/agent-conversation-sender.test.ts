@@ -44,6 +44,40 @@ function message(overrides: Partial<AgentConversationMessage> = {}): AgentConver
 }
 
 describe('agent conversation sender', () => {
+  test('retirement before publication leaves the actual transcript empty', async () => {
+    const primary = conversation(), controller = new AbortController();
+    const sender = createAgentConversationSender({ primaryConversation: () => primary, requestRender() {} });
+    controller.abort(new Error('Owned retired sender'));
+    await expect(sender.send(message(), { signal: controller.signal })).rejects.toThrow('retired sender');
+    expect(primary.said).toEqual([]); expect(sender.supportsGuardedDelivery).toBe(true);
+  });
+
+  test('conversation replacement during publication acquisition cannot receive the old prepared body', async () => {
+    const original = conversation(), replacement = conversation(); let primary = original, renders = 0;
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    const sender = createAgentConversationSender({ primaryConversation: () => primary, requestRender() { renders++; } });
+    const pending = sender.send(message(), { withPublication: async operation => {
+      entered.resolve(); await release.promise; return operation(() => {});
+    } });
+    await entered.promise; primary = replacement; release.resolve();
+    await expect(pending).rejects.toThrow('conversation changed');
+    expect(original.said).toEqual([]); expect(replacement.said).toEqual([]); expect(renders).toBe(0);
+  });
+
+  test('only actual transcript publication enters the native keeper and remains a completed landing', async () => {
+    const primary = conversation(); let held = false, publications = 0, renders = 0;
+    const originalAdd = primary.addAssistantMessage;
+    primary.addAssistantMessage = content => { expect(held).toBe(true); originalAdd(content); };
+    const sender = createAgentConversationSender({ primaryConversation: () => { expect(held || publications === 0).toBe(true); return primary; },
+      requestRender() { expect(held).toBe(false); renders++; } });
+    await sender.send(message(), { withPublication: async operation => {
+      publications++; held = true;
+      try { await operation(() => {}); throw new Error('Owned retirement after landing'); }
+      finally { held = false; }
+    } });
+    expect(primary.said).toEqual([NUDGE_BODY]); expect(publications).toBe(1); expect(renders).toBe(1);
+  });
+
   test('it names itself, so the router can report it and refuse a silent takeover', () => {
     const sender = createAgentConversationSender({
       primaryConversation: () => conversation(),

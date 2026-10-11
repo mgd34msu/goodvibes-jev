@@ -51,7 +51,7 @@ export class ControllableStore<T extends Record<string, unknown>> extends Persis
    * test built on that would let a stale write pick up state written while it
    * was asleep, which is to say it would pass with the defect still in place.
    */
-  override async persist(data: T): Promise<void> {
+  override async persist(data: T, options?: Parameters<PersistentStore<T>['persist']>[1]): Promise<void> {
     this.started += 1;
     const fail = this.failNext || this.failWriteNumber === this.started;
     this.failNext = false;
@@ -62,7 +62,7 @@ export class ControllableStore<T extends Record<string, unknown>> extends Persis
     try {
       if (delay > 0) await new Promise<void>((resolve) => { setTimeout(resolve, delay); });
       if (fail) throw new Error('store unavailable');
-      await super.persist(captured);
+      await super.persist(captured, options);
     } finally {
       this.finished += 1;
     }

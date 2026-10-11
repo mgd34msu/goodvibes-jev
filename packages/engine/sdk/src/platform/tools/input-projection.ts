@@ -1,11 +1,13 @@
 /** Trusted registration-only input projection. Nothing in this module grants tool admission. */
 import { types as nodeTypes } from 'node:util';
 import type { ToolExecuteOptions } from '../types/tools.js';
-import { snapshotJudgmentInput } from '../gate/judgment-input.js';
-import type { SecretsManager, PreparedScopedSecretDeletion } from '../config/secrets.js';
+import { captureOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
+import type { SecretsManager, PreparedScopedSecretDeletion, PreparedSecretImport } from '../config/secrets.js';
+import type { SubscriptionManager, PreparedSubscriptionImport } from '../config/subscriptions.js';
 import type { ConfigManager, PreparedConfigMutation } from '../config/manager.js';
 import type { ConfigWriteRoute } from '../config/daemon-config-route.js';
 import { assertPreparedConfigWriteRoute } from '../config/settings-precondition-client.js';
+import { assertRemoteSettingsImportPrecondition, type RemoteSettingsImportPrecondition } from '../config/settings-import-precondition-client.js';
 
 export type ToolInputProjectionProblem = 'held' | 'capacity' | 'unconfigured' | 'invalid' | 'unavailable' | 'stale' | 'cancelled' | 'released' | 'binding-changed';
 
@@ -25,6 +27,17 @@ export interface ToolInputProjectionRequest {
   readonly signal?: AbortSignal | undefined;
   /** Check the captured registration and authority at each asynchronous retry boundary. */
   readonly assertCurrent: () => void;
+  /** Private native reference binding from this registration's structural capture. */
+  readonly nativeReferenceContext?: object | undefined;
+}
+
+/** Only existing native string references may be substituted before semantic privacy checks. */
+export interface ToolNativeReferencesCapture {
+  readonly args: Record<string, unknown>;
+  readonly fields: readonly string[];
+  readonly assertCurrent: () => void;
+  readonly executionContext?: object | undefined;
+  readonly release?: (() => Promise<void>) | undefined;
 }
 
 /** Registration-owned facts for admission, never a grant or caller-supplied option. */
@@ -51,12 +64,22 @@ export type AgentReadAdmissionEvidence = ToolAdmissionEvidence;
 export type ToolOwnedAdmissionEvidence = ToolAdmissionEvidence | AgentSettingsAdmissionEvidence;
 
 /** Opaque local mutation binding; never serialized as judgment evidence. */
-export interface ToolPreparedSettingsMutation {
+interface PreparedSettingsBindings {
   readonly owner: ConfigManager;
-  readonly mutation: PreparedConfigMutation;
   readonly secretDeletion?: Readonly<{ owner: SecretsManager; mutation: PreparedScopedSecretDeletion }> | undefined;
+  readonly secretImport?: Readonly<{ owner: SecretsManager; mutation: PreparedSecretImport }> | undefined;
+  readonly subscriptionImport?: Readonly<{ owner: SubscriptionManager; mutation: PreparedSubscriptionImport }> | undefined;
+  readonly remoteImport?: RemoteSettingsImportPrecondition | undefined;
+  /** Restriction only: the registration retains its private source through each publication. */
+  readonly assertSourceCurrent?: (() => void) | undefined;
   readonly route?: ConfigWriteRoute | undefined;
 }
+export type ToolPreparedSettingsMutation = PreparedSettingsBindings & (
+  | { readonly mutation: PreparedConfigMutation }
+  | { readonly mutation?: never; readonly secretImport: NonNullable<PreparedSettingsBindings['secretImport']> }
+  | { readonly mutation?: never; readonly subscriptionImport: NonNullable<PreparedSettingsBindings['subscriptionImport']> }
+  | { readonly mutation?: never; readonly remoteImport: RemoteSettingsImportPrecondition }
+);
 
 export type ToolInputProjectionResult = {
   readonly status: 'held';
@@ -148,9 +171,12 @@ export function captureSettingsMutation(value: unknown): ToolPreparedSettingsMut
   const owner = projectionProperty(value, 'owner') as ConfigManager | undefined;
   const mutation = projectionProperty(value, 'mutation') as PreparedConfigMutation | undefined;
   const route = projectionProperty(value, 'route') as ConfigWriteRoute | undefined;
-  if (!owner || !mutation) throw new ToolInputProjectionError('invalid');
-  owner.assertPreparedMutation(mutation);
+  const remoteImport = projectionProperty(value, 'remoteImport') as RemoteSettingsImportPrecondition | undefined;
+  if (!owner) throw new ToolInputProjectionError('invalid');
+  owner.assertSettingsWritable();
+  if (mutation) { owner.assertPreparedMutation(mutation); owner.protectPreparedMutationTargets(mutation); }
   if (route) assertPreparedConfigWriteRoute(route);
+  if (remoteImport !== undefined) assertRemoteSettingsImportPrecondition(remoteImport);
   const secret = projectionProperty(value, 'secretDeletion');
   let secretDeletion: ToolPreparedSettingsMutation['secretDeletion'];
   if (secret !== undefined) {
@@ -161,12 +187,41 @@ export function captureSettingsMutation(value: unknown): ToolPreparedSettingsMut
     secretOwner.assertPreparedScopedDeletion(deletion);
     secretDeletion = Object.freeze({ owner: secretOwner, mutation: deletion });
   }
-  return Object.freeze({ owner, mutation, ...(route ? { route } : {}), ...(secretDeletion ? { secretDeletion } : {}) });
+  const importedSecret = projectionProperty(value, 'secretImport');
+  let secretImport: ToolPreparedSettingsMutation['secretImport'];
+  if (importedSecret !== undefined) {
+    if (!importedSecret || typeof importedSecret !== 'object' || nodeTypes.isProxy(importedSecret)) throw new ToolInputProjectionError('invalid');
+    const secretOwner = projectionProperty(importedSecret, 'owner') as SecretsManager;
+    const imported = projectionProperty(importedSecret, 'mutation') as PreparedSecretImport;
+    if (!secretOwner || !imported || secretDeletion) throw new ToolInputProjectionError('invalid');
+    secretOwner.assertPreparedImport(imported); secretImport = Object.freeze({ owner: secretOwner, mutation: imported });
+  }
+  const importedSubscription = projectionProperty(value, 'subscriptionImport');
+  let subscriptionImport: ToolPreparedSettingsMutation['subscriptionImport'];
+  if (importedSubscription !== undefined) {
+    if (!importedSubscription || typeof importedSubscription !== 'object' || nodeTypes.isProxy(importedSubscription)) throw new ToolInputProjectionError('invalid');
+    const subscriptionOwner = projectionProperty(importedSubscription, 'owner') as SubscriptionManager;
+    const imported = projectionProperty(importedSubscription, 'mutation') as PreparedSubscriptionImport;
+    if (!subscriptionOwner || !imported) throw new ToolInputProjectionError('invalid');
+    subscriptionOwner.assertPreparedImport(imported); subscriptionImport = Object.freeze({ owner: subscriptionOwner, mutation: imported });
+  }
+  const assertSourceCurrent = projectionFunction<() => void>(projectionProperty(value, 'assertSourceCurrent'));
+  const bindings = { owner, ...(route ? { route } : {}), ...(assertSourceCurrent ? { assertSourceCurrent } : {}),
+    ...(remoteImport ? { remoteImport } : {}),
+    ...(secretDeletion ? { secretDeletion } : {}), ...(secretImport ? { secretImport } : {}), ...(subscriptionImport ? { subscriptionImport } : {}) };
+  if (mutation) return Object.freeze({ ...bindings, mutation });
+  if (route || secretDeletion) throw new ToolInputProjectionError('invalid');
+  if (secretImport) return Object.freeze({ ...bindings, secretImport });
+  if (subscriptionImport) return Object.freeze({ ...bindings, subscriptionImport });
+  if (remoteImport) return Object.freeze({ ...bindings, remoteImport });
+  throw new ToolInputProjectionError('invalid');
 }
 
 export interface ToolInputProjector {
   readonly signal?: AbortSignal | undefined;
   readonly assertCurrent?: (() => void) | undefined;
+  /** Synchronous native lookup only; every other original field and selected payload remains protected. */
+  readonly captureNativeReferences?: ((request: ToolInputProjectionRequest) => ToolNativeReferencesCapture | undefined) | undefined;
   /** Must cooperate with request.signal and own pending work until its returned result can be released.
    * The registry awaits completion and cleanup; it never abandons a late result on cancellation.
    * A rejected project must clean up its own resources, since it supplies no release capability.
@@ -207,7 +262,7 @@ export function projectionProperty(value: object, key: string): unknown {
 }
 
 /** snapshotJudgmentInput handles JSON structure and the privacy floor after this proxy preflight. */
-export function captureProjectionArgs(value: unknown, name: string): Record<string, unknown> {
+function inspectProjectionStructure(value: unknown): void {
   const seen = new Set<object>();
   let nodes = 0;
   function inspect(entry: unknown, depth: number): void {
@@ -231,6 +286,18 @@ export function captureProjectionArgs(value: unknown, name: string): Record<stri
     }
   }
   inspect(value, 0);
+}
+
+/** Structural ownership for the registration's native-reference lookup; never semantic admission. */
+export function captureProjectionStructure(value: unknown): Record<string, unknown> {
+  inspectProjectionStructure(value);
+  const captured = captureOwnedJson(value, nodeTypes.isProxy);
+  if (!captured || typeof captured !== 'object' || Array.isArray(captured)) throw new ToolInputProjectionError('invalid');
+  return captured as Record<string, unknown>;
+}
+
+export function captureProjectionArgs(value: unknown, name: string): Record<string, unknown> {
+  inspectProjectionStructure(value);
   const captured = snapshotJudgmentInput(value, name);
   if (!captured || typeof captured !== 'object' || Array.isArray(captured)) throw new ToolInputProjectionError('invalid');
   return captured as Record<string, unknown>;
@@ -240,6 +307,20 @@ export function projectionFunction<T extends (...args: never[]) => unknown>(valu
   if (value === undefined) return undefined;
   if (typeof value !== 'function' || nodeTypes.isProxy(value)) throw new ToolInputProjectionError('invalid');
   return value as T;
+}
+
+/** Currentness checks finish in this synchronous boundary or provide no evidence. */
+export function assertProjectionCurrent(guard: (() => void) | undefined): void;
+export function assertProjectionCurrent(guard: ((args: Record<string, unknown>) => void) | undefined, args: Record<string, unknown>): void;
+export function assertProjectionCurrent(guard: ((args?: Record<string, unknown>) => void) | ((args: Record<string, unknown>) => void) | undefined,
+  args?: Record<string, unknown>): void {
+  if (!guard) return;
+  const result: unknown = Reflect.apply(guard, undefined, args === undefined ? [] : [args]);
+  if (result === undefined) return;
+  // Do not await or invoke a borrowed thenable. Drain a genuine promise's
+  // rejection while refusing its unfinished check before any effect.
+  if (nodeTypes.isPromise(result)) Reflect.apply(Promise.prototype.then, result, [undefined, () => {}]);
+  throw new ToolInputProjectionError('invalid');
 }
 
 const applyIntrinsic = Reflect.apply;

@@ -52,14 +52,15 @@ function headlineProblem(question: Question, answer: RawAnswer): string | undefi
   return undefined;
 }
 
-/** Choice is an argmax over a unit distribution; confidence is a separate statistic. */
+/** Choice is an argmax over an approximately unit distribution; confidence is separate. */
 function choiceDistributionProblem(question: Question, answer: RawAnswer): string | undefined {
   if (question.type !== 'choice') return undefined;
   const values = distributionKeys(question).map((key) => answer.probabilities![key]!);
-  // Accommodate only accumulated IEEE-754 addition error, not missing mass or
-  // a confidence/calibration threshold. Never renormalize an endpoint's answer.
+  // https://api.typesafe.ai/openapi.json specifies an approximate total without
+  // a numeric bound. One percentage point is our fixed admission policy, not
+  // a provider guarantee or a calibration threshold. Never renormalize values.
   const roundoff = Number.EPSILON * Math.max(1, values.length) * 4;
-  if (Math.abs(values.reduce((sum, value) => sum + value, 0) - 1) > roundoff) return 'probabilities that do not sum to 1';
+  if (Math.abs(values.reduce((sum, value) => sum + value, 0) - 1) > 0.01 + roundoff) return 'probabilities that do not sum approximately to 1';
   const selected = answer.probabilities![answer.choice!]!;
   if (values.some((value) => value > selected)) return 'a choice below the highest probability';
   return undefined;

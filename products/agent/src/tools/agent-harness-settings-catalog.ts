@@ -67,7 +67,6 @@ export async function harnessSettingsCatalog(
       page.total,
       catalogFilters(args, CATALOG_QUERIES.settings.filters),
       CATALOG_QUERIES.settings.discovery,
-      {},
     ),
     ...(related.length > 0 ? { relatedCommands: related } : {}),
     policy: settingsPolicySummary(),

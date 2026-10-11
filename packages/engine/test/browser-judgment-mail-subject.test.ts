@@ -179,7 +179,7 @@ test('source retirement during asynchronous key acquisition cannot dispatch or r
   const entered = deferred<void>(); const key = deferred<string>();
   let dispatches = 0;
   const fetch = spyOn(globalThis, 'fetch').mockImplementation(new Proxy(globalThis.fetch, { apply() { dispatches++; return Promise.reject(new Error('Unexpected synthetic dispatch')); } }));
-  const transport = createSettingsJudgmentPort({ config: { get: name => ({ 'judgment.endpoint': 'http://127.0.0.1:1', 'judgment.model': 'jev-1.13.0', 'judgment.keySource': 'secret', 'judgment.timeoutMs': 1000 })[name] },
+  const transport = createSettingsJudgmentPort({ config: { get: name => ({ 'judgment.endpoint': 'http://127.0.0.1:1', 'judgment.model': 'jev-1.13.0', 'judgment.keySource': 'secret', 'judgment.timeoutMs': 1000, 'judgment.fallbacks': [] })[name] },
     secrets: { get: async () => { entered.resolve(); return key.promise; } }, env: {} });
   const f = fixture({ transport }); let pending: Promise<unknown> | undefined;
   try {

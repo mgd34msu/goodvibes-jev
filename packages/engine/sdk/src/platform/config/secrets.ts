@@ -33,8 +33,11 @@
  */
 
 import { dirname, isAbsolute, resolve } from 'path';
-import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, statSync } from 'fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs';
+import { captureStrictJudgmentJson } from '../gate/judgment-result.js';
+import { observeImportFile, assertImportFileCurrent, type ImportFileObservation, type PreparedImportTransitionFacts } from './prepared-import.js';
+import type { PreparedConfigMutationReceipt } from './prepared-mutation.js';
 import { acquireCrossProcessLock } from '../workspace/checkpoint/cross-process-lock.js';
 import { writeJsonFileAtomic } from '../utils/atomic-json-store.js';
 import type { ConfigManager } from './manager.js';
@@ -100,6 +103,28 @@ export interface SecretWriteTransitionFacts {
 export interface SecretWriteEffectOwner {
   readonly assertCurrent: () => void;
   readonly committed: () => void;
+}
+declare const secretImportBrand: unique symbol;
+declare const secretImportTransitionBrand: unique symbol;
+export interface PreparedSecretImport { readonly [secretImportBrand]: true }
+export interface PreparedSecretImportTransition { readonly [secretImportTransitionBrand]: true }
+export type SecretImportEntry =
+  | { readonly key: string; readonly value: string; readonly scope: SecretScope; readonly operation?: 'set' }
+  | { readonly key: string; readonly scope: SecretScope; readonly operation: 'delete'; readonly value?: never };
+export interface PreparedSecretImportFacts {
+  readonly operation: 'import';
+  readonly beforeGeneration: number;
+  readonly items: readonly { readonly key: string; readonly scope: SecretScope; readonly configured: boolean }[];
+  readonly destinations: readonly { readonly path: string; readonly operation: 'set'; readonly tier: SecretScope | 'keyfile' }[];
+}
+interface SecretImportRecord {
+  readonly facts: PreparedSecretImportFacts;
+  readonly policy: SecretStorageMode;
+  readonly methods: readonly unknown[];
+  readonly observations: { readonly path: string; observation: ImportFileObservation }[];
+  readonly publications: readonly { readonly path: string; readonly payload: unknown; readonly keyfile: boolean }[];
+  phase: 'prepared' | 'pending' | 'committing' | 'committed' | 'failed';
+  transition?: PreparedSecretImportTransition;
 }
 export interface SecretWriteOptions {
   /** Optional exact effect transaction; never grants permission by itself. */
@@ -293,10 +318,11 @@ export class SecretsManager {
     return () => { this.changeListeners.delete(listener); };
   }
 
-  private notifyChanged(key: string): void {
+  private notifyChanged(key: string, privateImport = false): void {
     for (const listener of [...this.changeListeners]) {
       try { listener(key); } catch (error) {
-        logger.warn('SecretsManager: change listener failed', { key, error: summarizeError(error) });
+        logger.warn('SecretsManager: change listener failed', { key,
+          ...(privateImport ? { reason: 'listener-failed' } : { error: summarizeError(error) }) });
       }
     }
   }
@@ -339,6 +365,202 @@ export class SecretsManager {
     }
   }
   private readonly preparedScopedDeletions = new WeakMap<PreparedScopedSecretDeletion, ScopedDeletionRecord>();
+  private readonly preparedImports = new WeakMap<PreparedSecretImport, SecretImportRecord>();
+
+  /** Value-free private restriction over every native local credential source. */
+  captureLocalCredentialReadset(): () => void {
+    const state = this.getCredentialMutationState(), policy = this.getPolicy();
+    if (state.pending) throw new Error('Credential owner is busy.');
+    const methods = [this.getPolicy, this.getAllCandidateStores, this.getCredentialMutationState];
+    const observations = [...new Set([this.keyFilePath, ...this.getAllCandidateStores().map(store => store.path)])]
+      .map(path => ({ path, observation: observeImportFile(path) }));
+    return () => {
+      const current = this.getCredentialMutationState();
+      if (current.pending || current.generation !== state.generation || this.getPolicy() !== policy
+        || [this.getPolicy, this.getAllCandidateStores, this.getCredentialMutationState].some((method, index) => method !== methods[index])) throw new Error('Credential source changed.');
+      for (const entry of observations) assertImportFileCurrent(entry.path, entry.observation);
+    };
+  }
+
+  /** Stage complete private payloads; capture never creates a keyfile or repairs a store. */
+  prepareImport(entries: readonly SecretImportEntry[]): PreparedSecretImport {
+    try { return this.prepareImportOwned(entries); }
+    catch { throw new Error('Secret import is unavailable.'); }
+  }
+  private prepareImportOwned(entries: readonly SecretImportEntry[]): PreparedSecretImport {
+    const values = captureStrictJudgmentJson(entries), state = this.getCredentialMutationState(), policy = this.getPolicy();
+    if (state.pending || !values.length || new Set(values.map(entry => entry.key)).size !== values.length
+      || values.some(entry => typeof entry.key !== 'string' || !entry.key || (entry.operation !== undefined && entry.operation !== 'set' && entry.operation !== 'delete')
+        || (entry.operation === 'delete' ? entry.value !== undefined : typeof entry.value !== 'string') || !['project', 'user', 'daemon'].includes(entry.scope))) throw new Error('Secret import is unavailable.');
+    const medium = this.getDefaultWriteMedium(policy);
+    const keyObservation = observeImportFile(this.keyFilePath);
+    if (keyObservation.raw !== null && !/^[0-9a-f]{64}$/i.test(keyObservation.raw.trim())) throw new Error('Secret keyfile is unavailable.');
+    const key = keyObservation.raw === null ? this.encKey ?? randomBytes(32) : Buffer.from(keyObservation.raw.trim(), 'hex');
+    if (this.encKey && keyObservation.raw !== null && !this.encKey.equals(key)) throw new Error('Secret keyfile changed.');
+    const observations = [{ path: this.keyFilePath, observation: keyObservation }];
+    const targets = new Map<string, { readonly store: SecretStorePath; readonly values: Record<string, string>; encryptionKey: Buffer; legacy: boolean }>();
+    const items = values.map(entry => ({ key: entry.key, value: entry.value, operation: entry.operation ?? 'set', scope: resolveSecretWriteScope(entry.key, entry.scope) }));
+    for (const entry of items) {
+      const stores = entry.operation === 'delete' ? [this.resolveWriteTarget(entry.scope, 'secure'), this.resolveWriteTarget(entry.scope, 'plaintext')]
+        : [this.resolveWriteTarget(entry.scope, medium)];
+      for (const store of stores) {
+      let target = targets.get(store.path);
+      if (!target) {
+        const observation = observeImportFile(store.path);
+        const previousObservation = observations.find(entry => entry.path === store.path);
+        if (previousObservation) assertImportFileCurrent(store.path, previousObservation.observation);
+        else observations.push({ path: store.path, observation });
+        if (entry.operation === 'delete' && observation.raw === null) continue;
+        let existing: unknown = {};
+        let encryptionKey = key;
+        let legacy = false;
+        if (observation.raw !== null) {
+          const parsed: unknown = JSON.parse(observation.raw);
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Secret store is unavailable.');
+          if (store.secure) {
+            if (!('iv' in parsed) || typeof parsed.iv !== 'string' || !('tag' in parsed) || typeof parsed.tag !== 'string' || !('data' in parsed) || typeof parsed.data !== 'string') throw new Error('Secret store is unavailable.');
+            const previousKey = !('version' in parsed) ? deriveLegacyEncryptionKey(this.options.legacyIdentity) : keyObservation.raw === null ? null : key;
+            if (!previousKey || ('version' in parsed && parsed.version !== SECRETS_STORE_FORMAT_VERSION)) throw new Error('Secret store is unavailable.');
+            if (entry.operation === 'delete') { encryptionKey = previousKey; legacy = !('version' in parsed); }
+            if ('keyId' in parsed && typeof parsed.keyId !== 'string') throw new Error('Secret store is unavailable.');
+            const envelope = { iv: parsed.iv, tag: parsed.tag, data: parsed.data,
+              ...('version' in parsed ? { version: SECRETS_STORE_FORMAT_VERSION } : {}),
+              ...('keyId' in parsed && typeof parsed.keyId === 'string' ? { keyId: parsed.keyId } : {}) };
+            existing = JSON.parse(decrypt(envelope, previousKey));
+          } else existing = 'secrets' in parsed ? parsed.secrets : parsed;
+        }
+        if (!existing || typeof existing !== 'object' || Array.isArray(existing) || Object.values(existing).some(value => typeof value !== 'string')) throw new Error('Secret store is unavailable.');
+        target = { store, values: { ...captureStrictJudgmentJson(existing) } as Record<string, string>, encryptionKey, legacy }; targets.set(store.path, target);
+      }
+      if (entry.operation === 'delete') delete target.values[entry.key];
+      else {
+        target.encryptionKey = key; target.legacy = false;
+        Object.defineProperty(target.values, entry.key, { value: entry.value, enumerable: true, writable: true, configurable: true });
+      }
+      }
+    }
+    const needsKey = keyObservation.raw === null && [...targets.values()].some(target => target.store.secure && target.encryptionKey === key);
+    const publications = [...(needsKey ? [{ path: this.keyFilePath, payload: `${key.toString('hex')}\n`, keyfile: true }] : []),
+      ...[...targets.values()].map(target => {
+        const payload = target.store.secure ? encrypt(JSON.stringify(target.values), target.encryptionKey) : { version: 1, secrets: target.values };
+        if (target.legacy && 'iv' in payload) { delete payload.version; delete payload.keyId; }
+        return { path: target.store.path, payload, keyfile: false };
+      })];
+    const handle = Object.freeze({}) as PreparedSecretImport;
+    const facts: PreparedSecretImportFacts = Object.freeze({ operation: 'import', beforeGeneration: state.generation,
+      items: Object.freeze(items.map(({ key, scope, operation }) => Object.freeze({ key, scope, configured: operation === 'set' }))),
+      destinations: Object.freeze(publications.map(publication => Object.freeze({ path: publication.path, operation: 'set' as const,
+        tier: publication.keyfile ? 'keyfile' as const : targets.get(publication.path)!.store.scope }))) });
+    this.preparedImports.set(handle, { facts, policy, observations, publications: captureStrictJudgmentJson(publications),
+      methods: [this.getPolicy, this.resolveWriteTarget, this.getDefaultWriteMedium], phase: 'prepared' });
+    this.assertPreparedImport(handle); return handle;
+  }
+  inspectPreparedImport(handle: PreparedSecretImport): PreparedSecretImportFacts {
+    const record = this.preparedImports.get(handle); if (!record) throw new Error('Secret import is not authentic.'); return record.facts;
+  }
+  private assertImportRecord(record: SecretImportRecord, generation: number): void {
+    if (this.credentialMutationGeneration !== generation || this.getPolicy() !== record.policy
+      || [this.getPolicy, this.resolveWriteTarget, this.getDefaultWriteMedium].some((method, index) => method !== record.methods[index])) throw new Error('Secret import owner changed.');
+    for (const observation of record.observations) assertImportFileCurrent(observation.path, observation.observation);
+  }
+  assertPreparedImport(handle: PreparedSecretImport): void {
+    const record = this.preparedImports.get(handle);
+    if (!record || record.phase !== 'prepared' || this.pendingLocalMutations.size) throw new Error('Secret import is unavailable.');
+    this.assertImportRecord(record, record.facts.beforeGeneration);
+  }
+  beginPreparedImport(handle: PreparedSecretImport): PreparedSecretImportTransition {
+    this.assertPreparedImport(handle); const record = this.preparedImports.get(handle)!;
+    const transition = Object.freeze({}) as PreparedSecretImportTransition; record.transition = transition; record.phase = 'pending';
+    this.credentialMutationGeneration++;
+    for (const item of record.facts.items) this.pendingLocalMutations.set(item.key, 1);
+    this.notifyCredentialInvalidation();
+    try { this.assertPreparedImportTransition(handle, transition); return transition; }
+    catch {
+      record.phase = 'failed'; this.credentialMutationGeneration++;
+      for (const item of record.facts.items) {
+        const remaining = (this.pendingLocalMutations.get(item.key) ?? 1) - 1;
+        if (remaining) this.pendingLocalMutations.set(item.key, remaining); else this.pendingLocalMutations.delete(item.key);
+      }
+      this.notifyCredentialInvalidation(); throw new Error('Secret import owner changed.');
+    }
+  }
+  inspectPreparedImportTransition(handle: PreparedSecretImport, transition: PreparedSecretImportTransition): PreparedImportTransitionFacts {
+    this.assertPreparedImportTransition(handle, transition); const record = this.preparedImports.get(handle)!;
+    return Object.freeze({ beforeGeneration: record.facts.beforeGeneration, afterGeneration: this.credentialMutationGeneration, phase: record.phase === 'committed' ? 'committed' : 'pending' });
+  }
+  assertPreparedImportTransition(handle: PreparedSecretImport, transition: PreparedSecretImportTransition): void {
+    const record = this.preparedImports.get(handle);
+    if (!record || record.transition !== transition || !['pending', 'committing', 'committed'].includes(record.phase)) throw new Error('Secret import transition is not authentic.');
+    const completed = record.phase === 'committed';
+    if (completed ? this.pendingLocalMutations.size > 0 : this.pendingLocalMutations.size !== record.facts.items.length || record.facts.items.some(item => this.pendingLocalMutations.get(item.key) !== 1)) throw new Error('Secret import owner changed.');
+    this.assertImportRecord(record, record.facts.beforeGeneration + (completed ? 2 : 1));
+  }
+  /** Acquire the real file namespace before a synchronous authenticated publication tail. */
+  async withPreparedImport<T>(handle: PreparedSecretImport,
+    operation: (finish: (assertCurrent: () => void) => PreparedConfigMutationReceipt) => T,
+    assertCurrent: () => void = () => {}): Promise<T> {
+    this.assertPreparedImport(handle);
+    const record = this.preparedImports.get(handle)!;
+    const current = () => { assertCurrent(); this.assertPreparedImport(handle); };
+    return this.withStoreMutations(record.publications.map(publication => publication.path), () => {
+      current(); let active = true; let spent = false;
+      try { return operation(beforeEffect => {
+        if (!active || spent) throw new Error('Secret import is spent.'); spent = true;
+        beforeEffect(); const transition = this.beginPreparedImport(handle);
+        return this.finishPreparedImportOwned(handle, transition, beforeEffect);
+      }); } finally { active = false; }
+    }, [], current);
+  }
+
+  async finishPreparedImport(handle: PreparedSecretImport, transition: PreparedSecretImportTransition, beforeEffect: () => void): Promise<PreparedConfigMutationReceipt> {
+    const record = this.preparedImports.get(handle);
+    if (!record || record.phase !== 'pending' || record.transition !== transition) throw new Error('Secret import is spent.');
+    record.phase = 'committing';
+    const current = () => { beforeEffect(); this.assertPreparedImportTransition(handle, transition); };
+    try {
+      current();
+      return await this.withStoreMutations(record.publications.map(publication => publication.path),
+        () => this.finishPreparedImportOwned(handle, transition, beforeEffect), [], current);
+    } catch {
+      record.phase = 'failed'; this.settlePreparedImport(record);
+      return Object.freeze({ status: 'unknown', completedPaths: Object.freeze([]),
+        ...(record.publications[0] ? { uncertainPath: record.publications[0].path } : {}) });
+    }
+  }
+  private settlePreparedImport(record: SecretImportRecord): void {
+    this.credentialMutationGeneration++;
+    for (const item of record.facts.items) {
+      const remaining = (this.pendingLocalMutations.get(item.key) ?? 1) - 1;
+      if (remaining) this.pendingLocalMutations.set(item.key, remaining); else this.pendingLocalMutations.delete(item.key);
+    }
+    this.notifyCredentialInvalidation();
+    if (record.phase === 'committed') for (const item of record.facts.items) this.notifyChanged(item.key, true);
+  }
+  private finishPreparedImportOwned(handle: PreparedSecretImport, transition: PreparedSecretImportTransition, beforeEffect: () => void): PreparedConfigMutationReceipt {
+    const record = this.preparedImports.get(handle);
+    if (!record || !['pending', 'committing'].includes(record.phase) || record.transition !== transition) throw new Error('Secret import is spent.');
+    record.phase = 'committing'; const completedPaths: string[] = []; let uncertainPath: string | undefined;
+    const current = () => { beforeEffect(); this.assertPreparedImportTransition(handle, transition); };
+    try {
+      current();
+      for (const publication of record.publications) {
+        uncertainPath = publication.path; current();
+        if (publication.keyfile) writeFileSync(publication.path, publication.payload as string, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+        else writeJsonFileAtomic(publication.path, publication.payload, { mode: 0o600, cleanupStaleTemps: false, assertCurrent: current });
+        completedPaths.push(publication.path);
+        record.observations.find(observation => observation.path === publication.path)!.observation = observeImportFile(publication.path);
+      }
+      record.phase = 'committed'; uncertainPath = undefined;
+    } catch { record.phase = 'failed'; }
+    finally { this.settlePreparedImport(record); }
+    return Object.freeze({ status: record.phase === 'committed' ? 'committed' : completedPaths.length ? 'partial' : 'unknown',
+      completedPaths: Object.freeze(completedPaths), ...(uncertainPath ? { uncertainPath } : {}) });
+  }
+  assertCompletedImport(handle: PreparedSecretImport): void {
+    const record = this.preparedImports.get(handle);
+    if (!record || record.phase !== 'committed' || this.pendingLocalMutations.size) throw new Error('Secret import did not commit.');
+    this.assertImportRecord(record, record.facts.beforeGeneration + 2);
+  }
 
   /** Exact physical scope only. Capture never resolves refs, repairs stores or creates a keyfile. */
   prepareScopedDeletion(key: string, scope: SecretScope): PreparedScopedSecretDeletion {
@@ -346,7 +568,7 @@ export class SecretsManager {
     const state = this.getCredentialMutationState();
     if (state.pending) throw new Error('Credential owner is busy.');
     const policy = this.getPolicy();
-    const stores = this.getAllCandidateStores().filter(store => store.scope === scope);
+    const stores = [this.resolveWriteTarget(scope, 'secure'), this.resolveWriteTarget(scope, 'plaintext')];
     const observations: { path: string; stamp: string }[] = [];
     const publications: { path: string; payload: unknown }[] = [];
     const keyObservation = deletionFileObservation(this.keyFilePath);
@@ -508,18 +730,25 @@ export class SecretsManager {
    * References and unreadable tiers cannot be treated as missing material.
    * This does not authorize replacing an existing key or changing its scope.
    */
-  async getOrCreateDaemonSecret(key: string, create: () => string): Promise<string> {
+  async getOrCreateDaemonSecret(key: string, create: () => string, assertCurrent?: () => void): Promise<string> {
+    const guard = () => {
+      const result: unknown = assertCurrent?.();
+      if (result !== undefined) { void Promise.resolve(result).catch(() => {}); throw new Error('Daemon key ownership must be checked synchronously.'); }
+    };
+    guard();
     const policy = this.getPolicy();
     const paths = this.writeStorePaths('daemon', 'secure', policy);
     return this.withStoreMutations(paths, () => {
+      guard();
       if (this.getPolicy() !== policy) throw new Error('Secret storage policy changed during acquisition');
       const current = this.resolveLocalSecretSync(key);
       if (current.state === 'unsupported') throw new Error('Daemon key material is unavailable; existing material was preserved.');
       if (current.state === 'resolved') return current.value;
       const value = create();
-      this.setOwned(key, value, { scope: 'daemon', medium: 'secure' });
+      guard();
+      this.setOwned(key, value, { scope: 'daemon', medium: 'secure' }, assertCurrent ? { beforeWrite: guard, committed: () => {} } : undefined);
       return value;
-    }, paths.slice(1));
+    }, paths.slice(1), guard);
   }
 
   /**
@@ -752,14 +981,16 @@ export class SecretsManager {
   }
 
   /** Lock actual whole-file mutation targets; independent homes may share a tier. */
-  private async withStoreMutations<T>(paths: readonly string[], operation: () => T, optionalPaths: readonly string[] = []): Promise<T> {
+  private async withStoreMutations<T>(paths: readonly string[], operation: () => T, optionalPaths: readonly string[] = [], assertCurrent?: () => void): Promise<T> {
     const owned: string[] = [];
     const releases: Array<() => void> = [];
     try {
       for (const path of [...new Set(paths)].sort()) {
+        assertCurrent?.();
         try {
           mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
           releases.push(await acquireCrossProcessLock(`${path}.mutation.lock`, { strictOwnership: true, totalTimeoutMs: 10_000 }));
+          assertCurrent?.();
           owned.push(path);
         } catch (error) {
           // An unusable fallback must not prevent a valid secure write. A busy

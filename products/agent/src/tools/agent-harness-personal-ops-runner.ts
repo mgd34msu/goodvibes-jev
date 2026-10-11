@@ -1,6 +1,16 @@
+import { readPersonalOpsResultField } from './agent-harness-personal-ops-readings.ts';
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { redactSensitiveDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { protectPersonalOpsData } from './agent-harness-personal-ops-source.ts';
 import { randomUUID } from 'node:crypto';
+import { lstatSync } from 'node:fs';
+import { captureAgentExportPath } from './agent-artifact-effect.ts';
 import type { Ranked } from '@goodvibes-jev/judgment';
-import { rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureCatalogData, captureCatalogMethods, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { harnessCatalogInvocationAuthority } from './agent-harness-catalog-ingress.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
+import { redactStructuredDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
 import type { CommandContext } from '../input/command-registry.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 import { PERSONAL_OPS_READ_CONTROL_FIELDS, type PersonalOpsConnectorSignal, type PersonalOpsConnectorTool, type PersonalOpsExecutionStep, type PersonalOpsIntakeCandidate, type PersonalOpsLane, type PersonalOpsLaneId, type PersonalOpsLiveRecord, type PersonalOpsReadRunResult, type PersonalOpsRoutePacket, type PersonalOpsWorkflow, type PersonalOpsWorkflowStatus } from './agent-harness-personal-ops-types.ts';
@@ -194,110 +204,77 @@ export function recordOperationSummary(record: PersonalOpsLiveRecord | null, inc
   };
 }
 
-export function redactedPersonalOpsText(value: string): string {
-  return value
-    .replace(/(Authorization:\s*Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1<redacted>')
-    .replace(/\b([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTHORIZATION|BEARER)[A-Z0-9_]*)\s*[:=]\s*("[^"]*"|'[^']*'|[^\s,;}]+)/gi, '$1=<redacted>')
-    .replace(/(\b(?:api[-_]?key|token|secret|password|passwd|authorization|credential)\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;}]+)/gi, '$1<redacted>')
-    .replace(/\b(xox[baprs]-[A-Za-z0-9-]{8,})\b/g, '<redacted-token>');
+export async function redactedPersonalOpsText(value: string, options: JudgmentReadingOptions = {}): Promise<string> {
+  return redactSensitiveDataAsync(value, options);
 }
 
 export function stringifyForPreview(value: unknown): string {
   if (typeof value === 'string') return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
+  return JSON.stringify(captureCatalogData(value), null, 2) ?? '';
 }
 
-export function boundedPersonalOpsResult(value: unknown, includeParameters: boolean): Record<string, unknown> {
-  const text = redactedPersonalOpsText(stringifyForPreview(value));
+export async function boundedPersonalOpsResult(value: unknown, includeParameters: boolean, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const protectedValue = await protectPersonalOpsData(value, options);
+  const text = stringifyForPreview(protectedValue);
   const max = includeParameters ? 6000 : 1600;
   return {
     format: typeof value,
     characters: text.length,
     truncated: text.length > max,
     preview: text.length <= max ? text : `${text.slice(0, max).trimEnd()}...`,
-    redaction: 'Secret-looking tokens, API keys, credentials, passwords, and bearer values are redacted before model display.',
+    redaction: 'The complete result is protected through canonical field and text readings before the display preview is bounded.',
   };
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
 export function recordObject(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  return isObjectRecord(value) ? value : null;
 }
 
-export function lowerKeyEntries(record: Record<string, unknown>): readonly [string, unknown][] {
-  return Object.entries(record).map(([key, value]) => [key.toLowerCase(), value] as [string, unknown]);
-}
-
-export function stringField(record: Record<string, unknown>, names: readonly string[]): string {
-  const lowered = lowerKeyEntries(record);
-  for (const name of names) {
-    const exact = lowered.find(([key]) => key === name);
-    const value = exact?.[1];
-    if (typeof value === 'string' && value.trim()) return value.trim();
-    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  }
-  for (const name of names) {
-    const fuzzy = lowered.find(([key]) => key.includes(name));
-    const value = fuzzy?.[1];
-    if (typeof value === 'string' && value.trim()) return value.trim();
-    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  }
+export async function stringField(record: Record<string, unknown>, purpose: string, options: CatalogRankingOptions = {}): Promise<string> {
+  const key = await readPersonalOpsResultField(record, purpose, options);
+  if (key === null) return '';
+  const value = record[key];
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   return '';
 }
 
-export function candidateResultItems(value: unknown, depth = 0): readonly unknown[] {
-  if (depth > 4) return [];
+export async function candidateResultItems(value: unknown, options: CatalogRankingOptions = {}): Promise<readonly unknown[]> {
   if (Array.isArray(value)) return value;
   const object = recordObject(value);
   if (!object) return [];
-  for (const key of ['messages', 'threads', 'emails', 'mail', 'events', 'items', 'results', 'data']) {
-    const entry = object[key];
-    if (Array.isArray(entry)) return entry;
-    const nested = candidateResultItems(entry, depth + 1);
-    if (nested.length > 0) return nested;
-  }
-  for (const key of ['structuredContent', 'structured_content', 'result', 'payload', 'output']) {
-    const nested = candidateResultItems(object[key], depth + 1);
-    if (nested.length > 0) return nested;
-  }
-  return [];
+  const key = await readPersonalOpsResultField(object, 'primary returned personal record collection or its enclosing result object', options);
+  return key === null ? [] : candidateResultItems(object[key], options);
 }
 
-export function reviewCardFromObject(
+export async function reviewCardFromObject(
   lane: PersonalOpsLane,
   sourceRecord: PersonalOpsLiveRecord,
   item: Record<string, unknown>,
   index: number,
   includeParameters: boolean,
-): Record<string, unknown> {
+  options: CatalogRankingOptions = {},
+): Promise<Record<string, unknown>> {
   const calendar = lane.id === 'calendar';
-  const id = stringField(item, calendar ? ['id', 'eventid', 'uid'] : ['id', 'messageid', 'threadid', 'emailid']) || `${sourceRecord.id}:item-${index + 1}`;
-  const subject = stringField(item, calendar
-    ? ['summary', 'title', 'subject', 'name']
-    : ['subject', 'title', 'summary']);
-  const actor = stringField(item, calendar
-    ? ['calendar', 'organizer', 'attendee', 'location']
-    : ['from', 'sender', 'author']);
-  const time = stringField(item, calendar
-    ? ['start', 'starttime', 'time', 'when', 'date']
-    : ['date', 'receivedat', 'timestamp', 'time']);
-  const body = stringField(item, calendar
-    ? ['description', 'notes', 'body', 'snippet']
-    : ['snippet', 'preview', 'body', 'text', 'content']);
+  const id = await stringField(item, calendar ? 'calendar event identifier' : 'email message or thread identifier', options) || `${sourceRecord.id}:item-${index + 1}`;
+  const subject = await stringField(item, calendar ? 'calendar event title' : 'email message subject', options);
+  const actor = await stringField(item, calendar ? 'calendar event organizer, calendar or location' : 'email message sender', options);
+  const time = await stringField(item, calendar ? 'calendar event start time' : 'message received time', options);
+  const body = await stringField(item, calendar ? 'calendar event description' : 'message body or preview text', options);
   const label = subject || actor || `${calendar ? 'Calendar event' : 'Inbox item'} ${index + 1}`;
   const summaryParts = [
     actor ? `${calendar ? 'source' : 'from'} ${actor}` : '',
     time ? `time ${time}` : '',
     body,
   ].filter(Boolean);
-  const summary = redactedPersonalOpsText(summaryParts.join('; ') || stringifyForPreview(item));
+  const summary = summaryParts.join('; ') || stringifyForPreview(item);
   return {
     id,
     kind: calendar ? 'calendar-event' : 'inbox-message',
-    label: previewHarnessText(redactedPersonalOpsText(label), includeParameters ? 160 : 96),
+    label: previewHarnessText(label, includeParameters ? 160 : 96),
     summary: previewHarnessText(summary, includeParameters ? 420 : 180),
     sourceRecordId: sourceRecord.id,
     sourceTool: sourceRecord.qualifiedName,
@@ -309,23 +286,25 @@ export function reviewCardFromObject(
   };
 }
 
-export function personalOpsReadReviewRecords(
+export async function personalOpsReadReviewRecords(
   lane: PersonalOpsLane,
   sourceRecord: PersonalOpsLiveRecord,
   result: unknown,
   includeParameters: boolean,
-): readonly Record<string, unknown>[] {
-  const items = candidateResultItems(result);
-  const objectCards = items
-    .map((item, index) => {
-      const object = recordObject(item);
-      if (!object) return null;
-      return reviewCardFromObject(lane, sourceRecord, object, index, includeParameters);
-    })
-    .filter((item): item is Record<string, unknown> => item !== null)
-    .slice(0, 8);
+  options: CatalogRankingOptions = {},
+): Promise<readonly Record<string, unknown>[]> {
+  const protectedResult = await protectPersonalOpsData(result, options);
+  const items = await candidateResultItems(protectedResult, options);
+  const objectCards: Record<string, unknown>[] = [];
+  for (const [index, item] of items.entries()) {
+    const object = recordObject(item);
+    if (!object) continue;
+    objectCards.push(await reviewCardFromObject(lane, sourceRecord, object, index, includeParameters, options));
+    if (objectCards.length === 8) break;
+  }
   if (objectCards.length > 0) return objectCards;
-  const preview = boundedPersonalOpsResult(result, includeParameters).preview;
+  const protectedText = stringifyForPreview(protectedResult);
+  const preview = protectedText.slice(0, includeParameters ? 6000 : 1600);
   return [{
     id: `${sourceRecord.id}:raw-preview`,
     kind: lane.id === 'calendar' ? 'calendar-read-preview' : 'inbox-read-preview',
@@ -338,11 +317,11 @@ export function personalOpsReadReviewRecords(
   }];
 }
 
-export function reviewRecordFieldValues(records: readonly Record<string, unknown>[], names: readonly string[], limit: number): readonly string[] {
+export async function reviewRecordFieldValues(records: readonly Record<string, unknown>[], names: readonly string[], limit: number, options: CatalogRankingOptions = {}): Promise<readonly string[]> {
   const values: string[] = [];
   const seen = new Set<string>();
   for (const record of records) {
-    const value = previewHarnessText(redactedPersonalOpsText(stringField(record, names)), 120);
+    const value = previewHarnessText(await redactedPersonalOpsText(await stringField(record, `review record field serving one of: ${names.join(', ')}`, options), options), 120);
     if (!value || seen.has(value.toLowerCase())) continue;
     seen.add(value.toLowerCase());
     values.push(value);
@@ -359,7 +338,23 @@ export async function savePersonalOpsReviewArtifact(options: {
   readonly reviewRecords: readonly Record<string, unknown>[];
   readonly output: Record<string, unknown>;
   readonly title?: string;
+  readonly invocationArgs: Record<string, unknown>;
+  readonly executionOptions?: Parameters<Tool['execute']>[1];
+  readonly sourceOwner?: CatalogRankingOptions['sourceOwner'];
+  readonly signal?: AbortSignal | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
 }): Promise<Record<string, unknown>> {
+  const assertOptions = captureCatalogMethods(options, ['context', 'lane', 'sourceRecord', 'inputFields', 'reviewRecords', 'output', 'title', 'invocationArgs', 'executionOptions', 'sourceOwner', 'signal', 'assertCurrent']);
+  const assertEffectCurrent = () => {
+    assertOptions();
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    if (!harnessCatalogInvocationAuthority(options.invocationArgs, options.executionOptions, 'write')) throw new ToolInputProjectionError('held');
+  };
+  assertEffectCurrent();
+  const source = () => captureCatalogData({ lane: options.lane, sourceRecord: options.sourceRecord, inputFields: options.inputFields, reviewRecords: options.reviewRecords, output: options.output, title: options.title });
+  const sourceJson = JSON.stringify(source());
+  const assertContext = captureCatalogMethods(options.context, ['platform']);
+  const assertPlatform = captureCatalogMethods(options.context.platform, ['artifactStore']);
   const store = options.context.platform.artifactStore;
   if (!store?.create) {
     return {
@@ -368,13 +363,36 @@ export async function savePersonalOpsReviewArtifact(options: {
       policy: 'Review-card persistence requires the Agent artifact store; raw connector output was not written.',
     };
   }
+  const assertStoreMethods = captureCatalogMethods(store, ['create']);
+  const prototype: object | null = Object.getPrototypeOf(store);
+  const ownPath = Object.getOwnPropertyDescriptor(store, 'storagePath');
+  const inheritedPath = prototype ? Object.getOwnPropertyDescriptor(prototype, 'storagePath') : undefined;
+  const assertPathDescriptor = () => {
+    const own = Object.getOwnPropertyDescriptor(store, 'storagePath');
+    const inherited = prototype ? Object.getOwnPropertyDescriptor(prototype, 'storagePath') : undefined;
+    if (Object.getPrototypeOf(store) !== prototype || own?.value !== ownPath?.value || own?.get !== ownPath?.get || own?.set !== ownPath?.set
+      || inherited?.value !== inheritedPath?.value || inherited?.get !== inheritedPath?.get || inherited?.set !== inheritedPath?.set) throw new ToolInputProjectionError('stale');
+  };
+  assertPathDescriptor();
+  const storagePath = store.storagePath;
+  if (typeof storagePath !== 'string' || lstatSync(storagePath).isSymbolicLink()) throw new ToolInputProjectionError('held');
+  const physicalRoot = captureAgentExportPath(storagePath, storagePath);
+  const assertWriteCurrent = () => {
+    assertEffectCurrent(); assertContext(); assertPlatform(); assertStoreMethods(); assertPathDescriptor();
+    physicalRoot.assertCurrent();
+    if (options.context.platform.artifactStore !== store || store.storagePath !== storagePath
+      || lstatSync(storagePath).isSymbolicLink()
+      || JSON.stringify(source()) !== sourceJson) throw new ToolInputProjectionError('stale');
+  };
+  assertWriteCurrent();
+  const reading: CatalogRankingOptions = { signal: options.signal, sourceOwner: options.sourceOwner, assertCurrent: assertWriteCurrent };
   const createdAt = new Date().toISOString();
-  const safeTitle = previewHarnessText(options.title || `${options.lane.label} review cards`, 96)
+  const safeTitle = previewHarnessText(await redactedPersonalOpsText(options.title || `${options.lane.label} review cards`, reading), 96)
     .replace(/[^a-zA-Z0-9._-]+/g, '-')
     .replace(/^-+|-+$/g, '') || 'personal-ops-review';
-  const reviewLabels = reviewRecordFieldValues(options.reviewRecords, ['label', 'subject', 'title', 'summary'], 5);
-  const reviewKinds = reviewRecordFieldValues(options.reviewRecords, ['kind'], 5);
-  const reviewRecordIds = reviewRecordFieldValues(options.reviewRecords, ['id'], 8);
+  const reviewLabels = await reviewRecordFieldValues(options.reviewRecords, ['label', 'subject', 'title', 'summary'], 5, reading);
+  const reviewKinds = await reviewRecordFieldValues(options.reviewRecords, ['kind'], 5, reading);
+  const reviewRecordIds = await reviewRecordFieldValues(options.reviewRecords, ['id'], 8, reading);
   const payload = {
     version: 1,
     createdAt,
@@ -391,28 +409,27 @@ export async function savePersonalOpsReviewArtifact(options: {
   // payment-card guard. Encode only the generated UUID, preserving its entropy;
   // user titles and existing filenames still face the unchanged source boundary.
   const nonce = randomUUID().replace(/-/g, '').replace(/[0-9a-f]/g, (digit) => String.fromCharCode(97 + parseInt(digit, 16)));
+  const protectedPayload = await redactStructuredDataAsync(payload, reading);
+  const protectedMetadata = await redactStructuredDataAsync({
+    purpose: 'personal-ops-review-cards', laneId: options.lane.id, sourceRecordId: options.sourceRecord.id,
+    sourceTool: options.sourceRecord.qualifiedName ?? '', reviewRecordCount: options.reviewRecords.length,
+    reviewLabels, reviewKinds, reviewRecordIds, fullRawConnectorOutputStored: false,
+  }, reading);
+  if (!protectedPayload || typeof protectedPayload !== 'object' || Array.isArray(protectedPayload)
+    || !protectedMetadata || typeof protectedMetadata !== 'object' || Array.isArray(protectedMetadata)) throw new ToolInputProjectionError('held');
+  const metadata: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(captureCatalogData(protectedMetadata))) metadata[key] = value;
+  assertWriteCurrent();
   const descriptor = await store.create({
     kind: 'data',
     mimeType: 'application/json',
     filename: `${safeTitle}-${nonce}.json`,
-    // Payload/card keys are fixed schema; connector keys are string elements in
-    // rawKeys/inputFieldKeys. Redact values before JSON escaping so quotes and
-    // backslashes remain data rather than becoming broken JSON delimiters.
-    text: `${JSON.stringify(payload, (_key, value: unknown) => typeof value === 'string' ? redactedPersonalOpsText(value) : value, 2)}\n`,
+    text: `${JSON.stringify(protectedPayload, null, 2)}\n`,
     acquisitionMode: 'inline-data',
     fetchMode: 'not-applicable',
-    metadata: {
-      purpose: 'personal-ops-review-cards',
-      laneId: options.lane.id,
-      sourceRecordId: options.sourceRecord.id,
-      sourceTool: options.sourceRecord.qualifiedName ?? '',
-      reviewRecordCount: options.reviewRecords.length,
-      reviewLabels,
-      reviewKinds,
-      reviewRecordIds,
-      fullRawConnectorOutputStored: false,
-    },
-  });
+    metadata,
+  }, { signal: options.signal, assertCurrent: assertWriteCurrent });
+  assertWriteCurrent();
   return {
     status: 'saved',
     artifactId: descriptor.id,
@@ -420,7 +437,7 @@ export async function savePersonalOpsReviewArtifact(options: {
     mimeType: descriptor.mimeType,
     sizeBytes: descriptor.sizeBytes,
     modelRoute: `agent_artifacts show artifactId:"${descriptor.id}"`,
-    policy: 'Artifact contains redacted review cards for later user review; provider mutations still require separate confirmation.',
+    policy: 'Artifact contains redacted review cards for later review; provider mutations require separate current recorded effect admission.',
   };
 }
 
@@ -639,7 +656,7 @@ export async function resolveRunRecord(
   const ranking = await rankHarnessCatalog(catalog, lookup, ({ lane, record }) => ({
     id: `${lane.id}:${record.id}`, description: liveRecordSearchText(record),
   }), 'agent.personal-ops.record', rankingOptions);
-  if (ranking.matches.length > 0 && !ranking.matches.some(({ judgment }) => judgment.reading.verdict === 'yes')) {
+  if (ranking.matches.length > 0 && !ranking.matches.some(({ judgment }) => judgment.reading.verdict === 'yes' && judgment.reading.outcome === 'act')) {
     return { status: 'deferred', reason: 'uncertain_record_reading', judgments: ranking.judgments };
   }
   const matches = ranking.matches.map(({ entry }) => entry);

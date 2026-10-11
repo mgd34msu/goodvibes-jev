@@ -1243,31 +1243,24 @@ of §11.2. So a bulk read sees the raw stored value, unset, and the profile
 value reaches only the consumer that asked for that one key. A listing may show
 *that* a key resolves from the profile; it does not show the value.
 
-It is a fallback rather than a set of call-site edits for a practical reason as
-well: the payments capability and `daemon.timezone` live on an unmerged branch
-(`wo/payments-spec`) that a live round owns. Editing that branch from here would
-collide with it. A declared fallback map keyed by config path wires those
-consumers the moment their keys exist, with no change to their code and no
-contention over their files.
+The payment and daemon settings exist in the current schema. A declared map
+connects those keys to the profile fields, and scalar reads use the profile only
+when their stored value is unset. A configured value still wins, including the
+default `payments.currency` value of `USD`.
 
-**"Inert until the key exists" is true of the `payments.*` rows and false of
-`daemon.timezone`, and the difference is worth stating precisely** because an
-earlier version of this section got it wrong. `ConfigManager.resolvePath()` walks
-only as far as the *parent* section and then reads the field off it. So
-`payments.currency` throws, there is no `payments` section on this branch, and
-the fallback catches that and stays dormant.
-
-But `daemon.timezone` resolves today: the `daemon` section exists for other
-reasons, the field is simply unset, and an unset field is exactly what the
-fallback is for. It is live now, not waiting on a merge. Both behaviours are
-correct and both are pinned by tests; it was the description that was wrong.
+Postal addresses use `ConfigManager.preparePostalAddress()` instead of a
+synchronous scalar fallback. It reads the configured address parts, prepares a
+verified profile address when parts are missing, and preserves each configured
+part. A synchronous request for a profile-backed postal part remains held.
+The prepared result also checks that the configuration and installed profile
+reader remain current before a consumer uses the address.
 
 | Consumer config key | Profile field | Status |
 |---|---|---|
-| `daemon.timezone` | `location.timezone` | **live now**, the `daemon` section exists, the field is unset |
-| `payments.billingAddress.*` | `commerce.billingAddress` (parsed to the 7 `PostalAddress` parts) | dormant, no `payments` section on this branch; activates on merge |
-| `payments.shippingAddress.*` | `commerce.shippingAddress` (as above) | as above |
-| `payments.currency` | `commerce.currency` | as above |
+| `daemon.timezone` | `location.timezone` | live; falls back when unset |
+| `payments.billingAddress.*` | `commerce.billingAddress` | live; missing parts require async verified preparation |
+| `payments.shippingAddress.*` | `commerce.shippingAddress` | live; missing parts require async verified preparation |
+| `payments.currency` | `commerce.currency` | live; stored currency wins, including the `USD` default |
 | `checkin.quietHours` | `contactMe.quietHours` | live now |
 | `checkin.deliveryChannel` | `contactMe.channel` | live now |
 

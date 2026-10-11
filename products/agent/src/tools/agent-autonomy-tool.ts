@@ -2,6 +2,8 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
 import { createAgentHarnessTool } from './agent-harness-tool.ts';
+import { captureModelReadingInput } from './agent-harness-model-reading-source.ts';
+import { createHarnessCatalogInputProjector, protectHarnessCatalogTool, forwardHarnessCatalogCall } from './agent-harness-catalog-ingress.ts';
 
 type AgentAutonomyAction = 'intake' | 'queue' | 'item' | 'status';
 
@@ -93,7 +95,7 @@ export function createAgentAutonomyTool(deps: AgentAutonomyToolDeps): Tool {
     toolRegistry: deps.toolRegistry,
   });
 
-  return {
+  const tool: Tool = {
     definition: {
       name: 'autonomy',
       description: 'Route ongoing work and inspect visible autonomy.',
@@ -118,17 +120,24 @@ export function createAgentAutonomyTool(deps: AgentAutonomyToolDeps): Tool {
       sideEffects: [],
       concurrency: 'parallel',
     },
-    execute: async (rawArgs: unknown) => {
-      const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentAutonomyToolArgs;
+    execute: async (rawArgs, options) => {
+      const args = captureModelReadingInput(rawArgs);
+      const forward = (translated: Record<string, unknown>) => forwardHarnessCatalogCall(harnessTool, rawArgs, translated, options);
       const action = readAction(args);
 
-      if (action === 'intake') return harnessTool.execute(intakeArgs(args));
-      if (action === 'queue' || action === 'status') return harnessTool.execute(queueArgs(args));
-      if (action === 'item') return harnessTool.execute(itemArgs(args));
+      if (action === 'intake') return forward(intakeArgs(args));
+      if (action === 'queue' || action === 'status') return forward(queueArgs(args));
+      if (action === 'item') return forward(itemArgs(args));
 
       return error('Unknown autonomy action. Use action:"intake" for ongoing work or action:"queue" for visible autonomous work.');
     },
   };
+  return protectHarnessCatalogTool(tool, deps.toolRegistry, isAutonomyCatalogCall, deps.commandContext);
+}
+
+function isAutonomyCatalogCall(input: Record<string, unknown>): boolean {
+  const args = captureModelReadingInput(input);
+  return Boolean(readString(args.query) || readString(args.target));
 }
 
 export function registerAgentAutonomyTool(
@@ -136,5 +145,5 @@ export function registerAgentAutonomyTool(
   commandRegistry: CommandRegistry,
   commandContext: CommandContext,
 ): void {
-  if (!registry.has('autonomy')) registry.register(createAgentAutonomyTool({ commandRegistry, commandContext, toolRegistry: registry }));
+  if (!registry.has('autonomy')) registry.register(createAgentAutonomyTool({ commandRegistry, commandContext, toolRegistry: registry }), { inputProjection: createHarnessCatalogInputProjector(registry, undefined, isAutonomyCatalogCall, commandContext) });
 }

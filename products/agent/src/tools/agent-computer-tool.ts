@@ -2,6 +2,8 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
 import { createAgentHarnessTool } from './agent-harness-tool.ts';
+import { captureModelReadingInput } from './agent-harness-model-reading-source.ts';
+import { createHarnessCatalogInputProjector, protectHarnessCatalogTool, forwardHarnessCatalogCall } from './agent-harness-catalog-ingress.ts';
 
 type AgentComputerAction =
   | 'status'
@@ -118,7 +120,7 @@ export function createAgentComputerTool(deps: AgentComputerToolDeps): Tool {
     toolRegistry: deps.toolRegistry,
   });
 
-  return {
+  const tool: Tool = {
     definition: {
       name: 'computer',
       description: 'Inspect/open browser, desktop, and computer-use routes.',
@@ -142,21 +144,27 @@ export function createAgentComputerTool(deps: AgentComputerToolDeps): Tool {
       sideEffects: ['state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: unknown) => {
-      const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentComputerToolArgs;
+    execute: async (rawArgs, options) => {
+      const args = captureModelReadingInput(rawArgs);
+      const forward = (translated: Record<string, unknown>) => forwardHarnessCatalogCall(harnessTool, rawArgs, translated, options);
       const action = readAction(args);
       if (!action) return error('Unknown computer action. Use action:"status" for browser/desktop control posture.');
 
-      if (action === 'status' || action === 'control') return harnessTool.execute(controlArgs(args));
-      if (action === 'plan') return harnessTool.execute(planArgs(args));
-      if (action === 'browser') return harnessTool.execute(browserArgs(args));
-      if (action === 'open_browser') return harnessTool.execute(openBrowserArgs(args));
-      if (action === 'setup') return harnessTool.execute(setupArgs(args));
-      if (action === 'mcp') return harnessTool.execute(mcpArgs(args));
+      if (action === 'status' || action === 'control') return forward(controlArgs(args));
+      if (action === 'plan') return forward(planArgs(args));
+      if (action === 'browser') return forward(browserArgs(args));
+      if (action === 'open_browser') return forward(openBrowserArgs(args));
+      if (action === 'setup') return forward(setupArgs(args));
+      if (action === 'mcp') return forward(mcpArgs(args));
 
       return error('Unknown computer action. Use action:"status" for browser/desktop control posture.');
     },
   };
+  return protectHarnessCatalogTool(tool, deps.toolRegistry, isComputerWorkflowQuery, deps.commandContext);
+}
+
+export function isComputerWorkflowQuery(input: Record<string, unknown>): boolean {
+  return readAction(captureModelReadingInput(input)) === 'plan';
 }
 
 export function registerAgentComputerTool(
@@ -164,5 +172,5 @@ export function registerAgentComputerTool(
   commandRegistry: CommandRegistry,
   commandContext: CommandContext,
 ): void {
-  if (!registry.has('computer')) registry.register(createAgentComputerTool({ commandRegistry, commandContext, toolRegistry: registry }));
+  if (!registry.has('computer')) registry.register(createAgentComputerTool({ commandRegistry, commandContext, toolRegistry: registry }), { inputProjection: createHarnessCatalogInputProjector(registry, undefined, isComputerWorkflowQuery, commandContext) });
 }

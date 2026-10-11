@@ -23,6 +23,8 @@ import type {
 
 const CLIENT_ID_STORAGE_KEY = 'goodvibes.webui.hosted.clientId';
 
+export const HOSTED_SESSION_UPDATE_WIRE_EVENT = 'hosted-session-update';
+
 /**
  * A stable per-browser-profile client id for sessions.hosted.attach/detach,
  * minted once, persisted, and distinct from the push device id (push-client.ts):

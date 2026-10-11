@@ -639,9 +639,9 @@ export const runtimeSecondaryConfigSettings: ConfigSettingDefinition[] = [
     type: 'boolean',
     default: false,
     description:
-      'When false (default), turn emitters emit a redacted prompt summary {length, sha256, first100chars} instead of raw prompt/response content. ' +
-      'Set to true ONLY for debugging in non-production environments, raw prompts may contain PII, secrets, or proprietary data. ' +
-      'When true at startup, a WARN log is emitted to make the configuration visible to ops.',
+      'Allow raw telemetry reads from this daemon while enabled. Default false rejects raw reads; safe views always redact content. ' +
+      'HTTP raw reads also require read:telemetry and an admin session or read:telemetry-sensitive scope. Active raw streams stop after this opt-in is revoked. ' +
+      'Raw prompts may contain private data. Enabling the setting at startup emits a WARN log.',
   },
   {
     key: 'telemetry.decisionOtlpEnabled',

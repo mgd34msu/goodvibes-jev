@@ -7,7 +7,8 @@
  * `security/content-taint.ts` answer them.
  *
  *   Layer 1, authority. A write is refused unless the surface carries command
- *     authority, i.e. unless it is `owner-direct`. `web-page`, `email`,
+ *     authority, i.e. unless it is `owner-direct` or has private recorded
+ *     autonomous delegation from the active runtime. `web-page`, `email`,
  *     `channel-message` and `document` are refused by construction.
  *
  *   Layer 2, derivation. Layer 1 trusts the caller's claim about its own
@@ -43,15 +44,16 @@ import {
   type UntrustedContentLedger,
 } from '../security/untrusted-content.js';
 import { canonicalProfileSection, profileFieldById } from './fields.js';
+import { readProfileDelegation, type ProfileMutationOptions } from './delegation.js';
 
 export interface ProfileWriteAttempt {
   /** The surface claiming to make this write. */
-  readonly authority: AuthoritySurface;
+  readonly authority: AuthoritySurface | 'autonomous';
   /** The mechanical field, or `null`/omitted for a prose bullet. */
   readonly fieldId?: string | null | undefined;
   /** The text about to land in the file. */
   readonly value: string;
-  /** The owner's verbatim words. Empty is refused by layer 3. */
+  /** The owner's verbatim words; autonomous delegation carries no human quote. */
   readonly said: string;
   /**
    * The section heading a prose bullet will land under, when there is one.
@@ -96,7 +98,7 @@ function describeRemovalTarget(fieldId: string | null | undefined): string {
 }
 
 /** No-authority refusal wording, shared by both gates so they read alike. */
-function noAuthority(action: string, authority: AuthoritySurface, verb: string): string {
+function noAuthority(action: string, authority: AuthoritySurface | 'autonomous', verb: string): string {
   return (
     `Refused ${action}: content from ${authority} carries no command authority, so it cannot ${verb} `
     + 'facts about you. Only you, speaking directly to the runtime, can.'
@@ -121,6 +123,7 @@ async function findProfileTaint(
   said: string,
   section: string | undefined,
   ledger: UntrustedContentLedger,
+  autonomousSource?: string,
 ): Promise<readonly TaintFinding[]> {
   // Pass 1, the derivation reading, over a window one turn boundary wide.
   //
@@ -139,7 +142,8 @@ async function findProfileTaint(
   const recent = ledger.taintSourcesSinceLastTurnBoundary();
   if (recent.length > 0) {
     const derived = await findContentTaint(
-      section === undefined ? { value, said } : { value, said, section },
+      { value, said, ...(section === undefined ? {} : { section }),
+        ...(autonomousSource === undefined ? {} : { autonomousSource }) },
       recent,
       {},
     );
@@ -178,9 +182,12 @@ async function findProfileTaint(
  * `web-page` claim never reaches the taint check, and a write with no quote is
  * refused whether or not anything untrusted was read.
  */
-export async function evaluateProfileWrite(input: ProfileWriteAttempt): Promise<ProfileWriteDecision> {
+export async function evaluateProfileWrite(input: ProfileWriteAttempt, options: ProfileMutationOptions = {}): Promise<ProfileWriteDecision> {
+  const delegated = input.authority === 'autonomous' ? readProfileDelegation(options.delegation) : undefined;
+  const current = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); delegated?.assertCurrent(); };
+  current();
   // Layer 1, authority.
-  if (!surfaceHasCommandAuthority(input.authority)) {
+  if (input.authority === 'autonomous' ? !delegated : !surfaceHasCommandAuthority(input.authority)) {
     return refuse(
       `${noAuthority(describeTarget(input.fieldId), input.authority, 'record')} `
       + 'Tell the runtime yourself and it will record it.',
@@ -189,13 +196,15 @@ export async function evaluateProfileWrite(input: ProfileWriteAttempt): Promise<
 
   // Layer 2, derivation, which does not take the caller's word for layer 1.
   const ledger = input.ledger ?? getProcessUntrustedContentLedger();
-  const taint = await findProfileTaint(input.value, input.said, input.section, ledger);
+  const taint = await findProfileTaint(input.value, input.said, input.section, ledger,
+    delegated && JSON.stringify({ goal: delegated.goal, criteria: delegated.criteria }));
+  current();
   if (taint.length > 0) {
     return refuse(describeContentTaint(describeTarget(input.fieldId), taint), taint);
   }
 
   // Layer 3, a verbatim quote must exist.
-  if (input.said.trim().length === 0) {
+  if (!delegated && input.said.trim().length === 0) {
     return refuse(
       `Refused ${describeTarget(input.fieldId)}: a recorded fact must carry the words you said that `
       + 'produced it, so you can see later where it came from. There are none here.',
@@ -206,7 +215,7 @@ export async function evaluateProfileWrite(input: ProfileWriteAttempt): Promise<
 }
 
 export interface ProfileRemovalAttempt {
-  readonly authority: AuthoritySurface;
+  readonly authority: AuthoritySurface | 'autonomous';
   /** The mechanical field, or `null`/omitted for a prose bullet. */
   readonly fieldId?: string | null | undefined;
 }
@@ -226,8 +235,10 @@ export interface ProfileRemovalAttempt {
  * to invent a quote to satisfy a check. Authority is the right question and the
  * only honest one: only the owner speaking directly can remove a fact.
  */
-export function evaluateProfileRemoval(input: ProfileRemovalAttempt): ProfileWriteDecision {
-  if (!surfaceHasCommandAuthority(input.authority)) {
+export function evaluateProfileRemoval(input: ProfileRemovalAttempt, options: ProfileMutationOptions = {}): ProfileWriteDecision {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const delegated = input.authority === 'autonomous' ? readProfileDelegation(options.delegation) : undefined;
+  if (input.authority === 'autonomous' ? !delegated : !surfaceHasCommandAuthority(input.authority)) {
     return refuse(
       noAuthority(`forgetting ${describeRemovalTarget(input.fieldId)}`, input.authority, 'remove'),
     );

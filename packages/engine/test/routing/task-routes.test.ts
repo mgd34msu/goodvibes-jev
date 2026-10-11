@@ -5,17 +5,21 @@ import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/en
 import { ToolRegistry } from '../../sdk/src/platform/tools/registry.js';
 import {
   channelTargetNamedIds,
-  createTaskRouteTool,
+  createTaskRouteTool as engineCreateTaskRouteTool,
   modelProviderNamedIds,
   normalizeRouteAction,
-  planTaskRoute,
-  registerTaskRouteTool,
+  planTaskRoute as enginePlanTaskRoute,
+  registerTaskRouteTool as engineRegisterTaskRouteTool,
   TASK_ROUTES,
   taskRouteRegistry,
   type ReadyPlan,
   type TaskRouteCandidate,
   type TaskRouteDeps,
+  type TaskRouteArgs,
+  type TaskRouteReadOptions,
 } from '../../sdk/src/platform/routing/task-routes/index.js';
+
+import { taskRouteSourceFixture } from '../_helpers/task-route-source.js';
 
 /**
  * What the scripted port answers. `pick` is the route selection's choice
@@ -63,12 +67,20 @@ function scriptedPort(script: Script) {
   });
 }
 
+let source: ReturnType<typeof taskRouteSourceFixture>;
+function planTaskRoute(args: TaskRouteArgs, deps: TaskRouteDeps = {}, options: TaskRouteReadOptions = {}) {
+  return enginePlanTaskRoute(args, deps, { sourceOwner: source.owner, ...options });
+}
+function createTaskRouteTool(deps: TaskRouteDeps = {}) { return engineCreateTaskRouteTool(deps, { sourceOwner: source.owner }); }
+function registerTaskRouteTool(registry: ToolRegistry, deps: TaskRouteDeps = {}) { return engineRegisterTaskRouteTool(registry, deps, { sourceOwner: source.owner }); }
 let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => {
   previous = installJudgmentPort(undefined);
+  source = taskRouteSourceFixture();
 });
-afterEach(() => {
+afterEach(async () => {
   installJudgmentPort(previous);
+  await source.close();
 });
 
 /** Listings shaped as the live sources produce them (a provider registry, the channel adapters, a product's memory providers). */
@@ -129,6 +141,7 @@ describe('judgment port', () => {
 
   test('the registry holds every task route decision', () => {
     expect(taskRouteRegistry.list().map((decision) => decision.name)).toEqual([
+      'routing.autonomy-intake',
       'routing.task-route.named-id',
       'routing.task-route.pick',
       'routing.task-route.slots',
@@ -138,7 +151,7 @@ describe('judgment port', () => {
 
 describe('missing request', () => {
   test('returns the usage, examples and policy without asking anything', async () => {
-    const result = await planTaskRoute({ query: '   ' });
+    const result = await enginePlanTaskRoute({ query: '   ' });
     expect(result).toEqual({
       status: 'missing_request',
       usage: 'Use route action:"plan" query:"<user task>" to get the preferred GoodVibes Agent route, alternatives, missing fields, and confirmation boundary.',

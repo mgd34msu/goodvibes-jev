@@ -7,8 +7,7 @@ import type {
 } from './provider-registry.js';
 import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
 import { logger } from '../utils/logger.js';
-import { summarizeError } from '../utils/error-display.js';
-import { sleep } from '../utils/concurrency.js';
+import { assertDeliveryCurrent, type DeliveryLifetime } from '../utils/delivery-lifetime.js';
 import { isRecord } from '../utils/record-coerce.js';
 
 function readFirstEnv(envVars: readonly string[]): string | null {
@@ -146,22 +145,53 @@ function resolveReferenceUrl(request: MediaGenerationRequest): string | undefine
   return artifact ? toDataUrl(artifact) : undefined;
 }
 
-async function fetchJson(url: string, init: RequestInit, timeoutMs = 120_000): Promise<unknown> {
-  const response = await instrumentedFetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`Request failed (${response.status}) ${url}: ${text || response.statusText}`);
-  }
-  return response.json();
+async function fetchJson(url: string, init: RequestInit, timeoutMs = 120_000, lifetime: DeliveryLifetime = {}): Promise<unknown> {
+  const response = await fetchResponse(url, init, timeoutMs, lifetime);
+  const result: unknown = await response.json();
+  assertDeliveryCurrent(lifetime);
+  return result;
 }
 
-async function fetchResponse(url: string, init: RequestInit, timeoutMs = 120_000): Promise<Response> {
-  const response = await instrumentedFetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+async function fetchResponse(url: string, init: RequestInit, timeoutMs = 120_000, lifetime: DeliveryLifetime = {}): Promise<Response> {
+  assertDeliveryCurrent(lifetime);
+  const deadline = AbortSignal.timeout(timeoutMs);
+  const signal = lifetime.signal ? AbortSignal.any([deadline, lifetime.signal]) : deadline;
+  const response = await instrumentedFetch(url, { ...init, signal });
+  assertDeliveryCurrent(lifetime);
   if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`Request failed (${response.status}) ${url}: ${text || response.statusText}`);
+    try { await response.body?.cancel(); } catch { /* Preserve the structural status. */ }
+    assertDeliveryCurrent(lifetime);
+    throw new Error(`Media provider request failed (${response.status}).`);
   }
   return response;
+}
+
+/** Keep waits cancellable and fence the original credential aliases at each request. */
+function generationTransport(lifetime: DeliveryLifetime, environmentKeys: readonly string[]) {
+  const environment = environmentKeys.map(key => process.env[key]);
+  const signal = lifetime.signal, current = lifetime.assertCurrent;
+  const assertCurrent = () => {
+    if (lifetime.signal !== signal || lifetime.assertCurrent !== current
+      || environmentKeys.some((key, index) => process.env[key] !== environment[index])) throw new Error('Media generation owner changed.');
+    assertDeliveryCurrent(lifetime);
+  };
+  const owned = { signal, assertCurrent };
+  assertCurrent();
+  return {
+    fetchJson: (url: string, init: RequestInit, timeoutMs?: number) => fetchJson(url, init, timeoutMs, owned),
+    inferVideoArtifact: (providerId: string, url: string) => maybeInlineArtifact(providerId, url, 'video/mp4', 'video.mp4', 1_500_000, owned),
+    inferImageArtifact: (providerId: string, url: string) => maybeInlineArtifact(providerId, url, 'image/png', 'image.png', 5_000_000, owned),
+    async sleep(delayMs: number) {
+      assertCurrent();
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => { clearTimeout(timer); reject(signal?.reason ?? new DOMException('Media generation cancelled.', 'AbortError')); };
+        const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, delayMs);
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) abort();
+      });
+      assertCurrent();
+    },
+  };
 }
 
 function buildArtifactFromRemote(
@@ -199,13 +229,18 @@ async function maybeInlineArtifact(
   fallbackMimeType: string,
   filename?: string,
   maxInlineBytes = 5_000_000,
+  lifetime: DeliveryLifetime = {},
 ): Promise<MediaArtifact> {
   let head: Response | null = null;
   let headError: string | undefined;
   try {
-    head = await instrumentedFetch(url, { method: 'HEAD', signal: AbortSignal.timeout(20_000) });
-  } catch (error) {
-    headError = summarizeError(error);
+    assertDeliveryCurrent(lifetime);
+    const deadline = AbortSignal.timeout(20_000);
+    head = await instrumentedFetch(url, { method: 'HEAD', signal: lifetime.signal ? AbortSignal.any([deadline, lifetime.signal]) : deadline });
+    assertDeliveryCurrent(lifetime);
+  } catch {
+    assertDeliveryCurrent(lifetime);
+    headError = 'Media artifact HEAD probe failed.';
     logger.warn('Media artifact HEAD probe failed; recovering with GET', {
       url,
       providerId,
@@ -226,8 +261,10 @@ async function maybeInlineArtifact(
   if (Number.isFinite(contentLength) && contentLength > maxInlineBytes) {
     return buildArtifactFromRemote(providerId, url, contentType, filename, retrieval);
   }
-  const response = await fetchResponse(url, { method: 'GET' }, 120_000);
+  assertDeliveryCurrent(lifetime);
+  const response = await fetchResponse(url, { method: 'GET' }, 120_000, lifetime);
   const buffer = Buffer.from(await response.arrayBuffer());
+  assertDeliveryCurrent(lifetime);
   const mimeType = response.headers.get('content-type')?.trim() || contentType;
   if (buffer.length > maxInlineBytes) {
     return buildArtifactFromRemote(providerId, url, mimeType, filename, {
@@ -250,14 +287,6 @@ async function maybeInlineArtifact(
   };
 }
 
-function inferVideoArtifact(providerId: string, url: string): Promise<MediaArtifact> {
-  return maybeInlineArtifact(providerId, url, 'video/mp4', 'video.mp4', 1_500_000);
-}
-
-function inferImageArtifact(providerId: string, url: string): Promise<MediaArtifact> {
-  return maybeInlineArtifact(providerId, url, 'image/png', 'image.png', 5_000_000);
-}
-
 function createByteplusProvider(): MediaProvider {
   const envVars = ['BYTEPLUS_API_KEY'] as const;
   const defaultModel = 'seedance-1-0-lite-t2v-250428';
@@ -272,7 +301,8 @@ function createByteplusProvider(): MediaProvider {
         ? 'BytePlus video generation key available.'
         : 'Set BYTEPLUS_API_KEY to enable BytePlus video generation.');
     },
-    async generate(request: MediaGenerationRequest): Promise<MediaGenerationResult> {
+    async generate(request: MediaGenerationRequest, lifetime: DeliveryLifetime = {}): Promise<MediaGenerationResult> {
+      const { fetchJson, inferVideoArtifact, sleep } = generationTransport(lifetime, [...envVars, 'COMFY_BASE_URL']);
       const apiKey = readFirstEnv(envVars);
       if (!apiKey) throw new Error('BytePlus API key missing');
       const options = asRecord(request.options) ?? {};
@@ -352,7 +382,8 @@ function createRunwayProvider(): MediaProvider {
         ? 'Runway API key available.'
         : 'Set RUNWAYML_API_SECRET or RUNWAY_API_KEY to enable Runway generation.');
     },
-    async generate(request: MediaGenerationRequest): Promise<MediaGenerationResult> {
+    async generate(request: MediaGenerationRequest, lifetime: DeliveryLifetime = {}): Promise<MediaGenerationResult> {
+      const { fetchJson, inferVideoArtifact, sleep } = generationTransport(lifetime, [...envVars, 'COMFY_BASE_URL']);
       const apiKey = readFirstEnv(envVars);
       if (!apiKey) throw new Error('Runway API key missing');
       const options = asRecord(request.options) ?? {};
@@ -429,7 +460,8 @@ function createAlibabaProvider(): MediaProvider {
         ? 'Alibaba video generation key available.'
         : 'Set MODELSTUDIO_API_KEY, DASHSCOPE_API_KEY, or QWEN_API_KEY to enable Alibaba generation.');
     },
-    async generate(request: MediaGenerationRequest): Promise<MediaGenerationResult> {
+    async generate(request: MediaGenerationRequest, lifetime: DeliveryLifetime = {}): Promise<MediaGenerationResult> {
+      const { fetchJson, inferVideoArtifact, sleep } = generationTransport(lifetime, [...envVars, 'COMFY_BASE_URL']);
       const apiKey = readFirstEnv(envVars);
       if (!apiKey) throw new Error('Alibaba API key missing');
       const options = asRecord(request.options) ?? {};
@@ -508,7 +540,8 @@ function createFalProvider(): MediaProvider {
         ? 'fal API key available.'
         : 'Set FAL_KEY or FAL_API_KEY to enable fal generation.');
     },
-    async generate(request: MediaGenerationRequest): Promise<MediaGenerationResult> {
+    async generate(request: MediaGenerationRequest, lifetime: DeliveryLifetime = {}): Promise<MediaGenerationResult> {
+      const { fetchJson, inferVideoArtifact, inferImageArtifact, sleep } = generationTransport(lifetime, [...envVars, 'COMFY_BASE_URL']);
       const apiKey = readFirstEnv(envVars);
       if (!apiKey) throw new Error('fal API key missing');
       const options = asRecord(request.options) ?? {};
@@ -585,7 +618,8 @@ function createComfyProvider(): MediaProvider {
         'Comfy expects COMFY_BASE_URL plus options.workflow or options.workflowPath; COMFY_API_KEY is optional for cloud deployments.',
       );
     },
-    async generate(request: MediaGenerationRequest): Promise<MediaGenerationResult> {
+    async generate(request: MediaGenerationRequest, lifetime: DeliveryLifetime = {}): Promise<MediaGenerationResult> {
+      const { fetchJson, inferVideoArtifact, inferImageArtifact, sleep } = generationTransport(lifetime, [...envVars, 'COMFY_BASE_URL']);
       const options = asRecord(request.options) ?? {};
       const baseUrl = trimString(options['baseUrl']) ?? trimString(process.env['COMFY_BASE_URL']) ?? 'http://127.0.0.1:8188';
       const apiKey = readFirstEnv(envVars);

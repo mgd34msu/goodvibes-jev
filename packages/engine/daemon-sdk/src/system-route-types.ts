@@ -239,6 +239,7 @@ export interface CredentialStatusProviderLike {
 export interface DaemonSystemRouteContext {
   /** Optional adopted lane; absent hosts fail closed without changing legacy writes. */
   readonly settingsPrecondition?: import('./settings-precondition.js').SettingsPreconditionHandler | undefined;
+  readonly settingsImportPrecondition?: import('./settings-import-precondition.js').SettingsImportPreconditionHandler | undefined;
   readonly approvalBroker: ApprovalBrokerLike;
   readonly configManager: ConfigManagerLike;
   /**

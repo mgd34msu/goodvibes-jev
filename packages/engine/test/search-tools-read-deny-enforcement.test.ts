@@ -20,7 +20,9 @@
  *      symbols are withheld and the line is flagged.
  *   5. The exec guard's catastrophic reading is independent of read access.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -108,6 +110,15 @@ async function runFind(tool: ReturnType<typeof createFindTool>, query: Record<st
 }
 
 describe('find content mode (grep): restricted file content is excluded', () => {
+  let previous: ReturnType<typeof installJudgmentPort>;
+  beforeEach(() => {
+    previous = installJudgmentPort(fakePort((name) => {
+      if (name !== 'backtracking') throw new Error(`Unexpected content-search reading: ${name}`);
+      return noulAnswer(0.001);
+    }).port);
+  });
+  afterEach(() => { installJudgmentPort(previous); });
+
   test('a restricted file contributes no match text and the withheld count is surfaced', async () => {
     const tool = createFindTool(work, null, undefined, restrictSecret);
     const result = await runFind(tool, { mode: 'content', pattern: 'SECRETMARK', path: '.' });

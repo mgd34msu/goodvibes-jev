@@ -1,4 +1,7 @@
+import { HttpStatusError } from '@goodvibes-jev/engine/errors';
 import { createBrowserAgentSdk, type BrowserAgentSdk } from '@goodvibes-jev/engine/sdk/browser/agent';
+import { captureStrictJudgmentJson } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { isDeepStrictEqual } from 'node:util';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { VERSION } from '../version.ts';
 import { normalizeAgentKnowledgeScopeAliases } from '../agent/knowledge-scope-alias.ts';
@@ -66,47 +69,109 @@ export function resolveConnectedHostConnection(runtime: AgentKnowledgeConnection
   return { baseUrl, token: token.token, tokenPath: token.path };
 }
 
-export async function fetchConnectedHostStatus(connection: AgentKnowledgeConnection): Promise<{ readonly ok: boolean; readonly status: number; readonly body: unknown }> {
-  try {
-    const response = await fetch(`${connection.baseUrl}/status`, {
-      headers: connection.token ? { authorization: `Bearer ${connection.token}` } : undefined,
-    });
-    const text = await response.text();
-    let body: unknown = text;
-    try {
-      body = JSON.parse(text) as unknown;
-    } catch {
-      body = text;
+// Only this transport records HTTP status; arbitrary error prose is not protocol evidence.
+const knowledgeHttpStatuses = new WeakMap<Error, { readonly status: number; readonly assertCurrent?: () => void }>();
+const knowledgeTransportFailures = new WeakMap<Error, () => void>();
+function knowledgeHttpError(response: Response, assertCurrent?: () => void): Error {
+  const error = new Error(`Agent Knowledge HTTP request failed (${response.status}).`);
+  knowledgeHttpStatuses.set(error, { status: response.status, assertCurrent });
+  return error;
+}
+
+/** Additive request restrictions; these callbacks never grant tool admission. */
+export interface AgentKnowledgeRequestOptions {
+  readonly signal?: AbortSignal;
+  readonly assertCurrent?: () => void;
+}
+
+function retainKnowledgeRequest(connection: AgentKnowledgeConnection, options: AgentKnowledgeRequestOptions = {}) {
+  const fetchDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'fetch');
+  if (!fetchDescriptor || !('value' in fetchDescriptor) || typeof fetchDescriptor.value !== 'function') throw new Error('Agent Knowledge transport held.');
+  const transport: typeof fetch = fetchDescriptor.value;
+  const fields = ['baseUrl', 'token', 'tokenPath'];
+  const connectionDescriptors = fields.map(key => Object.getOwnPropertyDescriptor(connection, key));
+  const optionFields = ['signal', 'assertCurrent'];
+  const optionDescriptors = optionFields.map(key => ({ key, descriptor: Object.getOwnPropertyDescriptor(options, key) }));
+  if (connectionDescriptors.some(value => !value || !('value' in value))
+    || optionDescriptors.some(({ key, descriptor }) => descriptor ? !('value' in descriptor) : Reflect.has(options, key))) throw new Error('Agent Knowledge request held.');
+  const { baseUrl, token } = connection;
+  const { signal, assertCurrent } = options;
+  const check = () => {
+    signal?.throwIfAborted();
+    if (!isDeepStrictEqual(Object.getOwnPropertyDescriptor(globalThis, 'fetch'), fetchDescriptor)) throw new Error('Agent Knowledge transport changed.');
+    for (const [index, key] of fields.entries()) {
+      if (!isDeepStrictEqual(Object.getOwnPropertyDescriptor(connection, key), connectionDescriptors[index])) {
+        throw new Error('Agent Knowledge connection changed.');
+      }
     }
+    for (const { key, descriptor } of optionDescriptors) {
+      if (!isDeepStrictEqual(Object.getOwnPropertyDescriptor(options, key), descriptor)) {
+        throw new Error('Agent Knowledge request restrictions changed.');
+      }
+    }
+  };
+  return { baseUrl, token, signal, fetch: transport, assertCurrent() { check(); assertCurrent?.(); check(); } };
+}
+
+export async function fetchConnectedHostStatus(connection: AgentKnowledgeConnection,
+  options: AgentKnowledgeRequestOptions = {}): Promise<{ readonly ok: boolean; readonly status: number; readonly body: unknown }> {
+  const request = retainKnowledgeRequest(connection, options);
+  request.assertCurrent();
+  try {
+    const response = await request.fetch(`${request.baseUrl}/status`, {
+      signal: request.signal,
+      headers: request.token ? { authorization: `Bearer ${request.token}` } : undefined,
+    });
+    request.assertCurrent();
+    const text = await response.text();
+    request.assertCurrent();
+    let body: unknown = text;
+    try { body = JSON.parse(text); } catch { body = text; }
+    request.assertCurrent();
     return { ok: response.ok, status: response.status, body };
   } catch (error) {
+    request.assertCurrent();
     return { ok: false, status: 0, body: summarizeError(error) };
   }
 }
 
-export async function classifyKnowledgeError(error: unknown, connection: AgentKnowledgeConnection, route: string): Promise<AgentKnowledgeFailure> {
+export async function classifyKnowledgeError(error: unknown, connection: AgentKnowledgeConnection, route: string,
+  options: AgentKnowledgeRequestOptions = {}): Promise<AgentKnowledgeFailure> {
+  const request = retainKnowledgeRequest(connection, options);
+  request.assertCurrent();
   const message = summarizeError(error);
-  const lower = message.toLowerCase();
-  if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('auth')) {
-    return { ok: false, kind: 'auth_required', error: message, baseUrl: connection.baseUrl, route };
+  request.assertCurrent();
+  const receipt = error instanceof Error ? knowledgeHttpStatuses.get(error) : undefined;
+  receipt?.assertCurrent?.();
+  if (error instanceof Error) knowledgeTransportFailures.get(error)?.();
+  request.assertCurrent();
+  // The canonical SDK transport constructs this exact native error class from its HTTP response.
+  const native = error instanceof Error && Object.getPrototypeOf(error) === HttpStatusError.prototype ? error : undefined;
+  const nativeStatus = native && Object.getOwnPropertyDescriptor(native, 'status');
+  const status = receipt?.status ?? (nativeStatus && 'value' in nativeStatus
+    && typeof nativeStatus.value === 'number' && Number.isInteger(nativeStatus.value) ? nativeStatus.value : undefined);
+  if (status === 401 || status === 403) {
+    return { ok: false, kind: 'auth_required', error: message, baseUrl: request.baseUrl, route };
   }
-  if (lower.includes('404') || lower.includes('not found')) {
-    const connectedHost = await fetchConnectedHostStatus(connection);
+  if (status === 404) {
+    const connectedHost = await fetchConnectedHostStatus(connection, options);
+    request.assertCurrent();
     if (connectedHost.ok) {
-      return {
-        ok: false,
-        kind: 'connected_host_incompatible',
-        error: `Connected GoodVibes host compatibility does not satisfy Agent Knowledge requirements; Agent Knowledge route is unavailable.`,
-        baseUrl: connection.baseUrl,
-        route,
-      };
+      return { ok: false, kind: 'connected_host_incompatible',
+        error: 'Connected GoodVibes host compatibility does not satisfy Agent Knowledge requirements; Agent Knowledge route is unavailable.',
+        baseUrl: request.baseUrl, route };
     }
-    return { ok: false, kind: 'connected_host_route_unavailable', error: message, baseUrl: connection.baseUrl, route };
+    return { ok: false, kind: 'connected_host_route_unavailable', error: message, baseUrl: request.baseUrl, route };
   }
-  if (lower.includes('fetch') || lower.includes('connect') || lower.includes('econnrefused')) {
-    return { ok: false, kind: 'connected_host_unavailable', error: message, baseUrl: connection.baseUrl, route };
+  const nativeCategory = native && Object.getOwnPropertyDescriptor(native, 'category');
+  const nativeSource = native && Object.getOwnPropertyDescriptor(native, 'source');
+  const nativeNetwork = nativeStatus && 'value' in nativeStatus && nativeStatus.value === undefined
+    && nativeCategory && 'value' in nativeCategory && nativeCategory.value === 'network'
+    && nativeSource && 'value' in nativeSource && nativeSource.value === 'transport';
+  if ((error instanceof Error && knowledgeTransportFailures.has(error)) || nativeNetwork) {
+    return { ok: false, kind: 'connected_host_unavailable', error: message, baseUrl: request.baseUrl, route };
   }
-  return { ok: false, kind: 'connected_host_error', error: message, baseUrl: connection.baseUrl, route };
+  return { ok: false, kind: 'connected_host_error', error: message, baseUrl: request.baseUrl, route };
 }
 
 export function normalizeAgentKnowledgeData<TData>(data: TData): TData {
@@ -216,29 +281,48 @@ export async function postAgentKnowledgeJson<TData>(
   connection: AgentKnowledgeConnection,
   route: string,
   body: JsonRecord,
+  options: AgentKnowledgeRequestOptions = {},
 ): Promise<TData> {
-  const response = await fetch(`${connection.baseUrl}${route}`, {
+  const request = retainKnowledgeRequest(connection, options);
+  request.assertCurrent();
+  const original = captureStrictJudgmentJson(body);
+  const assertCurrent = () => {
+    request.assertCurrent();
+    if (!isDeepStrictEqual(captureStrictJudgmentJson(body), original)) throw new Error('Agent Knowledge input changed.');
+    request.assertCurrent();
+  };
+  const encoded = JSON.stringify(original);
+  assertCurrent();
+  let response: Response;
+  try { response = await request.fetch(`${request.baseUrl}${route}`, {
     method: 'POST',
-    headers: {
-      authorization: `Bearer ${connection.token ?? ''}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
+    signal: request.signal,
+    headers: { authorization: `Bearer ${request.token ?? ''}`, 'content-type': 'application/json' },
+    body: encoded,
+  }); } catch (error) {
+    assertCurrent();
+    if (error instanceof Error) knowledgeTransportFailures.set(error, assertCurrent);
+    throw error;
+  }
+  assertCurrent();
+  let text: string;
+  try { text = await response.text(); }
+  catch (error) {
+    assertCurrent();
+    if (error instanceof Error) knowledgeTransportFailures.set(error, assertCurrent);
+    throw error;
+  }
+  assertCurrent();
   let parsed: unknown = text;
   if (text.trim()) {
-    try {
-      parsed = JSON.parse(text) as unknown;
-    } catch {
-      parsed = text;
-    }
+    try { parsed = JSON.parse(text); } catch { parsed = text; }
   }
   if (!response.ok) {
-    const detail = isRecord(parsed) && typeof parsed.error === 'string' ? parsed.error : text;
-    throw new Error(`HTTP ${response.status} ${response.statusText}${detail ? `: ${detail}` : ''}`);
+    throw knowledgeHttpError(response, assertCurrent);
   }
-  return normalizeAgentKnowledgeData(parsed as TData);
+  const data = normalizeAgentKnowledgeData(parsed as TData);
+  assertCurrent();
+  return data;
 }
 
 function queryRoute(route: string, query: JsonRecord): string {
@@ -279,8 +363,7 @@ export async function getAgentKnowledgeJson<TData>(
     }
   }
   if (!response.ok) {
-    const detail = isRecord(parsed) && typeof parsed.error === 'string' ? parsed.error : text;
-    throw new Error(`HTTP ${response.status} ${response.statusText}${detail ? `: ${detail}` : ''}`);
+    throw knowledgeHttpError(response);
   }
   return normalizeAgentKnowledgeData(parsed as TData);
 }

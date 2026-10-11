@@ -9,6 +9,8 @@ export type { PostalKind, PostalParts, PostalReadOptions, PreparedPostalAddress 
  */
 
 export { ConfigManager } from './manager.js';
+export { captureJudgmentFallbackSettings, validJudgmentFallbackSettings } from './judgment-fallback-settings.js';
+export type { JudgmentFallbackSettings } from './schema-types-judgment.js';
 export type { PreparedConfigMutation, PreparedConfigMutationTransition, PreparedConfigMutationRequest,
   PreparedConfigMutationFacts, PreparedConfigMutationDestination, PreparedConfigMutationTransitionFacts,
   PreparedConfigMutationReceipt } from './prepared-mutation.js';
@@ -345,6 +347,11 @@ export {
   isSecretReferenceValue,
   SECRET_BEARING_CONFIG_PATHS,
 } from './secret-bearing-config-keys.js';
+export {
+  STRUCTURED_CREDENTIAL_CONFIG_DECLARATIONS,
+  isStructuredCredentialReferenceConfigKey,
+  captureStructuredCredentialReferenceConfigValue,
+} from './structured-credential-config.js';
 export { configKeyDescription, readCredentialKey } from './credential-key-reading.js';
 export {
   describePlaintextSweep,
@@ -373,6 +380,10 @@ export {
   secretWriteScopeWasOverridden,
 } from './secrets.js';
 export type {
+  PreparedSecretImport,
+  PreparedSecretImportTransition,
+  PreparedSecretImportFacts,
+  SecretImportEntry,
   PreparedScopedSecretDeletion,
   PreparedScopedSecretDeletionFacts,
   LegacyStoreIdentity,
@@ -393,12 +404,18 @@ export { ServiceRegistry } from './service-registry.js';
 export type * from './service-registry.js';
 export { SubscriptionManager, sharedSubscriptionsPath } from './subscriptions.js';
 export type {
+  PreparedSubscriptionImport,
+  PreparedSubscriptionImportTransition,
+  PreparedSubscriptionImportFacts,
+  SubscriptionImportEntry,
   OAuthProviderConfig,
   PendingSubscriptionLogin,
   ProviderSubscription,
   SubscriptionManagerOptions,
   SubscriptionShellPaths,
 } from './subscriptions.js';
+export { observeImportFile, assertImportFileCurrent } from './prepared-import.js';
+export type { ImportFileObservation, PreparedImportTransitionFacts } from './prepared-import.js';
 export * from './subscription-auth.js';
 export * from './subscription-providers.js';
 export { resolveToolLLM, ToolLLM, ToolLLMUnavailableError } from './tool-llm.js';
@@ -444,3 +461,7 @@ export type { AtRestCipher, DaemonCredentialStore } from './daemon-credential-st
 export { captureRemoteSettingsPrecondition, inspectRemoteSettingsPrecondition, assertRemoteSettingsPrecondition,
   applyRemoteSettingsPrecondition, resolvePreparedConfigWriteRoute, assertPreparedConfigWriteRoute } from './settings-precondition-client.js';
 export type { RemoteSettingsPrecondition, RemoteSettingsPreconditionFacts, SettingsPreconditionRequest, SettingsPreconditionReceipt } from './settings-precondition-client.js';
+export { captureRemoteSettingsImportPrecondition, inspectRemoteSettingsImportPrecondition, assertRemoteSettingsImportPrecondition,
+  applyRemoteSettingsImportPrecondition, assertCompletedRemoteSettingsImportPrecondition } from './settings-import-precondition-client.js';
+export type { RemoteSettingsImportPrecondition, RemoteSettingsImportPreconditionFacts, RemoteSettingsImportRestriction,
+  SettingsImportPreconditionRequest, SettingsImportPreconditionReceipt } from './settings-import-precondition-client.js';

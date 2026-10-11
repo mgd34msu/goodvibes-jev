@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentModelCompareArtifactStore, AgentModelCompareModelCatalog, AgentModelCompareRouteUpdateResult, AgentModelCompareToolArgs, CompareCandidateResult, LoadedComparisonJudgment, SavedComparisonArtifact, StoredComparison } from './agent-model-compare-types.ts';
-import { SYNTHESIS_THEMES } from './agent-model-compare-types.ts';
+import { MODEL_REASON_THEME_LABELS } from './agent-model-compare-types.ts';
+import { readComparisonReasonThemes } from './agent-model-compare-themes.ts';
+import type { ModelReadingOptions } from './agent-harness-model-reading-source.ts';
 import { isModelCompareJudgmentArtifact, listSelectableModels, toSavedComparisonArtifact } from './agent-model-compare-run.ts';
 import { readBoolean, readComparisonTag, readRecord, readString, previewText } from './agent-model-compare-utils.ts';
 
@@ -20,11 +22,11 @@ export function modelRouteHandoff(candidate: CompareCandidateResult, reveal: boo
   return {
     ...(reveal ? {
       routeInspection: `agent_harness mode:"model_route" target:"${candidate.model.registryKey}"`,
-      confirmedMainRouteUpdate: `settings action:"set" key:"provider.model" value:"${candidate.model.registryKey}" confirm:true explicitUserRequest:"..."`,
+      confirmedMainRouteUpdate: `settings action:"set" key:"provider.model" value:"${candidate.model.registryKey}"`,
     } : {
       routeInspection: 'reveal the winning model before model-route inspection',
     }),
-    policy: 'This judgment does not change the selected model. Route updates require a separate confirmed action.',
+    policy: 'This judgment does not change the selected model. Route updates require a separately admitted action.',
   };
 }
 
@@ -148,7 +150,7 @@ export function formatJudgmentResult(input: {
   if (input.reveal) {
     lines.push(`  update ${routeHandoff.confirmedMainRouteUpdate}`);
   } else {
-    lines.push('  update reveal the winner first, then use a separate confirmed model-routing action');
+    lines.push('  update reveal the winner first, then use a separately admitted model-routing action');
   }
   lines.push('No selected model was changed.');
   return lines.join('\n');
@@ -245,7 +247,7 @@ export function formatApplyPreview(judgment: LoadedComparisonJudgment): string {
     `  winner Candidate ${judgment.winnerBlindId}`,
     `  model ${judgment.winnerModel?.registryKey ?? '(not revealed in judgment)'}`,
     `  reasons ${previewText(judgment.reasons || '(none)')}`,
-    '  policy changes provider.model only after explicit confirmation',
+    '  policy changes provider.model only under current recorded write admission',
   ].join('\n');
 }
 
@@ -302,7 +304,7 @@ export function routeDecisionArtifactText(input: {
     selectedModel: input.route?.selectedModel ?? input.currentModel ?? null,
     explicitUserRequest: input.explicitUserRequest,
     policy: {
-      mutation: input.decision === 'applied-winner' ? 'provider.model updated through confirmed apply' : 'provider.model intentionally left unchanged',
+      mutation: input.decision === 'applied-winner' ? 'provider.model updated through admitted apply' : 'provider.model intentionally left unchanged',
       transcript: 'Route-decision evidence is saved as an artifact; comparison and judgment artifacts are not modified.',
     },
   }, null, 2)}\n`;
@@ -528,13 +530,16 @@ export function pushSynthesisTheme(
   map.set(label, judgments);
 }
 
-export function formatComparisonSynthesis(input: {
+export async function formatComparisonSynthesis(input: {
+  readonly artifactStore?: AgentModelCompareArtifactStore | undefined;
+  readonly request?: unknown;
+  readonly readingOptions: ModelReadingOptions;
   readonly judgments: readonly LoadedComparisonJudgment[];
   readonly limit: number;
   readonly includeReasons: boolean;
   readonly filters: ComparisonAnalyticsFilters;
   readonly storeAvailable: boolean;
-}): string {
+}): Promise<string> {
   if (!input.storeAvailable) {
     return 'Saved comparison synthesis is unavailable because the artifact store does not expose listing and content reads in this runtime.';
   }
@@ -560,12 +565,14 @@ export function formatComparisonSynthesis(input: {
       revealed += 1;
       incrementCount(modelWinners, `${judgment.winnerModel.registryKey} (${judgment.winnerModel.displayName})`);
     }
-    const preferenceText = `${judgment.reasons}\n${judgment.notes}`.trim();
-    const matched = SYNTHESIS_THEMES.filter((theme) => theme.pattern.test(preferenceText));
-    if (matched.length === 0) {
+    const reading = await readComparisonReasonThemes(judgment, input.artifactStore,
+      { request: input.request ?? null, limit: input.limit, includeReasons: input.includeReasons, filters: input.filters, storeAvailable: input.storeAvailable }, input.readingOptions);
+    if (reading.status === 'held') {
+      pushSynthesisTheme(themes, 'Unresolved preference signal', judgment);
+    } else if (reading.themes.length === 0) {
       pushSynthesisTheme(themes, 'Uncategorized preference signal', judgment);
     } else {
-      for (const theme of matched) pushSynthesisTheme(themes, theme.label, judgment);
+      for (const theme of reading.themes) pushSynthesisTheme(themes, MODEL_REASON_THEME_LABELS[theme], judgment);
     }
   }
 
@@ -627,7 +634,7 @@ export function formatComparisonSynthesis(input: {
   lines.push('Recommended next actions');
   if (hidden > 0) lines.push('  - Reveal hidden judgments before applying model-level route changes.');
   lines.push('  - Export comparison or judgment reports before sharing evidence externally.');
-  lines.push('  - Apply a winner only through confirmed mode:"apply".');
+  lines.push('  - Apply a winner only through admitted mode:"apply".');
   lines.push('No selected model was changed.');
   return lines.join('\n');
 }

@@ -1,11 +1,11 @@
 import type { ArtifactDescriptor, ArtifactRecord, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { ChannelDeliveryRouter } from '@goodvibes-jev/engine/sdk/platform/channels';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { ToolInputProjectionError, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { agentArtifactEffectGuard, captureAgentArtifactSource } from './agent-artifact-effect.ts';
+import { evaluateOutwardEffect, getSessionUntrustedContentLedger } from '../trust/untrusted-content.ts';
 import {
-  buildAgentChannelDeliveryPreview,
   deliverAgentChannelMessage,
-  formatAgentChannelDeliveryPreview,
   formatAgentChannelDeliveryResult,
 } from '../agent/channel-delivery.ts';
 
@@ -47,9 +47,6 @@ function readString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
-function readBoolean(value: unknown): boolean {
-  return value === true || value === 'true' || value === 'yes';
-}
 
 function readNumber(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -130,7 +127,7 @@ function formatIdList(ids: readonly string[], max = 6): string {
 }
 
 function archiveExportRoute(summary: ReviewPacketArchiveSummary): string {
-  return `agent_artifacts mode:"export" artifactId:"${summary.artifactId}" destinationPath:"exports/${summary.filename}" confirm:true explicitUserRequest:"..."`;
+  return `agent_artifacts mode:"export" artifactId:"${summary.artifactId}" destinationPath:"exports/${summary.filename}"`;
 }
 
 function buildPacketEvidenceLines(summary: ReviewPacketArchiveSummary): readonly string[] {
@@ -153,36 +150,6 @@ function buildShareMessage(summary: ReviewPacketArchiveSummary, customMessage: s
     '',
     'Reviewer packet evidence:',
     ...buildPacketEvidenceLines(summary),
-  ].join('\n');
-}
-
-function formatSharePreview(input: {
-  readonly summary: ReviewPacketArchiveSummary;
-  readonly message: string;
-  readonly title: string;
-  readonly args: AgentReviewPacketShareToolArgs;
-  readonly router: AgentReviewPacketShareChannelRouter;
-}): string {
-  const preview = buildAgentChannelDeliveryPreview({
-    message: input.message,
-    title: input.title,
-    ...(readString(input.args.channel) ? { channel: readString(input.args.channel) } : {}),
-    ...(readString(input.args.route) ? { route: readString(input.args.route) } : {}),
-    ...(readString(input.args.webhook) ? { webhook: readString(input.args.webhook) } : {}),
-    ...(readString(input.args.link) ? { link: readString(input.args.link) } : {}),
-  });
-  return [
-    'Agent review packet share preview',
-    `  archive ${input.summary.artifactId} ${input.summary.filename}`,
-    `  comparison ${input.summary.comparisonId}`,
-    `  included artifacts ${input.summary.artifactCount}`,
-    `  related artifacts ${formatIdList(input.summary.relatedArtifactIds)}`,
-    `  route-decision receipts ${formatIdList(input.summary.routeDecisionArtifactIds)}`,
-    `  export route ${archiveExportRoute(input.summary)}`,
-    '',
-    formatAgentChannelDeliveryPreview(preview, input.router.listStrategies().length),
-    '',
-    'policy sends a plain-text archive reference only; ZIP bytes stay in the Agent artifact store until an explicit export route is run',
   ].join('\n');
 }
 
@@ -209,7 +176,7 @@ export function createAgentReviewPacketShareTool(
   return {
     definition: {
       name: 'agent_review_packet_share',
-      description: 'Share one confirmed reviewer archive reference.',
+      description: 'Share one reviewer archive reference after recorded effect admission.',
       parameters: {
         type: 'object',
         properties: {
@@ -243,43 +210,60 @@ export function createAgentReviewPacketShareTool(
           },
           confirm: {
             type: 'boolean',
-            description: 'Required true for confirmed delivery.',
+            description: 'Optional request provenance. Recorded engine admission authorizes delivery.',
           },
           explicitUserRequest: {
             type: 'string',
-            description: 'User request authorizing this delivery.',
+            description: 'Optional user request provenance.',
           },
         },
-        required: ['archiveArtifactId', 'confirm', 'explicitUserRequest'],
+        required: ['archiveArtifactId'],
         additionalProperties: false,
       },
       sideEffects: ['network'],
     },
-    execute: async (rawArgs: Record<string, unknown>) => {
-      const args = rawArgs as AgentReviewPacketShareToolArgs;
-      const explicitUserRequest = readString(args.explicitUserRequest);
-      if (!explicitUserRequest) {
-        return failure('explicitUserRequest is required so review packet delivery stays tied to a direct user request.');
-      }
+    execute: async (rawArgs: Record<string, unknown>, executionOptions) => {
+      const args = rawArgs;
+      const effect = agentArtifactEffectGuard(rawArgs, executionOptions, 'send');
+      try { effect(); } catch (error) { return failure(error instanceof Error ? error.message : String(error)); }
       const artifactId = readString(args.archiveArtifactId);
       if (!artifactId) return failure('archiveArtifactId is required.');
       let summary: ReviewPacketArchiveSummary;
+      let assertSource: () => void;
       try {
-        summary = summarizeArchiveArtifact(await loadArchiveArtifact(artifactStore, artifactId));
+        const archive = await loadArchiveArtifact(artifactStore, artifactId);
+        effect();
+        assertSource = captureAgentArtifactSource(artifactStore ?? {}, archive);
+        assertSource();
+        summary = summarizeArchiveArtifact(archive);
       } catch (error) {
         return failure(error instanceof Error ? error.message : String(error));
       }
       const title = readString(args.title) ?? 'GoodVibes Agent review packet';
       const message = buildShareMessage(summary, readString(args.message));
       try {
-        const preview = formatSharePreview({ summary, message, title, args, router: channelDeliveryRouter });
-        if (!readBoolean(args.confirm)) {
-          return failure([
-            preview,
-            '',
-            'Model tool confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to share this reviewer packet.',
-          ].join('\n'));
-        }
+        const ledger = getSessionUntrustedContentLedger();
+        const ledgerSnapshot = () => JSON.stringify([ledger.originsThisTurn(), ledger.exposuresThisTurn(), ledger.taintSourcesThisTurn()]);
+        const sources = ledgerSnapshot();
+        const deliver = channelDeliveryRouter.deliver, listStrategies = channelDeliveryRouter.listStrategies;
+        const strategies = listStrategies.call(channelDeliveryRouter).map(strategy => ({ strategy, canHandle: strategy.canHandle, deliver: strategy.deliver }));
+        const assertCurrent = () => {
+          effect(); assertSource();
+          const current = listStrategies.call(channelDeliveryRouter);
+          if (channelDeliveryRouter.deliver !== deliver || channelDeliveryRouter.listStrategies !== listStrategies
+            || getSessionUntrustedContentLedger() !== ledger || ledgerSnapshot() !== sources
+            || current.length !== strategies.length || strategies.some((source, index) => current[index] !== source.strategy
+              || source.strategy.canHandle !== source.canHandle || source.strategy.deliver !== source.deliver)) throw new ToolInputProjectionError('stale');
+        };
+        assertCurrent();
+        const decision = await evaluateOutwardEffect({
+          request: { toolName: 'agent_review_packet_share', action: 'review-packet.share', description: 'sharing the saved reviewer archive reference' },
+          ledger,
+          content: { message, title, channel: readString(args.channel), route: readString(args.route), webhook: readString(args.webhook), link: readString(args.link) },
+          taintOptions: { signal: executionOptions?.signal, exactMatchFields: ['channel', 'route', 'webhook', 'link'] },
+        });
+        assertCurrent();
+        if (!decision.allowed) return failure(decision.reason ?? 'Outward effect held.');
         const delivery = await deliverAgentChannelMessage(channelDeliveryRouter, {
           message,
           title,
@@ -287,7 +271,8 @@ export function createAgentReviewPacketShareTool(
           ...(readString(args.route) ? { route: readString(args.route) } : {}),
           ...(readString(args.webhook) ? { webhook: readString(args.webhook) } : {}),
           ...(readString(args.link) ? { link: readString(args.link) } : {}),
-        });
+        }, { signal: executionOptions?.signal, assertCurrent });
+        assertCurrent();
         return output(formatShareResult({ summary, delivery }));
       } catch (error) {
         return failure(error instanceof Error ? error.message : String(error));

@@ -1,4 +1,7 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { redactSensitiveDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
 import {
   resolveGithubToken,
   GistUploadTarget,
@@ -135,14 +138,20 @@ describe('GistUploadTarget', () => {
   });
 
   test('returns ok:false on network error', async () => {
+    const previous = installJudgmentPort(fakePort((name, question) => {
+      if (question.type !== 'noul') throw new Error('Unexpected network error redaction fixture');
+      return noulAnswer(name === 'identifying' ? 0.99 : 0.01);
+    }).port);
     const restoreFetch = installMockFetch(() => Promise.reject(new Error('Network failure')));
     try {
+      expect(await redactSensitiveDataAsync('Network failure')).toBe('Network failure');
       const uploader = new GistUploadTarget(MOCK_TOKEN);
       const result = await uploader.upload('content', 'test.html');
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('Network failure');
     } finally {
       restoreFetch();
+      installJudgmentPort(previous);
     }
   });
 

@@ -1,10 +1,13 @@
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
+import { captureOwnedJson } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { isDeepStrictEqual } from 'node:util';
 import type { CommandContext } from '../input/command-registry.ts';
 import { AgentResearchRunRegistry, type AgentResearchRunRecord } from '../agent/research-run-registry.ts';
 import { AgentResearchSourceRegistry, researchSourceReportLine, type AgentResearchSourceRecord } from '../agent/research-source-registry.ts';
 import type { AgentResearchToolArgs } from './agent-research-tool.ts';
 
-type ToolResult = { readonly success: true; readonly output: string } | { readonly success: false; readonly error: string };
+type ToolResult = Awaited<ReturnType<Tool['execute']>>;
+type Dispatch = (child: Tool, args: Record<string, unknown>, assertSource?: () => void) => Promise<ToolResult>;
 
 function error(message: string): { readonly success: false; readonly error: string } {
   return { success: false, error: message };
@@ -105,8 +108,6 @@ function candidateFromSearchResult(question: string, result: Record<string, unkn
     evidence: evidenceText,
     credibility: 'unreviewed',
     tags: ['research', 'web-search'],
-    confirm: true,
-    explicitUserRequest: '...',
   });
   return {
     rank: typeof result.rank === 'number' ? result.rank : index + 1,
@@ -126,8 +127,6 @@ function candidateFromSearchResult(question: string, result: Record<string, unkn
       ...(evidenceText ? [`evidence:${quote(evidenceText)}`] : []),
       'credibility:"unreviewed"',
       'tags:["research","web-search"]',
-      'confirm:true',
-      'explicitUserRequest:"..."',
     ].join(' '),
   };
 }
@@ -152,6 +151,8 @@ export async function runPublicSearch(
   webSearchTool: Tool | undefined,
   args: AgentResearchToolArgs,
   shellPaths: CommandContext['workspace']['shellPaths'] | undefined,
+  dispatch: Dispatch,
+  assertCurrent: () => void,
 ): Promise<ToolResult> {
   const run = resolveSearchRun(args, shellPaths);
   const query = readString(args.query) || readString(args.question) || run?.question || readString(args.target);
@@ -163,7 +164,11 @@ export async function runPublicSearch(
     return error('Bounded public web search is unavailable because web_search is not registered. Use research action:"briefing" for the offline next-action queue or action:"plan" for the route plan.');
   }
   const webArgs = searchArgs({ ...args, query });
-  const webResult = await webSearchTool.execute(webArgs);
+  assertCurrent();
+  const selectedRun = JSON.stringify(run);
+  const assertRun = () => { assertCurrent(); if (run && shellPaths && JSON.stringify(AgentResearchRunRegistry.fromShellPaths(shellPaths).get(run.id)) !== selectedRun) throw new Error('Research run changed during source collection.'); };
+  const webResult = await dispatch(webSearchTool, webArgs, assertRun);
+  assertCurrent();
   if (!webResult.success) return { success: false, error: readString(webResult.error) || 'web_search failed.' };
   const payload = parseSearchPayload(webResult.output);
   const results = readRecordArray(payload?.results);
@@ -184,28 +189,22 @@ export async function runPublicSearch(
         ...(run ? {
           run: `research action:"run" runId:${quote(run.id)}`,
           briefing: `research action:"briefing" target:${quote(run.id)}`,
-          startRun: `research action:"start_run" id:${quote(run.id)} confirm:true explicitUserRequest:"..."`,
-          checkpointAfterCapture: `research action:"checkpoint" id:${quote(run.id)} phase:"reading" progress:${Math.max(run.progress, 25)} note:"Captured candidate sources for review." sourceIds:["..."] confirm:true explicitUserRequest:"..."`,
+          startRun: `research action:"start_run" id:${quote(run.id)}`,
+          checkpointAfterCapture: `research action:"checkpoint" id:${quote(run.id)} phase:"reading" progress:${Math.max(run.progress, 25)} note:"Captured candidate sources for review." sourceIds:["..."]`,
         } : {
-          createRun: `research action:"create_run" question:${quote(query)} plan:["Search bounded public web sources","Capture candidate sources","Review credibility","Save sourced report"] confirm:true explicitUserRequest:"..."`,
+          createRun: `research action:"create_run" question:${quote(query)} plan:["Search bounded public web sources","Capture candidate sources","Review credibility","Save sourced report"]`,
         }),
         sourceQueue: `research action:"sources" query:${quote(query)}`,
         reviewedBundle: `research action:"bundle" query:${quote(query)} includeReportLines:true`,
-        saveReport: `research action:"report" question:${quote(query)} sources:[...] visualReport:true requireCitationCoverage:true confirm:true explicitUserRequest:"..."`,
+        saveReport: `research action:"report" question:${quote(query)} sources:[...] visualReport:true requireCitationCoverage:true`,
       },
       ...(run ? { run: { id: run.id, title: run.title, status: run.status, phase: run.phase, progress: run.progress } } : {}),
       searchArgs: webArgs,
-      policy: 'This route performs bounded read-only public web search only. It does not create or start a run, save sources, checkpoint progress, write a report, ingest Knowledge, or send messages. Use each returned route only after explicit user confirmation.',
+      policy: 'This route performs bounded public web search under recorded send admission. It does not create or start a run, save sources, checkpoint progress, write a report, ingest Knowledge, or send messages. Every effectful follow-up requires its own current recorded admission.',
     }, null, 2),
   };
 }
 
-function requireConfirmedRunner(args: AgentResearchToolArgs): string {
-  const explicitUserRequest = readString(args.explicitUserRequest);
-  if (!explicitUserRequest) throw new Error('research action:"runner" requires explicitUserRequest before it can create or checkpoint a visible research run.');
-  if (args.confirm !== true) throw new Error('research action:"runner" requires confirm:true before it can create or checkpoint a visible research run.');
-  return explicitUserRequest;
-}
 
 function researchSourceRoutes(source: AgentResearchSourceRecord): Record<string, unknown> {
   return {
@@ -215,7 +214,7 @@ function researchSourceRoutes(source: AgentResearchSourceRecord): Record<string,
     credibility: source.credibility,
     score: source.score,
     inspectRoute: `research action:"source" sourceId:${quote(source.id)}`,
-    reviewRoute: `research action:"review_source" id:${quote(source.id)} credibility:"high|medium|mixed|low" score:80 note:"..." confirm:true explicitUserRequest:"..."`,
+    reviewRoute: `research action:"review_source" id:${quote(source.id)} credibility:"high|medium|mixed|low" score:80 note:"..."`,
     reportLine: researchSourceReportLine(source),
   };
 }
@@ -243,7 +242,7 @@ function sourceFromCandidate(
         ...(evidence ? { evidence } : {}),
         credibility: 'unreviewed',
         tags: ['research', 'web-search', 'runner'],
-        note: 'Captured by confirmed GoodVibes research runner.',
+        note: 'Captured by admitted GoodVibes research runner.',
         provenance: 'agent-research-runner',
       }),
     };
@@ -254,22 +253,28 @@ function sourceFromCandidate(
   }
 }
 
-export async function runConfirmedResearchRunner(
+export async function runAdmittedResearchRunner(
   webSearchTool: Tool | undefined,
   args: AgentResearchToolArgs,
   shellPaths: CommandContext['workspace']['shellPaths'] | undefined,
+  dispatch: Dispatch,
+  assertCurrent: () => void,
+  assertWrite: () => void,
 ): Promise<ToolResult> {
   try {
-    const explicitUserRequest = requireConfirmedRunner(args);
-    if (!shellPaths) return error('Confirmed research runner is unavailable because this runtime did not provide shell paths.');
-    if (!webSearchTool) return error('Confirmed research runner requires the web_search tool for bounded source collection. Use research action:"plan" for offline routing.');
+    assertCurrent();
+    const explicitUserRequest = readString(args.explicitUserRequest);
+    if (!shellPaths) return error('Admitted research runner is unavailable because this runtime did not provide shell paths.');
+    if (!webSearchTool) return error('Admitted research runner requires the web_search tool for bounded source collection. Use research action:"plan" for offline routing.');
     const runRegistry = AgentResearchRunRegistry.fromShellPaths(shellPaths);
     const sourceRegistry = AgentResearchSourceRegistry.fromShellPaths(shellPaths);
     const lookup = readString(args.runId) || readString(args.id);
     const existingRun = lookup ? runRegistry.get(lookup) : null;
     if (lookup && !existingRun) return error(`Unknown research run ${lookup}. Use research action:"runs" to inspect run ids.`);
-    const question = readString(args.query) || readString(args.question) || readString(args.target) || existingRun?.question || explicitUserRequest;
-    if (!question) return error('Confirmed research runner requires query, question, target, or an existing run with a question.');
+    const question = readString(args.query) || readString(args.question) || readString(args.target) || existingRun?.question;
+    if (!question) return error('Admitted research runner requires query, question, target, or an existing run with a question.');
+    assertCurrent();
+    assertWrite();
     let run = existingRun ?? runRegistry.create({
       title: readString(args.title) || fallbackTitle(question),
       question,
@@ -281,29 +286,37 @@ export async function runConfirmedResearchRunner(
         'Save a citation-covered report only after source review.',
       ],
       nextSteps: ['Run bounded source collection.', 'Review candidate sources.', 'Save a sourced report artifact.'],
-      note: `Confirmed runner authorized by user request: ${previewText(explicitUserRequest, 160)}`,
+      note: `Recorded runner audit text: ${previewText(explicitUserRequest, 160)}`,
       provenance: 'agent-research-runner',
     });
+    assertCurrent();
+    assertWrite();
     if (run.status === 'planned') {
-      run = runRegistry.start(run.id, 'Confirmed research runner started bounded source collection.');
+      run = runRegistry.start(run.id, 'Admitted research runner started bounded source collection.');
     } else if (run.status === 'paused' || run.status === 'blocked') {
-      run = runRegistry.resume(run.id, 'Confirmed research runner resumed bounded source collection.');
+      run = runRegistry.resume(run.id, 'Admitted research runner resumed bounded source collection.');
     } else if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
-      return error(`Cannot run confirmed research runner for ${run.status} research run ${run.id}. Create a follow-up run instead.`);
+      return error(`Cannot run admitted research runner for ${run.status} research run ${run.id}. Create a follow-up run instead.`);
     }
 
-    const webResult = await webSearchTool.execute(searchArgs({ ...args, query: run.question }));
+    const selectedRun = captureOwnedJson(run);
+    const assertRun = () => { assertCurrent(); if (!isDeepStrictEqual(captureOwnedJson(runRegistry.get(run.id)), selectedRun)) throw new Error('Research run changed during source collection.'); };
+    assertRun();
+    const webResult = await dispatch(webSearchTool, searchArgs({ ...args, query: run.question }), assertRun);
+    assertRun();
     if (!webResult.success) {
+      assertRun();
+      assertWrite();
       run = runRegistry.checkpoint(run.id, {
         status: 'blocked',
         phase: 'searching',
         progress: Math.max(run.progress, 10),
-        note: `Confirmed research runner blocked during source collection: ${readString(webResult.error) || 'web_search failed.'}`,
+        note: `Admitted research runner blocked during source collection: ${readString(webResult.error) || 'web_search failed.'}`,
         nextSteps: ['Inspect runner readiness.', 'Retry bounded source collection after search is available.'],
       });
       return {
         success: false,
-        error: `Confirmed research runner blocked for ${run.id}: ${readString(webResult.error) || 'web_search failed.'}`,
+        error: `Admitted research runner blocked for ${run.id}: ${readString(webResult.error) || 'web_search failed.'}`,
       };
     }
 
@@ -313,16 +326,18 @@ export async function runConfirmedResearchRunner(
       .filter((result) => readString(result.url))
       .map((result, index) => candidateFromSearchResult(run.question, result, index));
     const saved = candidates
-      .map((candidate) => sourceFromCandidate(sourceRegistry, run.question, candidate))
+      .map((candidate) => { assertRun(); assertWrite(); return sourceFromCandidate(sourceRegistry, run.question, candidate); })
       .filter((entry): entry is { readonly source: AgentResearchSourceRecord; readonly created: boolean } => entry !== null);
     const sourceIds = saved.map((entry) => entry.source.id);
     const createdCount = saved.filter((entry) => entry.created).length;
     const duplicateCount = saved.length - createdCount;
+    assertRun();
+    assertWrite();
     run = runRegistry.checkpoint(run.id, {
       status: 'running',
       phase: 'reading',
       progress: Math.max(run.progress, sourceIds.length > 0 ? 35 : 20),
-      note: `Confirmed research runner captured ${createdCount} new source candidate(s)${duplicateCount > 0 ? ` and reused ${duplicateCount} existing source(s)` : ''}.`,
+      note: `Admitted research runner captured ${createdCount} new source candidate(s)${duplicateCount > 0 ? ` and reused ${duplicateCount} existing source(s)` : ''}.`,
       nextSteps: sourceIds.length > 0
         ? ['Review candidate source credibility.', 'Save a citation-covered report artifact after source review.']
         : ['Try a more specific query or provider.', 'Capture sources manually if public search found none.'],
@@ -341,8 +356,8 @@ export async function runConfirmedResearchRunner(
           progress: run.progress,
           sourceIds: run.sourceIds,
           inspectRoute: `research action:"run" runId:${quote(run.id)}`,
-          checkpointRoute: `research action:"checkpoint" id:${quote(run.id)} phase:"reading" progress:${Math.max(run.progress, 35)} note:"..." sourceIds:["..."] confirm:true explicitUserRequest:"..."`,
-          cancelRoute: `research action:"cancel" id:${quote(run.id)} note:"..." confirm:true explicitUserRequest:"..."`,
+          checkpointRoute: `research action:"checkpoint" id:${quote(run.id)} phase:"reading" progress:${Math.max(run.progress, 35)} note:"..." sourceIds:["..."]`,
+          cancelRoute: `research action:"cancel" id:${quote(run.id)} note:"..."`,
         },
         query: run.question,
         providerId: readString(payload?.providerId),
@@ -354,11 +369,11 @@ export async function runConfirmedResearchRunner(
         nextRoutes: {
           run: `research action:"run" runId:${quote(run.id)}`,
           sources: `research action:"sources" query:${quote(run.question)} includeReportLines:true`,
-          reviewSource: 'research action:"review_source" id:"..." credibility:"high|medium|mixed|low" score:80 note:"..." confirm:true explicitUserRequest:"..."',
+          reviewSource: 'research action:"review_source" id:"..." credibility:"high|medium|mixed|low" score:80 note:"..."',
           bundle: `research action:"bundle" query:${quote(run.question)} includeReportLines:true`,
-          saveReport: `research action:"report" question:${quote(run.question)} sources:[...] visualReport:true requireCitationCoverage:true confirm:true explicitUserRequest:"..."`,
+          saveReport: `research action:"report" question:${quote(run.question)} sources:[...] visualReport:true requireCitationCoverage:true`,
         },
-        policy: 'Confirmed research runner only creates/updates local visible research run state and local source queue records. It does not save a report, ingest Knowledge, send messages, or control a browser/PWA surface.',
+        policy: 'Admitted research runner only creates/updates local visible research run state and local source queue records. It does not save a report, ingest Knowledge, send messages, or control a browser/PWA surface.',
       }, null, 2),
     };
   } catch (err) {

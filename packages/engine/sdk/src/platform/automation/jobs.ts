@@ -19,6 +19,8 @@ import type { AutomationSourceRecord } from './sources.js';
 export type AutomationJobKind = 'standard' | 'checkin';
 
 export interface AutomationJob extends AutomationEntityBase {
+  /** Absent only in legacy persisted records, before the manager restores them. */
+  readonly mutationRevision?: string | undefined;
   readonly name: string;
   readonly kind?: AutomationJobKind | undefined;
   readonly description?: string | undefined;
@@ -38,4 +40,8 @@ export interface AutomationJob extends AutomationEntityBase {
   readonly pausedReason?: string | undefined;
   readonly deleteAfterRun: boolean;
   readonly archivedAt?: number | undefined;
+}
+
+export interface ManagedAutomationJob extends AutomationJob {
+  readonly mutationRevision: string;
 }

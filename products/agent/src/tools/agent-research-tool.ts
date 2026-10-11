@@ -2,13 +2,13 @@ import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { prepareProtectedResearchReport, agentResearchSourceOwner, createAgentResearchReportProjector, inheritPreparedResearchReport, type PreparedResearchReport } from '../agent/protected-research-report.ts';
 import type { ProtectedSourceOwner } from '@goodvibes-jev/engine/sdk/platform/security';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolInvocation, assertCurrentToolExecution, assertCurrentToolEffect, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
 import { createAgentArtifactsTool } from './agent-artifacts-tool.ts';
 import { createAgentHarnessTool } from './agent-harness-tool.ts';
 import { createAgentResearchReportTool } from './agent-research-report-tool.ts';
 import { createAgentResearchRunsTool } from './agent-research-runs-tool.ts';
-import { runConfirmedResearchRunner, runPublicSearch } from './agent-research-runner.ts';
+import { runAdmittedResearchRunner, runPublicSearch } from './agent-research-runner.ts';
 import { createAgentResearchSourcesTool } from './agent-research-sources-tool.ts';
 
 type AgentResearchAction =
@@ -90,6 +90,7 @@ export interface AgentResearchToolArgs {
   readonly includeContent?: unknown;
   readonly previewBytes?: unknown;
   readonly limit?: unknown;
+  readonly preview?: unknown;
   readonly confirm?: unknown;
   readonly explicitUserRequest?: unknown;
 }
@@ -159,6 +160,7 @@ function readAction(args: AgentResearchToolArgs): AgentResearchAction {
   const captured = snapshotJudgmentInput(routing, 'research') as AgentResearchToolArgs;
   const explicit = normalizeResearchAction(captured.action) ?? normalizeResearchAction(captured.mode);
   if (explicit) return explicit;
+  if (readString(captured.action) || readString(captured.mode)) throw new Error('Unknown research action.');
   if (readString(args.sourceId)) return 'source';
   if (readString(args.runId)) return 'run';
   if (readString(args.query) || readString(args.target)) return 'plan';
@@ -240,7 +242,7 @@ function sourceArgs(args: AgentResearchToolArgs): Record<string, unknown> {
   });
 }
 
-function confirmedArgs(args: AgentResearchToolArgs): Record<string, unknown> {
+function auditArgs(args: AgentResearchToolArgs): Record<string, unknown> {
   return compactArgs({
     confirm: args.confirm,
     explicitUserRequest: args.explicitUserRequest,
@@ -257,7 +259,7 @@ function createRunArgs(args: AgentResearchToolArgs): Record<string, unknown> {
     nextSteps: args.nextSteps,
     sourceIds: args.sourceIds,
     note: args.note,
-    ...confirmedArgs(args),
+    ...auditArgs(args),
   });
 }
 
@@ -273,7 +275,7 @@ function runMutationArgs(args: AgentResearchToolArgs, mode: string): Record<stri
     sourceIds: args.sourceIds,
     reportArtifactId: args.reportArtifactId,
     error: args.error,
-    ...confirmedArgs(args),
+    ...auditArgs(args),
   });
 }
 
@@ -319,7 +321,7 @@ function addSourceArgs(args: AgentResearchToolArgs): Record<string, unknown> {
     score: args.score,
     tags: args.tags,
     note: args.note,
-    ...confirmedArgs(args),
+    ...auditArgs(args),
   });
 }
 
@@ -333,7 +335,7 @@ function reviewSourceArgs(args: AgentResearchToolArgs): Record<string, unknown> 
     summary: args.summary,
     evidence: args.evidence,
     tags: args.tags,
-    ...confirmedArgs(args),
+    ...auditArgs(args),
   });
 }
 
@@ -343,7 +345,7 @@ function sourceMutationArgs(args: AgentResearchToolArgs, mode: string): Record<s
     id: lookupId(args),
     note: args.note,
     reportArtifactId: args.reportArtifactId,
-    ...confirmedArgs(args),
+    ...auditArgs(args),
   });
 }
 
@@ -362,8 +364,9 @@ function reportArgs(args: AgentResearchToolArgs): Record<string, unknown> {
     confidence: args.confidence,
     requireCitationCoverage: args.requireCitationCoverage,
     visualReport: args.visualReport,
+    preview: args.preview,
     tags: args.tags,
-    ...confirmedArgs(args),
+    ...auditArgs(args),
   });
   inheritPreparedResearchReport(args, projected);
   return projected;
@@ -372,20 +375,25 @@ function reportArgs(args: AgentResearchToolArgs): Record<string, unknown> {
 export function createAgentResearchTool(deps: AgentResearchToolDeps): Tool {
   const sourceOwner = deps.sourceOwner ?? agentResearchSourceOwner(deps.toolRegistry);
   const shellPaths = deps.commandContext.workspace?.shellPaths;
-  const harnessTool = deps.harnessTool ?? createAgentHarnessTool({
+  const registered = (name: string) => deps.toolRegistry.list().find(tool => tool.definition.name === name);
+  const harnessTool = deps.harnessTool ?? registered('agent_harness') ?? createAgentHarnessTool({
     commandRegistry: deps.commandRegistry,
     commandContext: deps.commandContext,
     toolRegistry: deps.toolRegistry,
   });
-  const runsTool = deps.runsTool ?? createAgentResearchRunsTool(shellPaths);
-  const sourcesTool = deps.sourcesTool ?? createAgentResearchSourcesTool(shellPaths);
-  const reportTool = deps.reportTool ?? createAgentResearchReportTool(deps.commandContext.platform?.artifactStore, sourceOwner);
+  const runsTool = deps.runsTool ?? registered('agent_research_runs') ?? createAgentResearchRunsTool(shellPaths);
+  const sourcesTool = deps.sourcesTool ?? registered('agent_research_sources') ?? createAgentResearchSourcesTool(shellPaths);
+  const reportTool = deps.reportTool ?? registered('agent_research_report') ?? createAgentResearchReportTool(deps.commandContext.platform?.artifactStore, sourceOwner);
   const artifactTool = deps.artifactTool
     ?? deps.toolRegistry.list().find((entry) => entry.definition.name === 'agent_artifacts')
     ?? createAgentArtifactsTool(deps.commandContext.platform?.artifactStore);
   const webSearchTool = deps.webSearchTool
     ?? deps.toolRegistry.list().find((entry) => entry.definition.name === 'web_search');
 
+  for (const child of [harnessTool, runsTool, sourcesTool, reportTool, artifactTool, ...(webSearchTool ? [webSearchTool] : [])]) {
+    if (!deps.toolRegistry.has(child.definition.name)) deps.toolRegistry.register(child, child === reportTool ? { inputProjection: createAgentResearchReportProjector(sourceOwner) } : undefined);
+  }
+  let childSequence = 0;
   return {
     definition: {
       name: 'research',
@@ -395,35 +403,8 @@ export function createAgentResearchTool(deps: AgentResearchToolDeps): Tool {
         properties: {
           action: {
             type: 'string',
-            enum: [
-              'briefing',
-              'plan',
-              'runner',
-              'runs',
-              'run',
-              'sources',
-              'source',
-              'bundle',
-              'search',
-              'reports',
-              'report_artifact',
-              'create_run',
-              'start_run',
-              'checkpoint',
-              'pause',
-              'resume',
-              'cancel',
-              'complete',
-              'fail',
-              'delete_run',
-              'add_source',
-              'review_source',
-              'reject_source',
-              'use_source',
-              'delete_source',
-              'report',
-            ],
-            description: 'Read plans/queues; confirm writes.',
+
+            description: 'Read plans/queues; writes require current recorded effect admission.',
           },
           mode: { type: 'string', description: 'Alias for action.' },
           id: { type: 'string', description: 'Run or source id alias.' },
@@ -474,8 +455,9 @@ export function createAgentResearchTool(deps: AgentResearchToolDeps): Tool {
           includeContent: { type: 'boolean', description: 'Preview saved report artifact content.' },
           previewBytes: { type: 'number', description: 'Maximum saved report preview bytes.' },
           limit: { type: 'number', description: 'Maximum rows.' },
-          confirm: { type: 'boolean', description: 'Required true for writes.' },
-          explicitUserRequest: { type: 'string', description: 'User request authorizing writes.' },
+          preview: { type: 'boolean', description: 'Inspect runner readiness or report preview without writing state.' },
+          confirm: { type: 'boolean', description: 'Optional legacy audit field; does not authorize writes.' },
+          explicitUserRequest: { type: 'string', description: 'Optional audit text retained with research records.' },
         },
         additionalProperties: false,
       },
@@ -484,6 +466,12 @@ export function createAgentResearchTool(deps: AgentResearchToolDeps): Tool {
     },
     execute: async (rawArgs: unknown, options) => {
       let args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentResearchToolArgs;
+      const assertCurrent = () => { options?.signal?.throwIfAborted(); assertCurrentToolExecution(rawArgs as Record<string, unknown>, options); };
+      const dispatch = async (child: Tool, childArgs: Record<string, unknown>, assertSource?: () => void) => {
+        assertCurrent();
+        if (!assertCurrentToolInvocation(rawArgs as Record<string, unknown>, options)) return child.execute(childArgs);
+        return deps.toolRegistry.executeNested(`research-child-${++childSequence}`, child.definition.name, childArgs, options, { signal: options?.signal, assertCurrent: () => { assertCurrent(); prepared?.assertCurrent(); assertSource?.(); } });
+      };
       let action: AgentResearchAction;
       let prepared: PreparedResearchReport | undefined;
       try {
@@ -499,37 +487,38 @@ export function createAgentResearchTool(deps: AgentResearchToolDeps): Tool {
         return error('Research input was refused by the protected-input boundary before dispatch.');
       }
 
-      if (action === 'briefing') return harnessTool.execute(briefingArgs(args));
-      if (action === 'plan') return harnessTool.execute(planArgs(args));
+      if (action === 'briefing') return dispatch(harnessTool, briefingArgs(args));
+      if (action === 'plan') return dispatch(harnessTool, planArgs(args));
       if (action === 'runner') {
-        return args.confirm === true
-          ? runConfirmedResearchRunner(webSearchTool, args, shellPaths)
-          : harnessTool.execute(runnerArgs(args));
+        if (args.preview === true) return dispatch(harnessTool, runnerArgs(args));
+        if (!assertCurrentToolInvocation(rawArgs as Record<string, unknown>, options)) return error('Research runner writes require current recorded effect admission. Use preview:true to inspect readiness.');
+        return runAdmittedResearchRunner(webSearchTool, args, shellPaths, dispatch, assertCurrent, () => { assertCurrent(); if (!assertCurrentToolEffect(rawArgs as Record<string, unknown>, options, 'write')) throw new Error('Research runner writes require current recorded effect admission.'); });
       }
-      if (action === 'runs') return harnessTool.execute(runsArgs(args));
-      if (action === 'run') return harnessTool.execute(runArgs(args));
-      if (action === 'sources') return harnessTool.execute(sourcesArgs(args));
-      if (action === 'source') return harnessTool.execute(sourceArgs(args));
-      if (action === 'bundle') return sourcesTool.execute(bundleArgs(args));
-      if (action === 'search') return runPublicSearch(webSearchTool, args, shellPaths);
-      if (action === 'reports') return artifactTool.execute(reportsArgs(args));
-      if (action === 'report_artifact') return artifactTool.execute(reportArtifactArgs(args));
-      if (action === 'create_run') return runsTool.execute(createRunArgs(args));
-      if (action === 'start_run') return runsTool.execute(runMutationArgs(args, 'start'));
-      if (action === 'checkpoint') return runsTool.execute(runMutationArgs(args, 'checkpoint'));
-      if (action === 'pause') return runsTool.execute(runMutationArgs(args, 'pause'));
-      if (action === 'resume') return runsTool.execute(runMutationArgs(args, 'resume'));
-      if (action === 'cancel') return runsTool.execute(runMutationArgs(args, 'cancel'));
-      if (action === 'complete') return runsTool.execute(runMutationArgs(args, 'complete'));
-      if (action === 'fail') return runsTool.execute(runMutationArgs(args, 'fail'));
-      if (action === 'delete_run') return runsTool.execute(runMutationArgs(args, 'delete'));
-      if (action === 'add_source') return sourcesTool.execute(addSourceArgs(args));
-      if (action === 'review_source') return sourcesTool.execute(reviewSourceArgs(args));
-      if (action === 'reject_source') return sourcesTool.execute(sourceMutationArgs(args, 'reject'));
-      if (action === 'use_source') return sourcesTool.execute(sourceMutationArgs(args, 'use'));
-      if (action === 'delete_source') return sourcesTool.execute(sourceMutationArgs(args, 'delete'));
+      if (action === 'runs') return dispatch(harnessTool, runsArgs(args));
+      if (action === 'run') return dispatch(harnessTool, runArgs(args));
+      if (action === 'sources') return dispatch(harnessTool, sourcesArgs(args));
+      if (action === 'source') return dispatch(harnessTool, sourceArgs(args));
+      if (action === 'bundle') return dispatch(sourcesTool, bundleArgs(args));
+      if (action === 'search' && !assertCurrentToolEffect(rawArgs as Record<string, unknown>, options, 'send')) return error('Research search requires current recorded send admission.');
+      if (action === 'search') return runPublicSearch(webSearchTool, args, shellPaths, dispatch, assertCurrent);
+      if (action === 'reports') return dispatch(artifactTool, reportsArgs(args));
+      if (action === 'report_artifact') return dispatch(artifactTool, reportArtifactArgs(args));
+      if (action === 'create_run') return dispatch(runsTool, createRunArgs(args));
+      if (action === 'start_run') return dispatch(runsTool, runMutationArgs(args, 'start'));
+      if (action === 'checkpoint') return dispatch(runsTool, runMutationArgs(args, 'checkpoint'));
+      if (action === 'pause') return dispatch(runsTool, runMutationArgs(args, 'pause'));
+      if (action === 'resume') return dispatch(runsTool, runMutationArgs(args, 'resume'));
+      if (action === 'cancel') return dispatch(runsTool, runMutationArgs(args, 'cancel'));
+      if (action === 'complete') return dispatch(runsTool, runMutationArgs(args, 'complete'));
+      if (action === 'fail') return dispatch(runsTool, runMutationArgs(args, 'fail'));
+      if (action === 'delete_run') return dispatch(runsTool, runMutationArgs(args, 'delete'));
+      if (action === 'add_source') return dispatch(sourcesTool, addSourceArgs(args));
+      if (action === 'review_source') return dispatch(sourcesTool, reviewSourceArgs(args));
+      if (action === 'reject_source') return dispatch(sourcesTool, sourceMutationArgs(args, 'reject'));
+      if (action === 'use_source') return dispatch(sourcesTool, sourceMutationArgs(args, 'use'));
+      if (action === 'delete_source') return dispatch(sourcesTool, sourceMutationArgs(args, 'delete'));
       if (action === 'report') {
-        try { prepared!.assertCurrent(); return await reportTool.execute(reportArgs(args), options); }
+        try { prepared!.assertCurrent(); return await dispatch(reportTool, reportArgs(args)); }
         finally { await prepared!.release(); }
       }
 

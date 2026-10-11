@@ -9,15 +9,14 @@ import { describe, expect, test } from 'bun:test';
  * - TelemetryApiService ring buffer stores raw payloads so operators with
  *   explicit raw-view authorization can read them.
  * - EGRESS boundary: `listEvents({view: 'safe'})` (the default) runs payloads
- *   through `sanitizeRecord` → `redactStructuredData`, which matches the
- *   CONTENT_KEY_PATTERN (prompt, response, content, body, text, stdout, stderr,
- *   output, input, reasoning, transcript, command, arguments, query, detail,
- *   summary, message) and replaces the value with `[REDACTED_TEXT length=N]`.
- * - `listEvents({view: 'raw'})` skips redaction for callers with raw privilege.
+ *   through `sanitizeRecord` → `redactStructuredData`, which masks content,
+ *   secrets, and fields without a settled safe reading.
+ * - `listEvents({view: 'raw'})` requires the service's live opt-in and skips
+ *   redaction. The HTTP boundary also requires raw privilege.
  *
  * Config: `telemetry.includeRawPrompts` gates whether view='raw' is permitted
- * at all. Default false (home/production deployments get safe view always,
- * even if a caller requests raw). Opt-in with a startup WARN.
+ * at all. Default false rejects raw reads; safe reads always redact content.
+ * HTTP additionally requires the sensitive scope. Opt-in emits a startup WARN.
  */
 describe('summarizePromptContent helper', () => {
   test('returns PromptSummary by default (redacted)', async () => {
@@ -56,8 +55,8 @@ describe('existing redactor strips prompt/response at safe view', () => {
     };
     const redacted = redactStructuredData(payload) as Record<string, unknown>;
     expect(typeof redacted['prompt']).toBe('string');
-    // The existing redactor replaces content-keyed string values with [REDACTED_TEXT length=N]
-    expect(redacted['prompt']).toMatch(/^\[REDACTED_TEXT length=\d+\]$/);
+    // Unsettled content is masked by the canonical redactor.
+    expect(redacted['prompt']).toMatch(/^\[REDACTED(?:_TEXT)?(?: length=\d+)?\]$/);
     // raw secrets must not leak
     const serialized = JSON.stringify(redacted);
     expect(serialized).not.toContain('sk-very-secret-123');
@@ -117,6 +116,7 @@ describe('end-to-end through TelemetryApiService safe view', () => {
     const serialized = JSON.stringify(safeRecord);
     expect(serialized).not.toContain('sk-very-secret-token');
     expect(serialized).not.toContain('hunter2');
+    telemetry.dispose();
   });
 
   test('TURN_SUBMITTED raw prompt → raw-view listEvents returns unredacted', async () => {
@@ -127,7 +127,7 @@ describe('end-to-end through TelemetryApiService safe view', () => {
 
     const bus = new RuntimeEventBus();
     const runtimeStore = createRuntimeStore();
-    const telemetry = new TelemetryApiService({ runtimeBus: bus, runtimeStore });
+    const telemetry = new TelemetryApiService({ runtimeBus: bus, runtimeStore, includeRawPrompts: () => true });
 
     emitTurnSubmitted(bus, { sessionId: 's2', traceId: 't2', source: 'test' }, {
       turnId: 'turn2',
@@ -140,5 +140,6 @@ describe('end-to-end through TelemetryApiService safe view', () => {
     expect(rawRecord?.type).toBe('TURN_SUBMITTED');
     const payload = rawRecord!.payload as Record<string, unknown>;
     expect(payload['prompt']).toBe('raw visible prompt');
+    telemetry.dispose();
   });
 });

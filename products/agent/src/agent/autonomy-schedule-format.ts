@@ -56,9 +56,9 @@ export function formatAutonomySchedulePreview(preview: AutonomySchedulePreview):
     `  enabled ${preview.payload.enabled === false ? 'no' : 'yes'}`,
     `  delivery ${delivery?.mode ?? 'none'}${deliveryTargetCount > 0 ? ` (${deliveryTargetCount} target${deliveryTargetCount === 1 ? '' : 's'})` : ''}`,
     '  target connected GoodVibes host/main conversation route',
-    '  policy visible scheduled automation; isolated Agent Knowledge only; no default knowledge/non-Agent fallback; approvals required for risky effects',
+    '  policy visible scheduled automation; isolated Agent Knowledge only; no default knowledge/non-Agent fallback; recorded admission required for effects',
     ...scheduleConfirmationRouteLines({
-      model: `schedule action:"create" task:${scheduleRouteArg(preview.task)} successCriteria:${scheduleRouteArg(preview.successCriteria)} ${createScheduleRouteArgs(preview)} confirm:true explicitUserRequest:"..."`,
+      model: `schedule action:"create" task:${scheduleRouteArg(preview.task)} successCriteria:${scheduleRouteArg(preview.successCriteria)} ${createScheduleRouteArgs(preview)}`,
     }),
   ].join('\n');
 }
@@ -84,7 +84,7 @@ export function formatAutonomyScheduleFailure(failure: AutonomyScheduleFailure):
     failure.baseUrl ? `  connected host ${failure.baseUrl}` : null,
     `  route ${AUTONOMY_SCHEDULE_METHOD} ${failure.route}`,
     failure.kind === 'auth_required'
-      ? '  next pair/authenticate with the connected GoodVibes host, then retry with confirm:true.'
+      ? '  next pair/authenticate with the connected GoodVibes host, then retry under current recorded effect admission.'
       : null,
     failure.kind === 'connected_host_unavailable'
       ? '  next make the connected GoodVibes host available outside Agent, then retry.'

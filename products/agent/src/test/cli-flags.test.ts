@@ -1,3 +1,4 @@
+import { withBundleJudgmentFixture } from './helpers/bundle-judgment-fixture.ts';
 import { seedProviderMetadataCacheFixture } from './helpers/provider-metadata-cache-fixture.ts';
 import { describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -405,7 +406,8 @@ describe('parseCliFlags', () => {
     writeFileSync(logPath, 'failed with slack-secret-value and xoxb-secret-value\n', 'utf-8');
     configManager.setDynamic('service.logPath', logPath);
 
-    const exported = await captureGoodVibesCliCommand(['bundle', 'export', 'support-bundle.json'], configManager, root);
+    const exported = await withBundleJudgmentFixture(configManager, async () =>
+      captureGoodVibesCliCommand(['bundle', 'export', 'support-bundle.json'], configManager, root));
     expect(exported.result).toEqual({ handled: true, exitCode: 0 });
     const raw = readFileSync(join(root, 'support-bundle.json'), 'utf-8');
     expect(raw).not.toContain('slack-secret-value');

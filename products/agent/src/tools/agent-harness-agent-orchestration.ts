@@ -1,4 +1,6 @@
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureCatalogData, captureCatalogMethods, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import type { ArtifactDescriptor } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { CommandContext } from '../input/command-registry.ts';
 import type { WorkPlanItem } from '@goodvibes-jev/engine/sdk/platform/workflow';
@@ -96,7 +98,7 @@ function exportAgents(context: CommandContext): readonly AgentRecordView[] | nul
   try {
     return agentManager.exportState().map((record) => record as unknown as AgentRecordView);
   } catch {
-    return [];
+    throw new ToolInputProjectionError('unavailable');
   }
 }
 
@@ -104,7 +106,7 @@ function remoteContracts(context: CommandContext): readonly Record<string, unkno
   try {
     return context.ops.remoteRuntime?.listContracts().map((record) => record as unknown as Record<string, unknown>) ?? [];
   } catch {
-    return [];
+    throw new ToolInputProjectionError('unavailable');
   }
 }
 
@@ -112,7 +114,7 @@ function remotePools(context: CommandContext): readonly Record<string, unknown>[
   try {
     return context.ops.remoteRuntime?.listPools().map((record) => record as unknown as Record<string, unknown>) ?? [];
   } catch {
-    return [];
+    throw new ToolInputProjectionError('unavailable');
   }
 }
 
@@ -120,7 +122,7 @@ function remoteRuntimeArtifacts(context: CommandContext): readonly Record<string
   try {
     return context.ops.remoteRuntime?.listArtifacts().map((record) => record as unknown as Record<string, unknown>) ?? [];
   } catch {
-    return [];
+    throw new ToolInputProjectionError('unavailable');
   }
 }
 
@@ -139,7 +141,7 @@ function remoteReceiptArtifacts(context: CommandContext): readonly Record<string
       .slice(0, 20)
       .map((artifact) => artifact as unknown as Record<string, unknown>);
   } catch {
-    return [];
+    throw new ToolInputProjectionError('unavailable');
   }
 }
 
@@ -192,7 +194,7 @@ function agentSearchText(record: AgentRecordView): string {
     record.provider,
     Array.isArray(record.tools) ? record.tools.join('\n') : '',
     record.context,
-  ].map((value) => typeof value === 'string' ? value : String(value ?? '')).join('\n').toLowerCase();
+  ].map((value) => typeof value === 'string' ? value : String(value ?? '')).join('\n');
 }
 
 function statusCounts(records: readonly AgentRecordView[]): Record<string, number> {
@@ -362,7 +364,7 @@ function workPlanItems(context: CommandContext): readonly WorkPlanItem[] {
   try {
     return context.workspace.workPlanStore?.listItems() ?? [];
   } catch {
-    return [];
+    throw new ToolInputProjectionError('unavailable');
   }
 }
 
@@ -519,6 +521,7 @@ function managedExecutionPlan(
   toolRegistry: ToolRegistry,
   remoteSnapshot: RemoteRuntimeSnapshot,
   includeParameters: boolean,
+  workItems: readonly WorkPlanItem[],
 ): Record<string, unknown> {
   const agentToolAvailable = agentToolRegistered(toolRegistry);
   const remoteToolAvailable = remoteToolRegistered(toolRegistry);
@@ -527,7 +530,7 @@ function managedExecutionPlan(
   const artifactsByRunner = artifactsByRunnerId(artifacts);
   const outcomesByRunner = outcomesByRunnerId(outcomes);
   const workspacesByRunner = workspacesByRunnerId(workspaces);
-  const workPlanByAgent = workPlanItemsByAgentId(workPlanItems(context));
+  const workPlanByAgent = workPlanItemsByAgentId(workItems);
   const items = records.map((record) => {
     const id = agentId(record);
     return managedPlanItem(
@@ -680,8 +683,95 @@ export function agentOrchestrationCatalogStatus(context: CommandContext, toolReg
   };
 }
 
-export function agentOrchestrationSummary(context: CommandContext, toolRegistry: ToolRegistry, args: AgentHarnessAgentOrchestrationArgs): Record<string, unknown> {
-  const records = exportAgents(context);
+function orchestrationSources(context: CommandContext, toolRegistry?: ToolRegistry) {
+  return captureCatalogData({ records: exportAgents(context), remote: remoteRuntimeSnapshot(context), workItems: workPlanItems(context), sessionId: context.session.runtime.sessionId,
+    ...(toolRegistry ? { tools: toolRegistry.getToolDefinitions() } : {}) });
+}
+
+function captureOrchestrationBackend(context: CommandContext, toolRegistry?: ToolRegistry) {
+  const guards = [captureCatalogMethods(context, ['ops', 'platform', 'workspace', 'session', 'clients']),
+    captureCatalogMethods(context.ops, ['agentManager', 'remoteRuntime']), captureCatalogMethods(context.platform, ['artifactStore', 'readModels']),
+    captureCatalogMethods(context.workspace, ['workPlanStore']), captureCatalogMethods(context.session, ['runtime']),
+    captureCatalogMethods(context.session.runtime, ['sessionId'])];
+  if (context.ops.agentManager) guards.push(captureCatalogMethods(context.ops.agentManager, ['exportState']));
+  if (context.ops.remoteRuntime) guards.push(captureCatalogMethods(context.ops.remoteRuntime, ['listContracts', 'listPools', 'listArtifacts']));
+  if (context.platform.artifactStore) guards.push(captureCatalogMethods(context.platform.artifactStore, ['list']));
+  if (context.workspace.workPlanStore) guards.push(captureCatalogMethods(context.workspace.workPlanStore, ['listItems']));
+  const retainPublished = (subject: object, key: string) => {
+    guards.push(captureCatalogMethods(subject, [key]));
+    const revision = JSON.stringify(captureCatalogData(Reflect.get(subject, key)));
+    guards.push(() => { if (JSON.stringify(captureCatalogData(Reflect.get(subject, key))) !== revision) throw new ToolInputProjectionError('stale'); });
+  };
+  const readModels: unknown = Reflect.get(context.platform, 'readModels');
+  if (readModels && typeof readModels === 'object') for (const key of ['remoteRuntime', 'remoteRunners', 'remote', 'worktrees', 'remoteCaptureOutcomes', 'remoteRunnerOutcomes', 'remoteWorkspaces', 'remoteWorkspaceIsolation']) retainPublished(readModels, key);
+  if (context.ops.remoteRuntime) retainPublished(context.ops.remoteRuntime, 'readModels');
+  if (context.clients) {
+    guards.push(captureCatalogMethods(context.clients, ['operator']));
+    const operator = context.clients.operator;
+    if (operator) {
+      guards.push(captureCatalogMethods(operator, ['remoteRuntime']));
+      const remote: unknown = Reflect.get(operator, 'remoteRuntime');
+      if (remote && typeof remote === 'object') { retainPublished(remote, 'captureOutcomes'); retainPublished(remote, 'workspaces'); }
+    }
+  }
+  if (toolRegistry) guards.push(captureCatalogMethods(toolRegistry, ['getToolDefinitions']));
+  return () => { for (const guard of guards) guard(); };
+}
+
+function retainOrchestrationSources(context: CommandContext, sources: ReturnType<typeof orchestrationSources>, options: CatalogRankingOptions, assertBackend: () => void, toolRegistry?: ToolRegistry) {
+  const revision = JSON.stringify(sources);
+  const assertCurrent = () => {
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    assertBackend();
+    if (JSON.stringify(orchestrationSources(context, toolRegistry)) !== revision) throw new ToolInputProjectionError('stale');
+    assertBackend();
+  };
+  options.retainCurrent?.(assertCurrent, 'agent.harness.agent-orchestration.sources');
+  assertCurrent(); return assertCurrent;
+}
+
+function orchestrationEntries(sources: ReturnType<typeof orchestrationSources>) {
+  const contracts = contractByRunnerId(sources.remote.contracts), artifacts = artifactsByRunnerId(sources.remote.artifacts);
+  const outcomes = outcomesByRunnerId(sources.remote.outcomes), workspaces = workspacesByRunnerId(sources.remote.workspaces);
+  const workItems = workPlanItemsByAgentId(sources.workItems);
+  return (sources.records ?? []).map(record => {
+    const id = agentId(record);
+    return { record, underlying: { contract: contracts.get(id), artifacts: artifacts.get(id) ?? [], outcomes: outcomes.get(id) ?? [], workspaces: workspaces.get(id) ?? [], workItems: workItems.get(id) ?? [] },
+      full: describeAgent(record, true, contracts.get(id), artifacts.get(id) ?? [], outcomes.get(id) ?? [], workspaces.get(id) ?? [], workItems.get(id) ?? []),
+      summary: describeAgent(record, false, contracts.get(id), artifacts.get(id) ?? [], outcomes.get(id) ?? [], workspaces.get(id) ?? [], workItems.get(id) ?? []) };
+  });
+}
+
+async function matchingAgents(entries: ReturnType<typeof orchestrationEntries>, query: string, options: CatalogRankingOptions) {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  if (!query) return { matches: entries.map(entry => ({ entry, judgment: undefined })), judgments: [] };
+  const producerClock = (value: unknown) => {
+    if (typeof value !== 'number') return value;
+    const date = new Date(value);
+    if (!Number.isFinite(value) || !Number.isFinite(date.getTime())) throw new ToolInputProjectionError('invalid');
+    return date.toISOString();
+  };
+  return rankHarnessCatalog(entries, query, entry => ({ id: agentId(entry.record), description: agentSearchText(entry.record), evidence: {
+    ...entry,
+    record: { ...entry.record, startedAt: producerClock(entry.record.startedAt), completedAt: producerClock(entry.record.completedAt) },
+    full: { ...entry.full, startedAt: producerClock(entry.full.startedAt), completedAt: producerClock(entry.full.completedAt) },
+    underlying: { ...entry.underlying,
+      contract: entry.underlying.contract ? { ...entry.underlying.contract, createdAt: producerClock(entry.underlying.contract.createdAt) } : undefined,
+      artifacts: entry.underlying.artifacts.map(artifact => ({ ...artifact, createdAt: producerClock(artifact.createdAt), ...(artifact.task && typeof artifact.task === 'object' ? {
+        task: { ...readObject(artifact.task), startedAt: producerClock(readObject(artifact.task).startedAt), completedAt: producerClock(readObject(artifact.task).completedAt) },
+      } : {}) })),
+      workItems: entry.underlying.workItems.map(item => ({ ...item, createdAt: producerClock(item.createdAt), updatedAt: producerClock(item.updatedAt), completedAt: producerClock(item.completedAt) })),
+    },
+  } }),
+    'agent.harness.agent-orchestration', { ...options, requirePreservedSource: true });
+}
+
+export async function agentOrchestrationSummary(context: CommandContext, toolRegistry: ToolRegistry, args: AgentHarnessAgentOrchestrationArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const assertBackend = captureOrchestrationBackend(context, toolRegistry);
+  const sources = orchestrationSources(context, toolRegistry);
+  const assertCurrent = retainOrchestrationSources(context, sources, options, assertBackend, toolRegistry);
+  const records = sources.records;
   const toolRegistered = agentToolRegistered(toolRegistry);
   if (!records) {
     return {
@@ -693,17 +783,11 @@ export function agentOrchestrationSummary(context: CommandContext, toolRegistry:
     };
   }
   const counts = statusCounts(records);
-  const query = readString(args.query).toLowerCase();
+  const query = readString(args.query);
   const includeParameters = args.includeParameters === true;
-  const filtered = records
-    .filter((record) => !query || agentSearchText(record).includes(query))
-    .slice(0, readLimit(args.limit, 100));
-  const remoteSnapshot = remoteRuntimeSnapshot(context);
-  const contracts = contractByRunnerId(remoteSnapshot.contracts);
-  const artifacts = artifactsByRunnerId(remoteSnapshot.artifacts);
-  const outcomes = outcomesByRunnerId(remoteSnapshot.outcomes);
-  const workspaces = workspacesByRunnerId(remoteSnapshot.workspaces);
-  const workPlanByAgent = workPlanItemsByAgentId(workPlanItems(context));
+  const selected = await matchingAgents(orchestrationEntries(sources), query, { ...options, assertCurrent });
+  assertCurrent();
+  const filtered = selected.matches.slice(0, readLimit(args.limit, 100));
   return {
     status: counts.running > 0 || counts.pending > 0 ? 'attention' : toolRegistered ? 'ready' : 'needs-setup',
     summary: {
@@ -718,11 +802,9 @@ export function agentOrchestrationSummary(context: CommandContext, toolRegistry:
       serialDefault: true,
       managedPlanStatus: managedPlanStatus(records, toolRegistered),
     },
-    managedExecutionPlan: managedExecutionPlan(records, context, toolRegistry, remoteSnapshot, includeParameters),
-    agents: filtered.map((record) => {
-      const id = agentId(record);
-      return describeAgent(record, includeParameters, contracts.get(id), artifacts.get(id) ?? [], outcomes.get(id) ?? [], workspaces.get(id) ?? [], workPlanByAgent.get(id) ?? []);
-    }),
+    managedExecutionPlan: managedExecutionPlan(records, context, toolRegistry, sources.remote, includeParameters, sources.workItems),
+    agents: filtered.map(({ entry, judgment }) => ({ ...(includeParameters ? entry.full : entry.summary), ...(judgment ? { judgment } : {}) })),
+    judgments: selected.judgments,
     returned: filtered.length,
     total: records.length,
     decisionCards: agentOrchestrationDecisionCards(toolRegistered),
@@ -741,7 +823,9 @@ export function agentOrchestrationSummary(context: CommandContext, toolRegistry:
   };
 }
 
-export function describeAgentOrchestrationAgent(context: CommandContext, args: AgentHarnessAgentOrchestrationArgs): AgentOrchestrationResolution {
+export async function describeAgentOrchestrationAgent(context: CommandContext, args: AgentHarnessAgentOrchestrationArgs, options: CatalogRankingOptions = {}): Promise<AgentOrchestrationResolution> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const assertBackend = captureOrchestrationBackend(context);
   const lookup = lookupFromArgs(args);
   if (!lookup) {
     return {
@@ -749,39 +833,32 @@ export function describeAgentOrchestrationAgent(context: CommandContext, args: A
       usage: 'agent_orchestration_agent requires agentId, target, or query. Use mode:"agent_orchestration" to inspect visible agents.',
     };
   }
-  const records = exportAgents(context);
+  const sources = orchestrationSources(context);
+  const assertCurrent = retainOrchestrationSources(context, sources, options, assertBackend);
+  const records = sources.records;
   if (!records) {
     return {
       status: 'missing_lookup',
       usage: 'Visible Agent orchestration requires an Agent manager in the runtime.',
     };
   }
-  const exact = records.find((record) => agentId(record) === lookup.input);
-  const remoteSnapshot = remoteRuntimeSnapshot(context);
-  const contracts = contractByRunnerId(remoteSnapshot.contracts);
-  const artifacts = artifactsByRunnerId(remoteSnapshot.artifacts);
-  const outcomes = outcomesByRunnerId(remoteSnapshot.outcomes);
-  const workspaces = workspacesByRunnerId(remoteSnapshot.workspaces);
-  const workPlanByAgent = workPlanItemsByAgentId(workPlanItems(context));
+  const entries = orchestrationEntries(sources);
+  const exact = entries.find(({ record }) => agentId(record) === lookup.input);
   if (exact) {
-    const id = agentId(exact);
-    return { status: 'found', agent: describeAgent(exact, args.includeParameters !== false, contracts.get(id), artifacts.get(id) ?? [], outcomes.get(id) ?? [], workspaces.get(id) ?? [], workPlanByAgent.get(id) ?? []) };
+    return { status: 'found', agent: args.includeParameters !== false ? exact.full : exact.summary };
   }
-  const normalized = lookup.input.toLowerCase();
-  const matches = records.filter((record) => agentSearchText(record).includes(normalized));
-  if (matches.length === 1) {
-    const record = matches[0]!;
-    const id = agentId(record);
-    return { status: 'found', agent: describeAgent(record, args.includeParameters !== false, contracts.get(id), artifacts.get(id) ?? [], outcomes.get(id) ?? [], workspaces.get(id) ?? [], workPlanByAgent.get(id) ?? []) };
+  const selected = lookup.source === 'agentId' ? { matches: [], judgments: [] }
+    : await matchingAgents(entries, lookup.input, { ...options, assertCurrent });
+  assertCurrent();
+  const matches = selected.matches;
+  if (matches.length === 1 && matches[0]!.judgment?.reading.verdict === 'yes' && matches[0]!.judgment.reading.outcome === 'act') {
+    return { status: 'found', agent: { ...(args.includeParameters !== false ? matches[0]!.entry.full : matches[0]!.entry.summary), judgment: matches[0]!.judgment } };
   }
-  if (matches.length > 1) {
+  if (matches.length > 0) {
     return {
       status: 'ambiguous',
       input: lookup.input,
-      candidates: matches.slice(0, 8).map((record) => {
-        const id = agentId(record);
-        return describeAgent(record, false, contracts.get(id), artifacts.get(id) ?? [], outcomes.get(id) ?? [], workspaces.get(id) ?? [], workPlanByAgent.get(id) ?? []);
-      }),
+      candidates: matches.slice(0, 8).map(({ entry, judgment }) => ({ ...entry.summary, judgment })),
     };
   }
   return {

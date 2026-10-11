@@ -40,9 +40,12 @@ import { installOccasions, type OccasionsInstallDeps } from './occasions-composi
 import type { PersonalCaptureHolder } from '../../personal-capture/index.js';
 import { logger } from '../../utils/logger.js';
 import { registerAccountIdentityRedaction, type AccountIdentity } from '../../utils/redaction.js';
+import type { NativeMutationHost } from '../native-mutation.js';
+import { captureMutationDescriptors } from '../../utils/file-mutation.js';
 
 /** What the composition needs from the runtime graph. */
 export interface OwnerProfileCompositionDeps {
+  readonly nativeMutationHost?: NativeMutationHost | undefined;
   readonly postalProviders?: PostalProviders | undefined;
   /** Reads the `profile.*` policy and receives the consumer read fallback. */
   readonly configManager: Pick<ConfigManager, 'get' | 'attachProfileFallback'> & Partial<Pick<ConfigManager, 'attachProfilePostalFallback'>>;
@@ -133,6 +136,10 @@ export function composeOwnerProfile(
     enabled: config.get('profile.enabled'),
     reloadThrottleMs: config.get('profile.reloadThrottleMs'),
   });
+  const ownerCurrent = captureMutationDescriptors(store, ['captureRead', 'set', 'append', 'forget', 'undo']);
+  const configCurrent = captureMutationDescriptors(config, ['get']);
+  const target = Object.freeze({ profilePath: store.path, captureProfileRead: () => store.captureRead(),
+    assertOwnerCurrent: () => { ownerCurrent(); configCurrent(); } });
 
   // All three read live, per call, so each is a real toggle rather than a
   // restart-only one, the same treatment consumerFallback and injectOpenTier
@@ -141,7 +148,7 @@ export function composeOwnerProfile(
     autonomousWrites: () => config.get('profile.autonomousWrites'),
     discloseWrites: () => config.get('profile.discloseWrites'),
     discloseClosedTierReads: () => config.get('profile.discloseClosedTierReads'),
-  });
+  }, { host: deps.nativeMutationHost, target });
   // Beside the profile's own redaction values: egress anonymisation of the
   // account's home directory and login name, matched exactly.
   const accountIdentity = readAccountIdentity();
@@ -164,7 +171,7 @@ export function composeOwnerProfile(
   // way, removes the window instead of making it awaitable.
   const occasions = deps.occasions === undefined
     ? undefined
-    : installOccasions(catalog, store, deps.occasions);
+    : installOccasions(catalog, store, { ...deps.occasions, nativeMutationHost: deps.nativeMutationHost });
 
   // Hand the capture tool its store and service. Both or neither, see the dep's
   // comment: a port that could record a fact but not a trip is exactly the

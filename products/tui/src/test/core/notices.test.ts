@@ -3,7 +3,7 @@
  * rows (ui-live-run-5 item 9), and they keep their full text (ui-live-run-7
  * item 2: "(setFixWorkstreamRunner w" was a notice cut mid-word).
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { ConversationManager } from '../../core/conversation.ts';
 import { noticeParts, publishNotice } from '../../core/notices.ts';
 import { NotificationFeed } from '../../views/notifications-feed.ts';
@@ -13,6 +13,25 @@ import { renderNotificationsModal } from '../../renderer/notifications-modal.ts'
 import { appendConversationMessages, type ConversationRenderContext } from '../../core/conversation-rendering.ts';
 import { createEmptyLine, type Line } from '@goodvibes-jev/engine/sdk/platform/types';
 import { frameFromLayer } from '../helpers/surface-frame.ts';
+
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+
+let previousPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  const severities = new Map([
+    ['[Contract] contract-e9823b8 failed\nThe recorded repair did not pass its checks (owner decision required)', 'critical'],
+    ['[Compaction] Context compacted: 40 messages summarized', 'info'],
+    ["[Contract] contract-4e27484 passed\nall checks passed\nyour repository's commit hooks refused the contract's commit", 'warning'],
+  ]);
+  previousPort = installJudgmentPort(fakePort((_name, question, state) => {
+    if (!state || typeof state !== 'object' || Array.isArray(state) || !('text' in state) || typeof state.text !== 'string') throw new Error('Expected complete notice text');
+    const severity = severities.get(state.text);
+    if (!severity) throw new Error('Unspecified synthetic notice reading');
+    return choiceAnswer(question, severity, 0.99);
+  }).port);
+});
+afterEach(() => { installJudgmentPort(previousPort); });
 
 const FAILED = '[Agents] ✗ engineer b6834750: "Spawn one reviewer agent to review and verify the backoff…" — failed in 51s: planned-fix execution is not wired in this composition (setFixWorkstreamRunner was never called)';
 
@@ -24,18 +43,19 @@ function wired() {
   const feed = new NotificationFeed();
   const toasts = new ToastCenter(() => 0, () => {});
   bridgeNotificationFeedToToasts(feed, toasts);
-  conversation.setNoticeSink((content, { restored }) => publishNotice(feed, content, { restored, now: () => 1_000 }));
+  conversation.setNoticeSink((content, options) => publishNotice(feed, content, { ...options, now: () => 1_000 }));
   return { conversation, feed, toasts };
 }
 
 describe('system notices become toasts and history entries', () => {
-  test('a notice added mid-turn is a toast and a history entry with its full text, and no transcript row', () => {
+  test('a notice added mid-turn is a toast and a history entry with its full text, and no transcript row', async () => {
     const { conversation, feed, toasts } = wired();
     conversation.addUserMessage('review the retry logic');
     conversation.addAssistantMessage('Starting a reviewer.');
-    conversation.addTypedSystemMessage(FAILED, 'system');
+    conversation.addTypedSystemMessage(FAILED, 'system', { type: 'AGENT_FAILED', occurrenceId: 'agent-failed-full-detail' });
     conversation.addTypedSystemMessage('[Contract] contract-e9823b8 failed\nThe recorded repair did not pass its checks (owner decision required)', 'contract');
 
+    await conversation.whenNoticesSettled();
     const entries = feed.list();
     expect(entries).toHaveLength(2);
     // Known agent event lines retain their title; structured contract notices preserve their full title and body.
@@ -54,9 +74,10 @@ describe('system notices become toasts and history entries', () => {
     expect(frame).not.toContain('[Contract]');
   });
 
-  test('a restored session puts its notices back in the history, seen and not toasted', () => {
+  test('a restored session puts its notices back in the history, seen and not toasted', async () => {
     const { conversation, feed, toasts } = wired();
     conversation.fromJSON({ messages: [{ role: 'user', content: 'hi' }, { role: 'system', content: '[Compaction] Context compacted: 40 messages summarized' }] });
+    await conversation.whenNoticesSettled();
     expect(feed.list().map((e) => e.title)).toEqual(['[Compaction] Context compacted: 40 messages summarized']);
     expect(feed.unreadCount()).toBe(0);
     expect(toasts.visible()).toEqual([]);
@@ -65,7 +86,6 @@ describe('system notices become toasts and history entries', () => {
   test('a multi-line notice keeps every line: the first is the title, the rest the body', () => {
     const parts = noticeParts("[Agents] Cohort 'a' complete: 1 completed, 1 failed, 0 cancelled (2 total)\n  ✓ aaaa: completed in 3s (2 tool calls)\n  ✗ bbbb: failed in 5s (1 tool calls) — boom");
     expect(parts.domain).toBe('agents');
-    expect(parts.level).toBe('warning');
     expect(parts.title).toBe("[Agents] Cohort 'a' complete: 1 completed, 1 failed, 0 cancelled (2 total)");
     expect(parts.body).toBe('  ✓ aaaa: completed in 3s (2 tool calls)\n  ✗ bbbb: failed in 5s (1 tool calls) — boom');
   });
@@ -90,18 +110,18 @@ describe('notices show their full text, wrapped', () => {
     }
   });
 
-  test('the history modal shows the whole notice', () => {
+  test('the history modal shows the whole notice', async () => {
     const feed = new NotificationFeed();
-    publishNotice(feed, FAILED, { now: () => Date.now() });
+    await publishNotice(feed, FAILED, { now: () => Date.now(), runtimeEvent: { type: 'AGENT_FAILED', occurrenceId: 'modal-complete-detail' } });
     const layer = renderNotificationsModal({ entries: feed.list(), selectedIndex: 0, unread: 1, isUnread: () => true, status: null, now: Date.now() }, 120, 40);
     expect(flat(text(layer.lines))).toContain('(setFixWorkstreamRunner was never called)');
   });
 });
 
 describe('a multi-line body in the history', () => {
-  test('its lines stay apart in the row, never run together', () => {
+  test('its lines stay apart in the row, never run together', async () => {
     const feed = new NotificationFeed();
-    publishNotice(feed, "[Contract] contract-4e27484 passed\nall checks passed\nyour repository's commit hooks refused the contract's commit", { now: () => Date.now() });
+    await publishNotice(feed, "[Contract] contract-4e27484 passed\nall checks passed\nyour repository's commit hooks refused the contract's commit", { now: () => Date.now() });
     const layer = renderNotificationsModal({ entries: feed.list(), selectedIndex: 0, unread: 1, isUnread: () => true, status: null, now: Date.now() }, 160, 40);
     const shown = flat(text(layer.lines));
     expect(shown).toContain('all checks passed \u00b7 your repository');

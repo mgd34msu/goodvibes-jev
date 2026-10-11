@@ -1,3 +1,4 @@
+import { readAutonomyIntake, type AutonomyIntakeOptions, type AutonomyIntakeSchedule, type AutonomyIntents } from '@goodvibes-jev/engine/sdk/platform/routing';
 import { getOperatorContract } from '@goodvibes-jev/engine/sdk/contracts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
@@ -8,12 +9,7 @@ interface AgentHarnessAutonomyIntakeArgs {
   readonly includeParameters?: unknown;
 }
 
-interface ScheduleDetection {
-  readonly kind?: 'at' | 'every' | 'cron';
-  readonly value?: string;
-  readonly missing: readonly string[];
-  readonly notes: readonly string[];
-}
+type ScheduleDetection = AutonomyIntakeSchedule;
 
 interface AutonomyRouteCandidate {
   readonly id: string;
@@ -138,10 +134,6 @@ const WATCHER_PROVIDER_SOURCE_FIELDS = [
 
 function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function hasAny(text: string, tokens: readonly string[]): boolean {
-  return tokens.some((token) => text.includes(token));
 }
 
 function operatorMethodIds(): ReadonlySet<string> {
@@ -333,90 +325,7 @@ function watcherTriggerOutcome(): TriggerWorkflow['outcome'] {
   };
 }
 
-function normalizeInterval(amount: string, rawUnit: string): string {
-  const unit = rawUnit.toLowerCase();
-  if (unit === 'ms') return `${amount}ms`;
-  if (unit === 's' || unit.startsWith('sec')) return `${amount}s`;
-  if (unit === 'm' || unit === 'min' || unit.startsWith('minute')) return `${amount}m`;
-  if (unit === 'h' || unit === 'hr' || unit.startsWith('hour')) return `${amount}h`;
-  return `${amount}d`;
-}
-
-function detectSchedule(request: string): ScheduleDetection {
-  const lower = request.toLowerCase();
-  const iso = request.match(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})?\b/);
-  if (iso) return { kind: 'at', value: iso[0], missing: [], notes: ['Detected exact ISO timestamp.'] };
-
-  const interval = lower.match(/\bevery\s+(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|seconds?|m|min|minutes?|h|hr|hours?|d|days?)\b/);
-  if (interval?.[1] && interval[2]) {
-    return {
-      kind: 'every',
-      value: normalizeInterval(interval[1], interval[2]),
-      missing: [],
-      notes: ['Detected exact recurring interval.'],
-    };
-  }
-
-  const compactEvery = lower.match(/\bevery\s+(\d+(?:\.\d+)?(?:ms|s|m|h|d))\b/);
-  if (compactEvery?.[1]) {
-    return { kind: 'every', value: compactEvery[1], missing: [], notes: ['Detected exact recurring interval.'] };
-  }
-
-  const cron = request.match(/\bcron[:\s]+(\S+\s+\S+\s+\S+\s+\S+\s+\S+(?:\s+\S+)?)/i);
-  if (cron?.[1]) return { kind: 'cron', value: cron[1].trim(), missing: [], notes: ['Detected cron expression.'] };
-
-  if (hasAny(lower, ['daily', 'every day', 'each day'])) {
-    return {
-      kind: 'cron',
-      missing: ['scheduleValue', 'timezone'],
-      notes: ['Daily intent detected; ask for an exact time/timezone or cron expression before creating anything.'],
-    };
-  }
-  if (hasAny(lower, ['weekly', 'every week', 'each week'])) {
-    return {
-      kind: 'cron',
-      missing: ['scheduleValue', 'timezone'],
-      notes: ['Weekly intent detected; ask for day, time, and timezone or a cron expression before creating anything.'],
-    };
-  }
-  if (hasAny(lower, ['monthly', 'every month', 'each month'])) {
-    return {
-      kind: 'cron',
-      missing: ['scheduleValue', 'timezone'],
-      notes: ['Monthly intent detected; ask for day, time, and timezone or a cron expression before creating anything.'],
-    };
-  }
-  if (hasAny(lower, ['schedule', 'scheduled', 'recurring', 'repeat', 'remind', 'reminder', 'follow up', 'follow-up'])) {
-    return {
-      missing: ['scheduleKind', 'scheduleValue'],
-      notes: ['Scheduling intent detected; ask for exact ISO time, interval, or cron expression.'],
-    };
-  }
-  return { missing: [], notes: [] };
-}
-
-function asksForEventTrigger(lower: string): boolean {
-  return hasAny(lower, [
-    'event trigger',
-    'event-trigger',
-    'incoming webhook',
-    'webhook trigger',
-    'triggered by webhook',
-    'when a webhook',
-    'when webhook',
-    'on webhook',
-    'file watcher',
-    'watcher trigger',
-    'when gmail',
-    'new gmail',
-    'when email arrives',
-    'new email arrives',
-    'github webhook',
-  ]);
-}
-
-function buildTriggerWorkflows(request: string, schedule: ScheduleDetection): readonly TriggerWorkflow[] {
-  const methodIds = operatorMethodIds();
+function buildTriggerWorkflows(request: string, schedule: ScheduleDetection, methodIds: ReadonlySet<string>): readonly TriggerWorkflow[] {
   const schedulesCreatePublished = methodIds.has('automation.schedules.create');
   const schedulesListPublished = methodIds.has('automation.schedules.list');
   const watcherCreatePublished = methodIds.has('watchers.create');
@@ -559,38 +468,17 @@ function autonomyScheduleRoute(request: string, schedule: ScheduleDetection): st
   return `schedule action:"create" task:"${task}" successCriteria:"..." scheduleKind:"${kind}" scheduleValue:"${value}" confirm:true explicitUserRequest:"..."`;
 }
 
-function buildCandidates(request: string): readonly AutonomyRouteCandidate[] {
-  const lower = request.toLowerCase();
-  const schedule = detectSchedule(request);
+function buildCandidates(request: string, schedule: ScheduleDetection, intents: AutonomyIntents): readonly AutonomyRouteCandidate[] {
   const candidates: AutonomyRouteCandidate[] = [];
-  const scheduled = schedule.missing.length > 0 || schedule.kind !== undefined;
-  const asksForReminder = hasAny(lower, ['remind', 'reminder', 'follow up', 'follow-up', 'ping me', 'notify me']);
-  const asksForRoutine = hasAny(lower, ['routine', 'checklist', 'recurring task', 'daily review', 'weekly review']);
-  const asksForResearch = hasAny(lower, ['research', 'investigate', 'market map', 'source', 'report']);
-  const asksForAutonomousSchedule = scheduled && !asksForReminder && hasAny(lower, [
-    'audit',
-    'brief',
-    'briefing',
-    'check',
-    'daily report',
-    'weekly report',
-    'digest',
-    'monitor',
-    'research',
-    'review',
-    'run',
-    'scan',
-    'summarize',
-    'triage',
-  ]);
-  const asksForDelegation = hasAny(lower, ['build', 'fix', 'implement', 'refactor', 'code', 'test']) && hasAny(lower, ['background', 'subagent', 'delegate', 'parallel']);
-  const asksForApproval = hasAny(lower, ['approval', 'approve', 'deny']);
-  const asksForAutomationControl = hasAny(lower, ['cancel', 'retry', 'pause', 'resume', 'run now'])
-    && hasAny(lower, ['automation', 'schedule', 'job', 'run']);
-  const asksForTrigger = asksForEventTrigger(lower);
-  // Email and calendar are built in now, the google tool serves them once an
-  // account is connected. This used to classify them as unsupported outright.
-  const asksForMailOrCalendar = hasAny(lower, ['email', 'calendar', 'gmail', 'imap', 'caldav']);
+  const asksForReminder = intents.reminder;
+  const asksForRoutine = intents.routine;
+  const asksForResearch = intents.research;
+  const asksForAutonomousSchedule = intents.autonomousSchedule;
+  const asksForDelegation = intents.delegation;
+  const asksForApproval = intents.approval;
+  const asksForAutomationControl = intents.automationControl;
+  const asksForTrigger = intents.eventTrigger;
+  const asksForMailOrCalendar = intents.mailOrCalendar;
 
   if (asksForAutomationControl) {
     candidates.push({
@@ -644,7 +532,7 @@ function buildCandidates(request: string): readonly AutonomyRouteCandidate[] {
     });
   }
 
-  if (asksForReminder || (scheduled && !asksForRoutine && !asksForResearch)) {
+  if (asksForReminder) {
     candidates.push({
       id: 'one-reminder-or-simple-recurring-reminder',
       label: 'Create one confirmed reminder schedule',
@@ -692,7 +580,7 @@ function buildCandidates(request: string): readonly AutonomyRouteCandidate[] {
     });
   }
 
-  if (asksForResearch && !scheduled) {
+  if (asksForResearch && !asksForAutonomousSchedule) {
     candidates.push({
       id: 'visible-research-run',
       label: 'Start a visible research run',
@@ -751,11 +639,24 @@ function buildCandidates(request: string): readonly AutonomyRouteCandidate[] {
   return candidates;
 }
 
-export function autonomyIntakeSummary(_context: CommandContext, args: AgentHarnessAutonomyIntakeArgs): Record<string, unknown> {
+export async function autonomyIntakeSummary(_context: CommandContext, args: AgentHarnessAutonomyIntakeArgs, options: AutonomyIntakeOptions = {}): Promise<Record<string, unknown>> {
+  options.signal?.throwIfAborted();
   const request = readString(args.query) || readString(args.target);
-  const watcherContract = watcherEvidenceContract(operatorMethodIds());
+  const publishedMethods = operatorMethodIds();
+  const publication = JSON.stringify([...publishedMethods].sort());
+  const originalCurrent = options.assertCurrent;
+  const assertCurrent = () => { options.signal?.throwIfAborted();
+    const assertion: unknown = originalCurrent?.();
+    if (assertion !== undefined) {
+      try { void Promise.resolve(assertion).catch(() => {}); } catch { /* Refuse asynchronous authority. */ }
+      throw new Error('Autonomy intake authority must be synchronous.');
+    }
+    if (options.assertCurrent !== originalCurrent || JSON.stringify([...operatorMethodIds()].sort()) !== publication) throw new Error('Autonomy operator contract changed.'); };
+  const readingOptions = { ...options, assertCurrent };
+  assertCurrent();
+  const watcherContract = watcherEvidenceContract(publishedMethods);
   if (!request) {
-    const workflows = buildTriggerWorkflows('', { missing: [], notes: [] });
+    const workflows = buildTriggerWorkflows('', { missing: [], notes: [] }, publishedMethods);
     return {
       status: 'missing_request',
       usage: 'Use autonomy action:"intake" with query:"<ongoing work request>". This action is read-only and returns the safest confirmed route.',
@@ -769,12 +670,20 @@ export function autonomyIntakeSummary(_context: CommandContext, args: AgentHarne
       watcherEvidenceContract: compactWatcherEvidenceContract(watcherContract),
     };
   }
-  const schedule = detectSchedule(request);
-  const candidates = buildCandidates(request);
-  const preferred = candidates[0]!;
-  const workflows = buildTriggerWorkflows(request, schedule);
+  const reading = await readAutonomyIntake(request, readingOptions);
+  assertCurrent();
+  if (reading.status === 'held') return {
+    status: 'held', reason: reading.reason, unresolvedReadings: reading.unsettled, judgment: reading.judgment,
+    candidates: [], queueRoute: 'autonomy action:"queue"',
+    policy: 'Autonomy intake is read-only. Unsettled or unavailable readings hold route publication.',
+  };
+  const schedule = reading.schedule;
+  const candidates = buildCandidates(request, schedule, reading.intents);
+  const preferred = candidates[0];
+  const workflows = buildTriggerWorkflows(request, schedule, publishedMethods);
   return {
     status: 'ready',
+    judgment: reading.judgment,
     request: previewHarnessText(request, args.includeParameters === true ? 220 : 120),
     preferred,
     candidates: candidates.slice(0, args.includeParameters === true ? 8 : 4),

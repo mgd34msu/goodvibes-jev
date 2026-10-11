@@ -8,6 +8,9 @@ import { KnowledgeService } from '../sdk/src/platform/knowledge/service.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { trackDisposables } from './_helpers/disposables.ts';
 import { MemoryEmbeddingProviderRegistry, MemoryRegistry, MemoryStore } from '../sdk/src/platform/state/index.js';
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+
+const scopeReadings = useKnowledgeAnswerReadings();
 
 /**
  * A KnowledgeService kicks off initializeSchedules() fire-and-forget in its
@@ -28,6 +31,11 @@ afterEach(() => {
 
 describe('knowledge memory sync', () => {
   test('keeps reviewed project memory visible in default regular knowledge', async () => {
+    scopeReadings.set({ scope: [
+      ['node', 'Use sqlite-vec for semantic recall', 0.99],
+      ['node', 'sqlite-vec', 0.99],
+      ['node', 'semantic-recall', 0.99],
+    ] });
     const root = mkdtempSync(join(tmpdir(), 'goodvibes-knowledge-memory-sync-'));
     tmpRoots.push(root);
     const configManager = new ConfigManager({ configDir: join(root, 'config') });
@@ -57,13 +65,13 @@ describe('knowledge memory sync', () => {
     await service.reindex();
 
     expect(store.status().nodeCount).toBe(3);
-    expect(service.listNodes(100).map((node) => node.title)).toContain('Use sqlite-vec for semantic recall');
-    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.title)).toEqual(
+    expect((await service.listNodes(100)).map((node) => node.title)).toContain('Use sqlite-vec for semantic recall');
+    expect((await service.queryNodes({ limit: 100 })).items.map((node) => node.title)).toEqual(
       expect.arrayContaining(['Use sqlite-vec for semantic recall', 'sqlite-vec', 'semantic-recall']),
     );
-    const memoryNode = service.queryNodes({ query: 'sqlite-vec', limit: 10 }).items.find((node) => node.kind === 'memory');
+    const memoryNode = (await service.queryNodes({ query: 'sqlite-vec', limit: 10 })).items.find((node) => node.kind === 'memory');
     expect(memoryNode?.metadata.knowledgeSpaceId).toBe('default');
     expect(memoryNode?.metadata.namespace).toBe('default');
-    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.length).toBeGreaterThanOrEqual(3);
+    expect((await service.queryNodes({ limit: 100, includeAllSpaces: true })).items.length).toBeGreaterThanOrEqual(3);
   });
 });

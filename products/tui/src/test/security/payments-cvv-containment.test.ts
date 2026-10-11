@@ -613,7 +613,7 @@ describe('payments CVV containment', () => {
 
       const collected = await collectSensitiveConfigValues(rawConfig);
       expect(collected).toContain(FAKE_CVV);
-      const serializedBundle = redactSerializedSecrets(JSON.stringify(rawConfig), collected);
+      const serializedBundle = await redactSerializedSecrets(JSON.stringify(rawConfig), collected);
       expect(serializedBundle).not.toContain(FAKE_CVV);
       expect(serializedBundle).not.toContain(FAKE_CARD_NUMBER);
     });

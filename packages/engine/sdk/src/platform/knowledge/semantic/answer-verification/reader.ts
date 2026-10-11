@@ -1,5 +1,5 @@
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { toJson, type JudgmentPort, type YesNoReading, type JsonValue } from '@goodvibes-jev/judgment';
+import { checkAnswers, toJson, type JudgmentPort, type YesNoReading, type JsonValue } from '@goodvibes-jev/judgment';
 import { assertJudgmentInput } from '../../../gate/judgment-input.js';
 import { freezeSupport } from '../verification/projection.js';
 import { answerCandidateQuality, answerEvidenceSufficiency, answerCandidatePreference } from './batteries.js';
@@ -55,22 +55,8 @@ function validatedPort(port: JudgmentPort): JudgmentPort {
   return { ...port, model: port.model, async ask(request) {
     const result = await port.ask(request);
     if (!result?.answers || (result.decisionId !== undefined && (typeof result.decisionId !== 'string' || !result.decisionId.trim()))) throw new Held('malformed');
-    for (const [name, question] of Object.entries(request.questions)) {
-      const value: unknown = result.answers[name];
-      if (!value || typeof value !== 'object' || !('type' in value) || value.type !== question.type) throw new Held('malformed');
-      if (question.type === 'noul') {
-        if (!('noul' in value) || typeof value.noul !== 'number' || !Number.isFinite(value.noul) || value.noul < 0 || value.noul > 1) throw new Held('malformed');
-      } else if (question.type === 'choice') {
-        if (!('choice' in value) || typeof value.choice !== 'string' || !Object.hasOwn(question.criteria, value.choice)
-          || !('confidence' in value) || typeof value.confidence !== 'number' || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1
-          || !('probabilities' in value) || !value.probabilities || typeof value.probabilities !== 'object') throw new Held('malformed');
-        const probabilities = value.probabilities as Record<string, unknown>;
-        const scores = Object.keys(question.criteria).map((key) => probabilities[key]);
-        if (scores.some((score) => typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 1)) throw new Held('malformed');
-        if (Math.abs((scores as number[]).reduce((sum, score) => sum + score, 0) - 1) > 0.00001
-          || Math.abs(Number(probabilities[value.choice]) - value.confidence) > 0.00001) throw new Held('malformed');
-      }
-    }
+    try { checkAnswers(request.questions, result.answers); }
+    catch { throw new Held('malformed'); }
     return result;
   } };
 }

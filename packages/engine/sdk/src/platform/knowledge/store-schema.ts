@@ -1,5 +1,6 @@
 import { knowledgeClockNumber, knowledgeNodeMetadataView, knowledgeSourceMetadataView, retainKnowledgeRepresentation } from './store-record-representation.js';
 import { createNativeCiContinuationTable } from './store-native-ci-continuation.js';
+import { createKnowledgeEdgeChanges } from './store-edge-generations.js';
 import { createNativeConversationCaptureTable } from './store-native-intake.js';
 import { createNativeWorkSettlementTable, createNativeWorkExecutionTable, createNativeWorkExecutionIntentTable } from './store-native-work-execution.js';
 import { createWorkLedgerTable } from './store-work-ledger.js';
@@ -36,6 +37,7 @@ import type {
 } from './types.js';
 
 export const DEFAULT_KNOWLEDGE_DB_FILE = 'knowledge-wiki.sqlite';
+export const KNOWLEDGE_SCHEMA_VERSION = 10;
 
 export function resolveKnowledgeDbPathFromControlPlaneDir(
   controlPlaneDir: string,
@@ -141,6 +143,7 @@ export function createSchema(db: { run(sql: string): void }): void {
     )
   `);
   db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_edges_unique ON knowledge_edges(from_kind, from_id, to_kind, to_id, relation)`);
+  createKnowledgeEdgeChanges(db);
   db.run(`
     CREATE TABLE IF NOT EXISTS knowledge_issues (
       id TEXT PRIMARY KEY,

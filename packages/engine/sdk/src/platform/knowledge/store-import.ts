@@ -14,7 +14,7 @@ import type { KnowledgeEdgeRecord, KnowledgeEdgeUpsertInput, KnowledgeExtraction
   KnowledgeIssueRecord, KnowledgeIssueUpsertInput, KnowledgeNodeRecord, KnowledgeNodeRevisionRecord, KnowledgeNodeUpsertInput,
   KnowledgeSourceRecord, KnowledgeSourceUpsertInput } from './types.js';
 
-/** Exact committed identities; immutable arrays contain the rows published before save yields. */
+/** Exact physically published identities; immutable arrays retain the committed rows. */
 export interface KnowledgeImportReceipt {
   readonly nodes: readonly KnowledgeNodeRecord[];
   readonly sources: readonly KnowledgeSourceRecord[];
@@ -121,41 +121,34 @@ export async function applyKnowledgeImport(store: KnowledgeStore, view: Knowledg
   const nodes = drafts.map((_, index) => preparedNodeWrite(store, prepared, index, scope));
   const revisions = new Map<string, KnowledgeNodeRevisionRecord[]>();
   for (const { record } of nodes) revisions.set(record.id, [...(view.nodeRevisions.get(record.id) ?? [])]);
-  // Last authority/read-set check. No await or user callback occurs through cache publication.
-  assertPreparedNodeWrites(store, prepared, scope);
-  view.sqlite.run('SAVEPOINT knowledge_import');
-  try {
-    for (const record of sourceWrites) writeKnowledgeSourceRow(view.sqlite, record);
-    for (const record of extractionWrites) writeKnowledgeExtractionRow(view.sqlite, record);
+  await view.sqlite.publishPrepared((sqlite) => {
+    for (const record of sourceWrites) writeKnowledgeSourceRow(sqlite, record);
+    for (const record of extractionWrites) writeKnowledgeExtractionRow(sqlite, record);
     for (const { record, existing, now } of nodes) {
       if (record === existing) continue;
-      writeKnowledgeNodeRow(view.sqlite, record);
-      recordKnowledgeNodeRevisions(view.sqlite, revisions, record, existing, now);
+      writeKnowledgeNodeRow(sqlite, record);
+      recordKnowledgeNodeRevisions(sqlite, revisions, record, existing, now);
     }
-    for (const record of edgeWrites) writeKnowledgeEdgeRow(view.sqlite, record);
-    for (const record of issueWrites) writeKnowledgeIssueRow(view.sqlite, record);
-    view.sqlite.run('RELEASE SAVEPOINT knowledge_import');
-  } catch (error) {
-    view.sqlite.run('ROLLBACK TO SAVEPOINT knowledge_import');
-    view.sqlite.run('RELEASE SAVEPOINT knowledge_import');
-    throw error;
-  }
-  for (const record of sourceWrites) view.sources.set(record.id, record);
-  for (const id of removedExtractions) view.extractions.delete(id);
-  for (const record of extractionWrites) {
-    // A later import row may have replaced this extraction's source-unique identity.
-    if (extractions.get(record.id) === record) view.extractions.set(record.id, record);
-  }
-  for (const { record } of nodes) view.nodes.set(record.id, record);
-  for (const [id, records] of revisions) view.nodeRevisions.set(id, records);
-  for (const record of edgeWrites) view.edges.set(record.id, record);
-  for (const record of issueWrites) view.issues.set(record.id, record);
-  nodes.forEach(({ existing, record, observationEvidence, preserveObservation }, index) => {
-    retainKnowledgeNodeObservation(preserveObservation ? existing : undefined, record, observationEvidence); markPreparedNodeWritten(prepared, index);
+    for (const record of edgeWrites) writeKnowledgeEdgeRow(sqlite, record);
+    for (const record of issueWrites) writeKnowledgeIssueRow(sqlite, record);
+  }, () => assertPreparedNodeWrites(store, prepared, scope), () => {
+    for (const record of sourceWrites) view.sources.set(record.id, record);
+    for (const id of removedExtractions) view.extractions.delete(id);
+    for (const record of extractionWrites) {
+      // A later import row may have replaced this extraction's source-unique identity.
+      if (extractions.get(record.id) === record) view.extractions.set(record.id, record);
+    }
+    for (const { record } of nodes) view.nodes.set(record.id, record);
+    for (const [id, records] of revisions) view.nodeRevisions.set(id, records);
+    for (const record of edgeWrites) view.edges.set(record.id, record);
+    for (const record of issueWrites) view.issues.set(record.id, record);
+    nodes.forEach(({ existing, record, observationEvidence, preserveObservation }, index) => {
+      retainKnowledgeNodeObservation(preserveObservation ? existing : undefined, record, observationEvidence); markPreparedNodeWritten(prepared, index);
+    });
   });
   const receipt = Object.freeze({ nodes: Object.freeze(nodes.map(({ record }) => record)), sources: Object.freeze([...sourceWrites]), edges: Object.freeze([...edgeWrites]) });
-  // The source/graph and caches are now committed; report before persistence yields.
+  // A visible but indeterminate publication retains its internal mirror and
+  // artifact references; only a durable acknowledgment reaches this callback.
   onCommitted?.();
-  await view.sqlite.save();
   return receipt;
 }

@@ -42,6 +42,7 @@
  */
 
 import { readEmailInboxBatch, type EmailInboxBatchInput, type EmailInboxBatchRead } from './email-inbox-batch.js';
+import { assertDeliveryCurrent, type DeliveryLifetime } from '../utils/delivery-lifetime.js';
 import { readEmailInboxPage, type EmailInboxPageInput, type EmailInboxPageRead } from './email-inbox-page.js';
 import { listEmailInbox } from './email-inbox-list.js';
 import { readEmailMessage } from './email-message-reader.js';
@@ -217,7 +218,7 @@ export interface EmailConnectionTestResult {
   readonly error?: string;
 }
 
-export interface SendMailOptions {
+export interface SendMailOptions extends DeliveryLifetime {
   readonly to: string;
   readonly subject: string;
   readonly body: string;
@@ -577,7 +578,7 @@ export class EmailService {
   async readMessageResult(uid: number): Promise<EmailMessageRead> {
     return readEmailMessage(
       this.deps, this.getValidatedConfig(), uid, this.#replySubjectSources,
-      (messages) => this.recordIngest(messages),
+      (messages, current) => this.recordIngest(messages, current),
     );
   }
 
@@ -732,12 +733,18 @@ export class EmailService {
     if (!opts.confirm) {
       throw new Error('sendMail requires confirm: true at the call site');
     }
+    assertDeliveryCurrent(opts);
 
     const config = this.getValidatedConfig();
     const password = await resolveEmailPassword(smtpPasswordRefFor(config), this.deps.secretsManager);
+    assertDeliveryCurrent(opts);
+    validateSmtpAddress(config.fromAddress, 'from');
+    validateSmtpAddress(opts.to, 'to');
+    validateSmtpSubject(opts.subject);
 
     const socketFactory = this.deps.smtpSocketFactory ?? this.defaultSmtpSocketFactory(config.smtpPort, config.smtpSecurity);
     const socket = await socketFactory(config.smtpHost, config.smtpPort);
+    try { assertDeliveryCurrent(opts); } catch (error) { socket.destroy(); throw error; }
 
     const client = new SmtpClient({
       socket,
@@ -746,17 +753,14 @@ export class EmailService {
       password,
     });
 
-    // Validate at the service boundary so injection is blocked regardless of
-    // which client implementation is used.
-    validateSmtpAddress(config.fromAddress, 'from');
-    validateSmtpAddress(opts.to, 'to');
-    validateSmtpSubject(opts.subject);
-
     return client.sendMail({
       from: config.fromAddress,
       to: opts.to,
       subject: opts.subject,
       body: opts.body,
+      signal: opts.signal,
+      assertCurrent: opts.assertCurrent,
+      withPublication: opts.withPublication,
     });
   }
 

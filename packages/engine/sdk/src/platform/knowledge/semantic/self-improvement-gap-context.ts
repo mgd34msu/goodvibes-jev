@@ -1,3 +1,5 @@
+import type { KnowledgeScopeSelectionOptions } from '../scope-selection.js';
+import { KnowledgeScopeSelectionHeldError } from '../scope-selection.js';
 import { createKnowledgeFactQualityReader } from './fact-quality.js';
 import { createSemanticWriteGuard } from './primary-source-plan.js';
 import type { KnowledgeObjectProfilePolicy } from '../extensions.js';
@@ -44,19 +46,22 @@ export interface GapClassification {
   readonly markAttempt?: boolean | undefined;
 }
 
-export function collectCandidateGaps(
+export async function collectCandidateGaps(
   store: KnowledgeStore,
   spaceId: string,
   sourceIdFilter: ReadonlySet<string> | null,
   gapIdFilter: ReadonlySet<string> | null,
-): KnowledgeNodeRecord[] {
-  const graph = buildKnowledgeSemanticGraphIndex(store, spaceId);
+  options: KnowledgeScopeSelectionOptions = {},
+): Promise<{ readonly gaps: readonly KnowledgeNodeRecord[]; readonly assertCurrent: () => void }> {
+  const graph = await buildKnowledgeSemanticGraphIndex(store, spaceId, options);
   const edges = graph.edges;
-  return [...graph.nodesById.values()]
+  const gaps = [...graph.nodesById.values()]
     .filter((node) => node.kind === 'knowledge_gap' && node.status === 'active')
     .filter((node) => !gapIdFilter || gapIdFilter.has(node.id))
     .filter((node) => !sourceIdFilter || gapMatchesSourceFilter(node, sourceIdFilter, edges))
     .sort((left, right) => right.confidence - left.confidence || left.id.localeCompare(right.id));
+  graph.assertCurrent();
+  return { gaps, assertCurrent: graph.assertCurrent };
 }
 
 export async function buildGapContext(
@@ -66,7 +71,8 @@ export async function buildGapContext(
   objectProfiles: readonly KnowledgeObjectProfilePolicy[],
   options: { readonly signal?: AbortSignal | undefined; readonly shouldStop?: (() => boolean) | undefined } = {},
 ): Promise<GapContext> {
-  const graph = buildKnowledgeSemanticGraphIndex(store, spaceId);
+  const graph = await buildKnowledgeSemanticGraphIndex(store, spaceId, options);
+  if (!graph.nodesById.has(gap.id)) throw new KnowledgeScopeSelectionHeldError('stale');
   const edges = graph.edges;
   const sourcesById = graph.sourcesById;
   const nodesById = graph.nodesById;
@@ -92,7 +98,7 @@ export async function buildGapContext(
         .filter((node): node is KnowledgeNodeRecord => Boolean(node)),
     ],
   });
-  const assertCurrent = () => { guard.assertCurrent(); selected.assertCurrent(); };
+  const assertCurrent = () => { store.assertRecordSnapshotFrame(() => { graph.assertCurrent(); guard.assertCurrent(); selected.assertCurrent(); }); };
   assertCurrent();
   const linkedObjects = selected.nodes;
   const sources = uniqueById([
@@ -259,7 +265,7 @@ async function repairSubjectsForGap(
   objectProfiles: readonly KnowledgeObjectProfilePolicy[],
   shouldStop: () => boolean, signal?: AbortSignal, evidenceSourceIds: readonly string[] = [],
 ) {
-  const graph = buildKnowledgeSemanticGraphIndex(store, spaceId);
+  const graph = await buildKnowledgeSemanticGraphIndex(store, spaceId, { signal, shouldStop });
   const edges = graph.edges;
   const nodesById = graph.nodesById;
   const sourceIds = uniqueStrings([
@@ -282,7 +288,7 @@ async function repairSubjectsForGap(
       ...sourceIds.flatMap((sourceId) => linkedObjectsForSource(sourceId, edges, nodesById)),
     ],
   });
-  const assertCurrent = () => { guard.assertCurrent(); selected.assertCurrent(); };
+  const assertCurrent = () => { store.assertRecordSnapshotFrame(() => { graph.assertCurrent(); guard.assertCurrent(); selected.assertCurrent(); }); };
   assertCurrent(); return { nodes: selected.nodes, assertCurrent };
 }
 

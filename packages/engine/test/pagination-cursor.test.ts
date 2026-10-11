@@ -559,17 +559,20 @@ function makeKnowledgeItemsWithTs(
   }));
 }
 
+const knowledgePrincipal = { principalId: 'pagination-fixture', principalKind: 'operator', admin: true, scopes: ['*'] };
+
 function makeKnowledgeContext(
   sources: unknown[] = [],
   nodes: unknown[] = [],
 ): DaemonKnowledgeRouteContext {
   return {
+    resolveAuthenticatedPrincipal: () => knowledgePrincipal,
     knowledgeService: {
-      querySources: ({ limit }: { limit?: number }) => ({
+      querySources: async ({ limit }: { limit?: number }) => ({
         total: sources.length,
         items: sources.slice(0, limit ?? sources.length),
       }),
-      queryNodes: ({ limit }: { limit?: number }) => ({
+      queryNodes: async ({ limit }: { limit?: number }) => ({
         total: nodes.length,
         items: nodes.slice(0, limit ?? nodes.length),
       }),
@@ -616,7 +619,7 @@ describe('knowledge sources: getKnowledgeSources', () => {
     const sources = makeKnowledgeItems(3);
     const handlers = createDaemonKnowledgeRouteHandlers(makeKnowledgeContext(sources));
     const url = new URL('http://localhost/api/knowledge/sources');
-    const response = await handlers.getKnowledgeSources(url);
+    const response = await handlers.getKnowledgeSources(url, new Request(url));
     const body = await response.json() as Record<string, unknown>;
     expect(Array.isArray(body.sources)).toBe(true);
     expect(body.items).toBeUndefined();
@@ -626,7 +629,7 @@ describe('knowledge sources: getKnowledgeSources', () => {
     const sources = makeKnowledgeItems(5);
     const handlers = createDaemonKnowledgeRouteHandlers(makeKnowledgeContext(sources));
     const url = new URL('http://localhost/api/knowledge/sources?limit=2');
-    const response = await handlers.getKnowledgeSources(url);
+    const response = await handlers.getKnowledgeSources(url, new Request(url));
     const body = await response.json() as { items: unknown[]; hasMore: boolean; nextCursor?: string };
     expect(body.items).toHaveLength(2);
     expect(body.hasMore).toBe(true);
@@ -637,7 +640,7 @@ describe('knowledge sources: getKnowledgeSources', () => {
     const sources = makeKnowledgeItems(3);
     const handlers = createDaemonKnowledgeRouteHandlers(makeKnowledgeContext(sources));
     const url = new URL('http://localhost/api/knowledge/sources?limit=2&cursor=bad');
-    const response = await handlers.getKnowledgeSources(url);
+    const response = await handlers.getKnowledgeSources(url, new Request(url));
     expect(response.status).toBe(400);
   });
 
@@ -649,7 +652,7 @@ describe('knowledge sources: getKnowledgeSources', () => {
     let iterations = 0;
     do {
       const urlStr = `http://localhost/api/knowledge/sources?limit=3${nextCursor ? `&cursor=${nextCursor}` : ''}`;
-      const response = await handlers.getKnowledgeSources(new URL(urlStr));
+      const response = await handlers.getKnowledgeSources(new URL(urlStr), new Request(new URL(urlStr)));
       const body = await response.json() as { items: Array<{ id: string }>; hasMore: boolean; nextCursor?: string };
       for (const item of body.items) seen.push(item.id);
       nextCursor = body.nextCursor;
@@ -671,7 +674,7 @@ describe('knowledge sources: mid-walk deletion recovery', () => {
     const handlers = createDaemonKnowledgeRouteHandlers(makeKnowledgeContext(items));
 
     // Walk page 1
-    const resp1 = await handlers.getKnowledgeSources(new URL('http://localhost/api/knowledge/sources?limit=3'));
+    const resp1 = await handlers.getKnowledgeSources(new URL('http://localhost/api/knowledge/sources?limit=3'), new Request(new URL('http://localhost/api/knowledge/sources?limit=3')));
     const page1 = await resp1.json() as { items: Array<{ id: string }>; hasMore: boolean; nextCursor?: string };
     expect(page1.items.map((x) => x.id)).toEqual(['k1', 'k2', 'k3']);
     expect(page1.nextCursor).toBeDefined();
@@ -684,7 +687,7 @@ describe('knowledge sources: mid-walk deletion recovery', () => {
     // (with old createdAt extractor: createdAt order is ascending so cursor's recorded value
     //  would be k3.createdAt=300 and scan would land at wrong position, this assertion catches it)
     const urlStr = `http://localhost/api/knowledge/sources?limit=3&cursor=${page1.nextCursor!}`;
-    const resp2 = await handlersAfterDelete.getKnowledgeSources(new URL(urlStr));
+    const resp2 = await handlersAfterDelete.getKnowledgeSources(new URL(urlStr), new Request(new URL(urlStr)));
     const page2 = await resp2.json() as { items: Array<{ id: string }>; hasMore: boolean; nextCursor?: string };
     expect(page2.items.map((x) => x.id)).toEqual(['k4', 'k5', 'k6']);
     expect(page2.hasMore).toBe(true); // k7, k8 remain
@@ -703,7 +706,7 @@ describe('knowledge sources: mid-walk deletion recovery', () => {
     const items = makeKnowledgeItemsWithTs(8);
     const handlers = createDaemonKnowledgeRouteHandlers(makeKnowledgeContext(items));
 
-    const resp1 = await handlers.getKnowledgeSources(new URL('http://localhost/api/knowledge/sources?limit=3'));
+    const resp1 = await handlers.getKnowledgeSources(new URL('http://localhost/api/knowledge/sources?limit=3'), new Request(new URL('http://localhost/api/knowledge/sources?limit=3')));
     const page1 = await resp1.json() as { items: Array<{ id: string }>; hasMore: boolean; nextCursor?: string };
     expect(page1.items.map((x) => x.id)).toEqual(['k1', 'k2', 'k3']);
     expect(page1.nextCursor).toBeDefined();
@@ -715,7 +718,7 @@ describe('knowledge sources: mid-walk deletion recovery', () => {
     const handlersAfterUpdate = createDaemonKnowledgeRouteHandlers(makeKnowledgeContext(itemsAfterUpdate));
 
     const urlStr = `http://localhost/api/knowledge/sources?limit=3&cursor=${page1.nextCursor!}`;
-    const resp2 = await handlersAfterUpdate.getKnowledgeSources(new URL(urlStr));
+    const resp2 = await handlersAfterUpdate.getKnowledgeSources(new URL(urlStr), new Request(new URL(urlStr)));
     const page2 = await resp2.json() as { items: Array<{ id: string }>; hasMore: boolean; nextCursor?: string };
     // Page 2 should not crash and must not duplicate k1/k2/k3 from page 1
     expect(resp2.status).toBe(200);
@@ -733,7 +736,7 @@ describe('knowledge nodes: getKnowledgeNodes', () => {
     const nodes = makeKnowledgeItems(3);
     const handlers = createDaemonKnowledgeRouteHandlers(makeKnowledgeContext([], nodes));
     const url = new URL('http://localhost/api/knowledge/nodes');
-    const response = await handlers.getKnowledgeNodes(url);
+    const response = await handlers.getKnowledgeNodes(url, new Request(url));
     const body = await response.json() as Record<string, unknown>;
     expect(Array.isArray(body.nodes)).toBe(true);
     expect(body.items).toBeUndefined();
@@ -743,7 +746,7 @@ describe('knowledge nodes: getKnowledgeNodes', () => {
     const nodes = makeKnowledgeItems(5);
     const handlers = createDaemonKnowledgeRouteHandlers(makeKnowledgeContext([], nodes));
     const url = new URL('http://localhost/api/knowledge/nodes?limit=2');
-    const response = await handlers.getKnowledgeNodes(url);
+    const response = await handlers.getKnowledgeNodes(url, new Request(url));
     const body = await response.json() as { items: unknown[]; hasMore: boolean; nextCursor?: string };
     expect(body.items).toHaveLength(2);
     expect(body.hasMore).toBe(true);
@@ -754,7 +757,7 @@ describe('knowledge nodes: getKnowledgeNodes', () => {
     const nodes = makeKnowledgeItems(3);
     const handlers = createDaemonKnowledgeRouteHandlers(makeKnowledgeContext([], nodes));
     const url = new URL('http://localhost/api/knowledge/nodes?limit=2&cursor=bad');
-    const response = await handlers.getKnowledgeNodes(url);
+    const response = await handlers.getKnowledgeNodes(url, new Request(url));
     expect(response.status).toBe(400);
   });
 
@@ -766,7 +769,7 @@ describe('knowledge nodes: getKnowledgeNodes', () => {
     let iterations = 0;
     do {
       const urlStr = `http://localhost/api/knowledge/nodes?limit=3${nextCursor ? `&cursor=${nextCursor}` : ''}`;
-      const response = await handlers.getKnowledgeNodes(new URL(urlStr));
+      const response = await handlers.getKnowledgeNodes(new URL(urlStr), new Request(new URL(urlStr)));
       const body = await response.json() as { items: Array<{ id: string }>; hasMore: boolean; nextCursor?: string };
       for (const item of body.items) seen.push(item.id);
       nextCursor = body.nextCursor;
@@ -787,7 +790,7 @@ describe('knowledge nodes: mid-walk deletion recovery', () => {
     const items = makeKnowledgeItemsWithTs(8);
     const handlers = createDaemonKnowledgeRouteHandlers(makeKnowledgeContext([], items));
 
-    const resp1 = await handlers.getKnowledgeNodes(new URL('http://localhost/api/knowledge/nodes?limit=3'));
+    const resp1 = await handlers.getKnowledgeNodes(new URL('http://localhost/api/knowledge/nodes?limit=3'), new Request(new URL('http://localhost/api/knowledge/nodes?limit=3')));
     const page1 = await resp1.json() as { items: Array<{ id: string }>; hasMore: boolean; nextCursor?: string };
     expect(page1.items.map((x) => x.id)).toEqual(['k1', 'k2', 'k3']);
     expect(page1.nextCursor).toBeDefined();
@@ -797,7 +800,7 @@ describe('knowledge nodes: mid-walk deletion recovery', () => {
     const handlersAfterDelete = createDaemonKnowledgeRouteHandlers(makeKnowledgeContext([], itemsAfterDelete));
 
     const urlStr = `http://localhost/api/knowledge/nodes?limit=3&cursor=${page1.nextCursor!}`;
-    const resp2 = await handlersAfterDelete.getKnowledgeNodes(new URL(urlStr));
+    const resp2 = await handlersAfterDelete.getKnowledgeNodes(new URL(urlStr), new Request(new URL(urlStr)));
     const page2 = await resp2.json() as { items: Array<{ id: string }>; hasMore: boolean; nextCursor?: string };
     // Decisive: k4, k5, k6, NOT k1/k2 (restart-from-zero) or wrong items (createdAt misfired)
     expect(page2.items.map((x) => x.id)).toEqual(['k4', 'k5', 'k6']);
@@ -813,7 +816,7 @@ describe('knowledge nodes: mid-walk deletion recovery', () => {
     const items = makeKnowledgeItemsWithTs(8);
     const handlers = createDaemonKnowledgeRouteHandlers(makeKnowledgeContext([], items));
 
-    const resp1 = await handlers.getKnowledgeNodes(new URL('http://localhost/api/knowledge/nodes?limit=3'));
+    const resp1 = await handlers.getKnowledgeNodes(new URL('http://localhost/api/knowledge/nodes?limit=3'), new Request(new URL('http://localhost/api/knowledge/nodes?limit=3')));
     const page1 = await resp1.json() as { items: Array<{ id: string }>; hasMore: boolean; nextCursor?: string };
     expect(page1.items.map((x) => x.id)).toEqual(['k1', 'k2', 'k3']);
     expect(page1.nextCursor).toBeDefined();
@@ -825,7 +828,7 @@ describe('knowledge nodes: mid-walk deletion recovery', () => {
     const handlersAfterUpdate = createDaemonKnowledgeRouteHandlers(makeKnowledgeContext([], itemsAfterUpdate));
 
     const urlStr = `http://localhost/api/knowledge/nodes?limit=3&cursor=${page1.nextCursor!}`;
-    const resp2 = await handlersAfterUpdate.getKnowledgeNodes(new URL(urlStr));
+    const resp2 = await handlersAfterUpdate.getKnowledgeNodes(new URL(urlStr), new Request(new URL(urlStr)));
     const page2 = await resp2.json() as { items: Array<{ id: string }>; hasMore: boolean; nextCursor?: string };
     expect(resp2.status).toBe(200);
     const page2Ids = page2.items.map((x) => x.id);

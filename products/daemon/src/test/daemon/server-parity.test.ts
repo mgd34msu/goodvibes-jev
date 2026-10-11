@@ -7,6 +7,8 @@
  * Historical cases 34/55 are adapted to current exact-owner transport semantics;
  * each also executes a real autonomous tool through canonical admission without
  * a human approval. No live-provider calibration or external delivery is claimed.
+ * Immediate-work ingress cases select the documented legacy conversation mode;
+ * the default proposal mode is exercised separately through the same HTTP owner.
  */
 import { executeToolCalls } from '@goodvibes-jev/engine/sdk/platform/core';
 import { Client } from 'undici/index.js';
@@ -34,9 +36,22 @@ const parityReadings = fakePort((name, question, state) => {
   if (name === 'security_code' || name === 'wanted' || name === 'serve' || name === 'keep' || name === 'attached') return noulAnswer(0.01);
   if (name === 'pick' && question.type === 'choice' && 'title-1' in question.criteria) return choiceAnswer(question, 'title-1', 0.99);
   if (name === 'memory_class') return choiceAnswer(question, 'fact', 0.99);
-  if (name === 'reading') return choiceAnswer(question, 'approve', 0.99);
+  if (name === 'reading' && question.type === 'choice') {
+    return choiceAnswer(question, 'work' in question.criteria ? 'work' : 'approve', 0.99);
+  }
+  if (name === 'match') {
+    const term = (state as { candidate: { term: string } }).candidate.term;
+    return noulAnswer(['Multimodal', 'knowledge', 'system', 'improve'].includes(term) ? 0.99 : 0.01);
+  }
   if (name === 'fits_0') return noulAnswer(0.99);
+  // This route fixture ingests ordinary project articles and CSV artifacts;
+  // scope semantics are calibrated by the separate registered scope battery.
+  if (name === 'included') return noulAnswer(0.99);
   if (name === 'supported') return noulAnswer(0.99);
+  // Example-page fixtures establish no verified publisher authority.
+  if (name === 'authority' && question.type === 'choice' && 'unverified' in question.criteria) {
+    return choiceAnswer(question, 'unverified', 0.99);
+  }
   if (name === 'main_1' && (state as { title?: string }).title === 'Knowledge Route Page') return noulAnswer(0.99);
   if (name === 'excerptUseful') {
     const excerpts: readonly string[] = [
@@ -59,6 +74,24 @@ const parityReadings = fakePort((name, question, state) => {
   throw new Error(`Unscripted parity judgment: ${name}`);
 });
 const TEST_TOKEN = 'server-parity-synthetic-token';
+const CALLBACK_FIXTURE_URL = 'https://203.0.113.10/callback';
+
+/** Queued fixture agents can send cancellation notices while their graph drains. */
+function cancellationDeliveryFixture(request: { readonly url: string; readonly method: string }): Response | undefined {
+  const url = new URL(request.url);
+  const knownNotice = request.method === 'POST' && (
+    url.href === `https://ntfy.sh/${GOODVIBES_NTFY_AGENT_TOPIC}`
+    || url.href === 'https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token'
+    || url.href === 'https://mattermost.example.test/api/v4/posts'
+    || url.href === CALLBACK_FIXTURE_URL
+    || (url.origin === 'https://matrix.example.test'
+      && url.pathname.startsWith('/_matrix/client/v3/rooms/!room%3Aexample.test/send/m.room.message/'))
+  );
+  // The callback uses a documentation address: real URL validation/pinning runs,
+  // while exact external transport stays synthetic. No successful delivery is claimed.
+  if (knownNotice) return new Response('Synthetic cancellation delivery unavailable', { status: 503 });
+  return undefined;
+}
 async function waitFor<T>(fn: () => Promise<T | undefined | null> | T | undefined | null, timeoutMs = 5_000, intervalMs = 25): Promise<T> {
   const startedAt = Date.now();
   for (;;) {
@@ -218,7 +251,7 @@ describe('daemon server source parity: restored source assertions', () => {
     for (const spy of [spyOn(ProviderRegistry.prototype, 'refreshLiveModelDiscovery').mockResolvedValue([]),
       spyOn(BenchmarkStore.prototype, 'refreshBenchmarks').mockResolvedValue(undefined),
       spyOn(BenchmarkStore.prototype, 'readBenchmarks').mockResolvedValue(undefined)]) restores.push(() => spy.mockRestore());
-    restores.push(installProviderPricingFixture());
+    restores.push(installProviderPricingFixture(cancellationDeliveryFixture));
     daemon = await createTestDaemon();
   });
   afterEach(async () => {
@@ -797,6 +830,89 @@ async function proveAutonomousRead(): Promise<void> {
     expect(graphqlJson.data.projection.pageCount).toBe(1);
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+
+  for (const change of ['session-revocation', 'request-abort'] as const) {
+    test(`awaited knowledge HTTP scope cannot publish after ${change}`, async () => {
+      const userAuth = makeUserAuth();
+      daemon = await createTestDaemon({ userAuth });
+      daemon.enable({ daemon: true });
+      await daemon.start();
+      const login = await fetch(`http://127.0.0.1:${boundPort}/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'admin' }),
+      });
+      expect(login.status).toBe(200);
+      const { token } = await login.json() as { token: string };
+      const path = join(workingDir, 'held-scope.csv');
+      writeFileSync(path, 'project,owner\nGoodVibes,buzzkill\n');
+      await runtimeServices.knowledgeService.ingestArtifact({ path, connectorId: 'artifact', sessionId: 'held-scope-fixture' });
+      let release!: () => void;
+      const held = new Promise<void>(resolve => { release = resolve; });
+      const signals: AbortSignal[] = [];
+      const port: typeof parityReadings.port = { model: parityReadings.port.model, async ask(request) {
+        if ('included' in request.questions) {
+          if (!request.signal) throw new Error('HTTP scope reading must retain its request signal');
+          signals.push(request.signal);
+          await held;
+        }
+        return parityReadings.port.ask(request);
+      } };
+      const previous = installJudgmentPort(withDecisionLog(port, runtimeServices.judgment.decisionLog));
+      const scopeRecords = () => runtimeServices.judgment.decisionLog.query({}).filter(entry => entry.context.battery === 'engine.knowledge.scope-selection').length;
+      const before = scopeRecords();
+      const controller = new AbortController();
+      const pending = fetch(`http://127.0.0.1:${boundPort}/api/knowledge/extractions`, {
+        headers: { Authorization: `Bearer ${token}` }, signal: controller.signal,
+      });
+      try {
+        await waitFor(() => signals.length ? true : undefined);
+        if (change === 'session-revocation') {
+          const revoked = await fetch(`http://127.0.0.1:${boundPort}/api/local-auth/sessions/${token}`, {
+            method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+          });
+          expect(revoked.status).toBe(200);
+          release();
+          const response = await pending;
+          expect(response.status).toBe(401);
+          expect(await response.text()).not.toContain('held-scope.csv');
+          expect((await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/extractions`, {
+            headers: { Authorization: `Bearer ${token}` },
+          })).status).toBe(401);
+        } else {
+          controller.abort();
+          await expect(pending).rejects.toBeDefined();
+          await waitFor(() => signals.every(signal => signal.aborted) ? true : undefined);
+          release();
+        }
+        expect(scopeRecords()).toBe(before);
+      } finally {
+        release();
+        await pending.catch(() => {});
+        installJudgmentPort(previous);
+      }
+    });
+  }
+
+  test('knowledge HTTP returns an unavailable scope reading without publishing records', async () => {
+    daemon.enable({ daemon: true }, TEST_TOKEN);
+    await daemon.start();
+    const path = join(workingDir, 'unavailable-scope.csv');
+    writeFileSync(path, 'project,owner\nGoodVibes,buzzkill\n');
+    await runtimeServices.knowledgeService.ingestArtifact({ path, connectorId: 'artifact', sessionId: 'unavailable-scope-fixture' });
+    const scopeRecords = () => runtimeServices.judgment.decisionLog.query({}).filter(entry => entry.context.battery === 'engine.knowledge.scope-selection').length;
+    const before = scopeRecords();
+    const previous = installJudgmentPort(undefined);
+    try {
+      const response = await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/extractions`, {
+        headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+      });
+      expect(response.status).toBe(503);
+      expect(await response.text()).not.toContain('unavailable-scope.csv');
+      expect(scopeRecords()).toBe(before);
+    } finally {
+      installJudgmentPort(previous);
     }
   });
 
@@ -2434,7 +2550,7 @@ async function proveAutonomousRead(): Promise<void> {
       body: JSON.stringify({
         surfaceId: 'ci-gateway',
         externalId: 'build-123',
-        callbackUrl: 'https://example.com/callback',
+        callbackUrl: CALLBACK_FIXTURE_URL,
         message: 'summarize the current build failure',
         title: 'CI gateway',
       }),
@@ -2520,7 +2636,7 @@ async function proveAutonomousRead(): Promise<void> {
       surfaceId: 'ci-gateway',
       externalId: 'build-124',
       message: 'summarize build 124',
-      callbackUrl: 'https://example.com/callback',
+      callbackUrl: CALLBACK_FIXTURE_URL,
       callbackSignature: 'hmac-sha256',
       correlationId: 'corr-124',
     });
@@ -2666,6 +2782,7 @@ async function proveAutonomousRead(): Promise<void> {
   // Original server case 50, source line 2580.
   test('ntfy webhook creates route bindings and can spawn agents', async () => {
     const config = makeConfig();
+    config.setDynamic('conversationGate.mode', 'off');
     config.setDynamic('surfaces.ntfy.enabled', true);
     config.setDynamic('surfaces.ntfy.token', 'ntfy-test-token');
     daemon = await createTestDaemon({ configManager: config, userAuth: makeUserAuth() });
@@ -2697,6 +2814,39 @@ async function proveAutonomousRead(): Promise<void> {
     expect(listBody.bindings.some((binding) => binding.id === ntfyBody.bindingId && binding.surfaceKind === 'ntfy' && binding.externalId === GOODVIBES_NTFY_AGENT_TOPIC)).toBe(true);
   });
 
+  test('default ntfy work ingress delivers a proposal and starts no agent before agreement', async () => {
+    const notices: string[] = [];
+    const delivery = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+      expect(request.method).toBe('POST');
+      expect(new URL(request.url).pathname).toBe(`/${GOODVIBES_NTFY_AGENT_TOPIC}`);
+      expect(request.headers.get('authorization')).toBe('Bearer ntfy-test-token');
+      notices.push(await request.text());
+      return Response.json({ id: 'owned-proposal-delivery' });
+    } });
+    restores.push(() => { void delivery.stop(true); });
+    const config = makeConfig();
+    expect(config.get('conversationGate.mode')).toBe('propose');
+    config.setDynamic('surfaces.ntfy.enabled', true);
+    config.setDynamic('surfaces.ntfy.token', 'ntfy-test-token');
+    config.setDynamic('surfaces.ntfy.baseUrl', `http://127.0.0.1:${delivery.port}`);
+    daemon = await createTestDaemon({ configManager: config, userAuth: makeUserAuth() });
+    daemon.enable({ daemon: true }, TEST_TOKEN);
+    await daemon.start();
+    const response = await fetch(`http://127.0.0.1:${boundPort}/webhook/ntfy?topic=${GOODVIBES_NTFY_AGENT_TOPIC}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Goodvibes-Ntfy-Token': 'ntfy-test-token' },
+      body: JSON.stringify({ topic: GOODVIBES_NTFY_AGENT_TOPIC, message: 'summarize the latest deployment status', title: 'Ops alerts' }),
+    });
+    expect(response.status, response.status === 202 ? undefined : await response.clone().text()).toBe(202);
+    const body = await response.json() as { proposalId: string; acknowledged: boolean; queued: boolean; outcome: string };
+    expect(body).toMatchObject({ acknowledged: true, queued: false, outcome: 'work-proposed' });
+    expect(typeof body.proposalId).toBe('string');
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('Start work on: summarize the latest deployment status');
+    expect(runtimeServices.agentManager.list()).toHaveLength(0);
+    expect(rootSignals).toHaveLength(0);
+  });
+
   // Original server case 51, source line 2613.
   test('ntfy webhook rejects invalid ingress tokens', async () => {
     const config = makeConfig();
@@ -2724,6 +2874,7 @@ async function proveAutonomousRead(): Promise<void> {
   // Original server case 52, source line 2636.
   test('telegram and Google Chat webhook ingress create route bindings and queue agents', async () => {
     const config = makeConfig();
+    config.setDynamic('conversationGate.mode', 'off');
     config.setDynamic('surfaces.telegram.enabled', true);
     config.setDynamic('surfaces.telegram.botUsername', 'goodvibes_bot');
     config.setDynamic('surfaces.googleChat.enabled', true);
@@ -2782,6 +2933,7 @@ async function proveAutonomousRead(): Promise<void> {
   // Original server case 53, source line 2693.
   test('signal, WhatsApp, and iMessage ingress paths queue work and expose verification flows', async () => {
     const config = makeConfig();
+    config.setDynamic('conversationGate.mode', 'off');
     config.setDynamic('surfaces.signal.enabled', true);
     config.setDynamic('surfaces.signal.token', 'signal-bridge-token');
     config.setDynamic('surfaces.signal.account', '+15550001111');
@@ -2872,6 +3024,7 @@ async function proveAutonomousRead(): Promise<void> {
   // Original server case 54, source line 2782.
   test('msteams, BlueBubbles, Mattermost, and Matrix ingress paths queue work and persist route bindings', async () => {
     const config = makeConfig();
+    config.setDynamic('conversationGate.mode', 'off');
     config.setDynamic('surfaces.msteams.enabled', true);
     config.setDynamic('surfaces.msteams.appId', 'teams-app-id');
     config.setDynamic('surfaces.msteams.appPassword', 'teams-app-password');

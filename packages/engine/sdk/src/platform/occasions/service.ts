@@ -1,46 +1,10 @@
-/**
- * service.ts, the one object every occasions verb goes through.
- *
- * It owns nothing it can compute: the profile is read through a narrow source,
- * the machine state through its own store, the clock through an injected
- * function and delivery through a seam. What it owns is the SEQUENCE, capture
- * confirms once, an answer resolves an open item, a yes opens an interview, a
- * completed interview writes gift history, a removal drops orphaned state.
- *
- * That sequence lives here rather than in a consumer on purpose. A surface's job
- * is to call a verb and render what comes back; anything a surface would have to
- * compute is a second implementation waiting to disagree with this one.
- *
- * ## The TUI is not a destination, structurally
- *
- * The owner's ruling was Telegram and the agent, never the TUI, because *"that's
- * more of a 'get work done' kind of interface."* `resolveNudgeDestinations` in
- * destinations.ts refuses a TUI target rather than merely not choosing one, so
- * the rule survives a composition root that wires the delivery router
- * optimistically.
- *
- * ## Telegram and the agent, and one thing said once
- *
- * `occasions.nudgeChannel` is a LIST, so the owner's ruling, Telegram and the agent,
- * is expressible rather than a choice between them. Each destination is pushed
- * independently and a failure on one is recorded rather than thrown, so a dead
- * Telegram token cannot silence the agent and a missing agent sender cannot
- * silence Telegram.
- *
- * The agent is also the surface that PULLS through {@link OccasionsService.pending},
- * so it is the one place where a push and a pull could say the same thing twice.
- * They cannot, because both read the same open item: a push that lands on the
- * agent stamps the item with the DAY it landed, and the pull leaves out items
- * stamped with today. An item no push has ever landed there carries no stamp,
- * so the pull is still how that nudge gets raised, which covers `agent`
- * configured with no sender registered, and a send that failed.
- *
- * The stamp is scoped to the day rather than being permanent, and that matters
- * more than it used to. A nudge now pushes exactly twice; a permanent stamp
- * would have made an occasion invisible to "anything coming up?" for the whole
- * ten days after its first push, which is the opposite of what the pull is for.
+/** One service sequences occasion capture, acknowledgements, interviews and
+ * sweeps over the shared profile and machine state. Delivery records belong to
+ * each configured destination, so a failed push remains available to pull.
+ * Admitted operations retain source and effect restrictions across every await.
  */
-import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import type { OccasionMutationOptions } from './operation.js';
+import { captureOccasionOperation, retainOccasionStateReceipts } from './operation.js';
 import { OccasionReadingWork, OccasionReadingHeldError } from './readings.js';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 import type { AuthoritySurface } from '../security/untrusted-content.js';
@@ -68,15 +32,14 @@ import {
 import { composeConflictMessage, prepareNudge, subjectFor } from './nudge.js';
 import {
   pushNudge,
-  type NudgeDelivery,
   type OccasionNudgeDeliverer,
 } from './push.js';
 import { storedGiftEvidence } from './stored-reading-evidence.js';
-import { preparePending, type PendingResult as ComposedPending } from './pending.js';
+import { preparePending } from './pending.js';
 import { readOccasionsPolicy, readOccasionsTimezone, type OccasionsConfigAccess } from './policy.js';
 import { readOccasions, readOccasionDeclarations, readPlans, type OccasionProfileSource } from './reader.js';
 import type { OccasionStateStore } from './state-store.js';
-import { decideSweep, effectiveLead, type OccasionsPolicy, type SweepHold } from './sweep.js';
+import { decideSweep, effectiveLead, type OccasionsPolicy } from './sweep.js';
 import {
   confirmOccasion,
   confirmPlan,
@@ -96,18 +59,11 @@ import type {
   GiftRecord,
   OccasionAcknowledgement,
   Interview,
-  InterviewStep,
   Occasion,
   OccasionAnswer,
-  OccasionConflict,
-  OccasionKind,
-  OccasionNudge,
   OccasionStateDisclosure,
-  OccasionSweepReport,
   OpenItem,
   Plan,
-  UnparsedOccasionLine,
-  UnparsedPlanLine,
 } from './types.js';
 
 /**
@@ -149,76 +105,8 @@ export interface OccasionsServiceDeps {
   readonly now?: (() => number) | undefined;
 }
 
-/** One occasion with everything a surface needs to render it. */
-export interface OccasionView {
-  readonly occasion: Occasion;
-  readonly nextOccurrence: IsoDate | null;
-  /** Whole days away. Present for a surface that IS the owner, never in a nudge. */
-  readonly daysUntil: number | null;
-  readonly leadDays: number;
-  readonly inLeadWindow: boolean;
-  readonly answer: OccasionAnswer | null;
-  readonly mirrored: boolean;
-}
-
-/** What `occasions.list` answers. */
-export interface OccasionListResult {
-  readonly today: IsoDate;
-  readonly timezone: string;
-  readonly occasions: readonly OccasionView[];
-  readonly unparsed: readonly UnparsedOccasionLine[];
-  readonly conflicts: readonly OccasionConflict[];
-}
-
-/** What `occasions.plans.list` answers. */
-export interface PlanListResult {
-  readonly today: IsoDate;
-  readonly plans: readonly Plan[];
-  readonly unparsed: readonly UnparsedPlanLine[];
-  /** The plan that has the owner away today, if there is one. */
-  readonly awayNow: Plan | null;
-}
-
-/** What one sweep did. */
-export interface SweepOutcome {
-  readonly ranAt: number;
-  readonly today: IsoDate;
-  readonly hold: SweepHold;
-  readonly nudge: OccasionNudge | null;
-  readonly conflictMessages: readonly string[];
-  readonly resumedInterviews: readonly string[];
-  /** True when at least one destination accepted the nudge. */
-  readonly delivered: boolean;
-  /** Every destination it was addressed to, as configured. Empty ⇒ pull-only. */
-  readonly deliveryChannel: string;
-  /** The id from the first destination that accepted it. */
-  readonly deliveryId: string | null;
-  /** One entry per destination attempted, in configured order. */
-  readonly deliveries: readonly NudgeDelivery[];
-  readonly mirrored: number;
-  readonly housekeeping: OccasionSweepReport | null;
-}
-
-/** What the interview verbs answer. */
-export interface InterviewProgress {
-  readonly interviewId: string;
-  readonly occasionId: string;
-  readonly occurrence: IsoDate;
-  readonly steps: readonly InterviewStep[];
-  readonly nextStep: InterviewStep | null;
-  readonly complete: boolean;
-  readonly landedOn: string | null;
-}
-
-/**
- * Everything outstanding, for a surface that pulls rather than receives.
- *
- * The occasion half is composed by `pending.ts`; the interviews are added here
- * because an interview's progress is this service's shape.
- */
-export interface PendingResult extends ComposedPending {
-  readonly interviews: readonly InterviewProgress[];
-}
+import type { OccasionView, OccasionListResult, PlanListResult, SweepOutcome, InterviewProgress, PendingResult } from './service-views.js';
+export type { OccasionView, OccasionListResult, PlanListResult, SweepOutcome, InterviewProgress, PendingResult } from './service-views.js';
 
 export class OccasionsService {
   private readonly answerOwners = new Map<string, AbortController>();
@@ -242,7 +130,7 @@ export class OccasionsService {
   }
 
   /** Capture live source/config/function ownership before any asynchronous boundary. */
-  private reading(options: JudgmentReadingOptions = {}, request: unknown = {}): OccasionReadingWork {
+  private reading(options: OccasionMutationOptions = {}, request: unknown = {}): OccasionReadingWork {
     const profile = this.deps.profile, config = this.deps.config;
     const sourceLease = profile.captureRead?.();
     const configIncarnation = config.getConfigurationIncarnation?.();
@@ -258,6 +146,7 @@ export class OccasionsService {
       const currentFunctions = [profile.importantDates, profile.plans, profile.ownerNames, profile.person, profile.captureRead, config.get, config.getConfigurationIncarnation];
       if (this.deps.profile !== profile || this.deps.config !== config || functions.some((fn, index) => fn !== currentFunctions[index]) || JSON.stringify(snapshotJudgmentInput(source())) !== captured) throw new OccasionReadingHeldError();
     } });
+    retainOccasionStateReceipts(work.assertCurrent, options);
     work.snapshot(request);
     return work;
   }
@@ -275,8 +164,9 @@ export class OccasionsService {
    * which is exactly the explicit ask that unlocks a closed-tier read. The rule
    * is about what an unprompted message pushes onto a channel.
    */
-  async list(options: JudgmentReadingOptions = {}): Promise<OccasionListResult> {
+  async list(options: OccasionMutationOptions = {}): Promise<OccasionListResult> {
     const work = this.reading(options);
+    await this.deps.state.prepareRead(options);
     const today = this.today();
     const policy = this.policy();
     const { occasions, unparsed, conflicts } = await readOccasions(this.deps.profile, work);
@@ -313,13 +203,17 @@ export class OccasionsService {
   }
 
   /** What the machine-owned store is holding, and what the last sweep removed. */
-  async disclose(): Promise<OccasionStateDisclosure> {
-    return this.deps.state.disclose();
+  async disclose(options: OccasionMutationOptions = {}): Promise<OccasionStateDisclosure> {
+    const owned = captureOccasionOperation(this.deps, options, () => this.deps);
+    await this.deps.state.prepareRead(options);
+    const result = await this.deps.state.disclose(); owned.assertCurrent?.(); return result;
   }
 
   /** What the owner landed on before, for one occasion. */
-  async giftHistory(occasionId: string): Promise<readonly GiftRecord[]> {
-    return this.deps.state.giftHistory(occasionId);
+  async giftHistory(occasionId: string, options: OccasionMutationOptions = {}): Promise<readonly GiftRecord[]> {
+    const owned = captureOccasionOperation(this.deps, options, () => this.deps);
+    await this.deps.state.prepareRead(options);
+    const result = await this.deps.state.giftHistory(occasionId); owned.assertCurrent?.(); return result;
   }
 
   // -------------------------------------------------------------------------
@@ -332,8 +226,9 @@ export class OccasionsService {
   }
 
   /** Write the confirmed occasion. Refuses without a kind rather than guessing. */
-  async confirmOccasion(input: ConfirmOccasionInput): Promise<OccasionWriteOutcome> {
-    return confirmOccasion(this.deps.profile, this.deps.writer, input);
+  async confirmOccasion(input: ConfirmOccasionInput, options: OccasionMutationOptions = {}): Promise<OccasionWriteOutcome> {
+    const owned = captureOccasionOperation(this.deps, options, () => this.deps);
+    return confirmOccasion(this.deps.profile, this.deps.writer, input, owned);
   }
 
   /** The same two-step capture, for a plan. */
@@ -341,21 +236,24 @@ export class OccasionsService {
     return proposePlan(input);
   }
 
-  async confirmPlan(input: ConfirmPlanInput): Promise<OccasionWriteOutcome> {
-    return confirmPlan(this.deps.writer, input);
+  async confirmPlan(input: ConfirmPlanInput, options: OccasionMutationOptions = {}): Promise<OccasionWriteOutcome> {
+    const owned = captureOccasionOperation(this.deps, options, () => this.deps);
+    return confirmPlan(this.deps.writer, input, owned);
   }
 
   /** Remove an occasion and everything the machine remembered about it. */
   async removeOccasion(input: {
     readonly occasionId: string;
     readonly confirmed: boolean;
-    readonly authority: AuthoritySurface;
-  }): Promise<OccasionWriteOutcome> {
+    readonly authority: AuthoritySurface | 'autonomous';
+  }, options: OccasionMutationOptions = {}): Promise<OccasionWriteOutcome> {
+    const owned = captureOccasionOperation(this.deps, options, () => this.deps);
+    await this.deps.state.prepareRead(options);
     return removeOccasion(
       this.deps.profile,
       this.deps.writer,
-      (id) => this.deps.state.dropOccasion(id),
-      input,
+      (id) => this.deps.state.dropOccasion(id, owned.assertCurrent),
+      input, owned,
     );
   }
 
@@ -378,12 +276,12 @@ export class OccasionsService {
     readonly occasionId: string;
     readonly answer: OccasionAnswer;
     readonly occurrence?: string | undefined;
-  }, options: JudgmentReadingOptions = {}): Promise<{ readonly ok: boolean; readonly reason: string | null; readonly interview: InterviewProgress | null }> {
+  }, options: OccasionMutationOptions = {}): Promise<{ readonly ok: boolean; readonly reason: string | null; readonly interview: InterviewProgress | null }> {
     return this.withAnswerOwnership(input.occasionId, options, owned => this.answerOwned(input, owned));
   }
 
   /** A later response for this occasion retires earlier work, including an unfinished gift reading. */
-  private async withAnswerOwnership<T>(key: string, options: JudgmentReadingOptions, run: (owned: JudgmentReadingOptions) => Promise<T>): Promise<T> {
+  private async withAnswerOwnership<T>(key: string, options: OccasionMutationOptions, run: (owned: OccasionMutationOptions) => Promise<T>): Promise<T> {
     const controller = new AbortController();
     this.answerOwners.get(key)?.abort();
     this.answerOwners.set(key, controller);
@@ -394,9 +292,10 @@ export class OccasionsService {
       const checked: unknown = options.assertCurrent?.();
       if (checked !== undefined) { void Promise.resolve(checked).catch(() => {}); throw new OccasionReadingHeldError(); }
     };
+    retainOccasionStateReceipts(assertCurrent, options);
     try {
       assertCurrent();
-      return await run({ signal, assertCurrent });
+      return await run({ ...options, signal, assertCurrent });
     } finally { if (this.answerOwners.get(key) === controller) this.answerOwners.delete(key); }
   }
 
@@ -404,8 +303,9 @@ export class OccasionsService {
     readonly occasionId: string;
     readonly answer: OccasionAnswer;
     readonly occurrence?: string | undefined;
-  }, options: JudgmentReadingOptions = {}): Promise<{ readonly ok: boolean; readonly reason: string | null; readonly interview: InterviewProgress | null }> {
+  }, options: OccasionMutationOptions = {}): Promise<{ readonly ok: boolean; readonly reason: string | null; readonly interview: InterviewProgress | null }> {
     const work = this.reading(options, input);
+    await this.deps.state.prepareRead(options);
     input = work.snapshot(input);
     const today = this.today();
     const now = this.now();
@@ -501,8 +401,11 @@ export class OccasionsService {
   }
 
   /** The interview for one occasion, resumed at the question the owner did not answer. */
-  async interview(interviewId: string): Promise<InterviewProgress | null> {
+  async interview(interviewId: string, options: OccasionMutationOptions = {}): Promise<InterviewProgress | null> {
+    const owned = captureOccasionOperation(this.deps, options, () => this.deps);
+    await this.deps.state.prepareRead(options);
     const found = await this.deps.state.interview(interviewId);
+    owned.assertCurrent?.();
     return found === undefined ? null : progressOf(found);
   }
 
@@ -511,25 +414,32 @@ export class OccasionsService {
     readonly interviewId: string;
     readonly stepId: string;
     readonly text: string;
-  }): Promise<InterviewProgress | null> {
+  }, options: OccasionMutationOptions = {}): Promise<InterviewProgress | null> {
+    const owned = captureOccasionOperation(this.deps, options, () => this.deps);
+    await this.deps.state.prepareRead(options);
     const found = await this.deps.state.interview(input.interviewId);
+    owned.assertCurrent?.();
     if (found === undefined) return null;
     const updated = answerStep(found, input.stepId, input.text, this.now());
-    await this.deps.state.putInterview(updated);
+    await this.deps.state.putInterview(updated, owned.assertCurrent);
     // Working on the gift IS acknowledging the occasion. Being asked whether the
     // owner has thought about a birthday while they are in the middle of answering
     // questions about what to buy for it would be the feature interrupting its
     // own interview, so engagement here mutes the push by itself, no verb, no
     // extra sentence from them, nothing to remember to do.
-    await this.autoAcknowledgeFromGiftFlow(updated.occasionId, updated.occurrence);
-    return progressOf(updated);
+    await this.autoAcknowledgeFromGiftFlow(updated.occasionId, updated.occurrence, owned);
+    owned.assertCurrent?.(); return progressOf(updated);
   }
 
   /** Mute the push for an occurrence the owner is actively choosing a gift for. */
   private async autoAcknowledgeFromGiftFlow(
     occasionId: string,
     occurrence: IsoDate,
+    options: OccasionMutationOptions = {},
   ): Promise<void> {
+    const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); };
+    retainOccasionStateReceipts(assertCurrent, options);
+    assertCurrent();
     const occasion = readOccasionDeclarations(this.deps.profile).occasions.find(
       (entry) => entry.id === occasionId,
     );
@@ -540,13 +450,19 @@ export class OccasionsService {
     // machinery reads to know the thread is live. Only an unanswered or
     // deferred occurrence needs the mute.
     const existing = await this.deps.state.answerFor(occasionId, occurrence);
+    assertCurrent();
     if (existing?.answer === 'yes' || existing?.answer === 'no') return;
-    await acknowledgeOccurrence(this.deps.state, {
+    await acknowledgeOccurrence({
+      recordAnswer: entry => this.deps.state.recordAnswer(entry, assertCurrent),
+      openItem: async id => { const result = await this.deps.state.openItem(id); assertCurrent(); return result; },
+      putOpenItem: item => this.deps.state.putOpenItem(item, assertCurrent),
+    }, {
       occasion,
       occurrence,
       now: this.now(),
       source: 'gift-flow',
     });
+    assertCurrent();
   }
 
   /**
@@ -559,15 +475,18 @@ export class OccasionsService {
   async recordGiftOutcome(input: {
     readonly interviewId: string;
     readonly landedOn: string;
-  }): Promise<InterviewProgress | null> {
+  }, options: OccasionMutationOptions = {}): Promise<InterviewProgress | null> {
+    const owned = captureOccasionOperation(this.deps, options, () => this.deps);
+    await this.deps.state.prepareRead(options);
     const found = await this.deps.state.interview(input.interviewId);
+    owned.assertCurrent?.();
     if (found === undefined) return null;
     const completed = completeInterview(found, input.landedOn.trim(), this.now());
-    await this.deps.state.putInterview(completed);
+    await this.deps.state.putInterview(completed, owned.assertCurrent);
     const record = giftRecordFor(completed);
-    if (record !== null) await this.deps.state.recordGift(record);
-    await this.deps.state.resolveOpenItem(interviewItemId(completed.occasionId, completed.occurrence));
-    return progressOf(completed);
+    if (record !== null) await this.deps.state.recordGift(record, owned.assertCurrent);
+    await this.deps.state.resolveOpenItem(interviewItemId(completed.occasionId, completed.occurrence), owned.assertCurrent);
+    owned.assertCurrent?.(); return progressOf(completed);
   }
 
   // -------------------------------------------------------------------------
@@ -582,8 +501,9 @@ export class OccasionsService {
    * allowed to speak is a store that never reaps on a machine where the owner turned
    * nudging off.
    */
-  async sweep(options: JudgmentReadingOptions = {}): Promise<SweepOutcome> {
+  async sweep(options: OccasionMutationOptions = {}): Promise<SweepOutcome> {
     const work = this.reading(options);
+    await this.deps.state.prepareRead(options);
     const now = this.now();
     const today = todayInZone(now, this.timezone());
     const policy = this.policy();
@@ -648,7 +568,7 @@ export class OccasionsService {
     const destinations = resolveNudgeDestinations(policy.nudgeChannel);
     const deliveries = nudge === null
       ? []
-      : await pushNudge(this.deps.deliverer, nudge, destinations, work.assertCurrent);
+      : await pushNudge(this.deps.deliverer, nudge, destinations, work.assertCurrent, options.withNudgeDelivery);
     work.assertCurrent();
     const landed = deliveries.filter((entry) => entry.delivered);
     // Only a push that ACTUALLY landed on the agent stamps the items. A stamp
@@ -757,8 +677,9 @@ export class OccasionsService {
    * still comes back here, so the guard cannot turn into a way of dropping a
    * nudge.
    */
-  async pending(options: JudgmentReadingOptions = {}): Promise<PendingResult> {
+  async pending(options: OccasionMutationOptions = {}): Promise<PendingResult> {
     const work = this.reading(options);
+    await this.deps.state.prepareRead(options);
     await this.deps.state.disclose();
     this.deps.state.assertPendingReadingAdmission();
     work.assertCurrent();
@@ -793,7 +714,7 @@ export class OccasionsService {
     readonly occasionId: string;
     readonly source: OccasionAckSource;
     readonly occurrence?: string | undefined;
-  }, options: JudgmentReadingOptions = {}): Promise<{ readonly ok: boolean; readonly reason: string | null; readonly reply: string }> {
+  }, options: OccasionMutationOptions = {}): Promise<{ readonly ok: boolean; readonly reason: string | null; readonly reply: string }> {
     return this.withAnswerOwnership(input.occasionId, options, owned => this.acknowledgeOwned(input, owned));
   }
 
@@ -801,9 +722,10 @@ export class OccasionsService {
     readonly occasionId: string;
     readonly source: OccasionAckSource;
     readonly occurrence?: string | undefined;
-  }, options: JudgmentReadingOptions = {}): Promise<{ readonly ok: boolean; readonly reason: string | null; readonly reply: string }> {
+  }, options: OccasionMutationOptions = {}): Promise<{ readonly ok: boolean; readonly reason: string | null; readonly reply: string }> {
     input = snapshotJudgmentInput(input) as typeof input;
     const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); };
+    retainOccasionStateReceipts(assertCurrent, options);
     assertCurrent();
     const today = this.today();
     const occasion = readOccasionDeclarations(this.deps.profile).occasions.find(
@@ -832,8 +754,10 @@ export class OccasionsService {
   }
 
   /** Mark a conflict as dealt with, so it stops being re-raised. */
-  async resolveConflict(occasionId: string): Promise<boolean> {
-    return this.deps.state.resolveOpenItem(conflictItemId(occasionId));
+  async resolveConflict(occasionId: string, options: OccasionMutationOptions = {}): Promise<boolean> {
+    const owned = captureOccasionOperation(this.deps, options, () => this.deps);
+    await this.deps.state.prepareRead(options);
+    const result = await this.deps.state.resolveOpenItem(conflictItemId(occasionId), owned.assertCurrent); owned.assertCurrent?.(); return result;
   }
 }
 

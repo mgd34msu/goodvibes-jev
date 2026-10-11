@@ -3,8 +3,10 @@ import { Client, interceptors, type Dispatcher } from 'undici/index.js';
 import { responseStream } from '../../security/source-screening/direct-client.js';
 import { POLL_CADENCE_MS } from '../provider-adapter.js';
 import type { DiscordInboxHttp } from './discord.js';
+import { VERSION } from '../../version.js';
 
 const ORIGIN = 'https://discord.com';
+const USER_AGENT = `DiscordBot (https://github.com/mgd34msu/goodvibes-jev, ${VERSION})`;
 const RESPONSE_LIMIT = 8 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_TIMEOUT_MS = 120_000;
@@ -183,7 +185,7 @@ export function createDiscordInboxHttpOwner(options: DiscordInboxHttpOwnerOption
           // Check after the last owner hook and immediately before dispatch.
           requireDirectRoute();
           const response = await dispatcher!.request({ path: captured.path, method: 'GET',
-            headers: { authorization: captured.authorization, accept: 'application/json' }, signal: controller.signal });
+            headers: { authorization: captured.authorization, accept: 'application/json', 'user-agent': USER_AGENT }, signal: controller.signal });
           reader = responseStream(response.body).getReader();
           // Capture a received rate limit even if cancellation wins next.
           if (response.statusCode === 429) {

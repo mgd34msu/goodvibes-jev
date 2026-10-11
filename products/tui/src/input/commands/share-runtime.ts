@@ -66,8 +66,10 @@ export function registerShareRuntimeCommands(registry: CommandRegistry): void {
         return;
       }
       const conversation = ctx.session.conversationManager;
+      const history = conversation.captureHistoryReadingLifetime();
+      const sourceSignal = reading ? AbortSignal.any([history.signal, reading.signal]) : history.signal;
       const generation = conversation.getReplacementGeneration();
-      const current = () => (!reading || reading.current())
+      const current = () => !sourceSignal.aborted && (!reading || reading.current())
         && ctx.session.conversationManager === conversation
         && conversation.getReplacementGeneration() === generation;
       try {
@@ -142,18 +144,23 @@ export function registerShareRuntimeCommands(registry: CommandRegistry): void {
         sessionId: ctx.session.runtime.sessionId,
         title: ctx.session.conversationManager.title || undefined,
       };
-      const options = { redact, cost: costIsUnpriced ? undefined : sessionCostUsd };
+      const options = { redact, cost: costIsUnpriced ? undefined : sessionCostUsd, signal: sourceSignal, assertCurrent() {
+        history.assertCurrent();
+        if (!current()) throw new Error('Export is no longer current');
+      } };
 
       let outputContent: string;
       try {
-        if (format === 'html') outputContent = exportToHTML(messages, metadata, options);
-        else if (format === 'json') outputContent = exportToJSON(messages, metadata, options);
-        else outputContent = exportToMarkdownExtended(messages, metadata, options);
+        if (format === 'html') outputContent = await exportToHTML(messages, metadata, options);
+        else if (format === 'json') outputContent = await exportToJSON(messages, metadata, options);
+        else outputContent = await exportToMarkdownExtended(messages, metadata, options);
       } catch (err) {
+        if (!current()) return;
         ctx.print(`Export failed: ${summarizeError(err)}`);
         return;
       }
 
+      if (!current()) return;
       const { mkdirSync } = await import('node:fs');
       const { dirname, basename } = await import('node:path');
       if (!current()) return;
@@ -167,8 +174,9 @@ export function registerShareRuntimeCommands(registry: CommandRegistry): void {
       }
 
       try {
-        await writeFile(outputPath, outputContent, { encoding: 'utf-8', signal: reading?.signal });
+        await writeFile(outputPath, outputContent, { encoding: 'utf-8', signal: sourceSignal });
       } catch (err) {
+        if (!current()) return;
         ctx.print(`Failed to write export: ${summarizeError(err)}`);
         return;
       }
@@ -194,7 +202,7 @@ export function registerShareRuntimeCommands(registry: CommandRegistry): void {
         try {
           if (!current()) return;
           const captured = captureGithubAuthHeaders(authHeaders);
-          const token = await resolveGithubToken(captured, { signal: reading?.signal, beforeAttempt: () => { if (!current()) { reading?.assertCurrent(); throw new Error('Share is no longer current'); } } });
+          const token = await resolveGithubToken(captured, { signal: sourceSignal, beforeAttempt: () => { if (!current()) { reading?.assertCurrent(); throw new Error('Share is no longer current'); } } });
           if (!current()) return;
           // Re-resolve the same configured authority after the async reading.
           // A changed/revoked credential must never be sent from a stale snapshot.
@@ -213,7 +221,7 @@ export function registerShareRuntimeCommands(registry: CommandRegistry): void {
               ? `GoodVibes session: ${metadata.title}`
               : 'GoodVibes session export';
             const uploader = new GistUploadTarget(token, description);
-            const result = await uploader.upload(outputContent, gistFilename, reading?.signal);
+            const result = await uploader.upload(outputContent, gistFilename, sourceSignal);
             // A revoked UI owner does not revoke a request GitHub already saw.
             // Preserve the outcome under the original export/session identity,
             // without writing an old session's URL into the replacement UI.

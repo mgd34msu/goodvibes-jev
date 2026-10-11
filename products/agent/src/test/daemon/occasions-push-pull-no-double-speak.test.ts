@@ -12,8 +12,8 @@
  * product is on the right side of it, end to end: a real composed runtime, the
  * real `occasions.*` verb handlers, the real ChannelDeliveryRouter with its real
  * agent strategy, a real owner-profile file on disk, and this repo's own sender
- * registered on the router. The only stub is the conversation the message lands
- * in, which is the one part that would need a terminal.
+ * registered on the router. The conversation and recorded semantic answers are
+ * synthetic. Runtime, gateway, profile, state, delivery and stamping are real.
  *
  * The two outcomes get their OWN runtime rather than running in sequence, and
  * that is not tidiness. A raised nudge moves its open item's due date on by the
@@ -42,7 +42,10 @@
  * asserting that a client answers its own question.
  */
 
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, spyOn, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { withDecisionLog } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { buildDaemonGatewayCatalog } from '../helpers/daemon-gateway.ts';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -65,10 +68,12 @@ interface Harness {
   readonly profilePath: string;
   readonly services: RuntimeServices;
   readonly said: string[];
-  readonly invoke: (id: string, body?: Record<string, unknown>) => Promise<unknown>;
+  readonly invoke: (id: string, body?: Record<string, unknown>, readingAvailable?: boolean) => Promise<unknown>;
 }
 
 const roots: string[] = [];
+const runtimes: RuntimeServices[] = [];
+const restoreReadings: Array<() => void> = [];
 
 function harness(): Harness {
   const root = makeLongLivedProjectTempDir('gv-agent-occasions-push');
@@ -121,13 +126,26 @@ function harness(): Harness {
     homeDirectory: root,
     getConversationTitle: () => 'occasions-push-test',
   });
+  runtimes.push(services);
+  const semantic = fakePort((name, question) => {
+    if (name === 'subject') return choiceAnswer(question, 'other', 0.99);
+    if (name === 'names') return noulAnswer(0.99);
+    throw new Error(`Unscripted occasion fixture question: ${name}`);
+  });
+  const recorded = withDecisionLog(semantic.port, services.judgment.decisionLog);
+  const reading = spyOn(services.judgment.port, 'ask').mockImplementation(request => recorded.ask(request));
+  restoreReadings.push(() => reading.mockRestore());
 
   return {
     root,
     profilePath,
     services,
     said,
-    invoke: (id, body = {}) => buildDaemonGatewayCatalog(services).invoke(id, { methodId: id, body } as never),
+    invoke: async (id, body = {}, readingAvailable = true) => {
+      const previous = installJudgmentPort(readingAvailable ? services.judgment.port : undefined);
+      try { return await buildDaemonGatewayCatalog(services).invoke(id, { methodId: id, body } as never); }
+      finally { installJudgmentPort(previous); }
+    },
   };
 }
 
@@ -141,6 +159,8 @@ function registerSender(h: Harness): () => void {
 }
 
 afterAll(() => {
+  for (const restore of restoreReadings.splice(0)) restore();
+  for (const runtime of runtimes.splice(0).reverse()) runtime.dispose();
   for (const root of roots) rmSync(root, { recursive: true, force: true });
 });
 
@@ -163,6 +183,19 @@ describe('the seeded profile is this runtime\'s own, never the real home', () =>
     expect(list.unparsed).toEqual([]);
     expect(list.occasions).toHaveLength(1);
   });
+});
+
+test('an unavailable reading delivers nothing and cannot stamp away the later nudge', async () => {
+  const h = harness();
+  const undo = registerSender(h);
+  try {
+    await expect(h.invoke('occasions.sweep', {}, false)).rejects.toThrow(/occasion reading is unavailable/);
+    expect(h.said).toEqual([]);
+    const delivered = await h.invoke('occasions.sweep');
+    expect(delivered).toHaveProperty('delivered', true);
+    expect(h.said).toHaveLength(1);
+    expect(await h.invoke('occasions.pending')).toHaveProperty('nudge', null);
+  } finally { undo(); }
 });
 
 describe('sender registered: the push lands and the pull goes quiet', () => {

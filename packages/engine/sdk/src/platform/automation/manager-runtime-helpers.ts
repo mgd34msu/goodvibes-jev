@@ -47,6 +47,7 @@ export interface CreateAutomationJobInput {
 }
 
 export interface UpdateAutomationJobInput {
+  readonly expectedMutationRevision?: string | undefined;
   readonly name?: string | undefined;
   readonly kind?: import('./jobs.js').AutomationJobKind | undefined;
   readonly prompt?: string | undefined;

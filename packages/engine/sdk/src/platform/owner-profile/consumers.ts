@@ -5,20 +5,12 @@ import { PostalAddressHeldError } from '../config/postal-address.js';
  *
  * docs/owner-profile.md §13. One declared map from a CONSUMER CONFIG KEY to a
  * profile field, installed as a read fallback in `ConfigManager`. Not a set of
- * call-site edits, for two reasons that are both about not breaking things:
- *
- *  - **Direction.** An explicitly configured value still wins; the profile fills
- *    only the gap where the key is unset. A profile that overrode a value the
- *    owner deliberately configured would be the drift class this design removes,
- *    running backwards.
- *  - **Contention.** The payments capability and `daemon.timezone` live on an
- *    unmerged branch a live round owns. A map keyed by config path wires those
- *    consumers the moment their keys exist, with no change to their code and no
- *    edit to a file another round is holding. Rows for keys absent from today's
- *    schema are inert and cost nothing, `ConfigManager.get()` never reaches the
- *    fallback for a key whose section does not exist, because `resolvePath()`
- *    throws first, and {@link profileFallbackStatus} catches that throw so a
- *    report over the map cannot fail on the same rows.
+ * call-site edits. An explicitly configured value still wins; the profile fills
+ * only the gap where a scalar setting is unset. The current schema includes
+ * payment settings and `daemon.timezone`. Postal address parts use the async
+ * verified preparation boundary; this synchronous reader holds those requests.
+ * A missing config section throws before a fallback can run, and
+ * {@link profileFallbackStatus} catches that failure when reporting the map.
  *
  * ## Where the fallback applies
  *
@@ -93,12 +85,12 @@ function postalAddressRows(configPrefix: string, fieldId: string, note: string):
 }
 
 const PAYMENTS_NOTE =
-  'on the unmerged payments branch; the row is declared now so the wiring exists the moment the key does, with no edit to that branch from here';
+  'unset settings read the corresponding owner profile field; postal address parts require async verified preparation';
 
 /**
  * The whole map, exactly §13.1's table.
  *
- * Rows whose config key does not exist on this branch are inert: nothing calls
+ * Rows whose config key does not exist in a build are inert: nothing calls
  * `get()` for a key that is not in the schema, so the row simply never fires.
  */
 export const CONSUMER_FALLBACKS: readonly ConsumerFallbackRow[] = [
@@ -217,9 +209,9 @@ export interface ConsumerFallbackStatus {
  *
  * §13.1: a listing may show THAT a key resolves from the profile; it does not
  * show the value, and nothing here returns one. The `get` call is wrapped
- * because `ConfigManager.resolvePath()` throws for a section that does not
- * exist, which is exactly the state of every `payments.*` row on this branch,
- * a report that threw on them would be a report nobody could run.
+ * because `ConfigManager.resolvePath()` throws for a section absent from a
+ * build. A held postal fallback is reported as held, and an absent section is
+ * reported as a missing key; neither prevents the other rows from being listed.
  */
 export function profileFallbackStatus(
   source: ConsumerProfileSource,
@@ -244,45 +236,26 @@ export function profileFallbackStatus(
 // Containment: what redaction must never let out
 // ---------------------------------------------------------------------------
 
-/**
- * The closed-tier strings a redactor should recognise, in two classes.
- *
- * `guarded` is everything ordinary: closed-tier mechanical field values, and
- * the prose of every CLOSED section. `profileSectionTier` makes every heading
- * except `Style` closed, including ones the owner invented, and an earlier
- * version of this function collected prose from only the four canonical
- * prose-only sections, so `note: Home is the blue house on the corner of Elm`
- * under a heading of their own left a session export in the clear while `People`
- * lines beside it were redacted. Closed means closed; the length and
- * distinctiveness floor in `utils/redaction.ts` is what stops an ordinary short
- * sentence becoming a corpus-wide pattern, and that floor is the right place
- * for that judgement rather than this section list.
- *
- * `absolute` is `People` only, and it deliberately bypasses that floor. §10 is
- * unconditional about third-party personal data, and the floor is keyed on the
- * SHAPE of a value, so a seven-character line like `- Bob Lee` slipped under it
- * and reached an export. Keying People on its section instead resolves the
- * conflict in the direction §10 requires, while everything else keeps the
- * protection against blanking `standard` out of every log line. Redaction
- * matches these on word boundaries so a very short name cannot eat the middle
- * of an unrelated word.
- *
- * Read through `read()`, not `section()`: the store's generic section accessor
- * refuses the closed tier on purpose, so no consumer assembling something can
- * enumerate `People`. Redaction is the opposite kind of caller, it is deciding
- * what must NOT leave, and `read()` is the disclosure path that returns the
- * whole document.
+/** Collect complete local closed-tier values with safe declared field roles.
+ * People remains unconditional. Other values stay masked until a current
+ * field-role reading establishes an ordinary preference; raw values never
+ * enter the reading, and invalid fields are treated as closed private prose.
  */
 export function closedTierRedactionValues(source: ConsumerProfileSource): ProfileRedactionValues {
   const document = source.read();
   if (document.state.kind !== 'loaded') return EMPTY_REDACTION_VALUES;
 
   const guarded: string[] = [];
+  const guardedFields: NonNullable<ProfileRedactionValues['guardedFields']>[number][] = [];
   const absolute: string[] = [];
   for (const field of PROFILE_FIELDS) {
     if (field.tier !== 'closed') continue;
     const value = source.get(field.id);
-    if (value !== undefined && value.value.trim().length > 0) guarded.push(value.value.trim());
+    if (value !== undefined && value.value.trim().length > 0) {
+      const text = value.value.trim();
+      guarded.push(text);
+      guardedFields.push({ value: text, field: value.valid ? field.id : 'closed private profile prose', sourceKind: value.valid ? 'field' : 'prose' });
+    }
   }
   for (const section of document.sections) {
     if (section.tier !== 'closed') continue;
@@ -291,9 +264,10 @@ export function closedTierRedactionValues(source: ConsumerProfileSource): Profil
       const text = line.text.replace(/^\s*[-*+]\s+/, '').trim();
       if (text.length === 0) continue;
       (isPeople ? absolute : guarded).push(text);
+      if (!isPeople) guardedFields.push({ value: text, field: 'closed private profile prose', sourceKind: 'prose' });
     }
   }
-  return { guarded, absolute };
+  return { guarded, absolute, ...(guardedFields.length > 0 ? { guardedFields } : {}) };
 }
 
 const EMPTY_REDACTION_VALUES: ProfileRedactionValues = { guarded: [], absolute: [] };

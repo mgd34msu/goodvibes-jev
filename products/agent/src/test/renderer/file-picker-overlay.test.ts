@@ -66,4 +66,16 @@ describe('renderFilePickerOverlay', () => {
     expect(header).toContain('@app▏');
     expect(header).toContain('1 file');
   });
+
+  test('a withheld directory reading displays retry guidance instead of a loading row', () => {
+    const workingDirectory = makeWorkingDirectory();
+    workingDirectories.push(workingDirectory);
+    const picker = new FilePickerModal({ workingDirectory });
+    picker.active = true;
+    picker.loadError = 'File listing unavailable. Close and reopen to retry.';
+
+    const rendered = renderFilePickerOverlay(picker, 80, 24).map(lineToString).join('\n');
+    expect(rendered).toContain(picker.loadError);
+    expect(rendered).not.toContain('Loading files');
+  });
 });

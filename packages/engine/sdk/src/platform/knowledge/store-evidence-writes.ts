@@ -137,7 +137,7 @@ export function prepareKnowledgeExtractionRecord(input: KnowledgeExtractionUpser
     return retainKnowledgePreparedRecord(prepareKnowledgeOwnedClocks(record, existing, now));
 }
 
-export function writeKnowledgeExtractionRow(sqlite: SQLiteStore, record: KnowledgeExtractionRecord): void {
+export function writeKnowledgeExtractionRow(sqlite: Pick<SQLiteStore, 'run'>, record: KnowledgeExtractionRecord): void {
     const raw = knowledgeRawRepresentation(record);
     sqlite.run(`
       INSERT OR REPLACE INTO knowledge_extractions (

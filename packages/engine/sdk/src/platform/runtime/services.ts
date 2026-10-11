@@ -9,7 +9,7 @@ import { SubscriptionManager, sharedSubscriptionsPath } from '../config/subscrip
 import { AutomationDeliveryManager, AutomationManager, AutomationRouteStore, automationActionBinding } from '../automation/index.js';
 import { ChannelPluginRegistry, ChannelPolicyManager, RouteBindingManager, SurfaceRegistry } from '../channels/index.js';
 import { ChannelDeliveryRouter } from '../channels/delivery-router.js';
-import { ApprovalBroker, GatewayMethodCatalog, SessionLiveTurnControlsHolder, SharedSessionBroker, registerGatewayVerbGroups, controlPlaneStorePath } from '../control-plane/index.js';
+import { ApprovalBroker, GatewayMethodCatalog, SessionLiveTurnControlsHolder, SharedSessionBroker, registerGatewayVerbGroups, registerNativeAutomationGatewayMethods, controlPlaneStorePath } from '../control-plane/index.js';
 import { StepUpService } from '../relay/step-up-service.js';
 import { hasFreshSurfaceParticipant, SURFACE_ROUTE_FRESHNESS_MS } from '../control-plane/session-broker-sessions.js';
 import { buildSharedSessionAgentSpawnRoutingInput } from '../control-plane/session-intents.js';
@@ -188,6 +188,8 @@ export interface RuntimeServicesOptions {
 }
 
 export interface RuntimeServices {
+  /** The actual recorded autonomous host, borrowed by authenticated native HTTP writes. */
+  readonly nativeMutationHost?: import('../permissions/external-request.js').ExternalPermissionHost | undefined;
   readonly workingDirectory: string;
   readonly homeDirectory: string;
   /**
@@ -323,7 +325,7 @@ export interface RuntimeServices {
   /** A session's snapshot for saving, with the trees of the contracts started in the session filled from the runner (contract runner design 7.1). */
   sessionSnapshot(sessionId: string, conversation: Omit<SessionSnapshot, 'contracts'>): SessionSnapshot;
   readonly processManager: ProcessManager;
-  /** Live process registry (fleet aggregation). No dispose seam exists; the unref'd tick runs only while subscribers exist, hosts dispose() themselves. */
+  /** Live process registry (fleet aggregation). RuntimeServices.dispose() stops its tick; hosts own their process lifetimes. */
   readonly processRegistry: ArchivableProcessRegistry;
   readonly modeManager: ModeManager;
   readonly fileUndoManager: FileUndoManager;
@@ -930,8 +932,8 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
 
 
   // Live process registry, narrow structural deps only, constructed
-  // after every source manager exists. See the RuntimeServices interface
-  // comment for the dispose story (no RuntimeServices-wide shutdown seam yet).
+  // after every source manager exists. RuntimeServices.dispose() releases
+  // the registry through the graph's shared disposal scope.
   // Archive-aware: finished agent/swarm subtrees can be moved out of the
   // live fleet view into a session-scoped archive (see fleet/archive.ts).
   // ACP/MCP protocol decisions use the same recorded autonomous owner as native tools.
@@ -1074,6 +1076,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     admitExpensiveWork: (label) => admitExpensiveWork(label),
   });
   registerGatewayVerbGroups(gatewayMethods, { homeDirectory, processRegistry, workspaceCheckpointManager, sessionBroker, secretsManager, approvalBroker, requestApproval: (input) => approvalBroker.requestApproval(input), stampFixSessionOnApproval: (offerCallId, outcome) => approvalBroker.stampFixSession(offerCallId, outcome), watcherRegistry, userPermissionRuleStore, shellPaths, surfaceRoot, runtimeBus: options.runtimeBus, sessionPresence: { isAttached }, configManager, runtimeStore: options.runtimeStore, channelDeliveryRouter, providerRegistry, automationManager, sessionLister: sessionBroker, sessionIntake: sessionBroker, channelPolicy, workingDirectory, attemptsController: contractRunner.fleetControls(), contractOperator, stepUpService, memoryRegistry, pairingTokens, acpHost, sessionLiveTurnControls, powerManager, memoryGovernor, voiceSetup, credentialWrites: { config: configManager, secrets: secretsManager }, approvalRaise: approvalBroker, disposal: disposalScope.registry, personalCapture, ciAutonomousHost: () => externalPermissionHost, onCiAutoWatch: (observer) => { ciAutoWatchObserver = observer; } }); // see routes/register-gateway-verb-groups.ts
+  disposalScope.registry.add('native automation updates', registerNativeAutomationGatewayMethods(gatewayMethods, { manager: automationManager, host: externalPermissionHost }));
   // Teardown for every poller started above. RuntimePollerOwners is all-required,
   // so a poller added to this graph later cannot compile without being named here.
   registerRuntimePollers(disposalScope.registry, {
@@ -1086,6 +1089,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   void resumeContracts(contractRunner, workingDirectory);
   return {
     workingDirectory,
+    nativeMutationHost: externalPermissionHost,
     homeDirectory,
     surfaceRoot,
     memoryGovernor,

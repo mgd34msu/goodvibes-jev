@@ -125,10 +125,11 @@ describe('atomic Home Graph import', () => {
   }
   test('a later SQL failure rolls back all rows and leaves caches and disk untouched', async () => {
     const { store, dbPath, run, reopen } = await fixture(); reading();
-    const before = state(store), bytes = readFileSync(dbPath), database = sqlite(store), originalRun = database.run.bind(database);
-    database.run = (sql, params) => { if (sql.includes('INSERT OR REPLACE INTO knowledge_issues')) throw new Error('fixture late SQL failure'); originalRun(sql, params); };
-    try { await expect(run()).rejects.toThrow('fixture late SQL failure'); }
-    finally { database.run = originalRun; }
+    const database = sqlite(store);
+    database.run("CREATE TRIGGER fixture_import_issue_failure BEFORE INSERT ON knowledge_issues WHEN NEW.message = 'New issue' BEGIN SELECT RAISE(ABORT, 'fixture late SQL failure'); END");
+    await database.save();
+    const before = state(store), bytes = readFileSync(dbPath);
+    await expect(run()).rejects.toThrow('fixture late SQL failure');
     expect(state(store)).toEqual(before); expect(readFileSync(dbPath)).toEqual(bytes);
     // Persist the actual in-memory SQL after rollback, then close/reopen it.
     await database.save(); expect(state(await reopen())).toEqual(before);

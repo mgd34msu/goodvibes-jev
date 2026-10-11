@@ -22,7 +22,8 @@
  * guard rejected, or worse, the other way round.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { normalizeDomain, normalizeEmailAddress } from './signup-address.js';
 
@@ -82,6 +83,12 @@ export interface AgentAccountSnapshot {
 export interface AccountStoreFile {
   readonly version: 1;
   readonly accounts: readonly AgentAccountRecord[];
+}
+
+/** Additional owner restriction, never an admission grant. */
+export interface AgentAccountWriteGuard {
+  readonly assertCurrent: () => void;
+  readonly didWrite?: (stage: 'parent' | 'temporary' | 'store', content: string) => void;
 }
 
 export interface ParsedStore {
@@ -357,6 +364,9 @@ export class AgentAccountRegistry {
     return this.snapshot().accounts;
   }
 
+  /** The registration owner captures this path before reading or admitting an action. */
+  public getStorePath(): string { return this.storePath; }
+
   public get(id: string): AgentAccountRecord | null {
     const lookup = id.trim().toLowerCase();
     if (!lookup) return null;
@@ -364,23 +374,23 @@ export class AgentAccountRegistry {
   }
 
   /** Record an account the agent just created. Call this before storing the credential. */
-  public record(input: AgentAccountCreateInput): AgentAccountRecord {
+  public record(input: AgentAccountCreateInput, guard?: AgentAccountWriteGuard): AgentAccountRecord {
     const parsed = this.readStore();
     const fields = validateAccountCreateFields(input);
     if (accountSafetyFields(fields).some((text) => this.containsSecretLikeText(text))) {
       throw new Error('The account registry cannot store secret-looking values. Store the secret in the secret store and record only its key name.');
     }
     const account = buildAccountRecord(fields, input, parsed.store.accounts);
-    this.writeStore({ ...parsed.store, accounts: [...parsed.store.accounts, account] });
+    this.writeStore({ ...parsed.store, accounts: [...parsed.store.accounts, account] }, guard);
     return account;
   }
 
-  public forget(id: string): AgentAccountRecord {
+  public forget(id: string, guard?: AgentAccountWriteGuard): AgentAccountRecord {
     const parsed = this.readStore();
     const lookup = id.trim().toLowerCase();
     const existing = parsed.store.accounts.find((account) => account.id === lookup);
     if (!existing) throw new Error(`Unknown account record ${id}`);
-    this.writeStore({ ...parsed.store, accounts: parsed.store.accounts.filter((account) => account.id !== existing.id) });
+    this.writeStore({ ...parsed.store, accounts: parsed.store.accounts.filter((account) => account.id !== existing.id) }, guard);
     return existing;
   }
 
@@ -390,10 +400,10 @@ export class AgentAccountRegistry {
    * With no arguments this still rewrites the store from the validated read, which drops
    * malformed and duplicate entries that a hand edit may have introduced.
    */
-  public sweep(input: AgentAccountSweepInput = {}): AgentAccountSweepResult {
+  public sweep(input: AgentAccountSweepInput = {}, guard?: AgentAccountWriteGuard): AgentAccountSweepResult {
     const parsed = this.readStore();
     const { kept, removed } = sweepAccountRecords(parsed.store.accounts, input);
-    this.writeStore({ ...parsed.store, accounts: kept });
+    this.writeStore({ ...parsed.store, accounts: kept }, guard);
     return { removed, remaining: kept.length };
   }
   /**
@@ -412,10 +422,24 @@ export class AgentAccountRegistry {
     }
   }
 
-  private writeStore(store: AccountStoreFile): void {
+  private writeStore(store: AccountStoreFile, guard?: AgentAccountWriteGuard): void {
+    const content = formatStore(store);
+    guard?.assertCurrent();
     mkdirSync(dirname(this.storePath), { recursive: true });
-    const tmpPath = `${this.storePath}.tmp`;
-    writeFileSync(tmpPath, formatStore(store), 'utf-8');
-    renameSync(tmpPath, this.storePath);
+    guard?.didWrite?.('parent', content);
+    const tmpPath = `${this.storePath}.${randomUUID()}.tmp`;
+    let ownsTemporary = false;
+    try {
+      guard?.assertCurrent();
+      writeFileSync(tmpPath, content, { encoding: 'utf-8', flag: 'wx', mode: 0o600 });
+      ownsTemporary = true;
+      guard?.didWrite?.('temporary', content);
+      guard?.assertCurrent();
+      renameSync(tmpPath, this.storePath);
+      ownsTemporary = false;
+      guard?.didWrite?.('store', content);
+    } finally {
+      if (ownsTemporary) { try { unlinkSync(tmpPath); } catch { /* Clean up only this operation's private temporary file. */ } }
+    }
   }
 }

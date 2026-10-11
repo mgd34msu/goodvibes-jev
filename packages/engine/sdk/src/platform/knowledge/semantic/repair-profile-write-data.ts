@@ -1,4 +1,5 @@
-import type { KnowledgeNodeUpsertInput } from '../types.js';
+import { knowledgeClockIso } from '../store-record-representation.js';
+import type { KnowledgeEdgeUpsertInput, KnowledgeNodeUpsertInput } from '../types.js';
 import { semanticSlug } from './utils.js';
 import { getKnowledgeSpaceId } from '../spaces.js';
 import type { SourceLinkedRepairProfileFactInput } from './self-improvement-promotion.js';
@@ -48,7 +49,7 @@ export function prepareRepairProfileWriteData(
     generatedFactSupport: generatedFactSupportMetadata(plans.filter((plan) => plan.sourceId === input.source.id), undefined),
   });
   const describesMetadata = build({
-    ...(input.edgeMetadata ?? {}), repairedAt: Date.now(), sourceId: input.source.id,
+    ...(input.edgeMetadata ?? {}), repairedAt: knowledgeClockIso(Date.now()), sourceId: input.source.id,
     generatedFactSupport: generatedFactSupportMetadata(plans, undefined),
   });
   return { factMetadata, supportMetadata, describesMetadata };
@@ -66,4 +67,20 @@ export function repairProfileNodeInput(plan: {
     confidence: input.confidence ?? (input.authority === 'official-vendor' ? 90 : input.authority === 'vendor' ? 82 : 76),
     sourceId: primarySourceId, metadata: writeData.factMetadata,
   };
+}
+
+/** The same settled support and attachment edges used by atomic page publication. */
+export function repairProfileEdgeInputs(plan: {
+  readonly input: SourceLinkedRepairProfileFactInput; readonly factId: string;
+  readonly writeData: ReturnType<typeof prepareRepairProfileWriteData>;
+}): readonly KnowledgeEdgeUpsertInput[] {
+  const { input, factId, writeData } = plan;
+  return [
+    { fromKind: 'source', fromId: input.source.id, toKind: 'node', toId: factId,
+      relation: 'supports_fact', weight: input.supportWeight ?? (input.authority === 'official-vendor' ? 0.96 : 0.84),
+      metadata: writeData.supportMetadata },
+    ...input.subjects.map(subject => ({ fromKind: 'node' as const, fromId: factId, toKind: 'node' as const, toId: subject.id,
+      relation: 'describes', weight: input.describesWeight ?? (input.authority === 'official-vendor' ? 0.95 : 0.82),
+      metadata: writeData.describesMetadata })),
+  ];
 }

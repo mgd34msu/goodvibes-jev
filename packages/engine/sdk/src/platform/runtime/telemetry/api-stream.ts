@@ -20,6 +20,7 @@ export interface CreateTelemetryStreamInput {
   readonly filter: TelemetryFilter;
   readonly view: TelemetryViewMode;
   readonly rawAccessible: boolean;
+  readonly assertViewAvailable: () => void;
   readonly records: readonly TelemetryRecord[];
   readonly listEventPage: (
     filter: TelemetryFilter,
@@ -32,6 +33,7 @@ export interface CreateTelemetryStreamInput {
 }
 
 export function createTelemetryEventStream(input: CreateTelemetryStreamInput): Response {
+  input.assertViewAvailable();
   const encoder = new TextEncoder();
   let unsub = (): void => {};
   const requestedCursor = input.request.headers.get('last-event-id')?.trim() || input.filter.cursor;
@@ -43,6 +45,23 @@ export function createTelemetryEventStream(input: CreateTelemetryStreamInput): R
 
   const stream = new ReadableStream<Uint8Array>({
     start: (controller) => {
+      let closed = false;
+      const stop = (error?: unknown): void => {
+        if (closed) return;
+        closed = true;
+        teardown();
+        if (error !== undefined) controller.error(error);
+        else controller.close();
+      };
+      const checkAccess = (): boolean => {
+        try {
+          input.assertViewAvailable();
+          return true;
+        } catch (error) {
+          stop(error);
+          return false;
+        }
+      };
       if (requestedCursor) {
         const replay = input.listEventPage({
           ...input.filter,
@@ -50,28 +69,31 @@ export function createTelemetryEventStream(input: CreateTelemetryStreamInput): R
           limit: clampLimit(input.filter.limit, 100),
         }, input.view, input.rawAccessible);
         for (const record of [...replay.items].reverse()) {
+          if (!checkAccess()) return;
           controller.enqueue(encoder.encode(`id: ${record.id}\nevent: telemetry\ndata: ${JSON.stringify(record)}\n\n`));
         }
       }
       unsub = input.subscribe((record) => {
+        if (closed || !checkAccess()) return;
         if (!telemetryRecordMatches(record, input.filter)) return;
         const projected = sanitizeRecord(record, input.view);
         controller.enqueue(encoder.encode(`id: ${projected.id}\nevent: telemetry\ndata: ${JSON.stringify(projected)}\n\n`));
       });
       sseSubscribers.set(input.getSubscriberCount(), { stream_type: 'telemetry' });
       const heartbeat = setInterval(() => {
+        if (closed || !checkAccess()) return;
         controller.enqueue(encoder.encode(': heartbeat\n\n'));
       }, 15_000);
       (heartbeat as unknown as { unref?: () => void }).unref?.();
       teardown = (): void => {
+        closed = true;
         clearInterval(heartbeat);
         unsub();
+        input.request.signal.removeEventListener('abort', abort);
         sseSubscribers.set(input.getSubscriberCount(), { stream_type: 'telemetry' });
       };
-      input.request.signal.addEventListener('abort', () => {
-        teardown();
-        controller.close();
-      }, { once: true });
+      const abort = (): void => stop();
+      input.request.signal.addEventListener('abort', abort, { once: true });
       controller.enqueue(encoder.encode(`event: ready\ndata: ${JSON.stringify({
         version: 1,
         capabilities: input.getCapabilities(),

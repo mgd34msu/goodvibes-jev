@@ -30,8 +30,8 @@ import type { ConfigManager } from '../sdk/src/platform/config/manager.js';
 // Stubs, identical pattern to model-routes-secrets-skipped.test.ts
 // ---------------------------------------------------------------------------
 
-function makeConfigManager(): ConfigManager {
-  return { set: () => {}, get: () => undefined } as unknown as ConfigManager;
+function makeConfigManager(includeRawPrompts: () => boolean): ConfigManager {
+  return { set: () => {}, get: (key: string) => key === 'telemetry.includeRawPrompts' ? includeRawPrompts() : undefined } as unknown as ConfigManager;
 }
 
 function makeProviderRegistry(): ProviderRegistry {
@@ -52,10 +52,11 @@ function makeProviderRegistry(): ProviderRegistry {
  *   - runtimeBus + runtimeStore  → TelemetryApiService is constructed
  *   - checkAuth / extractAuthToken / describeAuthenticatedPrincipal → auth
  */
-function makeRouter(): { router: DaemonHttpRouter; dispose: () => void } {
+function makeRouter(): { router: DaemonHttpRouter; dispose: () => void; setRawEnabled: (value: boolean) => void } {
   const bus = new RuntimeEventBus();
   const store = createRuntimeStore();
-  const configManager = makeConfigManager();
+  let includeRawPrompts = false;
+  const configManager = makeConfigManager(() => includeRawPrompts);
   const providerRegistry = makeProviderRegistry();
 
   const SHARED_TOKEN = 'test-shared-token';
@@ -130,8 +131,31 @@ function makeRouter(): { router: DaemonHttpRouter; dispose: () => void } {
   };
 
   const router = new DaemonHttpRouter(routerContext as never);
-  return { router, dispose: () => router.dispose() };
+  return { router, dispose: () => router.dispose(), setRawEnabled: (value) => { includeRawPrompts = value; } };
 }
+
+test('serving router consults its own live raw telemetry opt-in', async () => {
+  const first = makeRouter();
+  const second = makeRouter();
+  const request = (): Request => new Request('http://localhost/api/v1/telemetry/events?view=raw', {
+    headers: { authorization: 'Bearer test-shared-token' },
+  });
+  try {
+    const disabled = await first.router.handleRequest(request());
+    expect(disabled.status).toBe(403);
+    expect(await disabled.json()).toMatchObject({ code: 'TELEMETRY_RAW_DISABLED' });
+    first.setRawEnabled(true);
+    const enabled = await first.router.handleRequest(request());
+    expect(enabled.status).toBe(200);
+    expect(await enabled.json()).toMatchObject({ view: 'raw', rawAccessible: true });
+    expect((await second.router.handleRequest(request())).status).toBe(403);
+    first.setRawEnabled(false);
+    expect((await first.router.handleRequest(request())).status).toBe(403);
+  } finally {
+    first.dispose();
+    second.dispose();
+  }
+});
 
 function jsonIngestRequest(url: string, body: unknown): Request {
   return new Request(url, {

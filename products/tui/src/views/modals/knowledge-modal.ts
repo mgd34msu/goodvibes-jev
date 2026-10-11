@@ -7,6 +7,8 @@ import type {
   ConfigModalTab,
   ConfigModalView,
 } from '../../input/config-modal-types.ts';
+import { JudgmentAuthorityRetiredError } from '@goodvibes-jev/engine/errors';
+import type { KnowledgeService } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 
 // ---------------------------------------------------------------------------
@@ -19,6 +21,8 @@ import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 // refresh() is the only place this module touches the SDK.
 // ---------------------------------------------------------------------------
 
+type KnowledgeReadOptions = Parameters<KnowledgeService['listNodes']>[1];
+
 interface KnowledgeNodeLike { readonly id: string; readonly kind: string; readonly title: string; readonly summary?: string | undefined; }
 interface KnowledgeSourceLike { readonly id: string; readonly sourceType: string; readonly status: string; readonly title?: string | undefined; readonly canonicalUri?: string | undefined; readonly sourceUri?: string | undefined; readonly summary?: string | undefined; }
 interface KnowledgeIssueLike { readonly id: string; readonly severity: 'info' | 'warning' | 'error'; readonly code: string; readonly message: string; readonly status: 'open' | 'resolved'; readonly sourceId?: string | undefined; readonly nodeId?: string | undefined; }
@@ -27,10 +31,10 @@ interface KnowledgeScheduleLike { readonly id: string; readonly label: string; r
 export interface KnowledgeModalDeps {
   readonly knowledgeApi: {
     readonly graph: {
-      readonly nodes: { list(limit?: number): readonly KnowledgeNodeLike[] };
-      readonly issues: { list(limit?: number): readonly KnowledgeIssueLike[] };
+      readonly nodes: { list(limit?: number, options?: KnowledgeReadOptions): Promise<readonly KnowledgeNodeLike[]> };
+      readonly issues: { list(limit?: number, options?: KnowledgeReadOptions): Promise<readonly KnowledgeIssueLike[]> };
     };
-    readonly sources: { list(limit?: number): readonly KnowledgeSourceLike[] };
+    readonly sources: { list(limit?: number, options?: KnowledgeReadOptions): Promise<readonly KnowledgeSourceLike[]> };
     readonly jobs: { schedules: { list(limit?: number): readonly KnowledgeScheduleLike[] } };
   };
 }
@@ -53,7 +57,11 @@ function issueRow(issue: KnowledgeIssueLike): BrowseRow {
   return { kind: 'issue', id: issue.id, title: issue.code, tag: `issue/${issue.severity}`, detail: cleanInline(issue.message), extra: refs.join('  ') };
 }
 
-class KnowledgeModalSurface implements ConfigModalSurface {
+export interface KnowledgeModalReadSurface extends ConfigModalSurface {
+  whenLoaded(): Promise<void>;
+}
+
+class KnowledgeModalSurface implements KnowledgeModalReadSurface {
   readonly name = 'knowledge-modal';
   readonly title = 'Knowledge';
   private browseRows: BrowseRow[] = [];
@@ -63,6 +71,11 @@ class KnowledgeModalSurface implements ConfigModalSurface {
   private issueCount = 0;
   private schedules: readonly KnowledgeScheduleLike[] = [];
   private loadError: string | null = null;
+
+  private controller: AbortController | null = null;
+  private requestRender: () => void = () => {};
+  private pendingLoad: Promise<void> = Promise.resolve();
+  private loading = false;
 
   constructor(private readonly deps: KnowledgeModalDeps) {}
 
@@ -77,23 +90,60 @@ class KnowledgeModalSurface implements ConfigModalSurface {
     { key: 'r', id: 'refresh', label: 'refresh' },
   ];
 
-  onOpen(): void { this.refresh(); }
+  onOpen(requestRender: () => void): void {
+    this.requestRender = requestRender;
+    this.refresh();
+  }
+
+  onClose(): void {
+    const previous = this.controller;
+    this.controller = null;
+    this.requestRender = () => {};
+    this.loading = false;
+    previous?.abort();
+  }
+
+  whenLoaded(): Promise<void> { return this.pendingLoad; }
 
   private refresh(): void {
+    const previous = this.controller;
+    const controller = new AbortController();
+    this.controller = controller;
+    previous?.abort();
+    this.loading = true;
+    this.loadError = null;
+    const assertCurrent = () => {
+      if (controller.signal.aborted || this.controller !== controller) throw new JudgmentAuthorityRetiredError();
+    };
+    this.pendingLoad = this.load(controller, assertCurrent);
+  }
+
+  private async load(controller: AbortController, assertCurrent: () => void): Promise<void> {
+    const options = { signal: controller.signal, assertCurrent };
     try {
-      const nodes = this.deps.knowledgeApi.graph.nodes.list(LIST_LIMIT);
-      const sources = this.deps.knowledgeApi.sources.list(LIST_LIMIT);
-      const issues = this.deps.knowledgeApi.graph.issues.list(LIST_LIMIT);
+      const [nodes, sources, issues] = await Promise.all([
+        this.deps.knowledgeApi.graph.nodes.list(LIST_LIMIT, options),
+        this.deps.knowledgeApi.sources.list(LIST_LIMIT, options),
+        this.deps.knowledgeApi.graph.issues.list(LIST_LIMIT, options),
+      ]);
+      assertCurrent();
+      const schedules = this.deps.knowledgeApi.jobs.schedules.list(20);
+      assertCurrent();
       this.sourceCount = sources.length;
       this.nodeCount = nodes.length;
       this.issueCount = issues.length;
       this.browseRows = [...sources.map(sourceRow), ...nodes.map(nodeRow), ...issues.map(issueRow)];
       this.reviewRows = issues.filter((issue) => issue.status === 'open').map(issueRow);
-      this.schedules = this.deps.knowledgeApi.jobs.schedules.list(20);
-      this.loadError = null;
+      this.schedules = schedules;
+      this.loading = false;
+      this.requestRender();
     } catch (e) {
+      if (controller.signal.aborted || this.controller !== controller) return;
       this.browseRows = []; this.reviewRows = []; this.schedules = [];
+      this.sourceCount = 0; this.nodeCount = 0; this.issueCount = 0;
+      this.loading = false;
       this.loadError = `Knowledge graph load failed: ${summarizeError(e)}`;
+      this.requestRender();
     }
   }
 
@@ -120,12 +170,13 @@ class KnowledgeModalSurface implements ConfigModalSurface {
   }
 
   buildView(): ConfigModalView {
+    if (this.loading) return { title: 'Knowledge', tabs: [{ id: 'browse', label: 'Browse', rows: [], emptyText: 'Loading knowledge graph…' }, { id: 'review', label: 'Review', rows: [], emptyText: 'Loading review queue…' }] };
     if (this.loadError) return { title: 'Knowledge', degraded: this.loadError, tabs: [{ id: 'browse', label: 'Browse', rows: [] }] };
     return { title: 'Knowledge', tabs: [this.browseTab(), this.reviewTab()] };
   }
 
   onAction(id: string, ctx: ConfigModalActionContext): void {
-    if (id === 'refresh') { this.refresh(); ctx.setStatus('Reloaded knowledge graph.'); return; }
+    if (id === 'refresh') { this.refresh(); ctx.setStatus('Reloading knowledge graph…'); return; }
     if (id === 'openMemory') { ctx.openModal?.('memory-modal'); return; }
     const action = id === 'accept' ? 'accept' : id === 'reject' ? 'reject' : id === 'resolve' ? 'resolve' : id === 'reopen' ? 'reopen' : null;
     if (!action) return;
@@ -136,7 +187,7 @@ class KnowledgeModalSurface implements ConfigModalSurface {
   }
 }
 
-export function createKnowledgeModalSurface(deps: KnowledgeModalDeps): ConfigModalSurface {
+export function createKnowledgeModalSurface(deps: KnowledgeModalDeps): KnowledgeModalReadSurface {
   return new KnowledgeModalSurface(deps);
 }
 
@@ -151,8 +202,8 @@ export function knowledgeModalGoldenSurface(): ConfigModalSurface {
   const schedules: readonly KnowledgeScheduleLike[] = [{ id: 'sched-1', label: 'Nightly reindex', enabled: true }];
   return createKnowledgeModalSurface({
     knowledgeApi: {
-      graph: { nodes: { list: () => nodes }, issues: { list: () => issues } },
-      sources: { list: () => sources },
+      graph: { nodes: { list: async () => nodes }, issues: { list: async () => issues } },
+      sources: { list: async () => sources },
       jobs: { schedules: { list: () => schedules } },
     },
   });

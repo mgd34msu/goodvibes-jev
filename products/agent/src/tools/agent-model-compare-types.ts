@@ -1,3 +1,5 @@
+import type { ToolExecuteOptions } from '@goodvibes-jev/engine/sdk/platform/tools';
+import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { ChatResponse, LLMProvider } from '@goodvibes-jev/engine/sdk/platform/providers';
 
@@ -11,6 +13,7 @@ export interface AgentModelCompareToolArgs {
   readonly maxTokens?: unknown;
   readonly reveal?: unknown;
   readonly saveArtifact?: unknown;
+  readonly preview?: unknown;
   readonly benchmarkKind?: unknown;
   readonly comparisonId?: unknown;
   readonly artifactId?: unknown;
@@ -52,20 +55,21 @@ export interface AgentModelCompareCatalogModel {
 export interface AgentModelCompareModelCatalog {
   readonly listModels: (query?: { readonly selectableOnly?: boolean }) => readonly AgentModelCompareCatalogModel[] | Promise<readonly AgentModelCompareCatalogModel[]>;
   readonly getCurrentModel?: () => AgentModelCompareCatalogModel | Promise<AgentModelCompareCatalogModel>;
-  readonly recordModelUsage?: (registryKey: string) => Promise<unknown>;
+  readonly recordModelUsage?: (registryKey: string, ownership?: Pick<ToolExecuteOptions, 'signal' | 'assertCurrent'>) => Promise<unknown>;
 }
 
 export interface AgentModelCompareProviderRegistry {
   readonly getForModel: (modelId: string, provider?: string) => LLMProvider;
 }
 
-export type AgentModelCompareArtifactStore = Pick<ArtifactStore, 'create'> & Partial<Pick<ArtifactStore, 'list' | 'readContent'>>;
+export type AgentModelCompareArtifactStore = Pick<ArtifactStore, 'create'> & Partial<Pick<ArtifactStore, 'list' | 'get' | 'readContent'>>;
 
 export interface AgentModelCompareToolDeps {
+  readonly toolRegistry?: ToolRegistry;
   readonly modelCatalog: AgentModelCompareModelCatalog;
   readonly providerRegistry: AgentModelCompareProviderRegistry;
   readonly artifactStore?: AgentModelCompareArtifactStore;
-  readonly applyModelRoute?: (registryKey: string) => AgentModelCompareRouteUpdateResult | Promise<AgentModelCompareRouteUpdateResult>;
+  readonly applyModelRoute?: (registryKey: string, options?: ToolExecuteOptions, ownership?: Pick<ToolExecuteOptions, 'signal' | 'assertCurrent'>) => AgentModelCompareRouteUpdateResult | Promise<AgentModelCompareRouteUpdateResult>;
 }
 
 export interface ResolvedCompareModel {
@@ -178,14 +182,4 @@ export const MAX_SIDE_BY_SIDE_PREVIEW_BYTES = 10_000;
 export const COMPARISON_STORE_LIMIT = 25;
 export const BLIND_LABELS = ['A', 'B', 'C', 'D'] as const;
 
-export const SYNTHESIS_THEMES: readonly {
-  readonly label: string;
-  readonly pattern: RegExp;
-}[] = [
-  { label: 'Concrete/actionable output', pattern: /\b(concrete|actionable|specific|steps?|route|command|practical)\b/i },
-  { label: 'Clear/scannable communication', pattern: /\b(clear|clarity|concise|scan|scannable|readable|structured|tone)\b/i },
-  { label: 'Accuracy and faithfulness', pattern: /\b(accurate|accuracy|faithful|correct|factual|hallucinat|source|evidence)\b/i },
-  { label: 'Context fit', pattern: /\b(context|project|user|goal|fit|rubric|instruction)\b/i },
-  { label: 'Safety and risk handling', pattern: /\b(safe|safety|risk|guard|permission|confirm|policy)\b/i },
-  { label: 'Speed and efficiency', pattern: /\b(fast|speed|latency|efficient|short|token)\b/i },
-];
+export { MODEL_REASON_THEME_LABELS } from '@goodvibes-jev/engine/sdk/platform/routing';

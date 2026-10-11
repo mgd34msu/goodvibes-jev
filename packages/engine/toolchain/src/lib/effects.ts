@@ -6,7 +6,7 @@
  * child processes). The thin bins wire the real Node/Bun implementations.
  */
 
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -50,22 +50,18 @@ export type Sleep = (ms: number) => Promise<void>;
 /** Real subprocess runner: captures stdout/stderr, reports the exit status without throwing. */
 export const realExec: Exec = (command, args, options = {}) => {
   try {
-    const stdout = execFileSync(command, args, {
+    const result = spawnSync(command, args, {
       cwd: options.cwd,
       env: options.env ?? process.env,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       maxBuffer: 64 * 1024 * 1024,
       timeout: options.timeoutMs,
+      killSignal: 'SIGKILL',
     });
-    return { status: 0, stdout, stderr: '' };
-  } catch (error) {
-    const err = error as { status?: number; stdout?: Buffer | string; stderr?: Buffer | string };
-    return {
-      status: typeof err.status === 'number' ? err.status : 1,
-      stdout: err.stdout ? err.stdout.toString() : '',
-      stderr: err.stderr ? err.stderr.toString() : '',
-    };
+    return { status: result.error ? 1 : result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+  } catch {
+    return { status: 1, stdout: '', stderr: '' };
   }
 };
 

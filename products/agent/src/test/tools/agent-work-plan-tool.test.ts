@@ -6,16 +6,23 @@ import {
   createAgentWorkPlanTool,
   registerAgentWorkPlanTool,
 } from '../../tools/agent-work-plan-tool.ts';
+import { admitLocalState } from '../helpers/local-state-admission.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../../config/surface.ts';
 
 function makeStore(): WorkPlanStore {
+  const home = makeProjectTempDir('goodvibes-agent-work-plan-tool');
   return new WorkPlanStore({
-    homeDirectory: makeProjectTempDir('goodvibes-agent-work-plan-tool'),
+    homeDirectory: home,
     surfaceRoot: GOODVIBES_AGENT_SURFACE_ROOT,
     projectId: 'project:agent-work-plan-tool',
-    projectRoot: '/tmp/agent-work-plan-tool',
+    projectRoot: home,
   });
+}
+
+function admittedWorkPlanTool(store: WorkPlanStore): Tool {
+  const tool = createAgentWorkPlanTool(store);
+  return { ...tool, execute: args => admitLocalState(registry => registerAgentWorkPlanTool(registry, store), 'agent_work_plan', args, { directory: store.homeDirectory }) };
 }
 
 function makeAgentRegistry(outputForArgs: (args: Record<string, unknown>) => string): { readonly registry: ToolRegistry; readonly calls: Record<string, unknown>[] } {
@@ -47,7 +54,7 @@ function makeAgentRegistry(outputForArgs: (args: Record<string, unknown>) => str
 describe('agent_work_plan tool', () => {
   test('creates and lists visible local work plan items from the main conversation', async () => {
     const store = makeStore();
-    const tool = createAgentWorkPlanTool(store);
+    const tool = admittedWorkPlanTool(store);
 
     const created = await tool.execute({
       action: 'create',
@@ -72,7 +79,7 @@ describe('agent_work_plan tool', () => {
 
   test('shows and updates status without connected-host mutation', async () => {
     const store = makeStore();
-    const tool = createAgentWorkPlanTool(store);
+    const tool = admittedWorkPlanTool(store);
     const item = store.addItem('Review visible plan', { source: 'test' });
 
     const updated = await tool.execute({
@@ -95,7 +102,7 @@ describe('agent_work_plan tool', () => {
 
   test('updates title owner and notes', async () => {
     const store = makeStore();
-    const tool = createAgentWorkPlanTool(store);
+    const tool = admittedWorkPlanTool(store);
     const item = store.addItem('Old title');
 
     const updated = await tool.execute({
@@ -141,7 +148,7 @@ describe('agent_work_plan tool', () => {
     }
   });
 
-  test('requires confirmation and explicit request before removing work plan items', async () => {
+  test('requires authentic admission before removing work plan items', async () => {
     const store = makeStore();
     const tool = createAgentWorkPlanTool(store);
     const item = store.addItem('Do not remove silently');
@@ -152,7 +159,7 @@ describe('agent_work_plan tool', () => {
       confirm: true,
     });
     expect(withoutRequest.success).toBe(false);
-    expect(withoutRequest.error).toContain('explicitUserRequest is required');
+    expect(withoutRequest.error).toContain('held');
     expect(store.listItems()).toHaveLength(1);
 
     const preview = await tool.execute({
@@ -162,20 +169,15 @@ describe('agent_work_plan tool', () => {
       explicitUserRequest: 'Remove this work item.',
     });
     expect(preview.success).toBe(false);
-    expect(preview.error).toContain('preview');
+    expect(preview.error).toContain('held');
     expect(store.listItems()).toHaveLength(1);
 
-    const removed = await tool.execute({
-      action: 'remove',
-      id: item.id,
-      confirm: true,
-      explicitUserRequest: 'Remove this work item.',
-    });
+    const removed = await admittedWorkPlanTool(store).execute({ action: 'remove', id: item.id });
     expect(removed.success).toBe(true);
     expect(store.listItems()).toHaveLength(0);
   });
 
-  test('requires confirmation before clearing completed work', async () => {
+  test('requires authentic admission before clearing completed work', async () => {
     const store = makeStore();
     const tool = createAgentWorkPlanTool(store);
     const done = store.addItem('Done item', { status: 'done' });
@@ -189,11 +191,7 @@ describe('agent_work_plan tool', () => {
     expect(preview.success).toBe(false);
     expect(store.listItems()).toHaveLength(2);
 
-    const cleared = await tool.execute({
-      action: 'clear_completed',
-      confirm: true,
-      explicitUserRequest: 'Clear completed work.',
-    });
+    const cleared = await admittedWorkPlanTool(store).execute({ action: 'clear_completed' });
     expect(cleared.success).toBe(true);
     expect(cleared.output).toContain('Cleared 1');
     expect(store.listItems().map((item) => item.id)).not.toContain(done.id);
@@ -204,11 +202,13 @@ describe('agent_work_plan tool', () => {
     const store = makeStore();
     const { registry, calls } = makeAgentRegistry(() => JSON.stringify({ agentId: 'must-not-spawn' }));
     registerAgentWorkPlanTool(registry, store);
-    const created = await registry.execute('create', 'agent_work_plan', { action: 'create', title: 'Local todo' });
+    const raw = await registry.execute('create', 'agent_work_plan', { action: 'create', title: 'Forged local todo' });
+    expect(raw.success).toBe(false);
+    const created = await admittedWorkPlanTool(store).execute({ action: 'create', title: 'Local todo' });
     expect(created.success).toBe(true);
     const item = store.listItems()[0]!;
-    expect((await registry.execute('update', 'agent_work_plan', { action: 'update', id: item.id, title: 'Changed local todo' })).success).toBe(true);
-    expect((await registry.execute('done', 'agent_work_plan', { action: 'set_status', id: item.id, status: 'done' })).success).toBe(true);
+    expect((await admittedWorkPlanTool(store).execute({ action: 'update', id: item.id, title: 'Changed local todo' })).success).toBe(true);
+    expect((await admittedWorkPlanTool(store).execute({ action: 'set_status', id: item.id, status: 'done' })).success).toBe(true);
     const before = store.listItems();
     const denied = await registry.execute('dispatch', 'agent_work_plan', { action: 'dispatch_agents', id: item.id, confirm: true, explicitUserRequest: 'Dispatch now' });
     expect(denied.success).toBe(false); expect(denied.error).toContain('/work submit-file');

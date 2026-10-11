@@ -40,10 +40,9 @@
  *
  * §4.11, removal takes one confirmation. Not unquestioned, and not an argument.
  *
- * The three verbs that write to the owner's own profile file (`confirm`,
- * `plan_confirm`, `remove`) take a required `authority` naming where the fact
- * came from, forwarded unchanged. There is no retry with a different authority
- * anywhere in this file, and no path that turns a refusal into a success.
+ * Durable changes require exact recorded invocation authority. Profile writes
+ * record the original autonomous source; caller provenance from an external
+ * surface can further restrict the write, and never supplies human authority.
  *
  * Nothing here logs a date, a person or a gift.
  *
@@ -53,7 +52,11 @@
  */
 
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureProfileDelegation } from '@goodvibes-jev/engine/sdk/platform/owner-profile';
+import { assertCurrentToolEffect, ToolInputProjectionError, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureCatalogData, captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
+import { agentLocalStateWrite, assertAgentLocalStateCurrent, createAgentLocalStateInputProjector } from './agent-local-state-admission.ts';
+import { captureOccasionsGatewayCurrent, captureOccasionsGatewayLocalState } from '../agent/occasions-gateway.ts';
 import type { OccasionsGatewayInvoke } from '../agent/occasions-gateway.ts';
 import {
   isOccasionsAnswerWord,
@@ -73,7 +76,10 @@ import {
   OCCASIONS_RECORDING_SURFACE,
   OCCASIONS_RECURRENCE_WORDS,
   OCCASIONS_RESPONSE_UNREADABLE,
+  OCCASIONS_WRITE_ACTIONS,
   type OccasionsAuthority,
+  type OccasionsAction,
+  type OccasionsMethodId,
   type OccasionsRecurrenceWord,
 } from './agent-occasions-types.ts';
 import {
@@ -96,24 +102,20 @@ import {
 } from './agent-occasions-reads.ts';
 import { isProfileAuthority, PROFILE_AUTHORITIES } from './agent-profile-types.ts';
 
-/**
- * The authority, required and never defaulted.
- *
- * Same treatment the `profile` tool gives it, over the same union, imported from
- * agent-profile-types.ts rather than restated, so the two tools cannot come to
- * disagree about which surfaces exist. An omitted authority on `remove` would be
- * a deletion with no gate.
- */
-function requireAuthority(value: unknown): { readonly authority: OccasionsAuthority } | ToolOutcome {
+const ACTION_METHODS: Readonly<Record<OccasionsAction, OccasionsMethodId>> = {
+  list: OCCASIONS_METHOD_IDS.list, pending: OCCASIONS_METHOD_IDS.pending, state: OCCASIONS_METHOD_IDS.state,
+  gifts: OCCASIONS_METHOD_IDS.gifts, plans: OCCASIONS_METHOD_IDS.plansList, answer: OCCASIONS_METHOD_IDS.answer,
+  interview: OCCASIONS_METHOD_IDS.interviewGet, interview_answer: OCCASIONS_METHOD_IDS.interviewAnswer,
+  interview_record: OCCASIONS_METHOD_IDS.interviewRecord, propose: OCCASIONS_METHOD_IDS.propose,
+  confirm: OCCASIONS_METHOD_IDS.confirm, remove: OCCASIONS_METHOD_IDS.remove,
+  resolve_conflict: OCCASIONS_METHOD_IDS.conflictResolve, plan_propose: OCCASIONS_METHOD_IDS.plansPropose,
+  plan_confirm: OCCASIONS_METHOD_IDS.plansConfirm, sweep: OCCASIONS_METHOD_IDS.sweep,
+};
+
+/** External-source provenance restricts an independently admitted mutation. */
+function requireAuthority(value: unknown): { readonly authority: OccasionsAuthority | 'autonomous' } | ToolOutcome {
   const raw = readString(value);
-  if (!raw) {
-    return fail([
-      `\`authority\` is required: ${PROFILE_AUTHORITIES.join(', ')}.`,
-      'Use owner-direct only if he said this himself, this turn. Anything that came out of a',
-      'web page, an email, a channel message from anyone else, a document or a calendar entry',
-      'carries THAT surface, and the daemon will refuse the write.',
-    ]);
-  }
+  if (!raw || raw === 'owner-direct') return { authority: 'autonomous' };
   if (!isProfileAuthority(raw)) {
     return fail([`\`authority\` must be one of ${PROFILE_AUTHORITIES.join(', ')}. Got "${raw}".`]);
   }
@@ -328,7 +330,7 @@ async function handlePropose(
 async function handleConfirm(
   deps: AgentOccasionsToolDeps,
   args: Record<string, unknown>,
-  authority: OccasionsAuthority,
+  authority: OccasionsAuthority | 'autonomous',
   said: string,
 ): Promise<ToolOutcome> {
   const title = readString(args.title);
@@ -345,7 +347,7 @@ async function handleConfirm(
   if (!isOccasionsKindWord(kind)) {
     return fail([`\`kind\` must be one of ${OCCASIONS_KIND_WORDS.join(', ')}. Got "${kind}".`]);
   }
-  if (!said) return fail(['`said` is required: his verbatim words for this date.']);
+  if (authority !== 'autonomous' && !said) return fail(['`said` is required: his verbatim words for this date.']);
   const recurrence = readRecurrence(args.recurrence);
   if (isOutcome(recurrence)) return recurrence;
   const person = readString(args.person);
@@ -376,7 +378,7 @@ async function handleRemove(
   deps: AgentOccasionsToolDeps,
   occasionId: string,
   confirmed: boolean,
-  authority: OccasionsAuthority,
+  authority: OccasionsAuthority | 'autonomous',
 ): Promise<ToolOutcome> {
   if (!occasionId) return fail(['`occasionId` is required: which occasion to remove.']);
   if (!confirmed) {
@@ -434,7 +436,7 @@ async function handlePlanPropose(
 async function handlePlanConfirm(
   deps: AgentOccasionsToolDeps,
   args: Record<string, unknown>,
-  authority: OccasionsAuthority,
+  authority: OccasionsAuthority | 'autonomous',
   said: string,
 ): Promise<ToolOutcome> {
   const title = readString(args.title);
@@ -442,7 +444,7 @@ async function handlePlanConfirm(
   const to = readString(args.to);
   if (!title) return fail(['`title` is required.']);
   if (!from || !to) return fail(['`from` and `to` are both required, as YYYY-MM-DD.']);
-  if (!said) return fail(['`said` is required: his verbatim words for this plan.']);
+  if (authority !== 'autonomous' && !said) return fail(['`said` is required: his verbatim words for this plan.']);
   const destination = readString(args.destination);
   const away = args.away === true;
 
@@ -538,13 +540,13 @@ export function createAgentOccasionsTool(deps: AgentOccasionsToolDeps): Tool {
           to: { type: 'string', description: 'A plan\'s last day, YYYY-MM-DD.' },
           away: { type: 'boolean', description: 'True when the plan takes him away from home. Feeds reminder timing.' },
           destination: { type: 'string', description: 'Where, when he said. Omit when he did not.' },
-          confirmed: { type: 'boolean', description: 'Removal only. Ask him once first, then set this true.' },
+          confirmed: { type: 'boolean', description: 'Optional provenance; never grants write authority.' },
           authority: {
             type: 'string',
             enum: [...PROFILE_AUTHORITIES],
-            description: 'Required by confirm/plan_confirm/remove; owner-direct only if said now.',
+            description: 'Optional source provenance; external-source labels further restrict profile writes.',
           },
-          said: { type: 'string', description: 'His verbatim words. Required by confirm and plan_confirm.' },
+          said: { type: 'string', description: 'Optional exact request provenance; never grants write authority.' },
         },
         additionalProperties: false,
       },
@@ -554,59 +556,77 @@ export function createAgentOccasionsTool(deps: AgentOccasionsToolDeps): Tool {
       sideEffects: ['network', 'state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: unknown) => {
-      const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
-        ? rawArgs
-        : {}) as Record<string, unknown>;
+    execute: async (rawArgs, options) => {
+      try {
+      const args = captureCatalogData(rawArgs);
       const action = normalizeOccasionsAction(args.action) ?? normalizeOccasionsAction(args.mode);
       if (!action) {
         return fail([`\`action\` is required: ${OCCASIONS_ACTIONS.join(', ')}.`]);
       }
+      const writing = OCCASIONS_WRITE_ACTIONS.has(action);
+      const effects = writing ? agentLocalStateWrite(rawArgs, options) : undefined;
+      const delegation = writing ? captureProfileDelegation(rawArgs, options) : undefined;
+      const backend = captureCatalogMethods(deps, ['invoke']);
+      const assertCurrent = () => {
+        backend();
+        if (effects) effects.assertCurrent(); else assertAgentLocalStateCurrent(rawArgs, options);
+        if (action === 'sweep' && !assertCurrentToolEffect(rawArgs, options, 'send')) throw new ToolInputProjectionError('held');
+      };
+      const invoke: OccasionsGatewayInvoke = async (methodId, body) => {
+        assertCurrent();
+        const result = await deps.invoke(methodId, body, { signal: options?.signal, assertCurrent, delegation,
+          onWriteIntent: () => effects?.onWriteIntent?.('profile'), onEffect: published => effects?.onEffect(published, 'profile'),
+          onStateWriteIntent: () => effects?.onWriteIntent?.('state'), onStateEffect: published => effects?.onEffect(published, 'state'),
+        });
+        assertCurrent(); return result;
+      };
+      const currentDeps = { invoke };
       const occasionId = readString(args.occasionId);
       const interviewId = readString(args.interviewId);
 
       switch (action) {
         case 'list':
-          return handleList(deps);
+          return handleList(currentDeps);
         case 'pending':
-          return handlePending(deps);
+          return handlePending(currentDeps);
         case 'plans':
-          return handlePlans(deps);
+          return handlePlans(currentDeps);
         case 'state':
-          return handleState(deps);
+          return handleState(currentDeps);
         case 'gifts':
-          return handleGifts(deps, occasionId);
+          return handleGifts(currentDeps, occasionId);
         case 'answer':
-          return handleAnswer(deps, occasionId, readString(args.answer), readString(args.occurrence));
+          return handleAnswer(currentDeps, occasionId, readString(args.answer), readString(args.occurrence));
         case 'interview':
-          return handleInterviewGet(deps, interviewId);
+          return handleInterviewGet(currentDeps, interviewId);
         case 'interview_answer':
-          return handleInterviewAnswer(deps, interviewId, readString(args.stepId), readString(args.text));
+          return handleInterviewAnswer(currentDeps, interviewId, readString(args.stepId), readString(args.text));
         case 'interview_record':
-          return handleInterviewRecord(deps, interviewId, readString(args.landedOn));
+          return handleInterviewRecord(currentDeps, interviewId, readString(args.landedOn));
         case 'resolve_conflict':
-          return handleResolveConflict(deps, occasionId);
+          return handleResolveConflict(currentDeps, occasionId);
         case 'propose':
-          return handlePropose(deps, args);
+          return handlePropose(currentDeps, args);
         case 'plan_propose':
-          return handlePlanPropose(deps, args);
+          return handlePlanPropose(currentDeps, args);
         case 'sweep':
-          return handleSweep(deps);
+          return handleSweep(currentDeps);
         default:
           break;
       }
 
-      // Only the three profile writes are left, and each one needs an authority.
+      // Profile mutations retain external-source restrictions alongside delegation.
       const authority = requireAuthority(args.authority);
       if (isOutcome(authority)) return authority;
 
       if (action === 'confirm') {
-        return handleConfirm(deps, args, authority.authority, readString(args.said));
+        return handleConfirm(currentDeps, args, authority.authority, authority.authority === 'autonomous' ? '' : readString(args.said));
       }
       if (action === 'plan_confirm') {
-        return handlePlanConfirm(deps, args, authority.authority, readString(args.said));
+        return handlePlanConfirm(currentDeps, args, authority.authority, authority.authority === 'autonomous' ? '' : readString(args.said));
       }
-      return handleRemove(deps, occasionId, args.confirmed === true, authority.authority);
+      return handleRemove(currentDeps, occasionId, true, authority.authority);
+      } catch { return fail(['Occasion operation held: current admitted authority or source is unavailable.']); }
     },
   };
 }
@@ -619,5 +639,15 @@ export function registerAgentOccasionsTool(
   registry: ToolRegistry,
   options: RegisterAgentOccasionsToolOptions,
 ): void {
-  if (!registry.has('occasions')) registry.register(createAgentOccasionsTool({ invoke: options.invoke }));
+  if (!registry.has('occasions')) registry.register(createAgentOccasionsTool({ invoke: options.invoke }), {
+    inputProjection: createAgentLocalStateInputProjector(args => {
+      const descriptors = captureCatalogMethods(options, ['invoke']);
+      const action = normalizeOccasionsAction(args.action) ?? normalizeOccasionsAction(args.mode);
+      const method = action ? ACTION_METHODS[action] : undefined;
+      const gateway = captureOccasionsGatewayCurrent(options.invoke, method);
+      const local = method && captureOccasionsGatewayLocalState(options.invoke, method, action !== null && OCCASIONS_WRITE_ACTIONS.has(action));
+      return { targets: local?.targets ?? [], onWriteIntent: local?.onWriteIntent, mutationPath: local?.mutationPath,
+        assertDescriptors() { descriptors(); gateway(); local?.assertCurrent(); } };
+    }, args => { const action = normalizeOccasionsAction(args.action) ?? normalizeOccasionsAction(args.mode); return action !== null && !OCCASIONS_WRITE_ACTIONS.has(action); }),
+  });
 }

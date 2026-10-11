@@ -69,8 +69,8 @@ describe('runtime knowledge store isolation', () => {
     expect(existsSync(join(controlPlaneDir, 'knowledge-agent.sqlite'))).toBe(false);
     expect(existsSync(join(controlPlaneDir, ['knowledge-home', 'graph.sqlite'].join('-')))).toBe(false);
 
-    const aliasNodes = services.knowledgeService.queryNodes({ includeAllSpaces: true, limit: 100 }).items;
-    const agentNodes = services.agentKnowledgeService.queryNodes({ includeAllSpaces: true, limit: 100 }).items;
+    const aliasNodes = (await services.knowledgeService.queryNodes({ includeAllSpaces: true, limit: 100 })).items;
+    const agentNodes = (await services.agentKnowledgeService.queryNodes({ includeAllSpaces: true, limit: 100 })).items;
     const aliasMap = await services.knowledgeService.map({ includeAllSpaces: true, limit: 100 });
     expect(aliasNodes).toHaveLength(0);
     expect(agentNodes).toHaveLength(0);
@@ -107,16 +107,16 @@ describe('runtime knowledge store isolation', () => {
       },
     });
 
-    const agentSources = services.agentKnowledgeService.querySources({
+    const agentSources = (await services.agentKnowledgeService.querySources({
       includeAllSpaces: true,
       connectorId: 'goodvibes-project-planning',
       limit: 100,
-    }).items;
-    const aliasSources = services.knowledgeService.querySources({
+    })).items;
+    const aliasSources = (await services.knowledgeService.querySources({
       includeAllSpaces: true,
       connectorId: 'goodvibes-project-planning',
       limit: 100,
-    }).items;
+    })).items;
 
     const schedules = services.agentKnowledgeService.listSchedules();
     expect(schedules.filter(schedule => schedule.metadata.bootstrap === true).map(schedule => schedule.jobId).sort()).toEqual([

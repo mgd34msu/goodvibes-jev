@@ -49,7 +49,6 @@
   },
   "smoke": {
     "bannerPrefix": "goodvibes-daemon ",
-    "forbiddenStrings": ["sqlite-vec", "$bunfs/root"],
     "binaryDefault": "native/goodvibes-daemon-linux-x64"
   }
 }

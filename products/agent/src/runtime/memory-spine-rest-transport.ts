@@ -27,8 +27,8 @@
  *    an injectable `fetchImpl` for exactly this kind of consumer policy.
  */
 
-import { createMemorySpineRestTransport as createSdkMemorySpineRestTransport } from '@goodvibes-jev/engine/sdk/platform/runtime/memory-spine';
-import type { MemoryTransport } from '@goodvibes-jev/engine/sdk/platform/runtime/memory-spine';
+import { createMemorySpineRestTransport as createSdkMemorySpineRestTransport, captureMemoryOperation, assertMemoryOperationCurrent, awaitMemoryOperation, memoryVerbUnavailableError } from '@goodvibes-jev/engine/sdk/platform/runtime/memory-spine';
+import type { MemoryTransport, MemoryOperationOptions } from '@goodvibes-jev/engine/sdk/platform/runtime/memory-spine';
 import type { SessionRegistrationConnection } from './session-spine-rest-transport.ts';
 
 const DEFAULT_MEMORY_WIRE_TIMEOUT_MS = 2_000;
@@ -44,7 +44,9 @@ function createTimeoutFetch(timeoutMs: number): typeof fetch {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      return await fetch(input, { ...init, signal: controller.signal });
+      const parent = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+      const signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
+      return await awaitMemoryOperation(() => fetch(input, { ...init, signal }), { signal });
     } finally {
       clearTimeout(timer);
     }
@@ -68,30 +70,57 @@ function requireToken(connection: SessionRegistrationConnection): void {
 export function createMemorySpineRestTransport(options: MemorySpineRestTransportOptions): MemoryTransport {
   const timeoutMs = options.timeoutMs ?? DEFAULT_MEMORY_WIRE_TIMEOUT_MS;
   const fetchImpl = createTimeoutFetch(timeoutMs);
-
-  const build = (): MemoryTransport => {
-    const connection = options.resolveConnection();
-    requireToken(connection);
-    return createSdkMemorySpineRestTransport({
-      baseUrl: connection.baseUrl,
-      authToken: connection.token,
-      fetchImpl,
-    });
+  const optionsResolver = options.resolveConnection;
+  const captureOperationScope = () => {
+    const connection = optionsResolver();
+    const baseUrl = connection.baseUrl, token = connection.token, tokenPath = connection.tokenPath;
+    return () => {
+      if (options.resolveConnection !== optionsResolver) throw new Error('Memory spine connection resolver changed');
+      const current = optionsResolver();
+      if (current.baseUrl !== baseUrl || current.token !== token || current.tokenPath !== tokenPath) {
+        throw new Error('Memory spine connection changed');
+      }
+    };
   };
 
-  return new Proxy({} as MemoryTransport, {
-    get(_target, prop, _receiver) {
-      // Async wrapper: every MemoryTransport method is async, and `build()`
-      // (which asserts a token is present) must throw as a REJECTED PROMISE,
-      // not a synchronous exception, a synchronous throw here would escape
-      // before the caller's own `await`/`.rejects` ever sees a promise, per
-      // the honest-failure contract every caller of this transport relies on.
-      return async (...args: unknown[]) => {
-        const transport = build() as unknown as Record<PropertyKey, unknown>;
-        const method = transport[prop];
-        if (typeof method !== 'function') return method;
-        return (method as (...a: unknown[]) => unknown).apply(transport, args);
-      };
-    },
-  });
+  const call = async <T>(verb: string, lifecycle: MemoryOperationOptions | undefined,
+    invoke: (transport: MemoryTransport, operation: MemoryOperationOptions) => Promise<T> | undefined): Promise<T> => {
+    const caller = captureMemoryOperation(lifecycle);
+    assertMemoryOperationCurrent(caller);
+    const scope = captureOperationScope();
+    const operation = captureMemoryOperation({ signal: caller.signal, assertCurrent: () => {
+      assertMemoryOperationCurrent(caller); scope();
+    } });
+    return awaitMemoryOperation(() => {
+      assertMemoryOperationCurrent(operation);
+      if (options.resolveConnection !== optionsResolver) throw new Error('Memory spine connection resolver changed');
+      const connection = optionsResolver();
+      requireToken(connection);
+      assertMemoryOperationCurrent(operation);
+      const transport = createSdkMemorySpineRestTransport({
+        baseUrl: connection.baseUrl, authToken: connection.token, fetchImpl,
+      });
+      const result = invoke(transport, operation);
+      if (!result) throw memoryVerbUnavailableError(verb);
+      return result;
+    }, operation);
+  };
+  return {
+    captureOperationScope,
+    add: (opts, operation) => call('add', operation, (transport, owned) => transport.add(opts, owned)),
+    honestSearch: (filter, searchOptions, operation) => call('honestSearch', operation, (transport, owned) => transport.honestSearch(filter, searchOptions, owned)),
+    get: (id, operation) => call('get', operation, (transport, owned) => transport.get(id, owned)),
+    updateReview: (id, patch, operation) => call('updateReview', operation, (transport, owned) => transport.updateReview(id, patch, owned)),
+    delete: (id, operation) => call('delete', operation, (transport, owned) => transport.delete(id, owned)),
+    list: (filter, operation) => call('list', operation, (transport, owned) => transport.list?.(filter, owned)),
+    searchSemantic: (filter, operation) => call('searchSemantic', operation, (transport, owned) => transport.searchSemantic?.(filter, owned)),
+    update: (id, patch, operation) => call('update', operation, (transport, owned) => transport.update?.(id, patch, owned)),
+    link: (fromId, toId, relation, operation) => call('link', operation, (transport, owned) => transport.link?.(fromId, toId, relation, owned)),
+    linksFor: (id, operation) => call('linksFor', operation, (transport, owned) => transport.linksFor?.(id, owned)),
+    reviewQueue: (limit, scope, operation) => call('reviewQueue', operation, (transport, owned) => transport.reviewQueue?.(limit, scope, owned)),
+    exportBundle: (filter, operation) => call('exportBundle', operation, (transport, owned) => transport.exportBundle?.(filter, owned)),
+    importBundle: (bundle, operation) => call('importBundle', operation, (transport, owned) => transport.importBundle?.(bundle, owned)),
+    vectorStats: (operation) => call('vectorStats', operation, (transport, owned) => transport.vectorStats?.(owned)),
+    doctor: (operation) => call('doctor', operation, (transport, owned) => transport.doctor?.(owned)),
+  };
 }

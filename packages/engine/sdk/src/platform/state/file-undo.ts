@@ -133,6 +133,11 @@ export class FileUndoManager {
     return this.undoStack[this.undoStack.length - 1];
   }
 
+  /** Peek at the next redo operation without changing either stack. */
+  peekRedo(): FileOperation | undefined {
+    return this.redoStack[this.redoStack.length - 1];
+  }
+
   /** Clear both stacks (e.g., on session reset). */
   clear(): void {
     this.undoStack = [];

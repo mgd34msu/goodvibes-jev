@@ -8,6 +8,9 @@ import { NotificationFeed } from '../../views/notifications-feed.ts';
 import { configGetStub } from '../helpers/config-manager-stub.ts';
 import { SAMPLES } from '../helpers/contract-event-samples.ts';
 
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+
 const config = { get: configGetStub() };
 const context = { sessionId: 'fixture-session', traceId: 'shared-trace', source: 'notification-identity-test' };
 
@@ -94,14 +97,17 @@ for (const bridgeFirst of [true, false]) {
   });
 }
 
-test('unknown legacy operator lines retain their original text as independent notices', () => {
+test('unknown legacy operator lines retain their original text as independent notices', async () => {
   const feed = new NotificationFeed();
   const sink = createShellNoticeSink(feed);
   const text = '[Legacy] synthetic unrecognized lifecycle text';
-  sink(text, { restored: true });
-  sink(text, { restored: true });
-  expect(feed.list().map((entry) => entry.title)).toEqual([text, text]);
-  expect(feed.unreadCount()).toBe(0);
+  const previous = installJudgmentPort(fakePort((_name, question) => choiceAnswer(question, 'info', 0.99)).port);
+  try {
+    await sink(text, { restored: true });
+    await sink(text, { restored: true });
+    expect(feed.list().map((entry) => entry.title)).toEqual([text, text]);
+    expect(feed.unreadCount()).toBe(0);
+  } finally { installJudgmentPort(previous); }
 });
 
 test('keyless memory-pressure deliveries also receive unique notification identities', async () => {

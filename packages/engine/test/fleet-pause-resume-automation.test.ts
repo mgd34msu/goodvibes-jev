@@ -6,7 +6,8 @@ import { describe, expect, test, spyOn, type Mock } from 'bun:test';
 import { createProcessRegistry } from '../sdk/src/platform/runtime/fleet/index.js';
 import type { ProcessRegistryDeps } from '../sdk/src/platform/runtime/fleet/registry.js';
 import type { ScheduleEntry, TriggerDefinition } from '../sdk/src/platform/tools/workflow/index.js';
-import type { AutomationJob } from '../sdk/src/platform/automation/index.js';
+import type { AutomationJob, ManagedAutomationJob } from '../sdk/src/platform/automation/index.js';
+import { ownedAutomationJob } from '../sdk/src/platform/automation/job-mutations.js';
 import { adaptAutomationJob, automationJobNodeId } from '../sdk/src/platform/runtime/fleet/adapters/automation.js';
 import { logger } from '../sdk/src/platform/utils/logger.js';
 
@@ -28,8 +29,8 @@ function makeDeps(overrides: Partial<ProcessRegistryDeps> = {}): ProcessRegistry
   };
 }
 
-function makeAutomationJob(overrides: Partial<AutomationJob> & { id: string }): AutomationJob {
-  return {
+function makeAutomationJob(overrides: Partial<AutomationJob> & { id: string }): ManagedAutomationJob {
+  return ownedAutomationJob({
     labels: [],
     createdAt: T0,
     updatedAt: T0,
@@ -51,7 +52,7 @@ function makeAutomationJob(overrides: Partial<AutomationJob> & { id: string }): 
     failureCount: 0,
     deleteAfterRun: false,
     ...overrides,
-  };
+  });
 }
 
 /** Flush the microtask queue so a fire-and-forget async control op has a chance to settle. */
@@ -204,7 +205,7 @@ describe('fleet registry: automation jobs in the fleet tree (d4)', () => {
   });
 
   test('kill() dispatches removeJob() fire-and-forget: returns the node id synchronously, next query reflects removal once settled', async () => {
-    const jobs = new Map<string, AutomationJob>([['job-1', makeAutomationJob({ id: 'job-1' })]]);
+    const jobs = new Map<string, ManagedAutomationJob>([['job-1', makeAutomationJob({ id: 'job-1' })]]);
     const registry = createProcessRegistry(makeDeps({
       automationManager: {
         listJobs: () => [...jobs.values()],
@@ -228,14 +229,14 @@ describe('fleet registry: automation jobs in the fleet tree (d4)', () => {
   });
 
   test('interrupt() and resume() dispatch setEnabled(false/true) fire-and-forget; next query reflects the toggle', async () => {
-    const job = makeAutomationJob({ id: 'job-2', enabled: true });
+    let job = makeAutomationJob({ id: 'job-2', enabled: true });
     const setEnabledCalls: Array<{ jobId: string; enabled: boolean }> = [];
     const registry = createProcessRegistry(makeDeps({
       automationManager: {
         listJobs: () => [job],
         setEnabled: async (jobId: string, enabled: boolean) => {
           setEnabledCalls.push({ jobId, enabled });
-          (job as { enabled: boolean }).enabled = enabled;
+          job = ownedAutomationJob({ ...job, enabled });
           return job;
         },
         removeJob: async () => true,

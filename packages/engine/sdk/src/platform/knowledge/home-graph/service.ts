@@ -1,3 +1,6 @@
+import { snapshotNodeInput } from '../activation/projection.js';
+import { KnowledgeScopeSelectionHeldError } from '../scope-selection.js';
+import { HomeGraphPagePriorityHeldError } from './page-priority.js';
 import { createKnowledgeExtractionOwner } from '../extraction-ownership.js';
 import type { KnowledgeIngestOwnership } from '../ingest-context.js';
 import { KnowledgeWebGapRepairHeldError } from '../semantic/web-gap-repair/types.js';
@@ -23,6 +26,7 @@ import {
   HOME_GRAPH_CONNECTOR_ID,
   buildHomeGraphMetadata,
   homeGraphSourceId,
+  isGeneratedPageSource,
   namespacedCanonicalUri,
   readRecord,
   resolveHomeGraphSpace,
@@ -91,6 +95,9 @@ export class HomeGraphService {
   private activeReindex: Promise<HomeGraphReindexResult> | null = null;
   private pendingSyncSelfImprove = new Set<string>();
   private syncSelfImproveControllers = new Map<string, AbortController>();
+  private syncSelfImproveRuns = new Map<string, Promise<void>>();
+  private foregroundOperations = new Map<string, number>();
+  private resumeSyncSelfImprove = new Set<string>();
   constructor(
     private readonly store: KnowledgeStore,
     private readonly artifactStore: ArtifactStore,
@@ -254,20 +261,22 @@ export class HomeGraphService {
   async ask(input: HomeGraphAskInput): Promise<HomeGraphAskResult> {
     await this.store.init();
     const { spaceId, installationId } = resolveReadableHomeGraphSpace(this.store, input);
-    const initialState = readHomeGraphSearchState(this.store, spaceId);
-    const repairedExtractions = await this.repairStaleExtractionsForAsk(spaceId, installationId, input.query, initialState);
-    const state = repairedExtractions > 0 ? readHomeGraphSearchState(this.store, spaceId) : initialState;
-    const selection = await readHomeGraphSearchSelection({ store: this.store, spaceId, query: input, state });
-    const answer = await answerHomeGraphQuery({ store: this.store, semanticService: this.options.semanticService,
-      spaceId, query: input, state, results: selection.results });
-    const pageRefresh = await refreshDevicePagesForHomeGraphAsk({
-      store: this.store,
-      artifactStore: this.artifactStore,
-      spaceId,
-      installationId,
-      answer,
+    return this.runForegroundOperation(spaceId, installationId, async () => {
+      const initialState = readHomeGraphSearchState(this.store, spaceId);
+      const repairedExtractions = await this.repairStaleExtractionsForAsk(spaceId, installationId, input.query, initialState);
+      const state = repairedExtractions > 0 ? readHomeGraphSearchState(this.store, spaceId) : initialState;
+      const selection = await readHomeGraphSearchSelection({ store: this.store, spaceId, query: input, state });
+      const answer = await answerHomeGraphQuery({ store: this.store, semanticService: this.options.semanticService,
+        spaceId, query: input, state, results: selection.results });
+      const pageRefresh = await refreshDevicePagesForHomeGraphAsk({
+        store: this.store,
+        artifactStore: this.artifactStore,
+        spaceId,
+        installationId,
+        answer,
+      });
+      return withHomeGraphAskPageRefresh(answer, pageRefresh);
     });
-    return withHomeGraphAskPageRefresh(answer, pageRefresh);
   }
 
   async reindex(input: HomeGraphReindexInput = {}): Promise<HomeGraphReindexResult> {
@@ -337,26 +346,30 @@ export class HomeGraphService {
   async refreshDevicePassport(input: HomeGraphProjectionInput): Promise<HomeGraphDevicePassportResult> {
     await this.store.init();
     const { spaceId, installationId } = resolveHomeGraphSpace(input);
-    await this.enrichSpaceSources(spaceId);
-    return refreshHomeGraphDevicePassport({
-      store: this.store,
-      artifactStore: this.artifactStore,
-      spaceId,
-      installationId,
-      input,
+    return this.runForegroundOperation(spaceId, installationId, async () => {
+      await this.enrichSpaceSources(spaceId);
+      return refreshHomeGraphDevicePassport({
+        store: this.store,
+        artifactStore: this.artifactStore,
+        spaceId,
+        installationId,
+        input,
+      });
     });
   }
 
   async generateRoomPage(input: HomeGraphProjectionInput): Promise<HomeGraphProjectionResult> {
     await this.store.init();
     const { spaceId, installationId } = resolveHomeGraphSpace(input);
-    await this.enrichSpaceSources(spaceId);
-    return generateHomeGraphRoomPage({
-      store: this.store,
-      artifactStore: this.artifactStore,
-      spaceId,
-      installationId,
-      input,
+    return this.runForegroundOperation(spaceId, installationId, async () => {
+      await this.enrichSpaceSources(spaceId);
+      return generateHomeGraphRoomPage({
+        store: this.store,
+        artifactStore: this.artifactStore,
+        spaceId,
+        installationId,
+        input,
+      });
     });
   }
 
@@ -408,8 +421,20 @@ export class HomeGraphService {
     await this.store.init();
     const { spaceId } = resolveReadableHomeGraphSpace(this.store, input);
     const state = readHomeGraphState(this.store, spaceId);
+    const observedSources = state.sources.filter(isGeneratedPageSource);
+    const observedNodes = state.nodes.filter(node => !node.metadata.semanticKind && !['fact', 'knowledge_gap', 'wiki_page'].includes(node.kind));
+    const ids = new Set([...observedSources, ...observedNodes].map(record => record.id));
+    const observedEdges = state.edges.filter(edge => ids.has(edge.fromId) && ids.has(edge.toId));
+    const original = JSON.stringify({ sources: observedSources, nodes: observedNodes, edges: observedEdges });
+    const assertCurrent = () => {
+      const edges = new Map(this.store.listEdges().map(edge => [edge.id, edge]));
+      const current = JSON.stringify({ sources: observedSources.map(source => this.store.getSource(source.id)),
+        nodes: observedNodes.map(node => this.store.getNode(node.id)), edges: observedEdges.map(edge => edges.get(edge.id)) });
+      if (current !== original) throw new HomeGraphPagePriorityHeldError('stale');
+    };
     return listHomeGraphPages({
       artifactStore: this.artifactStore,
+      assertCurrent,
       spaceId,
       sources: state.sources,
       nodes: state.nodes,
@@ -460,7 +485,10 @@ export class HomeGraphService {
   }
 
   async map(input: HomeGraphMapInput = {}): Promise<HomeGraphMapResult> {
-    return mapHomeGraph({ ...input, store: this.store });
+    const request = snapshotNodeInput(input);
+    const assertCurrent = () => { if (!sameKnowledgeRecord(input, request)) throw new KnowledgeScopeSelectionHeldError('stale'); };
+    assertCurrent();
+    return mapHomeGraph({ ...request, store: this.store, assertCurrent });
   }
 
   async exportSpace(input: HomeGraphSpaceInput = {}): Promise<HomeGraphExport> {
@@ -621,24 +649,49 @@ export class HomeGraphService {
     return refreshHomeGraphQualityIssues(this.store, spaceId, installationId);
   }
 
+  private async runForegroundOperation<T>(spaceId: string, installationId: string, operation: () => Promise<T>): Promise<T> {
+    this.foregroundOperations.set(spaceId, (this.foregroundOperations.get(spaceId) ?? 0) + 1);
+    if (this.syncSelfImproveControllers.has(spaceId)) this.resumeSyncSelfImprove.add(spaceId);
+    const background = this.syncSelfImproveRuns.get(spaceId);
+    this.cancelSyncSelfImprovement(spaceId);
+    try {
+      // Capture answer and page inputs only after the cancelled same-space
+      // repair pump has finished its owned writes and cleanup.
+      await background;
+      return await operation();
+    } finally {
+      const remaining = (this.foregroundOperations.get(spaceId) ?? 1) - 1;
+      if (remaining > 0) this.foregroundOperations.set(spaceId, remaining);
+      else {
+        this.foregroundOperations.delete(spaceId);
+        if (this.resumeSyncSelfImprove.delete(spaceId)) this.scheduleSyncSelfImprovement(spaceId, installationId);
+      }
+    }
+  }
+
   /**
    * Start the post-sync self-improvement pump for a Home Graph space.
    * The pump is intentionally delayed so the foreground sync response can
    * return before source search, semantic repair, and page refresh work begins.
    */
   private scheduleSyncSelfImprovement(spaceId: string, installationId: string): void {
-    if (!this.options.semanticService || this.pendingSyncSelfImprove.has(spaceId)) return;
+    if (!this.options.semanticService || this.autoLinkController.signal.aborted || this.pendingSyncSelfImprove.has(spaceId)) return;
+    if (this.foregroundOperations.has(spaceId)) { this.resumeSyncSelfImprove.add(spaceId); return; }
     this.pendingSyncSelfImprove.add(spaceId);
     const controller = new AbortController();
     this.syncSelfImproveControllers.set(spaceId, controller);
     scheduleBackground(() => {
-      void this.runSyncSelfImprovementPump(spaceId, installationId, controller.signal).catch((error: unknown) => {
+      const run = this.runSyncSelfImprovementPump(spaceId, installationId, controller.signal).catch((error: unknown) => {
         if (controller.signal.aborted) return;
         this.reportBackgroundError('homegraph-sync-self-improvement', error, { spaceId, installationId });
       }).finally(() => {
-        this.pendingSyncSelfImprove.delete(spaceId);
-        this.syncSelfImproveControllers.delete(spaceId);
+        if (this.syncSelfImproveRuns.get(spaceId) === run) this.syncSelfImproveRuns.delete(spaceId);
+        if (this.syncSelfImproveControllers.get(spaceId) === controller) {
+          this.pendingSyncSelfImprove.delete(spaceId);
+          this.syncSelfImproveControllers.delete(spaceId);
+        }
       });
+      this.syncSelfImproveRuns.set(spaceId, run);
     // Tie the delayed task to the controller so a space reset can cancel work
     // before it starts or cooperatively stop it while it is running.
     }, HOME_GRAPH_SYNC_SELF_IMPROVEMENT_START_DELAY_MS, controller.signal);

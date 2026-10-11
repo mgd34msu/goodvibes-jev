@@ -1,4 +1,4 @@
-import { assertDeliveryCurrent, type DeliveryLifetime } from '../utils/delivery-lifetime.js';
+import { assertDeliveryCurrent, runDeliveryPublication, type DeliveryLifetime } from '../utils/delivery-lifetime.js';
 import { retireDeliveryResponse } from './delivery-diagnostics.js';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { logger } from '../utils/logger.js';
@@ -421,7 +421,7 @@ export class SlackIntegration {
       payload.blocks = blocks;
     }
     assertDeliveryCurrent(lifetime);
-    const res = await fetchWithTimeout('https://slack.com/api/chat.postMessage', {
+    const res = await runDeliveryPublication(lifetime, () => fetchWithTimeout('https://slack.com/api/chat.postMessage', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
@@ -429,7 +429,7 @@ export class SlackIntegration {
       },
       body: JSON.stringify(payload),
       ...(lifetime.signal ? { signal: lifetime.signal } : {}),
-    });
+    }));
     if (!res.ok) {
       const err = await res.text();
       throw new HttpStatusError(`SlackIntegration.postMessage failed (${res.status}): ${err}`, { status: res.status });
@@ -454,12 +454,12 @@ export class SlackIntegration {
       payload.blocks = blocks;
     }
     assertDeliveryCurrent(lifetime);
-    const res = await fetchWithTimeout(target, {
+    const res = await runDeliveryPublication(lifetime, () => fetchWithTimeout(target, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
       ...(lifetime.signal ? { signal: lifetime.signal } : {}),
-    });
+    }));
     if (!res.ok) {
       const err = await res.text();
       throw new HttpStatusError(`SlackIntegration.postWebhook failed (${res.status}): ${err}`, { status: res.status });

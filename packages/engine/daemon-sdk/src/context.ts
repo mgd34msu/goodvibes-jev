@@ -270,25 +270,25 @@ export interface DaemonRemoteManagementRouteHandlers {
 
 /** Route handlers for the knowledge base: sources, nodes, issues, connectors, jobs, schedules, search, and GraphQL. */
 export interface DaemonKnowledgeRouteHandlers extends DaemonKnowledgeRefinementRouteHandlers {
-  getKnowledgeStatus(url: URL): MaybeResponse;
-  getKnowledgeSources(url: URL): MaybeResponse;
-  getKnowledgeNodes(url: URL): MaybeResponse;
-  getKnowledgeIssues(url: URL): MaybeResponse;
-  getKnowledgeItem(id: string, url: URL): MaybeResponse;
+  getKnowledgeStatus(url: URL, request: Request): MaybeResponse;
+  getKnowledgeSources(url: URL, request: Request): MaybeResponse;
+  getKnowledgeNodes(url: URL, request: Request): MaybeResponse;
+  getKnowledgeIssues(url: URL, request: Request): MaybeResponse;
+  getKnowledgeItem(id: string, url: URL, request: Request): MaybeResponse;
   getKnowledgeConnectors(): MaybeResponse;
   getKnowledgeConnector(id: string): MaybeResponse;
   getKnowledgeConnectorDoctor(id: string): MaybeResponse;
-  getKnowledgeProjectionTargets(url: URL): MaybeResponse;
-  getKnowledgeMap(url: URL): MaybeResponse;
+  getKnowledgeProjectionTargets(url: URL, request: Request): MaybeResponse;
+  getKnowledgeMap(url: URL, request: Request): MaybeResponse;
   getKnowledgeGraphqlSchema(): MaybeResponse;
-  getKnowledgeExtractions(url: URL): MaybeResponse;
+  getKnowledgeExtractions(url: URL, request: Request): MaybeResponse;
   getKnowledgeUsage(url: URL): MaybeResponse;
   getKnowledgeCandidates(url: URL): MaybeResponse;
   getKnowledgeCandidate(id: string): MaybeResponse;
   getKnowledgeReports(url: URL): MaybeResponse;
   getKnowledgeReport(id: string): MaybeResponse;
-  getKnowledgeExtraction(id: string): MaybeResponse;
-  getKnowledgeSourceExtraction(id: string): MaybeResponse;
+  getKnowledgeExtraction(id: string, url: URL, request: Request): MaybeResponse;
+  getKnowledgeSourceExtraction(id: string, url: URL, request: Request): MaybeResponse;
   getKnowledgeJobs(): MaybeResponse;
   getKnowledgeJob(jobId: string): MaybeResponse;
   getKnowledgeJobRuns(url: URL): MaybeResponse;

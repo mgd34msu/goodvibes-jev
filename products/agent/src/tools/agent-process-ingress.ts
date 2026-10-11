@@ -1,11 +1,11 @@
 import { types as nodeTypes } from 'node:util';
 import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { ToolInputProjectionError, type ToolInputProjector, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { createPersonalOpsInputProjector } from './agent-personal-ops-ingress.ts';
+import { createHarnessCatalogInputProjector } from './agent-harness-catalog-ingress.ts';
 
 /** Reuse the complete-input screening lease before generic registry readers. */
 export function createProcessInputProjector(registry: ToolRegistry, tool: 'terminal' | 'process' | 'agent_harness', fallback?: ToolInputProjector): ToolInputProjector {
-  return createPersonalOpsInputProjector(registry, fallback, (raw) => {
+  return createHarnessCatalogInputProjector(registry, fallback, (raw) => {
     if (nodeTypes.isProxy(raw)) throw new ToolInputProjectionError('held');
     if (tool === 'agent_harness') {
       const mode = Object.getOwnPropertyDescriptor(raw, 'mode');
@@ -17,6 +17,9 @@ export function createProcessInputProjector(registry: ToolRegistry, tool: 'termi
     if (tool === 'terminal' || typeof args.command === 'string' && args.command.trim()) return true;
     const fields = args.fields && typeof args.fields === 'object' ? args.fields as Record<string, unknown> : {};
     if (typeof fields.command === 'string' && fields.command.trim()) return true;
+    if ([args.query, args.target, args.processId, args.processSessionId, args.sessionId, args.session_id,
+      fields.query, fields.target, fields.processId, fields.processSessionId, fields.sessionId, fields.session_id]
+      .some(value => typeof value === 'string' && value.trim())) return true;
     return [args.action, args.processAction, fields.action].some(value => typeof value === 'string' && ['start', 'spawn', 'run'].includes(value.trim().toLowerCase()));
   });
 }

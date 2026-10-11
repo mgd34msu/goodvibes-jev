@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { ArtifactDescriptor } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { DEFAULT_LIST_LIMIT, MAX_FRESHNESS_ARTIFACT_SCAN, MAX_LIST_LIMIT, REVIEW_PACKET_PRESET_SCHEMA, auditPresetFreshness, buildPresetRecord, clamp, compactText, defaultPacketSummary, isPresetArtifact, packetFromMetadata, parseMode, parsePresetBody, presetCreateInput, readBoolean, readMetadataString, readNumber, readString, sourceArtifactId, type AgentReviewPacketPresetArtifactStore, type AgentReviewPacketPresetsToolArgs, type LoadedReviewPacketPreset, type ReviewPacketFreshnessAudit, type ReviewPacketPresetPacket, type ReviewPacketPresetRecord } from './agent-review-packet-presets-core.ts';
+import { agentArtifactEffectGuard, captureAgentArtifactSource } from './agent-artifact-effect.ts';
+import { DEFAULT_LIST_LIMIT, MAX_FRESHNESS_ARTIFACT_SCAN, MAX_LIST_LIMIT, REVIEW_PACKET_PRESET_SCHEMA, auditPresetFreshness, buildPresetRecord, clamp, compactText, defaultPacketSummary, isPresetArtifact, packetFromMetadata, parseMode, parsePresetBody, presetCreateInput, readMetadataString, readNumber, readString, sourceArtifactId, type AgentReviewPacketPresetArtifactStore, type AgentReviewPacketPresetsToolArgs, type LoadedReviewPacketPreset, type ReviewPacketFreshnessAudit, type ReviewPacketPresetPacket, type ReviewPacketPresetRecord } from './agent-review-packet-presets-core.ts';
 function formatPacketLines(packet: ReviewPacketPresetPacket): readonly string[] {
   return [
     `  summary ${packet.summary}`,
@@ -16,16 +17,6 @@ function formatPacketLines(packet: ReviewPacketPresetPacket): readonly string[] 
     packet.handoffArchiveArtifactId ? `  handoffArchive ${packet.handoffArchiveArtifactId}` : '',
     `  related ${packet.relatedArtifactIds.length > 0 ? packet.relatedArtifactIds.join(', ') : '(none)'}`,
   ].filter(Boolean);
-}
-
-function formatPresetPreview(record: ReviewPacketPresetRecord): string {
-  return [
-    'Agent review packet preset preview',
-    `  name ${record.name}`,
-    `  preset ${record.presetId}`,
-    ...formatPacketLines(record.packet),
-    '  policy save one local preset artifact only; documents, model routing, handoffs, and archives are unchanged',
-  ].join('\n');
 }
 
 function formatSaveResult(descriptor: ArtifactDescriptor, record: ReviewPacketPresetRecord): string {
@@ -95,9 +86,6 @@ function buildRefreshRecord(input: {
   readonly packet: ReviewPacketPresetPacket;
 }): ReviewPacketPresetRecord {
   const explicitUserRequest = readString(input.args.explicitUserRequest);
-  if (!explicitUserRequest) {
-    throw new Error('explicitUserRequest is required so refreshed packet presets stay tied to a direct user request.');
-  }
   const oldName = input.loaded.body?.name
     || readMetadataString(input.loaded.descriptor.metadata, 'name')
     || input.loaded.descriptor.filename
@@ -126,22 +114,6 @@ function buildRefreshRecord(input: {
       handoffArchiveCreated: false,
     },
   };
-}
-
-function formatRefreshPreview(
-  source: LoadedReviewPacketPreset,
-  audit: ReviewPacketFreshnessAudit,
-  record: ReviewPacketPresetRecord,
-): string {
-  return [
-    'Agent review packet preset refresh preview',
-    `  refreshOf ${source.descriptor.id}`,
-    `  name ${record.name}`,
-    ...formatFreshnessLines(audit),
-    '  refreshed packet',
-    ...formatPacketLines(record.packet),
-    '  policy save one new local preset artifact only; source preset, documents, model routing, handoffs, and archives are unchanged',
-  ].join('\n');
 }
 
 function formatRefreshResult(
@@ -210,7 +182,7 @@ function formatList(
     return [
       'Saved review packet presets',
       '  none found',
-      '  save agent_review_packet_presets mode:"save" name:"..." confirm:true explicitUserRequest:"..."',
+      '  save agent_review_packet_presets mode:"save" name:"..."',
     ].join('\n');
   }
   return [
@@ -227,7 +199,7 @@ function formatList(
         `    document ${packet.documentId ?? '(none)'}; source ${source}; handoff ${packet.handoffArtifactId ?? '(none)'}; archive ${packet.handoffArchiveArtifactId ?? '(none)'}; related ${packet.relatedArtifactIds.length}`,
         `    ${formatFreshnessSummary(audit)}`,
         audit.status === 'needs-review' && hasRefreshableReplacements(audit)
-          ? `    refresh agent_review_packet_presets mode:"refresh" artifactId:"${artifact.id}" confirm:true explicitUserRequest:"..."`
+          ? `    refresh agent_review_packet_presets mode:"refresh" artifactId:"${artifact.id}"`
           : '',
         `    inspect agent_review_packet_presets mode:"show" artifactId:"${artifact.id}"`,
       ].filter(Boolean);
@@ -251,14 +223,14 @@ function formatShow(loaded: LoadedReviewPacketPreset, audit: ReviewPacketFreshne
     ...formatFreshnessLines(audit),
     loaded.body?.explicitUserRequest ? `  explicitUserRequest ${compactText(loaded.body.explicitUserRequest, 140)}` : '',
     sourceId ? `  sideBySide agent_model_compare mode:"sideBySide" artifactId:"${sourceId}" relatedArtifactIds:${related}` : '',
-    sourceId ? `  handoff agent_model_compare mode:"handoff" artifactId:"${sourceId}" relatedArtifactIds:${related} confirm:true explicitUserRequest:"..."` : '',
-    routePacket.revealedJudgmentArtifactId ? `  routeDecision agent_model_compare mode:"routeDecision" artifactId:"${routePacket.revealedJudgmentArtifactId}" decision:"left-unchanged" confirm:true explicitUserRequest:"..."` : '',
-    routePacket.handoffArtifactId ? `  archive agent_model_compare mode:"handoffArchive" artifactId:"${routePacket.handoffArtifactId}" confirm:true explicitUserRequest:"..."` : '',
+    sourceId ? `  handoff agent_model_compare mode:"handoff" artifactId:"${sourceId}" relatedArtifactIds:${related}` : '',
+    routePacket.revealedJudgmentArtifactId ? `  routeDecision agent_model_compare mode:"routeDecision" artifactId:"${routePacket.revealedJudgmentArtifactId}" decision:"left-unchanged"` : '',
+    routePacket.handoffArtifactId ? `  archive agent_model_compare mode:"handoffArchive" artifactId:"${routePacket.handoffArtifactId}"` : '',
     routePacket.handoffArchiveArtifactId ? `  inspectArchive agent_artifacts mode:"show" artifactId:"${routePacket.handoffArchiveArtifactId}"` : '',
     audit.status === 'needs-review' && hasRefreshableReplacements(audit)
-      ? `  refreshPreset agent_review_packet_presets mode:"refresh" artifactId:"${loaded.descriptor.id}" confirm:true explicitUserRequest:"..."`
+      ? `  refreshPreset agent_review_packet_presets mode:"refresh" artifactId:"${loaded.descriptor.id}"`
       : '',
-    '  policy read-only inspection; reuse routes still require explicit confirmation where shown',
+    '  policy read-only inspection; reuse routes require their own recorded effect admission',
   ].filter(Boolean).join('\n');
 }
 
@@ -354,11 +326,11 @@ export function createAgentReviewPacketPresetsTool(
           },
           confirm: {
             type: 'boolean',
-            description: 'Required true for save or refresh mode.',
+            description: 'Optional request provenance. Recorded engine admission authorizes writes.',
           },
           explicitUserRequest: {
             type: 'string',
-            description: 'User request authorizing preset save or refresh.',
+            description: 'Optional user request provenance.',
           },
         },
         required: ['mode'],
@@ -367,8 +339,9 @@ export function createAgentReviewPacketPresetsTool(
       sideEffects: ['state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: Record<string, unknown>) => {
-      const args = rawArgs as AgentReviewPacketPresetsToolArgs;
+    execute: async (rawArgs: Record<string, unknown>, executionOptions) => {
+      const args = rawArgs;
+      const assertCurrent = agentArtifactEffectGuard(rawArgs, executionOptions);
       try {
         const mode = parseMode(args.mode);
         if (mode === 'list') {
@@ -395,6 +368,7 @@ export function createAgentReviewPacketPresetsTool(
           })));
         }
         if (mode === 'refresh') {
+          assertCurrent();
           const artifactId = readString(args.artifactId);
           if (!artifactId) return failure('artifactId is required for mode:"refresh".');
           if (!artifactStore?.create) return failure('Review packet preset refresh is unavailable because this runtime did not provide an artifact store.');
@@ -402,7 +376,12 @@ export function createAgentReviewPacketPresetsTool(
           if (!artifactStore.list) return failure('Review packet preset refresh is unavailable because this runtime cannot list artifacts for freshness checks.');
           const loaded = await loadPresetArtifact(artifactStore, artifactId);
           if (!loaded) return failure(`Unknown review packet preset artifact ${artifactId}. Use agent_review_packet_presets mode:"list" first.`);
+          assertCurrent();
+          const assertSource = captureAgentArtifactSource(artifactStore, loaded.descriptor);
           const allArtifacts = artifactStore.list(MAX_FRESHNESS_ARTIFACT_SCAN);
+          const references = allArtifacts.map(artifact => captureAgentArtifactSource(artifactStore, artifact));
+          const check = () => { assertCurrent(); assertSource(); for (const reference of references) reference(); };
+          check();
           const packet = loaded.body?.packet ?? packetFromMetadata(loaded.descriptor);
           const audit = auditPresetFreshness({
             packet,
@@ -422,26 +401,16 @@ export function createAgentReviewPacketPresetsTool(
               'Inspect the preset and repair missing evidence manually before saving a new preset.',
             ].join('\n'));
           }
-          if (!readBoolean(args.confirm)) {
-            return failure([
-              formatRefreshPreview(loaded, audit, record),
-              '',
-              'Refresh confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to refresh this reviewer packet preset.',
-            ].join('\n'));
-          }
-          const descriptor = await artifactStore.create(presetCreateInput(record));
+          check();
+          const descriptor = await artifactStore.create(presetCreateInput(record), { signal: executionOptions?.signal, assertCurrent: check });
+          assertCurrent();
           return output(formatRefreshResult(descriptor, loaded, audit, record));
         }
+        assertCurrent();
         if (!artifactStore?.create) return failure('Review packet preset save is unavailable because this runtime did not provide an artifact store.');
         const record = buildPresetRecord(args);
-        if (!readBoolean(args.confirm)) {
-          return failure([
-            formatPresetPreview(record),
-            '',
-            'Preset confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to save this reviewer packet preset.',
-          ].join('\n'));
-        }
-        const descriptor = await artifactStore.create(presetCreateInput(record));
+        const descriptor = await artifactStore.create(presetCreateInput(record), { signal: executionOptions?.signal, assertCurrent });
+        assertCurrent();
         return output(formatSaveResult(descriptor, record));
       } catch (error) {
         return failure(error instanceof Error ? error.message : String(error));

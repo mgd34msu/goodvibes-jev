@@ -14,7 +14,7 @@ import type { ProviderModelPricing } from './model-limits.js';
 import type { ResolvedModelPricing } from './model-pricing.js';
 import type { LiveModelDiscoveryResult } from './live-model-discovery.js';
 import { resolveModelReference } from './model-id-resolution.js';
-import type { FavoritesData, FavoritesStore } from './favorites.js';
+import type { FavoritesData, FavoritesStore, FavoritesUsageRestriction } from './favorites.js';
 import type { LLMProvider, ProviderRuntimeMetadata } from './interface.js';
 import { reasoningEffortLevels } from './reasoning-effort.js';
 import type { ModelDefinition } from './registry-types.js';
@@ -165,7 +165,7 @@ export interface ProviderApi {
   getFavorites(): Promise<ProviderApiFavoritesSnapshot>;
   pinModel(registryKey: string): Promise<ProviderApiFavoritesSnapshot>;
   unpinModel(registryKey: string): Promise<ProviderApiFavoritesSnapshot>;
-  recordModelUsage(registryKey: string): Promise<ProviderApiFavoritesSnapshot>;
+  recordModelUsage(registryKey: string, ownership?: FavoritesUsageRestriction): Promise<ProviderApiFavoritesSnapshot>;
   listBenchmarks(query?: ProviderApiBenchmarkQuery): Promise<readonly ProviderApiBenchmarkRecord[]>;
   queryRuntimeMetadata(query: ProviderApiRuntimeQuery): Promise<ProviderApiRuntimeQueryResult>;
   createHelperModel(configManager: HelperModelDeps['configManager']): HelperModel;
@@ -582,10 +582,15 @@ export function createProviderApi(deps: ProviderApiDependencies): ProviderApi {
       return await loadFavoritesSnapshot(deps);
     },
 
-    async recordModelUsage(registryKey: string): Promise<ProviderApiFavoritesSnapshot> {
+    async recordModelUsage(registryKey: string, ownership?: FavoritesUsageRestriction): Promise<ProviderApiFavoritesSnapshot> {
+      ownership?.signal?.throwIfAborted(); ownership?.assertCurrent?.();
       const model = resolveModelOrThrow(deps, registryKey);
-      await deps.favoritesStore.recordUsage(model.registryKey);
-      return await loadFavoritesSnapshot(deps);
+      ownership?.signal?.throwIfAborted(); ownership?.assertCurrent?.();
+      await deps.favoritesStore.recordUsage(model.registryKey, ownership);
+      ownership?.signal?.throwIfAborted(); ownership?.assertCurrent?.();
+      const result = await loadFavoritesSnapshot(deps);
+      ownership?.signal?.throwIfAborted(); ownership?.assertCurrent?.();
+      return result;
     },
 
     async listBenchmarks(query?: ProviderApiBenchmarkQuery): Promise<readonly ProviderApiBenchmarkRecord[]> {

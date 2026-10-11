@@ -1,6 +1,6 @@
-import { installAgentMemoryInputGuard } from './agent-memory-input-guard.ts';
+import { assertAgentLocalRegistryWrite, assertAgentLocalRegistryEffectCurrent, createAgentLocalRegistryWriteLifecycle, createAgentLocalRegistryInputProjector } from './agent-local-registry-admission.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolExecution, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { ShellPathService } from '@/runtime/index.ts';
 import { MemoryRegistry } from '@goodvibes-jev/engine/sdk/platform/state';
 import type { MemoryAccess } from '@goodvibes-jev/engine/sdk/platform/runtime/memory-spine';
@@ -18,7 +18,6 @@ import {
   readStringList,
   registryError,
   registryOutput,
-  requireConfirmedDelete,
   requireDescription,
   requireId,
   requireName,
@@ -53,8 +52,8 @@ function listNotes(records: readonly AgentNoteRecord[], title: string): string {
     : [title, ...records.map(formatNote)].join('\n');
 }
 
-function handleNote(shellPaths: ShellPathService, action: AgentLocalRegistryAction, args: AgentLocalRegistryToolArgs): string {
-  const registry = AgentNoteRegistry.fromShellPaths(shellPaths);
+function handleNote(shellPaths: ShellPathService, action: AgentLocalRegistryAction, args: AgentLocalRegistryToolArgs, effects: ReturnType<typeof createAgentLocalRegistryWriteLifecycle>): string {
+  const registry = AgentNoteRegistry.fromShellPaths(shellPaths, effects);
   if (action === 'list') return listNotes(registry.list(), 'Agent-local notes');
   if (action === 'search') return listNotes(registry.search(readString(args.query)), 'Agent-local notes search');
   if (action === 'get') {
@@ -113,7 +112,6 @@ function handleNote(shellPaths: ShellPathService, action: AgentLocalRegistryActi
     ].join('\n');
   }
   if (action === 'delete') {
-    requireConfirmedDelete(args, 'Agent-local note');
     const note = registry.deleteNote(requireId(args));
     return [
       'Deleted Agent-local note',
@@ -169,8 +167,8 @@ function listRoutines(records: readonly AgentRoutineRecord[], title: string): st
     : [title, ...records.map(formatRoutine)].join('\n');
 }
 
-function handlePersona(shellPaths: ShellPathService, action: AgentLocalRegistryAction, args: AgentLocalRegistryToolArgs): string {
-  const registry = AgentPersonaRegistry.fromShellPaths(shellPaths);
+function handlePersona(shellPaths: ShellPathService, action: AgentLocalRegistryAction, args: AgentLocalRegistryToolArgs, effects: ReturnType<typeof createAgentLocalRegistryWriteLifecycle>): string {
+  const registry = AgentPersonaRegistry.fromShellPaths(shellPaths, effects);
   if (action === 'list') return listPersonas(registry, registry.list(), 'Agent-local personas');
   if (action === 'search') return listPersonas(registry, registry.search(readString(args.query)), 'Agent-local personas search');
   if (action === 'get') {
@@ -246,7 +244,6 @@ function handlePersona(shellPaths: ShellPathService, action: AgentLocalRegistryA
     ].join('\n');
   }
   if (action === 'delete') {
-    requireConfirmedDelete(args, 'Agent-local persona');
     const persona = registry.deletePersona(requireId(args));
     return [
       'Deleted Agent-local persona',
@@ -257,8 +254,8 @@ function handlePersona(shellPaths: ShellPathService, action: AgentLocalRegistryA
   throw new Error(`Action ${action} is not valid for personas.`);
 }
 
-function handleSkill(shellPaths: ShellPathService, action: AgentLocalRegistryAction, args: AgentLocalRegistryToolArgs): string {
-  const registry = AgentSkillRegistry.fromShellPaths(shellPaths);
+function handleSkill(shellPaths: ShellPathService, action: AgentLocalRegistryAction, args: AgentLocalRegistryToolArgs, effects: ReturnType<typeof createAgentLocalRegistryWriteLifecycle>): string {
+  const registry = AgentSkillRegistry.fromShellPaths(shellPaths, effects);
   if (action === 'list') return listSkills(registry.list(), 'Agent-local skills');
   if (action === 'search') return listSkills(registry.search(readString(args.query)), 'Agent-local skills search');
   if (action === 'get') {
@@ -331,7 +328,6 @@ function handleSkill(shellPaths: ShellPathService, action: AgentLocalRegistryAct
     ].join('\n');
   }
   if (action === 'delete') {
-    requireConfirmedDelete(args, 'Agent-local skill');
     const skill = registry.deleteSkill(requireId(args));
     return [
       'Deleted Agent-local skill',
@@ -342,8 +338,8 @@ function handleSkill(shellPaths: ShellPathService, action: AgentLocalRegistryAct
   throw new Error(`Action ${action} is not valid for skills.`);
 }
 
-function handleSkillBundle(shellPaths: ShellPathService, action: AgentLocalRegistryAction, args: AgentLocalRegistryToolArgs): string {
-  const registry = AgentSkillRegistry.fromShellPaths(shellPaths);
+function handleSkillBundle(shellPaths: ShellPathService, action: AgentLocalRegistryAction, args: AgentLocalRegistryToolArgs, effects: ReturnType<typeof createAgentLocalRegistryWriteLifecycle>): string {
+  const registry = AgentSkillRegistry.fromShellPaths(shellPaths, effects);
   if (action === 'list') return listSkillBundles(registry.listBundles(), 'Agent-local skill bundles');
   if (action === 'search') return listSkillBundles(registry.searchBundles(readString(args.query)), 'Agent-local skill bundles search');
   if (action === 'get') {
@@ -408,7 +404,6 @@ function handleSkillBundle(shellPaths: ShellPathService, action: AgentLocalRegis
     ].join('\n');
   }
   if (action === 'delete') {
-    requireConfirmedDelete(args, 'Agent-local skill bundle');
     const bundle = registry.deleteBundle(requireId(args));
     return [
       'Deleted Agent-local skill bundle',
@@ -419,8 +414,8 @@ function handleSkillBundle(shellPaths: ShellPathService, action: AgentLocalRegis
   throw new Error(`Action ${action} is not valid for skill bundles.`);
 }
 
-function handleRoutine(shellPaths: ShellPathService, action: AgentLocalRegistryAction, args: AgentLocalRegistryToolArgs): string {
-  const registry = AgentRoutineRegistry.fromShellPaths(shellPaths);
+function handleRoutine(shellPaths: ShellPathService, action: AgentLocalRegistryAction, args: AgentLocalRegistryToolArgs, effects: ReturnType<typeof createAgentLocalRegistryWriteLifecycle>): string {
+  const registry = AgentRoutineRegistry.fromShellPaths(shellPaths, effects);
   if (action === 'list') return listRoutines(registry.list(), 'Agent-local routines');
   if (action === 'search') return listRoutines(registry.search(readString(args.query)), 'Agent-local routines search');
   if (action === 'get') {
@@ -503,7 +498,6 @@ function handleRoutine(shellPaths: ShellPathService, action: AgentLocalRegistryA
     ].join('\n');
   }
   if (action === 'delete') {
-    requireConfirmedDelete(args, 'Agent-local routine');
     const routine = registry.deleteRoutine(requireId(args));
     return [
       'Deleted Agent-local routine',
@@ -549,25 +543,40 @@ export function createAgentLocalRegistryTool(shellPaths: ShellPathService, memor
           enabled: { type: 'boolean' },
           activate: { type: 'boolean', description: 'Activate or clear the persona.' },
           provenance: { type: 'string' },
-          confirm: { type: 'boolean', description: 'Required true for delete after an explicit user request.' },
-          explicitUserRequest: { type: 'string', description: 'Exact user request or faithful short summary authorizing delete.' },
+          confirm: { type: 'boolean', description: 'Optional caller audit field; recorded admission controls writes.' },
+          explicitUserRequest: { type: 'string', description: 'Optional audit note; it does not grant authority.' },
         },
         required: ['domain', 'action'],
         additionalProperties: false,
       },
       sideEffects: ['state'],
     },
-    execute: async (rawArgs: unknown) => {
-      const args = rawArgs as AgentLocalRegistryToolArgs;
+    execute: async (rawArgs, options) => {
+      const args: AgentLocalRegistryToolArgs = rawArgs;
       if (!isDomain(args.domain)) return registryError(`Unknown domain. Valid values ${DOMAINS.join(', ')}.`);
       if (!isAction(args.action)) return registryError(`Unknown action. Valid values ${ACTIONS.join(', ')}.`);
+      const action = args.action;
       try {
-        if (args.domain === 'memory') return registryOutput(await handleMemory(memoryRegistry, memorySpine, args.action, args));
-        if (args.domain === 'note') return registryOutput(handleNote(shellPaths, args.action, args));
-        if (args.domain === 'persona') return registryOutput(handlePersona(shellPaths, args.action, args));
-        if (args.domain === 'skill') return registryOutput(handleSkill(shellPaths, args.action, args));
-        if (args.domain === 'skill_bundle') return registryOutput(handleSkillBundle(shellPaths, args.action, args));
-        return registryOutput(handleRoutine(shellPaths, args.action, args));
+        options?.signal?.throwIfAborted(); assertCurrentToolExecution(rawArgs, options);
+        if (!['list', 'search', 'get'].includes(args.action)) assertAgentLocalRegistryWrite(rawArgs, options);
+        if (args.domain === 'memory') {
+          const result = await handleMemory(memoryRegistry, memorySpine, args.action, args, {
+            signal: options?.signal,
+            assertCurrent: () => {
+              options?.signal?.throwIfAborted();
+              if (['list', 'search', 'get'].includes(action)) assertCurrentToolExecution(rawArgs, options);
+              else assertAgentLocalRegistryEffectCurrent(rawArgs, options);
+            },
+          });
+          options?.signal?.throwIfAborted(); assertCurrentToolExecution(rawArgs, options);
+          return registryOutput(result);
+        }
+        const effects = createAgentLocalRegistryWriteLifecycle(rawArgs, options);
+        if (args.domain === 'note') return registryOutput(handleNote(shellPaths, args.action, args, effects));
+        if (args.domain === 'persona') return registryOutput(handlePersona(shellPaths, args.action, args, effects));
+        if (args.domain === 'skill') return registryOutput(handleSkill(shellPaths, args.action, args, effects));
+        if (args.domain === 'skill_bundle') return registryOutput(handleSkillBundle(shellPaths, args.action, args, effects));
+        return registryOutput(handleRoutine(shellPaths, args.action, args, effects));
       } catch (error) {
         return registryError(error instanceof Error ? error.message : String(error));
       }
@@ -576,6 +585,6 @@ export function createAgentLocalRegistryTool(shellPaths: ShellPathService, memor
 }
 
 export function registerAgentLocalRegistryTool(registry: ToolRegistry, shellPaths: ShellPathService, memoryRegistry: MemoryRegistry, memorySpine: MemoryAccess): void {
-  installAgentMemoryInputGuard(registry);
-  registry.register(createAgentLocalRegistryTool(shellPaths, memoryRegistry, memorySpine));
+  registry.register(createAgentLocalRegistryTool(shellPaths, memoryRegistry, memorySpine),
+    { inputProjection: createAgentLocalRegistryInputProjector(shellPaths, memoryRegistry, memorySpine) });
 }

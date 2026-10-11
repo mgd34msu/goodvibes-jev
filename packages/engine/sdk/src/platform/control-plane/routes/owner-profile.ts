@@ -71,6 +71,9 @@ import {
   PERMISSIVE_OWNER_PROFILE_POLICY,
   type OwnerProfilePolicy,
 } from './owner-profile-policy.js';
+import { profileDelegationForInvocation } from '../../owner-profile/delegation.js';
+import { nativeProfileMutation, profileMutationOptions, registerNativeProfileTargets, type NativeProfileTarget } from './native-profile-mutation.js';
+import type { NativeMutationHost } from '../native-mutation.js';
 
 /** The read/write surface of the store these verbs need. */
 export type OwnerProfileGatewayService = Pick<
@@ -126,7 +129,8 @@ function requireFieldId(value: unknown): string {
  * An unrecognised string is refused rather than defaulted, so a typo or a probe
  * can never resolve to the one tier that carries write authority.
  */
-function readAuthority(value: unknown): AuthoritySurface {
+function readAuthority(value: unknown, invocation: GatewayMethodInvocation): AuthoritySurface | 'autonomous' {
+  if (value === 'autonomous' && profileDelegationForInvocation(invocation)) return 'autonomous';
   if (typeof value !== 'string' || !(AUTHORITY_SURFACES as readonly string[]).includes(value)) {
     throw new GatewayVerbError(
       `authority is required and must be one of ${AUTHORITY_SURFACES.join(', ')}`,
@@ -136,6 +140,11 @@ function readAuthority(value: unknown): AuthoritySurface {
     );
   }
   return value as AuthoritySurface;
+}
+
+function readSaid(value: unknown, authority: unknown, invocation: GatewayMethodInvocation): string {
+  if (authority === 'autonomous' && profileDelegationForInvocation(invocation)) return '';
+  return requireString(value, 'said');
 }
 
 /** Which surface is recording the line. Named in the provenance suffix. */
@@ -274,35 +283,35 @@ function createProvenanceHandler(service: OwnerProfileGatewayService): GatewayMe
 
 function createSetHandler(service: OwnerProfileGatewayService): GatewayMethodHandler {
   return (invocation: GatewayMethodInvocation) => {
-    refuseNonUserRequest(invocation, 'profile.set');
+    if (!profileDelegationForInvocation(invocation)) refuseNonUserRequest(invocation, 'profile.set');
     const params = readInvocationParams(invocation);
     return service.set({
       fieldId: requireFieldId(params.fieldId),
       value: requireString(params.value, 'value'),
       surface: readSurface(params.surface),
-      said: requireString(params.said, 'said'),
-      authority: readAuthority(params.authority),
-    });
+      said: readSaid(params.said, params.authority, invocation),
+      authority: readAuthority(params.authority, invocation),
+    }, profileMutationOptions(invocation, ['write:profile']));
   };
 }
 
 function createAppendHandler(service: OwnerProfileGatewayService): GatewayMethodHandler {
   return (invocation: GatewayMethodInvocation) => {
-    refuseNonUserRequest(invocation, 'profile.append');
+    if (!profileDelegationForInvocation(invocation)) refuseNonUserRequest(invocation, 'profile.append');
     const params = readInvocationParams(invocation);
     return service.append({
       section: requireString(params.section, 'section'),
       text: requireString(params.text, 'text'),
       surface: readSurface(params.surface),
-      said: requireString(params.said, 'said'),
-      authority: readAuthority(params.authority),
-    });
+      said: readSaid(params.said, params.authority, invocation),
+      authority: readAuthority(params.authority, invocation),
+    }, profileMutationOptions(invocation, ['write:profile']));
   };
 }
 
 function createForgetHandler(service: OwnerProfileGatewayService): GatewayMethodHandler {
   return (invocation: GatewayMethodInvocation) => {
-    refuseNonUserRequest(invocation, 'profile.forget');
+    if (!profileDelegationForInvocation(invocation)) refuseNonUserRequest(invocation, 'profile.forget');
     const params = readInvocationParams(invocation);
     const fieldId = params.fieldId === undefined || params.fieldId === null
       ? undefined
@@ -330,11 +339,11 @@ function createForgetHandler(service: OwnerProfileGatewayService): GatewayMethod
       );
     }
     return service.forget({
-      authority: readAuthority(params.authority),
+      authority: readAuthority(params.authority, invocation),
       ...(fieldId === undefined ? {} : { fieldId }),
       ...(section === undefined ? {} : { section }),
       ...(text === undefined ? {} : { text }),
-    });
+    }, profileMutationOptions(invocation, ['write:profile']));
   };
 }
 
@@ -351,8 +360,8 @@ function createUndoHandler(service: OwnerProfileGatewayService): GatewayMethodHa
     const params = readInvocationParams(invocation);
     return service.undo({
       fieldId: requireFieldId(params.fieldId),
-      authority: readAuthority(params.authority),
-    });
+      authority: readAuthority(params.authority, invocation),
+    }, profileMutationOptions(invocation, ['write:profile']));
   };
 }
 
@@ -368,12 +377,16 @@ export function registerOwnerProfileGatewayMethods(
   catalog: GatewayMethodCatalog,
   service: OwnerProfileGatewayService,
   policy: OwnerProfilePolicy = PERMISSIVE_OWNER_PROFILE_POLICY,
+  native?: { readonly host?: NativeMutationHost | undefined; readonly target: NativeProfileTarget } | undefined,
 ): void {
   const governed = applyOwnerProfilePolicy(service, policy);
+  const nativeMethods = ['profile.set', 'profile.append', 'profile.forget', 'profile.undo'];
   const attach = (id: string, handler: GatewayMethodHandler): void => {
     const descriptor = catalog.get(id);
-    if (descriptor) catalog.register(descriptor, handler, { replace: true });
+    if (descriptor) catalog.register(descriptor, nativeMethods.includes(id)
+      ? nativeProfileMutation(catalog, id, handler, native?.host, native?.target) : handler, { replace: true });
   };
+  if (native) registerNativeProfileTargets(catalog, nativeMethods, native.target);
   attach('profile.read', createReadHandler(governed));
   attach('profile.get', createGetHandler(governed, policy));
   attach('profile.person', createPersonHandler(governed, policy));

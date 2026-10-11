@@ -67,8 +67,9 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
             checkCancellation();
             try {
               if (beforeAsyncAttempt) {
+                let checked: unknown;
                 try {
-                  await interruptible(Promise.resolve().then(() => {
+                  checked = await interruptible(Promise.resolve().then(() => {
                     checkCancellation();
                     return beforeAsyncAttempt();
                   }), controller.signal);
@@ -77,11 +78,14 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
                   throw new JudgmentError('rejected', 'the judgment attempt is no longer authorized');
                 }
                 checkCancellation();
+                if (checked !== undefined) throw new JudgmentError('invalid-request', 'the asynchronous judgment attempt guard must complete without a return value');
               }
               const checked: unknown = beforeAttempt?.();
-              if (checked !== undefined && checked !== null && (typeof checked === 'object' || typeof checked === 'function') && 'then' in checked) {
-                void Promise.resolve(checked).catch(() => {});
-                throw new JudgmentError('invalid-request', 'the judgment attempt guard must be synchronous');
+              if (checked !== undefined) {
+                if (checked !== null && (typeof checked === 'object' || typeof checked === 'function')) {
+                  try { void Promise.prototype.then.call(checked, undefined, () => {}); } catch { /* Only genuine promises need rejection draining. */ }
+                }
+                throw new JudgmentError('invalid-request', 'the judgment attempt guard must be synchronous and complete without a return value');
               }
             } catch (error) {
               checkCancellation();

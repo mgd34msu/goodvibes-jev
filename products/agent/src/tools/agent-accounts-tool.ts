@@ -1,4 +1,6 @@
-import { installAgentMemoryInputGuard } from './agent-memory-input-guard.ts';
+import { assertAgentMemoryInput } from './agent-memory-input-guard.ts';
+import { agentAccountsWriteGuard, assertAgentAccountsRead, createAgentAccountsInputProjector } from './agent-accounts-admission.ts';
+import { captureCatalogData } from './agent-harness-catalog-ranking.ts';
 /**
  * The `accounts` tool: the durable record of every account the agent created.
  *
@@ -21,13 +23,14 @@ import { installAgentMemoryInputGuard } from './agent-memory-input-guard.ts';
  * signup form cannot cause a signup.
  */
 
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { ToolInputProjectionError, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { AgentAccountRegistry, type AgentAccountRecord } from '@goodvibes-jev/engine/sdk/platform/google';
 import { mintAddressFor } from '@goodvibes-jev/engine/sdk/platform/google';
 import { containsSecretLikeText } from '../agent/memory-safety.ts';
 import { getSessionExpectationBook } from '../agent/signup/session-expectations.ts';
 import { evaluateOutwardEffect, getSessionUntrustedContentLedger } from '../trust/untrusted-content.ts';
+import type { ShellPathService } from '@goodvibes-jev/engine/sdk/platform/runtime/shell';
 
 const ACCOUNT_ACTIONS = ['list', 'alias', 'record', 'forget', 'sweep'] as const;
 
@@ -56,6 +59,8 @@ function renderAccount(account: AgentAccountRecord): string {
 
 export interface AgentAccountsToolOptions {
   readonly registry: AgentAccountRegistry;
+  /** Construction-owned workspace, independent of caller action arguments. */
+  readonly shellPaths?: ShellPathService;
   /**
    * The owner's own mailbox, which per-signup aliases are minted from. Read at
    * call time so connecting an account mid-session takes effect.
@@ -97,12 +102,11 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
     execute: async (rawArgs: Record<string, unknown>, execution?: Parameters<Tool['execute']>[1]): Promise<ToolOutput> => {
       const cancelled = (): ToolOutput => ({ success: false, cancelled: true, error: 'Account action cancelled.' });
       if (execution?.signal?.aborted) return cancelled();
-      const action = readString(rawArgs.action).toLowerCase();
-      if (!ACCOUNT_ACTIONS.includes(action as (typeof ACCOUNT_ACTIONS)[number])) {
-        return failure(`accounts needs one of: ${ACCOUNT_ACTIONS.join(', ')}.`);
-      }
-
       try {
+        assertAgentMemoryInput(rawArgs);
+        const action = readString(rawArgs.action).toLowerCase();
+        if (!ACCOUNT_ACTIONS.some(candidate => candidate === action)) return failure(`accounts needs one of: ${ACCOUNT_ACTIONS.join(', ')}.`);
+        const write = agentAccountsWriteGuard(options, rawArgs, execution);
         if (action === 'alias') {
           // Each signup gets its own delivery address. That address is the
           // correlation key a verification mail is later matched on, so it must
@@ -117,11 +121,13 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
           // Opening the expectation here is what lets the verification mail
           // this signup provokes be recognised later. Nothing else opens one,
           // so unsolicited "verify your account" mail is never acted on.
+          write.assertCurrent();
           const expectation = getSessionExpectationBook().openExpectation({
             serviceDomain: alias.serviceDomain,
             recipientAddress: alias.address,
             purpose: readString(rawArgs.purpose) || `signing up at ${alias.serviceDomain}`,
-          });
+          }, write.assertCurrent);
+          write.assertCurrent();
           return ok([
             `Use ${alias.address} as the email address for this signup.`,
             `It delivers to ${alias.baseAddress}, and it is what a verification mail for ${alias.serviceDomain} will be matched on.`,
@@ -131,7 +137,9 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
         }
 
         if (action === 'list') {
+          assertAgentAccountsRead(options, rawArgs, execution);
           const snapshot = registry.snapshot();
+          assertAgentAccountsRead(options, rawArgs, execution);
           if (snapshot.accounts.length === 0) {
             return ok(`No accounts have been recorded. The register lives at ${snapshot.path}.`);
           }
@@ -156,6 +164,7 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
           if (Object.values(input).some(containsSecretLikeText)) {
             return failure('The account registry cannot store secret-looking values. Store the secret in the secret store and record only its key name.');
           }
+          write.assertCurrent();
           // Recording is the visible half of an outward effect that already
           // happened, so it is gated the same way the signup itself is: page
           // text cannot drive the agent into registering an account.
@@ -199,26 +208,42 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
           if (execution?.signal?.aborted) return cancelled();
           if (!decision.allowed) return failure(`${decision.reason} ${decision.fix}`);
 
-          const account = registry.record(input);
+          write.assertCurrent();
+          const account = registry.record(input, write);
+          write.assertCurrent();
           return ok(`Recorded:\n${renderAccount(account)}`);
         }
 
         if (action === 'forget') {
           const id = readString(rawArgs.id);
           if (!id) return failure('accounts action:"forget" needs the record id, from accounts action:"list".');
-          const removed = registry.forget(id);
+          write.assertCurrent();
+          const removed = registry.forget(id, write);
+          write.assertCurrent();
           return ok(
             `Forgot the record for ${removed.serviceDomain}. This removed the RECORD only, the account at ${removed.serviceUrl} still exists, and its credential is still under secret-store key ${removed.credentialSecretKey}.`,
           );
         }
 
+        write.assertCurrent();
         const known = options.knownSecretKeys ? await options.knownSecretKeys() : undefined;
         if (execution?.signal?.aborted) return cancelled();
+        const capturedKnown = known === undefined ? undefined : captureCatalogData(known);
+        const knownRevision = JSON.stringify(capturedKnown);
+        const assertKnown = () => {
+          if (JSON.stringify(known === undefined ? undefined : captureCatalogData(known)) !== knownRevision) throw new ToolInputProjectionError('stale');
+        };
+        const sweepWrite = {
+          assertCurrent() { write.assertCurrent(); assertKnown(); },
+          didWrite(stage: 'parent' | 'temporary' | 'store', content: string) { write.didWrite(stage, content); assertKnown(); },
+        };
+        sweepWrite.assertCurrent();
         const maxAgeDays = typeof rawArgs.maxAgeDays === 'number' ? rawArgs.maxAgeDays : undefined;
         const result = registry.sweep({
-          ...(known === undefined ? {} : { knownSecretKeys: known }),
+          ...(capturedKnown === undefined ? {} : { knownSecretKeys: capturedKnown }),
           ...(maxAgeDays === undefined ? {} : { maxAgeDays }),
-        });
+        }, sweepWrite);
+        sweepWrite.assertCurrent();
         return ok(
           result.removed.length === 0
             ? `Nothing to reap; ${result.remaining} record(s) remain.`
@@ -233,6 +258,5 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
 }
 
 export function registerAgentAccountsTool(registry: ToolRegistry, options: AgentAccountsToolOptions): void {
-  installAgentMemoryInputGuard(registry);
-  if (!registry.has('accounts')) registry.register(createAgentAccountsTool(options));
+  if (!registry.has('accounts')) registry.register(createAgentAccountsTool(options), { inputProjection: createAgentAccountsInputProjector(options) });
 }

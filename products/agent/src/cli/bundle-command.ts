@@ -1,21 +1,21 @@
 import { resolveConnectedHostBaseUrl } from '../config/connected-host-dial.ts';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { RuntimeEventBus, configureRuntimeEventBusDefaults, runtimeEventBusOptionsFrom } from '@/runtime/index.ts';
 import { createShellPathService } from '@/runtime/index.ts';
 import { listProviderRuntimeSnapshots } from '@goodvibes-jev/engine/sdk/platform/providers';
-import { createRuntimeServices } from '../runtime/services.ts';
-import { createRuntimeStore } from '../runtime/store/index.ts';
+import type { RuntimeServices } from '../runtime/services.ts';
 import { readConnectedHostOperatorToken } from '../runtime/connected-host-auth.ts';
 import { getOnboardingCheckMarkerPath } from '../runtime/onboarding/index.ts';
 import { CONFIG_SCHEMA } from '../config/index.ts';
 import { SecretsManager } from '../config/secrets.ts';
-import type { CliCommandRuntime } from './management.ts';
+import { withRuntimeServices, type CliCommandRuntime } from './management.ts';
 import type { CliCommandOutput } from './types.ts';
 import { getPackageVersion } from './help.ts';
 import { classifyProviderSetup } from './provider-classification.ts';
 import { buildCliServicePosture } from './service-posture.ts';
-import { REDACTED_VALUE, collectSensitiveConfigValues, isRedactedValue, redactConfig, redactSerializedSecrets } from './redaction.ts';
+import { REDACTED_VALUE, collectSensitiveConfigValues, isRedactedValue, redactConfig, redactSerializedSecrets } from '@goodvibes-jev/engine/terminal-shell';
+import { captureJudgmentPort, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { retainCliConfig } from './config-owner.ts';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../config/surface.ts';
 import { appendTemporalLabel } from './temporal-label.ts';
 
@@ -90,47 +90,24 @@ function readAuthPosture(runtime: CliCommandRuntime) {
   };
 }
 
-async function buildProviderReadiness(runtime: CliCommandRuntime) {
-  // Point the bus listener cap at runtime.eventBus.maxListeners before the
-  // first bus exists, so every bus this process builds later uses it.
-  configureRuntimeEventBusDefaults(runtimeEventBusOptionsFrom((key) => runtime.configManager.get(key)));
-  const runtimeBus = new RuntimeEventBus();
-  const runtimeStore = createRuntimeStore();
-  const services = createRuntimeServices({
-    configManager: runtime.configManager,
-    runtimeBus,
-    runtimeStore,
-    workingDir: runtime.workingDirectory,
-    homeDirectory: runtime.homeDirectory,
-  });
-  services.providerRegistry.initModelLimits();
-  services.benchmarkStore.initBenchmarks();
-  services.providerRegistry.initCatalog();
-  try {
-    await services.providerRegistry.ready();
-    const snapshots = await listProviderRuntimeSnapshots(services.providerRegistry);
-    return snapshots.map((snapshot) => ({
-      provider: snapshot.providerId,
-      active: snapshot.active,
+async function buildProviderReadiness(services: RuntimeServices) {
+  const snapshots = await listProviderRuntimeSnapshots(services.providerRegistry, { modelFamilyEnrichment: 'none' });
+  return snapshots.map((snapshot) => ({
+    provider: snapshot.providerId,
+    active: snapshot.active,
+    configured: snapshot.runtime.auth?.configured ?? true,
+    configuredVia: snapshot.runtime.auth?.mode ?? 'unknown',
+    models: snapshot.modelCount,
+    setup: classifyProviderSetup({
+      providerId: snapshot.providerId,
+      authMode: snapshot.runtime.auth?.mode,
       configured: snapshot.runtime.auth?.configured ?? true,
-      configuredVia: snapshot.runtime.auth?.mode ?? 'unknown',
-      models: snapshot.modelCount,
-      setup: classifyProviderSetup({
-        providerId: snapshot.providerId,
-        authMode: snapshot.runtime.auth?.mode,
-        configured: snapshot.runtime.auth?.configured ?? true,
-        modelCount: snapshot.modelCount,
-      }),
-    }));
-  } finally {
-    services.providerRegistry.stopWatching();
-    // Same as withRuntimeServices: the readiness probe builds the full graph,
-    // and stopWatching() stops only the provider registry's own watch.
-    services.dispose();
-  }
+      modelCount: snapshot.modelCount,
+    }),
+  }));
 }
 
-export async function handleBundleCommand(runtime: CliCommandRuntime): Promise<CliCommandOutput> {
+export async function handleBundleCommand(runtime: CliCommandRuntime, options: JudgmentReadingOptions = {}): Promise<CliCommandOutput> {
   const [sub = 'inspect', ...rest] = runtime.cli.commandArgs;
   const shellPaths = createShellPathService({
     workingDirectory: runtime.workingDirectory,
@@ -166,49 +143,81 @@ export async function handleBundleCommand(runtime: CliCommandRuntime): Promise<C
       globalHome: runtime.homeDirectory,
       configManager: runtime.configManager,
     });
-    const rawConfig = runtime.configManager.getRaw();
-    const sensitiveValues = collectSensitiveConfigValues(rawConfig);
-    const redactedConfig = redactConfig(rawConfig);
-    const service = await buildCliServicePosture(runtime, { logTailBytes: 8192 });
-    const bundle = {
-      version: 2,
-      type: 'goodvibes-agent.support',
-      capturedAt: Date.now(),
-      package: {
-        name: '@pellux/goodvibes-agent',
-        version: getPackageVersion(),
-      },
-      roots: {
-        workingDirectory: runtime.workingDirectory,
-        homeDirectory: runtime.homeDirectory,
-      },
-      config: redactedConfig.value,
-      redaction: {
-        sentinel: REDACTED_VALUE,
-        redactedConfigPaths: redactedConfig.redactedPaths,
-      },
-      diagnostics: {
-        service,
-        auth: readAuthPosture(runtime),
-        providers: await buildProviderReadiness(runtime),
-      },
-      secrets: await secrets.inspect(),
-      onboarding: {
-        userMarker: existsSync(getOnboardingCheckMarkerPath(shellPaths, 'user')),
-        projectMarker: existsSync(getOnboardingCheckMarkerPath(shellPaths, 'project')),
-      },
+    const configManager = runtime.configManager;
+    const retainedConfig = retainCliConfig(configManager);
+    const rawConfig = retainedConfig.raw;
+    const workingDirectory = runtime.workingDirectory;
+    const homeDirectory = runtime.homeDirectory;
+    const signal = options.signal;
+    const callerCurrent = options.assertCurrent;
+    const sourceCurrent = () => {
+      signal?.throwIfAborted();
+      if (options.signal !== signal || options.assertCurrent !== callerCurrent || runtime.configManager !== configManager
+        || runtime.workingDirectory !== workingDirectory || runtime.homeDirectory !== homeDirectory) throw new Error('Support bundle input changed before export.');
+      try { retainedConfig.assertCurrent(); }
+      catch { throw new Error('Support bundle input changed before export.'); }
     };
-    const targetPath = shellPaths.resolveWorkspacePath(outputPath);
-    mkdirSync(dirname(targetPath), { recursive: true });
-    writeFileSync(targetPath, redactSerializedSecrets(JSON.stringify(bundle, null, 2), sensitiveValues) + '\n', 'utf-8');
-    return {
-      output: formatJsonOrText(runtime, {
-        path: targetPath,
-        redactedConfigPaths: redactedConfig.redactedPaths,
-        hostIntegrationIssues: service.issues,
-      }, `Bundle exported: ${targetPath}\n  redactedConfigKeys: ${redactedConfig.redactedPaths.length}\n  hostIntegrationIssues: ${service.issues.length}`),
-      exitCode: 0,
+    const assertCurrent = () => {
+      sourceCurrent();
+      const result: unknown = callerCurrent?.();
+      if (result !== undefined) { void Promise.resolve(result).catch(() => {}); throw new Error('Support bundle ownership must be synchronous.'); }
+      sourceCurrent();
     };
+    assertCurrent();
+    return await withRuntimeServices(runtime, async (services) => {
+      assertCurrent();
+      const owner = captureJudgmentPort('agent.cli.bundle-export', { ...options, assertCurrent });
+      const reading = { ...options, signal: owner.signal, assertCurrent: owner.assertCurrent };
+      const providerReadiness = await buildProviderReadiness(services);
+      assertCurrent();
+      const sensitiveValues = await collectSensitiveConfigValues(rawConfig, reading);
+      const redactedConfig = await redactConfig(rawConfig, reading);
+      const service = await buildCliServicePosture(runtime, { ...reading, logTailBytes: 8192 });
+      const bundle = {
+        version: 2,
+        type: 'goodvibes-agent.support',
+        capturedAt: Date.now(),
+        package: {
+          name: '@pellux/goodvibes-agent',
+          version: getPackageVersion(),
+        },
+        roots: {
+          workingDirectory: runtime.workingDirectory,
+          homeDirectory: runtime.homeDirectory,
+        },
+        config: redactedConfig.value,
+        redaction: {
+          sentinel: REDACTED_VALUE,
+          redactedConfigPaths: redactedConfig.redactedPaths,
+        },
+        diagnostics: {
+          service,
+          auth: readAuthPosture(runtime),
+          providers: providerReadiness,
+        },
+        secrets: await secrets.inspect(),
+        onboarding: {
+          userMarker: existsSync(getOnboardingCheckMarkerPath(shellPaths, 'user')),
+          projectMarker: existsSync(getOnboardingCheckMarkerPath(shellPaths, 'project')),
+        },
+      };
+      const targetPath = shellPaths.resolveWorkspacePath(outputPath);
+      const serialized = await redactSerializedSecrets(JSON.stringify(bundle, null, 2), sensitiveValues, reading);
+      redactedConfig.assertCurrent();
+      owner.assertCurrent();
+      mkdirSync(dirname(targetPath), { recursive: true });
+      redactedConfig.assertCurrent();
+      owner.assertCurrent();
+      writeFileSync(targetPath, serialized + '\n', 'utf-8');
+      return {
+        output: formatJsonOrText(runtime, {
+          path: targetPath,
+          redactedConfigPaths: redactedConfig.redactedPaths,
+          hostIntegrationIssues: service.issues,
+        }, `Bundle exported: ${targetPath}\n  redactedConfigKeys: ${redactedConfig.redactedPaths.length}\n  hostIntegrationIssues: ${service.issues.length}`),
+        exitCode: 0,
+      };
+    });
   }
 
   if (sub === 'import') {

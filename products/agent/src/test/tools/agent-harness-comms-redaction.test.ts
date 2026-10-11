@@ -1,10 +1,24 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { saveDraft } from '../../agent/channel-draft.ts';
 import { channelDraftsSummary, channelDraftSaveHandoff } from '../../tools/agent-harness-comms.ts';
 import type { CommandContext } from '../../input/command-registry.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { createShellPathService } from '@goodvibes-jev/engine/sdk/platform/runtime/shell';
+import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { recordedEffectFixture } from '../helpers/recorded-effect-admission.ts';
+
+let prior: ReturnType<typeof installJudgmentPort>, log: SqliteDecisionLog;
+beforeEach(() => {
+  log = new SqliteDecisionLog(':memory:');
+  const answers = fakePort((name, question) => question.type === 'noul' ? noulAnswer(0.001)
+    : choiceAnswer(question, name === 'disposition' ? 'act' : name === 'kind' ? 'read' : 'generic', 0.999));
+  prior = installJudgmentPort(withDecisionLog(answers.port, log));
+});
+afterEach(() => { installJudgmentPort(prior); log[Symbol.dispose](); });
 
 // A webhook URL can embed an authentication token in its path, so it must never
 // be returned raw in any structured tool payload, only the formatted string is
@@ -12,7 +26,7 @@ import { makeProjectTempDir } from '../helpers/project-temp.ts';
 const WEBHOOK = 'https://hooks.example.com/services/T000/B000/xoxb-super-secret-token';
 
 function makeShellPaths(root: string) {
-  return { resolveUserPath: (...parts: string[]) => join(root, ...parts) };
+  return createShellPathService({ homeDirectory: root, workingDirectory: root });
 }
 
 function makeContext(shellPaths: ReturnType<typeof makeShellPaths>): CommandContext {
@@ -55,12 +69,15 @@ describe('agent-harness-comms webhook redaction', () => {
     const root = makeProjectTempDir('gv-comms');
     try {
       const shellPaths = makeShellPaths(root);
-      const result = await channelDraftSaveHandoff(makeContext(shellPaths), {
+      const context = makeContext(shellPaths);
+      const tool: Tool = { definition: { name: 'draft-redaction-fixture', description: 'Isolated synthetic draft display.', parameters: {} },
+        async execute(args, options) { const result = await channelDraftSaveHandoff(context, args, options); return { success: typeof result !== 'string', output: JSON.stringify(result) }; } };
+      const value = await recordedEffectFixture(tool, 'prompt', {}, root).run({
         draftMessage: 'hello',
         draftWebhook: WEBHOOK,
-        confirm: true,
-        explicitUserRequest: 'save a draft',
       });
+      expect(value.success).toBe(true);
+      const result = JSON.parse(value.output!);
       expect(typeof result).not.toBe('string');
       const draft = (result as Record<string, unknown>).draft as { readonly webhook?: string };
       expect(draft.webhook).toBe('[redacted]');

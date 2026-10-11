@@ -440,7 +440,7 @@ export class VerificationExpectationBook {
   public constructor(private readonly authority?: SurfaceAuthorityProbe) {}
 
   /** Registered explicitly when the agent initiates a signup. Nothing else opens one. */
-  public openExpectation(input: OpenExpectationInput): VerificationExpectation {
+  public openExpectation(input: OpenExpectationInput, assertCurrent?: () => void): VerificationExpectation {
     if (this.authority?.surfaceHasCommandAuthority(EMAIL_SURFACE) === true) {
       throw new Error(
         'Email has been granted command authority; scoped verification expectations assume email is input-only. Refusing to open one.',
@@ -482,6 +482,7 @@ export class VerificationExpectationBook {
     }
 
     const now = input.now ?? new Date();
+    assertCurrent?.();
     this.sweepExpired(now);
     if (this.open.size >= MAX_OPEN_EXPECTATIONS && !this.findByRecipient(recipientAddress)) {
       throw new Error(`Too many open verification expectations (limit ${MAX_OPEN_EXPECTATIONS}). Close finished signups first.`);
@@ -489,7 +490,7 @@ export class VerificationExpectationBook {
 
     // One expectation per address: re-opening replaces, it never stacks.
     const existing = this.findByRecipient(recipientAddress);
-    if (existing) this.open.delete(existing.id);
+    if (existing) { assertCurrent?.(); this.open.delete(existing.id); }
 
     const expectation: VerificationExpectation = {
       id: suppliedId ?? randomUUID(),
@@ -501,6 +502,7 @@ export class VerificationExpectationBook {
       kind: input.kind ?? 'signup',
       authority: 'evidence-only',
     };
+    assertCurrent?.();
     this.open.set(expectation.id, expectation);
     return expectation;
   }

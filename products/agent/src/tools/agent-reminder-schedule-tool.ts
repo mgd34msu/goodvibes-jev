@@ -1,18 +1,11 @@
+import { captureScheduleEffect, createScheduleInputProjector, formatScheduleOperatorResult } from './agent-schedule-effect.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { ShellPathService } from '@/runtime/index.ts';
 import {
   buildReminderSchedulePreview,
-  createReminderSchedule,
   parseReminderScheduleArgs,
-  resolveReminderConnectedHostConnection,
-  type ReminderScheduleResult,
 } from '../agent/reminder-schedule.ts';
-import {
-  formatReminderScheduleFailure,
-  formatReminderSchedulePreview,
-  formatReminderScheduleSuccess,
-} from '../agent/reminder-schedule-format.ts';
 import type { AgentConnectedHostConfigReader } from '../agent/routine-schedule-promotion.ts';
 
 type ReminderScheduleKind = 'at' | 'every' | 'cron';
@@ -87,40 +80,19 @@ function buildReminderScheduleArgs(rawArgs: AgentReminderScheduleToolArgs): read
   addOptionalArg(args, '--delivery-webhook', rawArgs.deliveryWebhook);
   addOptionalArg(args, '--delivery-link', rawArgs.deliveryLink);
   if (readBoolean(rawArgs.disabled)) args.push('--disabled');
-  if (readBoolean(rawArgs.confirm)) args.push('--yes');
+
   return args;
-}
-
-function outputForResult(result: ReminderScheduleResult): { readonly success: boolean; readonly output?: string; readonly error?: string } {
-  if (result.ok) {
-    return {
-      success: true,
-      output: formatReminderScheduleSuccess(result),
-    };
-  }
-  return {
-    success: false,
-    error: formatReminderScheduleFailure(result),
-  };
-}
-
-function confirmationError(preview: ReturnType<typeof buildReminderSchedulePreview>): string {
-  return [
-    formatReminderSchedulePreview(preview),
-    '',
-    'Model tool confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to create this reminder or schedule.',
-    'Do not create reminders from vague suggestions, brainstorming, routine startup, or inferred follow-up work.',
-  ].join('\n');
 }
 
 export function createAgentReminderScheduleTool(
   shellPaths: ShellPathService,
   configManager: AgentConnectedHostConfigReader,
+  registry: ToolRegistry,
 ): Tool {
   return {
     definition: {
       name: 'agent_reminder_schedule',
-      description: 'Schedule one confirmed GoodVibes Agent reminder.',
+      description: 'Schedule one GoodVibes Agent reminder under recorded effect admission.',
       parameters: {
         type: 'object',
         properties: {
@@ -175,49 +147,30 @@ export function createAgentReminderScheduleTool(
           },
           confirm: {
             type: 'boolean',
-            description: 'Required true only when user requested reminder.',
+            description: 'Optional audit annotation; does not grant effect authority.',
           },
           explicitUserRequest: {
             type: 'string',
-            description: 'User request authorizing this reminder.',
+            description: 'Optional request provenance; does not grant effect authority.',
           },
         },
-        required: ['message', 'scheduleKind', 'scheduleValue', 'confirm', 'explicitUserRequest'],
+        required: ['message', 'scheduleKind', 'scheduleValue'],
         additionalProperties: false,
       },
       sideEffects: ['network', 'state'],
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs, options) => {
       try {
-        const args = rawArgs as AgentReminderScheduleToolArgs;
-        const explicitUserRequest = readOptionalString(args.explicitUserRequest);
-        if (!explicitUserRequest) {
-          return {
-            success: false,
-            error: 'explicitUserRequest is required so reminder creation stays tied to a direct user request.',
-          };
-        }
-        const parsed = parseReminderScheduleArgs(buildReminderScheduleArgs(args));
-        if (parsed.errors.length > 0) {
-          return {
-            success: false,
-            error: parsed.errors.join('\n'),
-          };
-        }
+        const effect = captureScheduleEffect(rawArgs, options, shellPaths, configManager, registry);
+        const parsed = parseReminderScheduleArgs(buildReminderScheduleArgs(rawArgs));
+        if (parsed.errors.length > 0) return { success: false, error: parsed.errors.join('\n') };
         const preview = buildReminderSchedulePreview(parsed);
-        if (!parsed.yes) {
-          return {
-            success: false,
-            error: confirmationError(preview),
-          };
-        }
-        const connection = resolveReminderConnectedHostConnection(configManager, shellPaths.homeDirectory);
-        return outputForResult(await createReminderSchedule(connection, preview));
+        effect.assertCurrent();
+        const result = await effect.invoke('automation.schedules.create', preview.payload);
+        effect.assertCurrent();
+        return formatScheduleOperatorResult(result, 'Created GoodVibes schedule for Agent reminder');
       } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
       }
     },
   };
@@ -228,5 +181,5 @@ export function registerAgentReminderScheduleTool(
   shellPaths: ShellPathService,
   configManager: AgentConnectedHostConfigReader,
 ): void {
-  registry.register(createAgentReminderScheduleTool(shellPaths, configManager));
+  registry.register(createAgentReminderScheduleTool(shellPaths, configManager, registry), { inputProjection: createScheduleInputProjector(shellPaths, configManager) });
 }

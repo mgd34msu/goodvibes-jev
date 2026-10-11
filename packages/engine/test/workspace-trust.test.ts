@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { PermissionExecutionOptions, PermissionPromptRequest } from '../sdk/src/platform/permissions/index.js';
 import {
   WorkspaceTrustManager,
   detectPriorWorkspaceState,
@@ -123,6 +124,67 @@ describe('WorkspaceTrustManager', () => {
 });
 
 describe('trustGatedAsk', () => {
+  const request: PermissionPromptRequest = {
+    callId: 'owned-trust-request', tool: 'exec', category: 'execute', args: { command: 'echo owned-trust' },
+    analysis: { classification: 'shell', riskLevel: 'high', summary: 'run the owned fixture', reasons: [] },
+  };
+
+  it('forwards the exact execution lifetime through a trusted workspace', async () => {
+    const controller = new AbortController();
+    const options: PermissionExecutionOptions = { signal: controller.signal };
+    let seenRequest: PermissionPromptRequest | undefined;
+    let seenOptions: PermissionExecutionOptions | undefined;
+    const gated = trustGatedAsk({ isCategoryAllowed: () => true, isDecided: () => true, setLevel: async () => {} }, async (asked, execution) => {
+      seenRequest = asked; seenOptions = execution;
+      return { approved: true };
+    }, async () => 'trusted');
+    expect(await gated(request, options)).toEqual({ approved: true });
+    expect(seenRequest).toBe(request);
+    expect(seenOptions).toBe(options);
+  });
+
+  it('cancels a pending trust waiter without persisting or asking, while its sibling keeps the shared decision', async () => {
+    const { promise, resolve } = Promise.withResolvers<'trusted' | 'restricted'>();
+    const controller = new AbortController();
+    let level: 'trusted' | 'restricted' | undefined;
+    const writes: string[] = [];
+    const asks: PermissionExecutionOptions[] = [];
+    let promptCalls = 0;
+    const gated = trustGatedAsk({
+      isCategoryAllowed: category => level === 'trusted' || category === 'read',
+      isDecided: () => level !== undefined,
+      setLevel: async next => { level = next; writes.push(next); },
+    }, async (_asked, execution) => {
+      if (execution) asks.push(execution);
+      return { approved: true };
+    }, () => { promptCalls++; return promise; });
+    const abandoned = gated(request, { signal: controller.signal });
+    const activeOptions: PermissionExecutionOptions = { signal: new AbortController().signal };
+    const active = gated({ ...request, callId: 'active-trust-request' }, activeOptions);
+    controller.abort(new Error('private caller reason'));
+    await expect(abandoned).rejects.toThrow('the permission request was cancelled');
+    expect(writes).toEqual([]);
+    expect(asks).toEqual([]);
+    expect(promptCalls).toBe(1);
+    resolve('trusted');
+    expect(await active).toEqual({ approved: true });
+    expect(writes).toEqual(['trusted']);
+    expect(asks).toEqual([activeOptions]);
+  });
+
+  it('rejects an already cancelled request before opening a trust prompt', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let asked = false;
+    let prompted = false;
+    const gated = trustGatedAsk({ isCategoryAllowed: () => false, isDecided: () => false, setLevel: async () => {} }, async () => {
+      asked = true; return { approved: true };
+    }, async () => { prompted = true; return 'trusted'; });
+    await expect(gated(request, { signal: controller.signal })).rejects.toThrow('the permission request was cancelled');
+    expect(asked).toBe(false);
+    expect(prompted).toBe(false);
+  });
+
   it('denies non-read tools when EXPLICITLY restricted (a real prior decision), without calling ask or raising the trust prompt', async () => {
     let asked = false;
     let promptRaised = false;

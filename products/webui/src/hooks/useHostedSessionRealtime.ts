@@ -1,56 +1,16 @@
 /**
- * useHostedSessionRealtime, the hosted-sessions raw stream: lifecycle updates
- * for the list, plus the LIVE `turn`/`tools` output for one attached session.
- *
- * WHY A RAW STREAM (the useSessionRealtime pattern, not useRealtimeInvalidation's):
- * `hosted-session-update` is a fixed wire-event NAME (never the domain string) whose
- * specific transition rides `payload.event`, the same "un-domained-looking but
- * actually filter-tagged" shape `session-update` has (useSessionRealtime.ts's header
- * comment). useRealtimeInvalidation's DOMAIN_INVALIDATIONS only matches a frame whose
- * `event:` field IS a domain name (the runtime-bus auto-forward mechanism), so an
- * `event: hosted-session-update` frame is invisible to it, this hook opens its own
- * scoped raw stream via sdk.streams.open, exactly like useSessionRealtime, rather than
- * teaching the app-wide invalidation hook a wire event that only this feature cares
- * about.
- *
- * ONE stream covers both jobs this feature needs:
- *  - list liveness: every `hosted-session-update` frame invalidates the hosted list
- *    query (regardless of which session it names, turn/message counts, attached
- *    client counts and status all live there).
- *  - attach-view liveness: when `attachedSessionId` is given, `turn`/`tools` domain
- *    frames whose `sessionId` matches are decoded and handed to `onStreamFrame` (see
- *    lib/hosted-session-stream.ts), this is the hosted session's live output, the
- *    exact same envelopes a local session's turn emits (no separate wire shape for a
- *    hosted loop, method-catalog-hosted-sessions.ts's header comment). A matching
- *    `hosted-session-update` also calls `onLifecycleUpdate` so the attached view's own
- *    status/attachedClients/turnCount chips can update without a manual refetch.
- *
- * Only mounted while the hosted-sessions view is showing (not app-wide), so this adds
- * at most one connection to the per-origin budget useRealtimeInvalidation's header
- * comment tracks, never a second one for list vs. attach, since attaching narrows
- * what the SAME open stream forwards rather than opening a new one.
- *
- * THE STREAM OPENS EXACTLY ONCE PER `enabled` TOGGLE, NEVER ON ATTACH/DETACH: the
- * connection itself does not depend on which session is attached (the `?domains=`
- * path is a constant), only the in-hook JS filtering does. `attachedSessionId` and
- * the callbacks are read through refs, updated every render, so selecting a
- * different row re-targets what the OPEN stream forwards without tearing the
- * connection down and reopening it. Reopening on every attach would both waste a
- * connection and MISS whatever the daemon published in the gap between close and
- * reopen, there is no replay across that gap in this design.
+ * Live turn/tool output and lifecycle updates for an attached hosted session.
+ * The app-wide session stream owns list liveness even when nothing is attached.
+ * Row changes retarget callbacks through refs without reopening this stream.
  */
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { sdk, DEFAULT_SSE_RECONNECT } from '../lib/goodvibes';
 import { queryKeys } from '../lib/queries';
+import { HOSTED_SESSION_UPDATE_WIRE_EVENT } from '../lib/hosted-sessions';
 import { firstString, readPath } from '../lib/object';
 import { readHostedStreamFrame, type HostedStreamFrame } from '../lib/hosted-session-stream';
 import { RELAY_OVERFLOW_EVENT, noteRelayOverflow, readDroppedCount } from '../lib/relay-stream-overflow';
-
-/** The fixed wire-event name every hosted-session lifecycle notice rides,
- * always this literal string; the specific transition is `payload.event`
- * (HostedSessionUpdatePayload, hosted-sessions/types.ts). */
-export const HOSTED_SESSION_UPDATE_WIRE_EVENT = 'hosted-session-update';
 
 /** `?domains=` narrowing for this stream: `session` tags hosted-session-update
  * (EVENT_DOMAIN in the SDK's gateway-scope-enforcement.ts), `turn`/`tools` carry
@@ -91,6 +51,7 @@ export function useHostedSessionRealtime(options: UseHostedSessionRealtimeOption
 
   useEffect(() => {
     if (!enabled) return undefined;
+    const controller = new AbortController();
     let disposed = false;
     let close: (() => void) | null = null;
 
@@ -143,10 +104,10 @@ export function useHostedSessionRealtime(options: UseHostedSessionRealtimeOption
           onTerminate: () => {
             if (disposed) return;
             setConnected(false);
-            setError('Live updates paused: reconnecting. The hosted sessions list falls back to periodic refresh until the stream returns.');
+            setError('Live session output paused: reconnecting.');
           },
         },
-        { reconnect: DEFAULT_SSE_RECONNECT },
+        { reconnect: DEFAULT_SSE_RECONNECT, signal: controller.signal },
       )
       .then((dispose) => {
         if (disposed) {
@@ -162,6 +123,7 @@ export function useHostedSessionRealtime(options: UseHostedSessionRealtimeOption
 
     return () => {
       disposed = true;
+      controller.abort();
       if (close) close();
     };
   }, [enabled, queryClient]);

@@ -1,195 +1,183 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
-import { createToolRegistryDouble } from '../helpers/tool-registry-double.ts';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { CommandContext } from '../../input/command-registry.ts';
-import {
-  installAgentMcpCallRoute,
-  isAgentMcpCallRouteInstalled,
-  resetAgentMcpCallRouteForTests,
-} from '../../tools/agent-mcp-call-route.ts';
+import type { McpApi, McpServerSecurityRecord, McpToolCallOptions, McpToolSchema } from '@goodvibes-jev/engine/sdk/platform/mcp';
+import { DEFAULT_CONFIG, type PermissionMode } from '@goodvibes-jev/engine/sdk/platform/config';
+import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import { PolicyRuntimeState } from '@goodvibes-jev/engine/sdk/platform/runtime/security';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installAgentMcpCallRoute, isAgentMcpCallRouteInstalled, resetAgentMcpCallRouteForTests } from '../../tools/agent-mcp-call-route.ts';
 
-interface ServerRecord {
-  readonly name: string;
-  readonly connected: boolean;
-  readonly trustMode: string;
-  readonly role: string;
-  readonly schemaFreshness: string;
-  readonly allowedHosts: readonly string[];
+let previous: ReturnType<typeof installJudgmentPort>;
+let log: SqliteDecisionLog;
+beforeEach(() => {
+  resetAgentMcpCallRouteForTests(); log = new SqliteDecisionLog(':memory:');
+  const readings = fakePort((name, question) => {
+    if (question.type === 'choice') {
+      const label = name === 'disposition' ? Object.hasOwn(question.criteria, 'act') ? 'act' : 'reject'
+        : name === 'kind' ? 'read' : name === 'family' || name === 'capability' ? 'generic' : undefined;
+      if (!label) throw new Error(`Unexpected synthetic MCP choice ${name}`);
+      return choiceAnswer(question, label, 0.999);
+    }
+    if (question.type === 'noul') return noulAnswer(0.001);
+    throw new Error(`Unexpected synthetic MCP question ${name}`);
+  });
+  previous = installJudgmentPort(withDecisionLog(readings.port, log));
+});
+afterEach(() => { installJudgmentPort(previous); log[Symbol.dispose](); });
+
+const initialServer = (): McpServerSecurityRecord => ({ name: 'browserpilot', connected: true, trustMode: 'constrained',
+  role: 'browser', schemaFreshness: 'fresh', allowedHosts: [], allowedPaths: [] });
+const initialSchema = (): McpToolSchema => ({ name: 'browser_navigate', description: 'Navigate the synthetic browser.',
+  inputSchema: { type: 'object', properties: { url: { type: 'string' } }, additionalProperties: false } });
+function mcpTool(): Tool {
+  return { definition: { name: 'mcp', description: 'Inspect the synthetic MCP fixture.', parameters: {
+    type: 'object', properties: { mode: { type: 'string', enum: ['servers', 'tools', 'schema'] }, qualifiedName: { type: 'string' } },
+    required: ['mode'], additionalProperties: false,
+  } }, execute: async args => ({ success: true, output: JSON.stringify({ passthrough: args.mode }) }) };
 }
-
-function fakeMcpTool(): Tool {
-  return {
-    definition: {
-      name: 'mcp',
-      description: 'Inspect MCP servers, tools, schemas, and trust state.',
-      parameters: {
-        type: 'object',
-        properties: { mode: { type: 'string', enum: ['servers', 'tools', 'schema'] }, qualifiedName: { type: 'string' } },
-        required: ['mode'],
-        additionalProperties: false,
-      },
-    },
-    execute: async (args) => ({ success: true, output: JSON.stringify({ passthrough: args.mode }) }),
+function fixture(options: { readonly caller?: boolean; readonly schemaReader?: boolean; readonly mode?: PermissionMode } = {}) {
+  let mode = options.mode ?? 'prompt', sequence = 0;
+  const source = { goal: 'Exercise the isolated synthetic MCP call fixture', criteria: ['Do not contact an external server'] };
+  const reader: PermissionConfigReader = {
+    getAutonomousSnapshot: () => ({ permissions: { ...DEFAULT_CONFIG.permissions, mode, tools: mode === 'custom' ? { write: 'deny' } : {} }, autoApprove: false, directory: '/synthetic/mcp-fixture' }),
+    getSnapshot: () => ({ permissions: { ...DEFAULT_CONFIG.permissions, mode, tools: mode === 'custom' ? { write: 'deny' } : {} } }), isAutoApproveEnabled: () => false,
+    getWorkingDirectory: () => '/synthetic/mcp-fixture',
   };
-}
-
-function createContext(options: {
-  readonly servers?: readonly ServerRecord[];
-  readonly callTool?: (qualifiedName: string, input: Readonly<Record<string, unknown>>) => Promise<unknown>;
-}): CommandContext {
-  const servers = options.servers ?? [
-    { name: 'browserpilot', connected: true, trustMode: 'constrained', role: 'browser', schemaFreshness: 'fresh', allowedHosts: [] },
-  ];
-  const api = {
+  const manager = new PermissionManager(undefined, reader, new PolicyRuntimeState());
+  const registry = new ToolRegistry(manager); const tool = mcpTool(); registry.register(tool);
+  let servers = [initialServer()]; let schema: McpToolSchema | null = initialSchema();
+  let beforeSchema: (() => void | Promise<void>) | undefined;
+  let beforeCall: (() => void | Promise<void>) | undefined;
+  const calls: { name: string; input: Readonly<Record<string, unknown>>; options?: McpToolCallOptions }[] = [];
+  const api: Pick<McpApi, 'listServerSecurity' | 'getToolSchema' | 'callTool'> = {
     listServerSecurity: () => servers,
-    ...(options.callTool ? { callTool: options.callTool } : {}),
+    ...(options.schemaReader === false ? {} : { async getToolSchema(_name: string, opts?: McpToolCallOptions) {
+      opts?.assertCurrent?.(); await beforeSchema?.(); opts?.assertCurrent?.(); return schema;
+    } }),
+    ...(options.caller === false ? {} : { async callTool(name: string, input: Readonly<Record<string, unknown>>, opts?: McpToolCallOptions) {
+      await beforeCall?.(); opts?.signal?.throwIfAborted(); opts?.assertCurrent?.(); calls.push({ name, input, options: opts });
+      return { content: [{ type: 'text', text: 'navigated' }] };
+    } }),
   };
-  return { clients: { mcpApi: api } } as unknown as CommandContext;
+  const context = { clients: { mcpApi: api } };
+  const installed = installAgentMcpCallRoute(registry, context);
+  return { registry, tool, api, context, installed, calls, source,
+    setMode(next: PermissionMode) { mode = next; }, setServers(next: McpServerSecurityRecord[]) { servers = next; },
+    setSchema(next: McpToolSchema | null) { schema = next; }, schema: () => schema,
+    beforeSchema(callback: () => void | Promise<void>) { beforeSchema = callback; },
+    beforeCall(callback: () => void | Promise<void>) { beforeCall = callback; },
+    async run(args: Record<string, unknown>, signal?: AbortSignal, name = 'mcp') {
+      const id = `synthetic-mcp-${++sequence}`;
+      const call = await registry.prepareCall(id, name, args, { signal });
+      const admission = await manager.admitAutonomous(id, name, call.args, { sourceOf: () => source,
+        signal, schemaRevision: call.schemaRevision, preparedCall: { registry, call } });
+      return registry.executePrepared(call, admission, { signal });
+    },
+  };
 }
+const call = (input?: Record<string, unknown>) => ({ mode: 'call', qualifiedName: 'mcp:browserpilot:browser_navigate', ...(input ? { input } : {}) });
 
-function registryWithMcp(): { registry: ToolRegistry; tool: Tool } {
-  const registry = createToolRegistryDouble();
-  const tool = fakeMcpTool();
-  registry.register(tool);
-  return { registry, tool };
-}
-
-describe('mcp call route', () => {
-  beforeEach(() => {
-    resetAgentMcpCallRouteForTests();
+describe('MCP call route actual admission', () => {
+  test.each(['caller', 'schemaReader'] as const)('does not advertise call without its actual %s', key => {
+    const f = fixture({ [key]: false }); expect(f.installed).toBe(false); expect(isAgentMcpCallRouteInstalled()).toBe(false);
+    expect(JSON.stringify(f.tool.definition.parameters)).not.toContain('"call"');
   });
-
-  test('is not installed when the runtime publishes no tool caller', () => {
-    const { registry } = registryWithMcp();
-    const installed = installAgentMcpCallRoute(registry, createContext({}));
-    expect(installed).toBe(false);
-    expect(isAgentMcpCallRouteInstalled()).toBe(false);
+  test('advertises the call route and schema when both actual ports exist', () => {
+    const f = fixture(); expect(f.installed).toBe(true); expect(isAgentMcpCallRouteInstalled()).toBe(true);
+    expect(JSON.stringify(f.tool.definition.parameters)).toContain('"call"');
+    expect(f.tool.definition.parameters.properties).toHaveProperty('input');
   });
-
-  test('does not advertise a call mode it cannot serve', () => {
-    const { registry, tool } = registryWithMcp();
-    installAgentMcpCallRoute(registry, createContext({}));
-    const mode = (tool.definition.parameters.properties as Record<string, { enum?: string[] }>).mode;
-    expect(mode?.enum).not.toContain('call');
+  test('recorded flag-free act calls the exact schema-owned tool with its input', async () => {
+    const f = fixture(); const result = await f.run(call({ url: 'https://example.com' }));
+    expect(result.success).toBe(true); expect(result.output).toContain('navigated'); expect(f.calls).toHaveLength(1);
+    expect(f.calls[0]?.name).toBe('mcp:browserpilot:browser_navigate'); expect(f.calls[0]?.input).toEqual({ url: 'https://example.com' });
+    expect(f.calls[0]?.options?.assertCurrent).toBeFunction();
   });
-
-  test('advertises the call mode once it is wired', () => {
-    const { registry, tool } = registryWithMcp();
-    installAgentMcpCallRoute(registry, createContext({ callTool: async () => ({ ok: true }) }));
-    const properties = tool.definition.parameters.properties as Record<string, { enum?: string[] }>;
-    expect(properties.mode?.enum).toContain('call');
-    expect(properties.input).toBeDefined();
-    expect(isAgentMcpCallRouteInstalled()).toBe(true);
+  test('missing input remains the empty object under real admission', async () => {
+    const f = fixture(); expect((await f.run(call())).success).toBe(true); expect(f.calls[0]?.input).toEqual({});
   });
-
-  test('invokes the named tool and returns what the server sent back', async () => {
-    const invoked: { name?: string; input?: unknown } = {};
-    const { registry, tool } = registryWithMcp();
-    installAgentMcpCallRoute(registry, createContext({
-      callTool: async (qualifiedName, input) => {
-        invoked.name = qualifiedName;
-        invoked.input = input;
-        return { content: [{ type: 'text', text: 'navigated' }] };
-      },
-    }));
-
-    const result = await tool.execute({ mode: 'call', qualifiedName: 'mcp:browserpilot:browser_navigate', input: { url: 'https://example.com' } });
-
-    expect(result.success).toBe(true);
-    expect(result.output).toContain('navigated');
-    expect(invoked.name).toBe('mcp:browserpilot:browser_navigate');
-    expect(invoked.input).toEqual({ url: 'https://example.com' });
+  test('raw confirmation flags and restriction callbacks cannot mint a call', async () => {
+    const f = fixture(); const result = await f.tool.execute({ ...call(), confirm: true, explicitUserRequest: 'Caller claim' }, { assertCurrent() {} });
+    expect(result.success).toBe(false); expect(result.error).toContain('recorded'); expect(f.calls).toHaveLength(0);
   });
-
-  test('a browser tool is callable: the old keyword filter would have refused it', async () => {
-    const called: string[] = [];
-    const { registry, tool } = registryWithMcp();
-    installAgentMcpCallRoute(registry, createContext({
-      callTool: async (qualifiedName) => {
-        called.push(qualifiedName);
-        return 'ok';
-      },
-    }));
-
-    await tool.execute({ mode: 'call', qualifiedName: 'mcp:browserpilot:browser_click', input: {} });
-
-    expect(called).toEqual(['mcp:browserpilot:browser_click']);
+  test.each(['mode', 'qualifiedName', 'signal'] as const)('raw caller %s accessors are never invoked', async slot => {
+    const f = fixture(); let reads = 0;
+    const args = call();
+    const options = slot === 'signal' ? { get signal() { reads++; return new AbortController().signal; } } : undefined;
+    if (slot !== 'signal') Object.defineProperty(args, slot, { get() { reads++; return slot === 'mode' ? 'call' : 'mcp:browserpilot:browser_navigate'; }, enumerable: true });
+    const result = await f.tool.execute(args, options);
+    expect(result.success).toBe(false); expect(reads).toBe(0); expect(f.calls).toHaveLength(0);
   });
-
-  test('other modes still reach the underlying tool untouched', async () => {
-    const { registry, tool } = registryWithMcp();
-    installAgentMcpCallRoute(registry, createContext({ callTool: async () => 'ok' }));
-    const result = await tool.execute({ mode: 'servers' });
-    expect(result.output).toContain('passthrough');
+  test('inspection modes remain read-only ordinary observations', async () => {
+    const f = fixture(); const result = await f.tool.execute({ mode: 'servers' });
+    expect(result.output).toContain('passthrough'); expect(f.calls).toHaveLength(0);
   });
-
-  test('a blocked server is refused by its trust setting, not by its name', async () => {
-    const { registry, tool } = registryWithMcp();
-    installAgentMcpCallRoute(registry, createContext({
-      servers: [{ name: 'risky', connected: true, trustMode: 'blocked', role: 'browser', schemaFreshness: 'fresh', allowedHosts: [] }],
-      callTool: async () => 'should not be reached',
-    }));
-
-    const result = await tool.execute({ mode: 'call', qualifiedName: 'mcp:risky:anything', input: {} });
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('blocked');
+  test('intrinsic dispatch never invokes function-owned call accessors', async () => {
+    const f = fixture(); let reads = 0;
+    for (const method of [f.api.getToolSchema, f.api.callTool]) {
+      if (!method) throw new Error('Synthetic native method is unavailable');
+      Object.defineProperty(method, 'call', { get() { reads++; throw new Error('Forged method call slot'); } });
+    }
+    expect(await f.run(call())).toMatchObject({ success: true });
+    expect(reads).toBe(0); expect(f.calls).toHaveLength(1);
   });
-
-  test('a disconnected server is named as disconnected', async () => {
-    const { registry, tool } = registryWithMcp();
-    installAgentMcpCallRoute(registry, createContext({
-      servers: [{ name: 'offline', connected: false, trustMode: 'constrained', role: 'browser', schemaFreshness: 'fresh', allowedHosts: [] }],
-      callTool: async () => 'unreachable',
-    }));
-
-    const result = await tool.execute({ mode: 'call', qualifiedName: 'mcp:offline:tool', input: {} });
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('not connected');
+  test.each(['plan', 'custom'] as const)('an incorrect read classification cannot relax the %s effect floor', async mode => {
+    const f = fixture({ mode }); const result = await f.run(call());
+    expect(result.success).toBe(false); expect(f.calls).toHaveLength(0);
   });
-
-  test('an unknown server lists the ones that exist', async () => {
-    const { registry, tool } = registryWithMcp();
-    installAgentMcpCallRoute(registry, createContext({ callTool: async () => 'ok' }));
-    const result = await tool.execute({ mode: 'call', qualifiedName: 'mcp:ghost:tool', input: {} });
-    expect(result.error).toContain('browserpilot');
+  test('server read-only hints never grant an outward call under a read-only owner', async () => {
+    const f = fixture({ mode: 'plan' }); f.setSchema({ ...initialSchema(), annotations: { readOnlyHint: true } });
+    const result = await f.run(call()); expect(result.success).toBe(false); expect(f.calls).toHaveLength(0);
   });
-
-  test('a malformed tool name explains the expected form', async () => {
-    const { registry, tool } = registryWithMcp();
-    installAgentMcpCallRoute(registry, createContext({ callTool: async () => 'ok' }));
-    const result = await tool.execute({ mode: 'call', qualifiedName: 'browser_navigate', input: {} });
-    expect(result.error).toContain('mcp:<server>:<tool>');
+  test('accessor-backed transport ports are not advertised or invoked', () => {
+    let reads = 0; const f = fixture(); resetAgentMcpCallRouteForTests();
+    Object.defineProperty(f.api, 'callTool', { get() { reads++; return async () => 'forged'; }, configurable: true });
+    expect(installAgentMcpCallRoute(f.registry, f.context)).toBe(false); expect(reads).toBe(0);
   });
-
-  test('a failing server call is reported, not thrown', async () => {
-    const { registry, tool } = registryWithMcp();
-    installAgentMcpCallRoute(registry, createContext({
-      callTool: async () => {
-        throw new Error('MCP call denied: host not allowed');
-      },
-    }));
-
-    const result = await tool.execute({ mode: 'call', qualifiedName: 'mcp:browserpilot:browser_navigate', input: {} });
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('host not allowed');
+  test.each(['blocked', 'disconnected', 'quarantined'] as const)('retains the native %s server restriction', async state => {
+    const f = fixture(); f.setServers([{ ...initialServer(), ...(state === 'blocked' ? { trustMode: 'blocked' as const }
+      : state === 'disconnected' ? { connected: false } : { schemaFreshness: 'quarantined' as const }) }]);
+    const result = await f.run(call()); expect(result.success).toBe(false); expect(f.calls).toHaveLength(0);
   });
-
-  test('a call with no arguments sends an empty object rather than failing', async () => {
-    let received: unknown = null;
-    const { registry, tool } = registryWithMcp();
-    installAgentMcpCallRoute(registry, createContext({
-      callTool: async (_name, input) => {
-        received = input;
-        return 'ok';
-      },
-    }));
-
-    await tool.execute({ mode: 'call', qualifiedName: 'mcp:browserpilot:list' });
-
-    expect(received).toEqual({});
+  test.each(['missing', 'wrong-name'] as const)('holds %s schema without guessing the tool', async shape => {
+    const f = fixture(); f.setSchema(shape === 'missing' ? null : { ...initialSchema(), name: 'other' });
+    const result = await f.run(call()); expect(result.success).toBe(false); expect(f.calls).toHaveLength(0);
+  });
+  test.each(['api', 'policy', 'source', 'port', 'schema'] as const)('a %s change during schema acquisition refuses dispatch', async changed => {
+    const f = fixture(); f.beforeSchema(() => {
+      if (changed === 'api') f.context.clients.mcpApi = { ...f.api };
+      if (changed === 'policy') f.setServers([{ ...initialServer(), allowedHosts: ['changed.example'] }]);
+      if (changed === 'source') f.source.goal = 'The synthetic source was revoked';
+      if (changed === 'port') f.api.callTool = async () => 'replacement';
+      if (changed === 'schema') f.setSchema({ ...initialSchema(), name: 'replaced' });
+    });
+    const result = await f.run(call()); expect(result.success).toBe(false); expect(f.calls).toHaveLength(0);
+  });
+  test.each(['policy', 'schema', 'revoked', 'cancelled'] as const)('native pre-send restriction refuses late %s state', async changed => {
+    const f = fixture(); const controller = new AbortController(); f.beforeCall(() => {
+      if (changed === 'policy') f.setServers([{ ...initialServer(), allowedPaths: ['/changed'] }]);
+      if (changed === 'schema') { const schema = f.schema(); if (schema) schema.inputSchema.properties = { changed: { type: 'string' } }; }
+      if (changed === 'revoked') f.setMode('plan');
+      if (changed === 'cancelled') controller.abort();
+    });
+    const result = await f.run(call(), controller.signal).catch(() => undefined); expect(result?.success).not.toBe(true); expect(f.calls).toHaveLength(0);
+  });
+  test('a schema accessor replacement is rejected without executing the accessor', async () => {
+    const f = fixture(); let reads = 0; f.beforeCall(() => {
+      const schema = f.schema(); if (schema) Object.defineProperty(schema, 'inputSchema', { get() { reads++; return {}; }, configurable: true });
+    });
+    expect((await f.run(call())).success).toBe(false); expect(reads).toBe(0); expect(f.calls).toHaveLength(0);
+  });
+  test('a real nested child receives fresh recorded admission rather than caller flags', async () => {
+    const f = fixture(); f.registry.register({ definition: { name: 'mcp_facade', description: 'Synthetic MCP facade.', parameters: { type: 'object', additionalProperties: true } },
+      execute: (_args, options) => f.registry.executeNested('nested-synthetic-mcp', 'mcp', call(), options) });
+    expect((await f.run({}, undefined, 'mcp_facade')).success).toBe(true); expect(f.calls).toHaveLength(1);
+  });
+  test('server errors expose no raw private server failure details', async () => {
+    const f = fixture(); f.beforeCall(() => { throw new Error('synthetic-private-server-detail'); });
+    const result = await f.run(call()); expect(result.success).toBe(false); expect(result.error).not.toContain('synthetic-private-server-detail');
   });
 });

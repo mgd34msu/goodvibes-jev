@@ -11,6 +11,7 @@ import {
   createAgentKnowledgeIngestTool,
   registerAgentKnowledgeIngestTool,
 } from '../../tools/agent-knowledge-ingest-tool.ts';
+import { admitLocalState } from '../helpers/local-state-admission.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 type ShellPaths = ShellPathService;
@@ -53,6 +54,14 @@ function configManager(paths: ShellPaths): ConfigManager {
     workingDir: paths.workingDirectory,
     homeDir: paths.homeDirectory,
   });
+}
+
+function admittedTool(paths: ShellPaths) {
+  const config = configManager(paths), tool = createAgentKnowledgeIngestTool(paths, config);
+  return { definition: tool.definition, execute: (args: Record<string, unknown>) => admitLocalState(
+    registry => registerAgentKnowledgeIngestTool(registry, paths, config), tool.definition.name, args,
+    { directory: paths.workingDirectory }),
+  };
 }
 
 function inputUrl(input: Parameters<typeof fetch>[0]): string {
@@ -98,7 +107,7 @@ describe('agent_knowledge_ingest tool', () => {
     }
   });
 
-  test('requires explicit user request provenance before ingesting', async () => {
+  test('caller confirmation and fabricated restrictions cannot authorize ingestion', async () => {
     const paths = shellPaths();
     const tool = createAgentKnowledgeIngestTool(paths, configManager(paths));
     const originalFetch = globalThis.fetch;
@@ -112,19 +121,19 @@ describe('agent_knowledge_ingest tool', () => {
       const result = await tool.execute({
         url: 'https://example.com/agent-docs',
         confirm: true,
-      });
+      }, { assertCurrent() {}, inputProjectionContext: Object.freeze({}) });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('explicitUserRequest is required');
+      expect(result.error).toContain('current recorded effect admission');
       expect(calls).toBe(0);
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 
-  test('ingests URL through only the isolated Agent Knowledge route after explicit confirmation', async () => {
+  test('recorded admission ingests URL through only the isolated Agent route without caller flags', async () => {
     const paths = shellPaths();
-    const tool = createAgentKnowledgeIngestTool(paths, configManager(paths));
+    const tool = admittedTool(paths);
     const requests: CapturedRequest[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch(async (input, init) => {
@@ -141,8 +150,6 @@ describe('agent_knowledge_ingest tool', () => {
         url: 'https://example.com/agent-docs',
         title: 'Agent docs',
         tags: ['docs', 'agent'],
-        confirm: true,
-        explicitUserRequest: 'Add this docs URL to your Agent Knowledge.',
       });
 
       expect(result.success).toBe(true);
@@ -165,7 +172,7 @@ describe('agent_knowledge_ingest tool', () => {
 
   test('ingests local files through only the isolated Agent Knowledge artifact route', async () => {
     const paths = shellPaths();
-    const tool = createAgentKnowledgeIngestTool(paths, configManager(paths));
+    const tool = admittedTool(paths);
     const requests: CapturedRequest[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch(async (input, init) => {
@@ -177,10 +184,12 @@ describe('agent_knowledge_ingest tool', () => {
       return ingestResponse();
     });
 
+    const filePath = join(paths.workingDirectory, 'agent-notes.md');
+    writeFileSync(filePath, '# Agent notes\nKeep knowledge isolated.');
     try {
       const result = await tool.execute({
         sourceKind: 'file',
-        path: '/tmp/agent-notes.md',
+        path: filePath,
         title: 'Agent notes',
         tags: ['notes'],
         confirm: true,
@@ -193,7 +202,7 @@ describe('agent_knowledge_ingest tool', () => {
       expect(requests[0]?.url).toBe('http://127.0.0.1:3421/api/goodvibes-agent/knowledge/ingest/artifact');
       expect(requests[0]?.url).not.toContain('/api/knowledge');
       const payload = JSON.parse(requests[0]?.body ?? '{}') as IngestPayload;
-      expect(payload.path).toBe('/tmp/agent-notes.md');
+      expect(payload.path).toBe(filePath);
       expect(payload.title).toBe('Agent notes');
       expect(payload.tags).toEqual(['notes']);
       expect(payload.connectorId).toBe('goodvibes-agent-main-conversation-file');
@@ -205,7 +214,7 @@ describe('agent_knowledge_ingest tool', () => {
 
   test('ingests saved artifact ids through only the isolated Agent Knowledge artifact route', async () => {
     const paths = shellPaths();
-    const tool = createAgentKnowledgeIngestTool(paths, configManager(paths));
+    const tool = admittedTool(paths);
     const requests: CapturedRequest[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch(async (input, init) => {
@@ -246,7 +255,7 @@ describe('agent_knowledge_ingest tool', () => {
 
   test('imports URL-list and bookmarks files through isolated Agent routes after confirmation', async () => {
     const paths = shellPaths();
-    const tool = createAgentKnowledgeIngestTool(paths, configManager(paths));
+    const tool = admittedTool(paths);
     const requests: CapturedRequest[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch(async (input, init) => {
@@ -258,16 +267,20 @@ describe('agent_knowledge_ingest tool', () => {
       return Response.json({ imported: 2, failed: 0, sources: [] });
     });
 
+    const urlsPath = join(paths.workingDirectory, 'urls.txt');
+    const bookmarksPath = join(paths.workingDirectory, 'bookmarks.html');
+    writeFileSync(urlsPath, 'https://example.com/agent-docs');
+    writeFileSync(bookmarksPath, '<a href="https://example.com/agent-docs">Docs</a>');
     try {
       const urls = await tool.execute({
         sourceKind: 'urls_file',
-        path: '/tmp/urls.txt',
+        path: urlsPath,
         confirm: true,
         explicitUserRequest: 'Import this URL list into Agent Knowledge.',
       });
       const bookmarks = await tool.execute({
         sourceKind: 'bookmarks_file',
-        path: '/tmp/bookmarks.html',
+        path: bookmarksPath,
         confirm: true,
         explicitUserRequest: 'Import these bookmarks into Agent Knowledge.',
       });
@@ -281,7 +294,7 @@ describe('agent_knowledge_ingest tool', () => {
       for (const request of requests) {
         expect(request.url).not.toContain('/api/knowledge');
         const payload = JSON.parse(request.body ?? '{}') as IngestPayload;
-        expect(payload.path).toMatch(/^\/tmp\//);
+        expect([urlsPath, bookmarksPath]).toContain(payload.path);
         expect(payload.metadata?.originSurface).toBe('goodvibes-agent');
       }
     } finally {
@@ -291,7 +304,7 @@ describe('agent_knowledge_ingest tool', () => {
 
   test('ingests connector input through the isolated Agent connector route', async () => {
     const paths = shellPaths();
-    const tool = createAgentKnowledgeIngestTool(paths, configManager(paths));
+    const tool = admittedTool(paths);
     const requests: CapturedRequest[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch(async (input, init) => {
@@ -354,7 +367,7 @@ describe('agent_knowledge_ingest tool', () => {
 
   test('fails closed without token and does not call default knowledge routes', async () => {
     const paths = shellPaths(false);
-    const tool = createAgentKnowledgeIngestTool(paths, configManager(paths));
+    const tool = admittedTool(paths);
     const originalFetch = globalThis.fetch;
     let calls = 0;
     globalThis.fetch = mockFetch(async () => {
@@ -365,8 +378,6 @@ describe('agent_knowledge_ingest tool', () => {
     try {
       const result = await tool.execute({
         url: 'https://example.com/agent-docs',
-        confirm: true,
-        explicitUserRequest: 'Add this docs URL to your Agent Knowledge.',
       });
 
       expect(result.success).toBe(false);

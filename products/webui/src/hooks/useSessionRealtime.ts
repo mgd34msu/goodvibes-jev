@@ -1,28 +1,15 @@
-/**
- * useSessionRealtime, consume the un-domained `session-update` wire event.
- *
- * WHY THIS EXISTS (the live-updates blocker): the spine broadcasts every session
- * lifecycle change on a SINGLE un-domained wire event named `session-update`, whose
- * inner `payload.event` discriminant names the transition. The scoped viaSse() feed
- * opens one SSE per domain and hard-filters `if (eventName !== domain) return`, so the
- * `session-update` frame arriving on the ?domains=session stream is DROPPED
- * (browser-scoped.ts), `sdk.realtime.viaSse().domain('session')` can NEVER see it.
- *
- * So we bypass viaSse and open the RAW control-plane stream directly
- * (sdk.streams.open → ScopedRawEventStream), dispatching on the raw event name. This
- * is the only place the raw-stream escape hatch is used; everything else keeps the
- * typed viaSse facade.
- */
+/** Session lifecycle wire events share one app-wide session-domain stream. */
 
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { sdk, DEFAULT_SSE_RECONNECT } from '../lib/goodvibes';
 import { queryKeys } from '../lib/queries';
 import { SESSION_UPDATE_WIRE_EVENT, sessionUpdateIntent } from '../lib/sessions-union';
+import { HOSTED_SESSION_UPDATE_WIRE_EVENT } from '../lib/hosted-sessions';
 import { firstString, readPath } from '../lib/object';
 import { RELAY_OVERFLOW_EVENT, noteRelayOverflow, readDroppedCount } from '../lib/relay-stream-overflow';
 
-/** The un-domained control-plane events path; ?domains=session narrows the SSE feed. */
+/** Both lifecycle wire names are tagged with the session domain by the gateway. */
 const SESSION_EVENTS_PATH = '/api/control-plane/events?domains=session';
 
 export interface SessionRealtimeState {
@@ -66,6 +53,7 @@ export function useSessionRealtime(enabled: boolean): SessionRealtimeState {
     // existing useRealtimeInvalidation fast-path-off-the-socket model.
     const invalidateAll = () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.hostedSessionsAll });
     };
 
     sdk.streams
@@ -88,12 +76,16 @@ export function useSessionRealtime(enabled: boolean): SessionRealtimeState {
               invalidateAll();
               return;
             }
+            if (eventName === HOSTED_SESSION_UPDATE_WIRE_EVENT) {
+              void queryClient.invalidateQueries({ queryKey: queryKeys.hostedSessionsAll });
+              return;
+            }
             if (eventName !== SESSION_UPDATE_WIRE_EVENT) return;
             // Decode the intent for targeting/observability; an unknown future event
             // (intent === null) still invalidates defensively rather than being dropped.
             const wireEvent = updateEventName(payload);
             void sessionUpdateIntent(wireEvent); // reserved for finer-grained targeting
-            invalidateAll();
+            void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
           },
           onError: (err: unknown) => {
             if (disposed) return;

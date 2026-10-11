@@ -12,7 +12,7 @@ function wire(request: Request, text = paragraph) {
   return { ...request, input: undefined, protocolVersion: 1, requestId: request.requestId, battery: request.battery, batteryVersion: 1,
     status: 'settled', outcome: 'act', value: { endOffsets: selected.filter(yes), nextCursor: request.input.cursor + 64 < candidates.length ? request.input.cursor + 64 : null },
     readings: Object.fromEntries(selected.map((offset, i) => [`seam_${i}`, { kind: 'yes-no', probability: yes(offset) ? 0.999 : 0.001, verdict: yes(offset) ? 'yes' : 'no', outcome: 'act' }])),
-    evidence: [{ decisionId: 'offline-seam', model: 'fixture', requestedModel: 'fixture', usage: { inputTokens: 1, outputTokens: 1 }, latencyMs: 1 }],
+    evidence: selected.map((_, i) => ({ decisionId: `offline-seam-${request.input.cursor + i}`, model: 'fixture', requestedModel: 'fixture', usage: { inputTokens: 1, outputTokens: 1 }, latencyMs: 1 })),
   };
 }
 function response(request: Request, text = paragraph) { const body = wire(request, text); delete (body as { input?: unknown }).input; return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } }); }
@@ -41,4 +41,18 @@ test('malformed offsets, evidence, unknown fields and foreign identities are una
   const valid = JSON.parse(JSON.stringify(wire(request)));
   expect(readSpeechSeamsResponse(request, paragraph, valid)).toEqual([paragraph.indexOf(' Next'), paragraph.length]);
   for (const invalid of [{ ...valid, requestId: crypto.randomUUID() }, { ...valid, evidence: [] }, { ...valid, extra: true }, { ...valid, value: { ...valid.value, endOffsets: [3] } }, { ...valid, readings: { ...valid.readings, seam_0: { kind: 'yes-no', probability: 0.5, verdict: 'yes', outcome: 'act' } } }]) expect(readSpeechSeamsResponse(request, paragraph, invalid)).toBeUndefined();
+});
+
+test.each(['missing', 'extra', 'duplicate', 'last-malformed', 'last-extension'] as const)('%s per-seam evidence cannot publish sentence offsets', kind => {
+  const request: Request = { protocolVersion: 1, requestId: crypto.randomUUID(), battery: 'webui.voice.speech-seams', batteryVersion: 1,
+    input: { sessionId: 's', messageId: 'm', start: 0, end: paragraph.length, contentDigest: 'a'.repeat(64), cursor: 0 } };
+  const raw = wire(request); delete (raw as { input?: unknown }).input;
+  const first = raw.evidence[0]; const last = raw.evidence.at(-1);
+  if (!first || !last || first === last) throw new Error('Expected multiple recorded seam calls');
+  if (kind === 'missing') raw.evidence.splice(1, 1);
+  if (kind === 'extra') raw.evidence.push({ ...first, decisionId: 'extra-unrequested-call' });
+  if (kind === 'duplicate') last.decisionId = first.decisionId;
+  if (kind === 'last-malformed') last.usage.outputTokens = NaN;
+  if (kind === 'last-extension') Object.assign(last, { privateEcho: 'unrequested field' });
+  expect(readSpeechSeamsResponse(request, paragraph, raw)).toBeUndefined();
 });

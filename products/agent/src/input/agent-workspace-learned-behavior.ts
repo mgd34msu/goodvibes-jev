@@ -23,9 +23,11 @@ export interface AgentWorkspaceLearnedBehaviorResult {
 export function createAgentWorkspaceLearnedBehavior(
   shellPaths: ShellPathService,
   input: AgentWorkspaceLearnedBehaviorInput,
+  assertCurrent?: () => void,
 ): AgentWorkspaceLearnedBehaviorResult {
   if (input.target === 'persona') {
     const registry = AgentPersonaRegistry.fromShellPaths(shellPaths);
+    assertCurrent?.();
     const created = registry.create({
       name: input.name,
       description: input.description,
@@ -35,11 +37,12 @@ export function createAgentWorkspaceLearnedBehavior(
       source: 'agent',
       provenance: 'agent-workspace-learned-behavior',
     });
-    if (input.enable) registry.setActive(created.id);
+    if (input.enable) { assertCurrent?.(); registry.setActive(created.id); }
     return { kind: 'persona', id: created.id, name: created.name };
   }
 
   if (input.target === 'skill') {
+    assertCurrent?.();
     const created = AgentSkillRegistry.fromShellPaths(shellPaths).create({
       name: input.name,
       description: input.description,
@@ -53,6 +56,7 @@ export function createAgentWorkspaceLearnedBehavior(
     return { kind: 'skill', id: created.id, name: created.name };
   }
 
+  assertCurrent?.();
   const created = AgentRoutineRegistry.fromShellPaths(shellPaths).create({
     name: input.name,
     description: input.description,

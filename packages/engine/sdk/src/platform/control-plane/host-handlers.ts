@@ -43,6 +43,9 @@ export interface HandlerContextEnvelope {
   readonly scopes: string[];
   readonly explicitUserRequest: boolean;
   readonly authToken: string;
+  readonly principalKind?: GatewayMethodInvocationContext['principalKind'];
+  readonly nativeExecutionAuthority?: GatewayMethodInvocation['nativeExecutionAuthority'];
+  readonly isAuthorized?: GatewayMethodInvocation['isAuthorized'];
 }
 
 /** Typed, host-facing shape of a single method invocation. */
@@ -92,6 +95,7 @@ export function normalizeContext(
     scopes: context.scopes ? [...context.scopes] : [],
     explicitUserRequest: metadata['explicitUserRequest'] === true,
     authToken: context.authToken ?? '',
+    ...(context.principalKind ? { principalKind: context.principalKind } : {}),
   };
 }
 
@@ -140,7 +144,9 @@ export function registerCatalogHandler<TBody, TResult>(
   }
 
   const wrapped = async (inv: GatewayMethodInvocation): Promise<unknown> => {
-    const context: HandlerContextEnvelope = { ...normalizeContext(inv.context), ...(inv.signal ? { signal: inv.signal } : {}) };
+    const context: HandlerContextEnvelope = { ...normalizeContext(inv.context), ...(inv.signal ? { signal: inv.signal } : {}),
+      ...(inv.nativeExecutionAuthority ? { nativeExecutionAuthority: inv.nativeExecutionAuthority } : {}),
+      ...(inv.isAuthorized ? { isAuthorized: inv.isAuthorized } : {}) };
     const body = inv.body as TBody;
     if (options?.confirm) assertConfirmed(inv.body, context);
     try {

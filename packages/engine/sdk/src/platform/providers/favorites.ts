@@ -1,11 +1,14 @@
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { lstatSync, mkdirSync, rmdirSync } from 'node:fs';
 import { rename } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
+import { PersistentStore } from '../state/persistent-store.js';
+import { captureFileMutation, captureMutationDescriptors } from '../utils/file-mutation.js';
+import { types as nodeTypes } from 'node:util';
 
 export interface FavoriteEntry {
   registryKey: string;
@@ -93,6 +96,12 @@ export interface FavoritesStoreOptions {
   readonly dir: string;
 }
 
+/** Additional operation lifetime restrictions; these never grant write authority. */
+export interface FavoritesUsageRestriction {
+  readonly signal?: AbortSignal | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
+}
+
 export class FavoritesStore {
   private readonly dir: string;
   private cache: FavoritesData | null = null;
@@ -169,8 +178,30 @@ export class FavoritesStore {
     return data.pinned.some((entry) => entry.registryKey === registryKey);
   }
 
-  async recordUsage(registryKey: string): Promise<void> {
-    const data = await this.getData();
+  async recordUsage(registryKey: string, ownership?: FavoritesUsageRestriction): Promise<void> {
+    const assertOptions = ownership && captureMutationDescriptors(ownership, ['signal', 'assertCurrent']);
+    const signal = ownership?.signal, suppliedCurrent = ownership?.assertCurrent;
+    const assertOwner = ownership && captureMutationDescriptors(this, ['dir', 'getPath', 'recordUsage']);
+    const ownedPath = this.getPath();
+    const path = ownership ? resolve(ownedPath) : ownedPath;
+    const physical = ownership && captureFileMutation(path);
+    const current = () => {
+      assertOptions?.(); signal?.throwIfAborted();
+      const result: unknown = suppliedCurrent?.();
+      if (result !== undefined) {
+        if (nodeTypes.isPromise(result)) Reflect.apply(Promise.prototype.then, result, [undefined, () => {}]);
+        throw new Error('Favorites usage lifetime check is unavailable.');
+      }
+      assertOptions?.(); assertOwner?.();
+      if (this.getPath() !== ownedPath || (ownership && resolve(this.getPath()) !== path)) throw new Error('Favorites usage owner changed.');
+      physical?.assertCurrent(); signal?.throwIfAborted();
+    };
+    current();
+    const store = ownership ? new PersistentStore<Record<string, unknown>>(path) : undefined;
+    const snapshot = store ? await store.load() : undefined;
+    current();
+    const data = store ? snapshot === null ? emptyData() : parseFavoritesData(snapshot).data : await this.getData();
+    current();
     const now = new Date().toISOString();
     const existing = data.history.find((entry) => entry.registryKey === registryKey);
     if (existing) {
@@ -183,7 +214,41 @@ export class FavoritesStore {
       data.history.sort((a, b) => a.lastUsed.localeCompare(b.lastUsed));
       data.history = data.history.slice(data.history.length - MAX_HISTORY);
     }
-    await this.save(data);
+    if (store && physical) {
+      current();
+      const directory = dirname(path);
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
+      physical.onEffect();
+      current();
+      const stage = join(directory, `.favorites-usage-${randomUUID()}`);
+      mkdirSync(stage, { mode: 0o700 });
+      physical.onEffect();
+      const stageStat = lstatSync(stage, { bigint: true });
+      const isOwnedStage = () => {
+        const actual = lstatSync(stage, { bigint: true, throwIfNoEntry: false });
+        return actual?.isDirectory() && !actual.isSymbolicLink()
+          && actual.dev === stageStat.dev && actual.ino === stageStat.ino;
+      };
+      let completed = false;
+      try {
+        current();
+        await store.persist({ pinned: data.pinned, history: data.history }, {
+          durable: true, synchronousPublish: true, temporaryDirectory: stage, assertCurrent: current, beforePublish: current,
+          onEffect: published => { if (published) physical.onEffect(true); else physical.assertCurrent(); },
+          afterPublish: () => { current(); this.cache = data; },
+        });
+        current(); completed = true;
+      } finally {
+        if (isOwnedStage()) {
+          if (completed) {
+            current(); rmdirSync(stage); physical.onEffect(); current();
+          } else {
+            // Only the original empty private namespace may be removed after retirement.
+            try { rmdirSync(stage); } catch { /* Preserve foreign contents and the original failure. */ }
+          }
+        }
+      }
+    } else await this.save(data);
   }
 
   async getRecentModels(n: number): Promise<string[]> {

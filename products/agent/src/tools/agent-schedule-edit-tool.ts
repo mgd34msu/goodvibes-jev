@@ -1,20 +1,12 @@
+import { captureScheduleEffect, createScheduleInputProjector, formatScheduleOperatorResult } from './agent-schedule-effect.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { ShellPathService } from '@/runtime/index.ts';
 import {
   buildScheduleEditPreview,
-  editConnectedSchedule,
-  enrichScheduleEditPreviewFromConnectedHost,
   parseScheduleEditArgs,
-  resolveScheduleEditConnectedHostConnection,
   scheduleEditKindFromValue,
-  type ScheduleEditResult,
 } from '../agent/schedule-edit.ts';
-import {
-  formatScheduleEditFailure,
-  formatScheduleEditPreview,
-  formatScheduleEditSuccess,
-} from '../agent/schedule-edit-format.ts';
 import type { AgentConnectedHostConfigReader } from '../agent/routine-schedule-promotion.ts';
 
 export interface AgentScheduleEditToolArgs {
@@ -41,10 +33,6 @@ function readOptionalString(value: unknown): string | null {
   return text ? text : null;
 }
 
-function readBoolean(value: unknown): boolean {
-  return value === true || value === 'true' || value === 'yes';
-}
-
 function addOptionalArg(args: string[], flag: string, value: unknown): void {
   const text = readOptionalString(value);
   if (!text) return;
@@ -62,11 +50,9 @@ function addOptionalNumber(args: string[], flag: string, value: unknown): void {
 
 function buildScheduleEditArgs(rawArgs: AgentScheduleEditToolArgs): readonly string[] {
   const scheduleId = readOptionalString(rawArgs.scheduleId) ?? readOptionalString(rawArgs.jobId);
-  const explicitUserRequest = readOptionalString(rawArgs.explicitUserRequest);
   if (!scheduleId) throw new Error('scheduleId is required.');
-  if (!explicitUserRequest) throw new Error('explicitUserRequest is required.');
 
-  const args = [scheduleId, '--explicit-user-request', explicitUserRequest];
+  const args = [scheduleId];
   const scheduleKind = scheduleEditKindFromValue(rawArgs.scheduleKind);
   const scheduleValue = readOptionalString(rawArgs.scheduleValue);
   if (scheduleKind && !scheduleValue) throw new Error('scheduleValue is required when scheduleKind is set.');
@@ -79,40 +65,19 @@ function buildScheduleEditArgs(rawArgs: AgentScheduleEditToolArgs): readonly str
   addOptionalArg(args, '--prompt', rawArgs.prompt);
   addOptionalArg(args, '--task', rawArgs.task);
   addOptionalArg(args, '--success-criteria', rawArgs.successCriteria);
-  if (readBoolean(rawArgs.confirm)) args.push('--yes');
+  addOptionalArg(args, '--explicit-user-request', rawArgs.explicitUserRequest);
   return args;
-}
-
-function outputForResult(result: ScheduleEditResult): { readonly success: boolean; readonly output?: string; readonly error?: string } {
-  if (result.ok) {
-    return {
-      success: true,
-      output: formatScheduleEditSuccess(result),
-    };
-  }
-  return {
-    success: false,
-    error: formatScheduleEditFailure(result),
-  };
-}
-
-function confirmationError(preview: ReturnType<typeof buildScheduleEditPreview>): string {
-  return [
-    formatScheduleEditPreview(preview),
-    '',
-    'Model tool confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to edit this exact schedule.',
-    'Do not infer schedule edits from vague optimization, cleanup, or follow-up suggestions.',
-  ].join('\n');
 }
 
 export function createAgentScheduleEditTool(
   shellPaths: ShellPathService,
   configManager: AgentConnectedHostConfigReader,
+  registry: ToolRegistry,
 ): Tool {
   return {
     definition: {
       name: 'agent_schedule_edit',
-      description: 'Edit one confirmed connected GoodVibes schedule.',
+      description: 'Edit one connected GoodVibes schedule under recorded effect admission.',
       parameters: {
         type: 'object',
         properties: {
@@ -159,43 +124,30 @@ export function createAgentScheduleEditTool(
           },
           confirm: {
             type: 'boolean',
-            description: 'Required true only when user requested this edit.',
+            description: 'Optional audit annotation; does not grant effect authority.',
           },
           explicitUserRequest: {
             type: 'string',
-            description: 'User request authorizing this schedule edit.',
+            description: 'Optional request provenance; does not grant effect authority.',
           },
         },
-        required: ['scheduleId', 'confirm', 'explicitUserRequest'],
+        anyOf: [{ required: ['scheduleId'] }, { required: ['jobId'] }],
         additionalProperties: false,
       },
       sideEffects: ['network', 'state'],
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs, options) => {
       try {
-        const args = rawArgs as AgentScheduleEditToolArgs;
-        const parsed = parseScheduleEditArgs(buildScheduleEditArgs(args));
-        if (parsed.errors.length > 0) {
-          return {
-            success: false,
-            error: parsed.errors.join('\n'),
-          };
-        }
-        let preview = buildScheduleEditPreview(parsed);
-        const connection = resolveScheduleEditConnectedHostConnection(configManager, shellPaths.homeDirectory);
-        if (!parsed.yes) {
-          preview = await enrichScheduleEditPreviewFromConnectedHost(connection, preview);
-          return {
-            success: false,
-            error: confirmationError(preview),
-          };
-        }
-        return outputForResult(await editConnectedSchedule(connection, preview));
+        const effect = captureScheduleEffect(rawArgs, options, shellPaths, configManager, registry);
+        const parsed = parseScheduleEditArgs(buildScheduleEditArgs(rawArgs), { requireExplicitUserRequest: false });
+        if (parsed.errors.length > 0) return { success: false, error: parsed.errors.join('\n') };
+        const preview = buildScheduleEditPreview(parsed);
+        effect.assertCurrent();
+        const result = await effect.invoke('automation.jobs.update', preview.payload);
+        effect.assertCurrent();
+        return formatScheduleOperatorResult(result, 'Updated GoodVibes schedule');
       } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
       }
     },
   };
@@ -206,5 +158,5 @@ export function registerAgentScheduleEditTool(
   shellPaths: ShellPathService,
   configManager: AgentConnectedHostConfigReader,
 ): void {
-  registry.register(createAgentScheduleEditTool(shellPaths, configManager));
+  registry.register(createAgentScheduleEditTool(shellPaths, configManager, registry), { inputProjection: createScheduleInputProjector(shellPaths, configManager) });
 }

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { atomicWriteFileSync, type AtomicWriteOptions } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ShellPathService } from '@/runtime/index.ts';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../config/surface.ts';
 import { assertNoSecretLikeText } from './persona-registry.ts';
@@ -40,7 +41,7 @@ export interface AgentVibeSnapshot {
   readonly globalInitPath: string;
 }
 
-export interface AgentVibeInitOptions {
+export interface AgentVibeInitOptions extends Pick<AtomicWriteOptions, 'assertCurrent' | 'onEffect'> {
   readonly scope?: AgentVibeScope;
   readonly force?: boolean;
 }
@@ -372,8 +373,7 @@ export function formatVibeStatus(snapshot: AgentVibeSnapshot): string {
 export function initVibeFile(shellPaths: AgentVibePaths, options: AgentVibeInitOptions = {}): AgentVibeInitResult {
   const path = options.scope === 'global' ? globalVibeInitPath(shellPaths) : projectVibeInitPath(shellPaths);
   if (existsSync(path) && !options.force) return { path, created: false };
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${DEFAULT_VIBE_BODY}\n`, 'utf-8');
+  atomicWriteFileSync(path, `${DEFAULT_VIBE_BODY}\n`, { mkdirp: true, assertCurrent: options.assertCurrent, onEffect: options.onEffect });
   return { path, created: true };
 }
 

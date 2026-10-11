@@ -26,6 +26,7 @@
  */
 
 import { currentExternalOperationSource } from '../../permissions/external-operation-scope.js';
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { readCommandNeeds, type CommandNeeds } from '../../runtime/permissions/normalization/index.js';
 import { spawnSync } from 'node:child_process';
 import { normalizeCommand } from '../../runtime/permissions/normalization/index.js';
@@ -369,10 +370,11 @@ export async function resolveRuntimeSandboxPlan(
   command: string,
   workspaceDir: string,
   cwd: string,
+  options: Pick<JudgmentReadingOptions, 'signal' | 'assertCurrent'> = {},
 ): Promise<ExecSandboxPlan | null> {
   if (!sandbox) return null;
   const active = sandbox.featureEnabled && sandbox.config.enabled && sandbox.availability.available;
-  const needs = active ? await readCommandNeeds(command, workspaceDir) : NO_NEEDS;
+  const needs = active ? await readCommandNeeds(command, workspaceDir, options) : NO_NEEDS;
   return resolveExecSandboxPlan({
     needs,
     config: sandbox.config,
@@ -418,7 +420,7 @@ export async function brokerSandboxEscalation(
   };
   const decision = decideSandboxedExec({
     command,
-    needs: await readCommandNeeds(command, workingDirectory),
+    needs: await readCommandNeeds(command, workingDirectory, { signal: execution?.signal, assertCurrent }),
     sandboxActive: true,
     egressAllowlist: sandbox.config.egressAllowlist,
     baseEffectWhenNotSandboxed: 'ask',

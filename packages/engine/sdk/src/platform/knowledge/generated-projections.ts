@@ -1,14 +1,19 @@
+import { knowledgeContentHash } from './content-hash.js';
+import { knowledgeClockIso, knowledgeClockNumber, knowledgeRawRepresentation, retainKnowledgeRepresentation } from './store-record-representation.js';
 import { KnowledgeSourceQualityHeldError } from './source-quality.js';
 import { createHash } from 'node:crypto';
 import type { ArtifactDescriptor } from '../artifacts/types.js';
 import type { ArtifactStore } from '../artifacts/index.js';
 import type { KnowledgeStore } from './store.js';
+import type { KnowledgeImportGraph } from './store-import.js';
 import type {
   KnowledgeEdgeRecord,
   KnowledgeSourceRecord,
   KnowledgeSourceType,
+  KnowledgeNodeRecord,
 } from './types.js';
 import { logger } from '../utils/logger.js';
+import { SQLitePublicationError } from '../state/sqlite-store-persistence.js';
 
 export type GeneratedKnowledgeProjectionTargetKind = 'source' | 'node' | 'artifact';
 
@@ -61,6 +66,22 @@ export function isGeneratedKnowledgeSource(source: KnowledgeSourceRecord): boole
 export async function materializeGeneratedKnowledgeProjection(
   input: GeneratedKnowledgeProjectionInput,
 ): Promise<GeneratedKnowledgeProjectionResult> {
+  return materializeProjection(input);
+}
+
+/** Internal page publication stages its complete graph before one atomic import. */
+export async function materializeGeneratedKnowledgeGraphProjection(
+  input: GeneratedKnowledgeProjectionInput,
+  graph: KnowledgeImportGraph,
+): Promise<GeneratedKnowledgeProjectionResult & { readonly nodes: readonly KnowledgeNodeRecord[] }> {
+  const result = await materializeProjection(input, graph);
+  return { ...result, nodes: result.nodes ?? [] };
+}
+
+async function materializeProjection(
+  input: GeneratedKnowledgeProjectionInput,
+  graph?: KnowledgeImportGraph,
+): Promise<GeneratedKnowledgeProjectionResult & { readonly nodes?: readonly KnowledgeNodeRecord[] }> {
   const store = input.store, artifactStore = input.artifactStore;
   const authority = input.assertCurrent;
   const signal = input.signal;
@@ -80,7 +101,7 @@ export async function materializeGeneratedKnowledgeProjection(
   const outputVersion = outputState();
   const stale = () => { throw new KnowledgeSourceQualityHeldError('stale'); };
   const checkOwner = () => {
-    throwIfAborted(signal); authority?.();
+    throwIfAborted(signal); authority?.(); graph?.assertCurrent?.();
     if (authority && (input.store !== store || input.artifactStore !== artifactStore || input.assertCurrent !== authority || input.signal !== signal || outputState() !== outputVersion
       || readTarget() !== originalTarget || JSON.stringify(readTarget()) !== targetVersion)) stale();
   };
@@ -90,11 +111,11 @@ export async function materializeGeneratedKnowledgeProjection(
       || readLinked() !== originalLinked || JSON.stringify(readLinked()) !== linkedVersion)) stale();
   };
   check();
-  const contentHash = stableHash(input.markdown, 40);
+  const contentHash = knowledgeContentHash(input.markdown, 40);
   const existingMetadata = readRecord(existing?.metadata);
-  const existingGeneratedAt = typeof existingMetadata.generatedAt === 'number' ? existingMetadata.generatedAt : undefined;
+  const existingGeneratedAt = knowledgeRawRepresentation(existingMetadata).generatedAt;
   const contentUnchanged = existingMetadata.generatedContentHash === contentHash;
-  const generatedAt = contentUnchanged && existingGeneratedAt !== undefined ? existingGeneratedAt : Date.now();
+  const generatedAt = contentUnchanged && existingGeneratedAt !== undefined ? existingGeneratedAt : knowledgeClockIso(Date.now());
   const projectionMetadata = {
     ...(input.metadata ?? {}),
     generatedKnowledgePage: true,
@@ -104,7 +125,8 @@ export async function materializeGeneratedKnowledgeProjection(
     generatedContentHash: contentHash,
     pageEditable: true,
   };
-  if (input.target) {
+  const stagedTarget = target?.kind === 'node' && graph?.nodes.some(node => node.id === target.id);
+  if (input.target && !stagedTarget) {
     assertGeneratedProjectionTarget(input.artifactStore, input.store, {
       toKind: input.target.kind,
       toId: input.target.id,
@@ -126,7 +148,7 @@ export async function materializeGeneratedKnowledgeProjection(
       generatedContentHash: contentHash,
     },
   });
-  const sourceInput = {
+  const sourceInputView = {
     id: input.sourceId,
     connectorId: input.connectorId,
     sourceType: input.sourceType ?? 'document',
@@ -139,7 +161,7 @@ export async function materializeGeneratedKnowledgeProjection(
     artifactId: artifact.id,
     lastCrawledAt: contentUnchanged && typeof existing?.lastCrawledAt === 'number'
       ? existing.lastCrawledAt
-      : generatedAt,
+      : knowledgeClockNumber(generatedAt),
     metadata: {
       ...projectionMetadata,
       artifactId: artifact.id,
@@ -149,6 +171,8 @@ export async function materializeGeneratedKnowledgeProjection(
       generatedContentHash: contentHash,
     },
   };
+  const sourceInput = retainKnowledgeRepresentation(sourceInputView, { ...knowledgeRawRepresentation(sourceInputView),
+    lastCrawledAt: contentUnchanged && existing ? knowledgeRawRepresentation(existing).lastCrawledAt : generatedAt });
   const edgeInput = input.target
     ? {
         fromKind: 'source' as const,
@@ -173,13 +197,17 @@ export async function materializeGeneratedKnowledgeProjection(
     : undefined;
   let source: KnowledgeSourceRecord | undefined;
   let linked: KnowledgeEdgeRecord | undefined;
+  let nodes: readonly KnowledgeNodeRecord[] | undefined;
   try {
     check();
-    if (authority) {
+    if (authority || graph) {
       const receipt = await input.store.applyPreparedIngest({ sources: [sourceInput], extractions: [], nodes: [], edges: [], issues: [] }, async () => ({
-        nodes: [], edges: edgeInput ? [edgeInput] : [], issues: [], assertCurrent: check,
-      }), { signal });
-      checkOwner();
+        nodes: graph?.nodes ?? [], edges: [...(graph?.edges ?? []), ...(edgeInput ? [edgeInput] : [])],
+        issues: graph?.issues ?? [], assertCurrent: check,
+      }), { signal, ...(graph ? { requireAccepted: true } : {}) });
+      // The graph owner was checked synchronously before the complete commit.
+      // Its original read set intentionally changes when those rows publish.
+      nodes = receipt.nodes;
       source = receipt.sources.find((record) => record.id === input.sourceId);
       linked = edgeInput ? receipt.edges.find((record) => record.fromId === input.sourceId && record.toKind === edgeInput.toKind
         && record.toId === edgeInput.toId && record.relation === edgeInput.relation) : undefined;
@@ -192,7 +220,9 @@ export async function materializeGeneratedKnowledgeProjection(
       check();
     }
   } catch (error) {
-    if (authority) {
+    // An uncertain rename may already expose this artifact through the database.
+    if (error instanceof SQLitePublicationError && error.phase === 'indeterminate') throw error;
+    if (authority || graph) {
       // The guarded ingest either committed atomically under the original owner,
       // or made no mutation. Never overwrite a concurrent writer or compensate
       // an already valid commit after a later owner retirement.
@@ -235,6 +265,7 @@ export async function materializeGeneratedKnowledgeProjection(
     source,
     ...(linked ? { linked } : {}),
     artifactCreated: !reusedArtifact,
+    ...(nodes ? { nodes } : {}),
   };
 }
 

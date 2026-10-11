@@ -16,44 +16,50 @@ import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { registerAgentGoogleTool } from '../tools/agent-google-tool.ts';
 import { startLoopbackListener } from '@goodvibes-jev/engine/sdk/platform/google/node';
 import { getOutwardApprovalStore, OUTWARD_APPROVAL_GESTURE } from '../trust/outward-approvals.ts';
+import type { ConfigManager, SecretsManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { retainGoogleConnectionOwners } from '../tools/agent-google-admission.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 
 /** The slice of the runtime this wiring needs. Nothing wider. */
 export interface GoogleToolWiringDeps {
-  readonly configManager: { get(key: string): unknown; setDynamic(key: string, value: unknown): void };
-  readonly secretsManager: { get(key: string): Promise<string | null>; set(key: string, value: string): Promise<void> };
+  readonly configManager: ConfigManager;
+  readonly secretsManager: SecretsManager;
   readonly homeDirectory: string;
+}
+
+function readGoogleConfiguration(config: ConfigManager, key: string): unknown {
+  let value: unknown = config.getRaw();
+  for (const part of key.split('.')) {
+    if (!value || typeof value !== 'object') return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(value, part);
+    if (!descriptor) return undefined;
+    if (!('value' in descriptor)) throw new ToolInputProjectionError('held');
+    value = descriptor.value;
+  }
+  return value;
+}
+
+export function captureGoogleConnectionCurrent(deps: GoogleToolWiringDeps): () => void {
+  return retainGoogleConnectionOwners(deps);
 }
 
 export function wireAgentGoogleTool(registry: ToolRegistry, deps: GoogleToolWiringDeps): void {
   registerAgentGoogleTool(registry, {
     homeDirectory: deps.homeDirectory,
-    configGet: (key: string) => deps.configManager.get(key),
+    configManager: deps.configManager,
+    secretsManager: deps.secretsManager,
+    configGet: (key: string) => readGoogleConfiguration(deps.configManager, key),
     secretGet: (key: string) => deps.secretsManager.get(key),
+    captureConnectionCurrent: () => captureGoogleConnectionCurrent(deps),
 
-    // ── The write half ────────────────────────────────────────────────────
-    //
-    // Here so `connect.client` can finish what the setup walkthrough started.
-    // Without these the tool could only ever tell the owner to go and run a
-    // command with the two values he had just pasted into the conversation,
-    // a chore handed over at the exact moment the platform held everything it
-    // needed, which is precisely what the intent-completion rule forbids.
-    //
-    // No scope is passed, and that is deliberate. Every key the connector
-    // writes derives from a daemon-owned config path, so the store files it in
-    // the daemon tier by itself. Forcing a surface scope here would override
-    // that and hide the credential from the daemon, the runtime that has to
-    // answer mail at 3am, long after this surface has exited.
-    configSet: (key: string, value: unknown) => { deps.configManager.setDynamic(key, value); },
-    secretSet: (key: string, value: string) => deps.secretsManager.set(key, value),
+    // Exact config and credential plans publish into their native owning stores.
 
     // Binding the port Google redirects back to is real machine I/O, so the
     // connector takes it as a port and the concrete listener is named here.
     loopback: startLoopbackListener,
 
-    // The approval path, wired. It used to be absent, and the refusal invented
-    // a remedy to fill the gap, telling the owner to reply "send it now" to a
-    // mechanism no code implemented. A surface that supplies no store now gets
-    // a refusal that says so plainly instead.
+    // Existing native approval records remain exact and one-use. Model refusal
+    // text does not turn this separate control into a runtime fallback.
     approvals: getOutwardApprovalStore(),
     approvalGesture: OUTWARD_APPROVAL_GESTURE,
   });

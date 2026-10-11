@@ -14,18 +14,34 @@ import { describeDocumentOpsLane } from './agent-harness-document-ops.ts';
 import { runLocalWorkspaceEditorAction } from './agent-harness-local-operations.ts';
 import { describeWorkspaceEditorModelExecution } from './agent-harness-workspace-editor-execution.ts';
 import { describeWorkspaceEditor } from './agent-harness-workspace-actions.ts';
-import { runCommand } from './agent-harness-command-runner.ts';
-import type { AgentHarnessToolArgs, AgentHarnessToolDeps } from './agent-harness-tool-types.ts';
+import { runTranslatedWorkspaceCommand } from './agent-harness-command-runner.ts';
+import { captureHarnessLocalEffect } from './agent-harness-local-effect.ts';
+import { harnessCatalogExecutionGuard, retainHarnessCatalogCurrent } from './agent-harness-catalog-ingress.ts';
+import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
+import { personaStorePath } from '../agent/persona-registry.ts';
+import { skillStorePath } from '../agent/skill-registry.ts';
+import { routineStorePath } from '../agent/routine-registry.ts';
+import type { AgentHarnessToolDeps } from './agent-harness-tool-types.ts';
 import { error, output, readFieldMap, readString, requireConfirmedAction } from './agent-harness-tool-utils.ts';
 
 function fieldReader(editor: AgentWorkspaceLocalEditor, fields: Readonly<Record<string, string>>): (fieldId: string) => string {
   return (fieldId: string) => fields[fieldId] ?? editor.fields.find((field) => field.id === fieldId)?.value ?? '';
 }
 
+function modelEditorToolArgs(built: object, suppliedRequest: unknown): Record<string, unknown> {
+  const payload: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(built)) {
+    if (key !== 'confirm' && key !== 'explicitUserRequest') payload[key] = value;
+  }
+  const request = readString(suppliedRequest);
+  if (Object.hasOwn(built, 'explicitUserRequest') && request) payload.explicitUserRequest = request;
+  return payload;
+}
+
 function missingRequiredEditorFields(editor: AgentWorkspaceLocalEditor, fields: Readonly<Record<string, string>>): readonly string[] {
   const readField = fieldReader(editor, fields);
   return editor.fields
-    .filter((field) => field.required && !readField(field.id).trim())
+    .filter((field) => field.id !== 'confirm' && field.id !== 'explicitUserRequest' && field.required && !readField(field.id).trim())
     .map((field) => field.id);
 }
 
@@ -33,7 +49,7 @@ export async function runWorkspaceEditorAction(
   deps: AgentHarnessToolDeps,
   action: AgentWorkspaceAction,
   editor: AgentWorkspaceLocalEditor,
-  args: AgentHarnessToolArgs,
+  args: Record<string, unknown>,
   options?: Parameters<Tool['execute']>[1],
 ): Promise<{ readonly success: boolean; readonly output?: string; readonly error?: string }> {
   const fields = readFieldMap(args.fields);
@@ -49,7 +65,7 @@ export async function runWorkspaceEditorAction(
   }
 
   if (editor.kind === 'learned-behavior') {
-    const confirmationError = requireConfirmedAction(args, 'Workspace learned-behavior capture');
+    const confirmationError = requireConfirmedAction(args, options, 'Workspace learned-behavior capture');
     if (confirmationError) return error(confirmationError);
     const shellPaths = deps.commandContext.workspace.shellPaths;
     if (!shellPaths) return error('Agent shell paths are unavailable.');
@@ -58,6 +74,9 @@ export async function runWorkspaceEditorAction(
     if (target !== 'skill' && target !== 'routine' && target !== 'persona') {
       return error('learned-behavior target must be skill, routine, or persona.');
     }
+    const assertCurrent = captureHarnessLocalEffect(deps.commandContext, args, options, paths => [
+      target === 'persona' ? personaStorePath(paths) : target === 'skill' ? skillStorePath(paths) : routineStorePath(paths),
+    ]);
     const created = createAgentWorkspaceLearnedBehavior(shellPaths, {
       target,
       name: readField('name'),
@@ -66,7 +85,7 @@ export async function runWorkspaceEditorAction(
       tags: splitList(readField('tags')),
       triggers: splitList(readField('triggers')),
       enable: isAffirmative(readField('enable')),
-    });
+    }, assertCurrent);
     return output({
       status: 'created',
       kind: created.kind,
@@ -83,18 +102,16 @@ export async function runWorkspaceEditorAction(
     const parts = ['/agent-profile', 'create', name];
     if (template.trim() && template.trim().toLowerCase() !== 'none') parts.push('--template', template);
     parts.push('--yes');
-    return runCommand(deps, {
-      ...args,
-      command: parts.map((part, index) => index < 2 || part.startsWith('--') ? part : JSON.stringify(part)).join(' '),
-    });
+    return runTranslatedWorkspaceCommand(deps, args, parts.map((part, index) => index < 2 || part.startsWith('--') ? part : JSON.stringify(part)).join(' '), options);
   }
 
   if (editor.kind === 'artifact-browser') {
     const artifactsToolArgs = buildAgentArtifactBrowserToolArgs(fieldReader(editor, fields));
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-artifact-browser',
       'agent_artifacts',
-      artifactsToolArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(artifactsToolArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -108,10 +125,11 @@ export async function runWorkspaceEditorAction(
 
   if (editor.kind === 'artifact-show') {
     const artifactToolArgs = buildAgentArtifactShowToolArgs(fieldReader(editor, fields));
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-artifact-show',
       'agent_artifacts',
-      artifactToolArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(artifactToolArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -124,26 +142,17 @@ export async function runWorkspaceEditorAction(
   }
 
   if (editor.kind === 'artifact-export-file') {
-    const confirmationError = requireConfirmedAction(args, 'Workspace artifact export');
+    const confirmationError = requireConfirmedAction(args, options, 'Workspace artifact export');
     if (confirmationError) return error(confirmationError);
-    const formConfirmation = fieldReader(editor, fields)('confirm').trim().toLowerCase();
-    if (formConfirmation !== 'yes' && formConfirmation !== 'true') {
-      return output({
-        status: 'not_confirmed',
-        action: action.id,
-        editor: describeWorkspaceEditor(editor),
-        modelExecution: describeWorkspaceEditorModelExecution(editor.kind),
-        note: 'Type yes in the editor confirmation field before exporting the artifact to a workspace file.',
-      });
-    }
     const artifactToolArgs = buildAgentArtifactExportToolArgs(
       fieldReader(editor, fields),
-      readString(args.explicitUserRequest) || 'Export a reviewed saved Agent artifact to a workspace file.',
+      readString(args.explicitUserRequest),
     );
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-artifact-export',
       'agent_artifacts',
-      artifactToolArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(artifactToolArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -156,31 +165,18 @@ export async function runWorkspaceEditorAction(
   }
 
   if (editor.kind === 'artifact-export-package') {
-    const confirmationError = requireConfirmedAction(args, 'Workspace artifact package export');
+    const confirmationError = requireConfirmedAction(args, options, 'Workspace artifact package export');
     if (confirmationError) return error(confirmationError);
     const readField = fieldReader(editor, fields);
-    const formConfirmation = readField('confirm').trim().toLowerCase();
-    if (formConfirmation !== 'yes' && formConfirmation !== 'true') {
-      return output({
-        status: 'not_confirmed',
-        action: action.id,
-        editor: describeWorkspaceEditor(editor),
-        modelExecution: describeWorkspaceEditorModelExecution(editor.kind),
-        note: 'Type yes in the editor confirmation field before exporting the selected artifacts to a package output.',
-      });
-    }
-    const packageFormat = readField('packageFormat').trim().toLowerCase();
-    const defaultRequest = packageFormat === 'zip' || packageFormat === 'archive'
-      ? 'Export reviewed saved Agent artifacts to a workspace ZIP archive.'
-      : 'Export reviewed saved Agent artifacts to a workspace package directory.';
     const artifactToolArgs = buildAgentArtifactPackageToolArgs(
       readField,
-      readString(args.explicitUserRequest) || defaultRequest,
+      readString(args.explicitUserRequest),
     );
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-artifact-package-export',
       'agent_artifacts',
-      artifactToolArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(artifactToolArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -193,26 +189,17 @@ export async function runWorkspaceEditorAction(
   }
 
   if (editor.kind === 'artifact-promote-knowledge') {
-    const confirmationError = requireConfirmedAction(args, 'Workspace artifact Knowledge promotion');
+    const confirmationError = requireConfirmedAction(args, options, 'Workspace artifact Knowledge promotion');
     if (confirmationError) return error(confirmationError);
-    const formConfirmation = fieldReader(editor, fields)('confirm').trim().toLowerCase();
-    if (formConfirmation !== 'yes' && formConfirmation !== 'true') {
-      return output({
-        status: 'not_confirmed',
-        action: action.id,
-        editor: describeWorkspaceEditor(editor),
-        modelExecution: describeWorkspaceEditorModelExecution(editor.kind),
-        note: 'Type yes in the editor confirmation field before ingesting the artifact into Agent Knowledge.',
-      });
-    }
     const ingestToolArgs = buildAgentArtifactPromoteKnowledgeToolArgs(
       fieldReader(editor, fields),
-      readString(args.explicitUserRequest) || 'Promote a reviewed saved Agent artifact into isolated Agent Knowledge.',
+      readString(args.explicitUserRequest),
     );
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-artifact-promote-knowledge',
       'agent_knowledge_ingest',
-      ingestToolArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(ingestToolArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -225,26 +212,16 @@ export async function runWorkspaceEditorAction(
   }
 
   if (editor.kind === 'research-report') {
-    const confirmationError = requireConfirmedAction(args, 'Workspace research report artifact save');
+    const confirmationError = requireConfirmedAction(args, options, 'Workspace research report artifact save');
     if (confirmationError) return error(confirmationError);
-    const formConfirmation = fieldReader(editor, fields)('confirm').trim().toLowerCase();
-    if (formConfirmation !== 'yes' && formConfirmation !== 'true') {
-      return output({
-        status: 'not_confirmed',
-        action: action.id,
-        editor: describeWorkspaceEditor(editor),
-        modelExecution: describeWorkspaceEditorModelExecution(editor.kind),
-        note: 'Type yes in the editor confirmation field before saving the sourced research report artifact.',
-      });
-    }
     const researchToolArgs = captureAgentResearchReportToolArgs(
       fieldReader(editor, fields),
-      readString(args.explicitUserRequest) || 'Save a reviewed source-grounded research report as an Agent artifact.',
+      readString(args.explicitUserRequest),
     );
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-research-report',
       'agent_research_report',
-      researchToolArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(researchToolArgs, args.explicitUserRequest),
       options,
     );
     return output({
@@ -258,26 +235,17 @@ export async function runWorkspaceEditorAction(
   }
 
   if (editor.kind === 'research-run') {
-    const confirmationError = requireConfirmedAction(args, 'Workspace research run creation');
+    const confirmationError = requireConfirmedAction(args, options, 'Workspace research run creation');
     if (confirmationError) return error(confirmationError);
-    const formConfirmation = fieldReader(editor, fields)('confirm').trim().toLowerCase();
-    if (formConfirmation !== 'yes' && formConfirmation !== 'true') {
-      return output({
-        status: 'not_confirmed',
-        action: action.id,
-        editor: describeWorkspaceEditor(editor),
-        modelExecution: describeWorkspaceEditorModelExecution(editor.kind),
-        note: 'Type yes in the editor confirmation field before creating the visible local research run.',
-      });
-    }
     const runToolArgs = buildAgentResearchRunToolArgs(
       fieldReader(editor, fields),
-      readString(args.explicitUserRequest) || 'Create one visible checkpointable local research run.',
+      readString(args.explicitUserRequest),
     );
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-research-run',
       'agent_research_runs',
-      runToolArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(runToolArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -290,26 +258,17 @@ export async function runWorkspaceEditorAction(
   }
 
   if (editor.kind === 'research-source') {
-    const confirmationError = requireConfirmedAction(args, 'Workspace research source queue add');
+    const confirmationError = requireConfirmedAction(args, options, 'Workspace research source queue add');
     if (confirmationError) return error(confirmationError);
-    const formConfirmation = fieldReader(editor, fields)('confirm').trim().toLowerCase();
-    if (formConfirmation !== 'yes' && formConfirmation !== 'true') {
-      return output({
-        status: 'not_confirmed',
-        action: action.id,
-        editor: describeWorkspaceEditor(editor),
-        modelExecution: describeWorkspaceEditorModelExecution(editor.kind),
-        note: 'Type yes in the editor confirmation field before adding the source to the local research queue.',
-      });
-    }
     const sourceToolArgs = buildAgentResearchSourceToolArgs(
       fieldReader(editor, fields),
-      readString(args.explicitUserRequest) || 'Add one source to the project-local research queue.',
+      readString(args.explicitUserRequest),
     );
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-research-source',
       'agent_research_sources',
-      sourceToolArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(sourceToolArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -338,28 +297,19 @@ export async function runWorkspaceEditorAction(
   ) {
     const isMutation = editor.kind !== 'document-browse' && editor.kind !== 'document-show';
     if (isMutation) {
-      const confirmationError = requireConfirmedAction(args, 'Workspace Agent document action');
+      const confirmationError = requireConfirmedAction(args, options, 'Workspace Agent document action');
       if (confirmationError) return error(confirmationError);
-      const formConfirmation = fieldReader(editor, fields)('confirm').trim().toLowerCase();
-      if (formConfirmation !== 'yes' && formConfirmation !== 'true') {
-        return output({
-          status: 'not_confirmed',
-          action: action.id,
-          editor: describeWorkspaceEditor(editor),
-          modelExecution: describeWorkspaceEditorModelExecution(editor.kind),
-          note: 'Type yes in the editor confirmation field before changing Agent document drafts.',
-        });
-      }
     }
     const documentToolArgs = buildAgentDocumentToolArgs(
       editor,
       fieldReader(editor, fields),
-      readString(args.explicitUserRequest) || 'Run the Agent document workspace action.',
+      readString(args.explicitUserRequest),
     );
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-document',
       'agent_documents',
-      documentToolArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(documentToolArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -373,7 +323,10 @@ export async function runWorkspaceEditorAction(
 
   if (editor.kind === 'document-reviewer-readiness') {
     const readinessArgs = buildAgentDocumentReviewerReadinessToolArgs(fieldReader(editor, fields));
-    const resolved = describeDocumentOpsLane(deps.commandContext, readinessArgs);
+    const reading = { signal: options?.signal, sourceOwner: agentResearchSourceOwner(deps.toolRegistry),
+      assertCurrent: harnessCatalogExecutionGuard(args, options), retainCurrent: retainHarnessCatalogCurrent(args) };
+    const resolved = await describeDocumentOpsLane(deps.commandContext, readinessArgs, reading);
+    reading.assertCurrent();
     if (resolved.status !== 'found') {
       return error(resolved.status === 'ambiguous'
         ? `Ambiguous Document Ops lane reviewer_readiness. Candidates: ${JSON.stringify(resolved.candidates)}`
@@ -389,7 +342,10 @@ export async function runWorkspaceEditorAction(
   }
   if (editor.kind === 'document-review-packet-wizard') {
     const wizardArgs = buildAgentDocumentReviewPacketWizardToolArgs(fieldReader(editor, fields));
-    const resolved = describeDocumentOpsLane(deps.commandContext, wizardArgs);
+    const reading = { signal: options?.signal, sourceOwner: agentResearchSourceOwner(deps.toolRegistry),
+      assertCurrent: harnessCatalogExecutionGuard(args, options), retainCurrent: retainHarnessCatalogCurrent(args) };
+    const resolved = await describeDocumentOpsLane(deps.commandContext, wizardArgs, reading);
+    reading.assertCurrent();
     if (resolved.status !== 'found') {
       return error(resolved.status === 'ambiguous'
         ? `Ambiguous Document Ops lane review_packet_wizard. Candidates: ${JSON.stringify(resolved.candidates)}`
@@ -404,26 +360,17 @@ export async function runWorkspaceEditorAction(
     });
   }
   if (editor.kind === 'document-review-packet-preset') {
-    const confirmationError = requireConfirmedAction(args, 'Workspace review packet preset save');
+    const confirmationError = requireConfirmedAction(args, options, 'Workspace review packet preset save');
     if (confirmationError) return error(confirmationError);
-    const formConfirmation = fieldReader(editor, fields)('confirm').trim().toLowerCase();
-    if (formConfirmation !== 'yes' && formConfirmation !== 'true') {
-      return output({
-        status: 'not_confirmed',
-        action: action.id,
-        editor: describeWorkspaceEditor(editor),
-        modelExecution: describeWorkspaceEditorModelExecution(editor.kind),
-        note: 'Type yes in the editor confirmation field before saving a review packet preset artifact.',
-      });
-    }
     const presetArgs = buildAgentDocumentReviewPacketPresetToolArgs(
       fieldReader(editor, fields),
-      readString(args.explicitUserRequest) || 'Save the current Document Ops review packet preset from an Agent workspace action.',
+      readString(args.explicitUserRequest),
     );
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-review-packet-preset',
       'agent_review_packet_presets',
-      presetArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(presetArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -435,26 +382,17 @@ export async function runWorkspaceEditorAction(
     });
   }
   if (editor.kind === 'document-review-packet-preset-refresh') {
-    const confirmationError = requireConfirmedAction(args, 'Workspace review packet preset refresh');
+    const confirmationError = requireConfirmedAction(args, options, 'Workspace review packet preset refresh');
     if (confirmationError) return error(confirmationError);
-    const formConfirmation = fieldReader(editor, fields)('confirm').trim().toLowerCase();
-    if (formConfirmation !== 'yes' && formConfirmation !== 'true') {
-      return output({
-        status: 'not_confirmed',
-        action: action.id,
-        editor: describeWorkspaceEditor(editor),
-        modelExecution: describeWorkspaceEditorModelExecution(editor.kind),
-        note: 'Type yes in the editor confirmation field before refreshing a review packet preset artifact.',
-      });
-    }
     const presetArgs = buildAgentDocumentReviewPacketPresetRefreshToolArgs(
       fieldReader(editor, fields),
-      readString(args.explicitUserRequest) || 'Refresh the Document Ops review packet preset from an Agent workspace action.',
+      readString(args.explicitUserRequest),
     );
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-review-packet-preset-refresh',
       'agent_review_packet_presets',
-      presetArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(presetArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -466,26 +404,17 @@ export async function runWorkspaceEditorAction(
     });
   }
   if (editor.kind === 'document-review-packet-share') {
-    const confirmationError = requireConfirmedAction(args, 'Workspace review packet share');
+    const confirmationError = requireConfirmedAction(args, options, 'Workspace review packet share');
     if (confirmationError) return error(confirmationError);
-    const formConfirmation = fieldReader(editor, fields)('confirm').trim().toLowerCase();
-    if (formConfirmation !== 'yes' && formConfirmation !== 'true') {
-      return output({
-        status: 'not_confirmed',
-        action: action.id,
-        editor: describeWorkspaceEditor(editor),
-        modelExecution: describeWorkspaceEditorModelExecution(editor.kind),
-        note: 'Type yes in the editor confirmation field before sharing a review packet archive reference.',
-      });
-    }
     const shareArgs = buildAgentDocumentReviewPacketShareToolArgs(
       fieldReader(editor, fields),
-      readString(args.explicitUserRequest) || 'Share the Document Ops review packet archive from an Agent workspace action.',
+      readString(args.explicitUserRequest),
     );
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-review-packet-share',
       'agent_review_packet_share',
-      shareArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(shareArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -498,26 +427,17 @@ export async function runWorkspaceEditorAction(
   }
 
   if (editor.kind === 'model-compare' || editor.kind === 'local-model-benchmark') {
-    const confirmationError = requireConfirmedAction(args, 'Workspace blind model comparison');
+    const confirmationError = requireConfirmedAction(args, options, 'Workspace blind model comparison');
     if (confirmationError) return error(confirmationError);
-    const formConfirmation = fieldReader(editor, fields)('confirm').trim().toLowerCase();
-    if (formConfirmation !== 'yes' && formConfirmation !== 'true') {
-      return output({
-        status: 'not_confirmed',
-        action: action.id,
-        editor: describeWorkspaceEditor(editor),
-        modelExecution: describeWorkspaceEditorModelExecution(editor.kind),
-        note: 'Type yes in the editor confirmation field before spending model tokens.',
-      });
-    }
     const compareToolArgs = buildAgentModelCompareToolArgs(
       fieldReader(editor, fields),
-      readString(args.explicitUserRequest) || 'Run the blind model comparison from an Agent workspace action.',
+      readString(args.explicitUserRequest),
     );
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-model-compare',
       'agent_model_compare',
-      compareToolArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(compareToolArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -531,10 +451,11 @@ export async function runWorkspaceEditorAction(
 
   if (editor.kind === 'model-compare-review') {
     const reviewToolArgs = buildAgentModelCompareReviewToolArgs(fieldReader(editor, fields));
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-model-compare-review',
       'agent_model_compare',
-      reviewToolArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(reviewToolArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -548,10 +469,11 @@ export async function runWorkspaceEditorAction(
 
   if (editor.kind === 'model-compare-handoff-diff') {
     const handoffDiffArgs = buildAgentModelCompareHandoffDiffToolArgs(fieldReader(editor, fields));
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-model-compare-handoff-diff',
       'agent_model_compare',
-      handoffDiffArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(handoffDiffArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -564,26 +486,17 @@ export async function runWorkspaceEditorAction(
   }
 
   if (editor.kind === 'model-compare-judge') {
-    const confirmationError = requireConfirmedAction(args, 'Workspace comparison judgment');
+    const confirmationError = requireConfirmedAction(args, options, 'Workspace comparison judgment');
     if (confirmationError) return error(confirmationError);
-    const formConfirmation = fieldReader(editor, fields)('confirm').trim().toLowerCase();
-    if (formConfirmation !== 'yes' && formConfirmation !== 'true') {
-      return output({
-        status: 'not_confirmed',
-        action: action.id,
-        editor: describeWorkspaceEditor(editor),
-        modelExecution: describeWorkspaceEditorModelExecution(editor.kind),
-        note: 'Type yes in the editor confirmation field before saving the judgment artifact.',
-      });
-    }
     const judgmentToolArgs = buildAgentModelCompareJudgmentToolArgs(
       fieldReader(editor, fields),
-      readString(args.explicitUserRequest) || 'Save the blind model comparison judgment from an Agent workspace action.',
+      readString(args.explicitUserRequest),
     );
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-model-compare-judge',
       'agent_model_compare',
-      judgmentToolArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(judgmentToolArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -596,26 +509,17 @@ export async function runWorkspaceEditorAction(
   }
 
   if (editor.kind === 'model-compare-apply') {
-    const confirmationError = requireConfirmedAction(args, 'Workspace comparison route update');
+    const confirmationError = requireConfirmedAction(args, options, 'Workspace comparison route update');
     if (confirmationError) return error(confirmationError);
-    const formConfirmation = fieldReader(editor, fields)('confirm').trim().toLowerCase();
-    if (formConfirmation !== 'yes' && formConfirmation !== 'true') {
-      return output({
-        status: 'not_confirmed',
-        action: action.id,
-        editor: describeWorkspaceEditor(editor),
-        modelExecution: describeWorkspaceEditorModelExecution(editor.kind),
-        note: 'Type yes in the editor confirmation field before applying the winning model route.',
-      });
-    }
     const applyToolArgs = buildAgentModelCompareApplyToolArgs(
       fieldReader(editor, fields),
-      readString(args.explicitUserRequest) || 'Apply the revealed blind model comparison judgment from an Agent workspace action.',
+      readString(args.explicitUserRequest),
     );
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-model-compare-apply',
       'agent_model_compare',
-      applyToolArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(applyToolArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -628,26 +532,17 @@ export async function runWorkspaceEditorAction(
   }
 
   if (editor.kind === 'model-compare-route-decision') {
-    const confirmationError = requireConfirmedAction(args, 'Workspace comparison route decision');
+    const confirmationError = requireConfirmedAction(args, options, 'Workspace comparison route decision');
     if (confirmationError) return error(confirmationError);
-    const formConfirmation = fieldReader(editor, fields)('confirm').trim().toLowerCase();
-    if (formConfirmation !== 'yes' && formConfirmation !== 'true') {
-      return output({
-        status: 'not_confirmed',
-        action: action.id,
-        editor: describeWorkspaceEditor(editor),
-        modelExecution: describeWorkspaceEditorModelExecution(editor.kind),
-        note: 'Type yes in the editor confirmation field before saving the route-decision receipt.',
-      });
-    }
     const routeDecisionToolArgs = buildAgentModelCompareRouteDecisionToolArgs(
       fieldReader(editor, fields),
-      readString(args.explicitUserRequest) || 'Record a leave-unchanged blind model comparison route decision from an Agent workspace action.',
+      readString(args.explicitUserRequest),
     );
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-model-compare-route-decision',
       'agent_model_compare',
-      routeDecisionToolArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(routeDecisionToolArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -660,26 +555,17 @@ export async function runWorkspaceEditorAction(
   }
 
   if (editor.kind === 'model-compare-export') {
-    const confirmationError = requireConfirmedAction(args, 'Workspace comparison export');
+    const confirmationError = requireConfirmedAction(args, options, 'Workspace comparison export');
     if (confirmationError) return error(confirmationError);
-    const formConfirmation = fieldReader(editor, fields)('confirm').trim().toLowerCase();
-    if (formConfirmation !== 'yes' && formConfirmation !== 'true') {
-      return output({
-        status: 'not_confirmed',
-        action: action.id,
-        editor: describeWorkspaceEditor(editor),
-        modelExecution: describeWorkspaceEditorModelExecution(editor.kind),
-        note: 'Type yes in the editor confirmation field before creating the markdown report artifact.',
-      });
-    }
     const exportToolArgs = buildAgentModelCompareExportToolArgs(
       fieldReader(editor, fields),
-      readString(args.explicitUserRequest) || 'Export the saved blind model comparison artifact from an Agent workspace action.',
+      readString(args.explicitUserRequest),
     );
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-model-compare-export',
       'agent_model_compare',
-      exportToolArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(exportToolArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -693,10 +579,11 @@ export async function runWorkspaceEditorAction(
 
   if (editor.kind === 'model-compare-analytics') {
     const analyticsToolArgs = buildAgentModelCompareAnalyticsToolArgs(fieldReader(editor, fields));
-    const result = await deps.toolRegistry.execute(
+    const result = await deps.toolRegistry.executeNested(
       'agent-harness-workspace-model-compare-analytics',
       'agent_model_compare',
-      analyticsToolArgs as unknown as Record<string, unknown>,
+      modelEditorToolArgs(analyticsToolArgs, args.explicitUserRequest),
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
@@ -716,7 +603,7 @@ export async function runWorkspaceEditorAction(
       || editor.kind === 'skill'
       || editor.kind === 'routine'
     ) {
-      return runLocalWorkspaceEditorAction(deps, editor, args);
+      return runLocalWorkspaceEditorAction(deps, editor, args, options);
     }
     return output({
       status: 'model_tool_required',
@@ -751,8 +638,5 @@ export async function runWorkspaceEditorAction(
       note: 'This workspace action submits a normal main-conversation prompt in the TUI. In model-tool context, use the returned prompt as the conversation task instead of creating a hidden nested turn.',
     });
   }
-  return runCommand(deps, {
-    ...args,
-    command: submission.command,
-  });
+  return runTranslatedWorkspaceCommand(deps, args, submission.command, options);
 }

@@ -1,4 +1,6 @@
 import type { CommandContext } from '../input/command-registry.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureCatalogData, captureCatalogMethods, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 
 export interface AgentHarnessDelegationArgs {
@@ -311,7 +313,7 @@ function routeSearchText(route: DelegationRoute): string {
     ...(route.successEvidence ?? []),
     ...(route.statusRoutes ?? []),
     ...(route.recoveryRoutes ?? []),
-  ].join('\n').toLowerCase();
+  ].join('\n');
 }
 
 function describeCandidate(route: DelegationRoute): Record<string, unknown> {
@@ -387,32 +389,75 @@ export function delegationPostureCatalogStatus(context: CommandContext): Record<
   };
 }
 
-export function delegationPostureSummary(context: CommandContext, args: AgentHarnessDelegationArgs): Record<string, unknown> {
-  const query = readString(args.query).toLowerCase();
+function delegationSources(context: CommandContext) {
+  return captureCatalogData({
+    routes: routes().map(route => ({ route, full: describeRoute(context, route, { includeParameters: true }), summary: describeRoute(context, route) })),
+    cards: delegationDecisionCards(context),
+    sessionId: context.session.runtime.sessionId,
+    operatorClientAttached: Boolean(context.clients?.operator),
+  });
+}
+
+function captureDelegationBackend(context: CommandContext) {
+  const guards = [captureCatalogMethods(context, ['session', 'clients']), captureCatalogMethods(context.session, ['runtime']),
+    captureCatalogMethods(context.session.runtime, ['sessionId'])];
+  if (context.clients) guards.push(captureCatalogMethods(context.clients, ['operator']));
+  return () => { for (const guard of guards) guard(); };
+}
+
+function retainDelegationSources(context: CommandContext, sources: ReturnType<typeof delegationSources>, options: CatalogRankingOptions, assertBackend: () => void) {
+  const revision = JSON.stringify(sources);
+  const assertCurrent = () => {
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    assertBackend();
+    if (JSON.stringify(delegationSources(context)) !== revision) throw new ToolInputProjectionError('stale');
+    assertBackend();
+  };
+  options.retainCurrent?.(assertCurrent, 'agent.harness.delegation-posture.sources');
+  assertCurrent(); return assertCurrent;
+}
+
+async function matchingDelegationRoutes(sources: ReturnType<typeof delegationSources>, query: string, options: CatalogRankingOptions) {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  if (!query) return { matches: sources.routes.map(entry => ({ entry, judgment: undefined })), judgments: [] };
+  return rankHarnessCatalog(sources.routes, query, entry => ({ id: entry.route.id,
+    description: routeSearchText(entry.route), evidence: entry }), 'agent.harness.delegation-posture',
+    { ...options, requirePreservedSource: true });
+}
+
+export async function delegationPostureSummary(context: CommandContext, args: AgentHarnessDelegationArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const query = readString(args.query);
   const includeParameters = args.includeParameters === true;
-  const filtered = routes()
-    .filter((route) => !query || routeSearchText(route).includes(query))
-    .slice(0, readLimit(args.limit, 100));
+  const assertBackend = captureDelegationBackend(context);
+  const sources = delegationSources(context);
+  const assertCurrent = retainDelegationSources(context, sources, options, assertBackend);
+  const selected = await matchingDelegationRoutes(sources, query, { ...options, assertCurrent });
+  assertCurrent();
+  const filtered = selected.matches.slice(0, readLimit(args.limit, 100));
   return {
     status: 'available',
     summary: {
-      routes: routes().length,
-      decisionCards: delegationDecisionCards(context).length,
-      operatorClientAttached: Boolean(context.clients?.operator),
-      sessionId: context.session.runtime.sessionId,
+      routes: sources.routes.length,
+      decisionCards: sources.cards.length,
+      operatorClientAttached: sources.operatorClientAttached,
+      sessionId: sources.sessionId,
       delegatedReviewPolicy: 'explicit-build-delegation-only',
       normalChatPolicy: 'ordinary assistant work and suitable local execution stay in the main Agent conversation',
       codingOwnership: 'Agent may use local read/edit/exec when the current workspace is sufficient; GoodVibes TUI/shared-session routes own isolation, remote execution, separate worktrees, coding panels, and delegated review coordination',
     },
-    decisionCards: delegationDecisionCards(context),
-    routes: filtered.map((route) => describeRoute(context, route, { includeParameters })),
+    decisionCards: sources.cards,
+    routes: filtered.map(({ entry, judgment }) => ({ ...(includeParameters ? entry.full : entry.summary), ...(judgment ? { judgment } : {}) })),
+    judgments: selected.judgments,
     returned: filtered.length,
-    total: routes().length,
+    total: sources.routes.length,
     policy: 'Read-only delegation posture. Delegation submission requires an explicit build/fix/review/implementation user request, visible confirmation, and preservation of the full original ask.',
   };
 }
 
-export function describeHarnessDelegationRoute(context: CommandContext, args: AgentHarnessDelegationArgs): DelegationResolution {
+export async function describeHarnessDelegationRoute(context: CommandContext, args: AgentHarnessDelegationArgs, options: CatalogRankingOptions = {}): Promise<DelegationResolution> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const assertBackend = captureDelegationBackend(context);
   const lookup = lookupFromArgs(args);
   if (!lookup) {
     return {
@@ -420,19 +465,24 @@ export function describeHarnessDelegationRoute(context: CommandContext, args: Ag
       usage: 'delegation action:"route" requires delegationRouteId, target, or query. Use delegation action:"status" to inspect delegation route ids.',
     };
   }
-  const all = routes();
+  const sources = delegationSources(context);
+  const assertCurrent = retainDelegationSources(context, sources, options, assertBackend);
+  const all = sources.routes;
   const normalized = lookup.input.toLowerCase();
-  const exact = all.find((route) => route.id === lookup.input);
-  if (exact) return { status: 'found', route: describeRoute(context, exact, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'id' } }) };
-  const insensitive = all.find((route) => route.id.toLowerCase() === normalized);
-  if (insensitive) return { status: 'found', route: describeRoute(context, insensitive, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'case-insensitive-id' } }) };
-  const searched = all.filter((route) => routeSearchText(route).includes(normalized));
-  if (searched.length === 1) return { status: 'found', route: describeRoute(context, searched[0]!, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'search' } }) };
-  if (searched.length > 1) {
+  const exact = all.find(({ route }) => route.id === lookup.input);
+  if (exact) return { status: 'found', route: { ...exact.full, lookup: { ...lookup, resolvedBy: 'id' } } };
+  const insensitive = all.find(({ route }) => route.id.toLowerCase() === normalized);
+  if (insensitive) return { status: 'found', route: { ...insensitive.full, lookup: { ...lookup, resolvedBy: 'case-insensitive-id' } } };
+  const selected = lookup.source === 'delegationRouteId' ? { matches: [], judgments: [] }
+    : await matchingDelegationRoutes(sources, lookup.input, { ...options, assertCurrent });
+  assertCurrent();
+  const searched = selected.matches;
+  if (searched.length === 1 && searched[0]!.judgment?.reading.verdict === 'yes' && searched[0]!.judgment.reading.outcome === 'act') return { status: 'found', route: { ...searched[0]!.entry.full, judgment: searched[0]!.judgment, lookup: { ...lookup, resolvedBy: 'search' } } };
+  if (searched.length > 0) {
     return {
       status: 'ambiguous',
       input: lookup.input,
-      candidates: searched.slice(0, 8).map(describeCandidate),
+      candidates: searched.slice(0, 8).map(({ entry, judgment }) => ({ ...describeCandidate(entry.route), judgment })),
     };
   }
   return {

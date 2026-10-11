@@ -1,3 +1,4 @@
+import { executeAdmitted } from '../helpers/admitted-tool.ts';
 import { describe, expect, test } from 'bun:test';
 import type { ArtifactCreateInput, ArtifactDescriptor, ArtifactRecord, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -73,7 +74,7 @@ function artifactStore() {
 }
 
 describe('agent_review_packet_presets tool', () => {
-  test('previews preset saves until explicitly confirmed', async () => {
+  test('refuses caller request fields without authentic admission', async () => {
     const artifacts = artifactStore();
     const tool = createAgentReviewPacketPresetsTool(artifacts.store);
 
@@ -87,8 +88,7 @@ describe('agent_review_packet_presets tool', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('Agent review packet preset preview');
-    expect(result.error).toContain('confirmation required');
+    expect(result.error).toContain('recorded effect admission');
     expect(artifacts.inputs).toHaveLength(0);
   });
 
@@ -96,7 +96,7 @@ describe('agent_review_packet_presets tool', () => {
     const artifacts = artifactStore();
     const tool = createAgentReviewPacketPresetsTool(artifacts.store);
 
-    const saved = await tool.execute({
+    const saved = await executeAdmitted(tool, {
       mode: 'save',
       name: 'Launch review packet',
       documentId: 'doc_launch',
@@ -111,8 +111,6 @@ describe('agent_review_packet_presets tool', () => {
       handoffArchiveArtifactId: 'artifact-archive',
       relatedArtifactIds: ['artifact-doc', 'artifact-route'],
       summary: 'document doc_launch; source artifact-judge; handoff artifact-handoff; 2 related',
-      confirm: true,
-      explicitUserRequest: 'Save this packet preset.',
     });
 
     expect(saved.success).toBe(true);
@@ -230,7 +228,7 @@ describe('agent_review_packet_presets tool', () => {
     });
     const tool = createAgentReviewPacketPresetsTool(artifacts.store);
 
-    await tool.execute({
+    await executeAdmitted(tool, {
       mode: 'save',
       name: 'Launch stale packet',
       documentId: 'doc_launch',
@@ -242,8 +240,6 @@ describe('agent_review_packet_presets tool', () => {
       handoffArtifactId: 'handoff-old',
       handoffArchiveArtifactId: 'archive-old',
       relatedArtifactIds: ['doc-old'],
-      confirm: true,
-      explicitUserRequest: 'Save this packet preset.',
     });
 
     const listed = await tool.execute({ mode: 'list' });
@@ -271,13 +267,11 @@ describe('agent_review_packet_presets tool', () => {
     });
     const tool = createAgentReviewPacketPresetsTool(artifacts.store);
 
-    await tool.execute({
+    await executeAdmitted(tool, {
       mode: 'save',
       name: 'Missing packet',
       documentId: 'doc_launch',
       documentExportArtifactId: 'doc-missing',
-      confirm: true,
-      explicitUserRequest: 'Save this packet preset.',
     });
 
     const shown = await tool.execute({ mode: 'show', artifactId: 'artifact-1' });
@@ -301,15 +295,13 @@ describe('agent_review_packet_presets tool', () => {
     });
     const tool = createAgentReviewPacketPresetsTool(artifacts.store);
 
-    await tool.execute({
+    await executeAdmitted(tool, {
       mode: 'save',
       name: 'Launch packet',
       documentId: 'doc_launch',
       documentExportArtifactId: 'doc-old',
       relatedArtifactIds: ['doc-old'],
       summary: 'document doc_launch; source doc-old; 1 related',
-      confirm: true,
-      explicitUserRequest: 'Save this packet preset.',
     });
 
     const shown = await tool.execute({ mode: 'show', artifactId: 'artifact-1' });
@@ -322,11 +314,10 @@ describe('agent_review_packet_presets tool', () => {
       explicitUserRequest: 'Refresh this stale packet preset.',
     });
     expect(preview.success).toBe(false);
-    expect(preview.error).toContain('Agent review packet preset refresh preview');
-    expect(preview.error).toContain('documentExport doc-new');
+    expect(preview.error).toContain('recorded effect admission');
     expect(artifacts.inputs).toHaveLength(1);
 
-    const refreshed = await tool.execute({
+    const refreshed = await executeAdmitted(tool, {
       mode: 'refresh',
       artifactId: 'artifact-1',
       name: 'Launch packet refreshed',
@@ -372,16 +363,14 @@ describe('agent_review_packet_presets tool', () => {
     });
     const tool = createAgentReviewPacketPresetsTool(artifacts.store);
 
-    await tool.execute({
+    await executeAdmitted(tool, {
       mode: 'save',
       name: 'Current packet',
       documentId: 'doc_launch',
       documentExportArtifactId: 'doc-current',
-      confirm: true,
-      explicitUserRequest: 'Save this packet preset.',
     });
 
-    const refreshed = await tool.execute({
+    const refreshed = await executeAdmitted(tool, {
       mode: 'refresh',
       artifactId: 'artifact-1',
       confirm: true,

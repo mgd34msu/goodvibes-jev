@@ -1,12 +1,17 @@
+import { effectAdmissionFixture } from '../helpers/effect-admission.ts';
 import { ordinaryResearchOwner, cleanupResearchScreeningFixtures, researchScreeningFixture, exactSensitiveSpans } from '../helpers/research-screening.ts';
 import { prepareAgentResearchReportInput } from '../../agent/research-report-input.ts';
 import { afterAll, describe, expect, test } from 'bun:test';
 afterAll(cleanupResearchScreeningFixtures);
 import type { ArtifactCreateInput, ArtifactDescriptor, ArtifactRecord, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { createAgentResearchReportTool, registerAgentResearchReportTool } from '../../tools/agent-research-report-tool.ts';
-import { createAgentResearchTool } from '../../tools/agent-research-tool.ts';
+import { createAgentResearchReportTool as rawResearchReportTool, registerAgentResearchReportTool } from '../../tools/agent-research-report-tool.ts';
+import { createAgentResearchTool as rawResearchTool } from '../../tools/agent-research-tool.ts';
 import type { CommandContext, CommandRegistry } from '../../input/command-registry.ts';
+
+import { createAgentResearchReportProjector } from '../../agent/protected-research-report.ts';
+function createAgentResearchReportTool(...args: Parameters<typeof rawResearchReportTool>) { const admission = effectAdmissionFixture(); return admission.tool(rawResearchReportTool(...args), { inputProjection: createAgentResearchReportProjector(args[1]) }); }
+function createAgentResearchTool(...[deps]: Parameters<typeof rawResearchTool>) { const admission = effectAdmissionFixture(); return admission.tool(rawResearchTool({ ...deps, toolRegistry: admission.registry }), { inputProjection: createAgentResearchReportProjector(deps.sourceOwner) }); }
 
 class ResearchReportArtifactStore implements Pick<ArtifactStore, 'create'> {
   readonly records: ArtifactRecord[] = [];
@@ -47,7 +52,7 @@ describe('agent_research_report tool', () => {
         { title: `Read ${uri} carefully`, url: 'https://example.test/article?id=123#section-2',
           note: `Before ${uri} after.`, publisher: `Archive ${uri}`, credibility: `Reviewed ${uri}` },
       ] });
-    expect(result.success).toBe(true);
+    expect(result.success, result.error).toBe(true);
     expect(store.records).toHaveLength(1);
     expect(JSON.stringify([result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
     expect(store.records[0]?.metadata.sources).toMatchObject([{
@@ -67,7 +72,7 @@ describe('agent_research_report tool', () => {
     const result = await tool.execute({ action: 'report', title: 'Report', question: 'What is supported?',
       summary: 'Evidence [S1].', confirm: true, explicitUserRequest: 'Save the report.',
       sources: [{ title: 'Source', url: uri, note: `Before ${alias} after.` }] });
-    expect(result.success).toBe(true);
+    expect(result.success, result.error).toBe(true);
     expect(store.records).toHaveLength(1);
     expect(JSON.stringify([result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
     expect(store.records[0]?.metadata.sources).toMatchObject([{ title: 'Source', note: 'Before [source URL withheld] after.', urlOmitted: true }]);
@@ -91,7 +96,7 @@ describe('agent_research_report tool', () => {
       { title: `See ${unsafe}`, url: unsafe, note: `Before ${unsafe} after.` },
       { title: 'Safe source', url: safe, note: 'Ordinary prose.' },
     ] });
-    expect(result.success).toBe(true);
+    expect(result.success, result.error).toBe(true);
     expect(store.records).toHaveLength(1);
     expect(JSON.stringify([result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
     expect(store.records[0]?.metadata.sources).toMatchObject([
@@ -129,7 +134,7 @@ describe('agent_research_report tool', () => {
       explicitUserRequest: 'Save the reviewed local model research report.',
     });
 
-    expect(result.success).toBe(true);
+    expect(result.success, result.error).toBe(true);
     expect(result.output).toContain('Saved Agent research report artifact');
     expect(result.output).toContain('artifact artifact-1');
     expect(result.output).toContain('sources 2');
@@ -211,7 +216,7 @@ describe('agent_research_report tool', () => {
       explicitUserRequest: 'Save the reviewed deep research visual packet.',
     });
 
-    expect(result.success).toBe(true);
+    expect(result.success, result.error).toBe(true);
     expect(result.output).toContain('visualReport markdown-visual-report-packet');
     expect(result.output).not.toContain('The next step is to save');
 
@@ -242,11 +247,11 @@ describe('agent_research_report tool', () => {
     expect(content).toContain('agent_knowledge_ingest sourceKind:"artifact"');
   });
 
-  test('requires confirmation and at least one reviewed source', async () => {
+  test('requires recorded admission and at least one reviewed source', async () => {
     const store = new ResearchReportArtifactStore();
     const tool = createAgentResearchReportTool(store, ordinaryResearchOwner());
 
-    const unconfirmed = await tool.execute({
+    const unconfirmed = await rawResearchReportTool(store, ordinaryResearchOwner()).execute({
       title: 'Report',
       question: 'What happened?',
       summary: 'A concise answer.',
@@ -254,7 +259,7 @@ describe('agent_research_report tool', () => {
       explicitUserRequest: 'Save the report.',
     });
     expect(unconfirmed.success).toBe(false);
-    expect(unconfirmed.error).toContain('confirm:true');
+    expect(unconfirmed.error).toContain('recorded effect admission');
     expect(store.records).toHaveLength(0);
 
     const unsourced = await tool.execute({
@@ -266,7 +271,8 @@ describe('agent_research_report tool', () => {
       explicitUserRequest: 'Save the report.',
     });
     expect(unsourced.success).toBe(false);
-    expect(unsourced.error).toContain('reviewed source');
+    expect(unsourced.error).toContain('Tool input projection');
+    expect(store.records).toHaveLength(0);
   });
 
   test('records citation coverage warnings and can enforce complete body citations', async () => {
@@ -321,7 +327,7 @@ describe('agent_research_report tool', () => {
   });
 
   test('fails clearly without an artifact store and registers with the tool registry', async () => {
-    const unavailable = await createAgentResearchReportTool().execute({
+    const unavailable = await rawResearchReportTool().execute({
       title: 'Report',
       question: 'What happened?',
       summary: 'A concise answer.',
@@ -370,7 +376,7 @@ describe('research report source containment', () => {
         expect(Object.isFrozen(prepared.sources[0])).toBe(true);
         const store = new ResearchReportArtifactStore();
         const result = await createAgentResearchReportTool(store, ordinaryResearchOwner()).execute(repeated);
-        expect(result.success).toBe(true);
+        expect(result.success, result.error).toBe(true);
         expect(JSON.stringify([prepared, result, store.records, [...store.contents.values()]])).not.toContain(uri);
         expect(store.records[0]?.metadata.sources).toMatchObject([{ urlOmitted: true }]);
       }
@@ -398,7 +404,7 @@ describe('research report source containment', () => {
       const store = new ResearchReportArtifactStore();
       const result = await createAgentResearchReportTool(store, ordinaryResearchOwner()).execute({ ...base,
         sources: [{ title: `Reference ${uri}`, note }] });
-      expect(result.success).toBe(true);
+      expect(result.success, result.error).toBe(true);
       expect(store.records[0]?.metadata.sources).toMatchObject([{ title: `Reference ${uri}`, note }]);
       expect((store.records[0]?.metadata.sources as Array<{ urlOmitted?: boolean }>)[0]?.urlOmitted).toBeUndefined();
       expect(store.contents.get('artifact-1')).toContain(note);
@@ -415,7 +421,7 @@ describe('research report source containment', () => {
       ] });
       const store = new ResearchReportArtifactStore();
       const result = await createAgentResearchReportTool(store, ordinaryResearchOwner()).execute(prepared);
-      expect(result.success).toBe(true);
+      expect(result.success, result.error).toBe(true);
       expect(JSON.stringify([prepared, result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
       expect(prepared.sources).toMatchObject([
         { title: 'Read [source URL withheld] carefully', note: 'Before [source URL withheld] after.', urlOmitted: true },
@@ -446,7 +452,7 @@ describe('research report source containment', () => {
       for (const entry of [url, { url }, { name: url, url }, { title: url, url, note: url, publisher: url }]) {
         const store = new ResearchReportArtifactStore();
         const result = await createAgentResearchReportTool(store, ordinaryResearchOwner()).execute({ ...base, sources: [entry] });
-        expect(result.success).toBe(true);
+        expect(result.success, result.error).toBe(true);
         const emitted = JSON.stringify([result, store.records, [...store.contents.values()]]);
         expect(emitted).not.toContain('sentinel');
         expect(store.records[0]?.metadata.sources).toMatchObject([{ urlOmitted: true }]);
@@ -473,7 +479,7 @@ describe('research report source containment', () => {
       for (const source of [url, { url }, { title: url, url }, { name: url, url, note: url }]) {
         const store = new ResearchReportArtifactStore();
         const result = await createAgentResearchReportTool(store, ordinaryResearchOwner()).execute({ ...base, sources: [source] });
-        expect(result.success).toBe(true);
+        expect(result.success, result.error).toBe(true);
         expect(store.records[0]?.metadata.sources).toMatchObject([{ title: '[source URL withheld]', urlOmitted: true }]);
         const sources = store.records[0]?.metadata.sources as Array<{ url?: string }>;
         expect(sources[0]?.url).toBeUndefined();
@@ -490,7 +496,7 @@ describe('research report source containment', () => {
         { url, title: `Read ${url} carefully`, note: `Before ${url} after`, publisher: `Publisher ${url}` },
         { title: 'Other source', url: 'https://example.test/article?id=123#section-2', note: `Compare ${url} with this source.` },
       ] });
-      expect(result.success).toBe(true);
+      expect(result.success, result.error).toBe(true);
       expect(JSON.stringify([result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
       expect(store.records[0]?.metadata.sources).toMatchObject([
         { title: 'Read [source URL withheld] carefully', note: 'Before [source URL withheld] after', publisher: 'Publisher [source URL withheld]', urlOmitted: true },
@@ -506,7 +512,7 @@ describe('research report source containment', () => {
         for (const entry of [{ url, title: 'Source', note: `See ${url.replace('https:', 'HTTPS:')}` }]) {
           const store = new ResearchReportArtifactStore();
           const result = await createAgentResearchReportTool(store, ordinaryResearchOwner()).execute({ ...base, sources: [entry] });
-          expect(result.success).toBe(true);
+          expect(result.success, result.error).toBe(true);
           expect(JSON.stringify([result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
           expect(store.records[0]?.metadata.sources).toMatchObject([{ urlOmitted: true }]);
         }
@@ -521,7 +527,7 @@ describe('research report source containment', () => {
       const store = new ResearchReportArtifactStore();
       const result = await createAgentResearchReportTool(store, ordinaryResearchOwner()).execute({ ...base,
         sources: [{ title: `See ${alias}`, url, note: `Before ${alias} after.` }] });
-      expect(result.success).toBe(true);
+      expect(result.success, result.error).toBe(true);
       expect(JSON.stringify([result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
       expect(store.records[0]?.metadata.sources).toMatchObject([
         { title: 'See [source URL withheld]', note: 'Before [source URL withheld] after.', urlOmitted: true },
@@ -543,7 +549,7 @@ describe('research report source containment', () => {
           const store = new ResearchReportArtifactStore();
           const fixture = researchScreeningFixture({ spans: exactSensitiveSpans([`https://example.test/doc${control}ument?${key}=sentinel`]) });
           const result = await createAgentResearchReportTool(store, fixture.owner).execute({ ...base, sources: [entry] });
-          expect(result.success).toBe(true);
+          expect(result.success, result.error).toBe(true);
           expect(JSON.stringify([result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
         }
       }
@@ -555,7 +561,7 @@ describe('research report source containment', () => {
     const result = await createAgentResearchReportTool(store, ordinaryResearchOwner()).execute({ ...base, sources: [
       { title: 'Source', note: 'Before https:///example.test/document after.' },
     ] });
-    expect(result.success).toBe(true);
+    expect(result.success, result.error).toBe(true);
     expect(store.records[0]?.metadata.sources).toMatchObject([{ note: 'Before [source URL withheld] after.', urlOmitted: true }]);
   });
 
@@ -566,7 +572,7 @@ describe('research report source containment', () => {
         const note = `${prefix}${safe}\n${suffix}`;
         const store = new ResearchReportArtifactStore();
         const result = await createAgentResearchReportTool(store, ordinaryResearchOwner()).execute({ ...base, sources: [{ title: 'Source', url: safe, note }] });
-        expect(result.success).toBe(true);
+        expect(result.success, result.error).toBe(true);
         expect(store.records[0]?.metadata.sources).toMatchObject([{ url: safe, note }]);
       }
     }
@@ -584,7 +590,7 @@ describe('research report source containment', () => {
       expect(JSON.stringify(twice)).not.toContain('sentinel');
       const store = new ResearchReportArtifactStore();
       const result = await createAgentResearchReportTool(store, ordinaryResearchOwner()).execute(twice);
-      expect(result.success).toBe(true);
+      expect(result.success, result.error).toBe(true);
       expect(JSON.stringify([result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
       expect(store.records[0]?.metadata.sources).toMatchObject([{ title: 'See [source URL withheld]', note: 'See [source URL withheld]', urlOmitted: true }, { url: 'https://example.test/article?id=123#section-2' }]);
     }
@@ -596,7 +602,7 @@ describe('research report source containment', () => {
     const result = await createAgentResearchReportTool(store, ordinaryResearchOwner()).execute({ ...base, sources: [
       { title: 'Ordinary documentation', url: 'https://example.test/article?id=123#section-2', note },
     ] });
-    expect(result.success).toBe(true);
+    expect(result.success, result.error).toBe(true);
     expect(store.records[0]?.metadata.sources).toMatchObject([{ title: 'Ordinary documentation', url: 'https://example.test/article?id=123#section-2', note }]);
   });
 
@@ -607,7 +613,7 @@ describe('research report source containment', () => {
       { name: 'Search results', url: 'https://example.test/article?id=123', note: 'Query-dependent source.' },
       'https://example.test/guide#section-2',
     ] });
-    expect(result.success).toBe(true);
+    expect(result.success, result.error).toBe(true);
     expect(store.records[0]?.metadata.sources).toMatchObject([
       { title: 'https://example.test/document', url: 'https://example.test/document', credibility: 'high', note: 'Official documentation.' },
       { title: 'Search results', url: 'https://example.test/article?id=123', note: 'Query-dependent source.' },
@@ -673,7 +679,7 @@ describe('research report source containment', () => {
       return create(input);
     };
     const result = await createAgentResearchReportTool(store, ordinaryResearchOwner()).execute({ ...base, sources: [source] });
-    expect(result.success).toBe(true);
+    expect(result.success, result.error).toBe(true);
     expect(JSON.stringify([result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
     expect(store.records[0]?.metadata.sources).toMatchObject([{ title: 'Original source', url: 'https://example.test/document' }]);
   });

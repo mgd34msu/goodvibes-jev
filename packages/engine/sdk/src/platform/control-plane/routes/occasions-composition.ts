@@ -54,9 +54,12 @@ import { logger } from '../../utils/logger.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { registerOccasionsGatewayMethods } from './occasions.js';
 import { controlPlaneStorePath } from '../control-plane-store-paths.js';
+import type { NativeMutationHost } from '../native-mutation.js';
+import { captureMutationDescriptors } from '../../utils/file-mutation.js';
 
 /** What the composition needs from the runtime graph. */
 export interface OccasionsCompositionDeps {
+  readonly nativeMutationHost?: NativeMutationHost | undefined;
   /** The store that already owns the owner-profile file. */
   readonly ownerProfile: OwnerProfileStore;
   /** Reads the live `occasions.*` and `daemon.timezone` policy. */
@@ -103,8 +106,8 @@ export function composeOccasions(
       ].filter((name) => name.trim().length > 0),
     },
     writer: {
-      append: (input) => profile.append(input),
-      forget: (input) => profile.forget(input),
+      append: (input, options) => profile.append(input, options),
+      forget: (input, options) => profile.forget(input, options),
     },
     state,
     // Read live, per call, so every `occasions.*` setting is a real toggle
@@ -127,7 +130,7 @@ export function composeOccasions(
           // channel gets the plain line; the agent's own conversation gets the
           // framed notice, because text dropped bare into a conversation is
           // indistinguishable from the conversation. See destinations.ts.
-          deliver: async ({ channel, nudge }) => {
+          deliver: async ({ channel, nudge, signal, assertCurrent, withPublication }) => {
             const { title, body } = nudgeDeliveryText(channel, nudge);
             return router.deliver({
               target: parseChannelDeliveryTarget(channel),
@@ -136,13 +139,22 @@ export function composeOccasions(
               jobId: 'occasions',
               runId: nudge.id,
               includeLinks: false,
+              signal, assertCurrent, withPublication,
             });
           },
         },
       }),
   });
 
-  registerOccasionsGatewayMethods(catalog, service);
+  const profileCurrent = captureMutationDescriptors(profile, ['captureRead', 'append', 'forget', 'importantDates', 'plans']);
+  const stateCurrent = captureMutationDescriptors(state, ['captureRead', 'dropOccasion']);
+  const serviceCurrent = captureMutationDescriptors(service, ['confirmOccasion', 'confirmPlan', 'removeOccasion']);
+  const configCurrent = captureMutationDescriptors(deps.configManager, ['get', 'getConfigurationIncarnation']);
+  registerOccasionsGatewayMethods(catalog, service, { host: deps.nativeMutationHost, target: Object.freeze({
+    profilePath: profile.path, statePath: state.path,
+    captureProfileRead: () => profile.captureRead(), captureStateRead: () => state.captureRead(),
+    assertOwnerCurrent: () => { lifecycle.signal.throwIfAborted(); profileCurrent(); stateCurrent(); serviceCurrent(); configCurrent(); },
+  }) });
 
   // The repeating pass. Its rules and the reasoning behind them live in
   // occasions/ticker.ts, which takes an injected timer so they are testable by
@@ -202,6 +214,7 @@ export function composeOccasions(
  * pieces are needed lives beside the composition that needs them.
  */
 export interface OccasionsInstallDeps {
+  readonly nativeMutationHost?: NativeMutationHost | undefined;
   readonly configManager: Pick<ConfigManager, 'get'> & Partial<Pick<ConfigManager, 'getConfigurationIncarnation'>>;
   readonly shellPaths: { resolveUserPath(...segments: string[]): string };
   /** Surface root the state file resolves under; required, never defaulted (control-plane-store-paths.ts). */
@@ -224,6 +237,7 @@ export function installOccasions(
   deps: OccasionsInstallDeps,
 ): OccasionsComposition {
   const composition = composeOccasions(catalog, {
+    nativeMutationHost: deps.nativeMutationHost,
     ownerProfile,
     configManager: deps.configManager,
     statePath: controlPlaneStorePath(deps.shellPaths, deps.surfaceRoot, 'occasions-state.json'),

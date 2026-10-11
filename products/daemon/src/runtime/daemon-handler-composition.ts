@@ -6,7 +6,7 @@ import { registerOwnedMailInbox } from './owned-inbox-mail.js';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { createDaemonCredentialStore } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ClusterCoordinator } from '@goodvibes-jev/engine/sdk/platform/cluster';
-import type { GatewayMethodCatalog } from '@goodvibes-jev/engine/sdk/platform/control-plane';
+import type { GatewayMethodCatalog, NativeMutationHost } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 import { registerRoutingMethods, registerDraftMethods, type ChannelDeliveryRouter } from '@goodvibes-jev/engine/sdk/platform/channels';
 import { registerRemoteSurface } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import type { InboxPollingControl, RegisterInboxSurfaceOptions } from '@goodvibes-jev/engine/sdk/platform/intake';
@@ -42,6 +42,7 @@ export type DaemonInboxFactory = (
 
 export interface DaemonHandlerCompositionOptions {
   readonly triagePermissionHost?: DaemonTriagePermissionHost;
+  readonly nativeMutationHost?: NativeMutationHost | undefined;
   readonly gatewayMethods: GatewayMethodCatalog;
   readonly secretsManager: SecretsManager;
   readonly configManager: ConfigManager;
@@ -76,6 +77,7 @@ export async function createDaemonHandlerComposition(
     workingDirectory: options.workingDirectory,
     homeDirectory: options.homeDirectory,
     logger: handlerLogger,
+    ...(options.nativeMutationHost ? { nativeMutationHost: options.nativeMutationHost } : {}),
   };
   return registerDaemonHandlers(handlerContext, {
     registerRouting: registerRoutingMethods,

@@ -244,6 +244,7 @@ const MAX_RETAINED_INGESTS = 1_000;
  * something a stranger wrote, then act outwards in the same breath".
  */
 export class UntrustedContentLedger {
+  #publicationRevision = 0;
   private readonly ingests: UntrustedIngest[] = [];
   private turnStartIndex = 0;
   /**
@@ -262,6 +263,7 @@ export class UntrustedContentLedger {
   private previousTurnStartIndex = 0;
 
   record(ingest: UntrustedIngest): void {
+    this.#publicationRevision++;
     this.ingests.push(
       ingest.content === undefined
         ? ingest
@@ -277,9 +279,13 @@ export class UntrustedContentLedger {
 
   /** Called when a new owner turn begins: the previous turn's exposure ends. */
   startTurn(): void {
+    this.#publicationRevision++;
     this.previousTurnStartIndex = this.turnStartIndex;
     this.turnStartIndex = this.ingests.length;
   }
+
+  /** Native turn/source incarnation, including an empty turn or same-value ingest. */
+  getPublicationRevision(): number { return this.#publicationRevision; }
 
   ingestedThisTurn(): readonly UntrustedIngest[] {
     return this.ingests.slice(this.turnStartIndex);

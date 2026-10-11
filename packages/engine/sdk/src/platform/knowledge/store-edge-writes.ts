@@ -40,7 +40,7 @@ export function prepareKnowledgeEdgeRecord(input: KnowledgeEdgeUpsertInput, exis
     return record;
 }
 
-export function writeKnowledgeEdgeRow(sqlite: SQLiteStore, record: KnowledgeEdgeRecord): void {
+export function writeKnowledgeEdgeRow(sqlite: Pick<SQLiteStore, 'run'>, record: KnowledgeEdgeRecord): void {
     sqlite.run(`
       INSERT OR REPLACE INTO knowledge_edges (
         id, from_kind, from_id, to_kind, to_id, relation, weight, metadata, created_at, updated_at

@@ -39,7 +39,8 @@ export async function discoverIntrinsicGaps(
   signal?: AbortSignal,
   shouldStop?: () => boolean,
 ): Promise<number> {
-  const graph = buildKnowledgeSemanticGraphIndex(store, spaceId);
+  const graph = await buildKnowledgeSemanticGraphIndex(store, spaceId, { signal, shouldStop,
+    nodeIds: store.listNodesInSpace(spaceId).filter(node => node.kind !== 'knowledge_gap').map(node => node.id) });
   const edges = graph.edges;
   const sourcesById = new Map([...graph.sourcesById.values()]
     .filter((source) => source.status === 'indexed')
@@ -57,7 +58,7 @@ export async function discoverIntrinsicGaps(
     const facts = factsForSource(source.id, edges, nodesById);
     for (const [subjectIndex, subject] of linkedObjects.filter((node) => isConcreteRepairSubject(node, objectProfiles)).entries()) {
       await yieldEvery(subjectIndex, 16);
-      const quality = await prepareQuality(store, spaceId, subject, facts, signal, shouldStop);
+      const quality = await prepareQuality(store, spaceId, subject, facts, signal, shouldStop, graph.assertCurrent);
       if (!shouldCreateIntrinsicFeatureGap(subject, quality.facts, objectProfiles, source)) continue;
       if (await upsertIntrinsicFeatureGap(store, spaceId, subject, quality.facts, [source], createdIds, quality)) created += 1;
     }
@@ -73,7 +74,7 @@ export async function discoverIntrinsicGaps(
         ...sourceList.flatMap((source) => factsForSource(source.id, edges, nodesById)),
         ...factsForObject(subject.id, edges, nodesById),
       ];
-      const quality = await prepareQuality(store, spaceId, subject, facts, signal, shouldStop);
+      const quality = await prepareQuality(store, spaceId, subject, facts, signal, shouldStop, graph.assertCurrent);
       const coverage = factCoverage(quality.facts);
       if (coverage.coreFactCount >= 4 && coverage.coveredAreas.size >= 3) continue;
       if (!hasSpecificIdentity(subject, sourceList[0])) continue;
@@ -170,8 +171,9 @@ async function upsertIntrinsicFeatureGap(
   return !existing;
 }
 
-async function prepareQuality(store: KnowledgeStore, spaceId: string, subject: KnowledgeNodeRecord, facts: readonly KnowledgeNodeRecord[], signal?: AbortSignal, shouldStop?: () => boolean) {
+async function prepareQuality(store: KnowledgeStore, spaceId: string, subject: KnowledgeNodeRecord, facts: readonly KnowledgeNodeRecord[], signal?: AbortSignal, shouldStop?: () => boolean, assertScopeCurrent?: () => void) {
   const guard = createSemanticWriteGuard(store, signal, shouldStop);
+  guard.watch('intrinsic-scope', () => { assertScopeCurrent?.(); return true; });
   const reader = createKnowledgeFactQualityReader(store, { spaceId, query: `What are the complete features and specifications for ${subjectTitle(subject)}?`,
     purpose: 'repair', subjects: [subject], signal, guard });
   return reader.prepare([...new Map(facts.filter((fact) => isSelfImprovementFactCandidate(fact)).map((fact) => [fact.id, fact])).values()]);

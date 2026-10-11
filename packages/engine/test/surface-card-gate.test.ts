@@ -591,12 +591,14 @@ describe('through a real adapter, not just the hook', () => {
     expect(refused.allowed).toBe(false);
 
     // Reaching the spawn path anyway must not surface the refused text.
-    const spawned = context.trySpawnAgent(
+    const transcript = harness.tiers.transcript();
+    await expect(context.trySpawnAgent(
       { mode: 'spawn', task: 'unrelated follow-up' },
       'surface-card-gate.test',
       'session-1',
-    );
-    expect(spawned).toBeDefined();
+    )).rejects.toThrow('Conversation gate source is no longer authorized');
+    expect(harness.tiers.transcript()).toBe(transcript);
+    expect(readings.log.query()).toHaveLength(0);
     expectTierClean('the transcript', harness.tiers.transcript());
   });
 });
@@ -628,7 +630,11 @@ describe('credential-shaped replies stop before card-talk and downstream storage
       text: `password=${SECRET} and reference 4021`,
     });
     expect(refused.reason).toContain('judgment-input-refused');
-    context.trySpawnAgent({ mode: 'spawn', task: 'unrelated follow-up' }, 'protected-input.test', 'session-1');
+    const transcript = harness.tiers.transcript();
+    await expect(context.trySpawnAgent({ mode: 'spawn', task: 'unrelated follow-up' }, 'protected-input.test', 'session-1'))
+      .rejects.toThrow('Conversation gate source is no longer authorized');
+    expect(harness.tiers.transcript()).toBe(transcript);
+    expect(readings.log.query()).toHaveLength(0);
     expect(harness.tiers.transcript()).not.toContain(SECRET);
     expect(JSON.stringify(loggedText)).not.toContain(SECRET);
   });

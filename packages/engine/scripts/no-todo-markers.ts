@@ -21,9 +21,12 @@ import type { Dirent } from 'node:fs';
 import { resolve, relative, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sourceMarkerFindings } from './no-todo-marker-rules.ts';
+import { loadStaticSourceReadings } from './static-source-readings.ts';
+import { scanTargetsFromEnvironment } from './check-internal-identifiers.ts';
+import type { InternalIdentifierCandidate } from './internal-identifier-rule.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = resolve(__dirname, '..');
+export const TODO_ROOT = process.env.TODO_ROOT ?? resolve(__dirname, '..');
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
@@ -47,8 +50,8 @@ const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', '.cache', 'coverage',
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function isExempt(absPath: string): boolean {
-  const rel = relative(REPO_ROOT, absPath).replace(/\\/g, '/');
+function isExempt(absPath: string, root = TODO_ROOT): boolean {
+  const rel = relative(root, absPath).replace(/\\/g, '/');
   return EXEMPT.some((p) => p(rel));
 }
 
@@ -77,7 +80,7 @@ function walkSourceFiles(dir: string): string[] {
 const SCAN_ROOTS = [
   // The old packages/* are the engine's top-level package directories.
   ...['contracts', 'daemon-sdk', 'errors', 'operator-sdk', 'peer-sdk', 'sdk', 'terminal-shell',
-    'toolchain', 'transport-core', 'transport-http', 'transport-realtime'].map((pkg) => resolve(REPO_ROOT, pkg)),
+    'toolchain', 'transport-core', 'transport-http', 'transport-realtime'].map((pkg) => resolve(TODO_ROOT, pkg)),
 ];
 
 // ─── Main ───────────────────────────────────────────────────────────────────
@@ -90,42 +93,31 @@ interface Finding {
   text: string;
 }
 
-const findings: Finding[] = [];
+export function collectDeferredSourceCandidates(root = TODO_ROOT, targets?: readonly string[]): InternalIdentifierCandidate[] {
+  const roots = targets?.map(path => resolve(root, path)) ?? SCAN_ROOTS;
+  return roots.flatMap(path => {
+    if (!statSync(path, { throwIfNoEntry: false })) return [];
+    const paths = statSync(path).isFile() ? [path] : walkSourceFiles(path);
+    return paths.filter(path => !isExempt(path, root)).map(path => ({ relPath: relative(root, path).replace(/\\/g, '/'), text: readFileSync(path, 'utf8') }));
+  });
+}
 
-for (const root of SCAN_ROOTS) {
-  try {
-    if (!statSync(root).isDirectory()) continue;
-  } catch {
-    continue;
+if (import.meta.main) {
+  const readings = loadStaticSourceReadings(process.env.STATIC_SOURCE_READINGS_PATH);
+  const findings: Finding[] = [];
+  const candidates = collectDeferredSourceCandidates(TODO_ROOT, scanTargetsFromEnvironment(process.env.TODO_DIRS_JSON));
+  for (const { relPath, text } of candidates) {
+    for (const finding of sourceMarkerFindings(relPath, text, readings)) findings.push({ rel: relPath, ...finding });
   }
-  for (const absPath of walkSourceFiles(root)) {
-    if (isExempt(absPath)) continue;
-    let content: string;
-    try {
-      content = readFileSync(absPath, 'utf8');
-    } catch {
-      continue;
-    }
-    for (const finding of sourceMarkerFindings(absPath, content)) {
-      findings.push({ rel: relative(REPO_ROOT, absPath).replace(/\\/g, '/'), ...finding });
-    }
+  if (findings.length === 0) {
+    console.log('todo-check: OK, no unfinished production work in current settled source observations.');
+    process.exit(0);
   }
+  console.error(`todo-check: FAIL, ${findings.length} unfinished-work or held evidence finding(s):\n`);
+  for (const finding of findings.slice(0, 100)) {
+    console.error(`  ${finding.rel}:${finding.line}:${finding.col} [${finding.marker}]`);
+    console.error(`    ${finding.text}\n`);
+  }
+  if (findings.length > 100) console.error(`... ${findings.length - 100} additional findings`);
+  process.exit(1);
 }
-
-// ─── Report ─────────────────────────────────────────────────────────────────
-
-if (findings.length === 0) {
-  console.log('todo-check: OK, no unfinished-code markers outside recorded literal judgment fixture data.');
-  process.exit(0);
-}
-
-console.error(`\ntodo-check: FAIL, ${findings.length} marker(s) found in non-exempt source files:\n`);
-for (const f of findings) {
-  console.error(`  ${f.rel}:${f.line}:${f.col}  [${f.marker}]`);
-  console.error(`    ${f.text}\n`);
-}
-console.error(
-  'Unfinished-code markers are forbidden in published implementations.\n' +
-  'Move work-in-progress notes to *.test.ts or a tracking doc.\n',
-);
-process.exit(1);

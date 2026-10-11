@@ -131,13 +131,13 @@ export async function gateSurfaceSpawn(
   const inboundText = snapshotJudgmentInput(origin?.text ?? input.task ?? '') as string;
   // Also screen the actual task before retaining it in a pending proposal.
   snapshotJudgmentInput(input.task);
-  const result = await inboundIntent.read(daemonReadingPort('daemon.inbound-intent', assertCurrent, options.signal), null, inboundText, { ...options, beforeAttempt: assertCurrent });
+  const result = await inboundIntent.run(daemonReadingPort('daemon.inbound-intent', assertCurrent, options.signal), { message: inboundText }, { ...options, beforeAttempt: assertCurrent });
   assertCurrent();
-  if (result.reading.outcome !== 'act') {
+  if (result.readings.reading.outcome !== 'act') {
     result.recordAction('held: inbound intent unsettled');
     return Response.json({ acknowledged: true, queued: false, outcome: 'work-intent-unsettled' }, { status: 202 });
   }
-  const needsAgreement = config.mode === 'confirm-all' || result.reading.choice === 'work';
+  const needsAgreement = config.mode === 'confirm-all' || result.readings.reading.choice === 'work';
   result.recordAction(needsAgreement ? 'propose-work' : 'conversational-response');
   assertCurrent();
 

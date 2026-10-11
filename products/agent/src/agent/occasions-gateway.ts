@@ -33,7 +33,13 @@
  * daemon, most dangerously the rule that a nudge never carries the date.
  */
 
-import type { GatewayMethodCatalog } from '@goodvibes-jev/engine/sdk/platform/control-plane';
+import { captureOccasionsGatewayTarget, type GatewayMethodCatalog } from '@goodvibes-jev/engine/sdk/platform/control-plane';
+import { assertCurrentProfileDelegation, bindProfileMutationOptionsToInvocation } from '@goodvibes-jev/engine/sdk/platform/owner-profile';
+import { dirname } from 'node:path';
+import type { OccasionMutationOptions } from '@goodvibes-jev/engine/sdk/platform/occasions';
+import type { GatewayMethodInvocation } from '@goodvibes-jev/engine/sdk/platform/control-plane';
+import { captureCatalogMethods } from '../tools/agent-harness-catalog-ranking.ts';
+import { captureOperatorConnection } from './operator-connection-owner.ts';
 import type { OperatorMethodId, OperatorMethodInput } from '@goodvibes-jev/engine/sdk/contracts';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { OCCASIONS_METHOD_IDS, type OccasionsMethodId } from '../tools/agent-occasions-types.ts';
@@ -42,7 +48,6 @@ import {
   invokeOperatorGatewayMethod,
 } from './operator-gateway-call.ts';
 import {
-  resolveAgentConnectedHostConnection,
   type AgentConnectedHostConfigReader,
 } from './routine-schedule-promotion.ts';
 
@@ -69,6 +74,7 @@ export interface OccasionsGatewayResult {
 export type OccasionsGatewayInvoke = <TMethodId extends OccasionsMethodId>(
   methodId: TMethodId,
   body: OperatorMethodInput<TMethodId>,
+  options?: OccasionMutationOptions,
 ) => Promise<OccasionsGatewayResult>;
 
 export interface OccasionsGatewayOptions {
@@ -113,34 +119,79 @@ export function occasionsRouteLabel(methodId: OccasionsMethodId): string {
 export function createOccasionsGatewayInvoke(
   options: OccasionsGatewayOptions,
 ): OccasionsGatewayInvoke {
-  return async (methodId, body) => {
+  const invoke: OccasionsGatewayInvoke = async (methodId, body, lifetime = {}) => {
+    const scope = captureOccasionsGatewayCurrent(invoke, methodId);
+    const assertCurrent = () => { lifetime.signal?.throwIfAborted(); lifetime.assertCurrent?.();
+      if (lifetime.delegation) assertCurrentProfileDelegation(lifetime.delegation); scope(); };
+    assertCurrent();
     const catalog = options.gatewayMethods;
     if (catalog?.hasHandler(methodId)) {
       try {
-        const data = await catalog.invoke(methodId, {
+        const invocation: GatewayMethodInvocation = {
           body,
-          // `principalKind: 'user'` is what `refuseNonUserRequest` reads on the
-          // three write verbs. It is truthful here: every write reached through
-          // this invoker originates in something the owner said this turn, and
-          // the tool that calls it requires him to have said it.
-          context: { clientKind: 'goodvibes-agent', principalKind: 'user' },
-        });
-        return { ok: true, data, route: 'in-process' };
+          signal: lifetime.signal,
+          isAuthorized: () => { assertCurrent(); return true; },
+          context: { clientKind: 'goodvibes-agent', principalKind: 'service' },
+        };
+        bindProfileMutationOptionsToInvocation(lifetime, invocation);
+        const data = await catalog.invoke(methodId, invocation);
+        assertCurrent(); return { ok: true, data, route: 'in-process' };
       } catch (error) {
         return { ok: false, data: null, error: summarizeError(error), route: 'in-process' };
       }
     }
 
-    const connection = resolveAgentConnectedHostConnection(options.configManager, options.homeDirectory);
+    const connection = captureOperatorConnection(options, options.configManager, assertCurrent);
+    assertCurrent();
+    const remoteBody = lifetime.delegation ? { ...body, admission: 'autonomous' } : body;
     const result = await invokeOperatorGatewayMethod(
       connection,
       methodId,
       occasionsRouteLabel(methodId),
-      body,
+      remoteBody,
+      { signal: lifetime.signal, assertCurrent },
     );
+    assertCurrent();
     if (!result.ok) {
       return { ok: false, data: null, error: formatOperatorGatewayFailure(result), route: 'connected-host' };
     }
     return { ok: true, data: result.data, route: 'connected-host' };
+  };
+  gatewayOwners.set(invoke, options);
+  return invoke;
+}
+
+const gatewayOwners = new WeakMap<OccasionsGatewayInvoke, OccasionsGatewayOptions>();
+/** Capture native routing descriptors and private credential identity before admission. */
+export function captureOccasionsGatewayCurrent(invoke: OccasionsGatewayInvoke, methodId?: OccasionsMethodId): () => void {
+  const options = gatewayOwners.get(invoke);
+  if (!options) return () => {};
+  const optionsCurrent = captureCatalogMethods(options, ['gatewayMethods', 'configManager', 'homeDirectory']);
+  const catalog = options.gatewayMethods, config = options.configManager, home = options.homeDirectory;
+  const catalogCurrent = catalog && captureCatalogMethods(catalog, ['get', 'hasHandler', 'invoke']);
+  const descriptor = methodId && catalog?.get(methodId);
+  const inProcess = methodId !== undefined && catalog?.hasHandler(methodId);
+  const connection = inProcess ? undefined : captureOperatorConnection(options, config, () => {});
+  return () => {
+    optionsCurrent(); catalogCurrent?.(); connection?.assertCurrent();
+    if (options.gatewayMethods !== catalog || options.configManager !== config || options.homeDirectory !== home
+      || (methodId && (catalog?.get(methodId) !== descriptor || catalog?.hasHandler(methodId) !== inProcess))) throw new Error('Occasion gateway owner changed.');
+  };
+}
+
+/** The registrar owns native file selection; caller arguments never supply these paths. */
+export function captureOccasionsGatewayLocalState(invoke: OccasionsGatewayInvoke, method: OccasionsMethodId, writing: boolean) {
+  const owner = gatewayOwners.get(invoke), catalog = owner?.gatewayMethods;
+  const target = catalog && captureOccasionsGatewayTarget(catalog, method);
+  if (!target) return undefined;
+  const profileWrite = [OCCASIONS_METHOD_IDS.confirm, OCCASIONS_METHOD_IDS.plansConfirm, OCCASIONS_METHOD_IDS.remove].some(id => id === method);
+  const profileRead = target.captureProfileRead(), stateRead = target.captureStateRead?.();
+  let profileWriting = false, stateWriting = false;
+  return {
+    targets: [{ root: dirname(target.profilePath), path: target.profilePath, access: profileWrite ? 'write' as const : 'read' as const },
+      ...(target.statePath ? [{ root: dirname(target.statePath), path: target.statePath, access: writing ? 'write' as const : 'read' as const }] : [])],
+    assertCurrent() { target.assertOwnerCurrent(); if (!profileWriting) profileRead.assertCurrent(); if (!stateWriting) stateRead?.assertCurrent(); },
+    mutationPath(stage: 'profile' | 'state') { return stage === 'profile' ? target.profilePath : target.statePath; },
+    onWriteIntent(stage: 'profile' | 'state') { if (stage === 'profile') profileWriting = true; else stateWriting = true; },
   };
 }

@@ -59,7 +59,7 @@ export function captureRuntimeValue<K extends ConfigKey>(key: K, value: unknown)
     const validType = schema.type === 'enum'
       ? typeof owned === 'string' && schema.enumValues?.includes(owned)
       : schema.type === 'object'
-        ? owned !== null && typeof owned === 'object' && !Array.isArray(owned)
+        ? owned !== null && typeof owned === 'object'
         : typeof owned === schema.type;
     if (!validType || (schema.validate && !schema.validate(owned))) throw new Error('invalid');
     return capture(owned) as ConfigValue<K>;

@@ -56,6 +56,9 @@
  * store answered.
  */
 
+import { captureMemoryOperation, awaitMemoryOperation, assertMemoryOperationCurrent, type MemoryOperationOptions } from '../../state/memory-operation.js';
+export type { MemoryOperationOptions } from '../../state/memory-operation.js';
+
 import { logger } from '../../utils/logger.js';
 import type {
   MemoryAddOptions,
@@ -104,11 +107,11 @@ export interface MemoryUpdatePatch {
  * they are the minimum that lets a surface store and recall a fact over the wire.
  */
 export interface MemoryCoreAccess {
-  add(opts: MemoryAddOptions): Promise<MemoryRecord>;
-  honestSearch(filter: MemorySearchFilter, options?: HonestMemorySearchOptions): Promise<HonestMemorySearchResult>;
-  get(id: string): Promise<MemoryRecord | null>;
-  updateReview(id: string, patch: MemoryReviewPatch): Promise<MemoryRecord | null>;
-  delete(id: string): Promise<boolean>;
+  add(opts: MemoryAddOptions, operation?: MemoryOperationOptions): Promise<MemoryRecord>;
+  honestSearch(filter: MemorySearchFilter, options?: HonestMemorySearchOptions, operation?: MemoryOperationOptions): Promise<HonestMemorySearchResult>;
+  get(id: string, operation?: MemoryOperationOptions): Promise<MemoryRecord | null>;
+  updateReview(id: string, patch: MemoryReviewPatch, operation?: MemoryOperationOptions): Promise<MemoryRecord | null>;
+  delete(id: string, operation?: MemoryOperationOptions): Promise<boolean>;
 }
 
 /**
@@ -131,16 +134,16 @@ export interface MemoryCoreAccess {
  * a per-record detach need.
  */
 export interface MemoryExtendedAccess {
-  list(filter?: MemorySearchFilter): Promise<readonly MemoryRecord[]>;
-  searchSemantic(filter?: MemorySearchFilter): Promise<readonly MemorySemanticSearchResult[]>;
-  update(id: string, patch: MemoryUpdatePatch): Promise<MemoryRecord | null>;
-  link(fromId: string, toId: string, relation: string): Promise<MemoryLink | null>;
-  linksFor(id: string): Promise<readonly MemoryLink[]>;
-  reviewQueue(limit?: number, scope?: MemoryScope): Promise<readonly MemoryRecord[]>;
-  exportBundle(filter?: MemorySearchFilter): Promise<MemoryBundle>;
-  importBundle(bundle: MemoryBundle): Promise<MemoryImportResult>;
-  vectorStats(): Promise<MemoryVectorStats>;
-  doctor(): Promise<MemoryDoctorReport>;
+  list(filter?: MemorySearchFilter, operation?: MemoryOperationOptions): Promise<readonly MemoryRecord[]>;
+  searchSemantic(filter?: MemorySearchFilter, operation?: MemoryOperationOptions): Promise<readonly MemorySemanticSearchResult[]>;
+  update(id: string, patch: MemoryUpdatePatch, operation?: MemoryOperationOptions): Promise<MemoryRecord | null>;
+  link(fromId: string, toId: string, relation: string, operation?: MemoryOperationOptions): Promise<MemoryLink | null>;
+  linksFor(id: string, operation?: MemoryOperationOptions): Promise<readonly MemoryLink[]>;
+  reviewQueue(limit?: number, scope?: MemoryScope, operation?: MemoryOperationOptions): Promise<readonly MemoryRecord[]>;
+  exportBundle(filter?: MemorySearchFilter, operation?: MemoryOperationOptions): Promise<MemoryBundle>;
+  importBundle(bundle: MemoryBundle, operation?: MemoryOperationOptions): Promise<MemoryImportResult>;
+  vectorStats(operation?: MemoryOperationOptions): Promise<MemoryVectorStats>;
+  doctor(operation?: MemoryOperationOptions): Promise<MemoryDoctorReport>;
 }
 
 /**
@@ -148,7 +151,10 @@ export interface MemoryExtendedAccess {
  * resolves locally or over the wire. Every method is async so a local (sync store)
  * and a wire (async) backend present the SAME shape.
  */
-export interface MemoryAccess extends MemoryCoreAccess, MemoryExtendedAccess {}
+export interface MemoryAccess extends MemoryCoreAccess, MemoryExtendedAccess {
+  /** Optional backend-incarnation restriction for a prepared operation. */
+  captureOperationScope?(): () => void;
+}
 
 /**
  * The injected wire transport. A consumer builds a thin adapter over the daemon's
@@ -157,7 +163,7 @@ export interface MemoryAccess extends MemoryCoreAccess, MemoryExtendedAccess {}
  * client calling an extended verb the adopted daemon lacks gets an honest rejection,
  * never a silent local-file read.
  */
-export type MemoryTransport = MemoryCoreAccess & Partial<MemoryExtendedAccess>;
+export type MemoryTransport = MemoryCoreAccess & Partial<MemoryExtendedAccess> & Pick<MemoryAccess, 'captureOperationScope'>;
 
 /**
  * The local embedded store surface. The SDK's `MemoryRegistry` satisfies this
@@ -165,42 +171,59 @@ export type MemoryTransport = MemoryCoreAccess & Partial<MemoryExtendedAccess>;
  * normalizes them to promises). Kept minimal so the client stays decoupled from the concrete class.
  */
 export interface LocalMemoryStore {
-  add(opts: MemoryAddOptions): Promise<MemoryRecord> | MemoryRecord;
-  honestSearch(filter: MemorySearchFilter, options?: HonestMemorySearchOptions): Promise<HonestMemorySearchResult> | HonestMemorySearchResult;
-  get(id: string): MemoryRecord | null;
-  review(id: string, patch: MemoryReviewPatch): MemoryRecord | null;
-  delete(id: string): boolean;
+  captureOperationScope?(): () => void;
+  add(opts: MemoryAddOptions, operation?: MemoryOperationOptions): Promise<MemoryRecord> | MemoryRecord;
+  honestSearch(filter: MemorySearchFilter, options?: HonestMemorySearchOptions, operation?: MemoryOperationOptions): Promise<HonestMemorySearchResult> | HonestMemorySearchResult;
+  get(id: string, operation?: MemoryOperationOptions): MemoryRecord | null;
+  review(id: string, patch: MemoryReviewPatch, operation?: MemoryOperationOptions): MemoryRecord | null;
+  delete(id: string, operation?: MemoryOperationOptions): boolean;
   // Extended (sync or async on the registry; the facade normalizes to promises).
-  search(filter?: MemorySearchFilter): Promise<MemoryRecord[]> | MemoryRecord[];
-  searchSemantic(filter?: MemorySearchFilter): Promise<MemorySemanticSearchResult[]> | MemorySemanticSearchResult[];
-  update(id: string, patch: MemoryUpdatePatch): MemoryRecord | null;
-  link(fromId: string, toId: string, relation: string): Promise<MemoryLink | null> | MemoryLink | null;
-  linksFor(id: string): MemoryLink[];
-  reviewQueue(limit?: number, scope?: MemoryScope): Promise<MemoryRecord[]> | MemoryRecord[];
-  exportBundle(filter?: MemorySearchFilter): MemoryBundle;
-  importBundle(bundle: MemoryBundle): Promise<MemoryImportResult> | MemoryImportResult;
-  vectorStats(): MemoryVectorStats;
-  doctor(): Promise<MemoryDoctorReport> | MemoryDoctorReport;
+  search(filter?: MemorySearchFilter, operation?: MemoryOperationOptions): Promise<MemoryRecord[]> | MemoryRecord[];
+  searchSemantic(filter?: MemorySearchFilter, operation?: MemoryOperationOptions): Promise<MemorySemanticSearchResult[]> | MemorySemanticSearchResult[];
+  update(id: string, patch: MemoryUpdatePatch, operation?: MemoryOperationOptions): MemoryRecord | null;
+  link(fromId: string, toId: string, relation: string, operation?: MemoryOperationOptions): Promise<MemoryLink | null> | MemoryLink | null;
+  linksFor(id: string, operation?: MemoryOperationOptions): MemoryLink[];
+  reviewQueue(limit?: number, scope?: MemoryScope, operation?: MemoryOperationOptions): Promise<MemoryRecord[]> | MemoryRecord[];
+  exportBundle(filter?: MemorySearchFilter, operation?: MemoryOperationOptions): MemoryBundle;
+  importBundle(bundle: MemoryBundle, operation?: MemoryOperationOptions): Promise<MemoryImportResult> | MemoryImportResult;
+  vectorStats(operation?: MemoryOperationOptions): MemoryVectorStats;
+  doctor(operation?: MemoryOperationOptions): Promise<MemoryDoctorReport> | MemoryDoctorReport;
 }
 
 /** Wrap a local embedded store (e.g. a MemoryRegistry) as a full MemoryAccess. */
 export function createLocalMemoryAccess(store: LocalMemoryStore): MemoryAccess {
+  const run = <T>(options: MemoryOperationOptions | undefined, invoke: (operation: MemoryOperationOptions) => T | PromiseLike<T>) => {
+    const operation = captureMemoryOperation(options);
+    return awaitMemoryOperation(() => invoke(operation), operation);
+  };
   return {
-    add: (opts) => Promise.resolve(store.add(opts)),
-    honestSearch: (filter, options) => Promise.resolve(store.honestSearch(filter, options)),
-    get: (id) => Promise.resolve(store.get(id)),
-    updateReview: (id, patch) => Promise.resolve(store.review(id, patch)),
-    delete: (id) => Promise.resolve(store.delete(id)),
-    list: (filter) => Promise.resolve(store.search(filter ?? {})),
-    searchSemantic: (filter) => Promise.resolve(store.searchSemantic(filter ?? {})),
-    update: (id, patch) => Promise.resolve(store.update(id, patch)),
-    link: (fromId, toId, relation) => Promise.resolve(store.link(fromId, toId, relation)),
-    linksFor: (id) => Promise.resolve(store.linksFor(id)),
-    reviewQueue: (limit, scope) => Promise.resolve(store.reviewQueue(limit, scope)),
-    exportBundle: (filter) => Promise.resolve(store.exportBundle(filter ?? {})),
-    importBundle: (bundle) => Promise.resolve(store.importBundle(bundle)),
-    vectorStats: () => Promise.resolve(store.vectorStats()),
-    doctor: () => Promise.resolve(store.doctor()),
+    captureOperationScope: () => {
+      const capture = store.captureOperationScope, current = capture?.call(store);
+      const names = ['add', 'honestSearch', 'get', 'review', 'delete', 'search', 'searchSemantic',
+        'update', 'link', 'linksFor', 'reviewQueue', 'exportBundle', 'importBundle', 'vectorStats', 'doctor'] as const;
+      const methods = names.map(name => store[name]);
+      return () => {
+        if (store.captureOperationScope !== capture || names.some((name, index) => store[name] !== methods[index])) {
+          throw new Error('Memory operation local backend changed');
+        }
+        current?.();
+      };
+    },
+    add: (opts, operation) => run(operation, owned => store.add(opts, owned)),
+    honestSearch: (filter, options, operation) => run(operation, owned => store.honestSearch(filter, options, owned)),
+    get: (id, operation) => run(operation, owned => store.get(id, owned)),
+    updateReview: (id, patch, operation) => run(operation, owned => store.review(id, patch, owned)),
+    delete: (id, operation) => run(operation, owned => store.delete(id, owned)),
+    list: (filter, operation) => run(operation, owned => store.search(filter ?? {}, owned)),
+    searchSemantic: (filter, operation) => run(operation, owned => store.searchSemantic(filter ?? {}, owned)),
+    update: (id, patch, operation) => run(operation, owned => store.update(id, patch, owned)),
+    link: (fromId, toId, relation, operation) => run(operation, owned => store.link(fromId, toId, relation, owned)),
+    linksFor: (id, operation) => run(operation, owned => store.linksFor(id, owned)),
+    reviewQueue: (limit, scope, operation) => run(operation, owned => store.reviewQueue(limit, scope, owned)),
+    exportBundle: (filter, operation) => run(operation, owned => store.exportBundle(filter ?? {}, owned)),
+    importBundle: (bundle, operation) => run(operation, owned => store.importBundle(bundle, owned)),
+    vectorStats: (operation) => run(operation, owned => store.vectorStats(owned)),
+    doctor: (operation) => run(operation, owned => store.doctor(owned)),
   };
 }
 
@@ -236,6 +259,7 @@ export type { MemoryRecallSnapshot, MemoryRecallRefreshOptions } from './recall-
 export class MemorySpineClient implements MemoryAccess {
   private readonly local: MemoryAccess;
   private transport: MemoryTransport | null;
+  private operationEpoch = 0;
   private readonly log: SpineLogger;
   private readonly staleAfterMs: number;
 
@@ -265,6 +289,7 @@ export class MemorySpineClient implements MemoryAccess {
    * single writer.
    */
   activate(transport: MemoryTransport): void {
+    this.operationEpoch++;
     this.transport = transport;
     this.log.info('memory spine activated, routing memory through the adopted external daemon (single writer)', {});
   }
@@ -272,72 +297,110 @@ export class MemorySpineClient implements MemoryAccess {
   /** Release the daemon (mode lost / daemon stopped): return to owned-local access. */
   deactivate(reason: string): void {
     if (this.transport === null) return;
+    this.operationEpoch++;
     this.transport = null;
     this.log.info('memory spine deactivated, reverting to owned-local memory access', { reason });
   }
 
-  // ── Core verbs (routed local-or-wire) ─────────────────────────────────────────
-
-  add(opts: MemoryAddOptions): Promise<MemoryRecord> {
-    return this.route().add(opts);
+  /** Bind one prepared caller to its original route, including adoption ABA. */
+  captureOperationScope(): () => void {
+    const transport = this.transport, epoch = this.operationEpoch;
+    const route = transport ?? this.local;
+    const names = ['add', 'honestSearch', 'get', 'updateReview', 'delete', 'list', 'searchSemantic',
+      'update', 'link', 'linksFor', 'reviewQueue', 'exportBundle', 'importBundle', 'vectorStats', 'doctor'] as const;
+    const methods = names.map(name => route[name]);
+    const capture = route.captureOperationScope;
+    const routeCurrent = capture?.call(route);
+    return () => {
+      if (this.transport !== transport || this.operationEpoch !== epoch
+        || names.some((name, index) => route[name] !== methods[index])
+        || route.captureOperationScope !== capture) {
+        throw new Error('Memory operation route changed');
+      }
+      routeCurrent?.();
+    };
   }
 
-  honestSearch(filter: MemorySearchFilter, options?: HonestMemorySearchOptions): Promise<HonestMemorySearchResult> {
-    return this.route().honestSearch(filter, options);
+  private operation(options?: MemoryOperationOptions): MemoryOperationOptions {
+    const current = captureMemoryOperation(options), scope = this.captureOperationScope();
+    return captureMemoryOperation({ signal: current.signal, assertCurrent: () => {
+      scope(); assertMemoryOperationCurrent(current);
+    } });
   }
 
-  get(id: string): Promise<MemoryRecord | null> {
-    return this.route().get(id);
+  add(opts: MemoryAddOptions, options?: MemoryOperationOptions): Promise<MemoryRecord> {
+    const operation = this.operation(options), route = this.route();
+    return awaitMemoryOperation(() => route.add(opts, operation), operation);
   }
 
-  updateReview(id: string, patch: MemoryReviewPatch): Promise<MemoryRecord | null> {
-    return this.route().updateReview(id, patch);
+  honestSearch(filter: MemorySearchFilter, options?: HonestMemorySearchOptions, lifecycle?: MemoryOperationOptions): Promise<HonestMemorySearchResult> {
+    const operation = this.operation(lifecycle), route = this.route();
+    return awaitMemoryOperation(() => route.honestSearch(filter, options, operation), operation);
   }
 
-  delete(id: string): Promise<boolean> {
-    return this.route().delete(id);
+  get(id: string, options?: MemoryOperationOptions): Promise<MemoryRecord | null> {
+    const operation = this.operation(options), route = this.route();
+    return awaitMemoryOperation(() => route.get(id, operation), operation);
   }
 
-  // ── Extended verbs (routed local-or-wire; honest reject if the daemon lacks one) ─
-
-  list(filter?: MemorySearchFilter): Promise<readonly MemoryRecord[]> {
-    return this.routeExtended('list', (a) => a.list(filter), (t) => t.list?.(filter));
+  updateReview(id: string, patch: MemoryReviewPatch, options?: MemoryOperationOptions): Promise<MemoryRecord | null> {
+    const operation = this.operation(options), route = this.route();
+    return awaitMemoryOperation(() => route.updateReview(id, patch, operation), operation);
   }
 
-  searchSemantic(filter?: MemorySearchFilter): Promise<readonly MemorySemanticSearchResult[]> {
-    return this.routeExtended('searchSemantic', (a) => a.searchSemantic(filter), (t) => t.searchSemantic?.(filter));
+  delete(id: string, options?: MemoryOperationOptions): Promise<boolean> {
+    const operation = this.operation(options), route = this.route();
+    return awaitMemoryOperation(() => route.delete(id, operation), operation);
   }
 
-  update(id: string, patch: MemoryUpdatePatch): Promise<MemoryRecord | null> {
-    return this.routeExtended('update', (a) => a.update(id, patch), (t) => t.update?.(id, patch));
+  list(filter?: MemorySearchFilter, options?: MemoryOperationOptions): Promise<readonly MemoryRecord[]> {
+    const operation = this.operation(options);
+    return awaitMemoryOperation(() => this.routeExtended('list', a => a.list(filter, operation), t => t.list?.(filter, operation)), operation);
   }
 
-  link(fromId: string, toId: string, relation: string): Promise<MemoryLink | null> {
-    return this.routeExtended('link', (a) => a.link(fromId, toId, relation), (t) => t.link?.(fromId, toId, relation));
+  searchSemantic(filter?: MemorySearchFilter, options?: MemoryOperationOptions): Promise<readonly MemorySemanticSearchResult[]> {
+    const operation = this.operation(options);
+    return awaitMemoryOperation(() => this.routeExtended('searchSemantic', a => a.searchSemantic(filter, operation), t => t.searchSemantic?.(filter, operation)), operation);
   }
 
-  linksFor(id: string): Promise<readonly MemoryLink[]> {
-    return this.routeExtended('linksFor', (a) => a.linksFor(id), (t) => t.linksFor?.(id));
+  update(id: string, patch: MemoryUpdatePatch, options?: MemoryOperationOptions): Promise<MemoryRecord | null> {
+    const operation = this.operation(options);
+    return awaitMemoryOperation(() => this.routeExtended('update', a => a.update(id, patch, operation), t => t.update?.(id, patch, operation)), operation);
   }
 
-  reviewQueue(limit?: number, scope?: MemoryScope): Promise<readonly MemoryRecord[]> {
-    return this.routeExtended('reviewQueue', (a) => a.reviewQueue(limit, scope), (t) => t.reviewQueue?.(limit, scope));
+  link(fromId: string, toId: string, relation: string, options?: MemoryOperationOptions): Promise<MemoryLink | null> {
+    const operation = this.operation(options);
+    return awaitMemoryOperation(() => this.routeExtended('link', a => a.link(fromId, toId, relation, operation), t => t.link?.(fromId, toId, relation, operation)), operation);
   }
 
-  exportBundle(filter?: MemorySearchFilter): Promise<MemoryBundle> {
-    return this.routeExtended('exportBundle', (a) => a.exportBundle(filter), (t) => t.exportBundle?.(filter));
+  linksFor(id: string, options?: MemoryOperationOptions): Promise<readonly MemoryLink[]> {
+    const operation = this.operation(options);
+    return awaitMemoryOperation(() => this.routeExtended('linksFor', a => a.linksFor(id, operation), t => t.linksFor?.(id, operation)), operation);
   }
 
-  importBundle(bundle: MemoryBundle): Promise<MemoryImportResult> {
-    return this.routeExtended('importBundle', (a) => a.importBundle(bundle), (t) => t.importBundle?.(bundle));
+  reviewQueue(limit?: number, scope?: MemoryScope, options?: MemoryOperationOptions): Promise<readonly MemoryRecord[]> {
+    const operation = this.operation(options);
+    return awaitMemoryOperation(() => this.routeExtended('reviewQueue', a => a.reviewQueue(limit, scope, operation), t => t.reviewQueue?.(limit, scope, operation)), operation);
   }
 
-  vectorStats(): Promise<MemoryVectorStats> {
-    return this.routeExtended('vectorStats', (a) => a.vectorStats(), (t) => t.vectorStats?.());
+  exportBundle(filter?: MemorySearchFilter, options?: MemoryOperationOptions): Promise<MemoryBundle> {
+    const operation = this.operation(options);
+    return awaitMemoryOperation(() => this.routeExtended('exportBundle', a => a.exportBundle(filter, operation), t => t.exportBundle?.(filter, operation)), operation);
   }
 
-  doctor(): Promise<MemoryDoctorReport> {
-    return this.routeExtended('doctor', (a) => a.doctor(), (t) => t.doctor?.());
+  importBundle(bundle: MemoryBundle, options?: MemoryOperationOptions): Promise<MemoryImportResult> {
+    const operation = this.operation(options);
+    return awaitMemoryOperation(() => this.routeExtended('importBundle', a => a.importBundle(bundle, operation), t => t.importBundle?.(bundle, operation)), operation);
+  }
+
+  vectorStats(options?: MemoryOperationOptions): Promise<MemoryVectorStats> {
+    const operation = this.operation(options);
+    return awaitMemoryOperation(() => this.routeExtended('vectorStats', a => a.vectorStats(operation), t => t.vectorStats?.(operation)), operation);
+  }
+
+  doctor(options?: MemoryOperationOptions): Promise<MemoryDoctorReport> {
+    const operation = this.operation(options);
+    return awaitMemoryOperation(() => this.routeExtended('doctor', a => a.doctor(operation), t => t.doctor?.(operation)), operation);
   }
 
   // ── The sync-recall seam ──────────────────────────────────────────────────────
@@ -354,8 +417,10 @@ export class MemorySpineClient implements MemoryAccess {
     options: MemoryRecallRefreshOptions = {},
   ): Promise<MemoryRecallSnapshot> {
     const recall = options.recall ?? true;
-    const result = await this.route().honestSearch(filter, { recall });
-    this.snapshot = buildRecallSnapshot(result, this.mode(), Date.now(), this.staleAfterMs);
+    const operation = this.operation(), mode = this.mode(), route = this.route();
+    const result = await awaitMemoryOperation(() => route.honestSearch(filter, { recall }, operation), operation);
+    assertMemoryOperationCurrent(operation);
+    this.snapshot = buildRecallSnapshot(result, mode, Date.now(), this.staleAfterMs);
     return this.snapshot;
   }
 
@@ -376,8 +441,8 @@ export class MemorySpineClient implements MemoryAccess {
    * The single choke point that realizes the one-writer invariant: in client mode
    * EVERY op resolves through the transport and the local store is never reached.
    */
-  private route(): MemoryAccess {
-    return (this.transport as MemoryAccess | null) ?? this.local;
+  private route(): MemoryCoreAccess {
+    return this.transport ?? this.local;
   }
 
   /**

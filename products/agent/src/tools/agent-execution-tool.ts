@@ -2,6 +2,8 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
 import { createAgentHarnessTool } from './agent-harness-tool.ts';
+import { captureModelReadingInput } from './agent-harness-model-reading-source.ts';
+import { createHarnessCatalogInputProjector, protectHarnessCatalogTool, forwardHarnessCatalogCall } from './agent-harness-catalog-ingress.ts';
 
 type AgentExecutionAction =
   | 'status'
@@ -170,7 +172,7 @@ export function createAgentExecutionTool(deps: AgentExecutionToolDeps): Tool {
     toolRegistry: deps.toolRegistry,
   });
 
-  return {
+  const tool: Tool = {
     definition: {
       name: 'execution',
       description: 'Inspect local work routes, history, and recovery.',
@@ -202,23 +204,30 @@ export function createAgentExecutionTool(deps: AgentExecutionToolDeps): Tool {
       sideEffects: [],
       concurrency: 'parallel',
     },
-    execute: async (rawArgs: unknown) => {
-      const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentExecutionToolArgs;
+    execute: async (rawArgs, options) => {
+      const args = captureModelReadingInput(rawArgs);
+      const forward = (translated: Record<string, unknown>) => forwardHarnessCatalogCall(harnessTool, rawArgs, translated, options);
       const action = readAction(args);
       if (!action) return error('Unknown execution action. Use action:"status" for local route posture or action:"history" for recent work.');
 
-      if (action === 'status') return harnessTool.execute(statusArgs(args));
-      if (action === 'route') return harnessTool.execute(routeArgs(args));
-      if (action === 'history') return harnessTool.execute(historyArgs(args));
-      if (action === 'record') return harnessTool.execute(recordArgs(args));
-      if (action === 'processes') return harnessTool.execute(processesArgs(args));
-      if (action === 'process_capabilities') return harnessTool.execute(processCapabilitiesArgs());
-      if (action === 'process') return harnessTool.execute(processArgs(args));
-      if (action === 'recovery') return harnessTool.execute(recoveryArgs(args));
+      if (action === 'status') return forward(statusArgs(args));
+      if (action === 'route') return forward(routeArgs(args));
+      if (action === 'history') return forward(historyArgs(args));
+      if (action === 'record') return forward(recordArgs(args));
+      if (action === 'processes') return forward(processesArgs(args));
+      if (action === 'process_capabilities') return forward(processCapabilitiesArgs());
+      if (action === 'process') return forward(processArgs(args));
+      if (action === 'recovery') return forward(recoveryArgs(args));
 
       return error('Unknown execution action. Use action:"status" for local route posture or action:"history" for recent work.');
     },
   };
+  return protectHarnessCatalogTool(tool, deps.toolRegistry, isExecutionCatalogCall, deps.commandContext);
+}
+
+function isExecutionCatalogCall(input: Record<string, unknown>): boolean {
+  const args = captureModelReadingInput(input);
+  return Boolean(readString(args.query) || readString(args.target));
 }
 
 export function registerAgentExecutionTool(
@@ -226,5 +235,5 @@ export function registerAgentExecutionTool(
   commandRegistry: CommandRegistry,
   commandContext: CommandContext,
 ): void {
-  if (!registry.has('execution')) registry.register(createAgentExecutionTool({ commandRegistry, commandContext, toolRegistry: registry }));
+  if (!registry.has('execution')) registry.register(createAgentExecutionTool({ commandRegistry, commandContext, toolRegistry: registry }), { inputProjection: createHarnessCatalogInputProjector(registry, undefined, isExecutionCatalogCall, commandContext) });
 }

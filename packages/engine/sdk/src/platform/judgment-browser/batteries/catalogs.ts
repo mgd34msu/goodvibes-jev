@@ -5,3 +5,4 @@ export { WEBUI_STATUS_CATALOG, readWebuiStatusCatalog, type WebuiStatusLabelId }
 export type { StatusValue } from './webui-types.js';
 export { readDeclaredProviderCredential } from './provider-credential-catalog.js';
 export { SECRET_BEARING_CONFIG_PATHS, isSecretBearingConfigKey } from '../../config/secret-bearing-config-keys.js';
+export { isStructuredCredentialReferenceConfigKey, captureStructuredCredentialReferenceConfigValue } from '../../config/structured-credential-config.js';

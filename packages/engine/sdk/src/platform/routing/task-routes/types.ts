@@ -4,6 +4,13 @@
  */
 import type { Ranked, Reading, Selection } from '@goodvibes-jev/judgment';
 import type { NamedIdSources } from './named-ids.js';
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import type { ProtectedSourceOwner } from '../../security/source-screening/types.js';
+
+export interface TaskRouteReadOptions extends JudgmentReadingOptions {
+  readonly sourceOwner?: ProtectedSourceOwner | undefined;
+  readonly retainCurrent?: ((guard: () => void, key?: string) => void) | undefined;
+}
 
 export interface TaskRouteArgs {
   readonly query?: unknown;
@@ -120,8 +127,8 @@ export interface TaskRouteDeps {
    * listing gets no reading and its generic route string.
    */
   namedIds?: NamedIdSources | undefined;
-  workspaceMatches?(request: string, limit: number): TaskRouteCatalogResult | Promise<TaskRouteCatalogResult>;
-  modeMatches?(request: string, limit: number): TaskRouteCatalogResult | Promise<TaskRouteCatalogResult>;
+  workspaceMatches?(request: string, limit: number, options?: JudgmentReadingOptions): TaskRouteCatalogResult | Promise<TaskRouteCatalogResult>;
+  modeMatches?(request: string, limit: number, options?: JudgmentReadingOptions): TaskRouteCatalogResult | Promise<TaskRouteCatalogResult>;
 }
 
 export interface MissingRequestPlan {

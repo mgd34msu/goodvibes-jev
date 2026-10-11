@@ -1,5 +1,6 @@
 import type { KnowledgeStore } from './store.js';
 import type { KnowledgeSpaceScopeInput } from './spaces.js';
+import type { KnowledgeScopeSelectionOptions } from './scope-selection.js';
 import type { KnowledgePacket, KnowledgePacketDetail, KnowledgePacketItem, KnowledgeSearchResult, KnowledgeUsageRecord } from './types.js';
 import { emitKnowledgePacketBuilt } from '../runtime/emitters/index.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
@@ -27,13 +28,14 @@ export interface KnowledgePacketContext {
   ) => void;
 }
 
-type PacketOptions = { readonly detail?: KnowledgePacketDetail; readonly budgetLimit?: number; readonly signal?: AbortSignal } & KnowledgeSpaceScopeInput;
+type ScopeOptions = Pick<KnowledgeScopeSelectionOptions, 'signal' | 'assertCurrent' | 'shouldStop'>;
+type PacketOptions = { readonly detail?: KnowledgePacketDetail; readonly budgetLimit?: number } & KnowledgeSpaceScopeInput & ScopeOptions;
 const RELEVANCE_REASON = 'Selected by the shared semantic relevance reading; legacy retrieval points were not computed';
 
 /** A first lookup awaits a real reading, without a synchronous cold-cache or lexical fallback. */
 export async function searchKnowledge(context: KnowledgePacketContext, query: string, limit = 10,
-  scope: KnowledgeSpaceScopeInput = {}): Promise<KnowledgeSearchResult[]> {
-  const selection = await readPublicKnowledgeSelection(context.store, { query, scope, mode: 'search' });
+  scope: KnowledgeSpaceScopeInput = {}, options: ScopeOptions = {}): Promise<KnowledgeSearchResult[]> {
+  const selection = await readPublicKnowledgeSelection(context.store, { query, scope, mode: 'search' }, options);
   selection.assertCurrent();
   const results = selection.accepted.slice(0, Math.max(1, limit)).map((entry): KnowledgeSearchResult => ({
     kind: entry.kind, id: entry.id, score: 0, reason: RELEVANCE_REASON,
@@ -98,16 +100,21 @@ function requestSnapshot(task: string, writeScope: readonly string[], limit: num
     throw new JudgmentInputError('unsupported-input');
   }
   const fields = Object.getOwnPropertyDescriptors(options);
-  if (Object.values(fields).some((field) => !('value' in field) || typeof field.value === 'function')) throw new JudgmentInputError('unsupported-input');
-  const data = snapshotNodeInput(Object.fromEntries(Object.entries(fields).filter(([key]) => key !== 'signal')
-    .map(([key, field]) => [key, field.value]))) as Omit<PacketOptions, 'signal'>;
+  const ownershipFields = new Set(['signal', 'assertCurrent', 'shouldStop']);
+  if (Object.entries(fields).some(([key, field]) => !('value' in field)
+    || (typeof field.value === 'function' && !ownershipFields.has(key)))) throw new JudgmentInputError('unsupported-input');
+  if ((options.assertCurrent !== undefined && typeof options.assertCurrent !== 'function')
+    || (options.shouldStop !== undefined && typeof options.shouldStop !== 'function')
+    || (options.signal !== undefined && !(options.signal instanceof AbortSignal))) throw new JudgmentInputError('unsupported-input');
+  const data = snapshotNodeInput(Object.fromEntries(Object.entries(fields).filter(([key]) => !ownershipFields.has(key))
+    .map(([key, field]) => [key, field.value]))) as Omit<PacketOptions, keyof ScopeOptions>;
   const detail = data.detail ?? 'standard';
   if (!['compact', 'standard', 'detailed'].includes(detail) || !Number.isFinite(limit)
     || (data.budgetLimit !== undefined && !Number.isFinite(data.budgetLimit))) throw new Held('malformed');
   const request = snapshotNodeInput({ task, writeScope, limit, options: data });
   assertJudgmentInput({ task: request.task, writeScope: request.writeScope });
   return { request, detail, budgetLimit: Math.max(80, data.budgetLimit ?? DEFAULT_PACKET_BUDGET[detail]),
-    signal: fields.signal?.value as AbortSignal | undefined };
+    signal: options.signal, assertCurrent: options.assertCurrent, shouldStop: options.shouldStop };
 }
 
 async function preparePacket(context: KnowledgePacketContext, task: string, writeScope: readonly string[], limit: number, options: PacketOptions) {
@@ -115,14 +122,16 @@ async function preparePacket(context: KnowledgePacketContext, task: string, writ
   const version = JSON.stringify(captured.request);
   const assertRequestCurrent = () => {
     const current = requestSnapshot(task, writeScope, limit, options);
-    if (current.signal !== captured.signal || JSON.stringify(current.request) !== version) throw new Held('stale');
-    if (captured.signal?.aborted) throw new Held('aborted');
+    if (current.signal !== captured.signal || current.assertCurrent !== captured.assertCurrent
+      || current.shouldStop !== captured.shouldStop || JSON.stringify(current.request) !== version) throw new Held('stale');
+    if (captured.signal?.aborted || captured.shouldStop?.()) throw new Held('aborted');
+    captured.assertCurrent?.();
   };
   const selection = await readPublicKnowledgeSelection(context.store, {
     query: task, writeScope: captured.request.writeScope, mode: 'packet',
     scope: { knowledgeSpaceId: captured.request.options.knowledgeSpaceId, includeAllSpaces: captured.request.options.includeAllSpaces },
     ...(captured.signal ? { signal: captured.signal } : {}),
-  }, { assertCurrent: assertRequestCurrent });
+  }, { signal: captured.signal, shouldStop: captured.shouldStop, assertCurrent: assertRequestCurrent });
   const assertCurrent = () => { assertRequestCurrent(); selection.assertCurrent(); };
   assertCurrent();
   const { detail, budgetLimit } = captured;

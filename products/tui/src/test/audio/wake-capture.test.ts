@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
 import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
@@ -18,6 +20,7 @@ import {
 import { createTuiCaptureOpener } from '../../audio/capture.ts';
 import { extractOnnxRuntimeAssets } from '../../audio/wake-inference.ts';
 import { wireWakeRuntime, type WakeRuntimeDeps } from '../../audio/wake-runtime.ts';
+import type { VoiceSttGateway } from '../../core/voice-stt-gateway.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 /**
@@ -37,8 +40,10 @@ import { makeProjectTempDir } from '../helpers/project-temp.ts';
 const SAMPLES_PER_FRAME = 1280;
 const EMBED_DIM = 96;
 const cleanupPaths: string[] = [];
+const previousPorts: Array<ReturnType<typeof installJudgmentPort>> = [];
 
 afterEach(() => {
+  while (previousPorts.length > 0) installJudgmentPort(previousPorts.pop());
   for (const path of cleanupPaths.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
@@ -274,6 +279,8 @@ interface WakeHarnessOptions {
   readonly transcript?: string;
   /** Rejects the transcription with this message instead of resolving. */
   readonly transcribeError?: string;
+  readonly transcribe?: VoiceSttGateway['transcribe'];
+  readonly loadSession?: NonNullable<WakeRuntimeDeps['loadSession']>;
   /** Reports the models as absent, the way a fresh host does. */
   readonly notProvisioned?: boolean;
   /** Reports the SPEECH GATE's artifact as verified on disk (its own download). */
@@ -341,8 +348,9 @@ function makeWakeHarness(options: WakeHarnessOptions = {}): WakeHarness {
       : {
         available: true as const,
         gateway: {
-          transcribe: async (audio: UtteranceAudioArtifact) => {
+          transcribe: async (audio: UtteranceAudioArtifact, request) => {
             transcribed.push(audio);
+            if (options.transcribe) return options.transcribe(audio, request);
             if (options.transcribeError !== undefined) throw new Error(options.transcribeError);
             return options.transcript ?? 'open the deploy log';
           },
@@ -357,6 +365,7 @@ function makeWakeHarness(options: WakeHarnessOptions = {}): WakeHarness {
     warn: () => { /* warnings are not the subject here */ },
     loadSession: async (modelPath: string) => {
       loadedModelPaths.push(modelPath);
+      if (options.loadSession) return options.loadSession(modelPath);
       if (modelPath.includes('goodvibes-vad')) return vad.session;
       return modelPath.includes('speech-embedding') ? embedding : classifier.session;
     },
@@ -454,6 +463,55 @@ describe('recorder bytes become whole frames', () => {
 });
 
 describe('a confirmed wake drives the whole downstream chain', () => {
+  for (const autoSubmit of [false, true]) test(`stopping wake capture discards a late ${autoSubmit ? 'submitted turn' : 'composer draft'} transcription`, async () => {
+    let finish!: (text: string) => void;
+    const pending = new Promise<string>(resolve => { finish = resolve; });
+    let signal: AbortSignal | undefined;
+    const harness = makeWakeHarness({ config: { 'voice.wake.autoSubmit': autoSubmit }, scores: [0.1, 0.95, 0.95, 0.0],
+      transcribe: (_audio, options) => { signal = options?.signal; return pending; } });
+    await harness.runtime.refresh();
+    const recorder = harness.spawns.processes[0]!;
+    await primeFrontEnd(recorder);
+    recorder.emitBytes(pcmBytes(loudSamples(SAMPLES_PER_FRAME)));
+    await flush(2);
+    for (let i = 0; i < 5; i++) { recorder.emitBytes(pcmBytes(silentSamples(SAMPLES_PER_FRAME))); await flush(2); }
+    expect(harness.transcribed).toHaveLength(1);
+    await harness.runtime.stop();
+    const notices = [...harness.notices];
+    finish('obsolete transcript');
+    await flush();
+    expect(signal?.aborted).toBe(true);
+    expect(harness.drafts).toEqual([]);
+    expect(harness.submitted).toEqual([]);
+    expect(harness.notices).toEqual(notices);
+    expect(harness.runtime.status()).toBeNull();
+  });
+
+  test('a retired model startup cannot erase the replacement wake listener', async () => {
+    let finish!: (session: WakeInferenceSession) => void;
+    const pending = new Promise<WakeInferenceSession>(resolve => { finish = resolve; });
+    let loads = 0;
+    const harness = makeWakeHarness({ loadSession: async path => {
+      loads++;
+      if (loads === 1) return pending;
+      return path.includes('speech-embedding') ? stubEmbeddingSession() : scriptedClassifierSession([0]).session;
+    } });
+    const retired = harness.runtime.refresh();
+    await flush(2);
+    expect(harness.loadedModelPaths).toHaveLength(1);
+    await harness.runtime.stop();
+    await harness.runtime.refresh();
+    expect(harness.runtime.status()?.kind).toBe('wake-listening');
+    const notices = [...harness.notices];
+    finish(stubEmbeddingSession());
+    await retired;
+    expect(harness.runtime.status()?.kind).toBe('wake-listening');
+    expect(harness.spawns.calls).toHaveLength(1);
+    expect(harness.notices).toEqual(notices);
+    await harness.runtime.stop();
+    expect(harness.spawns.processes[0]!.killSignals).toContain('SIGTERM');
+  });
+
   test('sound, utterance, voice.stt and the composer (autoSubmit off)', async () => {
     // 0.95 twice clears the 0.9 threshold for the 2 patience frames the row asks
     // for, then drops back so the run does not re-fire while the utterance records.
@@ -692,6 +750,8 @@ describe('the onnxruntime assets reach disk', () => {
 
 describe('a recorder that keeps dying is restarted, then latched', () => {
   test('a non-zero exit schedules a restart and a second one latches with a stated reason', async () => {
+    const failure = fakePort((_name, question) => choiceAnswer(question, 'none', 0.99));
+    previousPorts.push(installJudgmentPort(failure.port));
     const harness = makeWakeHarness();
     await harness.runtime.refresh();
     expect(harness.spawns.calls.length).toBe(1);
@@ -702,6 +762,8 @@ describe('a recorder that keeps dying is restarted, then latched', () => {
     await flush();
 
     expect(harness.runtime.status()?.kind).toBe('wake-restarting');
+    expect(failure.requests).toHaveLength(1);
+    expect(JSON.stringify(failure.requests[0]?.state)).toContain('pw-record: failed to connect');
     // The start/first-frame watchdogs schedule their own (much longer) timers,
     // so the restart backoff is found by its delay, not by being the only timer.
     // restartBackoffMs * attempt, linear: 100 * 1.
@@ -728,6 +790,20 @@ describe('a recorder that keeps dying is restarted, then latched', () => {
     expect(latched).toContain('turned off and on again');
     // The latch reason is on the indicator row too, not only in a message.
     expect(harness.runtime.status()?.detail).toContain('crashed 2 times');
+  });
+
+  test('a diagnostic without a current reader pauses capture without scheduling a guessed restart', async () => {
+    previousPorts.push(installJudgmentPort(undefined));
+    const harness = makeWakeHarness();
+    await harness.runtime.refresh();
+    harness.spawns.processes[0]!.emitStderr('pw-record: failed to connect\n');
+    harness.spawns.processes[0]!.emitClose(1);
+    await flush();
+    expect(harness.runtime.status()).toBeNull();
+    expect(harness.notices.join('\n')).toContain('failure could not be safely determined');
+    expect(harness.timers.some(timer => timer.ms === 100)).toBe(false);
+    expect(harness.spawns.calls).toHaveLength(1);
+    await harness.runtime.stop();
   });
 
   test('a crash older than the window gets its restart budget back', async () => {

@@ -17,6 +17,7 @@ export {
   MemorySpineClient,
   createLocalMemoryAccess,
   type MemoryAccess,
+  type MemoryOperationOptions,
   type MemoryCoreAccess,
   type MemoryExtendedAccess,
   type MemoryAccessMode,
@@ -49,3 +50,5 @@ export {
   createMemorySpineRestTransport,
   type MemorySpineRestTransportOptions,
 } from './rest-transport.js';
+
+export { captureMemoryOperation, assertMemoryOperationCurrent, awaitMemoryOperation } from '../../state/memory-operation.js';

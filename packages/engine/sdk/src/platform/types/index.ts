@@ -74,6 +74,7 @@ export type {
   ToolCall,
   ToolConcurrencyMode,
   ToolDefinition,
+  ToolExecuteOptions,
   ToolResult,
   ToolSideEffect,
 } from './tools.js';

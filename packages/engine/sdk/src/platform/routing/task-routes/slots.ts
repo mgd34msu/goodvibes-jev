@@ -27,6 +27,10 @@
 import { defineBattery, oneOf, STAKES_BANDS, yesNo, type JudgmentPort, type Selection, type YesNoReading } from '@goodvibes-jev/judgment';
 import { NAMED_ID_KINDS, namedIdCandidates, taskRouteNamedId, type NamedIdKind, type NamedIdSources } from './named-ids.js';
 import type { ChannelTask, PersonalOpsLaneId, TaskRouteSlots } from './types.js';
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { assertJudgmentInput } from '../../gate/judgment-input.js';
+import { captureStrictJudgmentJson } from '../../gate/judgment-result.js';
+import { isDeepStrictEqual } from 'node:util';
 
 const LOW = STAKES_BANDS.low;
 
@@ -245,24 +249,46 @@ export interface SlotRun {
 export async function readSlots(
   port: JudgmentPort,
   request: string,
-  options: { readonly site: string; readonly signal?: AbortSignal; readonly namedIds?: NamedIdSources | undefined },
+  options: JudgmentReadingOptions & { readonly site: string; readonly namedIds?: NamedIdSources | undefined },
 ): Promise<SlotRun> {
-  const call = { site: options.site, ...(options.signal === undefined ? {} : { signal: options.signal }) };
-  const listed = (Object.keys(NAMED_ID_KINDS) as NamedIdKind[])
-    .map((kind) => ({ kind, ids: options.namedIds?.[kind]?.() ?? [] }))
-    .filter(({ ids }) => ids.length > 0);
+  const signal = options.signal, originalCurrent = options.assertCurrent, sources = options.namedIds, site = options.site;
+  const model = port.model, ask = port.ask, recorder = port.recorder;
+  const callerCurrent = () => {
+    signal?.throwIfAborted();
+    const assertion: unknown = originalCurrent?.();
+    if (assertion !== undefined) { void Promise.resolve(assertion).catch(() => {}); throw new Error('Task-route slot ownership must be synchronous.'); }
+    if (options.signal !== signal || options.assertCurrent !== originalCurrent || options.namedIds !== sources || options.site !== site
+      || port.model !== model || port.ask !== ask || port.recorder !== recorder) throw new Error('Task-route slot source changed.');
+  };
+  callerCurrent();
+  const snapshots = (Object.keys(NAMED_ID_KINDS) as NamedIdKind[])
+    .map((kind) => ({ kind, source: sources?.[kind], ids: captureStrictJudgmentJson(sources?.[kind]?.() ?? []) }));
+  const listed = snapshots.filter(({ ids }) => ids.length > 0);
+  const assertCurrent = () => {
+    callerCurrent();
+    for (const { kind, source, ids } of snapshots) {
+      if (sources?.[kind] !== source || !isDeepStrictEqual(captureStrictJudgmentJson(source?.() ?? []), ids)) throw new Error('Task-route named target source changed.');
+    }
+    callerCurrent();
+  };
+  assertCurrent();
+  assertJudgmentInput({ request, named: listed.map(({ kind, ids }) => ({ kind, ids })) });
+  const call = { site, ...(signal === undefined ? {} : { signal }), beforeAttempt: assertCurrent };
   const [run, selections] = await Promise.all([
     taskRouteSlots.run(port, { request }, call),
     Promise.all(listed.map(({ kind, ids }) =>
       taskRouteNamedId.select(port, { request, kind: NAMED_ID_KINDS[kind] }, namedIdCandidates(ids), call),
     )),
   ]);
+  assertCurrent();
   const named = Object.fromEntries(listed.map(({ kind }, index) => [kind, selections[index]!])) as Partial<Record<NamedIdKind, Selection>>;
   return {
     slots: composeSlots(run.readings, named), readings: run.readings, decisionId: run.result.decisionId, named,
     recordAction(action) {
+      assertCurrent();
       run.recordAction(action);
       for (const selection of selections) selection.recordAction(action);
+      assertCurrent();
     },
   };
 }

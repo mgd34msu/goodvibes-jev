@@ -17,7 +17,7 @@
  * reading that does not settle counts as high, the gate's convention that
  * doubt costs attention, never an unexamined change.
  */
-import { defineBattery, oneOf, STAKES_BANDS } from '@goodvibes-jev/judgment';
+import { defineBattery, oneOf, STAKES_BANDS, type JsonValue } from '@goodvibes-jev/judgment';
 
 export const SETTINGS_RISK_OPTIONS = {
   high: 'The change loosens what an agent may do without asking, switches off or weakens a safety check, sandbox or approval, grants access, or exposes secrets or private data.',
@@ -27,21 +27,21 @@ export const SETTINGS_RISK_OPTIONS = {
 
 export type SettingsRisk = keyof typeof SETTINGS_RISK_OPTIONS;
 
-const change = (key: string, description: string, previousValue: unknown, nextValue: unknown) => ({
+const change = (key: string, description: string, previousValue: JsonValue, nextValue: JsonValue) => ({
   key,
   description,
-  previousValue: previousValue as never,
-  nextValue: nextValue as never,
+  previousValue,
+  nextValue,
 });
 
 export const settingsRisk = defineBattery({
   name: 'engine.runtime.settings-risk',
-  version: 1,
+  version: 2,
   description: 'How much harm applying one staged managed setting change could do: high, medium or low.',
   accuracyFloor: 0.9,
   items: {
     risk: oneOf(
-      '`key` is a configuration setting of an AI coding assistant, described by `description`. A managed settings bundle would change it from `previousValue` to `nextValue`. How much harm could applying this change do?',
+      'Assess the effect of one staged setting change in an AI coding assistant. `description` explains the setting; `previousValue` is the current value and `nextValue` replaces it. Rate the direction of this change, not the current state or the key namespace. Removing or reducing a containment or approval protection is high risk even when no harmful command has happened yet. Display-only preferences do not change that protection. Model, storage and spending changes without weakened protections are medium risk. Which risk describes applying this exact change?',
       SETTINGS_RISK_OPTIONS,
       STAKES_BANDS.medium.confidence,
     ),

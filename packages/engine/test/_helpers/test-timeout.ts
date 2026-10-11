@@ -33,8 +33,7 @@ export async function waitFor(
   while (Date.now() <= deadline) {
     if (await predicate()) return;
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, intervalMs);
-      timer.unref?.();
+      setTimeout(resolve, intervalMs);
     });
   }
   throw new Error(`Timed out waiting for test predicate after ${timeoutMs}ms`);
@@ -42,8 +41,7 @@ export async function waitFor(
 
 export async function settleEvents(ms = EVENT_SETTLE_MS): Promise<void> {
   await new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref?.();
+    setTimeout(resolve, ms);
   });
 }
 

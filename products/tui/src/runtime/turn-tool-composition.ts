@@ -54,7 +54,7 @@ export function createTuiTurnPermissionManager(services: RuntimeServices, reques
       services.workspaceTrustManager,
       createSandboxExecAsk(
         sandboxExecAskDepsFromRuntime(services.configManager, services.featureFlags),
-        (request) => services.requestApproval({ request }),
+        (request, execution) => services.requestApproval({ request, signal: execution?.signal }),
       ),
       requestTrustDecision, // indirection through the ref, not bound early. main.ts patches the real impl in later
     ),

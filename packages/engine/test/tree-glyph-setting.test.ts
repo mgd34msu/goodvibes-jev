@@ -43,17 +43,22 @@ describe('read-only tree-glyph presentation', () => {
     }
   });
 
-  test('real ConfigManager reloads compose without installing or writing a setting', () => {
-    expect(CONFIG_SCHEMA.some((setting) => String(setting.key) === TREE_GLYPHS_CONFIG_KEY)).toBe(false);
+  test('real ConfigManager reloads apply the registered presentation setting without writing during reads', () => {
+    expect(CONFIG_SCHEMA.find((setting) => setting.key === TREE_GLYPHS_CONFIG_KEY)).toMatchObject({
+      type: 'enum', default: 'rounded', enumValues: ['rounded', 'square', 'ascii'],
+    });
     const directory = mkdtempSync(join(tmpdir(), 'tree-glyph-reader-'));
     const path = join(directory, 'settings.json');
     try {
       writeFileSync(path, '{}');
       const manager = new ConfigManager({ configDir: directory, readOnly: true });
-      const get = (key: string): unknown => manager.get(key as Parameters<ConfigManager['get']>[0]);
+      const get = (key: string): unknown => {
+        if (key !== TREE_GLYPHS_CONFIG_KEY) throw new Error('Unexpected setting');
+        return manager.get(key);
+      };
       expect(readTreeGlyphSet(get, true)).toBe('rounded');
       expect(readFileSync(path, 'utf8')).toBe('{}');
-      for (const value of ['square', 'ascii', 'rounded', 'malformed', null]) {
+      for (const value of ['square', 'ascii', 'rounded']) {
         const persisted = JSON.stringify({ display: { treeGlyphs: value } });
         writeFileSync(path, persisted);
         manager.load();
@@ -61,6 +66,27 @@ describe('read-only tree-glyph presentation', () => {
         expect(readTreeGlyphSet(get, false)).toBe('ascii');
         expect(readFileSync(path, 'utf8')).toBe(persisted);
       }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test('a stored selection survives bulk save, reset and reconstruction', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'tree-glyph-persisted-'));
+    const path = join(directory, 'settings.json');
+    try {
+      const manager = new ConfigManager({ configDir: directory });
+      manager.set(TREE_GLYPHS_CONFIG_KEY, 'square');
+      manager.save();
+      expect(JSON.parse(readFileSync(path, 'utf8'))).toMatchObject({ display: { treeGlyphs: 'square' } });
+      const reloaded = new ConfigManager({ configDir: directory, readOnly: true });
+      expect(reloaded.get(TREE_GLYPHS_CONFIG_KEY)).toBe('square');
+      expect(readTreeGlyphSet(() => reloaded.get(TREE_GLYPHS_CONFIG_KEY), false)).toBe('ascii');
+      expect(() => manager.setDynamic(TREE_GLYPHS_CONFIG_KEY, 'malformed')).toThrow('Invalid value');
+      expect(manager.get(TREE_GLYPHS_CONFIG_KEY)).toBe('square');
+      manager.reset(TREE_GLYPHS_CONFIG_KEY);
+      expect(manager.get(TREE_GLYPHS_CONFIG_KEY)).toBe('rounded');
+      expect(new ConfigManager({ configDir: directory, readOnly: true }).get(TREE_GLYPHS_CONFIG_KEY)).toBe('rounded');
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

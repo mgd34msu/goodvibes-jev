@@ -21,15 +21,15 @@ import {
   calendarWorkflows,
   inboxWorkflows,
   isInvokableContractMethod,
-  methodIdsMatching,
-  unavailableMethodIdsMatching,
+  partitionInvokableMethods,
   unavailableMethodsNote,
   workflowStatus,
 } from '../../tools/agent-harness-personal-ops-discovery.ts';
 import type { OperatorContractMethod } from '../../tools/agent-harness-personal-ops-types.ts';
 
-const EMAIL_TOKENS = ['email', 'mail', 'imap', 'smtp'] as const;
-const CALENDAR_TOKENS = ['calendar', 'caldav', 'agenda'] as const;
+// These are literal operator protocol namespaces, not discovery predicates.
+const emailContract = () => partitionInvokableMethods(contractMethods().filter(method => method.id.startsWith('email.')));
+const calendarContract = () => partitionInvokableMethods(contractMethods().filter(method => method.id.startsWith('calendar.')));
 
 function contractMethods(): readonly OperatorContractMethod[] {
   const contract = getOperatorContract();
@@ -44,10 +44,10 @@ describe('isInvokableContractMethod', () => {
   });
 });
 
-describe('methodIdsMatching excludes advertised-but-undispatchable methods', () => {
+describe('native invokable metadata excludes advertised-but-undispatchable methods', () => {
   test('every id returned for email tokens is invokable in the real contract', () => {
     const byId = new Map(contractMethods().map((m) => [m.id, m]));
-    for (const id of methodIdsMatching([...EMAIL_TOKENS])) {
+    for (const id of emailContract().available) {
       const method = byId.get(id);
       expect(method).toBeDefined();
       expect(isInvokableContractMethod(method!)).toBe(true);
@@ -63,8 +63,8 @@ describe('methodIdsMatching excludes advertised-but-undispatchable methods', () 
     // is what keeps this honest in both directions, it fails if a route-less
     // method ever creeps back into readiness, and it does not fail merely
     // because the routes got built.
-    const readinessIds = new Set(methodIdsMatching([...EMAIL_TOKENS]));
-    const unavailableIds = unavailableMethodIdsMatching([...EMAIL_TOKENS]);
+    const readinessIds = new Set(emailContract().available);
+    const unavailableIds = emailContract().unavailable;
     const byId = new Map(contractMethods().map((m) => [m.id, m]));
     for (const id of unavailableIds) {
       expect(readinessIds.has(id)).toBe(false);
@@ -75,7 +75,7 @@ describe('methodIdsMatching excludes advertised-but-undispatchable methods', () 
   test('the four email methods the daemon now serves are counted toward readiness', () => {
     // The positive half: a fixed route has to actually show up as capability,
     // or the hoist bought nothing a person can see.
-    const readinessIds = new Set(methodIdsMatching([...EMAIL_TOKENS]));
+    const readinessIds = new Set(emailContract().available);
     for (const id of ['email.inbox.list', 'email.inbox.read', 'email.send', 'email.draft.create']) {
       expect(readinessIds.has(id), `${id} is served by the daemon now`).toBe(true);
     }
@@ -86,8 +86,8 @@ describe('methodIdsMatching excludes advertised-but-undispatchable methods', () 
     // parallel fixer is marking them SDK-side). This asserts the INVARIANT
     // either way: readiness ids and unavailable ids are disjoint, and every
     // unavailable id really carries invokable:false.
-    const readinessIds = new Set(methodIdsMatching([...CALENDAR_TOKENS]));
-    const unavailableIds = unavailableMethodIdsMatching([...CALENDAR_TOKENS]);
+    const readinessIds = new Set(calendarContract().available);
+    const unavailableIds = calendarContract().unavailable;
     const byId = new Map(contractMethods().map((m) => [m.id, m]));
     for (const id of unavailableIds) {
       expect(readinessIds.has(id)).toBe(false);

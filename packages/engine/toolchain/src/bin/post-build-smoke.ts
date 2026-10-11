@@ -11,5 +11,5 @@ if (!config.smoke) {
 }
 const binaryIdx = process.argv.indexOf('--binary');
 const binary = binaryIdx !== -1 ? process.argv[binaryIdx + 1] : undefined;
-const result = runPostBuildSmoke({ binary: binary ?? config.smoke.binaryDefault, config: config.smoke, logger: consoleLogger });
+const result = await runPostBuildSmoke({ binary: binary ?? config.smoke.binaryDefault, config: config.smoke, logger: consoleLogger });
 process.exit(result.ok ? 0 : 1);

@@ -1,4 +1,5 @@
 import { createServingSettingsPrecondition } from './settings-precondition.js';
+import { createServingSettingsImportPrecondition } from './settings-import-precondition.js';
 import type { ConfigManager } from '../../config/manager.js';
 import { deriveControlPlaneBaseUrl, readControlPlaneBinding } from '../../config/control-plane-base-url.js';
 import { createBrowserJudgmentHttpHandler, type BrowserJudgmentCapability } from '@goodvibes-jev/engine/daemon-sdk';
@@ -150,6 +151,8 @@ interface DaemonHttpRouterContext {
   readonly githubWebhookSecret: string | null;
   readonly authToken: () => string | null;
   readonly settingsAuthority?: import('./settings-precondition.js').ServingSettingsAuthority | undefined;
+  readonly settingsImportAuthority?: import('./settings-import-precondition.js').ServingSettingsImportAuthority | undefined;
+  readonly nativeMutationHost?: import('../../permissions/external-request.js').ExternalPermissionHost | undefined;
   readonly buildSurfaceAdapterContext: () => SurfaceAdapterContext;
   readonly buildGenericWebhookAdapterContext: () => GenericWebhookAdapterContext;
   readonly checkAuth: (req: Request) => boolean;
@@ -208,7 +211,7 @@ interface DaemonHttpRouterContext {
    * Without this, the production router always passes undefined and the secrets
    * tier is permanently dead on live code paths.
    */
-  readonly secretsManager?: Pick<import('../../config/secrets.js').SecretsManager, 'get' | 'set' | 'getGlobalHome' | 'list' | 'listDetailed'> & Partial<import('./settings-precondition.js').ServingSettingsSecrets> | null | undefined;
+  readonly secretsManager?: Pick<import('../../config/secrets.js').SecretsManager, 'get' | 'set' | 'getGlobalHome' | 'list' | 'listDetailed'> & Partial<import('./settings-precondition.js').ServingSettingsSecrets & import('./settings-import-precondition.js').ServingSettingsImportSecrets> | null | undefined;
   readonly trySpawnAgent: (
     input: Parameters<AgentManager['spawn']>[0],
     logLabel?: string,
@@ -219,6 +222,7 @@ interface DaemonHttpRouterContext {
 export class DaemonHttpRouter {
   /** Stateful owner references must survive per-request handler reconstruction. */
   private readonly settingsPrecondition: ReturnType<typeof createServingSettingsPrecondition> | undefined;
+  private readonly settingsImportPrecondition: ReturnType<typeof createServingSettingsImportPrecondition> | undefined;
   private readonly telemetryApi: TelemetryApiService | null;
   private homeAssistantRoutes: HomeAssistantConversationRoutes | null = null;
   private homeGraphRoutes: HomeGraphRoutes | null = null;
@@ -238,6 +242,19 @@ export class DaemonHttpRouter {
   constructor(private readonly context: DaemonHttpRouterContext) {
     const settingsConfigOwner = context.configManager;
     const settingsAuthorityOwner = context.settingsAuthority;
+    const importAuthorityOwner = context.settingsImportAuthority;
+    this.settingsImportPrecondition = importAuthorityOwner ? createServingSettingsImportPrecondition({
+      manager: settingsConfigOwner, authority: importAuthorityOwner,
+      secrets: () => {
+        const owner = context.secretsManager;
+        return owner?.prepareImport && owner.inspectPreparedImport && owner.assertPreparedImport && owner.withPreparedImport && owner.assertCompletedImport
+          ? owner as import('./settings-import-precondition.js').ServingSettingsImportSecrets : null;
+      },
+      host: () => context.nativeMutationHost,
+      assertServingOwner: () => {
+        if (context.configManager !== settingsConfigOwner || context.settingsImportAuthority !== importAuthorityOwner) throw new Error('Settings import serving owner changed.');
+      },
+    }) : undefined;
     this.settingsPrecondition = context.settingsAuthority ? createServingSettingsPrecondition(context.configManager, context.settingsAuthority, () => {
       const owner = context.secretsManager;
       return owner?.prepareScopedDeletion && owner.inspectPreparedScopedDeletion && owner.assertPreparedScopedDeletion && owner.withPreparedScopedDeletion && owner.assertCompletedScopedDeletion
@@ -249,6 +266,7 @@ export class DaemonHttpRouter {
       ? new TelemetryApiService({
         runtimeBus: context.runtimeBus,
         runtimeStore: context.runtimeStore,
+        includeRawPrompts: () => this.getConfigValue('telemetry.includeRawPrompts') === true,
       })
       : null;
   }
@@ -546,6 +564,7 @@ export class DaemonHttpRouter {
       ...createDaemonSystemRouteHandlers({
         ...buildSystemRouteContext({
           settingsPrecondition: this.settingsPrecondition,
+          settingsImportPrecondition: this.settingsImportPrecondition,
           approvalBroker: this.context.approvalBroker,
           configManager: this.context.configManager,
           credentialStatus: this.context.secretsManager

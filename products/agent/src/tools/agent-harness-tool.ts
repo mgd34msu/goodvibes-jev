@@ -1,7 +1,7 @@
 import { captureCatalogData } from './agent-harness-catalog-ranking.ts';
 import { captureTranscriptSource } from '../input/commands/transcript-reading.ts';
 import { createPreferredSettingsProjector, executeAdmittedPreferredSettings } from './agent-settings-admission.ts';
-import { assertCurrentToolExecution } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolExecution, ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { modelReadingOptions, modelReadingServicePath, withModelReadingContext } from './agent-harness-model-reading-source.ts';
 import { processClassificationOptions } from './agent-harness-process-launch.ts';
 import { createProcessInputProjector } from './agent-process-ingress.ts';
@@ -92,7 +92,7 @@ function compactHarnessModeGuide(): Record<string, unknown> {
     inspect: harnessModeIdsByKind('inspect'),
     effects: harnessModeIdsByKind('effect'),
     aliases: harnessModeIdsByKind('alias'),
-    pattern: 'Use query|target for search and exact ids for inspect modes. Settings set/reset use current recorded effect-owner admission; other effects retain their documented confirmation requirements.',
+    pattern: 'Use query|target for search and exact ids for inspect modes. Settings set/reset and migrated harness effects use current recorded effect-owner admission; independent routes retain their documented requirements.',
   };
 }
 
@@ -100,10 +100,10 @@ function detailedHarnessModelAccessGuide(): Record<string, string> {
   return {
     cliCommands: 'Prefer workspace action:"cli_commands|cli_command" for CLI discovery. Lower-level cli command modes remain available.',
     uiSurfaces: 'Prefer workspace action:"surfaces|surface|open" for visible UI and computer action:"browser|open_browser" for browser/PWA. Lower-level UI modes remain available.',
-    shortcuts: 'Prefer workspace action:"shortcuts|keybindings|keybinding|run_keybinding|set_keybinding|reset_keybinding"; effects need confirmation.',
-    slashCommands: 'Prefer workspace action:"commands|command|run_command"; slash-command execution needs confirmation.',
-    channels: 'Prefer channels action:"status|channel|setup|triage|deliveries"; deliver with agent_channel_send and confirmation. Lower-level channel harness modes remain available for detail.',
-    notifications: 'List mode:"notifications"; inspect mode:"notification_target"; deliver with agent_notify and confirmation.',
+    shortcuts: 'Prefer workspace action:"shortcuts|keybindings|keybinding|run_keybinding|set_keybinding|reset_keybinding"; effects require current recorded effect admission.',
+    slashCommands: 'Prefer workspace action:"commands|command|run_command"; slash-command effects require current recorded admission.',
+    channels: 'Prefer channels action:"status|channel|setup|triage|deliveries"; deliver with agent_channel_send under current recorded send admission. Lower-level channel harness modes remain available for detail.',
+    notifications: 'List mode:"notifications"; inspect mode:"notification_target"; deliver with agent_notify under current recorded send admission.',
     providerAccounts: 'Prefer models action:"providers|provider" for account and subscription posture. Lower-level mode:"provider_accounts" and mode:"provider_account" remain available; auth changes stay confirmed workspace/command flows.',
     mcpServers: 'List mode:"mcp_servers"; inspect mode:"mcp_server"; trust/server changes stay confirmed workspace/command flows.',
     setupPosture: 'Prefer setup action:"status|item|repair|checkpoint|token|smoke|finish"; lower-level setup_* modes remain available for detailed harness inspection.',
@@ -111,24 +111,24 @@ function detailedHarnessModelAccessGuide(): Record<string, string> {
     projectContext: 'Prefer context action:"files|file"; lower-level project_context modes remain available for detail. Context files are read-only and secret-scanned.',
     promptContext: 'Prefer context action:"prompt|receipts|receipt" for prompt composition, selected/suppressed records, token budget, and prompt receipt outcomes.',
     agentOrchestration: 'List mode:"agent_orchestration" for managed plan and closeout cards; keep local todos with agent_work_plan; the owner can submit original source with /work submit-file <JSON-path> (no execution); inspect mode:"agent_orchestration_agent"; spawn/message/wait/cancel stay on first-class agent.',
-    modelRouting: 'Prefer models action:"status|local|route|smoke" for model choice, local cookbook, route inspection, and confirmed local server checks. Lower-level mode:"model_routing", mode:"model_route", and mode:"run_local_model_smoke" remain available; changes stay visible.',
+    modelRouting: 'Prefer models action:"status|local|route|smoke" for model choice, local cookbook, route inspection, and admitted local server checks. Lower-level mode:"model_routing", mode:"model_route", and mode:"run_local_model_smoke" remain available; changes stay visible.',
     executionPosture: 'Prefer execution action:"status|route"; use computer action:"plan" for browser, screenshot, or desktop-control route planning; use local read/edit/exec when current workspace is sufficient, delegation for isolation/parallel/remote.',
-    backgroundProcesses: 'Use execution action:"processes|process|capabilities" to inspect tracked local commands and process parity, terminal background:true to start visible tracked commands, and process action:list|poll|log|wait|kill|write to manage them. Lower-level background_* modes remain for compatibility. process action:"capabilities" probes SDK/daemon interactive contracts; write dispatches only when a safe ProcessManager stdin method exists and is explicitly confirmed; PTY/sudo stay typed-contract or foreground-only boundaries.',
+    backgroundProcesses: 'Use execution action:"processes|process|capabilities" to inspect tracked local commands and process parity, terminal background:true to start visible tracked commands, and process action:list|poll|log|wait|kill|write to manage them. Lower-level background_* modes remain for compatibility. process action:"capabilities" probes SDK/daemon interactive contracts; write requires native managed stdin and current recorded effect admission; PTY/sudo stay typed-contract or foreground-only boundaries.',
     executionHistory: 'Prefer execution action:"history|record" for activity cards and records; use returned verification, supervision, and recovery routes.',
-    fileRecovery: 'Prefer execution action:"recovery"; apply local file undo/redo snapshots with mode:"run_file_recovery" and confirmation.',
+    fileRecovery: 'Prefer execution action:"recovery"; apply local file undo/redo snapshots with mode:"run_file_recovery" and current recorded effect admission.',
     personalOps: 'Prefer personal_ops action:"briefing|status|queue|intake|lane|read"; lower-level modes personal_ops_briefing/personal_ops/personal_ops_queue/personal_ops_intake/personal_ops_lane/run_personal_ops_read remain available for harness inspection.',
     memoryPosture: 'Prefer memory action:"status|provider|refinement|run_refinement|curator|candidate|list|search|get"; run_refinement, memory writes, vector rebuilds, and embedding-provider changes stay on confirmed existing routes.',
-    autonomyQueue: 'Prefer autonomy action:"intake|queue|item" for ongoing work and visible autonomous work; lower-level autonomy_* modes remain available for detail. Effects stay confirmed on the owning route.',
+    autonomyQueue: 'Prefer autonomy action:"intake|queue|item" for ongoing work and visible autonomous work; lower-level autonomy_* modes remain available for detail. Effects require current recorded admission on the owning route.',
     learningCurator: 'Prefer memory action:"curator|candidate"; writes stay on reviewed Agent-local routes.',
     researchWorkflow: 'Prefer research action:"briefing" for the current next-action queue, action:"plan" for deep-research route planning, action:"search" for bounded public source candidates, and action:"runner" for browser-runner readiness; lower-level mode:"research_workflow" sequences visible run, web/fetch or browser posture, source queue, report, and Knowledge promotion routes.',
-    researchRuns: 'Prefer research action:"runs|run"; lower-level mode:"research_runs" and mode:"research_run" inspect run posture; checkpoint/cancel/complete stays confirmed.',
-    researchQueue: 'Prefer research action:"sources|source|bundle|reports|report_artifact"; lower-level research modes inspect source posture; capture/review/report/ingest stay confirmed.',
+    researchRuns: 'Prefer research action:"runs|run"; lower-level mode:"research_runs" and mode:"research_run" inspect run posture; checkpoint/cancel/complete requires current recorded effect admission.',
+    researchQueue: 'Prefer research action:"sources|source|bundle|reports|report_artifact"; lower-level research modes inspect source posture; capture/review/report/ingest requires current recorded effect admission.',
     documentOps: 'List mode:"document_ops"; inspect mode:"document_ops_lane"; browse saved artifacts with agent_artifacts; use returned routes for documents, review packet wizard, reviewer readiness, uploads, exports, source checks, artifacts, and blind compare.',
     pairingPosture: 'Prefer device action:"status|capability" for device maps. Lower-level mode:"pairing_posture" and mode:"pairing_route" remain available; raw token/QR and pairing effects stay visible user flows.',
     delegationPosture: 'Prefer delegation action:"status|routes|route"; delegated submission stays confirmed visible flow.',
     securityPosture: 'Prefer security action:"status|finding|explain"; lower-level security modes remain available for detail.',
     supportBundles: 'Prefer support action:"status|bundle"; lower-level support-bundle modes remain available; export/import stays confirmation-gated.',
-    mediaPosture: 'Prefer device action:"voice|provider" for voice/media posture. Lower-level mode:"media_posture" and mode:"media_provider" remain available; generate with agent_media_generate and confirmation.',
+    mediaPosture: 'Prefer device action:"voice|provider" for voice/media posture. Lower-level mode:"media_posture" and mode:"media_provider" remain available; generate with agent_media_generate under current recorded effect admission.',
     sessions: 'Prefer sessions action:"list|get"; lower-level session modes remain available; save/resume/export/delete stays visible confirmed flow.',
     workspace: 'Prefer workspace action:"status|actions|action|run|surfaces|surface|open|commands|command|run_command"; includeParameters:true inlines editor schemas.',
     settings: 'Prefer settings action:"list|get|set|reset|import"; list accepts category|prefix|query|includeHidden:true; lower-level settings modes remain for compatibility.',
@@ -136,11 +136,11 @@ function detailedHarnessModelAccessGuide(): Record<string, string> {
     modeCatalog: 'Search mode:"modes" with query|target; inspect one contract with mode:"mode" target:"...".',
     releaseEvidence: 'Operator/audit: prefer audit action:"evidence|artifact"; includeParameters:true inlines artifact detail.',
     releaseReadiness: 'Operator/audit: prefer audit action:"readiness|item"; includeParameters:true inlines item detail.',
-    operatorMethods: 'Prefer host action:"methods|method"; lower-level mode:"operator_methods|operator_method" remains for detail. Run exact daemon methods with agent_operator_method; write/admin routes require confirmation.',
+    operatorMethods: 'Prefer host action:"methods|method"; lower-level mode:"operator_methods|operator_method" remains for detail. Run exact daemon methods with agent_operator_method under current recorded admission on both runtimes.',
     servicePosture: 'Prefer host action:"services|service"; lower-level mode:"service_posture|service_endpoint" remains for probes and redacted log tail.',
     connectedHost: 'Prefer host action:"capabilities|capability"; lower-level mode:"connected_host|connected_host_capability" remains for route-family detail.',
     connectedHostStatus: 'Prefer host action:"status" for host reachability, token posture, and Knowledge readiness.',
-    daemon: 'Daemon aliases route to host action:"capabilities|status"; use agent_operator_method for exact confirmed contract calls.',
+    daemon: 'Daemon aliases route to host action:"capabilities|status"; use agent_operator_method for exact admitted contract calls.',
   };
 }
 
@@ -186,7 +186,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         if (resolved.status === 'ambiguous') return error(`Ambiguous policy explanation target ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
         return error(resolved.usage);
       }
-      if (dispatchMode === 'run_background_process') return output(await runBackgroundProcessAction(deps.commandContext, args, processClassificationOptions(deps.commandContext, deps.toolRegistry, signal, () => { assertCurrentToolExecution(rawArgs, options); })));
+      if (dispatchMode === 'run_background_process') return output(await runBackgroundProcessAction(deps.commandContext, args, processClassificationOptions(deps.commandContext, deps.toolRegistry, signal, () => { assertCurrentToolExecution(rawArgs, options); }), rawArgs, options));
       if (dispatchMode === 'model_routing' || dispatchMode === 'model_route') {
         const reading = modelReadingOptions(deps.commandContext, deps.toolRegistry, signal, assertCatalogExecution, retainHarnessCatalogCurrent(rawArgs));
         return withModelReadingContext(deps.commandContext, rawArgs, reading, async (context, scoped) => {
@@ -211,7 +211,8 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           || deps.commandContext.session?.runtime?.sessionId !== personalOpsSessionId
           || (deps.commandContext.clients?.mcpApi ?? deps.commandContext.extensions?.mcpRegistry) !== personalOpsApi) throw new Error('PersonalOps source owner changed.');
       } };
-      const catalogOptions = { ...personalOpsOptions, assertCurrent: () => { assertCatalogExecution(); personalOpsOptions.assertCurrent(); } };
+      const catalogOptions = { ...personalOpsOptions, retainCurrent: retainHarnessCatalogCurrent(rawArgs), assertCurrent: () => { assertCatalogExecution(); personalOpsOptions.assertCurrent(); } };
+      const effectCatalogOptions = { ...catalogOptions, retainCurrent: undefined };
       if (dispatchMode === 'settings' || dispatchMode === 'get_setting') {
         const originalJson = JSON.stringify(captureCatalogData(rawArgs));
         const config = deps.commandContext.platform.configManager;
@@ -229,16 +230,16 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         if (setting?.status === 'ambiguous') return error(`Ambiguous setting ${setting.input}. Candidates: ${JSON.stringify(setting.candidates)}`);
         return error(`Unknown setting ${readString(args.key || args.target || args.query) || '<missing>'}. Use mode:"settings" to inspect available settings.`);
       }
-      if (dispatchMode === 'personal_ops_queue') return output(await personalOpsQueueSummary(deps.commandContext, args, personalOpsOptions));
-      if (dispatchMode === 'personal_ops_intake') return output(await personalOpsIntakeSummary(deps.commandContext, args, personalOpsOptions));
+      if (dispatchMode === 'personal_ops_queue') return output(await personalOpsQueueSummary(deps.commandContext, args, catalogOptions));
+      if (dispatchMode === 'personal_ops_intake') return output(await personalOpsIntakeSummary(deps.commandContext, args, catalogOptions));
       if (dispatchMode === 'personal_ops_lane') {
-        const resolved = await describePersonalOpsLane(deps.commandContext, args, personalOpsOptions);
+        const resolved = await describePersonalOpsLane(deps.commandContext, args, catalogOptions);
         if (resolved.status === 'found') return output(resolved.lane);
         if (resolved.status === 'deferred') return output(resolved);
         if (resolved.status === 'ambiguous') return error(`Ambiguous Personal Ops lane ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
         return error(resolved.usage);
       }
-      if (dispatchMode === 'run_personal_ops_read') return output(await runPersonalOpsRead(deps.commandContext, args, personalOpsOptions));
+      if (dispatchMode === 'run_personal_ops_read') return output(await runPersonalOpsRead(deps.commandContext, args, effectCatalogOptions, rawArgs, options));
         if (dispatchMode === 'modes') return output(await listHarnessModes(args, catalogOptions));
         if (dispatchMode === 'mode') {
           const mode = await describeHarnessMode(args, catalogOptions);
@@ -248,7 +249,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         }
         if (dispatchMode === 'commands') {
           const commands = await searchHarnessCommands(deps.commandRegistry, args, catalogOptions);
-          return output(catalogEnvelope('commands', commands.matches, deps.commandRegistry.list().length, catalogFilters(args, CQ.commands.filters), CQ.commands.discovery, { relaxedQuery: commands.relaxed }));
+          return output(catalogEnvelope('commands', commands.matches, deps.commandRegistry.list().length, catalogFilters(args, CQ.commands.filters), CQ.commands.discovery));
         }
         if (dispatchMode === 'command') {
           const detail = await describeHarnessCommand(deps.commandRegistry, args, catalogOptions);
@@ -257,10 +258,10 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
             ? output(detail)
             : error(`Unknown slash command ${query || '<missing>'}. Use mode:"commands" to inspect available commands.`);
         }
-        if (dispatchMode === 'run_command') return await runCommand(deps, args, catalogOptions);
+        if (dispatchMode === 'run_command') return await runCommand(deps, rawArgs, catalogOptions, options);
         if (dispatchMode === 'tools') {
           const tools = await searchHarnessModelTools(deps.toolRegistry, args, catalogOptions);
-          return output(catalogEnvelope('tools', tools.matches, deps.toolRegistry.getToolDefinitions().length, catalogFilters(args, CQ.tools.filters), CQ.tools.discovery, { relaxedQuery: tools.relaxed }));
+          return output(catalogEnvelope('tools', tools.matches, deps.toolRegistry.getToolDefinitions().length, catalogFilters(args, CQ.tools.filters), CQ.tools.discovery));
         }
         if (dispatchMode === 'tool') {
           const query = readString(args.toolName || args.target || args.query);
@@ -394,9 +395,9 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
             connectedHost,
           });
         }
-        if (dispatchMode === 'route_decision') return output(await planAgentTaskRoute(deps.commandContext, args, deps.taskRouteSources, { ...(signal ? { signal } : {}) }));
+        if (dispatchMode === 'route_decision') return output(await planAgentTaskRoute(deps.commandContext, args, deps.taskRouteSources, catalogOptions));
         if (dispatchMode === 'cli_commands') {
-          const commands = listHarnessCliCommands(args);
+          const commands = await listHarnessCliCommands(args, catalogOptions);
           return output({
             ...catalogEnvelope('commands', commands, totalHarnessCliCommands(), catalogFilters(args, CQ.cli_commands.filters), CQ.cli_commands.discovery),
             blockedTokens: blockedHarnessCliCommandTokens(),
@@ -404,7 +405,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           });
         }
         if (dispatchMode === 'cli_command') {
-          return output(describeHarnessCliCommand(args));
+          return output(await describeHarnessCliCommand(args, catalogOptions));
         }
         if (dispatchMode === 'ui_surfaces') {
           const surfaces = listHarnessUiSurfaces(deps.commandContext, args);
@@ -415,27 +416,27 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           return surface ? output(surface) : error(`Unknown UI surface ${readString(args.surfaceId || args.query || args.target) || '<missing>'}.`);
         }
         if (dispatchMode === 'open_ui_surface') {
-          const confirmationError = requireConfirmedAction(args, 'UI surface routing');
+          const confirmationError = requireConfirmedAction(rawArgs, options, 'UI surface routing');
           if (confirmationError) return error(confirmationError);
           return output(await openHarnessUiSurface(deps.commandContext, args));
         }
-        if (dispatchMode === 'shortcuts') return output(listHarnessShortcuts(deps.commandContext, args));
-        if (dispatchMode === 'keybindings') return output(listHarnessKeybindings(deps.commandContext, args));
+        if (dispatchMode === 'shortcuts') return output(await listHarnessShortcuts(deps.commandContext, args, catalogOptions));
+        if (dispatchMode === 'keybindings') return output(await listHarnessKeybindings(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'keybinding') {
-          const binding = describeHarnessKeybinding(deps.commandContext, args);
+          const binding = await describeHarnessKeybinding(deps.commandContext, args, catalogOptions);
           return binding ? output(binding) : error(`Unknown keybinding action ${readString(args.actionId || args.target || args.key || args.query) || '<missing>'}.`);
         }
         if (dispatchMode === 'set_keybinding') {
-          const confirmationError = requireConfirmedAction(args, 'Keybinding mutation');
-          return confirmationError ? error(confirmationError) : output(setHarnessKeybinding(deps.commandContext, args));
+          const confirmationError = requireConfirmedAction(rawArgs, options, 'Keybinding mutation');
+          return confirmationError ? error(confirmationError) : output(await setHarnessKeybinding(deps.commandContext, args, effectCatalogOptions));
         }
         if (dispatchMode === 'reset_keybinding') {
-          const confirmationError = requireConfirmedAction(args, 'Keybinding reset');
-          return confirmationError ? error(confirmationError) : output(resetHarnessKeybinding(deps.commandContext, args));
+          const confirmationError = requireConfirmedAction(rawArgs, options, 'Keybinding reset');
+          return confirmationError ? error(confirmationError) : output(await resetHarnessKeybinding(deps.commandContext, args, effectCatalogOptions));
         }
         if (dispatchMode === 'run_keybinding') {
-          const confirmationError = requireConfirmedAction(args, 'Keybinding action');
-          return confirmationError ? error(confirmationError) : output(runHarnessKeybinding(deps.commandContext, args));
+          const confirmationError = requireConfirmedAction(rawArgs, options, 'Keybinding action');
+          return confirmationError ? error(confirmationError) : output(await runHarnessKeybinding(deps.commandContext, args, effectCatalogOptions));
         }
         if (dispatchMode === 'channels') return output(listHarnessChannels(deps.commandContext, args));
         if (dispatchMode === 'channel') {
@@ -483,14 +484,14 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         if (dispatchMode === 'setup_repair') return output(await setupRepairSummary(deps.commandContext, args));
         if (dispatchMode === 'setup_checkpoint') return output(await setupCheckpointSummary(deps.commandContext));
         if (dispatchMode === 'mark_setup_checkpoint') {
-          const confirmationError = requireConfirmedAction(args, 'Setup wizard checkpoint save');
+          const confirmationError = requireConfirmedAction(rawArgs, options, 'Setup wizard checkpoint save');
           if (confirmationError) return error(confirmationError);
-          return output(await markSetupCheckpoint(deps.commandContext, args));
+          return output(await markSetupCheckpoint(deps.commandContext, rawArgs, options));
         }
         if (dispatchMode === 'clear_setup_checkpoint') {
-          const confirmationError = requireConfirmedAction(args, 'Setup wizard checkpoint clear');
+          const confirmationError = requireConfirmedAction(rawArgs, options, 'Setup wizard checkpoint clear');
           if (confirmationError) return error(confirmationError);
-          return output(clearSetupCheckpoint(deps.commandContext, args));
+          return output(clearSetupCheckpoint(deps.commandContext, rawArgs, options));
         }
         if (dispatchMode === 'project_context') return output(projectContextSummary(deps.commandContext, args));
         if (dispatchMode === 'project_context_file') {
@@ -500,15 +501,15 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           return error(resolved.usage);
         }
         if (dispatchMode === 'prompt_context') return output(await promptContextSummary(deps.commandContext, args, signal));
-        if (dispatchMode === 'agent_orchestration') return output(agentOrchestrationSummary(deps.commandContext, deps.toolRegistry, args));
+        if (dispatchMode === 'agent_orchestration') return output(await agentOrchestrationSummary(deps.commandContext, deps.toolRegistry, args, catalogOptions));
         if (dispatchMode === 'agent_orchestration_agent') {
-          const resolved = describeAgentOrchestrationAgent(deps.commandContext, args);
+          const resolved = await describeAgentOrchestrationAgent(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.agent);
           if (resolved.status === 'ambiguous') return error(`Ambiguous visible Agent ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
         if (dispatchMode === 'provision_connected_host_token') {
-          const confirmationError = requireConfirmedAction(args, 'Connected-host token provisioning');
+          const confirmationError = requireConfirmedAction(rawArgs, options, 'Connected-host token provisioning');
           if (confirmationError) return error(confirmationError);
           const setupItemId = readString(args.setupItemId);
           if (setupItemId && setupItemId !== 'connected-host-auth') {
@@ -517,45 +518,45 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           return output(provisionConnectedHostOperatorToken(deps.commandContext, args));
         }
         if (dispatchMode === 'run_setup_smoke') {
-          const confirmationError = requireConfirmedAction(args, 'Setup smoke');
+          const confirmationError = requireConfirmedAction(rawArgs, options, 'Setup smoke');
           if (confirmationError) return error(confirmationError);
           const setupItemId = readString(args.setupItemId);
           if (setupItemId && setupItemId !== 'install-smoke') return error('run_setup_smoke currently supports setupItemId:"install-smoke" only.');
           return output(await runSetupInstallSmoke(deps.commandContext, args));
         }
         if (dispatchMode === 'run_local_model_smoke') {
-          const confirmationError = requireConfirmedAction(args, 'Local model smoke');
-          return confirmationError ? error(confirmationError) : output(await runLocalModelServerSmoke(deps.commandContext, args));
+          const confirmationError = requireConfirmedAction(rawArgs, options, 'Local model smoke');
+          return confirmationError ? error(confirmationError) : output(await runLocalModelServerSmoke(deps.commandContext, args, catalogOptions));
         }
-        if (dispatchMode === 'execution_posture') return output(executionPostureSummary(deps.commandContext, deps.toolRegistry, args));
-        if (dispatchMode === 'browser_control_route') return output(browserControlRouteSummary(deps.commandContext, deps.toolRegistry, args));
+        if (dispatchMode === 'execution_posture') return output(await executionPostureSummary(deps.commandContext, deps.toolRegistry, args, catalogOptions));
+        if (dispatchMode === 'browser_control_route') return output(await browserControlRouteSummary(deps.commandContext, deps.toolRegistry, args, catalogOptions));
         if (dispatchMode === 'execution_route') {
-          const resolved = describeHarnessExecutionRoute(deps.commandContext, deps.toolRegistry, args);
+          const resolved = await describeHarnessExecutionRoute(deps.commandContext, deps.toolRegistry, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.route);
           if (resolved.status === 'ambiguous') return error(`Ambiguous execution route ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'background_processes') return output(backgroundProcessSummary(deps.commandContext, args));
+        if (dispatchMode === 'background_processes') return output(await backgroundProcessSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'background_process') {
-          const resolved = describeBackgroundProcess(deps.commandContext, args);
+          const resolved = await describeBackgroundProcess(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.process);
           if (resolved.status === 'ambiguous') return error(`Ambiguous background process ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'execution_history') return output(executionHistorySummary(deps.commandContext, args));
+        if (dispatchMode === 'execution_history') return output(await executionHistorySummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'execution_history_item') {
-          const resolved = describeExecutionHistoryItem(deps.commandContext, args);
+          const resolved = await describeExecutionHistoryItem(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.record);
           if (resolved.status === 'ambiguous') return error(`Ambiguous execution history record ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
         if (dispatchMode === 'file_recovery') return output(fileRecoverySummary(deps.commandContext, args));
         if (dispatchMode === 'run_file_recovery') {
-          const confirmationError = requireConfirmedAction(args, 'File recovery');
-          return confirmationError ? error(confirmationError) : output(runFileRecovery(deps.commandContext, args));
+          const confirmationError = requireConfirmedAction(rawArgs, options, 'File recovery');
+          return confirmationError ? error(confirmationError) : output(runFileRecovery(deps.commandContext, rawArgs, options));
         }
-        if (dispatchMode === 'personal_ops_briefing') return output(await personalOpsBriefingSummary(deps.commandContext, args));
-        if (dispatchMode === 'personal_ops') return output(await personalOpsSummary(deps.commandContext, args));
+        if (dispatchMode === 'personal_ops_briefing') return output(await personalOpsBriefingSummary(deps.commandContext, args, catalogOptions));
+        if (dispatchMode === 'personal_ops') return output(await personalOpsSummary(deps.commandContext, args, catalogOptions));
 
         if (dispatchMode === 'memory_posture') return output(await memoryPostureSummary(deps.commandContext, args));
         if (dispatchMode === 'memory_provider') {
@@ -566,20 +567,20 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         }
         if (dispatchMode === 'memory_refinement') return output(memoryRefinementSummary(deps.commandContext, args));
         if (dispatchMode === 'run_memory_refinement') {
-          const confirmationError = requireConfirmedAction(args, 'Agent Knowledge semantic refinement');
+          const confirmationError = requireConfirmedAction(rawArgs, options, 'Agent Knowledge semantic refinement');
           return confirmationError ? error(confirmationError) : output(await runMemoryRefinement(deps.commandContext, args));
         }
-        if (dispatchMode === 'autonomy_intake') return output(autonomyIntakeSummary(deps.commandContext, args));
-        if (dispatchMode === 'autonomy_queue') return output(autonomyQueueSummary(deps.commandContext, args));
+        if (dispatchMode === 'autonomy_intake') return output(await autonomyIntakeSummary(deps.commandContext, args, catalogOptions));
+        if (dispatchMode === 'autonomy_queue') return output(await autonomyQueueSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'autonomy_queue_item') {
-          const resolved = describeAutonomyQueueItem(deps.commandContext, args);
+          const resolved = await describeAutonomyQueueItem(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.item);
           if (resolved.status === 'ambiguous') return error(`Ambiguous autonomy queue item ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'learning_curator') return output(learningCuratorSummary(deps.commandContext, args));
+        if (dispatchMode === 'learning_curator') return output(await learningCuratorSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'learning_auto_promote') {
-          const confirmationError = requireConfirmedAction(args, 'Learning promotion'); if (confirmationError) return error(confirmationError);
+          const confirmationError = requireConfirmedAction(rawArgs, options, 'Learning promotion'); if (confirmationError) return error(confirmationError);
           const shellPaths = deps.commandContext.workspace?.shellPaths;
           if (!shellPaths) return error('learning_auto_promote requires an active workspace.');
           const memoryApi = deps.commandContext.clients?.agentKnowledgeApi?.memory;
@@ -595,7 +596,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           });
         }
         if (dispatchMode === 'learning_candidate') {
-          const resolved = describeLearningCandidate(deps.commandContext, args);
+          const resolved = await describeLearningCandidate(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.candidate);
           if (resolved.status === 'ambiguous') return error(`Ambiguous learning candidate ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
@@ -618,7 +619,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         }
         if (dispatchMode === 'document_ops') return output(documentOpsSummary(deps.commandContext, args));
         if (dispatchMode === 'document_ops_lane') {
-          const resolved = describeDocumentOpsLane(deps.commandContext, args);
+          const resolved = await describeDocumentOpsLane(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.lane);
           if (resolved.status === 'ambiguous') return error(`Ambiguous Document Ops lane ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
@@ -630,9 +631,9 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (resolved.status === 'ambiguous') return error(`Ambiguous pairing route ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'delegation_posture') return output(delegationPostureSummary(deps.commandContext, args));
+        if (dispatchMode === 'delegation_posture') return output(await delegationPostureSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'delegation_route') {
-          const resolved = describeHarnessDelegationRoute(deps.commandContext, args);
+          const resolved = await describeHarnessDelegationRoute(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.route);
           if (resolved.status === 'ambiguous') return error(`Ambiguous delegation route ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
@@ -701,7 +702,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           const workspaceActionTool: Tool = { definition: tool.definition,
             execute: (input, executionOptions) => runWorkspaceAction(deps, input, executionOptions),
           };
-          return protectAgentHarnessResearchTool(workspaceActionTool, deps.toolRegistry).execute(args as Record<string, unknown>, options);
+          return protectAgentHarnessResearchTool(workspaceActionTool, deps.toolRegistry).execute(rawArgs, options);
         }
         if (dispatchMode === 'release_evidence') return output(releaseEvidenceSummary(args));
         if (dispatchMode === 'release_evidence_artifact') {
@@ -745,7 +746,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           }));
         }
         if (dispatchMode === 'propose_skill_drafts') {
-          const confirmationError = requireConfirmedAction(args, 'Skill draft proposal');
+          const confirmationError = requireConfirmedAction(rawArgs, options, 'Skill draft proposal');
           if (confirmationError) return error(confirmationError);
           const shellPaths = deps.commandContext.workspace?.shellPaths;
           if (!shellPaths) return error('Skill draft proposal requires an active workspace.');
@@ -766,44 +767,46 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         if (dispatchMode === 'remote_work') return output(remoteWorkSummary(args));
         if (dispatchMode === 'remote_pair_requests') return output(remotePairRequestsSummary(args));
         if (dispatchMode === 'remote_pair_approve') {
-          const confirmationError = requireConfirmedAction(args, 'Remote pair request approval');
+          const confirmationError = requireConfirmedAction(rawArgs, options, 'Remote pair request approval');
           if (confirmationError) return error(confirmationError);
           return output(remotePairApproveHandoff(args));
         }
         if (dispatchMode === 'remote_pair_reject') {
-          const confirmationError = requireConfirmedAction(args, 'Remote pair request rejection');
+          const confirmationError = requireConfirmedAction(rawArgs, options, 'Remote pair request rejection');
           if (confirmationError) return error(confirmationError);
           return output(remotePairRejectHandoff(args));
         }
         if (dispatchMode === 'remote_peers_invoke') {
-          const confirmationError = requireConfirmedAction(args, 'Remote peer command invocation');
+          const confirmationError = requireConfirmedAction(rawArgs, options, 'Remote peer command invocation');
           if (confirmationError) return error(confirmationError);
           return output(remotePeersInvokeHandoff(args));
         }
         if (dispatchMode === 'remote_work_cancel') {
-          const confirmationError = requireConfirmedAction(args, 'Remote work cancellation');
+          const confirmationError = requireConfirmedAction(rawArgs, options, 'Remote work cancellation');
           if (confirmationError) return error(confirmationError);
           return output(remoteWorkCancelHandoff(args));
         }
         if (dispatchMode === 'unified_inbox') return output(await unifiedInboxSummary(deps.commandContext, args));
         if (dispatchMode === 'channel_drafts') return output(await channelDraftsSummary(deps.commandContext, args));
         if (dispatchMode === 'channel_draft_save') {
-          const result = await channelDraftSaveHandoff(deps.commandContext, args); return typeof result === 'string' ? error(result) : output(result);
+          const result = await channelDraftSaveHandoff(deps.commandContext, rawArgs, options); return typeof result === 'string' ? error(result) : output(result);
         }
         if (dispatchMode === 'channel_draft_send') {
-          const result = await channelDraftSendHandoff(deps.commandContext, args); return typeof result === 'string' ? error(result) : output(result);
+          const result = await channelDraftSendHandoff(deps.commandContext, rawArgs, options); return typeof result === 'string' ? error(result) : output(result);
         }
         if (dispatchMode === 'channel_routing') return output(channelRoutingSummary(deps.commandContext, args));
         if (dispatchMode === 'channel_routing_assign') {
-          const result = await channelRoutingAssignHandoff(deps.commandContext, args);
+          const result = await channelRoutingAssignHandoff(deps.commandContext, rawArgs, options);
           return typeof result === 'string' ? error(result) : output(result);
         }
         if (dispatchMode === 'channel_routing_remove') {
-          const result = channelRoutingRemoveHandoff(deps.commandContext, args);
+          const result = channelRoutingRemoveHandoff(deps.commandContext, rawArgs, options);
           return typeof result === 'string' ? error(result) : output(result);
         }
         return error(`Unhandled agent_harness mode: ${dispatchMode}`);
       } catch (err) {
+        signal?.throwIfAborted();
+        if (err instanceof ToolInputProjectionError) throw err;
         if (dispatchMode === 'sessions') return error('Session transcript observation was canceled or superseded. Try again.');
         return error(formatHarnessError(err));
       }

@@ -24,6 +24,7 @@
  * never missing when that switch flips.
  */
 import type { Notification, RoutingDecision } from '@/runtime/index.ts';
+import { JudgmentAuthorityRetiredError } from '@goodvibes-jev/engine/errors';
 
 export interface NotificationFeedEntry {
   readonly key: string;
@@ -123,6 +124,15 @@ const COLLAPSING_REASON_CODES: ReadonlySet<RoutingDecision['reasonCode']> = new 
 ]);
 
 export class NotificationFeed {
+  private noticePublications = new AbortController();
+
+  /** A cleared history cannot be repopulated by an older pending reading. */
+  captureNoticePublication(): { readonly signal: AbortSignal; readonly assertCurrent: () => void } {
+    const controller = this.noticePublications;
+    return { signal: controller.signal, assertCurrent: () => {
+      if (controller.signal.aborted || controller !== this.noticePublications) throw new JudgmentAuthorityRetiredError();
+    } };
+  }
   private readonly entries = new Map<string, NotificationFeedEntry>();
   /** Insertion order of `entries` keys (oldest first), for bounded eviction. */
   private order: string[] = [];
@@ -321,6 +331,9 @@ export class NotificationFeed {
   }
 
   clear(): void {
+    const previous = this.noticePublications;
+    this.noticePublications = new AbortController();
+    previous.abort();
     this.entries.clear();
     this.groupTitles.clear();
     this.eventEntries.clear();

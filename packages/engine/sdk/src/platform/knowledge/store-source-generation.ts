@@ -35,8 +35,17 @@ export function knowledgeSourceSnapshotFromRows(result: ReturnType<SQLiteStore['
   // This is an entity fingerprint, not a wall-clock timestamp or an authority.
   const entries = row.columns.map((column, index) => [column, values[index]] as const)
     .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-  const generation = createHash('sha256').update(JSON.stringify(entries)).digest('hex');
+  const generation = knowledgeSourceGenerationFromRows(result);
   return { source: mapSourceRow(row.columns, values), generation, raw: Object.fromEntries(entries) };
+}
+
+/** The same complete row fingerprint without constructing a decoded view. */
+export function knowledgeSourceGenerationFromRows(result: ReturnType<SQLiteStore['exec']>): string | null {
+  const row = result[0], values = row?.values[0];
+  if (!row || !values) return null;
+  const entries = row.columns.map((column, index) => [column, values[index]] as const)
+    .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  return createHash('sha256').update(JSON.stringify(entries)).digest('hex');
 }
 
 /** A conditional semantic publication held before any durable mutation. */

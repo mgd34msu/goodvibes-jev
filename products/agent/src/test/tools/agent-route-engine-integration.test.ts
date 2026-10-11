@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { ChannelPluginRegistry } from '@goodvibes-jev/engine/sdk/platform/channels';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -12,6 +12,10 @@ import { taskRoutePort } from '../helpers/task-route-readings.ts';
 import { createTestProviderRegistry } from '../helpers/test-managers.ts';
 import { listWorkspaceActions } from '../../tools/agent-harness-workspace-actions.ts';
 import { listHarnessModes } from '../../tools/agent-harness-mode-catalog.ts';
+import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
+import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
+
+afterAll(cleanupResearchScreeningFixtures);
 
 const context = { extensions: {}, ops: {}, workspace: {}, platform: { config: {} }, session: { runtime: {} } } as CommandContext;
 let previous: ReturnType<typeof installJudgmentPort>;
@@ -32,9 +36,11 @@ function fixture(pick = 'host-runtime-diagnostics', named = 'none', namedKind = 
   });
 }
 function caller(kind: 'route' | 'harness', channels = new ChannelPluginRegistry(), commandContext = context) {
+  const registry = new ToolRegistry(); bindAgentResearchSourceOwner(registry, ordinaryResearchOwner());
+  const ownedContext: CommandContext = { ...commandContext, extensions: { ...commandContext.extensions, toolRegistry: registry } };
   return kind === 'route'
-    ? createAgentRouteTool(commandContext, { channelRegistry: channels })
-    : createAgentHarnessTool({ commandContext, commandRegistry: {} as CommandRegistry, toolRegistry: new ToolRegistry(), taskRouteSources: { channelRegistry: channels } });
+    ? createAgentRouteTool(ownedContext, { channelRegistry: channels }, registry)
+    : createAgentHarnessTool({ commandContext: ownedContext, commandRegistry: {} as CommandRegistry, toolRegistry: registry, taskRouteSources: { channelRegistry: channels } });
 }
 const args = { action: 'plan', mode: 'route_decision', query: 'change the theme setting', includeParameters: true, limit: 1 };
 

@@ -7,16 +7,21 @@ import {
   formatCliServicePosture,
 } from '../../cli/service-posture.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { cliRedactionReadings } from '../helpers/cli-redaction-readings.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 
 describe('CLI service posture', () => {
   let root = '';
+  let previous: ReturnType<typeof installJudgmentPort>;
 
   beforeEach(() => {
     root = makeProjectTempDir('goodvibes-agent-service-posture');
+    previous = installJudgmentPort(cliRedactionReadings().port);
   });
 
   afterEach(() => {
     rmSync(root, { recursive: true, force: true });
+    installJudgmentPort(previous);
   });
 
   function createConfig(): ConfigManager {
@@ -101,7 +106,36 @@ describe('CLI service posture', () => {
 
     expect(posture.log.exists).toBe(true);
     expect(posture.log.tail).not.toContain('abc123');
-    expect(posture.log.tail).toContain('<redacted>');
+    expect(posture.log.tail).not.toContain('secret-value');
+    expect(posture.log.tail).toContain('[REDACTED]');
+  });
+
+  test('a missing reading port withholds log contents and keeps config unchanged', async () => {
+    installJudgmentPort(undefined);
+    const config = createConfig();
+    const logPath = join(root, 'daemon.log');
+    writeFileSync(logPath, 'password=private-log-fixture\n');
+    config.setDynamic('service.logPath', logPath);
+    const original = JSON.stringify(config.getRaw());
+    const posture = await buildCliServicePosture({ configManager: config, workingDirectory: root, homeDirectory: root });
+    expect(posture.log.tail).toBeUndefined();
+    expect(posture.log.readError).toBe('Service log could not be read safely.');
+    expect(JSON.stringify(posture)).not.toContain('private-log-fixture');
+    expect(JSON.stringify(config.getRaw())).toBe(original);
+  });
+
+  test('source changes initiated by an ownership callback prevent publication', async () => {
+    const config = createConfig();
+    await expect(buildCliServicePosture({ configManager: config, workingDirectory: root, homeDirectory: root }, {
+      assertCurrent: () => { config.setDynamic('service.enabled', !config.get('service.enabled')); },
+    })).rejects.toThrow('Service posture input changed');
+  });
+
+  test('an async ownership callback cannot authorize a posture', async () => {
+    const config = createConfig();
+    await expect(buildCliServicePosture({ configManager: config, workingDirectory: root, homeDirectory: root }, {
+      assertCurrent: async () => {},
+    })).rejects.toThrow('Service posture ownership must be synchronous.');
   });
 
   test('json output preserves endpoint and connected-host ownership structure', async () => {

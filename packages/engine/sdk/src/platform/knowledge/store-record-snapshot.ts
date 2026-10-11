@@ -2,15 +2,15 @@ import { projectKnowledgeSourceReferences } from './source-structural-references
 import { createHash } from 'node:crypto';
 import { assertJudgmentInput, captureOwnedJson } from '../gate/judgment-input.js';
 import type { SQLiteStore } from '../state/sqlite-store.js';
-import { mapExtractionRow, mapNodeRow } from './store-schema.js';
+import { mapEdgeRow, mapExtractionRow, mapNodeRow } from './store-schema.js';
 import { isKnowledgeClock, sameKnowledgeRecord } from './store-record-representation.js';
 import type { KnowledgeStore } from './store.js';
-import type { KnowledgeExtractionRecord, KnowledgeNodeRecord, KnowledgeSourceRecord } from './types.js';
+import type { KnowledgeEdgeRecord, KnowledgeExtractionRecord, KnowledgeNodeRecord, KnowledgeSourceRecord } from './types.js';
 
 type RecordKind = 'source' | 'node' | 'extraction';
 type EvidenceRecord = KnowledgeSourceRecord | KnowledgeNodeRecord | KnowledgeExtractionRecord;
-export interface KnowledgeRecordSnapshot {
-  readonly record: KnowledgeNodeRecord | KnowledgeExtractionRecord | null;
+export interface KnowledgeRecordSnapshot<T = KnowledgeNodeRecord | KnowledgeExtractionRecord> {
+  readonly record: T | null;
   readonly raw: Readonly<Record<string, unknown>> | null;
   readonly generation: string | null;
 }
@@ -21,12 +21,25 @@ export function readKnowledgeRecordSnapshot(sqlite: Pick<SQLiteStore, 'exec'>, k
 
 /** Preserve every serialized field and generation byte for both read paths. */
 export function knowledgeRecordSnapshotFromRows(kind: 'node' | 'extraction', rows: ReturnType<SQLiteStore['exec']>): KnowledgeRecordSnapshot {
+  return recordSnapshotFromRows<KnowledgeNodeRecord | KnowledgeExtractionRecord>(rows, kind === 'node' ? mapNodeRow : mapExtractionRow);
+}
+export function knowledgeEdgeSnapshotFromRows(rows: ReturnType<SQLiteStore['exec']>): KnowledgeRecordSnapshot<KnowledgeEdgeRecord> {
+  return recordSnapshotFromRows(rows, mapEdgeRow);
+}
+/** Complete persisted fields, without rehydrating a view during guard checks. */
+export function knowledgeRecordGenerationFromRows(rows: ReturnType<SQLiteStore['exec']>): string | null {
+  const result = rows[0], values = result?.values[0];
+  if (!result || !values) return null;
+  const entries = result.columns.map((column, index) => [column, values[index]] as const).sort(([a], [b]) => a.localeCompare(b));
+  return createHash('sha256').update(JSON.stringify(entries)).digest('hex');
+}
+function recordSnapshotFromRows<T>(rows: ReturnType<SQLiteStore['exec']>, mapRow: (columns: string[], values: unknown[]) => T): KnowledgeRecordSnapshot<T> {
   const result = rows[0];
   const values = result?.values[0];
   if (!result || !values) return { record: null, raw: null, generation: null };
   const entries = result.columns.map((column, index) => [column, values[index]] as const).sort(([a], [b]) => a.localeCompare(b));
-  return { raw: Object.fromEntries(entries), generation: createHash('sha256').update(JSON.stringify(entries)).digest('hex'),
-    record: kind === 'node' ? mapNodeRow(result.columns, values) : mapExtractionRow(result.columns, values) };
+  return { raw: Object.fromEntries(entries), generation: knowledgeRecordGenerationFromRows(rows),
+    record: mapRow(result.columns, values) };
 }
 export class KnowledgeRecordAdmissionHeldError extends Error {
   constructor(readonly reason: 'stale' | 'malformed') { super(`Knowledge record admission held: ${reason}`); }
@@ -70,9 +83,8 @@ export function prepareKnowledgeRecordAdmission(store: KnowledgeStore, kind: Rec
     if (!isKnowledgeClock(snapshot.raw[column])) throw new KnowledgeRecordAdmissionHeldError('malformed');
   }
   const receipt = Object.freeze({ assertCurrent: () => {
-    const now = read();
-    if (current() !== record || now.generation !== snapshot.generation || !sameKnowledgeRecord(original, record)
-      || !sameKnowledgeRecord(now.raw, snapshot.raw)) throw new KnowledgeRecordAdmissionHeldError('stale');
+    const generation = kind === 'source' ? store.getSourceGeneration(record.id) : store.getRecordGeneration(kind, record.id);
+    if (current() !== record || generation !== snapshot.generation || !sameKnowledgeRecord(original, record)) throw new KnowledgeRecordAdmissionHeldError('stale');
   } });
   admittedRecords.set(receipt, record);
   return receipt;

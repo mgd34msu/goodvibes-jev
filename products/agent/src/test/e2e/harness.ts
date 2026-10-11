@@ -269,7 +269,7 @@ export async function makeHome(model: StubModel): Promise<E2EHome> {
   const settingsPath = join(agentDir, 'settings.json');
   const e2eHome: E2EHome = {
     root, home, workspace, daemonPort, daemonHome,
-    judgments: startE2EJudgments(),
+    judgments: startE2EJudgments({ ownedRoot: root }),
     networkViolations: join(root, 'network-violations.log'),
     setAgentSetting: (key, value) => mergeJson(settingsPath, key, value),
   };

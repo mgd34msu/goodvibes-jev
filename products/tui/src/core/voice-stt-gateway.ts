@@ -26,7 +26,7 @@ export type VoiceTranscriptionResult = OperatorMethodOutput<'voice.stt'>;
 /** The narrow verb surface a capture consumer needs. */
 export interface VoiceSttGateway {
   /** Transcribe one captured utterance; resolves to the recognised text. */
-  transcribe(audio: UtteranceAudioArtifact): Promise<string>;
+  transcribe(audio: UtteranceAudioArtifact, options?: { readonly signal?: AbortSignal }): Promise<string>;
 }
 
 /**
@@ -50,11 +50,9 @@ export function createVoiceSttGateway(deps: VoiceSttGatewayDeps): VoiceSttGatewa
   return {
     available: true,
     gateway: {
-      transcribe: async (audio) => {
-        // The generic invoke widens to `unknown` for this verb; the cast names the
-        // contract's own output type rather than inventing a local shape, so a
-        // contract change surfaces here as a type error.
-        const result = await sdk.operator.invoke('voice.stt', { audio }) as VoiceTranscriptionResult;
+      transcribe: async (audio, options) => {
+        // Keep the daemon contract's output type at the generic invoke boundary.
+        const result = await sdk.operator.invoke<VoiceTranscriptionResult>('voice.stt', { audio }, options);
         return result.text;
       },
     },

@@ -96,6 +96,17 @@ export const CONFIG_SCHEMA_ENTRIES: readonly ConfigSchemaEntry[] = [
     ]
   },
   {
+    "key": "display.treeGlyphs",
+    "type": "enum",
+    "default": "rounded",
+    "description": "Work tree connector style: rounded, square or ASCII. Terminals without Unicode support always use ASCII.",
+    "enumValues": [
+      "rounded",
+      "square",
+      "ascii"
+    ]
+  },
+  {
     "key": "display.showThinking",
     "type": "boolean",
     "default": false,
@@ -3005,7 +3016,7 @@ export const CONFIG_SCHEMA_ENTRIES: readonly ConfigSchemaEntry[] = [
     "key": "telemetry.includeRawPrompts",
     "type": "boolean",
     "default": false,
-    "description": "When false (default), turn emitters emit a redacted prompt summary {length, sha256, first100chars} instead of raw prompt/response content. Set to true ONLY for debugging in non-production environments, raw prompts may contain PII, secrets, or proprietary data. When true at startup, a WARN log is emitted to make the configuration visible to ops."
+    "description": "Allow raw telemetry reads from this daemon while enabled. Default false rejects raw reads; safe views always redact content. HTTP raw reads also require read:telemetry and an admin session or read:telemetry-sensitive scope. Active raw streams stop after this opt-in is revoked. Raw prompts may contain private data. Enabling the setting at startup emits a WARN log."
   },
   {
     "key": "telemetry.decisionOtlpEnabled",
@@ -3753,6 +3764,13 @@ export const CONFIG_SCHEMA_ENTRIES: readonly ConfigSchemaEntry[] = [
     "type": "string",
     "default": "",
     "description": "Versioned judgment model the batteries are tuned on; empty uses TYPESAFE_DEFAULT_MODEL, then the pinned version"
+  },
+  {
+    "key": "judgment.fallbacks",
+    "type": "object",
+    "default": [],
+    "description": "Ordered array of zero to eight System One fallback objects. Each object has exactly endpoint, model, keySource and keyName. endpoint is an HTTP or HTTPS URL without embedded credentials, query or fragment. model is a pinned Jev version such as jev-1.13.0. keySource is env or secret; keyName names the environment variable or native secret-store entry from which the runtime privately resolves the API key. This setting accepts only that reference name, never a credential value or an inline apiKey field. An empty array disables fallbacks, including inherited fallbacks.",
+    "validationHint": "array of { endpoint, model, keySource: \"env\" | \"secret\", keyName }, at most eight compatible targets; no credentials in URLs or inline keys"
   },
   {
     "key": "judgment.timeoutMs",

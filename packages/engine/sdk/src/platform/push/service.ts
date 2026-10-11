@@ -17,6 +17,7 @@
 
 import { logger } from '../utils/logger.js';
 import { deliverToAll, deliverToSubscription, type DeliveryDeps, type PushTransport } from './delivery.js';
+import type { DeliveryLifetime } from '../utils/delivery-lifetime.js';
 import { PushSubscriptionStore, toPublicSubscription } from './subscription-store.js';
 import { VapidManager } from './vapid.js';
 import type {
@@ -245,7 +246,7 @@ export class PushService {
    * honest receipt (delivered / pruned / failed). Returns null when the id is
    * not a subscription owned by this principal, so the verb can 404.
    */
-  async verify(id: string, principalId: string): Promise<PushDeliveryReceipt | null> {
+  async verify(id: string, principalId: string, lifetime: DeliveryLifetime = {}): Promise<PushDeliveryReceipt | null> {
     const record = await this.store.get(id);
     if (!record || record.principalId !== principalId) return null;
     return deliverToSubscription(
@@ -256,12 +257,13 @@ export class PushService {
         urgency: 'normal',
       },
       this.deliveryDeps(),
+      lifetime,
     );
   }
 
   /** Fan a message out to every stored subscription. */
-  deliver(message: PushMessage): Promise<PushDeliveryReceipt[]> {
-    return deliverToAll(message, this.deliveryDeps());
+  deliver(message: PushMessage, lifetime: DeliveryLifetime = {}): Promise<PushDeliveryReceipt[]> {
+    return deliverToAll(message, this.deliveryDeps(), lifetime);
   }
 
   /**

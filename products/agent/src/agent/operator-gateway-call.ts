@@ -4,6 +4,7 @@
  * classification never retries an operator mutation.
  */
 import { createBrowserGoodVibesSdk } from '@goodvibes-jev/engine/sdk/browser';
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import type { OperatorMethodId, OperatorMethodInput, OperatorMethodOutput } from '@goodvibes-jev/engine/sdk/contracts';
 import { classifyConnectedHostError } from './connected-host-failure.ts';
 import type { AgentConnectedHostConnection } from './routine-schedule-promotion.ts';
@@ -64,7 +65,11 @@ export async function invokeOperatorGatewayMethod<TMethodId extends OperatorMeth
   methodId: TMethodId,
   route: string,
   payload: OperatorMethodInput<TMethodId>,
+  options: JudgmentReadingOptions = {},
 ): Promise<OperatorGatewayCallResult<OperatorMethodOutput<TMethodId>>> {
+  const fetch = globalThis.fetch;
+  const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); };
+  assertCurrent();
   if (!connection.token) {
     return {
       ok: false,
@@ -76,15 +81,25 @@ export async function invokeOperatorGatewayMethod<TMethodId extends OperatorMeth
     };
   }
   const failed = async (error: unknown): Promise<OperatorGatewayCallFailure> => {
+    assertCurrent();
     const failure = await classifyConnectedHostError(error, connection, {
       route,
       incompatibleMessage: `Connected GoodVibes host compatibility does not satisfy Agent requirements; ${methodId} is unavailable.`,
       site: 'agent.operator-gateway.failure',
     });
-    return { ...failure, methodId };
+    assertCurrent(); return { ...failure, methodId };
   };
   try {
-    const sdk = createBrowserGoodVibesSdk({ baseUrl: connection.baseUrl, authToken: connection.token });
+    const sdk = createBrowserGoodVibesSdk({ baseUrl: connection.baseUrl, authToken: connection.token,
+      ...(options.assertCurrent || options.signal ? { retry: { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+        fetch: async (input, init) => {
+          assertCurrent();
+          if (globalThis.fetch !== fetch) throw new Error('Operator transport changed.');
+          const signal = AbortSignal.any([...(options.signal ? [options.signal] : []), ...(init?.signal ? [init.signal] : [])]);
+          const response = await fetch(input, { ...init, signal });
+          assertCurrent(); return response;
+        } } : {}),
+    });
     // The SDK's typed overload takes a CONDITIONAL argument tuple
     // (`MethodArgs` makes the input optional when every key is optional), and a
     // conditional type cannot be resolved against a still-generic `TMethodId`
@@ -101,7 +116,7 @@ export async function invokeOperatorGatewayMethod<TMethodId extends OperatorMeth
     // method's output through Awaited. Wrap the fully typed result first;
     // preserve the same classification for both rejection and setup throws.
     return invokeTyped(methodId, payload).then(
-      (data): OperatorGatewayCallSuccess<OperatorMethodOutput<TMethodId>> => ({ ok: true, data, methodId, route }),
+      (data): OperatorGatewayCallSuccess<OperatorMethodOutput<TMethodId>> => { assertCurrent(); return { ok: true, data, methodId, route }; },
       failed,
     );
   } catch (error) {

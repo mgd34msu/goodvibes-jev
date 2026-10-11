@@ -1,5 +1,6 @@
 import type { ConfigManager, DaemonCredentialStore } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { GatewayMethodCatalog } from './contracts.js';
+import type { NativeMutationHost } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 
 export interface HandlerLogger {
   info(message: string, meta?: unknown): void;
@@ -16,6 +17,7 @@ export interface HandlerContext {
   readonly workingDirectory: string;
   readonly homeDirectory: string;
   readonly logger: HandlerLogger;
+  readonly nativeMutationHost?: NativeMutationHost | undefined;
 }
 
 /** A real surface registration with an explicit completion boundary. */

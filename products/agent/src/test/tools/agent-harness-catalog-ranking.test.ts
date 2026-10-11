@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
+import { judgmentPort, installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { ToolRegistry, assertCurrentToolExecution } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { PolicyRuntimeState } from '@/runtime/index.ts';
@@ -43,6 +43,31 @@ function fixture(owner = ordinaryResearchOwner(), registry = new ToolRegistry())
   const deps = { commandRegistry: commands, toolRegistry: registry, commandContext: context };
   return { registry, commands, context, executed, harness: createAgentHarnessTool(deps), host: createAgentHostTool(deps), workspace: createAgentWorkspaceTool(deps) };
 }
+function admittedFixture() {
+  const directory = '/synthetic/admitted-catalog';
+  const reader: PermissionConfigReader = {
+    getAutonomousSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} }, autoApprove: false, directory }),
+    getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }), isAutoApproveEnabled: () => false, getWorkingDirectory: () => directory,
+  };
+  const manager = new PermissionManager(undefined, reader, new PolicyRuntimeState());
+  const f = fixture(ordinaryResearchOwner(), new ToolRegistry(manager));
+  registerAgentWorkspaceTool(f.registry, f.commands, f.context);
+  let sequence = 0;
+  return { ...f, async runWorkspace(args: Record<string, unknown>, signal?: AbortSignal) {
+    using log = new SqliteDecisionLog(':memory:');
+    const prior = installJudgmentPort(withDecisionLog(judgmentPort('agent.test.catalog-admission'), log));
+    try {
+      const id = `admitted-catalog-${++sequence}`;
+      const call = await f.registry.prepareCall(id, 'workspace', args, { signal });
+      const admission = await manager.admitAutonomous(id, 'workspace', call.args, {
+        sourceOf: () => ({ goal: 'Verify isolated slash command effects', criteria: ['Only execute registered synthetic command handlers'] }),
+        signal, schemaRevision: call.schemaRevision, preparedCall: { registry: f.registry, call },
+      });
+      expect(admission.result.autonomousDecision?.outcome).toBe('act');
+      return await f.registry.executePrepared(call, admission);
+    } finally { installJudgmentPort(prior); }
+  } };
+}
 const body = (result: { output?: unknown }) => JSON.parse(String(result.output));
 
 function suspended() {
@@ -63,7 +88,9 @@ describe('P11 actual catalog consumers', () => {
       expect(output[field]).toHaveLength(1); expect(output[field][0][id]).toBe('opaque_operation');
       expect(output[field][0].judgment.reading.verdict).toBe('yes'); expect(output.queryMatch).toBeUndefined();
     }
-    expect(fake.requests.every(request => request.context?.battery === 'engine.tools.registry-rank')).toBe(true);
+    const catalogRequests = fake.requests.filter(request => request.context?.site === 'agent.harness.tools' || request.context?.site === 'agent.harness.commands');
+    expect(catalogRequests.length).toBeGreaterThan(0);
+    expect(catalogRequests.every(request => request.context?.battery === 'engine.tools.registry-rank')).toBe(true);
     expect(f.executed).toEqual([]);
   });
 
@@ -78,10 +105,10 @@ describe('P11 actual catalog consumers', () => {
   });
 
   test('one uncertain detail remains ambiguous and no negative result guesses a lexical fallback', async () => {
-    const f = fixture();
+    const f = admittedFixture();
     for (const probability of [0.5, 0.01]) {
       installJudgmentPort(readings({ search_inbox: probability }).port);
-      const result = await f.workspace.execute({ action: 'run_command', query: 'search inbox', confirm: true, explicitUserRequest: 'Run the selected command' });
+      const result = await f.runWorkspace({ action: 'run_command', query: 'search inbox' });
       expect(result.success).toBe(false); expect(f.executed).toEqual([]);
       const tools = body(await f.harness.execute({ mode: 'tools', query: 'search inbox' }));
       expect(tools.tools).toHaveLength(probability === 0.5 ? 1 : 0);
@@ -89,11 +116,11 @@ describe('P11 actual catalog consumers', () => {
   });
 
   test('a sole yes discovers a command but only a separately named invocation executes', async () => {
-    const f = fixture(); installJudgmentPort(readings({ opaque_operation: 0.99 }).port);
-    const result = await f.workspace.execute({ action: 'run_command', query: 'search inbox', confirm: true, explicitUserRequest: 'Run the selected command' });
+    const f = admittedFixture(); installJudgmentPort(readings({ opaque_operation: 0.99 }).port);
+    const result = await f.runWorkspace({ action: 'run_command', query: 'search inbox' });
     expect(body(result)).toMatchObject({ status: 'selection_required', reason: 'exact_command_identity_required', candidates: [{ commandName: 'opaque_operation' }] });
     expect(f.executed).toEqual([]);
-    const exact = await f.workspace.execute({ action: 'run_command', commandName: 'opaque_operation', confirm: true, explicitUserRequest: 'Run opaque_operation' });
+    const exact = await f.runWorkspace({ action: 'run_command', commandName: 'opaque_operation' });
     expect(exact.success).toBe(true); expect(f.executed).toEqual(['opaque_operation']);
   });
 
@@ -125,7 +152,38 @@ describe('P11 actual catalog consumers', () => {
     expect(screening.calls).toHaveLength(before); expect(fake.requests).toHaveLength(0);
   });
 
-  test('redacted full schema source holds output instead of returning private fields beyond the 600-character ranking projection', async () => {
+  test.each(['channel_draft_save', 'channel_draft_send', 'channel_routing_assign', 'channel_routing_remove'])('%s protects complete comms payload before registered repair or admission', async mode => {
+    const privateText = 'synthetic-private-comms-payload';
+    const screening = researchScreeningFixture({ spans: exactSensitiveSpans([privateText]) });
+    const f = fixture(screening.owner); const fake = readings({}); installJudgmentPort(fake.port);
+    registerAgentHarnessTool(f.registry, f.commands, f.context);
+    await expect(f.registry.prepareCall(`private-comms-${mode}`, 'agent_harness', {
+      mode, draftId: 'isolated-draft', channelProfile: 'isolated-profile', routeKey: 'isolated-route',
+      body: 'Public draft', unusedPrivateContext: privateText, confirm: true, explicitUserRequest: 'Caller annotation',
+    })).rejects.toThrow();
+    expect(JSON.stringify(screening.calls)).toContain(privateText);
+    expect(fake.requests).toHaveLength(0); expect(f.executed).toEqual([]);
+  });
+
+  test('complete protected description and evidence reach the canonical catalog reader', async () => {
+    const description = `${'context '.repeat(100)}the complete description tail`;
+    const evidence = { schema: { note: `${'evidence '.repeat(100)}the complete evidence tail` } };
+    const fake = readings({ full_context: 0.99 });
+    installJudgmentPort(fake.port);
+    const result = await rankHarnessCatalog([{ id: 'full_context', description, evidence }], 'find the matching capability', entry => entry,
+      'agent.test.complete-catalog-context', { sourceOwner: ordinaryResearchOwner(), requirePreservedSource: true });
+    expect(result.matches).toHaveLength(1);
+    expect(fake.requests).toHaveLength(1);
+    const wire: unknown = fake.requests[0]!.state;
+    if (!wire || typeof wire !== 'object' || !('candidate' in wire)
+      || !wire.candidate || typeof wire.candidate !== 'object' || !('description' in wire.candidate) || !('evidenceJson' in wire.candidate)) {
+      throw new Error('Canonical catalog request lacks its protected candidate context.');
+    }
+    expect(wire.candidate.description).toBe(description);
+    expect(wire.candidate.evidenceJson).toBe(JSON.stringify(evidence));
+  });
+
+  test('redacted full schema source holds output instead of returning private fields beyond a display preview', async () => {
     const sensitive = 'synthetic-private-schema';
     const screening = researchScreeningFixture({ spans: exactSensitiveSpans([sensitive]) });
     const f = fixture(screening.owner);
@@ -256,11 +314,12 @@ test('exact command resolution fences same-object handler replacement across its
 });
 
 test('a cancelled command cannot dispatch a nested effect through the adapter-owned context', async () => {
-  const f = fixture(); const wait = suspended(); const controller = new AbortController();
+  const f = admittedFixture(); const wait = suspended(); const controller = new AbortController();
+  installJudgmentPort(readings({}).port);
   f.commands.register({ name: 'parent', description: 'Synthetic parent', handler: async (_args, context) => {
     wait.start(); await wait.gate; await context.executeCommand!('opaque_operation', []);
   } });
-  const pending = f.workspace.execute({ action: 'run_command', commandName: 'parent', confirm: true, explicitUserRequest: 'Run parent' }, { signal: controller.signal });
+  const pending = f.runWorkspace({ action: 'run_command', commandName: 'parent' }, controller.signal);
   await wait.started; controller.abort(); wait.release();
   await expect(pending).rejects.toThrow(); expect(f.executed).toEqual([]);
 });

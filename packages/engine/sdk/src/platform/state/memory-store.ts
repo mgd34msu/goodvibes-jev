@@ -8,6 +8,7 @@
  * Provenance links can reference: session, turn, task, event, or file.
  */
 
+import { captureMemoryOperation, assertMemoryOperationCurrent, awaitMemoryOperation, type MemoryOperationOptions } from './memory-operation.js';
 import { randomUUID } from 'node:crypto';
 import { rankReviewQueue, rankSemanticSearch, rerankRetrieved } from './memory-search-ranking.js';
 import { SQLiteStore } from './sqlite-store.js';
@@ -213,6 +214,9 @@ export class MemoryStore {
   private ready = false;
   private rebuildVectorIndexPromise: Promise<MemoryVectorStats> | null = null;
   private readonly embeddingRegistry: MemoryEmbeddingProviderRegistry;
+  private mutationRevision = 0;
+  private backendEpoch = 0;
+  private readonly operations = new WeakMap<MemoryOperationOptions, { revision: number }>();
 
   constructor(dbPath: string | undefined, options: MemoryStoreOptions) {
     this.sqlite = new SQLiteStore(dbPath);
@@ -228,6 +232,7 @@ export class MemoryStore {
 
   async init(): Promise<void> {
     if (this.ready) return;
+    this.backendEpoch++;
     await this.sqlite.init(createSchema as Parameters<SQLiteStore['init']>[0], { storeName: 'memory store', schemaVersion: 1 });
     this.ready = true;
     await this.vectorIndex?.init();
@@ -244,8 +249,34 @@ export class MemoryStore {
     return this.sqlite.databasePath;
   }
 
+  /** Backend incarnation only; ordinary writes do not change this binding. */
+  captureOperationScope(): () => void {
+    const sqlite = this.sqlite, vector = this.vectorIndex, ready = this.ready, epoch = this.backendEpoch;
+    const provider = this.embeddingRegistry.getDefaultProviderOrNull();
+    return () => {
+      if (this.sqlite !== sqlite || this.vectorIndex !== vector || this.ready !== ready || this.backendEpoch !== epoch
+        || this.embeddingRegistry.getDefaultProviderOrNull() !== provider) {
+        throw new Error('Memory operation store changed');
+      }
+    };
+  }
+
+  private captureOperation(options?: MemoryOperationOptions): MemoryOperationOptions {
+    if (options && this.operations.has(options)) return options;
+    const lifecycle = captureMemoryOperation(options), scope = this.captureOperationScope();
+    const state = { revision: this.mutationRevision };
+    const operation = captureMemoryOperation({ signal: lifecycle.signal, assertCurrent: () => {
+      assertMemoryOperationCurrent(lifecycle); scope();
+      if (this.mutationRevision !== state.revision) throw new Error('Memory operation source changed');
+    } });
+    this.operations.set(operation, state);
+    return operation;
+  }
+
   /** Add a new memory record. Returns the created record. */
-  async add(opts: MemoryAddOptions): Promise<MemoryRecord> {
+  async add(opts: MemoryAddOptions, options?: MemoryOperationOptions): Promise<MemoryRecord> {
+    const operation = this.captureOperation(options);
+    assertMemoryOperationCurrent(operation);
     if (!this.ready) throw new Error('MemoryStore: not initialized');
 
     const now = Date.now();
@@ -270,7 +301,7 @@ export class MemoryStore {
       validUntil: opts.validUntil,
     };
 
-    this.sqlite.run(
+    this.runMutation(
       `INSERT INTO memory_records
          (id, scope, cls, summary, detail, tags, provenance, review_state, confidence, reviewed_at, reviewed_by, stale_reason, created_at, updated_at, valid_from, valid_until)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -292,16 +323,20 @@ export class MemoryStore {
         record.validFrom ?? null,
         record.validUntil ?? null,
       ],
+      operation,
     );
 
+    this.vectorIndex?.upsert(record, operation);
+    this.persist(operation);
+    assertMemoryOperationCurrent(operation);
     logger.info('MemoryStore: record added', { id, cls: opts.cls });
-    this.vectorIndex?.upsert(record);
-    this.persist();
     return record;
   }
 
   /** Retrieve a single record by ID. */
-  get(id: string): MemoryRecord | null {
+  get(id: string, options?: MemoryOperationOptions): MemoryRecord | null {
+    const operation = this.captureOperation(options);
+    assertMemoryOperationCurrent(operation);
     if (!this.ready) return null;
 
     const rows = this.sqlite.exec(
@@ -319,14 +354,16 @@ export class MemoryStore {
    * or the vector index when `semantic` is set); when the filter carries a
    * query, the `engine.state.memory-search` rerank orders what retrieval found.
    */
-  async search(filter: MemorySearchFilter = {}): Promise<MemoryRecord[]> {
+  async search(filter: MemorySearchFilter = {}, options?: MemoryOperationOptions): Promise<MemoryRecord[]> {
+    const operation = this.captureOperation(options);
+    assertMemoryOperationCurrent(operation);
     if (!this.ready) return [];
     if (filter.semantic) {
-      return (await this.searchSemantic(filter)).map((entry) => entry.record);
+      return (await awaitMemoryOperation(() => this.searchSemantic(filter, operation), operation)).map((entry) => entry.record);
     }
     const query = filter.query?.trim();
-    if (!query) return this.retrieve(filter);
-    const ranked = await rerankRetrieved(query, this.retrieve({ ...filter, limit: undefined }), filter.limit);
+    if (!query) return this.retrieve(filter, operation);
+    const ranked = await awaitMemoryOperation(() => rerankRetrieved(query, this.retrieve({ ...filter, limit: undefined }, operation), filter.limit, operation), operation);
     const records = ranked.map((entry) => entry.record);
     return filter.limit !== undefined ? records.slice(0, filter.limit) : records;
   }
@@ -335,7 +372,9 @@ export class MemoryStore {
    * Retrieval only, no relevance ranking: the filter's records in
    * compareByTrust order. Bulk reads (getAll, review queue, export) use it.
    */
-  retrieve(filter: MemorySearchFilter = {}): MemoryRecord[] {
+  retrieve(filter: MemorySearchFilter = {}, options?: MemoryOperationOptions): MemoryRecord[] {
+    const operation = this.captureOperation(options);
+    assertMemoryOperationCurrent(operation);
     if (!this.ready) return [];
 
     const conditions: string[] = [];
@@ -420,7 +459,9 @@ export class MemoryStore {
    * judges relevance. Empty when there is no query or the index returns
    * nothing. `score` is the similarity on a 0 to 100 scale.
    */
-  semanticCandidates(filter: MemorySearchFilter = {}): MemorySemanticSearchResult[] {
+  semanticCandidates(filter: MemorySearchFilter = {}, options?: MemoryOperationOptions): MemorySemanticSearchResult[] {
+    const operation = this.captureOperation(options);
+    assertMemoryOperationCurrent(operation);
     if (!this.ready) return [];
     const query = filter.query?.trim();
     if (!query) return [];
@@ -430,8 +471,8 @@ export class MemoryStore {
       limit: Math.max(requestedLimit * 8, 50),
     };
     const results: MemorySemanticSearchResult[] = [];
-    for (const candidate of this.vectorIndex?.search(query, vectorFilter) ?? []) {
-      const record = this.get(candidate.id);
+    for (const candidate of this.vectorIndex?.search(query, vectorFilter, operation) ?? []) {
+      const record = this.get(candidate.id, operation);
       if (!record) continue;
       if (!recordMatchesPostSqlFilter(record, filter)) continue;
       results.push({ record, distance: candidate.distance, similarity: candidate.similarity, score: candidate.similarity * 100 });
@@ -440,24 +481,30 @@ export class MemoryStore {
   }
 
   /** Semantic search: the vector index builds the shortlist, the rerank orders it (memory-search-ranking.ts). */
-  async searchSemantic(filter: MemorySearchFilter = {}): Promise<MemorySemanticSearchResult[]> {
+  async searchSemantic(filter: MemorySearchFilter = {}, options?: MemoryOperationOptions): Promise<MemorySemanticSearchResult[]> {
+    const operation = this.captureOperation(options);
+    assertMemoryOperationCurrent(operation);
     if (!this.ready) return [];
-    return rankSemanticSearch(this, filter);
+    return awaitMemoryOperation(() => rankSemanticSearch(this, filter, operation), operation);
   }
 
   /** Records to review: the least trusted records, ordered by the memory-review-priority reading. */
-  async reviewQueue(limit = 10, scope?: MemoryScope): Promise<MemoryRecord[]> {
-    const leastTrustedFirst = this.retrieve(scope ? { scope } : {}).reverse();
-    return rankReviewQueue(leastTrustedFirst.slice(0, Math.max(limit * 4, 25)), limit);
+  async reviewQueue(limit = 10, scope?: MemoryScope, options?: MemoryOperationOptions): Promise<MemoryRecord[]> {
+    const operation = this.captureOperation(options);
+    assertMemoryOperationCurrent(operation);
+    const leastTrustedFirst = this.retrieve(scope ? { scope } : {}, operation).reverse();
+    return awaitMemoryOperation(() => rankReviewQueue(leastTrustedFirst.slice(0, Math.max(limit * 4, 25)), limit, operation), operation);
   }
 
   /** Exports the records the filter selects; a query here filters, it does not rank. */
-  exportBundle(filter: MemorySearchFilter = {}): MemoryBundle {
-    const records = this.retrieve(filter);
+  exportBundle(filter: MemorySearchFilter = {}, options?: MemoryOperationOptions): MemoryBundle {
+    const operation = this.captureOperation(options);
+    assertMemoryOperationCurrent(operation);
+    const records = this.retrieve(filter, operation);
     const recordIds = new Set(records.map((record) => record.id));
     const links: MemoryLink[] = [];
     for (const record of records) {
-      for (const link of this.linksFor(record.id)) {
+      for (const link of this.linksFor(record.id, operation)) {
         if (!recordIds.has(link.fromId) || !recordIds.has(link.toId)) continue;
         const duplicate = links.some((existing) => (
           existing.fromId === link.fromId
@@ -479,7 +526,9 @@ export class MemoryStore {
     };
   }
 
-  async importBundle(bundle: MemoryBundle): Promise<MemoryImportResult> {
+  async importBundle(bundle: MemoryBundle, options?: MemoryOperationOptions): Promise<MemoryImportResult> {
+    const operation = this.captureOperation(options);
+    assertMemoryOperationCurrent(operation);
     if (!this.ready) throw new Error('MemoryStore: not initialized');
 
     let importedRecords = 0;
@@ -491,7 +540,7 @@ export class MemoryStore {
         skippedRecords++;
         continue;
       }
-      this.sqlite.run(
+      this.runMutation(
         `INSERT INTO memory_records
            (id, scope, cls, summary, detail, tags, provenance, review_state, confidence, reviewed_at, reviewed_by, stale_reason, created_at, updated_at, valid_from, valid_until)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -513,28 +562,33 @@ export class MemoryStore {
           record.validFrom ?? null,
           record.validUntil ?? null,
         ],
+        operation,
       );
       importedRecords++;
-      this.vectorIndex?.upsert(record);
+      this.vectorIndex?.upsert(record, operation);
     }
 
     for (const link of bundle.links) {
       if (!this.get(link.fromId) || !this.get(link.toId)) continue;
-      this.sqlite.run(
+      this.runMutation(
         `INSERT OR REPLACE INTO memory_links (from_id, to_id, relation, created_at)
          VALUES (?, ?, ?, ?)`,
         [link.fromId, link.toId, link.relation, link.createdAt],
+        operation,
       );
       importedLinks++;
     }
 
+    this.persist(operation);
+    assertMemoryOperationCurrent(operation);
     logger.info('MemoryStore: bundle imported', { importedRecords, skippedRecords, importedLinks });
-    this.persist();
     return { importedRecords, skippedRecords, importedLinks };
   }
 
   /** Create a directed link between two records. */
-  async link(fromId: string, toId: string, relation: string): Promise<MemoryLink | null> {
+  async link(fromId: string, toId: string, relation: string, options?: MemoryOperationOptions): Promise<MemoryLink | null> {
+    const operation = this.captureOperation(options);
+    assertMemoryOperationCurrent(operation);
     if (!this.ready) return null;
 
     const from = this.get(fromId);
@@ -552,24 +606,28 @@ export class MemoryStore {
     const now = Date.now();
 
     try {
-      this.sqlite.run(
+      this.runMutation(
         `INSERT OR REPLACE INTO memory_links (from_id, to_id, relation, created_at)
          VALUES (?, ?, ?, ?)`,
         [fromId, toId, relation, now],
+        operation,
       );
     } catch (err) {
+      assertMemoryOperationCurrent(operation);
       logger.error('MemoryStore: link insert failed', {
         error: summarizeError(err),
       });
       return null;
     }
 
-    this.persist();
+    this.persist(operation);
     return { fromId, toId, relation, createdAt: now };
   }
 
   /** Get all links where this record is either source or target. */
-  linksFor(id: string): MemoryLink[] {
+  linksFor(id: string, options?: MemoryOperationOptions): MemoryLink[] {
+    const operation = this.captureOperation(options);
+    assertMemoryOperationCurrent(operation);
     if (!this.ready) return [];
 
     const rows = this.sqlite.exec(
@@ -605,7 +663,9 @@ export class MemoryStore {
     tags?: string[];
     validFrom?: number | null;
     validUntil?: number | null;
-  }): MemoryRecord | null {
+  }, options?: MemoryOperationOptions): MemoryRecord | null {
+    const operation = this.captureOperation(options);
+    assertMemoryOperationCurrent(operation);
     if (!this.ready) return null;
 
     const existing = this.get(id);
@@ -622,21 +682,25 @@ export class MemoryStore {
     const newValidFrom  = patch.validFrom  === undefined ? existing.validFrom  : (patch.validFrom  ?? undefined);
     const newValidUntil = patch.validUntil === undefined ? existing.validUntil : (patch.validUntil ?? undefined);
 
-    this.sqlite.run(
+    this.runMutation(
       `UPDATE memory_records
          SET scope = ?, summary = ?, detail = ?, tags = ?, valid_from = ?, valid_until = ?, updated_at = ?
          WHERE id = ?`,
       [newScope, newSummary, newDetail ?? null, JSON.stringify(newTags), newValidFrom ?? null, newValidUntil ?? null, now, id],
+      operation,
     );
 
-    logger.info('MemoryStore: record updated', { id });
     const updated = { ...existing, scope: newScope, summary: newSummary, detail: newDetail, tags: newTags, validFrom: newValidFrom, validUntil: newValidUntil, updatedAt: now };
-    this.vectorIndex?.upsert(updated);
-    this.persist();
+    this.vectorIndex?.upsert(updated, operation);
+    this.persist(operation);
+    assertMemoryOperationCurrent(operation);
+    logger.info('MemoryStore: record updated', { id });
     return updated;
   }
 
-  review(id: string, patch: MemoryReviewPatch): MemoryRecord | null {
+  review(id: string, patch: MemoryReviewPatch, options?: MemoryOperationOptions): MemoryRecord | null {
+    const operation = this.captureOperation(options);
+    assertMemoryOperationCurrent(operation);
     if (!this.ready) return null;
 
     const existing = this.get(id);
@@ -654,7 +718,7 @@ export class MemoryStore {
       ? (patch.staleReason ?? existing.staleReason ?? 'marked by operator')
       : undefined;
 
-    this.sqlite.run(
+    this.runMutation(
       `UPDATE memory_records
          SET review_state = ?, confidence = ?, reviewed_at = ?, reviewed_by = ?, stale_reason = ?, updated_at = ?
          WHERE id = ?`,
@@ -667,17 +731,21 @@ export class MemoryStore {
         now,
         id,
       ],
+      operation,
     );
 
-    logger.info('MemoryStore: record reviewed', { id, reviewState, confidence });
     const reviewed = { ...existing, reviewState, confidence, reviewedAt, reviewedBy, staleReason, updatedAt: now };
-    this.vectorIndex?.upsert(reviewed);
-    this.persist();
+    this.vectorIndex?.upsert(reviewed, operation);
+    this.persist(operation);
+    assertMemoryOperationCurrent(operation);
+    logger.info('MemoryStore: record reviewed', { id, reviewState, confidence });
     return reviewed;
   }
 
   /** Delete a record and all its links. */
-  delete(id: string): boolean {
+  delete(id: string, options?: MemoryOperationOptions): boolean {
+    const operation = this.captureOperation(options);
+    assertMemoryOperationCurrent(operation);
     if (!this.ready) return false;
 
     const existing = this.get(id);
@@ -685,11 +753,12 @@ export class MemoryStore {
 
     // Delete links explicitly as well as via FK cascade; sql.js may load older
     // stores with FK enforcement disabled for a connection.
-    this.sqlite.run('DELETE FROM memory_links WHERE from_id = ? OR to_id = ?', [id, id]);
-    this.sqlite.run('DELETE FROM memory_records WHERE id = ?', [id]);
-    this.vectorIndex?.delete(id);
+    this.runMutation('DELETE FROM memory_links WHERE from_id = ? OR to_id = ?', [id, id], operation);
+    this.runMutation('DELETE FROM memory_records WHERE id = ?', [id], operation);
+    this.vectorIndex?.delete(id, operation);
+    this.persist(operation);
+    assertMemoryOperationCurrent(operation);
     logger.info('MemoryStore: record deleted', { id });
-    this.persist();
     return true;
   }
 
@@ -730,7 +799,9 @@ export class MemoryStore {
     return this.rebuildVectorIndexPromise;
   }
 
-  vectorStats(): MemoryVectorStats {
+  vectorStats(options?: MemoryOperationOptions): MemoryVectorStats {
+    const operation = this.captureOperation(options);
+    assertMemoryOperationCurrent(operation);
     return this.vectorIndex?.stats() ?? {
       backend: 'sqlite-vec',
       enabled: false,
@@ -744,19 +815,24 @@ export class MemoryStore {
     };
   }
 
-  async doctor(): Promise<MemoryDoctorReport> {
+  async doctor(options?: MemoryOperationOptions): Promise<MemoryDoctorReport> {
+    const operation = this.captureOperation(options);
+    assertMemoryOperationCurrent(operation);
     return {
       vector: this.vectorStats(),
-      embeddings: await this.embeddingRegistry.doctor(),
+      embeddings: await awaitMemoryOperation(() => this.embeddingRegistry.doctor(), operation),
       checkedAt: Date.now(),
     };
   }
 
-  async save(): Promise<boolean> {
-    return this.sqlite.save();
+  async save(options?: MemoryOperationOptions): Promise<boolean> {
+    const operation = this.captureOperation(options);
+    assertMemoryOperationCurrent(operation);
+    return awaitMemoryOperation(() => this.sqlite.save(), operation);
   }
 
   close(): void {
+    this.backendEpoch++;
     this.sqlite.close();
     this.vectorIndex?.close();
     this.ready = false;
@@ -773,6 +849,7 @@ export class MemoryStore {
    * @throws if the new SQLite store or vector index cannot be opened.
    */
   async reroot(newDbPath: string): Promise<void> {
+    this.backendEpoch++;
     this.sqlite.close();
     this.vectorIndex?.close();
     this.ready = false;
@@ -788,8 +865,23 @@ export class MemoryStore {
 
   // ── Private helpers ──────────────────────────────────────────────────────────
 
-  private persist(): void {
-    void this.save().catch((err) => {
+  private runMutation(sql: Parameters<SQLiteStore['run']>[0], params: Parameters<SQLiteStore['run']>[1], operation: MemoryOperationOptions): void {
+    assertMemoryOperationCurrent(operation);
+    const state = this.operations.get(operation);
+    if (!state) throw new Error('Memory operation is not owned by this store');
+    const revision = ++this.mutationRevision;
+    try { this.sqlite.run(sql, params); }
+    finally {
+      if (this.mutationRevision !== revision) throw new Error('Memory operation source changed');
+      state.revision = revision;
+      assertMemoryOperationCurrent(operation);
+    }
+  }
+
+  private persist(operation: MemoryOperationOptions): void {
+    assertMemoryOperationCurrent(operation);
+    void this.save(operation).catch((err) => {
+      try { assertMemoryOperationCurrent(operation); } catch { return; }
       logger.warn('MemoryStore: autosave failed', { error: summarizeError(err) });
     });
   }

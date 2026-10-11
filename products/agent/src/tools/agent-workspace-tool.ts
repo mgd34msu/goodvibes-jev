@@ -4,6 +4,7 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
 import { createAgentHarnessTool } from './agent-harness-tool.ts';
+import { captureModelReadingInput } from './agent-harness-model-reading-source.ts';
 
 type AgentWorkspaceToolAction =
   | 'status'
@@ -199,7 +200,9 @@ function isWorkspaceReport(args: Record<string, unknown>): boolean {
 
 function isWorkspaceCatalogQuery(input: Record<string, unknown>): boolean {
   const routing = catalogRoutingInput(input);
-  return ['commands', 'command', 'run_command'].includes(readAction(routing))
+  const action = readAction(routing);
+  if (['shortcuts', 'keybindings', 'keybinding', 'run_keybinding', 'set_keybinding', 'reset_keybinding', 'cli_commands', 'cli_command'].includes(action)) captureModelReadingInput(input);
+  return ['shortcuts', 'keybindings', 'keybinding', 'run_keybinding', 'set_keybinding', 'reset_keybinding', 'cli_commands', 'cli_command', 'commands', 'command', 'run_command'].includes(action)
     && [routing.query, routing.target].some((value) => typeof value === 'string' && value.trim().length > 0);
 }
 
@@ -252,27 +255,27 @@ export function createAgentWorkspaceTool(deps: AgentWorkspaceToolDeps): Tool {
     },
     execute: async (rawArgs, options) => {
       const dispatch = (input: Record<string, unknown>) => forwardHarnessCatalogCall(harnessTool, rawArgs, input, options);
-      const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentWorkspaceToolArgs;
+      const args = captureModelReadingInput(rawArgs);
       const action = readAction(args);
 
-      if (action === 'status') return harnessTool.execute(compactArgs({ mode: 'workspace', target: args.target, query: args.query, includeParameters: args.includeParameters }));
-      if (action === 'actions') return harnessTool.execute({ mode: 'workspace_actions', ...workspaceDiscoveryArgs(args) });
-      if (action === 'action') return harnessTool.execute(workspaceActionArgs('workspace_action', args));
-      if (action === 'run') return harnessTool.execute(workspaceActionArgs('run_workspace_action', args), options);
-      if (action === 'surfaces') return harnessTool.execute(compactArgs({ mode: 'ui_surfaces', target: args.target, query: args.query, limit: args.limit, includeParameters: args.includeParameters }));
-      if (action === 'surface') return harnessTool.execute(surfaceArgs('ui_surface', args));
-      if (action === 'open') return harnessTool.execute(surfaceArgs('open_ui_surface', args));
-      if (action === 'shortcuts') return harnessTool.execute(compactArgs({ mode: 'shortcuts', target: args.target, query: args.query, limit: args.limit, includeParameters: args.includeParameters }));
-      if (action === 'keybindings') return harnessTool.execute(compactArgs({ mode: 'keybindings', target: args.target, query: args.query, limit: args.limit, includeParameters: args.includeParameters }));
-      if (action === 'keybinding') return harnessTool.execute(keybindingArgs('keybinding', args));
-      if (action === 'run_keybinding') return harnessTool.execute(keybindingArgs('run_keybinding', args));
-      if (action === 'set_keybinding') return harnessTool.execute(keybindingArgs('set_keybinding', args));
-      if (action === 'reset_keybinding') return harnessTool.execute(keybindingArgs('reset_keybinding', args));
+      if (action === 'status') return dispatch(compactArgs({ mode: 'workspace', target: args.target, query: args.query, includeParameters: args.includeParameters }));
+      if (action === 'actions') return dispatch({ mode: 'workspace_actions', ...workspaceDiscoveryArgs(args) });
+      if (action === 'action') return dispatch(workspaceActionArgs('workspace_action', args));
+      if (action === 'run') return dispatch(workspaceActionArgs('run_workspace_action', args));
+      if (action === 'surfaces') return dispatch(compactArgs({ mode: 'ui_surfaces', target: args.target, query: args.query, limit: args.limit, includeParameters: args.includeParameters }));
+      if (action === 'surface') return dispatch(surfaceArgs('ui_surface', args));
+      if (action === 'open') return dispatch(surfaceArgs('open_ui_surface', args));
+      if (action === 'shortcuts') return dispatch(compactArgs({ mode: 'shortcuts', target: args.target, query: args.query, limit: args.limit, includeParameters: args.includeParameters }));
+      if (action === 'keybindings') return dispatch(compactArgs({ mode: 'keybindings', target: args.target, query: args.query, limit: args.limit, includeParameters: args.includeParameters }));
+      if (action === 'keybinding') return dispatch(keybindingArgs('keybinding', args));
+      if (action === 'run_keybinding') return dispatch(keybindingArgs('run_keybinding', args));
+      if (action === 'set_keybinding') return dispatch(keybindingArgs('set_keybinding', args));
+      if (action === 'reset_keybinding') return dispatch(keybindingArgs('reset_keybinding', args));
       if (action === 'commands') return dispatch(compactArgs({ mode: 'commands', target: args.target, query: args.query, limit: args.limit, includeParameters: args.includeParameters }));
       if (action === 'command') return dispatch(commandArgs('command', args));
       if (action === 'run_command') return dispatch(commandArgs('run_command', args));
-      if (action === 'cli_commands') return harnessTool.execute(compactArgs({ mode: 'cli_commands', target: args.target, query: args.query, limit: args.limit, includeParameters: args.includeParameters }));
-      if (action === 'cli_command') return harnessTool.execute(commandArgs('cli_command', args));
+      if (action === 'cli_commands') return dispatch(compactArgs({ mode: 'cli_commands', target: args.target, query: args.query, limit: args.limit, includeParameters: args.includeParameters }));
+      if (action === 'cli_command') return dispatch(commandArgs('cli_command', args));
 
       return error('Unknown workspace action. Use action:"status" or action:"actions" to inspect the workspace.');
     },

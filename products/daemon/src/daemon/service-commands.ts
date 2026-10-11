@@ -137,6 +137,10 @@ export interface DaemonServiceCliInput {
   readonly binaryPath: string;
   /** The GoodVibes tree home (GOODVIBES_HOME-overridable), config/state root only, never unit-path resolution. See `unitHomeDir`. */
   readonly homeDir: string;
+  /** Selected daemon identity/settings directory, already resolved by the CLI. */
+  readonly daemonHomeDirectory?: string | undefined;
+  /** A relocated invocation may activate only its matching installed definition. */
+  readonly requireInstalledDefinitionMatch?: boolean | undefined;
   /**
    * The LOGIN user's home, where the systemd/launchd/Windows unit actually
    * lives, regardless of any GOODVIBES_HOME/GOODVIBES_DAEMON_HOME override.
@@ -208,6 +212,7 @@ function buildManager(input: DaemonServiceCliInput): PlatformServiceManager {
   return buildManagedDaemonServiceManager({
     binaryPath: input.binaryPath,
     homeDir: input.homeDir,
+    daemonHomeDirectory: input.daemonHomeDirectory,
     unitHomeDir: input.unitHomeDir,
     host: input.host,
     port: input.port,
@@ -301,6 +306,7 @@ export function buildLifecycleResultLines(
 function runLifecycleVerb(
   action: 'start' | 'stop' | 'restart',
   manager: PlatformServiceManager,
+  requireInstalledDefinitionMatch = false,
 ): DaemonServiceCliResult {
   const before = manager.status();
   if (!before.installed) {
@@ -310,6 +316,10 @@ function runLifecycleVerb(
       lines: buildLifecycleResultLines(action, before),
       status: before,
     };
+  }
+  if (action !== 'stop' && requireInstalledDefinitionMatch && !manager.installedDefinitionMatches()) {
+    return { ok: false, exitCode: 1, status: before,
+      lines: ['Service activation refused: the installed definition does not match the selected executable, tree, daemon home and workspace. No service was changed.'] };
   }
   const status = action === 'start'
     ? manager.start()
@@ -537,11 +547,11 @@ export async function runDaemonServiceCli(input: DaemonServiceCliInput): Promise
       return ok('uninstall', uninstalled, extra);
     }
     case 'start-service':
-      return runLifecycleVerb('start', manager);
+      return runLifecycleVerb('start', manager, input.requireInstalledDefinitionMatch);
     case 'stop-service':
       return runLifecycleVerb('stop', manager);
     case 'restart-service':
-      return runLifecycleVerb('restart', manager);
+      return runLifecycleVerb('restart', manager, input.requireInstalledDefinitionMatch);
     case 'service-status': {
       const status = manager.status();
       if (status.actionError) return failed('status', status);

@@ -253,8 +253,9 @@ describe('memory-spine REST transport against a real daemon', () => {
     expect(match).toBeDefined();
     expect(typeof match?.similarity).toBe('number');
     expect(typeof match?.score).toBe('number');
-    expect(searchRequests).toHaveLength(1);
-    expect(Object.keys(searchRequests[0]!.questions)).toEqual(['match']);
+    const reranks = searchRequests.filter(request => request.context?.battery === 'engine.state.memory-search');
+    expect(reranks).toHaveLength(1);
+    expect(Object.keys(reranks[0]!.questions)).toEqual(['match']);
   });
 
   test('exportBundle()/importBundle() round-trip through the DAEMON store as a no-loss, idempotent bundle', async () => {

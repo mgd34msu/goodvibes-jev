@@ -21,7 +21,7 @@ export interface CommandExecutionPolicy {
 
 export function describeCommandPolicy(commandName: string): CommandExecutionPolicy {
   const root = commandName.replace(/^\//, '').trim().toLowerCase();
-  const confirmation = 'agent_harness mode:"run_command" requires confirm:true and explicitUserRequest for every slash command invocation.';
+  const confirmation = 'Model command effects require current recorded engine admission. Caller confirmation and request fields grant no authority; owner-specific scope and effect checks remain mandatory.';
   if (root === 'work-import') {
     return {
       effect: 'mixed',

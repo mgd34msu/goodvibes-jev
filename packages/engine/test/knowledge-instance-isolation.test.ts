@@ -12,6 +12,9 @@ import {
 import { HomeGraphService, KnowledgeService, KnowledgeStore } from '../sdk/src/platform/knowledge/index.js';
 import type { MemoryAddOptions, MemoryRecord, MemoryStore } from '../sdk/src/platform/state/index.js';
 import { trackDisposables } from './_helpers/disposables.ts';
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.ts';
+
+const readings = useKnowledgeAnswerReadings();
 
 /**
  * A KnowledgeService kicks off initializeSchedules() fire-and-forget in its
@@ -32,6 +35,10 @@ afterEach(() => {
 
 describe('knowledge instance isolation', () => {
   test('keeps regular Knowledge/Wiki, Agent knowledge, and Home Graph on separate stores', async () => {
+    readings.set({
+      scope: [['source', 'GoodVibes Agent Operator Notes', 0.99]],
+      pagePriority: [['LG webOS Smart TV', 0.99], ['Living Room', 0.99]],
+    });
     const root = mkdtempSync(join(tmpdir(), 'goodvibes-knowledge-isolation-'));
     tmpRoots.push(root);
     const configManager = new ConfigManager({ configDir: join(root, 'config') });
@@ -77,12 +84,12 @@ describe('knowledge instance isolation', () => {
     expect(regularStore.storagePath).not.toBe(homeGraphStore.storagePath);
     expect(regularStore.storagePath).not.toBe(agentStore.storagePath);
     expect(agentStore.storagePath).not.toBe(homeGraphStore.storagePath);
-    expect(agentService.querySources({ limit: 100, includeAllSpaces: true }).items.map((source) => source.title)).toContain('GoodVibes Agent Operator Notes');
+    expect((await agentService.querySources({ limit: 100, includeAllSpaces: true })).items.map((source) => source.title)).toContain('GoodVibes Agent Operator Notes');
     expect((await homeGraphService.status({ installationId: 'house-1' })).nodeCount).toBeGreaterThan(0);
 
-    expect(regularService.querySources({ limit: 100, includeAllSpaces: true }).items).toEqual([]);
-    expect(regularService.queryNodes({ limit: 100, includeAllSpaces: true }).items).toEqual([]);
-    expect(regularService.queryIssues({ limit: 100, includeAllSpaces: true }).items).toEqual([]);
+    expect((await regularService.querySources({ limit: 100, includeAllSpaces: true })).items).toEqual([]);
+    expect((await regularService.queryNodes({ limit: 100, includeAllSpaces: true })).items).toEqual([]);
+    expect((await regularService.queryIssues({ limit: 100, includeAllSpaces: true })).items).toEqual([]);
     const regularProjectionTargets = await regularService.listProjectionTargets(100, { includeAllSpaces: true });
     const serializedTargets = JSON.stringify(regularProjectionTargets);
     expect(serializedTargets).not.toContain('LG webOS Smart TV');

@@ -10,6 +10,7 @@ import { mcpScopeArg } from './batteries/mcp-scope-arg.js';
 import { policyBreadth } from './batteries/policy-breadth.js';
 import { ledgerArg } from './batteries/ledger-arg.js';
 import { autonomousDisposition, autonomousRefusal } from './batteries/autonomous.js';
+import { executionVerification } from './batteries/execution-verification.js';
 
 /**
  * Every named decision the gate makes, for calibration:
@@ -30,6 +31,7 @@ registry.register(policyBreadth);
 registry.register(ledgerArg);
 registry.register(autonomousDisposition);
 registry.register(autonomousRefusal);
+registry.register(executionVerification);
 
 import { editTarget } from '../tools/batteries/edit-target.js';
 import { contentRank } from '../tools/batteries/content-rank.js';
@@ -112,3 +114,10 @@ registry.register(researchReferenceParameterRole);
 
 import { walkDirectoryReading } from '../utils/directory-reading.js';
 registry.register(walkDirectoryReading);
+
+import { personalOpsLaneMember, personalOpsSampleField, personalOpsToolLane, personalOpsReceiptStatus, personalOpsResultField } from '../routing/batteries/personal-ops.js';
+registry.register(personalOpsLaneMember);
+registry.register(personalOpsToolLane);
+registry.register(personalOpsSampleField);
+registry.register(personalOpsReceiptStatus);
+registry.register(personalOpsResultField);

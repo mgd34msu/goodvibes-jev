@@ -55,7 +55,7 @@ export function prepareKnowledgeIssueRecord(view: IssueView, input: KnowledgeIss
     };
     return { record, preserve: false };
 }
-export function writeKnowledgeIssueRow(sqlite: SQLiteStore, record: KnowledgeIssueRecord): void {
+export function writeKnowledgeIssueRow(sqlite: Pick<SQLiteStore, 'run'>, record: KnowledgeIssueRecord): void {
     sqlite.run(`
       INSERT OR REPLACE INTO knowledge_issues (
         id, severity, code, message, status, source_id, node_id, metadata, created_at, updated_at

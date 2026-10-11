@@ -21,6 +21,7 @@ const calls = {
   detach: [] as string[],
   close: [] as string[],
   tasksCancel: [] as string[],
+  streams: [] as string[],
 };
 
 const T = 1_700_000_000_000;
@@ -92,7 +93,10 @@ mock.module('../../lib/goodvibes', () => ({
   hostedSessionDetachBeacon: () => {},
   hasStoredTokenSync: () => true,
   sdk: {
-    streams: { open: () => Promise.resolve(() => {}) },
+    streams: { open: (path: string) => {
+      calls.streams.push(path);
+      return Promise.resolve(() => {});
+    } },
     operator: {
       fleet: {
         snapshot: () => Promise.resolve({ capturedAt: T, truncated: false, totalCount: NODES.length, nodes: NODES }),
@@ -392,13 +396,19 @@ describe('details', () => {
     approvals = [];
     const { el, unmount } = render('sessions');
     await waitFor(() => Boolean(rowButton(el, 'Hosted one')));
+    expect(calls.streams).not.toContain('/api/control-plane/events?domains=session,turn,tools');
+    click(rowButton(el, 'Refactor the spine'));
+    await waitFor(() => (el.querySelector('.dv-detail')?.textContent ?? '').includes('hello there'));
+    expect(calls.streams).not.toContain('/api/control-plane/events?domains=session,turn,tools');
     click(rowButton(el, 'Hosted one'));
     await waitFor(() => (el.querySelector('.dv-detail')?.textContent ?? '').includes('from history'));
     expect(calls.attach).toEqual(['h-1']);
+    expect(calls.streams.filter(path => path.includes('domains=session,turn,tools'))).toHaveLength(1);
     click(rowButton(el, 'Hosted two'));
     await waitFor(() => calls.attach.length === 2);
     expect(calls.attach).toEqual(['h-1', 'h-2']);
     expect(calls.detach).toContain('h-1');
+    expect(calls.streams.filter(path => path.includes('domains=session,turn,tools'))).toHaveLength(1);
     unmount();
   });
 

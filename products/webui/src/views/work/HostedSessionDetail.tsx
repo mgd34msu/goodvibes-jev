@@ -50,8 +50,6 @@ import { sentenceCase } from './work-items';
 import { nonEmpty } from '../../lib/non-empty';
 
 export interface HostedAttachment {
-  /** The hosted-session stream is live (the list can poll slowly). */
-  readonly streamConnected: boolean;
   readonly streamError: string | null;
   readonly session: HostedSessionRecord | null;
   readonly history: readonly HostedSessionHistoryMessage[];
@@ -118,7 +116,7 @@ export function useHostedAttachment(
   }, []);
 
   const realtime = useHostedSessionRealtime({
-    enabled: true,
+    enabled: selectedId !== null,
     attachedSessionId: selectedId,
     onStreamFrame,
     onLifecycleUpdate,
@@ -259,7 +257,6 @@ export function useHostedAttachment(
   }
 
   return {
-    streamConnected: realtime.connected,
     streamError: realtime.error,
     session: attachedSession,
     history: attachHistory,

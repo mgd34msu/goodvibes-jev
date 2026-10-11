@@ -1,4 +1,6 @@
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureCatalogData, captureCatalogMethods, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { browserControlPosture } from './agent-harness-browser-control.ts';
 import { delegationDecisionCards } from './agent-harness-delegation-posture.ts';
@@ -155,7 +157,7 @@ function safeToolDefinitions(toolRegistry: ToolRegistry): readonly ReturnType<To
   try {
     return toolRegistry.getToolDefinitions();
   } catch {
-    return [];
+    throw new ToolInputProjectionError('unavailable');
   }
 }
 
@@ -191,7 +193,7 @@ function routeSearchText(route: ExecutionRoute): string {
     route.nextStep,
     ...(route.toolNames ?? []),
     ...(route.anyToolNames ?? []),
-  ].join('\n').toLowerCase();
+  ].join('\n');
 }
 
 function describeCandidate(route: ExecutionRoute, context: CommandContext, toolRegistry: ToolRegistry): Record<string, unknown> {
@@ -284,11 +286,66 @@ function describeRoute(
   };
 }
 
-function matchingRoutes(input: string): readonly ExecutionRoute[] {
-  const normalized = input.toLowerCase().trim();
-  const all = routeDefinitions();
-  if (!normalized) return all;
-  return all.filter((route) => routeSearchText(route).includes(normalized));
+function executionSources(context: CommandContext, toolRegistry: ToolRegistry) {
+  return captureCatalogData({
+    sessionId: context.session.runtime.sessionId,
+    routes: routeDefinitions().map(route => ({ route,
+      full: describeRoute(route, context, toolRegistry, { includeParameters: true }),
+      summary: describeRoute(route, context, toolRegistry),
+    })),
+    tools: safeToolDefinitions(toolRegistry),
+    browserControl: browserControlPosture(context, toolRegistry),
+    delegationCards: delegationDecisionCards(context),
+    sudo: sudoExecutionPosture(context),
+    interactiveRuntime: interactiveRuntimeCapabilitySummary(context),
+    fileRecovery: fileRecoveryCatalogStatus(context),
+    supervision: executionSupervisionSummary(context),
+  });
+}
+
+function captureExecutionBackend(context: CommandContext, toolRegistry: ToolRegistry) {
+  const guards = [captureCatalogMethods(context, ['workspace', 'session', 'clients', 'extensions', 'platform', 'openProcessModal', 'openLiveTail']),
+    captureCatalogMethods(toolRegistry, ['getToolDefinitions']), captureCatalogMethods(context.workspace, ['fileUndoManager', 'shellPaths']),
+    captureCatalogMethods(context.session, ['runtime']), captureCatalogMethods(context.session.runtime, ['sessionId']),
+    captureCatalogMethods(context.extensions, ['mcpRegistry', 'daemonRuntime']), captureCatalogMethods(context.platform, ['readModels'])];
+  if (context.clients) guards.push(captureCatalogMethods(context.clients, ['operator', 'operatorSdk', 'mcpApi']));
+  if (context.workspace.shellPaths) guards.push(captureCatalogMethods(context.workspace.shellPaths, ['workingDirectory', 'homeDirectory']));
+  const retainPublished = (subject: object, key: string) => {
+    guards.push(captureCatalogMethods(subject, [key]));
+    const revision = JSON.stringify(captureCatalogData(Reflect.get(subject, key)));
+    guards.push(() => { if (JSON.stringify(captureCatalogData(Reflect.get(subject, key))) !== revision) throw new ToolInputProjectionError('stale'); });
+  };
+  const readModels: unknown = Reflect.get(context.platform, 'readModels');
+  if (readModels && typeof readModels === 'object') for (const key of ['execution', 'computer', 'browser']) retainPublished(readModels, key);
+  const daemonRuntime: unknown = Reflect.get(context.extensions, 'daemonRuntime');
+  if (daemonRuntime && typeof daemonRuntime === 'object') retainPublished(daemonRuntime, 'interactiveRuntime');
+  const operatorSdk: unknown = context.clients ? Reflect.get(context.clients, 'operatorSdk') : undefined;
+  if (operatorSdk && typeof operatorSdk === 'object') retainPublished(operatorSdk, 'execution');
+  if (context.workspace.fileUndoManager) guards.push(captureCatalogMethods(context.workspace.fileUndoManager, ['peekUndo', 'undoDepth', 'redoDepth']));
+  const mcp = context.clients?.mcpApi ?? context.extensions.mcpRegistry;
+  if (mcp) guards.push(captureCatalogMethods(mcp, ['listServerSecurity']));
+  return () => { for (const guard of guards) guard(); };
+}
+
+function retainExecutionSources(context: CommandContext, toolRegistry: ToolRegistry, sources: ReturnType<typeof executionSources>, options: CatalogRankingOptions, assertBackend: () => void) {
+  const revision = JSON.stringify(sources);
+  const assertCurrent = () => {
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    assertBackend();
+    if (JSON.stringify(executionSources(context, toolRegistry)) !== revision) throw new ToolInputProjectionError('stale');
+    assertBackend();
+  };
+  options.retainCurrent?.(assertCurrent, 'agent.harness.execution-posture.sources');
+  assertCurrent();
+  return assertCurrent;
+}
+
+async function matchingRoutes(sources: ReturnType<typeof executionSources>, input: string, options: CatalogRankingOptions) {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  if (!input) return { matches: sources.routes.map(entry => ({ entry, judgment: undefined })), judgments: [] };
+  return rankHarnessCatalog(sources.routes, input, entry => ({ id: entry.route.id,
+    description: routeSearchText(entry.route), evidence: entry }), 'agent.harness.execution-posture',
+    { ...options, requirePreservedSource: true });
 }
 
 export function executionPostureCatalogStatus(context: CommandContext, toolRegistry: ToolRegistry): Record<string, unknown> {
@@ -303,13 +360,18 @@ export function executionPostureCatalogStatus(context: CommandContext, toolRegis
   };
 }
 
-export function executionPostureSummary(context: CommandContext, toolRegistry: ToolRegistry, args: AgentHarnessExecutionArgs): Record<string, unknown> {
-  const query = readString(args.query).toLowerCase();
+export async function executionPostureSummary(context: CommandContext, toolRegistry: ToolRegistry, args: AgentHarnessExecutionArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const query = readString(args.query);
   const includeParameters = args.includeParameters === true;
-  const routes = matchingRoutes(query).slice(0, readLimit(args.limit, 100));
-  const all = routeDefinitions();
-  const browserControl = browserControlPosture(context, toolRegistry);
-  const delegationCards = delegationDecisionCards(context);
+  const assertBackend = captureExecutionBackend(context, toolRegistry);
+  const sources = executionSources(context, toolRegistry);
+  const assertCurrent = retainExecutionSources(context, toolRegistry, sources, options, assertBackend);
+  const selected = await matchingRoutes(sources, query, { ...options, assertCurrent });
+  assertCurrent();
+  const routes = selected.matches.slice(0, readLimit(args.limit, 100));
+  const browserControl = sources.browserControl;
+  const delegationCards = sources.delegationCards;
   return {
     status: 'available',
     summary: {
@@ -318,13 +380,13 @@ export function executionPostureSummary(context: CommandContext, toolRegistry: T
       browserControl: browserControl.status,
       browserControlSetup: browserControl,
       delegationDecisionCards: delegationCards,
-      sudoPosture: sudoExecutionPosture(context),
-      interactiveRuntime: interactiveRuntimeCapabilitySummary(context),
+      sudoPosture: sources.sudo,
+      interactiveRuntime: sources.interactiveRuntime,
       executionHistory: 'execution action:"history"',
       backgroundProcesses: 'execution action:"processes"',
-      fileRecovery: fileRecoveryCatalogStatus(context),
-      supervision: executionSupervisionSummary(context),
-      registeredExecutionTools: [...registeredToolNames(toolRegistry)].filter((name) => ['read', 'find', 'inspect', 'analyze', 'edit', 'write', 'exec', 'fetch', 'web_search'].includes(name)).sort(),
+      fileRecovery: sources.fileRecovery,
+      supervision: sources.supervision,
+      registeredExecutionTools: sources.tools.map(tool => tool.name).filter((name) => ['read', 'find', 'inspect', 'analyze', 'edit', 'write', 'exec', 'fetch', 'web_search'].includes(name)).sort(),
     },
     decisionRules: [
       'Do not delegate ordinary local implementation, fix, review, or verification work when local tools and permissions are sufficient.',
@@ -333,14 +395,17 @@ export function executionPostureSummary(context: CommandContext, toolRegistry: T
       'Treat PTY, sudo, live output, and browser/desktop command execution as ready only when certified SDK/daemon runtime records publish exact visible routes and receipts.',
       'Use tracked background processes for approved long-running local commands instead of hidden exec background mode.',
     ],
-    routes: routes.map((route) => describeRoute(route, context, toolRegistry, { includeParameters })),
+    routes: routes.map(({ entry, judgment }) => ({ ...(includeParameters ? entry.full : entry.summary), ...(judgment ? { judgment } : {}) })),
+    judgments: selected.judgments,
     returned: routes.length,
-    total: all.length,
+    total: sources.routes.length,
     policy: 'Read-only execution posture. It selects routes and safety boundaries; actual tool calls remain governed by each first-class tool policy.',
   };
 }
 
-export function describeHarnessExecutionRoute(context: CommandContext, toolRegistry: ToolRegistry, args: AgentHarnessExecutionArgs): ExecutionResolution {
+export async function describeHarnessExecutionRoute(context: CommandContext, toolRegistry: ToolRegistry, args: AgentHarnessExecutionArgs, options: CatalogRankingOptions = {}): Promise<ExecutionResolution> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const assertBackend = captureExecutionBackend(context, toolRegistry);
   const lookup = lookupFromArgs(args);
   if (!lookup) {
     return {
@@ -348,19 +413,24 @@ export function describeHarnessExecutionRoute(context: CommandContext, toolRegis
       usage: 'execution action:"route" requires executionRouteId, target, or query. Use execution action:"status" to inspect execution route ids.',
     };
   }
-  const all = routeDefinitions();
+  const sources = executionSources(context, toolRegistry);
+  const assertCurrent = retainExecutionSources(context, toolRegistry, sources, options, assertBackend);
+  const all = sources.routes;
   const normalized = lookup.input.toLowerCase();
-  const exact = all.find((route) => route.id === lookup.input);
-  if (exact) return { status: 'found', route: describeRoute(exact, context, toolRegistry, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'id' } }) };
-  const insensitive = all.find((route) => route.id.toLowerCase() === normalized);
-  if (insensitive) return { status: 'found', route: describeRoute(insensitive, context, toolRegistry, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'case-insensitive-id' } }) };
-  const searched = matchingRoutes(normalized);
-  if (searched.length === 1) return { status: 'found', route: describeRoute(searched[0]!, context, toolRegistry, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'search' } }) };
-  if (searched.length > 1) {
+  const exact = all.find(({ route }) => route.id === lookup.input);
+  if (exact) return { status: 'found', route: { ...exact.full, lookup: { ...lookup, resolvedBy: 'id' } } };
+  const insensitive = all.find(({ route }) => route.id.toLowerCase() === normalized);
+  if (insensitive) return { status: 'found', route: { ...insensitive.full, lookup: { ...lookup, resolvedBy: 'case-insensitive-id' } } };
+  const selected = lookup.source === 'executionRouteId' ? { matches: [], judgments: [] }
+    : await matchingRoutes(sources, lookup.input, { ...options, assertCurrent });
+  assertCurrent();
+  const searched = selected.matches;
+  if (searched.length === 1 && searched[0]!.judgment?.reading.verdict === 'yes' && searched[0]!.judgment.reading.outcome === 'act') return { status: 'found', route: { ...searched[0]!.entry.full, judgment: searched[0]!.judgment, lookup: { ...lookup, resolvedBy: 'search' } } };
+  if (searched.length > 0) {
     return {
       status: 'ambiguous',
       input: lookup.input,
-      candidates: searched.slice(0, 8).map((route) => describeCandidate(route, context, toolRegistry)),
+      candidates: searched.slice(0, 8).map(({ entry, judgment }) => ({ ...describeCandidate(entry.route, context, toolRegistry), judgment })),
     };
   }
   return {

@@ -586,6 +586,7 @@ export default function App() {
           tab={tab}
           onTabChange={setTab}
           subscriptionActive={fleetSubscriptionActive}
+          sessionSubscriptionActive={sessionRealtime.connected}
           streamPaused={Boolean(sessionRealtime.error)}
           onOpenSession={handleOpenSession}
         />

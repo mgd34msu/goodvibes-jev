@@ -1,10 +1,11 @@
 /** Jev reads schedule meaning; code owns quantities, calendars and validation. */
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { askAs, checkEachFixture, choice, decisionHeader, fixtureCheck, readChoice, recordAction, recordReadings, type CallOptions, type ChoiceCriteria, type JudgmentPort, type NamedDecision } from '@goodvibes-jev/judgment/decisions';
+import { askAs, checkEachFixture, choice, decisionHeader, fixtureCheck, readChoice, recordAction, recordReadings, type CallOptions, type ChoiceCriteria, type ChoiceReading, type EntryType, type JudgmentPort, type NamedDecision, type Questions } from '@goodvibes-jev/judgment/decisions';
+import { assertJudgmentInput } from '../gate/judgment-input.js';
 import { getNextAutomationOccurrence, normalizeAtSchedule, normalizeCronSchedule, normalizeEverySchedule, type AutomationScheduleDefinition } from './schedules.js';
 
 const SCHEDULE_READING_NAME = 'automation.schedule';
-const SCHEDULE_READING_HEADER = { name: SCHEDULE_READING_NAME, version: 1, description: 'Read one supported schedule from the complete phrase and source clock/timezone.', accuracyFloor: 0.95 };
+const SCHEDULE_READING_HEADER = { name: SCHEDULE_READING_NAME, version: 2, description: 'Read one supported schedule from the complete phrase and source clock/timezone.', accuracyFloor: 0.95 };
 const now = Date.parse('2026-07-10T23:50:00Z');
 const fixtures = [
   { name: 'weekday morning', phrase: 'every weekday at 9am', expect: 'cron:0 9 * * 1-5' },
@@ -18,6 +19,14 @@ const fixtures = [
   { name: 'named weekday', phrase: 'every monday at 8:30', expect: 'cron:30 8 * * 1' },
   { name: 'source zone rollover', phrase: 'at 9am', timezone: 'Asia/Tokyo', expect: `at:${Date.parse('2026-07-11T00:00:00Z')}` },
   ...['later', 'every 20 or 30 minutes', 'do not schedule it daily', 'at 25:00', 'at 13pm', 'February 30 at noon', 'at 9am Tokyo time', 'every thirty-seven minutes'].map(phrase => ({ name: phrase, phrase, expect: 'unknown' })),
+  { name: 'exact ISO timestamp', phrase: 'At 2026-11-12T14:30:00Z remind me to check the deploy.', expect: `at:${Date.parse('2026-11-12T14:30:00Z')}` },
+  { name: 'literal cron', phrase: 'Run the audit with cron 0 9 * * 1-5.', expect: 'cron:0 9 * * 1-5' },
+  { name: 'unsupported seconds cron', phrase: 'Run the audit with cron: 0 0 9 * * 1-5.', expect: 'unknown' },
+  { name: 'requested timestamp after quoted example', phrase: 'The example says "at 2026-11-11T09:00:00Z". Remind me at 2026-11-12T14:30:00Z.', expect: `at:${Date.parse('2026-11-12T14:30:00Z')}` },
+  { name: 'requested cron after quoted example', phrase: 'The example uses "cron 0 8 * * *". Run the audit with cron 0 9 * * 1-5.', expect: 'cron:0 9 * * 1-5' },
+  { name: 'impossible ISO calendar date', phrase: 'Remind me at 2026-02-30T14:30:00Z.', expect: 'unknown' },
+  { name: 'negated timestamp', phrase: 'Do not remind me at 2026-11-12T14:30:00Z.', expect: 'unknown' },
+  { name: 'unsupported interval exception', phrase: 'every 30 minutes except on weekends', expect: 'unknown' },
 ];
 
 const BAND = { actAt: 0.95, confirmAt: 0.95 };
@@ -39,16 +48,36 @@ type ScheduleConclusion =
 export type ScheduleReading = ScheduleConclusion & { readonly confidence: number | null };
 
 /** Lexical candidates only. Jev, never token position or an English regex, assigns their role. */
-function quantityCandidates(phrase: string) {
-  const candidates = [{ id: 'one', value: 1, literal: null as string | null, start: null as number | null, end: null as number | null }];
+type QuantityCandidate = { readonly id: string; readonly value: number | null; readonly literal: string | null; readonly start: number | null; readonly end: number | null };
+function quantityCandidates(phrase: string): QuantityCandidate[] {
+  const candidates: QuantityCandidate[] = [{ id: 'one', value: 1, literal: null, start: null, end: null }];
   for (const match of phrase.matchAll(/[+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g)) {
-    candidates.push({ id: `literal_${candidates.length}`, value: Number(match[0]), literal: match[0], start: match.index, end: match.index + match[0].length });
+    const value = Number(match[0]);
+    candidates.push({ id: `literal_${candidates.length}`, value: Number.isFinite(value) ? value : null, literal: match[0], start: match.index, end: match.index + match[0].length });
   }
   return candidates;
 }
 
+function formatCandidates(phrase: string, pattern: RegExp) {
+  const matches = [...phrase.matchAll(pattern)];
+  return matches.map((match, index) => ({ id: matches.length === 1 ? 'stated' : `candidate_${index + 1}`, literal: match[0], start: match.index, end: match.index + match[0].length }));
+}
+
+/** Date.parse alone rolls impossible calendar dates into another month. */
+function exactTimestamp(literal: string): number {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{3})?)?(Z|[+-]\d{2}:\d{2})$/.exec(literal);
+  if (!match) throw new RangeError('Invalid timestamp format');
+  const year = Number(match[1]), month = Number(match[2]), day = Number(match[3]);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  if (days === undefined || day < 1 || day > days || Number(match[4]) > 23 || Number(match[5]) > 59 || Number(match[6] ?? '0') > 59) throw new RangeError('Invalid timestamp parts');
+  const at = Date.parse(literal);
+  if (!Number.isSafeInteger(at) || at <= 0 || !Number.isFinite(new Date(at).getTime())) throw new RangeError('Invalid timestamp');
+  return at;
+}
+
 /**
- * Same closed-parts pattern as the foundation date reader, in one batched call.
+ * Read the requested representation and family, then only their relevant parts.
  * All supported historical families are retained; unsupported free-form dates,
  * compound intervals and unoffered word amounts stay unknown, never rounded.
  * The port alone owns transport retry. Failure/cancellation is operational, not
@@ -67,64 +96,113 @@ export const scheduleReading: NaturalLanguageScheduleDecision = {
     if (!source.phrase.trim() || !Number.isSafeInteger(source.now) || source.now <= 0 || !Number.isFinite(new Date(source.now).getTime())) return { kind: 'unknown', reason: 'invalid', confidence: null };
     // Validate the source zone before any semantic request; no guessed UTC fallback.
     new Intl.DateTimeFormat('en-US', { timeZone: source.timezone }).format(source.now);
+    assertJudgmentInput({ phrase: source.phrase, timezone: source.timezone });
     const quantities = quantityCandidates(source.phrase);
+    const amounts = Object.fromEntries(quantities.map(candidate => [candidate.id === 'one' ? 'singular' : quantities.length === 2 ? 'stated' : candidate.id, candidate]));
+    const timestamps = formatCandidates(source.phrase, /(?<![\w])\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{3})?)?(?:Z|[+-]\d{2}:\d{2})(?![\w])/g);
+    const crons = formatCandidates(source.phrase, /(?<![\w*\/?,+-])(?:[\d*\/?,+-]+[ \t]+){4,5}[\d*\/?,+-]+(?![\w*\/?,+-])/g);
     const questions = {
-      shape: choice('Which single schedule does the entire phrase request? Preserve the distinction between a fixed interval (every day) and calendar recurrence (daily). Reject multiple schedules, negation, contradictions and unsupported dates; do not ignore any qualifier.', {
-        interval: 'A fixed interval: every N seconds/minutes/hours/days, or every singular unit (N=1).',
-        delay: 'Once after N seconds/minutes/hours/days from the source clock.',
-        hourly: 'Hourly, on the hour.',
-        daily: 'Every calendar day at a time (midnight for bare daily).',
-        weekly: 'Every calendar week on Sunday at a time (midnight for bare weekly).',
-        weekdays: 'Every Monday through Friday at a time (midnight if unstated).',
-        weekends: 'Every Saturday and Sunday at a time (midnight if unstated).',
-        weekday: 'Every occurrence of one named weekday at a time (midnight if unstated).',
-        next_time: 'Once at the next occurrence of a stated time of day, today or a later day if already past.',
+      format: choice('Which representation does the complete request use for its requested schedule? Classify the requested timing, not a quoted example. Negated, contradictory or unsupported requested timing requires unknown.', {
+        natural: 'Timing stated in ordinary words or a time of day, with no requested ISO timestamp or literal cron field expression.',
+        timestamp: 'One explicitly zoned ISO timestamp is requested as the execution time.',
+        cron: 'One literal cron field expression is requested as the recurrence.',
         unknown: UNKNOWN,
       }),
-      complete: choice('Can the complete phrase be represented exactly by one offered shape and its offered quantities, units and time parts in source.timezone? All qualifiers must be satisfied. Invalid times (such as 25:00 or 13pm), conflicting alternatives, negation, other timezones, unsupported dates/amounts and uncertain intent require unknown. No missing part may be invented except the documented midnight/Sunday/singular-unit defaults.', { yes: 'Exactly representable.', unknown: UNKNOWN }),
-      quantity: choice('For interval or delay, which exact quantity is requested? one means an explicitly singular unit or one. Other candidates carry literal source offsets; select only the literal that states the requested amount. Do not select a different number from elsewhere in the phrase. If no exact offered quantity represents it, choose unknown.', {
-        ...Object.fromEntries(quantities.map(q => [q.id, q.literal === null ? 'Exactly one unit (singular unit or one).' : `${q.literal}, at UTF-16 offsets [${q.start}, ${q.end}). Numerical value ${q.value}.`])), unknown: UNKNOWN,
+      shape: choice('Which one schedule does this complete natural-language request ask for? Use the documented elapsed-versus-calendar distinction: every hour/day means interval; bare hourly/daily means calendar recurrence. A lone time means its next occurrence. Choose unknown if any requested timing condition is unsupported, negated, contradictory or only quoted.', {
+        interval: 'Fixed elapsed duration every N seconds/minutes/hours/days, including every hour/day as exactly one unit.',
+        delay: 'Once in N seconds/minutes/hours/days from now.',
+        hourly: 'Bare hourly, on the hour. Every hour belongs to interval.',
+        daily: 'Calendar recurrence daily at one time; bare daily defaults to midnight.',
+        weekly: 'Bare weekly defaults to Sunday at midnight. A specified named weekday belongs to weekday.',
+        weekdays: 'Recurrence on the combined Monday-through-Friday set at one time; midnight if unstated.',
+        weekends: 'Recurrence on the combined Saturday-and-Sunday set at one time; midnight if unstated.',
+        weekday: 'Recurrence on one explicitly named weekday at one time; midnight if unstated.',
+        next_time: 'Once at the next occurrence of one stated time of day, in the source timezone.',
+        unknown: 'No single supported schedule, including negation, competing alternatives, impossible time, calendar date, timezone override or unrepresentable conditions.',
+      }),
+      quantity: choice('Which durationAmounts candidate equals the requested duration amount in phrase? Use singular only if the request omits a number for a singular unit. Select the exact written number otherwise. Ignore quoted examples and refuse competing alternatives or unsupported word amounts.', {
+        ...Object.fromEntries(Object.keys(amounts).map(id => [id, id === 'singular' ? 'The implicit amount for a singular duration unit with no written amount.' : `The written numerical amount in durationAmounts.${id}.`])), unknown: UNKNOWN,
       }),
       unit: choice('For interval or delay, which fixed duration unit is requested? A day is exactly 24 hours, not a wall-clock recurrence.', { second: 'seconds', minute: 'minutes', hour: 'hours', day: 'days', unknown: UNKNOWN }),
-      hour: choice('For calendar recurrence or next_time, what is the exact 24-hour hour? Convert a stated am/pm time. Midnight is the documented default only for an unstated recurring time. Invalid or ambiguous time requires unknown.', { ...range(24), unknown: UNKNOWN }),
-      minute: choice('For calendar recurrence or next_time, what is the exact minute (0 through 59)? A stated whole hour means minute zero; midnight is the documented recurring default. Invalid or ambiguous time requires unknown.', { ...range(60), unknown: UNKNOWN }),
+      hour: choice('What is the schedule hour for phrase, expressed in 24-hour time? Convert am/pm when stated. Clock notation without am/pm uses the 24-hour clock, including an unpadded hour. If no time is stated for a recurring shape, use calendarDefaults.hour. A one-shot next_time requires an actual stated time. Impossible or ambiguous time requires unknown.', { ...range(24), unknown: UNKNOWN }),
+      minute: choice('What is the schedule minute for phrase? A stated whole hour means minute zero. If no time is stated for a recurring shape, use calendarDefaults.minute. A one-shot next_time requires an actual stated time. Impossible or ambiguous time requires unknown.', { ...range(60), unknown: UNKNOWN }),
       weekday: choice('For the weekday shape, which single weekday is requested?', { '0': 'Sunday', '1': 'Monday', '2': 'Tuesday', '3': 'Wednesday', '4': 'Thursday', '5': 'Friday', '6': 'Saturday', unknown: UNKNOWN }),
+      timestamp: choice('Which timestampLiterals entry states the requested execution time in phrase? A quoted example or negated timestamp is not the requested time. Unknown means no single offered timestamp is requested.', { ...Object.fromEntries(timestamps.map(candidate => [candidate.id, `timestampLiterals.${candidate.id}`])), unknown: UNKNOWN }),
+      cron: choice('Which cronLiterals entry states the requested expression in phrase? A quoted example or negated expression is not requested. Unknown means no single offered expression is requested.', { ...Object.fromEntries(crons.map(candidate => [candidate.id, `cronLiterals.${candidate.id}`])), unknown: UNKNOWN }),
     };
     const port = options.port ?? judgmentPort(SCHEDULE_READING_NAME);
-    const result = await askAs(port, SCHEDULE_READING_HEADER, 'date-parts', { source: { ...source, nowIso: new Date(source.now).toISOString(), localClock: new Intl.DateTimeFormat('en-CA', { timeZone: source.timezone, dateStyle: 'full', timeStyle: 'long' }).format(source.now) }, quantityCandidates: quantities }, questions, { ...options, site: options.site ?? SCHEDULE_READING_NAME });
-    options.signal?.throwIfAborted();
-    options.beforeAttempt?.();
-    const parts = Object.fromEntries(Object.entries(result.answers).map(([key, answer]) => [key, readChoice<ChoiceCriteria>(answer, BAND)]));
+    const callOptions = { ...options, site: options.site ?? SCHEDULE_READING_NAME };
+    const parts: Record<string, ChoiceReading> = {};
+    const used: string[] = [];
+    let finalDecisionId: string | undefined;
+    const readPhase = async (phase: string, state: EntryType, selected: Questions) => {
+      const result = await askAs(port, SCHEDULE_READING_HEADER, 'date-parts', state, selected, callOptions);
+      options.signal?.throwIfAborted();
+      options.beforeAttempt?.();
+      used.push(...Object.keys(selected));
+      for (const [key, answer] of Object.entries(result.answers)) {
+        if (answer.type !== 'choice') throw new TypeError('Unexpected schedule reading type');
+        parts[key] = readChoice<ChoiceCriteria>(answer, BAND);
+      }
+      recordReadings(port, result, { phase, parts });
+      recordAction(port, result.decisionId, `read schedule ${phase}`);
+      finalDecisionId = result.decisionId;
+    };
     const finish = (conclusion: ScheduleConclusion): ScheduleReading => {
       const confidence = Math.min(...used.map(key => parts[key]?.confidence ?? 0));
       const reading = { ...conclusion, confidence };
-      recordReadings(port, result, { parts, reading });
-      recordAction(port, result.decisionId, reading.kind === 'ready' ? `schedule:${reading.schedule.kind}` : `unknown:${reading.reason}`);
+      recordReadings(port, { decisionId: finalDecisionId }, { parts, reading });
+      recordAction(port, finalDecisionId, reading.kind === 'ready' ? `schedule:${reading.schedule.kind}` : `unknown:${reading.reason}`);
       return reading;
     };
-    const used = ['shape', 'complete'];
-    const shape = parts.shape?.choice;
-    if (shape === 'interval' || shape === 'delay') used.push('quantity', 'unit');
-    else if (shape !== 'hourly') used.push('hour', 'minute');
-    if (shape === 'weekday') used.push('weekday');
-    if (used.some(key => !parts[key] || parts[key]!.outcome !== 'act')) return finish({ kind: 'unknown', reason: 'unqualified' });
-    if (used.some(key => parts[key]!.choice === 'unknown') || parts.complete!.choice !== 'yes') return finish({ kind: 'unknown', reason: 'unsupported' });
+    const unsettled = () => used.some(key => parts[key]?.outcome !== 'act');
+    const unsupported = () => used.some(key => parts[key]?.choice === 'unknown');
+    await readPhase('representation', source.phrase, { format: questions.format });
+    if (unsettled()) return finish({ kind: 'unknown', reason: 'unqualified' });
+    if (unsupported()) return finish({ kind: 'unknown', reason: 'unsupported' });
+    let shape = parts.format?.choice;
+    if (shape === 'natural') {
+      await readPhase('shape', { phrase: source.phrase, representation: 'natural' }, { shape: questions.shape });
+      if (unsettled()) return finish({ kind: 'unknown', reason: 'unqualified' });
+      if (unsupported()) return finish({ kind: 'unknown', reason: 'unsupported' });
+      shape = parts.shape?.choice;
+    }
+    if (shape === undefined) return finish({ kind: 'unknown', reason: 'unsupported' });
+    const relevant: (keyof typeof questions)[] = shape === 'interval' || shape === 'delay' ? ['quantity', 'unit']
+      : shape === 'timestamp' ? ['timestamp'] : shape === 'cron' ? ['cron'] : shape === 'hourly' ? [] : ['hour', 'minute'];
+    if (shape === 'weekday') relevant.push('weekday');
+    const state = { phrase: source.phrase, timezone: source.timezone, shape };
+    const relevantState = shape === 'interval' || shape === 'delay' ? { ...state, durationAmounts: Object.fromEntries(Object.entries(amounts).map(([id, candidate]) => [id, candidate.value])), quantityCandidates: quantities }
+      : shape === 'timestamp' ? { ...state, timestampLiterals: Object.fromEntries(timestamps.map(candidate => [candidate.id, candidate.literal])) }
+      : shape === 'cron' ? { ...state, cronLiterals: Object.fromEntries(crons.map(candidate => [candidate.id, candidate.literal])) }
+      : { ...state, ...(shape === 'next_time' ? {} : { calendarDefaults: { hour: 0, minute: 0 } }) };
+    if (relevant.length) await readPhase('parts', relevantState, Object.fromEntries(relevant.map(key => [key, questions[key]])));
+    if (unsettled()) return finish({ kind: 'unknown', reason: 'unqualified' });
+    if (unsupported()) return finish({ kind: 'unknown', reason: 'unsupported' });
     try {
       let schedule: AutomationScheduleDefinition;
       if (shape === 'interval' || shape === 'delay') {
-        const amount = quantities.find(q => q.id === parts.quantity!.choice)?.value;
-        const unit = UNITS[parts.unit!.choice];
+        const amount = amounts[parts.quantity?.choice ?? '']?.value;
+        const unit = UNITS[parts.unit?.choice ?? ''];
         const duration = (amount ?? NaN) * (unit ?? NaN);
         if (!Number.isSafeInteger(duration) || duration <= 0) throw new RangeError('Invalid duration');
         const at = source.now + duration;
         if (shape === 'delay' && (!Number.isSafeInteger(at) || !Number.isFinite(new Date(at).getTime()))) throw new RangeError('Invalid timestamp');
         schedule = shape === 'interval' ? normalizeEverySchedule(duration) : normalizeAtSchedule(at);
+      } else if (shape === 'timestamp') {
+        const candidate = timestamps.find(candidate => candidate.id === parts.timestamp?.choice);
+        if (!candidate) throw new RangeError('Missing timestamp');
+        schedule = normalizeAtSchedule(exactTimestamp(candidate.literal));
+      } else if (shape === 'cron') {
+        const candidate = crons.find(candidate => candidate.id === parts.cron?.choice);
+        if (!candidate) throw new RangeError('Missing cron');
+        schedule = normalizeCronSchedule(candidate.literal.trim().replace(/[ \t]+/g, ' '), source.timezone, source.staggerMs);
       } else {
         const hour = Number(parts.hour?.choice); const minute = Number(parts.minute?.choice);
         if (shape !== 'hourly' && (!Number.isInteger(hour) || hour < 0 || hour > 23 || !Number.isInteger(minute) || minute < 0 || minute > 59)) throw new RangeError('Invalid time');
-        const dow = shape === 'weekly' ? '0' : shape === 'weekdays' ? '1-5' : shape === 'weekends' ? '0,6' : shape === 'weekday' ? parts.weekday!.choice : '*';
-        if (shape === 'weekday' && !['0', '1', '2', '3', '4', '5', '6'].includes(dow)) throw new RangeError('Invalid weekday');
-        if (!['hourly', 'daily', 'weekly', 'weekdays', 'weekends', 'weekday', 'next_time'].includes(shape ?? '')) throw new RangeError('Invalid shape');
+        const dow = shape === 'weekly' ? '0' : shape === 'weekdays' ? '1-5' : shape === 'weekends' ? '0,6' : shape === 'weekday' ? parts.weekday?.choice : '*';
+        if (dow === undefined || shape === 'weekday' && !['0', '1', '2', '3', '4', '5', '6'].includes(dow)) throw new RangeError('Invalid weekday');
+        if (!['hourly', 'daily', 'weekly', 'weekdays', 'weekends', 'weekday', 'next_time'].includes(shape)) throw new RangeError('Invalid shape');
         const cron = normalizeCronSchedule(shape === 'hourly' ? '0 * * * *' : `${minute} ${hour} * * ${dow}`, source.timezone, shape === 'next_time' ? 0 : source.staggerMs);
         schedule = shape === 'next_time' ? normalizeAtSchedule(getNextAutomationOccurrence(cron, source.now)!) : cron;
       }

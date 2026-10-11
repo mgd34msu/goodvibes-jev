@@ -1,4 +1,6 @@
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
+import { requireConfirmedAction } from './agent-harness-tool-utils.ts';
 import { AgentNoteRegistry } from '../agent/note-registry.ts';
 import { AgentPersonaRegistry } from '../agent/persona-registry.ts';
 import { AgentRoutineRegistry } from '../agent/routine-registry.ts';
@@ -84,12 +86,6 @@ function describeEditor(editor: AgentWorkspaceLocalEditor): Record<string, unkno
 function readRecordId(args: AgentHarnessLocalOperationArgs): string {
   const fields = readFieldMap(args.fields);
   return readString(args.recordId ?? args.id ?? fields.recordId ?? fields.id);
-}
-
-function requireConfirmed(args: AgentHarnessLocalOperationArgs, label: string): string | null {
-  if (!readString(args.explicitUserRequest)) return `${label} requires explicitUserRequest with the user's exact request or a short faithful summary.`;
-  if (args.confirm !== true) return `${label} requires confirm:true after an explicit user request.`;
-  return null;
 }
 
 function fieldReader(editor: AgentWorkspaceLocalEditor, fields: Readonly<Record<string, string>>): (id: string) => string {
@@ -186,13 +182,13 @@ function localRegistryArgsForTarget(target: RegistryTarget, args: AgentHarnessLo
     ...base,
     ...edit,
     ...(target.action === 'stale' && fields.reason ? { reason: fields.reason } : {}),
-    ...(target.action === 'delete' ? { confirm: args.confirm, explicitUserRequest: readString(args.explicitUserRequest) } : {}),
+    ...(readString(args.explicitUserRequest) ? { explicitUserRequest: readString(args.explicitUserRequest) } : {}),
   };
 }
 
-async function executeTool(toolRegistry: ToolRegistry, name: string, toolArgs: Record<string, unknown>): Promise<HarnessResult> {
+async function executeTool(toolRegistry: ToolRegistry, name: string, toolArgs: Record<string, unknown>, options: Parameters<Tool['execute']>[1]): Promise<HarnessResult> {
   if (!toolRegistry.has(name)) return output({ status: 'model_tool_required', modelExecution: { tool: name, args: toolArgs } });
-  const result = await toolRegistry.execute(`agent-harness-${name}-${Date.now()}`, name, toolArgs) as { readonly success: boolean; readonly output?: string; readonly error?: string };
+  const result = await toolRegistry.executeNested(`agent-harness-${name}-${Date.now()}`, name, toolArgs, options) as { readonly success: boolean; readonly output?: string; readonly error?: string };
   if (!result.success) return error(result.error ?? `${name} failed.`);
   return output({ status: 'executed_model_tool', tool: name, output: result.output ?? '' });
 }
@@ -209,7 +205,8 @@ export function describeLocalWorkspaceModelExecution(action: AgentWorkspaceActio
 export async function runLocalWorkspaceEditorAction(
   deps: AgentHarnessLocalOperationDeps,
   editor: AgentWorkspaceLocalEditor,
-  args: AgentHarnessLocalOperationArgs,
+  args: Record<string, unknown>,
+  options?: Parameters<Tool['execute']>[1],
 ): Promise<HarnessResult> {
   const fields = readFieldMap(args.fields);
   const missing = missingRequiredFields(editor, fields);
@@ -220,7 +217,7 @@ export async function runLocalWorkspaceEditorAction(
       editor: describeEditor(editor),
     });
   }
-  const confirmationError = requireConfirmed(args, 'Workspace local registry editor action');
+  const confirmationError = requireConfirmedAction(args, options, 'Workspace local registry editor action');
   if (confirmationError) return error(confirmationError);
   if (
     editor.kind !== 'memory'
@@ -238,13 +235,15 @@ export async function runLocalWorkspaceEditorAction(
     deps.toolRegistry,
     'agent_local_registry',
     localRegistryArgsFromEditor(editor, fields, editor.recordId),
+    options,
   );
 }
 
 export async function runLocalWorkspaceAction(
   deps: AgentHarnessLocalOperationDeps,
   action: AgentWorkspaceAction,
-  args: AgentHarnessLocalOperationArgs,
+  args: Record<string, unknown>,
+  options?: Parameters<Tool['execute']>[1],
 ): Promise<HarnessResult> {
   if (action.kind === 'local-selection') return output({ status: 'local_selection', action: action.id, modelExecution: describeLocalWorkspaceModelExecution(action) });
   const operation = action.localOperation;
@@ -253,16 +252,16 @@ export async function runLocalWorkspaceAction(
   const recordId = readRecordId(args);
   if (target?.requiresRecordId && !recordId) return output({ status: 'needs_record_id', action: action.id, modelExecution: describeLocalWorkspaceModelExecution(action) });
   const editor = recordId ? editorForOperation(deps.commandContext, operation, recordId) : null;
-  if (editor && !hasExecutionFields(args) && args.confirm !== true) return output({ status: 'editor', action: action.id, editor: describeEditor(editor), modelExecution: describeLocalWorkspaceModelExecution(action) });
-  const confirmationError = requireConfirmed(args, 'Workspace local registry action');
+  if (editor && !hasExecutionFields(args)) return output({ status: 'editor', action: action.id, editor: describeEditor(editor), modelExecution: describeLocalWorkspaceModelExecution(action) });
+  const confirmationError = requireConfirmedAction(args, options, 'Workspace local registry action');
   if (confirmationError) return error(confirmationError);
   if (editor) {
     const fields = readFieldMap(args.fields);
     const missing = missingRequiredFields(editor, fields);
     if (missing.length > 0) return output({ status: 'missing_required_fields', missing, action: action.id, editor: describeEditor(editor) });
-    if (editor.kind === 'knowledge-url') return executeTool(deps.toolRegistry, 'agent_knowledge_ingest', { sourceKind: 'url', url: fieldReader(editor, fields)('url'), tags: splitList(fieldReader(editor, fields)('tags')), folderPath: fieldReader(editor, fields)('folder'), confirm: args.confirm, explicitUserRequest: readString(args.explicitUserRequest) });
-    return executeTool(deps.toolRegistry, 'agent_local_registry', localRegistryArgsFromEditor(editor, fields, recordId));
+    if (editor.kind === 'knowledge-url') return executeTool(deps.toolRegistry, 'agent_knowledge_ingest', { sourceKind: 'url', url: fieldReader(editor, fields)('url'), tags: splitList(fieldReader(editor, fields)('tags')), folderPath: fieldReader(editor, fields)('folder'), ...(readString(args.explicitUserRequest) ? { explicitUserRequest: readString(args.explicitUserRequest) } : {}) }, options);
+    return executeTool(deps.toolRegistry, 'agent_local_registry', localRegistryArgsFromEditor(editor, fields, recordId), options);
   }
   if (!target) return output({ status: 'local_registry_action', action: action.id, modelExecution: describeLocalWorkspaceModelExecution(action) });
-  return executeTool(deps.toolRegistry, 'agent_local_registry', localRegistryArgsForTarget(target, args, recordId));
+  return executeTool(deps.toolRegistry, 'agent_local_registry', localRegistryArgsForTarget(target, args, recordId), options);
 }

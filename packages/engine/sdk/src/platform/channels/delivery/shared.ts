@@ -1,4 +1,4 @@
-import { assertDeliveryCurrent, type DeliveryLifetime } from '../../utils/delivery-lifetime.js';
+import { assertDeliveryCurrent, runDeliveryPublication, type DeliveryLifetime } from '../../utils/delivery-lifetime.js';
 import { ArtifactStore, type ArtifactAttachment, type ArtifactReference } from '../../artifacts/index.js';
 import { ConfigManager } from '../../config/manager.js';
 import type { ConfigKey } from '../../config/schema-types.js';
@@ -23,10 +23,10 @@ export function deliveryFetch(
   diagnosticMode: 'default' | 'opaque-url' = 'default',
 ): Promise<Response> {
   assertDeliveryCurrent(lifetime);
-  return instrumentedFetch(url, {
+  return runDeliveryPublication(lifetime, () => instrumentedFetch(url, {
     ...init,
     ...(lifetime.signal ? { signal: init?.signal ? AbortSignal.any([init.signal, lifetime.signal]) : lifetime.signal } : {}),
-  }, diagnosticMode);
+  }, diagnosticMode));
 }
 
 export function resolveChannelDeliverySurfaceKind(
@@ -167,7 +167,7 @@ export async function resolveMSTeamsAccessToken(
     client_secret: appPassword,
     scope: 'https://api.botframework.com/.default',
   });
-  const response = await deliveryFetch(lifetime, `https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/oauth2/v2.0/token`, {
+  const response = await deliveryFetch({ signal: lifetime.signal, assertCurrent: lifetime.assertCurrent }, `https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/oauth2/v2.0/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),

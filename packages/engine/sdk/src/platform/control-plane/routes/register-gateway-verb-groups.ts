@@ -455,6 +455,7 @@ export function registerGatewayVerbGroups(catalog: GatewayMethodCatalog, deps: G
   // verb group in this registrar down with it.
   if (deps.configManager?.attachProfileFallback !== undefined) {
     const ownerProfile = composeOwnerProfile(catalog, {
+      nativeMutationHost: deps.ciAutonomousHost?.(),
       configManager: deps.configManager,
       postalProviders: deps.providerRegistry,
       occasions: deps,

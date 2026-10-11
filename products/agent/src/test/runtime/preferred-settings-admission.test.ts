@@ -4,7 +4,9 @@ import type { UserPermissionRuleStore } from '@goodvibes-jev/engine/sdk/platform
 import { buildGoodVibesSecretKey } from '../../config/secret-config.ts';
 import { captureRemoteSettingsPrecondition } from '@goodvibes-jev/engine/sdk/platform/config';
 import { createDaemonConfigClient } from '@goodvibes-jev/engine/sdk/platform/runtime/client';
+import { createAgentDaemonVerbCaller } from '../../runtime/client/daemon-verbs.ts';
 import { registerAgentSettingsTool } from '../../tools/agent-settings-tool.ts';
+import { registerAgentSettingsImportTool } from '../../tools/agent-settings-import-tool.ts';
 import { registerAgentHarnessTool } from '../../tools/agent-harness-tool.ts';
 import { AgentConfigManager, AGENT_NOTIFICATIONS_METADATA_ONLY_KEY } from '../../config/host-settings.ts';
 import { agentDaemonConfigClient, installAgentDaemonConfigClient } from '../../config/daemon-config-routing.ts';
@@ -109,7 +111,7 @@ function recordedPort(): JudgmentPort {
   return withDecisionLog(observed, log);
 }
 
-async function fixture(remote?: 'normal' | 'lost-response', readOnly = false) {
+async function fixture(remote?: 'normal' | 'lost-response', readOnly = false, connected = false) {
   const root = makeProjectTempDir('agent-read-settings-admission');
   const workspace = join(root, 'workspace');
   const home = join(root, 'home');
@@ -121,6 +123,11 @@ async function fixture(remote?: 'normal' | 'lost-response', readOnly = false) {
   // Seed the synthetic starting state before the real client floor arms its
   // file watcher. No admission-generation exemption or watcher disable is used.
   if (!readOnly) { configManager.set('permissions.mode', 'prompt'); configManager.set('display.theme', 'vaporwave'); }
+  if (connected && serving && !readOnly) {
+    const endpoint = new URL(serving.baseUrl);
+    configManager.set('controlPlane.host', endpoint.hostname); configManager.set('controlPlane.port', Number(endpoint.port));
+    configManager.set('daemon.connectedHost.enabled', true);
+  }
   const runtime = createRuntimeServices({
     modelDiscovery: 'skip', runtimeBus: new RuntimeEventBus(), runtimeStore: createRuntimeStore(),
     configManager,
@@ -136,9 +143,11 @@ async function fixture(remote?: 'normal' | 'lost-response', readOnly = false) {
   const registry = composeAgentToolRegistry({ services: runtime, configManager: runtime.configManager,
     homeDirectory: home, resolveSessionId: () => 'adoption-session', getLastUserMessage: () => source.goal }).toolRegistry;
   const commands = {} as CommandRegistry;
-  const context = { platform: { configManager: runtime.configManager, secretsManager: runtime.secretsManager } } as unknown as CommandContext;
+  const context = { workspace: { shellPaths: runtime.shellPaths }, platform: { configManager: runtime.configManager,
+    secretsManager: runtime.secretsManager, subscriptionManager: runtime.subscriptionManager } } as unknown as CommandContext;
   registerAgentHarnessTool(registry, commands, context);
   registerAgentSettingsTool(registry, commands, context);
+  registerAgentSettingsImportTool(registry, context);
   const manager = composeAgentPermissionManager(runtime);
   const deps: ToolExecutionDeps = { toolRegistry: registry, permissionManager: manager, autonomousSource: sourceOf,
     hookDispatcher: null, runtimeBus: null, sessionId: 'adoption-session',
@@ -155,7 +164,7 @@ async function fixture(remote?: 'normal' | 'lost-response', readOnly = false) {
     const owner = manager.autonomousPreparation(id, sourceOf);
     return registry.prepareCall(id, name, args, { port: owner.port, assertCurrent: owner.assertCurrent });
   };
-  return { runtime, registry, manager, deps, run, write, workspace, home, context, source, sourceOf, prepare, serving, prompts: () => prompts };
+  return { root, runtime, registry, manager, deps, run, write, workspace, home, context, source, sourceOf, prepare, serving, prompts: () => prompts };
 }
 
 async function remoteOwner(root: string, home: string, mode: 'normal' | 'lost-response') {
@@ -352,11 +361,16 @@ test.each(['settings', 'agent_harness'])('%s honors the write-class tool deny ev
   expect((await f.run(name, mutation(name))).success).toBe(false); expect(f.runtime.configManager.get('display.theme')).toBe('vaporwave');
 });
 
-test('preferred settings rejects a read-only physical ConfigManager before any judgment', async () => {
-  const f = await fixture(undefined, true); const before = f.runtime.configManager.get('display.theme');
-  await expect(f.run('settings', mutation('settings'))).rejects.toThrow();
-  expect(requests).toHaveLength(0); expect(f.runtime.configManager.get('display.theme')).toBe(before);
-});
+for (const name of ['settings', 'agent_harness']) {
+  for (const operation of ['set', 'reset']) {
+    test(`${name} ${operation} rejects a read-only physical ConfigManager before any judgment`, async () => {
+      const f = await fixture(undefined, true); const before = f.runtime.configManager.get('display.theme');
+      await expect(f.run(name, mutation(name, operation))).rejects.toThrow();
+      expect(requests).toHaveLength(0); expect(f.runtime.configManager.get('display.theme')).toBe(before);
+      expect(f.prompts()).toBe(0);
+    });
+  }
+}
 
 test.each(['copied', 'different-manager'] as const)('preferred settings rejects %s authentic admission substitution', async kind => {
   const f = await fixture(); const prepared = await f.prepare('preferred-bound-owner', 'settings', mutation('settings'));
@@ -439,4 +453,144 @@ test('semantic settings cannot commit after the live request changes during its 
   const result = await f.run('settings', { action: 'set', target: 'Make the interface less glaring', value: 'nord' }).catch(() => undefined);
   expect(changed).toBe(true); expect(result?.success).not.toBe(true);
   expect(f.runtime.configManager.get('display.theme')).toBe('vaporwave');
+});
+
+function importSources(f: Awaited<ReturnType<typeof fixture>>, credentials = false, subscriptions = false) {
+  const path = f.runtime.shellPaths.resolveUserPath('tui', 'settings.json');
+  mkdirSync(join(path, '..'), { recursive: true });
+  writeFileSync(path, JSON.stringify({ display: { theme: 'nord' }, behavior: { saveHistory: false },
+    ...(credentials ? { surfaces: { slack: { botToken: 'private-synthetic-import-token' } } } : {}),
+    unknownFixture: { privateValue: 'private-synthetic-unknown-source' } }));
+  if (subscriptions) writeFileSync(f.runtime.shellPaths.resolveUserPath('tui', 'subscriptions.json'), JSON.stringify({ version: 1,
+    subscriptions: { synthetic: { provider: 'synthetic', accessToken: 'private-synthetic-subscription-token', tokenType: 'Bearer', authMode: 'oauth', overrideAmbientApiKeys: false, createdAt: 1, updatedAt: 1 } }, pending: {} }));
+  return path;
+}
+const importArgs = (name: string): Record<string, unknown> => name === 'agent_harness'
+  ? { mode: 'run_workspace_action', actionId: 'import-goodvibes-tui-settings' } : { action: 'import' };
+test.each(['settings', 'import_goodvibes_settings', 'agent_harness'])('%s imports a complete captured plan without confirmation flags', async name => {
+  const f = await fixture(); const source = importSources(f), before = readFileSync(source, 'utf8');
+  const result = await f.run(name, importArgs(name));
+  expect(result.success).toBe(true); expect(result.autonomousDecision?.outcome).toBe('act');
+  expect(f.runtime.configManager.get('display.theme')).toBe('nord'); expect(f.runtime.configManager.get('behavior.saveHistory')).toBe(false);
+  expect(JSON.parse(result.output!).verifiedInOwningStore).toBe(true); expect(f.prompts()).toBe(0); expect(readFileSync(source, 'utf8')).toBe(before);
+  expect(requests.some(request => 'hazard' in request.questions)).toBe(true);
+  expect(JSON.stringify(requests)).not.toContain('private-synthetic-unknown-source');
+});
+test('compound import admits opaque credential/subscription values and verifies actual native owning stores', async () => {
+  const f = await fixture(); importSources(f, true, true);
+  const result = await f.run('settings', { action: 'import', confirm: false, explicitUserRequest: 'untrusted model assertion' });
+  expect(result.success).toBe(true); expect(JSON.parse(result.output!).verifiedInOwningStore).toBe(true);
+  expect(await f.runtime.secretsManager.get(buildGoodVibesSecretKey('surfaces.slack.botToken'))).toBe('private-synthetic-import-token');
+  expect(f.runtime.subscriptionManager.get('synthetic')?.accessToken).toBe('private-synthetic-subscription-token');
+  const wire = JSON.stringify(requests);
+  expect(wire).not.toContain('private-synthetic-import-token'); expect(wire).not.toContain('private-synthetic-subscription-token');
+  expect(wire).not.toContain('private-synthetic-unknown-source'); expect(result.output).not.toContain('private-synthetic'); expect(f.prompts()).toBe(0);
+});
+test('source file same-byte ABA during recorded admission retires the full import before effects', async () => {
+  const f = await fixture(), path = importSources(f), raw = readFileSync(path, 'utf8'); let changed = false;
+  beforeAnswer = request => { if ('disposition' in request.questions && !changed) { changed = true; writeFileSync(path, '{}'); writeFileSync(path, raw); } };
+  const result = await f.run('settings', { action: 'import', confirm: true }).catch(() => undefined);
+  expect(changed).toBe(true); expect(result?.success).not.toBe(true); expect(f.runtime.configManager.get('display.theme')).toBe('vaporwave');
+});
+test('cancelled, readOnly, rejected and forged import calls cannot publish', async () => {
+  const f = await fixture(); importSources(f);
+  const direct = f.registry.list().find(tool => tool.definition.name === 'import_goodvibes_settings')!;
+  expect((await direct.execute({ action: 'apply', confirm: true, explicitUserRequest: 'forged approval' })).success).toBe(false);
+  selected = 'reject'; expect((await f.run('settings', { action: 'import', confirm: true })).success).toBe(false);
+  selected = 'act'; const abort = new AbortController(); f.deps.turnSignal = abort.signal;
+  beforeAnswer = request => { if ('disposition' in request.questions) abort.abort(); };
+  expect((await f.run('settings', { action: 'import' }).catch(() => undefined))?.success).not.toBe(true);
+  expect(f.runtime.configManager.get('display.theme')).toBe('vaporwave');
+  beforeAnswer = undefined; const readonly = await fixture(undefined, true); importSources(readonly);
+  expect((await readonly.run('settings', { action: 'import' }).catch(() => undefined))?.success).not.toBe(true); expect(readonly.prompts()).toBe(0);
+});
+test('source retirement between compound import effects reports partial and preserves the unwritten tail', async () => {
+  const f = await fixture(), source = importSources(f), raw = readFileSync(source, 'utf8');
+  const off = f.runtime.configManager.subscribe('display.theme', () => { writeFileSync(source, '{}'); writeFileSync(source, raw); });
+  const result = await f.run('settings', { action: 'import' }); off();
+  expect(result.success).toBe(false); expect(JSON.parse(result.output!).status).toBe('partial');
+  expect(JSON.parse(result.output!).completedPaths).toHaveLength(1); expect(f.runtime.configManager.get('display.theme')).toBe('nord');
+  expect(f.runtime.configManager.get('behavior.saveHistory')).toBe(true);
+});
+test('subscription-only import has no fabricated config effect and retains the actual writable owner', async () => {
+  const f = await fixture(), source = importSources(f, false, true); writeFileSync(source, '{}');
+  const incarnation = f.runtime.configManager.getConfigurationIncarnation();
+  const result = await f.run('settings', { action: 'import' });
+  expect(result.success).toBe(true); expect(JSON.parse(result.output!).verifiedInOwningStore).toBe(true);
+  expect(f.runtime.subscriptionManager.get('synthetic')?.accessToken).toBe('private-synthetic-subscription-token');
+  expect(f.runtime.configManager.getConfigurationIncarnation()).toBe(incarnation);
+  expect(f.runtime.configManager.get('display.theme')).toBe('vaporwave');
+  const readonly = await fixture(undefined, true), readonlySource = importSources(readonly, false, true); writeFileSync(readonlySource, '{}');
+  expect((await readonly.run('settings', { action: 'import' }).catch(() => undefined))?.success).not.toBe(true);
+  expect(readonly.runtime.subscriptionManager.get('synthetic')).toBeNull();
+});
+
+function installConnectedImportOwner(f: Awaited<ReturnType<typeof fixture>>, fetchImpl: typeof fetch = fetch) {
+  const serving = f.serving; if (!serving) throw new Error('Missing owned settings host');
+  const endpoint = new URL(serving.baseUrl);
+  if (f.runtime.configManager.get('controlPlane.host') !== endpoint.hostname || f.runtime.configManager.get('controlPlane.port') !== Number(endpoint.port)) throw new Error('Fixture connection was not seeded before its source owner armed');
+  const previousClient = agentDaemonConfigClient();
+  const client = createDaemonConfigClient(createAgentDaemonVerbCaller({ configManager: f.runtime.configManager, homeDirectory: f.home, fetchImpl }));
+  installAgentDaemonConfigClient(client); restoreOthers.push(() => installAgentDaemonConfigClient(previousClient));
+  return client;
+}
+
+test('connected compound import commits remote credentials/config before native local settings/subscriptions', async () => {
+  const f = await fixture('normal', false, true); installConnectedImportOwner(f); importSources(f, true, true);
+  const result = await f.run('settings', { action: 'import', confirm: false });
+  expect(result.success).toBe(true); expect(JSON.parse(result.output!).verifiedInOwningStore).toBe(true);
+  expect(f.serving!.config.get('surfaces.slack.botToken')).toBe(`goodvibes://secrets/goodvibes/${buildGoodVibesSecretKey('surfaces.slack.botToken')}`);
+  const remoteSecrets = JSON.parse(readFileSync(join(f.root, 'remote-daemon', 'secrets.json'), 'utf8'));
+  expect(remoteSecrets.secrets[buildGoodVibesSecretKey('surfaces.slack.botToken')]).toBe('private-synthetic-import-token');
+  expect(await f.runtime.secretsManager.get(buildGoodVibesSecretKey('surfaces.slack.botToken'))).toBeNull();
+  expect(f.runtime.configManager.get('display.theme')).toBe('nord');
+  expect(f.runtime.subscriptionManager.get('synthetic')?.accessToken).toBe('private-synthetic-subscription-token');
+  expect(await f.serving!.counts()).toEqual({ captures: 1, applies: 1 });
+  expect(JSON.stringify(requests)).not.toContain('private-synthetic-import-token');
+  expect(JSON.stringify(requests)).not.toContain('private-synthetic-subscription-token'); expect(f.prompts()).toBe(0);
+});
+
+test.each(['revoke', 'lost-response'] as const)('connected import %s preserves the local tail and does not retry the remote effect', async failure => {
+  const f = await fixture(failure === 'lost-response' ? 'lost-response' : 'normal', false, true); installConnectedImportOwner(f); importSources(f, true, true);
+  let revoked = false;
+  beforeAnswer = async request => { if (failure === 'revoke' && 'disposition' in request.questions && !revoked) { revoked = true; await f.serving!.revoke(); } };
+  const result = await f.run('settings', { action: 'import', confirm: true }).catch(() => undefined);
+  expect(result?.success).not.toBe(true); expect(f.runtime.configManager.get('display.theme')).toBe('vaporwave');
+  expect(f.runtime.subscriptionManager.get('synthetic')).toBeNull();
+  expect(await f.serving!.counts()).toEqual({ captures: 1, applies: 1 });
+  if (failure === 'lost-response') {
+    expect(f.serving!.config.get('surfaces.slack.botToken')).toBe(`goodvibes://secrets/goodvibes/${buildGoodVibesSecretKey('surfaces.slack.botToken')}`);
+    expect(JSON.parse(result!.output!).status).toBe('unknown');
+  }
+});
+
+test('connected import preserves a truthful remote receipt after source ABA and stops every local effect', async () => {
+  const f = await fixture('normal', false, true), source = importSources(f, true, true), original = readFileSync(source, 'utf8');
+  let replaced = false;
+  const fetchOwned: typeof fetch = Object.assign(async (...args: Parameters<typeof fetch>) => {
+    const response = await fetch(...args);
+    if (typeof args[1]?.body === 'string' && args[1].body.includes('"action":"apply"')) {
+      replaced = true; writeFileSync(source, '{}'); writeFileSync(source, original);
+    }
+    return response;
+  }, { preconnect: fetch.preconnect });
+  installConnectedImportOwner(f, fetchOwned);
+  const result = await f.run('settings', { action: 'import' });
+  expect(replaced).toBe(true); expect(result.success).toBe(false); expect(JSON.parse(result.output!).status).toBe('partial');
+  expect(JSON.parse(result.output!).completedPaths.length).toBeGreaterThan(0);
+  expect(f.serving!.config.get('surfaces.slack.botToken')).toBe(`goodvibes://secrets/goodvibes/${buildGoodVibesSecretKey('surfaces.slack.botToken')}`);
+  expect(f.runtime.configManager.get('display.theme')).toBe('vaporwave'); expect(f.runtime.subscriptionManager.get('synthetic')).toBeNull();
+  expect(await f.serving!.counts()).toEqual({ captures: 1, applies: 1 });
+});
+
+test('connected import rejects unfinished source restrictions before private capture and replacement before apply', async () => {
+  const f = await fixture('normal', false, true), client = installConnectedImportOwner(f);
+  const input = { settings: [{ key: 'surfaces.slack.botToken', value: 'private-synthetic-import-token' }] };
+  await expect(client.preparedImport!.capture(input, { assertCurrent: async () => {} })).rejects.toThrow();
+  expect(await f.serving!.counts()).toEqual({ captures: 0, applies: 0 });
+  const restriction = { assertCurrent: () => {} }, handle = await client.preparedImport!.capture(input, restriction);
+  restriction.assertCurrent = () => {};
+  expect(() => client.preparedImport!.assertCurrent(handle)).toThrow();
+  expect(await f.serving!.counts()).toEqual({ captures: 1, applies: 0 });
+  expect(JSON.stringify(requests)).not.toContain('private-synthetic-import-token');
 });

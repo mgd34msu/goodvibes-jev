@@ -3,9 +3,9 @@ import type { ArtifactDescriptor } from '@goodvibes-jev/engine/sdk/platform/arti
 import type { CommandContext } from '../input/command-registry.ts';
 import { requireProviderApi } from '../input/commands/runtime-services.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
-import { readLocalModelCookbook, localModelCookbook } from './agent-harness-local-model-cookbook.ts';
+import { readLocalModelCookbook } from './agent-harness-local-model-cookbook.ts';
 import { localBenchmarkRouteLatencyMap } from './agent-harness-local-model-benchmarks.ts';
-import { localModelDetection, localModelServerEndpoints, localModelServerHealthMap } from './agent-harness-local-model-endpoints.ts';
+import { localModelDetection, localModelServerEndpoints, localModelServerFacts } from './agent-harness-local-model-endpoints.ts';
 import { runLocalModelServerSmoke } from './agent-harness-local-model-smoke.ts';
 import { localHardwareProfile, modelReadinessScore } from './agent-harness-model-readiness.ts';
 import { contextWindowFor, loadModels, listProviderIds, modelBenchmarkCompositeScore, modelBenchmarkQualityTier, modelAvailable, modelConfigured, modelCapabilities, modelCurrent, modelDisplayName, modelModelId, modelProviderId, modelReasoning, modelRegistryKey, modelTier, readConfig, readProviderApi } from './agent-harness-model-catalog.ts';
@@ -116,7 +116,7 @@ function routeCandidates(context: CommandContext): readonly RouteCandidate[] {
       currentValue: {
         detected: localModelDetection(context),
         hardwareProfile: localHardwareProfile(),
-        localServerHealth: localModelServerHealthMap(context, false),
+        localServerHealth: localModelServerFacts(context, false),
       },
       settingKeys: [],
       commands: ['/provider add <name> <baseURL> [apiKey] --yes', '/refresh-models', '/model'],
@@ -197,7 +197,7 @@ async function describeRoute(route: RouteCandidate, options: { readonly context:
       uiSurfaces: route.uiSurfaces,
     } : {}),
     ...(options.lookup ? { lookup: options.lookup } : {}),
-    ...(route.id === 'local-model-cookbook' && options.includeParameters === true ? { localCookbook: options.cookbook ?? (options.reading?.sourceOwner ? await readLocalModelCookbook(options.context, true, options.reading) : localModelCookbook(options.context, true)) } : {}),
+    ...(route.id === 'local-model-cookbook' && options.includeParameters === true ? { localCookbook: options.cookbook ?? await readLocalModelCookbook(options.context, true, options.reading ?? {}) } : {}),
     ...(options.includeParameters ? {
       policy: {
         effect: 'read-only',
@@ -370,7 +370,7 @@ export async function modelRoutingSummary(context: CommandContext, args: AgentHa
     available: modelAvailable(currentModel) === false ? false : listedCurrentModel.available,
     configured: modelConfigured(currentModel) === false ? false : listedCurrentModel.configured } : listedCurrentModel;
   reading.assertCurrent?.();
-  const cookbook = reading.sourceOwner ? await readLocalModelCookbook(context, includeParameters, reading) : localModelCookbook(context, includeParameters);
+  const cookbook = await readLocalModelCookbook(context, includeParameters, reading);
   reading.assertCurrent?.();
   // Ranking snapshots entries. Equal captured facts still share enrichment;
   // an unavailable current-model override has distinct facts and stays separate.
@@ -444,7 +444,8 @@ export async function describeHarnessModelRoute(context: CommandContext, args: A
   reading.assertCurrent?.();
   const models = attachLocalBenchmarkLatencies(context, rawModels);
   const routes = routeCandidates(context);
-  const endpoints = localModelServerEndpoints(context, true);
+  const endpoints = await localModelServerEndpoints(context, true, reading);
+  reading.signal?.throwIfAborted(); reading.assertCurrent?.();
   const normalized = lookup.input.toLowerCase();
   const exactRoute = routes.find((route) => route.id === lookup.input);
   if (exactRoute) return { status: 'found', route: await describeRoute(exactRoute, { context, includeParameters: true, reading, lookup: { ...lookup, resolvedBy: 'route-id' } }) };

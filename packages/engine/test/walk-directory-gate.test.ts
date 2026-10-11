@@ -32,6 +32,7 @@ function put(root: string, path: string, content = 'export function authored() {
 }
 function directoryPort(answer: (directory: Directory) => unknown = directory => noulAnswer(directory.relativePath === 'target' ? 0.99 : 0.01)) {
   return fakePort((key, _question, state) => {
+    if (key === 'backtracking') return noulAnswer(0.001);
     const directory = (state as { directories: Directory[] }).directories.find(value => value.id === key)!;
     return answer(directory);
   });
@@ -287,7 +288,8 @@ test('a later skip verdict invalidates content-search cache eligibility without 
   expect(JSON.parse((await find.execute(query)).output!).q.count).toBe(0);
   skip = false;
   expect(JSON.parse((await find.execute(query)).output!).q.count).toBe(1);
-  expect(fake.requests).toHaveLength(3);
+  expect(fake.requests.filter(request => request.context?.battery === 'engine.walk.skip-directory')).toHaveLength(3);
+  expect(fake.requests.filter(request => request.context?.battery === 'engine.regex.backtracking')).toHaveLength(3);
 });
 
 test('the actual analyze executor cancels a pending directory judgment before descending', async () => {

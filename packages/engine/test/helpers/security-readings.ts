@@ -9,7 +9,7 @@
  */
 import { afterEach, beforeEach } from 'bun:test';
 import type { EntryType, JudgmentPort, JudgmentRequest, Questions } from '@goodvibes-jev/judgment';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 
 /** A yes, a no, or a reading too unsure to act on. */
@@ -92,8 +92,22 @@ const probability = (verdict: FakeVerdict): number => (verdict === 'unsure' ? 0.
 /** A port answering the security batteries' questions; any other question is an error. */
 export function securityPort(overrides: SecurityAnswers = {}): { port: JudgmentPort; requests: JudgmentRequest<Questions>[] } {
   const answers = { ...DEFAULT_SECURITY_ANSWERS, ...overrides };
-  return fakePort((name: string, _question: unknown, state: EntryType) => {
+  return fakePort((name, question, state) => {
     switch (name) {
+      case 'kind': {
+        const field = state !== null && typeof state === 'object' && 'field' in state ? state.field : undefined;
+        if (typeof field !== 'string' || !Object.hasOwn(REDACTION_FIELD_FIXTURES, field)) throw new Error('securityPort: unknown redaction field fixture');
+        return choiceAnswer(question, REDACTION_FIELD_FIXTURES[field]!, 0.99);
+      }
+      case 'identifying': {
+        const field = state !== null && typeof state === 'object' && 'field' in state ? state.field : undefined;
+        if (typeof field !== 'string' || !Object.hasOwn(PROFILE_ROLE_FIXTURES, field)) throw new Error('securityPort: unknown profile role fixture');
+        return noulAnswer(PROFILE_ROLE_FIXTURES[field] ? 0.99 : 0.01);
+      }
+      case 'lineHasCredential':
+      case 'spanIsCredential': return recordedCredentialProjection(state, name === 'spanIsCredential');
+      case 'credentialRemains': return recordedCredentialProjection(state !== null && typeof state === 'object'
+        ? { ...state, target: 'whole-line' } : state, false);
       case 'personLine': return noulAnswer(recordedProfilePerson(state) ? 0.99 : 0.01);
       case 'derives': return noulAnswer(probability(answers.derives(state as unknown as DerivationState, false)));
       case 'reply_derives': return noulAnswer(probability(answers.derives(state as unknown as DerivationState, true)));
@@ -106,6 +120,45 @@ export function securityPort(overrides: SecurityAnswers = {}): { port: JudgmentP
       default: throw new Error(`securityPort: no fake answer for question "${name}"`);
     }
   });
+}
+
+const REDACTION_FIELD_FIXTURES: Readonly<Record<string, 'secret' | 'owner_profile' | 'content' | 'other'>> = {
+  key: 'secret', KEY: 'secret', token: 'secret', password: 'secret', Authorization: 'secret', header: 'secret',
+  shippingAddress: 'owner_profile', billing_address: 'owner_profile', quietHours: 'owner_profile',
+  'identity.name': 'owner_profile',
+  note: 'other', cmd: 'other', env: 'other', argv: 'other', answer: 'other', path: 'other',
+  localhost: 'other', tokenCount: 'other', file: 'other', log: 'other', cwd: 'other', exists: 'other',
+  lines: 'other', fields: 'other', proseLines: 'other', invalidFields: 'other', changes: 'other', error: 'content', agent: 'other',
+};
+const PROFILE_ROLE_FIXTURES: Readonly<Record<string, boolean>> = {
+  'identity.name': true, 'contact.email': true, 'contact.phone': true, 'contact.agentAlias': true,
+  'location.homeAddress': true, 'commerce.shippingAddress': true, 'commerce.billingAddress': true,
+  'contactMe.quietHours': true, 'closed private profile prose': true,
+  'commerce.currency': false, 'commerce.shippingTier': false, 'contactMe.channel': false,
+  'preferences.units': false, 'preferences.dateFormat': false, 'defaults.approvalWindow': false,
+};
+
+/** Exact declared roles/context fixtures; opaque local values are absent. */
+function recordedCredentialProjection(state: EntryType, targetOnly: boolean) {
+  if (state === null || typeof state !== 'object' || !('parts' in state) || !Array.isArray(state.parts)
+    || !('target' in state) || typeof state.target !== 'string') throw new Error('securityPort: unknown credential projection fixture');
+  const live = state.parts.filter((part: unknown) => part !== null && typeof part === 'object' && 'kind' in part && part.kind === 'span');
+  const selected = targetOnly && state.target !== 'whole-line' ? live.filter((part: unknown) => part !== null
+    && typeof part === 'object' && 'reference' in part && part.reference === state.target) : live;
+  for (const part of selected) {
+    if (part !== null && typeof part === 'object' && 'field' in part && typeof part.field === 'string') {
+      if (REDACTION_FIELD_FIXTURES[part.field] === 'secret') return noulAnswer(0.99);
+      continue;
+    }
+    const text = state.parts.filter((part: unknown) => part !== null && typeof part === 'object' && 'kind' in part && part.kind === 'text')
+      .map((part: unknown) => part !== null && typeof part === 'object' && 'text' in part && typeof part.text === 'string' ? part.text : '').join('');
+    if (['token ', 'using key ', 'Bearer ', 'Authorization: Bearer '].includes(text)) return noulAnswer(0.99);
+    if (text === 'agent is ' && live.length === 1 && live.every((span: unknown) => span !== null
+      && typeof span === 'object' && 'field' in span && span.field === 'agent'
+      && 'syntax' in span && span.syntax === 'assignment-value')) return noulAnswer(0.01);
+    return noulAnswer(0.5);
+  }
+  return noulAnswer(0.01);
 }
 
 /**

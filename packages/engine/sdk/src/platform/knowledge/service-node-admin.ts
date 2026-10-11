@@ -2,11 +2,7 @@ import { createKnowledgeNodeOperatorMutation } from './store-node-authority.js';
 import type { KnowledgeStore } from './store.js';
 import type { KnowledgeIssueRecord, KnowledgeNodeRecord } from './types.js';
 import { tokenize } from './shared.js';
-import {
-  type KnowledgeScopeLookup,
-  knowledgeIssueMatchesScope,
-  knowledgeNodeMatchesScope,
-} from './scope-records.js';
+import type { KnowledgeScopeSelection } from './scope-selection.js';
 
 export interface KnowledgeNodeQueryInput {
   readonly limit?: number | undefined;
@@ -31,8 +27,7 @@ export interface KnowledgeIssueQueryInput {
 }
 
 export function queryKnowledgeNodes(
-  store: KnowledgeStore,
-  scopeLookup: KnowledgeScopeLookup,
+  selection: KnowledgeScopeSelection,
   input: KnowledgeNodeQueryInput,
 ): { total: number; items: KnowledgeNodeRecord[] } {
   const limit = Math.max(1, input.limit ?? 100);
@@ -43,8 +38,8 @@ export function queryKnowledgeNodes(
   // serve-surface drift where `forget` hid a node from search but GraphQL still
   // returned it. (Defect 6.)
   const includeStale = input.includeStale === true || input.status !== undefined;
-  const items = store.listNodes(Number.MAX_SAFE_INTEGER).filter((node) => {
-    if (!knowledgeNodeMatchesScope(node, input, scopeLookup)) return false;
+  const items = selection.nodes.filter((node) => {
+    if (!selection.node(node)) return false;
     if (input.kind && node.kind !== input.kind) return false;
     if (!includeStale && node.status === 'stale') return false;
     if (input.status && node.status !== input.status) return false;
@@ -52,19 +47,19 @@ export function queryKnowledgeNodes(
     const haystack = [node.title, node.summary ?? '', node.aliases.join(' '), JSON.stringify(node.metadata)].join(' ').toLowerCase();
     return queryTokens.every((token) => haystack.includes(token));
   });
+  selection.assertCurrent();
   return { total: items.length, items: items.slice(offset, offset + limit) };
 }
 
 export function queryKnowledgeIssues(
-  store: KnowledgeStore,
-  scopeLookup: KnowledgeScopeLookup,
+  selection: KnowledgeScopeSelection,
   input: KnowledgeIssueQueryInput,
 ): { total: number; items: KnowledgeIssueRecord[] } {
   const limit = Math.max(1, input.limit ?? 100);
   const offset = Math.max(0, input.offset ?? 0);
   const queryTokens = tokenize(input.query ?? '');
-  const items = store.listIssues(Number.MAX_SAFE_INTEGER).filter((issue) => {
-    if (!knowledgeIssueMatchesScope(issue, input, scopeLookup)) return false;
+  const items = selection.issues.filter((issue) => {
+    if (!selection.issue(issue)) return false;
     if (input.severity && issue.severity !== input.severity) return false;
     if (input.status && issue.status !== input.status) return false;
     if (input.code && issue.code !== input.code) return false;
@@ -72,6 +67,7 @@ export function queryKnowledgeIssues(
     const haystack = [issue.message, issue.code, JSON.stringify(issue.metadata)].join(' ').toLowerCase();
     return queryTokens.every((token) => haystack.includes(token));
   });
+  selection.assertCurrent();
   return { total: items.length, items: items.slice(offset, offset + limit) };
 }
 

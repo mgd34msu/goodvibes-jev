@@ -1,4 +1,4 @@
-import { assertDeliveryCurrent } from './delivery-lifetime.js';
+import { assertDeliveryCurrent, type DeliveryLifetime } from './delivery-lifetime.js';
 /**
  * Public webhook URLs: the checks every webhook callback and delivery target
  * passes, and the delivery request itself.
@@ -57,9 +57,10 @@ export function validatePublicWebhookUrl(rawUrl: string): { ok: true; url: strin
 export async function postToPublicWebhook(
   rawUrl: string,
   init: RequestInit,
-  options: { readonly resolveHost?: HostResolver | undefined; readonly assertCurrent?: (() => void) | undefined } = {},
+  options: DeliveryLifetime & { readonly resolveHost?: HostResolver | undefined } = {},
 ): Promise<Response> {
-  const lifetime = { signal: init.signal ?? undefined, assertCurrent: options.assertCurrent };
+  const lifetime = { signal: init.signal && options.signal ? AbortSignal.any([init.signal, options.signal]) : init.signal ?? options.signal,
+    assertCurrent: options.assertCurrent, withPublication: options.withPublication };
   assertDeliveryCurrent(lifetime);
   const validation = validatePublicWebhookUrl(rawUrl);
   if (!validation.ok) throw new Error(validation.error);
@@ -70,5 +71,6 @@ export async function postToPublicWebhook(
     diagnosticMode: 'opaque-url',
   });
   assertDeliveryCurrent(lifetime);
-  return pinnedFetch(validation.url, { ...init, redirect: 'manual' }, addresses, 'opaque-url', options.assertCurrent);
+  return pinnedFetch(validation.url, { ...init, ...(lifetime.signal ? { signal: lifetime.signal } : {}), redirect: 'manual' },
+    addresses, 'opaque-url', options.assertCurrent, options.withPublication);
 }

@@ -42,6 +42,8 @@
  * its value is carried only on a no verdict. The notice waits for that
  * reading; on a yes, an uncertain reading, or no reading at all it leaves the
  * value out.
+ * Declared structured reference arrays carry only their detached validated
+ * fields. Malformed structured values are omitted without invoking accessors.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -58,6 +60,7 @@ import {
   SECRET_BEARING_CONFIG_PATHS,
   isSecretBearingConfigKey,
 } from '../../config/secret-bearing-config-keys.js';
+import { isStructuredCredentialReferenceConfigKey, captureStructuredCredentialReferenceConfigValue } from '../../config/structured-credential-config.js';
 import { configKeyDescription } from '../../config/credential-key-reading.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { eventCredentialKey } from './batteries/event-credential-key.js';
@@ -174,6 +177,7 @@ export function attachConfigEmitBridge(deps: ConfigEmitBridgeDeps): () => void {
 
   for (const key of listWatchableConfigPaths(deps.additionalKeys ?? [])) {
     const declaredSecret = isSecretBearingConfigKey(key);
+    const structuredReference = isStructuredCredentialReferenceConfigKey(key);
     const needsReading = !declaredSecret && !SCHEMA_KEYS.has(key);
     const scope = configKeyScope(key);
     try {
@@ -189,7 +193,14 @@ export function attachConfigEmitBridge(deps: ConfigEmitBridgeDeps): () => void {
         };
         // Taken at change time, so a notice that waits on a reading still
         // reports the value and time of this change.
-        const value = toConfigEventValue(newValue);
+        let value: ConfigEventValue | undefined;
+        let invalidStructuredReference = false;
+        if (structuredReference) {
+          try { value = toConfigEventValue(captureStructuredCredentialReferenceConfigValue(key, newValue)); }
+          catch { invalidStructuredReference = true; }
+        } else {
+          value = toConfigEventValue(newValue);
+        }
         const changedAt = clock();
         const emit = (secret: boolean): void => {
           try {
@@ -211,7 +222,7 @@ export function attachConfigEmitBridge(deps: ConfigEmitBridgeDeps): () => void {
           }
         };
         if (!needsReading) {
-          emit(declaredSecret);
+          emit(declaredSecret || invalidStructuredReference);
           return;
         }
         readConfigEventCarriesValue(key).then(

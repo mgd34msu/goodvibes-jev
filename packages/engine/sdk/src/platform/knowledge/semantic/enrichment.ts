@@ -12,7 +12,7 @@ import { persistWikiPage, prepareWikiPageNodeInput, renderDeterministicWikiPage 
 import type { KnowledgeStore } from '../store.js';
 // Descriptive producer scores stay on the declared 0-100 scale. They never authorize activation.
 import { clampConfidence, guardKnowledgeSemanticStateInput } from '../store-node-history.js';
-import { knowledgeSourceMatchesScope } from '../scope-records.js';
+import { prepareKnowledgeScopeSelection } from '../scope-selection.js';
 import type {
   KnowledgeExtractionRecord,
   KnowledgeNodeRecord,
@@ -95,10 +95,14 @@ export async function enrichKnowledgeSource(
   const existingSemantic = readRecord(context.store.getSemanticEnrichmentState(source.id)?.metadata);
   const currentExtractor = readString(existingSemantic.extractor);
   const shouldUpgradeDeterministic = Boolean(context.llm && existingSemantic.textHash === textHash && currentExtractor !== 'llm');
-  if (!knowledgeSourceMatchesScope(source, { includeAllSpaces: true })) {
+  const scopeSelection = await prepareKnowledgeScopeSelection(context.store, { includeAllSpaces: true },
+    { signal: options.signal, shouldStop: options.shouldStop, kinds: ['source'], sourceIds: [source.id] });
+  generationGuard.watch('enrichment-source-scope', () => { scopeSelection.assertCurrent(); return true; });
+  if (!scopeSelection.source(source)) {
+    generationGuard.assertCurrent();
     await markSourceSemanticState(context.store, source, textHash, {
       skippedReason: 'source is outside active knowledge scope',
-    });
+    }, generationGuard.assertCurrent);
     return emptyResult(source, true, 'source is outside active knowledge scope');
   }
   if (!options.force && existingSemantic.textHash === textHash && !shouldUpgradeDeterministic) {
@@ -107,7 +111,7 @@ export async function enrichKnowledgeSource(
   if (text.length < 40) {
     await markSourceSemanticState(context.store, source, textHash, {
       skippedReason: 'source has too little extracted text',
-    });
+    }, generationGuard.assertCurrent);
     return emptyResult(source, true, 'source has too little extracted text');
   }
 
@@ -128,6 +132,7 @@ export async function enrichKnowledgeSource(
     signal: options.signal,
     shouldStop: options.shouldStop,
     textHash,
+    assertCurrent: scopeSelection.assertCurrent,
   });
   assertSemanticWriteAllowed(options.signal, options.shouldStop);
   const assertPersistenceCurrent = semanticPersistenceGuards.get(persisted)!;
@@ -331,6 +336,7 @@ async function persistSemanticExtraction(
   options: {
     readonly knowledgeSpaceId?: string | undefined;
     readonly textHash: string;
+    readonly assertCurrent?: (() => void) | undefined;
     readonly signal?: AbortSignal | undefined;
     readonly shouldStop?: (() => boolean) | undefined;
   },
@@ -391,7 +397,7 @@ async function persistSemanticExtraction(
   const qualitySubjects = sourceLinkedObjects.map((subject) => ({ subject, current: store.getNode(subject.id), version: JSON.stringify(subject) }));
   const evidenceVersion = JSON.stringify({ source, extraction });
   const assertQualityCurrent = () => {
-    assertSemanticWriteAllowed(options.signal, options.shouldStop); qualityReader.assertCurrent(); subjectSelection.assertCurrent();
+    assertSemanticWriteAllowed(options.signal, options.shouldStop); options.assertCurrent?.(); qualityReader.assertCurrent(); subjectSelection.assertCurrent();
     if (store.getSource(source.id) !== qualitySource || store.getExtractionBySourceId(source.id) !== qualityExtraction
       || JSON.stringify({ source: store.getSource(source.id), extraction: store.getExtractionBySourceId(source.id) }) !== evidenceVersion
       || qualitySubjects.some(({ subject, current, version }) => store.getNode(subject.id) !== current || JSON.stringify(store.getNode(subject.id)) !== version)) {

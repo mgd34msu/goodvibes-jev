@@ -36,6 +36,7 @@ interface TelemetryApiStubSnapshot {
  * Minimal TelemetryApiLike stub.
  */
 function makeTelemetryApi(): {
+  isRawEnabled: () => boolean;
   getSnapshot: (filter: unknown, view: string, rawAccessible: boolean) => TelemetryApiStubSnapshot;
   listEventPage: (filter: unknown, view: string, rawAccessible: boolean) => unknown;
   listErrorPage: (filter: unknown, view: string, rawAccessible: boolean) => unknown;
@@ -60,6 +61,7 @@ function makeTelemetryApi(): {
     spans: [],
   };
   return {
+    isRawEnabled: () => false,
     getSnapshot: (_filter, _view, _rawAccessible) => snapshot,
     listEventPage: (_filter, _view, _rawAccessible) => ({ items: [], cursor: null }),
     listErrorPage: (_filter, _view, _rawAccessible) => ({ items: [], cursor: null }),

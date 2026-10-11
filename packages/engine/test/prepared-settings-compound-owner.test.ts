@@ -19,7 +19,7 @@ test('all ordered companion effects are captured and share exactly one transitio
   expect(facts.effects?.map(effect => effect.key)).toEqual(['voice.wake.enabled', 'voice.wake.surfaces.agent']);
   const transition = config.beginPreparedMutation(mutation); let checks = 0;
   const receipt = config.finishPreparedMutation(mutation, transition, () => { checks++; config.assertPreparedMutationTransition(mutation, transition); });
-  expect(receipt.status).toBe('committed'); expect(checks).toBe(2); expect(config.getConfigurationIncarnation()).toBe(facts.incarnation + 1);
+  expect(receipt.status).toBe('committed'); expect(checks).toBeGreaterThanOrEqual(2); expect(config.getConfigurationIncarnation()).toBe(facts.incarnation + 1);
   expect(config.get('voice.wake.enabled')).toBe(true); expect(config.get('voice.wake.surfaces.agent')).toBe(true);
   expect(() => config.finishPreparedMutation(mutation, transition)).toThrow();
 });

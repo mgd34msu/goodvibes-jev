@@ -1,10 +1,13 @@
+import { effectAdmissionFixture } from '../helpers/effect-admission.ts';
 import { describe, expect, test } from 'bun:test';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { AgentResearchSourceRegistry } from '../../agent/research-source-registry.ts';
-import { createAgentResearchSourcesTool, registerAgentResearchSourcesTool } from '../../tools/agent-research-sources-tool.ts';
+import { createAgentResearchSourcesTool as rawResearchSourcesTool, registerAgentResearchSourcesTool } from '../../tools/agent-research-sources-tool.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+
+function createAgentResearchSourcesTool(...args: Parameters<typeof rawResearchSourcesTool>) { return effectAdmissionFixture().tool(rawResearchSourcesTool(...args)); }
 
 function makePaths() {
   const root = makeProjectTempDir('goodvibes-agent-research-sources-tool');
@@ -22,7 +25,7 @@ describe('agent_research_sources tool', () => {
     const fixture = makePaths();
     try {
       const tool = createAgentResearchSourcesTool(fixture.paths);
-      const missingIntent = await tool.execute({
+      const missingIntent = await rawResearchSourcesTool(fixture.paths).execute({
         mode: 'add',
         question: 'Which source should we cite?',
         title: 'Official docs',
@@ -30,13 +33,17 @@ describe('agent_research_sources tool', () => {
         summary: 'Official source.',
       });
       expect(missingIntent.success).toBe(false);
-      expect(missingIntent.error).toContain('explicitUserRequest');
+      expect(missingIntent.error).toContain('recorded effect admission');
+
+      const protectedInput = await tool.execute({ mode: 'add', question: 'Which source should we cite?', title: 'Private source', summary: 'Synthetic protected fixture.', url: 'https://example.test/docs?api_key=secret-value' });
+      expect(protectedInput.success).toBe(false);
+      expect(AgentResearchSourceRegistry.fromShellPaths(fixture.paths).list()).toEqual([]);
 
       const added = await tool.execute({
         mode: 'add',
         question: 'Which source should we cite?',
         title: 'Official docs',
-        url: 'https://example.test/docs?api_key=secret-value',
+        url: 'https://example.test/docs?section=overview',
         publisher: 'Example',
         summary: 'Official source.',
         credibility: 'high',
@@ -46,7 +53,7 @@ describe('agent_research_sources tool', () => {
         confirm: true,
         explicitUserRequest: 'Add this source to the queue.',
       });
-      expect(added.success).toBe(true);
+      expect(added.success, added.error).toBe(true);
       expect(added.output).toContain('Added Agent research source');
       expect(added.output).toContain('reportLine Official docs');
       expect(added.output).toContain('nextRoutes');
@@ -74,7 +81,7 @@ describe('agent_research_sources tool', () => {
 
       const source = AgentResearchSourceRegistry.fromShellPaths(fixture.paths).get('official-docs');
       expect(source?.status).toBe('reviewed');
-      expect(source?.url).toContain('api_key=%3Credacted%3E');
+      expect(source?.url).toBe('https://example.test/docs?section=overview');
     } finally {
       fixture.cleanup();
     }
@@ -140,13 +147,13 @@ describe('agent_research_sources tool', () => {
       expect(rejected.output).toContain('Rejected Agent research source');
       expect(rejected.output).toContain('reAdd research action:"add_source" question:"What source should the report use?"');
 
-      const unconfirmedDelete = await tool.execute({
+      const unconfirmedDelete = await rawResearchSourcesTool(fixture.paths).execute({
         mode: 'delete',
         id: 'candidate-source',
         explicitUserRequest: 'Delete this source.',
       });
       expect(unconfirmedDelete.success).toBe(false);
-      expect(unconfirmedDelete.error).toContain('confirm:true');
+      expect(unconfirmedDelete.error).toContain('recorded effect admission');
 
       const deleted = await tool.execute({
         mode: 'delete',

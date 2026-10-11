@@ -29,6 +29,7 @@ import {
   type ProfileWriteResult,
 } from '../../owner-profile/index.js';
 import type { OwnerProfileGatewayService } from './owner-profile.js';
+import type { ProfileMutationOptions } from '../../owner-profile/delegation.js';
 
 /**
  * The verbatim quote a settings-UI edit carries (docs/owner-profile.md §7, §9.3).
@@ -117,23 +118,23 @@ export function applyOwnerProfilePolicy(
     },
     provenance: (fieldId) => service.provenance(fieldId),
     status: () => service.status(),
-    forget: (input) => service.forget(input),
-    undo: (input) => service.undo(input),
+    forget: (input, options) => service.forget(input, options),
+    undo: (input, options) => service.undo(input, options),
 
-    set: async (input) => {
+    set: async (input, options) => {
       if (!policy.autonomousWrites() && !isSettingsEdit(input.said)) {
         return refused(AUTONOMOUS_WRITES_OFF);
       }
-      return applyDisclosurePolicy(await service.set(input), policy.discloseWrites());
+      return applyDisclosurePolicy(await service.set(input, options), policy.discloseWrites());
     },
 
-    append: async (input) => {
+    append: async (input, options) => {
       if (!policy.autonomousWrites() && !isSettingsEdit(input.said)) {
         return refused(AUTONOMOUS_WRITES_OFF);
       }
-      const sectionRefusal = await refuseTaintedSection(input);
+      const sectionRefusal = await refuseTaintedSection(input, options);
       if (sectionRefusal !== null) return sectionRefusal;
-      return applyDisclosurePolicy(await service.append(input), policy.discloseWrites());
+      return applyDisclosurePolicy(await service.append(input, options), policy.discloseWrites());
     },
   };
 }
@@ -151,13 +152,13 @@ export function applyOwnerProfilePolicy(
  * This is the same `evaluateProfileWrite` the store runs, with the same ledger
  * and the same two passes, not a second, weaker copy of the rule.
  */
-async function refuseTaintedSection(input: AppendProfileProseInput): Promise<ProfileWriteResult | null> {
+async function refuseTaintedSection(input: AppendProfileProseInput, options?: ProfileMutationOptions): Promise<ProfileWriteResult | null> {
   const decision = await evaluateProfileWrite({
     authority: input.authority,
     fieldId: null,
     value: input.text,
     said: input.said,
     section: input.section,
-  });
+  }, options);
   return decision.allowed ? null : refused(decision.reason ?? 'Refused.');
 }

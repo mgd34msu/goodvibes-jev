@@ -48,6 +48,9 @@ export interface DaemonVerbCaller {
   /** Capture through this exact connection owner; never rediscover on apply. */
   captureSettingsPrecondition?(request: import('../../config/settings-precondition-client.js').SettingsPreconditionRequest):
     Promise<import('../../config/settings-precondition-client.js').RemoteSettingsPrecondition>;
+  captureSettingsImportPrecondition?(request: import('../../config/settings-import-precondition-client.js').SettingsImportPreconditionRequest,
+    restriction?: import('../../config/settings-import-precondition-client.js').RemoteSettingsImportRestriction):
+    Promise<import('../../config/settings-import-precondition-client.js').RemoteSettingsImportPrecondition>;
   /**
    * Invoke a verb. Throws on a non-2xx, and on "no daemon is configured at all"
    *, a seam that wants to degrade instead of failing calls `probe()` first.

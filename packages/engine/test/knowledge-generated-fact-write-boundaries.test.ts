@@ -1,5 +1,5 @@
 import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
-import { createSchema } from '../sdk/src/platform/knowledge/store-schema.js';
+import { createSchema, KNOWLEDGE_SCHEMA_VERSION } from '../sdk/src/platform/knowledge/store-schema.js';
 import { writeKnowledgeNodeRow } from '../sdk/src/platform/knowledge/store-node-history.js';
 import type { KnowledgeNodeRecord } from '../sdk/src/platform/knowledge/types.js';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -47,7 +47,7 @@ async function fixture() {
 }
 /** Simulate records already on disk before the serving gate, not new automatic approvals. */
 async function loadLegacyFacts(store: KnowledgeStore, facts: readonly KnowledgeNodeRecord[]): Promise<KnowledgeStore> {
-  const sqlite = new SQLiteStore(store.storagePath); await sqlite.init(createSchema, { schemaVersion: 9 });
+  const sqlite = new SQLiteStore(store.storagePath); await sqlite.init(createSchema, { schemaVersion: KNOWLEDGE_SCHEMA_VERSION });
   for (const fact of facts) writeKnowledgeNodeRow(sqlite, fact);
   await sqlite.save();
   const reloaded = new KnowledgeStore({ dbPath: store.storagePath }); await reloaded.init(); return reloaded;

@@ -16,6 +16,7 @@ import { enrichKnowledgeSource } from '../sdk/src/platform/knowledge/semantic/en
 import { deriveRepairProfileFactPass, repairProfileSourceText } from '../sdk/src/platform/knowledge/semantic/repair-profile.js';
 import { captureKnowledgeSourceReferences, registerGeneratedKnowledgeSourceReferences, registerGeneratedKnowledgeExtractionReferences } from '../sdk/src/platform/knowledge/source-structural-references.js';
 import { KnowledgeRepairProfileHeldError } from '../sdk/src/platform/knowledge/semantic/repair-profile/types.js';
+import { KnowledgeRepairSourceAuthorityHeldError } from '../sdk/src/platform/knowledge/semantic/repair-source-authority/types.js';
 import { KnowledgeSourceQualityHeldError, isKnowledgeSourceQualityFailure } from '../sdk/src/platform/knowledge/source-quality.js';
 import { JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.js';
 const spaceId = 'homeassistant:profile-readings';
@@ -64,6 +65,30 @@ async function write(item: Fixture) {
   return item.store.batch(async () => { prepared.assertCurrent(); return prepared.write(); });
 }
 describe('repair profile complete-pass write boundaries', () => {
+  test('prepared repair publication retains the original caller callback before any write', async () => {
+    const item = await fixture(), fake = readings();
+    const facts = await buildDevicePageProfileFacts({ ...item, spaceId, installationId: 'profile-readings', sources: [item.source], sourceReader: createHomeGraphPageSourceReader() });
+    const inputs = facts.map(fact => devicePageProfileFactInput(item.store, spaceId, 'profile-readings', item.device, fact));
+    const options = { assertCurrent() {} };
+    const prepared = await prepareSourceLinkedRepairProfileFacts(inputs, options);
+    const before = snapshot(item.store), requests = fake.requests.length;
+    options.assertCurrent = () => {};
+    expect(() => prepared.assertCurrent()).toThrow(KnowledgeRepairSourceAuthorityHeldError);
+    await expect(prepared.write()).rejects.toBeInstanceOf(KnowledgeRepairSourceAuthorityHeldError);
+    expect(snapshot(item.store)).toBe(before);
+    expect(fake.requests).toHaveLength(requests);
+  });
+  test('an asynchronous repair caller cannot authorize the actual prepared source pass', async () => {
+    const item = await fixture(), fake = readings();
+    const facts = await buildDevicePageProfileFacts({ ...item, spaceId, installationId: 'profile-readings', sources: [item.source], sourceReader: createHomeGraphPageSourceReader() });
+    const inputs = facts.map(fact => devicePageProfileFactInput(item.store, spaceId, 'profile-readings', item.device, fact));
+    const before = snapshot(item.store), requests = fake.requests.length;
+    const pending = Promise.withResolvers<void>();
+    await expect(prepareSourceLinkedRepairProfileFacts(inputs, { assertCurrent: () => pending.promise })).rejects.toBeInstanceOf(KnowledgeRepairSourceAuthorityHeldError);
+    expect(snapshot(item.store)).toBe(before);
+    expect(fake.requests).toHaveLength(requests);
+    pending.resolve();
+  });
   test('real-store profile writes preserve precise values, support provenance and idempotent record identities', async () => {
     const item = await fixture(); const fake = readings();
     const written = await write(item);

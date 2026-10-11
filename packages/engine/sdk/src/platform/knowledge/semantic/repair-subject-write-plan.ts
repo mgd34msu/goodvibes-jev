@@ -28,7 +28,8 @@ export async function writeSupportedRepairSubjectLinks(input: {
   const guard = createSemanticWriteGuard(store, input.signal, input.shouldStop);
   const support = createGeneratedFactWritePlanner(store, guard, { signal: input.signal });
   guard.node(input.gap.id);
-  const graph = buildKnowledgeSemanticGraphIndex(store, spaceId);
+  const graph = await buildKnowledgeSemanticGraphIndex(store, spaceId, { signal: input.signal, shouldStop: input.shouldStop, assertCurrent: input.assertCurrent });
+  guard.watch('attachment-scope', () => { graph.assertCurrent(); return true; });
   const selectedSourceIds = new Set(input.sourceIds);
   guard.watch('attachment-source-edges', () => store.listEdges().filter((edge) =>
     edge.fromKind === 'source' && selectedSourceIds.has(edge.fromId)));
@@ -79,7 +80,7 @@ export async function writeSupportedRepairSubjectLinks(input: {
     }) };
     return { ...draft, supportMetadata, nodeInput };
   });
-  const assertCurrent = () => { assertSemanticWriteAllowed(input.signal, input.shouldStop); guard.assertCurrent(); input.assertCurrent?.(); };
+  const assertCurrent = () => { store.assertRecordSnapshotFrame(() => { assertSemanticWriteAllowed(input.signal, input.shouldStop); guard.assertCurrent(); input.assertCurrent?.(); }); };
   const edges = plans.flatMap(({ fact, primarySourceId, supportMetadata }) => subjects.map((object) => ({
     fromKind: 'node' as const, fromId: fact.id, toKind: 'node' as const, toId: object.id,
     relation: 'describes', weight: 0.82,

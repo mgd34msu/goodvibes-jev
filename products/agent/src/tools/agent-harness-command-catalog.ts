@@ -1,7 +1,6 @@
 import type { CommandRegistry, SlashCommand } from '../input/command-registry.ts';
 import { parseSlashCommand } from '../input/slash-command-parser.ts';
 import { describeCommandPolicy } from './agent-harness-metadata.ts';
-import type { CatalogSearchResult } from './agent-harness-catalog-search.ts';
 import { rankHarnessCatalog, captureCatalogData, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { types as nodeTypes } from 'node:util';
@@ -101,7 +100,6 @@ async function matchingCommands(commandRegistry: CommandRegistry, query: string,
 function describeCommand(command: CatalogCommand, lookup?: CommandDetailLookup): Record<string, unknown> {
   const policy = describeCommandPolicy(command.name);
   const modelRoute = previewText(policy.preferredModelTool ?? `workspace action:"command" commandName:"${command.name}"`);
-  const confirmationArgs = policy.requiresConfirmation === false ? '' : ' confirm:true explicitUserRequest:"..."';
   return {
     name: command.name,
     slash: `/${command.name}`,
@@ -112,10 +110,10 @@ function describeCommand(command: CatalogCommand, lookup?: CommandDetailLookup):
     modelRoute,
     modelAccess: {
       inspect: `agent_harness mode:"command" commandName:"${command.name}"`,
-      run: `agent_harness mode:"run_command" commandName:"${command.name}"${confirmationArgs}`,
+      run: `agent_harness mode:"run_command" commandName:"${command.name}"`,
       preferred: modelRoute,
       directInspect: `workspace action:"command" commandName:"${command.name}"`,
-      directRun: `workspace action:"run_command" commandName:"${command.name}"${confirmationArgs}`,
+      directRun: `workspace action:"run_command" commandName:"${command.name}"`,
     },
     ...(lookup ? {
       lookup: {
@@ -221,7 +219,7 @@ export async function searchHarnessCommands(
   commandRegistry: CommandRegistry,
   args: AgentHarnessCommandCatalogArgs,
   options: CatalogRankingOptions = {},
-): Promise<CatalogSearchResult<Record<string, unknown>>> {
+): Promise<{ readonly matches: readonly Record<string, unknown>[] }> {
   const query = readString(args.query);
   const limit = readLimit(args.limit, 500);
   const includeParameters = args.includeParameters === true;
@@ -231,7 +229,6 @@ export async function searchHarnessCommands(
     matches: found.matches
       .slice(0, limit)
       .map(({ entry, judgment }) => ({ ...(includeParameters ? describeCommand(entry) : describeCommandCandidate(entry)), ...(judgment ? { judgment } : {}) })),
-    relaxed: false,
   };
 }
 

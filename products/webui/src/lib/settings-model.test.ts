@@ -17,6 +17,16 @@ function groupById(groups: SettingsGroupModel[], id: string): SettingsGroupModel
 }
 
 describe('readConfigPath / liveLeafKeys', () => {
+  test('structured reference accessors are never evaluated during config traversal', () => {
+    let invoked = false;
+    const config = { judgment: Object.defineProperty({}, 'fallbacks', { enumerable: true, get: () => { invoked = true; return ['synthetic-private-value']; } }) };
+    expect(readConfigPath(config, 'judgment.fallbacks')).toEqual({ present: true, value: undefined });
+    expect(liveLeafKeys(config)).toEqual(['judgment.fallbacks']);
+    const field = buildSettingsModel(config).flatMap(group => group.plainRows).find(row => row.key === 'judgment.fallbacks');
+    expect(field?.present).toBe(true);
+    expect(field?.liveValue).toBeUndefined();
+    expect(invoked).toBe(false);
+  });
   test('reads nested dotted keys and reports presence', () => {
     const cfg = { surfaces: { slack: { botToken: 'x' } }, display: { theme: 'vaporwave' } };
     expect(readConfigPath(cfg, 'display.theme')).toEqual({ present: true, value: 'vaporwave' });

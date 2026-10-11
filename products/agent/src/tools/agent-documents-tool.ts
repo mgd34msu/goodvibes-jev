@@ -1,7 +1,10 @@
 import type { ArtifactDescriptor, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { agentArtifactEffectGuard, assertAgentArtifactBytes, captureAgentArtifactSource, captureAgentExportPath } from './agent-artifact-effect.ts';
 import type { ShellPathService } from '@/runtime/index.ts';
+import { GOODVIBES_AGENT_SURFACE_ROOT } from '../config/surface.ts';
 import {
   AgentDocumentRegistry,
   renderAgentDocumentMarkdown,
@@ -42,7 +45,7 @@ const MODES: readonly AgentDocumentsToolMode[] = ['list', 'show', 'create', 'upd
 const MAX_INSERT_TEXT_BYTES = 40_000;
 
 function isMode(value: unknown): value is AgentDocumentsToolMode {
-  return typeof value === 'string' && MODES.includes(value as AgentDocumentsToolMode);
+  return typeof value === 'string' && MODES.some(mode => mode === value);
 }
 
 function readString(value: unknown): string {
@@ -109,12 +112,6 @@ function requireSuggestionId(args: AgentDocumentsToolArgs): string {
   const id = readString(args.suggestionId);
   if (!id) throw new Error('suggestionId is required.');
   return id;
-}
-
-function requireConfirmed(args: AgentDocumentsToolArgs, action: string): void {
-  const explicitUserRequest = readString(args.explicitUserRequest);
-  if (!explicitUserRequest) throw new Error(`${action} requires explicitUserRequest with the user's exact request or a short faithful summary.`);
-  if (args.confirm !== true) throw new Error(`${action} requires confirm:true after an explicit user request.`);
 }
 
 function formatDocumentSummary(document: AgentDocumentRecord): string {
@@ -318,6 +315,8 @@ async function exportDocument(
   registry: AgentDocumentRegistry,
   artifactStore: AgentDocumentArtifactStore | undefined,
   document: AgentDocumentRecord,
+  assertCurrent: () => void,
+  signal: AbortSignal | undefined,
 ): Promise<string> {
   if (!artifactStore?.create) throw new Error('Agent document export requires an artifact store with create support.');
   const versionId = exportedVersionId(document);
@@ -325,6 +324,8 @@ async function exportDocument(
   const proposedSuggestions = document.suggestions.filter((suggestion) => suggestion.status === 'proposed').length;
   const acceptedSuggestions = document.suggestions.filter((suggestion) => suggestion.status === 'accepted').length;
   const rejectedSuggestions = document.suggestions.filter((suggestion) => suggestion.status === 'rejected').length;
+  const assertDocument = () => { assertCurrent(); if (JSON.stringify(registry.get(document.id)) !== JSON.stringify(document)) throw new ToolInputProjectionError('stale'); };
+  assertDocument();
   const artifact = await artifactStore.create({
     kind: 'document',
     mimeType: 'text/markdown',
@@ -354,7 +355,8 @@ async function exportDocument(
         exportedReviewAppendix: document.comments.length > 0 || document.suggestions.length > 0,
       },
     },
-  });
+  }, { signal, assertCurrent: assertDocument });
+  assertDocument();
   registry.updateArtifactId(document.id, artifact.id);
   return formatExport({ ...document, lastArtifactId: artifact.id }, artifact);
 }
@@ -363,12 +365,16 @@ async function attachArtifactToDocument(
   registry: AgentDocumentRegistry,
   artifactStore: AgentDocumentArtifactStore | undefined,
   args: AgentDocumentsToolArgs,
+  assertCurrent: () => void,
 ): Promise<string> {
   const documentId = requireDocumentId(args);
   const artifactId = requireArtifactId(args);
   const document = registry.get(documentId);
   if (!document) throw new Error(`Unknown Agent document ${documentId}.`);
   const loaded = await loadArtifactForInsert(artifactStore, artifactId, false);
+  const assertSource = captureAgentArtifactSource(artifactStore ?? {}, loaded.descriptor);
+  assertCurrent(); assertSource();
+  if (JSON.stringify(registry.get(document.id)) !== JSON.stringify(document)) throw new ToolInputProjectionError('stale');
   const updated = registry.attachArtifact(document.id, {
     artifactId: loaded.descriptor.id,
     label: readString(args.attachmentLabel) || loaded.descriptor.filename || loaded.descriptor.id,
@@ -394,6 +400,7 @@ async function insertArtifactIntoDocument(
   registry: AgentDocumentRegistry,
   artifactStore: AgentDocumentArtifactStore | undefined,
   args: AgentDocumentsToolArgs,
+  assertCurrent: () => void,
 ): Promise<string> {
   const documentId = requireDocumentId(args);
   const artifactId = requireArtifactId(args);
@@ -402,10 +409,15 @@ async function insertArtifactIntoDocument(
   const includeContent = readBoolean(args.includeContent, true);
   const placement = readPlacement(args.placement);
   const loaded = await loadArtifactForInsert(artifactStore, artifactId, includeContent);
+  assertCurrent();
+  if (loaded.buffer) assertAgentArtifactBytes(loaded.descriptor, loaded.buffer);
   const block = renderArtifactDocumentBlock(loaded.descriptor, loaded.buffer, {
     sectionTitle: readString(args.sectionTitle),
     includeContent,
   });
+  const assertSource = captureAgentArtifactSource(artifactStore ?? {}, loaded.descriptor);
+  assertCurrent(); assertSource();
+  if (JSON.stringify(registry.get(document.id)) !== JSON.stringify(document)) throw new ToolInputProjectionError('stale');
   const updated = registry.update(document.id, {
     body: insertBlock(document.body, block, placement),
     summary: readString(args.changeSummary) || `Inserted artifact ${artifactId}.`,
@@ -517,19 +529,20 @@ export function createAgentDocumentsTool(
           },
           confirm: {
             type: 'boolean',
-            description: 'Required true for document writes and export.',
+            description: 'Optional request provenance. Recorded engine admission authorizes writes.',
           },
           explicitUserRequest: {
             type: 'string',
-            description: 'User request authorizing the document mutation.',
+            description: 'Optional user request provenance.',
           },
         },
         additionalProperties: false,
       },
       sideEffects: ['state'],
     },
-    execute: async (rawArgs: unknown) => {
-      const args = rawArgs as AgentDocumentsToolArgs;
+    execute: async (rawArgs: Record<string, unknown>, executionOptions) => {
+      const args = rawArgs;
+      const assertCurrent = agentArtifactEffectGuard(rawArgs, executionOptions);
       const mode = args.mode === undefined || readString(args.mode) === ''
         ? 'list'
         : isMode(args.mode)
@@ -537,8 +550,10 @@ export function createAgentDocumentsTool(
           : null;
       if (mode === null) return failure(`mode must be one of ${MODES.join(', ')}.`);
 
-      const registry = AgentDocumentRegistry.fromShellPaths(shellPaths);
       try {
+        const path = shellPaths.resolveProjectPath(GOODVIBES_AGENT_SURFACE_ROOT, 'documents', 'documents.json');
+        const target = captureAgentExportPath(shellPaths.workingDirectory, path);
+        const registry = AgentDocumentRegistry.fromShellPaths(shellPaths, () => { assertCurrent(); target.assertCurrent(); });
         if (mode === 'list') {
           const query = readString(args.query);
           const matches = query ? registry.search(query) : registry.list();
@@ -551,7 +566,7 @@ export function createAgentDocumentsTool(
           return output(formatShow(document, readBoolean(args.includeVersions, true)));
         }
         if (mode === 'create') {
-          requireConfirmed(args, 'Agent document creation');
+          assertCurrent();
           const title = readString(args.title);
           const body = readString(args.body);
           const document = registry.create({
@@ -568,7 +583,7 @@ export function createAgentDocumentsTool(
           ].join('\n'));
         }
         if (mode === 'update') {
-          requireConfirmed(args, 'Agent document update');
+          assertCurrent();
           const id = requireDocumentId(args);
           const document = registry.update(id, {
             title: args.title === undefined ? undefined : readString(args.title),
@@ -585,7 +600,7 @@ export function createAgentDocumentsTool(
           ].join('\n'));
         }
         if (mode === 'review') {
-          requireConfirmed(args, 'Agent document review');
+          assertCurrent();
           const document = registry.markReviewed(requireDocumentId(args));
           return output([
             'Reviewed Agent document',
@@ -595,7 +610,7 @@ export function createAgentDocumentsTool(
           ].join('\n'));
         }
         if (mode === 'comment') {
-          requireConfirmed(args, 'Agent document comment');
+          assertCurrent();
           const document = registry.addComment(requireDocumentId(args), { body: readString(args.comment) });
           const latest = document.comments.at(-1);
           return output([
@@ -606,7 +621,7 @@ export function createAgentDocumentsTool(
           ].join('\n'));
         }
         if (mode === 'resolveComment') {
-          requireConfirmed(args, 'Agent document comment resolution');
+          assertCurrent();
           const document = registry.resolveComment(requireDocumentId(args), requireCommentId(args));
           return output([
             'Resolved Agent document comment',
@@ -616,7 +631,7 @@ export function createAgentDocumentsTool(
           ].join('\n'));
         }
         if (mode === 'suggest') {
-          requireConfirmed(args, 'Agent document suggestion');
+          assertCurrent();
           const document = registry.suggestUpdate(requireDocumentId(args), {
             title: args.title === undefined ? undefined : readString(args.title),
             body: readString(args.body),
@@ -635,7 +650,7 @@ export function createAgentDocumentsTool(
           ].join('\n'));
         }
         if (mode === 'acceptSuggestion') {
-          requireConfirmed(args, 'Agent document suggestion acceptance');
+          assertCurrent();
           const document = registry.acceptSuggestion(requireDocumentId(args), requireSuggestionId(args));
           return output([
             'Accepted Agent document suggestion',
@@ -646,7 +661,7 @@ export function createAgentDocumentsTool(
           ].join('\n'));
         }
         if (mode === 'rejectSuggestion') {
-          requireConfirmed(args, 'Agent document suggestion rejection');
+          assertCurrent();
           const document = registry.rejectSuggestion(requireDocumentId(args), requireSuggestionId(args));
           return output([
             'Rejected Agent document suggestion',
@@ -657,17 +672,17 @@ export function createAgentDocumentsTool(
           ].join('\n'));
         }
         if (mode === 'insertArtifact') {
-          requireConfirmed(args, 'Agent document artifact insertion');
-          return output(await insertArtifactIntoDocument(registry, artifactStore, args));
+          assertCurrent();
+          return output(await insertArtifactIntoDocument(registry, artifactStore, args, assertCurrent));
         }
         if (mode === 'attachArtifact') {
-          requireConfirmed(args, 'Agent document artifact attachment');
-          return output(await attachArtifactToDocument(registry, artifactStore, args));
+          assertCurrent();
+          return output(await attachArtifactToDocument(registry, artifactStore, args, assertCurrent));
         }
-        requireConfirmed(args, 'Agent document export');
+        assertCurrent();
         const document = registry.get(requireDocumentId(args));
         if (!document) return failure(`Unknown Agent document ${readString(args.documentId)}.`);
-        return output(await exportDocument(registry, artifactStore, document));
+        return output(await exportDocument(registry, artifactStore, document, assertCurrent, executionOptions?.signal));
       } catch (error) {
         return failure(error instanceof Error ? error.message : String(error));
       }

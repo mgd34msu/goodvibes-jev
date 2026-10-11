@@ -234,10 +234,10 @@ export function skillStorePath(shellPaths: AgentLocalStorePaths): string {
 }
 
 export class AgentSkillRegistry {
-  public constructor(private readonly storePath: string) {}
+  public constructor(private readonly storePath: string, private readonly effects?: Parameters<typeof writeStoreFile>[2]) {}
 
-  public static fromShellPaths(shellPaths: AgentLocalStorePaths): AgentSkillRegistry {
-    return new AgentSkillRegistry(skillStorePath(shellPaths));
+  public static fromShellPaths(shellPaths: AgentLocalStorePaths, effects?: Parameters<typeof writeStoreFile>[2]): AgentSkillRegistry {
+    return new AgentSkillRegistry(skillStorePath(shellPaths), effects);
   }
 
   public snapshot(): AgentSkillSnapshot {
@@ -632,7 +632,7 @@ export class AgentSkillRegistry {
   }
 
   private writeStore(store: SkillStoreFile): void {
-    writeStoreFile(this.storePath, formatStore(store));
+    writeStoreFile(this.storePath, formatStore(store), this.effects);
   }
 }
 

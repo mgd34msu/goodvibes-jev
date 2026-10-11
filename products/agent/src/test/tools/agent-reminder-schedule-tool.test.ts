@@ -1,3 +1,6 @@
+import { scheduleEffectAdmission } from '../helpers/schedule-effect-admission.ts';
+import { createScheduleInputProjector } from '../../tools/agent-schedule-effect.ts';
+import { registerAgentOperatorMethodTool } from '../../tools/agent-operator-method-tool.ts';
 import { mockFetch } from '../helpers/typed-fetch-mock.ts';
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -107,10 +110,18 @@ function scheduleResponse(): Response {
   });
 }
 
+function admittedTool(paths: ShellPaths) {
+  const fixture = scheduleEffectAdmission(paths.workingDirectory), config = configManager(paths);
+  registerAgentOperatorMethodTool(fixture.registry, paths, config);
+  const raw = createAgentReminderScheduleTool(paths, config, fixture.registry);
+  fixture.registry.register(raw, { inputProjection: createScheduleInputProjector(paths, config) });
+  return { definition: raw.definition, execute: (args: Record<string, unknown>, options?: Parameters<typeof raw.execute>[1]) => fixture.run(raw, args, options) };
+}
+
 describe('agent_reminder_schedule tool', () => {
-  test('previews without calling the connected host when confirmation is missing', async () => {
+  test('holds an unadmitted caller without calling the connected host', async () => {
     const paths = shellPaths();
-    const tool = createAgentReminderScheduleTool(paths, configManager(paths));
+    const tool = createAgentReminderScheduleTool(paths, configManager(paths), new ToolRegistry());
     const originalFetch = globalThis.fetch;
     let calls = 0;
     globalThis.fetch = mockFetch(async () => {
@@ -128,20 +139,16 @@ describe('agent_reminder_schedule tool', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('GoodVibes schedule preview for Agent reminder');
-      expect(result.error).toContain('confirmation required');
-      expect(result.error).toContain('confirmationRoutes');
-      expect(result.error).toContain('schedule action:"remind" message:"Review open approvals"');
-      expect(result.error).toContain('scheduleKind:"every" scheduleValue:"1d" confirm:true explicitUserRequest:"..."');
+      expect(result.error).toContain('recorded effect admission');
       expect(calls).toBe(0);
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 
-  test('requires explicit user request provenance before scheduling', async () => {
+  test('holds forged caller confirmation without recorded admission', async () => {
     const paths = shellPaths();
-    const tool = createAgentReminderScheduleTool(paths, configManager(paths));
+    const tool = createAgentReminderScheduleTool(paths, configManager(paths), new ToolRegistry());
     const originalFetch = globalThis.fetch;
     let calls = 0;
     globalThis.fetch = mockFetch(async () => {
@@ -158,16 +165,16 @@ describe('agent_reminder_schedule tool', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('explicitUserRequest is required');
+      expect(result.error).toContain('recorded effect admission');
       expect(calls).toBe(0);
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 
-  test('creates a connected reminder through automation.schedules.create after explicit confirmation', async () => {
+  test('creates a connected reminder through automation.schedules.create under recorded admission', async () => {
     const paths = shellPaths();
-    const tool = createAgentReminderScheduleTool(paths, configManager(paths));
+    const tool = admittedTool(paths);
     const requests: ScheduleRequest[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch(async (input, init) => {
@@ -185,16 +192,15 @@ describe('agent_reminder_schedule tool', () => {
         scheduleKind: 'every',
         scheduleValue: '1d',
         deliveryChannel: 'slack:ops:Ops',
-        confirm: true,
         explicitUserRequest: 'Remind me every day to review open approvals.',
       });
 
-      expect(result.success).toBe(true);
+      expect(result).toEqual(expect.objectContaining({ success: true }));
       expect(result.output).toContain('Created GoodVibes schedule for Agent reminder');
       expect(result.output).toContain('nextRoutes');
       expect(result.output).toContain('schedule action:"list" query:"sched-reminder-1"');
-      expect(result.output).toContain('schedule action:"edit" scheduleId:"sched-reminder-1" confirm:true explicitUserRequest:"..."');
-      expect(result.output).toContain('schedule action:"delete" scheduleId:"sched-reminder-1" confirm:true explicitUserRequest:"..."');
+      expect(result.output).toContain('schedule action:"edit" scheduleId:"sched-reminder-1"');
+      expect(result.output).toContain('schedule action:"delete" scheduleId:"sched-reminder-1"');
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url).toBe('http://127.0.0.1:3421/api/automation/schedules');
       expect(requests[0]?.method).toBe('POST');

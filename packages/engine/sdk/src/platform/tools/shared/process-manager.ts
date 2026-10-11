@@ -64,11 +64,17 @@ const MAX_COMPLETED_PROCESSES = 100;
 const COMPLETED_PROCESS_TTL_MS = 30 * 60 * 1000;
 
 /** An admission check cannot promise to authorize a process after it exists. */
-function assertSynchronousAdmission(check: (() => void) | undefined): void {
+function assertSynchronousAdmission(check: (() => void) | undefined, operation = 'admission'): void {
   const result: unknown = check?.();
   if (result === undefined) return;
   try { void Promise.resolve(result).catch(() => {}); } catch { /* Refuse below. */ }
-  throw new Error('Process admission currentness must be synchronous and return void');
+  throw new Error(`Process ${operation} currentness must be synchronous and return void`);
+}
+
+export interface ProcessInputOptions {
+  readonly signal?: AbortSignal | undefined;
+  /** Restricts an existing managed pipe; never grants authority to another child. */
+  readonly assertCurrent?: (() => void) | undefined;
 }
 
 // ─── SpawnOptions ─────────────────────────────────────────────────────────────
@@ -151,6 +157,15 @@ interface ManagedProcessShutdown {
   detach(): void;
 }
 
+interface ManagedProcessInput {
+  readonly entry: BackgroundProcess;
+  readonly child: ReturnType<typeof Bun.spawn>;
+  readonly pipe: Bun.FileSink;
+  readonly write: Bun.FileSink['write'];
+  readonly flush: Bun.FileSink['flush'];
+  readonly shutdown: ManagedProcessShutdown;
+}
+
 // ─── ProcessManager ───────────────────────────────────────────────────────────
 
 export class ProcessManager {
@@ -158,6 +173,7 @@ export class ProcessManager {
   private readonly _boundaryExecutions = new Map<string, OwnedBoundaryExecution>();
   private _processes = new Map<string, BackgroundProcess>();
   private readonly _shutdowns = new Map<string, ManagedProcessShutdown>();
+  private readonly _inputs = new Map<string, ManagedProcessInput>();
   private readonly _launches = new Set<Promise<BgCommandResult>>();
   private _closed = false;
   private _closing: Promise<void> | undefined;
@@ -325,6 +341,7 @@ export class ProcessManager {
     this._processes.set(id, entry);
 
     let proc: ReturnType<typeof Bun.spawn>;
+    let inputPipe: Bun.FileSink | undefined;
     try {
       const spawnArgv = [...argv];
       const spawnOptions = {
@@ -349,6 +366,8 @@ export class ProcessManager {
       if (this._closed) throw new Error('ProcessManager is closed');
       admissionSignal?.throwIfAborted();
       proc = Bun.spawn(spawnArgv, spawnOptions);
+      const stdin = proc.stdin;
+      if (spawnOptions?.stdin === 'pipe' && stdin !== null && typeof stdin === 'object') inputPipe = stdin;
       onSpawned?.();
     } catch (spawnErr: unknown) {
       // Surface ENOENT / EACCES immediately, callers should not retry these
@@ -401,6 +420,7 @@ export class ProcessManager {
       entry.signal = readSignalCode(proc);
       entry.done = true;
       entry.completedAt = Date.now();
+      this._inputs.delete(id);
       this.pruneCompletedProcesses();
     })();
 
@@ -432,6 +452,9 @@ export class ProcessManager {
       detach: () => { clearTimeout(timeoutHandle); },
     };
     this._shutdowns.set(id, owner);
+    if (inputPipe) this._inputs.set(id, {
+      entry, child: proc, pipe: inputPipe, write: inputPipe.write, flush: inputPipe.flush, shutdown: owner,
+    });
 
     // Timeout opt-outs preserve externally owned lifetimes. Explicit stop and
     // runtime close share one termination sequence, including escalation/reap.
@@ -458,6 +481,7 @@ export class ProcessManager {
       drain.abort();
       entry.done = !ownsGroup;
       if (entry.done) entry.completedAt = Date.now();
+      this._inputs.delete(id);
       this.pruneCompletedProcesses();
     });
 
@@ -615,6 +639,49 @@ export class ProcessManager {
     };
   }
 
+  /** Write and flush an existing native stdin pipe. Cancellation prevents later
+   * operations and a successful receipt; bytes already handed to the child
+   * cannot be recalled. This never closes stdin or terminates its process. */
+  async writeInput(id: string, data: string, options: ProcessInputOptions = {}): Promise<number> {
+    if (typeof data !== 'string') throw new TypeError('Process input must be a string');
+    const entry = this._processes.get(id);
+    const input = this._inputs.get(id);
+    if (!entry) throw new Error(`Unknown process: ${id}`);
+    if (!input) throw new Error(`Process stdin pipe is unavailable: ${id}`);
+    const signal = options.signal;
+    const callerCurrent = options.assertCurrent;
+    const { pid, cmd, startTime } = entry;
+    const assertCurrent = () => {
+      signal?.throwIfAborted();
+      assertSynchronousAdmission(callerCurrent, 'input');
+      signal?.throwIfAborted();
+      if (options.signal !== signal || options.assertCurrent !== callerCurrent) throw new Error('Process input ownership changed');
+      if (this._closed) throw new Error('ProcessManager is closed');
+      if (this._processes.get(id) !== entry || this._inputs.get(id) !== input || input.entry !== entry
+        || this._shutdowns.get(id) !== input.shutdown || entry.id !== id || entry.pid !== pid
+        || entry.cmd !== cmd || entry.startTime !== startTime || input.child.pid !== pid
+        || entry.done || input.child.exitCode !== null || input.shutdown.stopRequested
+        || input.child.stdin !== input.pipe || input.pipe.write !== input.write || input.pipe.flush !== input.flush) {
+        throw new Error(`Process input is no longer current: ${id}`);
+      }
+      signal?.throwIfAborted();
+      if (this._closed || this._processes.get(id) !== entry || this._inputs.get(id) !== input
+        || input.shutdown.stopRequested) throw new Error(`Process input is no longer current: ${id}`);
+    };
+    assertCurrent();
+    const written = await executePolicyCheck(() => {
+      assertCurrent();
+      return input.write.call(input.pipe, data);
+    }, signal);
+    assertCurrent();
+    await executePolicyCheck(() => {
+      assertCurrent();
+      return input.flush.call(input.pipe);
+    }, signal);
+    assertCurrent();
+    return written;
+  }
+
   /**
    * Stop a background process by ID.
    * Returns true if termination was requested, false if unknown. The visible
@@ -631,6 +698,7 @@ export class ProcessManager {
     // Preserve bg_stop's immediate record removal, but retain the owned handle
     // until exit/output collection completes so close() can still drain it.
     this._processes.delete(id);
+    this._inputs.delete(id);
     // A pending boundary remains discoverable to its owner's settlement drain.
     if (!this._shutdowns.has(id)) this._boundaryExecutions.delete(id);
     return true;
@@ -729,6 +797,7 @@ export class ProcessManager {
       const completedAt = entry.completedAt ?? entry.startTime;
       if (now - completedAt <= COMPLETED_PROCESS_TTL_MS && i < MAX_COMPLETED_PROCESSES) continue;
       this._processes.delete(entry.id);
+      this._inputs.delete(entry.id);
       this._boundaryExecutions.delete(entry.id);
     }
   }

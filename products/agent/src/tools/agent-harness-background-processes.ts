@@ -1,3 +1,9 @@
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
+import { realpathSync } from 'node:fs';
+import { resolveAndValidatePath } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { harnessCatalogInvocationAuthority } from './agent-harness-catalog-ingress.ts';
+import { captureCatalogData, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { processClassificationOptions, spawnClassifiedBackgroundProcess } from './agent-harness-process-launch.ts';
 import type { ProcessClassificationOptions } from './agent-harness-process-classification.ts';
@@ -23,7 +29,7 @@ const MAX_LOG_PREVIEW_CHARS = 4_000;
 const MAX_COMPACT_LOG_PREVIEW_CHARS = 600;
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 const PROCESS_PARITY_METHODS = ['terminal(background=true)', 'process(list)', 'process(poll)', 'process(wait)', 'process(log)', 'process(kill)', 'process(write)', 'pty', 'sudo'] as const;
-const STDIN_WRITE_METHOD_NAMES = ['write', 'writeInput', 'sendInput', 'writeStdin', 'sendStdin', 'stdinWrite'] as const;
+const STDIN_WRITE_METHOD_NAMES = ['writeInput'] as const;
 const PTY_METHOD_NAMES = ['spawnPty', 'openPty', 'createPty', 'pty'] as const;
 const SENSITIVE_TEXT_PATTERNS: readonly [RegExp, string][] = [
   [/\b([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTHORIZATION|BEARER)[A-Z0-9_]*)=("[^"]*"|'[^']*'|[^\s]+)/gi, '$1=<redacted>'],
@@ -128,16 +134,6 @@ function managerMethodNames(manager: ProcessManager | undefined): readonly strin
     .sort((left, right) => left.localeCompare(right));
 }
 
-function firstManagerFunction(manager: ProcessManager | undefined, names: readonly string[]): ((processId: string, data: string) => unknown) | null {
-  if (!manager) return null;
-  const record = manager as unknown as Record<string, unknown>;
-  for (const name of names) {
-    const fn = record[name];
-    if (typeof fn === 'function') return fn.bind(manager) as (processId: string, data: string) => unknown;
-  }
-  return null;
-}
-
 function processSubstrateReport(context?: CommandContext): Record<string, unknown> {
   const manager = context ? managerFrom(context) : undefined;
   const methodNames = managerMethodNames(manager);
@@ -200,46 +196,10 @@ function outputTail(value: string, max: number): {
   };
 }
 
-function safeJsonPreview(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function redactWrittenInputPreview(value: string, data: string): { readonly text: string; readonly redactedInputEcho: boolean } {
-  if (!data) return { text: value, redactedInputEcho: false };
-  const escaped = JSON.stringify(data).slice(1, -1);
-  let text = value;
-  let redactedInputEcho = false;
-  for (const candidate of [data, escaped]) {
-    if (!candidate || !text.includes(candidate)) continue;
-    text = text.split(candidate).join('<redacted-input>');
-    redactedInputEcho = true;
-  }
-  return { text, redactedInputEcho };
-}
-
-function summarizeWriteResult(value: unknown, data: string): Record<string, unknown> {
-  if (typeof value === 'undefined') return { returned: false };
-  const redacted = redactText(safeJsonPreview(value));
-  const inputRedacted = redactWrittenInputPreview(redacted, data);
-  return {
-    returned: true,
-    type: value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value,
-    preview: previewHarnessText(inputRedacted.text, 240),
-    inputEchoRedacted: inputRedacted.redactedInputEcho,
-    policy: 'Result preview is bounded, secret-redacted, and strips exact input echoes.',
-  };
-}
-
-
 function routeFor(processId: string, mode: 'background_process' | 'run_background_process', action?: string): string {
   if (mode === 'background_process') return `execution action:"process" processId:"${processId}"`;
   const processAction = action === 'stop' ? 'kill' : action || 'poll';
-  const confirmation = ['wait', 'kill', 'stop', 'write', 'start'].includes(processAction) ? ' confirm:true explicitUserRequest:"..."' : '';
-  return `process action:"${processAction}" processId:"${processId}"${confirmation}`;
+  return `process action:"${processAction}" processId:"${processId}"`;
 }
 
 function readProcessSessionId(args: AgentHarnessBackgroundProcessArgs): { readonly source: BackgroundProcessLookupSource; readonly input: string } | null {
@@ -308,13 +268,11 @@ function describeProcessEntry(
   };
 }
 
-function processSearchText(entry: BackgroundProcess): string {
-  return [
-    entry.id,
-    String(entry.pid),
-    entry.cmd,
-    processStatus(entry),
-  ].join('\n').toLowerCase();
+function trackedProcesses(manager: ProcessManager): readonly BackgroundProcess[] {
+  return manager.list().flatMap((entry) => {
+    const current = manager.getStatus(entry.id);
+    return current ? [current] : [];
+  });
 }
 
 function lookupFromArgs(args: AgentHarnessBackgroundProcessArgs): { readonly source: BackgroundProcessLookupSource; readonly input: string } | null {
@@ -326,25 +284,37 @@ function lookupFromArgs(args: AgentHarnessBackgroundProcessArgs): { readonly sou
   return query ? { source: 'query', input: query } : null;
 }
 
-function matchingProcesses(manager: ProcessManager, input: string): readonly BackgroundProcess[] {
-  const entries = manager.list()
-    .map((entry) => manager.getStatus(entry.id))
-    .filter((entry): entry is BackgroundProcess => Boolean(entry));
-  const normalized = input.toLowerCase().trim();
-  if (!normalized) return entries;
-  return entries.filter((entry) => processSearchText(entry).includes(normalized));
+function processCatalogEntry(entry: BackgroundProcess) {
+  return { id: entry.id, pid: entry.pid, cmd: entry.cmd, status: processStatus(entry), done: entry.done,
+    startedAt: new Date(entry.startTime).toISOString(), exitCode: entry.exitCode, timedOut: entry.timedOut, signal: entry.signal };
 }
 
-function candidateProcess(entry: BackgroundProcess): Record<string, unknown> {
-  return {
-    processId: entry.id,
-    processSessionId: entry.id,
-    sessionId: entry.id,
-    session_id: entry.id,
-    pid: entry.pid,
-    status: processStatus(entry),
-    command: previewHarnessText(redactText(entry.cmd), 96),
+function retainProcessSources(context: CommandContext, manager: ProcessManager, entries: readonly ReturnType<typeof processCatalogEntry>[], options: CatalogRankingOptions, exactId?: string) {
+  const revision = JSON.stringify(entries);
+  const list = manager.list, getStatus = manager.getStatus, getOutput = manager.getOutput;
+  const assertSourcesCurrent = () => {
+    options.signal?.throwIfAborted();
+    if (managerFrom(context) !== manager || manager.list !== list || manager.getStatus !== getStatus || manager.getOutput !== getOutput) throw new ToolInputProjectionError('stale');
+    const exact = exactId === undefined ? undefined : manager.getStatus(exactId);
+    const current = exactId === undefined ? trackedProcesses(manager) : exact ? [exact] : [];
+    if (JSON.stringify(captureCatalogData(current.map(processCatalogEntry))) !== revision) throw new ToolInputProjectionError('stale');
   };
+  options.retainCurrent?.(assertSourcesCurrent, exactId === undefined ? 'agent.harness.background-processes.sources' : `agent.harness.background-processes.source:${exactId}`);
+  return assertSourcesCurrent;
+}
+
+async function matchingProcesses(context: CommandContext, manager: ProcessManager, input: string, options: CatalogRankingOptions) {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const entries = captureCatalogData(trackedProcesses(manager).map(processCatalogEntry));
+  const assertSourcesCurrent = retainProcessSources(context, manager, entries, options);
+  const assertCurrent = () => { options.assertCurrent?.(); assertSourcesCurrent(); };
+  assertCurrent();
+  if (!input) return { all: entries, matches: entries.map((entry) => ({ entry, judgment: undefined })), judgments: [] };
+  const ranked = await rankHarnessCatalog(entries, input, (entry) => ({ id: entry.id,
+    description: `${entry.id}\n${entry.pid}\n${entry.cmd}\n${entry.status}`, evidence: entry }),
+    'agent.harness.background-processes', { ...options, requirePreservedSource: true, assertCurrent });
+  assertCurrent();
+  return { ...ranked, all: entries };
 }
 
 function processToolParity(context?: CommandContext): readonly Record<string, unknown>[] {
@@ -355,8 +325,9 @@ function processToolParity(context?: CommandContext): readonly Record<string, un
   const stdinWrite = localProcessManager.stdinWrite as Record<string, unknown>;
   const pty = localProcessManager.pty as Record<string, unknown>;
   const terminalRoutes = Array.isArray(daemonContract.terminalOrPtyRoutes) ? daemonContract.terminalOrPtyRoutes : [];
-  const writeStatus: ProcessCapabilityStatus = interactive?.stdinWriteContract ? 'contract-discovered' : stdinWrite.status === 'contract-discovered'
-    ? 'contract-discovered'
+  const writeStatus: ProcessCapabilityStatus = stdinWrite.status === 'contract-discovered'
+    ? 'supported'
+    : interactive?.stdinWriteContract ? 'contract-discovered'
     : terminalRoutes.some((route) => String((route as Record<string, unknown>).methodId).toLowerCase().includes('write'))
       ? 'contract-discovered'
       : 'blocked-contract-gap';
@@ -367,7 +338,7 @@ function processToolParity(context?: CommandContext): readonly Record<string, un
       capability: 'terminal(background=true)',
       status: 'supported',
       userOutcome: 'Start one visible tracked local command without blocking the conversation.',
-      modelRoute: 'terminal command:"..." background:true confirm:true explicitUserRequest:"..."',
+      modelRoute: 'terminal command:"..." background:true',
     },
     {
       capability: 'process(list)',
@@ -385,7 +356,7 @@ function processToolParity(context?: CommandContext): readonly Record<string, un
       capability: 'process(wait)',
       status: 'supported',
       userOutcome: 'Wait on one tracked process with a bounded timeout.',
-      modelRoute: 'process action:"wait" processId:"..." confirm:true explicitUserRequest:"..."',
+      modelRoute: 'process action:"wait" processId:"..."',
     },
     {
       capability: 'process(log)',
@@ -397,15 +368,15 @@ function processToolParity(context?: CommandContext): readonly Record<string, un
       capability: 'process(kill)',
       status: 'supported',
       userOutcome: 'Stop and remove one tracked process from the shared ProcessManager.',
-      modelRoute: 'process action:"kill" sessionId:"..." confirm:true explicitUserRequest:"..."',
+      modelRoute: 'process action:"kill" sessionId:"..."',
     },
     {
       capability: 'process(write)',
       status: writeStatus,
-      userOutcome: writeStatus === 'contract-discovered'
-        ? 'Interactive input has a published contract; Agent requires confirmation and a process id before writing.'
-        : 'Interactive input is not exposed because the SDK ProcessManager has no safe stdin handle.',
-      modelRoute: 'process action:"write" processId:"..." data:"..." confirm:true explicitUserRequest:"..."',
+      userOutcome: writeStatus === 'supported'
+        ? 'Write to a running tracked native stdin pipe under current recorded effect admission.'
+        : 'Input requires the local guarded ProcessManager writeInput contract.',
+      modelRoute: 'process action:"write" processId:"..." data:"..."',
     },
     {
       capability: 'pty',
@@ -413,7 +384,7 @@ function processToolParity(context?: CommandContext): readonly Record<string, un
       userOutcome: ptyStatus === 'contract-discovered'
         ? 'A PTY-like contract is discoverable; Agent still requires an explicit session API before generic PTY spawn is enabled.'
         : 'Interactive CLIs need a published PTY/session API before Agent can make them safe and visible.',
-      modelRoute: 'terminal command:"..." background:true pty:true confirm:true explicitUserRequest:"..."',
+      modelRoute: 'terminal command:"..." background:true pty:true',
     },
     {
       capability: 'sudo',
@@ -431,16 +402,16 @@ function capabilities(context?: CommandContext): Record<string, unknown> {
   const stdinWrite = localProcessManager.stdinWrite as Record<string, unknown>;
   const pty = localProcessManager.pty as Record<string, unknown>;
   return {
-    start: 'terminal command:"..." background:true confirm:true explicitUserRequest:"..."',
+    start: 'terminal command:"..." background:true',
     inspect: 'execution action:"processes" or action:"process"',
-    wait: 'process action:"wait" processId|sessionId:"..." confirm:true explicitUserRequest:"..."',
-    stop: 'process action:"kill" processId|sessionId:"..." confirm:true explicitUserRequest:"..."',
+    wait: 'process action:"wait" processId|sessionId:"..."',
+    stop: 'process action:"kill" processId|sessionId:"..."',
     aliases: {
       actions: {
         poll: 'status',
         kill: 'stop',
         log: 'output',
-        write: stdinWrite.status === 'contract-discovered' ? 'confirmed stdin write through discovered ProcessManager method' : 'unsupported until ProcessManager exposes stdin',
+        write: 'writeInput on a running tracked native stdin pipe',
       },
       ids: ['processId', 'processSessionId', 'sessionId', 'session_id'],
       userOutcome: 'The harness accepts the process-tool words users expect while returning stable processId/sessionId aliases.',
@@ -458,11 +429,11 @@ function capabilities(context?: CommandContext): Record<string, unknown> {
         : 'Use foreground exec for noninteractive commands. Interactive PTY needs a published SDK/daemon session API before Agent can expose it safely.',
     },
     stdinWrite: {
-      status: stdinWrite.status === 'contract-discovered' ? 'supported-with-confirmation' : 'not-yet-supported-in-agent-harness',
-      modelRoute: 'process action:"write" processId:"..." data:"..." confirm:true explicitUserRequest:"..."',
+      status: stdinWrite.status === 'contract-discovered' ? 'supported' : 'unavailable',
+      modelRoute: 'process action:"write" processId:"..." data:"..."',
       guidance: stdinWrite.status === 'contract-discovered'
-        ? 'The shared ProcessManager exposes a stdin write method. Agent requires confirm:true, explicitUserRequest, one exact process id, and non-empty data.'
-        : 'ProcessManager currently tracks output and stop lifecycle; it does not expose a safe stdin write API.',
+        ? 'Tracked launches open a native stdin pipe. Writes require current recorded admission and retain the exact process until the SDK write and flush finish.'
+        : 'The local guarded ProcessManager writeInput contract is unavailable.',
     },
     sudo: {
       ...sudoPosture,
@@ -483,7 +454,7 @@ export function backgroundProcessCatalogStatus(context: CommandContext): Record<
       reason: 'ProcessManager is not wired into this runtime.',
     };
   }
-  const entries = matchingProcesses(manager, '');
+  const entries = trackedProcesses(manager);
   return {
     modes: ['background_processes', 'background_process', 'run_background_process'],
     status: 'available',
@@ -494,7 +465,8 @@ export function backgroundProcessCatalogStatus(context: CommandContext): Record<
   };
 }
 
-export function backgroundProcessSummary(context: CommandContext, args: AgentHarnessBackgroundProcessArgs): Record<string, unknown> {
+export async function backgroundProcessSummary(context: CommandContext, args: AgentHarnessBackgroundProcessArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
   const manager = managerFrom(context);
   if (!manager) {
     return {
@@ -507,29 +479,36 @@ export function backgroundProcessSummary(context: CommandContext, args: AgentHar
     };
   }
   const query = readString(args.query || args.target);
-  const entries = matchingProcesses(manager, query);
+  const selected = await matchingProcesses(context, manager, query, options);
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const entries = selected.matches;
+  const all = selected.all;
   const limit = readLimit(args.limit, 100);
-  const processes = entries.slice(0, limit).map((entry) => describeProcessEntry(manager, entry, {
-    includeParameters: args.includeParameters === true,
-  }));
+  const processes = entries.slice(0, limit).map(({ entry, judgment }) => {
+    const current = manager.getStatus(entry.id);
+    if (!current) throw new ToolInputProjectionError('stale');
+    return { ...describeProcessEntry(manager, current, { includeParameters: args.includeParameters === true }), ...(judgment ? { judgment } : {}) };
+  });
   return {
     status: 'available',
     summary: {
-      tracked: entries.length,
-      running: entries.filter((entry) => !entry.done).length,
-      completed: entries.filter((entry) => entry.done).length,
+      tracked: all.length,
+      running: all.filter((entry) => !entry.done).length,
+      completed: all.filter((entry) => entry.done).length,
       visibleMonitor: 'workspace action:"open" surfaceId:"process-monitor"',
       liveTail: 'workspace action:"open" surfaceId:"live-tail"',
     },
     processes,
+    judgments: selected.judgments,
     returned: processes.length,
-    total: entries.length,
+    total: all.length,
     capabilities: capabilities(context),
-    policy: 'List/status/log routes are read-only and bounded. Starting, waiting on, or stopping a background process requires confirm:true and explicitUserRequest.',
+    policy: 'List/status/log/wait routes are read-only and bounded. Starting or stopping a background process requires current recorded effect admission.',
   };
 }
 
-export function describeBackgroundProcess(context: CommandContext, args: AgentHarnessBackgroundProcessArgs): BackgroundProcessResolution {
+export async function describeBackgroundProcess(context: CommandContext, args: AgentHarnessBackgroundProcessArgs, options: CatalogRankingOptions = {}): Promise<BackgroundProcessResolution> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
   const manager = managerFrom(context);
   if (!manager) {
     return {
@@ -546,6 +525,7 @@ export function describeBackgroundProcess(context: CommandContext, args: AgentHa
   }
   const exact = manager.getStatus(lookup.input);
   if (exact) {
+    retainProcessSources(context, manager, captureCatalogData([processCatalogEntry(exact)]), options, exact.id)();
     return {
       status: 'found',
       process: describeProcessEntry(manager, exact, {
@@ -554,33 +534,34 @@ export function describeBackgroundProcess(context: CommandContext, args: AgentHa
       }),
     };
   }
-  const matches = matchingProcesses(manager, lookup.input);
-  if (matches.length === 1) {
+  const selected = lookup.source === 'target' || lookup.source === 'query'
+    ? await matchingProcesses(context, manager, lookup.input, options) : { matches: [], judgments: [] };
+  const matches = selected.matches;
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  if (matches.length === 1 && matches[0]!.judgment?.reading.verdict === 'yes' && matches[0]!.judgment?.reading.outcome === 'act') {
+    const current = manager.getStatus(matches[0]!.entry.id);
+    if (!current) throw new ToolInputProjectionError('stale');
     return {
       status: 'found',
-      process: describeProcessEntry(manager, matches[0]!, {
+      process: { ...describeProcessEntry(manager, current, {
         includeParameters: true,
         lookup: { ...lookup, resolvedBy: 'search' },
-      }),
+      }), judgment: matches[0]!.judgment },
     };
   }
-  if (matches.length > 1) {
+  if (matches.length > 0) {
     return {
       status: 'ambiguous',
       input: lookup.input,
-      candidates: matches.slice(0, 8).map(candidateProcess),
+      candidates: matches.slice(0, 8).map(({ entry, judgment }) => ({ processId: entry.id, processSessionId: entry.id,
+        sessionId: entry.id, session_id: entry.id, pid: entry.pid, status: entry.status,
+        command: previewHarnessText(redactText(entry.cmd), 96), judgment })),
     };
   }
   return {
     status: 'missing_lookup',
     usage: `Unknown background process ${lookup.input}. Use execution action:"processes" to inspect tracked process ids.`,
   };
-}
-
-function requireConfirmed(args: AgentHarnessBackgroundProcessArgs, action: string): string | null {
-  if (!readString(args.explicitUserRequest)) return `${action} requires explicitUserRequest with the user's exact request or a short faithful summary.`;
-  if (args.confirm !== true) return `${action} requires confirm:true after an explicit user request.`;
-  return null;
 }
 
 function readProcessAction(args: AgentHarnessBackgroundProcessArgs): string {
@@ -606,22 +587,18 @@ function readProcessId(args: AgentHarnessBackgroundProcessArgs): string {
 function readCwd(context: CommandContext, args: AgentHarnessBackgroundProcessArgs): string | undefined {
   const raw = readString(args.cwd) || readField(args, 'cwd');
   const shellPaths = context.workspace.shellPaths;
-  if (!raw) return shellPaths?.workingDirectory;
-  if (!shellPaths) return raw;
-  const resolved = shellPaths.resolveWorkspacePath(raw);
-  if (!shellPaths.isWithinWorkingDirectory(resolved)) {
-    throw new Error('Background process cwd must stay inside the current Agent workspace.');
-  }
-  return resolved;
+  if (!shellPaths?.workingDirectory) throw new ToolInputProjectionError('held');
+  return realpathSync(resolveAndValidatePath(raw || '.', shellPaths.workingDirectory));
 }
 
 function looksLikeSudo(command: string): boolean {
   return /(^|[\s;&|])(?:sudo|su|doas|pkexec)\b/.test(command);
 }
 
-async function waitForProcess(manager: ProcessManager, processId: string, timeoutMs: number): Promise<BackgroundProcess | undefined> {
+async function waitForProcess(manager: ProcessManager, processId: string, timeoutMs: number, options: CatalogRankingOptions): Promise<BackgroundProcess | undefined> {
   const started = Date.now();
   for (;;) {
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
     const entry = manager.getStatus(processId);
     if (!entry || entry.done) return entry;
     if (Date.now() - started >= timeoutMs) return entry;
@@ -629,7 +606,9 @@ async function waitForProcess(manager: ProcessManager, processId: string, timeou
   }
 }
 
-export async function runBackgroundProcessAction(context: CommandContext, args: AgentHarnessBackgroundProcessArgs, options: ProcessClassificationOptions = {}): Promise<Record<string, unknown>> {
+export async function runBackgroundProcessAction(context: CommandContext, args: AgentHarnessBackgroundProcessArgs,
+  options: ProcessClassificationOptions & CatalogRankingOptions = {}, originalArgs?: Record<string, unknown>, executionOptions?: Parameters<Tool['execute']>[1],
+): Promise<Record<string, unknown>> {
   const manager = managerFrom(context);
   if (!manager) {
     return {
@@ -648,49 +627,33 @@ export async function runBackgroundProcessAction(context: CommandContext, args: 
   }
 
   const action = readProcessAction(args);
+  const assertEffect = () => {
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    if (!originalArgs || !harnessCatalogInvocationAuthority(originalArgs, executionOptions, 'write')) throw new ToolInputProjectionError('held');
+    if (managerFrom(context) !== manager) throw new ToolInputProjectionError('held');
+  };
   if (action === 'write') {
-    const confirmationError = requireConfirmed(args, 'Background process stdin write');
-    if (confirmationError) return { status: 'needs_confirmation', reason: confirmationError, policy: 'Writing stdin to a background process requires confirm:true and explicitUserRequest.' };
-    const writeInput = firstManagerFunction(manager, STDIN_WRITE_METHOD_NAMES);
-    if (!writeInput) {
-      return {
-        ...(capabilities(context).stdinWrite as Record<string, unknown>),
-        status: 'unsupported',
-        capability: 'stdinWrite',
-        processId: readProcessId(args) || null,
-        dataReceived: readData(args).length > 0,
-      };
-    }
-    const processId = readProcessId(args);
-    if (!processId) throw new Error('Background process stdin write requires processId.');
-    const data = readData(args);
-    if (!data) throw new Error('Background process stdin write requires non-empty data.');
-    const entry = manager.getStatus(processId);
-    if (!entry) {
-      return {
-        status: 'not_found',
-        capability: 'stdinWrite',
-        processId,
-        policy: 'No tracked process matched that id; no input was written.',
-      };
-    }
-    if (entry.done) {
-      return {
-        status: 'not_running',
-        capability: 'stdinWrite',
-        processId,
-        policy: 'Input is only written to currently running tracked processes.',
-      };
-    }
-    const result = await writeInput(processId, data);
-    return {
-      status: 'written',
-      capability: 'stdinWrite',
-      processId,
-      bytes: Buffer.byteLength(data),
-      result: summarizeWriteResult(result, data),
-      policy: 'Input was written through the shared ProcessManager stdin contract after explicit confirmation. The input data is not echoed in model-visible output.',
+    assertEffect();
+    const processId = readProcessId(args), data = readData(args);
+    if (!processId) throw new Error('Background process input requires processId.');
+    if (!data) throw new Error('Background process input requires nonempty data.');
+    const getStatus = manager.getStatus, writeInput = manager.writeInput;
+    const entry = getStatus.call(manager, processId);
+    if (!entry || entry.done) throw new ToolInputProjectionError('held');
+    const { id, pid, cmd, startTime } = entry;
+    const assertCurrent = () => {
+      assertEffect();
+      if (manager.getStatus !== getStatus || manager.writeInput !== writeInput
+        || getStatus.call(manager, processId) !== entry || entry.id !== id || id !== processId
+        || entry.pid !== pid || entry.cmd !== cmd || entry.startTime !== startTime || entry.done) {
+        throw new ToolInputProjectionError('held');
+      }
     };
+    assertCurrent();
+    const bytesWritten = await writeInput.call(manager, processId, data, { signal: options.signal, assertCurrent });
+    assertCurrent();
+    return { status: 'written', processId, processSessionId: processId, sessionId: processId, session_id: processId,
+      bytesWritten, policy: 'Input was written and flushed to the captured native stdin pipe. Bytes already handed to the child cannot be recalled.' };
   }
   if (action === 'capabilities' || action === 'doctor' || action === 'parity') {
     return {
@@ -701,11 +664,9 @@ export async function runBackgroundProcessAction(context: CommandContext, args: 
     };
   }
   if (action === 'start' || action === 'spawn' || action === 'run') {
+    assertEffect();
     args = snapshotJudgmentInput(args) as AgentHarnessBackgroundProcessArgs;
     const current = processClassificationOptions(context), supplied = options;
-    options = { ...supplied, assertCurrent: () => { current.assertCurrent?.(); supplied.assertCurrent?.(); } };
-    const confirmationError = requireConfirmed(args, 'Background process start');
-    if (confirmationError) return { status: 'needs_confirmation', reason: confirmationError, policy: 'Starting a background process requires confirm:true and explicitUserRequest.' };
     const command = readCommand(args);
     if (!command) throw new Error('Background process start requires command.');
     if (looksLikeSudo(command)) {
@@ -717,8 +678,15 @@ export async function runBackgroundProcessAction(context: CommandContext, args: 
       };
     }
     const cwd = readCwd(context, args);
+    const root = context.workspace.shellPaths?.workingDirectory;
+    if (!root) throw new ToolInputProjectionError('held');
+    const physicalRoot = realpathSync(root);
+    const launchOptions = { ...supplied, assertCurrent: () => {
+      assertEffect(); current.assertCurrent?.();
+      if (realpathSync(root) !== physicalRoot || readCwd(context, args) !== cwd) throw new ToolInputProjectionError('held');
+    } };
     const timeoutMs = clampTimeout(args.timeoutMs ?? readField(args, 'timeoutMs'), DEFAULT_BACKGROUND_TIMEOUT_MS);
-    const { processClass, killOnTimeout, result } = await spawnClassifiedBackgroundProcess(manager, args, command, cwd, timeoutMs, options);
+    const { processClass, killOnTimeout, result } = await spawnClassifiedBackgroundProcess(manager, args, command, cwd, timeoutMs, launchOptions);
     return {
       status: 'started',
       processClass,
@@ -748,11 +716,13 @@ export async function runBackgroundProcessAction(context: CommandContext, args: 
   }
 
   if (action === 'stop' || action === 'kill' || action === 'cancel') {
-    const confirmationError = requireConfirmed(args, 'Background process stop');
-    if (confirmationError) return { status: 'needs_confirmation', reason: confirmationError, policy: 'Stopping a background process requires confirm:true and explicitUserRequest.' };
+    assertEffect();
     const processId = readProcessId(args);
     if (!processId) throw new Error('Background process stop requires processId.');
-    const stopped = manager.stop(processId);
+    const getStatus = manager.getStatus, entry = getStatus.call(manager, processId), stop = manager.stop;
+    assertEffect();
+    if (manager.stop !== stop || manager.getStatus !== getStatus || getStatus.call(manager, processId) !== entry) throw new ToolInputProjectionError('held');
+    const stopped = stop.call(manager, processId);
     return {
       status: stopped ? 'stopped' : 'not_found',
       processId,
@@ -766,12 +736,13 @@ export async function runBackgroundProcessAction(context: CommandContext, args: 
   }
 
   if (action === 'wait') {
-    const confirmationError = requireConfirmed(args, 'Background process wait');
-    if (confirmationError) return { status: 'needs_confirmation', reason: confirmationError, policy: 'Waiting on a background process requires confirm:true and explicitUserRequest.' };
+    const current = processClassificationOptions(context), supplied = options;
+    const waiting = { ...supplied, assertCurrent: () => { current.assertCurrent?.(); supplied.assertCurrent?.(); } };
     const processId = readProcessId(args);
     if (!processId) throw new Error('Background process wait requires processId.');
     const timeoutMs = clampTimeout(args.timeoutMs ?? readField(args, 'timeoutMs'), DEFAULT_WAIT_TIMEOUT_MS);
-    const entry = await waitForProcess(manager, processId, timeoutMs);
+    const entry = await waitForProcess(manager, processId, timeoutMs, waiting);
+    waiting.assertCurrent();
     return {
       status: entry?.done ? 'completed' : entry ? 'still_running' : 'not_found',
       processId,
@@ -784,9 +755,9 @@ export async function runBackgroundProcessAction(context: CommandContext, args: 
     };
   }
 
-  if (action === 'list') return backgroundProcessSummary(context, args);
+  if (action === 'list') return backgroundProcessSummary(context, args, options);
   if (action === 'status' || action === 'log' || action === 'output') {
-    const resolved = describeBackgroundProcess(context, args);
+    const resolved = await describeBackgroundProcess(context, args, options);
     if (resolved.status === 'found') return resolved.process;
     return {
       status: resolved.status,

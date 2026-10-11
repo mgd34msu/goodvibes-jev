@@ -1,3 +1,5 @@
+import { redactText } from '@goodvibes-jev/engine/terminal-shell';
+import { captureJudgmentPort, type JudgmentPortCapture, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import type { CommandContext } from '../input/command-registry.ts';
 import type { LocalModelDetection, LocalModelEndpointSource, LocalModelServerDefaultEndpoint, LocalModelServerDiagnosticsPublication, LocalModelServerEndpoint, LocalModelServerHealthMap, LocalModelServerServingDiagnostics, MutableLocalModelServerEndpoint } from './agent-harness-model-routing-types.ts';
 import { listProviderIds, listProviderRegistryProviders, listRegistryModels, modelDisplayName, modelModelId, modelProviderId, modelRegistryKey, readProviderModels } from './agent-harness-model-catalog.ts';
@@ -67,6 +69,7 @@ interface LocalModelServingDiagnosticRecord extends LocalModelServerServingDiagn
 interface LocalModelServingDiagnosticIndex {
   readonly records: readonly LocalModelServingDiagnosticRecord[];
   readonly publication: Omit<LocalModelServerDiagnosticsPublication, 'matchedEndpointCount'>;
+  readonly assertCurrent: () => void;
 }
 
 const LOCAL_MODEL_SERVING_READ_MODEL_PATHS = [
@@ -85,17 +88,6 @@ const LOCAL_MODEL_SERVING_READ_MODEL_PATHS = [
   'context.clients.operator.models.servingDiagnostics',
   'context.clients.operator.localModelServingDiagnostics',
 ] as const;
-
-const LOCAL_MODEL_SECRET_PATTERNS: readonly [RegExp, string][] = [
-  [/("?\b(?:api[-_]?key|apikey|token|secret|password|passwd|credential|authorization)\b"?\s*:\s*)("[^"]*"|'[^']*'|[^\s,}]+)/gi, '$1"<redacted>"'],
-  [/\b([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTHORIZATION|BEARER)[A-Z0-9_]*)=("[^"]*"|'[^']*'|[^\s]+)/gi, '$1=<redacted>'],
-  [/(\b(?:token|secret|password|passwd|api[-_]?key|apikey|authorization|credential)\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}]+)/gi, '$1<redacted>'],
-  [/(Authorization:\s*Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1<redacted>'],
-];
-
-function redactLocalModelDiagnosticText(value: string): string {
-  return LOCAL_MODEL_SECRET_PATTERNS.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), value);
-}
 
 function readNumber(value: unknown): number | null {
   const parsed = typeof value === 'string' && value.trim() ? Number(value) : value;
@@ -173,9 +165,9 @@ function localResourcePressure(record: Record<string, unknown>): LocalModelServe
   return 'unknown';
 }
 
-function localResourceSummary(record: Record<string, unknown>, pressure: LocalModelServerServingDiagnostics['resourcePressure']): string | undefined {
+async function localResourceSummary(record: Record<string, unknown>, pressure: LocalModelServerServingDiagnostics['resourcePressure'], options: JudgmentReadingOptions): Promise<string | undefined> {
   const explicit = firstString(record, ['resourceSummary', 'resources', 'resourceDetail']);
-  if (explicit) return redactLocalModelDiagnosticText(previewHarnessText(explicit, 180));
+  if (explicit) return previewHarnessText(await redactText(explicit, options), 180);
   const parts = [
     firstNumber(record, ['memoryUsagePercent', 'memoryPercent']) !== null ? `memory ${firstNumber(record, ['memoryUsagePercent', 'memoryPercent'])}%` : '',
     firstNumber(record, ['vramUsagePercent', 'gpuMemoryPercent']) !== null ? `vram ${firstNumber(record, ['vramUsagePercent', 'gpuMemoryPercent'])}%` : '',
@@ -203,42 +195,43 @@ function localServingSchemaStatus(record: Record<string, unknown>): LocalModelSe
   return schemaVersion && provenance && publicationGuarantee ? 'certified' : 'legacy';
 }
 
-function routeTextFromDiagnosticValue(value: unknown): string {
+async function routeTextFromDiagnosticValue(value: unknown, options: JudgmentReadingOptions): Promise<string> {
   const direct = readString(value);
-  if (direct) return previewHarnessText(redactLocalModelDiagnosticText(direct), 260);
+  if (direct) return previewHarnessText(await redactText(direct, options), 260);
   const record = readRecord(value);
   const route = firstString(record, ['route', 'modelRoute', 'operatorRoute', 'methodRoute', 'commandRoute']);
-  return route ? previewHarnessText(redactLocalModelDiagnosticText(route), 260) : '';
+  return route ? previewHarnessText(await redactText(route, options), 260) : '';
 }
 
-function diagnosticRouteFromRecord(record: Record<string, unknown>, keys: readonly string[]): string {
+async function diagnosticRouteFromRecord(record: Record<string, unknown>, keys: readonly string[], options: JudgmentReadingOptions): Promise<string> {
   for (const key of keys) {
-    const route = routeTextFromDiagnosticValue(record[key]);
+    const route = await routeTextFromDiagnosticValue(record[key], options);
     if (route) return route;
   }
   for (const nestedKey of ['routes', 'actions', 'controls', 'operatorRoutes', 'hostRoutes', 'receiptRoutes']) {
     const nested = readRecord(record[nestedKey]);
     for (const key of keys) {
-      const route = routeTextFromDiagnosticValue(nested[key]);
+      const route = await routeTextFromDiagnosticValue(nested[key], options);
       if (route) return route;
     }
   }
   return '';
 }
 
-function diagnosticPublicationGuarantee(record: Record<string, unknown>): string {
+async function diagnosticPublicationGuarantee(record: Record<string, unknown>, options: JudgmentReadingOptions): Promise<string> {
   const value = firstStringFromRecords(
     [record, readRecord(record.schema), readRecord(record.contract), readRecord(record.receipt)],
     ['publicationGuarantee', 'hostPublicationGuarantee', 'servingPublicationGuarantee'],
   );
-  return value ? previewHarnessText(redactLocalModelDiagnosticText(value), 220) : '';
+  return value ? previewHarnessText(await redactText(value, options), 220) : '';
 }
 
-function localServingProvenance(
+async function localServingProvenance(
   record: Record<string, unknown>,
   startRoute: string,
   repairRoute: string,
-): readonly string[] {
+  options: JudgmentReadingOptions,
+): Promise<readonly string[]> {
   const explicit = readStringArray(record.provenance);
   const values = [
     ...explicit,
@@ -248,10 +241,8 @@ function localServingProvenance(
     startRoute ? `start ${startRoute}` : '',
     repairRoute ? `repair ${repairRoute}` : '',
   ];
-  return [...new Set(values
-    .map((entry) => previewHarnessText(redactLocalModelDiagnosticText(entry), 220))
-    .filter(Boolean))]
-    .slice(0, 8);
+  const redacted = await Promise.all(values.filter(Boolean).map(async (entry) => previewHarnessText(await redactText(entry, options), 220)));
+  return [...new Set(redacted.filter(Boolean))].slice(0, 8);
 }
 
 function setupServingReadModelSources(context: CommandContext): readonly LocalModelServingReadModelSource[] {
@@ -339,7 +330,7 @@ function isLocalServingDiagnosticRecord(record: Record<string, unknown>): boolea
   );
 }
 
-function normalizeServingDiagnosticRecord(value: unknown, source: string): LocalModelServingDiagnosticRecord | null {
+async function normalizeServingDiagnosticRecord(value: unknown, source: string, options: JudgmentReadingOptions): Promise<LocalModelServingDiagnosticRecord | null> {
   const record = {
     ...readRecord(readRecord(value).metadata),
     ...readRecord(value),
@@ -366,7 +357,7 @@ function normalizeServingDiagnosticRecord(value: unknown, source: string): Local
   const loadedModelCount = firstNumber(record, ['loadedModelCount', 'modelCount']) ?? loadedModels.length;
   const status = localServingStatus(record, loadedModelCount);
   const resourcePressure = localResourcePressure(record);
-  const summary = redactLocalModelDiagnosticText(firstString(record, ['summary', 'detail', 'message']))
+  const summary = await redactText(firstString(record, ['summary', 'detail', 'message']), options)
     || `${providerIdLabel(firstString(record, ['providerId', 'provider', 'providerName']))} local serving diagnostics are ${status}.`;
   const serverVersion = firstString(record, ['serverVersion', 'version']);
   const contextWindowTokens = firstNumber(record, ['contextWindowTokens', 'contextWindow', 'maxContextTokens']);
@@ -379,11 +370,12 @@ function normalizeServingDiagnosticRecord(value: unknown, source: string): Local
     [record, readRecord(record.schema), readRecord(record.contract), readRecord(record.receipt)],
     ['schemaVersion', 'receiptSchemaVersion', 'contractVersion'],
   );
-  const publicationGuarantee = diagnosticPublicationGuarantee(record);
+  const publicationGuarantee = await diagnosticPublicationGuarantee(record, options);
   const publisher = firstString(record, ['publisher', 'publisherId', 'daemonId', 'hostId']);
-  const startRoute = diagnosticRouteFromRecord(record, ['startRoute', 'startupRoute', 'startModelServerRoute', 'startServerRoute', 'startActionRoute', 'startCommandRoute']);
-  const repairRoute = diagnosticRouteFromRecord(record, ['repairRoute', 'restartRoute', 'restartServerRoute', 'repairModelServerRoute', 'repairActionRoute', 'repairCommandRoute']);
-  const provenance = localServingProvenance(record, startRoute, repairRoute);
+  const startRoute = await diagnosticRouteFromRecord(record, ['startRoute', 'startupRoute', 'startModelServerRoute', 'startServerRoute', 'startActionRoute', 'startCommandRoute'], options);
+  const repairRoute = await diagnosticRouteFromRecord(record, ['repairRoute', 'restartRoute', 'restartServerRoute', 'repairModelServerRoute', 'repairActionRoute', 'repairCommandRoute'], options);
+  const provenance = await localServingProvenance(record, startRoute, repairRoute, options);
+  const resourceSummary = await localResourceSummary(record, resourcePressure, options);
   const missingSignals = [
     ...(schemaStatus === 'certified' ? [] : ['Certified local serving diagnostics schema is not published.']),
     ...(serverVersion ? [] : ['Server version is not published.']),
@@ -399,17 +391,17 @@ function normalizeServingDiagnosticRecord(value: unknown, source: string): Local
     source,
     summary: previewHarnessText(summary, 220),
     schemaStatus,
-    ...(schemaVersion ? { schemaVersion: previewHarnessText(redactLocalModelDiagnosticText(schemaVersion), 80) } : {}),
+    ...(schemaVersion ? { schemaVersion: previewHarnessText(await redactText(schemaVersion, options), 80) } : {}),
     ...(provenance.length > 0 ? { provenance } : {}),
     ...(publicationGuarantee ? { publicationGuarantee } : {}),
-    ...(publisher ? { publisher: previewHarnessText(redactLocalModelDiagnosticText(publisher), 80) } : {}),
+    ...(publisher ? { publisher: previewHarnessText(await redactText(publisher, options), 80) } : {}),
     ...(serverVersion ? { serverVersion: previewHarnessText(serverVersion, 80) } : {}),
     ...(loadedModelCount > 0 ? { loadedModelCount } : {}),
     loadedModels: loadedModels.map((model) => previewHarnessText(model, 96)),
     ...(contextWindowTokens !== null ? { contextWindowTokens } : {}),
     ...(toolSupport !== null ? { toolSupport } : {}),
     resourcePressure,
-    ...(localResourceSummary(record, resourcePressure) ? { resourceSummary: localResourceSummary(record, resourcePressure) } : {}),
+    ...(resourceSummary ? { resourceSummary } : {}),
     lastCheckedAt: isoFromDiagnosticValue(firstString(record, ['lastCheckedAt', 'checkedAt', 'updatedAt', 'timestamp']) || record.lastCheckedAt || record.checkedAt || record.updatedAt || record.timestamp),
     ...(startReceiptId ? { startReceiptId } : {}),
     ...(repairReceiptId ? { repairReceiptId } : {}),
@@ -430,7 +422,21 @@ function providerIdLabel(providerId: string): string {
   return providerId || 'Detected';
 }
 
-function localServingDiagnosticsIndex(context: CommandContext): LocalModelServingDiagnosticIndex {
+async function localServingDiagnosticsIndex(context: CommandContext, options: JudgmentReadingOptions): Promise<LocalModelServingDiagnosticIndex> {
+  const signal = options.signal, callerCurrent = options.assertCurrent;
+  let owner: JudgmentPortCapture | undefined;
+  const sourceCurrent = () => {
+    signal?.throwIfAborted();
+    if (options.signal !== signal || options.assertCurrent !== callerCurrent) throw new Error('Local serving diagnostic owner changed.');
+  };
+  const assertSource = () => {
+    sourceCurrent();
+    const result: unknown = callerCurrent?.();
+    if (result !== undefined) { void Promise.resolve(result).catch(() => {}); throw new Error('Local serving diagnostic ownership must be synchronous.'); }
+    sourceCurrent();
+  };
+  const assertCurrent = () => { assertSource(); owner?.assertCurrent(); };
+  assertCurrent();
   const records: LocalModelServingDiagnosticRecord[] = [];
   const sourcePaths = new Set<string>();
   let sawSource = false;
@@ -439,17 +445,21 @@ function localServingDiagnosticsIndex(context: CommandContext): LocalModelServin
     if (entry.source === undefined || entry.source === null) continue;
     sawSource = true;
     try {
-      const sourceRecords = diagnosticEntriesFromSnapshot(readServingSnapshot(entry.source))
-        .flatMap((value) => {
-          const record = normalizeServingDiagnosticRecord(value, entry.path);
-          return record ? [record] : [];
-        });
+      owner ??= captureJudgmentPort('agent.local-serving-diagnostics', { ...options, assertCurrent: assertSource });
+      const reading = { ...options, signal: owner.signal, assertCurrent: owner.assertCurrent };
+      const sourceRecords: LocalModelServingDiagnosticRecord[] = [];
+      for (const value of diagnosticEntriesFromSnapshot(readServingSnapshot(entry.source))) {
+        const record = await normalizeServingDiagnosticRecord(value, entry.path, reading);
+        if (record) sourceRecords.push(record);
+      }
+      assertCurrent();
       if (sourceRecords.length > 0) sourcePaths.add(entry.path);
       records.push(...sourceRecords);
     } catch {
       sawError = true;
     }
   }
+  assertCurrent();
   const status = records.length > 0
     ? 'published-read-model'
     : sawError
@@ -462,6 +472,7 @@ function localServingDiagnosticsIndex(context: CommandContext): LocalModelServin
     : ['No daemon-published local serving diagnostics read model is available to Agent yet.'];
   return {
     records,
+    assertCurrent,
     publication: {
       status,
       requiredPaths: LOCAL_MODEL_SERVING_READ_MODEL_PATHS,
@@ -482,16 +493,19 @@ function servingDiagnosticForEndpoint(
     ?? null;
 }
 
-export function localModelServerEndpoints(
+export async function localModelServerEndpoints(
   context: CommandContext,
   includeParameters: boolean,
-): readonly LocalModelServerEndpoint[] {
-  const servingDiagnostics = localServingDiagnosticsIndex(context);
-  return collectLocalServerEndpointCandidates(context).map((endpoint) => describeLocalServerEndpoint(
+  options: JudgmentReadingOptions = {},
+): Promise<readonly LocalModelServerEndpoint[]> {
+  const servingDiagnostics = await localServingDiagnosticsIndex(context, options);
+  const endpoints = collectLocalServerEndpointCandidates(context).map((endpoint) => describeLocalServerEndpoint(
     endpoint,
     includeParameters,
     servingDiagnosticForEndpoint(servingDiagnostics.records, endpoint),
   ));
+  servingDiagnostics.assertCurrent();
+  return endpoints;
 }
 
 export function localModelServerDefaults(): readonly LocalModelServerDefaultEndpoint[] {
@@ -741,11 +755,12 @@ export function describeLocalServerEndpoint(
   };
 }
 
-export function localModelServerHealthMap(
+export async function localModelServerHealthMap(
   context: CommandContext,
   includeParameters: boolean,
-): LocalModelServerHealthMap {
-  const servingDiagnostics = localServingDiagnosticsIndex(context);
+  options: JudgmentReadingOptions = {},
+): Promise<LocalModelServerHealthMap> {
+  const servingDiagnostics = await localServingDiagnosticsIndex(context, options);
   const rawEndpoints = collectLocalServerEndpointCandidates(context);
   const matchedEndpointCount = rawEndpoints
     .filter((endpoint) => Boolean(servingDiagnosticForEndpoint(servingDiagnostics.records, endpoint)))
@@ -755,10 +770,34 @@ export function localModelServerHealthMap(
     includeParameters,
     servingDiagnosticForEndpoint(servingDiagnostics.records, endpoint),
   ));
+  const facts = localModelEndpointFacts(endpoints, includeParameters);
+  const hasMatchedDiagnostics = matchedEndpointCount > 0;
+  servingDiagnostics.assertCurrent();
+  return {
+    ...facts,
+    daemonDiagnostics: {
+      ...servingDiagnostics.publication,
+      matchedEndpointCount,
+      missingSignals: hasMatchedDiagnostics ? [] : servingDiagnostics.publication.missingSignals,
+    },
+    nextActions: [
+      ...(hasMatchedDiagnostics ? ['Review published local serving diagnostics before smoke, refresh, benchmark, or provider changes.'] : []),
+      ...facts.nextActions,
+    ],
+    policy: 'Read-only local endpoint map with canonical redacted daemon-published serving diagnostics. Probes, installs, downloads, provider edits, refresh, benchmarks, and route changes remain confirmed actions.',
+  };
+}
+
+/** Startup snapshots contain registry facts and static hints; daemon prose is read only by explicit inspection. */
+export function localModelServerFacts(context: CommandContext, includeParameters: boolean): Omit<LocalModelServerHealthMap, 'daemonDiagnostics'> {
+  return localModelEndpointFacts(collectLocalServerEndpointCandidates(context)
+    .map(endpoint => describeLocalServerEndpoint(endpoint, includeParameters)), includeParameters);
+}
+
+function localModelEndpointFacts(endpoints: readonly LocalModelServerEndpoint[], includeParameters: boolean): Omit<LocalModelServerHealthMap, 'daemonDiagnostics'> {
   const returned = endpoints.slice(0, includeParameters ? 8 : 3);
   const suggestedDefaults = localModelServerDefaults().slice(0, includeParameters ? 4 : 2);
   const first = returned[0];
-  const hasMatchedDiagnostics = matchedEndpointCount > 0;
   return {
     status: endpoints.length > 0 ? 'candidate-endpoints' : 'no-local-endpoints',
     liveProbe: 'not-run',
@@ -766,14 +805,8 @@ export function localModelServerHealthMap(
     returnedEndpoints: returned.length,
     endpoints: returned,
     suggestedDefaults,
-    daemonDiagnostics: {
-      ...servingDiagnostics.publication,
-      matchedEndpointCount,
-      missingSignals: hasMatchedDiagnostics ? [] : servingDiagnostics.publication.missingSignals,
-    },
     nextActions: endpoints.length > 0
       ? [
-        ...(hasMatchedDiagnostics ? ['Review published local serving diagnostics before smoke, refresh, benchmark, or provider changes.'] : []),
         `Smoke test ${first?.modelsUrl ?? 'the detected model-list endpoint'} before benchmark or route changes.`,
         'Refresh the model catalog after the local server is running and reachable.',
         'Run the local benchmark comparison before making a local route the default.',
@@ -783,6 +816,6 @@ export function localModelServerHealthMap(
         'Add or select the provider route only after the server is reachable.',
         'Refresh models and run the local benchmark before changing the default route.',
       ],
-    policy: 'Read-only local endpoint map. It derives candidate model-list URLs, smoke commands, confirmed route hints, and daemon-published serving diagnostics from registry/env/read-model metadata; it does not probe the network, install servers, download models, add providers, refresh models, benchmark, or change routes.',
+    policy: 'Read-only local endpoint facts from registry and environment metadata. Serving diagnostics are deferred until explicit inspection. Probes, installs, downloads, provider edits, refresh, benchmarks, and route changes remain confirmed actions.',
   };
 }

@@ -1,3 +1,4 @@
+import { admittedToolWorkspace, executeAdmitted } from '../helpers/admitted-tool.ts';
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import { ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
@@ -11,41 +12,40 @@ function fixture() {
   const root = makeProjectTempDir('goodvibes-agent-documents-tool');
   const shellPaths = createShellPathService({ workingDirectory: root, homeDirectory: root });
   const artifactStore = new ArtifactStore({ rootDir: join(root, 'artifacts') });
-  const tool = createAgentDocumentsTool(shellPaths, artifactStore);
+  const tool = admittedToolWorkspace(createAgentDocumentsTool(shellPaths, artifactStore), root);
   const documents = AgentDocumentRegistry.fromShellPaths(shellPaths);
   return { root, shellPaths, artifactStore, tool, documents };
 }
 
 describe('agent_documents tool', () => {
-  test('refuses document writes without explicit confirmation', async () => {
+  test('refuses caller confirmation fields without authentic admission', async () => {
     const { tool, documents } = fixture();
     const result = await tool.execute({
       mode: 'create',
       title: 'Unconfirmed Draft',
       body: 'This should not be saved.',
       explicitUserRequest: 'Create a document draft.',
+      confirm: true,
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('requires confirm:true');
+    expect(result.error).toContain('recorded effect admission');
     expect(documents.list()).toHaveLength(0);
   });
 
   test('creates, revises, lists, shows, reviews, and exports versioned drafts', async () => {
     const { artifactStore, tool } = fixture();
-    const create = await tool.execute({
+    const create = await executeAdmitted(tool, {
       mode: 'create',
       title: 'Launch Plan',
       body: 'Initial launch draft.',
       tags: ['launch', 'docs'],
-      confirm: true,
-      explicitUserRequest: 'Create a launch plan document draft.',
     });
     expect(create.success).toBe(true);
     expect(create.output).toContain('Created Agent document');
     expect(create.output).toContain('id launch-plan');
 
-    const update = await tool.execute({
+    const update = await executeAdmitted(tool, {
       mode: 'update',
       documentId: 'launch-plan',
       body: 'Initial launch draft.\n\nAdd rollout checklist.',
@@ -73,7 +73,7 @@ describe('agent_documents tool', () => {
       text: 'Source note body.',
       metadata: { purpose: 'source-note' },
     });
-    const attached = await tool.execute({
+    const attached = await executeAdmitted(tool, {
       mode: 'attachArtifact',
       documentId: 'launch-plan',
       artifactId: sourceArtifact.id,
@@ -94,7 +94,7 @@ describe('agent_documents tool', () => {
     expect(attachedShow.output).toContain(`artifact ${sourceArtifact.id}`);
     expect(attachedShow.output).toContain('Keep this note available without changing the draft body.');
 
-    const inserted = await tool.execute({
+    const inserted = await executeAdmitted(tool, {
       mode: 'insertArtifact',
       documentId: 'launch-plan',
       artifactId: sourceArtifact.id,
@@ -112,7 +112,7 @@ describe('agent_documents tool', () => {
     expect(insertedShow.output).toContain(`Artifact ID: ${sourceArtifact.id}`);
     expect(insertedShow.output).toContain('Source note body.');
 
-    const comment = await tool.execute({
+    const comment = await executeAdmitted(tool, {
       mode: 'comment',
       documentId: 'launch-plan',
       comment: 'Clarify the launch owner.',
@@ -129,7 +129,7 @@ describe('agent_documents tool', () => {
     expect(commentedShow.output).toContain('c1  open');
     expect(commentedShow.output).toContain('Clarify the launch owner.');
 
-    const resolved = await tool.execute({
+    const resolved = await executeAdmitted(tool, {
       mode: 'resolveComment',
       documentId: 'launch-plan',
       commentId: 'c1',
@@ -140,7 +140,7 @@ describe('agent_documents tool', () => {
     expect(resolved.output).toContain('Resolved Agent document comment');
     expect(resolved.output).toContain('open 0/1');
 
-    const suggestion = await tool.execute({
+    const suggestion = await executeAdmitted(tool, {
       mode: 'suggest',
       documentId: 'launch-plan',
       body: 'Initial launch draft.\n\nAdd rollout checklist.\n\nOwner: Launch team.',
@@ -160,7 +160,7 @@ describe('agent_documents tool', () => {
     expect(suggestedShow.output).toContain('s1  proposed');
     expect(suggestedShow.output).toContain('The user asked for a clearer launch owner.');
 
-    const acceptedSuggestion = await tool.execute({
+    const acceptedSuggestion = await executeAdmitted(tool, {
       mode: 'acceptSuggestion',
       documentId: 'launch-plan',
       suggestionId: 's1',
@@ -171,7 +171,7 @@ describe('agent_documents tool', () => {
     expect(acceptedSuggestion.output).toContain('Accepted Agent document suggestion');
     expect(acceptedSuggestion.output).toContain('versions 4');
 
-    const rejectCandidate = await tool.execute({
+    const rejectCandidate = await executeAdmitted(tool, {
       mode: 'suggest',
       documentId: 'launch-plan',
       body: 'Rejected launch rewrite.',
@@ -183,7 +183,7 @@ describe('agent_documents tool', () => {
     expect(rejectCandidate.success).toBe(true);
     expect(rejectCandidate.output).toContain('suggestion s2');
 
-    const rejectedSuggestion = await tool.execute({
+    const rejectedSuggestion = await executeAdmitted(tool, {
       mode: 'rejectSuggestion',
       documentId: 'launch-plan',
       suggestionId: 's2',
@@ -194,7 +194,7 @@ describe('agent_documents tool', () => {
     expect(rejectedSuggestion.output).toContain('Rejected Agent document suggestion');
     expect(rejectedSuggestion.output).toContain('versions 4');
 
-    const review = await tool.execute({
+    const review = await executeAdmitted(tool, {
       mode: 'review',
       documentId: 'launch-plan',
       confirm: true,
@@ -203,7 +203,7 @@ describe('agent_documents tool', () => {
     expect(review.success).toBe(true);
     expect(review.output).toContain('status reviewed');
 
-    const exported = await tool.execute({
+    const exported = await executeAdmitted(tool, {
       mode: 'export',
       documentId: 'launch-plan',
       confirm: true,
@@ -251,7 +251,7 @@ describe('agent_documents tool', () => {
 
   test('inserts non-text artifacts as references without base64 content', async () => {
     const { artifactStore, tool } = fixture();
-    await tool.execute({
+    await executeAdmitted(tool, {
       mode: 'create',
       title: 'Media Brief',
       body: 'Use generated media safely.',
@@ -266,7 +266,7 @@ describe('agent_documents tool', () => {
       metadata: { purpose: 'agent-media-generation' },
     });
 
-    const inserted = await tool.execute({
+    const inserted = await executeAdmitted(tool, {
       mode: 'insertArtifact',
       documentId: 'media-brief',
       artifactId: image.id,

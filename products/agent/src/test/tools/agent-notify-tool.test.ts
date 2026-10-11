@@ -1,4 +1,6 @@
-import { describe, expect, test } from 'bun:test';
+import { resetSessionUntrustedContentLedgerForTests } from '../../trust/untrusted-content.ts';
+import { beforeEach, describe, expect, test } from 'bun:test';
+import { executeAdmitted } from '../helpers/admitted-tool.ts';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import {
   createAgentNotifyTool,
@@ -40,8 +42,10 @@ function calls(): NotifyCalls {
   };
 }
 
+beforeEach(() => resetSessionUntrustedContentLedgerForTests());
+
 describe('agent_notify tool', () => {
-  test('previews without sending when confirmation is missing', async () => {
+  test('explicit preview reads configured targets without sending', async () => {
     const sent = calls();
     const tool = createAgentNotifyTool(
       configManager(['https://ntfy.sh/goodvibes-agent-alerts']),
@@ -50,18 +54,18 @@ describe('agent_notify tool', () => {
 
     const result = await tool.execute({
       message: 'Review the approvals',
-      confirm: false,
+      preview: true,
       explicitUserRequest: 'Tell me when approvals need review.',
     });
 
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('Agent notification preview');
-    expect(result.error).toContain('configured targets: 1');
+    expect(result.success).toBe(true);
+    expect(result.output).toContain('Agent notification preview');
+    expect(result.output).toContain('configured targets: 1');
     expect(sent.setUrls).toEqual([]);
     expect(sent.sends).toEqual([]);
   });
 
-  test('requires explicit user request provenance before sending', async () => {
+  test('raw caller confirmation and request text cannot grant sending', async () => {
     const sent = calls();
     const tool = createAgentNotifyTool(
       configManager(['https://ntfy.sh/goodvibes-agent-alerts']),
@@ -74,22 +78,20 @@ describe('agent_notify tool', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('explicitUserRequest is required');
+    expect(result.error).toContain('held');
     expect(sent.setUrls).toEqual([]);
     expect(sent.sends).toEqual([]);
   });
 
-  test('sends to configured notification targets after explicit confirmation', async () => {
+  test('recorded admission sends without confirmation fields', async () => {
     const sent = calls();
     const tool = createAgentNotifyTool(
       configManager(['https://ntfy.sh/goodvibes-agent-alerts']),
       notifier(sent),
     );
 
-    const result = await tool.execute({
+    const result = await executeAdmitted(tool, {
       message: 'Review the approvals',
-      confirm: true,
-      explicitUserRequest: 'Send a notification to review approvals.',
     });
 
     expect(result.success).toBe(true);

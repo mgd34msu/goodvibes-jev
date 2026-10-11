@@ -8,6 +8,14 @@
 /** Where the judgment API key is read from. */
 export type JudgmentKeySource = 'env' | 'secret';
 
+/** A compatible endpoint and a credential name, never a credential value. */
+export interface JudgmentFallbackSettings {
+  readonly endpoint: string;
+  readonly model: string;
+  readonly keySource: JudgmentKeySource;
+  readonly keyName: string;
+}
+
 export interface JudgmentSettings {
   /** System One endpoint base URL; empty uses TYPESAFE_BASE_URL, then the hosted endpoint. */
   endpoint: string;
@@ -17,13 +25,16 @@ export interface JudgmentSettings {
   model: string;
   /** Timeout per judgment attempt in milliseconds. */
   timeoutMs: number;
+  /** Ordered compatible endpoints. An explicit empty list disables inherited fallbacks. */
+  fallbacks: readonly JudgmentFallbackSettings[];
 }
 
 export type JudgmentConfigKey =
   | 'judgment.endpoint'
   | 'judgment.keySource'
   | 'judgment.model'
-  | 'judgment.timeoutMs';
+  | 'judgment.timeoutMs'
+  | 'judgment.fallbacks';
 
 /** The value of every `judgment.*` key, folded into ConfigValue with one arm. */
 export interface JudgmentConfigValueMap {
@@ -31,4 +42,5 @@ export interface JudgmentConfigValueMap {
   'judgment.keySource': JudgmentKeySource;
   'judgment.model': string;
   'judgment.timeoutMs': number;
+  'judgment.fallbacks': readonly JudgmentFallbackSettings[];
 }

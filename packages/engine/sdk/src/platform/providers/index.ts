@@ -75,7 +75,7 @@ export type {
   RuntimeProviderRegistration,
   TokenLimits,
 } from './registry-types.js';
-export type { ProviderRuntimeSnapshot, ProviderUsageSnapshot } from './runtime-snapshot.js';
+export type { ProviderRuntimeSnapshot, ProviderRuntimeSnapshotOptions, ProviderUsageSnapshot } from './runtime-snapshot.js';
 export { ProviderNotFoundError } from './provider-not-found-error.js';
 export { CONTEXT_OVERFLOW_RAW_STOP_REASONS, isContextOverflowSignal } from './stop-reason-maps.js';
 export { MAX_CONTEXT_WINDOW_OVERRIDE, isValidContextWindowOverride } from './context-window-overrides.js';

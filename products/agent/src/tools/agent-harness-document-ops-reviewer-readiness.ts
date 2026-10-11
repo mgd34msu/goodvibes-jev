@@ -142,9 +142,9 @@ export function buildReviewerReadinessChecklist(
         ? `agent_documents show documentId:"${firstOpenCommentDocument?.id ?? firstProposedSuggestionDocument?.id}" includeVersions:true`
         : 'agent_documents list',
       repairRoute: firstOpenCommentDocument
-        ? `agent_documents resolveComment documentId:"${firstOpenCommentDocument.id}" commentId:"..." confirm:true explicitUserRequest:"..."`
+        ? `agent_documents resolveComment documentId:"${firstOpenCommentDocument.id}" commentId:"..."`
         : firstProposedSuggestionDocument
-          ? `agent_documents acceptSuggestion documentId:"${firstProposedSuggestionDocument.id}" suggestionId:"..." confirm:true explicitUserRequest:"..." or agent_documents rejectSuggestion documentId:"${firstProposedSuggestionDocument.id}" suggestionId:"..." confirm:true explicitUserRequest:"..."`
+          ? `agent_documents acceptSuggestion documentId:"${firstProposedSuggestionDocument.id}" suggestionId:"..." or agent_documents rejectSuggestion documentId:"${firstProposedSuggestionDocument.id}" suggestionId:"..."`
           : undefined,
     },
     {
@@ -157,7 +157,7 @@ export function buildReviewerReadinessChecklist(
         : 'Document drafts and saved comparisons have source artifacts or explicit document/source markers where the current stores can verify them.',
       inspectRoute: 'agent_harness mode:"document_ops_lane" laneId:"artifact_browser"',
       repairRoute: missingSourceArtifacts > 0
-        ? 'agent_documents attachArtifact documentId:"..." artifactId:"..." confirm:true explicitUserRequest:"..." or agent_model_compare handoff artifactId:"..." relatedArtifactIds:"..." confirm:true explicitUserRequest:"..."'
+        ? 'agent_documents attachArtifact documentId:"..." artifactId:"..." or agent_model_compare handoff artifactId:"..." relatedArtifactIds:"..."'
         : undefined,
     },
     {
@@ -176,7 +176,7 @@ export function buildReviewerReadinessChecklist(
       repairRoute: firstUnrevealedComparison
         ? `agent_model_compare reveal artifactId:"${firstUnrevealedComparison.id}"`
         : firstHiddenJudgment
-          ? `agent_model_compare judge artifactId:"${readMetadataString(firstHiddenJudgment.metadata.sourceArtifactId) || firstHiddenJudgment.id}" winnerBlindId:"${readMetadataString(firstHiddenJudgment.metadata.winnerBlindId) || '...'}" reveal:true confirm:true explicitUserRequest:"..."`
+          ? `agent_model_compare judge artifactId:"${readMetadataString(firstHiddenJudgment.metadata.sourceArtifactId) || firstHiddenJudgment.id}" winnerBlindId:"${readMetadataString(firstHiddenJudgment.metadata.winnerBlindId) || '...'}" reveal:true`
           : undefined,
     },
     {
@@ -185,13 +185,13 @@ export function buildReviewerReadinessChecklist(
       status: revealedJudgmentsWaitingOnRouteDecision.length > 0 ? 'attention' : 'pass',
       count: revealedJudgmentsWaitingOnRouteDecision.length,
       detail: revealedJudgmentsWaitingOnRouteDecision.length > 0
-        ? `${revealedJudgmentsWaitingOnRouteDecision.length} revealed judgment(s) can drive a confirmed model route update, or the user can explicitly leave routing unchanged before archiving.`
+        ? `${revealedJudgmentsWaitingOnRouteDecision.length} revealed judgment(s) can drive an admitted model route update, or the user can explicitly leave routing unchanged before archiving.`
         : 'No revealed model comparison judgment is waiting on an apply-or-leave-unchanged decision.',
       inspectRoute: firstRevealedJudgment
         ? `agent_model_compare review artifactId:"${firstRevealedJudgment.id}" reveal:true`
         : 'models action:"status"',
       repairRoute: firstRevealedJudgment
-        ? `agent_model_compare apply artifactId:"${firstRevealedJudgment.id}" confirm:true explicitUserRequest:"..." or agent_model_compare routeDecision artifactId:"${firstRevealedJudgment.id}" decision:"left-unchanged" confirm:true explicitUserRequest:"..."`
+        ? `agent_model_compare apply artifactId:"${firstRevealedJudgment.id}" or agent_model_compare routeDecision artifactId:"${firstRevealedJudgment.id}" decision:"left-unchanged"`
         : undefined,
     },
     {
@@ -206,7 +206,7 @@ export function buildReviewerReadinessChecklist(
         ? `agent_model_compare review artifactId:"${firstHandoffMissingRelated.id}"`
         : 'agent_model_compare review',
       repairRoute: firstHandoffMissingRelated
-        ? `agent_model_compare handoff artifactId:"${readMetadataString(firstHandoffMissingRelated.metadata.sourceArtifactId) || firstHandoffMissingRelated.id}" relatedArtifactIds:"..." confirm:true explicitUserRequest:"..."`
+        ? `agent_model_compare handoff artifactId:"${readMetadataString(firstHandoffMissingRelated.metadata.sourceArtifactId) || firstHandoffMissingRelated.id}" relatedArtifactIds:"..."`
         : undefined,
     },
   ];
@@ -216,7 +216,7 @@ export function buildReviewerReadinessChecklist(
     status,
     next: firstAction
       ? `${firstAction.label}: ${firstAction.detail}`
-      : 'Export or archive reviewer packets through the returned confirmed document, artifact, or comparison routes.',
+      : 'Export or archive reviewer packets through the returned document, artifact, or comparison routes after recorded effect admission.',
     summary: {
       documents: documents.length,
       openComments,
@@ -229,6 +229,6 @@ export function buildReviewerReadinessChecklist(
       handoffsMissingRelatedArtifacts,
     },
     checks,
-    policy: 'Reviewer readiness is read-only. It flags unresolved review work and returns exact existing routes; document exports, comparison handoffs, archives, and model route updates still require explicit confirmation.',
+    policy: 'Reviewer readiness is read-only. It flags unresolved review work and returns exact existing routes; document exports, comparison handoffs, archives, and model route updates require their own current recorded effect admission.',
   };
 }

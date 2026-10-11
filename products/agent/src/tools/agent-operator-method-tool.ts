@@ -1,9 +1,13 @@
-import { getOperatorContract } from '@goodvibes-jev/engine/sdk/contracts';
+import { captureStrictJudgmentJson } from '@goodvibes-jev/engine/sdk/platform/gate';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolInvocation, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { redactStructuredDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { isDeepStrictEqual } from 'node:util';
 import type { ShellPathService } from '@/runtime/index.ts';
 import type { AgentConnectedHostConfigReader } from '../agent/routine-schedule-promotion.ts';
-import { resolveAgentConnectedHostConnection } from '../agent/routine-schedule-promotion.ts';
+import { assertOperatorEffect, captureOperatorConnection } from '../agent/operator-connection-owner.ts';
+import { publishOperatorMethodReceipt } from '../agent/operator-method-receipt.ts';
+import { createOperatorInputProjector, findConnectedOperatorMethod, operatorExecutionConnection, operatorExecutionWireInput, operatorExecutionRequestPolicy, operatorMethodIsReadOnly, operatorMethodIsOutward } from './agent-operator-input-projector.ts';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -45,6 +49,19 @@ type WatcherMethodId =
   | 'watchers.delete';
 
 const READ_ONLY_HTTP_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+// These native routes independently admit this paired invocation on the server.
+const AUTONOMOUS_NATIVE_STATE_METHOD_IDS = new Set([
+  'channels.drafts.save', 'channels.drafts.delete', 'channels.routing.assign', 'channels.routing.delete',
+  'occasions.answer', 'occasions.acknowledge', 'occasions.interview.answer',
+  'occasions.interview.record', 'occasions.conflict.resolve', 'occasions.sweep',
+]);
+const AUTONOMOUS_PROFILE_METHOD_IDS = new Set([
+  'profile.set', 'profile.append', 'profile.forget', 'profile.undo',
+  'occasions.confirm', 'occasions.plans.confirm', 'occasions.remove',
+]);
+const PROFILE_QUOTE_METHOD_IDS = new Set([
+  'profile.set', 'profile.append', 'occasions.confirm', 'occasions.plans.confirm',
+]);
 const MAX_OUTPUT_CHARS = 18_000;
 const SERVICE_METHOD_IDS = new Set<string>(['services.status', 'services.install', 'services.start', 'services.restart']);
 const WATCHER_METHOD_IDS = new Set<string>([
@@ -68,34 +85,10 @@ function readBoolean(value: unknown): boolean {
   return value === true || value === 'true';
 }
 
-function operatorMethods(): readonly OperatorContractMethod[] {
-  const contract = getOperatorContract();
-  return Array.isArray(contract.operator?.methods)
-    ? contract.operator.methods as OperatorContractMethod[]
-    : [];
-}
-
-function findOperatorMethod(methodId: string): OperatorContractMethod | null {
-  const methods = operatorMethods();
-  return methods.find((method) => method.id === methodId)
-    ?? methods.find((method) => method.id.toLowerCase() === methodId.toLowerCase())
-    ?? null;
-}
-
-function methodIsReadOnly(method: OperatorContractMethod): boolean {
-  const httpMethod = method.http?.method?.toUpperCase();
-  if (httpMethod && READ_ONLY_HTTP_METHODS.has(httpMethod)) return true;
-  const scopes = method.scopes ?? [];
-  return scopes.length > 0 && scopes.every((scope) => scope.startsWith('read:'));
-}
-
-function methodRequiresConfirmation(method: OperatorContractMethod): boolean {
-  return !methodIsReadOnly(method);
-}
-
 function cloneInput(input: unknown): JsonRecord {
   if (!isRecord(input)) return {};
-  return { ...input };
+  // Path substitution consumes only this transport-owned mutable top level.
+  return { ...captureStrictJudgmentJson(input) };
 }
 
 function encodePathValue(value: unknown, name: string): string {
@@ -243,7 +236,7 @@ function watcherExpectedOutcome(methodId: WatcherMethodId): JsonRecord {
 }
 
 function summarizePreview(route: PreparedOperatorRoute): JsonRecord {
-  const readOnly = methodIsReadOnly(route.method);
+  const readOnly = operatorMethodIsReadOnly(route.method, route.payload) && !operatorMethodIsOutward(route.method.id);
   const preview: JsonRecord = {
     methodId: route.method.id,
     title: route.method.title ?? route.method.id,
@@ -254,9 +247,10 @@ function summarizePreview(route: PreparedOperatorRoute): JsonRecord {
     effect: readOnly
       ? 'read-only-network'
       : route.method.access === 'admin'
-        ? 'confirmed-admin-connected-host-state'
-        : 'confirmed-connected-host-state',
-    confirmationRequired: !readOnly,
+        ? 'admitted-admin-connected-host-state'
+        : 'admitted-connected-host-state',
+    confirmationRequired: false,
+    admissionRequired: !readOnly,
     body: READ_ONLY_HTTP_METHODS.has(route.httpMethod) ? undefined : route.payload,
     query: READ_ONLY_HTTP_METHODS.has(route.httpMethod) ? route.payload : undefined,
   };
@@ -265,23 +259,10 @@ function summarizePreview(route: PreparedOperatorRoute): JsonRecord {
   return preview;
 }
 
-function redacted(value: unknown, depth = 0): unknown {
-  if (depth > 6) return '[truncated-depth]';
-  if (Array.isArray(value)) return value.slice(0, 100).map((entry) => redacted(entry, depth + 1));
-  if (!isRecord(value)) return value;
-  const output: JsonRecord = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (/(token|password|secret|apikey|api_key|authorization|cookie|credential)/i.test(key)) {
-      output[key] = '[redacted]';
-    } else {
-      output[key] = redacted(entry, depth + 1);
-    }
-  }
-  return output;
-}
-
-function stringifyOutput(value: unknown): string {
-  const text = JSON.stringify(redacted(value), null, 2);
+async function stringifyOutput(value: unknown, options: Parameters<typeof redactStructuredDataAsync>[1] = {}): Promise<string> {
+  const protectedOutput = await redactStructuredDataAsync(value, options);
+  if (!isRecord(protectedOutput)) throw new Error('Connected operator output could not be projected safely.');
+  const text = JSON.stringify(protectedOutput, null, 2);
   if (text.length <= MAX_OUTPUT_CHARS) return text;
   return `${text.slice(0, MAX_OUTPUT_CHARS)}\n...[truncated ${text.length - MAX_OUTPUT_CHARS} chars]`;
 }
@@ -306,11 +287,11 @@ function serviceReceiptEvidence(body: unknown): JsonRecord {
 }
 
 function serviceLifecycleRoute(methodId: ServiceMethodId): string {
-  return operatorMethodLikeRoute(methodId, methodId !== 'services.status');
+  return operatorMethodLikeRoute(methodId);
 }
 
-function operatorMethodLikeRoute(methodId: string, confirmed: boolean): string {
-  return `agent_operator_method methodId:"${methodId}" input:{}${confirmed ? ' confirm:true explicitUserRequest:"..."' : ''}`;
+function operatorMethodLikeRoute(methodId: string): string {
+  return `agent_operator_method methodId:"${methodId}" input:{}`;
 }
 
 function serviceLifecycleDecisionFromStatus(body: unknown): JsonRecord {
@@ -521,7 +502,7 @@ export function createAgentOperatorMethodTool(
   return {
     definition: {
       name: 'agent_operator_method',
-      description: 'Invoke a GoodVibes daemon operator method with confirmation gates.',
+      description: 'Invoke a GoodVibes daemon operator method under current recorded effect admission.',
       parameters: {
         type: 'object',
         properties: {
@@ -536,11 +517,11 @@ export function createAgentOperatorMethodTool(
           },
           confirm: {
             type: 'boolean',
-            description: 'Required true for write/admin operator methods.',
+            description: 'Optional audit annotation; does not grant effect authority.',
           },
           explicitUserRequest: {
             type: 'string',
-            description: 'User request authorizing a write/admin method.',
+            description: 'Optional request provenance; does not grant effect authority.',
           },
           dryRun: {
             type: 'boolean',
@@ -552,11 +533,14 @@ export function createAgentOperatorMethodTool(
       },
       sideEffects: ['network', 'state'],
     },
-    execute: async (rawArgs: unknown) => {
-      const args = isRecord(rawArgs) ? rawArgs as OperatorMethodToolArgs : {};
+    execute: async (rawArgs, options) => {
+      let args: OperatorMethodToolArgs;
+      try { args = isRecord(rawArgs) ? captureStrictJudgmentJson(rawArgs) : {}; }
+      catch { return { success: false, error: 'Operator method arguments must be plain JSON data.' }; }
+      options?.signal?.throwIfAborted();
       const methodId = readString(args.methodId);
       if (!methodId) return { success: false, error: 'methodId is required.' };
-      const method = findOperatorMethod(methodId);
+      const method = findConnectedOperatorMethod(methodId);
       if (!method) {
         return {
           success: false,
@@ -569,7 +553,8 @@ export function createAgentOperatorMethodTool(
       // Refuse here, before prepareOperatorRoute/fetch, rather than letting the
       // model discover a bare 404 from a route that was never wired up. The ad
       // must degrade at the source, not rely on the model coping with a 404.
-      if (method.invokable === false) {
+      const invocationDescriptor = Object.getOwnPropertyDescriptor(method, 'invokable');
+      if (invocationDescriptor && 'value' in invocationDescriptor && invocationDescriptor.value === false) {
         return {
           success: false,
           error: `operator method '${method.id}' is unavailable (route not served by this daemon). Do not retry it; the daemon has not wired this capability up.`,
@@ -577,54 +562,75 @@ export function createAgentOperatorMethodTool(
       }
 
       let route: PreparedOperatorRoute;
+      let methodSnapshot: OperatorContractMethod;
       try {
-        route = prepareOperatorRoute(method, args.input);
+        methodSnapshot = captureStrictJudgmentJson(method);
+        route = prepareOperatorRoute(methodSnapshot, args.input);
       } catch (error) {
         return { success: false, error: summarizeError(error) };
       }
 
       const preview = summarizePreview(route);
       if (readBoolean(args.dryRun)) {
-        return { success: true, output: stringifyOutput({ preview, dryRun: true }) };
+        try {
+          const output = await stringifyOutput({ preview, dryRun: true }, { signal: options?.signal, assertCurrent: () => {
+            options?.signal?.throwIfAborted(); assertCurrentToolInvocation(rawArgs, options);
+            if (findConnectedOperatorMethod(methodId) !== method || !isDeepStrictEqual(captureStrictJudgmentJson(method), methodSnapshot)) throw new Error('Connected operator method changed.');
+          } });
+          return { success: true, output };
+        } catch { return { success: false, error: 'Connected operator preview could not be projected safely.' }; }
       }
 
-      if (methodRequiresConfirmation(method)) {
-        const explicitUserRequest = readString(args.explicitUserRequest);
-        if (!readBoolean(args.confirm) || !explicitUserRequest) {
-          return {
-            success: false,
-            error: stringifyOutput({
-              preview,
-              required: {
-                confirm: true,
-                explicitUserRequest: 'Required for write/admin operator methods.',
-              },
-            }),
-          };
-        }
-      }
-
-      const connection = resolveAgentConnectedHostConnection(configManager, shellPaths.homeDirectory);
-      if (!connection.token) {
-        return {
-          success: false,
-          error: `auth_required: no connected-host operator token found at ${connection.tokenPath}`,
-        };
+      const requiresEffect = !operatorMethodIsReadOnly(methodSnapshot, args.input) || operatorMethodIsOutward(methodSnapshot.id);
+      if (requiresEffect && options === undefined) {
+        return { success: false, error: 'Connected operator effects require current recorded effect admission.' };
       }
 
       const requestPath = READ_ONLY_HTTP_METHODS.has(route.httpMethod)
         ? appendQuery(route.path, route.payload)
         : route.path;
       try {
+        const assertInvocation = () => {
+          options?.signal?.throwIfAborted();
+          if (requiresEffect) assertOperatorEffect(rawArgs, options, operatorMethodIsOutward(methodSnapshot.id));
+          else assertCurrentToolInvocation(rawArgs, options);
+          if (findConnectedOperatorMethod(methodId) !== method || !isDeepStrictEqual(captureStrictJudgmentJson(method), methodSnapshot)) {
+            throw new Error('Connected operator method changed.');
+          }
+        };
+        assertInvocation();
+        const projectedConnection = operatorExecutionConnection(rawArgs, options, shellPaths, configManager, 'method');
+        if (!projectedConnection && requiresEffect) throw new Error('Connected operator effects require a registered source projection.');
+        const connection = projectedConnection ?? captureOperatorConnection(shellPaths, configManager, assertInvocation);
+        const assertCurrent = () => { assertInvocation(); connection.assertCurrent(); };
+        if (!connection.token) return { success: false, error: 'auth_required: no connected-host operator token found.' };
+        const retainedPayload = operatorExecutionWireInput(route.payload, rawArgs, options, shellPaths, configManager, 'method');
+        const wirePayload = AUTONOMOUS_PROFILE_METHOD_IDS.has(methodSnapshot.id)
+          ? { ...retainedPayload, admission: 'autonomous', authority: 'autonomous',
+            ...(PROFILE_QUOTE_METHOD_IDS.has(methodSnapshot.id) ? { said: '' } : {}),
+            ...(methodSnapshot.id === 'occasions.remove' ? { confirmed: true } : {}) }
+          : AUTONOMOUS_NATIVE_STATE_METHOD_IDS.has(methodSnapshot.id)
+            ? { ...retainedPayload, admission: 'autonomous' } : retainedPayload;
+        if (requiresEffect) {
+          const requestPolicy = operatorExecutionRequestPolicy(rawArgs, options, shellPaths, configManager, 'method');
+          if (!requestPolicy) throw new Error('Connected operator source policy is unavailable.');
+          await requestPolicy.screen({ toolName: 'agent_operator_method', methodId: methodSnapshot.id,
+            endpoint: `${connection.baseUrl}${requestPath}`, payload: wirePayload }, { signal: options?.signal, assertCurrent });
+        }
+        assertCurrent();
         const response = await fetch(`${connection.baseUrl}${requestPath}`, {
+          signal: options?.signal,
+          redirect: 'error',
           method: route.httpMethod,
           headers: {
             authorization: `Bearer ${connection.token}`,
             ...(READ_ONLY_HTTP_METHODS.has(route.httpMethod) ? {} : { 'content-type': 'application/json' }),
           },
-          ...(READ_ONLY_HTTP_METHODS.has(route.httpMethod) ? {} : { body: JSON.stringify(route.payload) }),
+          ...(READ_ONLY_HTTP_METHODS.has(route.httpMethod) ? {} : { body: JSON.stringify(wirePayload) }),
         });
+        assertCurrent();
         const body = await readResponseBody(response);
+        assertCurrent();
         const outcome = operatorOutcome(route.method.id, response.ok, body);
         const output = {
           methodId: route.method.id,
@@ -635,12 +641,16 @@ export function createAgentOperatorMethodTool(
           body,
           ...(outcome ? { outcome } : {}),
         };
-        if (!response.ok) return { success: false, error: stringifyOutput(output) };
-        return { success: true, output: stringifyOutput(output) };
-      } catch (error) {
+        const formatted = await stringifyOutput(output, { signal: options?.signal, assertCurrent, secretValues: [connection.token] });
+        assertCurrent();
+        if (!response.ok) return { success: false, error: formatted };
+        publishOperatorMethodReceipt(route.method.id, rawArgs, options, body);
+        assertCurrent();
+        return { success: true, output: formatted };
+      } catch {
         return {
           success: false,
-          error: `connected_host_unavailable: ${summarizeError(error)}`,
+          error: 'connected_host_unavailable: current recorded effect admission and an unchanged connection are required.',
         };
       }
     },
@@ -652,5 +662,5 @@ export function registerAgentOperatorMethodTool(
   shellPaths: ShellPathService,
   configManager: AgentConnectedHostConfigReader,
 ): void {
-  registry.register(createAgentOperatorMethodTool(shellPaths, configManager));
+  registry.register(createAgentOperatorMethodTool(shellPaths, configManager), { inputProjection: createOperatorInputProjector(shellPaths, configManager, 'method') });
 }

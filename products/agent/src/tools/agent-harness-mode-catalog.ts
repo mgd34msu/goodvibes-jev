@@ -233,7 +233,7 @@ export async function listHarnessModes(args: HarnessModeCatalogArgs, options: Ca
   return {
     ...catalogEnvelope('modes', modes, HARNESS_MODE_DESCRIPTORS.length, {
       ...(lookup ? { [lookup.source]: lookup.input } : {}),
-    }, 'agent_harness mode:"modes" with no query', { relaxedQuery: false }),
+    }, 'agent_harness mode:"modes" with no query'),
     families: Array.from(new Set(HARNESS_MODE_DESCRIPTORS.map((descriptor) => descriptor.family))).sort(),
     policy: 'Mode discovery is read-only. Effect modes still require confirm:true and explicitUserRequest.',
   };

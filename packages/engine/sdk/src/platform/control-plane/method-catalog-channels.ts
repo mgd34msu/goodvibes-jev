@@ -662,12 +662,14 @@ export const builtinGatewayChannelMethodDescriptors: readonly GatewayMethodDescr
   methodDescriptor({
     id: 'channels.routing.assign',
     title: 'Assign Channel Routing Rule',
-    description: 'Create or update a channel-to-profile routing rule in the daemon-persisted routing table. Requires explicit confirmation.',
+    description: 'Create or update a channel-to-profile routing rule in the daemon-persisted routing table. Requires explicit confirmation or fresh recorded native admission for a paired autonomous caller.',
     category: 'channels',
     scopes: ['write:channels'],
     access: 'admin',
+    metadata: { requiresFreshOperatorAuth: true },
     http: { method: 'POST', path: '/api/channels/routing' },
     inputSchema: bodyEnvelopeSchema({
+      admission: { type: 'string', enum: ['autonomous'] },
       channelId: STRING_SCHEMA,
       surfaceKind: STRING_SCHEMA,
       routeId: STRING_SCHEMA,
@@ -693,8 +695,9 @@ export const builtinGatewayChannelMethodDescriptors: readonly GatewayMethodDescr
     category: 'channels',
     scopes: ['write:channels'],
     access: 'admin',
+    metadata: { requiresFreshOperatorAuth: true },
     http: { method: 'DELETE', path: '/api/channels/routing/{assignmentId}' },
-    inputSchema: objectSchema({ assignmentId: STRING_SCHEMA }, ['assignmentId']),
+    inputSchema: objectSchema({ assignmentId: STRING_SCHEMA, admission: { type: 'string', enum: ['autonomous'] } }, ['assignmentId']),
     outputSchema: objectSchema({
       deleted: BOOLEAN_SCHEMA,
       assignmentId: STRING_SCHEMA,
@@ -730,12 +733,13 @@ export const builtinGatewayChannelMethodDescriptors: readonly GatewayMethodDescr
   methodDescriptor({
     id: 'channels.drafts.save',
     title: 'Save Channel Draft',
-    description: 'Mirror a channel draft to the daemon-side store. Webhook values must be redacted before transmission; raw webhook tokens are rejected. Requires explicit confirmation.',
+    description: 'Mirror a channel draft to the daemon-side store. Webhook values must be redacted before transmission; raw webhook tokens are rejected. Requires explicit confirmation or fresh recorded native admission for a paired autonomous caller.',
     category: 'channels',
     scopes: ['write:channels'],
     access: 'admin',
+    metadata: { requiresFreshOperatorAuth: true },
     http: { method: 'POST', path: '/api/channels/drafts' },
-    inputSchema: bodyEnvelopeSchema({ ...CHANNEL_DRAFT_PROPERTIES }, [...CHANNEL_DRAFT_REQUIRED]),
+    inputSchema: bodyEnvelopeSchema({ ...CHANNEL_DRAFT_PROPERTIES, admission: { type: 'string', enum: ['autonomous'] } }, [...CHANNEL_DRAFT_REQUIRED]),
     outputSchema: objectSchema({
       draft: CHANNEL_DRAFT_SCHEMA,
       created: BOOLEAN_SCHEMA,
@@ -749,8 +753,9 @@ export const builtinGatewayChannelMethodDescriptors: readonly GatewayMethodDescr
     category: 'channels',
     scopes: ['write:channels'],
     access: 'admin',
+    metadata: { requiresFreshOperatorAuth: true },
     http: { method: 'DELETE', path: '/api/channels/drafts/{draftId}' },
-    inputSchema: objectSchema({ draftId: STRING_SCHEMA }, ['draftId']),
+    inputSchema: objectSchema({ draftId: STRING_SCHEMA, admission: { type: 'string', enum: ['autonomous'] } }, ['draftId']),
     outputSchema: objectSchema({
       deleted: BOOLEAN_SCHEMA,
       draftId: STRING_SCHEMA,

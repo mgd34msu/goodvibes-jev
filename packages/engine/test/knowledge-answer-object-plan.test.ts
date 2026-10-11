@@ -6,7 +6,7 @@ import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
-import { createSchema } from '../sdk/src/platform/knowledge/store-schema.js';
+import { createSchema, KNOWLEDGE_SCHEMA_VERSION } from '../sdk/src/platform/knowledge/store-schema.js';
 import { writeKnowledgeNodeRow } from '../sdk/src/platform/knowledge/store-node-history.js';
 import { KnowledgeSemanticService } from '../sdk/src/platform/knowledge/semantic/service.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
@@ -124,7 +124,7 @@ describe('answer object preparation with real stores', () => {
         status: 'draft', aliases: fields.aliases, metadata: { knowledgeSpaceId: spaceId, semanticKind: 'entity', ...fields.metadata } });
       const fact = await initial.upsertNode({ id: 'legacy-fact', kind: 'fact', slug: 'legacy-fact', title: 'Sound playback', status: 'draft',
         sourceId: document.id, summary: 'The kitchen speaker plays music.', metadata: { knowledgeSpaceId: spaceId, semanticKind: 'fact', subjectIds: [subject.id] } });
-      const sqlite = new SQLiteStore(initial.storagePath); await sqlite.init(createSchema, { schemaVersion: 9 });
+      const sqlite = new SQLiteStore(initial.storagePath); await sqlite.init(createSchema, { schemaVersion: KNOWLEDGE_SCHEMA_VERSION });
       writeKnowledgeNodeRow(sqlite, { ...subject, status: 'active' }); writeKnowledgeNodeRow(sqlite, { ...fact, status: 'active' }); await sqlite.save();
       const store = new KnowledgeStore({ dbPath: initial.storagePath }); await store.init(); const fake = port();
       const result = answerKnowledgeQuery({ store, objectProfiles: profiles }, { query: 'What plays tunes beside the sink?', knowledgeSpaceId: spaceId,
@@ -210,7 +210,7 @@ describe('answer object preparation with real stores', () => {
         ? await object(initial, 'other-installation-object', 'Bedroom speaker', { metadata: { knowledgeSpaceId: 'homeassistant:other' } }) : node;
       const edge = await initial.upsertEdge({ fromKind: 'node', fromId: fact.id, toKind: 'node', toId: target.id, relation: 'describes',
         metadata: { knowledgeSpaceId: relationState === 'foreign-space' ? 'homeassistant:other' : spaceId, deleted: relationState === 'deleted' } });
-      const sqlite = new SQLiteStore(initial.storagePath); await sqlite.init(createSchema, { schemaVersion: 9 });
+      const sqlite = new SQLiteStore(initial.storagePath); await sqlite.init(createSchema, { schemaVersion: KNOWLEDGE_SCHEMA_VERSION });
       writeKnowledgeNodeRow(sqlite, { ...fact, status: 'active' }); await sqlite.save();
       const store = new KnowledgeStore({ dbPath: initial.storagePath }); await store.init(); const fake = port();
       const result = await answer(store, [store.getNode(node.id)!]);
@@ -233,7 +233,7 @@ describe('answer object preparation with real stores', () => {
       const subjectId = foreign?.id ?? 'unknown-subject-reference';
       const fact = await initial.upsertNode({ id: 'declared-subject-fact', kind: 'fact', slug: 'declared-subject-fact', title: 'Sound playback', status: 'draft',
         sourceId: document.id, summary: 'A speaker plays music.', metadata: { knowledgeSpaceId: spaceId, semanticKind: 'fact', subjectIds: [subjectId] } });
-      const sqlite = new SQLiteStore(initial.storagePath); await sqlite.init(createSchema, { schemaVersion: 9 });
+      const sqlite = new SQLiteStore(initial.storagePath); await sqlite.init(createSchema, { schemaVersion: KNOWLEDGE_SCHEMA_VERSION });
       writeKnowledgeNodeRow(sqlite, { ...fact, status: 'active' }); await sqlite.save();
       const store = new KnowledgeStore({ dbPath: initial.storagePath }); await store.init(); const fake = port();
       await expect(answer(store)).rejects.toMatchObject({ reason: 'malformed' });

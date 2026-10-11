@@ -31,6 +31,7 @@ import {
   toProjectionKind,
 } from './graphql-schema.js';
 import type { KnowledgeSpaceScopeInput } from './spaces.js';
+import { KnowledgeScopeSelectionHeldError, type KnowledgeScopeSelectionOptions } from './scope-selection.js';
 
 export interface KnowledgeGraphqlAccessProfile {
   readonly operation: 'query' | 'mutation';
@@ -71,6 +72,7 @@ export interface KnowledgeGraphqlExecuteInput {
   readonly variables?: Record<string, unknown> | undefined;
   readonly admin: boolean;
   readonly scopes: readonly string[];
+  readonly scopeOptions?: Pick<KnowledgeScopeSelectionOptions, 'signal' | 'assertCurrent' | 'shouldStop'> | undefined;
 }
 
 export class KnowledgeGraphqlService {
@@ -111,15 +113,30 @@ export class KnowledgeGraphqlService {
   }
 
   async execute(input: KnowledgeGraphqlExecuteInput) {
-    const primed = await primeGraphqlModule();
-    if (!primed.available) throw new Error(primed.reason);
-    const { graphql } = graphqlModule();
-    const rootValue = this.createRootValue();
     const context: KnowledgeGraphqlContext = {
       service: this.service,
       admin: input.admin,
       scopes: [...input.scopes],
     };
+    const providedScopeOptions = input.scopeOptions;
+    const scopeOptions = providedScopeOptions ?? {};
+    const signal = scopeOptions.signal;
+    const shouldStop = scopeOptions.shouldStop;
+    const callerCurrent = scopeOptions.assertCurrent;
+    const assertCurrent = () => {
+      if (input.scopeOptions !== providedScopeOptions || scopeOptions.signal !== signal
+        || scopeOptions.shouldStop !== shouldStop || scopeOptions.assertCurrent !== callerCurrent) {
+        throw new KnowledgeScopeSelectionHeldError('stale');
+      }
+      if (signal?.aborted || shouldStop?.()) throw new KnowledgeScopeSelectionHeldError('aborted');
+      callerCurrent?.();
+    };
+    assertCurrent();
+    const primed = await primeGraphqlModule();
+    assertCurrent();
+    if (!primed.available) throw new Error(primed.reason);
+    const { graphql } = graphqlModule();
+    const rootValue = this.createRootValue({ signal, shouldStop, assertCurrent });
     const result = await graphql({
       schema: KnowledgeGraphqlService.schema,
       source: input.query,
@@ -128,35 +145,43 @@ export class KnowledgeGraphqlService {
       variableValues: input.variables,
       operationName: input.operationName,
     });
+    assertCurrent();
     return result;
   }
 
-  private createRootValue() {
+  private createRootValue(scopeOptions: KnowledgeScopeSelectionOptions) {
     return {
-      status: async (args: { knowledgeSpaceId?: string; includeAllSpaces?: boolean }) => this.service.getStatus(graphqlScope(args)),
-      sources: (args: { limit?: number; knowledgeSpaceId?: string; includeAllSpaces?: boolean }) => (
-        this.service.querySources({
+      status: async (args: { knowledgeSpaceId?: string; includeAllSpaces?: boolean }) => this.service.getStatus(graphqlScope(args), scopeOptions),
+      sources: async (args: { limit?: number; knowledgeSpaceId?: string; includeAllSpaces?: boolean }) => (
+        await this.service.querySources({
           limit: clampInt(args.limit, 100),
           ...graphqlScope(args),
-        }).items
-      ),
-      nodes: (args: { limit?: number; knowledgeSpaceId?: string; includeAllSpaces?: boolean }) => (
-        this.service.queryNodes({
+        }, scopeOptions)
+      ).items,
+      nodes: async (args: { limit?: number; knowledgeSpaceId?: string; includeAllSpaces?: boolean }) => (
+        await this.service.queryNodes({
           limit: clampInt(args.limit, 100),
           ...graphqlScope(args),
-        }).items
-      ),
-      issues: (args: { limit?: number; knowledgeSpaceId?: string; includeAllSpaces?: boolean }) => (
-        this.service.queryIssues({
+        }, scopeOptions)
+      ).items,
+      issues: async (args: { limit?: number; knowledgeSpaceId?: string; includeAllSpaces?: boolean }) => (
+        await this.service.queryIssues({
           limit: clampInt(args.limit, 100),
           ...graphqlScope(args),
-        }).items
-      ),
-      source: ({ id }: { id: string }) => this.service.listSources(Number.MAX_SAFE_INTEGER).find((source) => source.id === id) ?? null,
-      node: ({ id }: { id: string }) => this.service.listNodes(Number.MAX_SAFE_INTEGER).find((node) => node.id === id) ?? null,
-      issue: ({ id }: { id: string }) => this.service.listIssues(Number.MAX_SAFE_INTEGER).find((issue) => issue.id === id) ?? null,
-      item: ({ id }: { id: string }) => this.service.getItem(id),
-      items: ({ ids }: { ids: string[] }) => this.service.getItems(ids),
+        }, scopeOptions)
+      ).items,
+      source: async ({ id }: { id: string }) => (await this.service.listSources(Number.MAX_SAFE_INTEGER, scopeOptions)).find((source) => source.id === id) ?? null,
+      node: async ({ id }: { id: string }) => (await this.service.listNodes(Number.MAX_SAFE_INTEGER, scopeOptions)).find((node) => node.id === id) ?? null,
+      issue: async ({ id }: { id: string }) => (await this.service.listIssues(Number.MAX_SAFE_INTEGER, scopeOptions)).find((issue) => issue.id === id) ?? null,
+      item: ({ id }: { id: string }) => this.service.getItemScoped(id, {}, scopeOptions),
+      items: ({ ids }: { ids: string[] }) => this.service.getItems(ids, {}, scopeOptions),
+      itemView: async ({ kind, id }: { kind: string; id: string }) => {
+        if (kind !== 'source' && kind !== 'node' && kind !== 'issue') {
+          throw new (graphqlModule().GraphQLError)(`Unsupported knowledge item kind: ${kind}`);
+        }
+        const item = await this.service.getItemScoped(id, {}, scopeOptions);
+        return item?.[kind] ? item : null;
+      },
       sourcesConnection: (args: {
         limit?: number | undefined;
         offset?: number | undefined;
@@ -176,7 +201,7 @@ export class KnowledgeGraphqlService {
         sourceType: args.sourceType,
         tag: args.tag,
         query: args.query,
-      }),
+      }, scopeOptions),
       nodesConnection: (args: {
         limit?: number;
         offset?: number;
@@ -192,7 +217,7 @@ export class KnowledgeGraphqlService {
         kind: args.kind,
         status: args.status,
         query: args.query,
-      }),
+      }, scopeOptions),
       issuesConnection: (args: {
         limit?: number;
         offset?: number;
@@ -210,24 +235,23 @@ export class KnowledgeGraphqlService {
         status: args.status,
         code: args.code,
         query: args.query,
-      }),
-      extractions: (args: { limit?: number; sourceId?: string; knowledgeSpaceId?: string; includeAllSpaces?: boolean }) => (
-        this.service.listExtractions(clampInt(args.limit, 100), args.sourceId, graphqlScope(args))
-          .slice(0, clampInt(args.limit, 100))
-      ),
-      sourceExtraction: ({ sourceId }: { sourceId: string }) => this.service.getSourceExtraction(sourceId),
-      neighbors: ({ kind, id, relation, limit }: { kind: 'source' | 'node'; id: string; relation?: string | undefined; limit?: number }) => {
+      }, scopeOptions),
+      extractions: async (args: { limit?: number; sourceId?: string; knowledgeSpaceId?: string; includeAllSpaces?: boolean }) => (
+        await this.service.listExtractions(clampInt(args.limit, 100), args.sourceId, graphqlScope(args), scopeOptions)
+      ).slice(0, clampInt(args.limit, 100)),
+      sourceExtraction: async ({ sourceId }: { sourceId: string }) => (await this.service.listExtractions(1, sourceId, {}, scopeOptions))[0] ?? null,
+      neighbors: async ({ kind, id, relation, limit }: { kind: 'source' | 'node'; id: string; relation?: string | undefined; limit?: number }) => {
         if (kind !== 'source' && kind !== 'node') {
           throw new (graphqlModule().GraphQLError)(`Unsupported knowledge neighbor kind: ${kind}`);
         }
-        return this.service.getNeighbors(kind, id, { relation, limit: clampInt(limit, 20) });
+        return (await this.service.getNeighbors(kind, id, { relation, limit: clampInt(limit, 20) }, scopeOptions)).edges;
       },
       search: async (args: { query: string; limit?: number; knowledgeSpaceId?: string; includeAllSpaces?: boolean }) => (
         this.service.searchScoped({
           query: args.query,
           limit: clampInt(args.limit, 10),
           ...graphqlScope(args),
-        })
+        }, scopeOptions)
       ),
       packet: async (args: {
         task: string;
@@ -242,6 +266,7 @@ export class KnowledgeGraphqlService {
         args.writeScope ?? [],
         clampInt(args.limit, 6),
         {
+          ...scopeOptions,
           detail: toPacketDetail(args.detail),
           ...(typeof args.budgetLimit === 'number' ? { budgetLimit: args.budgetLimit } : {}),
           ...graphqlScope(args),
@@ -251,14 +276,14 @@ export class KnowledgeGraphqlService {
       connector: ({ id }: { id: string }) => this.service.getConnector(id),
       connectorDoctor: ({ id }: { id: string }) => this.service.doctorConnector(id),
       projectionTargets: async (args: { limit?: number; knowledgeSpaceId?: string; includeAllSpaces?: boolean }) => (
-        await this.service.listProjectionTargets(clampInt(args.limit, 25), graphqlScope(args))
+        await this.service.listProjectionTargets(clampInt(args.limit, 25), graphqlScope(args), scopeOptions)
       ).map((target) => mapProjectionTarget(target)),
       projection: async (args: { kind: string; id?: string; limit?: number; knowledgeSpaceId?: string; includeAllSpaces?: boolean }) => mapProjectionBundle(await this.service.renderProjection({
         kind: toProjectionKind(args.kind),
         id: args.id,
         limit: clampInt(args.limit, 12),
         ...graphqlScope(args),
-      })),
+      }, scopeOptions)),
       jobs: () => this.service.listJobs().map((job) => mapJob(job)),
       job: ({ id }: { id: string }) => {
         const job = this.service.getJob(id);
@@ -412,7 +437,7 @@ export class KnowledgeGraphqlService {
           id: args.id,
           limit: clampInt(args.limit, 12),
           ...graphqlScope(args),
-        }));
+        }, scopeOptions));
       },
       materializeProjection: async (
         args: { kind: string; id?: string; limit?: number; filename?: string; knowledgeSpaceId?: string; includeAllSpaces?: boolean },
@@ -425,7 +450,7 @@ export class KnowledgeGraphqlService {
           limit: clampInt(args.limit, 12),
           filename: args.filename,
           ...graphqlScope(args),
-        });
+        }, scopeOptions);
         return {
           ...materialized,
           bundle: mapProjectionBundle(materialized.bundle),

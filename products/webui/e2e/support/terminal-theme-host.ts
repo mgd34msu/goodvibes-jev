@@ -54,6 +54,7 @@ export function createTerminalThemeHost(savedTheme?: string) {
     // This manual-config host has no admitted SETTINGS owner. Envelopes must
     // receive the real route's unsupported-owner refusal without legacy writes.
     settingsPrecondition: undefined,
+    settingsImportPrecondition: undefined,
     configManager: {
       get: (key: string) => {
         if (!isValidConfigKey(key)) throw new Error(`Unknown config key: ${key}`);

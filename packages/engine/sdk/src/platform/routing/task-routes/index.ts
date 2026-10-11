@@ -26,5 +26,9 @@ export type {
   TaskRouteDraft,
   TaskRouteEntry,
   TaskRoutePlan,
+  TaskRouteReadOptions,
   TaskRouteSlots,
 } from './types.js';
+
+export { autonomyIntake, readAutonomyIntake } from './autonomy-intake.js';
+export type { AutonomyCadence, AutonomyIntents, AutonomyIntakeEvidence, AutonomyIntakeOptions, AutonomyIntakeReading, AutonomyIntakeSchedule } from './autonomy-intake.js';

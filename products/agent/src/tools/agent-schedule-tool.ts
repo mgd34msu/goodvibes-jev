@@ -1,12 +1,8 @@
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolInvocation, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { ShellPathService } from '@/runtime/index.ts';
 import type { AgentConnectedHostConfigReader } from '../agent/routine-schedule-promotion.ts';
-import { createAgentAutonomyScheduleTool } from './agent-autonomy-schedule-tool.ts';
-import { createAgentOperatorActionTool } from './agent-operator-action-tool.ts';
-import { createAgentOperatorMethodTool } from './agent-operator-method-tool.ts';
-import { createAgentReminderScheduleTool } from './agent-reminder-schedule-tool.ts';
-import { createAgentScheduleEditTool } from './agent-schedule-edit-tool.ts';
+import { randomUUID } from 'node:crypto';
 
 type ScheduleAction =
   | 'list'
@@ -60,10 +56,6 @@ const LIFECYCLE_ACTIONS: Readonly<Record<'run' | 'pause' | 'resume' | 'delete', 
 
 function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function readBoolean(value: unknown): boolean {
-  return value === true || value === 'true' || value === 'yes';
 }
 
 function readScheduleId(args: AgentScheduleToolArgs): string {
@@ -188,15 +180,10 @@ function listInput(args: AgentScheduleToolArgs): Record<string, unknown> {
 }
 
 export function createAgentScheduleTool(
-  shellPaths: ShellPathService,
-  configManager: AgentConnectedHostConfigReader,
+  _shellPaths: ShellPathService,
+  _configManager: AgentConnectedHostConfigReader,
+  registry?: ToolRegistry,
 ): Tool {
-  const autonomyTool = createAgentAutonomyScheduleTool(shellPaths, configManager);
-  const reminderTool = createAgentReminderScheduleTool(shellPaths, configManager);
-  const editTool = createAgentScheduleEditTool(shellPaths, configManager);
-  const operatorActionTool = createAgentOperatorActionTool(shellPaths, configManager);
-  const operatorMethodTool = createAgentOperatorMethodTool(shellPaths, configManager);
-
   return {
     definition: {
       name: 'schedule',
@@ -207,7 +194,7 @@ export function createAgentScheduleTool(
           action: {
             type: 'string',
             enum: ['list', 'create', 'autonomous', 'remind', 'reminder', 'edit', 'run', 'pause', 'resume', 'enable', 'disable', 'delete'],
-            description: 'Schedule action; list is read-only, others confirm.',
+            description: 'Schedule action; changes require a current recorded admission.',
           },
           scheduleId: { type: 'string', description: 'Connected schedule id for edit/run/pause/resume/delete.' },
           jobId: { type: 'string', description: 'Alias for scheduleId.' },
@@ -235,26 +222,31 @@ export function createAgentScheduleTool(
           disabled: { type: 'boolean', description: 'Create schedule disabled.' },
           query: { type: 'string', description: 'Optional list query or schedule lookup text.' },
           limit: { type: 'number', description: 'Optional list limit when supported by the connected host.' },
-          confirm: { type: 'boolean', description: 'Required true for create/edit/run/pause/resume/delete.' },
-          explicitUserRequest: { type: 'string', description: 'User request authorizing side-effecting schedule actions.' },
+          confirm: { type: 'boolean', description: 'Optional request provenance; does not grant permission.' },
+          explicitUserRequest: { type: 'string', description: 'Optional request provenance; the original admitted source remains authoritative.' },
         },
         additionalProperties: false,
       },
       sideEffects: ['network', 'state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: unknown) => {
-      const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentScheduleToolArgs;
+    execute: async (rawArgs, options) => {
+      if (!registry || !assertCurrentToolInvocation(rawArgs, options)) {
+        return { success: false, error: 'Schedule dispatch requires the current recorded tool admission.' };
+      }
+      const args: AgentScheduleToolArgs = rawArgs;
+      const run = (name: string, input: Record<string, unknown>) => registry.executeNested(randomUUID(), name,
+        Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)), options);
       const action = readAction(args);
       if (action === 'list') {
-        return operatorMethodTool.execute({
+        return run('agent_operator_method', {
           methodId: 'automation.schedules.list',
           input: listInput(args),
         });
       }
-      if (action === 'create') return autonomyTool.execute(autonomyArgs(args));
-      if (action === 'reminder') return reminderTool.execute(reminderArgs(args));
-      if (action === 'edit') return editTool.execute(editArgs(args));
+      if (action === 'create') return run('agent_autonomy_schedule', autonomyArgs(args));
+      if (action === 'reminder') return run('agent_reminder_schedule', reminderArgs(args));
+      if (action === 'edit') return run('agent_schedule_edit', editArgs(args));
 
       const scheduleId = readScheduleId(args);
       if (!scheduleId) {
@@ -263,11 +255,9 @@ export function createAgentScheduleTool(
           error: `scheduleId is required for schedule action:${action}.`,
         };
       }
-      return operatorActionTool.execute({
+      return run('agent_operator_action', {
         action: LIFECYCLE_ACTIONS[action],
         scheduleId,
-        confirm: readBoolean(args.confirm),
-        explicitUserRequest: args.explicitUserRequest,
       });
     },
   };
@@ -278,5 +268,5 @@ export function registerAgentScheduleTool(
   shellPaths: ShellPathService,
   configManager: AgentConnectedHostConfigReader,
 ): void {
-  if (!registry.has('schedule')) registry.register(createAgentScheduleTool(shellPaths, configManager));
+  if (!registry.has('schedule')) registry.register(createAgentScheduleTool(shellPaths, configManager, registry));
 }

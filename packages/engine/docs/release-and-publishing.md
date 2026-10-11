@@ -208,7 +208,7 @@ All sections are optional. A repo declares only the tools it uses. Import the
 | `sdkPin` | `{ sdkPackage, pinSource: "dependencies"｜"devDependencies", lockfile, overlayMarker, sourceRoots[], enforceExportsMap }`: parameterizes the SDK-pin tri-agreement. The agent bundles the SDK as a `devDependencies` pin; webui sets `enforceExportsMap: true`. |
 | `build` | `{ appEntrypoint, daemonEntrypoint?, outDir, addonOutDir, targets[], prebuild[][] }`. A target carries `{ key, bunTarget, appArtifact, daemonArtifact?, nativeAddonPackage?, nativeAddonFile?, capturedBunRuntime? }`. Presence of `daemonEntrypoint` + a target's `daemonArtifact` builds the daemon leg. |
 | `coverage` | `{ funcsFloor, linesFloor, command[] }`: the aggregate coverage floor that only rises. |
-| `smoke` | `{ bannerPrefix, forbiddenStrings[], binaryDefault }`: post-build binary smoke. |
+| `smoke` | `{ bannerPrefix, binaryDefault }`: post-build binary smoke. |
 | `releaseCut` | `{ branch, versionFiles[], syncCommands[][], commitPaths[], changelogHeading: "bracket"｜"plain", changelogInsertMarker: "first-separator"｜"top" }`. |
 | `publish` | `{ packageName, defaultRegistry, requiredTarballPaths[], forbiddenTarballPrefixes[], maxTarballBytes }`. |
 | `perJobGreen` | `{ owner, repo, workflow, event, pollIntervalMs, deadlineMs }` (the CLI also accepts `--repo/--sha/--workflow` and `GITHUB_REPOSITORY`/`GITHUB_SHA`). |

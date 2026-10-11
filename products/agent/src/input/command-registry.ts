@@ -254,7 +254,7 @@ export interface CommandPlatformConfigServices {
   /** Live memory-governance snapshot source (/health memory); absent against an older host build. */
   readonly memoryGovernor?: AgentMemoryDiagnostics;
   readonly mediaProviderRegistry?: MediaProviderRegistry;
-  readonly artifactStore?: Pick<ArtifactStore, 'create'> & Partial<Pick<ArtifactStore, 'get' | 'list' | 'readContent'>>;
+  readonly artifactStore?: Pick<ArtifactStore, 'create'> & Partial<Pick<ArtifactStore, 'get' | 'list' | 'readContent' | 'storagePath'>>;
   readonly channelDeliveryRouter?: Pick<ChannelDeliveryRouter, 'deliver' | 'listStrategies'>;
 }
 
@@ -299,6 +299,12 @@ export interface ConsolidationProposalsClient {
 export interface CommandContext
   extends CommandUiActions,
     CommandShellUiOpeners {
+  /** Restricts asynchronous command readings; never grants execution authority. */
+  readonly judgmentReadingOptions?: {
+    readonly signal?: AbortSignal | undefined;
+    readonly assertCurrent?: (() => void) | undefined;
+    readonly shouldStop?: (() => boolean) | undefined;
+  } | undefined;
   nativeWorkLedger?: import('../runtime/native-work-ledger.ts').NativeWorkLedgerView;
   readonly session: CommandSessionServices;
   readonly provider: CommandProviderServices;

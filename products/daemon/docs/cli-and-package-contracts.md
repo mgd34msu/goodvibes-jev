@@ -38,10 +38,15 @@ Serve wires config, event bus, store and an explicitly composed inbox through
 `runDaemonProcess`/`createDaemonHost`. Canonical owners retain restart fences,
 startup rollback, boot drainage, signal admission and the 15-second terminal
 deadline. Capability opt-ins remain explicit. Service activation additionally
-requires an explicitly composed installed executable path. Overridden tree or
-identity homes refuse before any service inspection/mutation because generated
-service definitions cannot preserve them. The shipped entrypoint does not
-implicitly grant service activation.
+requires an explicitly composed installed executable path. Systemd definitions
+preserve the selected daemon identity in argv, a relocated tree in
+`GOODVIBES_HOME`, and the workspace in `WorkingDirectory`; unit paths use the
+login home. Start/restart with selected homes or an explicit workspace check the
+persisted definition against the selected executable and all directories before
+activation. A mismatch
+refuses without a platform mutation. Other platforms refuse selected-home
+activation before dispatch. The shipped entrypoint does not implicitly grant
+service activation.
 
 The checked-in launcher exists before dist emission so frozen installation can
 create the actual Agent/TUI consumer bin links. The root need not be a daemon
@@ -295,7 +300,8 @@ remain unpersisted because the canonical host resolver does not call them stable
 
 Owned temporary homes and synthetic service runners exercise selected identity
 preservation, both stale candidates, alias protection, repeated pruning, runtime
-versus persisted endpoint/name, overridden-home refusal, cancellation before and
+versus persisted endpoint/name, selected-home propagation and installed-definition
+mismatch refusal, cancellation before and
 during probe, served stable-origin persistence and no-write cases. Actual CLI
 host tests establish admitted caller ordering, settled observed binding and no
 post-shutdown persistence/readiness. Existing service guard/outcome and startup

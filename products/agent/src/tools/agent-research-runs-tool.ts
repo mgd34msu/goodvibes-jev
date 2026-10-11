@@ -1,6 +1,6 @@
 import type { ShellPathService } from '@/runtime/index.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolEffect, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import {
   AgentResearchRunRegistry,
   researchRunLogTail,
@@ -115,12 +115,7 @@ function requireId(args: AgentResearchRunsToolArgs): string {
   return id;
 }
 
-function requireConfirmedWrite(args: AgentResearchRunsToolArgs, action: string): string {
-  const explicitUserRequest = readString(args.explicitUserRequest);
-  if (!explicitUserRequest) throw new Error(`${action} requires explicitUserRequest with the user's exact request or a short faithful summary.`);
-  if (args.confirm !== true) throw new Error(`${action} requires confirm:true after an explicit user request.`);
-  return explicitUserRequest;
-}
+
 
 function runOneLine(run: AgentResearchRunRecord): string {
   const artifact = run.reportArtifactId ? ` artifact ${run.reportArtifactId}` : '';
@@ -179,41 +174,41 @@ function runNextRouteLines(run: AgentResearchRunRecord): readonly string[] {
   ];
   if (run.status === 'planned') {
     lines.push(
-      `  start research action:"start_run" id:${routeString(run.id)} confirm:true explicitUserRequest:"..."`,
+      `  start research action:"start_run" id:${routeString(run.id)}`,
       `  search research action:"search" runId:${routeString(run.id)} maxResults:5`,
-      `  checkpoint research action:"checkpoint" id:${routeString(run.id)} phase:"searching" progress:10 note:"Started source collection." confirm:true explicitUserRequest:"..."`,
+      `  checkpoint research action:"checkpoint" id:${routeString(run.id)} phase:"searching" progress:10 note:"Started source collection."`,
     );
   } else if (run.status === 'running') {
     lines.push(
       `  search research action:"search" runId:${routeString(run.id)} maxResults:5`,
       `  sources research action:"sources" query:${routeString(run.question)} includeReportLines:true`,
-      `  checkpoint research action:"checkpoint" id:${routeString(run.id)} phase:"reading" progress:${Math.max(run.progress, 25)} note:"Captured and reviewed source candidates." sourceIds:["..."] confirm:true explicitUserRequest:"..."`,
+      `  checkpoint research action:"checkpoint" id:${routeString(run.id)} phase:"reading" progress:${Math.max(run.progress, 25)} note:"Captured and reviewed source candidates." sourceIds:["..."]`,
       `  bundle research action:"bundle" query:${routeString(run.question)} includeReportLines:true`,
-      `  report research action:"report" question:${routeString(run.question)} sources:[...] visualReport:true requireCitationCoverage:true confirm:true explicitUserRequest:"..."`,
-      `  pause research action:"pause" id:${routeString(run.id)} confirm:true explicitUserRequest:"..."`,
-      `  cancel research action:"cancel" id:${routeString(run.id)} note:"..." confirm:true explicitUserRequest:"..."`,
-      `  complete research action:"complete" id:${routeString(run.id)} reportArtifactId:"..." confirm:true explicitUserRequest:"..."`,
+      `  report research action:"report" question:${routeString(run.question)} sources:[...] visualReport:true requireCitationCoverage:true`,
+      `  pause research action:"pause" id:${routeString(run.id)}`,
+      `  cancel research action:"cancel" id:${routeString(run.id)} note:"..."`,
+      `  complete research action:"complete" id:${routeString(run.id)} reportArtifactId:"..."`,
     );
   } else if (run.status === 'paused' || run.status === 'blocked') {
     lines.push(
-      `  resume research action:"resume" id:${routeString(run.id)} confirm:true explicitUserRequest:"..."`,
-      `  checkpoint research action:"checkpoint" id:${routeString(run.id)} status:"running" phase:${routeString(run.phase)} progress:${run.progress} note:"Resumed with updated next steps." confirm:true explicitUserRequest:"..."`,
-      `  cancel research action:"cancel" id:${routeString(run.id)} note:"..." confirm:true explicitUserRequest:"..."`,
+      `  resume research action:"resume" id:${routeString(run.id)}`,
+      `  checkpoint research action:"checkpoint" id:${routeString(run.id)} status:"running" phase:${routeString(run.phase)} progress:${run.progress} note:"Resumed with updated next steps."`,
+      `  cancel research action:"cancel" id:${routeString(run.id)} note:"..."`,
     );
   } else if (run.status === 'completed') {
     lines.push(
       `  reports research action:"reports" query:${routeString(run.title)} includeContent:false`,
       ...(run.reportArtifactId ? [
         `  reportArtifact research action:"report_artifact" artifactId:${routeString(run.reportArtifactId)}`,
-        `  promoteKnowledge agent_knowledge_ingest sourceKind:"artifact" artifactId:${routeString(run.reportArtifactId)} confirm:true explicitUserRequest:"..."`,
+        `  promoteKnowledge agent_knowledge_ingest sourceKind:"artifact" artifactId:${routeString(run.reportArtifactId)}`,
       ] : [
-        `  attachReport research action:"complete" id:${routeString(run.id)} reportArtifactId:"..." confirm:true explicitUserRequest:"..."`,
+        `  attachReport research action:"complete" id:${routeString(run.id)} reportArtifactId:"..."`,
       ]),
     );
   } else {
     lines.push(
       `  list research action:"runs" status:${routeString(run.status)}`,
-      `  followup research action:"create_run" question:${routeString(run.question)} plan:["Follow up on the stopped research run."] confirm:true explicitUserRequest:"..."`,
+      `  followup research action:"create_run" question:${routeString(run.question)} plan:["Follow up on the stopped research run."]`,
     );
   }
   return lines;
@@ -222,7 +217,7 @@ function runNextRouteLines(run: AgentResearchRunRecord): readonly string[] {
 function deletedRunRouteLines(run: AgentResearchRunRecord): readonly string[] {
   return [
     `  list research action:"runs"`,
-    `  recreate research action:"create_run" title:${routeString(run.title)} question:${routeString(run.question)} plan:["Follow up on the stopped research run."] confirm:true explicitUserRequest:"..."`,
+    `  recreate research action:"create_run" title:${routeString(run.title)} question:${routeString(run.question)} plan:["Follow up on the stopped research run."]`,
   ];
 }
 
@@ -263,12 +258,12 @@ function formatRunDetail(run: AgentResearchRunRecord): string {
     '',
     ...logTailSection(run),
     'Routes',
-    `checkpoint research action:"checkpoint" id:"${run.id}" confirm:true explicitUserRequest:"..."`,
-    `pause research action:"pause" id:"${run.id}" confirm:true explicitUserRequest:"..."`,
-    `resume research action:"resume" id:"${run.id}" confirm:true explicitUserRequest:"..."`,
-    `cancel research action:"cancel" id:"${run.id}" note:"..." confirm:true explicitUserRequest:"..."`,
-    `complete research action:"complete" id:"${run.id}" reportArtifactId:"..." confirm:true explicitUserRequest:"..."`,
-    'report research action:"report" confirm:true explicitUserRequest:"..."',
+    `checkpoint research action:"checkpoint" id:"${run.id}"`,
+    `pause research action:"pause" id:"${run.id}"`,
+    `resume research action:"resume" id:"${run.id}"`,
+    `cancel research action:"cancel" id:"${run.id}" note:"..."`,
+    `complete research action:"complete" id:"${run.id}" reportArtifactId:"..."`,
+    'report research action:"report"',
     '',
     'Next routes',
     ...runNextRouteLines(run),
@@ -335,8 +330,8 @@ function createAgentResearchRunsTool(shellPaths?: Pick<ShellPathService, 'resolv
           error: { type: 'string', description: 'Failure note for fail mode.' },
           includeCheckpoints: { type: 'boolean', description: 'Include recent checkpoint lines in list/search output.' },
           includeLogTail: { type: 'boolean', description: 'Include recent run log tail in list/search output.' },
-          confirm: { type: 'boolean', description: 'Required true for local run-state writes.' },
-          explicitUserRequest: { type: 'string', description: 'User request authorizing local research run writes.' },
+          confirm: { type: 'boolean', description: 'Optional legacy audit field; does not authorize writes.' },
+          explicitUserRequest: { type: 'string', description: 'Optional request text for the research run provenance.' },
         },
         required: ['mode'],
         additionalProperties: false,
@@ -344,12 +339,18 @@ function createAgentResearchRunsTool(shellPaths?: Pick<ShellPathService, 'resolv
       sideEffects: ['state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: Record<string, unknown>) => {
+    execute: async (rawArgs: Record<string, unknown>, options) => {
       if (!shellPaths) return failure('Research run ledger is unavailable because this runtime did not provide shell paths.');
       const registry = AgentResearchRunRegistry.fromShellPaths(shellPaths);
       const args = rawArgs as AgentResearchRunsToolArgs;
       const mode = readMode(args.mode);
       try {
+        options?.signal?.throwIfAborted();
+        options?.assertCurrent?.(rawArgs);
+        const assertWrite = () => {
+          options?.signal?.throwIfAborted();
+          if (!assertCurrentToolEffect(rawArgs, options, 'write')) throw new Error('Research run writes require current recorded effect admission.');
+        };
         if (mode === 'list') {
           const status = readStatus(args.status);
           const runs = registry.list(status);
@@ -369,15 +370,16 @@ function createAgentResearchRunsTool(shellPaths?: Pick<ShellPathService, 'resolv
           return run ? output(formatRunDetail(run)) : failure(`Unknown research run ${readString(args.id)}`);
         }
         if (mode === 'create') {
-          const explicitUserRequest = requireConfirmedWrite(args, 'Research run creation');
+          assertWrite();
+          const explicitUserRequest = readString(args.explicitUserRequest) || 'Recorded research run operation';
           return output(formatMutationResult('Created Agent research run', registry.create(createInput(args, explicitUserRequest))));
         }
         if (mode === 'start') {
-          requireConfirmedWrite(args, 'Research run start');
+          assertWrite();
           return output(formatMutationResult('Started Agent research run', registry.start(requireId(args), readString(args.note))));
         }
         if (mode === 'checkpoint') {
-          requireConfirmedWrite(args, 'Research run checkpoint');
+          assertWrite();
           const phase = readPhase(args.phase);
           const status = readMutableStatus(args.status);
           const progress = readProgress(args.progress);
@@ -392,19 +394,19 @@ function createAgentResearchRunsTool(shellPaths?: Pick<ShellPathService, 'resolv
           })));
         }
         if (mode === 'pause') {
-          requireConfirmedWrite(args, 'Research run pause');
+          assertWrite();
           return output(formatMutationResult('Paused Agent research run', registry.pause(requireId(args), readString(args.note))));
         }
         if (mode === 'resume') {
-          requireConfirmedWrite(args, 'Research run resume');
+          assertWrite();
           return output(formatMutationResult('Resumed Agent research run', registry.resume(requireId(args), readString(args.note))));
         }
         if (mode === 'cancel') {
-          requireConfirmedWrite(args, 'Research run cancel');
+          assertWrite();
           return output(formatMutationResult('Cancelled Agent research run', registry.cancel(requireId(args), readString(args.note))));
         }
         if (mode === 'complete') {
-          requireConfirmedWrite(args, 'Research run completion');
+          assertWrite();
           return output(formatMutationResult('Completed Agent research run', registry.complete(requireId(args), {
             note: readString(args.note),
             reportArtifactId: readString(args.reportArtifactId),
@@ -412,10 +414,10 @@ function createAgentResearchRunsTool(shellPaths?: Pick<ShellPathService, 'resolv
           })));
         }
         if (mode === 'fail') {
-          requireConfirmedWrite(args, 'Research run failure');
+          assertWrite();
           return output(formatMutationResult('Failed Agent research run', registry.fail(requireId(args), readString(args.error) || readString(args.note))));
         }
-        requireConfirmedWrite(args, 'Research run deletion');
+        assertWrite();
         return output(formatMutationResult('Deleted Agent research run', registry.delete(requireId(args))));
       } catch (error) {
         return failure(error instanceof Error ? error.message : String(error));

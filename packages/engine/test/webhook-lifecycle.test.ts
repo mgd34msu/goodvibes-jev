@@ -82,6 +82,43 @@ afterEach(async () => {
   }
 });
 
+describe('WebhookNotifier external delivery lifetime', () => {
+  test.each(['cancel', 'source'] as const)('a held signer cannot send after %s retirement', async change => {
+    const started = gate(), held = gate();
+    const realSign = globalThis.crypto.subtle.sign.bind(globalThis.crypto.subtle);
+    const signSpy = spyOn(globalThis.crypto.subtle, 'sign').mockImplementation(async (...args) => {
+      started.resolve(); await held.promise; return realSign(...args);
+    });
+    restorers.push(() => signSpy.mockRestore());
+    const controller = new AbortController(); let current = true;
+    const value = notifier(URLS, { signingSecret: 'synthetic-owned-signing-key', maxConcurrent: 1 });
+    const sending = value.send('isolated lifetime fixture', { signal: controller.signal, assertCurrent() {
+      if (!current) throw new Error('Synthetic source retired');
+    } });
+    await started.promise;
+    if (change === 'cancel') controller.abort(); else current = false;
+    held.resolve();
+    const receipt = await sending;
+    expect(receipt.delivered).toBe(0); expect(receipt.failed).toBe(URLS.length);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+  test('retirement while the first response waits fences queued recipients and retains its accepted receipt', async () => {
+    const started = gate(), held = gate(new Response('ok'));
+    fetchSpy.mockImplementationOnce(async () => { started.resolve(); return held.promise; });
+    const value = notifier(URLS, { maxConcurrent: 1 }); let current = true;
+    const sending = value.send('isolated queue fixture', { assertCurrent() { if (!current) throw new Error('Synthetic source retired'); } });
+    await started.promise; current = false; held.resolve(new Response('ok'));
+    const receipt = await sending;
+    expect(receipt.delivered).toBe(1); expect(receipt.failed).toBe(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+  test('an asynchronous authority callback cannot authorize an actual request', async () => {
+    const value = notifier(URLS);
+    expect(() => value.send('isolated callback fixture', { assertCurrent: async () => {} })).toThrow('synchronously');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe('WebhookNotifier close and admission', () => {
   test('close returns the same promise before and after settlement and async disposal delegates', async () => {
     const value = notifier([]);

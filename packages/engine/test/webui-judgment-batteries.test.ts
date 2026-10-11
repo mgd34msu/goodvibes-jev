@@ -268,10 +268,31 @@ describe('source preflight and retention boundary', () => {
     }
     const choices = { badge: statusToneBattery.items.badge.question };
     const valid = choiceAnswer(choices.badge, 'ok', 0.9);
-    for (const answer of [{ ...valid, confidence: 1.1 }, { ...valid, choice: 'warning' }, { ...valid, choice: 'other' }, { ...valid, probabilities: { ...valid.probabilities, neutral: 0.5 } }, { ...valid, probabilities: { ok: 0.9 } }, { ...valid, probabilities: { ...valid.probabilities, other: 0 } }]) {
+    for (const answer of [{ ...valid, confidence: 1.1 }, { ...valid, confidence: -0.1 }, { ...valid, choice: 'warning' }, { ...valid, choice: 'other' },
+      { ...valid, probabilities: { ok: 0.5, warning: 0.5000000001, bad: 0, neutral: 0 } },
+      { ...valid, probabilities: { ok: 1.1, warning: -0.1, bad: 0, neutral: 0 } },
+      { ...valid, probabilities: { ok: Infinity, warning: 0, bad: 0, neutral: 0 } },
+      { ...valid, probabilities: { ok: 0.98, warning: 0, bad: 0, neutral: 0 } },
+      { ...valid, probabilities: { ...valid.probabilities, neutral: 0.5 } }, { ...valid, probabilities: { ok: 0.9 } }, { ...valid, probabilities: { ...valid.probabilities, other: 0 } }]) {
       expect(() => validateWebuiAnswers(choices, { badge: answer })).toThrow('Invalid WebUI judgment response.');
     }
     expect(validateWebuiAnswers(choices, { badge: valid })).toMatchObject({ badge: valid });
+  });
+
+  test('the shared approximate-unit Choice policy preserves admitted values before logging', async () => {
+    const answer = { type: 'choice' as const, choice: 'ok' as const, confidence: 0.99,
+      probabilities: { ok: 0.99, warning: 0, bad: 0, neutral: 0 } };
+    const choices = { badge: statusToneBattery.items.badge.question };
+    const captured = validateWebuiAnswers(choices, { badge: answer });
+    expect(Object.keys(captured)).toEqual(['badge']);
+    expect(captured.badge).toEqual(answer);
+    const fake = configured(() => answer);
+    expect(await readStatusTone(fake.port, { kind: 'text', vocabulary: 'badge', status: 'available', domain: 'session' }))
+      .toMatchObject({ status: 'ready', value: { tone: 'ok' } });
+    expect(fake.entries).toHaveLength(1);
+    const entry = fake.entries[0];
+    if (!entry || !('answers' in entry)) throw new Error('Expected a recorded successful judgment response');
+    expect(entry.answers).toEqual({ badge: answer });
   });
 
   test('raw output extensions and failure echoes are scrubbed before decision logging', async () => {

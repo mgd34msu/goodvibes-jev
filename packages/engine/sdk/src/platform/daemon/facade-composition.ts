@@ -525,9 +525,8 @@ export function createDaemonFacadeCollaborators(
 ): DaemonFacadeCollaborators {
   const { runtime } = options;
 
-  // wire telemetry.includeRawPrompts into turn-emitter redaction behavior.
-  // Default (false) redacts raw prompt/response content to {length, sha256, first100chars}.
-  // Opt-in surfaces a startup WARN (emitted inside setTelemetryIncludeRawPrompts when true).
+  // Report the startup opt-in. TelemetryApiService reads this daemon's live
+  // config separately; safe views redact and HTTP raw reads also require scope.
   setTelemetryIncludeRawPrompts(
     runtime.configManager.get('telemetry.includeRawPrompts') === true,
   );
@@ -638,6 +637,15 @@ export function createDaemonFacadeCollaborators(
       captureSettingsAdminAuthority: (req) => controlPlaneHelper.captureSettingsAdminAuthority(req),
       withSettingsAdminAuthority: (req, authority, callback) => controlPlaneHelper.withSettingsAdminAuthority(req, authority, callback),
     },
+    settingsImportAuthority: {
+      settingsLifetime: options.settingsLifetime ?? (() => null),
+      captureSettingsAdminAuthority: (req) => controlPlaneHelper.captureSettingsAdminAuthority(req),
+      withSettingsAdminAuthority: (req, authority, callback) => controlPlaneHelper.withSettingsAdminAuthority(req, authority, callback),
+      captureNativeExecutionAuthority: (req) => controlPlaneHelper.createNativeExecutionAuthority(controlPlaneHelper.extractAuthToken(req)),
+      extractAuthToken: (req) => controlPlaneHelper.extractAuthToken(req),
+      requireAdmin: (req) => controlPlaneHelper.requireAdmin(req),
+    },
+    nativeMutationHost: runtime.runtimeServices.nativeMutationHost,
     browserJudgment: runtime.runtimeServices.browserJudgment,
     configManager: runtime.configManager,
     serviceRegistry: runtime.serviceRegistry,

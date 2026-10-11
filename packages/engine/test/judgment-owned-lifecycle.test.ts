@@ -10,7 +10,7 @@ import { decisionLogPath } from '../sdk/src/platform/state/decision-log.ts';
 
 const request = { state: { fixture: 'native lifecycle' }, questions: { yes: noul('Is this a lifecycle fixture?') }, context: { site: 'test.native-lifecycle' } };
 const source = (endpoint: string, secrets: JudgmentSettingsSource['secrets'] = { get: async () => 'synthetic-key' }): JudgmentSettingsSource => ({
-  config: { get: (key) => ({ 'judgment.endpoint': endpoint, 'judgment.model': 'jev-1.13.0', 'judgment.timeoutMs': 1000, 'judgment.keySource': 'secret' })[key] },
+  config: { get: (key) => ({ 'judgment.endpoint': endpoint, 'judgment.model': 'jev-1.13.0', 'judgment.timeoutMs': 1000, 'judgment.keySource': 'secret', 'judgment.fallbacks': [] })[key] },
   env: {}, secrets,
 });
 function deferred() {

@@ -1,6 +1,6 @@
 import type { ShellPathService } from '@/runtime/index.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolEffect, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import {
   AgentResearchSourceRegistry,
   researchSourceReportLine,
@@ -91,16 +91,6 @@ function requireId(args: AgentResearchSourcesToolArgs): string {
   return id;
 }
 
-function requireExplicitUserRequest(args: AgentResearchSourcesToolArgs, action: string): string {
-  const explicitUserRequest = readString(args.explicitUserRequest);
-  if (!explicitUserRequest) throw new Error(`${action} requires explicitUserRequest with the user's exact request or a short faithful summary.`);
-  return explicitUserRequest;
-}
-
-function requireConfirmedWrite(args: AgentResearchSourcesToolArgs, action: string): void {
-  requireExplicitUserRequest(args, action);
-  if (args.confirm !== true) throw new Error(`${action} requires confirm:true after an explicit user request.`);
-}
 
 function sourceOneLine(source: AgentResearchSourceRecord): string {
   const url = source.url ? ` ${source.url}` : '';
@@ -172,16 +162,16 @@ function sourceNextRouteLines(source: AgentResearchSourceRecord): readonly strin
   ];
   if (source.status === 'candidate') {
     lines.push(
-      `  review research action:"review_source" id:${routeString(source.id)} credibility:"high|medium|mixed|low" score:80 note:"..." confirm:true explicitUserRequest:"..."`,
-      `  reject research action:"reject_source" id:${routeString(source.id)} note:"..." confirm:true explicitUserRequest:"..."`,
+      `  review research action:"review_source" id:${routeString(source.id)} credibility:"high|medium|mixed|low" score:80 note:"..."`,
+      `  reject research action:"reject_source" id:${routeString(source.id)} note:"..."`,
     );
   } else if (source.status === 'reviewed') {
     lines.push(
       `  bundle research action:"bundle" query:${routeString(source.question)} includeReportLines:true`,
-      `  report research action:"report" question:${routeString(source.question)} sources:[...] visualReport:true requireCitationCoverage:true confirm:true explicitUserRequest:"..."`,
-      `  markUsed research action:"use_source" id:${routeString(source.id)} reportArtifactId:"..." confirm:true explicitUserRequest:"..."`,
+      `  report research action:"report" question:${routeString(source.question)} sources:[...] visualReport:true requireCitationCoverage:true`,
+      `  markUsed research action:"use_source" id:${routeString(source.id)} reportArtifactId:"..."`,
       ...(source.url ? [
-        `  promoteUrl agent_knowledge_ingest sourceKind:"url" url:${routeString(source.url)} title:${routeString(source.title)} tags:["research"] confirm:true explicitUserRequest:"..."`,
+        `  promoteUrl agent_knowledge_ingest sourceKind:"url" url:${routeString(source.url)} title:${routeString(source.title)} tags:["research"]`,
       ] : []),
     );
   } else if (source.status === 'used') {
@@ -189,15 +179,15 @@ function sourceNextRouteLines(source: AgentResearchSourceRecord): readonly strin
       `  bundle research action:"bundle" query:${routeString(source.question)} includeReportLines:true`,
       ...(source.usedInReportArtifactId ? [
         `  reportArtifact research action:"report_artifact" artifactId:${routeString(source.usedInReportArtifactId)}`,
-        `  promoteReport agent_knowledge_ingest sourceKind:"artifact" artifactId:${routeString(source.usedInReportArtifactId)} confirm:true explicitUserRequest:"..."`,
+        `  promoteReport agent_knowledge_ingest sourceKind:"artifact" artifactId:${routeString(source.usedInReportArtifactId)}`,
       ] : [
-        `  attachReport research action:"use_source" id:${routeString(source.id)} reportArtifactId:"..." confirm:true explicitUserRequest:"..."`,
+        `  attachReport research action:"use_source" id:${routeString(source.id)} reportArtifactId:"..."`,
       ]),
     );
   } else {
     lines.push(
       `  search research action:"sources" status:"rejected" query:${routeString(source.question)}`,
-      `  reAdd research action:"add_source" question:${routeString(source.question)} title:${routeString(source.title)} summary:${routeString(source.summary)} confirm:true explicitUserRequest:"..."`,
+      `  reAdd research action:"add_source" question:${routeString(source.question)} title:${routeString(source.title)} summary:${routeString(source.summary)}`,
     );
   }
   return lines;
@@ -206,7 +196,7 @@ function sourceNextRouteLines(source: AgentResearchSourceRecord): readonly strin
 function deletedSourceRouteLines(source: AgentResearchSourceRecord): readonly string[] {
   return [
     `  queue research action:"sources" query:${routeString(source.question)} includeReportLines:true`,
-    `  reAdd research action:"add_source" question:${routeString(source.question)} title:${routeString(source.title)} summary:${routeString(source.summary)} confirm:true explicitUserRequest:"..."`,
+    `  reAdd research action:"add_source" question:${routeString(source.question)} title:${routeString(source.title)} summary:${routeString(source.summary)}`,
   ];
 }
 
@@ -360,8 +350,8 @@ function createAgentResearchSourcesTool(shellPaths?: Pick<ShellPathService, 'res
           reportArtifactId: { type: 'string', description: 'Optional report artifact id when marking a source used.' },
           includeReportLines: { type: 'boolean', description: 'Include report-form source lines in list/search output.' },
           limit: { type: 'number', description: 'Maximum rows for bundle output.' },
-          confirm: { type: 'boolean', description: 'Required true for local source queue writes.' },
-          explicitUserRequest: { type: 'string', description: 'User request authorizing source queue writes.' },
+          confirm: { type: 'boolean', description: 'Optional legacy audit field; does not authorize writes.' },
+          explicitUserRequest: { type: 'string', description: 'Optional request text retained as source provenance.' },
         },
         required: ['mode'],
         additionalProperties: false,
@@ -369,12 +359,18 @@ function createAgentResearchSourcesTool(shellPaths?: Pick<ShellPathService, 'res
       sideEffects: ['state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: Record<string, unknown>) => {
+    execute: async (rawArgs: Record<string, unknown>, options) => {
       if (!shellPaths) return failure('Research source queue is unavailable because this runtime did not provide shell paths.');
       const registry = AgentResearchSourceRegistry.fromShellPaths(shellPaths);
       const args = rawArgs as AgentResearchSourcesToolArgs;
       const mode = readMode(args.mode);
       try {
+        options?.signal?.throwIfAborted();
+        options?.assertCurrent?.(rawArgs);
+        const assertWrite = () => {
+          options?.signal?.throwIfAborted();
+          if (!assertCurrentToolEffect(rawArgs, options, 'write')) throw new Error('Research source writes require current recorded effect admission.');
+        };
         if (mode === 'list') {
           const status = readStatus(args.status);
           const sources = registry.list(status);
@@ -402,11 +398,11 @@ function createAgentResearchSourcesTool(shellPaths?: Pick<ShellPathService, 'res
           return output(formatSourceBundle(matched.slice(0, limit), query, limit, matched.length));
         }
         if (mode === 'add') {
-          requireConfirmedWrite(args, 'Research source add');
+          assertWrite();
           return output(formatMutationResult('Added Agent research source', registry.create(addInput(args))));
         }
         if (mode === 'review') {
-          requireConfirmedWrite(args, 'Research source review');
+          assertWrite();
           const credibility = readCredibility(args.credibility);
           const score = readScore(args.score);
           const note = readString(args.note);
@@ -424,11 +420,11 @@ function createAgentResearchSourcesTool(shellPaths?: Pick<ShellPathService, 'res
           return output(formatMutationResult('Reviewed Agent research source', source));
         }
         if (mode === 'reject') {
-          requireConfirmedWrite(args, 'Research source rejection');
+          assertWrite();
           return output(formatMutationResult('Rejected Agent research source', registry.reject(requireId(args), readString(args.note))));
         }
         if (mode === 'use') {
-          requireConfirmedWrite(args, 'Research source use');
+          assertWrite();
           const reportArtifactId = readString(args.reportArtifactId);
           const note = readString(args.note);
           return output(formatMutationResult('Marked Agent research source used', registry.markUsed(requireId(args), {
@@ -436,7 +432,7 @@ function createAgentResearchSourcesTool(shellPaths?: Pick<ShellPathService, 'res
             ...(note ? { note } : {}),
           })));
         }
-        requireConfirmedWrite(args, 'Research source deletion');
+        assertWrite();
         return output(formatMutationResult('Deleted Agent research source', registry.delete(requireId(args))));
       } catch (error) {
         return failure(error instanceof Error ? error.message : String(error));

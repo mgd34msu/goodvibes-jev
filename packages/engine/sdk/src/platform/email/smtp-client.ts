@@ -30,6 +30,7 @@
 
 import { randomBytes } from 'node:crypto';
 import type { Socket } from 'node:net';
+import { assertDeliveryCurrent, runDeliveryPublication, type DeliveryLifetime } from '../utils/delivery-lifetime.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -43,7 +44,7 @@ export interface SmtpClientOptions {
   readonly timeoutMs?: number;
 }
 
-export interface SmtpSendOptions {
+export interface SmtpSendOptions extends DeliveryLifetime {
   readonly from: string;
   readonly to: string;
   readonly subject: string;
@@ -313,59 +314,62 @@ export class SmtpClient {
    * once the final `250` has arrived.
    */
   async sendMail(opts: SmtpSendOptions): Promise<SmtpSendResult> {
+    assertDeliveryCurrent(opts);
     const { hostname, username, password } = this.options;
     const timeoutMs = this.options.timeoutMs ?? SMTP_DEFAULT_TIMEOUT_MS;
     const session = new SmtpSession(this.options.socket, timeoutMs);
-    const { capabilities } = await this.greetAndEhlo(session, hostname);
+    const abort = () => session.destroy();
+    opts.signal?.addEventListener('abort', abort, { once: true });
+    try {
+      const { capabilities } = await this.greetAndEhlo(session, hostname);
 
-    // AUTH
-    await this.authenticate(session, capabilities, username, password);
+      // AUTH
+      await this.authenticate(session, capabilities, username, password);
 
-    // Validate envelope fields before writing to the protocol stream (injection prevention)
-    validateSmtpAddress(opts.from, 'from');
-    validateSmtpAddress(opts.to, 'to');
-    validateSmtpSubject(opts.subject);
+      // Validate envelope fields before writing to the protocol stream (injection prevention)
+      validateSmtpAddress(opts.from, 'from');
+      validateSmtpAddress(opts.to, 'to');
+      validateSmtpSubject(opts.subject);
 
-    // Envelope
-    await session.cmd(`MAIL FROM:<${opts.from}>`, 250);
-    await session.cmd(`RCPT TO:<${opts.to}>`, 250);
+      const date = new Date().toUTCString();
+      const headers = [
+        `From: ${opts.from}`,
+        `To: ${opts.to}`,
+        `Subject: ${opts.subject}`,
+        `Date: ${date}`,
+        `MIME-Version: 1.0`,
+        `Content-Type: text/plain; charset=utf-8`,
+      ];
 
-    // DATA
-    await session.cmd('DATA', 354);
+      // Two Message-ID headers is a protocol error, so an id already present in
+      // the composed headers is reported rather than replaced.
+      const existing = headers.find((header) => /^message-id:/i.test(header));
+      const messageId = existing === undefined
+        ? generateMessageId(opts.from, hostname)
+        : existing.slice(existing.indexOf(':') + 1).trim();
+      if (existing === undefined) headers.push(`Message-ID: ${messageId}`);
 
-    const date = new Date().toUTCString();
-    const headers = [
-      `From: ${opts.from}`,
-      `To: ${opts.to}`,
-      `Subject: ${opts.subject}`,
-      `Date: ${date}`,
-      `MIME-Version: 1.0`,
-      `Content-Type: text/plain; charset=utf-8`,
-    ];
+      const message = [...headers, '', dotStuff(opts.body), '.'].join(CRLF) + CRLF;
 
-    // Two Message-ID headers is a protocol error, so an id already present in
-    // the composed headers is reported rather than replaced.
-    const existing = headers.find((header) => /^message-id:/i.test(header));
-    const messageId = existing === undefined
-      ? generateMessageId(opts.from, hostname)
-      : existing.slice(existing.indexOf(':') + 1).trim();
-    if (existing === undefined) headers.push(`Message-ID: ${messageId}`);
+      const result = await runDeliveryPublication(opts, async current => {
+        // Authentication is preparation; only the message transaction retains publication ownership.
+        current(); await session.cmd(`MAIL FROM:<${opts.from}>`, 250);
+        current(); await session.cmd(`RCPT TO:<${opts.to}>`, 250);
+        current(); await session.cmd('DATA', 354);
+        current(); await session.sendRaw(message);
+        const dataResp = await session.readResponse();
+        if (dataResp.code !== 250) throw new Error(`SMTP DATA rejected: ${dataResp.lines.join(' | ')}`);
+        // The final response proves the server accepted this message.
+        return { messageId, sentAt: new Date().toISOString() };
+      });
 
-    const message = [...headers, '', dotStuff(opts.body), '.'].join(CRLF) + CRLF;
-
-    await session.sendRaw(message);
-    const dataResp = await session.readResponse();
-    if (dataResp.code !== 250) {
-      throw new Error(`SMTP DATA rejected: ${dataResp.lines.join(' | ')}`);
+      // QUIT
+      await session.send('QUIT').catch(() => {});
+      return result;
+    } finally {
+      opts.signal?.removeEventListener('abort', abort);
+      session.destroy();
     }
-    // The message is now the server's problem, which is what makes this the
-    // moment the send happened.
-    const sentAt = new Date().toISOString();
-
-    // QUIT
-    await session.send('QUIT');
-    session.destroy();
-    return { messageId, sentAt };
   }
 
   // -------------------------------------------------------------------------

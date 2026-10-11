@@ -16,6 +16,7 @@ import {
 } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { BlockMeta } from './conversation-types.ts';
 import type { NoticeSink } from './notices.ts';
+import { JudgmentAuthorityRetiredError } from '@goodvibes-jev/engine/errors';
 import { MessageLineCache } from './conversation-line-cache.ts';
 import { SplashGateState } from './conversation-splash-state.ts';
 import { nearestBlock, resolveTranscriptEventLine, wrapToLine } from './conversation-event-navigation.ts';
@@ -150,6 +151,52 @@ export class ConversationManager extends SdkConversationManager {
 
   public suppressSplash: boolean = false;
   private noticeSink: NoticeSink | null = null;
+  private noticeLifetime = new AbortController();
+  private readonly noticePublications = new Set<Promise<void>>();
+
+  private retireNoticePublications(): void {
+    const previous = this.noticeLifetime;
+    this.noticeLifetime = new AbortController();
+    previous.abort();
+  }
+
+  /** Presentation reads belong to this history and end when it is replaced or disposed. */
+  public captureHistoryReadingLifetime(): { readonly signal: AbortSignal; readonly assertCurrent: () => void } {
+    const lifetime = this.noticeLifetime;
+    return { signal: lifetime.signal, assertCurrent: () => {
+      if (lifetime.signal.aborted || this.noticeLifetime !== lifetime) throw new JudgmentAuthorityRetiredError();
+    } };
+  }
+
+  private publishSystemNotice(index: number, restored: boolean): void {
+    const sink = this.noticeSink;
+    const message = this.getMessageSnapshot()[index];
+    if (!sink || !message || message.role !== 'system') return;
+    const lifetime = this.noticeLifetime;
+    const eventType = message.runtimeEvent?.type;
+    const occurrenceId = message.runtimeEvent?.occurrenceId;
+    const assertCurrent = () => {
+      const retained = this.getMessageSnapshot().some(current => current.role === 'system'
+        && current.content === message.content && current.runtimeEvent?.type === eventType
+        && current.runtimeEvent?.occurrenceId === occurrenceId);
+      if (lifetime.signal.aborted || this.noticeLifetime !== lifetime || this.noticeSink !== sink || !retained) throw new JudgmentAuthorityRetiredError();
+    };
+    try {
+      const result = sink(message.content, { restored, runtimeEvent: message.runtimeEvent, signal: lifetime.signal, assertCurrent });
+      if (result) {
+        // Unavailable or retired readings leave the original message saved;
+        // neither a guessed severity nor an unhandled rejection is emitted.
+        const pending = Promise.resolve(result).catch(() => {});
+        this.noticePublications.add(pending);
+        void pending.then(() => this.noticePublications.delete(pending));
+      }
+    } catch { /* Keep the notice in conversation history until it can be read. */ }
+  }
+
+  /** Await actual ingestion when a caller needs the published notice history. */
+  public async whenNoticesSettled(): Promise<void> {
+    await Promise.all([...this.noticePublications]);
+  }
   private usageHydrator: (() => void) | null = null;
 
   /** The shell's usage restore adapter, shared by every history replacement. */
@@ -232,11 +279,12 @@ export class ConversationManager extends SdkConversationManager {
     this.messageKindRegistry.delete(nextIndex);
     super.addSystemMessage(content, runtimeEvent);
     this.markDirty();
-    this.noticeSink?.(content, { restored: false, runtimeEvent });
+    this.publishSystemNotice(nextIndex, false);
   }
 
   /** Where system notices go (core/notices.ts); the transcript draws none. Absent in bare test conversations. */
   public setNoticeSink(sink: NoticeSink | null): void {
+    this.retireNoticePublications();
     this.noticeSink = sink;
   }
 
@@ -250,12 +298,13 @@ export class ConversationManager extends SdkConversationManager {
     this.messageKindRegistry.set(nextIndex, kind);
     super.addSystemMessage(content, runtimeEvent);
     this.markDirty();
-    this.noticeSink?.(content, { restored: false, runtimeEvent });
+    this.publishSystemNotice(nextIndex, false);
   }
 
   public override undo(): boolean {
     const result = super.undo();
     if (result) {
+      this.retireNoticePublications();
       // undo() splices the messages tail at the last user-message index, meaning
       // freed indices CAN be reused by subsequent adds. Purge all registry entries
       // at or after the new message count so a recycled index cannot carry a stale
@@ -270,16 +319,18 @@ export class ConversationManager extends SdkConversationManager {
     return result;
   }
 
+  public override removeMessagesAfter(count: number): void {
+    if (count < this.getMessageCount()) this.retireNoticePublications();
+    super.removeMessagesAfter(count);
+    this.markDirty();
+  }
+
   public override redo(): boolean {
     const result = super.redo();
     if (result) this.markDirty();
     return result;
   }
 
-  public override removeMessagesAfter(count: number): void {
-    super.removeMessagesAfter(count);
-    this.markDirty();
-  }
 
   public override markLastUserMessageCancelled(): void {
     super.markLastUserMessageCancelled();
@@ -361,6 +412,7 @@ export class ConversationManager extends SdkConversationManager {
    * This is a full reset; the LLM context is wiped.
    */
   public override resetAll(): void {
+    this.retireNoticePublications();
     this.replacementGeneration++;
     super.resetAll();
     this.history.clear();
@@ -381,6 +433,7 @@ export class ConversationManager extends SdkConversationManager {
 
   /** Compaction's replace: the SDK keeps every kept message whole (tool calls, model, reasoning); the display rebuilds. */
   public override replaceMessagesForLLM(newMessages: ProviderMessage[]): void {
+    this.retireNoticePublications();
     super.replaceMessagesForLLM(newMessages);
     this.history.clear();
     this.lineCache.clear();
@@ -395,7 +448,7 @@ export class ConversationManager extends SdkConversationManager {
    */
   public override switchBranch(name: string): boolean {
     const result = super.switchBranch(name);
-    if (result) this.markDirty();
+    if (result) { this.retireNoticePublications(); this.replacementGeneration++; this.markDirty(); }
     return result;
   }
 
@@ -420,11 +473,12 @@ export class ConversationManager extends SdkConversationManager {
     title?: string;
     titleSource?: import('@goodvibes-jev/engine/sdk/platform/core').ConversationTitleSource;
   }): void {
+    this.retireNoticePublications();
     this.replacementGeneration++;
     super.fromJSON(data);
     this.usageHydrator?.();
     // A restored session's notices go back into the history (not toasted).
-    for (const message of data.messages) if (message.role === 'system') this.noticeSink?.(message.content, { restored: true, runtimeEvent: message.runtimeEvent });
+    for (let index = 0; index < this.getMessageCount(); index++) this.publishSystemNotice(index, true);
     // Output printed over the conversation this one replaces is not about it.
     this.displayOnly.drop();
     this.history.clear();

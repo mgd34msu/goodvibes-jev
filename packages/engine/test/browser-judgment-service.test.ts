@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { createSystemOnePort, SqliteDecisionLog, withDecisionLog, noul, readYesNo, STAKES_BANDS, type JudgmentPort, type YesNoReading } from '@goodvibes-jev/judgment';
 import { BrowserJudgmentError, type AuthenticatedPrincipal } from '../daemon-sdk/src/index.ts';
-import { BrowserJudgmentRegistry, BrowserJudgmentReferences, BrowserJudgmentService, type BrowserJudgmentResolvedInput } from '../sdk/src/platform/judgment-browser/index.ts';
+import { BrowserJudgmentRegistry, BrowserJudgmentReferences, BrowserJudgmentService, type BrowserJudgmentAuthorization, type BrowserJudgmentRoute, type BrowserJudgmentResolvedInput } from '../sdk/src/platform/judgment-browser/index.ts';
 
 const ID = 'webui.errors.daemon-refusal' as const;
 const names = ['session_not_found', 'session_closed', 'session_active', 'session_not_local', 'method_unknown'] as const;
@@ -10,7 +10,8 @@ const owner: AuthenticatedPrincipal = { principalId: 'owner', principalKind: 'us
 const body = (errorRef = 'reference') => ({ protocolVersion: 1, requestId: crypto.randomUUID(), battery: ID, batteryVersion: 1, input: { errorRef } });
 
 function fixture(options: { probability?: number; authorized?: boolean; state?: unknown; fanOut?: number;
-  assertCurrent?: () => void; routeAssertion?: () => void; resolveBarrier?: () => Promise<void>; authorize?: () => boolean;
+  assertCurrent?: () => void; routeAssertion?: () => void; resolveBarrier?: () => Promise<void>; authorize?: (input: BrowserJudgmentAuthorization) => boolean;
+  endpointKinds?: BrowserJudgmentRoute['endpointKinds'];
   transport?: JudgmentPort;
   beforeAttempt?: () => void;
   onRetry?: () => void;
@@ -54,7 +55,7 @@ function fixture(options: { probability?: number; authorized?: boolean; state?: 
       }, readings },
   });
   const service = new BrowserJudgmentService({ registry, references,
-    currentRoute: () => ({ revision: 'fixture-route-1', kind: 'local', port, assertCurrent() {
+    currentRoute: () => ({ revision: 'fixture-route-1', kind: 'local', ...(options.endpointKinds ? { endpointKinds: options.endpointKinds } : {}), port, assertCurrent() {
       if (!current || this.revision !== 'fixture-route-1') throw new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD'); return options.routeAssertion?.();
     } }),
     authorize: options.authorize ?? (() => options.authorized !== false),
@@ -63,6 +64,33 @@ function fixture(options: { probability?: number; authorized?: boolean; state?: 
 }
 
 describe('browser judgment service (synthetic port only)', () => {
+  test('a local-only grant refuses a hosted fallback before transmission or logging', async () => {
+    const destinations: string[] = [];
+    const f = fixture({ endpointKinds: ['local', 'hosted', 'hosted'], authorize({ route }) {
+      destinations.push(route.kind); return route.kind === 'local';
+    } });
+    try {
+      await expect(f.service.execute(body(), owner, new AbortController().signal, () => owner))
+        .rejects.toMatchObject({ code: 'JUDGMENT_PERMISSION_HELD' });
+      expect(destinations).toEqual(['local', 'hosted']);
+      expect(f.calls()).toBe(0); expect(f.log.query()).toEqual([]);
+    } finally { await f.service.close(); f.log[Symbol.dispose](); }
+  });
+
+  test('revoking fallback clearance during an outage stops the next attempt and its log', async () => {
+    let hostedAllowed = true; let attempts = 0;
+    const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-key' }, model: 'jev-1.13.0', timeoutMs: 1000,
+      retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
+      fetch: async () => { attempts++; hostedAllowed = false; return new Response('', { status: 503 }); },
+    });
+    const f = fixture({ transport, endpointKinds: ['hosted'], authorize: ({ route }) => route.kind === 'local' || hostedAllowed });
+    try {
+      await expect(f.service.execute(body(), owner, new AbortController().signal, () => owner))
+        .rejects.toMatchObject({ code: 'JUDGMENT_PERMISSION_HELD' });
+      expect(attempts).toBe(1); expect(f.calls()).toBe(1); expect(f.log.query()).toEqual([]);
+    } finally { await f.service.close(); f.log[Symbol.dispose](); }
+  });
+
   test('recorders reject foreign decision IDs and callbacks retained after the run closes', async () => {
     let retained: JudgmentPort | undefined; let decisionId = '';
     const f = fixture({ onResult(port, id) {

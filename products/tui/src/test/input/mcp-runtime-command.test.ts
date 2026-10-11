@@ -3,6 +3,7 @@ import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { registerMcpRuntimeCommands } from '../../input/commands/mcp-runtime.ts';
+import { McpWorkspace } from '../../input/mcp-workspace.ts';
 import {
   loadMcpEffectiveConfig,
   removeMcpServerConfig,
@@ -81,6 +82,22 @@ function makeContext(root: string, out: string[]): CommandContext {
 }
 
 describe('/mcp runtime config commands', () => {
+  test('failed workspace validation carries an error tone and a new form restores neutral feedback', async () => {
+    const root = makeProjectTempDir('gv-mcp-feedback');
+    try {
+      const workspace = new McpWorkspace();
+      workspace.open(makeContext(root, []));
+      await workspace.refreshTools();
+      workspace.openAddForm();
+      await workspace.saveForm();
+      expect(workspace.lastError).not.toBeNull();
+      expect(workspace.statusTone).toBe('error');
+      expect(workspace.status).toContain('Save failed:');
+      workspace.openAddForm();
+      expect(workspace.statusTone).toBe('info');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   test('adds project-local MCP server and reloads runtime registry', async () => {
     const root = makeProjectTempDir('gv-mcp-command');
     try {

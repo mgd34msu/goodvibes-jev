@@ -1,5 +1,11 @@
-import { useMemoryReadings } from '../helpers/memory-readings.ts';
+import { useMemoryReadings, memoryReadingsPort } from '../helpers/memory-readings.ts';
 import { describe, expect, test } from 'bun:test';
+import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
+import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import { PolicyRuntimeState } from '@goodvibes-jev/engine/sdk/platform/runtime/security';
+import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { createAgentLocalRegistryTool, registerAgentLocalRegistryTool } from '../../tools/agent-local-registry-tool.ts';
 import { AgentPersonaRegistry } from '../../agent/persona-registry.ts';
@@ -7,7 +13,7 @@ import { AgentRoutineRegistry } from '../../agent/routine-registry.ts';
 import { AgentSkillRegistry } from '../../agent/skill-registry.ts';
 import { AgentNoteRegistry } from '../../agent/note-registry.ts';
 import { createShellPathService } from '@/runtime/index.ts';
-import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { ConfigManager, DEFAULT_CONFIG, type PermissionMode } from '@goodvibes-jev/engine/sdk/platform/config';
 import { MemoryEmbeddingProviderRegistry, MemoryRegistry, MemoryStore } from '@goodvibes-jev/engine/sdk/platform/state';
 import { createLocalMemoryAccess } from '@goodvibes-jev/engine/sdk/platform/runtime/memory-spine';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../../config/surface.ts';
@@ -33,17 +39,50 @@ async function createMemoryRegistry(paths: ShellPaths): Promise<MemoryRegistry> 
   return new MemoryRegistry(store);
 }
 
-async function toolFixture(): Promise<{
-  readonly paths: ShellPaths;
-  readonly memoryRegistry: MemoryRegistry;
-  readonly tool: ReturnType<typeof createAgentLocalRegistryTool>;
-}> {
+function admittedLocalTool(paths: ShellPaths, memoryRegistry: MemoryRegistry) {
+  let mode: PermissionMode = 'prompt', sequence = 0;
+  let beforeExecution: (() => void) | undefined;
+  const spine = createLocalMemoryAccess(memoryRegistry);
+  const rawTool = createAgentLocalRegistryTool(paths, memoryRegistry, spine);
+  const permissions = () => ({ ...DEFAULT_CONFIG.permissions, mode });
+  const reader: PermissionConfigReader = {
+    getAutonomousSnapshot: () => ({ permissions: permissions(), directory: paths.workingDirectory, autoApprove: false }),
+    getSnapshot: () => ({ permissions: permissions() }), getWorkingDirectory: () => paths.workingDirectory, isAutoApproveEnabled: () => false,
+  };
+  const manager = new PermissionManager(undefined, reader, new PolicyRuntimeState());
+  const registry = new ToolRegistry(manager);
+  registerAgentLocalRegistryTool(registry, paths, memoryRegistry, spine);
+  const tool: Tool = { ...rawTool, async execute(args, options) {
+    const memory = memoryReadingsPort();
+    const answers = fakePort((name, question) => question.type === 'noul' ? noulAnswer(0.001)
+      : choiceAnswer(question, name === 'disposition' ? 'act' : name === 'kind' ? 'read' : 'generic', 0.999));
+    using log = new SqliteDecisionLog(':memory:');
+    const port = withDecisionLog({ ...answers.port, ask: request => request.context?.battery?.includes('memory')
+      ? memory.port.ask(request) : answers.port.ask(request) }, log);
+    const previous = installJudgmentPort(port);
+    try {
+      const id = `local-registry-${++sequence}`;
+      const call = await registry.prepareCall(id, rawTool.definition.name, args, { signal: options?.signal });
+      const admission = await manager.admitAutonomous(id, rawTool.definition.name, call.args, {
+        sourceOf: () => ({ goal: 'Exercise isolated Agent-local record behavior', criteria: ['Temporary local stores only'] }),
+        schemaRevision: call.schemaRevision, preparedCall: { registry, call }, signal: options?.signal,
+      });
+      expect(admission.result.autonomousDecision?.outcome).toBe('act');
+      beforeExecution?.();
+      return await registry.executePrepared(call, admission);
+    } catch (error) { return { success: false, error: error instanceof Error ? error.message : String(error) }; }
+    finally { if (judgmentPort('local-registry-test') === port) installJudgmentPort(previous); }
+  } };
+  return { tool, rawTool, registry, setMode(next: PermissionMode) { mode = next; }, beforeExecution(callback: () => void) { beforeExecution = callback; } };
+}
+
+async function toolFixture() {
   const paths = shellPaths();
   const memoryRegistry = await createMemoryRegistry(paths);
   return {
     paths,
     memoryRegistry,
-    tool: createAgentLocalRegistryTool(paths, memoryRegistry, createLocalMemoryAccess(memoryRegistry)),
+    ...admittedLocalTool(paths, memoryRegistry),
   };
 }
 
@@ -161,7 +200,7 @@ describe('agent_local_registry tool', () => {
     );
     await store.init();
     const disabledIndexRegistry = new MemoryRegistry(store);
-    const tool = createAgentLocalRegistryTool(paths, disabledIndexRegistry, createLocalMemoryAccess(disabledIndexRegistry));
+    const { tool } = admittedLocalTool(paths, disabledIndexRegistry);
     await tool.execute({
       domain: 'memory',
       action: 'create',
@@ -182,8 +221,8 @@ describe('agent_local_registry tool', () => {
     await store.close();
   });
 
-  test('deletes Agent-local records only after explicit confirmation', async () => {
-    const { paths, tool } = await toolFixture();
+  test('deletes admitted Agent-local records without caller confirmation fields', async () => {
+    const { paths, tool, rawTool } = await toolFixture();
     const created = await tool.execute({
       domain: 'note',
       action: 'create',
@@ -193,22 +232,21 @@ describe('agent_local_registry tool', () => {
     expect(created.success).toBe(true);
     expect(AgentNoteRegistry.fromShellPaths(paths).list()).toHaveLength(1);
 
-    const preview = await tool.execute({
+    const preview = await rawTool.execute({
       domain: 'note',
       action: 'delete',
       id: 'delete-candidate',
+      confirm: true,
       explicitUserRequest: 'Delete the temporary note.',
     });
     expect(preview.success).toBe(false);
-    expect(preview.error).toContain('confirm:true');
+    expect(preview.error).toContain('held');
     expect(AgentNoteRegistry.fromShellPaths(paths).list()).toHaveLength(1);
 
     const deleted = await tool.execute({
       domain: 'note',
       action: 'delete',
       id: 'delete-candidate',
-      confirm: true,
-      explicitUserRequest: 'Delete the temporary note.',
     });
     expect(deleted.success).toBe(true);
     expect(deleted.output).toContain('Deleted Agent-local note');
@@ -226,7 +264,7 @@ describe('agent_local_registry tool', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('Agent memory cannot store secret-looking values');
+    expect(result.error).toContain('inline credential material');
     expect(memoryRegistry.getAll()).toHaveLength(0);
   });
 
@@ -422,8 +460,8 @@ describe('agent_local_registry tool', () => {
     ]);
   });
 
-  test('gates destructive actions and rejects external actions instead of inventing behavior', async () => {
-    const { tool } = await toolFixture();
+  test('gates raw destructive actions and rejects unsupported external actions', async () => {
+    const { rawTool: tool } = await toolFixture();
 
     const deleted = await tool.execute({ domain: 'skill', action: 'delete', id: 'anything' });
     const deletedBundle = await tool.execute({ domain: 'skill_bundle', action: 'delete', id: 'anything' });
@@ -431,11 +469,11 @@ describe('agent_local_registry tool', () => {
     const scheduled = await tool.execute({ domain: 'routine', action: 'schedule', id: 'anything' });
 
     expect(deleted.success).toBe(false);
-    expect(deleted.error).toContain('explicitUserRequest');
+    expect(deleted.error).toContain('held');
     expect(deletedBundle.success).toBe(false);
-    expect(deletedBundle.error).toContain('explicitUserRequest');
+    expect(deletedBundle.error).toContain('held');
     expect(deletedMemory.success).toBe(false);
-    expect(deletedMemory.error).toContain('explicitUserRequest');
+    expect(deletedMemory.error).toContain('held');
     expect(scheduled.success).toBe(false);
     expect(scheduled.error).toContain('Unknown action');
   });
@@ -454,6 +492,32 @@ describe('agent_local_registry tool', () => {
 
     expect(result.success).toBe(true);
     expect(result.output).toContain('Agent-local memory');
+  });
+
+  test('raw flags and recorded read dispositions cannot bypass local write floors', async () => {
+    const scene = await toolFixture();
+    const args = { domain: 'note', action: 'create', title: 'Held note', body: 'Fixture', confirm: true, explicitUserRequest: 'Caller assertion' };
+    expect(await scene.rawTool.execute(args)).toMatchObject({ success: false });
+    scene.setMode('plan');
+    expect(await scene.tool.execute(args)).toMatchObject({ success: false });
+    expect(AgentNoteRegistry.fromShellPaths(scene.paths).list()).toEqual([]);
+    expect(await scene.rawTool.execute({ domain: 'note', action: 'list' })).toMatchObject({ success: true });
+  });
+
+  test('revocation and changed admitted local source prevent the actual write', async () => {
+    for (const change of ['permission', 'source', 'cancel'] as const) {
+      const scene = await toolFixture(), controller = new AbortController();
+      const notes = AgentNoteRegistry.fromShellPaths(scene.paths);
+      notes.create({ title: 'Retained note', body: 'Original source' });
+      scene.beforeExecution(() => {
+        if (change === 'permission') scene.setMode('plan');
+        else if (change === 'cancel') controller.abort();
+        else notes.update('retained-note', { body: 'Changed source' });
+      });
+      const result = await scene.tool.execute({ domain: 'note', action: 'delete', id: 'retained-note' }, { signal: controller.signal });
+      expect(result.success).toBe(false);
+      expect(notes.get('retained-note')?.body).toBe(change === 'source' ? 'Changed source' : 'Original source');
+    }
   });
 });
 

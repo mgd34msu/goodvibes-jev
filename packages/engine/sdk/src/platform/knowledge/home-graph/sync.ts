@@ -1,3 +1,4 @@
+import { knowledgeClockIso, knowledgeRawRepresentation, retainKnowledgeRepresentation } from '../store-record-representation.js';
 import { registerGeneratedKnowledgeSourceReferences } from '../source-structural-references.js';
 import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
 import { snapshotNodeInput } from '../activation/projection.js';
@@ -53,22 +54,25 @@ export async function runHomeGraphSnapshotSync(input: {
     const capturedAt = snapshot.capturedAt ?? Date.now();
     const sourceId = homeGraphSourceId(spaceId, 'snapshot', String(capturedAt));
     const canonicalUri = namespacedCanonicalUri(spaceId, 'snapshot', String(capturedAt));
-    const source = await store.upsertSource({
+    const sourceInput = {
       id: sourceId,
       connectorId: HOME_GRAPH_CONNECTOR_ID,
-      sourceType: 'dataset',
+      sourceType: 'dataset' as const,
       title: snapshot.title ?? 'Home Assistant snapshot',
       canonicalUri,
       summary: 'Home Assistant entity, device, area, automation, script, scene, label, and integration snapshot.',
       tags: ['homeassistant', 'home-graph', 'snapshot'],
-      status: 'indexed',
+      status: 'indexed' as const,
       lastCrawledAt: capturedAt,
       metadata: buildHomeGraphMetadata(spaceId, installationId, {
         ...(snapshot.metadata ?? {}),
         homeGraphSourceKind: 'snapshot',
-        capturedAt,
+        capturedAt: snapshot.capturedAt ?? knowledgeClockIso(capturedAt),
       }),
-    });
+    };
+    const source = await store.upsertSource(snapshot.capturedAt === undefined
+      ? retainKnowledgeRepresentation(sourceInput, { ...knowledgeRawRepresentation(sourceInput), lastCrawledAt: knowledgeClockIso(capturedAt) })
+      : sourceInput);
     registerGeneratedKnowledgeSourceReferences(store, source, { id: sourceId, canonicalUri });
     const home = await upsertHomeNode(store, spaceId, installationId, snapshot);
     const beforeState = readHomeGraphState(store, spaceId);

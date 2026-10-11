@@ -267,7 +267,7 @@ async function runCommand(
     if (inputRevision !== JSON.stringify(cmdInput) || policyRevision !== JSON.stringify(policy.sandbox)) throw new Error('Exec command or sandbox policy changed');
   };
   const cwd = resolveCwd(cmdInput.cwd, workingDirectory);
-  const plan = await resolveRuntimeSandboxPlan(policy.sandbox, cmdStr, workingDirectory, cwd);
+  const plan = await resolveRuntimeSandboxPlan(policy.sandbox, cmdStr, workingDirectory, cwd, { signal, assertCurrent });
   assertCurrent();
   if (!policy.capturedInput) {
     const uncontained = containmentRefusal(policy, cmdStr, plan);

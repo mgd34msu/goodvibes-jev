@@ -9,10 +9,11 @@
  * makes the persistence rules independently testable.
  */
 import { readJsonFileOrQuarantine } from '../utils/atomic-json-store.js';
-import { DEFAULT_CONFIG } from './schema.js';
+import { CONFIG_SCHEMA, DEFAULT_CONFIG } from './schema.js';
 import type { GoodVibesConfig } from './schema.js';
 
 const DEFAULT_CONFIG_SNAPSHOT = structuredClone(DEFAULT_CONFIG) as GoodVibesConfig;
+const ATOMIC_ARRAY_SETTINGS = new Set<string>(CONFIG_SCHEMA.filter(setting => Array.isArray(setting.default)).map(setting => setting.key));
 
 /**
  * Read a settings JSON file into a plain object; a missing file reads as `{}`.
@@ -118,16 +119,18 @@ export function isFrozenDefaultDump(
  * the defaults (genuine user data we cannot classify) are kept as-is; a value
  * that DIFFERS from its default is kept; an object emptied by stripping is
  * pruned. Conservative by construction: only default-equal, defaults-known
- * leaves are removed. Returns the stripped object and whether anything changed.
+ * leaves are removed. Schema-defined atomic arrays remain explicit because an
+ * empty list can suppress an inherited list. Returns the stripped object and whether anything changed.
  */
 export function stripFrozenDefaults(
   raw: Record<string, unknown>,
   defaults: Record<string, unknown> = DEFAULT_CONFIG_SNAPSHOT as unknown as Record<string, unknown>,
 ): { config: Record<string, unknown>; changed: boolean } {
   let changed = false;
-  const walk = (value: Record<string, unknown>, def: Record<string, unknown> | undefined): Record<string, unknown> => {
+  const walk = (value: Record<string, unknown>, def: Record<string, unknown> | undefined, prefix = ''): Record<string, unknown> => {
     const out: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value)) {
+      const path = prefix ? `${prefix}.${key}` : key;
       const defChild = def ? def[key] : undefined;
       if (defChild === undefined) {
         out[key] = child; // Unknown key (not in defaults): keep genuine user data.
@@ -136,12 +139,12 @@ export function stripFrozenDefaults(
       const childIsObject = child !== null && typeof child === 'object' && !Array.isArray(child);
       const defIsObject = defChild !== null && typeof defChild === 'object' && !Array.isArray(defChild);
       if (childIsObject && defIsObject) {
-        const nested = walk(child as Record<string, unknown>, defChild as Record<string, unknown>);
+        const nested = walk(child as Record<string, unknown>, defChild as Record<string, unknown>, path);
         if (Object.keys(nested).length > 0) out[key] = nested;
         else changed = true; // Every leaf under here equalled its default, prune the shell.
         continue;
       }
-      if (jsonEqual(child, defChild)) {
+      if (!ATOMIC_ARRAY_SETTINGS.has(path) && jsonEqual(child, defChild)) {
         changed = true; // A frozen default leaf: drop it.
         continue;
       }

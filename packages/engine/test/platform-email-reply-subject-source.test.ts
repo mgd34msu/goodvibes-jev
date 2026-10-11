@@ -4,10 +4,15 @@ import { deferred, mailFixture, tick } from './_helpers/mail-subject-source.js';
 import { hasVerifiedImapMessageIdentity, readMessageDetail } from '../sdk/src/platform/email/imap-message-read.js';
 import type { ImapSession } from '../sdk/src/platform/email/imap-session.js';
 import type { ImapFetchFrame } from '../sdk/src/platform/email/imap-fetch-response.js';
+import { testDescribeSenderClaim } from './_helpers/platform-email-fixtures.js';
 
 function required<T>(value: T | null | undefined): T {
   expect(value).toBeDefined(); expect(value).not.toBeNull();
   return value!;
+}
+
+function observeRejection(pending: Promise<unknown>): Promise<unknown> {
+  return pending.then(() => undefined, (error: unknown) => error);
 }
 
 describe('canonical mail reply subject source', () => {
@@ -118,25 +123,35 @@ describe('canonical mail reply subject source', () => {
 
   test('a slow older DIFFERENT-UID read cannot restore old UIDVALIDITY after a new read', async () => {
     const gate = deferred<void>();
-    const { service } = mailFixture({ plans: [{ uidValidity: 7, headerGate: gate.promise }, { uidValidity: 8 }] });
+    let ingests = 0;
+    const { service } = mailFixture({ plans: [{ uidValidity: 7, headerGate: gate.promise }, { uidValidity: 8 }],
+      overrides: { recordUntrustedIngest() { ingests++; } } });
     const slow = service.readMessage(42);
+    const rejected = observeRejection(slow);
     await tick(); await tick();
     const newer = required(await service.readMessage(43));
     const current = required(service.getReplySubjectSource(newer));
     gate.resolve();
-    expect(service.getReplySubjectSource(required(await slow))).toBeUndefined();
+    expect(await rejected).toBeInstanceOf(Error);
+    expect(ingests).toBe(1);
     expect(current.signal.aborted).toBe(false);
     expect(() => current.assertCurrent()).not.toThrow();
   });
 
   test('a pre-credential-await ticket cannot mint after invalidation, even config ABA', async () => {
     const gate = deferred<string | null>();
-    const { service, owner, config } = mailFixture({ overrides: { secretsManager: { get: () => gate.promise } } });
+    let ingests = 0;
+    const { service, owner, config, connections } = mailFixture({ overrides: {
+      secretsManager: { get: () => gate.promise }, recordUntrustedIngest() { ingests++; },
+    } });
     const reading = service.readMessage(42);
+    const rejected = observeRejection(reading);
     config['email.username'] = 'replacement@example.invalid'; owner!.invalidate();
     config['email.username'] = 'owner@example.invalid'; owner!.invalidate();
     gate.resolve('synthetic');
-    expect(service.getReplySubjectSource(required(await reading))).toBeUndefined();
+    expect(await rejected).toMatchObject({ message: 'Mail read was cancelled.' });
+    expect(connections()).toBe(0);
+    expect(ingests).toBe(0);
   });
 
   test('owner shutdown revokes completed sources and reads still awaiting logout', async () => {
@@ -144,10 +159,64 @@ describe('canonical mail reply subject source', () => {
     const { service, owner } = mailFixture({ plans: [{}, { logoutGate: gate.promise }] });
     const source = required(service.getReplySubjectSource(required(await service.readMessage(42))));
     const slow = service.readMessage(43);
+    const rejected = observeRejection(slow);
     await tick(); await tick();
     owner!.dispose(); gate.resolve();
     expect(source.signal.aborted).toBe(true);
-    expect(service.getReplySubjectSource(required(await slow))).toBeUndefined();
+    expect(await rejected).toBeInstanceOf(Error);
+    expect(() => source.assertCurrent()).toThrow('no longer current');
+  });
+
+  test('revocation while connecting drains the late socket before rejecting and publishes no content', async () => {
+    const gate = deferred<void>();
+    let connecting!: () => void;
+    const started = new Promise<void>((resolve) => { connecting = resolve; });
+    let ingests = 0;
+    const fixture = mailFixture({ overrides: { recordUntrustedIngest() { ingests++; } } });
+    if (!fixture.owner) throw new Error('Mail fixture did not retain its owner.');
+    const connect = required(fixture.deps.imapSocketFactory);
+    let closed = false;
+    const { service } = mailFixture({ owner: fixture.owner, overrides: {
+      recordUntrustedIngest() { ingests++; },
+      imapSocketFactory: async (host, port) => {
+        connecting();
+        await gate.promise;
+        const socket = await connect(host, port);
+        socket.once('close', () => { closed = true; });
+        return socket;
+      },
+    } });
+    const reading = service.readMessage(42);
+    const rejected = observeRejection(reading);
+    await started;
+    fixture.owner!.dispose();
+    gate.resolve();
+    expect(await rejected).toMatchObject({ message: 'Mail read was cancelled.' });
+    expect(closed).toBe(true);
+    expect(ingests).toBe(0);
+  });
+
+  test('revocation during sender description prevents the ingest callback and result publication', async () => {
+    let ingests = 0;
+    const fixture = mailFixture({ overrides: {
+      describeSenderClaim(from) {
+        fixture.owner!.invalidate();
+        return testDescribeSenderClaim(from);
+      },
+      recordUntrustedIngest() { ingests++; },
+    } });
+    await expect(fixture.service.readMessage(42)).rejects.toThrow('no longer current');
+    expect(ingests).toBe(0);
+  });
+
+  test('revocation inside ingest prevents result publication and subject authority', async () => {
+    let ingests = 0;
+    const fixture = mailFixture({ overrides: { recordUntrustedIngest() {
+      ingests++;
+      fixture.owner!.dispose();
+    } } });
+    await expect(fixture.service.readMessage(42)).rejects.toThrow('no longer current');
+    expect(ingests).toBe(1);
   });
 
   test('source controllers are bounded and eviction revokes old snapshots', async () => {
@@ -159,6 +228,15 @@ describe('canonical mail reply subject source', () => {
     }
     expect(first.signal.aborted).toBe(true);
     expect(() => first.assertCurrent()).toThrow('no longer current');
+  });
+
+  test('source eviction cannot publish a completed read after synchronous owner revocation', async () => {
+    const { service, owner } = mailFixture({ plans: Array.from({ length: 257 }, () => ({})) });
+    const first = required(service.getReplySubjectSource(required(await service.readMessage(1))));
+    first.signal.addEventListener('abort', () => owner!.invalidate(), { once: true });
+    for (let uid = 2; uid <= 256; uid += 1) await service.readMessage(uid);
+    await expect(service.readMessage(257)).rejects.toThrow('no longer current');
+    expect(first.signal.aborted).toBe(true);
   });
 
   test('mailbox replacement seen by inbox listing revokes existing snapshots', async () => {

@@ -39,6 +39,9 @@ import {
   type RemoteSettingsPrecondition, type RemoteSettingsPreconditionFacts,
   type SettingsPreconditionRequest, type SettingsPreconditionReceipt,
 } from '../../config/settings-precondition-client.js';
+import { assertRemoteSettingsImportPrecondition, inspectRemoteSettingsImportPrecondition,
+  type RemoteSettingsImportPrecondition, type RemoteSettingsImportPreconditionFacts, type SettingsImportPreconditionRequest,
+  type RemoteSettingsImportRestriction } from '../../config/settings-import-precondition-client.js';
 
 /** This is a deterministic owner capability, not an admission grant. */
 export interface PreparedDaemonSettingsClient {
@@ -47,6 +50,11 @@ export interface PreparedDaemonSettingsClient {
   assertCurrent(handle: RemoteSettingsPrecondition): void;
   apply(handle: RemoteSettingsPrecondition): Promise<SettingsPreconditionReceipt>;
 }
+export interface PreparedDaemonSettingsImportClient {
+  capture(request: SettingsImportPreconditionRequest, restriction?: RemoteSettingsImportRestriction): Promise<RemoteSettingsImportPrecondition>;
+  inspect(handle: RemoteSettingsImportPrecondition): RemoteSettingsImportPreconditionFacts;
+  assertCurrent(handle: RemoteSettingsImportPrecondition): void;
+}
 
 /** Re-exported so call sites classify a key through one import, not two. */
 export { isDaemonOwnedConfigKey };
@@ -54,6 +62,7 @@ export { isDaemonOwnedConfigKey };
 export interface DaemonConfigClient {
   /** Absent on old/unbound transports; callers must fail closed, never fall back. */
   readonly preparedSettings?: PreparedDaemonSettingsClient;
+  readonly preparedImport?: PreparedDaemonSettingsImportClient;
   /** True when this key's value lives in the daemon's own settings tier. */
   ownsKey(key: string): boolean;
   /**
@@ -86,6 +95,22 @@ function readDottedPath(snapshot: Record<string, unknown> | null, key: string): 
 }
 
 export function createDaemonConfigClient(verbs: DaemonVerbCaller): DaemonConfigClient {
+  const captureImport = verbs.captureSettingsImportPrecondition?.bind(verbs);
+  const importHandles = new WeakSet<RemoteSettingsImportPrecondition>();
+  const preparedImport: PreparedDaemonSettingsImportClient | undefined = captureImport ? Object.freeze({
+    capture: async (request: SettingsImportPreconditionRequest, restriction?: RemoteSettingsImportRestriction) => {
+      if (!request.settings.length || request.settings.some(setting => !isDaemonOwnedConfigKey(setting.key))) throw new Error('Settings are not owned by the connected daemon.');
+      const handle = await captureImport(request, restriction); importHandles.add(handle); return handle;
+    },
+    inspect: (handle: RemoteSettingsImportPrecondition) => {
+      if (!importHandles.has(handle)) throw new Error('Settings import owner unavailable.');
+      return inspectRemoteSettingsImportPrecondition(handle);
+    },
+    assertCurrent: (handle: RemoteSettingsImportPrecondition) => {
+      if (!importHandles.has(handle)) throw new Error('Settings import owner unavailable.');
+      assertRemoteSettingsImportPrecondition(handle);
+    },
+  }) : undefined;
   const capture = verbs.captureSettingsPrecondition?.bind(verbs);
   const handles = new WeakSet<RemoteSettingsPrecondition>();
   const assertCurrent = (handle: RemoteSettingsPrecondition): void => {
@@ -105,6 +130,7 @@ export function createDaemonConfigClient(verbs: DaemonVerbCaller): DaemonConfigC
     apply: async (handle: RemoteSettingsPrecondition) => { assertCurrent(handle); return await applyRemoteSettingsPrecondition(handle); },
   }) : undefined;
   return {
+    ...(preparedImport ? { preparedImport } : {}),
     ...(preparedSettings ? { preparedSettings } : {}),
     ownsKey: (key) => isDaemonOwnedConfigKey(key),
 

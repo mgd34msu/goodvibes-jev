@@ -8,8 +8,8 @@ import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { getProcessUntrustedContentLedger } from '../security/untrusted-content.js';
 import { autonomousSourceEvidence, autonomousRevision, assertAutonomousData, captureAutonomousChoices, captureAutonomousSource, decideAutonomousTool, type AutonomousToolChoices, type AutonomousToolRevision, type AutonomousToolSource } from './autonomous.js';
 import { AutonomousChoiceProjectionOwner, type AutonomousChoiceProjection } from './autonomous-input-projection.js';
-import type { PreparedToolCall, ToolRegistry } from '../tools/registry.js';
-import { projectionProperty, type ToolPreparedSettingsMutation } from '../tools/input-projection.js';
+import type { PreparedToolCall, ToolRegistry, ToolExecutionEffect } from '../tools/registry.js';
+import { assertProjectionCurrent, projectionFunction, projectionProperty, ToolInputProjectionError, type ToolPreparedSettingsMutation } from '../tools/input-projection.js';
 import type { JevDecisionBinding, JevVersionRef } from '@goodvibes-jev/judgment/decisions';
 import { bindTurnHookDispatcher, type TurnHookOwner } from '../hooks/turn-ownership.js';
 import { getConfigSnapshot, isAutoApproveEnabled } from '../config/index.js';
@@ -23,6 +23,7 @@ import { categoryForSideEffectKind, classificationFromReading, readingArguments,
 import { grantOwnerApproval, type OwnerApproval } from '../security/owner-approval.js';
 import type { UntrustedContentLedger } from '../security/untrusted-content.js';
 import { currentTurnSurfaceId } from '../security/turn-boundary.js';
+import { effectPermittedForProvenance } from '../gate/surface-authority.js';
 import { isStateMutation } from '../gate/policy/state-policy.js';
 import { buildDurableRuleForDecision, buildRememberOptions, commandClassOf, matchDurableRulesAsync } from './approval-rules.js';
 import type { UserPermissionRuleStore } from './user-rule-store.js';
@@ -283,25 +284,90 @@ export interface AutonomousPermissionOptions extends PermissionExecutionOptions 
 
 interface AuthenticAutonomousAdmission {
   readonly issuer: PermissionManager;
-  readonly registry: ToolRegistry;
-  readonly call: PreparedToolCall;
+  readonly registry?: ToolRegistry | undefined;
+  readonly call?: PreparedToolCall | undefined;
   readonly claim: () => void;
   readonly assertCurrent: () => void;
   readonly assertWorkspace: () => void;
+  readonly assertEffect: (effect: ToolExecutionEffect) => void;
+  readonly nestedOwner: AutonomousNestedOwner;
+  readonly settingsBinding?: ToolPreparedSettingsMutation | undefined;
+  readonly nestedSettingsBindings: Set<ToolPreparedSettingsMutation>;
+  readonly parents: Set<AuthenticAutonomousAdmission>;
   readonly assertConfigTransition?: ((binding: ToolPreparedSettingsMutation, transition: PreparedConfigMutationTransition) => void) | undefined;
+  readonly completeConfigTransition: (binding: ToolPreparedSettingsMutation, transition: PreparedConfigMutationTransition) => void;
   readonly settingsPresentation?: Readonly<{ previous: unknown; current: unknown }> | undefined;
   consumed: boolean;
+  externalPhase?: 'claiming' | 'active' | 'closed';
+  externalChecking?: boolean;
 }
 
 // The only writer lives after this manager's successful recorded act decision.
 // Public admission objects and claim callbacks are not themselves capabilities.
 const authenticAutonomousAdmissions = new WeakMap<AutonomousPermissionAdmission, AuthenticAutonomousAdmission>();
 const authenticConfigTransitions = new WeakMap<() => void, NonNullable<AuthenticAutonomousAdmission['assertConfigTransition']>>();
+const consumedAdmissionRecords = new WeakMap<() => void, AuthenticAutonomousAdmission>();
 const workspaceConstraints = new WeakMap<() => void, () => void>();
+const effectConstraints = new WeakMap<() => void, (effect: ToolExecutionEffect) => void>();
+
+/** @internal Original recorded source retained only by consumed execution guards. */
+export interface AutonomousNestedOwner {
+  readonly manager: PermissionManager;
+  readonly source: AutonomousToolSource;
+  readonly decoratePort: AutonomousPermissionOptions['decoratePort'];
+}
+const nestedOwners = new WeakMap<() => void, AutonomousNestedOwner>();
+
+/** Consume a recorded native protocol act once, without creating a tool-body capability. */
+export function claimExternalAdmission(admission: AutonomousPermissionAdmission,
+  expectedIssuer: Pick<PermissionManager, 'admitAutonomous'>, effect: ToolExecutionEffect | 'read' = 'write'): void {
+  const record = authenticAutonomousAdmissions.get(admission);
+  if (!record || record.issuer !== expectedIssuer || record.registry || record.call || record.consumed) throw new ToolInputProjectionError('held');
+  record.consumed = true; record.externalPhase = 'claiming';
+  try {
+    record.claim(); record.assertCurrent();
+    if (effect !== 'read') record.assertEffect(effect);
+    if (record.externalPhase !== 'claiming') throw new ToolInputProjectionError('stale');
+    record.externalPhase = 'active';
+  } catch (error) { record.externalPhase = 'closed'; throw error; }
+}
+
+/** Only the authentic consumed external act retains its original live authority. */
+export function assertCurrentExternalAdmission(admission: AutonomousPermissionAdmission,
+  expectedIssuer: Pick<PermissionManager, 'admitAutonomous'>, effect: ToolExecutionEffect | 'read' = 'write'): void {
+  const record = authenticAutonomousAdmissions.get(admission);
+  if (!record || record.issuer !== expectedIssuer || record.registry || record.call
+    || !record.consumed || record.externalPhase !== 'active') throw new ToolInputProjectionError('held');
+  if (record.externalChecking) { record.externalPhase = 'closed'; throw new ToolInputProjectionError('stale'); }
+  record.externalChecking = true;
+  try {
+    record.assertCurrent(); if (effect !== 'read') record.assertEffect(effect);
+    if (record.externalPhase !== 'active') throw new ToolInputProjectionError('stale');
+  } catch (error) { record.externalPhase = 'closed'; throw error; }
+  finally { record.externalChecking = false; }
+}
+
+/** Closing an authentic native act is irreversible and cannot retire a registered tool admission. */
+export function closeExternalAdmission(admission: AutonomousPermissionAdmission,
+  expectedIssuer: Pick<PermissionManager, 'admitAutonomous'>): void {
+  const record = authenticAutonomousAdmissions.get(admission);
+  if (!record || record.issuer !== expectedIssuer || record.registry || record.call) throw new ToolInputProjectionError('held');
+  record.consumed = true; record.externalPhase = 'closed';
+}
+
+/** @internal Exact consumed guard required; caller data never selects a source. */
+export function readAutonomousNestedOwner(guard: () => void): AutonomousNestedOwner | undefined {
+  return nestedOwners.get(guard);
+}
 
 /** @internal Restriction-only capability for captured jobs with a separate owner lifetime. */
 export function readAutonomousWorkspaceConstraint(guard: () => void): (() => void) | undefined {
   return workspaceConstraints.get(guard);
+}
+
+/** @internal Only an exact consumed admission carries these owner-held effect restrictions. */
+export function readAutonomousEffectConstraint(guard: () => void): ((effect: ToolExecutionEffect) => void) | undefined {
+  return effectConstraints.get(guard);
 }
 
 const settingsPresentations = new WeakMap<() => void, Readonly<{ previous: unknown; current: unknown }>>();
@@ -319,6 +385,32 @@ export function assertAutonomousConfigTransition(assertCurrent: () => void, bind
   // The exact mutation transition may fence several companion effects; the
   // effect owner and registry each consume their handles once. No generation waiver.
   check(binding, transition);
+}
+
+/** @internal Registry-only bridge: the admitted child is the sole new effect owner. */
+export function bindAutonomousNestedAdmission(parentGuard: () => void, child: AutonomousPermissionAdmission): void {
+  const parent = consumedAdmissionRecords.get(parentGuard), nested = authenticAutonomousAdmissions.get(child);
+  if (!parent || !nested || nested.consumed || parent.issuer !== nested.issuer || parent.registry !== nested.registry) {
+    throw new ToolInputProjectionError('held');
+  }
+  parent.assertCurrent();
+  if (nested.settingsBinding) {
+    parent.assertEffect('write');
+    const bind = (owner: AuthenticAutonomousAdmission) => {
+      owner.nestedSettingsBindings.add(nested.settingsBinding!);
+      for (const ancestor of owner.parents) bind(ancestor);
+    };
+    bind(parent);
+  }
+  nested.parents.add(parent);
+}
+
+/** @internal A completed exact native transaction alone may advance retained authority. */
+export function completeAutonomousConfigTransition(guard: () => void, binding: ToolPreparedSettingsMutation,
+  transition: PreparedConfigMutationTransition): void {
+  const record = consumedAdmissionRecords.get(guard);
+  if (!record) throw new ToolInputProjectionError('held');
+  record.completeConfigTransition(binding, transition);
 }
 
 /** @internal Identity-only compatibility query. Never validates, consumes or creates authority. */
@@ -339,7 +431,10 @@ export function consumeAutonomousAdmission(admission: AutonomousPermissionAdmiss
   }
   record.consumed = true;
   record.claim();
+  consumedAdmissionRecords.set(record.assertCurrent, record);
   workspaceConstraints.set(record.assertCurrent, record.assertWorkspace);
+  effectConstraints.set(record.assertCurrent, record.assertEffect);
+  nestedOwners.set(record.assertCurrent, record.nestedOwner);
   if (record.assertConfigTransition) authenticConfigTransitions.set(record.assertCurrent, record.assertConfigTransition);
   if (record.settingsPresentation) settingsPresentations.set(record.assertCurrent, record.settingsPresentation);
   return record.assertCurrent;
@@ -494,7 +589,7 @@ export class PermissionManager {
     const assertCurrent = () => {
       assertPermissionActive(signal);
       if (this.gate.workspaceTrust !== owner || owner?.prepareAutonomousConstraint !== prepare) throw new Error('Workspace trust capability changed');
-      guard?.();
+      assertProjectionCurrent(guard);
     };
     assertCurrent();
     return assertCurrent;
@@ -534,7 +629,7 @@ export class PermissionManager {
     const rawAuthorityRevision = hashState(rawAuthority as unknown as EntryType);
     const capturedAuthority = (choiceProjection === undefined ? rawAuthority : Object.freeze({ ...rawAuthority,
       autonomousChoices: this.autonomousChoiceProjections.choices(choiceProjection, sourceId, rawAuthority) })) as AutonomousPermissionOwner & {
-        source: AutonomousToolSource; autonomousChoices: AutonomousToolChoices; directory: string | null; permissions: PermissionConfigSnapshot['permissions'];
+        source: AutonomousToolSource; autonomousChoices: AutonomousToolChoices; directory: string | null; permissions: PermissionConfigSnapshot['permissions']; surface?: string | undefined;
       };
     const source = capturedAuthority.source;
     const sourceRevision = hashState(source as unknown as EntryType);
@@ -567,13 +662,13 @@ export class PermissionManager {
       authorityId: 'engine.permission-runtime', authorityRevision,
       scopeId: autonomousRevision({ directory }), scopeRevision: authorityRevision,
     });
-    const assertPrepared = options.assertPrepared;
+    const assertPrepared = projectionFunction<() => void>(projectionProperty(options, 'assertPrepared'));
     const assertCurrent = () => {
       assertPermissionActive(signal); assertWorkspace();
       if (this.autonomousEpochs.get(sourceId) !== epoch) throw new Error('Autonomous admission was superseded');
       // Stage the compatibility callback before the final owner snapshot: it
       // may publish a revocation even when it returns normally.
-      assertPrepared?.();
+      assertProjectionCurrent(assertPrepared);
       const current = authority();
       assertPermissionActive(signal);
       if (hashState(current as unknown as EntryType) !== authorityRevision) throw new Error('Autonomous admission authority, source or scope changed');
@@ -621,6 +716,9 @@ export class PermissionManager {
     const permissions = capturedAuthority.permissions;
     const mode = permissions?.mode ?? 'prompt';
     const preset = presetForMode(mode);
+    const effectReadOnly = preset.readOnly;
+    const effectWriteDenied = preset.perTool && permissions?.tools?.write === 'deny';
+    const effectSurface = capturedAuthority.surface;
     const configTool = declaredMutation ? 'write' : TOOL_CONFIG_KEYS[toolName];
     const explicitToolDeny = preset.perTool && configTool !== undefined
       && permissions?.tools?.[configTool] === 'deny';
@@ -693,43 +791,91 @@ export class PermissionManager {
         this.autonomousDeferred.delete(sourceId);
       },
     });
-    if (receipt.outcome === 'act' && preparedCall) {
-      authenticAutonomousAdmissions.set(admission, {
-        issuer: this, registry: preparedCall.registry, call: preparedCall.call, claim: admission.claim, consumed: false, assertWorkspace,
-        ...(settings?.presentation ? { settingsPresentation: settings.presentation } : {}),
-        ...(settingsMutation ? { assertConfigTransition: (actual: ToolPreparedSettingsMutation, transition: PreparedConfigMutationTransition) => {
-          assertPermissionActive(signal); assertWorkspace();
-          if (actual !== settingsMutation || permissionConfigOwners.get(this.configReader) !== actual.owner
-            || this.autonomousEpochs.get(sourceId) !== epoch || !this.autonomousClaims.has(sourceId)) {
-            throw new Error('Autonomous settings owner or invocation changed');
+    if (receipt.outcome === 'act') {
+      let acceptedRevision = rawAuthorityRevision;
+      let acceptedIncarnation = (rawAuthority as Readonly<Record<string, unknown>>)['incarnation'];
+      let activeTransition: { readonly binding: ToolPreparedSettingsMutation; readonly transition: PreparedConfigMutationTransition } | undefined;
+      const nestedSettingsBindings = new Set<ToolPreparedSettingsMutation>();
+      const parents = new Set<AuthenticAutonomousAdmission>();
+      const assertOwnedLifetime = () => {
+        assertPermissionActive(signal); assertWorkspace();
+        if (this.autonomousEpochs.get(sourceId) !== epoch || !this.autonomousClaims.has(sourceId)) {
+          throw new Error('Autonomous execution admission is stale');
+        }
+      };
+      const assertTransitionBinding = (actual: ToolPreparedSettingsMutation) => {
+        assertOwnedLifetime();
+        if (!actual.mutation || (actual !== settingsMutation && !nestedSettingsBindings.has(actual))
+          || permissionConfigOwners.get(this.configReader) !== actual.owner) throw new Error('Autonomous settings owner or invocation changed');
+        return actual.mutation;
+      };
+      const assertAuthority = () => {
+        // Native protocol producers retain their original request/target lease
+        // through publication. Registry preparation guards are consumed at claim.
+        if (!preparedCall) assertProjectionCurrent(assertPrepared);
+        assertOwnedLifetime();
+        let expected = acceptedIncarnation;
+        if (activeTransition) {
+          const { binding, transition } = activeTransition;
+          const mutation = assertTransitionBinding(binding);
+          const facts = binding.owner.inspectPreparedMutationTransition(mutation, transition);
+          if (facts.beforeIncarnation !== acceptedIncarnation || facts.afterIncarnation !== facts.beforeIncarnation + 1) {
+            throw new Error('Autonomous settings transition changed');
           }
-          // Owner callbacks run before sampling. Only this exact prepared mutation's
-          // authentic pre-value invalidation is exempt; no generic generation waiver.
-          const current = this.autonomousAuthority(sourceId, sourceOf);
-          const transitionFacts = actual.owner.inspectPreparedMutationTransition(actual.mutation, transition);
-          actual.owner.assertPreparedMutationTransition(actual.mutation, transition);
-          const before = (rawAuthority as Readonly<Record<string, unknown>>)['incarnation'];
-          const now = (current as Readonly<Record<string, unknown>>)['incarnation'];
-          if (before !== transitionFacts.beforeIncarnation || now !== transitionFacts.afterIncarnation
-            || transitionFacts.afterIncarnation !== transitionFacts.beforeIncarnation + 1
-            || hashState({ ...current, incarnation: before } as unknown as EntryType) !== rawAuthorityRevision) {
-            throw new Error('Autonomous settings authority, source or scope changed');
+          expected = facts.afterIncarnation;
+        }
+        const current = this.autonomousAuthority(sourceId, sourceOf);
+        assertOwnedLifetime();
+        if ((current as Readonly<Record<string, unknown>>)['incarnation'] !== expected
+          || hashState({ ...current, incarnation: acceptedIncarnation } as unknown as EntryType) !== acceptedRevision) {
+          throw new Error('Autonomous execution authority, source or scope changed');
+        }
+        assertWorkspace();
+      };
+      const record: AuthenticAutonomousAdmission = {
+        issuer: this, registry: preparedCall?.registry, call: preparedCall?.call, claim: admission.claim, consumed: false, assertWorkspace,
+        settingsBinding: settingsMutation, nestedSettingsBindings, parents,
+        nestedOwner: Object.freeze({ manager: this, source, decoratePort: options.decoratePort }),
+        assertEffect: effect => {
+          if ((effect !== 'write' && effect !== 'send') || effectReadOnly || effectWriteDenied
+            || (effectSurface !== undefined && !effectPermittedForProvenance(effect, { surfaceId: effectSurface }).allowed)) {
+            throw new ToolInputProjectionError('held');
           }
-          assertPermissionActive(signal); assertWorkspace();
-        } } : {}),
-        assertCurrent: () => {
-          assertPermissionActive(signal); assertWorkspace();
-          if (this.autonomousEpochs.get(sourceId) !== epoch || !this.autonomousClaims.has(sourceId)) {
-            throw new Error('Autonomous execution admission is stale');
-          }
-          const current = this.autonomousAuthority(sourceId, sourceOf);
-          assertPermissionActive(signal);
-          if (hashState(current as unknown as EntryType) !== rawAuthorityRevision) {
-            throw new Error('Autonomous execution authority, source or scope changed');
-          }
-          assertWorkspace();
         },
-      });
+        ...(settings?.presentation ? { settingsPresentation: settings.presentation } : {}),
+        assertConfigTransition: (actual, transition) => {
+          const mutation = assertTransitionBinding(actual);
+          const facts = actual.owner.inspectPreparedMutationTransition(mutation, transition);
+          if (facts.beforeIncarnation !== acceptedIncarnation || facts.afterIncarnation !== facts.beforeIncarnation + 1
+            || (activeTransition && (activeTransition.binding !== actual || activeTransition.transition !== transition))) {
+            throw new Error('Autonomous settings transition changed');
+          }
+          for (const parent of parents) parent.assertConfigTransition?.(actual, transition);
+          activeTransition = { binding: actual, transition };
+          assertAuthority();
+        },
+        completeConfigTransition: (actual, transition) => {
+          const mutation = assertTransitionBinding(actual);
+          if (activeTransition?.binding !== actual || activeTransition.transition !== transition) throw new Error('Autonomous settings completion changed');
+          const facts = actual.owner.inspectCompletedMutation(mutation);
+          if (facts.beforeIncarnation !== acceptedIncarnation || facts.afterIncarnation !== facts.beforeIncarnation + 1) throw new Error('Autonomous settings completion changed');
+          // Ancestors adopt this exact child's result before the child's private
+          // source callback samples its retained parent guard.
+          for (const parent of parents) parent.completeConfigTransition(actual, transition);
+          const current = this.autonomousAuthority(sourceId, sourceOf);
+          assertOwnedLifetime(); actual.owner.assertCompletedMutation(mutation);
+          if ((current as Readonly<Record<string, unknown>>)['incarnation'] !== facts.afterIncarnation
+            || hashState({ ...current, incarnation: acceptedIncarnation } as unknown as EntryType) !== acceptedRevision) {
+            throw new Error('Autonomous settings completion authority changed');
+          }
+          acceptedIncarnation = facts.afterIncarnation;
+          acceptedRevision = hashState(current as unknown as EntryType);
+          activeTransition = undefined;
+          assertOwnedLifetime();
+        },
+        assertCurrent: assertAuthority,
+      };
+      authenticAutonomousAdmissions.set(admission, record);
     }
     return admission;
   }
@@ -947,7 +1093,7 @@ export class PermissionManager {
     const current = () => {
       options.signal?.throwIfAborted();
       if (owner) { owner.assertCurrent(); return; }
-      options.assertCurrent?.();
+      assertProjectionCurrent(projectionFunction<() => void>(projectionProperty(options, 'assertCurrent')));
       if (legacyRevision() !== before) throw new Error('Remembered permission owner changed while reading');
     };
     current();
@@ -1144,7 +1290,7 @@ export class PermissionManager {
     const current = () => {
       options.signal?.throwIfAborted();
       if (owner) { owner.assertCurrent(); return; }
-      options.assertCurrent?.();
+      assertProjectionCurrent(projectionFunction<() => void>(projectionProperty(options, 'assertCurrent')));
       if (legacyRevision() !== before) throw new Error('Permission configuration changed while reading');
     };
     current();
@@ -1174,12 +1320,9 @@ export class PermissionManager {
   /**
    * Hand this evaluation's decision-log records to the OTLP exporter.
    *
-   * `runtime/permissions/decision-otlp.ts` was fully built, attribute mapping,
-   * both record shapes, the POST, the off-by-default guards, and called from
-   * nowhere, so `telemetry.decisionOtlpEnabled` promised an export that could
-   * not happen. This is the seam where a decision comes into existence: the
-   * evaluator is constructed per evaluation, so its log holds exactly the
-   * records this call produced.
+   * The evaluator is constructed per evaluation, so its log contains exactly
+   * the records this call produced. Export runs only when the current config
+   * enables decision telemetry and supplies a nonempty collector endpoint.
    *
    * Fire-and-forget, and deliberately so. `exportDecisions` never throws and
    * reports its own failures, and a permission decision must not wait on a
@@ -1201,9 +1344,9 @@ export class PermissionManager {
   }
 
   /**
-   * The policy-as-code evaluator's decision, where it is an explicit rule: a
-   * user or managed policy rule. Its mode layer is not consulted; the presets
-   * decide on Jev's reading instead.
+   * Map explicit user or managed policy rules to permission results. Only the
+   * evaluator's policy layer supplies a result here; preset decisions use the
+   * Jev reading in the surrounding permission flow.
    */
   private mapEvaluatorDecision(
     decision: LayeredPermissionDecision,

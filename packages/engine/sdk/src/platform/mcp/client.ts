@@ -1,6 +1,8 @@
 import { captureMcpInputRequired, readProtocolRequest } from '../permissions/protocol-request.js';
 import { randomUUID } from 'node:crypto';
-import { snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { captureOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { isDeepStrictEqual, types as nodeTypes } from 'node:util';
+import { captureMcpCallRestrictions } from './call-currentness.js';
 import type { ExternalOperationSource, ExternalRequestScope } from '../permissions/external-request.js';
 import { awaitPermission } from '../permissions/cancellation.js';
 import { bindMcpElicitationResponse, commitMcpElicitation, discardMcpElicitation } from './elicitation-autonomous.js';
@@ -33,6 +35,7 @@ import type {
   McpClientUnhandledResponse,
   McpToolInfo,
   McpToolSchema,
+  McpToolCallOptions,
 } from './client-types.js';
 import {
   isJsonRpcNotification,
@@ -116,6 +119,16 @@ export class McpClient {
     };
     assertCurrent();
     return { connectionId, destination, signal, assertCurrent };
+  }
+
+  /** The selected cached schema remains the exact wire schema throughout admission. */
+  captureToolSchemaScope(toolName: string): { readonly assertCurrent: () => void } {
+    const schema = this.schemaCache.get(toolName);
+    if (!schema) throw new Error('MCP tool schema is unavailable');
+    const snapshot = captureOwnedJson(schema, nodeTypes.isProxy);
+    return { assertCurrent: () => {
+      if (this.schemaCache.get(toolName) !== schema || !isDeepStrictEqual(captureOwnedJson(schema, nodeTypes.isProxy), snapshot)) throw new Error('MCP tool schema changed');
+    } };
   }
 
   private async resolveElicitation(id: JsonRpcId, params: unknown, operation?: ExternalOperationSource, nested = false): Promise<McpElicitationOutcome> {
@@ -245,7 +258,8 @@ export class McpClient {
    * getToolSchema, Fetch full JSON schema for a tool (lazy, cached).
    * MCP protocol provides full schemas in tools/list; we cache them on first access.
    */
-  async getToolSchema(toolName: string): Promise<McpToolSchema | null> {
+  async getToolSchema(toolName: string, options?: McpToolCallOptions): Promise<McpToolSchema | null> {
+    const { assertCurrent } = captureMcpCallRestrictions(options);
     if (this.schemaCache.has(toolName)) {
       return this.schemaCache.get(toolName)!;
     }
@@ -256,8 +270,9 @@ export class McpClient {
 
     // Fetch all tools with full schemas and cache them all at once
     const result = await this._request<{
-      tools: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }>;
-    }>('tools/list');
+      tools: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown>; annotations?: unknown }>;
+    }>('tools/list', undefined, undefined, undefined, assertCurrent);
+    assertCurrent();
 
     for (const t of result.tools ?? []) {
       const inputSchema = t.inputSchema ?? { type: 'object', properties: {} };
@@ -274,6 +289,12 @@ export class McpClient {
         name: t.name,
         description: t.description ?? '',
         inputSchema,
+        ...(isRecord(t.annotations) ? { annotations: {
+          ...(typeof t.annotations.readOnlyHint === 'boolean' ? { readOnlyHint: t.annotations.readOnlyHint } : {}),
+          ...(typeof t.annotations.destructiveHint === 'boolean' ? { destructiveHint: t.annotations.destructiveHint } : {}),
+          ...(typeof t.annotations.idempotentHint === 'boolean' ? { idempotentHint: t.annotations.idempotentHint } : {}),
+          ...(typeof t.annotations.openWorldHint === 'boolean' ? { openWorldHint: t.annotations.openWorldHint } : {}),
+        } } : {}),
       });
     }
 
@@ -295,22 +316,27 @@ export class McpClient {
     const serverName = this.config.name;
     const lifetime = new AbortController();
     const signal = AbortSignal.any([this.connectionLife.signal, lifetime.signal, ...(operation?.signal ? [operation.signal] : [])]);
+    let schema: McpToolSchema | undefined, schemaSnapshot: unknown;
     const assertCurrent = () => {
       signal.throwIfAborted(); operation?.assertCurrent(); effect?.assertCurrent();
       if (this.config.name !== serverName || this.connectionId !== connectionId || this.proc !== proc || this.http !== http || http?.sessionGeneration !== httpSession || !this.isConnected) throw new Error('MCP tool operation changed');
+      if (schema && (this.schemaCache.get(toolName) !== schema || !isDeepStrictEqual(captureOwnedJson(schema, nodeTypes.isProxy), schemaSnapshot))) throw new Error('MCP tool schema changed');
     };
     const boundOperation = operation ? { ...operation, operationId: randomUUID(), signal, assertCurrent } : undefined;
     let responses: Record<string, unknown> | null = null;
     let claimed = false;
     try {
       assertCurrent();
-      if (!this.schemaCache.has(toolName)) await this.getToolSchema(toolName);
+      if (!this.schemaCache.has(toolName)) await this.getToolSchema(toolName, { signal, assertCurrent });
       assertCurrent();
+      schema = this.schemaCache.get(toolName);
+      if (!schema) throw new Error('MCP tool schema is unavailable');
+      schemaSnapshot = captureOwnedJson(schema, nodeTypes.isProxy);
       let params: Record<string, unknown> = { name: toolName, arguments: ownedArgs };
       for (let roundTrip = 0; roundTrip <= MAX_MRTR_ROUND_TRIPS; roundTrip++) {
         assertCurrent();
         const pendingResponses = responses;
-        const beforeSend = () => { assertCurrent(); if (!claimed) { effect?.claim(); claimed = true; } if (pendingResponses) for (const response of Object.values(pendingResponses)) commitMcpElicitation(response); };
+        const beforeSend = () => { assertCurrent(); if (this.schemaCache.get(toolName) !== schema) throw new Error('MCP tool schema changed'); if (!claimed) { effect?.claim(); claimed = true; } if (pendingResponses) for (const response of Object.values(pendingResponses)) commitMcpElicitation(response); };
         const result = await this._request('tools/call', params, this._toolCallHeaders(toolName, ownedArgs), boundOperation, beforeSend);
         assertCurrent(); responses = null;
         if (this.negotiated?.era !== 'modern' || !isInputRequiredResult(result)) return result;

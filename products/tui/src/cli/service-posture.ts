@@ -1,8 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { accessSync, closeSync, constants, existsSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
+import type { Stats } from 'node:fs';
 import net from 'node:net';
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { PlatformServiceManager } from '@goodvibes-jev/engine/sdk/platform/daemon';
 import type { ManagedServiceStatus } from '@goodvibes-jev/engine/sdk/platform/daemon';
 import { resolveDaemonEnabled } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -11,7 +13,8 @@ import { formatRuntimeEndpointBinding, resolveRuntimeEndpointBinding } from '@go
 import type { RuntimeEndpointBinding, RuntimeEndpointId } from '@goodvibes-jev/engine/terminal-shell';
 import { classifyBindPosture, isNetworkFacing } from './network-posture.ts';
 import { redactText } from '@goodvibes-jev/engine/terminal-shell';
-import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { captureStrictJudgmentJson } from '@goodvibes-jev/engine/sdk/platform/gate';
 
 export interface CliServiceRuntime {
   readonly configManager: ConfigManager;
@@ -105,7 +108,7 @@ interface CliServiceStatusManager {
   status(): ManagedServiceStatus;
 }
 
-interface CliServicePostureOptions {
+interface CliServicePostureOptions extends JudgmentReadingOptions {
   readonly probe?: boolean;
   readonly logTailBytes?: number;
   readonly manager?: CliServiceStatusManager;
@@ -309,9 +312,12 @@ function reconcileSystemdServiceStatus(
   };
 }
 
-function readLogPosture(path: string | undefined, tailBytes: number): CliServiceLogPosture {
+async function readLogPosture(path: string | undefined, tailBytes: number, options: JudgmentReadingOptions): Promise<CliServiceLogPosture> {
+  options.signal?.throwIfAborted();
+  options.assertCurrent?.();
   if (!path) return { path: null, exists: false, size: 0, modifiedAt: null };
   if (!existsSync(path)) return { path, exists: false, size: 0, modifiedAt: null };
+  let captured: { readonly stat: Stats; readonly text: string };
   try {
     const stat = statSync(path);
     const length = Math.min(stat.size, Math.max(0, tailBytes));
@@ -325,22 +331,27 @@ function readLogPosture(path: string | undefined, tailBytes: number): CliService
     } finally {
       closeSync(fd);
     }
-    return {
-      path,
-      exists: true,
-      size: stat.size,
-      modifiedAt: stat.mtimeMs,
-      tail: redactText(raw.toString('utf-8')),
-    };
-  } catch (error) {
+    captured = { stat, text: raw.toString('utf-8') };
+  } catch {
     return {
       path,
       exists: true,
       size: 0,
       modifiedAt: null,
-      readError: summarizeError(error),
+      readError: 'Service log could not be read.',
     };
   }
+  const assertCurrent = () => {
+    options.signal?.throwIfAborted();
+    options.assertCurrent?.();
+    const current = statSync(path);
+    const original = captured.stat;
+    if (current.dev !== original.dev || current.ino !== original.ino || current.size !== original.size
+      || current.mtimeMs !== original.mtimeMs || current.ctimeMs !== original.ctimeMs) throw new Error('Service log changed during redaction.');
+  };
+  const tail = await redactText(captured.text, { ...options, assertCurrent });
+  assertCurrent();
+  return { path, exists: true, size: captured.stat.size, modifiedAt: captured.stat.mtimeMs, tail };
 }
 
 function endpointsConflict(a: CliServiceEndpointPosture, b: CliServiceEndpointPosture): boolean {
@@ -387,8 +398,29 @@ export async function buildCliServicePosture(
   runtime: CliServiceRuntime,
   options: CliServicePostureOptions = {},
 ): Promise<CliServicePosture> {
+  const configManager = runtime.configManager;
+  const workingDirectory = runtime.workingDirectory, homeDirectory = runtime.homeDirectory;
+  const snapshot = captureStrictJudgmentJson(configManager.getRaw());
+  const signal = options.signal, callerCurrent = options.assertCurrent;
+  const sourceCurrent = () => {
+    signal?.throwIfAborted();
+    if (options.signal !== signal || options.assertCurrent !== callerCurrent || runtime.configManager !== configManager
+      || runtime.workingDirectory !== workingDirectory || runtime.homeDirectory !== homeDirectory
+      || !isDeepStrictEqual(captureStrictJudgmentJson(configManager.getRaw()), snapshot)) throw new Error('Service posture input changed.');
+  };
+  const assertCurrent = () => {
+    sourceCurrent();
+    const result: unknown = callerCurrent?.();
+    if (result !== undefined) { void Promise.resolve(result).catch(() => {}); throw new Error('Service posture ownership must be synchronous.'); }
+    sourceCurrent();
+  };
+  assertCurrent();
   const manager = options.manager ?? createPlatformServiceManager(runtime);
-  const status = reconcileSystemdServiceStatus(runtime, manager.status(), options);
+  const capturedStatus = captureStrictJudgmentJson(reconcileSystemdServiceStatus(runtime, manager.status(), options));
+  const actionError = capturedStatus.actionError === undefined ? undefined
+    : await redactText(capturedStatus.actionError, { ...options, assertCurrent });
+  assertCurrent();
+  const status = actionError === undefined ? capturedStatus : { ...capturedStatus, actionError };
   const endpoints = await Promise.all(ENDPOINTS.map(async (endpoint): Promise<CliServiceEndpointPosture> => {
     const enabled = runtime.configManager.get(endpoint.enabledKey as never) === true;
     const binding = resolveRuntimeEndpointBinding(runtime.configManager, endpoint.id);
@@ -447,11 +479,12 @@ export async function buildCliServicePosture(
       }
     }
   }
-  const log = readLogPosture(status.logPath, options.logTailBytes ?? 4096);
+  const log = await readLogPosture(status.logPath, options.logTailBytes ?? 4096, { ...options, assertCurrent });
   if (log.readError) {
     issues.push(`Service log exists but could not be read: ${log.readError}`);
   }
 
+  assertCurrent();
   return {
     config,
     managed: {

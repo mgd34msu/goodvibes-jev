@@ -1,5 +1,13 @@
 /** Engine-owned SETTINGS host. Products reach private owners only over real HTTP. */
 import { join } from 'node:path';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { gateReadingsPort, forgetGateReadings } from '../_helpers/gate-readings.js';
+import { SecretsManager } from '../../sdk/src/platform/config/secrets.js';
+import { GatewayMethodCatalog } from '../../sdk/src/platform/control-plane/method-catalog.js';
+import { PermissionManager, createPermissionConfigReader } from '../../sdk/src/platform/permissions/manager.js';
+import { PolicyRuntimeState } from '../../sdk/src/platform/runtime/permissions/policy-runtime.js';
 import { ConfigManager } from '../../sdk/src/platform/config/manager.js';
 import { PairingTokenManager } from '../../sdk/src/platform/pairing/pairing-token-store.js';
 import { UserAuthManager } from '../../sdk/src/platform/security/user-auth.js';
@@ -9,18 +17,38 @@ import { DaemonHttpRouter } from '../../sdk/src/platform/daemon/http/router.js';
 const root = process.argv[2];
 if (!root) throw new Error('Settings fixture requires its owned temporary root');
 const loseResponse = process.argv[3] === 'lost-response';
-const token = 'synthetic-agent-settings-operator';
 const config = new ConfigManager({ configDir: join(root, 'remote-config'), daemonTierPath: join(root, 'remote-settings.json') });
 const pairing = new PairingTokenManager(join(root, 'remote-pairing.json'));
+const paired = pairing.mint({ name: 'Synthetic settings fixture' }), token = paired.token;
+const secrets = new SecretsManager({ projectRoot: join(root, 'remote-project'), globalHome: join(root, 'remote-home'),
+  daemonHome: join(root, 'remote-daemon'), surfaceRoot: 'daemon', policy: 'plaintext_allowed', diagnosticMode: 'structural' });
+forgetGateReadings();
+const decisionLog = new SqliteDecisionLog(':memory:');
+const gates = gateReadingsPort(), dispositions = fakePort((_name, question) => choiceAnswer(question,
+  question.type === 'choice' && !Object.hasOwn(question.criteria, 'act') ? 'reject' : 'act', 0.99));
+const port = withDecisionLog({ model: gates.port.model, ask: request =>
+  'disposition' in request.questions ? dispositions.port.ask(request) : gates.port.ask(request) }, decisionLog);
+installJudgmentPort(port);
+const permissionManager = new PermissionManager(async () => { throw new Error('Native fixture has no human fallback'); },
+  createPermissionConfigReader(config), new PolicyRuntimeState());
+const admissionLifetime = new AbortController();
+const nativeMutationHost = { port, permissionManager, config, signal: admissionLifetime.signal, workspaceTrust: null,
+  workspaceRoot: root };
+const gatewayMethods = new GatewayMethodCatalog();
 const users = new UserAuthManager({ users: [{ username: 'fixture-admin', passwordHash: 'synthetic-unused', roles: ['admin'] }],
   bootstrapFilePath: join(root, 'unused-users.json'), bootstrapCredentialPath: join(root, 'unused-bootstrap.txt') });
 const lifetime = {};
-const helper = new DaemonControlPlaneHelper({ authToken: () => token, pairingTokens: pairing, userAuth: users,
+const helper = new DaemonControlPlaneHelper({ authToken: () => 'synthetic-unused-shared', gatewayMethods, pairingTokens: pairing, userAuth: users,
   settingsLifetime: () => lifetime } as unknown as DaemonControlPlaneContext);
 const router = new DaemonHttpRouter({ configManager: config, runtimeStore: null, userAuth: users,
   authToken: () => token, requireAdmin: (req: Request) => helper.requireAdmin(req), requireAuthenticatedSession: () => null,
   extractAuthToken: () => token, describeAuthenticatedPrincipal: () => null, controlPlaneGateway: { recordApiRequest() {} },
-  secretsManager: null, swapManager: null,
+  secretsManager: secrets, swapManager: null, nativeMutationHost,
+  settingsImportAuthority: { settingsLifetime: () => lifetime,
+    captureSettingsAdminAuthority: helper.captureSettingsAdminAuthority.bind(helper),
+    withSettingsAdminAuthority: helper.withSettingsAdminAuthority.bind(helper),
+    captureNativeExecutionAuthority: (req: Request) => helper.createNativeExecutionAuthority(helper.extractAuthToken(req)),
+    extractAuthToken: helper.extractAuthToken.bind(helper), requireAdmin: helper.requireAdmin.bind(helper) },
   settingsAuthority: { settingsLifetime: () => lifetime,
     captureSettingsAdminAuthority: (req: Request) => helper.captureSettingsAdminAuthority(req),
     withSettingsAdminAuthority: helper.withSettingsAdminAuthority.bind(helper) },
@@ -30,12 +58,13 @@ const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) 
   if (new URL(request.url).pathname !== '/config') return new Response(null, { status: 404 });
   if (request.method === 'GET') return Response.json({}); // Discovery only.
   const body = await request.clone().json();
-  if (body.settingsPrecondition?.action === 'capture') captures++;
-  else if (body.settingsPrecondition?.action === 'apply') applies++;
+  const arm = body.settingsImportPrecondition ?? body.settingsPrecondition;
+  if (arm?.action === 'capture') captures++;
+  else if (arm?.action === 'apply') applies++;
   else return new Response(null, { status: 400 }); // Never a fixture legacy fallback.
   const response = await router.dispatchApiRoutes(request);
   if (!response) throw new Error('Missing settings fixture route');
-  if (loseResponse && body.settingsPrecondition.action === 'apply') {
+  if (loseResponse && arm.action === 'apply') {
     // The real effect completed. Close the owned socket before delivering its ack.
     void server.stop(true);
     return new Response(null, { status: 503 });
@@ -65,7 +94,7 @@ try {
         else throw new Error('Unsupported settings fixture key');
         emit({ kind: 'configured', id: message.id });
       } else if (Object.keys(message).length !== 2) throw new Error('Invalid settings fixture control fields');
-      else if (message.type === 'revoke') { pairing.revokeLegacyShared(); emit({ kind: 'revoked', id: message.id }); }
+      else if (message.type === 'revoke') { pairing.revoke(paired.id); emit({ kind: 'revoked', id: message.id }); }
       else if (message.type === 'inspect') emit({ kind: 'inspection', id: message.id, captures, applies });
       else if (message.type === 'stop') { stopped = true; break; }
       else throw new Error('Unknown settings fixture control');
@@ -76,4 +105,4 @@ try {
   // Never send exception prose, requests, credentials or store values to diagnostics.
   emit({ kind: 'failure', stage: 'command' });
   throw new Error('Settings fixture control failed');
-} finally { await server.stop(true); router.dispose(); }
+} finally { admissionLifetime.abort(); await server.stop(true); router.dispose(); decisionLog[Symbol.dispose](); forgetGateReadings(); }

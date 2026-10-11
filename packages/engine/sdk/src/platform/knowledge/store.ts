@@ -1,4 +1,4 @@
-import { KnowledgeRecordAdmissionHeldError, knowledgeRecordSnapshotFromRows, type KnowledgeRecordSnapshot } from './store-record-snapshot.js';
+import { KnowledgeRecordAdmissionHeldError, knowledgeEdgeSnapshotFromRows, knowledgeRecordGenerationFromRows, knowledgeRecordSnapshotFromRows, type KnowledgeRecordSnapshot } from './store-record-snapshot.js';
 import { captureKnowledgeStoreInput, copyKnowledgeRepresentation, prepareKnowledgeOwnedClocks } from './store-record-representation.js';
 import { JudgmentInputError, snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { createNativeCiContinuationTable, validateNativeCiContinuationTable } from './store-native-ci-continuation.js';
@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { KnowledgeSourcePublicationHeldError, knowledgeSourceSnapshotFromRows, readKnowledgeSourceSnapshot, type KnowledgeSourceSnapshot, type KnowledgeSourceWriteResult } from './store-source-generation.js';
 import { applyKnowledgeImport, type KnowledgeImportInput, type KnowledgeImportReceipt, type PrepareKnowledgeImportGraph } from './store-import.js';
 import { prepareKnowledgeEdgeRecord, writeKnowledgeEdgeRow, findKnowledgeEdge } from './store-edge-writes.js';
+import { createKnowledgeEdgeChanges, validateKnowledgeEdgeChanges, knowledgeEdgeGeneration, knowledgeEdgeChangesFromRows, type KnowledgeEdgeChangeSnapshot, type KnowledgeEdgeGenerationSnapshot } from './store-edge-generations.js';
 import { snapshotNodeInput } from './activation/projection.js';
 import { KnowledgeNodeActivationHeldError, type KnowledgeNodeActivationOptions } from './activation/types.js';
 import { resolveKnowledgeNodeObservation, retainKnowledgeNodeObservation } from './store-node-observation.js';
@@ -18,7 +19,7 @@ import { knowledgeNodeRestorationGuard, prepareNodeActivationPass, assertPrepare
 export type { KnowledgePreparedNodeWrites } from './store-node-activation.js';
 import { commitGuardedKnowledgeIssueReplacement } from './store-issue-replacement.js';
 import { prepareKnowledgeIssueRecord, writeKnowledgeIssueRow, commitKnowledgeNodeIssueWrites, type KnowledgeGuardedNodeIssueWrites } from './store-node-issue-writes.js';
-import { SQLiteStore, SQLiteObservationRetiredError } from '../state/sqlite-store.js';
+import { SQLiteStore, SQLiteObservationRetiredError, type PersistedKnowledgeRecordSelector } from '../state/sqlite-store.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
 import type {
@@ -52,6 +53,7 @@ import type {
 } from './types.js';
 import {
   createSchema,
+  KNOWLEDGE_SCHEMA_VERSION,
   nowMs,
   stableText,
   uniq,
@@ -459,9 +461,79 @@ export class KnowledgeStore {
     return knowledgeRecordSnapshotFromRows(kind, this.sqlite.readPersistedRow(kind === 'node' ? 'knowledge_nodes' : 'knowledge_extractions', 'id', id));
   }
 
+  getEdgeSnapshot(id: string): KnowledgeRecordSnapshot<KnowledgeEdgeRecord> {
+    let result: KnowledgeRecordSnapshot<KnowledgeEdgeRecord> = { record: null, raw: null, generation: null };
+    this.assertRecordSnapshotFrame(() => {
+      const snapshot = knowledgeEdgeSnapshotFromRows(this.sqlite.readPersistedRow('knowledge_edges', 'id', id));
+      const incarnation = this.sqlite.readPersistedEdgeIncarnation(id)[0]?.values[0]?.[0];
+      if (typeof incarnation !== 'string') throw new KnowledgeRecordAdmissionHeldError('malformed');
+      result = { ...snapshot, generation: knowledgeEdgeGeneration(snapshot.generation, incarnation) };
+    });
+    return result;
+  }
+
+  getEdgeSnapshots(): readonly KnowledgeRecordSnapshot<KnowledgeEdgeRecord>[] {
+    let snapshots: readonly KnowledgeRecordSnapshot<KnowledgeEdgeRecord>[] = [];
+    this.assertRecordSnapshotFrame(() => {
+      const result = this.sqlite.readPersistedEdgeRows()[0];
+      const incarnations = new Map<string, string>();
+      for (const [id, generation] of this.sqlite.readPersistedEdgeIncarnations()[0]?.values ?? []) {
+        if (typeof id !== 'string' || typeof generation !== 'string') throw new KnowledgeRecordAdmissionHeldError('malformed');
+        incarnations.set(id, generation);
+      }
+      snapshots = result ? result.values.map(values => {
+        const snapshot = knowledgeEdgeSnapshotFromRows([{ columns: result.columns, values: [values] }]);
+        return { ...snapshot, generation: knowledgeEdgeGeneration(snapshot.generation, snapshot.record ? incarnations.get(snapshot.record.id) ?? '0' : '0') };
+      }) : [];
+    });
+    return snapshots;
+  }
+
+  getEdgeChangeSnapshots(): readonly KnowledgeEdgeChangeSnapshot[] {
+    return knowledgeEdgeChangesFromRows(this.sqlite.readPersistedEdgeChanges());
+  }
+
+  /** All physical endpoints and complete raw generations, without semantic views. */
+  getEdgeGenerationSnapshots(): readonly KnowledgeEdgeGenerationSnapshot[] {
+    let snapshots: readonly KnowledgeEdgeGenerationSnapshot[] = [];
+    this.assertRecordSnapshotFrame(() => {
+      const result = this.sqlite.readPersistedEdgeRows()[0];
+      const incarnations = new Map<string, string>();
+      for (const [id, generation] of this.sqlite.readPersistedEdgeIncarnations()[0]?.values ?? []) {
+        if (typeof id !== 'string' || typeof generation !== 'string') throw new KnowledgeRecordAdmissionHeldError('malformed');
+        incarnations.set(id, generation);
+      }
+      if (!result) return;
+      const positions = ['id', 'from_kind', 'from_id', 'to_kind', 'to_id'].map(column => result.columns.indexOf(column));
+      snapshots = result.values.map(values => {
+        const [id, fromKind, fromId, toKind, toId] = positions.map(position => values[position]);
+        if (typeof id !== 'string' || typeof fromKind !== 'string' || typeof fromId !== 'string'
+          || typeof toKind !== 'string' || typeof toId !== 'string') throw new KnowledgeRecordAdmissionHeldError('malformed');
+        const generation = knowledgeEdgeGeneration(knowledgeRecordGenerationFromRows([{ columns: result.columns, values: [values] }]), incarnations.get(id) ?? '0');
+        if (generation === null) throw new KnowledgeRecordAdmissionHeldError('malformed');
+        return { id, fromKind, fromId, toKind, toId, generation };
+      });
+    });
+    return snapshots;
+  }
+
+  getEdgeWindowGeneration(keys: readonly string[], incidentKeys?: readonly string[], includeUnselectedEndpoints = false): string {
+    const generation = this.sqlite.readPersistedEdgeWindowGeneration(keys, incidentKeys, includeUnselectedEndpoints)[0]?.values[0]?.[0];
+    if (typeof generation !== 'string' || !/^(0|[1-9][0-9]*)$/.test(generation)) throw new KnowledgeRecordAdmissionHeldError('malformed');
+    return generation;
+  }
+
   /** Opaque full-row entity fingerprint. Possessing it does not grant authority. */
   getSourceGeneration(id: string): string | null {
-    return this.getSourceSnapshot({ id }).generation;
+    return this.sqlite.readPersistedRowGeneration('knowledge_sources', 'id', id);
+  }
+
+  getRecordGeneration(kind: 'node' | 'extraction', id: string): string | null {
+    return this.sqlite.readPersistedRowGeneration(kind === 'node' ? 'knowledge_nodes' : 'knowledge_extractions', 'id', id);
+  }
+
+  getRecordGenerations(selectors: readonly PersistedKnowledgeRecordSelector[]): readonly (string | null)[] {
+    return this.sqlite.readPersistedRecordGenerations(selectors);
   }
 
   /** Compare and write synchronously after init; a hold has no durable effects. */
@@ -1183,8 +1255,8 @@ export class KnowledgeStore {
 
   private async initialize(): Promise<void> {
     await this.sqlite.init(createSchema, {
-      storeName: 'knowledge store', schemaVersion: 9,
-      validateCurrentSchema: db => { validateWorkLedgerTable(db); validateNativeWorkExecutionTable(db); validateNativeWorkExecutionIntentTable(db); validateNativeConversationCaptureTable(db); validateNativeWorkSettlementTable(db); validateNativeCiContinuationTable(db); },
+      storeName: 'knowledge store', schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
+      validateCurrentSchema: db => { validateWorkLedgerTable(db); validateNativeWorkExecutionTable(db); validateNativeWorkExecutionIntentTable(db); validateNativeConversationCaptureTable(db); validateNativeWorkSettlementTable(db); validateNativeCiContinuationTable(db); validateKnowledgeEdgeChanges(db); },
       migrations: [
         { toVersion: 1, migrate: createSchema },
         { toVersion: 2, migrate: createWorkLedgerTable },
@@ -1204,6 +1276,7 @@ export class KnowledgeStore {
           validateNativeWorkExecutionIntentTable(db); validateNativeConversationCaptureTable(db);
           validateNativeWorkSettlementTable(db); validateNativeCiContinuationTable(db);
         } },
+        { toVersion: 10, migrate: db => { createKnowledgeEdgeChanges(db); validateKnowledgeEdgeChanges(db); } },
       ],
     });
     try {

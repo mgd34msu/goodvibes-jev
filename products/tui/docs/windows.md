@@ -29,7 +29,7 @@ built and smoke-tested by a **separate, non-gating** workflow
 schedule), deliberately kept out of the release gate until the smoke job is
 reliably green and the blockers below are resolved. That workflow typechecks and
 tests the ref before it builds, and its Windows-runner smoke job is the shared
-`goodvibes-post-build-smoke` (version banner, packaging-failure sentinels,
+`goodvibes-post-build-smoke` (version protocol, module-load evidence,
 placeholder-version and eager-namespace-read scans), a real pass/fail check and
 never `continue-on-error`; a green run there is the signal to promote
 `windows-x64` into the release matrix.

@@ -4,6 +4,8 @@ import { mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { fieldKind, redactionCredential, residualCredential } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { sessionEventDecoder, syntheticSystemOneAnswers } from './hosted-session-protocol.mjs';
 
 const pause = () => new Promise(resolve => setTimeout(resolve, 20));
@@ -13,6 +15,17 @@ async function until(check, label, milliseconds = 20_000) {
     assert(Date.now() < deadline, `${label}: deadline exceeded`); await pause(); }
 }
 const writeJson = (path, value) => writeFileSync(path, JSON.stringify(value));
+// Every operation owns fresh privacy authority. Equal wire bodies across
+// independent logger/source operations are valid rereads, not boot retries.
+// Match complete emitted question contracts; a shared question name cannot
+// exempt an unrelated decision from the original two-boot replay bound.
+const scopedPrivacyContracts = [fieldKind, redactionCredential, residualCredential].map(battery => ({
+  name: battery.name,
+  questions: Object.fromEntries(Object.entries(battery.items).map(([name, item]) => [name, item.question])),
+}));
+function scopedPrivacyContract(request) {
+  return scopedPrivacyContracts.find(contract => isDeepStrictEqual(request.body.questions, contract.questions));
+}
 async function listen(server) {
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   return server.address().port;
@@ -270,10 +283,16 @@ export async function runHostedSessionProof({ binary, boundary, env, root }) {
       const group = [request.body.state?.provider && request.body.state?.model_id ? 'provider-catalog' : 'turn', ...Object.keys(request.body.questions).sort()].join(':');
       questionGroups.set(group, (questionGroups.get(group) ?? 0) + 1);
     }
-    assert([...identities.values()].every(count => count <= 2), 'No SystemOne request identity may exceed the two daemon boots');
+    const repeatedQuestionGroups = [...identities.entries()].filter(([, count]) => count > 2).map(([identity, count]) => {
+      const request = judgmentRequests.find(request => createHash('sha256').update(JSON.stringify(request.body)).digest('hex') === identity);
+      return { identity, count, questions: Object.keys(request.body.questions).sort(), stateKeys: Object.keys(request.body.state ?? {}).sort(), scopedPrivacy: scopedPrivacyContract(request)?.name };
+    });
+    const repeatedBootDecisions = repeatedQuestionGroups.filter(group => group.scopedPrivacy === undefined);
+    assert(repeatedBootDecisions.length === 0, `No non-privacy SystemOne request identity may exceed the two daemon boots: ${JSON.stringify({ questionGroups: Object.fromEntries(questionGroups), repeatedBootDecisions })}`);
     const identityCounts = {};
     for (const count of identities.values()) identityCounts[count] = (identityCounts[count] ?? 0) + 1;
     return { elapsedMs: Date.now() - startedAt, judgmentQuestionGroups: Object.fromEntries(questionGroups), judgmentUniqueIdentities: identities.size, judgmentRequestsPerIdentity: identityCounts,
+      repeatedScopedPrivacyIdentities: repeatedQuestionGroups, nonPrivacyRequestIdentityBound: 2, totalJudgmentRequestBound: 5_000,
       evidence: 'synthetic-http-protocol-only; not live Jev calibration', modelRequests: modelRequests.length, judgmentRequests: judgmentRequests.length, streamedDeltas: deltas.length, persistedDetachPolicyPrecedence: true, originalSteerHistoryPreserved: true, lastWatcherDetachKills: true, explicitKillAndTerminatedList: true, relativeWorkspaceRefused: true, restartHistoryPreserved: true, cancellationSettled: true, failureObserved: true, shutdownDuringStream: true };
   } catch (error) {
     console.error('HOSTED FAILURE DETAILS', JSON.stringify({ output, errors, modelRequests: modelRequests.length, judgmentRequests: judgmentRequests.length, events: events.filter(event => event.value.type).map(event => event.value) })); throw error;

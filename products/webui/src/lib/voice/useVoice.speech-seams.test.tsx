@@ -19,7 +19,7 @@ function validAnswer(request: Request) {
   return new Response(JSON.stringify({ protocolVersion: 1, requestId: request.requestId, battery: request.battery, batteryVersion: 1,
     status: 'settled', outcome: 'act', value: { endOffsets: selected.filter(yes), nextCursor: request.input.cursor + 64 < candidates.length ? request.input.cursor + 64 : null },
     readings: Object.fromEntries(selected.map((offset, i) => [`seam_${i}`, { kind: 'yes-no', probability: yes(offset) ? 0.999 : 0.001, verdict: yes(offset) ? 'yes' : 'no', outcome: 'act' }])),
-    evidence: [{ decisionId: `offline-seam-${request.input.cursor}`, model: 'fixture', requestedModel: 'fixture', usage: { inputTokens: 1, outputTokens: 1 }, latencyMs: 1 }],
+    evidence: selected.map((_, i) => ({ decisionId: `offline-seam-${request.input.cursor + i}`, model: 'fixture', requestedModel: 'fixture', usage: { inputTokens: 1, outputTokens: 1 }, latencyMs: 1 })),
   }), { headers: { 'Content-Type': 'application/json' } });
 }
 let contexts = 0; let resumes = 0;

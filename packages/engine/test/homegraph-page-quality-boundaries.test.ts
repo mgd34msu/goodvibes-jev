@@ -18,12 +18,13 @@ import {
   generateHomeGraphRoomPage,
   refreshHomeGraphDevicePassport,
 } from '../sdk/src/platform/knowledge/home-graph/generated-pages.js';
-import { buildHomeGraphMetadata, homeGraphNodeId } from '../sdk/src/platform/knowledge/home-graph/helpers.js';
+import { buildHomeGraphMetadata, homeGraphNodeId, homeGraphSourceId } from '../sdk/src/platform/knowledge/home-graph/helpers.js';
 import { renderRoomPage } from '../sdk/src/platform/knowledge/home-graph/rendering.js';
 import { readHomeGraphState } from '../sdk/src/platform/knowledge/home-graph/state.js';
 import type { HomeGraphAskResult } from '../sdk/src/platform/knowledge/home-graph/types.js';
 import { KnowledgeSourceQualityHeldError } from '../sdk/src/platform/knowledge/source-quality.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
+import { SQLitePublicationError } from '../sdk/src/platform/state/sqlite-store-persistence.js';
 import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../sdk/src/platform/knowledge/types.js';
 import { withTestTimeout } from './_helpers/test-timeout.js';
 import { homeGraphRepairProfileValues, repairProfileFixtureReading, repairUsefulFixtureReading } from './_helpers/repair-profile-fixture-readings.js';
@@ -187,14 +188,14 @@ function refreshAsk(context: Fixture, sources: readonly KnowledgeSourceRecord[],
 }
 
 /** Compare records, not just counts: a held pass must not overwrite existing content. */
-function persisted(context: Fixture) {
+function persisted(context: Fixture, options: { readonly includeArtifacts?: boolean } = {}) {
   return JSON.stringify({
     sources: context.store.listSourcesInSpace(spaceId),
     nodes: context.store.listNodesInSpace(spaceId),
     edges: context.store.listEdges(),
     extractions: context.store.listExtractionsInSpace(spaceId),
     issues: context.store.listIssuesInSpace(spaceId),
-    artifacts: context.artifactStore.list(),
+    ...(options.includeArtifacts === false ? {} : { artifacts: context.artifactStore.list() }),
   });
 }
 
@@ -256,6 +257,152 @@ describe('Home Graph page quality persistence boundaries', () => {
       expect(fake.requests).toHaveLength(0);
       expect(persisted(context)).toBe(before);
     });
+
+    test(`${kind} preserves a subject correction during artifact creation and removes its uncommitted artifact`, async () => {
+      const context = await fixture();
+      await addSource(context, 'artifact-boundary-reference');
+      readings();
+      const createArtifact = context.artifactStore.create.bind(context.artifactStore);
+      let corrected: KnowledgeNodeRecord | undefined;
+      const artifactWrite = spyOn(context.artifactStore, 'create').mockImplementation(async input => {
+        const artifact = await createArtifact(input);
+        corrected = await seedHomeAssistantObservation(context.store, { ...context.device, summary: 'Operator corrected the device during artifact creation.' });
+        return artifact;
+      });
+      try {
+        await expect(generate(context, kind)).rejects.toMatchObject({ reason: 'stale' });
+        expect(corrected).toBeDefined();
+        expect(context.store.getNode(context.device.id)).toEqual(corrected!);
+        expect(context.store.listSourcesInSpace(spaceId).filter(source => source.metadata.homeGraphGeneratedPage === true)).toEqual([]);
+        expect(context.store.listNodesInSpace(spaceId).filter(node => node.kind === 'ha_device_passport')).toEqual([]);
+        expect(context.artifactStore.list()).toEqual([]);
+      } finally { artifactWrite.mockRestore(); }
+    });
+
+    test(`${kind} holds an external source correction during artifact creation without relying on cached records`, async () => {
+      const context = await fixture();
+      const source = await addSource(context, 'externally-corrected-reference');
+      readings();
+      const writer = new KnowledgeStore({ dbPath: context.store.storagePath });
+      await writer.init();
+      const createArtifact = context.artifactStore.create.bind(context.artifactStore);
+      const correction = { ...source, title: 'Operator corrected the reference during artifact creation.' };
+      const artifactWrite = spyOn(context.artifactStore, 'create').mockImplementation(async input => {
+        const artifact = await createArtifact(input);
+        await writer.replaceSourceRecord(correction);
+        return artifact;
+      });
+      try {
+        const error = await generate(context, kind).then(() => undefined, (failure: unknown) => failure);
+        expect(context.store.getSource(source.id)).toEqual(source);
+        expect(context.store.getSourceSnapshot({ id: source.id }).source).toEqual(correction);
+        expect(context.store.listSourcesInSpace(spaceId).filter(row => row.metadata.homeGraphGeneratedPage === true)).toEqual([]);
+        expect(context.store.listNodesInSpace(spaceId).filter(node => node.kind === 'ha_device_passport')).toEqual([]);
+        expect(context.artifactStore.list()).toEqual([]);
+        expect(error).toMatchObject({ reason: 'stale' });
+      } finally { artifactWrite.mockRestore(); await writer.close(); }
+    });
+
+    for (const changed of ['subject', 'edge'] as const) {
+      test(`${kind} holds an external ${changed} correction before graph publication`, async () => {
+        const context = await fixture();
+        const source = await addSource(context, 'external-graph-reference');
+        readings();
+        const edge = context.store.edgesFor('source', source.id).find(row => row.toId === context.device.id);
+        if (!edge) throw new Error('Synthetic device reference edge was not seeded.');
+        const writer = new KnowledgeStore({ dbPath: context.store.storagePath });
+        await writer.init();
+        const createArtifact = context.artifactStore.create.bind(context.artifactStore);
+        const correctedEdge = { ...edge, metadata: { ...edge.metadata, operatorCorrection: 'This reference association was corrected.' } };
+        let correctedSubject: KnowledgeNodeRecord | undefined;
+        const artifactWrite = spyOn(context.artifactStore, 'create').mockImplementation(async input => {
+          const artifact = await createArtifact(input);
+          if (changed === 'subject') correctedSubject = await seedHomeAssistantObservation(writer, {
+            ...context.device, summary: 'The operator corrected the subject in another persisted store.',
+          });
+          else await writer.replaceEdgeRecord(correctedEdge);
+          return artifact;
+        });
+        try {
+          const error = await generate(context, kind).then(() => undefined, (failure: unknown) => failure);
+          expect(context.store.getNode(context.device.id)).toEqual(context.device);
+          expect(context.store.edgesFor('source', source.id).find(row => row.id === edge.id)).toEqual(edge);
+          if (changed === 'subject') {
+            expect(correctedSubject).toBeDefined();
+            if (!correctedSubject) throw new Error('External subject correction was not committed.');
+            expect(context.store.getRecordSnapshot('node', context.device.id).record).toEqual(correctedSubject);
+          } else expect(context.store.getEdgeSnapshot(edge.id).record).toEqual(correctedEdge);
+          expect(context.store.listSourcesInSpace(spaceId).filter(row => row.metadata.homeGraphGeneratedPage === true)).toEqual([]);
+          expect(context.store.listNodesInSpace(spaceId).filter(node => node.kind === 'ha_device_passport')).toEqual([]);
+          expect(context.artifactStore.list()).toEqual([]);
+          expect(error).toMatchObject({ reason: 'stale' });
+        } finally { artifactWrite.mockRestore(); await writer.close(); }
+      });
+    }
+
+    test(`${kind} external unrelated correction permits only complete publication or an effect-free hold`, async () => {
+      const context = await fixture();
+      await addSource(context, 'current-reference');
+      const unrelated = await addSource(context, 'unlinked-reference', { linked: false });
+      readings();
+      const writer = new KnowledgeStore({ dbPath: context.store.storagePath });
+      await writer.init();
+      const correction = { ...unrelated, summary: 'An unrelated operator correction must survive the publication attempt.' };
+      const createArtifact = context.artifactStore.create.bind(context.artifactStore);
+      const artifactWrite = spyOn(context.artifactStore, 'create').mockImplementation(async input => {
+        const artifact = await createArtifact(input);
+        await writer.replaceSourceRecord(correction);
+        return artifact;
+      });
+      try {
+        const generated = kind === 'room'
+          ? generateHomeGraphRoomPage({ ...context, input: { areaId } }).then(result => ({ pageKind: 'room' as const, result }))
+          : refreshHomeGraphDevicePassport({ ...context, input: { deviceId } }).then(result => ({ pageKind: 'passport' as const, result }));
+        const receipt = await generated.then(page => ({ kind: 'written' as const, ...page }), (error: unknown) => ({ kind: 'held' as const, error }));
+        expect(context.store.getSourceSnapshot({ id: unrelated.id }).source).toEqual(correction);
+        if (receipt.kind === 'written') {
+          const source = receipt.result.source;
+          if (!source) throw new Error('Successful generated page omitted its source.');
+          expect(context.store.getSource(source.id)).toEqual(source);
+          expect(context.store.getSourceSnapshot({ id: source.id }).source).toEqual(source);
+          expect(context.artifactStore.get(receipt.result.artifact.id)).toBeDefined();
+          if (receipt.pageKind === 'passport') {
+            expect(context.store.getNode(receipt.result.passport.id)).toEqual(receipt.result.passport);
+            expect(context.store.getRecordSnapshot('node', receipt.result.passport.id).record).toEqual(receipt.result.passport);
+          }
+        } else {
+          expect(receipt.error).toBeInstanceOf(Error);
+          expect(context.store.listSourcesInSpace(spaceId).filter(row => row.metadata.homeGraphGeneratedPage === true)).toEqual([]);
+          const canonicalValue = kind === 'room' ? `room-page:${areaId}` : `device-passport:${deviceId}`;
+          const sourceId = homeGraphSourceId(spaceId, 'generated-page', canonicalValue);
+          expect(context.store.getSourceSnapshot({ id: sourceId }).source).toBeNull();
+          expect(context.store.listNodesInSpace(spaceId).filter(node => node.kind === 'ha_device_passport')).toEqual([]);
+          expect(context.store.getRecordSnapshot('node', homeGraphNodeId(spaceId, 'ha_device_passport', deviceId)).record).toBeNull();
+          expect(context.artifactStore.list()).toEqual([]);
+        }
+      } finally { artifactWrite.mockRestore(); await writer.close(); }
+    });
+
+    for (const phase of ['before-publication', 'indeterminate'] as const) {
+      test(`${kind} ${phase} publication failure preserves exactly the recoverable artifact`, async () => {
+        const context = await fixture();
+        await addSource(context, 'publication-failure-reference');
+        readings();
+        const before = persisted(context, { includeArtifacts: false });
+        const failure = new SQLitePublicationError(phase, new Error('Synthetic publication uncertainty.'));
+        const publication = spyOn(context.store, 'applyPreparedIngest').mockRejectedValue(failure);
+        try {
+          const error = await generate(context, kind).then(() => undefined, (caught: unknown) => caught);
+          expect(error).toBe(failure);
+          const artifacts = context.artifactStore.list();
+          expect(artifacts).toHaveLength(phase === 'indeterminate' ? 1 : 0);
+          if (phase === 'indeterminate') expect(artifacts[0]?.metadata.generatedKnowledgePage).toBe(true);
+          // Fault injection proves the caller's conservative cleanup contract;
+          // physical visibility/durability is tested at the storage boundary.
+          expect(persisted(context, { includeArtifacts: false })).toBe(before);
+        } finally { publication.mockRestore(); }
+      });
+    }
 
     test(`${kind} cancellation during awaited quality leaves all records unchanged`, async () => {
       const context = await fixture();
@@ -626,14 +773,14 @@ describe('Home Graph page quality persistence boundaries', () => {
     expect(fact).toBeDefined();
     const racingStore = Object.create(context.store) as KnowledgeStore;
     let concurrent: KnowledgeNodeRecord | undefined;
-    const commit = racingStore.upsertPreparedNode.bind(racingStore);
-    racingStore.upsertPreparedNode = async (prepared, index) => {
-      const node = await commit(prepared, index);
-      if (node.kind === 'ha_device_passport') concurrent = await context.store.upsertNode({
+    const publish = racingStore.applyPreparedIngest.bind(racingStore);
+    racingStore.applyPreparedIngest = (input, prepareGraph, options) => publish(input, async stage => {
+      const graph = await prepareGraph(stage);
+      if (graph.nodes.some(node => node.kind === 'ha_device_passport')) concurrent = await context.store.upsertNode({
         ...fact, summary: 'Concurrent operator correction.',
       }, createKnowledgeNodeOperatorMutation(fact, { action: 'reject', reviewer: 'fixture-operator' }));
-      return node;
-    };
+      return graph;
+    }, options);
     await expect(generate({ ...context, store: racingStore }, 'passport')).rejects.toThrow();
     expect(context.store.getNode(fact.id)).toEqual(concurrent!);
     expect(context.store.getSource(priorPage.source!.id)).toEqual(priorPage.source!);
@@ -654,20 +801,22 @@ describe('Home Graph page quality persistence boundaries', () => {
     const racingStore = Object.create(context.store) as KnowledgeStore;
     let touched: KnowledgeNodeRecord | undefined;
     let concurrent: KnowledgeNodeRecord | undefined;
-    const commitPrepared = racingStore.upsertPreparedNode.bind(racingStore);
-    racingStore.upsertPreparedNode = async (prepared, index) => {
-      const node = await commitPrepared(prepared, index);
-      if (node.kind === 'fact' && touched === undefined) {
-        touched = node;
-        const untouched = facts.find((fact) => fact.id !== node.id)!;
+    const publish = racingStore.applyPreparedIngest.bind(racingStore);
+    racingStore.applyPreparedIngest = (input, prepareGraph, options) => publish(input, async stage => {
+      const graph = await prepareGraph(stage);
+      const proposed = graph.nodes.find(node => node.kind === 'fact');
+      if (proposed?.id && touched === undefined) {
+        touched = context.store.getNode(proposed.id)!;
+        expect(touched).toBeDefined();
+        const untouched = facts.find((fact) => fact.id !== proposed.id)!;
         const summary = 'Concurrent correction outside this write pass.';
         concurrent = await context.store.upsertNode({ ...untouched, summary }, createKnowledgeNodeOperatorMutation(untouched, {
           action: 'revise', reviewer: 'fixture-operator', fieldCorrections: [{ path: ['summary'], value: summary }],
         }));
         controller.abort();
       }
-      return node;
-    };
+      return graph;
+    }, options);
     await expect(generate({ ...context, store: racingStore }, 'passport', controller.signal)).rejects.toThrow();
     expect(touched).toBeDefined(); expect(concurrent).toBeDefined();
     expect(context.store.getNode(touched!.id)).toEqual(touched!);

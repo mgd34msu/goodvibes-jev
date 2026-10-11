@@ -2,6 +2,7 @@ import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-inp
 import { snapshotNodeInput } from '../activation/projection.js';
 import { assertKnowledgeExtractionInput, readKnowledgeExtractionTextUsability } from '../extraction-policy.js';
 import { getKnowledgeSpaceId } from '../spaces.js';
+import { prepareKnowledgeScopeSelection, KnowledgeScopeSelectionHeldError } from '../scope-selection.js';
 import { knowledgeSourceJudgmentUris } from '../source-structural-references.js';
 import { KnowledgeSourceQualityHeldError } from '../source-quality.js';
 import type { KnowledgeStore } from '../store.js';
@@ -72,61 +73,93 @@ export async function readHomeGraphSearchSelection(input: {
   try {
     return await withAnswerVerificationBudget(async (signal, deadlineAt) => {
       if (input.state.spaceId !== input.spaceId) throw new Held('malformed');
+      assertJudgmentInput({ query: input.query.query });
       // Do not retain the completed budget's aborted signal in a later handoff.
-      const guard = createSemanticWriteGuard(input.store);
+      const baseGuard = createSemanticWriteGuard(input.store);
       const originalQuestion = snapshotNodeInput(input.query);
-      guard.watch('home-graph-query', () => input.query, originalQuestion);
+      baseGuard.watch('home-graph-query', () => input.query, originalQuestion);
       const renewalGuard = createSemanticWriteGuard(input.store);
       renewalGuard.watch('home-graph-original-question', () => input.query, originalQuestion);
-      guard.watch('home-graph-search-context', () => {
+      baseGuard.watch('home-graph-search-context', () => {
         const state = readHomeGraphSearchState(input.store, input.spaceId);
         return { sources: state.sources, nodes: state.nodes, edges: state.edges };
       }, { sources: input.state.sources, nodes: input.state.nodes, edges: input.state.edges });
       const checkPorts = captureAnswerReadingPorts(['engine.knowledge.answer-evidence-relevance',
         'engine.knowledge.answer-excerpt-selection', 'engine.knowledge.answer-object-alignment',
         'engine.knowledge.answer-integration-intent', 'knowledge.extraction.readability']);
-      guard.watch('home-graph-reading-ports', () => { checkPorts(); return true; });
+      baseGuard.watch('home-graph-reading-ports', () => { checkPorts(); return true; });
+      input.store.assertRecordSnapshotFrame(() => {
+        for (const source of input.state.sources) {
+          const extraction = input.state.extractionBySourceId.get(source.id) ?? null;
+          assertKnowledgeExtractionInput(extraction);
+          baseGuard.watch(`scope-extraction:${source.id}`, () => input.store.getExtractionBySourceId(source.id), extraction);
+          if (extraction && (extraction.sourceId !== source.id || getKnowledgeSpaceId(extraction) !== getKnowledgeSpaceId(source))) throw new Held('malformed');
+          assertJudgmentInput(sourceSemanticText({ ...snapshotNodeInput(source), ...knowledgeSourceJudgmentUris(source) }, extraction));
+        }
+      });
+      const pendingScope = new AbortController();
+      const abortScope = () => pendingScope.abort();
+      signal.addEventListener('abort', abortScope, { once: true });
+      const scopeSelection = await (async () => {
+        try {
+          assertAnswerVerificationActive(signal);
+          baseGuard.assertCurrent();
+          return await prepareKnowledgeScopeSelection(input.store, { knowledgeSpaceId: input.spaceId }, {
+            signal: pendingScope.signal, assertCurrent: () => { renewalGuard.assertCurrent(); checkPorts(); }, kinds: ['source', 'node'],
+            assertPreparedInputCurrent: baseGuard.assertCurrent,
+            sourceIds: input.state.sources.map((source) => source.id), nodeIds: input.state.nodes.map((node) => node.id),
+          });
+        } finally { signal.removeEventListener('abort', abortScope); }
+      })();
+      baseGuard.assertCurrent();
+      const selectedSourceIds = new Set(scopeSelection.sources.map((source) => source.id));
+      const guard = createSemanticWriteGuard(input.store);
+      guard.watch('home-graph-scope-preflight', () => { baseGuard.assertCurrent(); return true; });
+      guard.watch('home-graph-selected-scope', () => { scopeSelection.assertCurrent(); return true; });
       const assertCurrent = () => { guard.assertCurrent(); checkPorts(); };
       const check = () => { assertAnswerVerificationActive(signal); assertCurrent(); };
       const items: HomeGraphSearchResult[] = [];
       const candidates: AnswerEvidenceCandidate[] = [];
-      for (const source of input.state.sources) {
-        const original = snapshotNodeInput(guard.watch(`source:${source.id}`, () => input.store.getSource(source.id), source));
-        if (!original) throw new Held('stale');
-        const capturedExtraction = input.state.extractionBySourceId.get(source.id) ?? null;
-        assertKnowledgeExtractionInput(capturedExtraction);
-        const extraction = snapshotNodeInput(capturedExtraction);
-        guard.watch(`extraction:${source.id}`, () => input.store.getExtractionBySourceId(source.id), extraction);
-        if (extraction && (extraction.sourceId !== source.id || getKnowledgeSpaceId(extraction) !== getKnowledgeSpaceId(source))) throw new Held('malformed');
-        assertKnowledgeExtractionInput(extraction);
-        const uris = knowledgeSourceJudgmentUris(source);
-        assertJudgmentInput({ title: original.title, summary: original.summary, description: original.description,
-          sourceType: original.sourceType, tags: original.tags, uris });
-        // Preserve the producer's unindexed suggestion boundary. A relevance
-        // yes is not permission to serve a documentation candidate as evidence.
-        if (!extraction && source.status !== 'indexed'
-          && source.metadata.homeGraphSourceKind === 'documentation-candidate') continue;
-        const text = sourceSemanticText({ ...original, ...uris }, extraction);
-        const item = { kind: 'source' as const, id: source.id, title: source.title ?? source.sourceUri ?? source.id, score: 0, source };
-        const candidate = initialEvidenceCandidate({ ...item, facts: [] }, `candidate-${items.length + 1}`, text, input.store, guard);
-        assertJudgmentInput({ query: input.query.query, candidate });
-        items.push(item); candidates.push(candidate);
-      }
-      const usableSourceIds = new Set(input.state.sources.filter((source) => source.status === 'indexed').map((source) => source.id));
-      const admittedNodeIds = new Set(listAnswerNodes(input.store, input.spaceId)
-        .filter((node) => node.metadata.semanticKind !== 'fact' || factHasUsableSource(node, usableSourceIds)).map((node) => node.id));
-      for (const node of input.state.nodes) {
-        if (!admittedNodeIds.has(node.id)) continue;
-        const original = snapshotNodeInput(guard.watch(`node:${node.id}`, () => input.store.getNode(node.id), node));
-        if (!original) throw new Held('stale');
-        const text = [renderNodeEvidence(original), JSON.stringify(subjectIdentity(original.metadata)),
-          initialNodeReferenceContext(input.store, original, input.spaceId, guard, usableSourceIds)].join('\n');
-        const item = { kind: 'node' as const, id: node.id, title: node.title, score: 0, node };
-        const candidate = initialEvidenceCandidate({ ...item, facts: node.metadata.semanticKind === 'fact' ? [original] : [] },
-          `candidate-${items.length + 1}`, text, input.store, guard);
-        assertJudgmentInput({ query: input.query.query, candidate });
-        items.push(item); candidates.push(candidate);
-      }
+      input.store.assertRecordSnapshotFrame(() => {
+        for (const source of input.state.sources) {
+          if (!selectedSourceIds.has(source.id)) continue;
+          const original = snapshotNodeInput(guard.watch(`source:${source.id}`, () => input.store.getSource(source.id), source));
+          if (!original) throw new Held('stale');
+          const capturedExtraction = input.state.extractionBySourceId.get(source.id) ?? null;
+          assertKnowledgeExtractionInput(capturedExtraction);
+          const extraction = snapshotNodeInput(capturedExtraction);
+          guard.watch(`extraction:${source.id}`, () => input.store.getExtractionBySourceId(source.id), extraction);
+          if (extraction && (extraction.sourceId !== source.id || getKnowledgeSpaceId(extraction) !== getKnowledgeSpaceId(source))) throw new Held('malformed');
+          assertKnowledgeExtractionInput(extraction);
+          const uris = knowledgeSourceJudgmentUris(source);
+          assertJudgmentInput({ title: original.title, summary: original.summary, description: original.description,
+            sourceType: original.sourceType, tags: original.tags, uris });
+          // Preserve the producer's unindexed suggestion boundary. A relevance
+          // yes is not permission to serve a documentation candidate as evidence.
+          if (!extraction && source.status !== 'indexed'
+            && source.metadata.homeGraphSourceKind === 'documentation-candidate') continue;
+          const text = sourceSemanticText({ ...original, ...uris }, extraction);
+          const item = { kind: 'source' as const, id: source.id, title: source.title ?? source.sourceUri ?? source.id, score: 0, source };
+          const candidate = initialEvidenceCandidate({ ...item, facts: [] }, `candidate-${items.length + 1}`, text, input.store, guard, scopeSelection);
+          assertJudgmentInput({ query: input.query.query, candidate });
+          items.push(item); candidates.push(candidate);
+        }
+        const usableSourceIds = new Set(scopeSelection.sources.filter((source) => source.status === 'indexed').map((source) => source.id));
+        const admittedNodeIds = new Set(listAnswerNodes(scopeSelection)
+          .filter((node) => node.metadata.semanticKind !== 'fact' || factHasUsableSource(node, usableSourceIds)).map((node) => node.id));
+        for (const node of input.state.nodes) {
+          if (!admittedNodeIds.has(node.id)) continue;
+          const original = snapshotNodeInput(guard.watch(`node:${node.id}`, () => input.store.getNode(node.id), node));
+          if (!original) throw new Held('stale');
+          const text = [renderNodeEvidence(original), JSON.stringify(subjectIdentity(original.metadata)),
+            initialNodeReferenceContext(input.store, original, scopeSelection, guard, usableSourceIds)].join('\n');
+          const item = { kind: 'node' as const, id: node.id, title: node.title, score: 0, node };
+          const candidate = initialEvidenceCandidate({ ...item, facts: node.metadata.semanticKind === 'fact' ? [original] : [] },
+            `candidate-${items.length + 1}`, text, input.store, guard, scopeSelection);
+          assertJudgmentInput({ query: input.query.query, candidate });
+          items.push(item); candidates.push(candidate);
+        }
+      });
       // Complete source/node preflight precedes even the first object-intent read.
       const objects = prepareAnswerLinkedObjects(input.store, input.spaceId, { query: input.query.query },
         HOME_GRAPH_KNOWLEDGE_EXTENSION.objectProfiles ?? [], signal);
@@ -154,7 +187,12 @@ export async function readHomeGraphSearchSelection(input: {
         for (const value of [extraction?.summary, item.source.summary]) {
           if (typeof value !== 'string' || !value.trim()) continue;
           check(); objects.assertCurrent();
-          const usable = await readKnowledgeExtractionTextUsability(value, signal);
+          let usable: boolean;
+          try { usable = await readKnowledgeExtractionTextUsability(value, signal); }
+          catch (error) {
+            check(); objects.assertCurrent();
+            throw error;
+          }
           check(); objects.assertCurrent();
           if (usable) { summaries.set(item.id, value.trim()); break; }
         }
@@ -199,6 +237,7 @@ export async function readHomeGraphSearchSelection(input: {
     if (error instanceof KnowledgeAnswerExcerptHeldError || error instanceof KnowledgeEvidenceRelevanceHeldError
       || error instanceof KnowledgeAnswerObjectAlignmentHeldError) throw new Held(
         error.reason === 'unconfigured' ? 'unavailable' : error.reason === 'unsettled' ? 'uncertain' : error.reason);
+    if (error instanceof KnowledgeScopeSelectionHeldError) throw new Held(error.reason);
     if (error instanceof KnowledgeSourceQualityHeldError) throw new Held(error.reason === 'aborted' ? 'aborted' : 'stale');
     throw new Held('unavailable');
   }

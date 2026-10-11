@@ -3,7 +3,7 @@ import { prepareProtectedResearchReport, createAgentResearchReportProjector, bin
 import type { ProtectedSourceOwner } from '@goodvibes-jev/engine/sdk/platform/security';
 import type { ArtifactDescriptor, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolEffect, assertCurrentToolInvocation, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 
 export interface AgentResearchReportToolArgs {
   readonly runId?: unknown;
@@ -21,6 +21,7 @@ export interface AgentResearchReportToolArgs {
   readonly tags?: unknown;
   readonly requireCitationCoverage?: unknown;
   readonly visualReport?: unknown;
+  readonly preview?: unknown;
   readonly confirm?: unknown;
   readonly explicitUserRequest?: unknown;
 }
@@ -90,7 +91,7 @@ function preview(args: AgentResearchReportToolArgs, sources: readonly ResearchSo
     `  question ${readString(args.question) || '(missing)'}`,
     `  sources ${sources.length}`,
     `  confidence ${readString(args.confidence) || '(unspecified)'}`,
-    '  policy saving a sourced report artifact requires confirm:true',
+    '  policy saving a sourced report artifact requires current recorded effect admission',
   ].join('\n');
 }
 
@@ -198,7 +199,7 @@ function visualReportSection(
     '- Review citation coverage and repair suggestions before sharing.',
     '- Inspect the saved artifact with `agent_artifacts mode:"show" includeContent:true`.',
     '- Archive the report with related research source artifacts through `agent_artifacts mode:"archive"`.',
-    '- Promote to Knowledge only through a separate confirmed `agent_knowledge_ingest sourceKind:"artifact"` call.',
+    '- Promote to Knowledge only through a separately admitted `agent_knowledge_ingest sourceKind:"artifact"` call.',
     '',
   );
   return lines.join('\n');
@@ -355,8 +356,8 @@ function visualReportMetadata(
     unknownCitationIds: coverage.unknownCitationIds,
     routes: {
       inspect: 'agent_artifacts mode:"show" artifactId:"..." includeContent:true',
-      archive: 'agent_artifacts mode:"archive" artifactIds:["..."] destinationPath:"exports/research-report.zip" confirm:true explicitUserRequest:"..."',
-      promoteKnowledge: 'agent_knowledge_ingest sourceKind:"artifact" artifactId:"..." confirm:true explicitUserRequest:"..."',
+      archive: 'agent_artifacts mode:"archive" artifactIds:["..."] destinationPath:"exports/research-report.zip"',
+      promoteKnowledge: 'agent_knowledge_ingest sourceKind:"artifact" artifactId:"..."',
     },
   };
 }
@@ -372,11 +373,11 @@ function reportNextRouteLines(descriptor: ArtifactDescriptor, args: AgentResearc
   return [
     `  inspect research action:"report_artifact" artifactId:${routeString(descriptor.id)}`,
     `  artifact agent_artifacts mode:"show" artifactId:${routeString(descriptor.id)} includeContent:true`,
-    `  export agent_artifacts mode:"export" artifactId:${routeString(descriptor.id)} destinationPath:${routeString(`exports/${filename}`)} confirm:true explicitUserRequest:"..."`,
-    `  archive agent_artifacts mode:"archive" artifactIds:[${routeString(descriptor.id)}] destinationPath:"exports/research-report.zip" confirm:true explicitUserRequest:"..."`,
-    `  promoteKnowledge agent_knowledge_ingest sourceKind:"artifact" artifactId:${routeString(descriptor.id)} confirm:true explicitUserRequest:"..."`,
+    `  export agent_artifacts mode:"export" artifactId:${routeString(descriptor.id)} destinationPath:${routeString(`exports/${filename}`)}`,
+    `  archive agent_artifacts mode:"archive" artifactIds:[${routeString(descriptor.id)}] destinationPath:"exports/research-report.zip"`,
+    `  promoteKnowledge agent_knowledge_ingest sourceKind:"artifact" artifactId:${routeString(descriptor.id)}`,
     ...(runId ? [
-      `  completeRun research action:"complete" id:${routeString(runId)} reportArtifactId:${routeString(descriptor.id)} confirm:true explicitUserRequest:"..."`,
+      `  completeRun research action:"complete" id:${routeString(runId)} reportArtifactId:${routeString(descriptor.id)}`,
     ] : []),
     `  reports research action:"reports"${title ? ` query:${routeString(title)}` : ''}`,
   ];
@@ -385,6 +386,7 @@ function reportNextRouteLines(descriptor: ArtifactDescriptor, args: AgentResearc
 async function saveResearchReport(
   artifactStore: AgentResearchReportArtifactStore,
   args: AgentResearchReportToolArgs & { readonly sources: readonly ResearchSource[] },
+  assertWrite: () => void,
 ): Promise<ArtifactDescriptor> {
   const title = readString(args.title);
   const question = readString(args.question);
@@ -396,14 +398,6 @@ async function saveResearchReport(
     throw new Error('summary, reportMarkdown, or findings are required.');
   }
   const explicitUserRequest = readString(args.explicitUserRequest);
-  if (!explicitUserRequest) throw new Error('explicitUserRequest is required so report export stays user-directed.');
-  if (!readBoolean(args.confirm)) {
-    throw new Error([
-      preview(args, sources),
-      '',
-      'Model tool confirmation required. Call this tool with confirm:true only after the user explicitly asked GoodVibes Agent to save this research report.',
-    ].join('\n'));
-  }
   const coverage = citationCoverage(args, sources);
   if (readBoolean(args.requireCitationCoverage) && !coverage.pass) {
     throw new Error([
@@ -414,6 +408,7 @@ async function saveResearchReport(
   const includeVisualReport = readBoolean(args.visualReport);
   const markdown = buildMarkdown(args, sources, includeVisualReport);
   if (markdown.length > MAX_REPORT_CHARS) throw new Error(`Research report is too large (${markdown.length} chars). Keep it under ${MAX_REPORT_CHARS}.`);
+  assertWrite();
   return artifactStore.create({
     kind: 'document',
     mimeType: 'text/markdown',
@@ -432,7 +427,7 @@ async function saveResearchReport(
       ...(includeVisualReport ? { visualReport: visualReportMetadata(args, sources, coverage) } : {}),
       explicitUserRequest,
     },
-  });
+  }, { assertCurrent: assertWrite });
 }
 
 function coverageFromMetadata(metadata: ArtifactDescriptor['metadata']): CitationCoverage | null {
@@ -459,7 +454,7 @@ export function createAgentResearchReportTool(
   return {
     definition: {
       name: 'agent_research_report',
-      description: 'Save one confirmed sourced research report artifact.',
+      description: 'Save one sourced research report artifact under current recorded effect admission.',
       parameters: {
         type: 'object',
         properties: {
@@ -498,10 +493,11 @@ export function createAgentResearchReportTool(
             items: { type: 'string' },
             description: 'Optional report tags.',
           },
-          confirm: { type: 'boolean', description: 'Required true to save the report.' },
-          explicitUserRequest: { type: 'string', description: 'User request authorizing report save.' },
+          preview: { type: 'boolean', description: 'Read a privacy-qualified report preview without saving an artifact.' },
+          confirm: { type: 'boolean', description: 'Optional legacy audit field; does not authorize report writes.' },
+          explicitUserRequest: { type: 'string', description: 'Optional request text retained with report metadata.' },
         },
-        required: ['title', 'question', 'sources', 'confirm', 'explicitUserRequest'],
+        required: ['title', 'question', 'sources'],
         additionalProperties: false,
       },
       sideEffects: ['state'],
@@ -511,10 +507,19 @@ export function createAgentResearchReportTool(
       if (!artifactStore?.create) return failure('Research report export is unavailable because this runtime did not provide an artifact store.');
       let prepared: PreparedResearchReport | undefined;
       try {
-        prepared = await prepareProtectedResearchReport(sourceOwner, rawArgs, { signal: options?.signal });
+        const assertWrite = () => {
+          options?.signal?.throwIfAborted();
+          const admitted = rawArgs.preview === true ? assertCurrentToolInvocation(rawArgs, options) : assertCurrentToolEffect(rawArgs, options, 'write');
+          if (!admitted) throw new Error('Research report writes require current recorded effect admission.');
+        };
+        assertWrite();
+        prepared = await prepareProtectedResearchReport(sourceOwner, rawArgs, { signal: options?.signal, assertCurrent: assertWrite });
         const args = prepared.args as unknown as AgentResearchReportToolArgs & { readonly sources: readonly ResearchSource[] };
         prepared.assertCurrent();
-        const descriptor = await saveResearchReport(artifactStore, args);
+        if (args.preview === true) return output(preview(args, args.sources));
+        const assertCommit = () => { assertWrite(); prepared?.assertCurrent(); };
+        const descriptor = await saveResearchReport(artifactStore, args, assertCommit);
+        assertCommit();
         const coverage = coverageFromMetadata(descriptor.metadata);
         const lines = [
           'Saved Agent research report artifact',

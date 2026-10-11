@@ -62,3 +62,5 @@ registry.register(providerSetupReading);
 import { localRecipeFit, routeReadiness } from './batteries/model-readiness.js';
 registry.register(routeReadiness);
 registry.register(localRecipeFit);
+import { modelReasonTheme } from './batteries/model-reason-theme.js';
+registry.register(modelReasonTheme);

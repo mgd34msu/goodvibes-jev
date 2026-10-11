@@ -7,7 +7,8 @@ import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { captureAutonomousSource, type AutonomousToolSource } from './autonomous.js';
 import { awaitPermission } from './cancellation.js';
-import type { PermissionManager } from './manager.js';
+import { assertCurrentExternalAdmission, claimExternalAdmission, closeExternalAdmission, type PermissionManager } from './manager.js';
+import type { ToolExecutionEffect } from '../tools/registry.js';
 import type { WorkspaceTrustManager } from '../runtime/workspace-trust.js';
 
 /** Trusted transport-owned lifetime; never reconstructed from remote protocol params. */
@@ -41,7 +42,7 @@ export interface ExternalOperationSource {
 }
 
 export async function admitExternalRequest(host: ExternalPermissionHost, transport: ExternalRequestScope,
-  operation: ExternalOperationSource, input: { readonly tool: string; readonly args: Record<string, unknown>; readonly supportingDecisionIds?: readonly string[]; readonly serverPolicy?: Readonly<Record<string, unknown>>; readonly protocolSubject?: CapturedProtocolRequest }) {
+  operation: ExternalOperationSource, input: { readonly tool: string; readonly args: Record<string, unknown>; readonly effect?: ToolExecutionEffect | undefined; readonly supportingDecisionIds?: readonly string[]; readonly serverPolicy?: Readonly<Record<string, unknown>>; readonly protocolSubject?: CapturedProtocolRequest }) {
   const externalRequestEvidence = captureExternalRequestEvidence({ destination: transport.destination, ...(input.serverPolicy ? { serverPolicy: input.serverPolicy } : {}) });
   if (!host.port.recorder) throw new Error('External protocol admission requires a recorded judgment owner');
   const invalidation = new AbortController();
@@ -67,15 +68,33 @@ export async function admitExternalRequest(host: ExternalPermissionHost, transpo
       decoratePort: () => host.port,
     }), signal);
     assertCurrent();
-    let finished = false;
+    let finished = false, claimed = false;
+    const retainedCurrent = () => {
+      if (finished && input.effect) throw new Error('External admission is closed');
+      assertCurrent();
+      if (claimed && input.effect) assertCurrentExternalAdmission(admission, host.permissionManager, input.effect);
+    };
     return {
       result: admission.result,
-      assertCurrent,
+      assertCurrent: retainedCurrent,
       claim() {
-        if (finished) throw new Error('External response already consumed');
-        assertCurrent(); admission.claim(); assertCurrent(); finished = true; unsubscribe();
+        if (finished || claimed) throw new Error('External response already consumed');
+        assertCurrent();
+        if (input.effect) claimExternalAdmission(admission, host.permissionManager, input.effect);
+        else admission.claim();
+        claimed = true; retainedCurrent();
+        // Existing protocol owners consume their response at claim. Native
+        // multi-effect owners opt into the retained issuer lifetime explicitly.
+        if (!input.effect) { finished = true; unsubscribe(); }
       },
-      close() { if (!finished) { finished = true; unsubscribe(); } },
+      close() {
+        if (!finished) {
+          finished = true;
+          try {
+            if (input.effect && admission.result.approved && admission.result.autonomousDecision?.outcome === 'act') closeExternalAdmission(admission, host.permissionManager);
+          } finally { unsubscribe(); }
+        }
+      },
     };
   } catch (error) { unsubscribe(); throw error; }
 }

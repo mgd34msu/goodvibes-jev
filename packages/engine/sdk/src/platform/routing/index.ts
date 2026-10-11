@@ -97,6 +97,7 @@ export {
 export * from './task-routes/index.js';
 export { registry as routingRegistry } from './judgment-registry.js';
 export { localRecipeFit, routeReadiness } from './batteries/model-readiness.js';
+export { modelReasonTheme, MODEL_REASON_THEME_LABELS, type ModelReasonTheme } from './batteries/model-reason-theme.js';
 export {
   localRecipeFitFrom,
   modelReadinessFlagFrom,
@@ -119,3 +120,4 @@ export {
   type RouteReadinessLevel,
   type RouteReadinessReading,
 } from './model-readiness.js';
+export { personalOpsLaneMember, personalOpsToolLane, personalOpsSampleField, personalOpsReceiptStatus, personalOpsResultField } from './batteries/personal-ops.js';

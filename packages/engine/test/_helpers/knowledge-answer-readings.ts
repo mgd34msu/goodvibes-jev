@@ -1,3 +1,4 @@
+import { homeGraphPagePriorityInstructions } from '../../sdk/src/platform/knowledge/home-graph/batteries/page-priority.js';
 import { repairSubjectFixtureReading } from './repair-subject-fixture-readings.js';
 /** Explicit plumbing readings for synthetic answer fixtures, not a semantic evaluator. */
 import { homeGraphDocumentKind, homeGraphDocumentSubject } from '../../sdk/src/platform/knowledge/home-graph/auto-link/battery.js';
@@ -9,6 +10,10 @@ import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/test
 import { repairProfileFixtureReading, repairUsefulFixtureReading, type RepairProfileFixtureValues, type RepairUsefulFixtureValues } from './repair-profile-fixture-readings.js';
 export interface AnswerFixtureReadings {
   /** Exact authored offered query strings, in preference order. Unlisted queries select none. */
+  scope?: ReadonlyArray<readonly ['source' | 'node' | 'issue', string, number]>;
+  scopeByView?: ReadonlyArray<readonly ['source' | 'node' | 'issue', string, 'ordinary' | 'explicit' | 'all', number]>;
+  pagePriority?: ReadonlyArray<readonly [string, number]>;
+  pagePriorityDefault?: number;
   webGapQueries?: readonly string[];
   /** Exact discovered URLs and their independent authored relevance/publisher readings. */
   webGapSources?: ReadonlyArray<readonly [string, number, 'official-vendor' | 'vendor' | 'secondary']>;
@@ -55,6 +60,17 @@ export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings,
   let fake = makePort();
   function makePort() {
     return fakePort((name, question, state) => {
+      if (name === 'included') {
+        const input = state as { view: 'ordinary' | 'explicit' | 'all'; candidate: { kind: 'source' | 'node' | 'issue'; content: { title?: string; message?: string } } };
+        const candidate = input.candidate;
+        const title = candidate.content.title ?? candidate.content.message ?? '';
+        return noulAnswer(table.scopeByView?.find(([kind, text, view]) => kind === candidate.kind && text === title && view === input.view)?.[3]
+          ?? table.scope?.find(([kind, text]) => kind === candidate.kind && text === title)?.[2] ?? 0.99);
+      }
+      if (question.type === 'noul' && question.instructions === homeGraphPagePriorityInstructions) {
+        const title = (state as { candidate?: { title?: string } }).candidate?.title;
+        return noulAnswer(table.pagePriority?.find(([candidate]) => candidate === title)?.[1] ?? table.pagePriorityDefault ?? 0.99);
+      }
       const web = state as { context?: { purpose?: string }; candidates?: { id: string; content: string }[]; source?: { url?: string } };
       if (web.context?.purpose === 'knowledge-gap-repair') {
         if (web.candidates) {

@@ -12,7 +12,7 @@ import { runSessionsCommand } from '../daemon/sessions-command.js';
 import { runStatusCommand, runUpdateCommand, type DaemonCommandResult } from '../daemon/status-command.js';
 import { runWebuiCommand } from '../daemon/webui-command.js';
 import { runProvisionWakeModelCommand } from '../daemon/provision-wake-model.js';
-import { isDaemonServiceSubcommand, runDaemonServiceCli, resolveInstalledDaemonBinary } from '../daemon/service-commands.js';
+import { isDaemonServiceSubcommand, runDaemonServiceCli, resolveInstalledDaemonBinary, type ManagedServiceActionRunner } from '../daemon/service-commands.js';
 import type { DaemonProcessOptions } from '../daemon/process-lifecycle.js';
 import { VERSION } from '../version.js';
 import { createDaemonCliConfiguration, resolveDaemonCliOwnership } from './configuration.js';
@@ -29,6 +29,8 @@ export interface DaemonCliOptions {
   readonly runtime?: DaemonCliRuntime;
   /** Explicit installed executable that composes the same runtime; never guessed from Bun. */
   readonly serviceBinaryPath?: string;
+  /** Trusted embedding port; ordinary commands use the real platform manager. */
+  readonly serviceActionRunner?: ManagedServiceActionRunner;
   readonly process?: DaemonProcessOptions;
   readonly stdout?: (line: string) => void;
   readonly stderr?: (line: string) => void;
@@ -84,7 +86,6 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
     if (cli.command === 'serve' && typeof options.runtime?.inboxFactory !== 'function') return refuse(PARTIAL);
     if (['install-service', 'start-service', 'restart-service', 'migrate-service'].includes(cli.command)) {
       if (typeof options.runtime?.inboxFactory !== 'function' || !options.serviceBinaryPath) return refuse(`${PARTIAL} Service activation requires an explicitly composed executable.`);
-      if (resolveDaemonCliOwnership(cli.flags, env, options.cwd).isOverridden) return refuse('Service activation with overridden tree or daemon homes is not supported by this partial launcher. No service was changed.');
     }
 
     if (cli.command === 'provision-wake-model') {
@@ -131,10 +132,17 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
       }
       default: {
         if (!isDaemonServiceSubcommand(cli.command)) return refuse('This command has no migrated dispatcher.');
+        const servicePlatform = config.get('service.platform');
+        if (configuration.isOverridden && ['install-service', 'start-service', 'restart-service', 'migrate-service'].includes(cli.command)
+          && servicePlatform !== 'systemd' && !(servicePlatform === 'auto' && process.platform === 'linux')) {
+          return refuse('Service activation with selected tree or daemon homes currently requires systemd. No service was changed.');
+        }
         const binding = resolveRuntimeEndpointBinding(config, 'controlPlane');
         return result(await runDaemonServiceCli({ subcommand: cli.command,
           binaryPath: options.serviceBinaryPath ?? resolveInstalledDaemonBinary({ moduleUrl: import.meta.url }),
-          configManager: config, homeDir: homeDirectory, unitHomeDir: env.HOME ?? homedir(), workingDirectory,
+          configManager: config, homeDir: homeDirectory, daemonHomeDirectory, unitHomeDir: env.HOME?.trim() || homedir(), workingDirectory,
+          requireInstalledDefinitionMatch: configuration.isOverridden || cli.flags.workingDir !== undefined
+            || env.GOODVIBES_WORKING_DIR !== undefined, actionRunner: options.serviceActionRunner,
           host: binding.host, port: binding.port, confirmMigration: cli.flags.yes, json: cli.flags.json,
           hostnameFlagProvided: cli.flags.hostname !== undefined, portFlagProvided: cli.flags.port !== undefined,
         }), stdout);

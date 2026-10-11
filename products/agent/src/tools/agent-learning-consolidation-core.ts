@@ -14,6 +14,8 @@ import {
   type LearningCandidate,
   type LearningConsolidationFields,
 } from './agent-harness-learning-curator.ts';
+import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { harnessCatalogInvocationAuthority } from './agent-harness-catalog-ingress.ts';
 
 export type AgentLearningConsolidationMode = 'preview' | 'merge' | 'stale' | 'delete' | 'rollback' | 'recreate' | 'receipts';
 export type AgentLearningConsolidationDomain = 'memory' | 'persona' | 'skill' | 'routine';
@@ -93,11 +95,9 @@ export function failure(error: string): { readonly success: false; readonly erro
   return { success: false, error };
 }
 
-export function requireConfirmedWrite(args: AgentLearningConsolidationToolArgs, mode: AgentLearningConsolidationWriteMode): string {
-  const explicitUserRequest = readString(args.explicitUserRequest);
-  if (!explicitUserRequest) throw new Error(`${mode} requires explicitUserRequest with the user's exact request or a short faithful summary.`);
-  if (args.confirm !== true) throw new Error(`${mode} requires confirm:true after an explicit user request.`);
-  return explicitUserRequest;
+export function requireConfirmedWrite(args: Record<string, unknown>, mode: AgentLearningConsolidationWriteMode, options: Parameters<Tool['execute']>[1]): string {
+  if (!harnessCatalogInvocationAuthority(args, options, 'write')) throw new Error(`${mode} requires current recorded effect admission.`);
+  return readString(args.explicitUserRequest) || `Recorded effect admission for ${mode}.`;
 }
 
 function isDomain(value: string): value is AgentLearningConsolidationDomain {
@@ -192,13 +192,14 @@ function minimalContext(shellPaths: ShellPathService, memoryRegistry: MemoryRegi
   } as unknown as CommandContext;
 }
 
-export function resolveCandidate(
+export async function resolveCandidate(
   shellPaths: ShellPathService,
   memoryRegistry: MemoryRegistry,
   args: AgentLearningConsolidationToolArgs,
-): LearningCandidate {
+  options: CatalogRankingOptions = {},
+): Promise<LearningCandidate> {
   const input = readString(args.candidateId) || readString(args.query);
-  const resolved = resolveLearningConsolidationCandidate(minimalContext(shellPaths, memoryRegistry), input);
+  const resolved = await resolveLearningConsolidationCandidate(minimalContext(shellPaths, memoryRegistry), input, options);
   if (resolved.status === 'found') return resolved.candidate;
   if (resolved.status === 'ambiguous') {
     throw new Error(`Ambiguous learning consolidation candidate ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);

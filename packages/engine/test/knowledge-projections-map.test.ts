@@ -11,6 +11,7 @@ import { renderDevicePassportPage } from '../sdk/src/platform/knowledge/home-gra
 import { buildKnowledgePacket } from '../sdk/src/platform/knowledge/packet.js';
 import { KnowledgeProjectionService } from '../sdk/src/platform/knowledge/projections.js';
 import { renderKnowledgeMap } from '../sdk/src/platform/knowledge/map.js';
+import { prepareKnowledgeScopeSelection } from '../sdk/src/platform/knowledge/scope-selection.js';
 import { KnowledgeService } from '../sdk/src/platform/knowledge/service.js';
 import { knowledgeSpaceMetadata } from '../sdk/src/platform/knowledge/spaces.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
@@ -431,7 +432,7 @@ describe('knowledge generated projections and maps', () => {
       nodes: store.listNodes(20),
       edges: store.listEdges(),
       issues: store.listIssues(20),
-    }, { includeSources: true });
+    }, await prepareKnowledgeScopeSelection(store), { includeSources: true });
 
     expect(first.artifactCreated).toBe(true);
     expect(second.artifactCreated).toBe(false);
@@ -736,7 +737,7 @@ describe('knowledge generated projections and maps', () => {
       nodes: store.listNodes(20),
       edges: store.listEdges(),
       issues: store.listIssues(20),
-    }, {
+    }, await prepareKnowledgeScopeSelection(store), {
       includeSources: true,
       nodeKinds: ['topic', 'capability'],
       sourceTypes: ['manual'],
@@ -810,13 +811,13 @@ describe('knowledge generated projections and maps', () => {
       nodes: store.listNodes(20),
       edges: store.listEdges(),
       issues: store.listIssues(20),
-    }, { includeSources: true });
+    }, await prepareKnowledgeScopeSelection(store), { includeSources: true });
     const allMap = renderKnowledgeMap({
       sources: store.listSources(20),
       nodes: store.listNodes(20),
       edges: store.listEdges(),
       issues: store.listIssues(20),
-    }, { includeSources: true, includeAllSpaces: true });
+    }, await prepareKnowledgeScopeSelection(store, { includeAllSpaces: true }), { includeSources: true, includeAllSpaces: true });
     const defaultPacket = await buildKnowledgePacket(packetContext(store), 'LG webOS Smart TV', [], 10);
     const allPacket = await buildKnowledgePacket(packetContext(store), 'LG webOS Smart TV', [], 10, { includeAllSpaces: true });
 
@@ -1230,49 +1231,78 @@ describe('knowledge generated projections and maps', () => {
     }), disposeKnowledgeService);
     const projectionService = new KnowledgeProjectionService(store, artifactStore);
 
-    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).toContain(baseNode.id);
-    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(leakedNode.id);
-    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(explicitDefaultGap.id);
-    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(edgeOnlyTopic.id);
-    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(edgeOnlyDomain.id);
-    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(orphanCatalogTopic.id);
-    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(orphanAnswerGap.id);
-    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(tvFact.id);
-    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(productNavigationFact.id);
-    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(productNavigationMemory.id);
-    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(orphanNavigationMemory.id);
-    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(legacyAgentWikiNode.id);
-    expect(service.querySources({ limit: 100 }).items.map((source) => source.id)).not.toContain(agentAmbiguitySource.id);
+    const scope = [
+      ['source', 'Base Knowledge Manual', 0.99],
+      ['node', 'Base Widget', 0.99],
+      ['source', 'Navigation Menu', 0.01],
+      ['source', 'Cohere-Labs-Community/language-confusion - GitHub', 0.01],
+      ['source', 'Specification: GoodVibes Agents with YAML frontmatter', 0.01],
+      ['node', 'What smart TV features does it have?', 0.01],
+      ['node', 'BRAVIA XBR-55X850B Home Assistant', 0.01],
+      ['node', 'Network and wireless capabilities', 0.01],
+      ['node', 'Input and output ports', 0.01],
+      ['node', 'Navigation Menu', 0.01],
+      ['node', 'Specification: GoodVibes Agents with YAML frontmatter', 0.01],
+      ['issue', 'No knowledge answer available for: What features does the TV have?', 0.01],
+      ['issue', 'No knowledge answer available for: What smart TV features does it have?', 0.01],
+      ['issue', 'No knowledge answer available for: BRAVIA XBR-55X850B Home Assistant', 0.01],
+    ] satisfies NonNullable<Parameters<typeof answerReadings.set>[0]['scope']>;
+    const scopeByView = [
+      ['node', 'DisplaySpecifications', 'ordinary', 0.01],
+      ['node', 'DisplaySpecifications', 'all', 0.99],
+    ] satisfies NonNullable<Parameters<typeof answerReadings.set>[0]['scopeByView']>;
+    answerReadings.set({ scope, scopeByView });
+
+    const ordinaryNodeIds = (await service.queryNodes({ limit: 100 })).items.map(node => node.id);
+    expect(ordinaryNodeIds).toContain(baseNode.id);
+    expect(ordinaryNodeIds).not.toContain(leakedNode.id);
+    expect(ordinaryNodeIds).not.toContain(explicitDefaultGap.id);
+    expect(ordinaryNodeIds).not.toContain(edgeOnlyTopic.id);
+    expect(ordinaryNodeIds).not.toContain(edgeOnlyDomain.id);
+    expect(ordinaryNodeIds).not.toContain(orphanCatalogTopic.id);
+    expect(ordinaryNodeIds).not.toContain(orphanAnswerGap.id);
+    expect(ordinaryNodeIds).not.toContain(tvFact.id);
+    expect(ordinaryNodeIds).not.toContain(productNavigationFact.id);
+    expect(ordinaryNodeIds).not.toContain(productNavigationMemory.id);
+    expect(ordinaryNodeIds).not.toContain(orphanNavigationMemory.id);
+    expect(ordinaryNodeIds).not.toContain(legacyAgentWikiNode.id);
+    const ordinarySourceIds = (await service.querySources({ limit: 100 })).items.map(source => source.id);
+    expect(ordinarySourceIds).not.toContain(agentAmbiguitySource.id);
     for (const source of productNavigationSources) {
-      expect(service.querySources({ limit: 100 }).items.map((entry) => entry.id)).not.toContain(source.id);
+      expect(ordinarySourceIds).not.toContain(source.id);
     }
-    expect(service.querySources({ limit: 100 }).items.map((source) => source.id)).not.toContain(githubRepairSource.id);
-    expect(service.querySources({ limit: 100 }).items.map((source) => source.id)).not.toContain(legacyAgentWikiSource.id);
-    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).toContain(leakedNode.id);
-    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).not.toContain(explicitDefaultGap.id);
-    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).toContain(edgeOnlyTopic.id);
-    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).toContain(edgeOnlyDomain.id);
-    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).toContain(orphanCatalogTopic.id);
-    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).not.toContain(orphanAnswerGap.id);
-    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).not.toContain(tvFact.id);
-    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).not.toContain(productNavigationFact.id);
-    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).not.toContain(productNavigationMemory.id);
-    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).not.toContain(orphanNavigationMemory.id);
-    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).not.toContain(legacyAgentWikiNode.id);
-    expect(service.querySources({ limit: 100, includeAllSpaces: true }).items.map((source) => source.id)).not.toContain(agentAmbiguitySource.id);
+    expect(ordinarySourceIds).not.toContain(githubRepairSource.id);
+    expect(ordinarySourceIds).not.toContain(legacyAgentWikiSource.id);
+    const allNodeIds = (await service.queryNodes({ limit: 100, includeAllSpaces: true })).items.map(node => node.id);
+    expect(allNodeIds).toContain(leakedNode.id);
+    expect(allNodeIds).not.toContain(explicitDefaultGap.id);
+    expect(allNodeIds).toContain(edgeOnlyTopic.id);
+    expect(allNodeIds).toContain(edgeOnlyDomain.id);
+    expect(allNodeIds).toContain(orphanCatalogTopic.id);
+    expect(allNodeIds).not.toContain(orphanAnswerGap.id);
+    expect(allNodeIds).not.toContain(tvFact.id);
+    expect(allNodeIds).not.toContain(productNavigationFact.id);
+    expect(allNodeIds).not.toContain(productNavigationMemory.id);
+    expect(allNodeIds).not.toContain(orphanNavigationMemory.id);
+    expect(allNodeIds).not.toContain(legacyAgentWikiNode.id);
+    const allSourceIds = (await service.querySources({ limit: 100, includeAllSpaces: true })).items.map(source => source.id);
+    expect(allSourceIds).not.toContain(agentAmbiguitySource.id);
     for (const source of productNavigationSources) {
-      expect(service.querySources({ limit: 100, includeAllSpaces: true }).items.map((entry) => entry.id)).not.toContain(source.id);
+      expect(allSourceIds).not.toContain(source.id);
     }
-    expect(service.querySources({ limit: 100, includeAllSpaces: true }).items.map((source) => source.id)).not.toContain(githubRepairSource.id);
-    expect(service.querySources({ limit: 100, includeAllSpaces: true }).items.map((source) => source.id)).not.toContain(legacyAgentWikiSource.id);
-    expect(service.queryNodes({ limit: 100, knowledgeSpaceId: 'homeassistant:test' }).items.map((node) => node.id)).toContain(edgeOnlyTopic.id);
-    expect(service.queryNodes({ limit: 100, knowledgeSpaceId: 'homeassistant:test' }).items.map((node) => node.id)).toContain(edgeOnlyDomain.id);
-    expect(service.queryIssues({ limit: 100 }).items.map((issue) => issue.id)).not.toContain(leakedIssue.id);
-    expect(service.queryIssues({ limit: 100 }).items.map((issue) => issue.id)).not.toContain(explicitDefaultIssue.id);
-    expect(service.queryIssues({ limit: 100 }).items.map((issue) => issue.id)).not.toContain(orphanAnswerIssue.id);
-    expect(service.queryIssues({ limit: 100, includeAllSpaces: true }).items.map((issue) => issue.id)).not.toContain(leakedIssue.id);
-    expect(service.queryIssues({ limit: 100, includeAllSpaces: true }).items.map((issue) => issue.id)).not.toContain(explicitDefaultIssue.id);
-    expect(service.queryIssues({ limit: 100, includeAllSpaces: true }).items.map((issue) => issue.id)).not.toContain(orphanAnswerIssue.id);
+    expect(allSourceIds).not.toContain(githubRepairSource.id);
+    expect(allSourceIds).not.toContain(legacyAgentWikiSource.id);
+    const homeNodeIds = (await service.queryNodes({ limit: 100, knowledgeSpaceId: 'homeassistant:test' })).items.map(node => node.id);
+    expect(homeNodeIds).toContain(edgeOnlyTopic.id);
+    expect(homeNodeIds).toContain(edgeOnlyDomain.id);
+    const ordinaryIssueIds = (await service.queryIssues({ limit: 100 })).items.map(issue => issue.id);
+    expect(ordinaryIssueIds).not.toContain(leakedIssue.id);
+    expect(ordinaryIssueIds).not.toContain(explicitDefaultIssue.id);
+    expect(ordinaryIssueIds).not.toContain(orphanAnswerIssue.id);
+    const allIssueIds = (await service.queryIssues({ limit: 100, includeAllSpaces: true })).items.map(issue => issue.id);
+    expect(allIssueIds).not.toContain(leakedIssue.id);
+    expect(allIssueIds).not.toContain(explicitDefaultIssue.id);
+    expect(allIssueIds).not.toContain(orphanAnswerIssue.id);
 
     const defaultTargets = await projectionService.listTargets(100);
     const defaultPacket = await buildKnowledgePacket(packetContext(store), 'BRAVIA Home Assistant', [], 10);
@@ -1281,7 +1311,7 @@ describe('knowledge generated projections and maps', () => {
       nodes: store.listNodes(100),
       edges: store.listEdges(),
       issues: store.listIssues(100),
-    }, { includeSources: true });
+    }, await prepareKnowledgeScopeSelection(store), { includeSources: true });
 
     expect(defaultTargets.map((target) => target.itemId)).not.toContain(leakedNode.id);
     expect(defaultTargets.map((target) => target.itemId)).not.toContain(edgeOnlyTopic.id);
@@ -1337,7 +1367,7 @@ describe('knowledge generated projections and maps', () => {
     expect(defaultAnswer.results.map((result) => result.id)).not.toContain(leakedNode.id);
     expect(defaultAnswer.answer.sources.map((source) => source.id)).not.toContain(haSource.id);
     expect(defaultAnswer.answer.linkedObjects.map((node) => node.id)).not.toContain(leakedNode.id);
-    answerReadings.set({ initialEvidenceDefault: 0.01 }); // This authored query has no relevant permitted default-space evidence.
+    answerReadings.set({ scope, scopeByView, initialEvidenceDefault: 0.01 }); // This authored query has no relevant permitted default-space evidence.
     const agentAnswer = await service.ask({
       query: 'What is GoodVibes Agent?',
       includeSources: true,

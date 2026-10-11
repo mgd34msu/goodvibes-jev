@@ -274,6 +274,7 @@ function classifyHttpFailure(
 export async function postOperatorAction(
   connection: OperatorActionConnection,
   request: OperatorActionRequest,
+  options: { readonly signal?: AbortSignal | undefined; readonly assertCurrent?: (() => void) | undefined } = {},
 ): Promise<OperatorActionResult> {
   const path = renderOperatorActionPath(request.descriptor, request.targetId);
   const httpMethod = operatorActionHttpMethod(request.descriptor);
@@ -294,14 +295,19 @@ export async function postOperatorAction(
   const init: RequestInit = {
     method: httpMethod,
     headers,
+    signal: options.signal,
+    redirect: 'error',
   };
   if (request.body) {
     headers['content-type'] = 'application/json';
     init.body = JSON.stringify(request.body);
   }
   try {
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
     const response = await fetch(`${connection.baseUrl}${path}`, init);
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
     const body = await readResponseBody(response);
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
     if (!response.ok) return classifyHttpFailure(request.descriptor.action, httpMethod, path, response.status, body);
     return {
       ok: true,
@@ -388,6 +394,6 @@ export function formatOperatorActionToolPreview(request: OperatorActionRequest, 
     `  route ${operatorActionHttpMethod(request.descriptor)} ${renderOperatorActionPath(request.descriptor, request.targetId)}`,
     explicitUserRequest ? `  requested by ${explicitUserRequest}` : '  requested by (missing)',
     '',
-    'Model tool confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to perform this exact operator action.',
+    'Model effects require current recorded execution admission. Caller confirmation fields do not grant authority.',
   ].join('\n');
 }

@@ -135,6 +135,44 @@ describe("maskSecretValue", () => {
 });
 
 describe("displayConfigValue", () => {
+  test("declared fallback arrays expose only strict detached references", () => {
+    const references = [
+      { endpoint: "https://fallback.example.test/v1", model: "jev-1.13.0", keySource: "env", keyName: "FALLBACK_API_KEY" },
+      { endpoint: "https://second.example.test", model: "jev-1.13.0", keySource: "secret", keyName: "judgment/fallback-key" },
+    ];
+    expect(isSecretConfigKey("judgment.fallbacks")).toBe(false);
+    expect(isUnresolvedConfigKey("judgment.fallbacks")).toBe(false);
+    expect(displayConfigValue("judgment.fallbacks", references)).toBe(JSON.stringify(references));
+    expect(displayConfigValue("judgment.fallbacks", [])).toBe("[]");
+  });
+
+  test("malformed declared arrays are wholly masked even with name clearance", () => {
+    const reference = { endpoint: "https://fallback.example.test", model: "jev-1.13.0", keySource: "env", keyName: "FALLBACK_API_KEY" };
+    for (const value of [
+      undefined, null, "synthetic-private-value", reference,
+      [{ ...reference, apiKey: "synthetic-private-value" }],
+      [{ ...reference, keyName: "synthetic-private-value" }],
+      [{ ...reference, endpoint: "https://user:synthetic-private-value@fallback.example.test" }],
+      [{ ...reference, model: "jev-latest" }],
+    ]) {
+      expect(displayConfigValue("judgment.fallbacks", value)).toBe("••••");
+      expect(displayConfigValue("judgment.fallbacks", value, true)).toBe("••••");
+    }
+  });
+
+  test("fallback display rejects accessors and serialization hooks without invoking them", () => {
+    let invoked = 0;
+    const accessor = { endpoint: "https://fallback.example.test", model: "jev-1.13.0", keySource: "env" };
+    Object.defineProperty(accessor, "keyName", { enumerable: true, get: () => { invoked++; return "synthetic-private-value"; } });
+    const indexed: unknown[] = [];
+    Object.defineProperty(indexed, 0, { enumerable: true, get: () => { invoked++; return accessor; } });
+    const hook = [{ endpoint: "https://fallback.example.test", model: "jev-1.13.0", keySource: "env", keyName: "FALLBACK_KEY", toJSON: () => { invoked++; return "synthetic-private-value"; } }];
+    for (const value of [[accessor], indexed, hook]) {
+      expect(displayConfigValue("judgment.fallbacks", value)).toBe("••••");
+    }
+    expect(invoked).toBe(0);
+  });
+
   test("never renders a secret key's value raw", () => {
     const displayed = displayConfigValue("surfaces.slack.botToken", "xoxb-real-secret-value");
     expect(displayed).not.toContain("real-secret-value");
@@ -208,6 +246,18 @@ describe("categoryLabelForKey", () => {
 });
 
 describe("flattenConfig", () => {
+  test("structured-reference values are terminal rows even when malformed or accessor-backed", () => {
+    const value = { apiKey: "synthetic-private-value" };
+    expect(flattenConfig({ judgment: { fallbacks: value } })).toEqual([
+      { key: "judgment.fallbacks", value, category: "Judgment" },
+    ]);
+    let invoked = false;
+    const judgment = Object.defineProperty({}, "fallbacks", { enumerable: true, get: () => { invoked = true; return value; } });
+    const entries = flattenConfig({ judgment });
+    expect(entries).toEqual([{ key: "judgment.fallbacks", value: undefined, category: "Judgment" }]);
+    expect(displayConfigValue(entries[0]!.key, entries[0]!.value)).toBe("••••");
+    expect(invoked).toBe(false);
+  });
   test("declared secret objects remain terminal rows rather than clearable child names", () => {
     const value = { ordinaryName: "synthetic-private-value" };
     const entries = flattenConfig({ cluster: { groupMaterial: value } });

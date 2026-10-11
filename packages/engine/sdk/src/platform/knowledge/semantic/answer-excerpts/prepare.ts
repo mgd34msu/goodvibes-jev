@@ -4,6 +4,7 @@ import { snapshotNodeInput } from '../../activation/projection.js';
 import { knowledgeSourceJudgmentUris } from '../../source-structural-references.js';
 import { getKnowledgeSpaceId } from '../../spaces.js';
 import type { KnowledgeStore } from '../../store.js';
+import { KnowledgeRecordAdmissionHeldError } from '../../store-record-snapshot.js';
 import type { KnowledgeSourceRecord, KnowledgeExtractionRecord } from '../../types.js';
 import type { SemanticWriteGuard } from '../primary-source-plan.js';
 import { readRecord } from '../utils.js';
@@ -21,6 +22,13 @@ export interface LocalAnswerExcerptSpan {
   readonly text: string;
 }
 interface Document extends AnswerExcerptDocument { readonly field: string; }
+function assertExcerptReadSetFrame(store: KnowledgeStore, signal: AbortSignal | undefined, assertion: () => undefined): void {
+  try { store.assertRecordSnapshotFrame(assertion); }
+  catch (error) {
+    if (error instanceof KnowledgeRecordAdmissionHeldError) throw new Held(signal?.aborted ? 'aborted' : 'stale');
+    throw error;
+  }
+}
 function documents(source: KnowledgeSourceRecord, extraction: KnowledgeExtractionRecord | null | undefined): Document[] {
   const result: Document[] = [];
   function add(field: string, kind: AnswerExcerptDocument['kind'], value: unknown) {
@@ -87,7 +95,7 @@ function prepareSourceExcerpts(store: KnowledgeStore, query: string,
       assertCurrent();
       if (rows.length && !configured) { configured = judgmentPort('engine.knowledge.answer-excerpt-selection'); model = configured.model; }
     },
-    assertCurrent() { assertCurrent(); prepared.assertCurrent(); },
+    assertCurrent() { assertExcerptReadSetFrame(store, signal, () => { prepared.assertCurrent(); }); },
     async read(sourceIds: ReadonlySet<string>) {
       assertCurrent();
       // One complete pass; rejected initial sources never enter downstream output.
@@ -122,13 +130,17 @@ export function prepareAnswerSourceExcerptBatches(store: KnowledgeStore, query: 
   const prepared = entries.map((entry) => ({ sourceId: entry.source.id,
     reader: prepareSourceExcerpts(store, query, [entry], guard, signal, observeModel) }));
   const assertCurrent = () => {
-    if (signal?.aborted) throw new Held('aborted');
-    // An empty source set still belongs to the caller's captured read-set.
-    try { guard.assertCurrent(); } catch { throw new Held(signal?.aborted ? 'aborted' : 'stale'); }
-    for (const entry of prepared) entry.reader.assertCurrent();
+    assertExcerptReadSetFrame(store, signal, () => {
+      if (signal?.aborted) throw new Held('aborted');
+      // An empty source set still belongs to the caller's captured read-set.
+      try { guard.assertCurrent(); } catch { throw new Held(signal?.aborted ? 'aborted' : 'stale'); }
+      for (const entry of prepared) entry.reader.assertCurrent();
+    });
   };
   return {
-    start() { assertCurrent(); for (const entry of prepared) entry.reader.start(); assertCurrent(); },
+    start() { assertExcerptReadSetFrame(store, signal, () => {
+      assertCurrent(); for (const entry of prepared) entry.reader.start(); assertCurrent();
+    }); },
     assertCurrent,
     async read(sourceIds: ReadonlySet<string>) {
       const selected = new Set(sourceIds);

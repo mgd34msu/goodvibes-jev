@@ -86,11 +86,6 @@ export function requireId(args: AgentLocalRegistryToolArgs): string {
   return id;
 }
 
-export function requireConfirmedDelete(args: AgentLocalRegistryToolArgs, label: string): void {
-  const explicitUserRequest = readString(args.explicitUserRequest);
-  if (!explicitUserRequest) throw new Error(`${label} deletion requires explicitUserRequest with the user's exact request or a short faithful summary.`);
-  if (args.confirm !== true) throw new Error(`${label} deletion requires confirm:true after an explicit user request.`);
-}
 
 export function requireName(args: AgentLocalRegistryToolArgs): string {
   const name = readString(args.name);

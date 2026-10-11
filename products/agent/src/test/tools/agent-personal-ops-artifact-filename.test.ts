@@ -1,14 +1,17 @@
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
 import type { ArtifactDescriptor, ArtifactRecord, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { recordedEffectFixture } from '../helpers/recorded-effect-admission.ts';
+import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import type { CommandContext } from '../../input/command-registry.ts';
 import { createAgentArtifactsTool } from '../../tools/agent-artifacts-tool.ts';
 import { savedReviewArtifactRecords, savedReviewArtifacts, savedReviewQueueRecords } from '../../tools/agent-harness-personal-ops-records.ts';
 import { resolveRunRecord, savePersonalOpsReviewArtifact } from '../../tools/agent-harness-personal-ops-runner.ts';
 import type { PersonalOpsLane, PersonalOpsLiveRecord } from '../../tools/agent-harness-personal-ops-types.ts';
-import { cleanupResearchScreeningFixtures, researchScreeningFixture } from '../helpers/research-screening.ts';
+import { cleanupResearchScreeningFixtures, ordinaryResearchOwner, researchScreeningFixture } from '../helpers/research-screening.ts';
 
 // This epoch passes the canonical Luhn guard. It must not become a generated
 // semantic label, even though old saved files remain readable by artifact ID.
@@ -25,9 +28,11 @@ function lane(id: 'inbox' | 'calendar'): PersonalOpsLane {
 }
 
 function fixture() {
+  const root = makeProjectTempDir('personal-ops-review-artifacts');
   const records: ArtifactRecord[] = [];
   const contents = new Map<string, Buffer>();
-  const store: Pick<ArtifactStore, 'create' | 'get' | 'list' | 'readContent'> = {
+  const store: Pick<ArtifactStore, 'create' | 'get' | 'list' | 'readContent' | 'storagePath'> = {
+    storagePath: root,
     async create(input): Promise<ArtifactDescriptor> {
       const id = `artifact-${records.length + 1}`;
       const buffer = Buffer.from(input.text ?? '');
@@ -49,17 +54,50 @@ function fixture() {
     },
   };
   const context = { platform: { artifactStore: store } } as unknown as CommandContext;
-  const save = (id: 'inbox' | 'calendar' = 'inbox', title?: string) => savePersonalOpsReviewArtifact({
-    context, lane: lane(id), sourceRecord, inputFields: { query: 'review' }, reviewRecords,
-    output: { preview: 'Quarterly review', truncated: false }, title,
-  });
+  const effect = recordedEffectFixture({
+    definition: { name: 'save_review_fixture', description: 'Save isolated authored review cards', parameters: { type: 'object', properties: { lane: { type: 'string' }, title: { type: 'string' } } }, sideEffects: ['state'] },
+    async execute(args, executionOptions) {
+      const saved = await savePersonalOpsReviewArtifact({
+        context, lane: lane(args.lane === 'calendar' ? 'calendar' : 'inbox'), sourceRecord,
+        inputFields: { query: 'review' }, reviewRecords, output: { preview: 'Quarterly review', truncated: false },
+        ...(typeof args.title === 'string' ? { title: args.title } : {}), invocationArgs: args, executionOptions, sourceOwner: ordinaryResearchOwner(),
+      });
+      return { success: true, output: JSON.stringify(saved) };
+    },
+  }, 'prompt', {}, root);
+  const save = (id: 'inbox' | 'calendar' = 'inbox', title?: string) => effect.run({ lane: id, ...(title === undefined ? {} : { title }) });
   return { context, records, store, save };
 }
 
 afterAll(cleanupResearchScreeningFixtures);
 let previous: ReturnType<typeof installJudgmentPort>;
-beforeEach(() => { previous = installJudgmentPort(undefined); });
-afterEach(() => { installJudgmentPort(previous); });
+let decisions: SqliteDecisionLog;
+let privacyReadings: ReturnType<typeof fakePort>;
+beforeEach(() => {
+  const readings = fakePort((name, question, rawState) => {
+    if (rawState && typeof rawState === 'object' && !Array.isArray(rawState) && 'context' in rawState && 'candidates' in rawState) {
+      const context = rawState.context;
+      if (context && typeof context === 'object' && !Array.isArray(context) && 'purpose' in context && typeof context.purpose === 'string') {
+        const targets: Readonly<Record<string, string>> = {
+          'review record field serving one of: label, subject, title, summary': '1',
+          'review record field serving one of: kind': '2',
+          'review record field serving one of: id': '0',
+        };
+        const target = targets[context.purpose];
+        if (target === undefined) throw new Error(`Unexpected review fixture purpose ${context.purpose}`);
+        if (name === 'pick') return choiceAnswer(question, target, 0.999);
+        return noulAnswer(name === `fits_${target}` ? 0.999 : 0.001);
+      }
+    }
+    if (question.type === 'choice') return choiceAnswer(question,
+      name === 'disposition' ? 'act' : name === 'kind' ? Object.hasOwn(question.criteria, 'read') ? 'read' : 'other' : 'generic', 0.999);
+    return noulAnswer(0.001);
+  });
+  privacyReadings = readings;
+  decisions = new SqliteDecisionLog(':memory:');
+  previous = installJudgmentPort(withDecisionLog(readings.port, decisions));
+});
+afterEach(() => { installJudgmentPort(previous); decisions[Symbol.dispose](); });
 
 describe('Personal Ops generated review artifact filenames', () => {
   test('uses unique alphabetic UUID suffixes at a card-shaped epoch and retains safe titles and JSON metadata', async () => {
@@ -81,7 +119,7 @@ describe('Personal Ops generated review artifact filenames', () => {
     } finally { now.mockRestore(); }
   });
 
-  test.each(['inbox', 'calendar'] as const)('%s reads old epoch and new filenames through unchanged metadata and artifact-ID consumers', async (id) => {
+  test.each(['inbox', 'calendar'] as const)('%s retains old artifact-ID access while protecting card-shaped epoch labels', async (id) => {
     const f = fixture();
     const legacy = await f.store.create({ kind: 'data', mimeType: 'application/json',
       filename: `${id}-review-cards-${CARD_SHAPED_EPOCH}.json`, text: JSON.stringify({ reviewRecords }),
@@ -89,12 +127,17 @@ describe('Personal Ops generated review artifact filenames', () => {
     });
     await f.save(id);
     const generated = f.records[1]!;
-    expect(savedReviewArtifacts(f.context, id).map((record) => record.id)).toEqual([generated.id, legacy.id]);
-    const artifactRecords = savedReviewArtifactRecords(f.context, id, []);
-    const queueRecords = savedReviewQueueRecords(f.context, id, []);
+    const reading = { sourceOwner: ordinaryResearchOwner() };
+    expect((await savedReviewArtifacts(f.context, id, reading)).map((record) => record.id)).toEqual([generated.id, legacy.id]);
+    const artifactRecords = await savedReviewArtifactRecords(f.context, id, [], reading);
+    const queueRecords = await savedReviewQueueRecords(f.context, id, [], reading);
     const browser = createAgentArtifactsTool(f.store);
     for (const artifact of [legacy, generated]) {
-      expect(artifactRecords.find((record) => record.artifactId === artifact.id)?.label).toContain(artifact.filename!);
+      const label = artifactRecords.find((record) => record.artifactId === artifact.id)?.label;
+      if (artifact === legacy) {
+        expect(label).toContain('[REDACTED]');
+        expect(JSON.stringify(artifactRecords)).not.toContain(artifact.filename!);
+      } else expect(label).toContain(artifact.filename!);
       expect(queueRecords.find((record) => record.artifactId === artifact.id)?.modelRoute)
         .toBe(`agent_artifacts show artifactId:"${artifact.id}" includeContent:true`);
       const result = await browser.execute({ mode: 'show', artifactId: artifact.id, includeContent: true });
@@ -107,8 +150,12 @@ describe('Personal Ops generated review artifact filenames', () => {
   test('generated saved labels reach the actual Personal Ops canonical catalog reader', async () => {
     const f = fixture(); await f.save();
     const screening = researchScreeningFixture();
-    const fake = fakePort(() => noulAnswer(0.99)); installJudgmentPort(fake.port);
-    const liveRecords = savedReviewArtifactRecords(f.context, 'inbox', []);
+    const fake = fakePort(() => noulAnswer(0.99));
+    installJudgmentPort({ ...privacyReadings.port, ask(request) {
+      return request.context?.battery === 'engine.tools.registry-rank'
+        ? fake.port.ask(request) : privacyReadings.port.ask(request);
+    } });
+    const liveRecords = await savedReviewArtifactRecords(f.context, 'inbox', [], { sourceOwner: screening.owner });
     const result = await resolveRunRecord([{ ...lane('inbox'), liveRecords }],
       { laneId: 'inbox', recordId: '', target: '', query: 'saved inbox review' }, { sourceOwner: screening.owner });
     expect(result).toMatchObject({ status: 'selection_required', candidates: [{ recordId: liveRecords[0]!.id }] });
@@ -117,16 +164,11 @@ describe('Personal Ops generated review artifact filenames', () => {
     expect(JSON.stringify(screening.calls)).toContain(f.records[0]!.filename!);
   });
 
-  test('genuine protected filename material remains intact and refused before local or hosted reading', async () => {
-    const f = fixture(); await f.save('inbox', 'review-4111111111111111');
-    expect(f.records[0]!.filename).toMatch(/^review-4111111111111111-[a-p]{32}\.json$/);
-    const screening = researchScreeningFixture();
+  test('genuine protected filename material is refused before admission or artifact creation', async () => {
+    const f = fixture();
     const fake = fakePort(() => noulAnswer(0.99)); installJudgmentPort(fake.port);
-    const liveRecords = savedReviewArtifactRecords(f.context, 'inbox', []);
-    await expect(resolveRunRecord([{ ...lane('inbox'), liveRecords }],
-      { laneId: 'inbox', recordId: '', target: '', query: 'saved inbox review' }, { sourceOwner: screening.owner }))
-      .rejects.toThrow('payment card material');
-    expect(screening.calls).toHaveLength(0);
+    await expect(f.save('inbox', 'review-4111111111111111')).rejects.toThrow();
+    expect(f.records).toHaveLength(0);
     expect(fake.requests).toHaveLength(0);
   });
 });

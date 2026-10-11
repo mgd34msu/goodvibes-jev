@@ -22,6 +22,7 @@
  * gets that right, so there is no rule.
  */
 import type { AuthoritySurface } from '../security/untrusted-content.js';
+import type { ProfileMutationOptions } from '../owner-profile/delegation.js';
 import type { ProfileSurface } from '../owner-profile/types.js';
 import { parseOccasionDate, renderOccasionDate } from './dates.js';
 import {
@@ -49,13 +50,13 @@ export interface OccasionProfileWriter {
     readonly text: string;
     readonly surface: ProfileSurface;
     readonly said: string;
-    readonly authority: AuthoritySurface;
-  }): Promise<import('../owner-profile/types.js').ProfileWriteResult>;
+    readonly authority: AuthoritySurface | 'autonomous';
+  }, options?: ProfileMutationOptions): Promise<import('../owner-profile/types.js').ProfileWriteResult>;
   forget(input: {
     readonly section?: string | undefined;
     readonly text?: string | undefined;
-    readonly authority: AuthoritySurface;
-  }): Promise<import('../owner-profile/types.js').ProfileWriteResult>;
+    readonly authority: AuthoritySurface | 'autonomous';
+  }, options?: ProfileMutationOptions): Promise<import('../owner-profile/types.js').ProfileWriteResult>;
 }
 
 /** What a capture proposes, before anything is written. */
@@ -107,7 +108,7 @@ export interface ConfirmOccasionInput extends ProposeOccasionInput {
   readonly kind: string;
   readonly surface: ProfileSurface;
   readonly said: string;
-  readonly authority: AuthoritySurface;
+  readonly authority: AuthoritySurface | 'autonomous';
 }
 
 function readRecurrenceWord(value: string | undefined, dated: boolean): OccasionRecurrence {
@@ -195,7 +196,10 @@ export async function confirmOccasion(
   source: OccasionProfileSource,
   writer: OccasionProfileWriter,
   input: ConfirmOccasionInput,
+  options: ProfileMutationOptions = {},
 ): Promise<OccasionWriteOutcome> {
+  const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); };
+  assertCurrent();
   const proposal = proposeOccasion(source, input);
   const id = occasionIdFor(input.title);
   if (!proposal.ok) return failed(id, proposal.reason ?? 'Refused.');
@@ -206,13 +210,15 @@ export async function confirmOccasion(
       + 'Nothing is recorded until you say, because that is not something to guess at.',
     );
   }
+  assertCurrent();
   const result = await writer.append({
     section: OCCASIONS_SECTION,
     text: proposal.line,
     surface: input.surface,
     said: input.said,
     authority: input.authority,
-  });
+  }, options);
+  assertCurrent();
   return {
     ok: result.ok,
     reason: result.reason,
@@ -245,7 +251,7 @@ export interface ProposePlanInput {
 export interface ConfirmPlanInput extends ProposePlanInput {
   readonly surface: ProfileSurface;
   readonly said: string;
-  readonly authority: AuthoritySurface;
+  readonly authority: AuthoritySurface | 'autonomous';
 }
 
 /** The same two-step capture, for a plan. Plans never prompt; they are known. */
@@ -295,17 +301,22 @@ export function proposePlan(input: ProposePlanInput): OccasionProposal {
 export async function confirmPlan(
   writer: OccasionProfileWriter,
   input: ConfirmPlanInput,
+  options: ProfileMutationOptions = {},
 ): Promise<OccasionWriteOutcome> {
+  const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); };
+  assertCurrent();
   const proposal = proposePlan(input);
   const id = occasionIdFor(input.title);
   if (!proposal.ok) return failed(id, proposal.reason ?? 'Refused.');
+  assertCurrent();
   const result = await writer.append({
     section: PLANS_SECTION,
     text: proposal.line,
     surface: input.surface,
     said: input.said,
     authority: input.authority,
-  });
+  }, options);
+  assertCurrent();
   return {
     ok: result.ok,
     reason: result.reason,
@@ -331,8 +342,11 @@ export async function removeOccasion(
   source: OccasionProfileSource,
   writer: OccasionProfileWriter,
   dropState: (occasionId: string) => Promise<number>,
-  input: { readonly occasionId: string; readonly confirmed: boolean; readonly authority: AuthoritySurface },
+  input: { readonly occasionId: string; readonly confirmed: boolean; readonly authority: AuthoritySurface | 'autonomous' },
+  options: ProfileMutationOptions = {},
 ): Promise<OccasionWriteOutcome> {
+  const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); };
+  assertCurrent();
   if (!input.confirmed) {
     return failed(
       input.occasionId,
@@ -343,7 +357,9 @@ export async function removeOccasion(
   if (occasion === undefined) {
     // Still drop any state, so a line the owner deleted by hand does not leave the
     // machine holding an answer about something that is no longer there.
+    assertCurrent();
     const dropped = await dropState(input.occasionId);
+    assertCurrent();
     return {
       ok: dropped > 0,
       reason: dropped > 0 ? null : 'There is no occasion by that name, so there was nothing to remove.',
@@ -352,13 +368,16 @@ export async function removeOccasion(
       droppedRecords: dropped,
     };
   }
+  assertCurrent();
   const result = await writer.forget({
     section: OCCASIONS_SECTION,
     text: occasion.text,
     authority: input.authority,
-  });
+  }, options);
+  assertCurrent();
   if (!result.ok) return failed(input.occasionId, result.reason ?? 'Refused.');
   const dropped = await dropState(input.occasionId);
+  assertCurrent();
   return {
     ok: true,
     reason: null,

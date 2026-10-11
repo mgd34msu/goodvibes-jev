@@ -60,6 +60,7 @@ export interface GeneratedKnowledgePageListOptions<TNode extends GeneratedKnowle
   readonly isPageSubjectNode?: ((node: KnowledgeNodeRecord) => boolean) | undefined;
   readonly resolvePageSubject?: ((target: KnowledgeNodeRecord, graph: GeneratedKnowledgePageGraph) => KnowledgeNodeRecord | undefined) | undefined;
   readonly projectNode?: ((node: KnowledgeNodeRecord) => TNode) | undefined;
+  readonly rankGeneratedPages?: ((sources: readonly KnowledgeSourceRecord[], graph: GeneratedKnowledgePageGraph) => Promise<readonly KnowledgeSourceRecord[]>) | undefined;
   readonly compareGeneratedPages?: (
     left: KnowledgeSourceRecord,
     right: KnowledgeSourceRecord,
@@ -84,9 +85,10 @@ export async function listGeneratedKnowledgePages<TNode extends GeneratedKnowled
   const resolveSubject = input.resolvePageSubject ?? defaultResolvePageSubject;
   const isSubject = input.isPageSubjectNode ?? defaultIsPageSubjectNode;
   const relatedPageLimit = input.relatedPageLimit ?? DEFAULT_RELATED_GENERATED_PAGES;
-  const sources = [...graph.generatedSources]
-    .sort((left, right) => input.compareGeneratedPages?.(left, right, graph) ?? compareGeneratedPages(left, right, graph))
-    .slice(0, input.limit);
+  const ranked = input.rankGeneratedPages
+    ? await input.rankGeneratedPages(graph.generatedSources, graph)
+    : [...graph.generatedSources].sort((left, right) => input.compareGeneratedPages?.(left, right, graph) ?? compareGeneratedPages(left, right, graph));
+  const sources = ranked.slice(0, input.limit);
   const pages = await mapWithConcurrency<KnowledgeSourceRecord, GeneratedKnowledgePageEntry<TNode>>(
     sources,
     GENERATED_PAGE_MARKDOWN_READ_CONCURRENCY,

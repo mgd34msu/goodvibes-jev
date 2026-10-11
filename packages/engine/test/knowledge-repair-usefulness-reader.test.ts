@@ -44,7 +44,7 @@ describe('repair fact usefulness complete-pass reader', () => {
   test('registers the versioned fixture-bearing repairUseful question and labelled gate plumbing', async () => {
     expect(registry.list().map((entry) => entry.name).sort()).toEqual(['engine.knowledge.page-fact-quality', 'engine.knowledge.repair-fact-usefulness']);
     expect(registry.list().find((entry) => entry.name === 'engine.knowledge.repair-fact-usefulness')).toBeDefined();
-    expect(repairFactUsefulness.version).toBe(1);
+    expect(repairFactUsefulness.version).toBe(2);
     expect(repairFactUsefulness.accuracyFloor).toBeGreaterThanOrEqual(0.95);
     expect(Object.keys(repairFactUsefulness.items)).toEqual(['repairUseful']);
     const fixturePort = fakePort((name, _question, state) => {

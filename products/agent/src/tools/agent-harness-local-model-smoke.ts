@@ -3,6 +3,8 @@ import type { AgentHarnessModelRoutingArgs, LocalModelServerDefaultEndpoint, Loc
 import { previewHarnessText } from './agent-harness-text.ts';
 import { readLimit, readRecord, readString } from './agent-harness-model-routing-utils.ts';
 import { collectLocalServerEndpointCandidates, describeLocalServerEndpoint, isPrivateOrLocalUrl, localEndpointSmokeRoute, localModelServerDefaults, parseUrlCandidate } from './agent-harness-local-model-endpoints.ts';
+import { captureCatalogData, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 
 function localModelSmokeTargetFromEndpoint(endpoint: LocalModelServerEndpoint): LocalModelSmokeTarget {
   return {
@@ -51,7 +53,7 @@ function localSmokeTargetSearchText(target: LocalModelSmokeTarget): string {
     target.modelsUrl,
     target.source,
     ...target.notes,
-  ].join('\n').toLowerCase();
+  ].join('\n');
 }
 
 function localModelSmokeLookup(args: AgentHarnessModelRoutingArgs): string {
@@ -77,17 +79,17 @@ interface LocalModelSmokeUnresolved {
   readonly unresolved: Record<string, unknown>;
 }
 
-function localModelSmokeTargets(
+async function localModelSmokeTargets(
   context: CommandContext,
   args: AgentHarnessModelRoutingArgs,
-): LocalModelSmokeSelection | LocalModelSmokeUnresolved {
+  options: CatalogRankingOptions,
+): Promise<LocalModelSmokeSelection | LocalModelSmokeUnresolved> {
   const endpoints = collectLocalServerEndpointCandidates(context)
     .map((endpoint) => localModelSmokeTargetFromEndpoint(describeLocalServerEndpoint(endpoint, true)));
   const defaults = localModelServerDefaults().map(localModelSmokeTargetFromDefault);
   const lookup = localModelSmokeLookup(args);
   const allTargets = [...endpoints, ...defaults];
   if (lookup) {
-    const normalized = lookup.toLowerCase();
     // An ambiguity report names at most 8 candidates. When more matched, the
     // count says so, a caller shown 8 of 14 would otherwise pick from a list
     // it believed was the whole set of matches.
@@ -111,8 +113,15 @@ function localModelSmokeTargets(
     const exact = allTargets.filter((target) => target.id === lookup || target.baseUrl === lookup || target.modelsUrl === lookup);
     if (exact.length === 1) return { targets: exact, candidateTotal: 1 };
     if (exact.length > 1) return ambiguous(exact);
-    const searched = allTargets.filter((target) => localSmokeTargetSearchText(target).includes(normalized));
-    if (searched.length === 1) return { targets: searched, candidateTotal: 1 };
+    const ranked = await rankHarnessCatalog(allTargets, lookup, target => ({
+      id: target.id, description: localSmokeTargetSearchText(target), evidence: target,
+    }), 'agent.local-model-smoke.endpoint', { ...options, requirePreservedSource: true });
+    const searched = ranked.matches.map(match => match.entry);
+    if (searched.length === 1 && ranked.matches[0]?.judgment.reading.verdict === 'yes' && ranked.matches[0].judgment.reading.outcome === 'act') return { targets: searched, candidateTotal: 1 };
+    if (searched.length === 1) return { unresolved: {
+      status: 'reading-held', input: lookup, candidates: searched,
+      note: 'No endpoint was probed because its suitability for this request is unsettled.',
+    } };
     if (searched.length > 1) return ambiguous(searched);
     return {
       unresolved: {
@@ -176,7 +185,8 @@ function safeSmokeError(error: unknown): string {
   return previewHarnessText(message.replace(/https?:\/\/\S+/g, '[redacted-url]'), 180);
 }
 
-async function smokeOneLocalModelTarget(target: LocalModelSmokeTarget, timeoutMs: number): Promise<Record<string, unknown>> {
+async function smokeOneLocalModelTarget(target: LocalModelSmokeTarget, timeoutMs: number, options: CatalogRankingOptions): Promise<Record<string, unknown>> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
   const network = localSmokeNetworkScope(target.modelsUrl);
   if (!network.allowed) {
     return {
@@ -196,11 +206,13 @@ async function smokeOneLocalModelTarget(target: LocalModelSmokeTarget, timeoutMs
     const response = await fetch(target.modelsUrl, {
       method: 'GET',
       headers: { Accept: 'application/json' },
-      signal: controller.signal,
+      signal: options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal,
     });
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
     const elapsedMs = Date.now() - started;
     const contentType = response.headers.get('content-type') ?? '';
     const text = await response.text();
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
     let payload: unknown = null;
     let jsonValid = false;
     try {
@@ -234,6 +246,7 @@ async function smokeOneLocalModelTarget(target: LocalModelSmokeTarget, timeoutMs
         : ['Start or fix the local server, confirm /v1/models returns model ids, then retry this smoke check.'],
     };
   } catch (error) {
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
     const elapsedMs = Date.now() - started;
     const aborted = controller.signal.aborted;
     return {
@@ -252,8 +265,22 @@ async function smokeOneLocalModelTarget(target: LocalModelSmokeTarget, timeoutMs
   }
 }
 
-export async function runLocalModelServerSmoke(context: CommandContext, args: AgentHarnessModelRoutingArgs): Promise<Record<string, unknown>> {
-  const selection = localModelSmokeTargets(context, args);
+export async function runLocalModelServerSmoke(context: CommandContext, args: AgentHarnessModelRoutingArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const source = JSON.stringify(captureCatalogData(args));
+  const endpointSnapshot = () => JSON.stringify(captureCatalogData(collectLocalServerEndpointCandidates(context).map(endpoint => ({
+    ...endpoint, sources: [...endpoint.sources], sourceDetails: [...endpoint.sourceDetails], modelRoutes: [...endpoint.modelRoutes], notes: [...endpoint.notes],
+  }))));
+  const endpoints = endpointSnapshot();
+  const assertSourceCurrent = () => {
+    options.signal?.throwIfAborted();
+    if (JSON.stringify(captureCatalogData(args)) !== source || endpointSnapshot() !== endpoints) throw new ToolInputProjectionError('stale');
+  };
+  options.retainCurrent?.(assertSourceCurrent, 'agent.local-model-smoke.endpoint.sources');
+  const assertCurrent = () => { options.assertCurrent?.(); assertSourceCurrent(); };
+  const reading = { ...options, assertCurrent };
+  const selection = await localModelSmokeTargets(context, args, reading);
+  assertCurrent();
   if ('unresolved' in selection) {
     return {
       kind: 'local-model-smoke',
@@ -276,7 +303,8 @@ export async function runLocalModelServerSmoke(context: CommandContext, args: Ag
   }
   const timeoutMs = readSmokeTimeoutMs(args.timeoutMs);
   const checkedAt = new Date().toISOString();
-  const results = await Promise.all(targets.map((target) => smokeOneLocalModelTarget(target, timeoutMs)));
+  const results = await Promise.all(targets.map((target) => smokeOneLocalModelTarget(target, timeoutMs, reading)));
+  assertCurrent();
   const passed = results.filter((result) => result.success === true);
   const blocked = results.filter((result) => result.status === 'blocked');
   return {

@@ -176,6 +176,59 @@ describe('the consent link comes back in the same answer', () => {
 });
 
 describe('the consent finishes on its own', () => {
+  test('a registered model flow holds the protocol credential privately without writing the store', async () => {
+    const secrets = secretPort(); let received: string | undefined;
+    const session = beginGoogleConsent({
+      clientId: CLIENT_ID, clientSecret: CLIENT_SECRET, config: configPort(), secrets,
+      loopback: fakeLoopback().factory,
+      fetchPort: tokenFetch({ access_token: 'synthetic-access', refresh_token: 'synthetic-private-refresh', expires_in: 3600, scope: '', token_type: 'Bearer' }).port,
+      receiveRefreshToken(value) { received = value; },
+    });
+    const outcome = await session.completed;
+    expect(outcome.ok).toBe(true); expect(received).toBe('synthetic-private-refresh');
+    expect(Object.keys(secrets.values)).toEqual([]);
+    expect(JSON.stringify(outcome)).not.toContain('synthetic-private-refresh');
+  });
+  test('cancellation aborts an in-flight code exchange and forbids the credential write', async () => {
+    const secrets = secretPort(), controller = new AbortController(), loopback = fakeLoopback();
+    let fetched!: () => void;
+    const started = new Promise<void>(resolve => { fetched = resolve; });
+    let ownedSignal: AbortSignal | null | undefined;
+    const session = beginGoogleConsent({
+      clientId: CLIENT_ID, clientSecret: CLIENT_SECRET, config: configPort(), secrets,
+      loopback: loopback.factory, signal: controller.signal,
+      fetchPort: { fetch: async (_url, init) => {
+        ownedSignal = init.signal; fetched();
+        return new Promise<Response>((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true }));
+      } },
+    });
+    await started; controller.abort();
+    expect((await session.completed).ok).toBe(false);
+    expect(ownedSignal?.aborted).toBe(true); expect(Object.keys(secrets.values)).toEqual([]); expect(loopback.closes()).toBe(1);
+  });
+  test('an account change during the listener wait prevents token exchange and private receipt', async () => {
+    const secrets = secretPort(); let current = true, calls = 0, receives = 0;
+    const session = beginGoogleConsent({
+      clientId: CLIENT_ID, clientSecret: CLIENT_SECRET, config: configPort(), secrets,
+      assertCurrent() { if (!current) throw new Error('Synthetic account replaced'); },
+      loopback: () => ({ redirectUri: 'http://127.0.0.1:41234/', async waitForCode() {
+        await Promise.resolve(); current = false; return { code: 'synthetic-code', state: 'synthetic-state' };
+      }, close() {} }),
+      fetchPort: { async fetch() { calls++; return Response.json({ refresh_token: 'synthetic-token' }); } },
+      receiveRefreshToken() { receives++; },
+    });
+    expect((await session.completed).ok).toBe(false); expect(calls).toBe(0); expect(receives).toBe(0);
+    expect(Object.keys(secrets.values)).toEqual([]);
+  });
+  test('an asynchronous ownership callback is refused before a listener or request is created', () => {
+    let listeners = 0;
+    expect(() => beginGoogleConsent({
+      clientId: CLIENT_ID, clientSecret: CLIENT_SECRET, config: configPort(), secrets: secretPort(),
+      assertCurrent: async () => {}, loopback: () => { listeners++; return fakeLoopback().factory(); }, fetchPort: tokenFetch({}).port,
+    })).toThrow('synchronously');
+    expect(listeners).toBe(0);
+  });
+
   test('approval stores the refresh token with nobody being told to run anything', async () => {
     const secrets = secretPort();
     const fetcher = tokenFetch({ access_token: 'at', refresh_token: 'rt-1', expires_in: 3600, scope: OAUTH_SCOPES.join(' '), token_type: 'Bearer' });
@@ -208,7 +261,7 @@ describe('the consent finishes on its own', () => {
 
     const outcome = await session.completed;
     expect(outcome.ok).toBe(false);
-    expect(outcome.problem ?? '').toContain('timed out');
+    expect(outcome.problem).toBe('No authorization code came back before consent stopped.');
   });
 
   test('a grant Google answers without a refresh token is reported, not stored as success', async () => {

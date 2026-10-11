@@ -15,8 +15,10 @@
  * so an insertion never invalidates an index computed before it.
  */
 import { randomUUID } from 'node:crypto';
-import { promises as fs } from 'node:fs';
+import { promises as fs, renameSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { capturePreparedFilePublication, publishFileMutation } from '../utils/file-mutation.js';
+import type { ProfileMutationOptions } from './delegation.js';
 import {
   PROVENANCE_MARKER,
   findProfileSection,
@@ -158,6 +160,14 @@ function renderVerifiedLine(
   const line = renderLine(prefix, value, provenance);
   if (provenance === null) return line;
   const readBack = splitProvenanceSuffix(line).provenance;
+  if (provenance.origin === 'autonomous') {
+    if (readBack?.origin !== 'autonomous' || readBack.surface !== provenance.surface || readBack.date !== provenance.date
+      || readBack.source.goal !== provenance.source.goal || readBack.source.criteria.length !== provenance.source.criteria.length
+      || readBack.source.criteria.some((criterion, index) => criterion !== provenance.source.criteria[index])) {
+      throw new Error('Recorded autonomous provenance did not round-trip.');
+    }
+    return line;
+  }
   if (readBack !== null
     && readBack.surface === provenance.surface
     && readBack.date === provenance.date
@@ -181,6 +191,11 @@ function renderCappedLine(
   provenance: ProfileProvenance | null,
 ): string {
   const value = sanitizeForLine(rawValue).slice(0, MAX_MACHINE_VALUE_CHARS);
+  if (provenance?.origin === 'autonomous') {
+    const line = renderVerifiedLine(prefix, value, provenance);
+    if (line.length > MAX_MACHINE_LINE_CHARS) throw new Error('Recorded autonomous source exceeds the profile line limit.');
+    return line;
+  }
   const said = provenance === null ? '' : sanitizeSaid(provenance.said);
   const full = provenance === null ? null : { ...provenance, said };
   let line = renderVerifiedLine(prefix, value, full);
@@ -614,12 +629,24 @@ export async function persistProfileText(
   path: string,
   text: string,
   io: ProfilePersistIo = NODE_PERSIST_IO,
+  lifetime: Pick<ProfileMutationOptions, 'assertCurrent' | 'onEffect' | 'withPublication'> = {},
 ): Promise<void> {
-  await io.mkdir(dirname(path));
   const tmpPath = `${path}.tmp.${process.pid}.${randomUUID()}`;
+  lifetime.assertCurrent?.();
+  await io.mkdir(dirname(path));
+  lifetime.onEffect?.(); lifetime.assertCurrent?.();
   try {
+    lifetime.assertCurrent?.();
     await io.writeFile(tmpPath, text);
-    await io.rename(tmpPath, path);
+    lifetime.onEffect?.(); lifetime.assertCurrent?.();
+    await publishFileMutation(lifetime.withPublication, async assertPublicationCurrent => {
+      lifetime.assertCurrent?.(); assertPublicationCurrent();
+      const assertPublished = lifetime.assertCurrent || lifetime.withPublication ? capturePreparedFilePublication(tmpPath) : undefined;
+      if (io === NODE_PERSIST_IO && lifetime.withPublication) renameSync(tmpPath, path);
+      else await io.rename(tmpPath, path);
+      assertPublished?.(path);
+      lifetime.onEffect?.(true); lifetime.assertCurrent?.(); assertPublicationCurrent();
+    });
   } catch (error) {
     await io.remove(tmpPath).catch(() => undefined);
     throw error;

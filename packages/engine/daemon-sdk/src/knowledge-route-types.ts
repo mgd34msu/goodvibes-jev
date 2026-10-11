@@ -35,22 +35,28 @@ export interface KnowledgeGraphqlServiceLike {
     readonly variables?: Record<string, unknown> | undefined;
     readonly admin: boolean;
     readonly scopes: readonly string[];
+    readonly scopeOptions?: KnowledgeScopeReadOptions;
   }): Promise<KnowledgeGraphqlResultLike>;
 }
 
+export interface KnowledgeScopeReadOptions {
+  readonly signal: AbortSignal;
+  readonly assertCurrent: () => void;
+}
+
 export interface KnowledgeServiceLike {
-  getStatus(scope?: Record<string, unknown>): Promise<unknown>;
-  querySources(input: Record<string, unknown>): { readonly total: number; readonly items: readonly unknown[] };
-  queryNodes(input: Record<string, unknown>): { readonly total: number; readonly items: readonly unknown[] };
-  queryIssues(input: Record<string, unknown>): { readonly total: number; readonly items: readonly unknown[] };
+  getStatus(scope?: Record<string, unknown>, options?: KnowledgeScopeReadOptions): Promise<unknown>;
+  querySources(input: Record<string, unknown>, options?: KnowledgeScopeReadOptions): Promise<{ readonly total: number; readonly items: readonly unknown[] }>;
+  queryNodes(input: Record<string, unknown>, options?: KnowledgeScopeReadOptions): Promise<{ readonly total: number; readonly items: readonly unknown[] }>;
+  queryIssues(input: Record<string, unknown>, options?: KnowledgeScopeReadOptions): Promise<{ readonly total: number; readonly items: readonly unknown[] }>;
   reviewIssue(input: Record<string, unknown>): Promise<unknown>;
-  getItemScoped(id: string, scope?: Record<string, unknown>): unknown | null;
+  getItemScoped(id: string, scope?: Record<string, unknown>, options?: KnowledgeScopeReadOptions): Promise<unknown | null>;
   listConnectors(): readonly unknown[];
   getConnector(id: string): unknown | null;
   doctorConnector(id: string): Promise<unknown | null>;
-  listProjectionTargets(limit: number, scope?: Record<string, unknown>): Promise<readonly unknown[]>;
-  map(input: Record<string, unknown>): Promise<unknown>;
-  listExtractions(limit: number, sourceId?: string, scope?: Record<string, unknown>): readonly unknown[];
+  listProjectionTargets(limit: number, scope?: Record<string, unknown>, options?: KnowledgeScopeReadOptions): Promise<readonly unknown[]>;
+  map(input: Record<string, unknown>, options?: KnowledgeScopeReadOptions): Promise<unknown>;
+  listExtractions(limit: number, sourceId?: string, scope?: Record<string, unknown>, options?: KnowledgeScopeReadOptions): Promise<readonly unknown[]>;
   listUsageRecords(
     limit: number,
     filter: { targetKind?: 'source' | 'node' | 'issue'; targetId?: string; usageKind?: KnowledgeUsageKind },
@@ -62,8 +68,6 @@ export interface KnowledgeServiceLike {
   getConsolidationCandidate(id: string): unknown | null;
   listConsolidationReports(limit: number): readonly unknown[];
   getConsolidationReport(id: string): unknown | null;
-  getExtraction(id: string): unknown | null;
-  getSourceExtraction(id: string): unknown | null;
   listJobs(): readonly unknown[];
   getJob(jobId: string): unknown | null;
   listJobRuns(limit: number, jobId?: string): readonly unknown[];

@@ -78,7 +78,7 @@ export interface ProfileProvenanceReport {
  * to widen it.
  */
 export interface WriteIdentity {
-  readonly authority: AuthoritySurface;
+  readonly authority: AuthoritySurface | 'autonomous';
   readonly surface: ProfileSurface;
   readonly said: string;
   readonly date?: string | undefined;
@@ -95,7 +95,7 @@ export interface AppendProfileProseInput extends WriteIdentity {
 }
 
 export interface ForgetProfileInput {
-  readonly authority: AuthoritySurface;
+  readonly authority: AuthoritySurface | 'autonomous';
   /** A mechanical field, by id. Every line carrying it goes, history included. */
   readonly fieldId?: string | undefined;
   /**
@@ -127,6 +127,6 @@ export interface ForgetProfileInput {
 }
 
 export interface UndoProfileInput {
-  readonly authority: AuthoritySurface;
+  readonly authority: AuthoritySurface | 'autonomous';
   readonly fieldId: string;
 }

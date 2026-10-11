@@ -5,14 +5,34 @@
  * does not name is read.
  */
 import type { YesNoReading } from '@goodvibes-jev/judgment';
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { captureJudgmentPort, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { admitJudgmentJson, captureStrictJudgmentJson } from '../gate/judgment-result.js';
+import { isDeepStrictEqual } from 'node:util';
 import { credentialKey, type CredentialKeyState } from './batteries/credential-key.js';
 import { isSecretBearingConfigKey } from './secret-bearing-config-keys.js';
 import { CONFIG_SCHEMA } from './schema.js';
 
 /** Jev's reading of whether `state.key` holds a credential. Throws when no reading can be made. */
-export async function readCredentialKey(state: CredentialKeyState, site: string): Promise<YesNoReading> {
-  const run = await credentialKey.run(judgmentPort(site), state, { site });
+export async function readCredentialKey(state: CredentialKeyState, site: string, options: JudgmentReadingOptions = {}): Promise<YesNoReading> {
+  const snapshot = admitJudgmentJson(state);
+  const signal = options.signal, callerCurrent = options.assertCurrent;
+  const sourceCurrent = () => {
+    signal?.throwIfAborted();
+    if (options.signal !== signal || options.assertCurrent !== callerCurrent
+      || !isDeepStrictEqual(captureStrictJudgmentJson(state), snapshot)) throw new Error('Credential field source changed.');
+  };
+  const assertCurrent = () => {
+    sourceCurrent();
+    const result: unknown = callerCurrent?.();
+    if (result !== undefined) {
+      void Promise.resolve(result).catch(() => {});
+      throw new Error('Credential field ownership must be synchronous.');
+    }
+    sourceCurrent();
+  };
+  const owner = captureJudgmentPort(site, { ...options, assertCurrent });
+  const run = await credentialKey.run(owner.port, snapshot, { site, signal: owner.signal, beforeAttempt: owner.assertCurrent });
+  owner.assertCurrent();
   return run.readings.credential;
 }
 

@@ -3,6 +3,7 @@ import { readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
+import type { MutationPublication } from '../utils/file-mutation.js';
 import { logger } from '../utils/logger.js';
 import { loadSqlJsEngine, type SqlDatabase } from './sqlite-store.js';
 
@@ -325,7 +326,8 @@ export class HandlerSqliteStore {
    * Concurrent ordinary mutations cause a rebase; queued ordinary saves capture
    * after this operation, preserving mixed-provider and retention updates.
    */
-  persistTransaction<T>(mutate: (transaction: HandlerSqliteTransaction) => T, assertCurrent: () => void): Promise<T> {
+  persistTransaction<T>(mutate: (transaction: HandlerSqliteTransaction) => T, assertCurrent: () => void,
+    withPublication?: MutationPublication): Promise<T> {
     this.requireDb();
     this.stagedTransactions += 1;
     const previous = HandlerSqliteStore.saveTails.get(this.resolvedPath) ?? Promise.resolve();
@@ -359,14 +361,26 @@ export class HandlerSqliteStore {
           await writeFile(tmpPath, candidate.export());
           // The trusted fence cannot yield. A synchronous rename closes the
           // otherwise unavoidable gap between checking and replacing the file.
-          synchronousFence(assertCurrent);
-          if (this.db !== live) throw new Error('HandlerSqliteStore transaction lost its database');
-          if (this.mutationRevision !== revision) continue;
-          renameSync(tmpPath, this.resolvedPath);
-          this.db = candidate;
-          this.mutationRevision += 1;
-          published = true;
-          try { live.close(); } catch { /* Publication already succeeded. */ }
+          let finished = false, attempted = false, active = true;
+          const publish = (publicationCurrent: () => void) => {
+            if (!active || attempted) throw new Error('HandlerSqliteStore publication is not current');
+            attempted = true;
+            synchronousFence(publicationCurrent); synchronousFence(assertCurrent);
+            if (this.db !== live) throw new Error('HandlerSqliteStore transaction lost its database');
+            if (this.mutationRevision !== revision) { finished = true; return; }
+            renameSync(tmpPath, this.resolvedPath);
+            this.db = candidate;
+            this.mutationRevision += 1;
+            published = true;
+            try { live.close(); } catch { /* Publication already succeeded. */ }
+            finished = true;
+          };
+          try {
+            if (withPublication) await withPublication(publish);
+            else publish(() => {});
+            if (!finished) throw new Error('HandlerSqliteStore publication did not finish');
+          } finally { active = false; }
+          if (!published) continue;
           return result;
         } finally {
           if (!published) candidate.close();

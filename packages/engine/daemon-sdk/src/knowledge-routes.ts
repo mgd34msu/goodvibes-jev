@@ -26,6 +26,7 @@ import type {
   KnowledgeProjectionTargetKind,
   KnowledgeSourceType,
   KnowledgeUsageKind,
+  KnowledgeScopeReadOptions,
 } from './knowledge-route-types.js';
 
 type KnowledgeSearchBody = {
@@ -70,21 +71,22 @@ export function createDaemonKnowledgeRouteHandlers(
   context: DaemonKnowledgeRouteContext,
 ): DaemonKnowledgeRouteHandlers {
   return {
-    getKnowledgeStatus: async (url) => Response.json(await context.knowledgeService.getStatus(readKnowledgeSpaceQuery(url))),
-    getKnowledgeSources: async (url) => handleGetKnowledgeSources(context, url),
-    getKnowledgeNodes: async (url) => handleGetKnowledgeNodes(context, url),
-    getKnowledgeIssues: async (url) => Response.json({
-      issues: context.knowledgeService.queryIssues({
+    getKnowledgeStatus: (url, request) => readScopedKnowledgeResponse(context, request, async options =>
+      Response.json(await context.knowledgeService.getStatus(readKnowledgeSpaceQuery(url), options))),
+    getKnowledgeSources: (url, request) => readScopedKnowledgeResponse(context, request, options => handleGetKnowledgeSources(context, url, options)),
+    getKnowledgeNodes: (url, request) => readScopedKnowledgeResponse(context, request, options => handleGetKnowledgeNodes(context, url, options)),
+    getKnowledgeIssues: (url, request) => readScopedKnowledgeResponse(context, request, async options => Response.json({
+      issues: (await context.knowledgeService.queryIssues({
         limit: readLimit(url, 100),
         ...readKnowledgeSpaceQuery(url),
-      }).items,
-    }),
-    getKnowledgeItem: (id, url) => {
-      const item = context.knowledgeService.getItemScoped(id, readKnowledgeSpaceQuery(url));
+      }, options)).items,
+    })),
+    getKnowledgeItem: (id, url, request) => readScopedKnowledgeResponse(context, request, async options => {
+      const item = await context.knowledgeService.getItemScoped(id, readKnowledgeSpaceQuery(url), options);
       return item
         ? Response.json(item)
         : jsonErrorResponse({ error: 'Unknown knowledge item' }, { status: 404 });
-    },
+    }),
     getKnowledgeConnectors: () => Response.json({ connectors: context.knowledgeService.listConnectors() }),
     getKnowledgeConnector: (id) => {
       const connector = context.knowledgeService.getConnector(id);
@@ -98,31 +100,32 @@ export function createDaemonKnowledgeRouteHandlers(
         ? Response.json({ report })
         : jsonErrorResponse({ error: 'Unknown knowledge connector' }, { status: 404 });
     },
-    getKnowledgeProjectionTargets: async (url) => Response.json({
-      targets: await context.knowledgeService.listProjectionTargets(readLimit(url, 25), readKnowledgeSpaceQuery(url)),
-    }),
-    getKnowledgeMap: async (url) => Response.json(await context.knowledgeService.map({
+    getKnowledgeProjectionTargets: (url, request) => readScopedKnowledgeResponse(context, request, async options => Response.json({
+      targets: await context.knowledgeService.listProjectionTargets(readLimit(url, 25), readKnowledgeSpaceQuery(url), options),
+    })),
+    getKnowledgeMap: (url, request) => readScopedKnowledgeResponse(context, request, async options => Response.json(await context.knowledgeService.map({
       limit: readLimit(url, 500),
       includeSources: readBooleanQuery(url, 'includeSources'),
       includeIssues: readBooleanQuery(url, 'includeIssues'),
       includeGenerated: readBooleanQuery(url, 'includeGenerated'),
       ...readKnowledgeMapFilters(url),
-    })),
+    }, options))),
     getKnowledgeGraphqlSchema: () => Response.json({
       language: 'graphql',
       domain: 'knowledge',
       schema: context.knowledgeGraphqlService.schemaText,
     }),
-    getKnowledgeExtractions: async (url) => {
+    getKnowledgeExtractions: (url, request) => readScopedKnowledgeResponse(context, request, async options => {
       const sourceId = url.searchParams.get('sourceId') ?? undefined;
       return Response.json({
-        extractions: context.knowledgeService.listExtractions(
+        extractions: await context.knowledgeService.listExtractions(
           readLimit(url, 100),
           sourceId,
           readKnowledgeSpaceQuery(url),
+          options,
         ),
       });
-    },
+    }),
     getKnowledgeUsage: async (url) => {
       const targetKind = readKnowledgeSubjectKind(url.searchParams.get('targetKind') ?? undefined);
       const targetId = url.searchParams.get('targetId') ?? undefined;
@@ -160,18 +163,19 @@ export function createDaemonKnowledgeRouteHandlers(
         ? Response.json({ report })
         : jsonErrorResponse({ error: 'Unknown knowledge consolidation report' }, { status: 404 });
     },
-    getKnowledgeExtraction: (id) => {
-      const extraction = context.knowledgeService.getExtraction(id);
+    getKnowledgeExtraction: (id, url, request) => readScopedKnowledgeResponse(context, request, async options => {
+      const candidates = await context.knowledgeService.listExtractions(Number.MAX_SAFE_INTEGER, undefined, readKnowledgeSpaceQuery(url), options);
+      const extraction = candidates.find(value => typeof value === 'object' && value !== null && 'id' in value && value.id === id);
       return extraction
         ? Response.json({ extraction })
         : jsonErrorResponse({ error: 'Unknown knowledge extraction' }, { status: 404 });
-    },
-    getKnowledgeSourceExtraction: (id) => {
-      const extraction = context.knowledgeService.getSourceExtraction(id);
+    }),
+    getKnowledgeSourceExtraction: (id, url, request) => readScopedKnowledgeResponse(context, request, async options => {
+      const extraction = (await context.knowledgeService.listExtractions(1, id, readKnowledgeSpaceQuery(url), options))[0];
       return extraction
         ? Response.json({ extraction })
         : jsonErrorResponse({ error: 'Unknown source extraction' }, { status: 404 });
-    },
+    }),
     getKnowledgeJobs: () => Response.json({ jobs: context.knowledgeService.listJobs() }),
     getKnowledgeJob: (jobId) => {
       const job = context.knowledgeService.getJob(jobId);
@@ -227,6 +231,45 @@ export function createDaemonKnowledgeRouteHandlers(
     postKnowledgeMaterializeProjection: async (request) => handleKnowledgeMaterializeProjection(context, request),
     executeKnowledgeGraphql: async (request) => handleKnowledgeGraphql(context, request),
   };
+}
+
+/** The exact authenticated request owns every awaited scope reading and response. */
+async function readScopedKnowledgeResponse(
+  context: DaemonKnowledgeRouteContext,
+  request: Request,
+  read: (options: KnowledgeScopeReadOptions) => Promise<Response>,
+): Promise<Response> {
+  const principal = context.resolveAuthenticatedPrincipal(request);
+  if (!principal) return jsonErrorResponse({ error: 'Unauthorized' }, { status: 401 });
+  const identity = (value: typeof principal) => JSON.stringify({
+    principalId: value.principalId, principalKind: value.principalKind,
+    admin: value.admin, scopes: [...value.scopes].sort(),
+  });
+  const captured = identity(principal);
+  const options: KnowledgeScopeReadOptions = {
+    signal: request.signal,
+    assertCurrent() {
+      request.signal.throwIfAborted();
+      const current = context.resolveAuthenticatedPrincipal(request);
+      if (!current || identity(current) !== captured) throw new Error('Knowledge read authorization is no longer current.');
+    },
+  };
+  try {
+    options.assertCurrent();
+    const response = await read(options);
+    options.assertCurrent();
+    return response;
+  } catch (error) {
+    if (request.signal.aborted) return jsonErrorResponse({ error: 'Knowledge read canceled.' }, { status: 499 });
+    const current = context.resolveAuthenticatedPrincipal(request);
+    if (!current || identity(current) !== captured) {
+      return jsonErrorResponse({ error: 'Knowledge read authorization is no longer current.' }, { status: 401 });
+    }
+    if (error instanceof Error && error.name === 'KnowledgeScopeSelectionHeldError') {
+      return jsonErrorResponse({ error: 'Knowledge scope reading is unsettled or no longer current.' }, { status: 503 });
+    }
+    throw error;
+  }
 }
 
 function readLimit(url: URL, fallback: number): number {
@@ -515,15 +558,18 @@ async function handleKnowledgeGraphql(context: DaemonKnowledgeRouteContext, req:
     return jsonErrorResponse({ error: 'Knowledge GraphQL mutation requires admin access.' }, { status: 403 });
   }
 
-  const result = await context.knowledgeGraphqlService.execute({
-    query: parsed.query,
-    ...(parsed.operationName ? { operationName: parsed.operationName } : {}),
-    ...(parsed.variables ? { variables: parsed.variables } : {}),
-    admin: principal.admin,
-    scopes: principal.scopes,
+  return readScopedKnowledgeResponse(context, req, async options => {
+    const result = await context.knowledgeGraphqlService.execute({
+      query: parsed.query,
+      ...(parsed.operationName ? { operationName: parsed.operationName } : {}),
+      ...(parsed.variables ? { variables: parsed.variables } : {}),
+      admin: principal.admin,
+      scopes: principal.scopes,
+      scopeOptions: options,
+    });
+    const status = result.errors?.length && !result.data ? 400 : 200;
+    return Response.json(result, { status });
   });
-  const status = result.errors?.length && !result.data ? 400 : 200;
-  return Response.json(result, { status });
 }
 
 function buildKnowledgePrivateHostFetchOptions(
@@ -933,19 +979,20 @@ function extractKnowledgeItemUpdatedAt(item: unknown): number | undefined {
  * grows beyond this, source-level pagination on the store API should be added
  * and this cap raised accordingly.
  */
-function handleGetKnowledgeSources(
+async function handleGetKnowledgeSources(
   context: DaemonKnowledgeRouteContext,
   url: URL,
-): Response {
+  options: KnowledgeScopeReadOptions,
+): Promise<Response> {
   const spaceQuery = readKnowledgeSpaceQuery(url);
   if (!hasPaginationParams(url)) {
-    const { items: sources } = context.knowledgeService.querySources({ limit: readLimit(url, 100), ...spaceQuery });
+    const { items: sources } = await context.knowledgeService.querySources({ limit: readLimit(url, 100), ...spaceQuery }, options);
     return Response.json({ sources });
   }
   const limit = readLimit(url, 100);
   const rawCursor = url.searchParams.get('cursor');
   // Load the full in-memory collection (capped at 5_000, see JSDoc note above).
-  const { items: allItems } = context.knowledgeService.querySources({ limit: 5_000, ...spaceQuery });
+  const { items: allItems } = await context.knowledgeService.querySources({ limit: 5_000, ...spaceQuery }, options);
   const items = allItems as readonly unknown[];
   const result = paginateItems(
     items,
@@ -971,19 +1018,20 @@ function handleGetKnowledgeSources(
  * ### Fetch cap
  * Same limitation as `handleGetKnowledgeSources`, capped at 5 000 items.
  */
-function handleGetKnowledgeNodes(
+async function handleGetKnowledgeNodes(
   context: DaemonKnowledgeRouteContext,
   url: URL,
-): Response {
+  options: KnowledgeScopeReadOptions,
+): Promise<Response> {
   const spaceQuery = readKnowledgeSpaceQuery(url);
   if (!hasPaginationParams(url)) {
-    const { items: nodes } = context.knowledgeService.queryNodes({ limit: readLimit(url, 100), ...spaceQuery });
+    const { items: nodes } = await context.knowledgeService.queryNodes({ limit: readLimit(url, 100), ...spaceQuery }, options);
     return Response.json({ nodes });
   }
   const limit = readLimit(url, 100);
   const rawCursor = url.searchParams.get('cursor');
   // Load the full in-memory collection (capped at 5_000, see JSDoc note above).
-  const { items: allItems } = context.knowledgeService.queryNodes({ limit: 5_000, ...spaceQuery });
+  const { items: allItems } = await context.knowledgeService.queryNodes({ limit: 5_000, ...spaceQuery }, options);
   const items = allItems as readonly unknown[];
   const result = paginateItems(
     items,

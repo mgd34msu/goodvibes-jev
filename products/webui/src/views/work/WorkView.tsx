@@ -74,6 +74,8 @@ export interface WorkViewProps {
   onTabChange: (tab: WorkTab) => void;
   /** The fleet subscription is live (the poll recedes to a safety cadence). */
   subscriptionActive?: boolean;
+  /** The shared session stream owns ordinary and hosted list updates. */
+  sessionSubscriptionActive?: boolean;
   /** The session-update stream is paused (steer confirmations may lag). */
   streamPaused?: boolean;
   /** Open a session in the Chat view. */
@@ -117,7 +119,7 @@ export function WorkView(props: WorkViewProps) {
   return <WorkViewContent key={contractScope.revision} {...props} contractScope={contractScope} />;
 }
 
-function WorkViewContent({ contractScope, tab, onTabChange, subscriptionActive = true, streamPaused = false, onOpenSession }: WorkViewProps & { contractScope: ClientLifetime }) {
+function WorkViewContent({ contractScope, tab, onTabChange, subscriptionActive = true, sessionSubscriptionActive = false, streamPaused = false, onOpenSession }: WorkViewProps & { contractScope: ClientLifetime }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const phone = useMediaQuery(PHONE_QUERY);
@@ -138,23 +140,18 @@ function WorkViewContent({ contractScope, tab, onTabChange, subscriptionActive =
   const [sessionTab, setSessionTab] = useState<SessionTab>(tab === 'checkpoints' ? 'checkpoints' : 'transcript');
 
   const selectedHostedId = selectedKey.startsWith('hosted:') ? selectedKey.slice('hosted:'.length) : null;
-  const [hostedStreamConnected, setHostedStreamConnected] = useState(false);
   const data = useWorkData({
     contractScope,
     subscriptionActive,
     archived: scope === 'archived',
     includeFinished: scope !== 'active',
-    hostedStreamConnected,
+    hostedStreamConnected: sessionSubscriptionActive,
   });
   const closeDetail = useCallback(() => {
     dismissedRef.current = true;
     setSelectedKey('');
   }, []);
   const hostedAttachment = useHostedAttachment(selectedHostedId, data.hostedRecords, closeDetail);
-  useEffect(() => {
-    setHostedStreamConnected(hostedAttachment.streamConnected);
-  }, [hostedAttachment.streamConnected]);
-
   const approvalActions = useApprovalActions();
 
   const items = useMemo(() => buildWorkItems({

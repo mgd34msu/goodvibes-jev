@@ -230,20 +230,21 @@ function isCreateAutomationJobInput(input: unknown): input is CreateAutomationJo
 
 function isUpdateAutomationJobInput(input: unknown): input is UpdateAutomationJobInput {
   return isRecord(input)
+    && isOptionalString(input.expectedMutationRevision)
     && isOptionalString(input.name)
     && isOptionalString(input.prompt)
     && (input.schedule === undefined || isAutomationScheduleDefinition(input.schedule))
     && hasValidAutomationJobFields(input);
 }
 
-function parseCreateAutomationJobInput(input: Record<string, unknown>): CreateAutomationJobInput {
+export function parseCreateAutomationJobInput(input: Record<string, unknown>): CreateAutomationJobInput {
   if (!isCreateAutomationJobInput(input)) {
     throw new Error('Invalid automation job create payload from runtime route parser.');
   }
   return input;
 }
 
-function parseUpdateAutomationJobInput(input: Record<string, unknown>): UpdateAutomationJobInput {
+export function parseUpdateAutomationJobInput(input: Record<string, unknown>): UpdateAutomationJobInput {
   if (!isUpdateAutomationJobInput(input)) {
     throw new Error('Invalid automation job update payload from runtime route parser.');
   }

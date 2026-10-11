@@ -17,7 +17,7 @@ import type {
   KnowledgeSemanticEnrichmentStateRecord,
 } from './types.js';
 
-export function writeKnowledgeNodeRow(sqlite: SQLiteStore, record: KnowledgeNodeRecord): void {
+export function writeKnowledgeNodeRow(sqlite: Pick<SQLiteStore, 'run'>, record: KnowledgeNodeRecord): void {
   const raw = knowledgeRawRepresentation(record);
   sqlite.run(`
     INSERT OR REPLACE INTO knowledge_nodes (
@@ -64,7 +64,7 @@ export function resolveNodeActivation(args: {
  * overwritten prior content and note what changed. (Invariant 8.)
  */
 export function recordKnowledgeNodeRevisions(
-  sqlite: SQLiteStore,
+  sqlite: Pick<SQLiteStore, 'run'>,
   nodeRevisions: Map<string, KnowledgeNodeRevisionRecord[]>,
   record: KnowledgeNodeRecord,
   existing: KnowledgeNodeRecord | undefined,
@@ -94,7 +94,7 @@ export function listKnowledgeNodeRevisions(
 }
 
 function appendNodeRevision(
-  sqlite: SQLiteStore,
+  sqlite: Pick<SQLiteStore, 'run'>,
   list: KnowledgeNodeRevisionRecord[],
   snapshot: KnowledgeNodeRecord,
   changeKind: KnowledgeNodeRevisionChangeKind,

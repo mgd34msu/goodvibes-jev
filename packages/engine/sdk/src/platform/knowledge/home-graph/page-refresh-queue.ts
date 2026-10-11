@@ -23,14 +23,19 @@ export function withDevicePageRefresh<T>(store: KnowledgeStore, key: string, sig
   let queue = queues.get(store);
   if (!queue) { queue = new Map(); queues.set(store, queue); }
   const previous = queue.get(key) ?? Promise.resolve();
-  const run = previous.then(async () => { assertRequest(); const result = await operation(assertRequest); assertRequest(); return result; });
+  let started = false;
+  const run = previous.then(async () => { assertRequest(); started = true; const result = await operation(assertRequest); assertRequest(); return result; });
   const tail = run.then(() => {}, () => {});
   queue.set(key, tail);
   void tail.then(() => { if (queue.get(key) === tail) queue.delete(key); });
   const stopped = signal && owner ? AbortSignal.any([signal, owner.signal]) : signal ?? owner?.signal;
   if (!stopped) return run;
   return new Promise<T>((resolve, reject) => {
-    const abort = () => reject(new Held(signal?.aborted ? 'aborted' : 'stale'));
+    const abort = () => {
+      // Active cancellation drains staged artifact cleanup before reporting the
+      // hold. A queued request has no owned work to drain.
+      if (!started) reject(new Held(signal?.aborted ? 'aborted' : 'stale'));
+    };
     stopped.addEventListener('abort', abort, { once: true });
     run.then(resolve, reject).finally(() => stopped.removeEventListener('abort', abort));
     if (stopped.aborted) abort();

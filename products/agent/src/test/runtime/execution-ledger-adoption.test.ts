@@ -61,7 +61,7 @@ test('real Agent services construct the shared ledger and actual history consume
   await runtime.executionLedger.settled();
   const record = runtime.executionLedger.getSnapshot().records[0]!;
   expect(record).toEqual(expect.objectContaining({ routeKind: 'network', targetPreview: 'public-fixture', permissionApproved: true, status: 'succeeded', durationMs: 19 }));
-  const summary = executionHistorySummary({ ops: { executionLedger: runtime.executionLedger }, workspace: { fileUndoManager: runtime.fileUndoManager } } as CommandContext, { includeParameters: true });
+  const summary = await executionHistorySummary({ ops: { executionLedger: runtime.executionLedger }, workspace: { fileUndoManager: runtime.fileUndoManager }, session: { runtime: { sessionId: ctx.sessionId } } } as CommandContext, { includeParameters: true });
   expect(JSON.stringify(summary)).toContain('network');
   expect(record.autonomousDecision).toEqual(decision);
   expect(JSON.stringify(summary)).toContain('composition-decision');

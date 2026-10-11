@@ -47,7 +47,6 @@ function scheduleEditConfirmationRoute(preview: ScheduleEditPreview): string {
     }
   }
   if (preview.payload.prompt) args.push('prompt:"..."');
-  args.push('confirm:true', 'explicitUserRequest:"..."');
   return args.join(' ');
 }
 
@@ -93,7 +92,7 @@ export function formatScheduleEditPreview(preview: ScheduleEditPreview): string 
     preview.payload.prompt ? '  prompt replacement prepared' : '',
     `  requested by ${preview.explicitUserRequest}`,
     '',
-    'Confirmation required: rerun with --yes or call the model tool with confirm:true only when the user explicitly asked for this exact schedule edit.',
+    'Manual CLI confirmation required: rerun with --yes. Model tools require current recorded effect admission.',
     ...scheduleConfirmationRouteLines({ model: scheduleEditConfirmationRoute(preview) }),
   ].filter((line) => line !== '').join('\n');
 }

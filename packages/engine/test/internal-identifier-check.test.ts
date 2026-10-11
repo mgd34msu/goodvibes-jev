@@ -10,15 +10,26 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { checkNoInternalIdentifiers } from '../scripts/internal-identifier-rule.ts';
+import { captureStaticInputs, saveStaticSourceReadings } from '../scripts/static-source-readings.ts';
+import { preparedStaticReadings } from './_helpers/static-source-evidence.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 
-function violationsFor(text: string, relPath = 'sdk/src/example.ts'): string[] {
-  return checkNoInternalIdentifiers([{ relPath, text }]);
+async function violationsFor(text: string, relPath = 'sdk/src/example.ts', probability = 0.99): Promise<string[]> {
+  const inputs = captureStaticInputs('internal-identifier', relPath, text);
+  const readings = await preparedStaticReadings(inputs, probability, inputs[0]?.anchors.at(-1)?.id);
+  return checkNoInternalIdentifiers([{ relPath, text }], readings);
+}
+
+async function fixtureReadings(root: string, relPath: string, text: string, probability = 0.99): Promise<string> {
+  const path = join(root, 'source-readings.json');
+  const inputs = captureStaticInputs('internal-identifier', relPath, text);
+  saveStaticSourceReadings(await preparedStaticReadings(inputs, probability, inputs[0]?.anchors.at(-1)?.id), path);
+  return path;
 }
 
 describe('internal-identifier rule', () => {
-  test('flags every banned planning-identifier shape', () => {
+  test('flags every banned planning-identifier shape', async () => {
     const banned = [
       'W' + '3.' + '1 shipped the renderer', // wave.item id
       'tracked as ' + 'wo' + '402 in the plan', // numeric work-order id
@@ -41,29 +52,29 @@ describe('internal-identifier rule', () => {
       'per ' + 'Ite' + 'm 1.4.2, the gate holds', // case-insensitive
     ];
     for (const text of banned) {
-      const violations = violationsFor(text);
+      const violations = await violationsFor(text);
       expect(violations.length).toBeGreaterThan(0);
     }
   });
 
-  test('quotes the owner doctrine verbatim in every violation', () => {
+  test('quotes the owner doctrine verbatim in every violation', async () => {
     const doctrine =
       'never put wave/work-order/register ids in outward-facing or in-code text; '
       + 'plain language only; provenance via decision-record paths or versions';
-    const violations = violationsFor('entry ' + 'DEBT-' + '9 remains open');
+    const violations = await violationsFor('entry ' + 'DEBT-' + '9 remains open');
     expect(violations).toHaveLength(1);
     expect(violations[0]).toContain(doctrine);
     expect(violations[0]).toContain('[internal-identifier]');
   });
 
-  test('reports the file path and one-based line number', () => {
+  test('reports the file path and one-based line number', async () => {
     const text = ['clean line', 'tracked as ' + 'wo' + '1234'].join('\n');
-    const violations = violationsFor(text, 'scripts/tool.ts');
+    const violations = await violationsFor(text, 'scripts/tool.ts');
     expect(violations).toHaveLength(1);
     expect(violations[0]).toStartWith('scripts/tool.ts:2:');
   });
 
-  test('non-regression: genuine technical tokens stay legal', () => {
+  test('non-regression: genuine technical tokens stay legal', async () => {
     const legal = [
       'strips C0 and C1 control characters from the payload', // control-set names, bare
       'bind the F5 key to refresh and F12 to devtools', // function keys (F excluded from the letter range)
@@ -83,19 +94,19 @@ describe('internal-identifier rule', () => {
       'the checklist item has 1.5 points', // "item" not directly adjoining the number
     ];
     for (const text of legal) {
-      expect(violationsFor(text)).toEqual([]);
+      expect(await violationsFor(text, 'sdk/src/example.ts', 0.01)).toEqual([]);
     }
   });
 
-  test('docs/decisions/** is exempt (the sanctioned provenance store)', () => {
+  test('docs/decisions/** is exempt (the sanctioned provenance store)', async () => {
     const text = 'Wave: One-Platform ' + 'Wave ' + '4 (' + 'A9' + ')';
-    expect(violationsFor(text, 'docs/decisions/2026-07-06-example.md')).toEqual([]);
-    expect(violationsFor(text, 'docs/guide.md').length).toBeGreaterThan(0);
+    expect(await violationsFor(text, 'docs/decisions/2026-07-06-example.md')).toEqual([]);
+    expect((await violationsFor(text, 'docs/guide.md')).length).toBeGreaterThan(0);
   });
 });
 
 describe('check-internal-identifiers.ts (subprocess)', () => {
-  test('red test: a planted violation fails the check with a named file and line', () => {
+  test('red test: a planted violation fails the check with a named file and line', async () => {
     const root = mkdtempSync(join(tmpdir(), 'internal-id-red-'));
     try {
       mkdirSync(join(root, 'src'), { recursive: true });
@@ -116,13 +127,14 @@ describe('check-internal-identifiers.ts (subprocess)', () => {
       expect(result.exitCode).toBe(1);
       const stderr = result.stderr.toString();
       expect(stderr).toContain('src/planted.ts:1');
+      expect(stderr).toContain('evidence held');
       expect(stderr).toContain('internal-identifier-check FAILED');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  test('red test: a violation in a .json file fails (json joined the scanned set)', () => {
+  test('red test: a violation in a .json file fails (json joined the scanned set)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'internal-id-json-'));
     try {
       writeFileSync(
@@ -142,7 +154,7 @@ describe('check-internal-identifiers.ts (subprocess)', () => {
     }
   });
 
-  test('red test: a violation in an extensionless hook script fails (.githooks joined the scanned set)', () => {
+  test('red test: a violation in an extensionless hook script fails (.githooks joined the scanned set)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'internal-id-hooks-'));
     try {
       mkdirSync(join(root, '.githooks'), { recursive: true });
@@ -157,13 +169,13 @@ describe('check-internal-identifiers.ts (subprocess)', () => {
         stderr: 'pipe',
       });
       expect(result.exitCode).toBe(1);
-      expect(result.stderr.toString()).toContain('.githooks/pre-commit:2');
+      expect(result.stderr.toString()).toContain('.githooks/pre-commit:1');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  test('red test: a violation in the root changelog fails under the DEFAULT scan set', () => {
+  test('red test: a violation in the root changelog fails under the DEFAULT scan set', async () => {
     const root = mkdtempSync(join(tmpdir(), 'internal-id-changelog-'));
     try {
       writeFileSync(join(root, 'CHANGELOG.md'), '## Unreleased\n\n- landed in ' + 'Wave ' + '9\n');
@@ -175,13 +187,13 @@ describe('check-internal-identifiers.ts (subprocess)', () => {
         stderr: 'pipe',
       });
       expect(result.exitCode).toBe(1);
-      expect(result.stderr.toString()).toContain('CHANGELOG.md:3');
+      expect(result.stderr.toString()).toContain('CHANGELOG.md:1');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  test('red test: the digit-then-letter work-order shape fails end-to-end', () => {
+  test('red test: the digit-then-letter work-order shape fails end-to-end', async () => {
     const root = mkdtempSync(join(tmpdir(), 'internal-id-digitletter-'));
     try {
       mkdirSync(join(root, 'src'), { recursive: true });
@@ -199,17 +211,20 @@ describe('check-internal-identifiers.ts (subprocess)', () => {
     }
   });
 
-  test('green test: clean text passes', () => {
+  test('green test: clean text passes', async () => {
     const root = mkdtempSync(join(tmpdir(), 'internal-id-green-'));
     try {
       mkdirSync(join(root, 'src'), { recursive: true });
-      writeFileSync(join(root, 'src', 'clean.ts'), '// plain descriptive comment\n');
+      const text = '// plain descriptive comment\n';
+      writeFileSync(join(root, 'src', 'clean.ts'), text);
+      const readingsPath = await fixtureReadings(root, 'src/clean.ts', text, 0.01);
       const result = Bun.spawnSync({
         cmd: ['bun', join(REPO_ROOT, 'scripts', 'check-internal-identifiers.ts')],
         env: {
           ...process.env,
           INTERNAL_ID_ROOT: root,
           INTERNAL_ID_DIRS_JSON: JSON.stringify(['src']),
+          STATIC_SOURCE_READINGS_PATH: readingsPath,
         },
         stdout: 'pipe',
         stderr: 'pipe',

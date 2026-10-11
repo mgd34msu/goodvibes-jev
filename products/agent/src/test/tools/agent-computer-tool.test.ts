@@ -1,29 +1,36 @@
-import { describe, expect, test } from 'bun:test';
-import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { afterAll, describe, expect, test } from 'bun:test';
+import { ToolInputProjectionError, ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import type { ProtectedSourceOwner } from '@goodvibes-jev/engine/sdk/platform/security';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { CommandContext, CommandRegistry } from '../../input/command-registry.ts';
 import { createAgentComputerTool, registerAgentComputerTool } from '../../tools/agent-computer-tool.ts';
+import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
+import { ordinaryResearchOwner, cleanupResearchScreeningFixtures, researchScreeningFixture, exactSensitiveSpans } from '../helpers/research-screening.ts';
 
-function fakeTool(calls: Record<string, unknown>[]): Tool {
+afterAll(cleanupResearchScreeningFixtures);
+
+function fakeTool(calls: Record<string, unknown>[], executionOptions: Array<Parameters<Tool['execute']>[1]> = []): Tool {
   return {
     definition: {
       name: 'agent_harness',
       description: 'Fake harness',
       parameters: { type: 'object', additionalProperties: true },
     },
-    execute: async (args: Record<string, unknown>) => {
+    execute: async (args, options) => {
       calls.push(args);
+      executionOptions.push(options);
       return { success: true, output: JSON.stringify({ args }) };
     },
   };
 }
 
-function makeTool(calls: Record<string, unknown>[] = []): Tool {
+function makeTool(calls: Record<string, unknown>[] = [], executionOptions: Array<Parameters<Tool['execute']>[1]> = [], owner: ProtectedSourceOwner = ordinaryResearchOwner()): Tool {
+  const registry = new ToolRegistry(); bindAgentResearchSourceOwner(registry, owner);
   return createAgentComputerTool({
     commandRegistry: {} as CommandRegistry,
     commandContext: { workspace: {}, platform: {}, session: { runtime: {} } } as CommandContext,
-    toolRegistry: new ToolRegistry(),
-    harnessTool: fakeTool(calls),
+    toolRegistry: registry,
+    harnessTool: fakeTool(calls, executionOptions),
   });
 }
 
@@ -91,5 +98,23 @@ describe('computer adapter', () => {
 
     expect(registry.has('computer')).toBe(true);
     expect(registry.getToolDefinitions().filter((definition) => definition.name === 'computer')).toHaveLength(1);
+  });
+
+  test('forwards the exact execution capability and refuses an already cancelled workflow request', async () => {
+    const calls: Record<string, unknown>[] = [], forwarded: Array<Parameters<Tool['execute']>[1]> = [];
+    const tool = makeTool(calls, forwarded), controller = new AbortController(), options = { signal: controller.signal };
+    expect((await tool.execute({ action: 'plan', query: 'opaque workflow request' }, options)).success).toBe(true);
+    expect(forwarded[0]).toBe(options);
+    controller.abort(new Error('fixture cancelled'));
+    await expect(tool.execute({ action: 'plan', query: 'opaque workflow request' }, options)).rejects.toThrow('fixture cancelled');
+    expect(calls).toHaveLength(1);
+  });
+
+  test('screens the complete original workflow request before translating away unused private fields', async () => {
+    const privateText = 'synthetic-private-computer-value';
+    const screening = researchScreeningFixture({ spans: exactSensitiveSpans([privateText]) });
+    const calls: Record<string, unknown>[] = [], tool = makeTool(calls, [], screening.owner);
+    await expect(tool.execute({ action: 'plan', query: 'ordinary request', unused: privateText })).rejects.toBeInstanceOf(ToolInputProjectionError);
+    expect(calls).toHaveLength(0);
   });
 });

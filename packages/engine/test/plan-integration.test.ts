@@ -1,7 +1,10 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import {
   ProjectPlanningService,
 } from '../sdk/src/platform/knowledge/index.js';
@@ -15,8 +18,16 @@ import {
 } from '../sdk/src/platform/core/plan-proposal.js';
 
 const tmpRoots: string[] = [];
+let previousPort: JudgmentPort | undefined;
+beforeEach(() => {
+  previousPort = installJudgmentPort(fakePort((name) => {
+    if (name === 'specified') return noulAnswer(0.99);
+    throw new Error(`Unscripted plan integration reading: ${name}`);
+  }).port);
+});
 
 afterEach(() => {
+  installJudgmentPort(previousPort);
   for (const root of tmpRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
@@ -71,14 +82,16 @@ describe('proposal -> planning-state approval seam (readiness gate)', () => {
     expect(evalBefore.readiness).toBe('needs-user-input');
     expect(evalBefore.gaps.map((g) => g.kind)).toEqual(['unapproved-execution']);
 
-    // Mirrors the TUI's `/plan approve` (planning-runtime.ts): fetch current
-    // state, flip executionApproved, upsert again.
+    // Mirrors the TUI's approval action, bound to its observed revision.
     const current = await service.getState({ projectId });
     expect(current.state).not.toBeNull();
-    await service.upsertState({
+    if (!current.revision) throw new Error('Planning state revision is missing');
+    const approved = await service.applyStateAction({
       projectId,
-      state: { ...current.state!, executionApproved: true },
+      expected: { kind: 'revision', revision: current.revision },
+      action: { kind: 'approve' },
     });
+    expect(approved.applied).toBe(true);
 
     const evalAfter = await service.evaluate({ projectId });
     expect(evalAfter.gaps).toEqual([]);

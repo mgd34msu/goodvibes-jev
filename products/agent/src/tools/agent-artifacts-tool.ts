@@ -3,8 +3,8 @@ import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { ArtifactDescriptor, ArtifactRecord, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { resolveAndValidatePath } from '@goodvibes-jev/engine/sdk/platform/utils';
+import type { ToolRegistry, ToolExecuteOptions } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { agentArtifactEffectGuard, assertAgentArtifactBytes, captureAgentArtifactSource, captureAgentExportPath } from './agent-artifact-effect.ts';
 import {
   createZipArchive,
   packageArtifactFilename,
@@ -189,7 +189,7 @@ function describeArtifact(artifact: ArtifactDescriptor, options: { readonly incl
     `  source ${source || artifact.sourceUri || '(none)'}`,
     `  sha256 ${artifact.sha256}`,
     ...(options.includeRoute ? [`  inspect agent_artifacts mode:"show" artifactId:"${artifact.id}" includeContent:true`] : []),
-    ...(options.includeRoute ? [`  export agent_artifacts mode:"export" artifactId:"${artifact.id}" destinationPath:"${exportPath}" confirm:true explicitUserRequest:"..."`] : []),
+    ...(options.includeRoute ? [`  export agent_artifacts mode:"export" artifactId:"${artifact.id}" destinationPath:"${exportPath}"`] : []),
   ];
 }
 
@@ -216,8 +216,8 @@ function formatList(artifacts: readonly ArtifactDescriptor[], total: number, arg
   if (artifacts.length > 1) {
     lines.push(
       'Package selected artifacts',
-      `  package agent_artifacts mode:"package" artifactIds:${JSON.stringify(artifacts.slice(0, 5).map((artifact) => artifact.id))} destinationPath:"exports/artifact-package" confirm:true explicitUserRequest:"..."`,
-      `  archive agent_artifacts mode:"archive" artifactIds:${JSON.stringify(artifacts.slice(0, 5).map((artifact) => artifact.id))} destinationPath:"exports/artifact-package.zip" confirm:true explicitUserRequest:"..."`,
+      `  package agent_artifacts mode:"package" artifactIds:${JSON.stringify(artifacts.slice(0, 5).map((artifact) => artifact.id))} destinationPath:"exports/artifact-package"`,
+      `  archive agent_artifacts mode:"archive" artifactIds:${JSON.stringify(artifacts.slice(0, 5).map((artifact) => artifact.id))} destinationPath:"exports/artifact-package.zip"`,
     );
   }
   return lines.join('\n').trimEnd();
@@ -255,32 +255,35 @@ function formatShow(loaded: LoadedArtifact, args: AgentArtifactsToolArgs): strin
   return lines.join('\n');
 }
 
-function requireConfirmed(args: AgentArtifactsToolArgs, action: string): void {
-  const explicitUserRequest = readString(args.explicitUserRequest);
-  if (!explicitUserRequest) throw new Error(`${action} requires explicitUserRequest with the user's exact request or a short faithful summary.`);
-  if (args.confirm !== true) throw new Error(`${action} requires confirm:true after an explicit user request.`);
-}
-
 async function exportArtifactToFile(
   store: AgentArtifactBrowserStore,
   args: AgentArtifactsToolArgs,
   options: AgentArtifactsToolOptions,
+  assertCurrent: () => void,
 ): Promise<string> {
-  requireConfirmed(args, 'Agent artifact export');
+  assertCurrent();
   if (!store.readContent) throw new Error('Artifact export requires an artifact store with readContent support.');
   if (!options.projectRoot) throw new Error('Artifact export requires a projectRoot for path validation.');
   const artifactId = readString(args.artifactId);
   if (!artifactId) throw new Error('artifactId is required for mode:"export".');
   const destinationPath = readString(args.destinationPath);
   if (!destinationPath) throw new Error('destinationPath is required for mode:"export".');
-  const resolvedPath = resolveAndValidatePath(destinationPath, options.projectRoot);
-  const { record, buffer } = await store.readContent(artifactId);
+  const target = captureAgentExportPath(options.projectRoot, destinationPath);
+  const resolvedPath = target.path;
+  const { record, buffer: sourceBuffer } = await store.readContent(artifactId);
+  assertAgentArtifactBytes(record, sourceBuffer);
+  const assertSource = captureAgentArtifactSource(store, record);
+  const buffer = Buffer.from(sourceBuffer);
+  assertCurrent(); assertSource(); target.assertCurrent();
   const overwrite = readBoolean(args.overwrite);
   if (existsSync(resolvedPath) && !overwrite) {
-    throw new Error(`Export target already exists: ${resolvedPath}. Pass overwrite:true only after the user confirms replacement.`);
+    throw new Error(`Export target already exists: ${resolvedPath}. Pass overwrite:true when replacement is part of the admitted action.`);
   }
+  assertCurrent(); assertSource(); target.assertCurrent();
   await mkdir(dirname(resolvedPath), { recursive: true });
-  await writeFile(resolvedPath, buffer);
+  assertCurrent(); assertSource(); target.assertCurrent();
+  await writeFile(resolvedPath, buffer, { flag: overwrite ? 'w' : 'wx' });
+  assertCurrent(); assertSource();
   return [
     'Exported Agent artifact',
     `  artifact ${record.id}`,
@@ -298,6 +301,7 @@ async function loadArtifactsForPackage(
   store: AgentArtifactBrowserStore,
   args: AgentArtifactsToolArgs,
   mode: 'package' | 'archive',
+  assertCurrent: () => void,
 ): Promise<readonly { readonly record: ArtifactRecord; readonly buffer: Buffer }[]> {
   if (!store.readContent) throw new Error('Artifact package export requires an artifact store with readContent support.');
   const artifactIds = readStringList(args.artifactIds);
@@ -305,7 +309,11 @@ async function loadArtifactsForPackage(
   if (artifactIds.length > MAX_PACKAGE_ARTIFACTS) throw new Error(`Artifact package export supports at most ${MAX_PACKAGE_ARTIFACTS} artifacts per package.`);
   const loaded: Array<{ readonly record: ArtifactRecord; readonly buffer: Buffer }> = [];
   for (const artifactId of artifactIds) {
-    loaded.push(await store.readContent(artifactId));
+    assertCurrent();
+    const source = await store.readContent(artifactId);
+    assertCurrent();
+    assertAgentArtifactBytes(source.record, source.buffer);
+    loaded.push({ record: source.record, buffer: Buffer.from(source.buffer) });
   }
   return loaded;
 }
@@ -393,11 +401,14 @@ function buildArtifactPackagePayload(
   };
 }
 
-async function writeArtifactPackageDirectory(resolvedPath: string, payload: ArtifactPackagePayload): Promise<void> {
+async function writeArtifactPackageDirectory(resolvedPath: string, payload: ArtifactPackagePayload, assertCurrent: (target: string) => void, overwrite: boolean): Promise<void> {
   for (const entry of payload.entries) {
     const target = join(resolvedPath, ...entry.path.split('/'));
+    assertCurrent(target);
     await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, entry.buffer);
+    assertCurrent(target);
+    await writeFile(target, entry.buffer, { flag: overwrite ? 'w' : 'wx' });
+    assertCurrent(target);
   }
 }
 
@@ -405,26 +416,32 @@ async function exportArtifactPackage(
   store: AgentArtifactBrowserStore,
   args: AgentArtifactsToolArgs,
   options: AgentArtifactsToolOptions,
+  assertCurrent: () => void,
 ): Promise<string> {
-  requireConfirmed(args, 'Agent artifact package export');
+  assertCurrent();
   if (!options.projectRoot) throw new Error('Artifact package export requires a projectRoot for path validation.');
   const destinationPath = readString(args.destinationPath);
   if (!destinationPath) throw new Error('destinationPath is required for mode:"package".');
-  const resolvedPath = resolveAndValidatePath(destinationPath, options.projectRoot);
+  const target = captureAgentExportPath(options.projectRoot, destinationPath);
+  const resolvedPath = target.path;
   const overwrite = readBoolean(args.overwrite);
   if (existsSync(resolvedPath)) {
     const stats = await stat(resolvedPath);
+    assertCurrent(); target.assertCurrent();
     if (!stats.isDirectory()) {
       throw new Error(`Package target already exists and is not a directory: ${resolvedPath}. Choose a directory path.`);
     }
     if (!overwrite) {
-      throw new Error(`Package target already exists: ${resolvedPath}. Pass overwrite:true only after the user confirms replacement.`);
+      throw new Error(`Package target already exists: ${resolvedPath}. Pass overwrite:true when replacement is part of the admitted action.`);
     }
   }
 
-  const loaded = await loadArtifactsForPackage(store, args, 'package');
+  const loaded = await loadArtifactsForPackage(store, args, 'package', assertCurrent);
+  const sources = loaded.map(source => captureAgentArtifactSource(store, source.record));
+  const check = (path = resolvedPath) => { assertCurrent(); for (const source of sources) source(); target.assertCurrent(path); };
+  check();
   const payload = buildArtifactPackagePayload(loaded);
-  await writeArtifactPackageDirectory(resolvedPath, payload);
+  await writeArtifactPackageDirectory(resolvedPath, payload, check, overwrite);
   const artifactDir = join(resolvedPath, 'artifacts');
 
   return [
@@ -443,28 +460,37 @@ async function exportArtifactArchive(
   store: AgentArtifactBrowserStore,
   args: AgentArtifactsToolArgs,
   options: AgentArtifactsToolOptions,
+  assertCurrent: () => void,
 ): Promise<string> {
-  requireConfirmed(args, 'Agent artifact archive export');
+  assertCurrent();
   if (!options.projectRoot) throw new Error('Artifact archive export requires a projectRoot for path validation.');
   const destinationPath = readString(args.destinationPath);
   if (!destinationPath) throw new Error('destinationPath is required for mode:"archive".');
-  const resolvedPath = resolveAndValidatePath(destinationPath, options.projectRoot);
+  const target = captureAgentExportPath(options.projectRoot, destinationPath);
+  const resolvedPath = target.path;
   const overwrite = readBoolean(args.overwrite);
   if (existsSync(resolvedPath)) {
     const stats = await stat(resolvedPath);
+    assertCurrent(); target.assertCurrent();
     if (stats.isDirectory()) {
       throw new Error(`Archive target already exists and is a directory: ${resolvedPath}. Choose a .zip file path.`);
     }
     if (!overwrite) {
-      throw new Error(`Archive target already exists: ${resolvedPath}. Pass overwrite:true only after the user confirms replacement.`);
+      throw new Error(`Archive target already exists: ${resolvedPath}. Pass overwrite:true when replacement is part of the admitted action.`);
     }
   }
 
-  const loaded = await loadArtifactsForPackage(store, args, 'archive');
+  const loaded = await loadArtifactsForPackage(store, args, 'archive', assertCurrent);
+  const sources = loaded.map(source => captureAgentArtifactSource(store, source.record));
+  const check = (path = resolvedPath) => { assertCurrent(); for (const source of sources) source(); target.assertCurrent(path); };
+  check();
   const payload = buildArtifactPackagePayload(loaded);
   const archive = createZipArchive(payload.entries);
+  check();
   await mkdir(dirname(resolvedPath), { recursive: true });
-  await writeFile(resolvedPath, archive);
+  check();
+  await writeFile(resolvedPath, archive, { flag: overwrite ? 'w' : 'wx' });
+  check();
 
   return [
     'Exported Agent artifact archive',
@@ -500,8 +526,7 @@ export function createAgentArtifactsTool(
             description: 'Artifact id for show or export.',
           },
           artifactIds: {
-            type: 'array',
-            items: { type: 'string' },
+            anyOf: [{ type: 'array', items: { type: 'string' } }, { type: 'string' }],
             description: 'Artifact ids for mode:"package" or mode:"archive".',
           },
           destinationPath: {
@@ -546,11 +571,11 @@ export function createAgentArtifactsTool(
           },
           confirm: {
             type: 'boolean',
-            description: 'Required true for export, package, and archive writes.',
+            description: 'Optional request provenance. Recorded engine admission authorizes writes.',
           },
           explicitUserRequest: {
             type: 'string',
-            description: 'User request authorizing export.',
+            description: 'Optional user request provenance.',
           },
         },
         required: ['mode'],
@@ -559,8 +584,9 @@ export function createAgentArtifactsTool(
       sideEffects: ['write_fs'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: Record<string, unknown>) => {
-      const args = rawArgs as AgentArtifactsToolArgs;
+    execute: async (rawArgs: Record<string, unknown>, executionOptions: ToolExecuteOptions | undefined) => {
+      const args = rawArgs;
+      const assertCurrent = agentArtifactEffectGuard(rawArgs, executionOptions);
       const mode = readString(args.mode);
       if (!artifactStore?.list && !artifactStore?.get && !artifactStore?.readContent) {
         return failure('Artifact browsing is unavailable because this runtime did not provide the SDK artifact store.');
@@ -581,13 +607,13 @@ export function createAgentArtifactsTool(
           return output(formatShow(loaded, args));
         }
         if (mode === 'export') {
-          return output(await exportArtifactToFile(artifactStore, args, options));
+          return output(await exportArtifactToFile(artifactStore, args, options, assertCurrent));
         }
         if (mode === 'package') {
-          return output(await exportArtifactPackage(artifactStore, args, options));
+          return output(await exportArtifactPackage(artifactStore, args, options, assertCurrent));
         }
         if (mode === 'archive') {
-          return output(await exportArtifactArchive(artifactStore, args, options));
+          return output(await exportArtifactArchive(artifactStore, args, options, assertCurrent));
         }
         return failure(`Unknown agent_artifacts mode: ${mode || '<missing>'}. Use mode:"list", mode:"show", mode:"export", mode:"package", or mode:"archive".`);
       } catch (error) {

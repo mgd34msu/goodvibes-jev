@@ -323,10 +323,10 @@ export function renderAgentDocumentMarkdown(document: AgentDocumentRecord): stri
 }
 
 export class AgentDocumentRegistry {
-  public constructor(private readonly storePath: string) {}
+  public constructor(private readonly storePath: string, private readonly assertWriteCurrent?: () => void) {}
 
-  public static fromShellPaths(shellPaths: AgentDocumentStorePaths): AgentDocumentRegistry {
-    return new AgentDocumentRegistry(documentStorePath(shellPaths));
+  public static fromShellPaths(shellPaths: AgentDocumentStorePaths, assertWriteCurrent?: () => void): AgentDocumentRegistry {
+    return new AgentDocumentRegistry(documentStorePath(shellPaths), assertWriteCurrent);
   }
 
   public snapshot(): AgentDocumentSnapshot {
@@ -672,6 +672,7 @@ export class AgentDocumentRegistry {
   }
 
   private writeStore(store: DocumentStoreFile): void {
+    this.assertWriteCurrent?.();
     writeStoreFile(this.storePath, formatStore(store));
   }
 

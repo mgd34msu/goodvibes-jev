@@ -1,8 +1,9 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { CommandContext } from '../../input/command-registry.ts';
@@ -11,15 +12,35 @@ import { createKnowledgeApi, KnowledgeService, KnowledgeStore } from '@goodvibes
 import { MemoryRegistry, MemoryStore } from '@goodvibes-jev/engine/sdk/platform/state';
 import { MemoryEmbeddingProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/state';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
-import { withPublicKnowledgeReadings } from '../helpers/public-knowledge-readings.ts';
+
+type CommandScopeReading = readonly [kind: 'source' | 'node' | 'issue', text: string, probability: number];
+function object(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+function commandKnowledgeReadings(scope: readonly CommandScopeReading[], titles: readonly string[] = [], excerpts: readonly string[] = []) {
+  return fakePort((name, _question, state) => {
+    if (!object(state) || !object(state.candidate)) throw new Error('Missing command knowledge candidate');
+    const candidate = state.candidate;
+    if (name === 'included' && object(candidate.content)) {
+      const text = candidate.content.title ?? candidate.content.message ?? candidate.content.sourceUri;
+      const reading = scope.find(([kind, authored]) => kind === candidate.kind && authored === text);
+      if (reading) return noulAnswer(reading[2]);
+    }
+    if (name === 'useful' && typeof candidate.title === 'string' && titles.includes(candidate.title)) return noulAnswer(0.99);
+    if (name === 'excerptUseful' && typeof candidate.text === 'string' && excerpts.includes(candidate.text)) return noulAnswer(0.99);
+    throw new Error(`Unscripted command knowledge reading: ${name}`);
+  });
+}
 
 let server: ReturnType<typeof Bun.serve>;
 let baseUrl = '';
+let servedRequests = 0;
 
 beforeAll(() => {
   server = Bun.serve({
     port: 0,
     fetch() {
+      servedRequests++;
       return new Response('<html><head><title>Example Page</title></head><body><h1>Example</h1><p>Knowledge command test page.</p></body></html>', {
         headers: { 'content-type': 'text/html; charset=utf-8' },
       });
@@ -125,13 +146,19 @@ describe('knowledgeCommand', () => {
   let configManager: ConfigManager;
   let restoreJudgment: (() => void) | undefined;
 
-  function installArtifactKindReadings(filename: string) {
+  function installArtifactKindReadings(filename: string, title: string) {
     const rejected: string[] = [];
     const readings = fakePort((name, question, state) => {
-      const input = state as { filename?: string; mimeType?: string };
+      if (!object(state)) throw new Error('Missing artifact fixture state');
+      const input = state;
       if (name === 'kind' && input.filename === filename && input.mimeType === 'text/markdown') {
         return choiceAnswer(question, 'document', 0.99);
       }
+      if (name === 'included' && object(input.candidate) && input.candidate.kind === 'source'
+        && object(input.candidate.content) && input.candidate.content.title === title) return noulAnswer(0.99);
+      // Diagnostic field roles are outside this extraction fixture. Uncertainty
+      // withholds their values rather than inventing a safe classification.
+      if (name === 'kind' && typeof input.field === 'string') return choiceAnswer(question, 'other', 0.5);
       rejected.push(name);
       throw new Error(`Unexpected knowledge command reading: ${name}`);
     });
@@ -154,6 +181,135 @@ describe('knowledgeCommand', () => {
     restoreJudgment?.();
     restoreJudgment = undefined;
     memoryStore.close();
+  });
+
+  async function scopedFixture() {
+    const store = new KnowledgeStore({ dbPath: join(root, 'knowledge-agent.sqlite'), family: 'agent' });
+    const service = new KnowledgeService(store, new ArtifactStore({ rootDir: join(root, 'artifacts') }), undefined, { memoryRegistry });
+    const source = await store.upsertSource({ connectorId: 'manual', sourceType: 'document', title: 'Agent recovery guide', status: 'indexed' });
+    const node = await store.upsertNode({ kind: 'topic', slug: 'agent-recovery', title: 'Agent recovery', sourceId: source.id, confidence: 95 });
+    const issue = await store.upsertIssue({ severity: 'warning', code: 'agent.recovery', message: 'Replay the Agent recovery queue.', sourceId: source.id, nodeId: node.id });
+    await store.upsertSource({ connectorId: 'manual', sourceType: 'document', title: 'Installation device catalog', status: 'indexed', description: 'Only device installation descriptors with no project documentation.' });
+    const foreign = await store.upsertSource({ connectorId: 'homeassistant', sourceType: 'document', title: 'Private kitchen passport', status: 'indexed', metadata: { knowledgeSpaceId: 'homeassistant:fixture' } });
+    await store.upsertEdge({ fromKind: 'source', fromId: source.id, toKind: 'node', toId: node.id, relation: 'documents' });
+    const scope: readonly CommandScopeReading[] = [
+      ['source', 'Agent recovery guide', 0.99], ['node', 'Agent recovery', 0.99],
+      ['issue', 'Replay the Agent recovery queue.', 0.99], ['source', 'Installation device catalog', 0.01],
+    ];
+    const readings = commandKnowledgeReadings(scope);
+    const context = makeKnowledgeCommandContext(root, printed, service, memoryRegistry);
+    return { store, service, source, node, issue, foreign, readings, context };
+  }
+
+  test.each([
+    { command: ['list'], expected: 'Agent recovery guide' },
+    { command: ['list', '--kind', 'nodes'], expected: 'Agent recovery' },
+    { command: ['list', '--kind', 'issues'], expected: 'Replay the Agent recovery queue.' },
+    { command: ['queue'], expected: 'Replay the Agent recovery queue.' },
+    { command: ['status'], expected: 'sources: 1' },
+    { command: ['map'], expected: 'nodes: 2 of 3' },
+  ])('awaits real scoped Agent records for $command', async ({ command, expected }) => {
+    const fixture = await scopedFixture();
+    const previous = installJudgmentPort(fixture.readings.port);
+    try {
+      await knowledgeCommand.handler(command, fixture.context);
+      expect(printed.join('\n')).toContain(expected);
+      expect(printed.join('\n')).not.toContain('Installation device catalog');
+      expect(printed.join('\n')).not.toContain('Private kitchen passport');
+      expect(fixture.readings.requests.some(request => Object.hasOwn(request.questions, 'included'))).toBe(true);
+    } finally { installJudgmentPort(previous); fixture.service.dispose(); fixture.store.close(); }
+  });
+
+  test('awaits scoped item lookup and never publishes a foreign item', async () => {
+    const fixture = await scopedFixture();
+    const previous = installJudgmentPort(fixture.readings.port);
+    try {
+      await knowledgeCommand.handler(['get', fixture.source.id], fixture.context);
+      expect(printed.join('\n')).toContain('Agent recovery guide');
+      printed.length = 0;
+      await knowledgeCommand.handler(['get', fixture.foreign.id], fixture.context);
+      expect(printed.join('\n')).toContain(`Unknown item ${fixture.foreign.id}`);
+      expect(printed.join('\n')).not.toContain('Private kitchen passport');
+    } finally { installJudgmentPort(previous); fixture.service.dispose(); fixture.store.close(); }
+  });
+
+  test.each(['cancelled', 'revoked', 'stopped', 'session', 'args', 'api', 'method', 'restriction', 'output'] as const)(
+    'pending scoped Agent command retains %s ownership and publishes no stale output or usage', async state => {
+      const fixture = await scopedFixture();
+      const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+      const port: JudgmentPort = { ...fixture.readings.port, async ask(request, options) {
+        if (Object.hasOwn(request.questions, 'included')) { entered.resolve(); await release.promise; }
+        return fixture.readings.port.ask(request, options);
+      } };
+      const previous = installJudgmentPort(port);
+      const controller = new AbortController();
+      let current = true, stopped = false;
+      const restrictions = { signal: controller.signal, assertCurrent: () => { if (!current) throw new Error('Command revoked'); }, shouldStop: () => stopped };
+      const context: CommandContext = { ...fixture.context, judgmentReadingOptions: restrictions };
+      const args = ['get', fixture.source.id];
+      const usage = fixture.store.listUsageRecords();
+      let restoreMethod: (() => void) | undefined;
+      let replacementCalls = 0;
+      try {
+        const pending = knowledgeCommand.handler(args, context);
+        await Promise.race([entered.promise, Promise.resolve(pending).then(() => { throw new Error('Command settled before scope dispatch'); })]);
+        if (state === 'cancelled') controller.abort(new Error('Command cancelled'));
+        if (state === 'revoked') current = false;
+        if (state === 'stopped') stopped = true;
+        if (state === 'session') context.session.runtime.sessionId = 'another-session';
+        if (state === 'args') args[1] = fixture.foreign.id;
+        if (state === 'api') Object.defineProperty(context, 'clients', { value: { agentKnowledgeApi: createKnowledgeApi(fixture.service) } });
+        if (state === 'method') {
+          const api = context.clients?.agentKnowledgeApi;
+          if (!api) throw new Error('Missing fixture API');
+          const replaced = spyOn(api.graph.items, 'get').mockImplementation(async () => { replacementCalls++; return null; });
+          restoreMethod = () => { replaced.mockRestore(); };
+        }
+        if (state === 'restriction') restrictions.assertCurrent = () => {};
+        if (state === 'output') context.print = () => { replacementCalls++; };
+        release.resolve();
+        await pending;
+        expect(printed).toEqual([]);
+        expect(replacementCalls).toBe(0);
+        expect(fixture.store.listUsageRecords()).toEqual(usage);
+      } finally { release.resolve(); restoreMethod?.(); installJudgmentPort(previous); fixture.service.dispose(); fixture.store.close(); }
+    },
+  );
+
+  test.each(['currentness', 'stop'] as const)('asynchronous %s cannot authorize an Agent command reading', async field => {
+    const fixture = await scopedFixture();
+    const restrictions = {};
+    Object.defineProperty(restrictions, field === 'currentness' ? 'assertCurrent' : 'shouldStop', { value: async () => false });
+    const context: CommandContext = { ...fixture.context, judgmentReadingOptions: restrictions };
+    const previous = installJudgmentPort(fixture.readings.port);
+    try {
+      await knowledgeCommand.handler(['get', fixture.source.id], context);
+      expect(printed).toEqual([]);
+      expect(fixture.readings.requests).toHaveLength(0);
+      expect(fixture.store.listUsageRecords()).toHaveLength(0);
+    } finally { installJudgmentPort(previous); fixture.service.dispose(); fixture.store.close(); }
+  });
+
+  test.each(['session', 'output'] as const)('a fulfilled real scoped read cannot paint into a replaced %s', async state => {
+    const fixture = await scopedFixture();
+    const api = fixture.context.clients?.agentKnowledgeApi;
+    if (!api) throw new Error('Missing fixture API');
+    const original = api.sources.list;
+    let fulfilled = false, replacementPaints = 0;
+    const wrapped = spyOn(api.sources, 'list').mockImplementation(async (limit, options) => {
+      const records = await original.call(api.sources, limit, options);
+      fulfilled = true;
+      if (state === 'session') fixture.context.session.runtime.sessionId = 'another-session';
+      else fixture.context.print = () => { replacementPaints++; };
+      return records;
+    });
+    const previous = installJudgmentPort(fixture.readings.port);
+    try {
+      await knowledgeCommand.handler(['list'], fixture.context);
+      expect(fulfilled).toBe(true);
+      expect(printed).toEqual([]);
+      expect(replacementPaints).toBe(0);
+    } finally { wrapped.mockRestore(); installJudgmentPort(previous); fixture.service.dispose(); fixture.store.close(); }
   });
 
   test('opens Agent Knowledge workspace by default instead of copied panels or fallback APIs', async () => {
@@ -182,6 +338,7 @@ describe('knowledgeCommand', () => {
   });
 
   test('retains blocked URL metadata in a packet without claiming fetched HTML', async () => {
+    const requestsBefore = servedRequests;
     const artifactStore = new ArtifactStore({
       configManager: {
         getControlPlaneConfigDir: () => root,
@@ -213,7 +370,8 @@ describe('knowledgeCommand', () => {
     const sources = knowledgeStore.listSources(10);
     expect(sources).toHaveLength(1);
     expect(sources[0]).toMatchObject({ status: 'failed', sourceUri: `${baseUrl}/docs`, tags: ['example', 'docs'] });
-    expect(sources[0]?.crawlError).toContain('SSRF policy');
+    expect(sources[0]?.crawlError).toBe('[REDACTED]');
+    expect(servedRequests).toBe(requestsBefore);
     expect(sources[0]?.title).toBeUndefined();
     expect(sources[0]?.summary).toBeUndefined();
     expect(knowledgeStore.getExtractionBySourceId(sources[0]!.id)).toBeNull();
@@ -221,10 +379,12 @@ describe('knowledgeCommand', () => {
     printed.length = 0;
     // Authored relevance for this sole metadata-only source. The existing
     // localhost boundary remains intact and no HTML excerpts were captured.
-    await withPublicKnowledgeReadings(['Untitled source'], [], () => knowledgeCommand.handler(
+    const packetReadings = commandKnowledgeReadings([['source', `${baseUrl}/docs`, 0.99]], ['Untitled source']);
+    const previous = installJudgmentPort(packetReadings.port);
+    try { await knowledgeCommand.handler(
       ['packet', 'example docs'],
       makeKnowledgeCommandContext(root, printed, knowledgeService, memoryRegistry),
-    ));
+    ); } finally { installJudgmentPort(previous); }
 
     expect(printed.join('\n')).toContain('Curated Project Knowledge');
     expect(printed.join('\n')).toContain(`${baseUrl}/docs`);
@@ -247,7 +407,7 @@ describe('knowledgeCommand', () => {
     const knowledgeService = new KnowledgeService(knowledgeStore, artifactStore, undefined, { memoryRegistry });
     const filePath = join(root, 'agent-guide.md');
     const text = '# Agent Guide\n\nUse Agent Knowledge for product-owned references.\n';
-    const readings = installArtifactKindReadings('agent-guide.md');
+    const readings = installArtifactKindReadings('agent-guide.md', 'Agent Guide');
     writeFileSync(filePath, text);
 
     await knowledgeCommand.handler(
@@ -292,7 +452,7 @@ describe('knowledgeCommand', () => {
     await memoryStore.init();
     const knowledgeService = new KnowledgeService(knowledgeStore, artifactStore, undefined, { memoryRegistry });
     const text = '# Reviewed Export\n\nPromote this artifact into Agent Knowledge.\n';
-    const readings = installArtifactKindReadings('reviewed-export.md');
+    const readings = installArtifactKindReadings('reviewed-export.md', 'Reviewed Export');
     const artifact = await artifactStore.create({
       filename: 'reviewed-export.md',
       text,

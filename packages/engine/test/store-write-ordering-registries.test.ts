@@ -143,13 +143,14 @@ describe('AutomationJobStore: a disabled job does not come back enabled', () => 
       replaceInternalStore(jobs, 'store', store);
 
       const enabled = makeAutomationJob({ enabled: true });
-      await jobs.save([enabled]);
+      const other = makeAutomationJob({ id: 'job-neighbour', name: 'Neighbouring run' });
+      await jobs.save([enabled, other]);
 
       store.delayNextMs = 250;
-      const neighbour = jobs.save([enabled]);
+      const neighbour = jobs.save([enabled, { ...other, runCount: 1 }]);
       await waitFor(() => store.started >= 2);
 
-      await jobs.save([makeAutomationJob({ enabled: false, status: 'paused' })]);
+      await jobs.save([{ ...enabled, enabled: false, status: 'paused' }, { ...other, runCount: 1 }]);
       await neighbour;
       await waitFor(() => store.finished >= 3);
 

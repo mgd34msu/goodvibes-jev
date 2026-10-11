@@ -40,6 +40,11 @@
  * this barrel, and reaching it through the barrel would load the whole
  * gateway/fleet graph on the startup path.
  */
+export { readNoticeSeverity, type NoticeSeverityReading } from './notice-severity.js';
+export { readProcessOutput, processEndpointCandidates, PROCESS_OUTPUT_READING_LIMITS, type ProcessOutputEvidence, type ProcessOutputEvidenceLine, type ProcessOutputReading } from './process-output-reading.js';
+export { processOutputError, processOutputEndpoint } from './batteries/process-output.js';
+export { noticeSeverity, type NoticeSeverity } from './batteries/notice-severity.js';
+
 export {
   attachWsOnlyGatewayVerbHandlers,
   createArchivableFleetRegistry,

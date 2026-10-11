@@ -108,6 +108,8 @@ export interface BuildManagedDaemonServiceManagerParams {
    * `src/daemon/cli.ts` already guards against with the identical split.
    */
   readonly homeDir: string;
+  /** Resolved identity/settings tier; independent of the tree and login homes. */
+  readonly daemonHomeDirectory?: string | undefined;
   /**
    * The LOGIN user's home, where `~/.config/systemd/user/` (or the launchd/
    * Windows equivalent) actually lives, regardless of any GOODVIBES_HOME/
@@ -170,8 +172,9 @@ export function buildManagedDaemonServiceManager(params: BuildManagedDaemonServi
     // the mismatch is invisible from the outside, the daemon simply mints a
     // second operator-tokens.json in the home directory and the client keeps
     // reading the empty one under .goodvibes/daemon.
-    args: ['--daemon-home', join(params.homeDir, '.goodvibes', 'daemon')],
-    env: {},
+    args: ['--daemon-home', params.daemonHomeDirectory ?? join(params.homeDir, '.goodvibes', 'daemon')],
+    // Service managers do not inherit the invoking shell's relocated tree.
+    env: params.homeDir === params.unitHomeDir ? {} : { GOODVIBES_HOME: params.homeDir },
     restartOnFailure: true,
   };
   return new PlatformServiceManager(configManager, {

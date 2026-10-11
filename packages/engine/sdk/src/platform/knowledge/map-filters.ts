@@ -1,11 +1,9 @@
 import {
   isGeneratedKnowledgeSource,
 } from './generated-projections.js';
-import {
-  knowledgeIssueMatchesScope,
-  knowledgeNodeMatchesScope,
-  knowledgeSourceMatchesScope,
-} from './scope-records.js';
+import type { KnowledgeScopeSelection } from './scope-selection.js';
+import { captureStrictRepairJson } from './semantic/web-gap-repair/admission.js';
+import { knowledgeRecordVersion } from './store-record-representation.js';
 import type {
   KnowledgeEdgeRecord,
   KnowledgeIssueRecord,
@@ -30,24 +28,23 @@ export interface KnowledgeMapFilterOptions extends KnowledgeMapFilterInput {
 
 export function applyKnowledgeMapFilters(
   state: KnowledgeMapFilterState,
+  selection: KnowledgeScopeSelection,
   options: KnowledgeMapFilterOptions = {},
 ): KnowledgeMapFilterState {
   const filters = normalizeKnowledgeMapFilters(options);
   const linkedIds = new Set(filters.linkedToIds);
-  const linkedRecordIds = linkedIds.size > 0 ? recordIdsLinkedTo(state.edges, linkedIds) : new Set<string>();
+  selection.assertCurrent();
+  const retainedEdges = new Map(selection.edges.map((edge) => [edge.id, knowledgeRecordVersion(captureStrictRepairJson(edge))]));
+  const stateEdges = state.edges.filter((edge) => retainedEdges.get(edge.id) === knowledgeRecordVersion(captureStrictRepairJson(edge)));
+  const assertEdges = selection.retainEdges(stateEdges);
+  const linkedRecordIds = linkedIds.size > 0 ? recordIdsLinkedTo(stateEdges, linkedIds) : new Set<string>();
   const query = filters.query?.toLowerCase();
   const recordKinds = filters.recordKinds;
-  const scopeLookup = {
-    sources: new Map(state.sources.map((source) => [source.id, source])),
-    nodes: new Map(state.nodes.map((node) => [node.id, node])),
-    edges: state.edges,
-  };
-
   const sources = recordKinds && !recordKinds.has('source')
     ? []
     : state.sources
         .filter((source) => source.status !== 'stale')
-        .filter((source) => knowledgeSourceMatchesScope(source, filters))
+        .filter((source) => selection.source(source))
         .filter((source) => options.includeGenerated !== false || !isGeneratedKnowledgeSource(source))
         .filter((source) => matchesSet(filters.sourceTypes, source.sourceType))
         .filter((source) => matchesSet(filters.sourceStatuses, source.status))
@@ -68,7 +65,7 @@ export function applyKnowledgeMapFilters(
     ? []
     : state.nodes
         .filter((node) => node.status !== 'stale')
-        .filter((node) => knowledgeNodeMatchesScope(node, filters, scopeLookup))
+        .filter((node) => selection.node(node))
         .filter((node) => matchesSet(filters.nodeKinds, node.kind))
         .filter((node) => matchesSet(filters.nodeStatuses, node.status))
         .filter((node) => filters.minConfidence === undefined || node.confidence >= filters.minConfidence)
@@ -88,7 +85,7 @@ export function applyKnowledgeMapFilters(
     ? []
     : state.issues
         .filter((issue) => (filters.issueStatuses?.length ?? 0) > 0 || issue.status === 'open')
-        .filter((issue) => knowledgeIssueMatchesScope(issue, filters, scopeLookup))
+        .filter((issue) => selection.issue(issue))
         .filter((issue) => matchesSet(filters.issueCodes, issue.code))
         .filter((issue) => matchesSet(filters.issueStatuses, issue.status))
         .filter((issue) => matchesSet(filters.issueSeverities, issue.severity))
@@ -109,10 +106,12 @@ export function applyKnowledgeMapFilters(
     ...nodes.map((node) => node.id),
     ...issues.map((issue) => issue.id),
   ]);
-  const edges = state.edges
+  const edges = stateEdges
     .filter((edge) => matchesSet(filters.edgeRelations, edge.relation))
     .filter((edge) => visibleIds.has(edge.fromId) && visibleIds.has(edge.toId));
 
+  selection.assertCurrent();
+  assertEdges();
   return { sources, nodes, edges, issues };
 }
 

@@ -11,6 +11,8 @@
  *     credential undeclared, so for a schema key the list already carries the
  *     reading. Any other key (a path inside a status object) is read now
  *     through `holdsCredential`, the same battery.
+ *   - Declared structured reference arrays are shown only after their exact
+ *     parser detaches them; malformed arrays are masked as a whole.
  *   - A string value under a key that is not a credential is read by Jev
  *     (`engine.tools.credential-value`) and shown only on a no that acts. Not
  *     read: an empty value, a `goodvibes://` reference (it names a stored
@@ -22,6 +24,7 @@ import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { isValidConfigKey } from '../../config/schema.js';
 import { configKeyDescription, holdsCredential } from '../../config/credential-key-reading.js';
 import { isSecretBearingConfigKey } from '../../config/secret-bearing-config-keys.js';
+import { isStructuredCredentialReferenceConfigKey, captureStructuredCredentialReferenceConfigValue } from '../../config/structured-credential-config.js';
 import { credentialValue, credentialValueState } from '../batteries/credential-value.js';
 
 const KEY_SITE = 'tools.goodvibes-runtime.credential-key';
@@ -62,6 +65,10 @@ function redacted(value: unknown): Record<string, unknown> {
  * @param schemaDefault - The key's schema default when it has one; a value equal to it is not read.
  */
 export async function redactConfigValue(key: string, value: unknown, schemaDefault?: unknown): Promise<unknown> {
+  if (isStructuredCredentialReferenceConfigKey(key)) {
+    try { return captureStructuredCredentialReferenceConfigValue(key, value); }
+    catch { return redacted(value); }
+  }
   if (await isCredentialConfigKey(key)) return redacted(value);
   if (typeof value !== 'string' || value.trim() === '' || value.trim().startsWith(SECRET_REFERENCE_SCHEME)) return value;
   if (schemaDefault !== undefined && value === schemaDefault) return value;
@@ -70,6 +77,7 @@ export async function redactConfigValue(key: string, value: unknown, schemaDefau
 
 /** Every leaf of a nested object, each redacted under its dotted path below `prefix`. */
 export async function redactObjectByPath(prefix: string, value: unknown): Promise<unknown> {
+  if (isStructuredCredentialReferenceConfigKey(prefix)) return redactConfigValue(prefix, value);
   if (!value || typeof value !== 'object') return value;
   if (Array.isArray(value)) return Promise.all(value.map((entry, index) => redactObjectByPath(`${prefix}.${index}`, entry)));
   const entries = await Promise.all(

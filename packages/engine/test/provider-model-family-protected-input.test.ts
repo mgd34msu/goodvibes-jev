@@ -51,7 +51,7 @@ test.each(['id', 'displayName', 'provider', 'description'] as const)(
       expect(() => snapshotJudgmentInput(model)).toThrow(JudgmentInputError);
       const { decisionLog } = composeJudgment({
         config: { get: (key) => ({ 'judgment.endpoint': 'https://synthetic.example.test', 'judgment.keySource': 'env',
-          'judgment.model': 'jev-1.13.0', 'judgment.timeoutMs': 1000 })[key] },
+          'judgment.model': 'jev-1.13.0', 'judgment.timeoutMs': 1000, 'judgment.fallbacks': [] })[key] },
         secrets: { get: async () => null }, env: { TYPESAFE_API_KEY: 'synthetic-test-key' },
         stateRoot: join(root, 'state'), disposal: scope.registry,
       });

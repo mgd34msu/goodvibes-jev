@@ -898,6 +898,33 @@ export class DaemonControlPlaneHelper {
               : { metadata: { explicitUserRequest: context.explicitUserRequest } }),
           },
         });
+        if (body instanceof Response) {
+          if ((body.headers.get('content-type') ?? '').toLowerCase().includes('text/event-stream')) {
+            await body.body?.cancel().catch(() => {});
+            return {
+              status: 501,
+              ok: false,
+              body: { error: 'streaming-not-supported', message: 'This method serves an event stream; it cannot be invoked as a WS call. Subscribe via the events channel instead.' },
+            };
+          }
+          const bounded = await readBodyBounded(body, WS_CALL_MAX_RESPONSE_BYTES);
+          if (!bounded.ok) {
+            return {
+              status: 502,
+              ok: false,
+              body: { error: 'response-too-large', message: `Response exceeded the ${WS_CALL_MAX_RESPONSE_BYTES}-byte WS-call ceiling (streaming or oversized endpoint).` },
+            };
+          }
+          let responseBody: unknown = bounded.text || null;
+          if (bounded.text.length > 0) {
+            try {
+              responseBody = JSON.parse(bounded.text);
+            } catch {
+              responseBody = bounded.text;
+            }
+          }
+          return { status: body.status, ok: body.ok, body: responseBody };
+        }
         return { status: 200, ok: true, body };
       } catch (error) {
         // A handler-registered verb (fleet.*, checkpoints.*,

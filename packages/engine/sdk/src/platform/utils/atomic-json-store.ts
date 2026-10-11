@@ -83,6 +83,7 @@ import {
   writeSync,
 } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { types as nodeTypes } from 'node:util';
 import { basename, dirname, isAbsolute, join, parse, sep } from 'node:path';
 import type { Stats } from 'node:fs';
 import { logger } from './logger.js';
@@ -136,6 +137,8 @@ export function createAtomicTempPath(filePath: string): string {
 }
 
 export interface AtomicWriteOptions {
+  /** Additional operation restriction, completed synchronously before each physical write. */
+  readonly assertCurrent?: (() => void) | undefined;
   /**
    * Exact mode of the resulting file. Applied with an explicit `chmod` before
    * the rename, so the result does not vary with the process umask.
@@ -261,23 +264,37 @@ export function confirmFileDurable(filePath: string): void {
  * needed. See the module docstring for the mechanics and why they matter.
  */
 export function writeFileAtomic(filePath: string, contents: string, options: AtomicWriteOptions = {}): void {
+  const guard = options.assertCurrent;
+  const current = () => {
+    const result: unknown = guard?.();
+    if (result !== undefined) {
+      if (nodeTypes.isPromise(result)) Reflect.apply(Promise.prototype.then, result, [undefined, () => {}]);
+      throw new Error('Atomic file operation currentness is unavailable.');
+    }
+  };
   const mode = options.mode ?? DEFAULT_STORE_FILE_MODE;
   const dir = dirname(filePath);
   let tmpPath: string | undefined;
   let published = false;
   try {
+    current();
     mkdirSync(dir, { recursive: true });
     if (options.cleanupStaleTemps !== false) cleanupStaleTempFiles(dir, filePath);
     tmpPath = createAtomicTempPath(filePath);
+    current();
     const fd = openSync(tmpPath, 'w', mode);
     try {
+      current();
       const written = writeSync(fd, contents, null, 'utf-8');
       if (written !== Buffer.byteLength(contents, 'utf-8')) {
         throw new Error('Incomplete atomic file write');
       }
+      current();
       fsyncSync(fd);
     } finally { closeSync(fd); }
+    current();
     chmodSync(tmpPath, mode);
+    current();
     renameSync(tmpPath, filePath);
     published = true;
     if (options.durable === true) confirmFileDurable(filePath);

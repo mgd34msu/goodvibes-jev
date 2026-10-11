@@ -1,3 +1,5 @@
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureCatalogData, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { buildAgentWorkspaceRuntimeSnapshot } from '../input/agent-workspace-snapshot.ts';
 import type { AgentWorkspaceLocalLibraryItem } from '../input/agent-workspace-types.ts';
@@ -54,13 +56,13 @@ function describeCandidate(candidate: LearningCandidate, includeParameters: bool
         stale: candidate.staleRoute ?? null,
         update: candidate.updateRoute ?? null,
         apply: candidate.consolidation ? `agent_learning_consolidation mode=preview candidateId:"${routeValue(candidate.id)}"` : null,
-        merge: candidate.consolidation ? `agent_learning_consolidation mode=merge candidateId:"${routeValue(candidate.id)}" confirm:true explicitUserRequest:"..."` : null,
-        stalePhase: candidate.consolidation ? `agent_learning_consolidation mode=stale candidateId:"${routeValue(candidate.id)}" confirm:true explicitUserRequest:"..."` : null,
-        deletePhase: candidate.consolidation ? `agent_learning_consolidation mode=delete candidateId:"${routeValue(candidate.id)}" confirm:true explicitUserRequest:"..."` : null,
+        merge: candidate.consolidation ? `agent_learning_consolidation mode=merge candidateId:"${routeValue(candidate.id)}"` : null,
+        stalePhase: candidate.consolidation ? `agent_learning_consolidation mode=stale candidateId:"${routeValue(candidate.id)}"` : null,
+        deletePhase: candidate.consolidation ? `agent_learning_consolidation mode=delete candidateId:"${routeValue(candidate.id)}"` : null,
         create: candidate.createRoute ?? null,
         delete: candidate.deleteRoute ?? null,
       },
-      policy: 'Learning curator rows are read-only. VIBE.md personality issues route to existing /vibe inspection/init/import commands. Duplicate consolidation phases use agent_learning_consolidation with confirmation, while create, review, promote, enable, schedule, and non-batch local effects stay on existing confirmed routes.',
+      policy: 'Learning curator rows are read-only. VIBE.md personality issues route to existing /vibe inspection/init/import commands. Duplicate consolidation phases use agent_learning_consolidation under current recorded admission; create, review, promote, enable, schedule, and non-batch local effects require current recorded admission on their owning routes.',
     } : {}),
   };
 }
@@ -95,9 +97,9 @@ function learningConsolidationBatchPlan(
       detailRoute: `memory action:"candidate" candidateId:"${routeValue(candidate.id)}"`,
       ...(candidate.updateRoute ? { updateRoute: candidate.updateRoute } : {}),
       applyRoute: `agent_learning_consolidation mode=preview candidateId:"${routeValue(candidate.id)}"`,
-      mergeRoute: `agent_learning_consolidation mode=merge candidateId:"${routeValue(candidate.id)}" confirm:true explicitUserRequest:"..."`,
-      stalePhaseRoute: `agent_learning_consolidation mode=stale candidateId:"${routeValue(candidate.id)}" confirm:true explicitUserRequest:"..."`,
-      deletePhaseRoute: `agent_learning_consolidation mode=delete candidateId:"${routeValue(candidate.id)}" confirm:true explicitUserRequest:"..."`,
+      mergeRoute: `agent_learning_consolidation mode=merge candidateId:"${routeValue(candidate.id)}"`,
+      stalePhaseRoute: `agent_learning_consolidation mode=stale candidateId:"${routeValue(candidate.id)}"`,
+      deletePhaseRoute: `agent_learning_consolidation mode=delete candidateId:"${routeValue(candidate.id)}"`,
       ...(candidate.staleRoute ? { staleRoute: candidate.staleRoute } : {}),
       ...(candidate.deleteRoute ? { deleteRoute: candidate.deleteRoute } : {}),
       ...(includeParameters ? {
@@ -128,29 +130,29 @@ function learningConsolidationBatchPlan(
         id: 'merge-survivor',
         label: 'Merge visible survivor fields',
         goal: 'Apply the survivor update route only when the visible diffs preserve useful names, descriptions, tags, and triggers.',
-        route: 'Use each topCandidates[].mergeRoute after explicit approval.',
+        route: 'Use each topCandidates[].mergeRoute under current recorded admission.',
       },
       {
         id: 'stale-duplicates',
         label: 'Stage duplicates as stale',
         goal: 'Mark duplicates stale before deleting them so rollback remains one reviewed route away.',
-        route: 'Use each topCandidates[].stalePhaseRoute after explicit approval.',
+        route: 'Use each topCandidates[].stalePhaseRoute under current recorded admission.',
       },
       {
         id: 'verify',
         label: 'Verify prompt impact and rollback',
-        goal: 'Re-run the curator, check the survivor, and keep rollback routes visible until the user accepts the result.',
+        goal: 'Re-run the curator, check the survivor, and keep rollback routes visible while verifying the result.',
         route: 'memory action:"curator" query:"consolidation" includeParameters:true',
       },
       {
-        id: 'delete-after-approval',
-        label: 'Delete only after explicit approval',
-        goal: 'Use delete routes only after the user confirms the stale duplicates are no longer needed.',
+        id: 'delete-after-stale',
+        label: 'Delete after verifying the stale phase',
+        goal: 'Use delete routes under current recorded admission after verifying that the stale duplicates are no longer needed.',
         route: 'Use each topCandidates[].deletePhaseRoute only after the stale phase has already run.',
       },
     ],
     topCandidates,
-    policy: 'This is an ordered review plan. Use agent_learning_consolidation to preview or apply one confirmed candidate phase; low-level Agent-local routes remain visible for inspection and recovery.',
+    policy: 'This is an ordered review plan. Use agent_learning_consolidation to preview or apply one candidate phase under current recorded admission; low-level Agent-local routes remain visible for inspection and recovery.',
   };
 }
 
@@ -311,12 +313,35 @@ export function learningCuratorCatalogStatus(context: CommandContext): Record<st
   };
 }
 
-export function learningCuratorSummary(context: CommandContext, args: AgentHarnessLearningCuratorArgs): Record<string, unknown> {
+function retainLearningCandidateSources(context: CommandContext, candidates: readonly LearningCandidate[], options: CatalogRankingOptions, consolidationOnly = false) {
+  const revision = JSON.stringify(candidates);
+  const assertSourcesCurrent = () => {
+    options.signal?.throwIfAborted();
+    const current = captureCatalogData(buildLearningCandidates(context));
+    if (JSON.stringify(consolidationOnly ? current.filter((candidate) => candidate.consolidation !== undefined) : current) !== revision) throw new ToolInputProjectionError('stale');
+  };
+  options.retainCurrent?.(assertSourcesCurrent, 'agent.harness.learning-curator.sources');
+  return assertSourcesCurrent;
+}
+
+async function matchingLearningCandidates(context: CommandContext, candidates: readonly LearningCandidate[], query: string, options: CatalogRankingOptions, consolidationOnly = false) {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const assertSourcesCurrent = retainLearningCandidateSources(context, candidates, options, consolidationOnly);
+  const assertCurrent = () => { options.assertCurrent?.(); assertSourcesCurrent(); };
+  assertCurrent();
+  if (!query) return { matches: candidates.map((entry) => ({ entry, judgment: undefined })), judgments: [] };
+  return rankHarnessCatalog(candidates, query, (candidate) => ({ id: candidate.id, description: candidateSearchText(candidate), evidence: candidate }),
+    'agent.harness.learning-curator', { ...options, requirePreservedSource: true, assertCurrent });
+}
+
+export async function learningCuratorSummary(context: CommandContext, args: AgentHarnessLearningCuratorArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
   const includeParameters = args.includeParameters === true;
-  const query = readString(args.query).toLowerCase();
+  const query = readString(args.query);
   const limit = readLimit(args.limit, 100);
-  const all = buildLearningCandidates(context);
-  const filtered = all.filter((candidate) => !query || candidateSearchText(candidate).includes(query));
+  const all = captureCatalogData(buildLearningCandidates(context));
+  const selected = await matchingLearningCandidates(context, all, query, options);
+  const filtered = selected.matches;
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
   const consolidationBatch = learningConsolidationBatchPlan(all, includeParameters);
   return {
     summary: {
@@ -331,12 +356,13 @@ export function learningCuratorSummary(context: CommandContext, args: AgentHarne
       ready: all.filter((candidate) => candidate.status === 'ready').length,
     },
     promptPlan: learningPromptPlan(context, all, includeParameters),
-    candidates: filtered.slice(0, limit).map((candidate) => describeCandidate(candidate, includeParameters)),
+    candidates: filtered.slice(0, limit).map(({ entry, judgment }) => ({ ...describeCandidate(entry, includeParameters), ...(judgment ? { judgment } : {}) })),
+    judgments: selected.judgments,
     ...(consolidationBatch ? { consolidationBatch } : {}),
     returned: Math.min(filtered.length, limit),
     total: all.length,
     nextActions: nextActions(all),
-    policy: 'Learning curator is read-only. Proposed memory and behavior changes use notes, completed work-plan items, completed research runs, saved sessions, VIBE.md personality health cards, duplicate consolidation, and existing confirmed capture routes; durable context still requires provenance, rollback via stale/delete routes, and explicit user intent for writes or promotion.',
+    policy: 'Learning curator is read-only. Proposed memory and behavior changes use notes, completed work-plan items, completed research runs, saved sessions, VIBE.md personality health cards, duplicate consolidation, and existing owning capture routes; durable context requires provenance, rollback via stale/delete routes, and current recorded admission for writes or promotion.',
   };
 }
 
@@ -345,7 +371,8 @@ export type LearningConsolidationCandidateResolution =
   | { readonly status: 'ambiguous'; readonly input: string; readonly candidates: readonly Pick<LearningCandidate, 'id' | 'label' | 'status' | 'priority'>[] }
   | { readonly status: 'missing_lookup'; readonly usage: string };
 
-export function resolveLearningConsolidationCandidate(context: CommandContext, input: string): LearningConsolidationCandidateResolution {
+export async function resolveLearningConsolidationCandidate(context: CommandContext, input: string, options: CatalogRankingOptions = {}): Promise<LearningConsolidationCandidateResolution> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
   const lookup = input.trim();
   if (!lookup) {
     return {
@@ -353,18 +380,24 @@ export function resolveLearningConsolidationCandidate(context: CommandContext, i
       usage: 'candidateId or query is required. Use memory action:"curator" query:"consolidation" to inspect candidate ids.',
     };
   }
-  const candidates = buildLearningCandidates(context).filter((candidate) => candidate.consolidation !== undefined);
+  const candidates = captureCatalogData(buildLearningCandidates(context)).filter((candidate) => candidate.consolidation !== undefined);
   const normalized = lookup.toLowerCase();
   const exact = candidates.find((candidate) => candidate.id === lookup)
     ?? candidates.find((candidate) => candidate.id.toLowerCase() === normalized);
-  if (exact) return { status: 'found', candidate: exact };
-  const matches = candidates.filter((candidate) => candidateSearchText(candidate).includes(normalized));
-  if (matches.length === 1) return { status: 'found', candidate: matches[0]! };
-  if (matches.length > 1) {
+  if (exact) {
+    retainLearningCandidateSources(context, candidates, options, true)();
+    return { status: 'found', candidate: exact };
+  }
+  const selected = await matchingLearningCandidates(context, candidates, lookup, options, true);
+  const matches = selected.matches;
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  if (matches.length === 1 && matches[0]!.judgment?.reading.verdict === 'yes' && matches[0]!.judgment?.reading.outcome === 'act') return { status: 'found', candidate: matches[0]!.entry };
+  if (matches.length > 0) {
     return {
       status: 'ambiguous',
       input: lookup,
-      candidates: matches.slice(0, 8).map((candidate) => ({
+      candidates: matches.slice(0, 8).map(({ entry: candidate, judgment }) => ({
+        judgment,
         id: candidate.id,
         label: candidate.label,
         status: candidate.status,
@@ -378,7 +411,8 @@ export function resolveLearningConsolidationCandidate(context: CommandContext, i
   };
 }
 
-export function describeLearningCandidate(context: CommandContext, args: AgentHarnessLearningCuratorArgs): LearningCandidateResolution {
+export async function describeLearningCandidate(context: CommandContext, args: AgentHarnessLearningCuratorArgs, options: CatalogRankingOptions = {}): Promise<LearningCandidateResolution> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
   const candidateId = readString(args.candidateId);
   const target = readString(args.target);
   const query = readString(args.query);
@@ -390,18 +424,22 @@ export function describeLearningCandidate(context: CommandContext, args: AgentHa
     };
   }
   const normalized = input.toLowerCase();
-  const candidates = buildLearningCandidates(context);
+  const candidates = captureCatalogData(buildLearningCandidates(context));
+  retainLearningCandidateSources(context, candidates, options)();
   const exact = candidates.find((candidate) => candidate.id === input);
   if (exact) return { status: 'found', candidate: describeCandidate(exact, true, { source: candidateId ? 'candidateId' : target ? 'target' : 'query', input, resolvedBy: 'id' }) };
   const insensitive = candidates.find((candidate) => candidate.id.toLowerCase() === normalized);
   if (insensitive) return { status: 'found', candidate: describeCandidate(insensitive, true, { source: candidateId ? 'candidateId' : target ? 'target' : 'query', input, resolvedBy: 'case-insensitive-id' }) };
-  const matches = candidates.filter((candidate) => candidateSearchText(candidate).includes(normalized));
-  if (matches.length === 1) return { status: 'found', candidate: describeCandidate(matches[0]!, true, { source: candidateId ? 'candidateId' : target ? 'target' : 'query', input, resolvedBy: 'search' }) };
-  if (matches.length > 1) {
+  const selected = candidateId ? { matches: [], judgments: [] } : await matchingLearningCandidates(context, candidates, input, options);
+  const matches = selected.matches;
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  if (matches.length === 1 && matches[0]!.judgment?.reading.verdict === 'yes' && matches[0]!.judgment?.reading.outcome === 'act') return { status: 'found', candidate: { ...describeCandidate(matches[0]!.entry, true, { source: target ? 'target' : 'query', input, resolvedBy: 'search' }), judgment: matches[0]!.judgment } };
+  if (matches.length > 0) {
     return {
       status: 'ambiguous',
       input,
-      candidates: matches.slice(0, 8).map((candidate) => ({
+      candidates: matches.slice(0, 8).map(({ entry: candidate, judgment }) => ({
+        judgment,
         candidateId: candidate.id,
         label: candidate.label,
         status: candidate.status,

@@ -75,7 +75,7 @@ export function judgmentExportMarkdown(judgment: LoadedComparisonJudgment): stri
   lines.push('## Route Update');
   lines.push('');
   if (judgment.winnerModel) {
-    lines.push(`Confirmed apply route: agent_model_compare mode:"apply" artifactId:"${judgment.artifact.artifactId}" confirm:true explicitUserRequest:"..."`);
+    lines.push(`Confirmed apply route: agent_model_compare mode:"apply" artifactId:"${judgment.artifact.artifactId}"`);
   } else {
     lines.push('Save or reveal the judgment before applying a model route update.');
   }
@@ -157,7 +157,7 @@ export function comparisonHandoffMarkdown(input: {
     '',
     '- This packet is local reviewer evidence.',
     '- It does not change model routing.',
-    '- Route changes require a separate confirmed `agent_model_compare mode:"apply"` call.',
+    '- Route changes require a separately admitted `agent_model_compare mode:"apply"` call.',
     '',
     '## Related Artifacts',
     '',
@@ -279,8 +279,8 @@ export function formatSideBySideReview(input: {
     }),
     '',
     'Reviewer next actions',
-    `  create handoff agent_model_compare mode:"handoff" artifactId:"${input.sourceArtifactId}" relatedArtifactIds:${JSON.stringify(input.relatedArtifacts.map((entry) => entry.artifact.artifactId))} confirm:true explicitUserRequest:"..."`,
-    `  export report agent_model_compare mode:"export" artifactId:"${input.sourceArtifactId}" confirm:true explicitUserRequest:"..."`,
+    `  create handoff agent_model_compare mode:"handoff" artifactId:"${input.sourceArtifactId}" relatedArtifactIds:${JSON.stringify(input.relatedArtifacts.map((entry) => entry.artifact.artifactId))}`,
+    `  export report agent_model_compare mode:"export" artifactId:"${input.sourceArtifactId}"`,
     'No selected model was changed.',
   ].join('\n');
 }

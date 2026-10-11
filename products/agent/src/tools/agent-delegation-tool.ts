@@ -2,6 +2,8 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
 import { createAgentHarnessTool } from './agent-harness-tool.ts';
+import { captureModelReadingInput } from './agent-harness-model-reading-source.ts';
+import { createHarnessCatalogInputProjector, protectHarnessCatalogTool, forwardHarnessCatalogCall } from './agent-harness-catalog-ingress.ts';
 
 type AgentDelegationAction = 'status' | 'routes' | 'route';
 
@@ -82,7 +84,7 @@ export function createAgentDelegationTool(deps: AgentDelegationToolDeps): Tool {
     toolRegistry: deps.toolRegistry,
   });
 
-  return {
+  const tool: Tool = {
     definition: {
       name: 'delegation',
       description: 'Inspect build delegation routes and policy.',
@@ -107,16 +109,23 @@ export function createAgentDelegationTool(deps: AgentDelegationToolDeps): Tool {
       sideEffects: [],
       concurrency: 'parallel',
     },
-    execute: async (rawArgs: unknown) => {
-      const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentDelegationToolArgs;
+    execute: async (rawArgs, options) => {
+      const args = captureModelReadingInput(rawArgs);
+      const forward = (translated: Record<string, unknown>) => forwardHarnessCatalogCall(harnessTool, rawArgs, translated, options);
       const action = readAction(args);
 
-      if (action === 'status' || action === 'routes') return harnessTool.execute(postureArgs(args));
-      if (action === 'route') return harnessTool.execute(routeArgs(args));
+      if (action === 'status' || action === 'routes') return forward(postureArgs(args));
+      if (action === 'route') return forward(routeArgs(args));
 
       return error('Unknown delegation action. Use action:"status" for policy or action:"route" for one delegation route.');
     },
   };
+  return protectHarnessCatalogTool(tool, deps.toolRegistry, isDelegationCatalogCall, deps.commandContext);
+}
+
+function isDelegationCatalogCall(input: Record<string, unknown>): boolean {
+  const args = captureModelReadingInput(input);
+  return Boolean(readString(args.query) || readString(args.target));
 }
 
 export function registerAgentDelegationTool(
@@ -124,5 +133,5 @@ export function registerAgentDelegationTool(
   commandRegistry: CommandRegistry,
   commandContext: CommandContext,
 ): void {
-  if (!registry.has('delegation')) registry.register(createAgentDelegationTool({ commandRegistry, commandContext, toolRegistry: registry }));
+  if (!registry.has('delegation')) registry.register(createAgentDelegationTool({ commandRegistry, commandContext, toolRegistry: registry }), { inputProjection: createHarnessCatalogInputProjector(registry, undefined, isDelegationCatalogCall, commandContext) });
 }

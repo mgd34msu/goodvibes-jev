@@ -1,5 +1,6 @@
 import { WEBUI_CODE_LANGUAGES, type WebuiCodeLanguage } from '@goodvibes-jev/engine/sdk/platform/judgment-browser/catalogs';
 import type { BrowserJudgmentRequest } from '@goodvibes-jev/engine/daemon-sdk';
+import { captureChoiceAnswer } from '@goodvibes-jev/judgment/decisions';
 import { runBrowserJudgment } from './goodvibes';
 import { getClientLifetime, isClientLifetimeCurrent, subscribeClientLifetime } from './client-lifetime';
 import { randomUuid } from './uuid';
@@ -25,10 +26,15 @@ export function readCodeLanguageResponse(request: Request, raw: unknown): { read
   const distribution = object(reading?.probabilities);
   if (!readings || !keys(readings, ['language']) || !reading || !keys(reading, ['kind', 'choice', 'confidence', 'probabilities', 'outcome'])
     || reading.kind !== 'choice' || !probability(reading.confidence) || typeof reading.choice !== 'string' || !(WEBUI_CODE_LANGUAGES as readonly string[]).includes(reading.choice)
-    || !distribution || !keys(distribution, WEBUI_CODE_LANGUAGES) || !Object.values(distribution).every(probability)
-    || Math.abs(Object.values(distribution).reduce<number>((sum, value) => sum + Number(value), 0) - 1) > 1e-6
-    || Number(distribution[reading.choice]) < Math.max(...Object.values(distribution).map(Number))
+    || !distribution || !keys(distribution, WEBUI_CODE_LANGUAGES)
     || typeof reading.outcome !== 'string' || !['act', 'confirm', 'escalate'].includes(reading.outcome) || result.outcome !== reading.outcome) return undefined;
+  const probabilities: Record<string, number> = {};
+  for (const [option, value] of Object.entries(distribution)) {
+    if (!probability(value)) return undefined;
+    probabilities[option] = value;
+  }
+  try { captureChoiceAnswer({ type: 'choice', choice: reading.choice, confidence: reading.confidence, probabilities }); }
+  catch { return undefined; }
   if (!Array.isArray(result.evidence) || result.evidence.length !== 1) return undefined;
   const evidence = object(result.evidence[0]); const usage = object(evidence?.usage);
   if (!evidence || !keys(evidence, ['decisionId', 'model', 'requestedModel', 'usage', 'latencyMs']) || !nonempty(evidence.decisionId)

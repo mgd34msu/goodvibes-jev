@@ -5,16 +5,34 @@
  * mechanics of a send. Both functions here are about the same honesty problem:
  * what actually reached the owner, as opposed to what was attempted.
  */
-import { summarizeError } from '../utils/error-display.js';
+import { redactSensitiveDataAsync } from '../utils/redaction.js';
 import type { IsoDate } from './dates.js';
 import type { OccasionNudge, OpenItem } from './types.js';
+import type { DeliveryLifetime } from '../utils/delivery-lifetime.js';
+import type { OccasionMutationOptions } from './operation.js';
+
+type NativeNudgeDelivery = NonNullable<OccasionMutationOptions['withNudgeDelivery']>;
+interface AcceptedNudgeReceipt {
+  readonly complete: false;
+  readonly acceptedDeliveries: number;
+  readonly stopped: 'request-retired-after-delivery' | 'delivery-processing-stopped';
+}
+const stoppedDeliveries = new WeakMap<object, { readonly owner: NativeNudgeDelivery; readonly receipt: AcceptedNudgeReceipt }>();
+
+/** Observes an exact completed native operation; it grants no continuation. */
+export function readStoppedNativeNudge(error: unknown, owner: NativeNudgeDelivery): AcceptedNudgeReceipt | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const recorded = stoppedDeliveries.get(error);
+  if (!recorded || recorded.owner !== owner) return undefined;
+  stoppedDeliveries.delete(error); return recorded.receipt;
+}
 
 /** How a nudge leaves the daemon. Bound to the channel delivery router. */
 export interface OccasionNudgeDeliverer {
   deliver(input: {
     readonly channel: string;
     readonly nudge: OccasionNudge;
-  }): Promise<string | undefined>;
+  } & DeliveryLifetime): Promise<string | undefined>;
 }
 
 /**
@@ -49,20 +67,38 @@ export async function pushNudge(
   nudge: OccasionNudge,
   destinations: readonly string[],
   assertCurrent: () => void = () => {},
+  withNudgeDelivery?: OccasionMutationOptions['withNudgeDelivery'],
 ): Promise<readonly NudgeDelivery[]> {
   if (deliverer === undefined) return [];
   const results: NudgeDelivery[] = [];
-  for (const channel of destinations) {
-    assertCurrent();
-    try {
-      const deliveryId = (await deliverer.deliver({ channel, nudge })) ?? null;
-      results.push({ channel, delivered: true, deliveryId, failure: null });
-    } catch (error) {
-      results.push({ channel, delivered: false, deliveryId: null, failure: summarizeError(error) });
+  try {
+    for (const channel of destinations) {
+      assertCurrent();
+      try {
+        const request = { channel, nudge };
+        const deliveryId = (await (withNudgeDelivery
+          ? withNudgeDelivery(request, lifetime => deliverer.deliver({ ...request, ...lifetime }))
+          : deliverer.deliver(request))) ?? null;
+        results.push({ channel, delivered: true, deliveryId, failure: null });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : typeof error === 'string' ? error : 'Nudge delivery failed';
+        const qualified = await redactSensitiveDataAsync(message, { assertCurrent });
+        assertCurrent();
+        results.push({ channel, delivered: false, deliveryId: null, failure: qualified.length > 240 ? `${qualified.slice(0, 240)}…` : qualified });
+      }
     }
+    assertCurrent();
+    return results;
+  } catch (error) {
+    const acceptedDeliveries = results.filter(result => result.delivered).length;
+    if (!withNudgeDelivery || acceptedDeliveries === 0) throw error;
+    let stopped: AcceptedNudgeReceipt['stopped'] = 'delivery-processing-stopped';
+    try { assertCurrent(); } catch { stopped = 'request-retired-after-delivery'; }
+    const observation = new Error('Native nudge processing stopped after an accepted delivery');
+    stoppedDeliveries.set(observation, { owner: withNudgeDelivery,
+      receipt: Object.freeze({ complete: false, acceptedDeliveries, stopped }) });
+    throw observation;
   }
-  assertCurrent();
-  return results;
 }
 
 /**

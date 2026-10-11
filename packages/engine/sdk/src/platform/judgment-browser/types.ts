@@ -47,6 +47,8 @@ export interface BrowserJudgmentRoute {
   readonly signal?: AbortSignal;
   readonly revision: string;
   readonly kind: 'hosted' | 'local';
+  /** Server-owned destinations available to the configured failover chain. */
+  readonly endpointKinds?: readonly ('hosted' | 'local')[];
   readonly port: JudgmentPort;
   readonly assertCurrent: () => void;
 }

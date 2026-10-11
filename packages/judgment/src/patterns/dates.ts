@@ -52,7 +52,8 @@ export interface DatePartsReader extends NamedDecision {
 }
 
 type Part = { readonly choice: string; readonly confidence: number };
-type Parts = Readonly<Record<'mode' | 'month' | 'day' | 'year' | 'day_anchor' | 'weekday' | 'week_offset', Part>>;
+type PartName = 'mode' | 'month' | 'day' | 'year' | 'day_anchor' | 'weekday' | 'week_offset';
+type Parts = Readonly<Partial<Record<PartName, Part>>>;
 
 const ABSENT = 'The document does not state this, or it is not this kind of date.';
 
@@ -145,25 +146,27 @@ function withInferredYear(today: Date, month: number, day: number, label: string
 }
 
 function assembleAbsolute(parts: Parts, today: Date): Assembled {
-  const month = MONTHS.indexOf(parts.month.choice as (typeof MONTHS)[number]) + 1;
-  const day = Number(parts.day.choice);
-  const label = `${parts.month.choice} ${parts.day.choice}`;
-  if (month === 0 || !Number.isInteger(day)) return { note: 'absolute date incomplete' };
-  if (parts.year.choice === 'out_of_range') return { note: 'year outside the listed range' };
-  if (parts.year.choice === 'none') return withInferredYear(today, month, day, label);
-  const stated = calendarDate(Number(parts.year.choice), month, day);
-  return stated === null ? { note: `impossible date: ${parts.year.choice} ${label}` } : { date: stated };
+  const month = MONTHS.findIndex(month => month === parts.month?.choice) + 1;
+  const day = Number(parts.day?.choice);
+  const year = parts.year?.choice;
+  const label = `${parts.month?.choice} ${parts.day?.choice}`;
+  if (month === 0 || !Number.isInteger(day) || year === undefined) return { note: 'absolute date incomplete' };
+  if (year === 'out_of_range') return { note: 'year outside the listed range' };
+  if (year === 'none') return withInferredYear(today, month, day, label);
+  const stated = calendarDate(Number(year), month, day);
+  return stated === null ? { note: `impossible date: ${year} ${label}` } : { date: stated };
 }
 
 const ANCHOR_OFFSETS: Readonly<Record<string, number>> = { today: 0, tomorrow: 1, day_after: 2 };
 
 function assembleRelative(parts: Parts, today: Date): Assembled {
-  const anchor = parts.day_anchor.choice;
+  const anchor = parts.day_anchor?.choice;
+  if (anchor === undefined) return { note: 'relative day not read' };
   const offset = ANCHOR_OFFSETS[anchor];
   if (offset !== undefined) return { date: addDays(today, offset) };
   if (anchor !== 'weekday') return { note: 'relative day not read' };
-  const weekday = parts.weekday.choice as (typeof WEEKDAYS)[number];
-  if (!WEEKDAYS.includes(weekday)) return { note: 'relative weekday not read' };
+  const weekday = WEEKDAYS.find(day => day === parts.weekday?.choice);
+  if (weekday === undefined || parts.week_offset === undefined) return { note: 'relative weekday not read' };
   return { date: resolveWeekday(today, weekday, parts.week_offset.choice) };
 }
 
@@ -174,8 +177,8 @@ const PARTS_USED: Readonly<Record<string, readonly (keyof Parts)[]>> = {
 };
 
 function partsUsed(parts: Parts): readonly (keyof Parts)[] {
-  const used = PARTS_USED[parts.mode.choice] ?? ['mode'];
-  const namesWeekday = parts.mode.choice === 'relative' && parts.day_anchor.choice === 'weekday';
+  const used = PARTS_USED[parts.mode?.choice ?? ''] ?? ['mode'];
+  const namesWeekday = parts.mode?.choice === 'relative' && parts.day_anchor?.choice === 'weekday';
   return namesWeekday ? [...used, 'weekday', 'week_offset'] : used;
 }
 
@@ -185,14 +188,14 @@ export function assembleDate(
   today: Date,
   band: ConfidenceBand,
 ): { date: string | null; confidence: number | null; outcome: Outcome; note: string } {
-  const mode = parts.mode.choice;
+  const mode = parts.mode?.choice;
   const assembled: Assembled =
     mode === 'absolute'
       ? assembleAbsolute(parts, today)
       : mode === 'relative'
         ? assembleRelative(parts, today)
         : { note: mode === 'none' ? 'no such date stated' : `unrecognized mode: ${mode}` };
-  const confidence = Math.min(...partsUsed(parts).map((part) => parts[part].confidence));
+  const confidence = Math.min(...partsUsed(parts).map((part) => parts[part]?.confidence ?? 0));
   if ('note' in assembled) return { date: null, confidence, outcome: 'escalate', note: assembled.note };
   return { date: isoDay(assembled.date), confidence, outcome: outcomeForConfidence(confidence, band), note: '' };
 }
@@ -214,13 +217,30 @@ export function defineDatePartsReader(spec: DatePartsSpec): DatePartsReader {
     async extract(port, document, role, today, options = {}) {
       const todayDate = parseDay(today);
       const questions = dateQuestions(role, todayDate.getUTCFullYear());
-      const result = await askAs(port, spec, 'date-parts', document, questions, options);
-      const parts = Object.fromEntries(
-        Object.entries(result.answers).map(([name, answer]) => [name, { choice: answer.choice, confidence: answer.confidence }]),
-      ) as Parts;
+      const parts: Partial<Record<PartName, Part>> = {};
+      let decisionId: string | undefined;
+      const readParts = async (phase: string, selected: readonly PartName[]) => {
+        const result = await askAs(port, spec, 'date-parts', document, Object.fromEntries(selected.map(name => [name, questions[name]])), options);
+        options.signal?.throwIfAborted();
+        options.beforeAttempt?.();
+        for (const name of selected) {
+          const answer = result.answers[name];
+          if (answer === undefined || answer.type !== 'choice') throw new TypeError('Missing or invalid date part');
+          parts[name] = { choice: answer.choice, confidence: answer.confidence };
+        }
+        recordReadings(port, result, { phase, today, parts });
+        recordAction(port, result.decisionId, `read date ${phase}`);
+        decisionId = result.decisionId;
+      };
+      await readParts('mode', ['mode']);
+      if (parts.mode?.choice === 'absolute') await readParts('calendar parts', ['month', 'day', 'year']);
+      else if (parts.mode?.choice === 'relative') {
+        await readParts('relative anchor', ['day_anchor']);
+        if (parts.day_anchor?.choice === 'weekday') await readParts('weekday parts', ['weekday', 'week_offset']);
+      }
       const assembled = assembleDate(parts, todayDate, spec.band);
-      recordReadings(port, result, { ...assembled, today, parts });
-      return { ...assembled, decisionId: result.decisionId, recordAction: (a) => recordAction(port, result.decisionId, a) };
+      recordReadings(port, { decisionId }, { ...assembled, today, parts });
+      return { ...assembled, decisionId, recordAction: (action) => recordAction(port, decisionId, action) };
     },
     checkFixtures: (port, options = {}) =>
       checkEachFixture(spec.fixtures, options, async (fixture, run) => dateCheck(fixture, await reader.extract(port, fixture.document, fixture.role, fixture.today, run))),

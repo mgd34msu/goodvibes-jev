@@ -1,5 +1,6 @@
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import type { Question } from '@goodvibes-jev/judgment';
 import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
 import { createSchema } from '../sdk/src/platform/knowledge/store-schema.js';
 import { writeKnowledgeNodeRow } from '../sdk/src/platform/knowledge/store-node-history.js';
@@ -26,8 +27,39 @@ import type { MemoryRegistry } from '../sdk/src/platform/state/memory-registry.j
 import type { MemoryStore } from '../sdk/src/platform/state/memory-store.js';
 import { useArtifactKindReadings } from './helpers/artifact-kind-readings.ts';
 import { withPublicKnowledgeReadings } from './_helpers/public-knowledge-readings.ts';
+import { homeGraphPagePriorityInstructions } from '../sdk/src/platform/knowledge/home-graph/batteries/page-priority.js';
 
 useArtifactKindReadings();
+
+async function withScopeReadings<T>(titles: readonly string[], action: () => Promise<T>): Promise<T> {
+  const fake = fakePort((name, _question, state) => {
+    if (name !== 'included') {
+      throw new Error(`Unexpected scope fixture reading: ${name}`);
+    }
+    if (!state || typeof state !== 'object' || !('candidate' in state)) throw new Error('Missing scope candidate.');
+    const candidate = state.candidate;
+    if (!candidate || typeof candidate !== 'object' || !('content' in candidate)) throw new Error('Missing scope content.');
+    const content = candidate.content;
+    if (!content || typeof content !== 'object' || !('title' in content) || typeof content.title !== 'string') {
+      throw new Error('Missing authored scope title.');
+    }
+    if (!titles.includes(content.title)) throw new Error(`Unscripted scope candidate: ${content.title}`);
+    return noulAnswer(0.99);
+  });
+  const previous = installJudgmentPort(fake.port);
+  try { return await action(); }
+  finally { installJudgmentPort(previous); }
+}
+
+function authoredTvPagePriority(question: Question, state: unknown) {
+  if (typeof question.instructions !== 'string' || question.instructions !== homeGraphPagePriorityInstructions) return undefined;
+  if (!state || typeof state !== 'object' || !('candidate' in state)) throw new Error('Missing page priority candidate.');
+  const candidate = state.candidate;
+  if (!candidate || typeof candidate !== 'object' || !('title' in candidate) || candidate.title !== 'TV') {
+    throw new Error('Unscripted home reference priority.');
+  }
+  return noulAnswer(0.99);
+}
 
 /** None of these tests exercise the memory subsystem, KnowledgeService just needs the dependency present. */
 function fakeMemoryRegistry(): Pick<MemoryRegistry, 'add' | 'getAll' | 'getStore'> {
@@ -291,8 +323,10 @@ describe('knowledge wiki honesty: honest hard delete and forget filter (Defect 6
     const service = disposables.add(new KnowledgeService(store, artifactStore, undefined, { memoryRegistry: fakeMemoryRegistry() }), disposeKnowledgeService);
     const node = await store.upsertNode({ kind: 'topic', slug: 'forgettable', title: 'Forgettable', confidence: 90 });
     await store.upsertNode({ id: node.id, kind: 'topic', slug: 'forgettable', title: 'Forgettable', status: 'stale', confidence: 90 });
-    expect(service.queryNodes({ limit: 100 }).items.map((n) => n.id)).not.toContain(node.id);
-    expect(service.queryNodes({ limit: 100, includeStale: true }).items.map((n) => n.id)).toContain(node.id);
+    await withScopeReadings(['Forgettable'], async () => {
+      expect((await service.queryNodes({ limit: 100 })).items.map((n) => n.id)).not.toContain(node.id);
+      expect((await service.queryNodes({ limit: 100, includeStale: true })).items.map((n) => n.id)).toContain(node.id);
+    });
   });
 
   test('deleteNode is an honest hard delete that also purges revision history', async () => {
@@ -393,7 +427,14 @@ describe('knowledge wiki honesty: unlink is a real reversal (unlink sub-defect)'
   test('unlinking a never-linked target creates no phantom node or edge', async () => {
     const { store, artifactStore } = createStores();
     const service = disposables.add(new HomeGraphService(store, artifactStore));
-    await service.syncSnapshot({ installationId: 'house', devices: [{ id: 'tv', name: 'TV' }] });
+    const priority = fakePort((_name, question, state) => {
+      const reading = authoredTvPagePriority(question, state);
+      if (!reading) throw new Error('Unexpected snapshot reading.');
+      return reading;
+    });
+    const previousPriority = installJudgmentPort(priority.port);
+    try { await service.syncSnapshot({ installationId: 'house', devices: [{ id: 'tv', name: 'TV' }] }); }
+    finally { installJudgmentPort(previousPriority); }
     // This exact generic note is unrelated to the sole TV candidate. Keep the
     // automatic-link reading real so unlink still exercises persisted state.
     const body = 'A note body long enough to index.';
@@ -411,6 +452,8 @@ describe('knowledge wiki honesty: unlink is a real reversal (unlink sub-defect)'
       documentKind: { manual: 'no', integrationDocumentation: 'no' } };
     const readNames: string[] = [];
     const readings = fakePort((name, question, state) => {
+      const pagePriority = authoredTvPagePriority(question, state);
+      if (pagePriority) return pagePriority;
       readNames.push(name);
       if (isDeepStrictEqual(state, kindState)) {
         if (name === 'manual' || name === 'integrationDocumentation') return noulAnswer(0.01);
@@ -473,14 +516,20 @@ describe('knowledge wiki honesty: forgotten nodes are not served over the wire (
 
     // The route handler serves whatever knowledgeService.queryNodes returns; only
     // queryNodes is exercised by this route, so the rest of the context is stubbed.
+    const principal = { principalId: 'wiki-fixture', principalKind: 'operator', admin: true, scopes: ['*'] };
     const handlers = createDaemonKnowledgeRouteHandlers({
-      knowledgeService: { queryNodes: (input: Parameters<KnowledgeService['queryNodes']>[0]) => service.queryNodes(input) },
+      resolveAuthenticatedPrincipal: () => principal,
+      knowledgeService: {
+        queryNodes: (input: Parameters<KnowledgeService['queryNodes']>[0], options: Parameters<KnowledgeService['queryNodes']>[1]) => service.queryNodes(input, options),
+      },
     } as unknown as DaemonKnowledgeRouteContext);
-    const response = await handlers.getKnowledgeNodes(new URL('http://localhost/api/knowledge/nodes'));
-    const body = await response.json() as { nodes: KnowledgeNodeRecord[] };
-    const ids = body.nodes.map((n) => n.id);
-    expect(ids).toContain(kept.id);
-    expect(ids).not.toContain(forgotten.id);
+    await withScopeReadings(['Served', 'Forgotten'], async () => {
+      const response = await handlers.getKnowledgeNodes(new URL('http://localhost/api/knowledge/nodes'), new Request(new URL('http://localhost/api/knowledge/nodes')));
+      const body = await response.json() as { nodes: KnowledgeNodeRecord[] };
+      const ids = body.nodes.map((n) => n.id);
+      expect(ids).toContain(kept.id);
+      expect(ids).not.toContain(forgotten.id);
+    });
   });
 });
 

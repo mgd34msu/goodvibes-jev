@@ -1,5 +1,6 @@
 import type { AgentHarnessToolArgs } from './agent-harness-tool-types.ts';
-import { RELAXED_MATCH_NOTE } from './agent-harness-catalog-search.ts';
+import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
+import { harnessCatalogInvocationAuthority } from './agent-harness-catalog-ingress.ts';
 
 export function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -89,18 +90,12 @@ export function catalogFilters(
  */
 const SIBLING_CATALOG_ROUTES = 'agent_harness mode:"settings"|"commands"|"workspace_actions"|"tools"|"modes"';
 
-export interface CatalogEnvelopeOptions {
-  /** Rows matched single words from the query, not the phrase itself. */
-  readonly relaxedQuery?: boolean;
-}
-
 export function catalogEnvelope(
   key: string,
   items: readonly unknown[],
   total: number,
   filters: CatalogFilters = {},
   discovery?: string,
-  options: CatalogEnvelopeOptions = {},
 ): Record<string, unknown> {
   const applied = Object.entries(filters)
     .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0);
@@ -115,7 +110,6 @@ export function catalogEnvelope(
     returned: items.length,
     total,
     ...(applied.length > 0 ? { appliedFilters: Object.fromEntries(applied) } : {}),
-    ...(options.relaxedQuery ? { queryMatch: 'relaxed' } : {}),
   };
 
   // An empty catalog still owes the reader a sentence, and that sentence is not
@@ -137,20 +131,14 @@ export function catalogEnvelope(
   // page read as "no such capability", just in slower motion. `returned` and
   // `total` were always both present, but a number two fields away is easy to
   // miss in a way a sentence is not.
-  const relaxedNote = options.relaxedQuery ? ` ${RELAXED_MATCH_NOTE}` : '';
-
   if (items.length > 0) {
-    if (items.length >= total && !options.relaxedQuery) return envelope;
+    if (items.length >= total) return envelope;
     const shownFilters = applied.map(([name, value]) => `${name}="${value}"`).join(', ');
-    if (items.length >= total) {
-      envelope.note = `Showing all ${total} ${key}.${relaxedNote}`;
-      return envelope;
-    }
     envelope.note = `Showing ${items.length} of ${total} ${key}. `
       + (shownFilters
         ? `This is a filtered view (${shownFilters}), not the full catalog`
         : 'This is a partial view, not the full catalog')
-      + `${discovery ? `; re-send as ${discovery} to see everything` : ''}.${relaxedNote}`;
+      + `${discovery ? `; re-send as ${discovery} to see everything` : ''}.`;
     return envelope;
   }
 
@@ -173,9 +161,11 @@ export function output(value: unknown): { readonly success: true; readonly outpu
 
 export function error(message: string): { readonly success: false; readonly error: string } { return { success: false, error: message }; }
 
-export function requireConfirmedAction(args: AgentHarnessToolArgs, action: string): string | null {
-  const explicitUserRequest = readString(args.explicitUserRequest);
-  if (!explicitUserRequest) return `${action} requires explicitUserRequest with the user's exact request or a short faithful summary.`;
-  if (args.confirm !== true) return `${action} requires confirm:true after an explicit user request.`;
-  return null;
+export function requireConfirmedAction(args: Record<string, unknown>, options: Parameters<Tool['execute']>[1], action: string): string | null {
+  if (!harnessCatalogInvocationAuthority(args, options)) return `${action} requires current recorded effect admission.`;
+  const mode = Object.getOwnPropertyDescriptor(args, 'mode');
+  const outward = mode && 'value' in mode && typeof mode.value === 'string' && ['run_setup_smoke', 'run_local_model_smoke', 'run_memory_refinement',
+    'remote_pair_approve', 'remote_pair_reject', 'remote_peers_invoke', 'remote_work_cancel'].includes(mode.value);
+  return harnessCatalogInvocationAuthority(args, options, outward ? 'send' : 'write')
+    ? null : `${action} requires current recorded effect admission.`;
 }

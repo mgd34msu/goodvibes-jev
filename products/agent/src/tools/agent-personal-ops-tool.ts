@@ -3,6 +3,8 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
 import { createAgentHarnessTool } from './agent-harness-tool.ts';
+import { captureCatalogData } from './agent-harness-catalog-ranking.ts';
+import { forwardHarnessCatalogCall, protectHarnessCatalogTool } from './agent-harness-catalog-ingress.ts';
 
 type AgentPersonalOpsAction = 'briefing' | 'status' | 'queue' | 'intake' | 'lane' | 'read';
 
@@ -142,7 +144,7 @@ export function createAgentPersonalOpsTool(deps: AgentPersonalOpsToolDeps): Tool
     toolRegistry: deps.toolRegistry,
   });
 
-  return {
+  const tool: Tool = {
     definition: {
       name: 'personal_ops',
       description: 'Plan and run safe Personal Ops workflows.',
@@ -152,7 +154,7 @@ export function createAgentPersonalOpsTool(deps: AgentPersonalOpsToolDeps): Tool
           action: {
             type: 'string',
             enum: ['briefing', 'status', 'queue', 'intake', 'lane', 'read'],
-            description: 'Discovery actions are read-only; read needs confirmation.',
+            description: 'Discovery actions are read-only; live reads need current recorded admission.',
           },
           mode: { type: 'string', description: 'Alias for action.' },
           laneId: { type: 'string', enum: ['inbox', 'calendar', 'notes', 'tasks', 'reminders', 'routines', 'delivery'], description: 'Personal Ops lane id.' },
@@ -165,29 +167,30 @@ export function createAgentPersonalOpsTool(deps: AgentPersonalOpsToolDeps): Tool
           artifactTitle: { type: 'string', description: 'Optional title for a saved read-review artifact.' },
           includeParameters: { type: 'boolean', description: 'Include bounded operation schema and route detail where supported.' },
           limit: { type: 'number', description: 'Maximum briefing or intake rows.' },
-          confirm: { type: 'boolean', description: 'Required true for action:read.' },
-          explicitUserRequest: { type: 'string', description: 'User request authorizing action:read.' },
+          confirm: { type: 'boolean', description: 'Optional caller annotation; grants no authority.' },
+          explicitUserRequest: { type: 'string', description: 'Optional audit context for the live read.' },
         },
         additionalProperties: false,
       },
       sideEffects: ['state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: unknown, options) => {
+    execute: async (rawArgs, options) => {
       options?.signal?.throwIfAborted();
-      const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentPersonalOpsToolArgs;
+      const args = captureCatalogData(rawArgs);
       const action = readAction(args);
 
-      if (action === 'briefing') return harnessTool.execute(briefingArgs(args), options);
-      if (action === 'status') return harnessTool.execute(statusArgs(args), options);
-      if (action === 'queue') return harnessTool.execute(queueArgs(args), options);
-      if (action === 'intake') return harnessTool.execute(intakeArgs(args), options);
-      if (action === 'lane') return harnessTool.execute(laneArgs(args), options);
-      if (action === 'read') return harnessTool.execute(readArgs(args), options);
+      if (action === 'briefing') return forwardHarnessCatalogCall(harnessTool, rawArgs, briefingArgs(args), options);
+      if (action === 'status') return forwardHarnessCatalogCall(harnessTool, rawArgs, statusArgs(args), options);
+      if (action === 'queue') return forwardHarnessCatalogCall(harnessTool, rawArgs, queueArgs(args), options);
+      if (action === 'intake') return forwardHarnessCatalogCall(harnessTool, rawArgs, intakeArgs(args), options);
+      if (action === 'lane') return forwardHarnessCatalogCall(harnessTool, rawArgs, laneArgs(args), options);
+      if (action === 'read') return forwardHarnessCatalogCall(harnessTool, rawArgs, readArgs(args), options);
 
       return error('Unknown Personal Ops action. Use action:"briefing" for the user-first daily plan.');
     },
   };
+  return protectHarnessCatalogTool(tool, deps.toolRegistry, () => true, deps.commandContext);
 }
 
 export function registerAgentPersonalOpsTool(
@@ -195,5 +198,5 @@ export function registerAgentPersonalOpsTool(
   commandRegistry: CommandRegistry,
   commandContext: CommandContext,
 ): void {
-  if (!registry.has('personal_ops')) registry.register(createAgentPersonalOpsTool({ commandRegistry, commandContext, toolRegistry: registry }), { inputProjection: createPersonalOpsInputProjector(registry, undefined, (args) => ['queue', 'intake', 'lane', 'read'].includes(readAction(args))) });
+  if (!registry.has('personal_ops')) registry.register(createAgentPersonalOpsTool({ commandRegistry, commandContext, toolRegistry: registry }), { inputProjection: createPersonalOpsInputProjector(registry, undefined, () => true) });
 }

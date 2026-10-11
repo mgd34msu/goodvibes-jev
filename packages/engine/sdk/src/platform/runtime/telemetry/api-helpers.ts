@@ -316,20 +316,41 @@ export function clampLimit(limit: number | undefined, fallback: number): number 
 
 export function sanitizeRecord(record: TelemetryRecord, view: TelemetryViewMode): TelemetryRecord {
   if (view === 'raw') return structuredClone(record);
+  const safeText = (value: string): string => {
+    const projected = redactStructuredData(value);
+    return typeof projected === 'string' ? projected : '[REDACTED]';
+  };
   return {
     ...record,
+    message: safeText(record.message),
     payload: redactStructuredData(record.payload),
     attributes: redactStructuredData(record.attributes) as Record<string, unknown>,
+    ...(record.error ? { error: {
+      ...record.error,
+      message: safeText(record.error.message),
+      summary: safeText(record.error.summary),
+      ...(record.error.hint !== undefined ? { hint: safeText(record.error.hint) } : {}),
+    } } : {}),
   };
 }
 
 export function sanitizeSpan(span: ReadableSpan, view: TelemetryViewMode): ReadableSpan {
   if (view === 'raw') return structuredClone(span);
+  const safeText = (value: string): string => {
+    const projected = redactStructuredData(value);
+    return typeof projected === 'string' ? projected : '[REDACTED]';
+  };
   return {
     ...span,
+    name: safeText(span.name),
+    status: {
+      ...span.status,
+      ...(span.status.message !== undefined ? { message: safeText(span.status.message) } : {}),
+    },
     attributes: redactStructuredData(span.attributes) as SpanAttributes,
     events: span.events.map((event) => ({
       ...event,
+      name: safeText(event.name),
       ...(event.attributes ? { attributes: redactStructuredData(event.attributes) as Record<string, AttributeValue> } : {}),
     })),
   };

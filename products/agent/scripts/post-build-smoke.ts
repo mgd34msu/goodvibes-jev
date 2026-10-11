@@ -6,11 +6,11 @@
  * banner, and does not emit packaged module-resolution errors. It never starts
  * or owns a daemon.
  *
- * The boot/banner/sentinel policy now lives in the shared
+ * The boot/version/diagnostic policy lives in the shared
  * @goodvibes-jev/engine/toolchain `post-build-smoke` (one implementation across
  * tui/agent). This file is a thin adapter: it resolves the binary (from
  * --binary or the configured default) and delegates to the toolchain, sourcing
- * the banner prefix + packaging-failure sentinels from toolchain.config.json.
+ * the version banner contract from toolchain.config.json.
  */
 import { existsSync } from 'node:fs';
 import { runPostBuildSmoke, loadToolchainConfig } from '@goodvibes-jev/engine/toolchain';
@@ -33,5 +33,5 @@ if (!existsSync(binary)) {
   process.exit(1);
 }
 
-const result = runPostBuildSmoke({ binary, config: smoke });
+const result = await runPostBuildSmoke({ binary, config: smoke });
 process.exit(result.ok ? 0 : 1);

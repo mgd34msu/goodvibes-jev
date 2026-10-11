@@ -75,6 +75,17 @@ days. Setup or launch failures are failures; they are not browser assertions.
 configuration and dependencies before running; it does not submit model turns,
 and it is not part of the synthetic default suite.
 
+`bun run test:connected-browser` exercises an isolated running product daemon
+serving the built WebUI. Set `GOODVIBES_WEBUI_CONNECTED_URL` to its origin and
+`GOODVIBES_WEBUI_CONNECTED_TOKEN` to its test operator token. This lane uses no
+request interception. It signs in through the actual browser form and checks
+missing/wrong authentication, canonical status/config reads, and session
+create, canceled close, confirmed close, reopen, reload and confirmed hard delete
+through Work on desktop and phone. It writes screenshots and stage receipts to
+`e2e/.artifacts/connected`, or `GOODVIBES_WEBUI_CONNECTED_OUTPUT` when specified.
+Only sessions created by this run are changed or removed. It makes no model
+calls and does not establish live Jev calibration or external service acceptance.
+
 ## Generated data and packaging
 
 `bun run release:prepare` regenerates config schema, ownership and presentation

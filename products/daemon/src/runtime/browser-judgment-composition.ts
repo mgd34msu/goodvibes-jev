@@ -1,14 +1,12 @@
 import { endpointKind, HOSTED_BASE_URL, validEndpointURL } from '@goodvibes-jev/judgment';
 import { BrowserJudgmentError } from '@goodvibes-jev/engine/daemon-sdk';
-import { CONFIG_SCHEMA, type ConfigManager, type SecretsManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { captureJudgmentFallbackSettings, CONFIG_SCHEMA, type ConfigManager, type SecretsManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { SECRET_BEARING_CONFIG_PATHS } from '@goodvibes-jev/engine/sdk/platform/judgment-browser/catalogs';
 import type { ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { GatewayMethodCatalog } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 import { createWebuiBrowserJudgment, type BrowserJudgmentRoute } from '@goodvibes-jev/engine/sdk/platform/judgment-browser';
-import type { JudgmentServices } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
+import { createJudgmentSourceLifetime, type JudgmentServices } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 
-const KEYS = ['judgment.endpoint', 'judgment.keySource', 'judgment.model', 'judgment.timeoutMs'] as const;
-const ENV_KEYS = ['TYPESAFE_BASE_URL', 'TYPESAFE_DEFAULT_MODEL', 'TYPESAFE_API_KEY'] as const;
 const text = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
 
 /**
@@ -24,55 +22,48 @@ export function composeBrowserJudgment(input: {
   readonly judgment: JudgmentServices;
   readonly providers?: () => Pick<ProviderRegistry, 'captureProviderCatalogIds'>;
   readonly config: ConfigManager;
-  readonly secrets: Pick<SecretsManager, 'onDidChange'> & Partial<Pick<SecretsManager, 'list'>>;
+  readonly secrets: Pick<SecretsManager, 'onDidChange'> & Partial<Pick<SecretsManager,
+    'list' | 'getCredentialMutationState' | 'onDidInvalidateCredentials' | 'resolveLocalCredentialSnapshot'>>;
   readonly methods: GatewayMethodCatalog;
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly disposal: { add(label: string, dispose: () => void | Promise<void>): void };
 }) {
-  let lifetime = new AbortController();
+  const sourceLifetime = createJudgmentSourceLifetime(input);
   let credentialLifetime = new AbortController();
   let configLifetime = new AbortController();
-  let revision = crypto.randomUUID();
+  const revisions = new WeakMap<object, string>();
+  let revision: string | undefined;
   let closed = false;
-  let observed: readonly unknown[] | undefined;
-  const revoke = () => {
-    lifetime.abort(new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD'));
-    lifetime = new AbortController(); revision = crypto.randomUUID();
-    observed = undefined;
-  };
-  const subscriptions = KEYS.map((key) => input.config.subscribe(key, revoke));
-  subscriptions.push(input.config.onDidInvalidate(() => { configLifetime.abort(); configLifetime = new AbortController(); }));
-  subscriptions.push(input.secrets.onDidChange((key) => {
+  const subscriptions = [input.config.onDidInvalidate(() => { configLifetime.abort(); configLifetime = new AbortController(); })];
+  subscriptions.push(input.secrets.onDidChange(() => {
     credentialLifetime.abort(); credentialLifetime = new AbortController();
-    if (key === 'TYPESAFE_API_KEY') revoke();
   }));
-  const snapshot = () => {
-    const current = [...KEYS.map((key) => input.config.get(key)), ...ENV_KEYS.map((key) => input.env[key])];
-    // Environment writes have no subscription. Observe them at both admission
-    // and every current-authority check, retiring old work without poisoning
-    // the next request's configured generation.
-    if (observed && current.some((value, index) => value !== observed![index])) revoke();
-    observed = current;
-    return current;
-  };
   const currentRoute = (): BrowserJudgmentRoute | undefined => {
     if (closed) return undefined;
-    // Values stay in this operation-local closure, never in route IDs/logs.
-    const configuration = snapshot();
-    const endpoint = text(configuration[0]) || text(configuration[KEYS.length]) || HOSTED_BASE_URL;
+    // The same private config/credential observation as the native composition,
+    // acquired from these explicit owners rather than the global installed port.
+    let frame: ReturnType<typeof sourceLifetime.capture>;
+    try { frame = sourceLifetime.capture(); }
+    catch { throw new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD'); }
+    const fallbacks = captureJudgmentFallbackSettings(input.config.get('judgment.fallbacks'));
+    const endpoint = text(input.config.get('judgment.endpoint')) || text(input.env['TYPESAFE_BASE_URL']) || HOSTED_BASE_URL;
     if (!validEndpointURL(endpoint)) return undefined;
-    const capturedRevision = revision;
-    const capturedLifetime = lifetime;
+    const kind = endpointKind(endpoint);
+    const endpointKinds = Object.freeze([...new Set([kind, ...fallbacks.map(target => endpointKind(target.endpoint))])]);
+    const credentials = credentialLifetime;
+    let capturedRevision = revisions.get(frame.identity);
+    if (!capturedRevision) { capturedRevision = crypto.randomUUID(); revisions.set(frame.identity, capturedRevision); }
+    revision = capturedRevision;
+    const signal = AbortSignal.any([...(frame.signal ? [frame.signal] : []), credentials.signal]);
+    const assertCurrent = () => {
+      try {
+        frame.assertCurrent();
+        if (closed || signal.aborted || credentials !== credentialLifetime || revision !== capturedRevision) throw new Error('Retired route');
+      } catch { throw new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD'); }
+    };
+    assertCurrent();
     return {
-      revision: capturedRevision, kind: endpointKind(endpoint), port: input.judgment.port, signal: capturedLifetime.signal,
-      assertCurrent() {
-        snapshot();
-        if (closed || capturedLifetime.signal.aborted || revision !== capturedRevision
-          || observed!.some((value, index) => value !== configuration[index])) {
-          capturedLifetime.abort(new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD'));
-          throw new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD');
-        }
-      },
+      revision: capturedRevision, kind, endpointKinds, port: input.judgment.port, signal, assertCurrent,
     };
   };
   const service = createWebuiBrowserJudgment({ methods: input.methods, currentRoute,
@@ -150,10 +141,11 @@ export function composeBrowserJudgment(input: {
   input.disposal.add('browser judgment transport', async () => {
     closed = true;
     for (const unsubscribe of subscriptions) unsubscribe();
-    lifetime.abort(new BrowserJudgmentError('JUDGMENT_SHUTTING_DOWN'));
+    const closing = service.close();
+    sourceLifetime.dispose();
     credentialLifetime.abort();
     configLifetime.abort();
-    await service.close();
+    await closing;
   });
   return service;
 }

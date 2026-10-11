@@ -11,6 +11,7 @@ function isSecretReferenceValue(value: string): boolean {
 export interface DaemonCredentialStore {
   /** Alias/tier-aware local incarnation, including pending mutations; never sent to judgment. */
   resolveConfigCredentialSnapshot?(configKey: string): ReturnType<SecretsManager['resolveLocalCredentialSnapshot']>;
+  resolveDaemonCredentialSnapshot?(secretKey: string): ReturnType<SecretsManager['resolveLocalCredentialSnapshot']>;
   /**
    * Resolve a goodvibes://secrets/ reference OR a raw secret key to its
    * plaintext value (daemon-internal only).
@@ -39,7 +40,7 @@ export interface DaemonCredentialStore {
   ): Promise<void>;
   has(secretKey: string): Promise<boolean>;
   /** Atomic namespace owner, required before creating new persistent cipher material. */
-  getOrCreateDaemonSecret?(secretKey: string, create: () => string): Promise<string>;
+  getOrCreateDaemonSecret?(secretKey: string, create: () => string, assertCurrent?: () => void): Promise<string>;
   /** Local literal presence only; no reference resolution or nullable failure conflation. */
   inspectConfigSecret?(configKey: string): 'absent' | 'present' | 'unavailable';
 }
@@ -55,7 +56,8 @@ function secretKeyFromReference(ref: string): string {
 export function createDaemonCredentialStore(secrets: Pick<SecretsManager, 'get' | 'set'> & Partial<Pick<SecretsManager, 'getOrCreateDaemonSecret' | 'resolveLocalSecretSync' | 'resolveLocalCredentialSnapshot'>>): DaemonCredentialStore {
   const observe = secrets.resolveLocalCredentialSnapshot?.bind(secrets);
   return {
-    ...(observe ? { resolveConfigCredentialSnapshot: (configKey: string) => observe(daemonSecretKeyFor(configKey)) } : {}),
+    ...(observe ? { resolveConfigCredentialSnapshot: (configKey: string) => observe(daemonSecretKeyFor(configKey)),
+      resolveDaemonCredentialSnapshot: (secretKey: string) => observe(secretKey) } : {}),
     ...(secrets.resolveLocalSecretSync ? {
       inspectConfigSecret(configKey: string): 'absent' | 'present' | 'unavailable' {
         const current = secrets.resolveLocalSecretSync!(daemonSecretKeyFor(configKey));
@@ -64,7 +66,7 @@ export function createDaemonCredentialStore(secrets: Pick<SecretsManager, 'get' 
       },
     } : {}),
     ...(secrets.getOrCreateDaemonSecret ? {
-      getOrCreateDaemonSecret: (key: string, create: () => string) => secrets.getOrCreateDaemonSecret!(key, create),
+      getOrCreateDaemonSecret: (key: string, create: () => string, assertCurrent?: () => void) => secrets.getOrCreateDaemonSecret!(key, create, assertCurrent),
     } : {}),
     async resolveRef(ref: string): Promise<string | null> {
       const key = isSecretReferenceValue(ref) ? secretKeyFromReference(ref) : ref;
@@ -95,8 +97,8 @@ export function createDaemonCredentialStore(secrets: Pick<SecretsManager, 'get' 
 // ---------------------------------------------------------------------------
 
 export interface AtRestCipher {
-  encrypt(plaintext: string): Promise<string>;
-  decrypt(ciphertext: string): Promise<string>;
+  encrypt(plaintext: string, assertCurrent?: () => void, retainCurrent?: (check: () => void) => void): Promise<string>;
+  decrypt(ciphertext: string, assertCurrent?: () => void, retainCurrent?: (check: () => void) => void): Promise<string>;
 }
 
 const DEFAULT_DRAFT_KEY_NAME = 'GOODVIBES_DAEMON_DRAFT_AESKEY';
@@ -148,8 +150,26 @@ export function createAtRestCipher(
   };
 
   return {
-    async encrypt(plaintext: string): Promise<string> {
-      const key = await getKey(true);
+    async encrypt(plaintext: string, assertCurrent?: () => void, retainCurrent?: (check: () => void) => void): Promise<string> {
+      assertCurrent?.();
+      let key: Buffer;
+      if (assertCurrent) {
+        if (!store.getOrCreateDaemonSecret || !store.resolveDaemonCredentialSnapshot || !retainCurrent) throw new Error('Admitted draft encryption requires the native key owner.');
+        // The native owner checks the restriction after lock acquisition and at
+        // its actual write. A prior cipher cache cannot select current material.
+        const selected = await store.getOrCreateDaemonSecret(keyName, () => randomBytes(AES_KEY_BYTES).toString('base64'), assertCurrent);
+        assertCurrent(); key = Buffer.from(selected, 'base64');
+        if (key.length !== AES_KEY_BYTES || key.toString('base64') !== selected) throw new Error('Draft encryption key is invalid; existing material was preserved.');
+        const before = store.resolveDaemonCredentialSnapshot(keyName);
+        if (before.state !== 'resolved' || before.value !== selected) throw new Error('Draft encryption key changed.');
+        const observe = store.resolveDaemonCredentialSnapshot;
+        const current = () => {
+          assertCurrent();
+          if (store.resolveDaemonCredentialSnapshot !== observe || JSON.stringify(observe.call(store, keyName)) !== JSON.stringify(before)) throw new Error('Draft encryption key changed.');
+        };
+        current(); retainCurrent(current);
+      } else key = await getKey(true);
+      assertCurrent?.();
       const iv = randomBytes(GCM_IV_BYTES);
       const cipher = createCipheriv('aes-256-gcm', key, iv);
       const encrypted = Buffer.concat([
@@ -159,8 +179,23 @@ export function createAtRestCipher(
       const tag = cipher.getAuthTag();
       return Buffer.concat([iv, tag, encrypted]).toString('base64');
     },
-    async decrypt(ciphertext: string): Promise<string> {
-      const key = await getKey(false);
+    async decrypt(ciphertext: string, assertCurrent?: () => void, retainCurrent?: (check: () => void) => void): Promise<string> {
+      assertCurrent?.();
+      let key: Buffer;
+      if (assertCurrent) {
+        if (!store.resolveDaemonCredentialSnapshot || !retainCurrent) throw new Error('Admitted draft decryption requires the native key owner.');
+        const observe = store.resolveDaemonCredentialSnapshot;
+        const before = observe.call(store, keyName);
+        if (before.state !== 'resolved') throw new Error('Draft encryption key is missing; no replacement was created.');
+        key = Buffer.from(before.value, 'base64');
+        if (key.length !== AES_KEY_BYTES || key.toString('base64') !== before.value) throw new Error('Draft encryption key is invalid; existing material was preserved.');
+        const current = () => {
+          assertCurrent();
+          if (store.resolveDaemonCredentialSnapshot !== observe || JSON.stringify(observe.call(store, keyName)) !== JSON.stringify(before)) throw new Error('Draft encryption key changed.');
+        };
+        current(); retainCurrent(current);
+      } else key = await getKey(false);
+      assertCurrent?.();
       const raw = Buffer.from(ciphertext, 'base64');
       const iv = raw.subarray(0, GCM_IV_BYTES);
       const tag = raw.subarray(GCM_IV_BYTES, GCM_IV_BYTES + GCM_TAG_BYTES);

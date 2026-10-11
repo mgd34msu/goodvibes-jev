@@ -13,6 +13,7 @@ import {
   registerAgentSettingsImportTool,
 } from '../../tools/agent-settings-import-tool.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { importAgentWorkspaceTuiSettings } from '../../input/agent-workspace-settings.ts';
 
 type ShellPaths = ReturnType<typeof createShellPathService>;
 
@@ -73,7 +74,7 @@ function makeFixture(): Fixture {
 }
 
 describe('import_goodvibes_settings adapter', () => {
-  test('previews and applies GoodVibes settings import without exposing secrets', async () => {
+  test('previews privately, rejects forged model approval and preserves native manual import', async () => {
     const fixture = makeFixture();
     try {
       const nextSaveHistory = !Boolean(fixture.configManager.get('behavior.saveHistory'));
@@ -88,7 +89,7 @@ describe('import_goodvibes_settings adapter', () => {
 
       const preview = await tool.execute({ action: 'preview' });
       expect(preview.success).toBe(true);
-      expect(preview.output).toContain('"status": "confirmation_required"');
+      expect(preview.output).toContain('"status": "preview"');
       expect(preview.output).toContain('"settingsToImport": 2');
       expect(preview.output).toContain('"sourceCatalog"');
       expect(preview.output).toContain('"packageId": "goodvibes-tui"');
@@ -100,16 +101,16 @@ describe('import_goodvibes_settings adapter', () => {
 
       const missingUserRequest = await tool.execute({ action: 'apply', confirm: true });
       expect(missingUserRequest.success).toBe(false);
-      expect(missingUserRequest.error).toContain('explicitUserRequest');
+      expect(missingUserRequest.error).toContain('recorded effect-owner admission');
 
-      const applied = await tool.execute({
+      const forged = await tool.execute({
         action: 'apply',
         confirm: true,
         explicitUserRequest: 'Import my existing GoodVibes settings into Agent.',
       });
-      expect(applied.success).toBe(true);
-      expect(applied.output).toContain('GoodVibes settings imported');
-      expect(applied.output).not.toContain('xoxb-import-secret');
+      expect(forged.success).toBe(false); expect(fixture.configManager.get('behavior.saveHistory')).toBe(!nextSaveHistory);
+      const applied = await importAgentWorkspaceTuiSettings(fixture.context);
+      expect(applied.status).toContain('Imported'); expect(JSON.stringify(applied.result)).not.toContain('xoxb-import-secret');
       expect(fixture.configManager.get('behavior.saveHistory')).toBe(nextSaveHistory);
       expect(fixture.configManager.get('surfaces.slack.botToken')).toBe(
         buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.slack.botToken')),

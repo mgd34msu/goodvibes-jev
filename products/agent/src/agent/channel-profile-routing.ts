@@ -25,6 +25,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import type { ShellPathService } from '@/runtime/index.ts';
 import { writeStoreJson } from '@/utils/store-file.ts';
+import { retainChannelStoreSource, type ChannelStoreEffectOptions } from './channel-store-lifetime.ts';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../config/surface.ts';
 import type { DaemonInvokeFailureKind, DaemonOperatorInvoke } from './daemon-operator-client.ts';
 import {
@@ -201,12 +202,12 @@ export function readChannelProfileRoutes(shellPaths: ShellPaths): ChannelProfile
   }
 }
 
-function writeRoutes(path: string, routes: readonly ChannelProfileRoute[]): void {
+function writeRoutes(path: string, routes: readonly ChannelProfileRoute[], assertCurrent?: () => void): void {
   const file: ChannelProfileRouteFile = {
     version: ROUTE_FILE_VERSION,
     routes: routes.slice(0, ROUTE_LIMIT),
   };
-  writeStoreJson(path, file);
+  writeStoreJson(path, file, { assertCurrent });
 }
 
 // ---------------------------------------------------------------------------
@@ -221,14 +222,13 @@ function readDaemonAssignmentId(body: unknown): string {
 /**
  * Offer one assignment to the daemon's routing table.
  *
- * `confirm: true` plus the explicit-user-request claim is what the daemon's
- * confirmation gate asks for. Both are honest at this call site: an assignment
- * only reaches here through the harness's own confirmed-action gate, which
- * already required the operator to ask for it by name.
+ * Manual callers use the native confirmation protocol. The admitted model
+ * transport replaces that envelope with a request for fresh native admission.
  */
 async function offerRouteToDaemon(
   invoke: DaemonOperatorInvoke | undefined,
   route: ChannelProfileRoute,
+  options: ChannelStoreEffectOptions = {},
 ): Promise<ChannelProfileRouteSyncOutcome> {
   if (!invoke) {
     return {
@@ -246,7 +246,7 @@ async function offerRouteToDaemon(
       ...(route.label ? { label: route.label } : {}),
       confirm: true,
     },
-    { explicitUserRequest: true },
+    { signal: options.signal, assertCurrent: options.assertCurrent, explicitUserRequest: options.explicitUserRequest ?? true },
   );
   if (!result.ok) return { synced: false, kind: result.kind, error: result.error };
   const assignmentId = readDaemonAssignmentId(result.body);
@@ -296,15 +296,17 @@ export async function assignChannelToProfile(
     readonly profileId: string;
     readonly label?: string;
   },
-  options: { readonly invoke?: DaemonOperatorInvoke } = {},
+  options: ChannelStoreEffectOptions = {},
 ): Promise<ChannelProfileRouteAssignResult> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
   const surfaceKind = input.surfaceKind.trim();
   const profileId = input.profileId.trim();
   if (!surfaceKind) throw new Error('surfaceKind is required for channel-to-profile assignment.');
   if (!profileId) throw new Error('profileId is required for channel-to-profile assignment.');
 
-  const snapshot = readChannelProfileRoutes(shellPaths);
   const path = channelProfileRouteFilePath(shellPaths);
+  const assertCurrent = retainChannelStoreSource(path, options);
+  const snapshot = readChannelProfileRoutes(shellPaths);
   const now = new Date().toISOString();
 
   // Find existing assignment for the same (surfaceKind, routeId) pair
@@ -317,7 +319,7 @@ export async function assignChannelToProfile(
 
   const draft: ChannelProfileRoute = {
     version: ROUTE_VERSION,
-    id: existing?.id ?? `cpr-${new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14)}-${randomUUID().slice(0, 8)}`,
+    id: existing?.id ?? `cpr-${randomUUID().replaceAll('-', '_')}`,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     surfaceKind,
@@ -327,7 +329,8 @@ export async function assignChannelToProfile(
     daemonSyncState: 'pending',
   };
 
-  const daemon = await offerRouteToDaemon(options.invoke, draft);
+  const daemon = await offerRouteToDaemon(options.invoke, draft, { ...options, assertCurrent });
+  assertCurrent();
   const route = withSyncOutcome(draft, daemon);
 
   let updatedRoutes: readonly ChannelProfileRoute[];
@@ -337,7 +340,7 @@ export async function assignChannelToProfile(
     updatedRoutes = [route, ...snapshot.routes];
   }
 
-  writeRoutes(path, updatedRoutes);
+  writeRoutes(path, updatedRoutes, assertCurrent);
   return { route, path, created, daemon };
 }
 
@@ -485,12 +488,14 @@ export function getProfileForChannel(
 export function removeChannelProfileRoute(
   shellPaths: ShellPaths,
   routeId: string,
+  options: ChannelStoreEffectOptions = {},
 ): boolean {
+  const assertCurrent = retainChannelStoreSource(channelProfileRouteFilePath(shellPaths), options);
   const snapshot = readChannelProfileRoutes(shellPaths);
   const before = snapshot.routes.length;
   const updated = snapshot.routes.filter((r) => r.id !== routeId);
   if (updated.length === before) return false;
-  writeRoutes(channelProfileRouteFilePath(shellPaths), updated);
+  writeRoutes(channelProfileRouteFilePath(shellPaths), updated, assertCurrent);
   return true;
 }
 

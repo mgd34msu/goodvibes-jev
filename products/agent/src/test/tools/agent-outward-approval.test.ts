@@ -1,19 +1,9 @@
+import { executeAdmitted } from '../helpers/admitted-tool.ts';
 import { useSecurityReadings } from '../helpers/security-readings.ts';
 /**
- * agent-outward-approval.test.ts, the remedy is real, and only the owner has it.
- *
- * Two claims, and the boundary is worthless if either is false:
- *
- *  1. What the refusal TELLS the owner to do actually clears the gate. The
- *     refusal he met told him to reply "send it now"; nothing implemented that,
- *     so the retry refused again in the same words. A remedy nobody implemented
- *     is worse than none, because it spends the reader's trust and teaches him
- *     the boundary is broken.
- *  2. Nothing content can reach produces that remedy. Had "send it now" worked,
- *     the gate would have been cleared by three words of chat text, and text
- *     is the thing being guarded against. The model can run any slash command
- *     through `agent_harness mode:"run_command"`, so the approval route has to
- *     refuse that path explicitly, or the fix would have been theatre.
+ * The model receives a taint refusal without a human approval fallback.
+ * Existing native approval records remain exact, one-use and unavailable to
+ * model slash commands. Every retry still needs its own recorded admission.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -124,7 +114,7 @@ function googleTool() {
 }
 
 function run(tool: ReturnType<typeof createAgentGoogleTool>, args: Record<string, unknown>) {
-  return tool.execute(args) as Promise<{ success: boolean; output?: string; error?: string }>;
+  return executeAdmitted(tool, args);
 }
 
 /** A command context the way the owner's own keystrokes produce one. */
@@ -161,15 +151,16 @@ afterEach(() => {
 
 useSecurityReadings();
 
-describe('the remedy the refusal names', () => {
-  test('the refusal names the gesture, and the gesture is not a phrase to reply with', async () => {
+describe('model refusal and separate native approval records', () => {
+  test('the model refusal does not invent a human approval fallback', async () => {
     const { tool } = googleTool();
     startTurnForOwnerInput(undefined, getSessionUntrustedContentLedger());
     await run(tool, { action: 'mail.read', id: 'm1' });
 
     const refused = await run(tool, TAINTED_SEND);
     expect(refused.success).toBe(false);
-    expect(refused.error ?? '').toContain('/google approve');
+    expect(refused.error ?? '').not.toContain('/google approve');
+    expect(refused.error ?? '').not.toContain('Tell the owner');
   });
 
   test('typing the gesture clears the gate, and the send then goes', async () => {
@@ -181,7 +172,7 @@ describe('the remedy the refusal names', () => {
     expect(refused.success).toBe(false);
     expect(sent).toHaveLength(0);
 
-    // The owner does exactly what the refusal told him to do.
+    // The separate native owner control records only this exact payload.
     const printed: string[] = [];
     await runGoogleCommand(['approve'], ownerTypedContext(printed));
     expect(printed.join(' ')).toContain('Approved');

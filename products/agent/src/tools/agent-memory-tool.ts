@@ -2,6 +2,8 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
 import { createAgentHarnessTool } from './agent-harness-tool.ts';
+import { captureModelReadingInput } from './agent-harness-model-reading-source.ts';
+import { createHarnessCatalogInputProjector, protectHarnessCatalogTool, forwardHarnessCatalogCall } from './agent-harness-catalog-ingress.ts';
 
 type AgentMemoryAction =
   | 'status'
@@ -131,7 +133,7 @@ export function createAgentMemoryTool(deps: AgentMemoryToolDeps): Tool {
     toolRegistry: deps.toolRegistry,
   });
 
-  return {
+  const tool: Tool = {
     definition: {
       name: 'memory',
       description: 'Inspect memory posture, providers, curator, and records.',
@@ -173,12 +175,13 @@ export function createAgentMemoryTool(deps: AgentMemoryToolDeps): Tool {
       sideEffects: ['state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: unknown) => {
-      const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentMemoryToolArgs;
+    execute: async (rawArgs, options) => {
+      const args = captureModelReadingInput(rawArgs);
+      const forward = (translated: Record<string, unknown>) => forwardHarnessCatalogCall(harnessTool, rawArgs, translated, options);
       const action = readAction(args);
 
       if (action === 'status') {
-        return harnessTool.execute(compactArgs({
+        return forward(compactArgs({
           mode: 'memory_posture',
           query: args.query ?? args.target,
           limit: args.limit,
@@ -186,7 +189,7 @@ export function createAgentMemoryTool(deps: AgentMemoryToolDeps): Tool {
         }));
       }
       if (action === 'provider') {
-        return harnessTool.execute(compactArgs({
+        return forward(compactArgs({
           mode: 'memory_provider',
           providerId: args.providerId ?? args.id,
           target: args.providerId || args.id ? undefined : args.target,
@@ -195,7 +198,7 @@ export function createAgentMemoryTool(deps: AgentMemoryToolDeps): Tool {
         }));
       }
       if (action === 'refinement') {
-        return harnessTool.execute(compactArgs({
+        return forward(compactArgs({
           mode: 'memory_refinement',
           target: args.target,
           query: args.query,
@@ -207,7 +210,7 @@ export function createAgentMemoryTool(deps: AgentMemoryToolDeps): Tool {
         }));
       }
       if (action === 'run_refinement') {
-        return harnessTool.execute(compactArgs({
+        return forward(compactArgs({
           mode: 'run_memory_refinement',
           knowledgeSpaceId: args.knowledgeSpaceId,
           sourceIds: args.sourceIds,
@@ -220,7 +223,7 @@ export function createAgentMemoryTool(deps: AgentMemoryToolDeps): Tool {
         }));
       }
       if (action === 'curator') {
-        return harnessTool.execute(compactArgs({
+        return forward(compactArgs({
           mode: 'learning_curator',
           query: args.query ?? args.target,
           limit: args.limit,
@@ -228,7 +231,7 @@ export function createAgentMemoryTool(deps: AgentMemoryToolDeps): Tool {
         }));
       }
       if (action === 'candidate') {
-        return harnessTool.execute(compactArgs({
+        return forward(compactArgs({
           mode: 'learning_candidate',
           candidateId: args.candidateId ?? args.id,
           target: args.candidateId || args.id ? undefined : args.target,
@@ -239,9 +242,16 @@ export function createAgentMemoryTool(deps: AgentMemoryToolDeps): Tool {
 
       const localRegistryTool = deps.localRegistryTool ?? findRegisteredTool(deps.toolRegistry, 'agent_local_registry');
       if (!localRegistryTool) return error('Agent-local memory registry is unavailable in this runtime.');
-      return localRegistryTool.execute(localMemoryArgs(action, args));
+      return forwardHarnessCatalogCall(localRegistryTool, rawArgs, localMemoryArgs(action, args), options);
     },
   };
+  return protectHarnessCatalogTool(tool, deps.toolRegistry, isMemoryCatalogCall, deps.commandContext);
+}
+
+function isMemoryCatalogCall(input: Record<string, unknown>): boolean {
+  const args = captureModelReadingInput(input);
+  const action = readAction(args);
+  return (action === 'curator' || action === 'candidate') && Boolean(readString(args.query) || readString(args.target));
 }
 
 export function registerAgentMemoryTool(
@@ -249,5 +259,5 @@ export function registerAgentMemoryTool(
   commandRegistry: CommandRegistry,
   commandContext: CommandContext,
 ): void {
-  if (!registry.has('memory')) registry.register(createAgentMemoryTool({ commandRegistry, commandContext, toolRegistry: registry }));
+  if (!registry.has('memory')) registry.register(createAgentMemoryTool({ commandRegistry, commandContext, toolRegistry: registry }), { inputProjection: createHarnessCatalogInputProjector(registry, undefined, isMemoryCatalogCall, commandContext) });
 }

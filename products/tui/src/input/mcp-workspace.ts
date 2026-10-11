@@ -214,7 +214,9 @@ export class McpWorkspace {
   public formIndex = 0;
   public form: McpWorkspaceForm = serverConfigToForm();
   public editingServerName: string | null = null;
-  public status = 'Ready. Add, edit, remove, reload, and inspect MCP servers without restarting the TUI.';
+  private feedback: { readonly text: string; readonly tone: 'info' | 'warning' | 'error' } = {
+    text: 'Ready. Add, edit, remove, reload, and inspect MCP servers without restarting the TUI.', tone: 'info',
+  };
   public tools: readonly RegisteredTool[] = [];
   public loadingTools = false;
   public lastError: string | null = null;
@@ -230,6 +232,13 @@ export class McpWorkspace {
     effectiveConfig: { servers: [], locations: [] },
     servers: [],
   };
+
+  get status(): string { return this.feedback.text; }
+  get statusTone(): 'info' | 'warning' | 'error' { return this.feedback.tone; }
+
+  private setStatus(text: string, tone: 'info' | 'warning' | 'error' = 'info'): void {
+    this.feedback = { text, tone };
+  }
 
   open(context: CommandContext): void {
     this.context = context;
@@ -334,10 +343,10 @@ export class McpWorkspace {
     try {
       const api = requireMcpApi(this.context);
       this.tools = await api.listAllTools();
-      this.status = `Tool list refreshed: ${this.tools.length} tool(s) available.`;
+      this.setStatus(`Tool list refreshed: ${this.tools.length} tool(s) available.`);
     } catch (error) {
       this.lastError = summarizeError(error);
-      this.status = `Tool refresh failed: ${this.lastError}`;
+      this.setStatus(`Tool refresh failed: ${this.lastError}`, 'error');
     } finally {
       this.loadingTools = false;
       this.context?.renderRequest();
@@ -353,11 +362,11 @@ export class McpWorkspace {
       const result = await api.reload(roots);
       this.refreshSnapshot();
       const connected = this.snapshot.servers.filter((server) => server.connected).length;
-      this.status = `Reloaded MCP runtime: ${connected}/${this.snapshot.servers.length} server(s) connected. Result: +${result.added} ~${result.changed} -${result.removed}, unchanged ${result.unchanged}.`;
+      this.setStatus(`Reloaded MCP runtime: ${connected}/${this.snapshot.servers.length} server(s) connected. Result: +${result.added} ~${result.changed} -${result.removed}, unchanged ${result.unchanged}.`, connected < this.snapshot.servers.length ? 'warning' : 'info');
       void this.refreshTools();
     } catch (error) {
       this.lastError = summarizeError(error);
-      this.status = `Reload failed: ${this.lastError}`;
+      this.setStatus(`Reload failed: ${this.lastError}`, 'error');
     } finally {
       this.context?.renderRequest();
     }
@@ -368,7 +377,7 @@ export class McpWorkspace {
     this.formIndex = 0;
     this.editingServerName = null;
     this.form = serverConfigToForm();
-    this.status = 'Add an MCP server. Choose project or global scope, then save and reload.';
+    this.setStatus('Add an MCP server. Choose project or global scope, then save and reload.');
   }
 
   openEditForm(serverName: string): void {
@@ -377,9 +386,9 @@ export class McpWorkspace {
     this.formIndex = 0;
     this.editingServerName = serverName;
     this.form = { ...serverConfigToForm(entry?.server), scope: entry?.source.scope === 'global' ? 'global' : 'project' };
-    this.status = entry
+    this.setStatus(entry
       ? `Editing ${serverName}. Saving writes a ${this.form.scope} config entry and reloads the live runtime.`
-      : `Editing ${serverName}. Runtime status exists, but no launch config was found; enter command details before saving.`;
+      : `Editing ${serverName}. Runtime status exists, but no launch config was found; enter command details before saving.`, entry ? 'info' : 'warning');
   }
 
   requestDelete(serverName: string): void {
@@ -387,24 +396,24 @@ export class McpWorkspace {
     this.editingServerName = serverName;
     const entry = this.snapshot.effectiveConfig.servers.find((configEntry) => configEntry.server.name === serverName);
     const scope = entry?.source.scope === 'global' ? 'global' : 'project';
-    this.status = `Remove ${scope} server "${serverName}"? Press y to confirm or n/Esc to cancel.`;
+    this.setStatus(`Remove ${scope} server "${serverName}"? Press y to confirm or n/Esc to cancel.`);
   }
 
   async saveForm(): Promise<void> {
     if (!this.context) return;
     try {
       const server = formToServerConfig(this.form);
-      this.status = `Saving ${server.name} to ${this.form.scope} MCP config and reloading runtime...`;
+      this.setStatus(`Saving ${server.name} to ${this.form.scope} MCP config and reloading runtime...`);
       this.mode = 'browse';
       this.editingServerName = null;
       const api = requireMcpApi(this.context);
       const result = await api.upsertServerConfig(requireShellPaths(this.context), this.form.scope, server);
       this.refreshSnapshot();
-      this.status = `Saved ${server.name} to ${result.path}. Reload result: +${result.reload.added} ~${result.reload.changed} -${result.reload.removed}, unchanged ${result.reload.unchanged}.`;
+      this.setStatus(`Saved ${server.name} to ${result.path}. Reload result: +${result.reload.added} ~${result.reload.changed} -${result.reload.removed}, unchanged ${result.reload.unchanged}.`);
       void this.refreshTools();
     } catch (error) {
       this.lastError = summarizeError(error);
-      this.status = `Save failed: ${this.lastError}`;
+      this.setStatus(`Save failed: ${this.lastError}`, 'error');
       this.context.renderRequest();
     }
   }
@@ -420,13 +429,13 @@ export class McpWorkspace {
       this.mode = 'browse';
       this.editingServerName = null;
       this.refreshSnapshot();
-      this.status = result.removed
+      this.setStatus(result.removed
         ? `Removed ${scope} server "${name}" from ${result.path}. Reload result: +${result.reload.added} ~${result.reload.changed} -${result.reload.removed}.`
-        : `No ${scope} MCP server named "${name}" exists in ${result.path}.`;
+        : `No ${scope} MCP server named "${name}" exists in ${result.path}.`, result.removed ? 'info' : 'warning');
       void this.refreshTools();
     } catch (error) {
       this.lastError = summarizeError(error);
-      this.status = `Remove failed: ${this.lastError}`;
+      this.setStatus(`Remove failed: ${this.lastError}`, 'error');
       this.context.renderRequest();
     }
   }
@@ -434,7 +443,7 @@ export class McpWorkspace {
   cancelForm(): void {
     this.mode = 'browse';
     this.editingServerName = null;
-    this.status = 'Returned to MCP server browser.';
+    this.setStatus('Returned to MCP server browser.');
   }
 
   moveSelection(delta: number): void {
@@ -468,11 +477,11 @@ export class McpWorkspace {
     else if (row.id === 'reload') await this.reloadRuntime();
     else if (row.id === 'refresh-tools') await this.refreshTools();
     else if (row.id === 'config') {
-      this.status = [
+      this.setStatus([
         `Project config: ${this.snapshot.projectPath}`,
         `Global config: ${this.snapshot.globalPath}`,
         `Scanned: ${this.snapshot.effectiveConfig.locations.map((location) => `${location.kind}:${location.writable ? 'writable' : 'read-only'}`).join(', ')}`,
-      ].join(' ');
+      ].join(' '));
     }
   }
 

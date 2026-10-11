@@ -157,10 +157,10 @@ export function personaStorePath(shellPaths: AgentLocalStorePaths): string {
 }
 
 export class AgentPersonaRegistry {
-  public constructor(private readonly storePath: string) {}
+  public constructor(private readonly storePath: string, private readonly effects?: Parameters<typeof writeStoreFile>[2]) {}
 
-  public static fromShellPaths(shellPaths: AgentLocalStorePaths): AgentPersonaRegistry {
-    return new AgentPersonaRegistry(personaStorePath(shellPaths));
+  public static fromShellPaths(shellPaths: AgentLocalStorePaths, effects?: Parameters<typeof writeStoreFile>[2]): AgentPersonaRegistry {
+    return new AgentPersonaRegistry(personaStorePath(shellPaths), effects);
   }
 
   public snapshot(): AgentPersonaSnapshot {
@@ -350,7 +350,7 @@ export class AgentPersonaRegistry {
   }
 
   private writeStore(store: PersonaStoreFile): void {
-    writeStoreFile(this.storePath, formatStore(store));
+    writeStoreFile(this.storePath, formatStore(store), this.effects);
   }
 }
 

@@ -29,11 +29,15 @@ export function readSpeechSeamsResponse(request: Request, paragraph: string, raw
     if ((reading.verdict === 'yes' ? reading.probability : 1 - reading.probability) < BROWSER_SPEECH_SEAM_BAND[reading.verdict].actAt) return undefined;
     if (reading.verdict === 'yes') offsets.push(selected[i]);
   }
-  if (!Array.isArray(result.evidence) || result.evidence.length !== 1) return undefined;
-  const evidence = object(result.evidence[0]); const usage = object(evidence?.usage);
-  if (!evidence || !keys(evidence, ['decisionId', 'model', 'requestedModel', 'usage', 'latencyMs']) || !nonempty(evidence.decisionId)
-    || !nonempty(evidence.model) || !nonempty(evidence.requestedModel) || !nonnegative(evidence.latencyMs)
-    || !usage || !keys(usage, ['inputTokens', 'outputTokens']) || !nonnegative(usage.inputTokens) || !nonnegative(usage.outputTokens)) return undefined;
+  if (!Array.isArray(result.evidence) || result.evidence.length !== selected.length) return undefined;
+  const decisions = new Set<string>();
+  for (const item of result.evidence) {
+    const evidence = object(item); const usage = object(evidence?.usage);
+    if (!evidence || !keys(evidence, ['decisionId', 'model', 'requestedModel', 'usage', 'latencyMs']) || !nonempty(evidence.decisionId)
+      || decisions.has(evidence.decisionId) || !nonempty(evidence.model) || !nonempty(evidence.requestedModel) || !nonnegative(evidence.latencyMs)
+      || !usage || !keys(usage, ['inputTokens', 'outputTokens']) || !nonnegative(usage.inputTokens) || !nonnegative(usage.outputTokens)) return undefined;
+    decisions.add(evidence.decisionId);
+  }
   const nextCursor = request.input.cursor + 64 < candidates.length ? request.input.cursor + 64 : null;
   if (value.nextCursor !== nextCursor || !Array.isArray(value.endOffsets) || value.endOffsets.length !== offsets.length
     || value.endOffsets.some((offset, i) => offset !== offsets[i])) return undefined;

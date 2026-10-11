@@ -1,9 +1,12 @@
-import { assertDeliveryCurrent, type DeliveryLifetime } from '../utils/delivery-lifetime.js';
+import { assertDeliveryCurrent, runDeliveryPublication, type DeliveryLifetime } from '../utils/delivery-lifetime.js';
 import { retireDeliveryResponse } from './delivery-diagnostics.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
 import { HttpStatusError } from '@goodvibes-jev/engine/errors';
+import { VERSION } from '../version.js';
+
+const USER_AGENT = `DiscordBot (https://github.com/mgd34msu/goodvibes-jev, ${VERSION})`;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -320,12 +323,12 @@ export class DiscordIntegration {
     if (embeds && embeds.length > 0) payload.embeds = embeds;
 
     assertDeliveryCurrent(lifetime);
-    const res = await instrumentedFetch(target, {
+    const res = await runDeliveryPublication(lifetime, () => instrumentedFetch(target, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'User-Agent': USER_AGENT },
       body: JSON.stringify(payload),
       ...(lifetime.signal ? { signal: lifetime.signal } : {}),
-    }, 'opaque-url');
+    }, 'opaque-url'));
     if (!res.ok) {
       const err = await res.text();
       throw new HttpStatusError(`DiscordIntegration.postWebhook failed (${res.status}): ${err}`, { status: res.status });
@@ -347,15 +350,16 @@ export class DiscordIntegration {
     if (embeds && embeds.length > 0) payload.embeds = embeds;
 
     assertDeliveryCurrent(lifetime);
-    const res = await instrumentedFetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+    const res = await runDeliveryPublication(lifetime, () => instrumentedFetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'User-Agent': USER_AGENT,
         Authorization: `Bot ${this.botToken}`,
       },
       body: JSON.stringify(payload),
       ...(lifetime.signal ? { signal: lifetime.signal } : {}),
-    });
+    }));
     if (!res.ok) {
       const err = await res.text();
       throw new HttpStatusError(`DiscordIntegration.postMessage failed (${res.status}): ${err}`, { status: res.status });
@@ -381,7 +385,7 @@ export class DiscordIntegration {
       `https://discord.com/api/v10/interactions/${interactionId}/${interactionToken}/callback`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'User-Agent': USER_AGENT },
         body: JSON.stringify(payload),
       },
       'opaque-url',
@@ -409,16 +413,16 @@ export class DiscordIntegration {
     if (embeds && embeds.length > 0) payload.embeds = embeds;
 
     assertDeliveryCurrent(lifetime);
-    const res = await instrumentedFetch(
+    const res = await runDeliveryPublication(lifetime, () => instrumentedFetch(
       `https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}/messages/@original`,
       {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'User-Agent': USER_AGENT },
         body: JSON.stringify(payload),
         ...(lifetime.signal ? { signal: lifetime.signal } : {}),
       },
       'opaque-url',
-    );
+    ));
     if (!res.ok) {
       const err = await res.text();
       throw new HttpStatusError(
@@ -444,6 +448,7 @@ export class DiscordIntegration {
       method: options.method ?? 'GET',
       headers: {
         Authorization: `Bot ${token}`,
+        'User-Agent': USER_AGENT,
         ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
       },
       ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),

@@ -26,6 +26,9 @@ import {
 } from '../../runtime/legacy-daemon-reconcile.js';
 import { resolveRuntimeEndpointBinding } from '@goodvibes-jev/engine/terminal-shell';
 import { makeOwnedTempDir } from '../helpers/owned-temp.js';
+import { resolveDaemonCliOwnership } from '../../cli/configuration.js';
+import { parseDaemonCli } from '../../cli/parser.js';
+import { GOODVIBES_DAEMON_SURFACE_ROOT } from '../../config/surface.js';
 
 describe('resolveConfiguredServiceName: config-honest name for pre-manager callers', () => {
   function config(value: unknown): { get(key: string): unknown } {
@@ -412,11 +415,14 @@ describe('runDaemonServiceCli: unit paths use the login home, never the tree hom
   });
 
   function baseInput(overrides: Partial<Parameters<typeof runDaemonServiceCli>[0]> = {}) {
+    const configManager = new ConfigManager({ homeDir: treeHome, workingDir: treeHome, surfaceRoot: GOODVIBES_DAEMON_SURFACE_ROOT });
+    configManager.setDynamic('service.platform', 'systemd');
     return {
       subcommand: 'install-service' as const,
       binaryPath: '/usr/local/bin/goodvibes-daemon',
       homeDir: treeHome,
       unitHomeDir: loginHome,
+      configManager,
       host: '127.0.0.1',
       port: 3421,
       actionRunner: (() => ({ status: 0 })) as ManagedServiceActionRunner,
@@ -434,6 +440,60 @@ describe('runDaemonServiceCli: unit paths use the login home, never the tree hom
     expect(existsSync(treeUnitPath)).toBe(false);
     expect(result.status.path).toBe(loginUnitPath);
   });
+
+  test('installed unit preserves independently selected tree, daemon and working directories', async () => {
+    const daemonHomeDirectory = join(treeHome, 'selected-daemon-identity');
+    const workingDirectory = join(treeHome, 'selected-workspace');
+    const result = await runDaemonServiceCli(baseInput({ daemonHomeDirectory, workingDirectory }));
+    expect(result.ok).toBe(true);
+    const contents = readFileSync(result.status.path, 'utf8');
+    const execStart = contents.split('\n').find(line => line.startsWith('ExecStart='));
+    expect(execStart).toBe(`ExecStart=/usr/local/bin/goodvibes-daemon --daemon-home ${daemonHomeDirectory}`);
+    expect(contents).toContain(`WorkingDirectory=${workingDirectory}`);
+    const environment = contents.split('\n').find(line => line.startsWith('Environment='))?.slice('Environment='.length).replace(/^"|"$/g, '');
+    expect(environment).toBe(`GOODVIBES_HOME=${treeHome}`);
+    const cli = parseDaemonCli(execStart!.slice('ExecStart='.length).split(' ').slice(1));
+    expect(cli.errors).toEqual([]);
+    const launched = resolveDaemonCliOwnership(cli.flags, { HOME: loginHome, GOODVIBES_HOME: environment!.slice('GOODVIBES_HOME='.length) }, workingDirectory);
+    expect(launched).toMatchObject({ homeDirectory: treeHome, daemonHomeDirectory, workingDirectory });
+    expect(existsSync(join(treeHome, '.config', 'systemd', 'user', 'goodvibes.service'))).toBe(false);
+  });
+
+  for (const subcommand of ['start-service', 'restart-service'] as const) {
+    test(`${subcommand} activates only the matching selected definition`, async () => {
+      const calls: string[][] = [];
+      const actionRunner: ManagedServiceActionRunner = (command, args) => {
+        calls.push([command, ...args]);
+        return { status: 0 };
+      };
+      const daemonHomeDirectory = join(treeHome, 'selected-daemon');
+      const workingDirectory = join(treeHome, 'selected-workspace');
+      const selected = { daemonHomeDirectory, workingDirectory, actionRunner };
+      expect((await runDaemonServiceCli(baseInput(selected))).ok).toBe(true);
+      calls.length = 0;
+      expect((await runDaemonServiceCli(baseInput({ ...selected, subcommand, requireInstalledDefinitionMatch: true }))).ok).toBe(true);
+      expect(calls.some(call => call.includes(subcommand === 'start-service' ? 'enable' : 'restart'))).toBe(true);
+    });
+
+    for (const changed of ['homeDir', 'daemonHomeDirectory', 'workingDirectory', 'binaryPath'] as const) {
+      test(`${subcommand} refuses a mismatched ${changed} before platform activation`, async () => {
+        const calls: string[][] = [];
+        const actionRunner: ManagedServiceActionRunner = (command, args) => {
+          calls.push([command, ...args]);
+          return { status: 0 };
+        };
+        const selected = { daemonHomeDirectory: join(treeHome, 'selected-daemon'),
+          workingDirectory: join(treeHome, 'selected-workspace'), actionRunner };
+        expect((await runDaemonServiceCli(baseInput(selected))).ok).toBe(true);
+        calls.length = 0;
+        const result = await runDaemonServiceCli(baseInput({ ...selected, subcommand,
+          requireInstalledDefinitionMatch: true, [changed]: join(treeHome, `other-${changed}`) }));
+        expect(result.exitCode).toBe(1);
+        expect(result.lines.join('\n')).toContain('installed definition does not match');
+        expect(calls.every(call => call.includes('is-active'))).toBe(true);
+      });
+    }
+  }
 
   test('service-status reports the unit path under unitHomeDir', async () => {
     await runDaemonServiceCli(baseInput());

@@ -50,3 +50,26 @@ test('array-coerced choices and outcomes are never accepted', () => {
     expect(readPlatformResponse(input, raw)).toBeUndefined();
   }
 });
+
+test('the shared approximate-unit Choice policy admits the original platform values', () => {
+  const input = request(); const raw = response(input);
+  raw.readings.platform.probabilities = { 'ios-share-menu': 0.99, other: 0 };
+  const original = structuredClone(raw);
+  expect(readPlatformResponse(input, raw)).toEqual({ status: 'ready', platform: 'ios-share-menu' });
+  expect(raw).toEqual(original);
+});
+
+test.each(['negative', 'over-one', 'non-finite', 'non-maximal', 'unknown-choice', 'missing-option', 'extra-option', 'outside-total', 'invalid-confidence'])(
+  'rejects %s platform Choice evidence', kind => {
+    const input = request(); const raw = response(input); const reading = raw.readings.platform;
+    if (kind === 'negative') reading.probabilities = { 'ios-share-menu': 1, other: -0.001 };
+    if (kind === 'over-one') reading.probabilities = { 'ios-share-menu': 1.001, other: 0 };
+    if (kind === 'non-finite') reading.probabilities = { 'ios-share-menu': NaN, other: 0 };
+    if (kind === 'non-maximal') reading.probabilities = { 'ios-share-menu': 0.5, other: 0.5000000001 };
+    if (kind === 'unknown-choice') { reading.choice = 'invented'; Object.assign(raw, { value: { platform: 'invented' } }); }
+    if (kind === 'missing-option') Object.assign(reading, { probabilities: { 'ios-share-menu': 1 } });
+    if (kind === 'extra-option') Object.assign(reading, { probabilities: { ...reading.probabilities, invented: 0 } });
+    if (kind === 'outside-total') reading.probabilities = { 'ios-share-menu': 0.98, other: 0 };
+    if (kind === 'invalid-confidence') reading.confidence = -0.01;
+    expect(readPlatformResponse(input, raw)).toBeUndefined();
+  });

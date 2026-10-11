@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { admittedToolWorkspace, executeAdmitted } from '../helpers/admitted-tool.ts';
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -29,7 +31,7 @@ class ArtifactBrowserTestStore implements Partial<Pick<ArtifactStore, 'get' | 'l
       mimeType: input.mimeType ?? 'text/plain',
       ...(input.filename ? { filename: input.filename } : {}),
       sizeBytes: buffer.byteLength,
-      sha256: `sha-${input.id}`,
+      sha256: createHash('sha256').update(buffer).digest('hex'),
       createdAt: input.createdAt ?? Date.now(),
       ...(input.sourceUri ? { sourceUri: input.sourceUri } : {}),
       acquisitionMode: 'inline-data',
@@ -185,9 +187,9 @@ describe('agent_artifacts tool', () => {
         filename: 'generated.png',
         buffer: bytes,
       });
-      const tool = createAgentArtifactsTool(store, { projectRoot: root });
+      const tool = admittedToolWorkspace(createAgentArtifactsTool(store, { projectRoot: root }), root);
 
-      const exported = await tool.execute({
+      const exported = await executeAdmitted(tool, {
         mode: 'export',
         artifactId: 'artifact-image',
         destinationPath: 'exports/generated.png',
@@ -201,7 +203,7 @@ describe('agent_artifacts tool', () => {
       expect(exported.output).toContain('content not printed');
       expect(readFileSync(join(root, 'exports', 'generated.png'))).toEqual(bytes);
 
-      const existing = await tool.execute({
+      const existing = await executeAdmitted(tool, {
         mode: 'export',
         artifactId: 'artifact-image',
         destinationPath: 'exports/generated.png',
@@ -211,7 +213,7 @@ describe('agent_artifacts tool', () => {
       expect(existing.success).toBe(false);
       expect(existing.error).toContain('already exists');
 
-      const overwritten = await tool.execute({
+      const overwritten = await executeAdmitted(tool, {
         mode: 'export',
         artifactId: 'artifact-image',
         destinationPath: 'exports/generated.png',
@@ -232,7 +234,7 @@ describe('agent_artifacts tool', () => {
     try {
       const store = new ArtifactBrowserTestStore();
       store.add({ id: 'artifact-text', text: 'body' });
-      const tool = createAgentArtifactsTool(store, { projectRoot: root });
+      const tool = admittedToolWorkspace(createAgentArtifactsTool(store, { projectRoot: root }), root);
 
       const unconfirmed = await tool.execute({
         mode: 'export',
@@ -241,9 +243,9 @@ describe('agent_artifacts tool', () => {
         explicitUserRequest: 'Export the text artifact.',
       });
       expect(unconfirmed.success).toBe(false);
-      expect(unconfirmed.error).toContain('confirm:true');
+      expect(unconfirmed.error).toContain('recorded effect admission');
 
-      const escaped = await tool.execute({
+      const escaped = await executeAdmitted(tool, {
         mode: 'export',
         artifactId: 'artifact-text',
         destinationPath: '../escaped.txt',
@@ -278,9 +280,9 @@ describe('agent_artifacts tool', () => {
         buffer: imageBytes,
         metadata: { purpose: 'media' },
       });
-      const tool = createAgentArtifactsTool(store, { projectRoot: root });
+      const tool = admittedToolWorkspace(createAgentArtifactsTool(store, { projectRoot: root }), root);
 
-      const exported = await tool.execute({
+      const exported = await executeAdmitted(tool, {
         mode: 'package',
         artifactIds: ['artifact-report', 'artifact-image'],
         destinationPath: 'exports/research-package',
@@ -309,7 +311,7 @@ describe('agent_artifacts tool', () => {
       expect(exported.output).not.toContain('secret-value');
       expect(exported.output).not.toContain('# Report');
 
-      const existing = await tool.execute({
+      const existing = await executeAdmitted(tool, {
         mode: 'package',
         artifactIds: 'artifact-report, artifact-image',
         destinationPath: 'exports/research-package',
@@ -319,7 +321,7 @@ describe('agent_artifacts tool', () => {
       expect(existing.success).toBe(false);
       expect(existing.error).toContain('already exists');
 
-      const overwritten = await tool.execute({
+      const overwritten = await executeAdmitted(tool, {
         mode: 'package',
         artifactIds: 'artifact-report, artifact-image',
         destinationPath: 'exports/research-package',
@@ -354,9 +356,9 @@ describe('agent_artifacts tool', () => {
         filename: 'generated.png',
         buffer: imageBytes,
       });
-      const tool = createAgentArtifactsTool(store, { projectRoot: root });
+      const tool = admittedToolWorkspace(createAgentArtifactsTool(store, { projectRoot: root }), root);
 
-      const exported = await tool.execute({
+      const exported = await executeAdmitted(tool, {
         mode: 'archive',
         artifactIds: ['artifact-report', 'artifact-image'],
         destinationPath: 'exports/research-package.zip',
@@ -385,7 +387,7 @@ describe('agent_artifacts tool', () => {
       expect(entries.get(imageFile ?? '')).toEqual(imageBytes);
       expect(entries.get('README.md')?.toString('utf-8')).toContain('GoodVibes Agent Artifact Package');
 
-      const existing = await tool.execute({
+      const existing = await executeAdmitted(tool, {
         mode: 'archive',
         artifactIds: ['artifact-report', 'artifact-image'],
         destinationPath: 'exports/research-package.zip',
@@ -404,7 +406,7 @@ describe('agent_artifacts tool', () => {
     try {
       const store = new ArtifactBrowserTestStore();
       store.add({ id: 'artifact-text', text: 'body' });
-      const tool = createAgentArtifactsTool(store, { projectRoot: root });
+      const tool = admittedToolWorkspace(createAgentArtifactsTool(store, { projectRoot: root }), root);
 
       const unconfirmed = await tool.execute({
         mode: 'package',
@@ -413,9 +415,9 @@ describe('agent_artifacts tool', () => {
         explicitUserRequest: 'Export the package.',
       });
       expect(unconfirmed.success).toBe(false);
-      expect(unconfirmed.error).toContain('confirm:true');
+      expect(unconfirmed.error).toContain('recorded effect admission');
 
-      const escaped = await tool.execute({
+      const escaped = await executeAdmitted(tool, {
         mode: 'package',
         artifactIds: ['artifact-text'],
         destinationPath: '../escaped-package',

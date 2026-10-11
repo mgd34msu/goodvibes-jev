@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { ProviderListing } from '@goodvibes-jev/engine/sdk/platform/routing';
 import type { CommandContext, CommandRegistry } from '../../input/command-registry.ts';
@@ -6,6 +6,9 @@ import { createAgentHarnessTool } from '../../tools/agent-harness-tool.ts';
 import { createAgentRouteTool, registerAgentRouteTool } from '../../tools/agent-route-tool.ts';
 import type { AgentTaskRouteSources } from '../../tools/agent-route-planner.ts';
 import { useTaskRouteReadings, type TaskRouteReadings } from '../helpers/task-route-readings.ts';
+import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
+import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
+afterAll(cleanupResearchScreeningFixtures);
 
 // The adapter composes these readings into the existing route contract. Request
 // strings are exact fixture keys; no test-side keyword classifier replaces Jev.
@@ -86,9 +89,10 @@ const taskRouteSources: AgentTaskRouteSources = {
 };
 
 function fakeContext(): CommandContext {
+  const registry = new ToolRegistry(); bindAgentResearchSourceOwner(registry, ordinaryResearchOwner());
   return {
     workspace: {},
-    extensions: {},
+    extensions: { toolRegistry: registry },
     platform: {
       config: {
         behavior: { autoApprove: false },
@@ -583,10 +587,11 @@ describe('route adapter', () => {
   });
 
   test('exposes the same planner through agent_harness route_decision', async () => {
+    const context = fakeContext();
     const harness = createAgentHarnessTool({
       commandRegistry: {} as CommandRegistry,
-      commandContext: fakeContext(),
-      toolRegistry: new ToolRegistry(),
+      commandContext: context,
+      toolRegistry: context.extensions.toolRegistry,
       taskRouteSources,
     });
     const result = await harness.execute({ mode: 'route_decision', query: 'set up ollama local model' });

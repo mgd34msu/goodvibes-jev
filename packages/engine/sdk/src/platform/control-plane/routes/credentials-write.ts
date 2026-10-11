@@ -65,6 +65,7 @@ import {
   isSecretReferenceValue,
 } from '../../config/secret-bearing-config-keys.js';
 import { configKeyDescription, holdsCredential } from '../../config/credential-key-reading.js';
+import { isStructuredCredentialReferenceConfigKey } from '../../config/structured-credential-config.js';
 import { secretReferenceFor } from '../../config/plaintext-credential-sweep.js';
 import {
   describeSecretWriteScope,
@@ -136,6 +137,9 @@ function requireString(value: unknown, field: string): string {
  * for those, and the refusal says so.
  */
 async function requireSecretBearingKey(key: string, additional: readonly string[]): Promise<void> {
+  if (isStructuredCredentialReferenceConfigKey(key)) {
+    throw invalid(`${key} holds structured credential references, so a scalar credential write or clear cannot replace it. Use config.set for its validated array.`, 'key');
+  }
   if (isSecretBearingConfigKey(key) || additional.includes(key)) return;
   // A key nothing declares: whether it holds a credential is read from the key
   // and its schema description (config.credential-key), never its spelling.

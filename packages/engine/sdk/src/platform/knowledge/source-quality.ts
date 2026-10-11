@@ -1,3 +1,4 @@
+import { KnowledgeScopeSelectionHeldError } from './scope-selection.js';
 import { KnowledgeRepairSubjectSelectionHeldError } from './semantic/repair-subject-selection/types.js';
 import { KnowledgeWebGapRepairHeldError } from './semantic/web-gap-repair/types.js';
 import { KnowledgeRepairSourceAuthorityHeldError } from './semantic/repair-source-authority/types.js';
@@ -37,7 +38,7 @@ export class KnowledgeSourceQualityHeldError extends Error {
 
 /** These failures must not be swallowed before downstream knowledge writes. */
 export function isKnowledgeSourceQualityFailure(error: unknown): error is Error {
-  return error instanceof KnowledgeWebGapRepairHeldError || error instanceof KnowledgeRepairSubjectSelectionHeldError || error instanceof KnowledgeRepairSourceAuthorityHeldError || error instanceof KnowledgeRepairFactUsefulnessHeldError || error instanceof KnowledgeRepairProfileHeldError || error instanceof KnowledgeNodeMutationHeldError || error instanceof KnowledgeNodeActivationHeldError || error instanceof KnowledgeGeneratedFactSupportHeldError || error instanceof KnowledgeSourceQualityHeldError || error instanceof JudgmentError || error instanceof JudgmentPortMissingError || error instanceof JudgmentInputError;
+  return error instanceof KnowledgeScopeSelectionHeldError || error instanceof KnowledgeWebGapRepairHeldError || error instanceof KnowledgeRepairSubjectSelectionHeldError || error instanceof KnowledgeRepairSourceAuthorityHeldError || error instanceof KnowledgeRepairFactUsefulnessHeldError || error instanceof KnowledgeRepairProfileHeldError || error instanceof KnowledgeNodeMutationHeldError || error instanceof KnowledgeNodeActivationHeldError || error instanceof KnowledgeGeneratedFactSupportHeldError || error instanceof KnowledgeSourceQualityHeldError || error instanceof JudgmentError || error instanceof JudgmentPortMissingError || error instanceof JudgmentInputError;
 }
 export interface KnowledgePageSourceCandidate {
   readonly source: KnowledgeSourceRecord;

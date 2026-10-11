@@ -1,7 +1,10 @@
+import { captureCatalogMethods, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { assertPersonalOpsDataCurrent, capturePersonalOpsData, protectPersonalOpsData } from './agent-harness-personal-ops-source.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { modelReadingServicePath } from './agent-harness-model-reading-source.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 import { readRecord, readString } from './agent-harness-model-routing-utils.ts';
-import { redactedPersonalOpsText } from './agent-harness-personal-ops-runner.ts';
 import { personalOpsRecordCertification } from './agent-harness-personal-ops-certification.ts';
 import { safeRecordIdPart } from './agent-harness-personal-ops-records.ts';
 import type { PersonalOpsFollowUpRoute, PersonalOpsLiveRecord, PersonalOpsRecordFreshness } from './agent-harness-personal-ops-types.ts';
@@ -49,7 +52,7 @@ function readIso(value: unknown): string {
   const text = readString(value);
   if (!text) return '';
   const timestamp = Date.parse(text);
-  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : previewHarnessText(redactedPersonalOpsText(text), 80);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : previewHarnessText(text, 80);
 }
 
 function readRoute(value: unknown): string {
@@ -75,37 +78,28 @@ function routeFromKeys(record: Record<string, unknown>, keys: readonly string[])
 }
 
 function sources(context: CommandContext, lane: ProviderTaskLane): readonly ProviderTaskSource[] {
-  const platform = context.platform as unknown as Record<string, unknown>;
-  const clients = readRecord(context.clients);
-  const readModels = readRecord(platform.readModels);
-  const personalOps = readRecord(readModels.personalOps);
-  const platformPersonalOps = readRecord(platform.personalOps);
-  const operatorPersonalOps = readRecord(readRecord(clients.operator).personalOps);
-  if (lane === 'tasks') {
-    return [
-      { path: 'context.platform.readModels.personalOps.tasks', source: personalOps.tasks, kind: 'daemon-read-model' },
-      { path: 'context.platform.readModels.personalOps.taskRecords', source: personalOps.taskRecords, kind: 'daemon-read-model' },
-      { path: 'context.platform.readModels.providerTasks', source: readModels.providerTasks, kind: 'daemon-read-model' },
-      { path: 'context.platform.readModels.taskProviders.tasks', source: readRecord(readModels.taskProviders).tasks, kind: 'daemon-read-model' },
-      { path: 'context.platform.personalOps.tasks', source: platformPersonalOps.tasks, kind: 'daemon-read-model' },
-      { path: 'context.clients.operator.personalOps.tasks', source: operatorPersonalOps.tasks, kind: 'sdk-read-model' },
-    ];
-  }
-  return [
-    { path: 'context.platform.readModels.personalOps.reminders', source: personalOps.reminders, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.personalOps.reminderRecords', source: personalOps.reminderRecords, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.providerReminders', source: readModels.providerReminders, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.reminders', source: readModels.reminders, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.schedules.reminders', source: readRecord(readModels.schedules).reminders, kind: 'daemon-read-model' },
-    { path: 'context.platform.personalOps.reminders', source: platformPersonalOps.reminders, kind: 'daemon-read-model' },
-    { path: 'context.clients.operator.personalOps.reminders', source: operatorPersonalOps.reminders, kind: 'sdk-read-model' },
+  const paths = lane === 'tasks' ? [
+    { path: 'context.platform.readModels.personalOps.tasks', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.readModels.personalOps.taskRecords', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.readModels.providerTasks', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.readModels.taskProviders.tasks', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.personalOps.tasks', kind: 'daemon-read-model' as const },
+    { path: 'context.clients.operator.personalOps.tasks', kind: 'sdk-read-model' as const },
+  ] : [
+    { path: 'context.platform.readModels.personalOps.reminders', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.readModels.personalOps.reminderRecords', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.readModels.providerReminders', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.readModels.reminders', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.readModels.schedules.reminders', kind: 'daemon-read-model' as const },
+    { path: 'context.platform.personalOps.reminders', kind: 'daemon-read-model' as const },
+    { path: 'context.clients.operator.personalOps.reminders', kind: 'sdk-read-model' as const },
   ];
+  return paths.map(entry => ({ ...entry, source: modelReadingServicePath(context, entry.path.split('.').slice(1)) }));
 }
-
 function readSnapshot(source: unknown, lane: ProviderTaskLane): unknown {
   if (typeof source === 'function') {
     try {
-      const result = (source as () => unknown)();
+      const result: unknown = source();
       return result instanceof Promise ? undefined : result;
     } catch {
       return undefined;
@@ -116,10 +110,10 @@ function readSnapshot(source: unknown, lane: ProviderTaskLane): unknown {
     ? ['getSnapshot', 'snapshot', 'listTasks', 'getTasks', 'list']
     : ['getSnapshot', 'snapshot', 'listReminders', 'getReminders', 'listSchedules', 'list'];
   for (const methodName of methods) {
-    const method = record[methodName];
+    const method = modelReadingServicePath(source, [methodName]);
     if (typeof method !== 'function') continue;
     try {
-      const result = (method as () => unknown).call(source);
+      const result: unknown = method.call(source);
       return result instanceof Promise ? undefined : result;
     } catch {
       return undefined;
@@ -210,16 +204,16 @@ function normalizeTask(source: ProviderTaskSource, raw: unknown, index: number):
   const hasConfirmedEffectRoute = followUpRoutes.some((route) => route.effect === 'confirmed-effect');
   return {
     id: `provider-task:${safeRecordIdPart(source.path)}:${safeRecordIdPart(taskId)}`,
-    label: `Fresh task: ${previewHarnessText(redactedPersonalOpsText(title), 96)}`,
-    status: previewHarnessText(redactedPersonalOpsText(status), 48),
+    label: `Fresh task: ${previewHarnessText(title, 96)}`,
+    status: previewHarnessText(status, 48),
     summary: [
-      `Provider ${previewHarnessText(redactedPersonalOpsText(providerId), 64)} published current task ${previewHarnessText(redactedPersonalOpsText(taskId), 80)} from ${source.path}.`,
-      notes ? `Preview ${previewHarnessText(redactedPersonalOpsText(notes), 140)}.` : '',
-      list ? `List ${previewHarnessText(redactedPersonalOpsText(list), 64)}.` : '',
+      `Provider ${previewHarnessText(providerId, 64)} published current task ${previewHarnessText(taskId, 80)} from ${source.path}.`,
+      notes ? `Preview ${previewHarnessText(notes, 140)}.` : '',
+      list ? `List ${previewHarnessText(list, 64)}.` : '',
       dueAt ? `Due ${dueAt}.` : '',
-      priority ? `Priority ${previewHarnessText(redactedPersonalOpsText(priority), 40)}.` : '',
-      assignee ? `Owner ${previewHarnessText(redactedPersonalOpsText(assignee), 64)}.` : '',
-      labels.length > 0 ? `Labels ${labels.map((label) => previewHarnessText(redactedPersonalOpsText(label), 40)).join(', ')}.` : '',
+      priority ? `Priority ${previewHarnessText(priority, 40)}.` : '',
+      assignee ? `Owner ${previewHarnessText(assignee, 64)}.` : '',
+      labels.length > 0 ? `Labels ${labels.map((label) => previewHarnessText(label, 40)).join(', ')}.` : '',
       updatedAt ? `Updated ${updatedAt}.` : '',
       followUpRoutes.length > 0 ? 'Published provider effects are separated into confirmed follow-up routes.' : 'No provider mutation route is published for this task.',
     ].filter(Boolean).join(' '),
@@ -265,14 +259,14 @@ function normalizeReminder(source: ProviderTaskSource, raw: unknown, index: numb
   const hasConfirmedEffectRoute = followUpRoutes.some((route) => route.effect === 'confirmed-effect');
   return {
     id: `provider-reminder:${safeRecordIdPart(source.path)}:${safeRecordIdPart(reminderId)}`,
-    label: `Fresh reminder: ${previewHarnessText(redactedPersonalOpsText(title), 96)}`,
-    status: previewHarnessText(redactedPersonalOpsText(status), 48),
+    label: `Fresh reminder: ${previewHarnessText(title, 96)}`,
+    status: previewHarnessText(status, 48),
     summary: [
-      `Provider ${previewHarnessText(redactedPersonalOpsText(providerId), 64)} published current reminder ${previewHarnessText(redactedPersonalOpsText(reminderId), 80)} from ${source.path}.`,
-      notes ? `Preview ${previewHarnessText(redactedPersonalOpsText(notes), 140)}.` : '',
+      `Provider ${previewHarnessText(providerId, 64)} published current reminder ${previewHarnessText(reminderId, 80)} from ${source.path}.`,
+      notes ? `Preview ${previewHarnessText(notes, 140)}.` : '',
       dueAt ? `Due ${dueAt}.` : '',
-      cadence ? `Cadence ${previewHarnessText(redactedPersonalOpsText(cadence), 64)}.` : '',
-      delivery ? `Delivery ${previewHarnessText(redactedPersonalOpsText(delivery), 64)}.` : '',
+      cadence ? `Cadence ${previewHarnessText(cadence, 64)}.` : '',
+      delivery ? `Delivery ${previewHarnessText(delivery, 64)}.` : '',
       updatedAt ? `Updated ${updatedAt}.` : '',
       followUpRoutes.length > 0 ? 'Published provider effects are separated into confirmed follow-up routes.' : 'No provider mutation route is published for this reminder.',
     ].filter(Boolean).join(' '),
@@ -296,19 +290,32 @@ function normalizeReminder(source: ProviderTaskSource, raw: unknown, index: numb
   };
 }
 
-export function providerBackedTaskRecords(context: CommandContext): readonly PersonalOpsLiveRecord[] {
-  return providerBackedRecords(context, 'tasks');
+export async function providerBackedTaskRecords(context: CommandContext, options: CatalogRankingOptions = {}): Promise<readonly PersonalOpsLiveRecord[]> {
+  return providerBackedRecords(context, 'tasks', options);
 }
 
-export function providerBackedReminderRecords(context: CommandContext): readonly PersonalOpsLiveRecord[] {
-  return providerBackedRecords(context, 'reminders');
+export async function providerBackedReminderRecords(context: CommandContext, options: CatalogRankingOptions = {}): Promise<readonly PersonalOpsLiveRecord[]> {
+  return providerBackedRecords(context, 'reminders', options);
 }
 
-function providerBackedRecords(context: CommandContext, lane: ProviderTaskLane): readonly PersonalOpsLiveRecord[] {
+async function providerBackedRecords(context: CommandContext, lane: ProviderTaskLane, options: CatalogRankingOptions): Promise<readonly PersonalOpsLiveRecord[]> {
   const records: PersonalOpsLiveRecord[] = [];
   const seen = new Set<string>();
   for (const source of sources(context, lane)) {
-    const snapshot = readSnapshot(source.source, lane);
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    const original = readSnapshot(source.source, lane);
+    if (original === undefined || original === null) continue;
+    const originalSnapshot = capturePersonalOpsData(original);
+    const sourceMethods = source.source !== null && typeof source.source === 'object'
+      ? captureCatalogMethods(source.source, ['getSnapshot', 'snapshot', 'list', 'listEvents', 'getEvents', 'listThreads', 'getThreads', 'listMessages', 'getMessages', 'listTasks', 'getTasks', 'listReminders', 'getReminders', 'listSchedules']) : () => {};
+    const assertSource = () => {
+      options.signal?.throwIfAborted(); sourceMethods();
+      if (sources(context, lane).find(entry => entry.path === source.path)?.source !== source.source) throw new ToolInputProjectionError('held');
+      assertPersonalOpsDataCurrent(readSnapshot(source.source, lane), originalSnapshot);
+    };
+    const assertCurrent = () => { options.assertCurrent?.(); assertSource(); };
+    const snapshot = await protectPersonalOpsData(original, { signal: options.signal, assertCurrent });
+    assertCurrent(); options.retainCurrent?.(assertSource, source.path);
     for (const [index, raw] of recordsFromSnapshot(snapshot, lane).entries()) {
       const record = lane === 'tasks' ? normalizeTask(source, raw, index) : normalizeReminder(source, raw, index);
       if (!record || seen.has(record.id)) continue;

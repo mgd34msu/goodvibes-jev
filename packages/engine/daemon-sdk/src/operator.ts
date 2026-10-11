@@ -262,12 +262,12 @@ async function dispatchOperatorRoutesInner(
   if (memoryRecordMatch && method === 'GET') return handlers.getMemoryRecord(safeDecodeURIComponent(memoryRecordMatch[1]!));
   if (memoryRecordMatch && method === 'DELETE') return handlers.deleteMemoryRecord(safeDecodeURIComponent(memoryRecordMatch[1]!));
 
-  if (pathname === '/api/knowledge/status' && method === 'GET') return handlers.getKnowledgeStatus(url);
-  if (pathname === '/api/knowledge/sources' && method === 'GET') return handlers.getKnowledgeSources(url);
-  if (pathname === '/api/knowledge/nodes' && method === 'GET') return handlers.getKnowledgeNodes(url);
-  if (pathname === '/api/knowledge/issues' && method === 'GET') return handlers.getKnowledgeIssues(url);
+  if (pathname === '/api/knowledge/status' && method === 'GET') return handlers.getKnowledgeStatus(url, req);
+  if (pathname === '/api/knowledge/sources' && method === 'GET') return handlers.getKnowledgeSources(url, req);
+  if (pathname === '/api/knowledge/nodes' && method === 'GET') return handlers.getKnowledgeNodes(url, req);
+  if (pathname === '/api/knowledge/issues' && method === 'GET') return handlers.getKnowledgeIssues(url, req);
   if (pathname === '/api/knowledge/connectors' && method === 'GET') return handlers.getKnowledgeConnectors();
-  if (pathname === '/api/knowledge/extractions' && method === 'GET') return handlers.getKnowledgeExtractions(url);
+  if (pathname === '/api/knowledge/extractions' && method === 'GET') return handlers.getKnowledgeExtractions(url, req);
   if (pathname === '/api/knowledge/usage' && method === 'GET') return handlers.getKnowledgeUsage(url);
   if (pathname === '/api/knowledge/candidates' && method === 'GET') return handlers.getKnowledgeCandidates(url);
   if (pathname === '/api/knowledge/reports' && method === 'GET') return handlers.getKnowledgeReports(url);
@@ -276,8 +276,8 @@ async function dispatchOperatorRoutesInner(
   if (pathname === '/api/knowledge/refinement/tasks' && method === 'GET') return handlers.getKnowledgeRefinementTasks(url);
   if (pathname === '/api/knowledge/refinement/run' && method === 'POST') return handlers.postKnowledgeRunRefinement(req);
   if (pathname === '/api/knowledge/schedules' && method === 'GET') return handlers.getKnowledgeSchedules(url);
-  if (pathname === '/api/knowledge/projections' && method === 'GET') return handlers.getKnowledgeProjectionTargets(url);
-  if (pathname === '/api/knowledge/map' && method === 'GET') return handlers.getKnowledgeMap(url);
+  if (pathname === '/api/knowledge/projections' && method === 'GET') return handlers.getKnowledgeProjectionTargets(url, req);
+  if (pathname === '/api/knowledge/map' && method === 'GET') return handlers.getKnowledgeMap(url, req);
   if (pathname === '/api/knowledge/graphql/schema' && method === 'GET') return handlers.getKnowledgeGraphqlSchema();
   if (pathname === '/api/knowledge/graphql' && (method === 'GET' || method === 'POST')) return handlers.executeKnowledgeGraphql(req);
   if (pathname === '/api/knowledge/ingest/url' && method === 'POST') return handlers.postKnowledgeIngestUrl(req);
@@ -299,7 +299,7 @@ async function dispatchOperatorRoutesInner(
   const knowledgeConnectorMatch = pathname.match(/^\/api\/knowledge\/connectors\/([^/]+)$/);
   if (knowledgeConnectorMatch && method === 'GET') return handlers.getKnowledgeConnector(safeDecodeURIComponent(knowledgeConnectorMatch[1]!) );
   const knowledgeExtractionMatch = pathname.match(/^\/api\/knowledge\/extractions\/([^/]+)$/);
-  if (knowledgeExtractionMatch && method === 'GET') return handlers.getKnowledgeExtraction(safeDecodeURIComponent(knowledgeExtractionMatch[1]!) );
+  if (knowledgeExtractionMatch && method === 'GET') return handlers.getKnowledgeExtraction(safeDecodeURIComponent(knowledgeExtractionMatch[1]!), url, req);
   const knowledgeIssueReviewMatch = pathname.match(/^\/api\/knowledge\/issues\/([^/]+)\/review$/);
   if (knowledgeIssueReviewMatch && method === 'POST') return handlers.postKnowledgeReviewIssue(safeDecodeURIComponent(knowledgeIssueReviewMatch[1]!), req);
   const knowledgeCandidateDecideMatch = pathname.match(/^\/api\/knowledge\/candidates\/([^/]+)\/decide$/);
@@ -309,7 +309,7 @@ async function dispatchOperatorRoutesInner(
   const knowledgeReportMatch = pathname.match(/^\/api\/knowledge\/reports\/([^/]+)$/);
   if (knowledgeReportMatch && method === 'GET') return handlers.getKnowledgeReport(safeDecodeURIComponent(knowledgeReportMatch[1]!) );
   const knowledgeSourceExtractionMatch = pathname.match(/^\/api\/knowledge\/sources\/([^/]+)\/extraction$/);
-  if (knowledgeSourceExtractionMatch && method === 'GET') return handlers.getKnowledgeSourceExtraction(safeDecodeURIComponent(knowledgeSourceExtractionMatch[1]!) );
+  if (knowledgeSourceExtractionMatch && method === 'GET') return handlers.getKnowledgeSourceExtraction(safeDecodeURIComponent(knowledgeSourceExtractionMatch[1]!), url, req);
   const knowledgeJobRunMatch = pathname.match(/^\/api\/knowledge\/jobs\/([^/]+)\/run$/);
   if (knowledgeJobRunMatch && method === 'POST') return handlers.postKnowledgeRunJob(safeDecodeURIComponent(knowledgeJobRunMatch[1]!), req);
   const knowledgeJobMatch = pathname.match(/^\/api\/knowledge\/jobs\/([^/]+)$/);
@@ -324,7 +324,7 @@ async function dispatchOperatorRoutesInner(
   if (knowledgeScheduleMatch && method === 'GET') return handlers.getKnowledgeSchedule(safeDecodeURIComponent(knowledgeScheduleMatch[1]!) );
   if (knowledgeScheduleMatch && method === 'DELETE') return handlers.deleteKnowledgeSchedule(safeDecodeURIComponent(knowledgeScheduleMatch[1]!), req);
   const knowledgeItemMatch = pathname.match(/^\/api\/knowledge\/items\/([^/]+)$/);
-  if (knowledgeItemMatch && method === 'GET') return handlers.getKnowledgeItem(safeDecodeURIComponent(knowledgeItemMatch[1]!), url);
+  if (knowledgeItemMatch && method === 'GET') return handlers.getKnowledgeItem(safeDecodeURIComponent(knowledgeItemMatch[1]!), url, req);
 
   if (pathname === '/api/voice' && method === 'GET') return handlers.getVoiceStatus();
   if (pathname === '/api/voice/providers' && method === 'GET') return handlers.getVoiceProviders();

@@ -16,9 +16,18 @@ let answer: string; let confidence: number; let calls: unknown[];
 let pause: (() => Promise<void>) | undefined;
 beforeEach(() => {
   answer = 'conversation'; confidence = 0.99; calls = []; pause = undefined;
-  const fake = fakePort((_name, question) => choiceAnswer(question, answer, confidence));
+  const fake = fakePort((name, question) => {
+    // The real activity logger reads these fixture identifiers independently.
+    if (name === 'kind' && question.type === 'choice' && 'other' in question.criteria) {
+      return choiceAnswer(question, 'other', 0.99);
+    }
+    return choiceAnswer(question, answer, confidence);
+  });
   const port: JudgmentPort = { model: fake.port.model, async ask(request) {
-    request.beforeAttempt?.(); calls.push(request.state); await pause?.(); request.beforeAttempt?.(); return fake.port.ask(request);
+    request.beforeAttempt?.();
+    if ('reading' in request.questions) { calls.push(request.state); await pause?.(); }
+    request.beforeAttempt?.();
+    return fake.port.ask(request);
   } };
   log = new SqliteDecisionLog(':memory:');
   previous = installJudgmentPort(withDecisionLog(port, log));
@@ -45,7 +54,7 @@ describe('canonical inbound work reading at actual spawn boundary', () => {
       const text = kind === 'work' ? 'Testing' : 'fix deploy src/main.ts';
       const response = await gateSurfaceSpawn(h.deps, { surface: 'ntfy', text }, { mode: 'spawn', task: text });
       expect(h.spawns).toHaveLength(kind === 'work' ? 0 : 1);
-      expect(calls).toEqual([{ proposal: null, reply: text }]);
+      expect(calls).toEqual([{ message: text }]);
       if (kind === 'work') expect(await (response as Response).json()).toMatchObject({ outcome: 'work-proposed' });
     } finally { h.store.dispose(); }
   });

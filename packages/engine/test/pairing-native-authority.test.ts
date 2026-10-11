@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { PairingTokenManager, PairingTokenStoreBusyError } from '../sdk/src/platform/pairing/pairing-token-store.js';
@@ -9,6 +9,39 @@ import * as atomic from '../sdk/src/platform/utils/atomic-json-store.js';
 import { DaemonControlPlaneHelper, type DaemonControlPlaneContext } from '../sdk/src/platform/daemon/control-plane.js';
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.js';
 import type { NativeExecutionAuthority } from '../sdk/src/platform/security/http-auth.js';
+
+function ownerLockPath(file: string): string { return join(dirname(file), '.pairing-owner-locks', `${basename(file)}.lock`); }
+
+test('shared publication locks preserve original target-parent revision and fence old writers', async () => {
+  const item = fixture(), capability = item.helper.createNativeExecutionAuthority(item.paired.token)!;
+  const directory = dirname(item.file), before = lstatSync(directory, { bigint: true }).ctimeNs;
+  expect(lstatSync(`${item.file}.owner-lock`).isFile()).toBe(true);
+  expect(() => mkdirSync(`${item.file}.owner-lock`)).toThrow();
+  await capability.withCurrent(capability.current()!, assertCurrent => {
+    assertCurrent(); expect(existsSync(ownerLockPath(item.file))).toBe(true);
+    expect(lstatSync(directory, { bigint: true }).ctimeNs).toBe(before);
+  });
+  expect(lstatSync(directory, { bigint: true }).ctimeNs).toBe(before);
+  expect(existsSync(ownerLockPath(item.file))).toBe(false);
+});
+
+test('an existing old writer directory is never converted or stolen', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gv-old-pair-lock-')); dirs.push(dir);
+  const file = join(dir, 'pairing.json'); mkdirSync(`${file}.owner-lock`);
+  const manager = new PairingTokenManager(file);
+  expect(() => manager.mint({ name: 'Synthetic refused migration' })).toThrow(PairingTokenStoreBusyError);
+  expect(lstatSync(`${file}.owner-lock`).isDirectory()).toBe(true);
+});
+
+test('namespace replacement cannot inherit an active paired publication', async () => {
+  const item = fixture(), capability = item.helper.createNativeExecutionAuthority(item.paired.token)!;
+  const namespace = dirname(ownerLockPath(item.file));
+  await expect(capability.withCurrent(capability.current()!, assertCurrent => {
+    renameSync(namespace, `${namespace}.displaced`); mkdirSync(namespace, { mode: 0o700 });
+    mkdirSync(ownerLockPath(item.file)); assertCurrent();
+  })).rejects.toThrow(PairingTokenStoreBusyError);
+  expect(existsSync(ownerLockPath(item.file))).toBe(true);
+});
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -166,18 +199,18 @@ describe('persisted paired native authority', () => {
     const item = fixture(); const capability = item.helper.createNativeExecutionAuthority(item.paired.token)!;
     let launched = false;
     await expect(capability.withCurrent(capability.current()!, assertCurrent => {
-      renameSync(`${item.file}.owner-lock`, `${item.file}.displaced-lock`);
-      mkdirSync(`${item.file}.owner-lock`);
+      renameSync(ownerLockPath(item.file), `${item.file}.displaced-lock`);
+      mkdirSync(ownerLockPath(item.file));
       assertCurrent();
       launched = true;
     })).rejects.toThrow(PairingTokenStoreBusyError);
     expect(launched).toBe(false);
-    expect(existsSync(`${item.file}.owner-lock`)).toBe(true);
+    expect(existsSync(ownerLockPath(item.file))).toBe(true);
   });
 
   test('stale or externally held lock refuses launch without age-based stealing', async () => {
     const item = fixture(); const capability = item.helper.createNativeExecutionAuthority(item.paired.token)!;
-    mkdirSync(`${item.file}.owner-lock`);
+    mkdirSync(ownerLockPath(item.file));
     let launched = false;
     await expect(capability.withCurrent(capability.current()!, () => { launched = true; })).rejects.toThrow(PairingTokenStoreBusyError);
     expect(launched).toBe(false);

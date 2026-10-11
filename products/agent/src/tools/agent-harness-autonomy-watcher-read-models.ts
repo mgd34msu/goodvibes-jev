@@ -1,7 +1,12 @@
 import type { CommandContext } from '../input/command-registry.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 import { readRecord, readString } from './agent-harness-model-routing-utils.ts';
-import { redactedPersonalOpsText } from './agent-harness-personal-ops-runner.ts';
+import { captureCatalogData, captureCatalogMethods, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { modelReadingServicePath } from './agent-harness-model-reading-source.ts';
+import { assertPersonalOpsDataCurrent, capturePersonalOpsData, protectPersonalOpsData } from './agent-harness-personal-ops-source.ts';
+import { readPersonalOpsReceiptStatus } from './agent-harness-personal-ops-readings.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { types as nodeTypes } from 'node:util';
 import { safeRecordIdPart } from './agent-harness-personal-ops-records.ts';
 import type { AutonomyQueueLiveRecord, AutonomyQueueRecordControl, AutonomyQueueRecordOutput } from './agent-harness-autonomy-queue-types.ts';
 
@@ -22,7 +27,7 @@ interface CollectedWatcherRecord {
   readonly record: Record<string, unknown>;
 }
 
-const SNAPSHOT_METHODS = ['getSnapshot', 'snapshot', 'toJSON'] as const;
+const SNAPSHOT_METHODS = ['getSnapshot', 'snapshot'] as const;
 const RUN_METHODS = ['listRuns', 'listRunHistory', 'listWatcherRuns', 'listAutomationRuns', 'listReceipts', 'listEvents', 'list'] as const;
 const SOURCE_METHODS = ['listSources', 'listProviderSources', 'listWatcherSources', 'listWatchers', 'listSubscriptions', 'list'] as const;
 
@@ -62,60 +67,37 @@ const RUN_RESUME_KEYS = ['resumeRoute'];
 const SOURCE_READ_KEYS = ['readRoute', 'inspectRoute', 'reviewRoute', 'sourceRoute', 'watcherRoute', 'modelRoute'];
 const SOURCE_REFRESH_KEYS = ['refreshRoute', 'syncRoute', 'pollRoute', 'readNowRoute'];
 
+const WATCHER_SOURCES = [
+  { path: 'context.platform.readModels.watchers.runs', kind: 'daemon-read-model', lane: 'watcher-run' },
+  { path: 'context.platform.readModels.watchers.runHistory', kind: 'daemon-read-model', lane: 'watcher-run' },
+  { path: 'context.platform.readModels.watchers.watcherRuns', kind: 'daemon-read-model', lane: 'watcher-run' },
+  { path: 'context.platform.readModels.watcherRuns', kind: 'daemon-read-model', lane: 'watcher-run' },
+  { path: 'context.platform.readModels.watcherRunHistory', kind: 'daemon-read-model', lane: 'watcher-run' },
+  { path: 'context.platform.readModels.automation.watcherRuns', kind: 'daemon-read-model', lane: 'watcher-run' },
+  { path: 'context.platform.readModels.automation.runHistory', kind: 'daemon-read-model', lane: 'watcher-run' },
+  { path: 'context.platform.readModels.gmail.watcherRuns', kind: 'daemon-read-model', lane: 'watcher-run' },
+  { path: 'context.platform.readModels.email.watcherRuns', kind: 'daemon-read-model', lane: 'watcher-run' },
+  { path: 'context.clients.operator.watchers.runs', kind: 'sdk-read-model', lane: 'watcher-run' },
+  { path: 'context.clients.operator.watchers.runHistory', kind: 'sdk-read-model', lane: 'watcher-run' },
+  { path: 'context.clients.operator.automation.watcherRuns', kind: 'sdk-read-model', lane: 'watcher-run' },
+  { path: 'context.platform.readModels.watchers.sources', kind: 'daemon-read-model', lane: 'provider-source' },
+  { path: 'context.platform.readModels.watchers.providerSources', kind: 'daemon-read-model', lane: 'provider-source' },
+  { path: 'context.platform.readModels.watcherSources', kind: 'daemon-read-model', lane: 'provider-source' },
+  { path: 'context.platform.readModels.providerSources', kind: 'daemon-read-model', lane: 'provider-source' },
+  { path: 'context.platform.readModels.providers.sources', kind: 'daemon-read-model', lane: 'provider-source' },
+  { path: 'context.platform.readModels.gmail.sources', kind: 'daemon-read-model', lane: 'provider-source' },
+  { path: 'context.platform.readModels.gmail.providerSources', kind: 'daemon-read-model', lane: 'provider-source' },
+  { path: 'context.platform.readModels.gmail.watchers', kind: 'daemon-read-model', lane: 'provider-source' },
+  { path: 'context.platform.readModels.email.sources', kind: 'daemon-read-model', lane: 'provider-source' },
+  { path: 'context.platform.readModels.email.providerSources', kind: 'daemon-read-model', lane: 'provider-source' },
+  { path: 'context.platform.readModels.email.watchers', kind: 'daemon-read-model', lane: 'provider-source' },
+  { path: 'context.clients.operator.watchers.sources', kind: 'sdk-read-model', lane: 'provider-source' },
+  { path: 'context.clients.operator.gmail.sources', kind: 'sdk-read-model', lane: 'provider-source' },
+  { path: 'context.clients.operator.email.sources', kind: 'sdk-read-model', lane: 'provider-source' },
+] as const;
+
 function watcherSources(context: CommandContext): readonly WatcherReadModelSource[] {
-  const platform = context.platform as unknown as Record<string, unknown>;
-  const readModels = readRecord(platform.readModels);
-  const clients = readRecord(context.clients);
-  const operator = readRecord(clients.operator);
-  const automation = readRecord(readModels.automation);
-  const watchers = readRecord(readModels.watchers);
-  const gmail = readRecord(readModels.gmail);
-  const email = readRecord(readModels.email);
-  const provider = readRecord(readModels.providers);
-  const operatorAutomation = readRecord(operator.automation);
-  const operatorWatchers = readRecord(operator.watchers);
-  const operatorGmail = readRecord(operator.gmail);
-  const operatorEmail = readRecord(operator.email);
-  return [
-    { path: 'context.platform.readModels.watchers.runs', source: watchers.runs, kind: 'daemon-read-model', lane: 'watcher-run' },
-    { path: 'context.platform.readModels.watchers.runHistory', source: watchers.runHistory, kind: 'daemon-read-model', lane: 'watcher-run' },
-    { path: 'context.platform.readModels.watchers.watcherRuns', source: watchers.watcherRuns, kind: 'daemon-read-model', lane: 'watcher-run' },
-    { path: 'context.platform.readModels.watcherRuns', source: readModels.watcherRuns, kind: 'daemon-read-model', lane: 'watcher-run' },
-    { path: 'context.platform.readModels.watcherRunHistory', source: readModels.watcherRunHistory, kind: 'daemon-read-model', lane: 'watcher-run' },
-    { path: 'context.platform.readModels.automation.watcherRuns', source: automation.watcherRuns, kind: 'daemon-read-model', lane: 'watcher-run' },
-    { path: 'context.platform.readModels.automation.runHistory', source: automation.runHistory, kind: 'daemon-read-model', lane: 'watcher-run' },
-    { path: 'context.platform.readModels.gmail.watcherRuns', source: gmail.watcherRuns, kind: 'daemon-read-model', lane: 'watcher-run' },
-    { path: 'context.platform.readModels.email.watcherRuns', source: email.watcherRuns, kind: 'daemon-read-model', lane: 'watcher-run' },
-    { path: 'context.clients.operator.watchers.runs', source: operatorWatchers.runs, kind: 'sdk-read-model', lane: 'watcher-run' },
-    { path: 'context.clients.operator.watchers.runHistory', source: operatorWatchers.runHistory, kind: 'sdk-read-model', lane: 'watcher-run' },
-    { path: 'context.clients.operator.automation.watcherRuns', source: operatorAutomation.watcherRuns, kind: 'sdk-read-model', lane: 'watcher-run' },
-
-    { path: 'context.platform.readModels.watchers.sources', source: watchers.sources, kind: 'daemon-read-model', lane: 'provider-source' },
-    { path: 'context.platform.readModels.watchers.providerSources', source: watchers.providerSources, kind: 'daemon-read-model', lane: 'provider-source' },
-    { path: 'context.platform.readModels.watcherSources', source: readModels.watcherSources, kind: 'daemon-read-model', lane: 'provider-source' },
-    { path: 'context.platform.readModels.providerSources', source: readModels.providerSources, kind: 'daemon-read-model', lane: 'provider-source' },
-    { path: 'context.platform.readModels.providers.sources', source: provider.sources, kind: 'daemon-read-model', lane: 'provider-source' },
-    { path: 'context.platform.readModels.gmail.sources', source: gmail.sources, kind: 'daemon-read-model', lane: 'provider-source' },
-    { path: 'context.platform.readModels.gmail.providerSources', source: gmail.providerSources, kind: 'daemon-read-model', lane: 'provider-source' },
-    { path: 'context.platform.readModels.gmail.watchers', source: gmail.watchers, kind: 'daemon-read-model', lane: 'provider-source' },
-    { path: 'context.platform.readModels.email.sources', source: email.sources, kind: 'daemon-read-model', lane: 'provider-source' },
-    { path: 'context.platform.readModels.email.providerSources', source: email.providerSources, kind: 'daemon-read-model', lane: 'provider-source' },
-    { path: 'context.platform.readModels.email.watchers', source: email.watchers, kind: 'daemon-read-model', lane: 'provider-source' },
-    { path: 'context.clients.operator.watchers.sources', source: operatorWatchers.sources, kind: 'sdk-read-model', lane: 'provider-source' },
-    { path: 'context.clients.operator.gmail.sources', source: operatorGmail.sources, kind: 'sdk-read-model', lane: 'provider-source' },
-    { path: 'context.clients.operator.email.sources', source: operatorEmail.sources, kind: 'sdk-read-model', lane: 'provider-source' },
-  ];
-}
-
-function callMethod(source: Record<string, unknown>, method: string): unknown {
-  const fn = source[method];
-  if (typeof fn !== 'function') return undefined;
-  try {
-    const result = (fn as () => unknown).call(source);
-    return result instanceof Promise ? undefined : result;
-  } catch {
-    return undefined;
-  }
+  return WATCHER_SOURCES.map(entry => ({ ...entry, source: modelReadingServicePath(context, entry.path.split('.').slice(1)) }));
 }
 
 function firstString(record: Record<string, unknown>, keys: readonly string[]): string {
@@ -160,25 +142,15 @@ function readStringArray(value: unknown): readonly string[] {
   return text ? text.split(',').map((entry) => entry.trim()).filter(Boolean).slice(0, 12) : [];
 }
 
-function redactWatcherText(value: string): string {
-  return redactedPersonalOpsText(value)
-    .replace(/("?\b(?:api[-_]?key|apikey|token|secret|password|passwd|credential|authorization)\b"?\s*:\s*)("[^"]*"|'[^']*'|[^\s,}]+)/gi, '$1"<redacted>"')
-    .replace(/(\b(?:token|secret|password|passwd|api[-_]?key|apikey|authorization|credential)\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}]+)/gi, '$1<redacted>');
-}
-
+// These functions consume complete, already protected producer DTOs.
 function compactUnknown(value: unknown): string {
   if (value === undefined || value === null) return '';
-  if (typeof value === 'string') return redactWatcherText(value.replace(/\s+/g, ' ').trim());
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  try {
-    return redactWatcherText(JSON.stringify(value).replace(/\s+/g, ' ').trim());
-  } catch {
-    return '';
-  }
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  return text.replace(/\s+/g, ' ').trim();
 }
 
 function safePreview(value: string, limit: number): string {
-  return previewHarnessText(redactWatcherText(value), limit);
+  return previewHarnessText(value, limit);
 }
 
 function readIso(value: unknown): string {
@@ -211,73 +183,91 @@ function routeFromKeys(record: Record<string, unknown>, keys: readonly string[])
   return '';
 }
 
-function normalizedStatus(record: Record<string, unknown>, lane: WatcherReadModelLane): string {
-  const raw = firstString(record, ['status', 'state', 'outcome', 'result']);
-  if (!raw && lane === 'provider-source') {
-    const enabled = readBoolean(record, ['enabled', 'active', 'watching']);
-    if (enabled === true) return 'ready';
-    if (enabled === false) return 'blocked';
+/** Literal automation-run grammar and published boolean source state are native facts. */
+function nativeStatus(record: Record<string, unknown>, lane: WatcherReadModelLane): string {
+  const status = record.status;
+  if (lane === 'watcher-run') {
+    switch (status) {
+      case 'queued': case 'running': case 'failed': case 'cancelled': return status;
+      case 'completed': return 'succeeded';
+      case 'missed': return 'blocked';
+    }
+  } else {
+    const enabled = record.enabled;
+    if (typeof enabled === 'boolean') return enabled ? 'ready' : 'blocked';
   }
-  const status = raw.toLowerCase().replace(/[\s_]+/g, '-');
-  if (!status) return lane === 'provider-source' ? 'ready' : 'unknown';
-  if (['ok', 'ready', 'success', 'succeeded', 'complete', 'completed', 'delivered', 'captured', 'recorded'].includes(status)) return 'succeeded';
-  if (['pending', 'scheduled'].includes(status)) return 'queued';
-  if (['in-progress', 'active', 'executing', 'processing'].includes(status)) return 'running';
-  if (['needs-review', 'needs-setup', 'error-blocked'].includes(status)) return 'blocked';
-  if (['fail', 'error', 'errored'].includes(status)) return 'failed';
-  if (['cancelled', 'canceled', 'aborted'].includes(status)) return 'cancelled';
-  return status;
+  return 'unknown';
 }
 
-function looksLikeRecord(record: Record<string, unknown>, lane: WatcherReadModelLane): boolean {
-  const keys = lane === 'watcher-run'
-    ? ['runId', 'watcherRunId', 'automationRunId', 'jobRunId', 'eventId', 'id', 'status', 'outcome']
-    : ['sourceId', 'providerSourceId', 'watcherId', 'subscriptionId', 'accountId', 'id', 'scope', 'filter'];
-  return firstString(record, keys) !== '';
-}
-
-function collectFromSource(
-  source: unknown,
-  path: string,
-  kind: WatcherReadModelSourceKind,
-  lane: WatcherReadModelLane,
-  visited = new WeakSet<object>(),
-  depth = 0,
-): readonly CollectedWatcherRecord[] {
-  if (!source) return [];
-  if (Array.isArray(source)) {
-    return source.flatMap((entry, index) => collectFromSource(entry, `${path}[${index}]`, kind, lane, visited, depth + 1));
-  }
-  if (source instanceof Map) {
-    return Array.from(source.entries())
-      .flatMap(([key, value]) => collectFromSource(value, `${path}.${String(key)}`, kind, lane, visited, depth + 1));
-  }
-  if (typeof source !== 'object') return [];
-  if (visited.has(source)) return [];
+function collectFromSource(source: unknown, path: string, kind: WatcherReadModelSourceKind,
+  lane: WatcherReadModelLane, guards: (() => void)[], visited = new WeakSet<object>()): readonly CollectedWatcherRecord[] {
+  if (source === undefined || source === null) return [];
+  if (typeof source !== 'object' || nodeTypes.isProxy(source)) throw new ToolInputProjectionError('invalid');
+  if (visited.has(source)) throw new ToolInputProjectionError('invalid');
   visited.add(source);
+  try {
+    if (Array.isArray(source)) return captureCatalogData(source).flatMap((entry, index) => collectFromSource(entry, `${path}[${index}]`, kind, lane, guards, visited));
+    if (Object.getPrototypeOf(source) === Map.prototype) {
+      if (Reflect.ownKeys(source).length) throw new ToolInputProjectionError('invalid');
+      const records: CollectedWatcherRecord[] = [];
+      for (const [key, value] of Map.prototype.entries.call(source) as IterableIterator<[unknown, unknown]>) {
+        if (typeof key !== 'string') throw new ToolInputProjectionError('invalid');
+        records.push(...collectFromSource(value, `${path}.${key}`, kind, lane, guards, visited));
+      }
+      return records;
+    }
+    const methodNames = [...SNAPSHOT_METHODS, ...(lane === 'watcher-run' ? RUN_METHODS : SOURCE_METHODS)];
+    const wrapperKeys = lane === 'watcher-run' ? RUN_WRAPPER_KEYS : SOURCE_WRAPPER_KEYS;
+    const methodsCurrent = captureCatalogMethods(source, [...methodNames, ...wrapperKeys]);
+    guards.push(methodsCurrent);
+    const records: CollectedWatcherRecord[] = [];
+    let materialized = false;
+    for (const name of methodNames) {
+      const method = modelReadingServicePath(source, [name]);
+      if (typeof method !== 'function') continue;
+      materialized = true;
+      methodsCurrent(); const snapshot: unknown = method.call(source); methodsCurrent();
+      if (snapshot instanceof Promise) throw new ToolInputProjectionError('held');
+      if (snapshot !== undefined) records.push(...collectFromSource(snapshot, `${path}.${name}()`, kind, lane, guards, visited));
+    }
+    for (const key of wrapperKeys) {
+      const value = modelReadingServicePath(source, [key]);
+      if (value !== undefined) { materialized = true; records.push(...collectFromSource(value, `${path}.${key}`, kind, lane, guards, visited)); }
+    }
+    if (materialized) return records;
+    const captured = captureCatalogData(source);
+    const record = readRecord(captured);
+    const identityKeys = lane === 'watcher-run'
+      ? ['runId', 'watcherRunId', 'automationRunId', 'jobRunId', 'eventId', 'id', 'status', 'outcome']
+      : ['sourceId', 'providerSourceId', 'watcherId', 'subscriptionId', 'accountId', 'id', 'scope', 'filter'];
+    if (firstString(record, identityKeys)) return [{ path, kind, lane, record }];
+    return Object.entries(record).flatMap(([key, value]) => value && typeof value === 'object'
+      ? collectFromSource(value, `${path}.${key}`, kind, lane, guards, visited) : []);
+  } finally { visited.delete(source); }
+}
 
-  const record = source as Record<string, unknown>;
-  const wrapperKeys = lane === 'watcher-run' ? RUN_WRAPPER_KEYS : SOURCE_WRAPPER_KEYS;
-  const methods = lane === 'watcher-run' ? RUN_METHODS : SOURCE_METHODS;
-  const fromSnapshots = SNAPSHOT_METHODS.flatMap((method) => {
-    const snapshot = callMethod(record, method);
-    return snapshot === undefined ? [] : collectFromSource(snapshot, `${path}.${method}()`, kind, lane, visited, depth + 1);
-  });
-  const fromMethods = methods.flatMap((method) => {
-    const snapshot = callMethod(record, method);
-    return snapshot === undefined ? [] : collectFromSource(snapshot, `${path}.${method}()`, kind, lane, visited, depth + 1);
-  });
-  const fromWrappers = wrapperKeys.flatMap((key) => {
-    if (!(key in record)) return [];
-    return collectFromSource(record[key], `${path}.${key}`, kind, lane, visited, depth + 1);
-  });
-  if (fromSnapshots.length > 0 || fromMethods.length > 0 || fromWrappers.length > 0) {
-    return [...fromSnapshots, ...fromMethods, ...fromWrappers];
-  }
-  if (looksLikeRecord(record, lane)) return [{ path, kind, lane, record }];
-  if (depth >= 3) return [];
-  return Object.entries(record)
-    .flatMap(([key, value]) => collectFromSource(value, `${path}.${key}`, kind, lane, visited, depth + 1));
+function captureWatcherRecords(context: CommandContext): { readonly entries: readonly CollectedWatcherRecord[]; readonly assertCurrent: () => void } {
+  const sources = watcherSources(context);
+  const methods: (() => void)[] = [];
+  const collect = () => sources.flatMap(source => collectFromSource(source.source, source.path, source.kind, source.lane, methods));
+  const entries = collect();
+  const snapshot = capturePersonalOpsData(entries);
+  const assertCurrent = () => {
+    for (const guard of methods) guard();
+    const current = watcherSources(context);
+    if (current.some((source, index) => source.source !== sources[index]?.source)) throw new ToolInputProjectionError('held');
+    const refreshed = current.flatMap(source => collectFromSource(source.source, source.path, source.kind, source.lane, []));
+    assertPersonalOpsDataCurrent(refreshed, snapshot);
+    for (const guard of methods) guard();
+  };
+  assertCurrent(); return { entries, assertCurrent };
+}
+
+/** Startup counts never expose producer text or acquire semantic authority. */
+export function watcherReadModelNativeFacts(context: CommandContext): readonly { readonly status: string }[] {
+  const source = captureWatcherRecords(context);
+  const result = source.entries.map(entry => ({ status: nativeStatus(entry.record, entry.lane) }));
+  source.assertCurrent(); return result;
 }
 
 function availableControl(id: string, label: string, effect: AutonomyQueueRecordControl['effect'], modelRoute: string): AutonomyQueueRecordControl {
@@ -335,16 +325,15 @@ function runOutputDescriptor(record: Record<string, unknown>, route: string, ins
     source: preview ? 'host-output-chunk' : 'not-published',
     ...(preview ? { preview } : {}),
     policy: preview
-      ? 'Bounded live watcher output/chunk preview from the connected host; secret-looking text is redacted. Use the route for the full host-owned stream when available.'
+      ? 'Bounded live watcher output/chunk preview from the connected host; private text is protected. Use the route for the full host-owned stream when available.'
       : 'The watcher record exposes an output route but no inline chunks. Use the route only for a user-requested host-owned output view.',
   };
 }
 
-function normalizeRun(entry: CollectedWatcherRecord, index: number): AutonomyQueueLiveRecord | null {
+function normalizeRun(entry: CollectedWatcherRecord, index: number, status: string): AutonomyQueueLiveRecord | null {
   const providerId = firstString(entry.record, ['providerId', 'provider', 'sourceProvider', 'service', 'accountProvider']);
   const watcherId = firstString(entry.record, ['watcherId', 'watchId', 'subscriptionId', 'sourceId', 'providerSourceId']);
   const runId = firstString(entry.record, ['runId', 'watcherRunId', 'automationRunId', 'jobRunId', 'eventId', 'id']) || `${index + 1}`;
-  const status = normalizedStatus(entry.record, 'watcher-run');
   const active = status === 'queued' || status === 'running';
   const retryable = status === 'failed' || status === 'blocked' || status === 'cancelled';
   const trigger = firstString(entry.record, ['triggerKind', 'trigger', 'eventKind', 'kind', 'type', 'operation']) || 'watcher-run';
@@ -424,10 +413,9 @@ function normalizeRun(entry: CollectedWatcherRecord, index: number): AutonomyQue
   };
 }
 
-function normalizeProviderSource(entry: CollectedWatcherRecord, index: number): AutonomyQueueLiveRecord | null {
+function normalizeProviderSource(entry: CollectedWatcherRecord, index: number, status: string): AutonomyQueueLiveRecord | null {
   const providerId = firstString(entry.record, ['providerId', 'provider', 'service', 'kind', 'sourceKind']) || 'provider';
   const sourceId = firstString(entry.record, ['sourceId', 'providerSourceId', 'watcherId', 'subscriptionId', 'accountId', 'id']) || `${index + 1}`;
-  const status = normalizedStatus(entry.record, 'provider-source');
   const scope = firstString(entry.record, ['scope', 'sourceScope', 'mailbox', 'folder', 'label']);
   const filter = firstString(entry.record, ['filter', 'query', 'search', 'predicate']);
   const checkpoint = firstString(entry.record, ['checkpoint', 'lastCheckpoint', 'cursor', 'historyId']);
@@ -442,7 +430,7 @@ function normalizeProviderSource(entry: CollectedWatcherRecord, index: number): 
       route: inspectRoute,
       source: 'provider-source-preview',
       preview: safePreview(preview, 220),
-      policy: 'Bounded provider-source event preview from a daemon or SDK read model; secret-looking text is redacted and provider mutations require separate confirmed routes.',
+      policy: 'Bounded provider-source event preview from a daemon or SDK read model; private text is protected and provider mutations require separate confirmed routes.',
     }
     : undefined;
   return {
@@ -490,20 +478,28 @@ function normalizeProviderSource(entry: CollectedWatcherRecord, index: number): 
   };
 }
 
-export function watcherReadModelLiveRecords(context: CommandContext): readonly AutonomyQueueLiveRecord[] {
-  const records = watcherSources(context)
-    .flatMap((source) => collectFromSource(
-      source.source,
-      source.path,
-      source.kind,
-      source.lane,
-    ))
-    .map((entry, index) => entry.lane === 'watcher-run' ? normalizeRun(entry, index) : normalizeProviderSource(entry, index))
-    .filter((record): record is AutonomyQueueLiveRecord => record !== null);
+export async function watcherReadModelLiveRecords(context: CommandContext, options: CatalogRankingOptions = {}): Promise<readonly AutonomyQueueLiveRecord[]> {
+  const source = captureWatcherRecords(context);
+  const signal = options.signal;
+  const assertSource = () => { signal?.throwIfAborted(); source.assertCurrent(); };
+  const assertCurrent = () => { options.assertCurrent?.(); assertSource(); };
+  const current = { ...options, assertCurrent };
+  assertCurrent();
+  const protectedEntries = await protectPersonalOpsData(source.entries, current);
+  if (!Array.isArray(protectedEntries) || protectedEntries.length !== source.entries.length) throw new ToolInputProjectionError('held');
+  const records: AutonomyQueueLiveRecord[] = [];
+  for (const [index, entry] of source.entries.entries()) {
+    assertCurrent();
+    const protectedEntry = readRecord(protectedEntries[index]);
+    const record = readRecord(protectedEntry.record);
+    if (typeof protectedEntry.path !== 'string') throw new ToolInputProjectionError('held');
+    const safeEntry: CollectedWatcherRecord = { path: protectedEntry.path, kind: entry.kind, lane: entry.lane, record };
+    const native = nativeStatus(entry.record, entry.lane);
+    const status = native === 'unknown' ? await readPersonalOpsReceiptStatus(record, current) : native;
+    const result = entry.lane === 'watcher-run' ? normalizeRun(safeEntry, index, status) : normalizeProviderSource(safeEntry, index, status);
+    if (result) records.push(result);
+  }
+  assertCurrent(); options.retainCurrent?.(assertSource, 'personal-ops-watcher-source');
   const seen = new Set<string>();
-  return records.filter((record) => {
-    if (seen.has(record.id)) return false;
-    seen.add(record.id);
-    return true;
-  }).slice(0, 20);
+  return records.filter(record => { if (seen.has(record.id)) return false; seen.add(record.id); return true; }).slice(0, 20);
 }

@@ -1,22 +1,20 @@
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolInvocation, assertCurrentToolEffect, ToolInputProjectionError, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import type { McpApi, McpToolSchema } from '@goodvibes-jev/engine/sdk/platform/mcp';
+import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { isDeepStrictEqual } from 'node:util';
+import { captureCatalogData, captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
 import type { Tool, ToolSideEffect } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { CommandContext } from '../input/command-registry.ts';
-import { mcpServerRecords, mcpToolCaller } from './agent-harness-personal-ops-discovery.ts';
 
-/**
- * The mcp tool's effect mode: actually invoking a tool on a connected server.
- *
- * Before this existed the agent could list MCP servers, list their tools, and
- * read their schemas, and then had no way to call any of them. An MCP server
- * the user installed and trusted was, in practice, decoration. The runtime
- * already exposed callTool; the only place it was wired reached it through a
- * keyword filter that matched mail and calendar tools and nothing else.
- *
- * The gate here is the server's own security posture, evaluated by the MCP
- * registry on every call: connection state, schema quarantine, trust mode, and
- * the server's allowed hosts and paths. Which words appear in a tool's name is
- * not a security property and is not used as one.
- */
+type McpCallApi = Pick<McpApi, 'callTool' | 'getToolSchema' | 'listServerSecurity'>;
+const applyIntrinsic = Reflect.apply;
+type McpCallRouteContext = {
+  readonly clients?: { readonly mcpApi?: McpCallApi | undefined } | undefined;
+  readonly extensions?: { readonly mcpRegistry?: McpCallApi | undefined } | undefined;
+  readonly session?: Pick<CommandContext['session'], 'runtime'> | undefined;
+};
+
+/** Actual MCP calls retain recorded invocation, effects, server and schema through native transport. */
 
 export const AGENT_MCP_CALL_MODE = 'call';
 
@@ -49,13 +47,15 @@ function readString(value: unknown): string {
 }
 
 function readInput(value: unknown): Readonly<Record<string, unknown>> {
-  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
-  return {};
+  if (value === undefined) return {};
+  const captured = snapshotJudgmentInput(value, 'mcp');
+  if (!captured || typeof captured !== 'object' || Array.isArray(captured)) throw new ToolInputProjectionError('invalid');
+  return captured as Record<string, unknown>;
 }
 
 function serverNameOf(qualifiedName: string): string {
   const parts = qualifiedName.split(':');
-  return parts.length >= 3 && parts[0] === 'mcp' ? parts[1] ?? '' : '';
+  return parts.length === 3 && parts[0] === 'mcp' && parts[1] && parts[2] ? parts[1] : '';
 }
 
 function stringifyResult(result: unknown): string {
@@ -92,16 +92,19 @@ function advertiseCallMode(tool: Tool): void {
 /**
  * Installs the call route on the registered mcp tool.
  *
- * The route is added only when the runtime actually publishes a tool caller.
- * When it does not, the call mode is never advertised, the schema keeps
- * telling the truth about what can be invoked instead of offering a mode that
- * returns "unknown mode" when used.
+ * Both native schema and call ports must exist before the mode is advertised.
  */
 const CANCELLED: unique symbol = Symbol('mcp-call-cancelled');
 
 /** `work`, or CANCELLED as soon as `signal` aborts, whichever comes first. */
 function raceAbort<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T | typeof CANCELLED> {
   if (!signal) return work;
+  if (signal.aborted) {
+    // A caller may abort synchronously while starting its promise. Own that
+    // promise's eventual rejection even when cancellation has already won.
+    void work.then(() => undefined, () => undefined);
+    return Promise.resolve(CANCELLED);
+  }
   return new Promise((resolve, reject) => {
     const onAbort = () => resolve(CANCELLED);
     signal.addEventListener('abort', onAbort, { once: true });
@@ -112,64 +115,120 @@ function raceAbort<T>(work: Promise<T>, signal: AbortSignal | undefined): Promis
   });
 }
 
-export function installAgentMcpCallRoute(registry: ToolRegistry, context: CommandContext): boolean {
+export function installAgentMcpCallRoute(registry: ToolRegistry, context: McpCallRouteContext): boolean {
   const tool = registry.list().find((candidate) => candidate.definition.name === 'mcp');
   if (!tool) return false;
-  const callTool = mcpToolCaller(context);
-  if (!callTool) return false;
+  try {
+    captureCatalogMethods(context, ['clients', 'extensions']);
+    if (context.clients) captureCatalogMethods(context.clients, ['mcpApi']);
+    if (context.extensions) captureCatalogMethods(context.extensions, ['mcpRegistry']);
+  } catch { return false; }
+  const api = context.clients?.mcpApi ?? context.extensions?.mcpRegistry;
+  if (api) { try { captureCatalogMethods(api, ['callTool', 'getToolSchema', 'listServerSecurity']); } catch { return false; } }
+  if (!api || typeof api.callTool !== 'function' || typeof api.getToolSchema !== 'function') return false;
 
   advertiseCallMode(tool);
   const originalExecute = tool.execute.bind(tool);
   tool.definition.sideEffects = [...new Set<ToolSideEffect>([...(tool.definition.sideEffects ?? []), 'network', 'state'])];
 
   tool.execute = async (args, options) => {
-    const input = args as McpCallArgs;
+    let input: McpCallArgs;
+    try { input = captureCatalogData(args); }
+    catch { return { success: false, error: 'MCP arguments must be plain data properties.' }; }
     if (readString(input.mode) !== AGENT_MCP_CALL_MODE) return originalExecute(args, options);
-
-    const qualifiedName = readString(input.qualifiedName);
-    if (!qualifiedName) {
-      return {
-        success: false,
-        error: 'mcp mode:"call" needs qualifiedName. List the callable tools with mcp mode:"tools", then pass one of their qualifiedName values.',
-      };
-    }
-    const serverName = serverNameOf(qualifiedName);
-    if (!serverName) {
-      return {
-        success: false,
-        error: `"${qualifiedName}" is not a qualified MCP tool name. Use the mcp:<server>:<tool> form reported by mcp mode:"tools".`,
-      };
-    }
-    const server = mcpServerRecords(context).find((record) => record.name === serverName);
-    if (!server) {
-      const known = mcpServerRecords(context).map((record) => record.name);
-      return {
-        success: false,
-        error: known.length > 0
-          ? `No MCP server named "${serverName}". Connected servers: ${known.join(', ')}.`
-          : `No MCP server named "${serverName}", and no MCP servers are configured.`,
-      };
-    }
-    if (!server.connected) {
-      return { success: false, error: `The MCP server "${serverName}" is not connected, so its tools cannot be called.` };
-    }
-    if (server.trustMode === 'blocked') {
-      return {
-        success: false,
-        error: `The MCP server "${serverName}" is set to blocked, so its tools cannot be called. Change its trust setting in the MCP surface first.`,
-      };
-    }
-
-    const signal = options?.signal;
-    if (signal?.aborted) return { success: false, error: `mcp call ${qualifiedName} was cancelled before it started.` };
+    let signal: AbortSignal | undefined;
     try {
-      // Abort reaches the canonical owner before admission and every transport write.
-      const result = await raceAbort(callTool(qualifiedName, readInput(input.input), { signal }), signal);
-      if (result === CANCELLED) return { success: false, error: `mcp call ${qualifiedName} was cancelled.` };
+      if (!assertCurrentToolInvocation(args, options)) return { success: false, error: 'MCP calls require a current recorded tool admission.' };
+      signal = options?.signal;
+      if (signal?.aborted) return { success: false, error: 'MCP call was cancelled before dispatch.' };
+      const qualifiedName = readString(input.qualifiedName);
+      if (!qualifiedName) {
+        return {
+          success: false,
+          error: 'mcp mode:"call" needs qualifiedName. List the callable tools with mcp mode:"tools", then pass one of their qualifiedName values.',
+        };
+      }
+      const serverName = serverNameOf(qualifiedName);
+      if (!serverName) {
+        return {
+          success: false,
+          error: `"${qualifiedName}" is not a qualified MCP tool name. Use the mcp:<server>:<tool> form reported by mcp mode:"tools".`,
+        };
+      }
+
+      const guards = [captureCatalogMethods(context, ['clients', 'extensions', 'session']),
+        captureCatalogMethods(api, ['callTool', 'getToolSchema', 'listServerSecurity'])];
+      if (context.clients) guards.push(captureCatalogMethods(context.clients, ['mcpApi']));
+      if (context.extensions) guards.push(captureCatalogMethods(context.extensions, ['mcpRegistry']));
+      if (context.session) {
+        guards.push(captureCatalogMethods(context.session, ['runtime']));
+        if (context.session.runtime) guards.push(captureCatalogMethods(context.session.runtime, ['sessionId']));
+      }
+      const server = captureCatalogData(api.listServerSecurity()).find((record) => record.name === serverName);
+      if (!server) {
+        const known = captureCatalogData(api.listServerSecurity()).map((record) => record.name);
+        return {
+          success: false,
+          error: known.length > 0
+            ? `No MCP server named "${serverName}". Connected servers: ${known.join(', ')}.`
+            : `No MCP server named "${serverName}", and no MCP servers are configured.`,
+        };
+      }
+      if (!server.connected) {
+        return { success: false, error: `The MCP server "${serverName}" is not connected, so its tools cannot be called.` };
+      }
+      if (server.trustMode === 'blocked') {
+        return {
+          success: false,
+          error: `The MCP server "${serverName}" is set to blocked, so its tools cannot be called. Change its trust setting in the MCP surface first.`,
+        };
+      }
+
+      const callTool = api.callTool, getToolSchema = api.getToolSchema;
+      if (!callTool || !getToolSchema) throw new ToolInputProjectionError('unavailable');
+      const ownedInput = readInput(input.input);
+      const serverSnapshot = captureCatalogData(server);
+      // A successful call refreshes the observational cache. Its policy and
+      // quarantine state remain authority and are checked independently.
+      const { schemaFreshness: _freshness, ...policySnapshot } = serverSnapshot;
+      let selectedSchema: McpToolSchema | undefined;
+      let schemaSnapshot: McpToolSchema | undefined;
+      const assertCurrent = () => {
+        signal?.throwIfAborted();
+        if (!assertCurrentToolInvocation(args, options)) throw new ToolInputProjectionError('stale');
+        for (const guard of guards) guard();
+        if ((context.clients?.mcpApi ?? context.extensions?.mcpRegistry) !== api) throw new ToolInputProjectionError('stale');
+        const currentServer = captureCatalogData(api.listServerSecurity()).find((record) => record.name === serverName);
+        if (!currentServer || currentServer.schemaFreshness === 'quarantined') throw new ToolInputProjectionError('held');
+        const { schemaFreshness: _currentFreshness, ...currentPolicy } = captureCatalogData(currentServer);
+        if (!isDeepStrictEqual(currentPolicy, policySnapshot)) throw new ToolInputProjectionError('stale');
+        if (selectedSchema && !isDeepStrictEqual(captureCatalogData(selectedSchema), schemaSnapshot)) throw new ToolInputProjectionError('stale');
+      };
+      assertCurrent();
+      const schema = await raceAbort<McpToolSchema | null>(applyIntrinsic(getToolSchema, api, [qualifiedName, { signal, assertCurrent }]), signal);
+      assertCurrent();
+      if (schema === CANCELLED) return { success: false, error: 'MCP schema reading was cancelled.' };
+      if (!schema) throw new ToolInputProjectionError('held');
+      selectedSchema = schema; schemaSnapshot = captureCatalogData(schema);
+      if (schemaSnapshot.name !== qualifiedName.split(':')[2] || !schemaSnapshot.inputSchema
+        || typeof schemaSnapshot.inputSchema !== 'object' || Array.isArray(schemaSnapshot.inputSchema)) throw new ToolInputProjectionError('held');
+      const assertEffect = () => {
+        assertCurrent();
+        if (schemaSnapshot?.annotations?.readOnlyHint !== true && !assertCurrentToolEffect(args, options, 'write')) throw new ToolInputProjectionError('held');
+        if (!assertCurrentToolEffect(args, options, 'send')) throw new ToolInputProjectionError('held');
+        assertCurrent();
+      };
+      assertEffect();
+      // The canonical MCP owner repeats this restriction before every initial
+      // or resumed transport write, in addition to its own source and policy.
+      const result = await raceAbort<unknown>(applyIntrinsic(callTool, api, [qualifiedName, ownedInput,
+        { signal, assertCurrent: assertEffect, expectedSchema: selectedSchema }]), signal);
+      if (result === CANCELLED) return { success: false, error: 'MCP call was cancelled.' };
+      assertEffect();
       return { success: true, output: stringifyResult(result) };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: `mcp call ${qualifiedName} failed: ${message}` };
+      if (error instanceof ToolInputProjectionError || signal?.aborted) return { success: false, error: 'MCP call held: its recorded source or execution authority is unavailable.' };
+      return { success: false, error: 'MCP call failed at the connected server boundary.' };
     }
   };
   callRouteInstalled = true;

@@ -453,6 +453,7 @@ export const AUTOMATION_RUN_TELEMETRY_SCHEMA = objectSchema({
 
 export const AUTOMATION_JOB_SCHEMA = objectSchema({
   id: STRING_SCHEMA,
+  mutationRevision: STRING_SCHEMA,
   name: STRING_SCHEMA,
   description: STRING_SCHEMA,
   labels: STRING_LIST_SCHEMA,
@@ -475,7 +476,7 @@ export const AUTOMATION_JOB_SCHEMA = objectSchema({
   deleteAfterRun: BOOLEAN_SCHEMA,
   archivedAt: NUMBER_SCHEMA,
   metadata: METADATA_SCHEMA,
-}, ['id', 'name', 'labels', 'createdAt', 'updatedAt', 'status', 'enabled', 'schedule', 'execution', 'delivery', 'failure', 'source', 'runCount', 'successCount', 'failureCount', 'deleteAfterRun'], { additionalProperties: true });
+}, ['id', 'mutationRevision', 'name', 'labels', 'createdAt', 'updatedAt', 'status', 'enabled', 'schedule', 'execution', 'delivery', 'failure', 'source', 'runCount', 'successCount', 'failureCount', 'deleteAfterRun'], { additionalProperties: true });
 
 const DELIVERY_ATTEMPT_SCHEMA = objectSchema({
   id: STRING_SCHEMA,

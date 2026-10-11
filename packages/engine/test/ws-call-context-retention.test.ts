@@ -15,18 +15,22 @@
 import { describe, expect, test } from 'bun:test';
 import { DaemonControlPlaneHelper } from '../sdk/src/platform/daemon/control-plane.ts';
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.ts';
+import { methodDescriptor, objectSchema } from '../sdk/src/platform/control-plane/method-catalog-shared.ts';
 
 function gc(): void {
   (globalThis as { Bun?: { gc?: (f: boolean) => void } }).Bun?.gc?.(true);
 }
 
-function makeHelper(dispatch: (req: Request) => Promise<Response | null>): DaemonControlPlaneHelper {
+function makeHelper(
+  dispatch: (req: Request) => Promise<Response | null>,
+  gatewayMethods: GatewayMethodCatalog = new GatewayMethodCatalog(),
+): DaemonControlPlaneHelper {
   return new DaemonControlPlaneHelper({
     authToken: () => 'operator-token-xyz',
     userAuth: {} as never,
     agentManager: {} as never,
     controlPlaneGateway: {} as never,
-    gatewayMethods: new GatewayMethodCatalog(),
+    gatewayMethods,
     distributedRuntime: {} as never,
     host: '127.0.0.1',
     port: 4483,
@@ -36,6 +40,103 @@ function makeHelper(dispatch: (req: Request) => Promise<Response | null>): Daemo
     requireAuthenticatedSession: () => null,
   });
 }
+
+describe('registered gateway handlers preserve native HTTP responses', () => {
+  function helperFor(handler: () => unknown): DaemonControlPlaneHelper {
+    const methods = new GatewayMethodCatalog({ includeBuiltins: false });
+    methods.register(methodDescriptor({
+      id: 'test.handler.response', title: 'Response fixture', description: 'Isolated native HTTP response fixture.',
+      category: 'health', access: 'public', scopes: [], inputSchema: objectSchema({}, []),
+    }), handler);
+    return makeHelper(async () => { throw new Error('Native handlers must not synthesize HTTP dispatch'); }, methods);
+  }
+
+  function invoke(helper: DaemonControlPlaneHelper) {
+    return helper.invokeGatewayMethodCall({ authToken: 'isolated-response-token', methodId: 'test.handler.response', body: {} });
+  }
+
+  test('creation status and JSON reach the caller through the actual registered handler', async () => {
+    const helper = helperFor(() => Response.json({ id: 'created-native-job' }, { status: 201 }));
+    expect(await invoke(helper)).toEqual({ status: 201, ok: true, body: { id: 'created-native-job' } });
+    expect(helper.wsCallStats().inFlight).toBe(0);
+  });
+
+  test('native HTTP refusal status and body remain unsuccessful', async () => {
+    const helper = helperFor(() => Response.json({ error: 'Actual native refusal', code: 'CONFLICT' }, { status: 409 }));
+    expect(await invoke(helper)).toEqual({ status: 409, ok: false, body: { error: 'Actual native refusal', code: 'CONFLICT' } });
+    expect(helper.wsCallStats().inFlight).toBe(0);
+  });
+
+  test('plain text remains text and an empty response remains null', async () => {
+    const helper = helperFor(() => new Response('accepted-native-job', { status: 202, headers: { 'content-type': 'text/plain' } }));
+    expect(await invoke(helper)).toEqual({ status: 202, ok: true, body: 'accepted-native-job' });
+    const empty = helperFor(() => new Response(null, { status: 204 }));
+    expect(await invoke(empty)).toEqual({ status: 204, ok: true, body: null });
+  });
+
+  test('ordinary typed handler results keep their original object contract', async () => {
+    const body = { id: 'ordinary-object', status: 409 };
+    const helper = helperFor(() => body);
+    const result = await invoke(helper);
+    expect(result).toEqual({ status: 200, ok: true, body });
+    expect(result.body).toBe(body);
+  });
+
+  test('registered native event streams are cancelled before any body read', async () => {
+    let cancelled = false;
+    let pulled = 0;
+    const helper = helperFor(() => new Response(new ReadableStream<Uint8Array>({
+      pull() { pulled += 1; },
+      cancel() { cancelled = true; },
+    }, { highWaterMark: 0 }), { headers: { 'content-type': 'text/event-stream' } }));
+    const result = await invoke(helper);
+    expect(result).toMatchObject({ status: 501, ok: false, body: { error: 'streaming-not-supported' } });
+    expect(cancelled).toBe(true);
+    expect(pulled).toBe(0);
+    expect(helper.wsCallStats().inFlight).toBe(0);
+  });
+
+  test('oversized native response streams use the existing byte ceiling and release the handler', async () => {
+    let cancelled = false;
+    let pulls = 0;
+    const chunk = new Uint8Array(1024 * 1024);
+    const helper = helperFor(() => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) { pulls += 1; controller.enqueue(chunk); },
+      cancel() { cancelled = true; },
+    }, { highWaterMark: 0 }), { headers: { 'content-type': 'application/octet-stream' } }));
+    const result = await invoke(helper);
+    expect(result).toMatchObject({ status: 502, ok: false, body: { error: 'response-too-large' } });
+    expect(cancelled).toBe(true);
+    expect(pulls).toBe(9);
+    expect(helper.wsCallStats().inFlight).toBe(0);
+  });
+
+  test('the in-flight cap remains owned until the actual native response body has drained', async () => {
+    let release: () => void = () => {};
+    const drain = new Promise<void>(resolve => { release = resolve; });
+    let handlers = 0;
+    const helper = helperFor(() => {
+      handlers += 1;
+      return new Response(new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          await drain;
+          controller.enqueue(new TextEncoder().encode('{"drained":true}'));
+          controller.close();
+        },
+      }, { highWaterMark: 0 }), { status: 201, headers: { 'content-type': 'application/json' } });
+    });
+    const pending = Array.from({ length: 256 }, () => invoke(helper));
+    try {
+      const overflow = await invoke(helper);
+      expect(overflow).toMatchObject({ status: 503, ok: false, body: { error: 'ws-call-overloaded' } });
+      expect(helper.wsCallStats().inFlight).toBe(256);
+      expect(handlers).toBe(256);
+    } finally { release(); }
+    const results = await Promise.all(pending);
+    expect(results.every(result => result.status === 201 && result.ok)).toBe(true);
+    expect(helper.wsCallStats().inFlight).toBe(0);
+  });
+});
 
 describe('WS call path retained-context caps', () => {
   test('a parked burst is capped in flight; overflow refused with 503; everything releases on drain', async () => {

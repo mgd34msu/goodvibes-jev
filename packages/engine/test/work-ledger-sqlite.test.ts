@@ -1,3 +1,4 @@
+import { KNOWLEDGE_SCHEMA_VERSION } from '../sdk/src/platform/knowledge/store-schema.js';
 import * as nativeFs from 'node:fs';
 import type { SQLitePublicationIO } from '../sdk/src/platform/state/sqlite-store-persistence.js';
 import { afterEach, expect, test } from 'bun:test';
@@ -5,7 +6,7 @@ import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'no
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
-import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
+import { loadSqlJsEngine, SQLiteStore, type SqlDatabase } from '../sdk/src/platform/state/sqlite-store.js';
 import { createWorkLedger } from '../sdk/src/platform/workflow/work-ledger/service.js';
 import { acquireCrossProcessLock } from '../sdk/src/platform/workspace/checkpoint/cross-process-lock.js';
 import type { WorkLedgerDecision } from '../sdk/src/platform/workflow/work-ledger/types.js';
@@ -114,7 +115,7 @@ test('v1 migration adds ledger and native execution tables; legacy metadata is p
   const file = path(); const seed = await open(file);
   await seed.store.upsertSource({ id: 'legacy', connectorId: 'fixture', sourceType: 'manual', status: 'indexed', metadata: { executionApproved: true, verifier: 'legacy-text', answers: ['yes'] } });
   await seed.store.close();
-  const legacy = new SQLiteStore(file); await legacy.init(() => {}, { schemaVersion: 9 });
+  const legacy = new SQLiteStore(file); await legacy.init(() => {}, { schemaVersion: KNOWLEDGE_SCHEMA_VERSION });
   legacy.run('DROP TABLE work_ledgers'); legacy.run('PRAGMA user_version = 1'); await legacy.save(); legacy.close();
   const migrated = await open(file);
   expect(migrated.store.getSource('legacy')?.metadata).toMatchObject({ executionApproved: true, verifier: 'legacy-text', answers: ['yes'] });
@@ -125,7 +126,7 @@ test('v1 migration adds ledger and native execution tables; legacy metadata is p
 
 test('malformed ledger receipt/history is rejected without reset or publication', async () => {
   const file = path(); const first = await open(file); await first.service.execute(command, first.actor);
-  const raw = new SQLiteStore(file, { coordinated: true }); await raw.init(() => {}, { schemaVersion: 9 });
+  const raw = new SQLiteStore(file, { coordinated: true }); await raw.init(() => {}, { schemaVersion: KNOWLEDGE_SCHEMA_VERSION });
   const state = await first.storage.read() as { receipts: unknown[] };
   state.receipts = [];
   raw.run('UPDATE work_ledgers SET state_json = ?', [JSON.stringify(state)]); await raw.save(); raw.close();
@@ -161,7 +162,7 @@ test('reentrant local writes during a decision are retained and prevent publicat
 
 test('missing ledger table in an established v5 database cannot be repaired by ordinary writes', async () => {
   const file = path(); const first = await open(file); await first.service.execute(command, first.actor); await first.store.close();
-  const raw = new SQLiteStore(file); await raw.init(() => {}, { schemaVersion: 9 }); raw.run('DROP TABLE work_ledgers'); await raw.save(); raw.close();
+  const raw = new SQLiteStore(file); await raw.init(() => {}, { schemaVersion: KNOWLEDGE_SCHEMA_VERSION }); raw.run('DROP TABLE work_ledgers'); await raw.save(); raw.close();
   const bytes = readFileSync(file);
   const owner = new KnowledgeStore({ dbPath: file }); stores.push(owner);
   await expect(owner.init()).rejects.toThrow('schema is missing or corrupt');
@@ -172,7 +173,7 @@ test('missing ledger table in an established v5 database cannot be repaired by o
 
 test('schema deletion after open fences an ordinary save without replacing the newer disk image', async () => {
   const file = path(); const first = await open(file); await first.service.execute(command, first.actor);
-  const raw = new SQLiteStore(file); await raw.init(() => {}, { schemaVersion: 9 }); raw.run('DROP TABLE work_ledgers'); await raw.save(); raw.close();
+  const raw = new SQLiteStore(file); await raw.init(() => {}, { schemaVersion: KNOWLEDGE_SCHEMA_VERSION }); raw.run('DROP TABLE work_ledgers'); await raw.save(); raw.close();
   const bytes = readFileSync(file);
   await expect(first.store.upsertSource({ id: 'must-not-repair', connectorId: 'fixture', sourceType: 'manual', status: 'indexed' })).rejects.toThrow('persisted state changed');
   expect(await first.service.execute(command, first.actor)).toMatchObject({ kind: 'indeterminate' });
@@ -207,12 +208,21 @@ for (const corrupt of [Buffer.alloc(0), Buffer.from('SQLite format 3\0'), Buffer
 test('postcommit replaced-image close failure does not change the durable result', async () => {
   const file = path(); const sqlite = new SQLiteStore(file, { coordinated: true });
   await sqlite.init(db => db.run('CREATE TABLE IF NOT EXISTS fixture(value TEXT)'));
-  const previous = (sqlite as unknown as { db: { close(): void } }).db;
-  const originalClose = previous.close.bind(previous);
-  previous.close = () => { originalClose(); throw new Error('injected old image cleanup'); };
-  expect(await sqlite.transactPersisted(db => { db.run("INSERT INTO fixture VALUES ('durable')"); return { changed: true, value: 'accepted' }; }, () => {})).toEqual({ kind: 'completed', value: 'accepted' });
-  expect(sqlite.readPersisted(db => db.exec('SELECT value FROM fixture')[0]?.values)).toEqual([['durable']]);
-  sqlite.close();
+  const backend: SqlDatabase = (await loadSqlJsEngine()).Database.prototype;
+  const originalClose = backend.close;
+  let cleanupCalls = 0;
+  backend.close = function () {
+    originalClose.call(this);
+    cleanupCalls++;
+    throw new Error('injected old image cleanup');
+  };
+  try {
+    try {
+      expect(await sqlite.transactPersisted(db => { db.run("INSERT INTO fixture VALUES ('durable')"); return { changed: true, value: 'accepted' }; }, () => {})).toEqual({ kind: 'completed', value: 'accepted' });
+      expect(cleanupCalls).toBe(1);
+    } finally { backend.close = originalClose; }
+    expect(sqlite.readPersisted(db => db.exec('SELECT value FROM fixture')[0]?.values)).toEqual([['durable']]);
+  } finally { sqlite.close(); }
 });
 
 test('postcommit lock cleanup failure preserves success and durable replay while fencing ordinary writes', async () => {

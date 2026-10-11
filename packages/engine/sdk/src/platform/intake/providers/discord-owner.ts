@@ -17,7 +17,7 @@ export interface DiscordInboxAccount {
   readonly userId: string;
 }
 
-/** Trusted local scope, never an inferred provider payload or a complete historical DM list.
+/** Explicit bot-accessible one-to-one DMs, never an inferred historical DM list.
  * All listed channels are required; every one must be readable by this account.
  */
 export interface DiscordInboxChannelScope {
@@ -28,7 +28,7 @@ export interface DiscordInboxChannelScope {
 }
 export interface DiscordInboxOwnerOptions {
   readonly channels: DiscordInboxChannelScope;
-  /** Expected provider identity, established by the trusted composition root. */
+  /** Expected bot identity, established by the trusted composition root. */
   readonly account: DiscordInboxAccount;
   /** Actual local-service provenance/retention capability, never a source flag. */
   readonly screening: ProtectedSourceOwnerOptions;
@@ -241,7 +241,7 @@ export async function createDiscordInboxOwner(
     current();
     if (input.selfId !== account.userId || input.signal?.aborted) throw new Error('Discord inbox catalog is unavailable');
     const epoch = identityEpoch;
-    const found: { id: string; type: 1 | 3 }[] = [];
+    const found: { id: string; type: 1 }[] = [];
     for (const id of channels.channelIds) {
       const response = await httpOwner.http(new URL(`https://discord.com/api/v10/channels/${id}`), {
         method: 'GET', headers: { Authorization: `Bot ${token}`, Accept: 'application/json' },
@@ -253,11 +253,11 @@ export async function createDiscordInboxOwner(
         invalidateIdentity(); throw new Error('Discord inbox channel is unavailable');
       }
       const fields = Object.getOwnPropertyDescriptors(body);
-      if (fields.id?.value !== id || (fields.type?.value !== 1 && fields.type?.value !== 3)
+      if (fields.id?.value !== id || fields.type?.value !== 1
         || fields.guild_id?.value !== undefined) {
         invalidateIdentity(); throw new Error('Discord inbox channel scope mismatch');
       }
-      found.push({ id, type: fields.type.value as 1 | 3 });
+      found.push({ id, type: 1 });
     }
     current();
     if (epoch !== identityEpoch || input.signal?.aborted || await readCredential() !== token) {

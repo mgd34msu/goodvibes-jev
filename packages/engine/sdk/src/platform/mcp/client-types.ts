@@ -20,6 +20,21 @@ export interface McpToolInfo {
 
 export interface McpToolSchema extends McpToolInfo {
   inputSchema: Record<string, unknown>;
+  /** Server-declared presentation hints; never a permission grant. */
+  annotations?: {
+    readonly readOnlyHint?: boolean | undefined;
+    readonly destructiveHint?: boolean | undefined;
+    readonly idempotentHint?: boolean | undefined;
+    readonly openWorldHint?: boolean | undefined;
+  } | undefined;
+}
+
+/** Additive restrictions from the actual caller, never execution authority. */
+export interface McpToolCallOptions {
+  readonly signal?: AbortSignal | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
+  /** Require the exact schema returned by this native owner; never a grant. */
+  readonly expectedSchema?: McpToolSchema | undefined;
 }
 
 export interface McpClientNotification {

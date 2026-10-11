@@ -1,3 +1,4 @@
+import { KNOWLEDGE_SCHEMA_VERSION } from '../sdk/src/platform/knowledge/store-schema.js';
 import { createHash } from 'node:crypto';
 import { createNativeConversationIntakeHost } from '../sdk/src/platform/workflow/work-ledger/native-intake.js';
 import { canonicalNativeConversationContinuation } from '../sdk/src/platform/workflow/work-ledger/native-continuation-context.js';
@@ -207,7 +208,7 @@ test('actual process restart explicitly resumes a prepared attempt with fresh re
 test('missing native acknowledgment cannot downgrade an engine launch claim into resumable prepared work', async () => {
   const f = await fixture({ harness: { scripts: { u1: () => [{ text: 'waiting', stop: { kind: 'hang' } }] } } });
   const original = await f.host.start(f.target, f.authority); await waitFor(() => f.harness.agentsOf('u1').length === 1, 'native effect boundary');
-  const raw = new SQLiteStore(join(f.root, '.goodvibes', 'knowledge.sqlite'), { coordinated: true }); await raw.init(() => {}, { schemaVersion: 9 });
+  const raw = new SQLiteStore(join(f.root, '.goodvibes', 'knowledge.sqlite'), { coordinated: true }); await raw.init(() => {}, { schemaVersion: KNOWLEDGE_SCHEMA_VERSION });
   raw.run('DELETE FROM native_work_executions'); raw.run('DELETE FROM native_work_execution_intents'); await raw.save(); raw.close();
   const replacement = createNativeWorkExecutionHost(f.hostOptions); replacement.attachRunner(f.harness.runner);
   const replay = await replacement.start(f.target, f.authority); expect(replay.admission).toEqual(original.admission);

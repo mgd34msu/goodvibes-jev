@@ -34,7 +34,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { atomicWriteFileSync } from '../config/atomic-write.js';
+import { atomicWriteFileSync, type AtomicWriteOptions } from '../config/atomic-write.js';
+
+export type WorkPlanEffectOptions = Pick<AtomicWriteOptions, 'assertCurrent' | 'onEffect'>;
+export interface WorkPlanReadOptions { readonly readOnly?: boolean; }
 
 /**
  * Age TTL for TERMINAL (done/cancelled) items. Once a completed or cancelled
@@ -336,23 +339,28 @@ export class WorkPlanStore {
    */
   private lastQuarantineSweepAt = 0;
 
-  constructor(private readonly options: WorkPlanStoreOptions) {
+  readonly homeDirectory: string;
+  private readonly options: WorkPlanStoreOptions;
+
+  constructor(options: WorkPlanStoreOptions) {
+    this.options = Object.freeze({ ...options });
+    this.homeDirectory = options.homeDirectory;
     const fileName = `${safeFileId(options.projectId, options.projectRoot)}.json`;
     this.filePath = join(options.homeDirectory, '.goodvibes', options.surfaceRoot, 'work-plans', fileName);
   }
 
-  getActivePlan(): WorkPlan {
-    return this.readPlan();
+  getActivePlan(options: WorkPlanReadOptions = {}): WorkPlan {
+    return this.readPlan(undefined, options.readOnly);
   }
 
-  listItems(): readonly WorkPlanItem[] {
-    return this.getActivePlan().items;
+  listItems(options: WorkPlanReadOptions = {}): readonly WorkPlanItem[] {
+    return this.getActivePlan(options).items;
   }
 
-  addItem(title: string, options: AddWorkPlanItemOptions = {}): WorkPlanItem {
+  addItem(title: string, options: AddWorkPlanItemOptions = {}, effects?: WorkPlanEffectOptions): WorkPlanItem {
     const normalizedTitle = title.trim();
     if (!normalizedTitle) throw new Error('Work plan item title is required.');
-    const plan = this.readPlan();
+    const plan = this.readPlan(effects);
     const time = nowMs();
     const item: WorkPlanItem = {
       id: createItemId(),
@@ -371,12 +379,12 @@ export class WorkPlanStore {
       items: [...plan.items, item],
       activeItemId: item.id,
       updatedAt: time,
-    });
+    }, effects);
     return item;
   }
 
-  updateItem(idOrPrefix: string, patch: UpdateWorkPlanItemPatch): WorkPlanItem {
-    const plan = this.readPlan();
+  updateItem(idOrPrefix: string, patch: UpdateWorkPlanItemPatch, effects?: WorkPlanEffectOptions): WorkPlanItem {
+    const plan = this.readPlan(effects);
     const item = this.resolveItem(plan, idOrPrefix);
     const time = nowMs();
     const nextStatus = patch.status ?? item.status;
@@ -397,12 +405,12 @@ export class WorkPlanStore {
       items: plan.items.map((candidate) => candidate.id === item.id ? next : candidate),
       activeItemId: next.id,
       updatedAt: time,
-    });
+    }, effects);
     return next;
   }
 
-  setItemStatus(idOrPrefix: string, status: WorkPlanItemStatus): WorkPlanItem {
-    return this.updateItem(idOrPrefix, { status });
+  setItemStatus(idOrPrefix: string, status: WorkPlanItemStatus, effects?: WorkPlanEffectOptions): WorkPlanItem {
+    return this.updateItem(idOrPrefix, { status }, effects);
   }
 
   cycleItemStatus(idOrPrefix: string): WorkPlanItem {
@@ -410,8 +418,8 @@ export class WorkPlanStore {
     return this.setItemStatus(item.id, nextWorkPlanStatus(item.status));
   }
 
-  removeItem(idOrPrefix: string): WorkPlanItem {
-    const plan = this.readPlan();
+  removeItem(idOrPrefix: string, effects?: WorkPlanEffectOptions): WorkPlanItem {
+    const plan = this.readPlan(effects);
     const item = this.resolveItem(plan, idOrPrefix);
     const time = nowMs();
     const remaining = plan.items.filter((candidate) => candidate.id !== item.id);
@@ -420,12 +428,12 @@ export class WorkPlanStore {
       items: remaining,
       activeItemId: remaining[0]?.id,
       updatedAt: time,
-    });
+    }, effects);
     return item;
   }
 
-  clearCompleted(): number {
-    const plan = this.readPlan();
+  clearCompleted(effects?: WorkPlanEffectOptions): number {
+    const plan = this.readPlan(effects);
     const remaining = plan.items.filter((item) => item.status !== 'done' && item.status !== 'cancelled');
     const removed = plan.items.length - remaining.length;
     if (removed === 0) return 0;
@@ -434,7 +442,7 @@ export class WorkPlanStore {
       items: remaining,
       activeItemId: remaining[0]?.id,
       updatedAt: nowMs(),
-    });
+    }, effects);
     return removed;
   }
 
@@ -485,10 +493,12 @@ export class WorkPlanStore {
    * bounded plan, carrying its housekeeping disclosure, is written back
    * immediately, so the disclosure survives even if the caller only reads.
    */
-  private readPlan(): WorkPlan {
-    const loaded = this.loadFromDisk();
-    const swept = this.sweep(loaded.plan, loaded.recovery);
-    if (swept.changed) this.writePlan(swept.plan);
+  private readPlan(effects?: WorkPlanEffectOptions, readOnly = false): WorkPlan {
+    effects?.assertCurrent?.();
+    const loaded = this.loadFromDisk(effects, readOnly);
+    if (readOnly) return loaded.plan;
+    const swept = this.sweep(loaded.plan, loaded.recovery, effects);
+    if (swept.changed) this.writePlan(swept.plan, effects);
     return swept.plan;
   }
 
@@ -497,7 +507,7 @@ export class WorkPlanStore {
    * empty case. A file that exists but does not parse into a plan object is
    * moved aside (never overwritten in place) and reported as a recovery.
    */
-  private loadFromDisk(): { plan: WorkPlan; recovery: WorkPlanHousekeeping | null } {
+  private loadFromDisk(effects?: WorkPlanEffectOptions, readOnly = false): { plan: WorkPlan; recovery: WorkPlanHousekeeping | null } {
     let raw: string;
     try {
       raw = readFileSync(this.filePath, 'utf8');
@@ -510,7 +520,7 @@ export class WorkPlanStore {
     if (parsed === null) {
       // The file EXISTED but its contents are not a usable plan: zero-byte,
       // truncated mid-write, or otherwise torn. Existence is not validity.
-      const quarantinePath = raw.trim().length > 0 ? this.quarantineUnreadableFile() : undefined;
+      const quarantinePath = !readOnly && raw.trim().length > 0 ? this.quarantineUnreadableFile(effects) : undefined;
       return {
         plan: this.createEmptyPlan(),
         recovery: {
@@ -559,6 +569,7 @@ export class WorkPlanStore {
   private sweep(
     plan: WorkPlan,
     recovery: WorkPlanHousekeeping | null,
+    effects?: WorkPlanEffectOptions,
   ): { plan: WorkPlan; changed: boolean } {
     const now = nowMs();
     const expired = new Set<WorkPlanItem>();
@@ -573,7 +584,7 @@ export class WorkPlanStore {
       .sort((a, b) => terminalAgeStamp(b) - terminalAgeStamp(a));
     const capped = new Set<WorkPlanItem>(terminalSurvivors.slice(WORK_PLAN_TERMINAL_ITEM_CAP));
     const kept = survivors.filter((item) => !capped.has(item));
-    const quarantinesRemoved = this.sweepQuarantines(now);
+    const quarantinesRemoved = this.sweepQuarantines(now, effects);
 
     const changed = expired.size > 0 || capped.size > 0 || recovery !== null || quarantinesRemoved > 0;
     if (!changed) return { plan, changed: false };
@@ -613,16 +624,17 @@ export class WorkPlanStore {
    * Returns the quarantine path, or undefined if the rename did not happen
    * (already moved by a concurrent process, or the directory is not writable).
    */
-  private quarantineUnreadableFile(): string | undefined {
+  private quarantineUnreadableFile(effects?: WorkPlanEffectOptions): string | undefined {
     const target = `${this.filePath}${QUARANTINE_SUFFIX}${nowMs()}-${randomUUID().slice(0, 8)}`;
+    effects?.assertCurrent?.();
     try {
       renameSync(this.filePath, target);
-      return target;
     } catch {
-      // Gone already (another process quarantined it first) or unwritable,
-      // either way the plan still degrades to empty rather than throwing.
       return undefined;
     }
+    effects?.onEffect?.(true);
+    return target;
+
   }
 
   /**
@@ -631,7 +643,7 @@ export class WorkPlanStore {
    * WORK_PLAN_QUARANTINE_SWEEP_INTERVAL_MS per store instance so a long-lived
    * session keeps sweeping without scanning the directory on every read.
    */
-  private sweepQuarantines(now: number): number {
+  private sweepQuarantines(now: number, effects?: WorkPlanEffectOptions): number {
     if (now - this.lastQuarantineSweepAt < WORK_PLAN_QUARANTINE_SWEEP_INTERVAL_MS) return 0;
     this.lastQuarantineSweepAt = now;
     const directory = dirname(this.filePath);
@@ -655,6 +667,7 @@ export class WorkPlanStore {
       const tooOld = now - candidate.at > WORK_PLAN_QUARANTINE_TTL_MS;
       const overCap = index >= WORK_PLAN_QUARANTINE_CAP;
       if (!tooOld && !overCap) continue;
+      effects?.assertCurrent?.();
       try {
         unlinkSync(join(directory, candidate.entry));
         removed += 1;
@@ -662,6 +675,7 @@ export class WorkPlanStore {
         // Already removed by a concurrent sweep, idempotent, not an error, and
         // not counted so the disclosed number stays truthful.
       }
+      effects?.onEffect?.();
     }
     return removed;
   }
@@ -680,8 +694,8 @@ export class WorkPlanStore {
     };
   }
 
-  private writePlan(plan: WorkPlan): void {
-    atomicWriteFileSync(this.filePath, `${JSON.stringify(plan, null, 2)}\n`, { mkdirp: true });
+  private writePlan(plan: WorkPlan, effects?: WorkPlanEffectOptions): void {
+    atomicWriteFileSync(this.filePath, `${JSON.stringify(plan, null, 2)}\n`, { ...effects, mkdirp: true });
   }
 
   private resolveItem(plan: WorkPlan, idOrPrefix: string): WorkPlanItem {

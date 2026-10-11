@@ -10,9 +10,10 @@ import { AgentMessageBus } from '../agents/message-bus.js';
 import { computeSchedulerCapacity, type SchedulerCapacityReport } from './scheduler-capacity.js';
 import { AutomationJobStore } from './store/jobs.js';
 import { AutomationRunStore } from './store/runs.js';
+import { AutomationJobMap, automationJobRevision, ownedAutomationJob, AutomationJobCommitIndeterminateError, AutomationJobMutationStaleError, retainAutomationMutation, type AutomationJobMutationOptions } from './job-mutations.js';
 import { AutomationDeliveryManager } from './delivery-manager.js';
 import { RouteBindingManager } from '../channels/index.js';
-import type { AutomationJob } from './jobs.js';
+import type { AutomationJob, ManagedAutomationJob } from './jobs.js';
 import type { AutomationCheckinEvaluator } from './checkin-execution.js';
 import type { AutomationRun, AutomationRunContinuationMode, AutomationRunTelemetry } from './runs.js';
 import type { AutomationRunTrigger, AutomationSurfaceKind } from './types.js';
@@ -135,7 +136,8 @@ export class AutomationManager {
   private readonly defaultSurfaceKind?: AutomationSurfaceKind | undefined;
   private readonly defaultSurfaceId?: string | undefined;
   private readonly providerRegistry?: Pick<import('../providers/registry.js').ProviderRegistry, 'listModels'> | undefined;
-  private readonly jobs = new Map<string, AutomationJob>();
+  private readonly jobs = new AutomationJobMap();
+  private mutationLifetime = {};
   private readonly runs = new Map<string, AutomationRun>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -231,13 +233,71 @@ export class AutomationManager {
     return {
       configManager: this.configManager,
       jobs: this.jobs,
-      saveJobs: () => this.saveJobs(),
+      commitJob: (previous: AutomationJob | undefined, next: AutomationJob, options?: AutomationJobMutationOptions) => this.commitJob(previous, next, options),
       scheduleJob: (job: AutomationJob) => this.scheduleJob(job),
       syncJobToRuntime: (job: AutomationJob, source: string) => this.syncJobToRuntime(job, source),
       emitJobCreated: (job: AutomationJob) => this.emitJobCreated(job),
       emitJobUpdated: (job: AutomationJob, changedFields: string[]) => this.emitJobUpdated(job, changedFields),
       ...(this.providerRegistry ? { listModels: () => this.providerRegistry!.listModels() } : {}),
     };
+  }
+
+  private retainJobMutation(input: unknown, options: AutomationJobMutationOptions): () => void {
+    const restrictions = retainAutomationMutation(options), lifetime = this.mutationLifetime;
+    const store = this.jobStore, commit = store.commit, ownedInput = JSON.stringify(input);
+    const current = () => {
+      restrictions();
+      this.requireEnabled('mutate automation job');
+      if (this.mutationLifetime !== lifetime || this.jobStore !== store || store.commit !== commit || JSON.stringify(input) !== ownedInput) throw new AutomationJobMutationStaleError();
+      store.assertCurrent();
+    };
+    current();
+    return current;
+  }
+
+  retainJobTarget(jobId: string, expectedMutationRevision: string): { readonly job: ManagedAutomationJob; readonly assertCurrent: () => void } {
+    const selected = this.jobs.get(jobId);
+    if (!selected || automationJobRevision(selected) !== expectedMutationRevision) throw new AutomationJobMutationStaleError();
+    const original = JSON.stringify(selected), lifetime = this.mutationLifetime, store = this.jobStore;
+    const current = () => {
+      this.requireEnabled('update automation job');
+      store.assertCurrent();
+      if (this.jobStore !== store || this.mutationLifetime !== lifetime || this.jobs.get(jobId) !== selected || JSON.stringify(selected) !== original) throw new AutomationJobMutationStaleError();
+    };
+    current();
+    return { job: { ...structuredClone(selected), mutationRevision: expectedMutationRevision }, assertCurrent: current };
+  }
+
+  private commitJob(previous: AutomationJob | undefined, next: AutomationJob, options?: AutomationJobMutationOptions): Promise<ManagedAutomationJob>;
+  private commitJob(previous: AutomationJob, next: null, options?: AutomationJobMutationOptions): Promise<null>;
+  private async commitJob(previous: AutomationJob | undefined, next: AutomationJob | null, options: AutomationJobMutationOptions = {}): Promise<ManagedAutomationJob | null> {
+    const jobId = next?.id ?? previous?.id;
+    if (!jobId) throw new Error('An automation mutation requires a job id.');
+    const restrictions = retainAutomationMutation(options), original = JSON.stringify(previous);
+    const candidate = next ? ownedAutomationJob(next) : null;
+    const current = () => {
+      restrictions();
+      if (this.jobs.get(jobId) !== previous || JSON.stringify(previous) !== original) throw new AutomationJobMutationStaleError();
+    };
+    current();
+    try {
+      await this.jobStore.commit(jobId, previous ? automationJobRevision(previous) : null, candidate, { signal: options.signal, assertCurrent: current, withPublication: options.withPublication });
+      current();
+    } catch (error) {
+      if (error instanceof AutomationJobCommitIndeterminateError && this.jobs.get(jobId) === previous) {
+        // Reconcile the observed bytes, without scheduling or emitting a
+        // successful mutation after its authority has gone away.
+        const persisted = (await this.jobStore.load()).jobs.find(job => job.id === jobId);
+        if (this.jobs.get(jobId) === previous) {
+          if (persisted) this.jobs.restore(persisted);
+          else this.jobs.delete(jobId);
+        }
+      }
+      throw error;
+    }
+    if (candidate) this.jobs.publish(candidate);
+    else this.jobs.delete(jobId);
+    return candidate;
   }
 
   async start(): Promise<void> {
@@ -264,6 +324,7 @@ export class AutomationManager {
   }
 
   stop(): void {
+    this.mutationLifetime = {};
     for (const timer of this.timers.values()) {
       clearTimeout(timer);
     }
@@ -310,10 +371,10 @@ export class AutomationManager {
     }
   }
 
-  listJobs(): AutomationJob[] {
+  listJobs(): ManagedAutomationJob[] {
     if (!this.isEnabled()) return [];
     this.reconcileActiveRuns();
-    return sortJobs(this.jobs.values());
+    return [...this.jobs.values()].sort((a, b) => a.name.localeCompare(b.name) || a.createdAt - b.createdAt);
   }
 
   listRuns(jobId?: string): AutomationRun[] {
@@ -337,40 +398,50 @@ export class AutomationManager {
     return this.runs.get(runId);
   }
 
-  getJob(jobId: string): AutomationJob | undefined {
+  getJob(jobId: string): ManagedAutomationJob | undefined {
     if (!this.isEnabled()) return undefined;
     this.reconcileActiveRuns();
     return this.jobs.get(jobId);
   }
 
-  async createJob(input: CreateAutomationJobInput): Promise<AutomationJob> {
+  async createJob(input: CreateAutomationJobInput, options: AutomationJobMutationOptions = {}): Promise<ManagedAutomationJob> {
+    const current = this.retainJobMutation(input, options);
     this.requireEnabled('create automation job');
     await this.start();
-    return await createAutomationJobRecord(this.jobMutationContext(), input);
+    current();
+    return await createAutomationJobRecord(this.jobMutationContext(), input, { signal: options.signal, assertCurrent: current, withPublication: options.withPublication });
   }
 
-  async removeJob(jobId: string): Promise<boolean> {
+  async removeJob(jobId: string, options: AutomationJobMutationOptions = {}): Promise<boolean> {
+    const current = this.retainJobMutation({ jobId }, options);
     this.requireEnabled('remove automation job');
     await this.start();
+    current();
+    const selected = this.jobs.get(jobId);
+    if (!selected) return false;
+    await this.commitJob(selected, null, { signal: options.signal, assertCurrent: current, withPublication: options.withPublication });
     this.cancelTimer(jobId);
-    const removed = this.jobs.delete(jobId);
-    if (!removed) return false;
-    await this.saveJobs();
     return true;
   }
 
-  async setEnabled(jobId: string, enabled: boolean): Promise<AutomationJob | null> {
+  async setEnabled(jobId: string, enabled: boolean, options: AutomationJobMutationOptions = {}): Promise<ManagedAutomationJob | null> {
+    const current = this.retainJobMutation({ jobId, enabled }, options);
     this.requireEnabled('set automation job enabled state');
     await this.start();
-    const updated = await toggleAutomationJobEnabled(this.jobMutationContext(), jobId, enabled);
+    current();
+    const updated = await toggleAutomationJobEnabled(this.jobMutationContext(), jobId, enabled, { signal: options.signal, assertCurrent: current, withPublication: options.withPublication });
     if (!enabled) this.cancelTimer(jobId);
     return updated;
   }
 
-  async updateJob(jobId: string, patch: UpdateAutomationJobInput): Promise<AutomationJob | null> {
+  async updateJob(jobId: string, patch: UpdateAutomationJobInput, options: AutomationJobMutationOptions = {}): Promise<ManagedAutomationJob | null> {
+    const current = this.retainJobMutation(patch, options);
     this.requireEnabled('update automation job');
     await this.start();
-    return await updateAutomationJobRecord(this.jobMutationContext(), jobId, patch);
+    current();
+    const selected = this.jobs.get(jobId);
+    if (patch.expectedMutationRevision !== undefined && (!selected || automationJobRevision(selected) !== patch.expectedMutationRevision)) throw new AutomationJobMutationStaleError();
+    return await updateAutomationJobRecord(this.jobMutationContext(), jobId, patch, { signal: options.signal, assertCurrent: current, withPublication: options.withPublication });
   }
 
   private readonly sourceClaims = new Set<string>();
@@ -575,7 +646,7 @@ export class AutomationManager {
     ]);
     for (const job of jobSnapshot.jobs) {
       const normalizedJob = normalizeJobRecord(job, this.configManager);
-      this.jobs.set(normalizedJob.id, normalizedJob);
+      this.jobs.restore({ ...normalizedJob, mutationRevision: automationJobRevision(job) });
     }
     for (const run of runSnapshot.runs) {
       const normalizedRun = normalizeRunRecord(run, this.jobs.get(run.jobId));

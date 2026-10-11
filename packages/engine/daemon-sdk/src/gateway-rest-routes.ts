@@ -55,6 +55,15 @@ function route(method: string, template: string, methodId: string): GatewayRestR
  * bindings (the reconcile gate enforces it).
  */
 export const GATEWAY_REST_ROUTES: readonly GatewayRestRoute[] = [
+  route('POST', '/api/automation/jobs', 'automation.jobs.create'),
+  route('PATCH', '/api/automation/jobs/{jobId}', 'automation.jobs.update'),
+  route('DELETE', '/api/automation/jobs/{jobId}', 'automation.jobs.delete'),
+  route('POST', '/api/automation/jobs/{jobId}/enable', 'automation.jobs.enable'),
+  route('POST', '/api/automation/jobs/{jobId}/disable', 'automation.jobs.disable'),
+  route('POST', '/api/automation/schedules', 'automation.schedules.create'),
+  route('DELETE', '/api/automation/schedules/{scheduleId}', 'automation.schedules.delete'),
+  route('POST', '/api/automation/schedules/{scheduleId}/enable', 'automation.schedules.enable'),
+  route('POST', '/api/automation/schedules/{scheduleId}/disable', 'automation.schedules.disable'),
   route('POST', '/api/inbound/telegram/configure', 'inbound.telegram.configure'),
   route('POST', '/api/inbound/telegram/decide', 'inbound.telegram.decide'),
   route('POST', '/api/inbound/telegram/list', 'inbound.telegram.list'),

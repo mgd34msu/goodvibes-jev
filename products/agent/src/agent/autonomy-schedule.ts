@@ -79,7 +79,7 @@ export interface AutonomyScheduleFailure {
 
 export type AutonomyScheduleResult = AutonomyScheduleSuccess | AutonomyScheduleFailure;
 
-export function parseAutonomyScheduleArgs(args: readonly string[]): ParsedAutonomyScheduleArgs {
+export function parseAutonomyScheduleArgs(args: readonly string[], options: { readonly requireExplicitUserRequest?: boolean } = {}): ParsedAutonomyScheduleArgs {
   let task: string | null = null;
   let successCriteria: string | null = null;
   let explicitUserRequest: string | null = null;
@@ -213,7 +213,7 @@ export function parseAutonomyScheduleArgs(args: readonly string[]): ParsedAutono
   if (!task && positional.length > 0) task = positional.join(' ').trim();
   if (!task) errors.push('Autonomous task is required: use --task <work to perform>.');
   if (!successCriteria) errors.push('Success criteria are required: use --success-criteria <what a good run reports or produces>.');
-  if (!explicitUserRequest) errors.push('Explicit user request is required: use --explicit-user-request <authorizing request>.');
+  if (options.requireExplicitUserRequest !== false && !explicitUserRequest) errors.push('Explicit user request is required: use --explicit-user-request <authorizing request>.');
   if (!schedule) errors.push('Schedule is required: use --cron <expr>, --every <interval>, or --at <iso-time>.');
   const deliveryError = validateDeliveryTargets(deliveryTargets, 'autonomous schedule command');
   if (deliveryError) errors.push(deliveryError);
@@ -223,14 +223,12 @@ export function parseAutonomyScheduleArgs(args: readonly string[]): ParsedAutono
 export function buildAutonomySchedulePrompt(input: {
   readonly task: string;
   readonly successCriteria: string;
-  readonly explicitUserRequest: string;
+  readonly explicitUserRequest?: string | null;
 }): string {
   return [
     'GoodVibes Agent autonomous schedule.',
     '',
-    'User request:',
-    input.explicitUserRequest,
-    '',
+    ...(input.explicitUserRequest ? ['Request provenance:', input.explicitUserRequest, ''] : []),
     'Task:',
     input.task,
     '',
@@ -240,7 +238,7 @@ export function buildAutonomySchedulePrompt(input: {
     'Operator policy:',
     '- Run this as a visible GoodVibes Agent scheduled automation, not a hidden background job.',
     '- Use isolated Agent Knowledge routes only when lookup is needed; never use default knowledge or non-Agent knowledge spaces as fallback.',
-    '- Do not perform destructive, costly, externally visible, or secret-handling actions without explicit approval.',
+    '- Perform each effect only under current recorded effect admission and its unchanged source and target constraints.',
     '- Do not self-expand the scope beyond the task and success criteria; report missing setup or ambiguous requirements instead of improvising.',
     '- Do not request GoodVibes TUI delegation unless this schedule explicitly delegates build/fix/review work and the user asked for that delegation.',
     '- Summarize what was checked, what changed, what still needs review, and the next user-visible action.',
@@ -250,7 +248,6 @@ export function buildAutonomySchedulePrompt(input: {
 export function buildAutonomySchedulePayload(parsed: ParsedAutonomyScheduleArgs): ScheduleCreateInput {
   if (!parsed.task) throw new Error('Autonomous task is required.');
   if (!parsed.successCriteria) throw new Error('Success criteria are required.');
-  if (!parsed.explicitUserRequest) throw new Error('Explicit user request is required.');
   if (!parsed.schedule) throw new Error('Schedule is required.');
   const modelRoute = normalizeProviderModel(parsed.provider, parsed.model);
   const payload: ScheduleCreateInput = {
@@ -310,11 +307,10 @@ export function buildAutonomySchedulePayload(parsed: ParsedAutonomyScheduleArgs)
 export function buildAutonomySchedulePreview(parsed: ParsedAutonomyScheduleArgs): AutonomySchedulePreview {
   if (!parsed.task) throw new Error('Autonomous task is required.');
   if (!parsed.successCriteria) throw new Error('Success criteria are required.');
-  if (!parsed.explicitUserRequest) throw new Error('Explicit user request is required.');
   return {
     task: parsed.task,
     successCriteria: parsed.successCriteria,
-    explicitUserRequest: parsed.explicitUserRequest,
+    explicitUserRequest: parsed.explicitUserRequest ?? '',
     route: AUTONOMY_SCHEDULE_ROUTE,
     method: AUTONOMY_SCHEDULE_METHOD,
     payload: buildAutonomySchedulePayload(parsed),

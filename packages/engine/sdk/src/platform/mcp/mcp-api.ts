@@ -1,4 +1,5 @@
 import type { McpToolSchema } from './client.js';
+import type { McpToolCallOptions } from './client-types.js';
 import type { RegisteredTool } from './registry.js';
 import type { McpConfigRoots, McpConfigScope, McpEffectiveConfig, McpServerConfig } from './config.js';
 import type { McpReloadResult } from './registry.js';
@@ -38,8 +39,8 @@ export interface McpSandboxBindingRecord {
 }
 
 export interface McpApi {
-  callTool?(qualifiedName: string, args: Readonly<Record<string, unknown>>, options?: { readonly signal?: AbortSignal | undefined }): Promise<unknown>;
-  getToolSchema?(qualifiedName: string): Promise<McpToolSchema | null>;
+  callTool?(qualifiedName: string, args: Readonly<Record<string, unknown>>, options?: McpToolCallOptions): Promise<unknown>;
+  getToolSchema?(qualifiedName: string, options?: McpToolCallOptions): Promise<McpToolSchema | null>;
   getEffectiveConfig(roots: McpConfigRoots): McpEffectiveConfig;
   reload(roots: McpConfigRoots): Promise<McpReloadResult>;
   upsertServerConfig(
@@ -65,8 +66,8 @@ export interface McpApi {
 }
 
 export interface McpApiRegistry {
-  callTool?(qualifiedName: string, args: Readonly<Record<string, unknown>>, options?: { readonly signal?: AbortSignal | undefined }): Promise<unknown>;
-  getToolSchema?(qualifiedName: string): Promise<McpToolSchema | null>;
+  callTool?(qualifiedName: string, args: Readonly<Record<string, unknown>>, options?: McpToolCallOptions): Promise<unknown>;
+  getToolSchema?(qualifiedName: string, options?: McpToolCallOptions): Promise<McpToolSchema | null>;
   readonly serverNames: readonly string[];
   getEffectiveConfig(roots: McpConfigRoots): McpEffectiveConfig;
   reload(roots: McpConfigRoots): Promise<McpReloadResult>;
@@ -93,8 +94,8 @@ export interface McpApiRegistry {
 
 export function createMcpApi(registry: McpApiRegistry): McpApi {
   return {
-    ...(registry.callTool ? { callTool: (name: string, args: Readonly<Record<string, unknown>>, options?: { readonly signal?: AbortSignal | undefined }) => registry.callTool!(name, args, options) } : {}),
-    ...(registry.getToolSchema ? { getToolSchema: (name: string) => registry.getToolSchema!(name) } : {}),
+    ...(registry.callTool ? { callTool: (name: string, args: Readonly<Record<string, unknown>>, options?: McpToolCallOptions) => registry.callTool!(name, args, options) } : {}),
+    ...(registry.getToolSchema ? { getToolSchema: (name: string, options?: McpToolCallOptions) => registry.getToolSchema!(name, options) } : {}),
     getEffectiveConfig(roots) {
       return registry.getEffectiveConfig(roots);
     },

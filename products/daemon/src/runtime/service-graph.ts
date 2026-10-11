@@ -5,7 +5,7 @@ import { installNativeHostedConversationOwner } from './native-hosted-conversati
 import { createNativeWorkSubmissionHost } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-submission';
 import { createNativeConversationIntakeHost, createNativeRequirementProposer, type NativeConversationContinuationOwner } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake';
 import { createLocalWorkLedgerReadBinding } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
-import { prepareGatewayScopePolicyOwner, registerWorkLedgerGatewayMethods, registerWorkLedgerImportGatewayMethods, registerNativeWorkExecutionGatewayMethods, registerNativeWorkSubmissionGatewayMethods, registerNativeConversationIntakeGatewayMethods } from '@goodvibes-jev/engine/sdk/platform/control-plane';
+import { prepareGatewayScopePolicyOwner, registerNativeAutomationGatewayMethods, registerWorkLedgerGatewayMethods, registerWorkLedgerImportGatewayMethods, registerNativeWorkExecutionGatewayMethods, registerNativeWorkSubmissionGatewayMethods, registerNativeConversationIntakeGatewayMethods } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 import { WorkspaceRegistrationStore, sharedWorkspaceRegisterPath, legacyWorkspaceRegisterPath } from '@goodvibes-jev/engine/sdk/platform/workspace';
 import { join } from 'node:path';
 import { ServiceRegistry, SubscriptionManager, ToolLLM, sharedSubscriptionsPath } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -669,6 +669,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       ...wireFleetNeedsInputPush({ registry: processRegistry, runtimeBus: options.runtimeBus, sessionBroker }),
     });
     disposalScope.registry.add('browser checkout seam holder', () => browserCheckoutSeam.clear()); // newer than 'browser sessions' above, so runs first
+    disposalScope.registry.add('native automation updates', registerNativeAutomationGatewayMethods(gatewayMethods, { manager: automationManager, host: autonomousHost }));
     const agentToolDependencies = {
       toolExecutionObserver: (tool: string, args: Record<string, unknown>, success: boolean) => ciAutoWatchObserver?.(tool, args, success),
       contractRunner, contractHooks: contractRunner.hooks(),
@@ -788,6 +789,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
 
     const services: Omit<RuntimeServices, 'daemonHandlers'> = {
       workingDirectory,
+      nativeMutationHost: autonomousHost,
       homeDirectory,
       surfaceRoot: GOODVIBES_DAEMON_SURFACE_ROOT,
       surface,
@@ -935,6 +937,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       clusterCoordinator,
       checkoutSeam: browserCheckoutSeam.get, channelDeliveryRouter, inboxFactory: options.inboxFactory,
       triagePermissionHost: autonomousHost,
+      nativeMutationHost: autonomousHost,
     };
     return { services, handlerOptions, closeWorkLedger: () => { retireContinuationScope(); return fenceWorkLedger!(); }, closeBrowserJudgment: () => { retireContinuationScope(); return fenceBrowserJudgment!(); }, closeAutonomousPermissions, retireContinuationScope };
   } catch (startupError) {

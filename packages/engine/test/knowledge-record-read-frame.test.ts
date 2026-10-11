@@ -2,7 +2,7 @@ import { afterEach, expect, spyOn, test } from 'bun:test';
 import { copyFileSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SQLiteObservationRetiredError, SQLiteStore, type SqlDatabase } from '../sdk/src/platform/state/sqlite-store.js';
+import { loadSqlJsEngine, SQLiteObservationRetiredError, SQLiteStore, type SqlDatabase } from '../sdk/src/platform/state/sqlite-store.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { KnowledgeRecordAdmissionHeldError, prepareKnowledgeRecordAdmission } from '../sdk/src/platform/knowledge/store-record-snapshot.js';
 import { createSemanticWriteGuard } from '../sdk/src/platform/knowledge/semantic/primary-source-plan.js';
@@ -62,6 +62,236 @@ async function database() {
   return { sqlite, filename };
 }
 const read = (sqlite: SQLiteStore) => sqlite.readPersistedRow('knowledge_sources', 'id', 'pending direct change');
+
+test('cached closed rows are detached on every read and cannot cross a synchronous frame', async () => {
+  const { sqlite } = await database();
+  sqlite.run("INSERT INTO knowledge_sources VALUES ('original')"); await sqlite.save();
+  sqlite.assertPersistedReadFrame(() => {
+    const first = sqlite.readPersistedRow('knowledge_sources', 'id', 'original');
+    first[0]!.columns[0] = 'borrowed mutation'; first[0]!.values[0]![0] = 'borrowed mutation';
+    first[0]!.values.push(['injected']);
+    expect(sqlite.readPersistedRow('knowledge_sources', 'id', 'original')).toEqual([{ columns: ['id'], values: [['original']] }]);
+  });
+  sqlite.run("UPDATE knowledge_sources SET id = 'replacement'"); await sqlite.save();
+  sqlite.assertPersistedReadFrame(() => {
+    expect(sqlite.readPersistedRow('knowledge_sources', 'id', 'original')).toEqual([]);
+    expect(sqlite.readPersistedRow('knowledge_sources', 'id', 'replacement')).toEqual([{ columns: ['id'], values: [['replacement']] }]);
+  });
+});
+
+test('generation-only guards match complete snapshots and retain raw stored bytes', async () => {
+  const { store, source, extraction, sqlite } = await fixture();
+  let originalSource: string | null = null, originalExtraction: string | null = null;
+  store.assertRecordSnapshotFrame(() => {
+    originalSource = store.getSourceGeneration(source.id);
+    originalExtraction = store.getRecordGeneration('extraction', extraction.id);
+    expect(originalSource).toBe(store.getSourceSnapshot({ id: source.id }).generation);
+    expect(originalExtraction).toBe(store.getRecordSnapshot('extraction', extraction.id).generation);
+    expect(store.getRecordGeneration('node', 'missing')).toBeNull();
+  });
+  const rawMetadata = String(store.getSourceSnapshot({ id: source.id }).raw!.metadata);
+  sqlite.run('UPDATE knowledge_sources SET metadata = ? WHERE id = ?', [` ${rawMetadata}`, source.id]);
+  await sqlite.save();
+  store.assertRecordSnapshotFrame(() => {
+    expect(store.getSourceGeneration(source.id)).not.toBe(originalSource);
+    expect(store.getSourceSnapshot({ id: source.id }).source?.metadata).toEqual(source.metadata);
+    expect(store.getRecordGeneration('extraction', extraction.id)).toBe(originalExtraction);
+  });
+  expect(store.getSource(source.id)).toBe(source);
+});
+
+test('a memoized raw generation retires before reuse after a retained writer restores the row', async () => {
+  let writer: SqlDatabase | undefined;
+  const { store, source, sqlite } = await fixture();
+  await sqlite.transactPersisted(db => {
+    writer = db;
+    db.run('UPDATE knowledge_sources SET summary = summary WHERE id = ?', [source.id]);
+    return { changed: true, value: undefined };
+  }, () => {});
+  const original = store.getSourceSnapshot({ id: source.id }).raw!;
+  let reused = false;
+  expect(() => store.assertRecordSnapshotFrame(() => {
+    const generation = store.getSourceGeneration(source.id);
+    expect(store.getSourceGeneration(source.id)).toBe(generation);
+    writer!.run('UPDATE knowledge_sources SET summary = ? WHERE id = ?', ['temporary meaning', source.id]);
+    writer!.run('UPDATE knowledge_sources SET summary = ? WHERE id = ?', [source.summary ?? null, source.id]);
+    store.getSourceGeneration(source.id);
+    reused = true;
+  })).toThrow(KnowledgeRecordAdmissionHeldError);
+  expect(reused).toBe(false);
+  expect(store.getSourceSnapshot({ id: source.id }).raw).toEqual(original);
+});
+
+test('an admitted mutable record keeps its full descriptor fence after generation-only checks', async () => {
+  const { store, extraction } = await fixture();
+  const receipt = prepareKnowledgeRecordAdmission(store, 'extraction', extraction);
+  store.assertRecordSnapshotFrame(() => { receipt.assertCurrent(); receipt.assertCurrent(); });
+  Object.defineProperty(extraction.sections, 'extraMeaning', { value: 'new protected input', enumerable: true });
+  expect(() => store.assertRecordSnapshotFrame(() => { receipt.assertCurrent(); })).toThrow(KnowledgeRecordAdmissionHeldError);
+});
+
+test('an actual native VFS alias replacement and restore retires the original raw generation', async () => {
+  const { store, source, sqlite } = await fixture();
+  let writer: SqlDatabase | undefined;
+  await sqlite.transactPersisted(db => {
+    writer = db;
+    db.run('UPDATE knowledge_sources SET summary = summary WHERE id = ?', [source.id]);
+    return { changed: true, value: undefined };
+  }, () => {});
+  const main = writer!.exec('PRAGMA database_list')[0]?.values.find(row => row[1] === 'main')?.[2];
+  if (typeof main !== 'string') throw new Error('No original VFS file');
+  const SQL = await loadSqlJsEngine(), alias = new SQL.Database();
+  let consumed = false;
+  try {
+    alias.run('ATTACH DATABASE ? AS original', [main]);
+    expect(alias.exec('SELECT title FROM original.knowledge_sources WHERE id = ?', [source.id])[0]?.values[0]?.[0]).toBe(source.title);
+    expect(() => store.assertRecordSnapshotFrame(() => {
+      const original = store.getSourceGeneration(source.id);
+      expect(store.getSourceGeneration(source.id)).toBe(original);
+      alias.run('UPDATE original.knowledge_sources SET summary = ? WHERE id = ?', ['native alias replacement', source.id]);
+      alias.run('UPDATE original.knowledge_sources SET summary = ? WHERE id = ?', [source.summary ?? null, source.id]);
+      store.getSourceGeneration(source.id);
+      consumed = true;
+    })).toThrow(KnowledgeRecordAdmissionHeldError);
+    expect(consumed).toBe(false);
+    expect(store.getSourceSnapshot({ id: source.id }).source?.summary).toBe(source.summary);
+  } finally { alias.close(); }
+});
+
+test('closed generation batches match every original row and retire native alias restore before returning', async () => {
+  const { store, source, extraction, sqlite } = await fixture();
+  let writer: SqlDatabase | undefined;
+  await sqlite.transactPersisted(db => {
+    writer = db;
+    db.run('UPDATE knowledge_sources SET summary = summary WHERE id = ?', [source.id]);
+    return { changed: true, value: undefined };
+  }, () => {});
+  const main = writer!.exec('PRAGMA database_list')[0]?.values.find(row => row[1] === 'main')?.[2];
+  if (typeof main !== 'string') throw new Error('No original VFS file');
+  const SQL = await loadSqlJsEngine(), alias = new SQL.Database();
+  const selectors = [{ kind: 'source' as const, id: source.id }, { kind: 'extraction' as const, id: extraction.id }, { kind: 'node' as const, id: 'missing' }];
+  let consumed = false;
+  try {
+    alias.run('ATTACH DATABASE ? AS original', [main]);
+    expect(alias.exec('SELECT title FROM original.knowledge_sources WHERE id = ?', [source.id])[0]?.values[0]?.[0]).toBe(source.title);
+    expect(() => store.assertRecordSnapshotFrame(() => {
+      const expected = [store.getSourceSnapshot({ id: source.id }).generation, store.getRecordSnapshot('extraction', extraction.id).generation, null];
+      expect(store.getRecordGenerations(selectors)).toEqual(expected);
+      expect(Object.isFrozen(store.getRecordGenerations(selectors))).toBe(true);
+      alias.run('UPDATE original.knowledge_sources SET summary = ? WHERE id = ?', ['batch alias replacement', source.id]);
+      alias.run('UPDATE original.knowledge_sources SET summary = ? WHERE id = ?', [source.summary ?? null, source.id]);
+      store.getRecordGenerations(selectors);
+      consumed = true;
+    })).toThrow(KnowledgeRecordAdmissionHeldError);
+    expect(consumed).toBe(false);
+  } finally { alias.close(); }
+});
+
+test.each(['selector-accessor', 'index-accessor', 'named-array'] as const)('generation batch rejects %s before reading any raw image', async mode => {
+  const { store, source, sqlite } = await fixture();
+  const selectors = [{ kind: 'source' as const, id: source.id }];
+  let getterCalls = 0;
+  if (mode === 'selector-accessor') Object.defineProperty(selectors[0], 'id', { get() { getterCalls++; return source.id; }, enumerable: true });
+  if (mode === 'index-accessor') Object.defineProperty(selectors, '0', { get() { getterCalls++; return { kind: 'source', id: source.id }; }, enumerable: true });
+  if (mode === 'named-array') Object.defineProperty(selectors, 'meaning', { value: 'unselected extra', enumerable: true });
+  const snapshots = instrument(sqlite);
+  expect(() => store.getRecordGenerations(selectors)).toThrow(TypeError);
+  expect(getterCalls).toBe(0);
+  expect(snapshots()).toEqual({ opened: 0, closed: 0 });
+  expect(snapshots.privateImages()).toEqual({ opened: 0, closed: 0 });
+});
+
+test('the all-cached generation batch exit fence retires an actual native alias restore before returning', async () => {
+  const { store, source, sqlite } = await fixture();
+  let writer: SqlDatabase | undefined;
+  await sqlite.transactPersisted(db => {
+    writer = db;
+    db.run('UPDATE knowledge_sources SET summary = summary WHERE id = ?', [source.id]);
+    return { changed: true, value: undefined };
+  }, () => {});
+  const main = writer!.exec('PRAGMA database_list')[0]?.values.find(row => row[1] === 'main')?.[2];
+  if (typeof main !== 'string') throw new Error('No original VFS file');
+  const SQL = await loadSqlJsEngine(), alias = new SQL.Database();
+  const observers: { mockRestore(): void }[] = [];
+  let replaced = false, consumed = false;
+  alias.run('ATTACH DATABASE ? AS original', [main]);
+  try {
+    expect(() => store.assertRecordSnapshotFrame(() => {
+      const selectors = [{ kind: 'source' as const, id: source.id }];
+      store.getRecordGenerations(selectors);
+      const frame: unknown = Reflect.get(sqlite, 'persistedReadFrame');
+      if (!frame || typeof frame !== 'object') throw new Error('No original synchronous read frame');
+      const memo: unknown = Reflect.get(frame, 'generations');
+      if (!(memo instanceof Map)) throw new Error('No original generation memo');
+      const read = memo.get.bind(memo), key = JSON.stringify(['knowledge_sources', 'id', source.id]);
+      observers.push(spyOn(memo, 'get').mockImplementation(entry => {
+        const generation: unknown = read(entry);
+        if (!replaced && entry === key) {
+          replaced = true;
+          alias.run('UPDATE original.knowledge_sources SET summary = ? WHERE id = ?', ['during cached batch replacement', source.id]);
+          alias.run('UPDATE original.knowledge_sources SET summary = ? WHERE id = ?', [source.summary ?? null, source.id]);
+        }
+        return generation;
+      }));
+      store.getRecordGenerations(selectors);
+      consumed = true;
+    })).toThrow(KnowledgeRecordAdmissionHeldError);
+    expect(replaced).toBe(true);
+    expect(consumed).toBe(false);
+  } finally { for (const observer of observers) observer.mockRestore(); alias.close(); }
+});
+
+test('the closed generation batch exit fence catches an actual native alias restore during its SQL read', async () => {
+  const { store, source, extraction, sqlite } = await fixture();
+  let writer: SqlDatabase | undefined;
+  await sqlite.transactPersisted(db => {
+    writer = db;
+    db.run('UPDATE knowledge_sources SET summary = summary WHERE id = ?', [source.id]);
+    return { changed: true, value: undefined };
+  }, () => {});
+  const main = writer!.exec('PRAGMA database_list')[0]?.values.find(row => row[1] === 'main')?.[2];
+  if (typeof main !== 'string') throw new Error('No original VFS file');
+  const SQL = await loadSqlJsEngine(), alias = new SQL.Database();
+  const internal = sqlite as unknown as { readPrivatePersistedRows(sql: string, params: string[], closed?: boolean): ReturnType<SqlDatabase['exec']> };
+  const read = internal.readPrivatePersistedRows.bind(sqlite);
+  let replaced = false, consumed = false;
+  alias.run('ATTACH DATABASE ? AS original', [main]);
+  const observing = spyOn(internal, 'readPrivatePersistedRows').mockImplementation((sql, params, closed) => {
+    const result = read(sql, params, closed);
+    if (!replaced && sql === 'SELECT * FROM knowledge_sources WHERE id = ? LIMIT 1') {
+      replaced = true;
+      alias.run('UPDATE original.knowledge_sources SET summary = ? WHERE id = ?', ['during batch replacement', source.id]);
+      alias.run('UPDATE original.knowledge_sources SET summary = ? WHERE id = ?', [source.summary ?? null, source.id]);
+    }
+    return result;
+  });
+  try {
+    expect(() => store.getRecordGenerations([{ kind: 'source', id: source.id }, { kind: 'extraction', id: extraction.id }])
+      && (consumed = true)).toThrow(SQLiteObservationRetiredError);
+    expect(replaced).toBe(true);
+    expect(consumed).toBe(false);
+  } finally { observing.mockRestore(); alias.close(); }
+});
+
+test('physical edge generation reads retain exact original raw metadata without decoded views', async () => {
+  const { store, source, sqlite } = await fixture();
+  const edge = await store.upsertEdge({ fromKind: 'source', fromId: source.id, toKind: 'node', toId: 'bounded-node',
+    relation: 'documents', weight: 0.75, metadata: { complete: 'raw' } });
+  const original = store.getEdgeSnapshot(edge.id);
+  store.assertRecordSnapshotFrame(() => {
+    expect(store.getEdgeGenerationSnapshots().find(snapshot => snapshot.id === edge.id)).toEqual({ id: edge.id,
+      fromKind: edge.fromKind, fromId: edge.fromId, toKind: edge.toKind, toId: edge.toId, generation: original.generation! });
+  });
+  sqlite.run('UPDATE knowledge_edges SET metadata = ? WHERE id = ?', [' {"complete":"raw"}', edge.id]);
+  await sqlite.save();
+  store.assertRecordSnapshotFrame(() => {
+    const changed = store.getEdgeSnapshot(edge.id);
+    expect(changed.record?.metadata).toEqual(edge.metadata);
+    const generation = store.getEdgeGenerationSnapshots().find(snapshot => snapshot.id === edge.id)?.generation ?? null;
+    expect(generation).toBe(changed.generation);
+    expect(changed.generation).not.toBe(original.generation);
+  });
+});
 
 test('real admission and nested semantic guard read every full row from one image per invocation', async () => {
   const { store, source, extraction, sqlite } = await fixture();
@@ -271,6 +501,24 @@ test('nested file-backed guards detect mutations through a legitimately retained
     } finally { handle.run('ROLLBACK'); }
   })).toThrow(SQLiteObservationRetiredError);
   sqlite.assertPersistedReadFrame(() => { read(sqlite); });
+});
+
+test.each(['mode', 'attachment', 'export'] as const)('a retained facade %s operation invalidates the private image before a nested read', async operation => {
+  const { sqlite } = await database(); let retained: SqlDatabase | undefined;
+  await sqlite.transactPersisted(db => {
+    retained = db; db.run("INSERT INTO knowledge_sources VALUES ('original')");
+    return { changed: true, value: undefined };
+  }, () => {});
+  if (!retained) throw new Error('Writer handle was not captured');
+  const handle = retained; let consumed = false;
+  expect(() => sqlite.assertPersistedReadFrame(() => {
+    read(sqlite);
+    if (operation === 'mode') handle.exec('PRAGMA read_uncommitted=1');
+    else if (operation === 'attachment') handle.exec("ATTACH DATABASE ':memory:' AS external");
+    else handle.export();
+    sqlite.assertPersistedReadFrame(() => { read(sqlite); consumed = true; });
+  })).toThrow(SQLiteObservationRetiredError);
+  expect(consumed).toBe(false);
 });
 
 

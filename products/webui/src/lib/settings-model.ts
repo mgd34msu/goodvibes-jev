@@ -132,9 +132,10 @@ export function readConfigPath(config: unknown, key: string): { present: boolean
     if (cursor === null || typeof cursor !== 'object' || Array.isArray(cursor)) {
       return { present: false, value: undefined };
     }
-    const record = cursor as Record<string, unknown>;
-    if (!(segment in record)) return { present: false, value: undefined };
-    cursor = record[segment];
+    const descriptor = Object.getOwnPropertyDescriptor(cursor, segment);
+    if (!descriptor) return { present: false, value: undefined };
+    if (!('value' in descriptor)) return { present: true, value: undefined };
+    cursor = descriptor.value;
   }
   return { present: true, value: cursor };
 }
@@ -155,7 +156,8 @@ export function liveLeafKeys(config: unknown, prefix = '', stopKeys?: ReadonlySe
   const out: string[] = [];
   for (const key of keys) {
     const full = prefix ? `${prefix}.${key}` : key;
-    const item = record[key];
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    const item: unknown = descriptor && 'value' in descriptor ? descriptor.value : undefined;
     if (item !== null && typeof item === 'object' && !Array.isArray(item) && !stopKeys?.has(full)) {
       out.push(...liveLeafKeys(item, full, stopKeys));
     } else {

@@ -192,14 +192,26 @@ interface ActiveSyntheticSpan {
 interface TelemetryApiServiceOptions {
   readonly runtimeBus: RuntimeEventBus;
   readonly runtimeStore: RuntimeStore;
+  /** Read the owning daemon's current opt-in; omitted means raw reads are disabled. */
+  readonly includeRawPrompts?: (() => boolean) | undefined;
   readonly eventLimit?: number | undefined;
   readonly errorLimit?: number | undefined;
   readonly spanLimit?: number | undefined;
 }
 
+export class TelemetryRawViewDisabledError extends Error {
+  readonly code = 'TELEMETRY_RAW_DISABLED';
+
+  constructor() {
+    super('Raw telemetry is disabled. Enable telemetry.includeRawPrompts to allow authorized raw reads.');
+    this.name = 'TelemetryRawViewDisabledError';
+  }
+}
+
 export class TelemetryApiService {
   private readonly runtimeBus: RuntimeEventBus;
   private readonly runtimeStore: RuntimeStore;
+  private readonly includeRawPrompts: () => boolean;
   private readonly eventLimit: number;
   private readonly errorLimit: number;
   private readonly spanLimit: number;
@@ -223,6 +235,7 @@ export class TelemetryApiService {
   constructor(options: TelemetryApiServiceOptions) {
     this.runtimeBus = options.runtimeBus;
     this.runtimeStore = options.runtimeStore;
+    this.includeRawPrompts = options.includeRawPrompts ?? (() => false);
     this.eventLimit = options.eventLimit ?? DEFAULT_EVENT_LIMIT;
     this.errorLimit = options.errorLimit ?? DEFAULT_ERROR_LIMIT;
     this.spanLimit = options.spanLimit ?? DEFAULT_SPAN_LIMIT;
@@ -244,6 +257,14 @@ export class TelemetryApiService {
     return () => {
       this.subscribers.delete(listener);
     };
+  }
+
+  isRawEnabled(): boolean {
+    return this.includeRawPrompts() === true;
+  }
+
+  private assertViewAvailable(view: TelemetryViewMode): void {
+    if (view === 'raw' && !this.isRawEnabled()) throw new TelemetryRawViewDisabledError();
   }
 
   getCapabilities(): TelemetryCapabilities {
@@ -271,6 +292,8 @@ export class TelemetryApiService {
     view: TelemetryViewMode = filter.view ?? 'safe',
     rawAccessible = view === 'raw',
   ): TelemetrySnapshot {
+    this.assertViewAvailable(view);
+    rawAccessible = rawAccessible && this.isRawEnabled();
     const state = this.runtimeStore.getState();
     const telemetry = state.telemetry;
     const limit = clampLimit(filter.limit, 20);
@@ -347,8 +370,9 @@ export class TelemetryApiService {
     view: TelemetryViewMode = filter.view ?? 'safe',
     rawAccessible = view === 'raw',
   ): TelemetryListResponse<TelemetryRecord> {
+    this.assertViewAvailable(view);
     const { items, pageInfo } = applyTelemetryRecordFilter(this.records, filter, view);
-    return buildListResponse(items, view, rawAccessible, pageInfo);
+    return buildListResponse(items, view, rawAccessible && this.isRawEnabled(), pageInfo);
   }
 
   listErrorPage(
@@ -356,8 +380,9 @@ export class TelemetryApiService {
     view: TelemetryViewMode = filter.view ?? 'safe',
     rawAccessible = view === 'raw',
   ): TelemetryListResponse<TelemetryRecord> {
+    this.assertViewAvailable(view);
     const { items, pageInfo } = applyTelemetryRecordFilter(this.errors, filter, view);
-    return buildListResponse(items, view, rawAccessible, pageInfo);
+    return buildListResponse(items, view, rawAccessible && this.isRawEnabled(), pageInfo);
   }
 
   listSpanPage(
@@ -365,8 +390,9 @@ export class TelemetryApiService {
     view: TelemetryViewMode = filter.view ?? 'safe',
     rawAccessible = view === 'raw',
   ): TelemetryListResponse<ReadableSpan> {
+    this.assertViewAvailable(view);
     const { items, pageInfo } = applyTelemetrySpanFilter(this.spans, filter, view);
-    return buildListResponse(items, view, rawAccessible, pageInfo);
+    return buildListResponse(items, view, rawAccessible && this.isRawEnabled(), pageInfo);
   }
 
   createStream(
@@ -375,11 +401,13 @@ export class TelemetryApiService {
     view: TelemetryViewMode = filter.view ?? 'safe',
     rawAccessible = view === 'raw',
   ): Response {
+    this.assertViewAvailable(view);
     return createTelemetryEventStream({
       request,
       filter,
       view,
-      rawAccessible,
+      rawAccessible: rawAccessible && this.isRawEnabled(),
+      assertViewAvailable: () => this.assertViewAvailable(view),
       records: this.records,
       listEventPage: (nextFilter, nextView, nextRawAccessible) =>
         this.listEventPage(nextFilter, nextView, nextRawAccessible),

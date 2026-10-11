@@ -1,13 +1,20 @@
-import { describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
+import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
+import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
+import { effectAdmissionFixture } from '../helpers/effect-admission.ts';
+import { afterAll, describe, expect, test } from 'bun:test';
 import { inflateRawSync } from 'node:zlib';
 import type { ArtifactCreateInput, ArtifactDescriptor, ArtifactRecord, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { ChatRequest, ChatResponse, LLMProvider } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import {
-  createAgentModelCompareTool,
+  createAgentModelCompareTool as rawModelCompareTool,
   registerAgentModelCompareTool,
   type AgentModelCompareCatalogModel,
 } from '../../tools/agent-model-compare-tool.ts';
+
+afterAll(cleanupResearchScreeningFixtures);
+function createAgentModelCompareTool(...[deps]: Parameters<typeof rawModelCompareTool>) { const admission = effectAdmissionFixture(); bindAgentResearchSourceOwner(admission.registry, ordinaryResearchOwner()); return admission.tool(rawModelCompareTool({ ...deps, toolRegistry: admission.registry })); }
 
 class CompareTestProvider implements LLMProvider {
   readonly models: string[];
@@ -49,7 +56,7 @@ function artifactStore() {
         mimeType: input.mimeType ?? 'application/json',
         filename: input.filename,
         sizeBytes: buffer.byteLength,
-        sha256: `sha-${inputs.length}`,
+        sha256: createHash('sha256').update(buffer).digest('hex'),
         createdAt: Date.now(),
         acquisitionMode: 'inline-data',
         fetchMode: 'not-applicable',
@@ -123,7 +130,7 @@ function fixture(options: {
   const recordedUsage: string[] = [];
   const appliedModelRoutes: string[] = [];
   let selectedModel = 'openai:gpt-4.1';
-  const tool = createAgentModelCompareTool({
+  const deps: Parameters<typeof rawModelCompareTool>[0] = {
     modelCatalog: {
       listModels: () => models,
       getCurrentModel: () => models[0]!,
@@ -145,7 +152,9 @@ function fixture(options: {
       appliedModelRoutes.push(registryKey);
       return { previousModel, selectedModel };
     }),
-  });
+    };
+  const tool = createAgentModelCompareTool(deps);
+  const rawTool = rawModelCompareTool(deps);
 
   return {
     appliedModelRoutes,
@@ -153,14 +162,15 @@ function fixture(options: {
     openai,
     recordedUsage,
     tool,
+    rawTool,
   };
 }
 
 describe('agent_model_compare tool', () => {
-  test('previews without calling providers when confirmation is missing', async () => {
+  test('previews without calling providers when recorded admission is absent', async () => {
     const item = fixture();
 
-    const result = await item.tool.execute({
+    const result = await item.rawTool.execute({
       mode: 'run',
       prompt: 'Compare release note drafts.',
       confirm: false,
@@ -169,7 +179,7 @@ describe('agent_model_compare tool', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('Agent blind model comparison preview');
-    expect(result.error).toContain('confirmation required');
+    expect(result.error).toContain('recorded effect admission');
     expect(item.openai.calls).toEqual([]);
     expect(item.anthropic.calls).toEqual([]);
   });
@@ -378,7 +388,7 @@ describe('agent_model_compare tool', () => {
       confirm: true,
       explicitUserRequest: 'Compare launch update drafts for this document.',
     });
-    expect(documentRun.success).toBe(true);
+    expect(documentRun.success, documentRun.error).toBe(true);
     expect(documentRun.output).toContain('benchmark doc-draft');
     expect(documentRun.output).toContain('task type writing');
     expect(documentRun.output).toContain('document doc_launch');
@@ -483,7 +493,7 @@ describe('agent_model_compare tool', () => {
       confirm: true,
       explicitUserRequest: 'Compare product update drafts.',
     });
-    expect(run.success).toBe(true);
+    expect(run.success, run.error).toBe(true);
 
     const reviewer = fixture({ artifactStore: artifacts.store });
     const list = await reviewer.tool.execute({ mode: 'review' });
@@ -512,7 +522,7 @@ describe('agent_model_compare tool', () => {
     expect(reveal.output).toContain('A: openai:gpt-4.1 (GPT-4.1)');
     expect(reveal.output).toContain('B: anthropic:claude-sonnet (Claude Sonnet)');
 
-    const preview = await reviewer.tool.execute({
+    const preview = await reviewer.rawTool.execute({
       mode: 'judge',
       artifactId: 'artifact-1',
       winnerBlindId: 'B',
@@ -630,7 +640,7 @@ describe('agent_model_compare tool', () => {
     expect(hiddenApply.error).toContain('does not include a revealed winner model');
     expect(reviewer.appliedModelRoutes).toEqual([]);
 
-    const applyPreview = await reviewer.tool.execute({
+    const applyPreview = await reviewer.rawTool.execute({
       mode: 'apply',
       artifactId: 'artifact-2',
       confirm: false,
@@ -671,7 +681,7 @@ describe('agent_model_compare tool', () => {
     expect(applyReceiptPayload.decision).toBe('applied-winner');
     expect(applyReceiptPayload.selectedModel).toBe('anthropic:claude-sonnet');
 
-    const exportPreview = await reviewer.tool.execute({
+    const exportPreview = await reviewer.rawTool.execute({
       mode: 'export',
       artifactId: 'artifact-1',
       confirm: false,
@@ -787,7 +797,7 @@ describe('agent_model_compare tool', () => {
     expect(sideBySideList.output).toContain('Choose a saved comparison or judgment artifactId');
     expect(artifacts.inputs).toHaveLength(7);
 
-    const handoffPreview = await reviewer.tool.execute({
+    const handoffPreview = await reviewer.rawTool.execute({
       mode: 'handoff',
       artifactId: 'artifact-2',
       relatedArtifactIds: [documentExport.id],
@@ -828,9 +838,9 @@ describe('agent_model_compare tool', () => {
     expect(handoffText).toContain('## Comparison Evidence');
     expect(handoffText).toContain('# Blind Model Comparison Judgment');
     expect(handoffText).toContain('Winner model: anthropic:claude-sonnet');
-    expect(handoffText).toContain('Route changes require a separate confirmed');
+    expect(handoffText).toContain('Route changes require a separately admitted');
 
-    const archivePreview = await reviewer.tool.execute({
+    const archivePreview = await reviewer.rawTool.execute({
       mode: 'handoffArchive',
       artifactId: 'artifact-8',
       confirm: false,
@@ -998,7 +1008,7 @@ describe('agent_model_compare tool', () => {
       confirm: true,
       explicitUserRequest: 'Compare route-decision wording.',
     });
-    expect(run.success).toBe(true);
+    expect(run.success, run.error).toBe(true);
 
     const reviewer = fixture({ artifactStore: artifacts.store });
     const judgment = await reviewer.tool.execute({
@@ -1012,7 +1022,7 @@ describe('agent_model_compare tool', () => {
     });
     expect(judgment.success).toBe(true);
 
-    const preview = await reviewer.tool.execute({
+    const preview = await reviewer.rawTool.execute({
       mode: 'routeDecision',
       artifactId: 'artifact-2',
       decision: 'left-unchanged',
@@ -1032,7 +1042,7 @@ describe('agent_model_compare tool', () => {
       confirm: true,
       explicitUserRequest: 'Leave the current model unchanged for this judgment.',
     });
-    expect(receipt.success).toBe(true);
+    expect(receipt.success, receipt.error).toBe(true);
     expect(receipt.output).toContain('Recorded blind model comparison route decision left-unchanged');
     expect(receipt.output).toContain('route decision receipt artifact-3');
     expect(receipt.output).toContain('No selected model was changed.');

@@ -134,13 +134,15 @@ describe('Home Graph sync self-improvement cancellation', () => {
     const passportId = homeGraphNodeId(spaceId, 'ha_device_passport', deviceId);
     const controller = new AbortController();
     const abortingStore = Object.create(store) as KnowledgeStore;
-    abortingStore.upsertEdge = async (input) => {
-      const edge = await store.upsertEdge(input);
-      if (input.fromKind === 'node' && input.fromId === passportId && input.toKind === 'node' && input.toId === device.id) {
-        controller.abort();
-      }
-      return edge;
-    };
+    const publish = abortingStore.applyPreparedIngest.bind(abortingStore);
+    abortingStore.applyPreparedIngest = (input, prepareGraph, options) => publish(input, async stage => {
+      const graph = await prepareGraph(stage);
+      expect(graph.nodes.some(node => node.id === passportId)).toBe(true);
+      expect(graph.edges.some(edge => edge.fromId === passportId && edge.toId === device.id)).toBe(true);
+      expect(store.getNode(passportId)).toBeNull();
+      controller.abort();
+      return graph;
+    }, options);
 
     await expect(refreshHomeGraphDevicePassport({
       store: abortingStore,
@@ -152,7 +154,7 @@ describe('Home Graph sync self-improvement cancellation', () => {
         deviceId,
       },
       signal: controller.signal,
-    })).rejects.toThrow('Home Graph device passport refresh was cancelled');
+    })).rejects.toMatchObject({ category: 'timeout' });
 
     expect(store.getNode(passportId)).toBeNull();
     expect(store.listEdges()).not.toContainEqual(expect.objectContaining({
@@ -219,12 +221,14 @@ describe('Home Graph sync self-improvement cancellation', () => {
     });
     const controller = new AbortController();
     const abortingStore = Object.create(store) as KnowledgeStore;
-    const commitPrepared = abortingStore.upsertPreparedNode.bind(abortingStore);
-    abortingStore.upsertPreparedNode = async (prepared, index) => {
-      const node = await commitPrepared(prepared, index);
-      if (node.kind === 'fact') controller.abort();
-      return node;
-    };
+    const publish = abortingStore.applyPreparedIngest.bind(abortingStore);
+    abortingStore.applyPreparedIngest = (input, prepareGraph, options) => publish(input, async stage => {
+      const graph = await prepareGraph(stage);
+      expect(graph.nodes.some(node => node.kind === 'fact')).toBe(true);
+      expect(store.listNodes(50).filter(node => node.kind === 'fact')).toEqual([]);
+      controller.abort();
+      return graph;
+    }, options);
 
     await expect(refreshHomeGraphDevicePassport({
       store: abortingStore,
@@ -236,7 +240,7 @@ describe('Home Graph sync self-improvement cancellation', () => {
         deviceId,
       },
       signal: controller.signal,
-    })).rejects.toThrow('Home Graph device passport refresh was cancelled');
+    })).rejects.toMatchObject({ category: 'timeout' });
 
     expect(store.listNodes(50).filter((node) => node.kind === 'fact')).toEqual([]);
     expect(store.listEdges()).not.toContainEqual(expect.objectContaining({

@@ -1,7 +1,7 @@
 import { projectKnowledgeSourceReferences } from '../../source-structural-references.js';
 import { storedKnowledgeSourceReferences } from './structural-references.js';
 import type { SupportReferenceLabels } from './structural-references.js';
-import { createHash } from 'node:crypto';
+import { knowledgeContentHash } from '../../content-hash.js';
 import type { JsonValue } from '@goodvibes-jev/judgment';
 import { assertJudgmentInput, JudgmentInputError } from '../../../gate/judgment-input.js';
 import { getKnowledgeSpaceId } from '../../spaces.js';
@@ -10,7 +10,7 @@ import type { KnowledgeNodeRecord } from '../../types.js';
 import { KnowledgeGeneratedFactSupportHeldError as Held, type GeneratedFactSupportInput } from './types.js';
 
 export function supportHash(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  return knowledgeContentHash(JSON.stringify(value));
 }
 export function freezeSupport<T>(value: T): T {
   if (value && typeof value === 'object') {

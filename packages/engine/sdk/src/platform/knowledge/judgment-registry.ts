@@ -11,3 +11,6 @@ registry.register(repairFailureCause);
 
 import { planningGoalSpecified } from './project-planning/batteries/readiness.js';
 registry.register(planningGoalSpecified);
+
+import { knowledgeScopeSelection } from './batteries/scope-selection.js';
+registry.register(knowledgeScopeSelection);

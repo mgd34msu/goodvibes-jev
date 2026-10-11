@@ -142,20 +142,20 @@ var init_other = __esm(() => {
       }
     }
   });
-  test('a passing version banner cannot waive an unproven constructor call', () => {
-    const result = runPostBuildSmoke({
+  test('a passing version banner cannot waive an unproven constructor call', async () => {
+    const result = await runPostBuildSmoke({
       binary: 'fixture',
-      config: { bannerPrefix: 'goodvibes ', forbiddenStrings: [], binaryDefault: 'fixture' },
-      exec: () => ({ status: 0, stdout: 'goodvibes 1.0\n', stderr: '' }),
+      config: { bannerPrefix: 'goodvibes ', binaryDefault: 'fixture' },
+      exec: () => ({ status: 0, stdout: 'goodvibes 1.0.0\n', stderr: '' }),
       logger: captureLogger(), readArtifact: () => fixture(''),
     });
     expect(result.ok).toBe(false);
   });
-  test('a proven constructor still goes through the version smoke', () => {
-    const result = runPostBuildSmoke({
+  test('a proven constructor still goes through the version smoke', async () => {
+    const result = await runPostBuildSmoke({
       binary: 'fixture',
-      config: { bannerPrefix: 'goodvibes ', forbiddenStrings: [], binaryDefault: 'fixture' },
-      exec: () => ({ status: 0, stdout: 'goodvibes 1.0\n', stderr: '' }),
+      config: { bannerPrefix: 'goodvibes ', binaryDefault: 'fixture' },
+      exec: () => ({ status: 0, stdout: 'goodvibes 1.0.0\n', stderr: '' }),
       logger: captureLogger(), readArtifact: () => fixture(),
     });
     expect(result.ok).toBe(true);

@@ -143,10 +143,10 @@ export function noteStorePath(shellPaths: AgentLocalStorePaths): string {
 }
 
 export class AgentNoteRegistry {
-  public constructor(private readonly storePath: string) {}
+  public constructor(private readonly storePath: string, private readonly effects?: Parameters<typeof writeStoreFile>[2]) {}
 
-  public static fromShellPaths(shellPaths: AgentLocalStorePaths): AgentNoteRegistry {
-    return new AgentNoteRegistry(noteStorePath(shellPaths));
+  public static fromShellPaths(shellPaths: AgentLocalStorePaths, effects?: Parameters<typeof writeStoreFile>[2]): AgentNoteRegistry {
+    return new AgentNoteRegistry(noteStorePath(shellPaths), effects);
   }
 
   public snapshot(): AgentNoteSnapshot {
@@ -315,6 +315,6 @@ export class AgentNoteRegistry {
   }
 
   private writeStore(store: NoteStoreFile): void {
-    writeStoreFile(this.storePath, formatStore(store));
+    writeStoreFile(this.storePath, formatStore(store), this.effects);
   }
 }

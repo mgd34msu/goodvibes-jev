@@ -14,6 +14,8 @@ const configSetCalls: [string, unknown][] = [];
 // network failure, a rejected promise, never a resolved { success: false }.
 type SetOutcome = 'ok' | 'reject';
 let setOutcome: SetOutcome = 'ok';
+let fallbackValue: unknown = [];
+let semanticCalls = 0;
 
 // Enough of a live config to exercise: a typed string field
 // (provider.systemPromptFile), the engine-declared display.theme field,
@@ -39,7 +41,7 @@ const CONFIG_FIXTURE = {
 const cardsListCalls: string[] = [];
 
 mock.module('../../../lib/goodvibes', () => ({
-  runBrowserJudgment: async () => { throw new Error('No semantic reading fixture'); },
+  runBrowserJudgment: async () => { semanticCalls++; throw new Error('No semantic reading fixture'); },
   sdk: {
     operator: {
       payments: {
@@ -62,7 +64,7 @@ mock.module('../../../lib/goodvibes', () => ({
           if (outcome === 'network-error') {
             return Promise.reject(new Error('Failed to fetch'));
           }
-          return Promise.resolve(CONFIG_FIXTURE);
+          return Promise.resolve({ ...CONFIG_FIXTURE, judgment: { fallbacks: fallbackValue } });
         },
         set: (key: string, value: unknown) => {
           configSetCalls.push([key, value]);
@@ -71,6 +73,7 @@ mock.module('../../../lib/goodvibes', () => ({
               Object.assign(new Error('POST /config failed: 409 Conflict'), { status: 409 }),
             );
           }
+          if (key === 'judgment.fallbacks') fallbackValue = value;
           // daemonOwned surfaces.* keys report a daemon-tier persistedTo; everything
           // else reports the ordinary client settings path, mirrors system-routes.ts.
           const daemonOwned = key.startsWith('surfaces.');
@@ -201,6 +204,8 @@ afterEach(() => {
   outcome = 'ok';
   setOutcome = 'ok';
   configSetCalls.length = 0;
+  fallbackValue = [];
+  semanticCalls = 0;
 });
 
 describe('settings config groups: schema-driven structure', () => {
@@ -398,6 +403,100 @@ describe('settings config groups: object-typed pricing editor', () => {
     expect(field.querySelector('[data-testid="model-prices-editor"]')).not.toBeNull();
     expect(field.querySelector('textarea')).toBeNull();
     unmount();
+  });
+});
+
+describe('settings config groups: declared fallback-reference arrays', () => {
+  const reference = { endpoint: 'https://fallback.example.test/v1', model: 'jev-1.13.0', keySource: 'env', keyName: 'FALLBACK_API_KEY' };
+  async function openFallbackField(el: HTMLElement): Promise<HTMLElement> {
+    await waitFor(() => Boolean([...el.querySelectorAll('.settings-category')].some(button => button.textContent === 'Judgment')));
+    clickCategory(el, 'Judgment');
+    await waitFor(() => Boolean(el.querySelector('[data-config-key="judgment.fallbacks"] textarea')));
+    return el.querySelector('[data-config-key="judgment.fallbacks"]') as HTMLElement;
+  }
+  function replaceDraft(field: HTMLElement, value: unknown): void {
+    const textarea = field.querySelector('textarea');
+    if (!textarea) throw new Error('Missing fallback-reference editor');
+    flushSync(() => {
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(textarea, JSON.stringify(value));
+      textarea.dispatchEvent(new window.Event('input', { bubbles: true }));
+    });
+  }
+  function save(field: HTMLElement): void {
+    flushSync(() => field.querySelector('button')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true })));
+  }
+
+  test('valid references stay editable and a saved array returns through config.get without semantic readings', async () => {
+    fallbackValue = [reference];
+    const ui = render();
+    try {
+      const field = await openFallbackField(ui.el);
+      expect(JSON.parse(field.querySelector('textarea')!.value)).toEqual([reference]);
+      const replacement = [{ ...reference, keySource: 'secret', keyName: 'judgment/backup-key' }];
+      replaceDraft(field, replacement);
+      save(field);
+      await waitFor(() => Boolean(field.querySelector('.settings-field-persisted')));
+      expect(configSetCalls).toEqual([['judgment.fallbacks', replacement]]);
+      expect(fallbackValue).toEqual(replacement);
+      expect(semanticCalls).toBe(0);
+      clickCategory(ui.el, 'Display');
+      const reloaded = await openFallbackField(ui.el);
+      expect(JSON.parse(reloaded.querySelector('textarea')!.value)).toEqual(replacement);
+    } finally { ui.unmount(); }
+  });
+
+  test.each([
+    { value: { apiKey: 'synthetic-private-value' } },
+    { value: [{ ...reference, apiKey: 'synthetic-private-value' }] },
+    { value: [{ ...reference, keyName: 'synthetic-private-value' }] },
+  ])('malformed persisted value %j is hidden and cannot be submitted unchanged', async ({ value }) => {
+    fallbackValue = value;
+    const ui = render();
+    try {
+      const field = await openFallbackField(ui.el);
+      expect(field.querySelector('textarea')!.value).toBe('');
+      expect(field.querySelector('.settings-value--secret')?.textContent).toBe('••••');
+      expect(ui.el.innerHTML).not.toContain('synthetic-private-value');
+      save(field);
+      expect(field.querySelector('[role="alert"]')?.textContent).toBe('Not valid JSON.');
+      expect(configSetCalls).toEqual([]);
+      replaceDraft(field, []);
+      save(field);
+      await waitFor(() => Boolean(field.querySelector('.settings-field-persisted')));
+      expect(configSetCalls).toEqual([['judgment.fallbacks', []]]);
+      expect(semanticCalls).toBe(0);
+    } finally { ui.unmount(); }
+  });
+
+  test('accessor-backed reference arrays are masked without invoking getters', async () => {
+    let invoked = 0;
+    const references: unknown[] = [];
+    Object.defineProperty(references, 0, { enumerable: true, get: () => { invoked++; return { ...reference, apiKey: 'synthetic-private-value' }; } });
+    fallbackValue = references;
+    const ui = render();
+    try {
+      const field = await openFallbackField(ui.el);
+      expect(field.querySelector('textarea')!.value).toBe('');
+      expect(field.querySelector('.settings-value--secret')?.textContent).toBe('••••');
+      expect(ui.el.innerHTML).not.toContain('synthetic-private-value');
+      expect(invoked).toBe(0);
+      expect(semanticCalls).toBe(0);
+    } finally { ui.unmount(); }
+  });
+
+  test('parsed replacements use canonical validation before config.set', async () => {
+    fallbackValue = [reference];
+    const ui = render();
+    try {
+      const field = await openFallbackField(ui.el);
+      for (const invalid of [{}, [{ ...reference, model: 'jev-latest' }], [{ ...reference, apiKey: 'synthetic-private-value' }]]) {
+        replaceDraft(field, invalid);
+        save(field);
+        expect(field.querySelector('[role="alert"]')?.textContent).toBe('Value must be a valid fallback-reference array.');
+        expect(configSetCalls).toEqual([]);
+      }
+      expect(semanticCalls).toBe(0);
+    } finally { ui.unmount(); }
   });
 });
 

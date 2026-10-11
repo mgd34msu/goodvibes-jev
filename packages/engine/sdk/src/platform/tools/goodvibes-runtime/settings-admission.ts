@@ -31,7 +31,10 @@ const captures = new WeakMap<object, Capture>();
 function assertCapture(capture: Capture): void {
   if (capture.released || capture.spent) throw new ToolInputProjectionError('stale');
   assertPreparedConfigWriteRoute(capture.route);
-  if (capture.local) capture.local.owner.assertPreparedMutation(capture.local.mutation);
+  if (capture.local) {
+    if (!capture.local.mutation) throw new ToolInputProjectionError('stale');
+    capture.local.owner.assertPreparedMutation(capture.local.mutation);
+  }
   if (capture.remote) assertRemoteSettingsPrecondition(capture.remote);
 }
 function posture(value: unknown): Readonly<Record<string, unknown>> {

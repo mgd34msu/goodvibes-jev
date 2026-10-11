@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto';
 import type { ArtifactDescriptor, ArtifactRecord, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { ChatRequest, ChatResponse, LLMProvider } from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolEffect, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { registerComparisonCandidate, runAdmittedComparisonCandidate } from './agent-model-compare-candidate.ts';
+import { createComparisonOperation } from './agent-model-compare-operation.ts';
 import { createZipArchive } from './artifact-archive.ts';
 import type { AgentModelCompareToolArgs, AgentModelCompareToolDeps, SavedComparisonArtifact, StoredComparison } from './agent-model-compare-types.ts';
 import { BLIND_LABELS, DEFAULT_CANDIDATE_COUNT, DEFAULT_MAX_TOKENS, DEFAULT_SIDE_BY_SIDE_PREVIEW_BYTES, MAX_CANDIDATES, MAX_COMPLETION_TOKENS, MAX_PROMPT_CHARS, MAX_SIDE_BY_SIDE_PREVIEW_BYTES, MIN_CANDIDATES, MODE_ANALYTICS, MODE_APPLY, MODE_EXPORT, MODE_HANDOFF, MODE_HANDOFF_ARCHIVE, MODE_HANDOFF_DIFF, MODE_JUDGE, MODE_REVEAL, MODE_REVIEW, MODE_ROUTE_DECISION, MODE_RUN, MODE_SIDE_BY_SIDE, MODE_SYNTHESIS } from './agent-model-compare-types.ts';
@@ -13,8 +15,9 @@ import { buildComparisonHandoffArchivePayload, findRouteDecisionArtifactIdsForHa
 import { clamp, failure, output, previewText, readBenchmarkKind, readBoolean, readComparisonTag, readModelRefs, readNumber, readOptionalBoolean, readString, readStringList } from './agent-model-compare-utils.ts';
 export type { AgentModelCompareCatalogModel, AgentModelCompareModelCatalog, AgentModelCompareProviderRegistry, AgentModelCompareRouteUpdateResult, AgentModelCompareToolArgs, AgentModelCompareToolDeps } from './agent-model-compare-types.ts';
 
-export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): Tool {
+export function createAgentModelCompareTool(sourceDeps: AgentModelCompareToolDeps): Tool {
   const comparisons = new Map<string, StoredComparison>();
+  if (sourceDeps.toolRegistry) registerComparisonCandidate(sourceDeps.toolRegistry, sourceDeps);
   return {
     definition: {
       name: 'agent_model_compare',
@@ -132,11 +135,12 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
           },
           confirm: {
             type: 'boolean',
-            description: 'Required true for provider calls and mutating modes.',
+            description: 'Optional legacy audit field; does not authorize provider calls or writes.',
           },
+          preview: { type: 'boolean', description: 'For mode:run, inspect a comparison request without metered provider calls or result writes.' },
           explicitUserRequest: {
             type: 'string',
-            description: 'User request authorizing this comparison.',
+            description: 'Optional request text retained with route-decision receipts.',
           },
         },
         required: ['mode'],
@@ -145,10 +149,14 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
       sideEffects: ['network', 'state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: Record<string, unknown>) => {
+    execute: async (rawArgs: Record<string, unknown>, options) => {
       try {
+        const operation = createComparisonOperation(sourceDeps, rawArgs, options);
+        const deps = operation.deps;
+        operation.assertCurrent();
         const args = rawArgs as AgentModelCompareToolArgs;
         const mode = parseMode(args.mode);
+        if (args.preview === true && mode !== MODE_RUN) return failure('preview:true is available for mode:run.');
         if (mode === MODE_REVEAL || mode === MODE_REVIEW) {
           const comparisonId = readString(args.comparisonId);
           const artifactId = readString(args.artifactId);
@@ -261,7 +269,8 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
           const limit = clamp(readNumber(args.limit, 20), 1, 100);
           const filters = readComparisonAnalyticsFilters(args);
           const judgments = await loadSavedJudgments(deps.artifactStore, limit, filters);
-          return output(formatComparisonSynthesis({
+          return output(await formatComparisonSynthesis({
+            artifactStore: deps.artifactStore, request: rawArgs, readingOptions: { signal: options?.signal, assertCurrent: operation.assertCurrent, sourceOwner: operation.sourceOwner },
             judgments,
             limit,
             includeReasons: readOptionalBoolean(args.includeReasons, true),
@@ -279,14 +288,11 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
           if (!comparisonId && !artifactId) return failure('judge mode requires comparisonId or artifactId.');
           if (!winnerBlindId) return failure('winnerBlindId is required for judge mode.');
           if (!reasons) return failure('reasons are required for judge mode.');
-          if (!explicitUserRequest) {
-            return failure('explicitUserRequest is required so saved judgments stay tied to a direct user request.');
-          }
-          if (!readBoolean(args.confirm)) {
+          if (!assertCurrentToolEffect(rawArgs, options, 'write')) {
             return failure([
               formatJudgePreview(args),
               '',
-              'Judgment confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to save this judgment.',
+              'This operation requires current recorded effect admission.',
             ].join('\n'));
           }
           const comparison = await resolveComparisonForRead({
@@ -322,9 +328,6 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
           const artifactId = readString(args.artifactId);
           const explicitUserRequest = readString(args.explicitUserRequest);
           if (!artifactId) return failure('apply mode requires a saved judgment artifactId.');
-          if (!explicitUserRequest) {
-            return failure('explicitUserRequest is required so route updates stay tied to a direct user request.');
-          }
           if (!deps.applyModelRoute) {
             return failure('Model route updates are unavailable in this runtime. Use settings action:"set" for provider.model if available.');
           }
@@ -336,11 +339,11 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
           if (!judgment.revealIncludedInJudgment || !judgment.winnerModel?.registryKey) {
             return failure('Judgment artifact does not include a revealed winner model. Save or reveal the judgment before applying a route update.');
           }
-          if (!readBoolean(args.confirm)) {
+          if (!assertCurrentToolEffect(rawArgs, options, 'write')) {
             return failure([
               formatApplyPreview(judgment),
               '',
-              'Route update confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to apply this winning model.',
+              'This operation requires current recorded effect admission.',
             ].join('\n'));
           }
           await ensureSelectableWinnerModel(deps.modelCatalog, judgment.winnerModel.registryKey);
@@ -367,9 +370,6 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
           const explicitUserRequest = readString(args.explicitUserRequest);
           const decision = parseRouteDecision(args.decision);
           if (!artifactId) return failure('routeDecision mode requires a saved judgment artifactId.');
-          if (!explicitUserRequest) {
-            return failure('explicitUserRequest is required so route-decision receipts stay tied to a direct user request.');
-          }
           if (decision !== 'left-unchanged') {
             return failure('routeDecision mode records leave-unchanged decisions. Use mode:"apply" to apply a revealed winner.');
           }
@@ -382,11 +382,11 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
             return failure('Judgment artifact does not include a revealed winner model. Save or reveal the judgment before recording a route decision.');
           }
           const currentModel = (await resolveCurrentModel(deps.modelCatalog))?.registryKey ?? null;
-          if (!readBoolean(args.confirm)) {
+          if (!assertCurrentToolEffect(rawArgs, options, 'write')) {
             return failure([
               formatRouteDecisionPreview({ judgment, decision, currentModel }),
               '',
-              'Route-decision confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to leave the current model route unchanged.',
+              'This operation requires current recorded effect admission.',
             ].join('\n'));
           }
           const receipt = await saveRouteDecisionArtifact({
@@ -403,9 +403,6 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
           const artifactId = readString(args.artifactId);
           const explicitUserRequest = readString(args.explicitUserRequest);
           if (!artifactId) return failure('export mode requires a saved comparison or judgment artifactId.');
-          if (!explicitUserRequest) {
-            return failure('explicitUserRequest is required so exports stay tied to a direct user request.');
-          }
           if (!deps.artifactStore?.readContent || !deps.artifactStore.create) {
             return failure('Saved comparison export is unavailable because this runtime cannot read and create artifact content.');
           }
@@ -413,7 +410,7 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
           const comparison = await loadComparisonFromArtifact(deps.artifactStore, artifactId);
           if (comparison) {
             const reveal = readBoolean(args.reveal);
-            if (!readBoolean(args.confirm)) {
+            if (!assertCurrentToolEffect(rawArgs, options, 'write')) {
               return failure([
                 formatExportPreview({
                   sourceKind: 'comparison',
@@ -422,7 +419,7 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
                   reveal,
                 }),
                 '',
-                'Export confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to create this markdown report.',
+                'This operation requires current recorded effect admission.',
               ].join('\n'));
             }
             const artifact = await saveComparisonExportArtifact({
@@ -445,7 +442,7 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
           const judgment = await loadJudgmentFromArtifact(deps.artifactStore, artifactId);
           if (!judgment) return failure('Unknown comparison or judgment artifact. Pass a saved blind model comparison artifactId.');
           const reveal = judgment.revealIncludedInJudgment;
-          if (!readBoolean(args.confirm)) {
+          if (!assertCurrentToolEffect(rawArgs, options, 'write')) {
             return failure([
               formatExportPreview({
                 sourceKind: 'judgment',
@@ -454,7 +451,7 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
                 reveal,
               }),
               '',
-              'Export confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to create this markdown report.',
+              'This operation requires current recorded effect admission.',
             ].join('\n'));
           }
           const artifact = await saveComparisonExportArtifact({
@@ -479,9 +476,6 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
           const relatedArtifactIds = readStringList(args.relatedArtifactIds).filter((relatedId) => relatedId !== artifactId);
           if (!artifactId) return failure('handoff mode requires a saved comparison or judgment artifactId.');
           if (relatedArtifactIds.length === 0) return failure('handoff mode requires at least one relatedArtifactIds entry.');
-          if (!explicitUserRequest) {
-            return failure('explicitUserRequest is required so reviewer handoffs stay tied to a direct user request.');
-          }
           if (!deps.artifactStore?.readContent || !deps.artifactStore.create) {
             return failure('Reviewer handoff is unavailable because this runtime cannot read and create artifact content.');
           }
@@ -489,7 +483,7 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
           const comparison = await loadComparisonFromArtifact(deps.artifactStore, artifactId);
           if (comparison) {
             const reveal = readBoolean(args.reveal);
-            if (!readBoolean(args.confirm)) {
+            if (!assertCurrentToolEffect(rawArgs, options, 'write')) {
               return failure([
                 formatHandoffPreview({
                   sourceKind: 'comparison',
@@ -499,7 +493,7 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
                   relatedArtifactIds,
                 }),
                 '',
-                'Handoff confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to create this reviewer handoff.',
+                'This operation requires current recorded effect admission.',
               ].join('\n'));
             }
             const relatedArtifacts = await loadHandoffRelatedArtifacts(deps.artifactStore, relatedArtifactIds);
@@ -532,7 +526,7 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
           const judgment = await loadJudgmentFromArtifact(deps.artifactStore, artifactId);
           if (!judgment) return failure('Unknown comparison or judgment artifact. Pass a saved blind model comparison artifactId.');
           const reveal = judgment.revealIncludedInJudgment;
-          if (!readBoolean(args.confirm)) {
+          if (!assertCurrentToolEffect(rawArgs, options, 'write')) {
             return failure([
               formatHandoffPreview({
                 sourceKind: 'judgment',
@@ -542,7 +536,7 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
                 relatedArtifactIds,
               }),
               '',
-              'Handoff confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to create this reviewer handoff.',
+              'This operation requires current recorded effect admission.',
             ].join('\n'));
           }
           const relatedArtifacts = await loadHandoffRelatedArtifacts(deps.artifactStore, relatedArtifactIds);
@@ -575,9 +569,6 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
           const artifactId = readString(args.artifactId);
           const explicitUserRequest = readString(args.explicitUserRequest);
           if (!artifactId) return output(formatSavedHandoffArtifacts(deps.artifactStore));
-          if (!explicitUserRequest) {
-            return failure('explicitUserRequest is required so reviewer handoff archives stay tied to a direct user request.');
-          }
           if (!deps.artifactStore?.readContent || !deps.artifactStore.create) {
             return failure('Reviewer handoff archive is unavailable because this runtime cannot read and create artifact content.');
           }
@@ -585,11 +576,11 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
           const handoff = await loadHandoffFromArtifact(deps.artifactStore, artifactId);
           if (!handoff) return failure('Unknown reviewer handoff artifact. Pass a saved blind model comparison handoff artifactId.');
           const routeDecisionArtifactIds = findRouteDecisionArtifactIdsForHandoff(deps.artifactStore, handoff);
-          if (!readBoolean(args.confirm)) {
+          if (!assertCurrentToolEffect(rawArgs, options, 'write')) {
             return failure([
               formatHandoffArchivePreview({ handoff, routeDecisionArtifactIds }),
               '',
-              'Handoff archive confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to create this reviewer handoff ZIP.',
+              'This operation requires current recorded effect admission.',
             ].join('\n'));
           }
 
@@ -621,14 +612,12 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
         const requestedDocumentId = readComparisonTag(args.documentId);
         const candidateCount = clamp(readNumber(args.candidateCount, DEFAULT_CANDIDATE_COUNT), MIN_CANDIDATES, MAX_CANDIDATES);
         if (!promptInput && !sourceArtifactId) return failure('prompt or artifactId is required.');
-        if (!explicitUserRequest) {
-          return failure('explicitUserRequest is required so model comparison stays tied to a direct user request.');
-        }
-        if (!readBoolean(args.confirm)) {
+        if (args.preview === true) return output(formatPreview(args, refs, candidateCount));
+        if (!assertCurrentToolEffect(rawArgs, options, 'send')) {
           return failure([
             formatPreview(args, refs, candidateCount),
             '',
-            'Model tool confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to run this comparison.',
+            'This operation requires current recorded effect admission.',
           ].join('\n'));
         }
         const runPrompt = await buildRunPromptFromArtifact({
@@ -642,14 +631,12 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
         const maxTokens = clamp(readNumber(args.maxTokens, DEFAULT_MAX_TOKENS), 1, MAX_COMPLETION_TOKENS);
         const systemPrompt = readString(args.systemPrompt);
         const models = await selectComparisonModels(deps.modelCatalog, refs, candidateCount);
-        const results = await Promise.all(models.map((model, index) => runCandidate(
-          deps,
-          model,
-          BLIND_LABELS[index] ?? String(index + 1),
-          prompt,
-          systemPrompt,
-          maxTokens,
-        )));
+        operation.assertSend();
+        const pending = models.map((model, index) => runAdmittedComparisonCandidate(sourceDeps.toolRegistry, options,
+          model, BLIND_LABELS[index] ?? String(index + 1), prompt, systemPrompt, maxTokens, operation.assertCurrent, rawArgs, sourceArtifactId));
+        const settled = await Promise.allSettled(pending);
+        operation.assertCurrent();
+        const results = settled.map(result => { if (result.status === 'rejected') throw result.reason; return result.value; });
         const reveal = readBoolean(args.reveal);
         const baseComparison: StoredComparison = {
           comparisonId: `cmp_${randomUUID()}`,
@@ -677,8 +664,10 @@ export function createAgentModelCompareTool(deps: AgentModelCompareToolDeps): To
           ...(saved.artifact ? { artifact: saved.artifact } : {}),
           artifactStatus: saved.status,
         };
+        operation.assertWrite();
         rememberComparison(comparisons, comparison);
         await Promise.allSettled(models.map((model) => deps.modelCatalog.recordModelUsage?.(model.registryKey)));
+        operation.assertCurrent();
         const rendered = formatRunResult(comparison, reveal);
         return results.some((candidate) => candidate.status === 'completed')
           ? output(rendered)
@@ -694,5 +683,5 @@ export function registerAgentModelCompareTool(
   registry: ToolRegistry,
   deps: AgentModelCompareToolDeps,
 ): void {
-  registry.register(createAgentModelCompareTool(deps));
+  registry.register(createAgentModelCompareTool({ ...deps, toolRegistry: registry }));
 }

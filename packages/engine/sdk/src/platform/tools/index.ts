@@ -89,10 +89,12 @@ export type {
   UnavailableConfigRead,
 } from './goodvibes-runtime/config-routing.js';
 
-export { ToolRegistry, assertCurrentToolExecution, assertCurrentToolInvocation, commitCurrentToolSettingsPlan, currentToolSettingsPresentation, claimCurrentToolSettingsDispatch } from './registry.js';
-export { ToolInputProjectionError, assertProjectionExecution } from './input-projection.js';
+export { ToolRegistry, assertCurrentToolExecution, assertCurrentToolInvocation, assertCurrentToolEffect, currentToolAutonomySource, commitCurrentToolSettingsPlan, currentToolSettingsPresentation, claimCurrentToolSettingsDispatch } from './registry.js';
+export type { ToolExecutionEffect, CurrentToolAutonomySource } from './registry.js';
+export type { ToolExecuteOptions } from '../types/tools.js';
+export { ToolInputProjectionError, assertProjectionExecution, assertProjectionCurrent } from './input-projection.js';
 export type {
-  ToolPreparedSettingsMutation, ProjectedToolCall, ToolAdmissionEvidence, ToolInputProjectionProblem, ToolInputProjectionRequest,
+  ToolPreparedSettingsMutation, ToolNativeReferencesCapture, ProjectedToolCall, ToolAdmissionEvidence, ToolInputProjectionProblem, ToolInputProjectionRequest,
   ToolInputProjectionResult, ToolInputProjector, ToolRegistrationOptions, ToolInputProjectionOptions,
 } from './input-projection.js';
 export { ProcessManager } from './shared/process-manager.js';
@@ -681,3 +683,4 @@ export function registerAllTools(
   registerTool(createChannelTool(channelRegistry));
   return { fileCache, projectIndex };
 }
+export { booleanValue } from './batteries/boolean-value.js';

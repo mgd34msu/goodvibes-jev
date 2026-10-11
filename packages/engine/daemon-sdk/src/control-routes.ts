@@ -330,6 +330,13 @@ export function createDaemonControlRouteHandlers(
           ((bodyRecord.sessionId !== undefined && bodyRecord.sessionId !== params.sessionId) || query.sessionId !== params.sessionId)) {
         return jsonErrorResponse({ error: 'sessionId must match the route target', code: 'INVALID_ARGUMENT' }, { status: 400 });
       }
+      if (methodId.startsWith('automation.jobs.') || methodId.startsWith('automation.schedules.')) {
+        for (const key of ['jobId', 'scheduleId']) {
+          if (params[key] !== undefined && ((bodyRecord[key] !== undefined && bodyRecord[key] !== params[key]) || query[key] !== params[key])) {
+            return jsonErrorResponse({ error: `${key} must match the route target`, code: 'INVALID_ARGUMENT' }, { status: 400 });
+          }
+        }
+      }
       const response = await context.invokeGatewayMethodCall({
         authToken: context.extractAuthToken(req),
         signal: req.signal,

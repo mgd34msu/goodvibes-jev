@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { createHash } from 'node:crypto';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { openVersionedSchema, sqlJsVersionHandle } from './store-versioning.js';
 import { restoreStoreSnapshot, snapshotStoreFile } from './store-snapshots.js';
-import { imageDigest, SQLiteStorePersistence } from './sqlite-store-persistence.js';
+import { imageDigest, SQLitePublicationError, SQLiteStorePersistence } from './sqlite-store-persistence.js';
 import { sqliteLocalObservation } from './sqlite-local-observation.js';
 
 // The sql.js engine loads exactly once per process, however many stores open.
@@ -32,6 +33,37 @@ export interface SqlDatabase {
   exec(sql: string, params?: (string | number)[], config?: { useBigInt: boolean }): Array<{ columns: string[]; values: unknown[][] }>;
   export(): Uint8Array;
   close(): void;
+}
+
+export interface PersistedKnowledgeRecordSelector {
+  readonly kind: 'source' | 'node' | 'extraction';
+  readonly id: string;
+}
+
+function captureRecordSelectors(value: readonly PersistedKnowledgeRecordSelector[]): PersistedKnowledgeRecordSelector[] {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new TypeError('SQLiteStore: invalid record generation selectors');
+  const array: object = value;
+  const descriptors = Object.getOwnPropertyDescriptors(array);
+  const length: unknown = descriptors.length?.value;
+  if (typeof length !== 'number' || !Number.isSafeInteger(length) || length < 0
+    || Reflect.ownKeys(descriptors).length !== length + 1) throw new TypeError('SQLiteStore: invalid record generation selectors');
+  const captured: PersistedKnowledgeRecordSelector[] = [];
+  for (let index = 0; index < length; index++) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor || !('value' in descriptor)) throw new TypeError('SQLiteStore: invalid record generation selector');
+    const selector: unknown = descriptor.value;
+    if (!selector || typeof selector !== 'object' || (Object.getPrototypeOf(selector) !== Object.prototype && Object.getPrototypeOf(selector) !== null)) {
+      throw new TypeError('SQLiteStore: invalid record generation selector');
+    }
+    const fields = Object.getOwnPropertyDescriptors(selector);
+    if (Reflect.ownKeys(fields).length !== 2 || !fields.kind || !fields.id || !('value' in fields.kind) || !('value' in fields.id)) {
+      throw new TypeError('SQLiteStore: invalid record generation selector');
+    }
+    const kind: unknown = fields.kind.value, id: unknown = fields.id.value;
+    if ((kind !== 'source' && kind !== 'node' && kind !== 'extraction') || typeof id !== 'string') throw new TypeError('SQLiteStore: invalid record generation selector');
+    captured.push({ kind, id });
+  }
+  return captured;
 }
 
 interface SqlJsStatic {
@@ -80,25 +112,35 @@ function readDatabaseRow(db: SqlDatabase, sql: string, params: string[]) {
   return (state?.raw ?? db).exec(sql, params);
 }
 
-function databaseProbe(raw: SqlDatabase): { readonly signature: string | null; readonly cacheable: boolean } {
-  const query = (sql: string) => raw.exec(sql, undefined, { useBigInt: true })[0]?.values;
-  const mode = query('PRAGMA read_uncommitted')?.[0]?.[0];
-  const databases = query('PRAGMA database_list');
-  if ((mode !== 0n && mode !== 1n) || !databases?.length) return { signature: null, cacheable: false };
+function databaseProbe(raw: SqlDatabase): { readonly signature: string | null; readonly cacheable: boolean; readonly isolated: boolean; readonly guarded: boolean } {
+  const unsupported = { signature: null, cacheable: false, isolated: false, guarded: false } as const;
+  const initial = raw.exec('PRAGMA read_uncommitted;PRAGMA database_list', undefined, { useBigInt: true });
+  const mode = initial[0]?.values[0]?.[0];
+  const databases = initial[1]?.values;
+  if ((mode !== 0n && mode !== 1n) || !databases?.length) return unsupported;
   const identities: Array<readonly string[]> = [];
+  const schemas: string[] = [];
   for (const row of databases) {
     const [sequence, name, file] = row;
     if (typeof sequence !== 'bigint' || typeof name !== 'string' || typeof file !== 'string'
       || [name, file].some(value => value.includes('\0') || value.includes('\ufffd') || Buffer.from(value).toString('utf8') !== value)) {
-      return { signature: null, cacheable: false };
+      return unsupported;
     }
     const schema = `"${name.replaceAll('"', '""')}"`;
-    const version = query(`PRAGMA ${schema}.data_version`)?.[0]?.[0];
-    const schemaVersion = query(`PRAGMA ${schema}.schema_version`)?.[0]?.[0];
-    if (typeof version !== 'bigint' || typeof schemaVersion !== 'bigint') return { signature: null, cacheable: false };
-    identities.push([String(sequence), name, file, String(version), String(schemaVersion)]);
+    schemas.push(`PRAGMA ${schema}.data_version;PRAGMA ${schema}.schema_version`);
+    identities.push([String(sequence), name, file]);
   }
-  return { signature: JSON.stringify([String(mode), identities]), cacheable: mode === 0n };
+  const versions = raw.exec(schemas.join(';'), undefined, { useBigInt: true });
+  if (versions.length !== identities.length * 2) return unsupported;
+  const observed = identities.map((identity, index) => {
+    const version = versions[index * 2]?.values[0]?.[0], schemaVersion = versions[index * 2 + 1]?.values[0]?.[0];
+    return typeof version === 'bigint' && typeof schemaVersion === 'bigint' ? [...identity, String(version), String(schemaVersion)] : null;
+  });
+  if (observed.some(identity => identity === null)) return unsupported;
+  const guarded = mode === 0n && identities.filter(row => row[1] === 'main').length === 1
+    && identities.every(row => row[1] === 'main' || row[1] === 'temp');
+  return { signature: JSON.stringify([String(mode), observed]), cacheable: mode === 0n,
+    isolated: guarded && identities.every(row => row[2] === ''), guarded };
 }
 
 /** Reuse only a complete observation owned by an uninterrupted connection.
@@ -176,7 +218,7 @@ export class SQLiteStore {
   private validateCurrentSchema: ((db: SqlDatabase) => void) | undefined;
   private imageEpoch = 0;
   private observationEpoch = 0;
-  private persistedReadFrame: { db: SqlDatabase | null; owned: boolean; identity: string | undefined; local: string | undefined; persisted: string | undefined; poisoned: boolean; assertCurrent: () => void } | null = null;
+  private persistedReadFrame: { db: SqlDatabase | null; owned: boolean; identity: string | undefined; local: string | undefined; persisted: string | undefined; poisoned: boolean; localState: OwnedSqlDatabase | undefined; localRevision: bigint | undefined; localProbe: string | undefined; localIsolated: boolean; rows: Map<string, ReturnType<SqlDatabase['exec']>>; generations: Map<string, string | null>; assertCurrent: (verifyNative?: boolean) => void } | null = null;
   private admission: Promise<void> = Promise.resolve();
   private readonly activeBatches = new Set<Promise<void>>();
   private fenced = false;
@@ -251,17 +293,114 @@ export class SQLiteStore {
 
   /** Internal knowledge raw-row read. A closed descriptor, never caller SQL or
    * a callback, selects one detached result from the private guard image. */
-  readPersistedRow(table: 'knowledge_sources' | 'knowledge_nodes' | 'knowledge_extractions',
+  readPersistedRow(table: 'knowledge_sources' | 'knowledge_nodes' | 'knowledge_extractions' | 'knowledge_edges',
     column: 'id' | 'canonical_uri', value: string): Array<{ columns: string[]; values: unknown[][] }> {
-    if (!this.coordinated) throw new Error('SQLiteStore: persisted reads require coordinated storage');
-    const frame = this.persistedReadFrame;
     try {
-      if (!['knowledge_sources', 'knowledge_nodes', 'knowledge_extractions'].includes(table)
+      if (!['knowledge_sources', 'knowledge_nodes', 'knowledge_extractions', 'knowledge_edges'].includes(table)
         || (column !== 'id' && !(table === 'knowledge_sources' && column === 'canonical_uri'))
         || typeof value !== 'string') {
         throw new TypeError('SQLiteStore: invalid raw record selector');
       }
-      const sql = `SELECT * FROM ${table} WHERE ${column} = ? LIMIT 1`, params = [value];
+      return this.readPrivatePersistedRows(`SELECT * FROM ${table} WHERE ${column} = ? LIMIT 1`, [value]);
+    } catch (error) { if (this.persistedReadFrame) this.persistedReadFrame.poisoned = true; throw error; }
+  }
+
+  /** Complete raw values, with a primitive memo only in one certified frame. */
+  readPersistedRowGeneration(table: 'knowledge_sources' | 'knowledge_nodes' | 'knowledge_extractions' | 'knowledge_edges',
+    column: 'id' | 'canonical_uri', value: string): string | null {
+    const frame = this.persistedReadFrame;
+    try {
+      if (!['knowledge_sources', 'knowledge_nodes', 'knowledge_extractions', 'knowledge_edges'].includes(table)
+        || (column !== 'id' && !(table === 'knowledge_sources' && column === 'canonical_uri'))
+        || typeof value !== 'string') throw new TypeError('SQLiteStore: invalid raw record selector');
+      const key = JSON.stringify([table, column, value]);
+      if (frame?.localState && frame.generations.has(key)) {
+        frame.assertCurrent();
+        return frame.generations.get(key)!;
+      }
+      const row = this.readPersistedRow(table, column, value)[0], values = row?.values[0];
+      const entries = row && values ? row.columns.map((column, index) => [column, values[index]] as const)
+        .sort(([left], [right]) => table === 'knowledge_sources' ? left < right ? -1 : left > right ? 1 : 0 : left.localeCompare(right)) : null;
+      const generation = entries ? createHash('sha256').update(JSON.stringify(entries)).digest('hex') : null;
+      frame?.assertCurrent();
+      if (frame?.localState) frame.generations.set(key, generation);
+      return generation;
+    } catch (error) { if (frame) frame.poisoned = true; throw error; }
+  }
+
+  /** A closed primitive readset has no caller code between its physical fences. */
+  readPersistedRecordGenerations(selectors: readonly PersistedKnowledgeRecordSelector[]): readonly (string | null)[] {
+    let generations: readonly (string | null)[] = [];
+    try {
+      const captured = captureRecordSelectors(selectors);
+      const read = (): undefined => {
+        const frame = this.persistedReadFrame;
+        frame?.assertCurrent();
+        const values: (string | null)[] = [];
+        for (const selector of captured) {
+          const table = selector.kind === 'source' ? 'knowledge_sources' : selector.kind === 'node' ? 'knowledge_nodes' : 'knowledge_extractions';
+          const key = JSON.stringify([table, 'id', selector.id]);
+          if (frame?.localState && frame.generations.has(key)) {
+            values.push(frame.generations.get(key)!);
+            continue;
+          }
+          const row = this.readPrivatePersistedRows(`SELECT * FROM ${table} WHERE id = ? LIMIT 1`, [selector.id], frame?.localState !== undefined)[0];
+          const cells = row?.values[0];
+          if (row && (!row.columns.every(column => typeof column === 'string')
+            || row.values.some(cells => cells.some(cell => cell !== null && typeof cell !== 'string' && typeof cell !== 'number')))) {
+            throw new SQLiteObservationRetiredError();
+          }
+          const entries = row && cells ? row.columns.map((column, index) => [column, cells[index]] as const)
+            .sort(([left], [right]) => selector.kind === 'source' ? left < right ? -1 : left > right ? 1 : 0 : left.localeCompare(right)) : null;
+          const generation = entries ? createHash('sha256').update(JSON.stringify(entries)).digest('hex') : null;
+          if (frame?.localState) frame.generations.set(key, generation);
+          values.push(generation);
+        }
+        frame?.assertCurrent();
+        generations = Object.freeze(values);
+      };
+      if (this.persistedReadFrame?.localState) read(); else this.assertPersistedReadFrame(read);
+      return generations;
+    } catch (error) { if (this.persistedReadFrame) this.persistedReadFrame.poisoned = true; throw error; }
+  }
+
+  /** Closed edge-table read; endpoint bounds remain local knowledge identities. */
+  readPersistedEdgeRows(): ReturnType<SqlDatabase['exec']> {
+    return this.readPrivatePersistedRows('SELECT * FROM knowledge_edges', []);
+  }
+
+  readPersistedEdgeChanges(): ReturnType<SqlDatabase['exec']> {
+    return this.readPrivatePersistedRows('SELECT CAST(sequence AS TEXT),from_kind,from_id,to_kind,to_id FROM knowledge_edge_changes', []);
+  }
+
+  readPersistedEdgeIncarnations(): ReturnType<SqlDatabase['exec']> {
+    return this.readPrivatePersistedRows('SELECT edge_id,CAST(MAX(sequence) AS TEXT) FROM knowledge_edge_changes GROUP BY edge_id', []);
+  }
+
+  readPersistedEdgeIncarnation(id: string): ReturnType<SqlDatabase['exec']> {
+    return this.readPrivatePersistedRows('SELECT CAST(COALESCE(MAX(sequence),0) AS TEXT) FROM knowledge_edge_changes WHERE edge_id = ?', [id]);
+  }
+
+  readPersistedEdgeWindowGeneration(keys: readonly string[], incidentKeys?: readonly string[], includeUnselectedEndpoints = false): ReturnType<SqlDatabase['exec']> {
+    try {
+      if ([...keys, ...(incidentKeys ?? [])].some(key => typeof key !== 'string' || (!key.startsWith('source:') && !key.startsWith('node:')))) {
+        throw new TypeError('SQLiteStore: invalid edge change window');
+      }
+      if (typeof includeUnselectedEndpoints !== 'boolean' || (includeUnselectedEndpoints && !incidentKeys?.length)) throw new TypeError('SQLiteStore: missing incident edge window');
+      const slots = (values: readonly string[]) => values.map(() => '?').join(',');
+      const from = "(from_kind || ':' || from_id)", to = "(to_kind || ':' || to_id)";
+      const endpoints = includeUnselectedEndpoints ? '1' : keys.length ? `${from} IN (${slots(keys)}) AND ${to} IN (${slots(keys)})` : '0';
+      const incident = incidentKeys ? incidentKeys.length
+        ? ` AND (${from} IN (${slots(incidentKeys)}) OR ${to} IN (${slots(incidentKeys)}))` : ' AND 0' : '';
+      return this.readPrivatePersistedRows(`SELECT CAST(COALESCE(MAX(sequence),0) AS TEXT) FROM knowledge_edge_changes WHERE ${endpoints}${incident}`,
+        [...(includeUnselectedEndpoints ? [] : [...keys, ...keys]), ...(incidentKeys ?? []), ...(incidentKeys ?? [])]);
+    } catch (error) { if (this.persistedReadFrame) this.persistedReadFrame.poisoned = true; throw error; }
+  }
+
+  private readPrivatePersistedRows(sql: string, params: string[], closedReadSet = false): ReturnType<SqlDatabase['exec']> {
+    if (!this.coordinated) throw new Error('SQLiteStore: persisted reads require coordinated storage');
+    const frame = this.persistedReadFrame;
+    try {
       if (!frame) {
         // Closed internal selectors must not self-retire live ephemeral receipts.
         // Arbitrary legacy callbacks still use the revision-tracked facade.
@@ -269,18 +408,30 @@ export class SQLiteStore {
         const current = this.openCurrentImage();
         try { return readDatabaseRow(current, sql, params); } finally { this.closeReadImage(current); }
       }
-      frame.assertCurrent();
+      frame.assertCurrent(!closedReadSet);
       if (!frame.db) {
         frame.identity = this.persistence?.observationIdentity();
         frame.local = observeDatabase(this.getDb());
+        const localState = ownedDatabases.get(this.getDb()), revision = localState?.revision;
+        const probe = localState ? databaseProbe(localState.raw) : undefined;
+        if (localState && probe?.guarded && probe.signature !== null) {
+          if (localState.inFlight || localState.revision !== revision) throw new SQLiteObservationRetiredError();
+          frame.localState = localState; frame.localRevision = revision;
+          frame.localProbe = probe.signature; frame.localIsolated = probe.isolated;
+        }
         const persisted = this.persistence?.read();
         frame.persisted = persisted ? imageDigest(persisted) : undefined;
         frame.db = this.openPrivateReadImage();
         frame.owned = true;
+        frame.assertCurrent();
       }
-      frame.assertCurrent();
+      const key = JSON.stringify([sql, params]);
+      const copyRows = (rows: ReturnType<SqlDatabase['exec']>) => rows.map(row => ({ columns: [...row.columns], values: row.values.map(values => [...values]) }));
+      const previous = frame.rows.get(key);
+      if (previous) return copyRows(previous);
       const result = readDatabaseRow(frame.db, sql, params);
-      frame.assertCurrent();
+      if (result.every(row => row.values.every(values => values.every(value => value === null || typeof value === 'string' || typeof value === 'number')))) frame.rows.set(key, copyRows(result));
+      frame.assertCurrent(!closedReadSet);
       return result;
     } catch (error) { if (frame) frame.poisoned = true; throw error; }
   }
@@ -303,7 +454,13 @@ export class SQLiteStore {
     if (active) {
       const assertNestedCurrent = () => {
         active.assertCurrent();
-        if (active.db && observeDatabase(this.getDb()) !== active.local) throw new SQLiteObservationRetiredError();
+        if (active.db) {
+          const localState = active.localState;
+          if (localState) {
+            const state = ownedDatabases.get(this.getDb());
+            if (state !== localState || state.inFlight || state.revision !== active.localRevision) throw new SQLiteObservationRetiredError();
+          } else if (observeDatabase(this.getDb()) !== active.local) throw new SQLiteObservationRetiredError();
+        }
       };
       try { assertNestedCurrent(); invoke(); assertNestedCurrent(); }
       catch (error) { active.poisoned = true; throw error; }
@@ -313,10 +470,19 @@ export class SQLiteStore {
     const frame = {
       db: null as SqlDatabase | null, owned: false, identity: undefined as string | undefined,
       local: undefined as string | undefined, persisted: undefined as string | undefined, poisoned: false,
-      assertCurrent: () => {
+      localState: undefined as OwnedSqlDatabase | undefined, localRevision: undefined as bigint | undefined,
+      localProbe: undefined as string | undefined, localIsolated: false,
+      rows: new Map<string, ReturnType<SqlDatabase['exec']>>(),
+      generations: new Map<string, string | null>(),
+      assertCurrent: (verifyNative = true) => {
         if (frame.poisoned || this.observationEpoch !== observationEpoch || this.imageEpoch !== imageEpoch
           || (frame.db !== null && this.persistence?.observationIdentity() !== frame.identity)) {
           throw new SQLiteObservationRetiredError();
+        }
+        if (frame.localState) {
+          const state = ownedDatabases.get(this.getDb());
+          if (state !== frame.localState || state.inFlight || state.revision !== frame.localRevision) throw new SQLiteObservationRetiredError();
+          if (verifyNative && !frame.localIsolated && databaseProbe(state.raw).signature !== frame.localProbe) throw new SQLiteObservationRetiredError();
         }
       },
     };
@@ -404,6 +570,76 @@ export class SQLiteStore {
       } finally {
         try { current?.close(); } catch { /* Detached image cleanup. */ }
         try { release(); } catch { this.fenced = true; }
+      }
+    });
+  }
+
+  /** Prepared imports have their own durable boundary, including inside a
+   * deferred-save batch. Stage the captured prefix privately; ordinary failed
+   * saves still retain their live pending rows under their existing contract. */
+  publishPrepared(operation: (db: SqlDatabase) => void, assertCurrent: () => void, onCommit: () => void): Promise<void> {
+    if (!this.coordinated) return Promise.reject(new Error('SQLiteStore: prepared publication requires coordinated storage'));
+    assertCurrent();
+    const original = this.getDb(), persistence = this.persistence, epoch = this.imageEpoch;
+    const prefix = original.export();
+    const local = observeDatabase(original);
+    const staged = ownDatabase(new this.sqlEngine!.Database(prefix));
+    let data: Uint8Array, cleanContent: string | null, stagedLocal: string;
+    try {
+      const result: unknown = operation(staged);
+      if (result !== undefined) {
+        if (result instanceof Promise) void result.catch(() => {});
+        throw new TypeError('SQLiteStore: prepared operation must be synchronous and return no value');
+      }
+      assertCurrent();
+      data = staged.export();
+      cleanContent = this.readCleanContent(staged);
+      stagedLocal = observeDatabase(staged);
+    } catch (error) { staged.close(); return Promise.reject(error); }
+    const assertOwnedImage = () => {
+      if (this.getDb() !== original || this.persistence !== persistence || this.imageEpoch !== epoch
+        || observeDatabase(original) !== local || observeDatabase(staged) !== stagedLocal) {
+        throw new Error('SQLiteStore: prepared image was superseded by local changes');
+      }
+    };
+    const adopt = () => {
+      this.db = staged;
+      this.imageEpoch += 1;
+      this.observationEpoch += 1;
+      this.cleanContent = cleanContent;
+      this.cleanBytes = persistence ? null : data;
+      try { original.close(); } catch { /* The replaced image has no current authority. */ }
+      onCommit();
+    };
+    return this.enqueue(async () => {
+      let release: (() => void) | undefined, adopted = false;
+      try {
+        release = persistence ? await persistence.lock() : () => {};
+        assertOwnedImage();
+        assertCurrent();
+        assertOwnedImage();
+        try { persistence?.writeIfCurrent(data); }
+        catch (error) {
+          if (error instanceof SQLitePublicationError && error.phase === 'indeterminate') {
+            // A failed directory sync cannot undo a visible rename. Mirror only
+            // our exact current image; never restore bytes or adopt another winner.
+            try {
+              assertOwnedImage();
+              const published = persistence?.read();
+              if (published && imageDigest(published) === imageDigest(data)) {
+                adopted = true;
+                adopt();
+              }
+            } catch { /* An unresolved publication stays fenced until reopen. */ }
+            this.fenced = true;
+          }
+          throw error;
+        }
+        adopted = true;
+        try { adopt(); } catch (error) { this.fenced = true; throw error; }
+      } finally {
+        if (!adopted) try { staged.close(); } catch { /* Detached image cleanup. */ }
+        try { release?.(); } catch { this.fenced = true; }
       }
     });
   }

@@ -1,7 +1,6 @@
 import { types as nodeTypes } from 'node:util';
 import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
-import type { CatalogSearchResult } from './agent-harness-catalog-search.ts';
 import { rankHarnessCatalog, captureCatalogData, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 
@@ -132,7 +131,7 @@ export async function searchHarnessModelTools(
   toolRegistry: ToolRegistry,
   args: AgentHarnessModelToolCatalogArgs,
   options: CatalogRankingOptions = {},
-): Promise<CatalogSearchResult<Record<string, unknown>>> {
+): Promise<{ readonly matches: readonly Record<string, unknown>[] }> {
   const query = readString(args.query);
   const includeParameters = args.includeParameters === true;
   const limit = readLimit(args.limit, 500);
@@ -140,7 +139,6 @@ export async function searchHarnessModelTools(
   options.signal?.throwIfAborted(); options.assertCurrent?.();
   return {
     matches: found.matches.slice(0, limit).map(({ entry, judgment }) => ({ ...describeModelTool(entry, { includeParameters }), ...(judgment ? { judgment } : {}) })),
-    relaxed: false,
   };
 }
 

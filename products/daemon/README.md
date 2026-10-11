@@ -42,8 +42,10 @@ startup and rolls back owned resources. An unavailable credential store is not
 reported as a fresh install.
 Service install/start/restart/migrate requires a
 launcher that supplies both real inbox composition and its installed executable
-path and canonical (non-overridden) homes, so this package cannot install an
-unbootable default service or silently relaunch a different identity.
+path. Systemd service definitions preserve the selected tree, daemon home and
+workspace; start and restart with relocated homes or an explicit workspace
+require a matching installed definition. The package carries the same identity
+into the service.
 
 From this directory:
 
@@ -196,6 +198,14 @@ this is not a distributed lease or a global no-overlap guarantee.
 process environment or cwd. Raw-intercept commands including `send` must be the
 first argument; use the documented environment homes for relocated one-shot sends. Serve's model, endpoint, config and feature flags
 are runtime-only and never saved as settings.
+
+Explicitly composed systemd service installation preserves the selected tree,
+daemon identity and workspace in its installed definition. Unit files stay under
+the login home. Start and restart with selected homes require that installed
+definition to match the selected executable and all three directories; a mismatch
+refuses activation. Other service platforms currently refuse selected-home
+activation. The shipped entrypoint still requires a trusted launcher to compose
+the production inbox before service activation.
 
 The package remains a private Bun script package with an opt-in local native
 build. The local tooling does not publish a native release or activate automatic

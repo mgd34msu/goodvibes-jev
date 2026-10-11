@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import type { SandboxAvailability } from '@goodvibes-jev/engine/sdk/platform/tools/exec/sandbox';
-import type { PermissionPromptRequest, PermissionPromptDecision } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import type { PermissionExecutionOptions, PermissionPromptRequest, PermissionPromptDecision } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import {
   createSandboxExecAsk,
   extractExecCommands,
@@ -65,6 +65,68 @@ describe('extractExecCommands', () => {
 });
 
 describe('createSandboxExecAsk', () => {
+  it('forwards execution options through every delegated ask path', async () => {
+    const options: PermissionExecutionOptions = { signal: new AbortController().signal };
+    const seen: (PermissionExecutionOptions | undefined)[] = [];
+    const ask = async (_request: PermissionPromptRequest, execution?: PermissionExecutionOptions) => {
+      seen.push(execution); return { approved: false };
+    };
+    await createSandboxExecAsk(deps(), ask)({ ...execRequest('fixture-non-exec-lifetime'), tool: 'write', category: 'write' }, options);
+    await createSandboxExecAsk(deps(), ask)(execRequest({ commands: [] }), options);
+    await createSandboxExecAsk(deps({ isSandboxConfigEnabled: () => false }), ask)(execRequest('fixture-disabled-lifetime'), options);
+    await createSandboxExecAsk(deps(), ask)(execRequest('curl https://example.com'), options);
+    expect(seen).toHaveLength(4);
+    for (const execution of seen) expect(execution).toBe(options);
+  });
+
+  it('releases an aborted needs reading even when the reader ignores cancellation', async () => {
+    const waiting = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    const fixture = fakePort(() => noulAnswer(0.01));
+    installJudgmentPort({ ...fixture.port, ask: async request => {
+      started.resolve(); await waiting.promise; return fixture.port.ask(request);
+    } });
+    const controller = new AbortController();
+    let asked = false;
+    const gate = createSandboxExecAsk(deps(), async () => { asked = true; return { approved: true }; });
+    const pending = gate(execRequest('fixture-abandoned-reader'), { signal: controller.signal });
+    await started.promise;
+    controller.abort();
+    await expect(pending).rejects.toThrow('The judgment reading owner is no longer current.');
+    expect(asked).toBe(false);
+    waiting.resolve();
+    await Promise.resolve();
+    expect(asked).toBe(false);
+  });
+
+  for (const change of ['command', 'workspace', 'config', 'feature', 'egress']) {
+    it(`rejects a delayed reading after its ${change} changes`, async () => {
+      const waiting = Promise.withResolvers<void>();
+      const started = Promise.withResolvers<void>();
+      const fixture = fakePort(() => noulAnswer(0.01));
+      installJudgmentPort({ ...fixture.port, ask: async request => {
+        started.resolve(); await waiting.promise; return fixture.port.ask(request);
+      } });
+      let config = true; let feature = true;
+      const egress: string[] = [];
+      let asked = false;
+      const request = { ...execRequest(`fixture-retired-${change}`), workingDirectory: '/owned-before' };
+      const gate = createSandboxExecAsk(deps({ isSandboxConfigEnabled: () => config, isSandboxFeatureEnabled: () => feature, readEgressAllowlist: () => egress }), async () => {
+        asked = true; return { approved: true };
+      });
+      const pending = gate(request);
+      await started.promise;
+      if (change === 'command') request.args.command = 'changed while reading';
+      if (change === 'workspace') request.workingDirectory = '/owned-after';
+      if (change === 'config') config = false;
+      if (change === 'feature') feature = false;
+      if (change === 'egress') egress.push('curl');
+      waiting.resolve();
+      await expect(pending).rejects.toThrow('The judgment reading owner is no longer current.');
+      expect(asked).toBe(false);
+    });
+  }
+
   it('waits for the real needs reader before allowing a command', async () => {
     let release!: () => void;
     let began!: () => void;

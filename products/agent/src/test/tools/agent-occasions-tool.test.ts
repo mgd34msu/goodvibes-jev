@@ -21,8 +21,12 @@
  * authority, it is forwarded unchanged, and a refusal is never retried.
  */
 
-import { describe, expect, test } from 'bun:test';
-import { createAgentOccasionsTool } from '../../tools/agent-occasions-tool.ts';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { rmSync } from 'node:fs';
+import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { admitLocalState } from '../helpers/local-state-admission.ts';
+import { createAgentOccasionsTool, registerAgentOccasionsTool } from '../../tools/agent-occasions-tool.ts';
+import { normalizeOccasionsAction, OCCASIONS_WRITE_ACTIONS } from '../../tools/agent-occasions-types.ts';
 import type { OccasionsGatewayInvoke, OccasionsGatewayResult } from '../../agent/occasions-gateway.ts';
 
 interface Recorded {
@@ -30,19 +34,26 @@ interface Recorded {
   readonly body: Record<string, unknown>;
 }
 
+const dirs: string[] = [];
+afterEach(() => { for (const directory of dirs.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+
 function toolWith(
   respond: (methodId: string, body: Record<string, unknown>) => OccasionsGatewayResult,
 ): { readonly run: (args: Record<string, unknown>) => Promise<{ success: boolean; output: string }>; readonly calls: Recorded[] } {
   const calls: Recorded[] = [];
-  const invoke = ((methodId: string, body: Record<string, unknown>) => {
-    calls.push({ methodId, body });
-    return Promise.resolve(respond(methodId, body));
-  }) as unknown as OccasionsGatewayInvoke;
+  const invoke: OccasionsGatewayInvoke = async (methodId, body) => {
+    const captured = { ...body }; calls.push({ methodId, body: captured });
+    return respond(methodId, captured);
+  };
+  const directory = makeProjectTempDir('agent-occasions-relay'); dirs.push(directory);
   const tool = createAgentOccasionsTool({ invoke });
   return {
     run: async (args) => {
-      const result = await tool.execute(args) as { success: boolean; output: string };
-      return result;
+      const action = normalizeOccasionsAction(args.action);
+      const result = action && OCCASIONS_WRITE_ACTIONS.has(action)
+        ? await admitLocalState(registry => registerAgentOccasionsTool(registry, { invoke }), 'occasions', args, { directory })
+        : await tool.execute(args);
+      return { success: result.success, output: 'output' in result && typeof result.output === 'string' ? result.output : '' };
     },
     calls,
   };
@@ -307,7 +318,7 @@ describe('occasions tool: capture', () => {
     expect(calls).toEqual([]);
   });
 
-  test('confirm forwards the authority and the recording surface unchanged', async () => {
+  test('confirm records delegated source without trusting a claimed human quotation', async () => {
     const { run, calls } = toolWith(() => answers({
       ok: true,
       reason: null,
@@ -331,18 +342,18 @@ describe('occasions tool: capture', () => {
       kind: 'gift-giving',
       person: 'Jane',
       surface: 'agent',
-      said: 'our anniversary is the twelfth of September',
-      authority: 'owner-direct',
+      said: '',
+      authority: 'autonomous',
     });
     expect(result.output).toContain('Recorded your anniversary.');
   });
 
-  test('a write with no authority is refused before any call', async () => {
-    const { run, calls } = toolWith(() => answers({}));
+  test('recorded delegated confirmation needs no caller authority or quotation flags', async () => {
+    const { run, calls } = toolWith(() => answers({ ok: true, reason: null, occasionId: 'x', disclosure: 'Recorded x.', droppedRecords: 0 }));
     const result = await run({ action: 'confirm', title: 'x', date: '01-01', kind: 'neither', said: 'x' });
-    expect(result.success).toBe(false);
-    expect(result.output).toContain('`authority` is required');
-    expect(calls).toEqual([]);
+    expect(result.success).toBe(true);
+    expect(calls[0]?.body.authority).toBe('autonomous');
+    expect(calls[0]?.body.said).toBe('');
   });
 
   test('an untrusted authority is forwarded as-is so the daemon refuses it, not laundered', async () => {
@@ -384,13 +395,11 @@ describe('occasions tool: capture', () => {
 });
 
 describe('occasions tool: removal and conflicts', () => {
-  test('removal asks once before it happens, and asks nothing else', async () => {
-    const { run, calls } = toolWith(() => answers({}));
-    const result = await run({ action: 'remove', occasionId: 'sarahs-birthday', authority: 'owner-direct' });
-    expect(result.success).toBe(false);
-    expect(result.output).toContain('confirmed:true');
-    expect(result.output).toContain('Do not ask why, and do not ask twice');
-    expect(calls).toEqual([]);
+  test('raw caller confirmation cannot grant removal authority', async () => {
+    let called = false;
+    const invoke: OccasionsGatewayInvoke = async () => { called = true; return answers({}); };
+    const result = await createAgentOccasionsTool({ invoke }).execute({ action: 'remove', occasionId: 'sarahs-birthday', confirmed: true, authority: 'owner-direct' });
+    expect(result.success).toBe(false); expect(called).toBe(false);
   });
 
   test('a confirmed removal reports the orphaned records that went with it', async () => {
@@ -403,7 +412,7 @@ describe('occasions tool: removal and conflicts', () => {
     }));
     const result = await run({ action: 'remove', occasionId: 'sarahs-birthday', confirmed: true, authority: 'owner-direct' });
     expect(result.success).toBe(true);
-    expect(calls[0]?.body).toMatchObject({ occasionId: 'sarahs-birthday', confirmed: true, authority: 'owner-direct' });
+    expect(calls[0]?.body).toMatchObject({ occasionId: 'sarahs-birthday', confirmed: true, authority: 'autonomous' });
     expect(result.output).toContain('3 records');
   });
 

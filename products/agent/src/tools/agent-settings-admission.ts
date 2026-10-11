@@ -20,6 +20,7 @@ import { coerceHarnessSettingValue, bindSettingSchemaDescriptors, resolveHarness
 import { getAgentSettingsSchema } from '../config/settings-catalog.ts';
 import { agentDaemonConfigClient, agentDaemonConfigClientRevision, buildAgentConfigRouting, configKeyScope } from '../config/daemon-config-routing.ts';
 import { buildGoodVibesSecretKey, defaultSecretBackedScope, isSecretConfigKey, isSecretReferenceValue } from '../config/secret-config.ts';
+import { createAgentSettingsImportProjector, isAgentSettingsImportMutation } from './agent-settings-import-admission.ts';
 
 const setActions = new Set(['set', 'update', 'change', 'configure', 'set_setting']);
 const resetActions = new Set(['reset', 'clear', 'default', 'restore', 'reset_setting']);
@@ -53,7 +54,7 @@ function assertCapture(capture: Capture): void {
   if (capture.released || capture.spent) throw new ToolInputProjectionError('stale');
   capture.assertOwner();
   if (capture.local) {
-    capture.local.owner.assertPreparedMutation(capture.local.mutation);
+    if (capture.local.mutation) capture.local.owner.assertPreparedMutation(capture.local.mutation);
     const secret = capture.local.secretDeletion; if (secret) secret.owner.assertPreparedScopedDeletion(secret.mutation);
   }
 }
@@ -61,7 +62,12 @@ function assertCapture(capture: Capture): void {
 export function createPreferredSettingsProjector(platform: Pick<CommandContext['platform'], 'configManager' | 'secretsManager'>,
   fallback?: ToolInputProjector, readingContext?: { readonly registry: ToolRegistry; readonly context: CommandContext }): ToolInputProjector {
   const config = platform.configManager; const secrets = platform.secretsManager;
+  const imports = readingContext ? createAgentSettingsImportProjector(readingContext.context, undefined, readingContext.registry) : undefined;
   return { async project(request) {
+    if (isAgentSettingsImportMutation(request.name, request.args)) {
+      if (!imports) throw new ToolInputProjectionError('unconfigured');
+      return imports.project(request);
+    }
     const operation = preferredSettingsMutation(request.name, request.args);
     if (!operation) {
       const result = fallback ? await fallback.project(request) : { status: 'projected' as const, args: request.args };

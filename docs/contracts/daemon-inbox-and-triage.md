@@ -357,6 +357,11 @@ from an enum/fixture. Supported self, channel and history endpoints do not by th
 complete bot DM enumeration mechanism. Preserve that API-documentation inference as a scope limit,
 not live-provider proof.
 
+The selected release scope is bot-accessible one-to-one DMs with an explicit
+account-bound registry. The owner and adapter reject group DMs and never infer a
+personal catalog. Register each intended bot-readable DM explicitly; undeclared
+channels cannot be requested or returned from a stored mirror.
+
 Implementation:
 [discord-owner.ts](../../packages/engine/sdk/src/platform/intake/providers/discord-owner.ts#L16-L123),
 [discord-owner.ts](../../packages/engine/sdk/src/platform/intake/providers/discord-owner.ts#L240-L376),

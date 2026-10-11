@@ -1,18 +1,11 @@
+import { captureScheduleEffect, createScheduleInputProjector, formatScheduleOperatorResult } from './agent-schedule-effect.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { ShellPathService } from '@/runtime/index.ts';
 import {
   buildAutonomySchedulePreview,
-  createAutonomySchedule,
   parseAutonomyScheduleArgs,
-  resolveAutonomyConnectedHostConnection,
-  type AutonomyScheduleResult,
 } from '../agent/autonomy-schedule.ts';
-import {
-  formatAutonomyScheduleFailure,
-  formatAutonomySchedulePreview,
-  formatAutonomyScheduleSuccess,
-} from '../agent/autonomy-schedule-format.ts';
 import type { AgentConnectedHostConfigReader } from '../agent/routine-schedule-promotion.ts';
 
 type AutonomyScheduleKind = 'at' | 'every' | 'cron';
@@ -69,11 +62,9 @@ function scheduleFlag(kind: AutonomyScheduleKind): string {
 function buildAutonomyScheduleArgs(rawArgs: AgentAutonomyScheduleToolArgs): readonly string[] {
   const task = readOptionalString(rawArgs.task);
   const successCriteria = readOptionalString(rawArgs.successCriteria);
-  const explicitUserRequest = readOptionalString(rawArgs.explicitUserRequest);
-  const scheduleValue = readOptionalString(rawArgs.scheduleValue);
+    const scheduleValue = readOptionalString(rawArgs.scheduleValue);
   if (!task) throw new Error('task is required.');
   if (!successCriteria) throw new Error('successCriteria is required.');
-  if (!explicitUserRequest) throw new Error('explicitUserRequest is required.');
   if (!isScheduleKind(rawArgs.scheduleKind)) throw new Error('scheduleKind must be one of: at, every, cron.');
   if (!scheduleValue) throw new Error('scheduleValue is required.');
 
@@ -84,8 +75,6 @@ function buildAutonomyScheduleArgs(rawArgs: AgentAutonomyScheduleToolArgs): read
     task,
     '--success-criteria',
     successCriteria,
-    '--explicit-user-request',
-    explicitUserRequest,
   ];
   addOptionalArg(args, '--timezone', rawArgs.timezone);
   addOptionalArg(args, '--name', rawArgs.name);
@@ -96,40 +85,19 @@ function buildAutonomyScheduleArgs(rawArgs: AgentAutonomyScheduleToolArgs): read
   addOptionalArg(args, '--delivery-webhook', rawArgs.deliveryWebhook);
   addOptionalArg(args, '--delivery-link', rawArgs.deliveryLink);
   if (readBoolean(rawArgs.disabled)) args.push('--disabled');
-  if (readBoolean(rawArgs.confirm)) args.push('--yes');
+  addOptionalArg(args, '--explicit-user-request', rawArgs.explicitUserRequest);
   return args;
-}
-
-function outputForResult(result: AutonomyScheduleResult): { readonly success: boolean; readonly output?: string; readonly error?: string } {
-  if (result.ok) {
-    return {
-      success: true,
-      output: formatAutonomyScheduleSuccess(result),
-    };
-  }
-  return {
-    success: false,
-    error: formatAutonomyScheduleFailure(result),
-  };
-}
-
-function confirmationError(preview: ReturnType<typeof buildAutonomySchedulePreview>): string {
-  return [
-    formatAutonomySchedulePreview(preview),
-    '',
-    'Model tool confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to create this autonomous schedule.',
-    'Do not create autonomous schedules from vague suggestions, brainstorming, inferred follow-up work, or tasks without success criteria.',
-  ].join('\n');
 }
 
 export function createAgentAutonomyScheduleTool(
   shellPaths: ShellPathService,
   configManager: AgentConnectedHostConfigReader,
+  registry: ToolRegistry,
 ): Tool {
   return {
     definition: {
       name: 'agent_autonomy_schedule',
-      description: 'Schedule one confirmed visible autonomous Agent task.',
+      description: 'Schedule one visible autonomous Agent task under recorded effect admission.',
       parameters: {
         type: 'object',
         properties: {
@@ -188,42 +156,30 @@ export function createAgentAutonomyScheduleTool(
           },
           confirm: {
             type: 'boolean',
-            description: 'Required true only when user requested this schedule.',
+            description: 'Optional audit annotation; does not grant effect authority.',
           },
           explicitUserRequest: {
             type: 'string',
-            description: 'User request authorizing this schedule.',
+            description: 'Optional request provenance; does not grant effect authority.',
           },
         },
-        required: ['task', 'successCriteria', 'scheduleKind', 'scheduleValue', 'confirm', 'explicitUserRequest'],
+        required: ['task', 'successCriteria', 'scheduleKind', 'scheduleValue'],
         additionalProperties: false,
       },
       sideEffects: ['network', 'state'],
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs, options) => {
       try {
-        const args = rawArgs as AgentAutonomyScheduleToolArgs;
-        const parsed = parseAutonomyScheduleArgs(buildAutonomyScheduleArgs(args));
-        if (parsed.errors.length > 0) {
-          return {
-            success: false,
-            error: parsed.errors.join('\n'),
-          };
-        }
+        const effect = captureScheduleEffect(rawArgs, options, shellPaths, configManager, registry);
+        const parsed = parseAutonomyScheduleArgs(buildAutonomyScheduleArgs(rawArgs), { requireExplicitUserRequest: false });
+        if (parsed.errors.length > 0) return { success: false, error: parsed.errors.join('\n') };
         const preview = buildAutonomySchedulePreview(parsed);
-        if (!parsed.yes) {
-          return {
-            success: false,
-            error: confirmationError(preview),
-          };
-        }
-        const connection = resolveAutonomyConnectedHostConnection(configManager, shellPaths.homeDirectory);
-        return outputForResult(await createAutonomySchedule(connection, preview));
+        effect.assertCurrent();
+        const result = await effect.invoke('automation.schedules.create', preview.payload);
+        effect.assertCurrent();
+        return formatScheduleOperatorResult(result, 'Created GoodVibes schedule for autonomous Agent work');
       } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
       }
     },
   };
@@ -234,5 +190,5 @@ export function registerAgentAutonomyScheduleTool(
   shellPaths: ShellPathService,
   configManager: AgentConnectedHostConfigReader,
 ): void {
-  registry.register(createAgentAutonomyScheduleTool(shellPaths, configManager));
+  registry.register(createAgentAutonomyScheduleTool(shellPaths, configManager, registry), { inputProjection: createScheduleInputProjector(shellPaths, configManager) });
 }

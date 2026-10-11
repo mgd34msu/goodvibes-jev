@@ -1,33 +1,11 @@
-/**
- * store.ts, the profile in memory, and the only path to a write.
- *
- * ## Speed
- *
- * The owner's ruling was "it needs to be extremely fast". A mechanical read here
- * is `Map.get` against a projection built once at load: no `stat`, no `readFile`,
- * no parse, no lock on the read path. The watcher exists so a hand edit is
- * picked up without a restart; it is not a lookup structure and it never puts a
- * syscall on a read.
- *
- * ## Why the store is the only exported write path
- *
- * `writer.ts` knows how to edit lines and nothing about trust. Every mutation
- * offered to the rest of the platform goes through this class, which runs the
- * §7 gate first, `evaluateProfileWrite` for `set`/`append`,
- * `evaluateProfileRemoval` for `forget`/`undo`. A gate that can be walked around
- * is not a gate, so the module barrel deliberately does not re-export the raw
- * writer functions.
- *
- * ## Reload
- *
- * The model is swapped atomically: the new projection is built completely and
- * only then assigned, so a reader sees the old one or the new one and never a
- * half-built one. A reload that FAILS discards the previous projection and
- * reports unavailable, continuing to serve stale values from a file that can no
- * longer be read is exactly the silent-success failure this design exists to
- * avoid.
+/** The profile reader and guarded surgical writer share one loaded projection.
+ * Watcher reloads replace that projection atomically. Native manual mutations
+ * retain replay behavior; admitted operations also hold source and physical
+ * lifetime restrictions through their final publication.
  */
 import { watch, type FSWatcher } from 'node:fs';
+import { readProfileDelegation, type ProfileMutationOptions } from './delegation.js';
+import { captureFileMutation, captureMutationDescriptors } from '../utils/file-mutation.js';
 import { readProfilePerson, type ProfilePersonReadingOptions } from './person-reading.js';
 import { basename, dirname } from 'node:path';
 import { summarizeError } from '../utils/error-display.js';
@@ -503,7 +481,9 @@ export class OwnerProfileStore {
   // -------------------------------------------------------------------------
 
   /** Write or supersede a mechanical field. */
-  async set(input: SetProfileFieldInput): Promise<ProfileWriteResult> {
+  async set(input: SetProfileFieldInput, options: ProfileMutationOptions = {}): Promise<ProfileWriteResult> {
+    const lifetime = this.mutationLifetime(options);
+    lifetime?.assertCurrent();
     const projection = this.writableProjection();
     if ('reason' in projection) return refusal(projection.reason);
 
@@ -513,20 +493,23 @@ export class OwnerProfileStore {
       value: input.value,
       said: input.said,
       ...(this.options.ledger === undefined ? {} : { ledger: this.options.ledger }),
-    });
+    }, options);
+    lifetime?.assertCurrent();
     if (!decision.allowed) return refusal(decision.reason ?? 'Refused.');
 
-    const provenance = this.provenanceFor(input);
+    const provenance = this.provenanceFor(input, options);
     return this.commit((current) => setField(current, {
       fieldId: input.fieldId,
       value: input.value,
       provenance,
       supersededOn: provenance.date,
-    }));
+    }), { lifetime });
   }
 
   /** Add a prose bullet to a section. */
-  async append(input: AppendProfileProseInput): Promise<ProfileWriteResult> {
+  async append(input: AppendProfileProseInput, options: ProfileMutationOptions = {}): Promise<ProfileWriteResult> {
+    const lifetime = this.mutationLifetime(options);
+    lifetime?.assertCurrent();
     const projection = this.writableProjection();
     if ('reason' in projection) return refusal(projection.reason);
 
@@ -535,27 +518,31 @@ export class OwnerProfileStore {
       fieldId: null,
       value: input.text,
       said: input.said,
+      section: input.section,
       ...(this.options.ledger === undefined ? {} : { ledger: this.options.ledger }),
-    });
+    }, options);
+    lifetime?.assertCurrent();
     if (!decision.allowed) return refusal(decision.reason ?? 'Refused.');
 
-    const provenance = this.provenanceFor(input);
+    const provenance = this.provenanceFor(input, options);
     return this.commit((current) => appendProse(current, {
       section: input.section,
       text: input.text,
       provenance,
-    }));
+    }), { lifetime });
   }
 
   /** Delete a line and, for a field, every history comment it left behind. */
-  async forget(input: ForgetProfileInput): Promise<ProfileWriteResult> {
+  async forget(input: ForgetProfileInput, options: ProfileMutationOptions = {}): Promise<ProfileWriteResult> {
+    const lifetime = this.mutationLifetime(options);
+    lifetime?.assertCurrent();
     const projection = this.writableProjection();
     if ('reason' in projection) return refusal(projection.reason);
 
     const decision = evaluateProfileRemoval({
       authority: input.authority,
       fieldId: input.fieldId ?? null,
-    });
+    }, options);
     if (!decision.allowed) return refusal(decision.reason ?? 'Refused.');
 
     // A prose line addressed by CONTENT resolves inside the callback, so a
@@ -568,28 +555,61 @@ export class OwnerProfileStore {
       const wanted = input.text;
       return this.commit(
         (current) => forgetProseByText(current, section, wanted),
-        { replayable: true },
+        { replayable: true, lifetime },
       );
     }
 
     return this.commit((current) => forgetLines(current, {
       ...(input.fieldId === undefined ? {} : { fieldId: input.fieldId }),
       ...(input.lineIndex === undefined ? {} : { lineIndex: input.lineIndex }),
-    }), { replayable: input.lineIndex === undefined });
+    }), { replayable: input.lineIndex === undefined, lifetime });
   }
 
   /** Promote the most recent superseded value back to an active line. */
-  async undo(input: UndoProfileInput): Promise<ProfileWriteResult> {
+  async undo(input: UndoProfileInput, options: ProfileMutationOptions = {}): Promise<ProfileWriteResult> {
+    const lifetime = this.mutationLifetime(options);
+    lifetime?.assertCurrent();
     const projection = this.writableProjection();
     if ('reason' in projection) return refusal(projection.reason);
 
-    const decision = evaluateProfileRemoval({ authority: input.authority, fieldId: input.fieldId });
+    const decision = evaluateProfileRemoval({ authority: input.authority, fieldId: input.fieldId }, options);
     if (!decision.allowed) return refusal(decision.reason ?? 'Refused.');
 
-    return this.commit((current) => undoLines(current, input.fieldId));
+    return this.commit((current) => undoLines(current, input.fieldId), { lifetime });
   }
 
-  private provenanceFor(input: WriteIdentity): ProfileProvenance {
+  private mutationLifetime(input: ProfileMutationOptions) {
+    const options = Object.freeze({ ...input });
+    if (!options.assertCurrent && !options.signal && !options.delegation && !options.withPublication) return undefined;
+    const delegation = readProfileDelegation(options.delegation);
+    const ownerCurrent = captureMutationDescriptors(this, ['filePath', 'options', 'commit', 'commitWhilePending', 'provenanceFor']);
+    const filePath = this.filePath, storeOptions = this.options;
+    const optionsCurrent = captureMutationDescriptors(storeOptions, ['persistIo', 'now', 'ledger']);
+    const persistIo = storeOptions.persistIo;
+    const ioCurrent = persistIo && captureMutationDescriptors(persistIo, ['mkdir', 'writeFile', 'rename', 'remove']);
+    const physical = captureFileMutation(filePath);
+    const authority = () => {
+      options.signal?.throwIfAborted(); options.assertCurrent?.(); delegation?.assertCurrent(); ownerCurrent(); optionsCurrent(); ioCurrent?.();
+      if (this.filePath !== filePath || this.options !== storeOptions || this.options.persistIo !== persistIo) {
+        throw new Error('Profile mutation owner changed.');
+      }
+    };
+    return { withPublication: options.withPublication, assertCurrent() { authority(); physical.assertCurrent(); },
+      onWriteIntent() { authority(); physical.assertCurrent(); options.onWriteIntent?.(); authority(); physical.assertCurrent(); },
+      onEffect(published?: boolean) {
+        options.signal?.throwIfAborted(); options.onEffect?.(published);
+        delegation?.assertCurrent();
+        authority(); physical.onEffect(published);
+      } };
+  }
+
+  private provenanceFor(input: WriteIdentity, options: ProfileMutationOptions = {}): ProfileProvenance {
+    if (input.authority === 'autonomous') {
+      const source = readProfileDelegation(options.delegation);
+      if (!source) throw new Error('Recorded profile provenance is unavailable.');
+      return { origin: 'autonomous', surface: input.surface, date: input.date ?? this.now().toISOString().slice(0, 10),
+        said: '', source: { goal: source.goal, criteria: source.criteria } };
+    }
     return {
       surface: input.surface,
       date: input.date ?? this.now().toISOString().slice(0, 10),
@@ -643,8 +663,10 @@ export class OwnerProfileStore {
    */
   private async commit(
     operate: (projection: ProfileProjection) => ProfileEditResult,
-    options: { readonly replayable?: boolean } = {},
+    options: { readonly replayable?: boolean; readonly lifetime?: ReturnType<OwnerProfileStore['mutationLifetime']> } = {},
   ): Promise<ProfileWriteResult> {
+    options.lifetime?.assertCurrent();
+    options.lifetime?.onWriteIntent();
     // Retire at accepted mutation intent, before a reload, persistence or its
     // failure cleanup can yield. Even a same-content write is a new incarnation.
     this.readEpoch += 1;
@@ -655,7 +677,7 @@ export class OwnerProfileStore {
 
   private async commitWhilePending(
     operate: (projection: ProfileProjection) => ProfileEditResult,
-    options: { readonly replayable?: boolean },
+    options: { readonly replayable?: boolean; readonly lifetime?: ReturnType<OwnerProfileStore['mutationLifetime']> },
   ): Promise<ProfileWriteResult> {
     const replayable = options.replayable !== false;
     const start = this.projection;
@@ -670,7 +692,9 @@ export class OwnerProfileStore {
       if (this.matchesLastSeen(onDisk)) break;
 
       // Someone else, the owner, wrote to this file since the projection was built.
+      options.lifetime?.assertCurrent();
       const reloaded = await this.load();
+      options.lifetime?.assertCurrent();
       if (reloaded.kind !== 'loaded' || this.projection === null) {
         return refusal(
           reloaded.kind === 'unavailable'
@@ -705,7 +729,7 @@ export class OwnerProfileStore {
 
     const text = profileTextFromLines(edit.lines);
     try {
-      await persistProfileText(this.filePath, text, this.options.persistIo);
+      await persistProfileText(this.filePath, text, this.options.persistIo, options.lifetime);
     } catch (error) {
       logger.warn('owner-profile: write failed', {
         path: this.filePath,

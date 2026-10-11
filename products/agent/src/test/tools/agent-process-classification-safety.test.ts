@@ -7,7 +7,9 @@ import { afterAll, afterEach, beforeEach, describe, spyOn, expect, test } from '
 import { gateJudgmentRegistry } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { PolicyRuntimeState } from '@goodvibes-jev/engine/sdk/platform/runtime/security';
-import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
+import { createShellPathService } from '@goodvibes-jev/engine/sdk/platform/runtime/shell';
+import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { ToolRegistry, ProcessManager } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -19,6 +21,7 @@ import { processClassificationOptions } from '../../tools/agent-harness-process-
 import { resolveBackgroundProcessClass } from '../../tools/agent-harness-process-timeout-policy.ts';
 import { createAgentProcessTool, createAgentTerminalTool, registerAgentTerminalProcessTools } from '../../tools/agent-terminal-process-tools.ts';
 import { ordinaryResearchOwner, researchScreeningFixture, cleanupResearchScreeningFixtures, exactSensitiveSpans } from '../helpers/research-screening.ts';
+import { recordedEffectFixture } from '../helpers/recorded-effect-admission.ts';
 
 afterAll(cleanupResearchScreeningFixtures);
 const configRoots: string[] = [];
@@ -31,7 +34,7 @@ function fixturePlatform() {
     workingDir: root,
     homeDir: root,
   });
-  return { config: configManager.getAll(), configManager };
+  return { config: configManager.getAll(), configManager, root };
 }
 let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => { previous = installJudgmentPort(undefined); });
@@ -43,10 +46,39 @@ afterEach(() => {
 const start = { command: 'env firefox', processAction: 'start', confirm: true, explicitUserRequest: 'Open the browser.', timeoutMs: 120_000 };
 function fixture(owner = ordinaryResearchOwner()) {
   const calls: unknown[][] = [];
-  const manager = { async spawn(...args: unknown[]) { calls.push(args); return { process_id: 'fixture-process', pid: 123 }; } } as unknown as ProcessManager;
-  const context = { platform: fixturePlatform(), workspace: { processManager: manager }, session: { runtime: { sessionId: 'original' } }, extensions: {}, clients: {} } as CommandContext;
+  const manager = new ProcessManager();
+  manager.spawn = async (...args) => { calls.push(args); args[3]?.assertCurrent?.(); return { cmd: args[0], exit_code: null, stdout: '', stderr: '', success: true, process_id: 'fixture-process', pid: 123 }; };
+  const platform = fixturePlatform();
+  const context = { platform, workspace: { processManager: manager, shellPaths: createShellPathService({ workingDirectory: platform.root, homeDirectory: platform.root }) }, session: { runtime: { sessionId: 'original' } }, extensions: {}, clients: {} } as CommandContext;
   const registry = new ToolRegistry(); bindAgentResearchSourceOwner(registry, owner);
-  return { context, registry, calls, manager, options: (signal?: AbortSignal) => processClassificationOptions(context, registry, signal) };
+  const options = (signal?: AbortSignal) => processClassificationOptions(context, registry, signal);
+  async function admitted(tool: Tool, args: Record<string, unknown>, signal?: AbortSignal) {
+    let sourcePort: ReturnType<typeof judgmentPort> | undefined;
+    try { sourcePort = judgmentPort('process-classification-test'); } catch { /* Missing lifetime reader remains a classifier failure. */ }
+    const sourceAsk = sourcePort?.ask;
+    const admission = fakePort((name, question) => question.type === 'noul' ? noulAnswer(0.01)
+      : choiceAnswer(question, name === 'disposition' ? 'act' : name === 'kind' ? 'read' : 'generic', 0.999));
+    using log = new SqliteDecisionLog(':memory:');
+    const wrapper = withDecisionLog({ ...admission.port, async ask(request) {
+      if (request.context?.battery === 'agent.tools.long-lived-process' || request.context?.battery === 'engine.tools.credential-env') {
+        if (!sourcePort || sourcePort.ask !== sourceAsk) throw new Error('Lifetime reader is unavailable or changed');
+        return sourcePort.ask(request);
+      }
+      return admission.port.ask(request);
+    } }, log);
+    installJudgmentPort(wrapper);
+    const admittedFixture = recordedEffectFixture(tool, 'prompt', {}, platform.root);
+    bindAgentResearchSourceOwner(admittedFixture.registry, owner);
+    try { return await admittedFixture.run(args, signal); }
+    finally { if (judgmentPort('process-classification-test') === wrapper) installJudgmentPort(sourcePort); }
+  }
+  async function run(args: Record<string, unknown>, supplied = options()) {
+    const tool: Tool = { definition: { name: 'classified-process-fixture', description: 'Intercepted process lifetime fixture.', parameters: {} },
+      execute(rawArgs, executionOptions) { return runBackgroundProcessAction(context, rawArgs, supplied, rawArgs, executionOptions).then(output => ({ success: true, output: JSON.stringify(output) })); } };
+    const result = await admitted(tool, args, supplied.signal);
+    return JSON.parse(result.output!);
+  }
+  return { context, registry, calls, manager, root: platform.root, options, admitted, run };
 }
 function reading(p = 0.99) { const fake = fakePort(() => noulAnswer(p)); installJudgmentPort(fake.port); return fake; }
 function latch() {
@@ -64,12 +96,15 @@ describe('protected process lifetime classification', () => {
       const tool = name === 'terminal' ? createAgentTerminalTool(f.context, f.registry)
         : name === 'process' ? createAgentProcessTool(f.context, f.registry)
         : createAgentHarnessTool({ commandContext: f.context, commandRegistry: new CommandRegistry(), toolRegistry: f.registry });
-      const result = tool.execute({ ...start, background: true, action: 'start', mode: 'run_background_process' });
+      const args = name === 'terminal' ? { command: start.command, background: true, timeoutMs: start.timeoutMs }
+        : name === 'process' ? { command: start.command, action: 'start', timeoutMs: start.timeoutMs }
+        : { ...start, mode: 'run_background_process' };
+      const result = f.admitted(tool, args);
       await pending.first; expect(f.calls).toEqual([]); pending.release();
       const value = await result;
       expect(value.success).toBe(true);
       expect(JSON.parse(value.output!)).toMatchObject({ status: 'started', processClass: 'long_lived', killOnTimeout: false });
-      expect(f.calls).toEqual([['env firefox', undefined, undefined, { timeout_ms: 120_000, sigterm_grace_ms: 5000, kill_on_timeout: false, signal: undefined, assertCurrent: expect.any(Function) }]]);
+      expect(f.calls).toEqual([['env firefox', f.root, undefined, { timeout_ms: 120_000, sigterm_grace_ms: 5000, kill_on_timeout: false, stdin: 'pipe', signal: undefined, assertCurrent: expect.any(Function) }]]);
       expect(fake.requests).toHaveLength(1);
       expect(fake.requests[0]?.context?.battery).toBe('agent.tools.long-lived-process');
     }
@@ -77,17 +112,17 @@ describe('protected process lifetime classification', () => {
 
   test('ordinary reading preserves timeout termination and explicit kill overrides', async () => {
     const f = fixture(); reading(0.01);
-    await runBackgroundProcessAction(f.context, { ...start, command: 'grep -r firefox /etc' }, f.options());
+    await f.run({ ...start, command: 'grep -r firefox /etc' }, f.options());
     expect(f.calls[0]?.[3]).toMatchObject({ kill_on_timeout: true });
     reading(0.99);
-    await runBackgroundProcessAction(f.context, { ...start, killOnTimeout: true }, f.options());
+    await f.run({ ...start, killOnTimeout: true }, f.options());
     expect(f.calls[1]?.[3]).toMatchObject({ kill_on_timeout: true });
   });
 
-  test('explicit classes launch without a classification owner or hosted reading', async () => {
+  test('explicit classes skip lifetime reading while effects still require recorded admission', async () => {
     const f = fixture();
     for (const processClass of ['command', 'long_lived']) {
-      const result = await runBackgroundProcessAction(f.context, { ...start, processClass });
+      const result = await f.run({ ...start, processClass }, {});
       expect(result.processClass).toBe(processClass);
     }
     expect(f.calls).toHaveLength(2);
@@ -100,35 +135,35 @@ describe('protected process lifetime classification', () => {
     const log = new SqliteDecisionLog(':memory:'); installJudgmentPort(withDecisionLog(fake.port, log));
     const command = 'env firefox ' + 'x'.repeat(1200) + privateText;
     try {
-      await runBackgroundProcessAction(f.context, { ...start, command }, f.options());
+      expect(await resolveBackgroundProcessClass({}, command, f.options())).toBe('long_lived');
       expect(JSON.stringify(local.calls)).toContain(command);
       expect(JSON.stringify(fake.requests)).not.toContain(privateText);
       expect(JSON.stringify(fake.requests)).toContain('[redacted]');
       expect(JSON.stringify(log.query())).not.toContain(privateText);
       expect(log.query()).toHaveLength(1);
-      expect(f.calls[0]?.[0]).toBe(command);
+      expect(f.calls).toHaveLength(0);
     } finally { log[Symbol.dispose](); }
   });
 
   test('literal credentials anywhere in the command are held before either service', async () => {
     const local = researchScreeningFixture(); const f = fixture(local.owner); const fake = reading();
-    await expect(runBackgroundProcessAction(f.context, { ...start, command: 'env firefox ' + 'x'.repeat(1200) + ' Authorization: Bearer synthetic-credential' }, f.options())).rejects.toThrow();
+    await expect(resolveBackgroundProcessClass({}, 'env firefox ' + 'x'.repeat(1200) + ' Authorization: Bearer synthetic-credential', f.options())).rejects.toThrow();
     expect(local.calls).toHaveLength(0); expect(fake.requests).toHaveLength(0); expect(f.calls).toHaveLength(0);
   });
 
   test('missing owner, unsettled screening, missing port, malformed answer and uncertain answer never spawn', async () => {
     const noOwner = fixture(); const fake = reading();
-    await expect(runBackgroundProcessAction(noOwner.context, start)).rejects.toThrow();
+    await expect(resolveBackgroundProcessClass({}, start.command)).rejects.toThrow();
     expect(fake.requests).toHaveLength(0); expect(noOwner.calls).toHaveLength(0);
     const local = researchScreeningFixture({ complete: 0.5 }); const held = fixture(local.owner);
-    await expect(runBackgroundProcessAction(held.context, start, held.options())).rejects.toThrow();
+    await expect(resolveBackgroundProcessClass({}, start.command, held.options())).rejects.toThrow();
     expect(fake.requests).toHaveLength(0); expect(held.calls).toHaveLength(0);
     for (const response of ['missing', 'malformed', 'uncertain', 'failure']) {
       const f = fixture();
       installJudgmentPort(response === 'missing' ? undefined : response === 'failure'
         ? { model: 'jev-1.13.0', ask: async () => { throw new Error('synthetic unavailable'); } }
         : fakePort(() => response === 'malformed' ? { type: 'noul', noul: 'yes' } : noulAnswer(0.5)).port);
-      await expect(runBackgroundProcessAction(f.context, start, f.options())).rejects.toThrow();
+      await expect(resolveBackgroundProcessClass({}, start.command, f.options())).rejects.toThrow();
       expect(f.calls).toHaveLength(0);
     }
   });
@@ -136,7 +171,7 @@ describe('protected process lifetime classification', () => {
   test('cancellation during local screening never contacts the classifier', async () => {
     const pending = latch(); const local = researchScreeningFixture({ beforeProposal: async () => { pending.started(); await pending.gate; } });
     const f = fixture(local.owner); const fake = reading(); const controller = new AbortController();
-    const result = runBackgroundProcessAction(f.context, start, f.options(controller.signal));
+    const result = resolveBackgroundProcessClass({}, start.command, f.options(controller.signal));
     await pending.first; controller.abort(); pending.release();
     await expect(result).rejects.toThrow(); expect(fake.requests).toHaveLength(0); expect(f.calls).toHaveLength(0);
   });
@@ -147,7 +182,7 @@ describe('protected process lifetime classification', () => {
       const pending = latch(), controller = new AbortController();
       const port: typeof fake.port = { ...fake.port, async ask(request) { pending.started(); await pending.gate; return fake.port.ask(request); } };
       installJudgmentPort(port);
-      const result = runBackgroundProcessAction(f.context, start, f.options(controller.signal));
+      const result = resolveBackgroundProcessClass({}, start.command, f.options(controller.signal));
       await pending.first;
       if (change === 'abort') controller.abort();
       if (change === 'owner-revoked') local.lifetime.abort();
@@ -170,7 +205,7 @@ describe('protected process lifetime classification', () => {
         expect(() => request[fence]!()).toThrow(); checked = true;
         return fake.port.ask(request);
       } });
-      await expect(runBackgroundProcessAction(f.context, start, f.options())).rejects.toThrow();
+      await expect(resolveBackgroundProcessClass({}, start.command, f.options())).rejects.toThrow();
       expect(checked).toBe(true); expect(f.calls).toHaveLength(0);
     }
   });
@@ -180,7 +215,7 @@ describe('protected process lifetime classification', () => {
     const log = new SqliteDecisionLog(':memory:');
     installJudgmentPort(withDecisionLog({ ...fake.port, async ask(request) { pending.started(); await pending.gate; return fake.port.ask(request); } }, log));
     try {
-      const result = runBackgroundProcessAction(f.context, start, f.options(controller.signal));
+      const result = resolveBackgroundProcessClass({}, start.command, f.options(controller.signal));
       await pending.first; controller.abort(); pending.release();
       await expect(result).rejects.toThrow(); expect(log.query()).toHaveLength(0); expect(f.calls).toHaveLength(0);
     } finally { log[Symbol.dispose](); }
@@ -190,9 +225,9 @@ describe('protected process lifetime classification', () => {
     const f = fixture(), pending = latch(); const fake = reading();
     installJudgmentPort({ ...fake.port, async ask(request) { pending.started(); await pending.gate; return fake.port.ask(request); } });
     const args = { ...start, killOnTimeout: false };
-    const result = runBackgroundProcessAction(f.context, args, f.options());
+    const result = f.run(args, f.options());
     await pending.first; args.command = 'different command'; args.killOnTimeout = true; args.timeoutMs = 1000; pending.release(); await result;
-    expect(f.calls).toEqual([['env firefox', undefined, undefined, { timeout_ms: 120_000, sigterm_grace_ms: 5000, kill_on_timeout: false, signal: undefined, assertCurrent: expect.any(Function) }]]);
+    expect(f.calls).toEqual([['env firefox', f.root, undefined, { timeout_ms: 120_000, sigterm_grace_ms: 5000, kill_on_timeout: false, stdin: 'pipe', signal: undefined, assertCurrent: expect.any(Function) }]]);
   });
 
   test('accessors are not evaluated by the classification source capture', async () => {
@@ -214,7 +249,7 @@ describe('protected process lifetime classification', () => {
       const projected = await f.registry.projectCall('clear', name, { ...args, command: 'env firefox' });
       f.registry.assertProjected(projected);
       local.lifetime.abort(); expect(() => f.registry.assertProjected(projected)).toThrow();
-      await f.registry.releaseProjected(projected);
+      await expect(f.registry.releaseProjected(projected)).rejects.toThrow();
     });
   }
 
@@ -244,8 +279,8 @@ describe('protected process lifetime classification', () => {
     test(`${name} authentic admission stays current during a pending reading: ${change}`, async () => {
       const f = fixture(), pending = latch(); let revision = 0;
       const config = {
-        getAutonomousSnapshot: () => ({ permissions: { mode: revision ? 'allow-all' : 'prompt', tools: {} }, autoApprove: false, directory: '/synthetic/project', incarnation: revision }),
-        isAutoApproveEnabled: () => false, getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }), getWorkingDirectory: () => '/synthetic/project',
+        getAutonomousSnapshot: () => ({ permissions: { mode: revision ? 'allow-all' : 'prompt', tools: {} }, autoApprove: false, directory: f.root, incarnation: revision }),
+        isAutoApproveEnabled: () => false, getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }), getWorkingDirectory: () => f.root,
       } as PermissionConfigReader;
       const manager = new PermissionManager(undefined, config, new PolicyRuntimeState());
       const registry = new ToolRegistry(manager); bindAgentResearchSourceOwner(registry, ordinaryResearchOwner());
@@ -289,7 +324,7 @@ describe('protected process lifetime classification', () => {
       } });
       const launches = spyOn(Bun, 'spawn').mockImplementation(() => { throw new Error('Unexpected synthetic launch'); });
       try {
-        const result = runBackgroundProcessAction(f.context, start, f.options(controller.signal));
+        const result = f.run(start, f.options(controller.signal));
         const settled = result.then(() => undefined, (error: unknown) => error);
         await pending.first;
         if (change === 'abort') controller.abort(new Error('synthetic cancellation'));
@@ -309,8 +344,8 @@ describe('protected process lifetime classification', () => {
     const processManager = new ProcessManager(); (f.context.workspace as { processManager?: ProcessManager }).processManager = processManager;
     const key = 'JEV_PROCESS_LIFETIME_PERMISSION'; const previous = process.env[key]; process.env[key] = 'synthetic';
     const config = {
-      getAutonomousSnapshot: () => ({ permissions: { mode: revision ? 'allow-all' : 'prompt', tools: {} }, autoApprove: false, directory: '/synthetic/project', incarnation: revision }),
-      isAutoApproveEnabled: () => false, getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }), getWorkingDirectory: () => '/synthetic/project',
+      getAutonomousSnapshot: () => ({ permissions: { mode: revision ? 'allow-all' : 'prompt', tools: {} }, autoApprove: false, directory: f.root, incarnation: revision }),
+      isAutoApproveEnabled: () => false, getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }), getWorkingDirectory: () => f.root,
     } as PermissionConfigReader;
     const permissions = new PermissionManager(undefined, config, new PolicyRuntimeState());
     const registry = new ToolRegistry(permissions); bindAgentResearchSourceOwner(registry, ordinaryResearchOwner());

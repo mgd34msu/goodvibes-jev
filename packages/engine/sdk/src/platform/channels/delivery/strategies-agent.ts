@@ -176,10 +176,11 @@ export function createAgentDeliveryStrategy(
         request.binding?.channelId,
         request.binding?.externalId,
       );
-      const guarded = request.signal !== undefined || request.assertCurrent !== undefined;
+      const guarded = request.signal !== undefined || request.assertCurrent !== undefined || request.withPublication !== undefined;
       if (guarded && !registry.guardFor) throw new Error('Agent conversation sender does not support guarded delivery');
       const senderCurrent = guarded ? registry.guardFor!(sender) : undefined;
-      const lifetime = { signal: request.signal, assertCurrent: () => { assertDeliveryCurrent(request); senderCurrent?.(); } };
+      const lifetime = { signal: request.signal, withPublication: request.withPublication,
+        assertCurrent: () => { assertDeliveryCurrent(request); senderCurrent?.(); } };
       const message: AgentConversationMessage = {
         title: request.title.trim().length > 0 ? request.title : titleFromBody(request.body),
         body: request.body,

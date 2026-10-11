@@ -76,6 +76,11 @@ export {
   type ProfileWriteDecision,
 } from './trust.js';
 
+export { captureProfileDelegation, captureNativeProfileDelegation, bindProfileDelegationToInvocation, profileDelegationForInvocation,
+  bindProfileMutationOptionsToInvocation, profileMutationOptionsForInvocation,
+  assertCurrentProfileDelegation,
+  type RecordedProfileDelegation, type ProfileMutationOptions } from './delegation.js';
+
 export {
   describeProfilePersonRead,
   describeProfileRead,

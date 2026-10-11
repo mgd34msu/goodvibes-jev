@@ -2,6 +2,9 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext } from '../input/command-registry.ts';
 import { planAgentTaskRoute, type AgentTaskRouteSources } from './agent-route-planner.ts';
+import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
+import { captureModelReadingInput } from './agent-harness-model-reading-source.ts';
+import { createHarnessCatalogInputProjector, protectHarnessCatalogTool, harnessCatalogExecutionGuard, retainHarnessCatalogCurrent } from './agent-harness-catalog-ingress.ts';
 
 type AgentRouteAction = 'plan' | 'status';
 
@@ -67,8 +70,8 @@ function status(): Record<string, unknown> {
   };
 }
 
-export function createAgentRouteTool(commandContext: CommandContext, sources: AgentTaskRouteSources = {}): Tool {
-  return {
+export function createAgentRouteTool(commandContext: CommandContext, sources: AgentTaskRouteSources = {}, registry: ToolRegistry | undefined = commandContext.extensions?.toolRegistry): Tool {
+  const tool: Tool = {
     definition: {
       name: 'route',
       description: 'Choose the best visible route for a user task.',
@@ -91,15 +94,24 @@ export function createAgentRouteTool(commandContext: CommandContext, sources: Ag
       sideEffects: [],
       concurrency: 'parallel',
     },
-    execute: async (rawArgs: unknown, options) => {
-      const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentRouteToolArgs;
+    execute: async (rawArgs, options) => {
+      const args = captureModelReadingInput(rawArgs);
       const action = readAction(args);
       if (action === 'status') return output(status());
-      return output(await planAgentTaskRoute(commandContext, args, sources, { ...(options?.signal ? { signal: options.signal } : {}) }));
+      return output(await planAgentTaskRoute(commandContext, args, sources, {
+        signal: options?.signal, sourceOwner: agentResearchSourceOwner(registry),
+        assertCurrent: harnessCatalogExecutionGuard(rawArgs, options), retainCurrent: retainHarnessCatalogCurrent(rawArgs),
+      }));
     },
   };
+  return registry ? protectHarnessCatalogTool(tool, registry, isRouteQuery, commandContext) : tool;
+}
+
+function isRouteQuery(input: Record<string, unknown>): boolean {
+  const args = captureModelReadingInput(input);
+  return readAction(args) === 'plan' && Boolean(readString(args.query) || readString(args.target));
 }
 
 export function registerAgentRouteTool(registry: ToolRegistry, commandContext: CommandContext, sources: AgentTaskRouteSources = {}): void {
-  if (!registry.has('route')) registry.register(createAgentRouteTool(commandContext, sources));
+  if (!registry.has('route')) registry.register(createAgentRouteTool(commandContext, sources, registry), { inputProjection: createHarnessCatalogInputProjector(registry, undefined, isRouteQuery, commandContext) });
 }

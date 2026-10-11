@@ -3,7 +3,7 @@ import { createHostPowerSeam } from '@goodvibes-jev/engine/sdk/platform/power';
 import { createProductionDaemonInboxFactory, type ProductionDaemonInboxOptions } from '../runtime/production-inbox-composition.js';
 import type { DaemonCliRuntime } from './serve.js';
 
-/** Trusted embedders may admit protected Slack/email accounts explicitly. */
+/** Trusted embedders may admit protected Slack/Discord/email accounts explicitly. */
 export function createProductionDaemonRuntime(inbox: ProductionDaemonInboxOptions = {}): DaemonCliRuntime {
   return {
     inboxFactory: createProductionDaemonInboxFactory(inbox),

@@ -1,3 +1,6 @@
+import { withBundleJudgmentFixture } from '../helpers/bundle-judgment-fixture.ts';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { waitForConcealedSubmission } from '../../input/concealed-input.ts';
 import { withOfflineProviderMetadata } from '../helpers/offline-provider-metadata.ts';
 import { useSecurityReadings } from '../helpers/security-readings.ts';
@@ -78,7 +81,7 @@ import {
   cancelConcealedInputFor,
   type ConcealedInputHost,
 } from '../../input/concealed-input.ts';
-import { redactConfig, collectSensitiveConfigValues, redactSerializedSecrets, REDACTED_VALUE } from '../../cli/redaction.ts';
+import { redactConfig, collectSensitiveConfigValues, redactSerializedSecrets, REDACTED_VALUE } from '@goodvibes-jev/engine/terminal-shell';
 import { deliverAgentChannelMessage } from '../../agent/channel-delivery.ts';
 import {
   screenOutboundForCardMaterial,
@@ -911,12 +914,12 @@ describe('payments card containment (agent terminal)', () => {
     await persistSecretBackedConfigValue(cm, secrets, PAYMENTS_CARD_NUMBER_CONFIG_KEY, FAKE_CARD_NUMBER, { scope: 'daemon' });
 
     const bundlePath = join(tmpDir, 'bundle.json');
-    const { result, requests } = await withOfflineProviderMetadata(() => handleBundleCommand({
+    const { result, requests } = await withBundleJudgmentFixture(cm, withBackend => withOfflineProviderMetadata(() => withBackend(() => handleBundleCommand({
       cli: parseGoodVibesCli(['bundle', 'export', bundlePath]),
       configManager: cm,
       workingDirectory: tmpDir,
       homeDirectory: tmpDir,
-    }));
+    }))));
     expect(requests.length).toBeGreaterThan(0);
     expect(result.exitCode).toBe(0);
     expect(existsSync(bundlePath)).toBe(true);
@@ -947,7 +950,7 @@ describe('payments card containment (agent terminal)', () => {
     expect(stringLeaves.filter((leaf) => leakedDigits(leaf, FAKE_CVV))).toEqual([]);
   }, 60_000);
 
-  test('DEFECT BACKSTOP: a raw literal under payments.card* is redacted by NAME: the suffix list does not catch these', () => {
+  test('DEFECT BACKSTOP: a raw literal under payments.card* is redacted by NAME: the suffix list does not catch these', async () => {
     // If a future bug ever wrote a literal instead of a reference, this is what
     // stands between it and a file the owner emails to someone.
     const config = {
@@ -960,7 +963,15 @@ describe('payments card containment (agent terminal)', () => {
       },
     };
 
-    const redacted = redactConfig(config);
+    const secretPaths = new Set(['payments.cardNumber', 'payments.cardExpiry', 'payments.cardCvv', 'payments.cardholderName']);
+    const safePaths = new Set(['payments', 'payments.billingAddress', 'payments.billingAddress.line1']);
+    const previous = installJudgmentPort(fakePort((name, _question, state) => {
+      if (name !== 'credential') return noulAnswer(0.5);
+      const key = state !== null && typeof state === 'object' && !Array.isArray(state) && 'key' in state ? state.key : undefined;
+      return noulAnswer(typeof key === 'string' && secretPaths.has(key) ? 0.99 : typeof key === 'string' && safePaths.has(key) ? 0.01 : 0.5);
+    }).port);
+    try {
+    const redacted = await redactConfig(config);
     const serialized = JSON.stringify(redacted.value);
     expect(serialized).not.toContain(FAKE_CARD_NUMBER);
     expect(serialized).not.toContain(FAKE_EXPIRY);
@@ -975,8 +986,9 @@ describe('payments card containment (agent terminal)', () => {
     expect(serialized).toContain('123 Fake St');
 
     // and the same values are collected for the serialized-secret sweep
-    const collected = collectSensitiveConfigValues(config);
+    const collected = await collectSensitiveConfigValues(config);
     expect(collected).toContain(FAKE_CARD_NUMBER);
-    expect(redactSerializedSecrets(`leaked ${FAKE_CARD_NUMBER}`, collected)).not.toContain(FAKE_CARD_NUMBER);
+    expect(await redactSerializedSecrets(`leaked ${FAKE_CARD_NUMBER}`, collected)).not.toContain(FAKE_CARD_NUMBER);
+    } finally { installJudgmentPort(previous); }
   });
 });

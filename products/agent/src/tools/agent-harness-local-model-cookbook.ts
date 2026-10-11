@@ -1,10 +1,10 @@
 import type { CommandContext } from '../input/command-registry.ts';
 import { estimateModelBytes, fitAssessment, fitVerdictLabel, readHardwareProfileSync, REPRESENTATIVE_7B_PARAMS } from '../core/hardware-profile.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
-import { localModelDetection, localModelServerHealthMap } from './agent-harness-local-model-endpoints.ts';
+import { localModelDetection, localModelServerFacts, localModelServerHealthMap } from './agent-harness-local-model-endpoints.ts';
 import { deferredModelReadiness, deferredRecipeFit, localHardwareProfile, localRecipeReadinessScore, localRecipeStackId, scoreLocalModelRecipe } from './agent-harness-model-readiness.ts';
 import { localModelBenchmarkHistory, localModelBenchmarkPlan } from './agent-harness-local-model-benchmarks.ts';
-import type { LocalModelDetection, LocalModelHardwareProfile, LocalModelRecipe, LocalModelRecipeFit, LocalModelSetupPlan, LocalModelBenchmarkEvidence, ModelReadinessScore } from './agent-harness-model-routing-types.ts';
+import type { LocalModelDetection, LocalModelHardwareProfile, LocalModelRecipe, LocalModelRecipeFit, LocalModelSetupPlan, LocalModelBenchmarkEvidence, LocalModelServerHealthMap, ModelReadinessScore } from './agent-harness-model-routing-types.ts';
 import { routeReadiness } from '@goodvibes-jev/engine/sdk/platform/routing';
 import { withModelReadingSource, type ModelReadingOptions } from './agent-harness-model-reading-source.ts';
 import { readRecord, readString } from './agent-harness-model-routing-utils.ts';
@@ -218,12 +218,12 @@ export function localModelCookbook(context: CommandContext, includeParameters: b
   return cookbookSnapshot(context, includeParameters);
 }
 
-function cookbookSnapshot(context: CommandContext, includeParameters: boolean, enriched?: readonly Record<string, unknown>[], hardware?: LocalModelHardwareProfile): Record<string, unknown> {
+function cookbookSnapshot(context: CommandContext, includeParameters: boolean, enriched?: readonly Record<string, unknown>[], hardware?: LocalModelHardwareProfile,
+  localServerHealth: Omit<LocalModelServerHealthMap, 'daemonDiagnostics'> = localModelServerFacts(context, includeParameters)): Record<string, unknown> {
   const detection = localModelDetection(context);
   const hardwareProfile = hardware ?? localHardwareProfile();
   const benchmarkHistory = localModelBenchmarkHistory(context, includeParameters);
   const benchmarkEvidence = readRecord(benchmarkHistory.evidence) as unknown as LocalModelBenchmarkEvidence;
-  const localServerHealth = localModelServerHealthMap(context, includeParameters);
   const recipes = enriched ?? localModelRecipes()
     .map((recipe) => describeLocalModelRecipe(recipe, detection, hardwareProfile, benchmarkEvidence, includeParameters));
   const ready = recipes.filter(recipe => readRecord(recipe.fitReading).outcome === 'ready'
@@ -266,6 +266,12 @@ function cookbookSnapshot(context: CommandContext, includeParameters: boolean, e
 
 /** Explicit inspection may enrich facts; startup and setup snapshots never ask a model. */
 export async function readLocalModelCookbook(context: CommandContext, includeParameters: boolean, options: ModelReadingOptions): Promise<Record<string, unknown>> {
+  if (!options.sourceOwner) {
+    const health = await localModelServerHealthMap(context, includeParameters, options);
+    const result = cookbookSnapshot(context, includeParameters, undefined, undefined, health);
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    return result;
+  }
   const recipes = localModelRecipes(), hardware = localHardwareProfile(), detection = localModelDetection(context);
   const history = localModelBenchmarkHistory(context, true);
   const evidence = readRecord(history.evidence) as unknown as LocalModelBenchmarkEvidence;
@@ -281,7 +287,8 @@ export async function readLocalModelCookbook(context: CommandContext, includePar
     // Explicit null handling: missing scores stay at the end and never become zero.
     enriched.sort((a, b) => typeof a.fitScore !== 'number' ? typeof b.fitScore !== 'number' ? 0 : 1
       : typeof b.fitScore !== 'number' ? -1 : b.fitScore - a.fitScore);
-    const result = cookbookSnapshot(context, includeParameters, enriched, facts.hardware);
+    const health = await localModelServerHealthMap(context, includeParameters, scoped);
+    const result = cookbookSnapshot(context, includeParameters, enriched, facts.hardware, health);
     scoped.assertCurrent?.(); return result;
   });
 }

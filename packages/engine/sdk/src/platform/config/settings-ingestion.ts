@@ -49,6 +49,7 @@ import { listDaemonOwnedConfigPaths } from './config-ownership.js';
 import { deleteRawDotPath } from './settings-io.js';
 import { readDotPath } from './shared-config-tier.js';
 import { isSecretBearingConfigKey, SECRET_BEARING_CONFIG_PATHS } from './secret-bearing-config-keys.js';
+import { isStructuredCredentialReferenceConfigKey } from './structured-credential-config.js';
 import { describeMalformedSecretRef, looksLikeSecretRef } from './secret-ref-refusal.js';
 import { normalizeSecretRef } from './secret-refs.js';
 import {
@@ -113,6 +114,8 @@ export const SAFETY_GATE_CONFIG_PREFIXES: readonly string[] = [
   // restriction OFF, so a fallback silently stops enforcing whatever the
   // operator turned on.
   'policy.',
+  // Dropping an invalid project chain could revive a broader inherited destination.
+  'judgment.fallbacks',
 ];
 
 /**
@@ -159,7 +162,7 @@ function describeShape(value: unknown): string {
  * SHAPE only, a wrong-shaped password is still a password someone pasted.
  */
 function describeOffendingValue(key: string, value: unknown): string {
-  if (isSecretBearingConfigKey(key)) return describeShape(value);
+  if (isSecretBearingConfigKey(key) || isStructuredCredentialReferenceConfigKey(key)) return describeShape(value);
   if (typeof value === 'string') return `${describeShape(value)} ${JSON.stringify(value.slice(0, 80))}`;
   if (isPlainObject(value)) return 'an object';
   return `${describeShape(value)} ${JSON.stringify(value) ?? 'undefined'}`;

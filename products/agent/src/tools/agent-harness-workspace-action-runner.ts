@@ -1,17 +1,18 @@
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { AgentHarnessToolArgs, AgentHarnessToolDeps } from './agent-harness-tool-types.ts';
+import type { AgentHarnessToolDeps } from './agent-harness-tool-types.ts';
 import { clearSetupCheckpoint, markSetupCheckpoint, setupCheckpointSummary } from './agent-harness-setup-posture.ts';
 import { runLocalWorkspaceAction } from './agent-harness-local-operations.ts';
 import { AGENT_WORKSPACE_CATEGORIES, buildWorkspaceEditorContext, createWorkspaceEditor, describeWorkspaceAction, describeWorkspaceCategory, listWorkspaceActions, resolveWorkspaceActionDetail } from './agent-harness-workspace-actions.ts';
-import { runCommand } from './agent-harness-command-runner.ts';
+import { runTranslatedWorkspaceCommand } from './agent-harness-command-runner.ts';
 import { runWorkspaceEditorAction } from './agent-harness-workspace-editor-runner.ts';
 import { error, output, readString, requireConfirmedAction } from './agent-harness-tool-utils.ts';
-import { importAgentWorkspaceTuiSettings, previewAgentWorkspaceTuiSettingsImport } from '../input/agent-workspace-settings.ts';
-import { writeOnboardingCheckMarker, writeOnboardingCompletionMarker } from '../runtime/onboarding/index.ts';
+import { executeAdmittedAgentSettingsImport } from './agent-settings-import-admission.ts';
+import { getOnboardingCheckMarkerPath, getOnboardingCompletionMarkerPath, writeOnboardingCheckMarker, writeOnboardingCompletionMarker } from '../runtime/onboarding/index.ts';
+import { captureHarnessLocalEffect } from './agent-harness-local-effect.ts';
 
 export async function runWorkspaceAction(
   deps: AgentHarnessToolDeps,
-  args: AgentHarnessToolArgs,
+  args: Record<string, unknown>,
   options?: Parameters<Tool['execute']>[1],
 ): Promise<{ readonly success: boolean; readonly output?: string; readonly error?: string }> {
   const resolved = resolveWorkspaceActionDetail(args);
@@ -46,36 +47,11 @@ export async function runWorkspaceAction(
         note: 'This workspace action is a command template. Provide concrete values with mode:"run_command" once the exact command is known.',
       });
     }
-    return runCommand(deps, { ...args, command: action.command });
+    return runTranslatedWorkspaceCommand(deps, args, action.command, options);
   }
   if (action.kind === 'settings-import') {
-    const preview = previewAgentWorkspaceTuiSettingsImport(deps.commandContext);
-    if (!preview) return error('GoodVibes settings import is unavailable in this runtime.');
-    if (args.confirm !== true && !readString(args.explicitUserRequest)) {
-      return output({
-        status: 'confirmation_required',
-        action: describeWorkspaceAction(category, action, { lookup }),
-        preview,
-        next: 'Run with confirm:true and explicitUserRequest after the user asks to import these settings.',
-      });
-    }
-    const confirmationError = requireConfirmedAction(args, 'GoodVibes settings import');
-    if (confirmationError) return error(confirmationError);
-    const explicitUserRequest = readString(args.explicitUserRequest);
-    const outcome = await importAgentWorkspaceTuiSettings(deps.commandContext);
-    return output({
-      status: outcome.status,
-      action: describeWorkspaceAction(category, action, { lookup }),
-      preview,
-      actionResult: outcome.result,
-      runtimeSnapshot: outcome.runtimeSnapshot,
-      policy: {
-        effect: 'state',
-        confirmation: 'confirmed',
-        explicitUserRequest,
-        boundary: 'Applied only Agent-owned settings and subscription state from published GoodVibes platform sources; source package stores were not mutated.',
-      },
-    });
+    try { return await executeAdmittedAgentSettingsImport(deps.commandContext, args, options); }
+    catch { return error('Settings import requires a current recorded effect-owner admission.'); }
   }
   if (action.kind === 'setup-checkpoint') {
     const operation = action.setupCheckpointOperation ?? 'show';
@@ -86,11 +62,11 @@ export async function runWorkspaceAction(
         checkpoint: await setupCheckpointSummary(deps.commandContext),
       });
     }
-    const confirmationError = requireConfirmedAction(args, operation === 'clear' ? 'Setup wizard checkpoint clear' : 'Setup wizard checkpoint save');
+    const confirmationError = requireConfirmedAction(args, options, operation === 'clear' ? 'Setup wizard checkpoint clear' : 'Setup wizard checkpoint save');
     if (confirmationError) return error(confirmationError);
     const result = operation === 'clear'
-      ? clearSetupCheckpoint(deps.commandContext, args)
-      : await markSetupCheckpoint(deps.commandContext, args);
+      ? clearSetupCheckpoint(deps.commandContext, args, options)
+      : await markSetupCheckpoint(deps.commandContext, args, options);
     return output({
       status: 'checkpoint_action_completed',
       action: describeWorkspaceAction(category, action, { lookup }),
@@ -103,17 +79,19 @@ export async function runWorkspaceAction(
     return runWorkspaceEditorAction(deps, action, editor, args, options);
   }
   if (action.kind === 'local-selection' || action.kind === 'local-operation') {
-    return runLocalWorkspaceAction(deps, action, args);
+    return runLocalWorkspaceAction(deps, action, args, options);
   }
   if (action.kind === 'onboarding-complete') {
-    const confirmationError = requireConfirmedAction(args, 'Onboarding completion');
+    const confirmationError = requireConfirmedAction(args, options, 'Onboarding completion');
     if (confirmationError) return error(confirmationError);
     const explicitUserRequest = readString(args.explicitUserRequest);
-    if (!explicitUserRequest) return error('Onboarding completion requires explicitUserRequest when confirm is true.');
     const shellPaths = deps.commandContext.workspace?.shellPaths;
     if (!shellPaths) return error('Onboarding completion requires Agent shell paths.');
+    const assertCurrent = captureHarnessLocalEffect(deps.commandContext, args, options, paths => [getOnboardingCheckMarkerPath(paths), getOnboardingCompletionMarkerPath(paths)]);
     const marker = { scope: 'user', source: 'wizard', mode: 'new', workspaceRoot: shellPaths.workingDirectory } as const;
+    assertCurrent();
     const checkMarker = writeOnboardingCheckMarker(shellPaths, marker);
+    assertCurrent();
     const completionMarker = writeOnboardingCompletionMarker(shellPaths, marker);
     return output({
       status: 'onboarding_completed',

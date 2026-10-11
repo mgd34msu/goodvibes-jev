@@ -3,7 +3,7 @@ import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/en
 import { OpenAICompatProvider, OllamaProvider } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { routingRegistry, routeReadiness } from '@goodvibes-jev/engine/sdk/platform/routing';
 import { SOURCE_SCREENING_LIMITS, type ProtectedSourceOwner } from '@goodvibes-jev/engine/sdk/platform/security';
-import { ToolRegistry, assertCurrentToolExecution } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { ToolRegistry, ToolInputProjectionError, assertCurrentToolExecution } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { JudgmentError, SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
@@ -597,6 +597,19 @@ test.each(['signal', 'sourceOwner', 'assertCurrent'] as const)('mutating source 
   wait.release(); await expect(pending).rejects.toThrow(); expect(delivered).toBe(0);
 });
 
+test.each(['capture', 'screen', 'project', 'release'] as const)('a replaced source-owner %s accessor cannot publish or hijack cleanup', async changed => {
+  const screening = researchScreeningFixture();
+  const release = screening.owner.release.bind(screening.owner);
+  let released = 0, accessed = 0, delivered = 0;
+  screening.owner.release = async handle => { released++; await release(handle); };
+  await expect(withModelReadingSource({ ordinary: 'Complete source' }, { sourceOwner: screening.owner }, async () => {
+    await Promise.resolve();
+    Object.defineProperty(screening.owner, changed, { configurable: true, get() { accessed++; throw new Error('Replacement source accessor must not run'); } });
+    return 'Result';
+  }).then(value => { delivered++; return value; })).rejects.toThrow(ToolInputProjectionError);
+  expect(delivered).toBe(0); expect(accessed).toBe(0); expect(released).toBe(1);
+});
+
 test.each(['invocation', 'model', 'provider', 'artifact'] as const)('non-enumerable %s credentials stay protected before source transport', async field => {
   const secret = 'synthetic-hidden-credential';
   const screening = researchScreeningFixture(); const f = fixture(screening.owner); const fake = readings(); installJudgmentPort(fake.port);
@@ -1060,6 +1073,22 @@ test('late shared source DAG is bounded while rechecking already-screened bytes'
   const started = performance.now(); wait.release();
   await expect(pending).rejects.toThrow(); expect(performance.now() - started).toBeLessThan(2_000);
   expect(delivered).toBe(0); expect(fake.requests).toHaveLength(0);
+});
+
+test.each(['hidden-value', 'hidden-added', 'accessor', 'proxy', 'array-property'] as const)('source publication rejects late %s without executing hostile slots', async changed => {
+  const source: { nested: object; rows: string[] } = { nested: {}, rows: ['original'] };
+  Object.defineProperty(source.nested, 'complete', { value: 'original', enumerable: false, configurable: true });
+  let touched = 0;
+  const pending = withModelReadingSource(source, { sourceOwner: ordinaryResearchOwner() }, async () => {
+    if (changed === 'hidden-value') Object.defineProperty(source.nested, 'complete', { value: 'changed' });
+    if (changed === 'hidden-added') Object.defineProperty(source.nested, 'undisplayed', { value: 'changed' });
+    if (changed === 'accessor') Object.defineProperty(source.nested, 'complete', { get() { touched++; return 'original'; } });
+    if (changed === 'proxy') source.nested = new Proxy(source.nested, { ownKeys() { touched++; return ['complete']; } });
+    if (changed === 'array-property') Object.defineProperty(source.rows, 'undisplayed', { value: 'changed' });
+    return 'stale-result';
+  });
+  await expect(pending).rejects.toThrow(ToolInputProjectionError);
+  expect(touched).toBe(0);
 });
 
 test.each(['unchanged', 'incarnation', 'method', 'accessor'] as const)('raw readiness guards supported config incarnation against %s without reading config secrets', async kind => {

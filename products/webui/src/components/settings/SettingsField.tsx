@@ -41,6 +41,10 @@
  * state so the user can correct it.
  */
 import { useRef, useState } from 'react';
+import {
+  captureStructuredCredentialReferenceConfigValue,
+  isStructuredCredentialReferenceConfigKey,
+} from '@goodvibes-jev/engine/sdk/platform/judgment-browser/catalogs';
 import { useSettingsDraft } from '../../hooks/useSettingsDraft';
 import { SettingsDraftConflict } from './SettingsDraftConflict';
 import { maskSecretValue } from '../../lib/config-redaction';
@@ -368,8 +372,9 @@ function ScalarSettingsField({ field, onCommit }: {
 /**
  * Fallback editor for an object-typed schema key that has no dedicated
  * structured editor yet: shows the current value and accepts a replacement as
- * validated JSON (must parse to a plain object, never silently committed as a
- * string). pricing.modelPrices never reaches this, it has ModelPricesEditor.
+ * validated JSON. Declared credential-reference arrays use the canonical
+ * capture before display and before writes; other keys require an object.
+ * pricing.modelPrices never reaches this, it has ModelPricesEditor.
  */
 function ObjectJsonField({
   field,
@@ -381,10 +386,27 @@ function ObjectJsonField({
   readonly onCommit: (value: unknown) => void;
 }) {
   const current = field.present ? field.liveValue : field.default;
-  const [draft, setDraft] = useState(() => JSON.stringify(current ?? {}, null, 2));
+  const structuredReferences = isStructuredCredentialReferenceConfigKey(field.key);
+  let captured: unknown = current;
+  let masked = false;
+  if (structuredReferences) {
+    try {
+      captured = captureStructuredCredentialReferenceConfigValue(field.key, current);
+    } catch {
+      captured = undefined;
+      masked = true;
+    }
+  }
+  const [draft, setDraft] = useState(() => masked ? '' : JSON.stringify(captured ?? {}, null, 2));
   const [parseError, setParseError] = useState<string | null>(null);
   return (
     <div className="settings-field-object">
+      {masked && (
+        <>
+          <span className="settings-value settings-value--secret">••••</span>
+          <p role="note">Stored fallback references are malformed and hidden. Enter a valid replacement array.</p>
+        </>
+      )}
       <Textarea
         aria-label={field.key}
         value={draft}
@@ -399,6 +421,18 @@ function ObjectJsonField({
         onClick={() => {
           try {
             const parsed: unknown = JSON.parse(draft);
+            if (structuredReferences) {
+              let references: ReturnType<typeof captureStructuredCredentialReferenceConfigValue>;
+              try {
+                references = captureStructuredCredentialReferenceConfigValue(field.key, parsed);
+              } catch {
+                setParseError('Value must be a valid fallback-reference array.');
+                return;
+              }
+              setParseError(null);
+              onCommit(references);
+              return;
+            }
             if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
               setParseError('Value must be a JSON object.');
               return;

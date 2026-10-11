@@ -5,6 +5,9 @@ import type {
   MediaProvider,
   MediaProviderRegistry,
 } from '@goodvibes-jev/engine/sdk/platform/media';
+import { retainSurfaceMethods, retainSurfaceRead } from '../tools/agent-surface-effect.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertDeliveryCurrent, type DeliveryLifetime } from '@goodvibes-jev/engine/sdk/platform/utils';
 
 export interface AgentMediaGenerationInput {
   readonly prompt: string;
@@ -125,15 +128,36 @@ export async function generateAgentMedia(
   registry: MediaProviderRegistry,
   artifactStore: Pick<ArtifactStore, 'create'>,
   input: AgentMediaGenerationInput,
+  lifetime: DeliveryLifetime = {},
 ): Promise<AgentMediaGenerationResult> {
+  assertDeliveryCurrent(lifetime);
   const provider = findGenerationProvider(registry, input.providerId);
   const generate = provider.generate;
   if (!generate) throw new Error(`Media generation provider is unavailable or not configured for generation: ${provider.id}.`);
-  const generated = await generate(buildProviderRequest(input));
+  const incarnation = registry.getIncarnation();
+  const registryCurrent = retainSurfaceMethods(registry, ['getIncarnation', 'findProvider', 'get']);
+  const providerCurrent = retainSurfaceRead(provider, ['generate'], () => ({ id: provider.id, label: provider.label, capabilities: provider.capabilities }));
+  const storeCurrent = retainSurfaceMethods(artifactStore, ['create']);
+  const assertCurrent = () => {
+    assertDeliveryCurrent(lifetime);
+    registryCurrent(); providerCurrent(); storeCurrent();
+    if (registry.getIncarnation() !== incarnation || registry.get(provider.id) !== provider) throw new ToolInputProjectionError('stale');
+  };
+  assertCurrent();
+  const ownership = { signal: lifetime.signal, assertCurrent };
+  const generated = await generate.call(provider, buildProviderRequest(input), ownership);
+  assertCurrent();
+  if (generated.providerId !== provider.id) throw new Error('The generation response belongs to a different provider.');
   const artifacts: AgentGeneratedMediaArtifact[] = [];
-  for (const [index, artifact] of generated.artifacts.entries()) {
-    const descriptor = await artifactStore.create(artifactCreateInput(generated.providerId, artifact, index));
-    artifacts.push(toGeneratedArtifact(descriptor));
+  try {
+    for (const [index, artifact] of generated.artifacts.entries()) {
+      assertCurrent();
+      const descriptor = await artifactStore.create(artifactCreateInput(generated.providerId, artifact, index), ownership);
+      artifacts.push(toGeneratedArtifact(descriptor));
+      assertCurrent();
+    }
+  } catch {
+    throw new Error(`Media generation stopped after ${artifacts.length} confirmed artifact writes. The provider request completed; any interrupted write may also have completed. Inspect stored artifacts before retrying.`);
   }
   if (artifacts.length === 0) throw new Error(`Media provider ${generated.providerId} did not return artifacts.`);
   return {

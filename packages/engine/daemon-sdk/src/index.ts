@@ -218,3 +218,5 @@ export * from './browser-judgment-routes.js';
 
 export { createSettingsPreconditionHandler } from './settings-precondition.js';
 export type { SettingsPreconditionRequest, SettingsPreconditionFacts, SettingsPreconditionReceipt, SettingsPreconditionHandler } from './settings-precondition.js';
+export { createSettingsImportPreconditionHandler } from './settings-import-precondition.js';
+export type { SettingsImportPreconditionRequest, SettingsImportPreconditionFacts, SettingsImportPreconditionReceipt, SettingsImportPreconditionHandler } from './settings-import-precondition.js';

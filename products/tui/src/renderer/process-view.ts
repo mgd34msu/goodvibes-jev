@@ -31,7 +31,7 @@ export interface ProcessRow {
   /** Set on the first row of a line. */
   readonly time?: string;
   readonly text: string;
-  readonly error: boolean;
+  readonly error: boolean | undefined;
 }
 
 export interface ProcessSearchState {

@@ -7,6 +7,7 @@ import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
 import { createAgentHarnessTool } from './agent-harness-tool.ts';
 import { createAgentSettingsImportTool } from './agent-settings-import-tool.ts';
+import { executeAdmittedAgentSettingsImport, isAgentSettingsImportMutation } from './agent-settings-import-admission.ts';
 
 type AgentSettingsAction =
   | 'list'
@@ -137,7 +138,7 @@ export function createAgentSettingsTool(deps: AgentSettingsToolDeps): Tool {
           action: {
             type: 'string',
             enum: ['list', 'get', 'set', 'reset', 'import'],
-            description: 'Read settings or propose an exact owner-admitted setting change. Import remains a separate confirmed flow.',
+            description: 'Read settings or apply exact settings changes and captured imports through recorded admission.',
           },
           mode: { type: 'string', description: 'Alias for action.' },
           key: { type: 'string', description: 'Exact setting key.' },
@@ -150,7 +151,7 @@ export function createAgentSettingsTool(deps: AgentSettingsToolDeps): Tool {
           includeHidden: { type: 'boolean', description: 'Include scriptable or hidden settings.' },
           includeParameters: { type: 'boolean', description: 'Include full setting metadata.' },
           limit: { type: 'number', description: 'Maximum settings to return.' },
-          confirm: { type: 'boolean', description: 'Legacy context for set/reset; required true only for import apply. It is never settings admission authority.' },
+          confirm: { type: 'boolean', description: 'Optional legacy context; never grants settings or import authority.' },
           explicitUserRequest: { type: 'string', description: 'Optional request context; settings authority comes from the live source and recorded admission.' },
         },
         additionalProperties: false,
@@ -169,10 +170,9 @@ export function createAgentSettingsTool(deps: AgentSettingsToolDeps): Tool {
         catch { return error('Settings mutation requires a current recorded effect-owner admission.'); }
       }
       if (action === 'import') {
-        return settingsImportTool.execute({
-          action: readBoolean(args.confirm) ? 'apply' : 'preview',
-          ...confirmedArgs(args),
-        });
+        if (!isAgentSettingsImportMutation('settings', rawArgs as Record<string, unknown>)) return settingsImportTool.execute({ action: 'preview' }, options);
+        try { return await executeAdmittedAgentSettingsImport(deps.commandContext, rawArgs as Record<string, unknown>, options); }
+        catch { return error('Settings import requires a current recorded effect-owner admission.'); }
       }
 
       return error('Unknown settings action. Use action:"list" to inspect settings.');

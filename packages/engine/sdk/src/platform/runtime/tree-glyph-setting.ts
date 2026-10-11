@@ -1,10 +1,11 @@
 import type { ConfigGet } from './alert-gating.js';
+import type { GoodVibesConfig } from '../config/schema-types.js';
 
-/** Host-owned presentation preference; this reader does not install its schema. */
+/** Persisted presentation preference shared by the terminal products. */
 export const TREE_GLYPHS_CONFIG_KEY = 'display.treeGlyphs';
 
 /** Closed set understood by the terminal work-tree renderer. */
-export type TreeGlyphSetName = 'rounded' | 'square' | 'ascii';
+export type TreeGlyphSetName = GoodVibesConfig['display']['treeGlyphs'];
 
 /**
  * Read the work-tree style live. Unknown, unavailable or malformed values use
@@ -13,7 +14,7 @@ export type TreeGlyphSetName = 'rounded' | 'square' | 'ascii';
  *
  * Async getters are not awaited or accepted. Their rejection is consumed so
  * an accidental async reader cannot leak a private error or kill the host.
- * This adds no ConfigKey, persisted default, validation or write permission.
+ * Persisted values are validated by the config schema before publication.
  */
 export function readTreeGlyphSet(configGet: ConfigGet, unicodeCapable: boolean): TreeGlyphSetName {
   let configured: unknown;

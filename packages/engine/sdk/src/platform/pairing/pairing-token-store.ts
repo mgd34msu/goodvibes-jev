@@ -25,8 +25,8 @@
  * same lock across their final authorization/launch boundary.
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { lstatSync, mkdirSync, readFileSync, rmdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { lstatSync, mkdirSync, readFileSync, rmdirSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { AtomicWriteDurabilityError, confirmFileDurable, readJsonFileOrQuarantine, writeJsonFileAtomic } from '../utils/atomic-json-store.js';
 import { logger } from '../utils/logger.js';
 import { SettingsAuthorityUnavailableError, runSynchronousSettingsOperation } from '../security/settings-authority.js';
@@ -34,6 +34,7 @@ import { SettingsAuthorityUnavailableError, runSynchronousSettingsOperation } fr
 const TOKEN_PREFIX = 'gvp_';
 /** Do not thrash the disk stamping last-seen on every request. */
 const LAST_SEEN_FLUSH_INTERVAL_MS = 10_000;
+const OWNER_LOCK_NAMESPACE_VERSION = 'goodvibes-pairing-owner-lock-v2\n';
 
 /** A per-pairing token as stored on disk, the hash, never the secret. */
 interface StoredPairingToken {
@@ -343,7 +344,21 @@ export class PairingTokenManager {
    */
   private acquireOwnerLock(): PairingOwnerLock {
     mkdirSync(dirname(this.filePath), { recursive: true });
-    const lockPath = `${this.filePath}.owner-lock`;
+    // Initialize once, before any native request captures its target ancestry.
+    // The permanent marker fences older mkdir-based writers without changing
+    // the target directory's revision for every final publication lease.
+    const markerPath = `${this.filePath}.owner-lock`;
+    try { writeFileSync(markerPath, OWNER_LOCK_NAMESPACE_VERSION, { flag: 'wx', mode: 0o600 }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+    const marker = lstatSync(markerPath);
+    if (!marker.isFile() || marker.isSymbolicLink() || marker.nlink !== 1 || (marker.mode & 0o077) !== 0
+      || readFileSync(markerPath, 'utf8') !== OWNER_LOCK_NAMESPACE_VERSION) throw new PairingTokenStoreBusyError();
+    const namespacePath = join(dirname(this.filePath), '.pairing-owner-locks');
+    try { mkdirSync(namespacePath, { mode: 0o700 }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+    const namespace = lstatSync(namespacePath);
+    if (!namespace.isDirectory() || namespace.isSymbolicLink() || (namespace.mode & 0o077) !== 0) throw new PairingTokenStoreBusyError();
+    const lockPath = join(namespacePath, `${basename(this.filePath)}.lock`);
     try { mkdirSync(lockPath); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new PairingTokenStoreBusyError();
@@ -353,8 +368,15 @@ export class PairingTokenManager {
     const assertOwned = () => {
       let current;
       try { current = lstatSync(lockPath); } catch { throw new PairingTokenStoreBusyError(); }
+      const currentMarker = lstatSync(markerPath), currentNamespace = lstatSync(namespacePath);
       if (!current.isDirectory() || current.dev !== owned.dev || current.ino !== owned.ino
-        || current.birthtimeMs !== owned.birthtimeMs) throw new PairingTokenStoreBusyError();
+        || current.birthtimeMs !== owned.birthtimeMs || currentMarker.dev !== marker.dev || currentMarker.ino !== marker.ino
+        || currentMarker.ctimeMs !== marker.ctimeMs || currentMarker.size !== marker.size
+        || !currentMarker.isFile() || currentMarker.isSymbolicLink() || currentMarker.nlink !== 1 || (currentMarker.mode & 0o077) !== 0
+        || readFileSync(markerPath, 'utf8') !== OWNER_LOCK_NAMESPACE_VERSION
+        || !currentNamespace.isDirectory() || currentNamespace.isSymbolicLink()
+        || (currentNamespace.mode & 0o077) !== 0
+        || currentNamespace.dev !== namespace.dev || currentNamespace.ino !== namespace.ino) throw new PairingTokenStoreBusyError();
     };
     return { assertOwned, release: () => { assertOwned(); rmdirSync(lockPath); } };
   }

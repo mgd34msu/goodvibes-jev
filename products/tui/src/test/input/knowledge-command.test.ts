@@ -3,12 +3,16 @@ import { join } from 'node:path';
 import { ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { CommandContext } from '../../input/command-registry.ts';
+import { ConversationManager } from '../../core/conversation.ts';
 import { knowledgeCommand } from '../../input/commands/knowledge.ts';
 import { createKnowledgeApi, KnowledgeService, KnowledgeStore } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import { MemoryRegistry, MemoryStore } from '@goodvibes-jev/engine/sdk/platform/state';
 import { MemoryEmbeddingProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/state';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import { withPublicKnowledgeReadings } from '../helpers/public-knowledge-readings.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { redactSensitiveDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
 
 let server: ReturnType<typeof Bun.serve>;
 let baseUrl = '';
@@ -37,7 +41,7 @@ function makeKnowledgeCommandContext(
   sessionId = 'session-1',
 ): CommandContext {
   const providerRegistry = {} as never;
-  const conversationManager = {} as never;
+  const conversationManager = new ConversationManager();
   const configManager = {
     getControlPlaneConfigDir: () => root,
   } as never;
@@ -79,7 +83,7 @@ function makeKnowledgeCommandContext(
 function makeKnowledgeAskCommandContext(printed: string[], askResult: unknown): CommandContext {
   return {
     session: {
-      conversationManager: {} as never,
+      conversationManager: new ConversationManager(),
       runtime: {
         model: '',
         provider: '',
@@ -131,6 +135,43 @@ describe('knowledgeCommand', () => {
     memoryRegistry = new MemoryRegistry(memoryStore);
   });
 
+  for (const retire of [false, true]) {
+    test(`node listing awaits its actual public API before output (history retired=${retire})`, async () => {
+      const knowledgeStore = new KnowledgeStore({ configManager: { getControlPlaneConfigDir: () => root } });
+      const artifactStore = new ArtifactStore({ configManager: { getControlPlaneConfigDir: () => root } });
+      const service = new KnowledgeService(knowledgeStore, artifactStore, undefined, {});
+      const context = makeKnowledgeCommandContext(root, printed, service, memoryRegistry);
+      const api = context.clients?.knowledgeApi;
+      if (!api) throw new Error('Knowledge fixture API missing');
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      let sourceSignal: AbortSignal | undefined;
+      const commandContext: CommandContext = { ...context, clients: { ...context.clients, knowledgeApi: {
+        ...api,
+        graph: { ...api.graph, nodes: { ...api.graph.nodes, list: async (_limit, options) => {
+          sourceSignal = options?.signal;
+          entered.resolve();
+          await release.promise;
+          return [];
+        } } },
+      } } };
+      const pending = knowledgeCommand.handler(['list', '--kind', 'nodes'], commandContext);
+      await entered.promise;
+      expect(printed).toEqual([]);
+      expect(sourceSignal?.aborted).toBe(false);
+      if (retire) context.session.conversationManager.resetAll();
+      release.resolve();
+      if (retire) {
+        await expect(pending).rejects.toThrow('The judgment reading owner is no longer current.');
+        expect(sourceSignal?.aborted).toBe(true);
+        expect(printed).toEqual([]);
+      } else {
+        await pending;
+        expect(printed).toEqual(['[knowledge] No nodes.']);
+      }
+    });
+  }
+
   test('retains blocked URL metadata in a packet without claiming fetched HTML', async () => {
     const artifactStore = new ArtifactStore({
       configManager: {
@@ -145,10 +186,20 @@ describe('knowledgeCommand', () => {
     await memoryStore.init();
     const knowledgeService = new KnowledgeService(knowledgeStore, artifactStore, undefined, { memoryRegistry });
 
-    await knowledgeCommand.handler(
-      ['ingest-url', `${baseUrl}/docs`, '--tags', 'example,docs'],
-      makeKnowledgeCommandContext(root, printed, knowledgeService, memoryRegistry),
-    );
+    const blockedError = 'Artifact URI blocked by SSRF policy: host "127.0.0.1" is a loopback address, needs the per-project localhost approval (fetch.allowLocalhost)';
+    const previous = installJudgmentPort(fakePort((name, question) => {
+      if (question.type === 'choice' && name === 'kind') return choiceAnswer(question, 'other', 0.99);
+      if (question.type !== 'noul') throw new Error('Unexpected blocked URL error redaction fixture');
+      return noulAnswer(name === 'identifying' ? 0.99 : 0.01);
+    }).port);
+    try {
+      // The synchronous error boundary may display only current canonical proof.
+      expect(await redactSensitiveDataAsync(blockedError)).toContain('SSRF policy');
+      await knowledgeCommand.handler(
+        ['ingest-url', `${baseUrl}/docs`, '--tags', 'example,docs'],
+        makeKnowledgeCommandContext(root, printed, knowledgeService, memoryRegistry),
+      );
+    } finally { installJudgmentPort(previous); }
 
     expect(printed.join('\n')).toContain('Ingested');
 

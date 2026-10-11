@@ -368,7 +368,7 @@ describe('date parts', () => {
     expect(resolveWeekday(today, 'Thursday', 'none').toISOString().slice(0, 10)).toBe('2026-07-30');
   });
 
-  test('asks all seven part questions in one request with years around today', async () => {
+  test('a relative date asks mode and anchor without unused calendar or weekday parts', async () => {
     const reader = defineDatePartsReader({
       ...header,
       name: 'test.dates',
@@ -377,11 +377,79 @@ describe('date parts', () => {
     });
     const { port, requests } = fakePort((name, q) => choiceAnswer(q, name === 'mode' ? 'relative' : name === 'day_anchor' ? 'tomorrow' : 'none', 0.9));
     const got = await reader.extract(port, 'Call me tomorrow', 'the callback date', '2026-07-30');
-    expect(requests).toHaveLength(1);
-    expect(Object.keys(requests[0]!.questions).length).toBe(7);
-    const year = requests[0]!.questions['year'];
-    expect(year?.type === 'choice' && '1926' in year.criteria && '2056' in year.criteria).toBe(true);
+    expect(requests.map(request => Object.keys(request.questions))).toEqual([['mode'], ['day_anchor']]);
+    expect(requests.every(request => request.state === 'Call me tomorrow')).toBe(true);
     expect(got.date).toBe('2026-07-31');
+  });
+
+  const stagedReader = () => defineDatePartsReader({ ...header, name: 'test.staged-dates', band, fixtures: [{ name: 'no callback', document: 'No callback is planned.', role: 'the callback date', today: '2026-07-30', expect: 'none' }] });
+
+  test('an absolute date asks only its calendar parts, with years around today', async () => {
+    const expected: Record<string, string> = { mode: 'absolute', month: 'August', day: '14', year: 'none' };
+    const { port, requests } = fakePort((name, question) => {
+      if (name === 'weekday' || name === 'day_anchor' || name === 'week_offset') throw new Error('Unused malformed provider answer');
+      return choiceAnswer(question, expected[name] ?? 'none', 0.9);
+    });
+    const document = 'Call me August 14; the example on Tuesday is unrelated.';
+    const got = await stagedReader().extract(port, document, 'the callback date', '2026-07-30');
+    expect(got.date).toBe('2026-08-14');
+    expect(requests.map(request => Object.keys(request.questions))).toEqual([['mode'], ['month', 'day', 'year']]);
+    expect(requests.every(request => request.state === document)).toBe(true);
+    const year = requests[1]!.questions.year;
+    expect(year?.type === 'choice' && '1926' in year.criteria && '2056' in year.criteria).toBe(true);
+  });
+
+  test('a relative weekday adds only its weekday and week-offset suffix', async () => {
+    const expected: Record<string, string> = { mode: 'relative', day_anchor: 'weekday', weekday: 'Thursday', week_offset: 'next' };
+    const { port, requests } = fakePort((name, question) => choiceAnswer(question, expected[name] ?? 'none', 0.9));
+    const got = await stagedReader().extract(port, 'Call me next Thursday.', 'the callback date', '2026-07-30');
+    expect(got.date).toBe('2026-08-06');
+    expect(requests.map(request => Object.keys(request.questions))).toEqual([['mode'], ['day_anchor'], ['weekday', 'week_offset']]);
+  });
+
+  test('a missing date stops after its actual mode reading', async () => {
+    const { port, requests } = fakePort((_name, question) => choiceAnswer(question, 'none', 0.9));
+    expect(await stagedReader().extract(port, 'No callback is planned.', 'the callback date', '2026-07-30')).toMatchObject({ date: null, confidence: 0.9, outcome: 'escalate' });
+    expect(requests.map(request => Object.keys(request.questions))).toEqual([['mode']]);
+  });
+
+  test('weak mode still carries its confidence into the historical assembled-date outcome', async () => {
+    const expected: Record<string, string> = { mode: 'relative', day_anchor: 'tomorrow' };
+    const { port } = fakePort((name, question) => choiceAnswer(question, expected[name] ?? 'none', name === 'mode' ? 0.55 : 0.9));
+    expect(await stagedReader().extract(port, 'Call me tomorrow.', 'the callback date', '2026-07-30')).toMatchObject({ date: '2026-07-31', confidence: 0.55, outcome: 'confirm' });
+  });
+
+  test('cancellation after mode prevents any subsequent date request', async () => {
+    const abort = new AbortController();
+    const { port, requests } = fakePort((_name, question) => {
+      abort.abort();
+      return choiceAnswer(question, 'relative', 0.9);
+    });
+    await expect(stagedReader().extract(port, 'Call me tomorrow.', 'the callback date', '2026-07-30', { signal: abort.signal })).rejects.toThrow();
+    expect(requests).toHaveLength(1);
+  });
+
+  test('a retired source owner after mode prevents any subsequent date request', async () => {
+    let current = true;
+    const { port, requests } = fakePort((_name, question) => {
+      current = false;
+      return choiceAnswer(question, 'relative', 0.9);
+    });
+    await expect(stagedReader().extract(port, 'Call me tomorrow.', 'the callback date', '2026-07-30', { beforeAttempt: () => { if (!current) throw new Error('Owner retired'); } })).rejects.toThrow('Owner retired');
+    expect(requests).toHaveLength(1);
+  });
+
+  test('a relevant provider error remains operational and cannot become an absent date', async () => {
+    const { port, requests } = fakePort((name, question) => {
+      if (name === 'day_anchor') throw new Error('Invalid provider answer');
+      return choiceAnswer(question, 'relative', 0.9);
+    });
+    await expect(stagedReader().extract(port, 'Call me tomorrow.', 'the callback date', '2026-07-30')).rejects.toThrow('Invalid provider answer');
+    expect(requests).toHaveLength(2);
+  });
+
+  test('incomplete relevant parts never receive an invented confidence', () => {
+    expect(assembleDate({ mode: part('absolute'), month: part('August'), day: part('14') }, today, band)).toMatchObject({ date: null, confidence: 0, outcome: 'escalate' });
   });
 
   test('refuses fixtures with impossible dates', () => {

@@ -12,10 +12,13 @@ export * from './surface-authority.js';
 export { riskFamily, RISK_FAMILY_OPTIONS, type GateRiskFamily } from './batteries/risk-family.js';
 export { sideEffect, SIDE_EFFECT_KIND_OPTIONS, MCP_CAPABILITY_OPTIONS, type SideEffectKind } from './batteries/side-effect.js';
 export { sandboxAdvisory } from './batteries/sandbox-advisory.js';
+export { executionVerification } from './batteries/execution-verification.js';
 export { registry as gateJudgmentRegistry } from './judgment-registry.js';
 
 /** Full-size validated snapshots for asynchronous callers; never a projected reading. */
-export { snapshotJudgmentInput } from './judgment-input.js';
+export { snapshotJudgmentInput, captureOwnedJson, assertJudgmentInput } from './judgment-input.js';
 export { captureJudgmentFailure } from './failure-input.js';
 export { decideAutonomous } from './autonomous-decision.js';
 export type { AutonomousDecisionInput, AutonomousDecision, AutonomousContinuation, AutonomousCondition } from './autonomous-decision.js';
+export { admitJudgmentJson, captureStrictJudgmentJson, prepareJudgmentResult, JudgmentResultAdmissionError } from './judgment-result.js';
+export type { JudgmentResultAdmissionFailure, JudgmentResultAdmissionProblem } from './judgment-result.js';

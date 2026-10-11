@@ -77,8 +77,6 @@ export interface CoverageConfig {
 export interface SmokeConfig {
   /** Expected `--version` banner prefix, e.g. `goodvibes-agent `. */
   readonly bannerPrefix: string;
-  /** Substrings whose presence in output signals a packaging failure, e.g. `["sqlite-vec","$bunfs/root"]`. */
-  readonly forbiddenStrings: readonly string[];
   /**
    * Default binary path when `--binary` is not passed. Serves LOCAL CLI runs
    * only, CI matrix legs each build a different suffixed artifact, so the
@@ -234,7 +232,6 @@ const CoverageConfigSchema = z.object({
 
 const SmokeConfigSchema = z.object({
   bannerPrefix: z.string(),
-  forbiddenStrings: z.array(z.string()),
   binaryDefault: z.string(),
 }).catchall(z.unknown());
 

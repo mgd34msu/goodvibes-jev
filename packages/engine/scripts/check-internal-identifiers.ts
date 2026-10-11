@@ -2,8 +2,7 @@
 //
 // CI/pre-commit gate: fails the build when internal planning identifiers
 // (wave/work-order/debt-register/UX-workstream/lettered-finding shorthand)
-// appear in tracked text. See internal-identifier-rule.ts for the pattern
-// set, the owner doctrine quoted verbatim, and the exemption rules
+// appear in tracked text. See internal-identifier-rule.ts for the content-bound reading, the owner doctrine quoted verbatim, and the exemption rules
 // (docs/decisions/** is the sanctioned home for that shorthand).
 //
 // Scanned: packages/*/src, scripts/, docs/, test/, eval/, examples/, and
@@ -26,8 +25,9 @@ import {
   checkNoInternalIdentifiers,
   type InternalIdentifierCandidate,
 } from './internal-identifier-rule.ts';
+import { loadStaticSourceReadings } from './static-source-readings.ts';
 
-const REPO_ROOT = process.env.INTERNAL_ID_ROOT ?? resolve(import.meta.dir, '..');
+export const INTERNAL_ID_ROOT = process.env.INTERNAL_ID_ROOT ?? resolve(import.meta.dir, '..');
 
 const TEXT_EXTENSIONS = new Set(['.ts', '.tsx', '.md', '.json']);
 const SKIP_DIR_NAMES = new Set(['node_modules', 'dist', '.git', 'generated', 'vendor']);
@@ -99,19 +99,25 @@ function defaultScanTargets(root: string): string[] {
   return targets.sort();
 }
 
-const scanTargets: string[] = process.env.INTERNAL_ID_DIRS_JSON
-  ? (JSON.parse(process.env.INTERNAL_ID_DIRS_JSON) as string[])
-  : defaultScanTargets(REPO_ROOT);
-
-const candidates = scanTargets.flatMap((target) => walkTextFiles(join(REPO_ROOT, target), REPO_ROOT));
-const violations = checkNoInternalIdentifiers(candidates);
-
-if (violations.length > 0) {
-  console.error('internal-identifier-check FAILED:\n');
-  for (const violation of violations) {
-    console.error(`- ${violation}`);
-  }
-  process.exit(1);
+export function collectInternalIdentifierCandidates(root = INTERNAL_ID_ROOT, targets?: readonly string[]): InternalIdentifierCandidate[] {
+  return (targets ?? defaultScanTargets(root)).flatMap(target => walkTextFiles(join(root, target), root));
 }
 
-console.log(`internal-identifier-check PASSED for ${candidates.length} text files.`);
+export function scanTargetsFromEnvironment(value: string | undefined): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  const parsed: unknown = JSON.parse(value);
+  if (!Array.isArray(parsed) || !parsed.every(item => typeof item === 'string')) throw new Error('Scan targets must be a JSON array of paths');
+  return parsed;
+}
+
+if (import.meta.main) {
+  const candidates = collectInternalIdentifierCandidates(INTERNAL_ID_ROOT, scanTargetsFromEnvironment(process.env.INTERNAL_ID_DIRS_JSON));
+  const violations = checkNoInternalIdentifiers(candidates, loadStaticSourceReadings(process.env.STATIC_SOURCE_READINGS_PATH));
+  if (violations.length > 0) {
+    console.error(`internal-identifier-check FAILED: ${violations.length} violation or held evidence finding(s).\n`);
+    for (const violation of violations.slice(0, 100)) console.error(`- ${violation}`);
+    if (violations.length > 100) console.error(`... ${violations.length - 100} additional findings`);
+    process.exit(1);
+  }
+  console.log(`internal-identifier-check PASSED for ${candidates.length} text files.`);
+}

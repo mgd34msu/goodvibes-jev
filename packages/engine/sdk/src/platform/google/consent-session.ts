@@ -12,8 +12,9 @@
  * So the consent is split in two. `beginGoogleConsent` binds the listener,
  * builds the URL and returns immediately; the exchange finishes on the
  * `completed` promise whenever the person actually approves. The caller hands
- * back the link in its reply and the refresh token lands in the encrypted store
- * on its own, without anybody being told to run anything afterwards.
+ * back the link in its reply. Native user flows store the refresh token when
+ * consent completes. Registered model flows receive it privately and require
+ * a freshly admitted storage action.
  *
  * ── The rule about the secret ─────────────────────────────────────────────
  *
@@ -37,6 +38,7 @@ import {
 } from './oauth-loopback.js';
 import { GOOGLE_CONFIG_KEYS, GOOGLE_SECRET_KEYS, OAUTH_SCOPES } from './setup-plan.js';
 import type { GoogleConfigPort, GoogleSecretPort } from './types.js';
+import { assertDeliveryCurrent, type DeliveryLifetime } from '../utils/delivery-lifetime.js';
 
 /** How long the listener waits for the person before giving up. */
 export const CONSENT_WAIT_MS = 600_000;
@@ -126,7 +128,7 @@ export interface GoogleConsentSession {
   cancel(): void;
 }
 
-export interface BeginGoogleConsentDeps {
+export interface BeginGoogleConsentDeps extends DeliveryLifetime {
   readonly clientId: string;
   readonly clientSecret: string;
   readonly config: GoogleConfigPort;
@@ -138,6 +140,8 @@ export interface BeginGoogleConsentDeps {
   readonly timeoutMs?: number | undefined;
   /** Injected so the CSRF token is deterministic in tests. */
   readonly generateState?: (() => string) | undefined;
+  /** Registered model flows hold the token privately for a freshly admitted storage action. */
+  readonly receiveRefreshToken?: ((value: string) => Promise<void> | void) | undefined;
 }
 
 function randomState(): string {
@@ -156,6 +160,7 @@ function randomState(): string {
  * the code exchange, storing the refresh token, happens on `completed`.
  */
 export function beginGoogleConsent(deps: BeginGoogleConsentDeps): GoogleConsentSession {
+  assertDeliveryCurrent(deps);
   const pkce = generatePkcePair();
   // This run's CSRF token: the listener rejects any redirect not carrying it.
   const state = (deps.generateState ?? randomState)();
@@ -177,19 +182,28 @@ export function beginGoogleConsent(deps: BeginGoogleConsentDeps): GoogleConsentS
     if (closed) return;
     closed = true;
     listener.close();
+    deps.signal?.removeEventListener('abort', close);
+  };
+  deps.signal?.addEventListener('abort', close, { once: true });
+  if (deps.signal?.aborted) close();
+  const assertCurrent = () => {
+    if (closed) throw new Error('Google consent stopped.');
+    assertDeliveryCurrent(deps);
   };
 
   const completed: Promise<GoogleConsentCompletion> = (async () => {
     try {
       let code: string;
       try {
+        assertCurrent();
         const received = await listener.waitForCode(deps.timeoutMs ?? CONSENT_WAIT_MS);
+        assertCurrent();
         code = received.code;
-      } catch (error) {
+      } catch {
         return {
           ok: false,
           detail: 'The Google consent was not completed.',
-          problem: `No authorization code came back: ${error instanceof Error ? error.message : String(error)}`,
+          problem: 'No authorization code came back before consent stopped.',
           fix: 'Open the consent link again and approve it; the link is good until it is used.',
         };
       }
@@ -202,8 +216,16 @@ export function beginGoogleConsent(deps: BeginGoogleConsentDeps): GoogleConsentS
           codeVerifier: pkce.codeVerifier,
           redirectUri: listener.redirectUri,
         },
-        deps.fetchPort,
+        { fetch: async (url, init) => {
+          assertCurrent();
+          const { signal: requestSignal, ...requestInit } = init;
+          const signal = deps.signal ? (requestSignal ? AbortSignal.any([deps.signal, requestSignal]) : deps.signal) : requestSignal;
+          const response = await deps.fetchPort.fetch(url, { ...requestInit, ...(signal === undefined ? {} : { signal }) });
+          assertCurrent();
+          return response;
+        } },
       );
+      assertCurrent();
       if (!tokens.ok) {
         return { ok: false, detail: 'Google refused the authorization code.', problem: tokens.problem, fix: tokens.fix };
       }
@@ -219,8 +241,14 @@ export function beginGoogleConsent(deps: BeginGoogleConsentDeps): GoogleConsentS
         };
       }
 
-      await deps.secrets.set(GOOGLE_SECRET_KEYS.oauthRefreshToken, tokens.refreshToken);
+      assertCurrent();
+      if (deps.receiveRefreshToken) await deps.receiveRefreshToken(tokens.refreshToken);
+      else await deps.secrets.set(GOOGLE_SECRET_KEYS.oauthRefreshToken, tokens.refreshToken);
+      assertCurrent();
+      if (deps.receiveRefreshToken) return { ok: true, detail: 'Google approved. The credential is awaiting its admitted storage action.' };
       return { ok: true, detail: 'Google approved. The credential is in the encrypted store.' };
+    } catch {
+      return { ok: false, detail: 'The Google consent stopped before completion.', problem: 'The authorization owner changed or its storage was unavailable.', fix: 'Start a new connection with the current client.' };
     } finally {
       close();
     }

@@ -4,7 +4,7 @@ import { createInitialProviderHealthState } from '../sdk/src/platform/runtime/st
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
-import { getProviderRuntimeSnapshot, modelFamilyReadings, type ModelDefinition } from '@goodvibes-jev/engine/sdk/platform/providers';
+import { getProviderRuntimeSnapshot, listProviderRuntimeSnapshots, modelFamilyReadings, type ModelDefinition, type ProviderRuntimeMetadata } from '@goodvibes-jev/engine/sdk/platform/providers';
 
 let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => { previous = installJudgmentPort(undefined); });
@@ -33,6 +33,39 @@ function deferred() {
 }
 
 describe('provider runtime family projection', () => {
+  test('readiness snapshots omit unused family work while default picker snapshots still read it', async () => {
+    const entered = deferred();
+    const fixture = fakePort((_name, question) => choiceAnswer(question, 'Llama', 0.99));
+    installJudgmentPort({ ...fixture.port, async ask(request) {
+      entered.resolve();
+      return fixture.port.ask(request);
+    } });
+    const catalog = [model('Ordinary model')];
+    const base = registry(() => catalog);
+    const metadata: ProviderRuntimeMetadata = { auth: { mode: 'api-key', configured: false }, models: { models: ['alias'] },
+      usage: { streaming: true, toolCalling: true, parallelTools: false } };
+    const source = { ...base, getRegistered: () => ({ ...base.getRegistered('local'), describeRuntime: () => metadata }),
+      describeRuntime: async () => metadata };
+    const snapshots = await listProviderRuntimeSnapshots({ ...source,
+      listProviders: () => [source.getRegistered('local')],
+    }, { modelFamilyEnrichment: 'none' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(fixture.requests).toHaveLength(0);
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toMatchObject({ providerId: 'local', active: true, modelCount: 1,
+      models: [{ id: 'alias', registryKey: 'local:alias', displayName: 'Ordinary model', contextWindow: 8192 }],
+      runtime: metadata });
+    expect(snapshots[0]?.models[0]).not.toHaveProperty('family');
+
+    await getProviderRuntimeSnapshot(source, 'local');
+    await entered.promise;
+    await modelFamilyReadings.read(catalog);
+    expect(fixture.requests).toHaveLength(1);
+    expect((await getProviderRuntimeSnapshot(source, 'local'))?.models[0]?.family).toBe('Llama');
+    expect((await getProviderRuntimeSnapshot(source, 'local', { modelFamilyEnrichment: 'none' }))?.models[0]).not.toHaveProperty('family');
+    expect(fixture.requests).toHaveLength(1);
+  });
+
   test('uses the shared judgment for actual snapshots and never guesses from the id', async () => {
     const fixture = fakePort((_name, question) => choiceAnswer(question, 'Llama', 0.99));
     installJudgmentPort(fixture.port);

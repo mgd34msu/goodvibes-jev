@@ -2,6 +2,7 @@
 import { ConfigError } from '../types/errors.js';
 import type { ConfigKey, ConfigSetting } from './schema.js';
 import { coerceSchemaValue } from './manager-bootstrap.js';
+import type { PreparedSettingsTarget } from './prepared-target.js';
 
 declare const mutationBrand: unique symbol;
 declare const transitionBrand: unique symbol;
@@ -47,6 +48,13 @@ export interface PreparedMutationRecord {
   readonly steps?: readonly PreparedConfigMutation[];
   phase: 'prepared' | 'beginning' | 'begun' | 'committing' | 'spent';
   transition?: PreparedConfigMutationTransition;
+  targets?: readonly PreparedSettingsTarget[];
+  completion?: {
+    readonly receipt: PreparedConfigMutationReceipt;
+    readonly incarnation: number;
+    readonly runtimeJson: string;
+    readonly stores: readonly { readonly path: string; readonly stamp: string }[];
+  };
 }
 
 /** Only JSON-shaped detached values reach the callback-free publication tail. */

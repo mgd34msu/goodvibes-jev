@@ -30,7 +30,6 @@ import { searchHarnessCommands } from '../../tools/agent-harness-command-catalog
 import { CommandRegistry } from '../../input/command-registry.ts';
 import { registerPaymentCardCommands } from '../../input/commands/payment-card-intake.ts';
 import { SETTING_DOMAIN_VOCABULARY } from '../../config/settings-search-vocabulary.ts';
-import { searchCatalog } from '../../tools/agent-harness-catalog-search.ts';
 
 interface SettingsPage {
   readonly settings: readonly { readonly key: string; readonly judgment: { readonly reading: { readonly verdict: string; readonly probability: number } } }[];
@@ -181,30 +180,5 @@ describe('capability discovery: modes and commands', () => {
     expect(await commandNames('payment')).toContain('payments');
     expect(await commandNames('card')).toContain('payments');
     expect(await commandNames('credit card')).toContain('payments');
-  });
-});
-
-describe('capability discovery: the shared match rule', () => {
-  const entries = ['payments budget daily item amount', 'voice wake word threshold'] as const;
-  const text = (entry: string): string => entry;
-
-  test('an exact phrase and an all-words query both match strictly', () => {
-    expect(searchCatalog(entries, 'wake word', text)).toEqual({ matches: ['voice wake word threshold'], relaxed: false });
-    expect(searchCatalog(entries, 'amount budget', text)).toEqual({ matches: ['payments budget daily item amount'], relaxed: false });
-  });
-
-  test('a phrase that matches nothing falls back to single words, and says it did', () => {
-    const found = searchCatalog(entries, 'daily spending budget', text);
-    expect(found.matches).toEqual(['payments budget daily item amount']);
-    expect(found.relaxed).toBe(true);
-  });
-
-  test('a one-word query never relaxes, however it is punctuated', () => {
-    expect(searchCatalog(entries, 'zzz-no-such-thing', text)).toEqual({ matches: [], relaxed: false });
-    expect(searchCatalog(entries, 'nonexistent', text)).toEqual({ matches: [], relaxed: false });
-  });
-
-  test('an empty query is every entry, and is not a relaxed match', () => {
-    expect(searchCatalog(entries, '  ', text)).toEqual({ matches: entries, relaxed: false });
   });
 });

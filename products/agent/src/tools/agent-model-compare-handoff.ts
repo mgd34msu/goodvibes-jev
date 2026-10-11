@@ -562,7 +562,7 @@ export function formatHandoffResult(input: {
     `source ${input.sourceArtifactId} (${input.sourceKind})`,
     `related artifacts ${input.relatedArtifactCount}`,
     `artifact ${input.artifact.artifactId}${input.artifact.filename ? ` ${input.artifact.filename}` : ''} (${input.artifact.mimeType}, ${input.artifact.sizeBytes} bytes)`,
-    `archive agent_model_compare mode:"handoffArchive" artifactId:"${input.artifact.artifactId}" confirm:true explicitUserRequest:"..."`,
+    `archive agent_model_compare mode:"handoffArchive" artifactId:"${input.artifact.artifactId}"`,
     'No selected model was changed.',
   ].join('\n');
 }
@@ -585,7 +585,7 @@ export function formatHandoffArchiveResult(input: {
     `included artifacts ${input.artifactCount}`,
     `source bytes ${formatArchiveBytes(input.sourceBytes)}`,
     `archive ${input.artifact.artifactId}${input.artifact.filename ? ` ${input.artifact.filename}` : ''} (${input.artifact.mimeType}, ${input.archiveBytes} bytes)`,
-    `export agent_artifacts mode:"export" artifactId:"${input.artifact.artifactId}" destinationPath:"${exportPath}" confirm:true explicitUserRequest:"..."`,
+    `export agent_artifacts mode:"export" artifactId:"${input.artifact.artifactId}" destinationPath:"${exportPath}"`,
     'policy exact saved artifact bytes packaged; manifest metadata redacted; original artifacts retained',
     'No selected model was changed.',
   ].join('\n');

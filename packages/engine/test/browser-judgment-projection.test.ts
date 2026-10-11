@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { BrowserJudgmentError, type BrowserJudgmentRequest } from '../daemon-sdk/src/index.ts';
 import { validateBrowserJudgmentProjection } from '../sdk/src/platform/judgment-browser/projection.ts';
 import type { BrowserJudgmentProjection } from '../sdk/src/platform/judgment-browser/types.ts';
+import { WEBUI_CODE_LANGUAGES } from '../daemon-sdk/src/index.ts';
 
 const unknownReading = { kind: 'yes-no', probability: 0.5, verdict: 'uncertain', outcome: 'escalate' } as const;
 const request = (battery: string, input: unknown) => ({ protocolVersion: 1, requestId: crypto.randomUUID(), battery, batteryVersion: 1, input }) as BrowserJudgmentRequest;
@@ -47,4 +48,26 @@ describe('closed held projections', () => {
     expect(() => check(req, held({ badge: { kind: 'choice', choice: 'ok', confidence: 0.42, outcome: 'escalate',
       probabilities: { ok: 0.61, warning: 0.35, bad: 0.04, neutral: 0 } } }))).not.toThrow();
   });
+});
+
+test('settled public platform and code projections preserve admitted approximate-unit Choices', () => {
+  for (const name of ['platform', 'language'] as const) {
+    const platform = name === 'platform';
+    const choice = platform ? 'ios-share-menu' : 'typescript';
+    const options = platform ? ['ios-share-menu', 'other'] : WEBUI_CODE_LANGUAGES;
+    const req = request(platform ? 'webui.pwa.install-platform' : 'webui.code.language', platform
+      ? { userAgent: 'Synthetic fixture', platform: 'MacIntel', maxTouchPoints: 5 }
+      : { sessionId: 'synthetic-session', messageId: 'synthetic-message', start: 0, end: 5, contentDigest: 'a'.repeat(64) });
+    const reading = {
+      kind: 'choice', choice, confidence: 0.99, outcome: 'act',
+      probabilities: Object.fromEntries(options.map(option => [option, option === choice ? 0.99 : 0])),
+    };
+    const projection = { status: 'settled', value: { [name]: choice }, readings: { [name]: reading } };
+    const original = structuredClone(projection);
+    expect(() => check(req, projection)).not.toThrow();
+    expect(projection).toEqual(original);
+    reading.probabilities[choice] = 0.5;
+    reading.probabilities[platform ? 'other' : 'python'] = 0.5000000001;
+    expect(() => check(req, projection)).toThrow(BrowserJudgmentError);
+  }
 });

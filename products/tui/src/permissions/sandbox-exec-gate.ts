@@ -25,15 +25,14 @@
  */
 import { decideSandboxedExec, readCommandNeeds } from '@goodvibes-jev/engine/sdk/platform/runtime/permissions/sandbox-policy';
 import { detectSandboxAvailability, probeSandboxHost, type SandboxAvailability } from '@goodvibes-jev/engine/sdk/platform/tools/exec/sandbox';
+import { JudgmentAuthorityRetiredError } from '@goodvibes-jev/engine/errors';
 import type {
   PermissionPromptRequest,
-  PermissionPromptDecision,
+  PermissionRequestHandler,
 } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { FeatureFlagManager } from '@/runtime/index.ts';
 import { readSandboxExecList, SANDBOX_EGRESS_ALLOWLIST_CONFIG_KEY } from '../input/sandbox-exec-config.ts';
-
-type AskCallback = (request: PermissionPromptRequest) => Promise<PermissionPromptDecision>;
 
 /**
  * TUI-local metadata the gate attaches to an exec ask so the approval card can
@@ -107,28 +106,40 @@ function isExecRequest(request: PermissionPromptRequest): boolean {
  * Wrap the permission machinery's ask callback with the sandbox-aware exec
  * policy. Only exec asks are considered; everything else delegates unchanged.
  */
-export function createSandboxExecAsk(deps: SandboxExecAskDeps, ask: AskCallback): AskCallback {
+export function createSandboxExecAsk(deps: SandboxExecAskDeps, ask: PermissionRequestHandler): PermissionRequestHandler {
   let cachedAvailability: SandboxAvailability | null = null;
   const availability = (): SandboxAvailability => {
     if (cachedAvailability === null) cachedAvailability = deps.detectAvailability();
     return cachedAvailability;
   };
 
-  return async (request) => {
-    if (!isExecRequest(request)) return ask(request);
+  return async (request, options) => {
+    if (!isExecRequest(request)) return ask(request, options);
     const commands = extractExecCommands(request);
-    if (commands.length === 0) return ask(request);
+    if (commands.length === 0) return ask(request, options);
 
     // The sandbox is genuinely active only when the feature flag AND the config
     // switch are on AND the host can actually provide a boundary.
     const featureAndConfig = deps.isSandboxFeatureEnabled() && deps.isSandboxConfigEnabled();
     const sandboxActive = featureAndConfig && availability().available;
-    if (!sandboxActive) return ask(request);
+    if (!sandboxActive) return ask(request, options);
 
-    const egressAllowlist = deps.readEgressAllowlist();
+    const egressAllowlist = [...deps.readEgressAllowlist()];
+    const workspace = request.workingDirectory;
+    const assertCurrent = () => {
+      const currentCommands = extractExecCommands(request);
+      const currentEgress = deps.readEgressAllowlist();
+      if (options?.signal?.aborted || !isExecRequest(request) || request.workingDirectory !== workspace
+        || currentCommands.length !== commands.length || currentCommands.some((command, index) => command !== commands[index])
+        || !deps.isSandboxFeatureEnabled() || !deps.isSandboxConfigEnabled()
+        || currentEgress.length !== egressAllowlist.length || currentEgress.some((command, index) => command !== egressAllowlist[index])) {
+        throw new JudgmentAuthorityRetiredError();
+      }
+    };
     const decisions = await Promise.all(commands.map(async (command) =>
-      decideSandboxedExec({ command, needs: await readCommandNeeds(command), sandboxActive: true, egressAllowlist, baseEffectWhenNotSandboxed: 'ask' }),
+      decideSandboxedExec({ command, needs: await readCommandNeeds(command, workspace, { signal: options?.signal, assertCurrent }), sandboxActive: true, egressAllowlist, baseEffectWhenNotSandboxed: 'ask' }),
     ));
+    assertCurrent();
 
     // A batch auto-allows only when EVERY command is boundary-safe. If any needs
     // host access, the whole ask surfaces with the union of named escalations.
@@ -137,7 +148,7 @@ export function createSandboxExecAsk(deps: SandboxExecAskDeps, ask: AskCallback)
     }
 
     const escalations = dedupe(decisions.flatMap((decision) => decision.escalations));
-    return ask(annotateExecAsk(request, { sandboxed: true, sandboxEscalations: escalations }));
+    return ask(annotateExecAsk(request, { sandboxed: true, sandboxEscalations: escalations }), options);
   };
 }
 

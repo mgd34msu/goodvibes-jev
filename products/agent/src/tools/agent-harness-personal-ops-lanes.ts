@@ -1,6 +1,9 @@
+import { captureCatalogData, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { withModelReadingSource } from './agent-harness-model-reading-source.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext } from '../input/command-registry.ts';
 import { buildAgentWorkspaceRuntimeSnapshot } from '../input/agent-workspace-snapshot.ts';
-import { calendarWorkflows, connectorSignalsMatching, inboxWorkflows, methodIdsMatching, reminderWorkflows, taskWorkflows, unavailableMethodIdsMatching } from './agent-harness-personal-ops-discovery.ts';
+import { calendarWorkflows, connectorSignalsMatching, inboxWorkflows, contractMethodsForLane, reminderWorkflows, taskWorkflows } from './agent-harness-personal-ops-discovery.ts';
 import { providerBackedQueueRecords } from './agent-harness-personal-ops-provider-records.ts';
 import { providerBackedReminderRecords, providerBackedTaskRecords } from './agent-harness-personal-ops-provider-task-records.ts';
 import { channelRecords, connectorRecords, localRecord, refreshableSavedRecordCount, reminderOperationRecords, routineReceiptRecord, savedProviderEffectReceiptRecords, savedReviewArtifactRecords, savedReviewQueueRecords, taskOperationRecords } from './agent-harness-personal-ops-records.ts';
@@ -14,42 +17,52 @@ import type { McpToolRecord, McpToolSchema, PersonalOpsLane, PersonalOpsLiveReco
 // The composer stays as tested internal code; do not re-advertise it here until
 // the sent-corpus input and a real compose route ship together.
 
-export function buildLanes(
+export async function buildLanes(
   context: CommandContext,
-  options: {
+  options: CatalogRankingOptions & {
     readonly toolsByServer?: ReadonlyMap<string, readonly McpToolRecord[]>;
     readonly schemasByQualifiedName?: ReadonlyMap<string, McpToolSchema>;
   } = {},
-): readonly PersonalOpsLane[] {
-  const snapshot = buildAgentWorkspaceRuntimeSnapshot(context);
+): Promise<readonly PersonalOpsLane[]> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const original = buildAgentWorkspaceRuntimeSnapshot(context);
+  const serialized = JSON.stringify(captureCatalogData(original));
+  const assertSource = () => {
+    options.signal?.throwIfAborted();
+    if (JSON.stringify(captureCatalogData(buildAgentWorkspaceRuntimeSnapshot(context))) !== serialized) throw new ToolInputProjectionError('held');
+  };
+  const assertCurrent = () => { options.assertCurrent?.(); assertSource(); };
+  const readOptions = { ...options, assertCurrent };
+  const lanes = await withModelReadingSource(original, readOptions, async (snapshot, current): Promise<readonly PersonalOpsLane[]> => {
   // Readiness counts only DISPATCHABLE methods (capability-advertisement honesty): a
   // method the contract marks invokable:false has no serving route, so it
   // must not make a lane read "ready"/"partial". The unavailable lists feed
   // honest degraded wording instead.
-  const emailMethods = methodIdsMatching(['email', 'mail', 'imap', 'smtp']);
-  const unavailableEmailMethods = unavailableMethodIdsMatching(['email', 'mail', 'imap', 'smtp']);
-  const calendarMethods = methodIdsMatching(['calendar', 'caldav', 'agenda']);
-  const unavailableCalendarMethods = unavailableMethodIdsMatching(['calendar', 'caldav', 'agenda']);
+  const email = await contractMethodsForLane('inbox', current);
+  const calendar = await contractMethodsForLane('calendar', current);
+  const tasks = await contractMethodsForLane('tasks', current);
+  const reminders = await contractMethodsForLane('reminders', current);
+  const emailMethods = email.available, unavailableEmailMethods = email.unavailable;
+  const calendarMethods = calendar.available, unavailableCalendarMethods = calendar.unavailable;
+  const taskMethods = tasks.available, scheduleMethods = reminders.available;
   const toolsByName = options.toolsByServer ?? new Map<string, readonly McpToolRecord[]>();
   const schemasByQualifiedName = options.schemasByQualifiedName ?? new Map<string, McpToolSchema>();
-  const emailConnectors = connectorSignalsMatching(context, ['email', 'mail', 'imap', 'smtp', 'gmail'], { lane: 'inbox', toolsByServer: toolsByName, schemasByQualifiedName });
-  const calendarConnectors = connectorSignalsMatching(context, ['calendar', 'caldav', 'agenda'], { lane: 'calendar', toolsByServer: toolsByName, schemasByQualifiedName });
-  const inboxProviderRecords = providerBackedQueueRecords(context, 'inbox');
-  const calendarProviderRecords = providerBackedQueueRecords(context, 'calendar');
-  const inboxArtifactRecords = savedReviewArtifactRecords(context, 'inbox', emailConnectors);
-  const calendarArtifactRecords = savedReviewArtifactRecords(context, 'calendar', calendarConnectors);
-  const inboxReviewQueueRecords = savedReviewQueueRecords(context, 'inbox', emailConnectors);
-  const calendarReviewQueueRecords = savedReviewQueueRecords(context, 'calendar', calendarConnectors);
-  const inboxEffectReceiptRecords = savedProviderEffectReceiptRecords(context, 'inbox');
-  const calendarEffectReceiptRecords = savedProviderEffectReceiptRecords(context, 'calendar');
+  const emailConnectors = await connectorSignalsMatching(context, { ...current, lane: 'inbox', toolsByServer: toolsByName, schemasByQualifiedName });
+  const calendarConnectors = await connectorSignalsMatching(context, { ...current, lane: 'calendar', toolsByServer: toolsByName, schemasByQualifiedName });
+  const inboxProviderRecords = await providerBackedQueueRecords(context, 'inbox', current);
+  const calendarProviderRecords = await providerBackedQueueRecords(context, 'calendar', current);
+  const inboxArtifactRecords = await savedReviewArtifactRecords(context, 'inbox', emailConnectors, current);
+  const calendarArtifactRecords = await savedReviewArtifactRecords(context, 'calendar', calendarConnectors, current);
+  const inboxReviewQueueRecords = await savedReviewQueueRecords(context, 'inbox', emailConnectors, current);
+  const calendarReviewQueueRecords = await savedReviewQueueRecords(context, 'calendar', calendarConnectors, current);
+  const inboxEffectReceiptRecords = await savedProviderEffectReceiptRecords(context, 'inbox', current);
+  const calendarEffectReceiptRecords = await savedProviderEffectReceiptRecords(context, 'calendar', current);
   const refreshableInboxQueueRecords = refreshableSavedRecordCount(inboxReviewQueueRecords);
   const refreshableCalendarQueueRecords = refreshableSavedRecordCount(calendarReviewQueueRecords);
-  const taskMethods = methodIdsMatching(['task', 'work-plan', 'workplan']);
-  const scheduleMethods = methodIdsMatching(['schedule', 'reminder']);
-  const taskProviderRecords = providerBackedTaskRecords(context);
-  const reminderProviderRecords = providerBackedReminderRecords(context);
-  const taskEffectReceiptRecords = savedProviderEffectReceiptRecords(context, 'tasks');
-  const reminderEffectReceiptRecords = savedProviderEffectReceiptRecords(context, 'reminders');
+  const taskProviderRecords = await providerBackedTaskRecords(context, current);
+  const reminderProviderRecords = await providerBackedReminderRecords(context, current);
+  const taskEffectReceiptRecords = await savedProviderEffectReceiptRecords(context, 'tasks', current);
+  const reminderEffectReceiptRecords = await savedProviderEffectReceiptRecords(context, 'reminders', current);
   const readyChannels = snapshot.channels.filter((channel) => channel.ready).length;
   const enabledChannels = snapshot.channels.filter((channel) => channel.enabled).length;
   const configuredTargets = snapshot.channels.filter((channel) => channel.defaultTarget === 'configured').length;
@@ -286,4 +299,7 @@ export function buildLanes(
       liveRecords: channelRecords(snapshot),
     },
   ];
+  });
+  assertCurrent(); options.retainCurrent?.(assertSource, 'personal-ops-lanes');
+  return lanes;
 }

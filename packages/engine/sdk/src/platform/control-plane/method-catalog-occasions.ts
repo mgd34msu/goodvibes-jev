@@ -211,6 +211,7 @@ export const OCCASIONS_PROPOSE_INPUT_SCHEMA = objectSchema({
  * without them is how a published contract breaks a client by construction.
  */
 export const OCCASIONS_CONFIRM_INPUT_SCHEMA = objectSchema({
+  admission: { type: 'string', enum: ['autonomous'] },
   title: STRING_SCHEMA,
   date: STRING_SCHEMA,
   kind: OCCASION_KIND_SCHEMA,
@@ -223,12 +224,14 @@ export const OCCASIONS_CONFIRM_INPUT_SCHEMA = objectSchema({
 }, ['title', 'date', 'kind', 'surface', 'said', 'authority']);
 
 export const OCCASIONS_REMOVE_INPUT_SCHEMA = objectSchema({
+  admission: { type: 'string', enum: ['autonomous'] },
   occasionId: STRING_SCHEMA,
   confirmed: BOOLEAN_SCHEMA,
   authority: STRING_SCHEMA,
 }, ['occasionId', 'confirmed', 'authority']);
 
 export const OCCASIONS_ANSWER_INPUT_SCHEMA = objectSchema({
+  admission: { type: 'string', enum: ['autonomous'] },
   occasionId: STRING_SCHEMA,
   answer: OCCASION_ANSWER_SCHEMA,
   occurrence: STRING_SCHEMA,
@@ -241,11 +244,13 @@ export const OCCASIONS_ANSWER_OUTPUT_SCHEMA = objectSchema({
 
 export const OCCASIONS_INTERVIEW_GET_INPUT_SCHEMA = objectSchema({ interviewId: STRING_SCHEMA }, ['interviewId']);
 export const OCCASIONS_INTERVIEW_ANSWER_INPUT_SCHEMA = objectSchema({
+  admission: { type: 'string', enum: ['autonomous'] },
   interviewId: STRING_SCHEMA,
   stepId: STRING_SCHEMA,
   text: STRING_SCHEMA,
 }, ['interviewId', 'stepId', 'text']);
 export const OCCASIONS_INTERVIEW_RECORD_INPUT_SCHEMA = objectSchema({
+  admission: { type: 'string', enum: ['autonomous'] },
   interviewId: STRING_SCHEMA,
   landedOn: STRING_SCHEMA,
 }, ['interviewId', 'landedOn']);
@@ -281,8 +286,8 @@ export const NUDGE_DELIVERY_SCHEMA = objectSchema({
   failure: NULLABLE_STRING_SCHEMA,
 }, ['channel', 'delivered', 'deliveryId', 'failure']);
 
-export const OCCASIONS_SWEEP_INPUT_SCHEMA = EMPTY_OBJECT_SCHEMA;
-export const OCCASIONS_SWEEP_OUTPUT_SCHEMA = objectSchema({
+export const OCCASIONS_SWEEP_INPUT_SCHEMA = objectSchema({ admission: { type: 'string', enum: ['autonomous'] } }, []);
+const OCCASIONS_COMPLETE_SWEEP_OUTPUT_SCHEMA = objectSchema({
   ranAt: NUMBER_SCHEMA,
   today: STRING_SCHEMA,
   hold: NULLABLE_STRING_SCHEMA,
@@ -296,6 +301,11 @@ export const OCCASIONS_SWEEP_OUTPUT_SCHEMA = objectSchema({
   mirrored: NUMBER_SCHEMA,
   housekeeping: { anyOf: [OCCASION_SWEEP_REPORT_SCHEMA, { type: 'null' }] },
 }, ['ranAt', 'today', 'hold', 'nudge', 'conflictMessages', 'resumedInterviews', 'delivered', 'deliveryChannel', 'deliveryId', 'deliveries', 'mirrored', 'housekeeping']);
+export const OCCASIONS_SWEEP_OUTPUT_SCHEMA = { anyOf: [OCCASIONS_COMPLETE_SWEEP_OUTPUT_SCHEMA, objectSchema({
+  complete: { type: 'boolean', enum: [false] },
+  acceptedDeliveries: { type: 'integer', minimum: 1 },
+  stopped: { type: 'string', enum: ['request-retired-after-delivery', 'delivery-processing-stopped'] },
+}, ['complete', 'acceptedDeliveries', 'stopped'])] };
 
 export const OCCASIONS_PLANS_LIST_INPUT_SCHEMA = EMPTY_OBJECT_SCHEMA;
 export const OCCASIONS_PLANS_LIST_OUTPUT_SCHEMA = objectSchema({
@@ -314,6 +324,7 @@ export const OCCASIONS_PLANS_PROPOSE_INPUT_SCHEMA = objectSchema({
 }, ['title', 'from', 'to']);
 
 export const OCCASIONS_PLANS_CONFIRM_INPUT_SCHEMA = objectSchema({
+  admission: { type: 'string', enum: ['autonomous'] },
   title: STRING_SCHEMA,
   from: STRING_SCHEMA,
   to: STRING_SCHEMA,
@@ -330,7 +341,8 @@ export const OCCASIONS_GIFTS_OUTPUT_SCHEMA = objectSchema({
   gifts: arraySchema(GIFT_RECORD_SCHEMA),
 }, ['occasionId', 'gifts']);
 
-export const OCCASIONS_CONFLICT_RESOLVE_INPUT_SCHEMA = objectSchema({ occasionId: STRING_SCHEMA }, ['occasionId']);
+export const OCCASIONS_CONFLICT_RESOLVE_INPUT_SCHEMA = objectSchema({
+  admission: { type: 'string', enum: ['autonomous'] }, occasionId: STRING_SCHEMA }, ['occasionId']);
 export const OCCASIONS_CONFLICT_RESOLVE_OUTPUT_SCHEMA = objectSchema({
   occasionId: STRING_SCHEMA,
   resolved: BOOLEAN_SCHEMA,
@@ -350,6 +362,7 @@ export const OCCASIONS_STATE_OUTPUT_SCHEMA = objectSchema({
 }, ['path', 'acknowledgements', 'giftRecords', 'openItems', 'interviews', 'mirrors', 'lastSweep', 'reconciledOpenItems', 'corruption']);
 
 export const OCCASIONS_ACKNOWLEDGE_INPUT_SCHEMA = objectSchema({
+  admission: { type: 'string', enum: ['autonomous'] },
   occasionId: STRING_SCHEMA,
   source: OCCASION_ACK_SOURCE_SCHEMA,
   occurrence: STRING_SCHEMA,
@@ -383,6 +396,7 @@ export const builtinGatewayOccasionsMethodDescriptors: readonly GatewayMethodDes
   }),
   methodDescriptor({
     id: 'occasions.confirm',
+    metadata: { requiresFreshOperatorAuth: true },
     title: 'Record A Confirmed Important Date',
     description: 'Write the confirmed occasion as one line in the owner profile, under Important dates, carrying its provenance. This is the ONE confirmation: nothing re-confirms at nudge time, because for an annual date a silent write means the mistake surfaces up to eleven months later. Refused without a kind rather than defaulting one. Goes through the owner-profile write gate, so authority, surface and a verbatim quote of what the owner said are all required.',
     category: 'occasions',
@@ -393,6 +407,7 @@ export const builtinGatewayOccasionsMethodDescriptors: readonly GatewayMethodDes
   }),
   methodDescriptor({
     id: 'occasions.remove',
+    metadata: { requiresFreshOperatorAuth: true },
     title: 'Remove An Important Date',
     description: 'Remove one occasion and every record the machine kept against it, answers, gift history, open items, interviews and calendar mirrors. Takes exactly one confirmation: not unquestioned, and not an argument. People divorce and people die. A confirmed:false call returns the sentence to put to the owner and removes nothing.',
     category: 'occasions',
@@ -404,6 +419,7 @@ export const builtinGatewayOccasionsMethodDescriptors: readonly GatewayMethodDes
   }),
   methodDescriptor({
     id: 'occasions.answer',
+    metadata: { requiresFreshOperatorAuth: true },
     title: 'Answer An Occasion Nudge',
     description: 'Record yes, no or later for one occurrence. A no goes silent for the rest of this cycle and expires with the date, so next year asks fresh carrying no memory of the refusal. A later is NOT a decline, it comes back roughly halfway to the date. A yes on a gift-giving occasion opens the short interview and returns its first question. All three RESOLVE the open item and remove it; to say only "I have this in hand" without ending the question, use occasions.acknowledge instead.',
     category: 'occasions',
@@ -414,6 +430,7 @@ export const builtinGatewayOccasionsMethodDescriptors: readonly GatewayMethodDes
   }),
   methodDescriptor({
     id: 'occasions.acknowledge',
+    metadata: { requiresFreshOperatorAuth: true },
     title: 'Acknowledge An Occasion',
     description: 'Record that the owner has one occurrence in hand, so nothing is pushed at them about it again. This is not a yes and not a no: the open item STAYS OPEN and stays enumerable, so occasions.pending still lists it, under acknowledged[] rather than in the nudge, and asking what is coming up still answers with it. Only the push stops. The record expires with its occurrence, so next year asks fresh. source names how it was recorded: conversation when the owner said so in a reply, explicit when a surface offered the action, gift-flow when the owner is already answering gift questions about it.',
     category: 'occasions',
@@ -434,6 +451,7 @@ export const builtinGatewayOccasionsMethodDescriptors: readonly GatewayMethodDes
   }),
   methodDescriptor({
     id: 'occasions.interview.answer',
+    metadata: { requiresFreshOperatorAuth: true },
     title: 'Answer A Gift Interview Question',
     description: 'Record one answer and return the next question, if there is one. The interview guides the owner to their own idea and never recommends a gift, that judgement is the owner\'s, which is also why the outcome recorded is what the owner landed on rather than what was suggested.',
     category: 'occasions',
@@ -444,6 +462,7 @@ export const builtinGatewayOccasionsMethodDescriptors: readonly GatewayMethodDes
   }),
   methodDescriptor({
     id: 'occasions.interview.record',
+    metadata: { requiresFreshOperatorAuth: true },
     title: 'Record What The Owner Landed On',
     description: 'Close the interview with what the owner settled on and write it to the gift history. Recording the outcome rather than merely that the owner said yes is the point: "said yes in 2026" cannot stop year three steering where year one did.',
     category: 'occasions',
@@ -474,6 +493,7 @@ export const builtinGatewayOccasionsMethodDescriptors: readonly GatewayMethodDes
   }),
   methodDescriptor({
     id: 'occasions.sweep',
+    metadata: { requiresFreshOperatorAuth: true },
     title: 'Run The Approach Sweep Now',
     description: 'Run one pass immediately: reap expired and orphaned state, find the occasions entering their lead window, batch them into a single message, mirror to the calendar if that is on, and deliver. Delivery goes to every destination in occasions.nudgeChannel, a comma-separated list, so Telegram and the agent both get it, and each is attempted independently, with deliveries[] naming per destination what landed and what did not. Housekeeping runs first and unconditionally, so a machine with nudging turned off still reaps. Returns hold:"quiet-hours" or hold:"disabled" when it deliberately said nothing, nothing is dropped, it waits.',
     category: 'occasions',
@@ -484,6 +504,7 @@ export const builtinGatewayOccasionsMethodDescriptors: readonly GatewayMethodDes
   }),
   methodDescriptor({
     id: 'occasions.conflict.resolve',
+    metadata: { requiresFreshOperatorAuth: true },
     title: 'Close A Date Conflict',
     description: 'Stop re-raising a conflict the owner has dealt with. The conflict itself is never resolved automatically, two different dates for one thing means only the owner knows which was right, and silently taking the newer value is the behaviour this exists to prevent.',
     category: 'occasions',
@@ -514,6 +535,7 @@ export const builtinGatewayOccasionsMethodDescriptors: readonly GatewayMethodDes
   }),
   methodDescriptor({
     id: 'occasions.plans.confirm',
+    metadata: { requiresFreshOperatorAuth: true },
     title: 'Record A Confirmed Plan',
     description: 'Write the confirmed plan as one line in the owner profile, under Plans, carrying its provenance. Same one-confirmation rule and the same owner-profile write gate as an occasion.',
     category: 'occasions',

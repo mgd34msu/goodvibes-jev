@@ -1,4 +1,6 @@
 import type { KnowledgeService } from './service.js';
+import type { KnowledgeScopeSelectionOptions } from './scope-selection.js';
+import type { KnowledgeSpaceScopeInput } from './spaces.js';
 import type { ArtifactFetchMode } from '../artifacts/types.js';
 import {
   buildKnowledgeInjectionPrompt,
@@ -147,45 +149,46 @@ export interface CreateKnowledgeApiOptions {
 
 export interface KnowledgeApi {
   readonly status: {
-    get(): ReturnType<KnowledgeService['getStatus']>;
+    get(scope?: KnowledgeSpaceScopeInput, options?: KnowledgeScopeSelectionOptions): ReturnType<KnowledgeService['getStatus']>;
     lint(): ReturnType<KnowledgeService['lint']>;
     reindex(): ReturnType<KnowledgeService['reindex']>;
   };
   readonly sources: {
-    list(limit?: number): ReturnType<KnowledgeService['listSources']>;
-    query(input?: SourceQueryInput): ReturnType<KnowledgeService['querySources']>;
+    list(limit?: number, options?: KnowledgeScopeSelectionOptions): ReturnType<KnowledgeService['listSources']>;
+    query(input?: SourceQueryInput, options?: KnowledgeScopeSelectionOptions): ReturnType<KnowledgeService['querySources']>;
     delete(id: string): ReturnType<KnowledgeService['deleteSource']>;
   };
   readonly graph: {
     nodes: {
-      list(limit?: number): ReturnType<KnowledgeService['listNodes']>;
-      query(input?: NodeQueryInput): ReturnType<KnowledgeService['queryNodes']>;
+      list(limit?: number, options?: KnowledgeScopeSelectionOptions): ReturnType<KnowledgeService['listNodes']>;
+      query(input?: NodeQueryInput, options?: KnowledgeScopeSelectionOptions): ReturnType<KnowledgeService['queryNodes']>;
       history(id: string): ReturnType<KnowledgeService['listNodeRevisions']>;
       delete(id: string): ReturnType<KnowledgeService['deleteNode']>;
       merge(loserId: string, winnerId: string): ReturnType<KnowledgeService['mergeNodes']>;
       review(input: NodeReviewInput): ReturnType<KnowledgeService['reviewNode']>;
     };
     issues: {
-      list(limit?: number): ReturnType<KnowledgeService['listIssues']>;
-      query(input?: IssueQueryInput): ReturnType<KnowledgeService['queryIssues']>;
+      list(limit?: number, options?: KnowledgeScopeSelectionOptions): ReturnType<KnowledgeService['listIssues']>;
+      query(input?: IssueQueryInput, options?: KnowledgeScopeSelectionOptions): ReturnType<KnowledgeService['queryIssues']>;
       review(input: IssueReviewInput): ReturnType<KnowledgeService['reviewIssue']>;
     };
     extractions: {
-      list(limit?: number, sourceId?: string): ReturnType<KnowledgeService['listExtractions']>;
-      get(id: string): ReturnType<KnowledgeService['getExtraction']>;
-      getBySourceId(sourceId: string): ReturnType<KnowledgeService['getSourceExtraction']>;
+      list(limit?: number, sourceId?: string, scope?: KnowledgeSpaceScopeInput, options?: KnowledgeScopeSelectionOptions): ReturnType<KnowledgeService['listExtractions']>;
+      get(id: string, scope?: KnowledgeSpaceScopeInput, options?: KnowledgeScopeSelectionOptions): Promise<ReturnType<KnowledgeService['getExtraction']>>;
+      getBySourceId(sourceId: string, scope?: KnowledgeSpaceScopeInput, options?: KnowledgeScopeSelectionOptions): Promise<ReturnType<KnowledgeService['getSourceExtraction']>>;
     };
     items: {
-      get(id: string): ReturnType<KnowledgeService['getItem']>;
-      getMany(ids: readonly string[]): ReturnType<KnowledgeService['getItems']>;
+      get(id: string, scope?: KnowledgeSpaceScopeInput, options?: KnowledgeScopeSelectionOptions): ReturnType<KnowledgeService['getItemScoped']>;
+      getMany(ids: readonly string[], scope?: KnowledgeSpaceScopeInput, options?: KnowledgeScopeSelectionOptions): ReturnType<KnowledgeService['getItems']>;
       neighbors(
         kind: Parameters<KnowledgeService['getNeighbors']>[0],
         id: string,
         input?: NeighborInput,
+        options?: KnowledgeScopeSelectionOptions,
       ): ReturnType<KnowledgeService['getNeighbors']>;
-      search(query: string, limit?: number): ReturnType<KnowledgeService['search']>;
+      search(query: string, limit?: number, options?: Parameters<KnowledgeService['searchScoped']>[1]): ReturnType<KnowledgeService['searchScoped']>;
     };
-    map(input?: KnowledgeMapInput): ReturnType<KnowledgeService['map']>;
+    map(input?: KnowledgeMapInput, options?: KnowledgeScopeSelectionOptions): ReturnType<KnowledgeService['map']>;
   };
   readonly usage: {
     list(limit?: number, input?: UsageListInput): ReturnType<KnowledgeService['listUsageRecords']>;
@@ -232,9 +235,9 @@ export interface KnowledgeApi {
     ): ReturnType<KnowledgeService['buildPromptPacket']>;
   };
   readonly projections: {
-    listTargets(limit?: number): ReturnType<KnowledgeService['listProjectionTargets']>;
-    render(input: ProjectionRenderInput): ReturnType<KnowledgeService['renderProjection']>;
-    materialize(input: ProjectionMaterializeInput): ReturnType<KnowledgeService['materializeProjection']>;
+    listTargets(limit?: number, scope?: KnowledgeSpaceScopeInput, options?: KnowledgeScopeSelectionOptions): ReturnType<KnowledgeService['listProjectionTargets']>;
+    render(input: ProjectionRenderInput, options?: KnowledgeScopeSelectionOptions): ReturnType<KnowledgeService['renderProjection']>;
+    materialize(input: ProjectionMaterializeInput, options?: KnowledgeScopeSelectionOptions): ReturnType<KnowledgeService['materializeProjection']>;
   };
   readonly jobs: {
     list(): ReturnType<KnowledgeService['listJobs']>;
@@ -342,45 +345,50 @@ export function createKnowledgeApi(
 ): KnowledgeApi {
   return Object.freeze({
     status: Object.freeze({
-      get: () => knowledgeService.getStatus(),
+      get: (scope: KnowledgeSpaceScopeInput = {}, options: KnowledgeScopeSelectionOptions = {}) => knowledgeService.getStatus(scope, options),
       lint: () => knowledgeService.lint(),
       reindex: () => knowledgeService.reindex(),
     }),
     sources: Object.freeze({
-      list: (limit = 100) => knowledgeService.listSources(limit),
-      query: (input = {}) => knowledgeService.querySources(input),
+      list: (limit = 100, options: KnowledgeScopeSelectionOptions = {}) => knowledgeService.listSources(limit, options),
+      query: (input: SourceQueryInput = {}, options: KnowledgeScopeSelectionOptions = {}) => knowledgeService.querySources(input, options),
       delete: (id: string) => knowledgeService.deleteSource(id),
     }),
     graph: Object.freeze({
       nodes: Object.freeze({
-        list: (limit = 100) => knowledgeService.listNodes(limit),
-        query: (input = {}) => knowledgeService.queryNodes(input),
+        list: (limit = 100, options: KnowledgeScopeSelectionOptions = {}) => knowledgeService.listNodes(limit, options),
+        query: (input: NodeQueryInput = {}, options: KnowledgeScopeSelectionOptions = {}) => knowledgeService.queryNodes(input, options),
         history: (id: string) => knowledgeService.listNodeRevisions(id),
         delete: (id: string) => knowledgeService.deleteNode(id),
         merge: (loserId: string, winnerId: string) => knowledgeService.mergeNodes(loserId, winnerId),
         review: (input: NodeReviewInput) => knowledgeService.reviewNode(input),
       }),
       issues: Object.freeze({
-        list: (limit = 100) => knowledgeService.listIssues(limit),
-        query: (input = {}) => knowledgeService.queryIssues(input),
+        list: (limit = 100, options: KnowledgeScopeSelectionOptions = {}) => knowledgeService.listIssues(limit, options),
+        query: (input: IssueQueryInput = {}, options: KnowledgeScopeSelectionOptions = {}) => knowledgeService.queryIssues(input, options),
         review: (input: IssueReviewInput) => knowledgeService.reviewIssue(input),
       }),
       extractions: Object.freeze({
-        list: (limit: number = 100, sourceId?: string) => knowledgeService.listExtractions(limit, sourceId),
-        get: (id: string) => knowledgeService.getExtraction(id),
-        getBySourceId: (sourceId: string) => knowledgeService.getSourceExtraction(sourceId),
+        list: (limit: number = 100, sourceId?: string, scope: KnowledgeSpaceScopeInput = {}, options: KnowledgeScopeSelectionOptions = {}) => knowledgeService.listExtractions(limit, sourceId, scope, options),
+        get: async (id: string, scope: KnowledgeSpaceScopeInput = {}, options: KnowledgeScopeSelectionOptions = {}) => (
+          await knowledgeService.listExtractions(Number.MAX_SAFE_INTEGER, undefined, scope, options)
+        ).find(extraction => extraction.id === id) ?? null,
+        getBySourceId: async (sourceId: string, scope: KnowledgeSpaceScopeInput = {}, options: KnowledgeScopeSelectionOptions = {}) => (
+          await knowledgeService.listExtractions(1, sourceId, scope, options)
+        )[0] ?? null,
       }),
       items: Object.freeze({
-        get: (id: string) => knowledgeService.getItem(id),
-        getMany: (ids: readonly string[]) => knowledgeService.getItems(ids),
+        get: (id: string, scope: KnowledgeSpaceScopeInput = {}, options: KnowledgeScopeSelectionOptions = {}) => knowledgeService.getItemScoped(id, scope, options),
+        getMany: (ids: readonly string[], scope: KnowledgeSpaceScopeInput = {}, options: KnowledgeScopeSelectionOptions = {}) => knowledgeService.getItems(ids, scope, options),
         neighbors: (
           kind: Parameters<KnowledgeService['getNeighbors']>[0],
           id: string,
           input: NeighborInput = {},
-        ) => knowledgeService.getNeighbors(kind, id, input),
-        search: (query: string, limit = 10) => knowledgeService.search(query, limit),
+          options: KnowledgeScopeSelectionOptions = {},
+        ) => knowledgeService.getNeighbors(kind, id, input, options),
+        search: (query: string, limit = 10, options: Parameters<KnowledgeService['searchScoped']>[1] = {}) => knowledgeService.searchScoped({ query, limit }, options),
       }),
-      map: (input: KnowledgeMapInput = {}) => knowledgeService.map(input),
+      map: (input: KnowledgeMapInput = {}, options: KnowledgeScopeSelectionOptions = {}) => knowledgeService.map(input, options),
     }),
     usage: Object.freeze({
       list: (limit = 100, input = {}) => knowledgeService.listUsageRecords(limit, input),
@@ -443,9 +451,9 @@ export function createKnowledgeApi(
       ) => knowledgeService.buildPromptPacket(task, writeScope, limit, options),
     }),
     projections: Object.freeze({
-      listTargets: (limit = 25) => knowledgeService.listProjectionTargets(limit),
-      render: (input: ProjectionRenderInput) => knowledgeService.renderProjection(input),
-      materialize: (input: ProjectionMaterializeInput) => knowledgeService.materializeProjection(input),
+      listTargets: (limit = 25, scope: KnowledgeSpaceScopeInput = {}, options: KnowledgeScopeSelectionOptions = {}) => knowledgeService.listProjectionTargets(limit, scope, options),
+      render: (input: ProjectionRenderInput, options: KnowledgeScopeSelectionOptions = {}) => knowledgeService.renderProjection(input, options),
+      materialize: (input: ProjectionMaterializeInput, options: KnowledgeScopeSelectionOptions = {}) => knowledgeService.materializeProjection(input, options),
     }),
     jobs: Object.freeze({
       list: () => knowledgeService.listJobs(),

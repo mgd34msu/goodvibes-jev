@@ -55,7 +55,7 @@
  * has nothing of that shape left to catch in this file.
  */
 
-import { atomicWriteFileSync } from '@goodvibes-jev/engine/sdk/platform/config';
+import { atomicWriteFileSync, type AtomicWriteOptions } from '@goodvibes-jev/engine/sdk/platform/config';
 import { resolve } from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -68,13 +68,13 @@ import { resolve } from 'node:path';
  * needed. A failed write leaves `path` holding its previous contents; the sdk
  * primitive removes its own temp file on failure.
  */
-export function writeStoreFile(path: string, contents: string): void {
-  atomicWriteFileSync(path, contents, { mkdirp: true });
+export function writeStoreFile(path: string, contents: string, options: Pick<AtomicWriteOptions, 'assertCurrent' | 'onEffect'> = {}): void {
+  atomicWriteFileSync(path, contents, { ...options, mkdirp: true });
 }
 
 /** {@link writeStoreFile} for the pretty-printed-JSON-plus-newline shape most stores use. */
-export function writeStoreJson(path: string, data: unknown): void {
-  writeStoreFile(path, `${JSON.stringify(data, null, 2)}\n`);
+export function writeStoreJson(path: string, data: unknown, options: Pick<AtomicWriteOptions, 'assertCurrent' | 'onEffect'> = {}): void {
+  writeStoreFile(path, `${JSON.stringify(data, null, 2)}\n`, options);
 }
 
 // ---------------------------------------------------------------------------

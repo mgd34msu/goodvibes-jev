@@ -1,8 +1,11 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { CommandContext, CommandRegistry } from '../../input/command-registry.ts';
 import { createAgentAutonomyTool, registerAgentAutonomyTool } from '../../tools/agent-autonomy-tool.ts';
+import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
+import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
+afterAll(cleanupResearchScreeningFixtures);
 
 function fakeTool(calls: Record<string, unknown>[]): Tool {
   return {
@@ -19,10 +22,11 @@ function fakeTool(calls: Record<string, unknown>[]): Tool {
 }
 
 function makeTool(calls: Record<string, unknown>[] = []): Tool {
+  const registry = new ToolRegistry(); bindAgentResearchSourceOwner(registry, ordinaryResearchOwner());
   return createAgentAutonomyTool({
     commandRegistry: {} as CommandRegistry,
     commandContext: { workspace: {}, platform: {}, session: { runtime: {} } } as CommandContext,
-    toolRegistry: new ToolRegistry(),
+    toolRegistry: registry,
     harnessTool: fakeTool(calls),
   });
 }

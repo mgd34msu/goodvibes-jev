@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { createAtRestCipher, createDaemonCredentialStore, type DaemonCredentialStore } from '../sdk/src/platform/config/daemon-credential-store.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { SecretsManager } from '../sdk/src/platform/config/secrets.js';
 
 const FIXTURE_KEY = Buffer.alloc(32, 7).toString('base64');
 function store(initial: string | null) {
@@ -94,4 +98,47 @@ test('local presence distinguishes empty literal credentials, material, referenc
   for (const value of ['', '   ']) { current = { state: 'resolved', value }; expect(credentials.inspectConfigSecret!('surfaces.slack.botToken')).toBe('absent'); }
   current = { state: 'resolved', value: 'synthetic-present' }; expect(credentials.inspectConfigSecret!('surfaces.slack.botToken')).toBe('present');
   current = { state: 'unsupported' }; expect(credentials.inspectConfigSecret!('surfaces.slack.botToken')).toBe('unavailable');
+});
+
+test('native admitted cipher retains the actual selected key incarnation', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'gv-native-cipher-'));
+  try {
+    const secrets = new SecretsManager({ projectRoot: root, globalHome: root, daemonHome: join(root, 'daemon'), surfaceRoot: 'native-cipher' });
+    const cipher = createAtRestCipher(createDaemonCredentialStore(secrets));
+    const checks: Array<() => void> = [];
+    const encrypted = await cipher.encrypt('synthetic private draft', () => {}, check => { checks.push(check); });
+    expect(await cipher.decrypt(encrypted)).toBe('synthetic private draft');
+    expect(checks).toHaveLength(1); checks[0]?.();
+    await secrets.set('GOODVIBES_DAEMON_DRAFT_AESKEY', Buffer.alloc(32, 19).toString('base64'), { scope: 'daemon', medium: 'secure' });
+    expect(() => checks[0]?.()).toThrow('key changed');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('actual atomic daemon key owner checks retirement before its first write', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'gv-native-cipher-cancel-'));
+  try {
+    const secrets = new SecretsManager({ projectRoot: root, globalHome: root, daemonHome: join(root, 'daemon'), surfaceRoot: 'native-cipher-cancel' });
+    let checks = 0;
+    await expect(secrets.getOrCreateDaemonSecret('SYNTHETIC_CANCELLED_KEY', () => Buffer.alloc(32, 5).toString('base64'), () => {
+      if (++checks > 1) throw new Error('Synthetic request retired');
+    })).rejects.toThrow('retired');
+    expect(secrets.resolveLocalSecretSync('SYNTHETIC_CANCELLED_KEY').state).toBe('absent');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('native decryption bypasses an old cache and retains the selected key through consume', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'gv-native-decrypt-'));
+  try {
+    const secrets = new SecretsManager({ projectRoot: root, globalHome: root, daemonHome: join(root, 'daemon'), surfaceRoot: 'native-decrypt' });
+    const credentials = createDaemonCredentialStore(secrets);
+    const cipher = createAtRestCipher(credentials);
+    const first = await cipher.encrypt('first private fixture');
+    await secrets.set('GOODVIBES_DAEMON_DRAFT_AESKEY', Buffer.alloc(32, 23).toString('base64'), { scope: 'daemon', medium: 'secure' });
+    const second = await createAtRestCipher(credentials).encrypt('second private fixture');
+    const checks: Array<() => void> = [];
+    expect(await cipher.decrypt(second, () => {}, check => checks.push(check))).toBe('second private fixture');
+    await expect(cipher.decrypt(first, () => {}, check => checks.push(check))).rejects.toThrow();
+    await secrets.set('GOODVIBES_DAEMON_DRAFT_AESKEY', Buffer.alloc(32, 29).toString('base64'), { scope: 'daemon', medium: 'secure' });
+    expect(() => checks[0]?.()).toThrow('key changed');
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

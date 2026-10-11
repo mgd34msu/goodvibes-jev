@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ConfigManager } from '../config/manager.js';
-import type { AutomationJob } from './jobs.js';
+import type { AutomationJob, ManagedAutomationJob } from './jobs.js';
+import type { AutomationJobMutationOptions } from './job-mutations.js';
 import type { CreateAutomationJobInput, UpdateAutomationJobInput } from './manager-runtime-helpers.js';
 import type { ModelIdCandidate } from '../providers/model-id-resolution.js';
 import {
@@ -20,7 +21,7 @@ import {
 interface AutomationJobMutationContext {
   readonly configManager: ConfigManager;
   readonly jobs: Map<string, AutomationJob>;
-  readonly saveJobs: () => Promise<void>;
+  readonly commitJob: (previous: AutomationJob | undefined, next: AutomationJob, options?: AutomationJobMutationOptions) => Promise<ManagedAutomationJob>;
   readonly scheduleJob: (job: AutomationJob) => void;
   readonly syncJobToRuntime: (job: AutomationJob, source: string) => void;
   readonly emitJobCreated: (job: AutomationJob) => void;
@@ -37,7 +38,8 @@ interface AutomationJobMutationContext {
 export async function createAutomationJobRecord(
   context: AutomationJobMutationContext,
   input: CreateAutomationJobInput,
-): Promise<AutomationJob> {
+  options: AutomationJobMutationOptions = {},
+): Promise<ManagedAutomationJob> {
   const now = Date.now();
   const enabled = input.enabled ?? true;
   const jobId = `auto-${randomUUID().slice(0, 8)}`;
@@ -68,19 +70,19 @@ export async function createAutomationJobRecord(
     deleteAfterRun: input.deleteAfterRun ?? Boolean(context.configManager.get('automation.deleteAfterRun')),
     archivedAt: undefined,
   };
-  context.jobs.set(job.id, job);
-  await context.saveJobs();
-  context.scheduleJob(job);
-  context.syncJobToRuntime(job, 'automation.create');
-  context.emitJobCreated(job);
-  return job;
+  const committed = await context.commitJob(undefined, job, options);
+  context.scheduleJob(committed);
+  context.syncJobToRuntime(committed, 'automation.create');
+  context.emitJobCreated(committed);
+  return committed;
 }
 
 export async function toggleAutomationJobEnabled(
   context: AutomationJobMutationContext,
   jobId: string,
   enabled: boolean,
-): Promise<AutomationJob | null> {
+  options: AutomationJobMutationOptions = {},
+): Promise<ManagedAutomationJob | null> {
   const job = context.jobs.get(jobId);
   if (!job) return null;
   const updated: AutomationJob = {
@@ -96,19 +98,19 @@ export async function toggleAutomationJobEnabled(
       updatedAt: Date.now(),
     },
   };
-  context.jobs.set(jobId, updated);
-  await context.saveJobs();
-  context.scheduleJob(updated);
-  context.syncJobToRuntime(updated, 'automation.toggle');
-  context.emitJobUpdated(updated, ['enabled', 'status', 'pausedReason', 'nextRunAt']);
-  return updated;
+  const committed = await context.commitJob(job, updated, options);
+  context.scheduleJob(committed);
+  context.syncJobToRuntime(committed, 'automation.toggle');
+  context.emitJobUpdated(committed, ['enabled', 'status', 'pausedReason', 'nextRunAt']);
+  return committed;
 }
 
 export async function updateAutomationJobRecord(
   context: AutomationJobMutationContext,
   jobId: string,
   patch: UpdateAutomationJobInput,
-): Promise<AutomationJob | null> {
+  options: AutomationJobMutationOptions = {},
+): Promise<ManagedAutomationJob | null> {
   const job = context.jobs.get(jobId);
   if (!job) return null;
 
@@ -191,10 +193,9 @@ export async function updateAutomationJobRecord(
     },
   };
 
-  context.jobs.set(jobId, updated);
-  await context.saveJobs();
-  context.scheduleJob(updated);
-  context.syncJobToRuntime(updated, 'automation.update');
-  context.emitJobUpdated(updated, ['name', 'description', 'schedule', 'execution', 'delivery', 'failure', 'enabled']);
-  return updated;
+  const committed = await context.commitJob(job, updated, options);
+  context.scheduleJob(committed);
+  context.syncJobToRuntime(committed, 'automation.update');
+  context.emitJobUpdated(committed, ['name', 'description', 'schedule', 'execution', 'delivery', 'failure', 'enabled']);
+  return committed;
 }

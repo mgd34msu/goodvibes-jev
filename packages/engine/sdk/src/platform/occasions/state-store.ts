@@ -41,6 +41,9 @@
  * built to
  * stop.
  */
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { captureFileMutation, captureMutationDescriptors } from '../utils/file-mutation.js';
+import { occasionStateReceipts } from './operation.js';
 import { JudgmentInputError, type JudgmentInputProblem } from '../gate/judgment-input.js';
 import { StoredRecordAdmissionOwner, storedEvidenceProblem, storedGiftAdmission, type StoredGiftAdmission } from './stored-reading-evidence.js';
 import { PersistentStore } from '../state/persistent-store.js';
@@ -64,6 +67,8 @@ import {
   type OpenItemKind,
   type RaiseBoundary,
 } from './types.js';
+
+const UNRESTRICTED_OPERATION = () => {};
 
 /** Caps. Generous against any real life, finite against an unbounded file. */
 export const MAX_ACKNOWLEDGEMENTS = 2000;
@@ -414,15 +419,22 @@ export class OccasionStateStore {
    * would make every later call fail forever over one unreadable byte,
    * INCLUDING the disclosure call that exists to explain exactly that state.
    */
-  private async state(): Promise<OccasionStateSnapshot> {
+  async prepareRead(options: JudgmentReadingOptions = {}): Promise<void> {
+    const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); };
+    assertCurrent(); await this.state(Boolean(options.assertCurrent || options.signal), assertCurrent); assertCurrent();
+  }
+
+  private async state(readOnly = false, assertCurrent: () => void = UNRESTRICTED_OPERATION): Promise<OccasionStateSnapshot> {
     if (this.loading) return this.loading;
     if (this.snapshot !== null) return this.snapshot;
-    this.loading = this.loadState();
+    this.loading = this.loadState(readOnly, assertCurrent);
     try { return await this.loading; } finally { this.loading = undefined; }
   }
 
-  private async loadState(): Promise<OccasionStateSnapshot> {
+  private async loadState(readOnly = false, assertCurrent: () => void = UNRESTRICTED_OPERATION): Promise<OccasionStateSnapshot> {
+    assertCurrent();
     const read = await this.store.loadOrDiscard();
+    assertCurrent();
     if (read.corruption !== null) {
       this.corruption = read.corruption.detail;
       logger.warn('occasions: state file was unreadable and has been discarded', {
@@ -453,13 +465,15 @@ export class OccasionStateStore {
       // rebuilt ledger IS the thing that keeps the owner from being pushed at again,
       // and a correction that only exists in memory is one crash away from
       // undoing itself.
-      await this.persist(snapshot);
+      if (!readOnly) await this.persist(snapshot, assertCurrent);
       this.adoptPublishedAdmission(snapshot);
     }
     return this.snapshot;
   }
 
-  private async persist(snapshot: OccasionStateSnapshot): Promise<void> {
+  private async persist(snapshot: OccasionStateSnapshot, assertCurrent: () => void = UNRESTRICTED_OPERATION): Promise<void> {
+    const physical = this.filePath === ':memory:' || assertCurrent === UNRESTRICTED_OPERATION ? undefined : captureFileMutation(this.filePath);
+    const current = () => { assertCurrent(); physical?.assertCurrent(); };
     await this.writes.run(() => this.store.persist({
       version: 1,
       acknowledgements: [...snapshot.acknowledgements],
@@ -468,40 +482,51 @@ export class OccasionStateStore {
       interviews: [...snapshot.interviews],
       mirrors: [...snapshot.mirrors],
       lastSweep: snapshot.lastSweep,
-    }));
+    }, { assertCurrent: current, onEffect: published => { assertCurrent(); physical?.onEffect(published); } }));
   }
 
   /** Serialize calculation as well as publication. No tentative state is visible on refusal. */
-  private async change<T>(mutate: (snapshot: OccasionStateSnapshot) => T, assertCurrent: () => void = () => {}, options: { readonly publish?: (result: T) => boolean; readonly afterPublish?: () => void; readonly replacedGiftOccasion?: string } = {}): Promise<T> {
+  private async change<T>(mutate: (snapshot: OccasionStateSnapshot) => T, assertCurrent: () => void = UNRESTRICTED_OPERATION, options: { readonly publish?: (result: T) => boolean; readonly afterPublish?: () => void; readonly replacedGiftOccasion?: string } = {}): Promise<T> {
     assertCurrent();
-    await this.state();
-    assertCurrent();
+    const ownerCurrent = captureMutationDescriptors(this, ['filePath', 'store', 'state', 'change']);
+    const filePath = this.filePath, store = this.store;
+    const storeCurrent = captureMutationDescriptors(store, ['persist', 'loadOrDiscard']);
+    const physical = filePath === ':memory:' || assertCurrent === UNRESTRICTED_OPERATION ? undefined : captureFileMutation(filePath);
+    const current = () => { assertCurrent(); ownerCurrent(); storeCurrent(); if (this.filePath !== filePath || this.store !== store) throw new Error('Occasion state owner changed.'); physical?.assertCurrent(); };
+    await this.state(true, current);
+    current();
     let value!: T;
     await this.writes.run(async () => {
-      assertCurrent();
-      const current = this.snapshot!;
+      current();
+      const receipts = occasionStateReceipts(assertCurrent);
+      receipts?.onStateWriteIntent?.();
+      current();
+      const previous = this.snapshot!;
       // Reading records are owned immutable data. Keep their proof incarnations;
       // the other records retain the previous deep-copy transaction semantics.
       const snapshot: OccasionStateSnapshot = {
-        ...current,
-        acknowledgements: [...current.acknowledgements],
-        gifts: [...current.gifts],
-        openItems: [...current.openItems],
-        interviews: structuredClone(current.interviews),
-        mirrors: structuredClone(current.mirrors),
-        lastSweep: structuredClone(current.lastSweep),
+        ...previous,
+        acknowledgements: [...previous.acknowledgements],
+        gifts: [...previous.gifts],
+        openItems: [...previous.openItems],
+        interviews: structuredClone(previous.interviews),
+        mirrors: structuredClone(previous.mirrors),
+        lastSweep: structuredClone(previous.lastSweep),
       };
       const result = mutate(snapshot);
-      assertCurrent();
+      current();
       if (options.publish?.(result) === false) { value = result; return; }
       this.ownReadingRecords(snapshot);
       Object.freeze(snapshot);
-      await this.store.persist(snapshot, { beforePublish: assertCurrent, afterPublish: () => {
+      await this.store.persist(snapshot, { assertCurrent: current, withPublication: receipts?.withPublication,
+        synchronousPublish: receipts?.withPublication !== undefined, onEffect: published => {
+        receipts?.onStateEffect?.(published); assertCurrent(); physical?.onEffect(published);
+      }, beforePublish: current, afterPublish: () => {
         this.publishedGiftHistory(snapshot, options.replacedGiftOccasion);
         this.adoptPublishedAdmission(snapshot);
         this.snapshot = snapshot; this.publication += 1; options.afterPublish?.();
       } });
-      assertCurrent();
+      current();
       value = result;
     });
     return value;
@@ -541,7 +566,7 @@ export class OccasionStateStore {
    * decision that changed, not two decisions, and keeping both would leave the
    * sweep reading whichever it found first.
    */
-  async recordAnswer(entry: OccasionAcknowledgement, assertCurrent: () => void = () => {}): Promise<OccasionAcknowledgement> {
+  async recordAnswer(entry: OccasionAcknowledgement, assertCurrent: () => void = UNRESTRICTED_OPERATION): Promise<OccasionAcknowledgement> {
     assertCurrent();
     const owned = this.admissionOwner.own('acknowledgements', [entry])[0]!;
     return this.change(snapshot => {
@@ -567,7 +592,7 @@ export class OccasionStateStore {
       .sort((left, right) => right.recordedAt - left.recordedAt);
   }
 
-  async recordGift(entry: GiftRecord, assertCurrent: () => void = () => {}): Promise<GiftRecord> {
+  async recordGift(entry: GiftRecord, assertCurrent: () => void = UNRESTRICTED_OPERATION): Promise<GiftRecord> {
     assertCurrent();
     const owned = this.admissionOwner.own('gifts', [entry])[0]!;
     return this.change(snapshot => {
@@ -594,7 +619,7 @@ export class OccasionStateStore {
   }
 
   /** Create or replace one open item, addressed by its id. */
-  async putOpenItem(item: OpenItem, assertCurrent: () => void = () => {}): Promise<OpenItem> {
+  async putOpenItem(item: OpenItem, assertCurrent: () => void = UNRESTRICTED_OPERATION): Promise<OpenItem> {
     assertCurrent();
     const owned = this.admissionOwner.own('openItems', [item])[0]!;
     return this.change(snapshot => {
@@ -626,7 +651,7 @@ export class OccasionStateStore {
    * thing that answers "what happened", the acknowledgement, or the gift
    * record, not a husk of the question.
    */
-  async resolveOpenItem(id: string, assertCurrent: () => void = () => {}): Promise<boolean> {
+  async resolveOpenItem(id: string, assertCurrent: () => void = UNRESTRICTED_OPERATION): Promise<boolean> {
     return this.change(snapshot => {
       const before = snapshot.openItems.length;
       snapshot.openItems = snapshot.openItems.filter((entry) => entry.id !== id);
@@ -652,7 +677,7 @@ export class OccasionStateStore {
     );
   }
 
-  async putInterview(interview: Interview, assertCurrent: () => void = () => {}): Promise<Interview> {
+  async putInterview(interview: Interview, assertCurrent: () => void = UNRESTRICTED_OPERATION): Promise<Interview> {
     return this.change(snapshot => {
       const kept = snapshot.interviews.filter((existing) => existing.id !== interview.id);
       kept.push(interview);
@@ -680,7 +705,7 @@ export class OccasionStateStore {
    * what makes the mirror idempotent: writing the same occasion again next year
    * adds one record, and writing it twice this year replaces one.
    */
-  async recordMirror(entry: OccasionMirrorRecord, assertCurrent: () => void = () => {}): Promise<OccasionMirrorRecord> {
+  async recordMirror(entry: OccasionMirrorRecord, assertCurrent: () => void = UNRESTRICTED_OPERATION): Promise<OccasionMirrorRecord> {
     return this.change(snapshot => {
       const kept = snapshot.mirrors.filter(
         (existing) => !(existing.occasionId === entry.occasionId && existing.occurrence === entry.occurrence),
@@ -704,7 +729,7 @@ export class OccasionStateStore {
    * leave last year's "no" and a gift history for a person who is no longer in
    * their life sitting in a file they cannot see.
    */
-  async dropOccasion(occasionId: string, assertCurrent: () => void = () => {}): Promise<number> {
+  async dropOccasion(occasionId: string, assertCurrent: () => void = UNRESTRICTED_OPERATION): Promise<number> {
     return this.change(snapshot => {
       const before = snapshot.acknowledgements.length + snapshot.gifts.length
         + snapshot.openItems.length + snapshot.interviews.length + snapshot.mirrors.length;
@@ -736,7 +761,7 @@ export class OccasionStateStore {
    *  - Gift history ages out at the configured retention rather than never,
    *    because a persisted store with no reaper is unbounded by design.
    */
-  async sweep(input: OccasionSweepInput, assertCurrent: () => void = () => {}): Promise<OccasionSweepReport> {
+  async sweep(input: OccasionSweepInput, assertCurrent: () => void = UNRESTRICTED_OPERATION): Promise<OccasionSweepReport> {
     return this.change(snapshot => {
       const declared = input.declaredOccasionIds;
       const giftCutoff = addDays(input.today, -Math.max(1, Math.round(input.giftHistoryYears * 365)));

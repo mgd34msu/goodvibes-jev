@@ -5,8 +5,9 @@ import { resolveConnectedHostDialEnabled, resolveDaemonEnabled } from '@goodvibe
 import type { ConfigKey, ConfigManager } from '../config/index.ts';
 import { resolveRuntimeEndpointBinding } from './endpoints.ts';
 import type { RuntimeEndpointBinding, RuntimeEndpointId } from './endpoints.ts';
-import { classifyBindPosture, isNetworkFacing } from '@goodvibes-jev/engine/terminal-shell';
-import { redactText } from './redaction.ts';
+import { classifyBindPosture, isNetworkFacing, redactText } from '@goodvibes-jev/engine/terminal-shell';
+import { captureJudgmentPort, type JudgmentPortCapture, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { retainCliConfig } from './config-owner.ts';
 import { dialHostForConfiguredHost } from '../config/connected-host-dial.ts';
 
 export interface CliServiceRuntime {
@@ -86,7 +87,7 @@ const ENDPOINTS: readonly { readonly id: RuntimeEndpointId; readonly label: stri
   { id: 'web', label: 'browser companion route', enabledKey: 'web.enabled' },
 ];
 
-interface CliServicePostureOptions {
+interface CliServicePostureOptions extends JudgmentReadingOptions {
   readonly probe?: boolean;
   readonly logTailBytes?: number;
 }
@@ -109,7 +110,7 @@ async function probeTcp(host: string, port: number, timeoutMs = 750): Promise<bo
   });
 }
 
-function readLogPosture(path: string | undefined, tailBytes: number): CliServiceLogPosture {
+async function readLogPosture(path: string | undefined, tailBytes: number, options: JudgmentReadingOptions, captureOwner: () => void): Promise<CliServiceLogPosture> {
   if (!path) return { path: null, exists: false, size: 0, modifiedAt: null };
   if (!existsSync(path)) return { path, exists: false, size: 0, modifiedAt: null };
   try {
@@ -125,20 +126,21 @@ function readLogPosture(path: string | undefined, tailBytes: number): CliService
     } finally {
       closeSync(fd);
     }
+    captureOwner();
     return {
       path,
       exists: true,
       size: stat.size,
       modifiedAt: stat.mtimeMs,
-      tail: redactText(raw.toString('utf-8')),
+      tail: await redactText(raw.toString('utf-8'), options),
     };
-  } catch (error) {
+  } catch {
     return {
       path,
       exists: true,
       size: 0,
       modifiedAt: null,
-      readError: error instanceof Error ? error.message : String(error),
+      readError: 'Service log could not be read safely.',
     };
   }
 }
@@ -178,6 +180,27 @@ export async function buildCliServicePosture(
   runtime: CliServiceRuntime,
   options: CliServicePostureOptions = {},
 ): Promise<CliServicePosture> {
+  const configManager = runtime.configManager;
+  const workingDirectory = runtime.workingDirectory;
+  const homeDirectory = runtime.homeDirectory;
+  const retainedConfig = retainCliConfig(configManager);
+  const signal = options.signal;
+  const callerCurrent = options.assertCurrent;
+  const sourceCurrent = () => {
+    signal?.throwIfAborted();
+    if (options.signal !== signal || options.assertCurrent !== callerCurrent || runtime.configManager !== configManager
+      || runtime.workingDirectory !== workingDirectory || runtime.homeDirectory !== homeDirectory) throw new Error('Service posture input changed before publication.');
+    try { retainedConfig.assertCurrent(); }
+    catch { throw new Error('Service posture input changed before publication.'); }
+  };
+  const assertCurrent = () => {
+    sourceCurrent();
+    const result: unknown = callerCurrent?.();
+    if (result !== undefined) { void Promise.resolve(result).catch(() => {}); throw new Error('Service posture ownership must be synchronous.'); }
+    sourceCurrent();
+  };
+  const reading = { ...options, assertCurrent };
+  assertCurrent();
   const endpoints = await Promise.all(ENDPOINTS.map(async (endpoint): Promise<CliServiceEndpointPosture> => {
     const enabled = runtime.configManager.get(endpoint.enabledKey) === true;
     const binding = resolveRuntimeEndpointBinding(runtime.configManager, endpoint.id);
@@ -230,11 +253,16 @@ export async function buildCliServicePosture(
     }
   }
   const configuredLogPath = resolveConfiguredLogPath(runtime);
-  const log = readLogPosture(configuredLogPath, options.logTailBytes ?? 4096);
+  let logOwner: JudgmentPortCapture | undefined;
+  const logReading = { ...reading, assertCurrent: () => { assertCurrent(); logOwner?.assertCurrent(); } };
+  const log = await readLogPosture(configuredLogPath, options.logTailBytes ?? 4096, logReading,
+    () => { logOwner = captureJudgmentPort('agent.cli.service-log', reading); });
   if (log.readError) {
     issues.push(`Service log exists but could not be read: ${log.readError}`);
   }
 
+  assertCurrent();
+  logOwner?.assertCurrent();
   return {
     config,
     managed: createExternalHostLifecycle(configuredLogPath),

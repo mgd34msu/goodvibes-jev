@@ -254,7 +254,9 @@ test('emitted launcher reports failed bind, drains its graph and leaves the exis
   const fx = launch(['serve', '--hostname', '127.0.0.1', '--port', String(lease.port)], true, root);
   try {
     expect(await fx.waitForExit()).toBe(1);
-    expect(fx.output().stderr).toContain('Daemon startup failed');
+    // The host's static failure context remains readable; an unclassified
+    // exception body from the child may only render the canonical refusal.
+    expect(fx.output().stderr).toBe('goodvibes daemon host failed: [REDACTED]\n');
     expect(fx.output().stdout).toContain(`intended-port=${lease.port}`);
     expect(fx.output().stdout).not.toContain(' bound:');
     expect(fx.output().stdout).not.toContain('host started');
@@ -313,16 +315,77 @@ test('known capabilities without a switch refuse before serving', () => {
 });
 
 for (const command of ['install-service', 'start-service', 'restart-service', 'migrate-service']) {
-  test(`composed ${command} refuses home overrides before service mutations`, async () => {
+  test(`composed ${command} preserves selected homes at the systemd dispatcher`, async () => {
     const root = makeOwnedTempDir('daemon-cli-service-homes');
-    const stderr: string[] = [];
-    const code = await runDaemonCli([command], {
-      env: { HOME: root, GOODVIBES_DAEMON_HOME: join(root, 'selected') }, cwd: root,
-      runtime: { inboxFactory() { throw new Error('Must not acquire'); } },
-      serviceBinaryPath: '/synthetic-installed-daemon', stdout() {}, stderr: (line) => { stderr.push(line); },
+    const tree = join(root, 'selected-tree'); const daemon = join(root, 'selected-daemon');
+    const workspace = join(root, 'selected-workspace');
+    const env = { HOME: root, GOODVIBES_HOME: tree };
+    const argv = [command, '--daemon-home', daemon, '--working-dir', workspace];
+    createDaemonCliConfiguration(parseDaemonCli(argv).flags, env, root).config.set('service.platform', 'systemd');
+    const runner: serviceCommands.ManagedServiceActionRunner = () => { throw new Error('The dispatch fixture must not activate a host service'); };
+    const run = spyOn(serviceCommands, 'runDaemonServiceCli').mockResolvedValue({
+      ok: true, exitCode: 0, lines: [], status: { platform: 'systemd', installed: true, running: true, path: 'synthetic-unit',
+        serviceName: 'fixture', autostart: true, commandPreview: 'fixture', suggestedCommands: [] },
     });
-    expect(code).toBe(2); expect(stderr.join('\n')).toContain('overridden tree or daemon homes');
-    expect(existsSync(join(root, '.goodvibes'))).toBe(false);
+    try {
+      expect(await runDaemonCli(argv, {
+        env, cwd: root,
+        runtime: { inboxFactory() { throw new Error('One-shot commands must not acquire a runtime'); } },
+        serviceBinaryPath: '/synthetic-installed-daemon', serviceActionRunner: runner, stdout() {}, stderr() {},
+      })).toBe(0);
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(run.mock.calls[0]?.[0].configManager?.get('service.platform')).toBe('systemd');
+      expect(run.mock.calls[0]?.[0]).toMatchObject({ subcommand: command, homeDir: tree,
+        daemonHomeDirectory: daemon, unitHomeDir: root, workingDirectory: workspace,
+        binaryPath: '/synthetic-installed-daemon', requireInstalledDefinitionMatch: true, actionRunner: runner });
+    } finally { run.mockRestore(); }
+  });
+}
+
+test('selected-home activation refuses unsupported service platforms before dispatch', async () => {
+  const root = makeOwnedTempDir('daemon-cli-service-home-platform');
+  const daemon = join(root, 'selected-daemon');
+  const env = { HOME: root };
+  const argv = ['install-service', '--daemon-home', daemon];
+  createDaemonCliConfiguration(parseDaemonCli(argv).flags, env, root).config.set('service.platform', 'launchd');
+  const run = spyOn(serviceCommands, 'runDaemonServiceCli');
+  const stderr: string[] = [];
+  try {
+    expect(await runDaemonCli(argv, {
+      env, cwd: root,
+      runtime: { inboxFactory() { throw new Error('Must not acquire'); } },
+      serviceBinaryPath: '/synthetic-installed-daemon', stdout() {}, stderr: line => { stderr.push(line); },
+    })).toBe(2);
+    expect(stderr.join('\n')).toContain('requires systemd');
+    expect(run).not.toHaveBeenCalled();
+  } finally { run.mockRestore(); }
+});
+
+for (const selection of ['flag', 'environment'] as const) {
+  test(`start-service refuses a different explicitly selected workspace through ${selection}`, async () => {
+    const root = makeOwnedTempDir('daemon-cli-service-workspace');
+    const installedWorkspace = join(root, 'installed-workspace');
+    const selectedWorkspace = join(root, 'selected-workspace');
+    const env = { HOME: root };
+    const install = ['install-service', '--working-dir', installedWorkspace];
+    createDaemonCliConfiguration(parseDaemonCli(install).flags, env, root).config.set('service.platform', 'systemd');
+    const calls: string[][] = [];
+    const actionRunner: serviceCommands.ManagedServiceActionRunner = (command, args) => {
+      calls.push([command, ...args]);
+      return { status: 0 };
+    };
+    const options = { env, cwd: root, serviceBinaryPath: '/synthetic-installed-daemon', serviceActionRunner: actionRunner,
+      runtime: { inboxFactory() { throw new Error('Service commands must not acquire a runtime'); } }, stdout() {}, stderr() {} };
+    expect(await runDaemonCli(install, options)).toBe(0);
+    calls.length = 0;
+    const lines: string[] = [];
+    const command = selection === 'flag' ? ['start-service', '--working-dir', selectedWorkspace] : ['start-service'];
+    expect(await runDaemonCli(command, { ...options,
+      env: selection === 'environment' ? { ...env, GOODVIBES_WORKING_DIR: selectedWorkspace } : env,
+      stdout: line => { lines.push(line); },
+    })).toBe(1);
+    expect(lines.join('\n')).toContain('installed definition does not match');
+    expect(calls.every(call => call.includes('is-active'))).toBe(true);
   });
 }
 

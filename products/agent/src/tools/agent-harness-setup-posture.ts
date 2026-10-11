@@ -7,7 +7,10 @@ import type { CommandContext } from '../input/command-registry.ts';
 import { requireShellPaths } from '../input/commands/runtime-services.ts';
 import { deriveStep1Capabilities, deriveStep1CapabilityFlags } from '../runtime/onboarding/index.ts';
 import { connectedHostOperatorTokenFingerprint, connectedHostOperatorTokenPath, readConnectedHostOperatorToken } from '../runtime/connected-host-auth.ts';
-import { clearSetupWizardCheckpoint, saveSetupWizardCheckpoint } from '../agent/setup-wizard-checkpoint.ts';
+import { clearSetupWizardCheckpoint, saveSetupWizardCheckpoint, setupWizardCheckpointPath } from '../agent/setup-wizard-checkpoint.ts';
+import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureHarnessLocalEffect } from './agent-harness-local-effect.ts';
 import { DEFAULT_AGENT_SETUP_WIZARD_CLEAR_CHECKPOINT_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_INSPECT_CHECKPOINT_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_MARK_CHECKPOINT_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_REVIEW_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_RERUN_SMOKE_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_SAVE_SMOKE_ROUTE } from '../agent/setup-wizard.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 import type { AgentHarnessSetupArgs, SetupResolution } from './agent-harness-setup-posture-types.ts';
@@ -197,7 +200,9 @@ export async function setupCheckpointSummary(context: CommandContext): Promise<R
   };
 }
 
-export async function markSetupCheckpoint(context: CommandContext, args: AgentHarnessSetupArgs): Promise<Record<string, unknown>> {
+export async function markSetupCheckpoint(context: CommandContext, args: Record<string, unknown>, options?: Parameters<Tool['execute']>[1]): Promise<Record<string, unknown>> {
+  const assertCurrent = captureHarnessLocalEffect(context, args, options, paths => [setupWizardCheckpointPath(paths)]);
+  const platform = context.platform, config = platform.configManager, incarnation = config.getConfigurationIncarnation();
   const snapshot = await collectSnapshot(context);
   const servicePosture = await collectServicePosture(context);
   const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture);
@@ -238,11 +243,13 @@ export async function markSetupCheckpoint(context: CommandContext, args: AgentHa
     };
   }
   const shellPaths = requireShellPaths(context);
+  assertCurrent();
+  if (context.platform !== platform || platform.configManager !== config || config.getConfigurationIncarnation() !== incarnation) throw new ToolInputProjectionError('held');
   const checkpoint = saveSetupWizardCheckpoint(shellPaths, {
     currentStepId: step.id,
     currentStepLabel: step.label,
     source: 'harness',
-    note: 'User-confirmed setup wizard checkpoint.',
+    note: 'Recorded model-admitted setup wizard checkpoint.',
   });
   const updatedWizard = buildSetupWizard(plan, context);
   return {
@@ -270,8 +277,10 @@ export async function markSetupCheckpoint(context: CommandContext, args: AgentHa
   };
 }
 
-export function clearSetupCheckpoint(context: CommandContext, args: AgentHarnessSetupArgs): Record<string, unknown> {
+export function clearSetupCheckpoint(context: CommandContext, args: Record<string, unknown>, options?: Parameters<Tool['execute']>[1]): Record<string, unknown> {
+  const assertCurrent = captureHarnessLocalEffect(context, args, options, paths => [setupWizardCheckpointPath(paths)]);
   const shellPaths = requireShellPaths(context);
+  assertCurrent();
   const checkpoint = clearSetupWizardCheckpoint(shellPaths);
   return {
     status: 'checkpoint_cleared',

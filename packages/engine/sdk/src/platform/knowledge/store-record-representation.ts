@@ -4,7 +4,7 @@ import { captureOwnedJson, JudgmentInputError } from '../gate/judgment-input.js'
  * by actual writers/SQL decoders and bind complete object values. JSON copies,
  * replacements and caller-created lookalikes cannot mint this evidence. */
 const representations = new WeakMap<object, { readonly version: string; readonly raw: unknown }>();
-function version(value: unknown): string {
+export function knowledgeRecordVersion(value: unknown): string {
   const encode = (item: unknown): unknown => {
     if (item === undefined) return ['undefined'];
     if (item === null) return ['null'];
@@ -17,12 +17,12 @@ function version(value: unknown): string {
   };
   return JSON.stringify(encode(captureOwnedJson(value)));
 }
-export function sameKnowledgeRecord(left: unknown, right: unknown): boolean { return version(left) === version(right); }
+export function sameKnowledgeRecord(left: unknown, right: unknown): boolean { return knowledgeRecordVersion(left) === knowledgeRecordVersion(right); }
 function known(value: unknown): unknown | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const entry = representations.get(value);
   if (!entry) return undefined;
-  try { return entry.version === version(value) ? entry.raw : undefined; } catch { return undefined; }
+  try { return entry.version === knowledgeRecordVersion(value) ? entry.raw : undefined; } catch { return undefined; }
 }
 /** Bind decoder/writer-created numeric views to their exact canonical originals.
  * This is internal transport; callers of public replacement APIs never use it. */
@@ -31,10 +31,10 @@ export function retainKnowledgeRepresentation<T>(view: T, raw: unknown): T {
   let captured: unknown;
   // A legacy hydration may contain malformed numbers. Do not broaden at-rest
   // rejection; it receives no representation proof and semantic admission holds.
-  try { captured = captureOwnedJson(raw); version(view); } catch { return view; }
+  try { captured = captureOwnedJson(raw); knowledgeRecordVersion(view); } catch { return view; }
   const bind = (value: unknown, original: unknown): void => {
     if (!value || typeof value !== 'object') return;
-    representations.set(value, { version: version(value), raw: original });
+    representations.set(value, { version: knowledgeRecordVersion(value), raw: original });
     if (original && typeof original === 'object') for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
       if ((Array.isArray(value) ? key !== 'length' : descriptor.enumerable) && Object.hasOwn(original, key)) bind(descriptor.value, (original as Record<string, unknown>)[key]);
     }
@@ -192,11 +192,13 @@ export function knowledgeNodeMetadataView(raw: Record<string, unknown>): Record<
   let view = metadataClockView(decision, 'review', 'reviewedAt');
   // Actual repair/supersession writers emit canonical strings before snapshotting. Decode
   // only those strings; a caller's numeric lookalike remains an original number.
-  for (const field of ['lastRepairAttemptAt', 'nextRepairAttemptAt', 'repairedAt', 'supersededAt', 'sourceDetachedAt']) view = metadataClockView(view, undefined, field);
+  for (const field of ['lastRepairAttemptAt', 'nextRepairAttemptAt', 'repairedAt', 'supersededAt', 'sourceDetachedAt', 'refreshedAt']) view = metadataClockView(view, undefined, field);
   return retainKnowledgeRepresentation(view, raw);
 }
 export function knowledgeSourceMetadataView(raw: Record<string, unknown>): Record<string, unknown> {
-  return metadataClockView(raw, 'sourceDiscovery', 'searchedAt');
+  let view = metadataClockView(raw, 'sourceDiscovery', 'searchedAt');
+  for (const field of ['generatedAt', 'capturedAt']) view = metadataClockView(view, undefined, field);
+  return retainKnowledgeRepresentation(view, raw);
 }
 /** The search producer emits canonical data immediately, so intervening ingest
  * copies never need to infer provenance from a caller's numeric searchedAt. */

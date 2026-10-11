@@ -1,10 +1,13 @@
+import { effectAdmissionFixture } from '../helpers/effect-admission.ts';
 import { describe, expect, test } from 'bun:test';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { AgentResearchRunRegistry } from '../../agent/research-run-registry.ts';
-import { createAgentResearchRunsTool, registerAgentResearchRunsTool } from '../../tools/agent-research-runs-tool.ts';
+import { createAgentResearchRunsTool as rawResearchRunsTool, registerAgentResearchRunsTool } from '../../tools/agent-research-runs-tool.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+
+function createAgentResearchRunsTool(...args: Parameters<typeof rawResearchRunsTool>) { return effectAdmissionFixture().tool(rawResearchRunsTool(...args)); }
 
 function makePaths() {
   const root = makeProjectTempDir('goodvibes-agent-research-runs-tool');
@@ -18,18 +21,18 @@ function makePaths() {
 }
 
 describe('agent_research_runs tool', () => {
-  test('creates and lists visible local research runs only after confirmation', async () => {
+  test('creates and lists visible local research runs under recorded admission', async () => {
     const fixture = makePaths();
     try {
       const tool = createAgentResearchRunsTool(fixture.paths);
-      const missingConfirm = await tool.execute({
+      const missingConfirm = await rawResearchRunsTool(fixture.paths).execute({
         mode: 'create',
         title: 'Competitor research',
         question: 'What should we match?',
         explicitUserRequest: 'Create this research run.',
       });
       expect(missingConfirm.success).toBe(false);
-      expect(missingConfirm.error).toContain('confirm:true');
+      expect(missingConfirm.error).toContain('recorded effect admission');
 
       const created = await tool.execute({
         mode: 'create',
@@ -147,13 +150,13 @@ describe('agent_research_runs tool', () => {
       expect(completed.output).toContain('reportArtifact research action:"report_artifact" artifactId:"artifact-2"');
       expect(completed.output).toContain('promoteKnowledge agent_knowledge_ingest sourceKind:"artifact" artifactId:"artifact-2"');
 
-      const unconfirmedDelete = await tool.execute({
+      const unconfirmedDelete = await rawResearchRunsTool(fixture.paths).execute({
         mode: 'delete',
         id: 'deep-research-run',
         explicitUserRequest: 'Delete this research run.',
       });
       expect(unconfirmedDelete.success).toBe(false);
-      expect(unconfirmedDelete.error).toContain('confirm:true');
+      expect(unconfirmedDelete.error).toContain('recorded effect admission');
 
       const deleted = await tool.execute({
         mode: 'delete',
@@ -173,7 +176,7 @@ describe('agent_research_runs tool', () => {
     }
   });
 
-  test('cancels and fails runs through confirmed local state routes', async () => {
+  test('cancels and fails runs through admitted local state routes', async () => {
     const fixture = makePaths();
     try {
       const tool = createAgentResearchRunsTool(fixture.paths);

@@ -29,9 +29,9 @@ test('public scheduling and calibration invoke the same registered owner', async
     expect(read).toHaveBeenCalledTimes(1);
     expect(read.mock.calls[0]![0]).toBe(input);
     const checks = await decision.checkFixtures(f.port);
-    expect(checks).toHaveLength(18);
-    expect(read).toHaveBeenCalledTimes(19);
-    expect(f.requests).toHaveLength(19);
+    expect(checks).toHaveLength(26);
+    expect(read).toHaveBeenCalledTimes(checks.length + 1);
+    expect(f.requests).toHaveLength(checks.length + 1);
     expect(f.requests.every(request => request.context?.battery === decision.name && request.context?.batteryVersion === decision.version)).toBe(true);
   } finally {
     read.mockRestore();

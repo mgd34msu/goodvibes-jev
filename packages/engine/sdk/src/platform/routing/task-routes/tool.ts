@@ -1,16 +1,19 @@
 /**
  * The `route` tool: the agent's route adapter, backed by the Jev task route
  * planner. The definition, the action aliases and the status output are the
- * agent's; planning needs an installed judgment port.
+ * agent's; planning needs an installed judgment port and a protected source owner.
  */
 import type { ToolRegistry } from '../../tools/registry.js';
 import type { Tool } from '../../types/tools.js';
 import { planTaskRoute } from './planner.js';
-import type { TaskRouteDeps } from './types.js';
+import type { TaskRouteDeps, TaskRouteReadOptions } from './types.js';
+import { captureStrictJudgmentJson } from '../../gate/judgment-result.js';
+import { isDeepStrictEqual } from 'node:util';
+import { ToolInputProjectionError } from '../../tools/input-projection.js';
 
 type TaskRouteAction = 'plan' | 'status';
 
-interface TaskRouteToolArgs {
+interface TaskRouteToolArgs extends Readonly<Record<string, unknown>> {
   readonly action?: unknown;
   readonly mode?: unknown;
   readonly query?: unknown;
@@ -46,6 +49,16 @@ function output(value: unknown): { readonly success: true; readonly output: stri
   };
 }
 
+function sameBindings(value: object, original: Record<string, PropertyDescriptor>): boolean {
+  const fields = Object.getOwnPropertyDescriptors(value);
+  return Object.getOwnPropertySymbols(value).length === 0 && Object.keys(fields).length === Object.keys(original).length
+    && Object.entries(original).every(([key, field]) => {
+      const current = fields[key];
+      return current !== undefined && 'value' in current && Object.is(current.value, field.value)
+        && current.enumerable === field.enumerable && current.configurable === field.configurable && current.writable === field.writable;
+    });
+}
+
 function status(): Record<string, unknown> {
   return {
     status: 'ready',
@@ -73,7 +86,7 @@ function status(): Record<string, unknown> {
   };
 }
 
-export function createTaskRouteTool(deps: TaskRouteDeps = {}): Tool {
+export function createTaskRouteTool(deps: TaskRouteDeps = {}, options: TaskRouteReadOptions = {}): Tool {
   return {
     definition: {
       name: 'route',
@@ -99,15 +112,43 @@ export function createTaskRouteTool(deps: TaskRouteDeps = {}): Tool {
     },
     execute: async (rawArgs, opts) => {
       // The registry passes an object, but a model's arguments can arrive as anything.
-      const args: TaskRouteToolArgs = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {};
+      const args: TaskRouteToolArgs = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? captureStrictJudgmentJson(rawArgs) : {};
       const action = readAction(args);
       if (action === 'status') return output(status());
-      return output(await planTaskRoute(args, deps, opts?.signal === undefined ? {} : { signal: opts.signal }));
+      const original = captureStrictJudgmentJson(args);
+      const optionsFields = Object.getOwnPropertyDescriptors(options);
+      const invocationFields = opts === undefined ? undefined : Object.getOwnPropertyDescriptors(opts);
+      if (Object.getOwnPropertySymbols(options).length || Object.values(optionsFields).some(field => !('value' in field))
+        || (opts !== undefined && (Object.getOwnPropertySymbols(opts).length || Object.values(invocationFields ?? {}).some(field => !('value' in field))))) throw new ToolInputProjectionError('invalid');
+      const signal = options.signal && opts?.signal ? AbortSignal.any([options.signal, opts.signal]) : options.signal ?? opts?.signal;
+      const callerCurrent = options.assertCurrent, invocationCurrent = opts?.assertCurrent;
+      const assertCurrent = () => {
+        signal?.throwIfAborted();
+        if (!isDeepStrictEqual(captureStrictJudgmentJson(rawArgs), original)
+          || !sameBindings(options, optionsFields)
+          || (opts !== undefined && invocationFields !== undefined && !sameBindings(opts, invocationFields))) throw new ToolInputProjectionError('held');
+        const first: unknown = callerCurrent?.(), second: unknown = invocationCurrent?.(original);
+        if (first !== undefined || second !== undefined) {
+          void Promise.resolve(first).catch(() => {}); void Promise.resolve(second).catch(() => {});
+          throw new ToolInputProjectionError('held');
+        }
+        signal?.throwIfAborted();
+        if (!isDeepStrictEqual(captureStrictJudgmentJson(rawArgs), original)
+          || !sameBindings(options, optionsFields)
+          || (opts !== undefined && invocationFields !== undefined && !sameBindings(opts, invocationFields))) throw new ToolInputProjectionError('held');
+      };
+      assertCurrent();
+      let publicationCurrent = assertCurrent;
+      const plan = await planTaskRoute(args, deps, { ...options, signal, assertCurrent, retainCurrent(guard, key) {
+        publicationCurrent = guard; options.retainCurrent?.(guard, key);
+      } });
+      publicationCurrent();
+      return output(plan);
     },
   };
 }
 
 /** Registers the route tool unless a tool named `route` is already registered. */
-export function registerTaskRouteTool(registry: ToolRegistry, deps: TaskRouteDeps = {}): void {
-  if (!registry.has('route')) registry.register(createTaskRouteTool(deps));
+export function registerTaskRouteTool(registry: ToolRegistry, deps: TaskRouteDeps = {}, options: TaskRouteReadOptions = {}): void {
+  if (!registry.has('route')) registry.register(createTaskRouteTool(deps, options));
 }

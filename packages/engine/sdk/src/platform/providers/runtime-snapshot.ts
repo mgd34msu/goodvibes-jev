@@ -3,6 +3,10 @@ import type { ProviderRuntimeMetadata } from './interface.js';
 import type { ModelDefinition, ProviderRegistry } from './registry.js';
 import type { LLMProvider } from './interface.js';
 
+export interface ProviderRuntimeSnapshotOptions {
+  readonly modelFamilyEnrichment?: 'background' | 'none';
+}
+
 export interface ProviderModelSnapshot {
   readonly id: string;
   readonly registryKey: string;
@@ -51,12 +55,13 @@ export interface ProviderUsageSnapshot {
 function toModelSnapshot(
   model: ModelDefinition,
   providerRegistry: Pick<ProviderRegistry, 'resolveModelPricing'>,
+  enrichFamilies: boolean,
 ): ProviderModelSnapshot {
   // The ONE pricing resolver (manual -> registration -> provider-served ->
   // catalog -> honest unknown), so the price a surface renders here is the
   // price the platform actually charges with, carrying its provenance.
   const resolved = providerRegistry.resolveModelPricing(model.id, model.provider);
-  const family = modelFamilyReadings.known(model);
+  const family = enrichFamilies ? modelFamilyReadings.known(model) : undefined;
   return {
     id: model.id,
     registryKey: model.registryKey,
@@ -82,7 +87,9 @@ function toModelSnapshot(
 async function buildSnapshotForProvider(
   providerRegistry: Pick<ProviderRegistry, 'getRegistered' | 'getCurrentModel' | 'listModels' | 'resolveModelPricing' | 'describeRuntime'>,
   providerId: string,
+  options: ProviderRuntimeSnapshotOptions = {},
 ): Promise<ProviderRuntimeSnapshot | null> {
+  const enrichFamilies = options.modelFamilyEnrichment !== 'none';
   let provider: LLMProvider;
   try {
     provider = providerRegistry.getRegistered(providerId);
@@ -116,8 +123,8 @@ async function buildSnapshotForProvider(
   // Optional display enrichment never delays catalog, auth or usage responses.
   // Judgment transport may keep retrying an outage; later snapshots pick up
   // settled readings for this exact evidence and current installed port.
-  void modelFamilyReadings.read(catalog).catch(() => {});
-  const models = catalog.map((model) => toModelSnapshot(model, providerRegistry));
+  if (enrichFamilies) void modelFamilyReadings.read(catalog).catch(() => {});
+  const models = catalog.map((model) => toModelSnapshot(model, providerRegistry, enrichFamilies));
   return {
     providerId,
     active: currentModel?.provider === providerId,
@@ -129,16 +136,18 @@ async function buildSnapshotForProvider(
 
 export async function listProviderRuntimeSnapshots(
   providerRegistry: Pick<ProviderRegistry, 'listProviders' | 'getRegistered' | 'getCurrentModel' | 'listModels' | 'resolveModelPricing' | 'describeRuntime'>,
+  options: ProviderRuntimeSnapshotOptions = {},
 ): Promise<readonly ProviderRuntimeSnapshot[]> {
-  const snapshots = await Promise.all(providerRegistry.listProviders().map((provider) => buildSnapshotForProvider(providerRegistry, provider.name)));
+  const snapshots = await Promise.all(providerRegistry.listProviders().map((provider) => buildSnapshotForProvider(providerRegistry, provider.name, options)));
   return snapshots.filter((snapshot): snapshot is ProviderRuntimeSnapshot => snapshot != null);
 }
 
 export async function getProviderRuntimeSnapshot(
   providerRegistry: Pick<ProviderRegistry, 'getRegistered' | 'getCurrentModel' | 'listModels' | 'resolveModelPricing' | 'describeRuntime'>,
   providerId: string,
+  options: ProviderRuntimeSnapshotOptions = {},
 ): Promise<ProviderRuntimeSnapshot | null> {
-  return buildSnapshotForProvider(providerRegistry, providerId);
+  return buildSnapshotForProvider(providerRegistry, providerId, options);
 }
 
 export async function getProviderUsageSnapshot(

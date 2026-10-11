@@ -1,3 +1,6 @@
+import { scheduleEffectAdmission } from '../helpers/schedule-effect-admission.ts';
+import { createScheduleInputProjector } from '../../tools/agent-schedule-effect.ts';
+import { registerAgentOperatorMethodTool } from '../../tools/agent-operator-method-tool.ts';
 import { mockFetch } from '../helpers/typed-fetch-mock.ts';
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -23,6 +26,8 @@ interface ScheduleEditRequest {
 
 interface SchedulePatchPayload {
   readonly jobId?: string;
+  readonly expectedMutationRevision?: string;
+  readonly admission?: string;
   readonly name?: string;
   readonly prompt?: string;
   readonly schedule?: {
@@ -111,6 +116,7 @@ function schedulesListResponse(): Response {
         labels: [],
         createdAt: 1,
         updatedAt: 2,
+        mutationRevision: 'synthetic-edit-revision-1',
         status: 'enabled',
         enabled: true,
         schedule: { kind: 'cron', expression: '0 8 * * *', timezone: 'America/Chicago' },
@@ -151,10 +157,18 @@ function schedulesListResponse(): Response {
   });
 }
 
+function admittedTool(paths: ShellPaths) {
+  const fixture = scheduleEffectAdmission(paths.workingDirectory), config = configManager(paths);
+  registerAgentOperatorMethodTool(fixture.registry, paths, config);
+  const raw = createAgentScheduleEditTool(paths, config, fixture.registry);
+  fixture.registry.register(raw, { inputProjection: createScheduleInputProjector(paths, config) });
+  return { definition: raw.definition, execute: (args: Record<string, unknown>, options?: Parameters<typeof raw.execute>[1]) => fixture.run(raw, args, options) };
+}
+
 describe('agent_schedule_edit tool', () => {
-  test('previews schedule edits with a read-only current-state diff before confirmation', async () => {
+  test('holds an unadmitted edit before reading the connected host', async () => {
     const paths = shellPaths();
-    const tool = createAgentScheduleEditTool(paths, configManager(paths));
+    const tool = createAgentScheduleEditTool(paths, configManager(paths), new ToolRegistry());
     const originalFetch = globalThis.fetch;
     let calls = 0;
     globalThis.fetch = mockFetch(async () => {
@@ -173,22 +187,16 @@ describe('agent_schedule_edit tool', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('GoodVibes schedule edit preview');
-      expect(result.error).toContain('confirmation required');
-      expect(result.error).toContain('current source automation.schedules.list GET /api/automation/schedules');
-      expect(result.error).toContain('schedule 0 8 * * * [America/Chicago] -> 0 9 * * * [America/Chicago]');
-      expect(result.error).toContain('confirmationRoutes');
-      expect(result.error).toContain('schedule action:"edit" scheduleId:"sched-edit-1"');
-      expect(result.error).toContain('scheduleKind:"cron" scheduleValue:"0 9 * * * [America/Chicago]" confirm:true explicitUserRequest:"..."');
-      expect(calls).toBe(1);
+      expect(result.error).toContain('recorded effect admission');
+      expect(calls).toBe(0);
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 
-  test('requires explicit user request provenance before editing', async () => {
+  test('holds forged edit confirmation without recorded admission', async () => {
     const paths = shellPaths();
-    const tool = createAgentScheduleEditTool(paths, configManager(paths));
+    const tool = createAgentScheduleEditTool(paths, configManager(paths), new ToolRegistry());
     const originalFetch = globalThis.fetch;
     let calls = 0;
     globalThis.fetch = mockFetch(async () => {
@@ -204,16 +212,16 @@ describe('agent_schedule_edit tool', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('explicitUserRequest is required');
+      expect(result.error).toContain('recorded effect admission');
       expect(calls).toBe(0);
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 
-  test('patches a connected schedule after explicit confirmation', async () => {
+  test('patches a connected schedule under recorded admission', async () => {
     const paths = shellPaths();
-    const tool = createAgentScheduleEditTool(paths, configManager(paths));
+    const tool = admittedTool(paths);
     const requests: ScheduleEditRequest[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch(async (input, init) => {
@@ -222,7 +230,7 @@ describe('agent_schedule_edit tool', () => {
         method: init?.method ?? 'GET',
         body: typeof init?.body === 'string' ? init.body : '',
       });
-      return scheduleResponse();
+      return init?.method === 'GET' ? schedulesListResponse() : scheduleResponse();
     });
 
     try {
@@ -232,21 +240,22 @@ describe('agent_schedule_edit tool', () => {
         scheduleValue: '0 9 * * *',
         timezone: 'America/Chicago',
         name: 'Daily queue review',
-        confirm: true,
         explicitUserRequest: 'Move the daily review to 9 AM.',
       });
 
-      expect(result.success).toBe(true);
+      expect(result).toEqual(expect.objectContaining({ success: true }));
       expect(result.output).toContain('Updated GoodVibes schedule');
       expect(result.output).toContain('nextRoutes');
       expect(result.output).toContain('schedule action:"list" query:"sched-edit-1"');
-      expect(result.output).toContain('schedule action:"run" scheduleId:"sched-edit-1" confirm:true explicitUserRequest:"..."');
-      expect(result.output).toContain('schedule action:"delete" scheduleId:"sched-edit-1" confirm:true explicitUserRequest:"..."');
-      expect(requests).toHaveLength(1);
-      expect(requests[0]?.url).toBe('http://127.0.0.1:3421/api/automation/jobs/sched-edit-1');
-      expect(requests[0]?.method).toBe('PATCH');
-      const payload = JSON.parse(requests[0]?.body ?? '{}') as SchedulePatchPayload;
+      expect(result.output).toContain('schedule action:"run" scheduleId:"sched-edit-1"');
+      expect(result.output).toContain('schedule action:"delete" scheduleId:"sched-edit-1"');
+      expect(requests).toHaveLength(3);
+      expect(requests[2]?.url).toBe('http://127.0.0.1:3421/api/automation/jobs/sched-edit-1');
+      expect(requests[2]?.method).toBe('PATCH');
+      const payload = JSON.parse(requests[2]?.body ?? '{}') as SchedulePatchPayload;
       expect(payload.jobId).toBeUndefined();
+      expect(payload.expectedMutationRevision).toBe('synthetic-edit-revision-1');
+      expect(payload.admission).toBe('autonomous');
       expect(payload.name).toBe('Daily queue review');
       expect(payload.schedule).toEqual(expect.objectContaining({
         kind: 'cron',
@@ -260,7 +269,7 @@ describe('agent_schedule_edit tool', () => {
 
   test('rebuilds the autonomous policy prompt when task is edited', async () => {
     const paths = shellPaths();
-    const tool = createAgentScheduleEditTool(paths, configManager(paths));
+    const tool = admittedTool(paths);
     const requests: ScheduleEditRequest[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch(async (input, init) => {
@@ -269,7 +278,7 @@ describe('agent_schedule_edit tool', () => {
         method: init?.method ?? 'GET',
         body: typeof init?.body === 'string' ? init.body : '',
       });
-      return scheduleResponse();
+      return init?.method === 'GET' ? schedulesListResponse() : scheduleResponse();
     });
 
     try {
@@ -277,12 +286,11 @@ describe('agent_schedule_edit tool', () => {
         scheduleId: 'sched-edit-1',
         task: 'Review the ops queue and summarize blockers',
         successCriteria: 'Report blocker count and highest priority action.',
-        confirm: true,
         explicitUserRequest: 'Change the daily review to summarize blockers.',
       });
 
-      expect(result.success).toBe(true);
-      const payload = JSON.parse(requests[0]?.body ?? '{}') as SchedulePatchPayload;
+      expect(result).toEqual(expect.objectContaining({ success: true }));
+      const payload = JSON.parse(requests[2]?.body ?? '{}') as SchedulePatchPayload;
       expect(payload.prompt).toContain('GoodVibes Agent autonomous schedule');
       expect(payload.prompt).toContain('Change the daily review to summarize blockers.');
       expect(payload.prompt).toContain('Report blocker count and highest priority action.');

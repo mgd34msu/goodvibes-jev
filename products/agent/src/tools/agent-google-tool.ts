@@ -47,23 +47,26 @@
  * around, and then there is no guard.
  */
 
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolEffect, ToolInputProjectionError, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
+import { retainSurfaceMethods } from './agent-surface-effect.ts';
+import { captureStrictJudgmentJson, snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { isDeepStrictEqual } from 'node:util';
+import { CardMaterialRefusedError, screenOutboundForCardMaterial } from '../agent/payments-channel-guard.ts';
+import { assertDeliveryCurrent } from '@goodvibes-jev/engine/sdk/platform/utils';
 import {
   beginGoogleConsent,
   openGoogleConnection,
-  readClientCredentialsFromJson,
-  registerGoogleClient,
-  storeClientCredentials,
   summarizeCredentials,
-  type GoogleClientRegistration,
-  type GoogleConnection,
   type GoogleConnectionSources,
   type GoogleConsentSession,
   type GoogleLoopbackListenerFactory,
+  type GoogleConsentCompletion,
 } from '@goodvibes-jev/engine/sdk/platform/google';
+import type { ConfigManager, SecretsManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { createGoogleSettingsProjector, commitGoogleSettings, retainGoogleConnectionOwners, retainGooglePreparedEffectSource, type GooglePendingCredential } from './agent-google-admission.ts';
 import { nodeGoogleFilePort } from '@goodvibes-jev/engine/sdk/platform/google/node';
-import { GOOGLE_CONFIG_KEYS, GOOGLE_SECRET_KEYS } from '@goodvibes-jev/engine/sdk/platform/google';
+import { GOOGLE_CONFIG_KEYS } from '@goodvibes-jev/engine/sdk/platform/google';
 import {
   evaluateOutwardEffect,
   getSessionUntrustedContentLedger,
@@ -89,6 +92,7 @@ const GOOGLE_ACTIONS = [
   // and the only thing it could say was "now go and type /google client ...".
   'connect.client',
   'connect.clientFile',
+  'connect.complete',
   'mail.list',
   'mail.read',
   'mail.send',
@@ -100,21 +104,7 @@ const GOOGLE_ACTIONS = [
 /** Actions that only read. Everything else is an outward effect. */
 const READ_ONLY_ACTIONS = new Set<string>(['status', 'mail.list', 'mail.read', 'calendar.list', 'mail.verification']);
 
-/**
- * Actions that register a credential the owner just handed over.
- *
- * Exempt from the confirm:true gate, and the reasoning matters. That gate
- * guards things that leave this machine, a mail send, a calendar write,
- * where content read this turn could have steered the model into acting. A
- * credential write is neither: the values came from the owner's own message in
- * this turn, they go into the local encrypted store, and nothing is
- * transmitted. Asking him to confirm values he just pasted is the second
- * question the zero-friction rule exists to delete, and outward-action
- * approval framing does not apply to a local write of what he typed.
- *
- * They run BEFORE the connection is opened, because their entire purpose is to
- * exist on a machine that has no connection yet.
- */
+/** Native setup resolves protected credential sources before ordinary Google calls. */
 const CONNECT_ACTIONS = new Set<string>(['connect.client', 'connect.clientFile']);
 
 export interface AgentGoogleToolOptions {
@@ -123,16 +113,6 @@ export interface AgentGoogleToolOptions {
   readonly secretGet: (key: string) => Promise<string | null>;
   /** Injected in tests; production uses the process fetch. */
   readonly fetchImpl?: (url: string, init: RequestInit) => Promise<Response>;
-  /**
-   * Config and secret WRITES, for registering a client the owner pasted.
-   *
-   * Absent means this surface cannot complete a connection, and
-   * `connect.client` says exactly that rather than reporting a success it did
-   * not perform. Optional so narrow compositions and read-only tests can build
-   * the tool without a writable store.
-   */
-  readonly configSet?: ((key: string, value: unknown) => void) | undefined;
-  readonly secretSet?: ((key: string, value: string) => Promise<void>) | undefined;
   /**
    * Binds the local port Google redirects back to after consent. Injected
    * because binding a port is real machine I/O, the whole exchange runs
@@ -153,6 +133,10 @@ export interface AgentGoogleToolOptions {
    * owner's words. Only meaningful alongside `approvals`.
    */
   readonly approvalGesture?: string | undefined;
+  /** Native configuration and physical credential observation; an added restriction only. */
+  readonly captureConnectionCurrent?: (() => () => void) | undefined;
+  readonly configManager?: ConfigManager | undefined;
+  readonly secretsManager?: SecretsManager | undefined;
 }
 
 type ToolOutput = { readonly success: true; readonly output: string } | { readonly success: false; readonly error: string };
@@ -187,24 +171,21 @@ function isFailure<T>(result: GoogleApiResult<T>): result is GoogleApiFailure {
 const NOT_CONNECTED = [
   'No Google account is connected on this machine.',
   'Offer to connect one: work out the shortest route, walk the user through creating an OAuth client if there is none,',
-  'and when they paste the client id and secret call connect.client to register them and hand back the consent link.',
-  'Never tell them to run a command.',
+  'Use connect.clientFile with the exact OAuth client JSON they named, or connect.client with their client id and the already configured native client secret.',
+  'New secret values require the native secure credential entry. Return the consent link after registration, then use connect.complete after consent.',
 ].join(' ');
 
 export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
+  const captureNativeCurrent = () => options.configManager && options.secretsManager
+    ? retainGoogleConnectionOwners({ configManager: options.configManager, secretsManager: options.secretsManager }) : undefined;
   const sources: GoogleConnectionSources = {
     files: nodeGoogleFilePort,
     homeDirectory: options.homeDirectory,
     configGet: options.configGet,
     secretGet: options.secretGet,
   };
-  const fetchImpl = options.fetchImpl ?? ((url: string, init: RequestInit) => fetch(url, init));
-  const fetchPort = { fetch: fetchImpl };
-
-  /** Opened per call: credentials can be connected mid-session. */
-  async function connect(): Promise<GoogleConnection | null> {
-    return openGoogleConnection(sources, { fetch: fetchPort });
-  }
+  const nativeFetch = fetch;
+  const fetchImpl = options.fetchImpl ?? ((url: string, init: RequestInit) => nativeFetch(url, init));
 
   /**
    * Outward-effect gate.
@@ -229,19 +210,6 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
       ledger: getSessionUntrustedContentLedger(),
       content,
       ...(taintOptions === undefined ? {} : { taintOptions }),
-      // The `google` tool only ever runs inside a turn the owner started,
-      // it is not reachable from a schedule or a channel, so a refusal here
-      // must not tell him to go and ask the owner. He is the owner and he
-      // already asked.
-      requestedBy: 'owner-direct',
-      ...(options.approvals === undefined
-        ? {}
-        : {
-          ownerRemedy: {
-            gesture: options.approvalGesture
-              ?? 'answer the approval prompt this raises, which asks about this exact message.',
-          },
-        }),
       // Spend a matching approval if the owner has already answered a prompt
       // for this exact payload. `take` removes it, so one answered prompt
       // authorizes one send.
@@ -253,7 +221,7 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
     if (options.approvals !== undefined) {
       rememberRefusedOutwardAction({ action, description, content });
     }
-    return failure(`${decision.reason} ${decision.fix}`);
+    return failure(decision.reason ?? 'Google outbound content was refused.');
   }
 
   /**
@@ -263,10 +231,6 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
    * header, a sender, or anything else a message can influence, see the SDK's
    * security/owner-identity.ts for what an attacker would have to control.
    */
-  function ownerAddresses(): ReadonlySet<string> {
-    return resolveOwnerAddresses(options.configGet);
-  }
-
 
   /**
    * The consent in flight, if one is.
@@ -276,53 +240,38 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
    * is the only sensible reading anyway: a second paste replaces the first.
    */
   let pendingConsent: GoogleConsentSession | null = null;
+  let pendingCredential: GooglePendingCredential | null = null;
+  let pendingOutcome: GoogleConsentCompletion | null = null;
 
   /** Registration + the consent link, in one answer. */
-  async function registerClient(action: string, rawArgs: Record<string, unknown>): Promise<ToolOutput> {
-    const configSet = options.configSet;
-    const secretSet = options.secretSet;
+  async function registerClient(rawArgs: Record<string, unknown>, executionOptions: Parameters<Tool['execute']>[1]): Promise<ToolOutput> {
     const loopback = options.loopback;
-    if (configSet === undefined || secretSet === undefined || loopback === undefined) {
+    if (!options.configManager || !options.secretsManager || loopback === undefined) {
       // A surface with no writable store says so rather than reporting a
       // success it did not perform, the same rule the approval path follows.
       return failure(
         'This surface cannot register a Google client: it was built without a writable credential store. '
-        + 'The values you pasted were not stored anywhere.',
+        + 'No client configuration or credential was stored.',
       );
     }
 
-    const config = { get: options.configGet, set: configSet };
-    const secrets = { get: options.secretGet, set: secretSet };
-
-    let registration: GoogleClientRegistration;
-    if (action === 'connect.clientFile') {
-      const path = readString(rawArgs.path);
-      if (!path) return failure('google action:"connect.clientFile" needs the path the user named.');
-      const raw = nodeGoogleFilePort.readText(path);
-      if (raw === null) return failure(`There is no readable file at ${path}. Check the path and tell me the right one.`);
-      const parsed = readClientCredentialsFromJson(raw);
-      if (!parsed.ok) return failure(`${parsed.problem} ${parsed.fix}`);
-      registration = await storeClientCredentials({ config, secrets }, parsed.credentials);
-    } else {
-      const clientId = readString(rawArgs.clientId);
-      const clientSecret = readString(rawArgs.clientSecret);
-      if (!clientId || !clientSecret) {
-        return failure('google action:"connect.client" needs both clientId and clientSecret, as the user pasted them.');
-      }
-      const result = await registerGoogleClient({ config, secrets }, { clientId, clientSecret });
-      if (!result.ok) return failure(`${result.problem} ${result.fix}`);
-      registration = result;
-    }
-
-    // Continue the flow rather than stopping at "registered". Stopping here is
-    // what produced the instruction to go and run another command.
-    const storedClientId = readString(options.configGet(GOOGLE_CONFIG_KEYS.oauthClientId));
-    const storedSecret = await options.secretGet(GOOGLE_SECRET_KEYS.oauthClientSecret);
-    if (!storedClientId || !storedSecret) {
-      return failure('The client was written but could not be read back, so no consent link was started.');
-    }
+    const committed = await commitGoogleSettings(rawArgs, executionOptions);
+    if (committed.receipt.status !== 'committed') return failure('Google registration has a partial or unknown storage outcome. No write was retried and no consent was started.');
+    if (!committed.sourceCurrent) return failure('The client was stored, but its connection owner changed before consent started. No consent was started.');
+    const storedClientId = committed.clientId, storedSecret = committed.clientSecret;
+    const config = { get: options.configGet, set: () => { throw new ToolInputProjectionError('held'); } };
+    const secrets = { get: options.secretGet, set: async () => { throw new ToolInputProjectionError('held'); } };
 
     pendingConsent?.cancel();
+    pendingOutcome = null;
+    const nativeCurrent = options.captureConnectionCurrent?.() ?? captureNativeCurrent();
+    const sourceMethods = retainSurfaceMethods(options, ['configGet', 'secretGet', ...(options.fetchImpl ? ['fetchImpl'] : []), ...(options.captureConnectionCurrent ? ['captureConnectionCurrent'] : [])]);
+    const credential: GooglePendingCredential = { clientId: storedClientId, clientSecret: storedSecret, refreshToken: null, assertCurrent() {
+      executionOptions?.signal?.throwIfAborted(); sourceMethods(); assertDeliveryCurrent({ assertCurrent: nativeCurrent });
+      if (!options.fetchImpl && fetch !== nativeFetch) throw new ToolInputProjectionError('stale');
+      if (pendingCredential !== credential) throw new ToolInputProjectionError('stale');
+    } };
+    pendingCredential = credential;
     const loginHint = readString(options.configGet('email.username'))
       || readString(options.configGet('email.fromAddress'));
     const session = beginGoogleConsent({
@@ -331,7 +280,15 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
       config,
       secrets,
       loopback,
-      fetchPort,
+      fetchPort: { async fetch(url, init) {
+        credential.assertCurrent();
+        const signal = executionOptions?.signal;
+        const response = await fetchImpl(url, { ...init, ...(signal ? { signal: init.signal ? AbortSignal.any([init.signal, signal]) : signal } : {}) });
+        credential.assertCurrent(); return response;
+      } },
+      signal: executionOptions?.signal,
+      assertCurrent: credential.assertCurrent,
+      receiveRefreshToken(value) { credential.assertCurrent(); credential.refreshToken = value; },
       ...(loginHint ? { loginHint } : {}),
     });
     pendingConsent = session;
@@ -340,28 +297,29 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
     // a consent screen would look broken.
     void session.completed.then((outcome) => {
       if (session === pendingConsent) pendingConsent = null;
+      if (pendingCredential === credential) pendingOutcome = outcome;
       return outcome;
     });
 
     return ok([
-      `Registered the OAuth client ending ${registration.clientIdTail}. The secret went straight into the encrypted store and is not shown again.`,
+      `Registered the OAuth client ending ${storedClientId.slice(-12)}. The secret is in the encrypted store and is not shown again.`,
       '',
       'Open this link and approve it, it asks for mail and calendar together, so one approval covers both:',
       session.consentUrl,
       '',
       ...(loginHint ? [`Approve as ${loginHint}, not a personal account.`] : []),
-      'Google will warn that the app is unverified; that is expected for a client you created yourself. Once you approve, the credential lands here on its own.',
+      'Once Google approves, call connect.complete to store the returned credential through its current admitted action.',
     ].filter((line, index, all) => !(line === '' && all[index - 1] === '')).join('\n'));
   }
 
-  return {
+  const tool: Tool = {
     definition: {
       name: 'google',
       description:
         'Read and send Gmail; read and write Google Calendar. '
-        + 'When the user pastes a Google OAuth client id and secret, call connect.client with them, that is the '
-        + 'continuation of the setup walkthrough, and it returns the consent link to hand back. When they name a path '
-        + 'to a client JSON, call connect.clientFile.',
+        + 'connect.client uses the preconfigured stored OAuth client secret. connect.clientFile uses an exact named client JSON. '
+        + 'Both return a consent link. connect.complete stores the returned credential with fresh admission. '
+        + 'Inline client secrets must enter through the native secure credential setup.',
       parameters: {
         type: 'object',
         properties: {
@@ -384,15 +342,17 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
           timeMax: { type: 'string', description: 'RFC3339 upper bound for calendar.list.' },
           maxResults: { type: 'number', description: 'How many items to return. Defaults to 10.' },
           clientId: { type: 'string', description: 'OAuth client id the user pasted, for connect.client.' },
-          clientSecret: { type: 'string', description: 'Pasted client secret for connect.client; stored encrypted, never echoed.' },
+          clientSecret: { type: 'string', description: 'Inline secret values are refused at the model boundary; use native secure credential setup or clientSecretRef.' },
+          clientSecretRef: { type: 'string', description: 'Stored OAuth client-secret reference for connect.client; defaults to the native Google credential key.' },
           path: { type: 'string', description: 'Path to an OAuth client JSON the user named, for connect.clientFile.' },
-          confirm: { type: 'boolean', description: 'Required true for mail.send and calendar.create.' },
+          confirm: { type: 'boolean', description: 'Optional historical provenance; does not grant effect authority.' },
         },
         required: ['action'],
       },
     },
-    execute: async (rawArgs: Record<string, unknown>): Promise<ToolOutput> => {
-      const requested = readString(rawArgs.action);
+    execute: async (rawArgs: Record<string, unknown>, executionOptions): Promise<ToolOutput> => {
+      const args = captureStrictJudgmentJson(rawArgs); snapshotJudgmentInput(args);
+      const requested = readString(args.action);
       if (!requested) return failure(`google needs an action. Use one of: ${GOOGLE_ACTIONS.join(', ')}.`);
       // Matched case-insensitively but resolved to the CANONICAL spelling.
       // Lowercasing in place used to be the whole normalisation, which quietly
@@ -405,9 +365,63 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
 
       // Registration runs BEFORE the connection is opened, because a machine
       // that needs it does not have one yet.
-      if (CONNECT_ACTIONS.has(action)) return await registerClient(action, rawArgs);
+      if (CONNECT_ACTIONS.has(action)) return await registerClient(rawArgs, executionOptions);
+      if (action === 'connect.complete') {
+        if (!pendingCredential?.refreshToken) return failure(pendingOutcome?.detail ?? 'Google consent is still pending.');
+        const committed = await commitGoogleSettings(rawArgs, executionOptions);
+        if (committed.receipt.status !== 'committed') return failure('Google credential storage has a partial or unknown outcome. No write was retried.');
+        if (!committed.sourceCurrent || pendingCredential !== committed.pending) return failure('Google credential was stored, but the connection owner changed afterward.');
+        pendingCredential.refreshToken = null; pendingCredential = null; pendingOutcome = null;
+        return ok('Google approved. The credential is in the encrypted store.');
+      }
 
-      const connection = await connect();
+      const effect = !READ_ONLY_ACTIONS.has(action);
+      const methods = retainSurfaceMethods(options, ['configGet', 'secretGet', ...(options.fetchImpl ? ['fetchImpl'] : []), ...(options.captureConnectionCurrent ? ['captureConnectionCurrent'] : [])]);
+      if (effect && (options.configManager || options.secretsManager) && !(options.configManager && options.secretsManager)) throw new ToolInputProjectionError('held');
+      const nativeCurrent = effect && options.configManager && options.secretsManager
+        ? retainGooglePreparedEffectSource(rawArgs, executionOptions)
+        : options.captureConnectionCurrent?.() ?? captureNativeCurrent();
+      const configValues = new Map<string, unknown>();
+      const secretValues = new Map<string, string | null>();
+      const configGet = options.configGet, secretGet = options.secretGet;
+      const ledger = getSessionUntrustedContentLedger();
+      const ledgerMethods = retainSurfaceMethods(ledger, ['getPublicationRevision', 'originsThisTurn', 'exposuresThisTurn', 'taintSourcesThisTurn']);
+      const ledgerSnapshot = () => JSON.stringify([ledger.getPublicationRevision(), ledger.originsThisTurn(), ledger.exposuresThisTurn(), ledger.taintSourcesThisTurn()]);
+      const ledgerVersion = ledgerSnapshot();
+      const assertCurrent = () => {
+        executionOptions?.signal?.throwIfAborted();
+        if (effect && (!assertCurrentToolEffect(rawArgs, executionOptions, 'send')
+          || (action === 'calendar.create' && !assertCurrentToolEffect(rawArgs, executionOptions, 'write')))) throw new ToolInputProjectionError('held');
+        if (!effect) assertDeliveryCurrent({ assertCurrent: () => executionOptions?.assertCurrent?.(rawArgs) });
+        methods(); ledgerMethods(); assertDeliveryCurrent({ assertCurrent: nativeCurrent });
+        if (!options.fetchImpl && fetch !== nativeFetch) throw new ToolInputProjectionError('stale');
+        for (const [key, value] of configValues) if (!isDeepStrictEqual(captureStrictJudgmentJson({ value: configGet(key) ?? null }), value)) throw new ToolInputProjectionError('stale');
+        if (effect && (getSessionUntrustedContentLedger() !== ledger || ledgerSnapshot() !== ledgerVersion)) throw new ToolInputProjectionError('stale');
+        methods(); assertDeliveryCurrent({ assertCurrent: nativeCurrent });
+      };
+      const assertCredentials = async () => {
+        assertCurrent();
+        for (const [key, value] of secretValues) {
+          if (await secretGet(key) !== value) throw new ToolInputProjectionError('stale');
+          assertCurrent();
+        }
+      };
+      assertCurrent();
+      const guardedSources: GoogleConnectionSources = { ...sources, configGet(key) {
+        assertCurrent(); const value = configGet(key); configValues.set(key, captureStrictJudgmentJson({ value: value ?? null })); assertCurrent(); return value;
+      }, async secretGet(key) {
+        assertCurrent(); const value = await secretGet(key); assertCurrent();
+        const previous = secretValues.get(key);
+        if (secretValues.has(key) && previous !== value) throw new ToolInputProjectionError('stale');
+        secretValues.set(key, value); return value;
+      } };
+      const connection = await openGoogleConnection(guardedSources, { fetch: { async fetch(url, init) {
+        await assertCredentials(); assertCurrent();
+        const signal = executionOptions?.signal;
+        const result = await fetchImpl(url, { ...init, ...(signal ? { signal: init.signal ? AbortSignal.any([init.signal, signal]) : signal } : {}) });
+        await assertCredentials(); assertCurrent(); return result;
+      } } });
+      assertCurrent();
       if (connection === null) return failure(NOT_CONNECTED);
       const { client } = connection;
 
@@ -423,6 +437,7 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
       // source. `collectHistoryDelta` already forces this refresh for the same
       // reason; this is the same fix on the tool path.
       const refreshed = await connection.tokens.forceRefresh();
+      assertCurrent();
       if (!refreshed.ok) {
         return failure([refreshed.problem, refreshed.fix].filter(Boolean).join(' '));
       }
@@ -442,16 +457,12 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
         );
       }
 
-      // Confirmation is required before anything leaves this machine.
-      if (!READ_ONLY_ACTIONS.has(action) && rawArgs.confirm !== true) {
-        return failure(`google action:"${action}" changes something outside this machine. Re-issue it with confirm:true once the user has asked for it.`);
-      }
-
       if (action === 'mail.list') {
         const result = await client.listMessages({
-          query: readString(rawArgs.query) || undefined,
-          maxResults: readNumber(rawArgs.maxResults, 10),
+          query: readString(args.query) || undefined,
+          maxResults: readNumber(args.maxResults, 10),
         });
+        assertCurrent();
         if (isFailure(result)) return describeFailure(result);
         // A listing that matched nothing read nothing, so there is nothing it
         // could have derived an outward action from. Recording an ingest here
@@ -473,9 +484,10 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
       }
 
       if (action === 'mail.read') {
-        const id = readString(rawArgs.id);
+        const id = readString(args.id);
         if (!id) return failure('google action:"mail.read" needs the message id, from mail.list.');
         const result = await client.getMessage(id);
+        assertCurrent();
         if (isFailure(result)) return describeFailure(result);
         // The whole body is MORE attacker-controlled text than a subject line,
         // not less, so it is what gets retained, the guard can only weigh
@@ -493,9 +505,10 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
         // The one case where mail may yield something actionable, and only
         // because the agent provoked it. Correlation runs on receiver-written
         // delivery headers; the To: header is never accepted as evidence.
-        const id = readString(rawArgs.id);
+        const id = readString(args.id);
         if (!id) return failure('google action:"mail.verification" needs the message id, from mail.list.');
         const result = await client.getMessage(id);
+        assertCurrent();
         if (isFailure(result)) return describeFailure(result);
 
         const book = getSessionExpectationBook();
@@ -558,9 +571,9 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
       }
 
       if (action === 'mail.send') {
-        const to = readString(rawArgs.to);
-        const subject = readString(rawArgs.subject);
-        const body = readString(rawArgs.body);
+        const to = readString(args.to);
+        const subject = readString(args.subject);
+        const body = readString(args.body);
         if (!to || !subject) return failure('google action:"mail.send" needs to and subject.');
         if (!summary.canSendMail) {
           return failure('The connected Google account was not granted a scope that permits sending mail. Re-authorize with: /google reauthorize');
@@ -577,7 +590,7 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
         // influence. This matches the daemon's email.send route, which had the
         // exemption while this path did not, the same defect class on two
         // surfaces, behaving differently.
-        if (!isSendToOwnerOnly(to, ownerAddresses())) {
+        if (!isSendToOwnerOnly(to, resolveOwnerAddresses(guardedSources.configGet))) {
           const refused = await outwardAllowed(
             'email.send',
             `sending mail to ${to}`,
@@ -589,30 +602,37 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
               exactMatchFields: ['to'],
               // A reply that quotes what it answers repeats it by design.
               stripQuotedFields: ['body'],
+              signal: executionOptions?.signal,
             },
           );
+          assertCurrent();
           if (refused !== null) return refused;
         }
 
-        const result = await client.sendMessage({ to, subject, body });
+        const card = await screenOutboundForCardMaterial({ surface: 'email', message: body, title: subject }, { signal: executionOptions?.signal, assertCurrent });
+        assertCurrent(); if (card) throw new CardMaterialRefusedError(card);
+        let result: Awaited<ReturnType<typeof client.sendMessage>>;
+        try { result = await client.sendMessage({ to, subject, body }); assertCurrent(); }
+        catch { return failure('The Gmail send request started, but its outcome could not be confirmed. Inspect sent mail before retrying.'); }
         if (isFailure(result)) return describeFailure(result);
         return ok(`Sent to ${to} (message ${result.value.id}).`);
       }
 
       if (action === 'calendar.list') {
         const result = await client.listEvents({
-          timeMin: readString(rawArgs.timeMin) || undefined,
-          timeMax: readString(rawArgs.timeMax) || undefined,
-          maxResults: readNumber(rawArgs.maxResults, 10),
+          timeMin: readString(args.timeMin) || undefined,
+          timeMax: readString(args.timeMax) || undefined,
+          maxResults: readNumber(args.maxResults, 10),
         });
+        assertCurrent();
         if (isFailure(result)) return describeFailure(result);
         if (result.value.length === 0) return ok('No events in that range.');
         return ok(result.value.map((event) => `${event.start}  ${event.summary}${event.location ? ` (${event.location})` : ''}`).join('\n'));
       }
 
-      const summaryText = readString(rawArgs.summary);
-      const start = readString(rawArgs.start);
-      const end = readString(rawArgs.end);
+      const summaryText = readString(args.summary);
+      const start = readString(args.start);
+      const end = readString(args.end);
       if (!summaryText || !start || !end) {
         return failure('google action:"calendar.create" needs summary, start and end.');
       }
@@ -628,25 +648,37 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
         `creating the event "${summaryText}"`,
         {
           summary: summaryText,
-          location: readString(rawArgs.location) || undefined,
-          description: readString(rawArgs.description) || undefined,
-        },
+          location: readString(args.location) || undefined,
+          description: readString(args.description) || undefined,
+        }, { signal: executionOptions?.signal },
       );
+      assertCurrent();
       if (refusedEvent !== null) return refusedEvent;
 
-      const created = await client.createEvent({
+      const card = await screenOutboundForCardMaterial({ surface: 'calendar', message: [readString(args.description), readString(args.location)].join('\n'), title: summaryText }, { signal: executionOptions?.signal, assertCurrent });
+      assertCurrent(); if (card) throw new CardMaterialRefusedError(card);
+      let created: Awaited<ReturnType<typeof client.createEvent>>;
+      try { created = await client.createEvent({
         summary: summaryText,
         start,
         end,
-        ...(readString(rawArgs.location) ? { location: readString(rawArgs.location) } : {}),
-        ...(readString(rawArgs.description) ? { description: readString(rawArgs.description) } : {}),
-      });
+        ...(readString(args.location) ? { location: readString(args.location) } : {}),
+        ...(readString(args.description) ? { description: readString(args.description) } : {}),
+      }); assertCurrent(); }
+      catch { return failure('The Google Calendar write started, but its outcome could not be confirmed. Inspect the calendar before retrying.'); }
       if (isFailure(created)) return describeFailure(created);
       return ok(`Created "${created.value.summary}" starting ${created.value.start}.`);
     },
   };
+  if (options.configManager && options.secretsManager) googleProjectors.set(tool, createGoogleSettingsProjector({ configManager: options.configManager, secretsManager: options.secretsManager }, () => pendingCredential));
+  return tool;
 }
 
+const googleProjectors = new WeakMap<Tool, ReturnType<typeof createGoogleSettingsProjector>>();
+export function agentGoogleInputProjector(tool: Tool) { return googleProjectors.get(tool); }
 export function registerAgentGoogleTool(registry: ToolRegistry, options: AgentGoogleToolOptions): void {
-  if (!registry.has('google')) registry.register(createAgentGoogleTool(options));
+  if (!registry.has('google')) {
+    const tool = createAgentGoogleTool(options);
+    registry.register(tool, { inputProjection: agentGoogleInputProjector(tool) });
+  }
 }

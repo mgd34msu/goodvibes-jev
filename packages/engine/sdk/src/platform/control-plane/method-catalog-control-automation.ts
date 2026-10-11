@@ -123,6 +123,7 @@ export const builtinGatewayControlAutomationMethodDescriptors: readonly GatewayM
     events: [runtimeEventId('automation')],
     inputSchema: automationScheduleInputSchema({
       id: STRING_SCHEMA,
+      admission: stringEnumSchema(['autonomous']),
       name: STRING_SCHEMA,
       description: STRING_SCHEMA,
       prompt: STRING_SCHEMA,
@@ -164,6 +165,8 @@ export const builtinGatewayControlAutomationMethodDescriptors: readonly GatewayM
     events: [runtimeEventId('automation')],
     inputSchema: bodyEnvelopeSchema({
       jobId: STRING_SCHEMA,
+      expectedMutationRevision: STRING_SCHEMA,
+      admission: stringEnumSchema(['autonomous']),
       name: STRING_SCHEMA,
       description: STRING_SCHEMA,
       prompt: STRING_SCHEMA,
@@ -199,7 +202,7 @@ export const builtinGatewayControlAutomationMethodDescriptors: readonly GatewayM
     scopes: ['write:automation'],
     http: { method: 'DELETE', path: '/api/automation/jobs/{jobId}' },
     events: [runtimeEventId('automation')],
-    inputSchema: objectSchema({ jobId: STRING_SCHEMA }, ['jobId']),
+    inputSchema: objectSchema({ jobId: STRING_SCHEMA, expectedMutationRevision: STRING_SCHEMA, admission: stringEnumSchema(['autonomous']) }, ['jobId']),
     outputSchema: REMOVE_WITH_ID_OUTPUT_SCHEMA,
     dangerous: true,
   }),
@@ -211,7 +214,7 @@ export const builtinGatewayControlAutomationMethodDescriptors: readonly GatewayM
     scopes: ['write:automation'],
     http: { method: 'POST', path: '/api/automation/jobs/{jobId}/enable' },
     events: [runtimeEventId('automation')],
-    inputSchema: objectSchema({ jobId: STRING_SCHEMA }, ['jobId']),
+    inputSchema: objectSchema({ jobId: STRING_SCHEMA, expectedMutationRevision: STRING_SCHEMA, admission: stringEnumSchema(['autonomous']) }, ['jobId']),
     outputSchema: objectSchema({ id: STRING_SCHEMA, enabled: BOOLEAN_SCHEMA }, ['id', 'enabled'], { additionalProperties: true }),
   }),
   methodDescriptor({
@@ -222,7 +225,7 @@ export const builtinGatewayControlAutomationMethodDescriptors: readonly GatewayM
     scopes: ['write:automation'],
     http: { method: 'POST', path: '/api/automation/jobs/{jobId}/disable' },
     events: [runtimeEventId('automation')],
-    inputSchema: objectSchema({ jobId: STRING_SCHEMA }, ['jobId']),
+    inputSchema: objectSchema({ jobId: STRING_SCHEMA, expectedMutationRevision: STRING_SCHEMA, admission: stringEnumSchema(['autonomous']) }, ['jobId']),
     outputSchema: objectSchema({ id: STRING_SCHEMA, enabled: BOOLEAN_SCHEMA }, ['id', 'enabled'], { additionalProperties: true }),
   }),
   // automation.jobs.pause / automation.jobs.resume were RETIRED in the 1.0.0
@@ -348,6 +351,7 @@ export const builtinGatewayControlAutomationMethodDescriptors: readonly GatewayM
     http: { method: 'POST', path: '/api/automation/schedules' },
     inputSchema: automationScheduleInputSchema({
       name: STRING_SCHEMA,
+      admission: stringEnumSchema(['autonomous']),
       prompt: STRING_SCHEMA,
       cron: STRING_SCHEMA,
       every: STRING_SCHEMA,
@@ -382,7 +386,7 @@ export const builtinGatewayControlAutomationMethodDescriptors: readonly GatewayM
     category: 'automation',
     scopes: ['write:automation'],
     http: { method: 'DELETE', path: '/api/automation/schedules/{scheduleId}' },
-    inputSchema: objectSchema({ scheduleId: STRING_SCHEMA }, ['scheduleId']),
+    inputSchema: objectSchema({ scheduleId: STRING_SCHEMA, expectedMutationRevision: STRING_SCHEMA, admission: stringEnumSchema(['autonomous']) }, ['scheduleId']),
     outputSchema: REMOVE_WITH_ID_OUTPUT_SCHEMA,
     dangerous: true,
   }),
@@ -393,7 +397,7 @@ export const builtinGatewayControlAutomationMethodDescriptors: readonly GatewayM
     category: 'automation',
     scopes: ['write:automation'],
     http: { method: 'POST', path: '/api/automation/schedules/{scheduleId}/enable' },
-    inputSchema: objectSchema({ scheduleId: STRING_SCHEMA }, ['scheduleId']),
+    inputSchema: objectSchema({ scheduleId: STRING_SCHEMA, expectedMutationRevision: STRING_SCHEMA, admission: stringEnumSchema(['autonomous']) }, ['scheduleId']),
     outputSchema: objectSchema({ id: STRING_SCHEMA, enabled: BOOLEAN_SCHEMA }, ['id', 'enabled'], { additionalProperties: true }),
   }),
   methodDescriptor({
@@ -403,7 +407,7 @@ export const builtinGatewayControlAutomationMethodDescriptors: readonly GatewayM
     category: 'automation',
     scopes: ['write:automation'],
     http: { method: 'POST', path: '/api/automation/schedules/{scheduleId}/disable' },
-    inputSchema: objectSchema({ scheduleId: STRING_SCHEMA }, ['scheduleId']),
+    inputSchema: objectSchema({ scheduleId: STRING_SCHEMA, expectedMutationRevision: STRING_SCHEMA, admission: stringEnumSchema(['autonomous']) }, ['scheduleId']),
     outputSchema: objectSchema({ id: STRING_SCHEMA, enabled: BOOLEAN_SCHEMA }, ['id', 'enabled'], { additionalProperties: true }),
   }),
   methodDescriptor({

@@ -1,5 +1,5 @@
 import { mockFetch } from '../helpers/typed-fetch-mock.ts';
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -12,6 +12,25 @@ import {
   registerAgentOperatorActionTool,
 } from '../../tools/agent-operator-action-tool.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { recordedEffectFixture } from '../helpers/recorded-effect-admission.ts';
+import { createOperatorInputProjector } from '../../tools/agent-operator-input-projector.ts';
+import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+
+let prior: ReturnType<typeof installJudgmentPort>, log: SqliteDecisionLog;
+beforeEach(() => {
+  log = new SqliteDecisionLog(':memory:');
+  const fake = fakePort((name, question) => {
+    if (question.type === 'choice') return choiceAnswer(question, name === 'disposition' ? 'act'
+      : name === 'kind' ? Object.hasOwn(question.criteria, 'other') ? 'other' : 'read' : 'generic', 0.999);
+    if (question.type === 'noul') return noulAnswer(0.001);
+    throw new Error(`Unexpected question ${name}`);
+  });
+  prior = installJudgmentPort(withDecisionLog(fake.port, log));
+});
+afterEach(() => { installJudgmentPort(prior); log[Symbol.dispose](); });
 
 type ShellPaths = ShellPathService;
 
@@ -46,6 +65,13 @@ function configManager(paths: ShellPaths): ConfigManager {
     workingDir: paths.workingDirectory,
     homeDir: paths.homeDirectory,
   });
+}
+
+function registeredActionFixture(tool: Tool, paths: ShellPaths, config: ConfigManager) {
+  const fixture = recordedEffectFixture(tool, 'prompt', {}, paths.workingDirectory);
+  fixture.registry.unregister(tool.definition.name);
+  fixture.registry.register(tool, { inputProjection: createOperatorInputProjector(paths, config, 'action') });
+  return fixture;
 }
 
 function inputUrl(input: Parameters<typeof fetch>[0]): string {
@@ -150,9 +176,10 @@ const ACTION_CASES: readonly OperatorActionCase[] = [
 ];
 
 describe('agent_operator_action tool', () => {
-  test('previews without calling the connected host when confirmation is missing', async () => {
+  test('refuses caller confirmation without recorded admission', async () => {
     const paths = shellPaths();
-    const tool = createAgentOperatorActionTool(paths, configManager(paths));
+    const config = configManager(paths);
+    const tool = createAgentOperatorActionTool(paths, config);
     const originalFetch = globalThis.fetch;
     let calls = 0;
     globalThis.fetch = mockFetch(async () => {
@@ -169,8 +196,7 @@ describe('agent_operator_action tool', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('Agent operator action preview');
-      expect(result.error).toContain('confirmation required');
+      expect(result.error).toContain('recorded effect admission');
       expect(calls).toBe(0);
     } finally {
       globalThis.fetch = originalFetch;
@@ -179,7 +205,8 @@ describe('agent_operator_action tool', () => {
 
   test('rejects unknown actions without calling the connected host', async () => {
     const paths = shellPaths();
-    const tool = createAgentOperatorActionTool(paths, configManager(paths));
+    const config = configManager(paths);
+    const tool = createAgentOperatorActionTool(paths, config);
     const originalFetch = globalThis.fetch;
     let calls = 0;
     globalThis.fetch = mockFetch(async () => {
@@ -205,7 +232,8 @@ describe('agent_operator_action tool', () => {
 
   test('fails closed without auth token and does not call routes', async () => {
     const paths = shellPaths(false);
-    const tool = createAgentOperatorActionTool(paths, configManager(paths));
+    const config = configManager(paths);
+    const tool = createAgentOperatorActionTool(paths, config);
     const originalFetch = globalThis.fetch;
     let calls = 0;
     globalThis.fetch = mockFetch(async () => {
@@ -214,7 +242,7 @@ describe('agent_operator_action tool', () => {
     });
 
     try {
-      const result = await tool.execute({
+      const result = await registeredActionFixture(tool, paths, config).run({
         action: 'automation.jobs.run',
         jobId: 'job-1',
         confirm: true,
@@ -233,7 +261,8 @@ describe('agent_operator_action tool', () => {
 
   test('reports connected-host route failures without legacy daemon kinds', async () => {
     const paths = shellPaths();
-    const tool = createAgentOperatorActionTool(paths, configManager(paths));
+    const config = configManager(paths);
+    const tool = createAgentOperatorActionTool(paths, config);
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch(async () => new Response(JSON.stringify({ error: 'missing route' }), {
       status: 404,
@@ -241,7 +270,7 @@ describe('agent_operator_action tool', () => {
     }));
 
     try {
-      const result = await tool.execute({
+      const result = await registeredActionFixture(tool, paths, config).run({
         action: 'automation.jobs.run',
         jobId: 'job-1',
         confirm: true,
@@ -256,9 +285,10 @@ describe('agent_operator_action tool', () => {
     }
   });
 
-  test('uses only allowlisted exact public routes after explicit confirmation', async () => {
+  test('uses only allowlisted exact public routes after recorded admission', async () => {
     const paths = shellPaths();
-    const tool = createAgentOperatorActionTool(paths, configManager(paths));
+    const config = configManager(paths);
+    const tool = createAgentOperatorActionTool(paths, config);
     const requests: CapturedRequest[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch(async (input, init) => {
@@ -268,31 +298,39 @@ describe('agent_operator_action tool', () => {
         method: init?.method ?? 'GET',
         body: typeof init?.body === 'string' ? init.body : '',
       });
+      if (url.endsWith('/api/automation/schedules') && init?.method === 'GET') return successResponse({
+        jobs: ACTION_CASES.map(entry => ({ id: entry.targetId, mutationRevision: `fixture-${entry.targetId}-generation` })),
+      });
       const match = ACTION_CASES.find((entry) => url.endsWith(entry.path));
       return match ? successResponse(match.response) : successResponse({ error: 'unexpected route' });
     });
 
     try {
       for (const entry of ACTION_CASES) {
-        const result = await tool.execute({
+        const result = await registeredActionFixture(tool, paths, config).run({
           action: entry.action,
           [entry.targetField]: entry.targetId,
-          confirm: true,
-          explicitUserRequest: `Run ${entry.action} for ${entry.targetId}.`,
         });
         expect(result.success).toBe(true);
         expect(result.output).toContain(`method: ${entry.action}`);
       }
 
-      expect(requests.map((request) => request.url)).toEqual(
+      const mutations = requests.filter(request => request.method !== 'GET');
+      expect(mutations.map((request) => request.url)).toEqual(
         ACTION_CASES.map((entry) => `http://127.0.0.1:3421${entry.path}`),
       );
-      expect(requests.map((request) => request.method)).toEqual(ACTION_CASES.map((entry) => entry.method ?? 'POST'));
-      expect(requests.map((request) => request.url.includes('/api/knowledge'))).toEqual(ACTION_CASES.map(() => false));
-      expect(requests.map((request) => request.url.includes('homeGraph'))).toEqual(ACTION_CASES.map(() => false));
-      expect(requests.map((request) => request.url.includes('/api/automation/jobs/job-1/delete'))).toEqual(
+      expect(mutations.map((request) => request.method)).toEqual(ACTION_CASES.map((entry) => entry.method ?? 'POST'));
+      expect(mutations.map((request) => request.url.includes('/api/knowledge'))).toEqual(ACTION_CASES.map(() => false));
+      expect(mutations.map((request) => request.url.includes('homeGraph'))).toEqual(ACTION_CASES.map(() => false));
+      expect(mutations.map((request) => request.url.includes('/api/automation/jobs/job-1/delete'))).toEqual(
         ACTION_CASES.map(() => false),
       );
+      const reads = requests.filter(request => request.method === 'GET');
+      expect(reads).toHaveLength(5);
+      expect(reads.every(request => request.url === 'http://127.0.0.1:3421/api/automation/schedules')).toBe(true);
+      for (const request of mutations.filter(request => /\/(?:enable|disable)$/.test(request.url) || request.method === 'DELETE')) {
+        expect(JSON.parse(request.body)).toMatchObject({ admission: 'autonomous', expectedMutationRevision: expect.any(String) });
+      }
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -300,7 +338,8 @@ describe('agent_operator_action tool', () => {
 
   test('sends approval notes and remember flags only for approval actions', async () => {
     const paths = shellPaths();
-    const tool = createAgentOperatorActionTool(paths, configManager(paths));
+    const config = configManager(paths);
+    const tool = createAgentOperatorActionTool(paths, config);
     const requests: CapturedRequest[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch(async (input, init) => {
@@ -313,7 +352,7 @@ describe('agent_operator_action tool', () => {
     });
 
     try {
-      const result = await tool.execute({
+      const result = await registeredActionFixture(tool, paths, config).run({
         action: 'approvals.approve',
         approvalId: 'approval-1',
         note: 'Approved by user request.',

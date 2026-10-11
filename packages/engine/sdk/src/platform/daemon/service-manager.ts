@@ -141,6 +141,28 @@ export function parseSystemdMajorVersion(versionOutput: string | undefined): num
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/** WorkingDirectory and Description expand specifiers but do not unquote C escapes. */
+function systemdScalar(value: string, field: string): string {
+  if (/[\x00-\x1f\x7f]/.test(value) || /^[ \t]|[ \t]$/.test(value) || value.endsWith('\\')) {
+    throw new Error(`The systemd ${field} cannot preserve this value.`);
+  }
+  return value.replaceAll('%', '%%');
+}
+
+/** ExecStart words and complete Environment assignments accept systemd C quoting. */
+function systemdWord(value: string, expandEnvironment = false): string {
+  if (value.includes('\0')) throw new Error('Systemd service values cannot contain NUL.');
+  if (/^[A-Za-z0-9_./:=+-]+$/.test(value)) return value;
+  const escaped = value.replace(/[\\"\x01-\x1f\x7f%$]/g, (character) => {
+    if (character === '\\') return '\\\\';
+    if (character === '"') return '\\"';
+    if (character === '%') return '%%';
+    if (character === '$') return expandEnvironment ? '$$' : '$';
+    return `\\x${character.charCodeAt(0).toString(16).padStart(2, '0')}`;
+  });
+  return `"${escaped}"`;
+}
+
 /**
  * Survival contract for a restartOnFailure unit: StartLimitIntervalSec=0
  * disables the start-rate limiter, so a crashing daemon keeps retrying
@@ -155,9 +177,18 @@ export function renderSystemdUnit(
   definition: ManagedServiceDefinition,
   systemdMajorVersion: number | null = null,
 ): string {
+  if (!definition.command || /^[-@:+!|;]/.test(definition.command) || /[\x00-\x1f\x7f]/.test(definition.command)) {
+    throw new Error('The systemd executable must be a literal executable name or path.');
+  }
+  // The executable path itself does not expand $, but argv[0] does. Disable
+  // argv expansion when it contains $, preserving the literal path in both.
+  const literalExecutable = definition.command.includes('$');
   const envLines = Object.entries(definition.env)
     .filter(([, value]) => value.length > 0)
-    .map(([key, value]) => `Environment=${key}=${value.replace(/"/g, '\\"')}`);
+    .map(([key, value]) => {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error('Invalid systemd environment variable name.');
+      return `Environment=${systemdWord(`${key}=${value}`)}`;
+    });
   const restartLines = definition.restartOnFailure
     ? [
         'Restart=on-failure',
@@ -169,14 +200,14 @@ export function renderSystemdUnit(
     : ['Restart=no'];
   return [
     '[Unit]',
-    `Description=${definition.description}`,
+    `Description=${systemdScalar(definition.description, 'Description')}`,
     'After=network-online.target',
     ...(definition.restartOnFailure ? ['StartLimitIntervalSec=0'] : []),
     '',
     '[Service]',
     'Type=simple',
-    `WorkingDirectory=${definition.workingDirectory}`,
-    `ExecStart=${[definition.command, ...definition.args].join(' ')}`,
+    `WorkingDirectory=${systemdScalar(definition.workingDirectory, 'WorkingDirectory')}`,
+    `ExecStart=${literalExecutable ? ':' : ''}${[systemdWord(definition.command), ...definition.args.map((argument) => systemdWord(argument, !literalExecutable))].join(' ')}`,
     ...envLines,
     ...restartLines,
     '',
@@ -332,6 +363,24 @@ export class PlatformServiceManager {
       workingDirectory: this.workingDirectory,
       homeDirectory: this.homeDirectory,
     };
+  }
+
+  /** Read-only identity check; an installed definition grants no authority for another selected host. */
+  installedDefinitionMatches(): boolean {
+    if (!this.isEnabled()) return false;
+    const platform = detectPlatform(String(this.configManager.get('service.platform')));
+    const serviceName = resolveServiceName(this.configManager, this.defaultServiceName);
+    const path = definitionPath(platform, serviceName, this.getPaths(), this.surfaceRoot);
+    try {
+      const actual = readFileSync(path, 'utf-8');
+      const definition = this.resolveDefinition();
+      const candidates = platform === 'systemd'
+        ? [renderSystemdUnit(definition), renderSystemdUnit(definition, 254)]
+        : [platform === 'launchd' ? renderLaunchdPlist(definition)
+          : platform === 'windows' ? renderWindowsCommand(definition)
+            : [definition.command, ...definition.args].join(' ')];
+      return candidates.some((contents) => actual === `${contents}\n`);
+    } catch { return false; }
   }
 
   status(): ManagedServiceStatus {

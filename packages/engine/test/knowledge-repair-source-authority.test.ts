@@ -50,7 +50,7 @@ const distinct = (index: number): RepairSourceAuthorityInput => ({ ...input(`sou
 describe('repair source authority canonical reader', () => {
   test('registers the versioned role reading with official, vendor, retail, misleading label and injection fixtures', async () => {
     expect(registry.list().map((entry) => entry.name)).toEqual(['engine.knowledge.repair-source-authority']);
-    expect(repairSourceAuthority.version).toBe(1); expect(repairSourceAuthority.accuracyFloor).toBeGreaterThanOrEqual(0.95);
+    expect(repairSourceAuthority.version).toBe(2); expect(repairSourceAuthority.accuracyFloor).toBeGreaterThanOrEqual(0.95);
     const fake = fakePort((name, question, state) => {
       const fixture = repairSourceAuthority.fixtures.find((candidate) => JSON.stringify(candidate.state) === JSON.stringify(state));
       if (name !== 'authority' || !fixture || typeof fixture.expect.authority !== 'string') throw new Error('Unscripted authority fixture');

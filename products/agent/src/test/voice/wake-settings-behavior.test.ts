@@ -58,7 +58,9 @@
  *     `wasm` because it is a host process, so no value of the row changes anything
  *     this repo does.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -77,6 +79,9 @@ import { createAgentCaptureOpener } from '../../audio/capture.ts';
 import { startWakeRuntime, wireWakeRuntime, type WakeRuntime, type WakeRuntimeDeps } from '../../audio/wake-runtime.ts';
 import { voiceCaptureRowVisible } from '../../core/voice-capture-status.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+
+const previousPorts: Array<ReturnType<typeof installJudgmentPort>> = [];
+afterEach(() => { for (const previous of previousPorts.splice(0).reverse()) installJudgmentPort(previous); });
 
 // ---------------------------------------------------------------------------
 // Stubs and helpers
@@ -909,6 +914,8 @@ describe('the post-wake capture rows bound what is recorded', () => {
 
 describe('a recorder that keeps dying is restarted, then latched, with the reason shown', () => {
   test('voice.wake.maxRestarts + restartBackoffMs bound the retries on a real capture stream', async () => {
+    const reading = fakePort((_name, question) => choiceAnswer(question, 'none', 0.99));
+    previousPorts.push(installJudgmentPort(reading.port));
     const harness = makeCaptureHarness({ config: { 'voice.wake.maxRestarts': 1, 'voice.wake.restartBackoffMs': 250 } });
     const first = await startListening(harness);
 
@@ -916,6 +923,8 @@ describe('a recorder that keeps dying is restarted, then latched, with the reaso
     first.emitClose(1);
     await flush();
     expect(harness.runtime.status()?.kind).toBe('wake-restarting');
+    expect(reading.requests).toHaveLength(1);
+    expect(reading.requests[0]?.state).toHaveProperty('stderr', 'device or resource busy');
     expect(harness.timers.at(-1)?.ms).toBe(250);
     expect(harness.notices.join('\n')).toContain('restarting the wake-word detector');
 
@@ -929,5 +938,21 @@ describe('a recorder that keeps dying is restarted, then latched, with the reaso
     expect(harness.runtime.status()?.kind).toBe('wake-latched');
     expect(harness.runtime.status()?.detail ?? '').not.toBe('');
     expect(harness.notices.join('\n')).toContain('stays off until voice.wake.enabled is turned off and on again');
+    await harness.runtime.stop();
+  });
+
+  test('a diagnostic without a current reader pauses capture without a guessed restart', async () => {
+    previousPorts.push(installJudgmentPort(undefined));
+    const harness = makeCaptureHarness({ config: { 'voice.wake.maxRestarts': 1, 'voice.wake.restartBackoffMs': 250 } });
+    const recorder = await startListening(harness);
+    recorder.emitStderr('device or resource busy');
+    recorder.emitClose(1);
+    await flush();
+
+    expect(harness.runtime.status()).toBeNull();
+    expect(harness.notices.join('\n')).toContain('failure could not be safely determined');
+    expect(harness.timers.some(timer => timer.ms === 250)).toBe(false);
+    expect(harness.spawns.calls).toHaveLength(1);
+    await harness.runtime.stop();
   });
 });

@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { PairingTokenManager, PairingTokenStoreBusyError } from '../sdk/src/platform/pairing/pairing-token-store.js';
 import { UserAuthManager } from '../sdk/src/platform/security/user-auth.js';
 import { DaemonControlPlaneHelper, type DaemonControlPlaneContext } from '../sdk/src/platform/daemon/control-plane.js';
@@ -10,6 +10,8 @@ import * as atomic from '../sdk/src/platform/utils/atomic-json-store.js';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
 import { createServingSettingsPrecondition } from '../sdk/src/platform/daemon/http/settings-precondition.js';
 import { createDaemonSystemRouteHandlers } from '../daemon-sdk/src/system-routes.js';
+
+function ownerLockPath(file: string): string { return join(dirname(file), '.pairing-owner-locks', `${basename(file)}.lock`); }
 
 const roots: string[] = [];
 const restores: (() => void)[] = [];
@@ -106,18 +108,18 @@ describe('strict SETTINGS serving-owner auth', () => {
     const f = fixture(kind); const authority = capture(f); const other = new PairingTokenManager(f.file);
     const action = commit(f, authority, () => {
       expect(() => kind === 'shared' ? other.revokeLegacyShared() : other.revoke(f.paired!.id)).toThrow(PairingTokenStoreBusyError);
-      expect(existsSync(`${f.file}.owner-lock`)).toBe(true);
+      expect(existsSync(ownerLockPath(f.file))).toBe(true);
     });
     expect(action.run()).toBe('committed'); expect(action.effects()).toBe(1);
-    expect(existsSync(`${f.file}.owner-lock`)).toBe(false);
+    expect(existsSync(ownerLockPath(f.file))).toBe(false);
     expect(() => kind === 'shared' ? other.revokeLegacyShared() : other.revoke(f.paired!.id)).not.toThrow();
   });
 
   test('held lock refuses without fallback and a copied/cross-helper handle cannot execute', () => {
     const f = fixture('paired'); const authority = capture(f);
-    mkdirSync(`${f.file}.owner-lock`); const action = commit(f, authority);
+    mkdirSync(ownerLockPath(f.file)); const action = commit(f, authority);
     expect(() => action.run()).toThrow(PairingTokenStoreBusyError); expect(action.effects()).toBe(0);
-    rmSync(`${f.file}.owner-lock`, { recursive: true });
+    rmSync(ownerLockPath(f.file), { recursive: true });
     expect(() => f.helper.withSettingsAdminAuthority(f.request, { ...authority }, () => 'forged')).toThrow();
     const other = new DaemonControlPlaneHelper(f.context as unknown as DaemonControlPlaneContext);
     expect(() => other.withSettingsAdminAuthority(f.request, authority, () => 'wrong owner')).toThrow();
@@ -234,7 +236,7 @@ describe('strict SETTINGS serving-owner auth', () => {
       return Promise.resolve().then(() => { assertCurrent(); effects++; });
     })).toThrow(/synchronous/i);
     await Promise.resolve(); expect(() => escaped()).toThrow(); expect(effects).toBe(0);
-    expect(existsSync(`${f.file}.owner-lock`)).toBe(false);
+    expect(existsSync(ownerLockPath(f.file))).toBe(false);
   });
 
   test('successful effect result is not retroactively denied by later auth change in presentation', () => {
@@ -348,7 +350,7 @@ describe('strict SETTINGS serving-owner auth', () => {
   test('post-effect owner-lock cleanup failure preserves the receipt and blocks subsequent strict auth', () => {
     const f = fixture('paired');
     expect(f.helper.withSettingsAdminAuthority(f.request, capture(f), assertCurrent => {
-      assertCurrent(); const receipt = { committed: true }; rmSync(`${f.file}.owner-lock`, { recursive: true }); return receipt;
+      assertCurrent(); const receipt = { committed: true }; rmSync(ownerLockPath(f.file), { recursive: true }); return receipt;
     })).toEqual({ committed: true });
     expect(f.helper.captureSettingsAdminAuthority(f.request)).toBeNull();
   });

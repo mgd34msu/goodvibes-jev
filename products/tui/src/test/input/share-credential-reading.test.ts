@@ -1,9 +1,10 @@
 import { afterEach, expect, test } from 'bun:test';
 import { join } from 'node:path';
-import { readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createShellPathService } from '@goodvibes-jev/engine/sdk/platform/runtime/shell';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { ConversationManager } from '../../core/conversation.ts';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { registerShareRuntimeCommands } from '../../input/commands/share-runtime.ts';
 import { getSharedNotificationFeed } from '../../views/notifications-feed.ts';
@@ -18,7 +19,9 @@ function fixture() {
   const lines: string[] = [];
   const registry = new CommandRegistry(); registerShareRuntimeCommands(registry);
   const calls: string[] = [];
-  let generation = 0;
+  const conversation = new ConversationManager();
+  conversation.title = 'Test export';
+  conversation.addUserMessage('hello');
   const authHeaders = { 'X-API-Key': 'configured-literal' };
   const runtime = { model: 'synthetic-unpriced', provider: 'synthetic', sessionId: 'exact-session' };
   const lifetime = new ScheduleReadingLifetime(() => runtime.sessionId, () => true);
@@ -27,9 +30,9 @@ function fixture() {
     print: (text: string) => lines.push(text),
     workspace: { shellPaths: createShellPathService({ workingDirectory: root, homeDirectory: root }) },
     platform: { serviceRegistry: { resolveAuth: async (name: string) => { calls.push(name); return authHeaders; } } },
-    session: { runtime, conversationManager: { getReplacementGeneration: () => generation, title: 'Test export', toJSON: () => ({ messages: [{ role: 'user', content: 'hello' }] }) } },
+    session: { runtime, conversationManager: conversation },
   } as unknown as CommandContext;
-  return { root, lines, calls, runtime, lifetime, authHeaders, replace: () => generation++, run: () => registry.get('share')!.handler(['json', 'session.json', '--upload'], context) };
+  return { root, lines, calls, runtime, lifetime, authHeaders, replace: () => conversation.fromJSON({ messages: [{ role: 'user', content: 'hello' }] }), run: (args = ['json', 'session.json', '--upload']) => registry.get('share')!.handler(args, context) };
 }
 
 test('real share command awaits a reading before sending exact configured token and repeats normally', async () => {
@@ -45,6 +48,21 @@ test('real share command awaits a reading before sending exact configured token 
   expect(f.calls).toEqual(['github', 'github', 'github', 'github']);
   expect(f.lines.filter(line => line.includes('Share link:'))).toHaveLength(2);
   expect(readFileSync(join(f.root, 'session.json'), 'utf8')).toContain('hello');
+});
+
+test('a replaced history cancels asynchronous export redaction before disk or stale error publication', async () => {
+  const f = fixture(); const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const fixturePort = fakePort((name, question) => question.type === 'choice'
+    ? choiceAnswer(question, 'other', 0.99) : noulAnswer(name === 'identifying' ? 0.99 : 0.01));
+  previous = installJudgmentPort({ ...fixturePort.port, async ask(request) { entered.resolve(); await release.promise; return fixturePort.port.ask(request); } });
+  const pending = f.run(['json', 'session.json', '--redact']);
+  await entered.promise;
+  const before = [...f.lines]; f.replace();
+  await pending;
+  expect(f.lines).toEqual(before);
+  expect(existsSync(join(f.root, 'session.json'))).toBe(false);
+  expect(f.calls).toEqual([]);
+  release.resolve();
 });
 
 test('failed reading uploads nothing, preserves local export, and a later retry recovers', async () => {

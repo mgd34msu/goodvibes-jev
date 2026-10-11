@@ -1,6 +1,10 @@
 import type { ChannelDeliveryRouter } from '@goodvibes-jev/engine/sdk/platform/channels';
+import { lstatSync, realpathSync } from 'node:fs';
+import { resolveAndValidatePath } from '@goodvibes-jev/engine/sdk/platform/utils';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { ToolInputProjectionError, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { harnessCatalogInvocationAuthority } from './agent-harness-catalog-ingress.ts';
 import type { ShellPathService } from '@/runtime/index.ts';
 import {
   buildAgentChannelDeliveryPreview,
@@ -8,7 +12,7 @@ import {
   formatAgentChannelDeliveryPreview,
   formatAgentChannelDeliveryResult,
 } from '../agent/channel-delivery.ts';
-import { recordAgentChannelDeliveryReceipt } from '../agent/channel-delivery-receipts.ts';
+import { agentChannelDeliveryReceiptPath, recordAgentChannelDeliveryReceipt } from '../agent/channel-delivery-receipts.ts';
 import { evaluateOutwardEffect, getSessionUntrustedContentLedger } from '../trust/untrusted-content.ts';
 
 export interface AgentChannelSendToolArgs {
@@ -19,11 +23,12 @@ export interface AgentChannelSendToolArgs {
   readonly webhook?: unknown;
   readonly link?: unknown;
   readonly confirm?: unknown;
+  readonly preview?: unknown;
   readonly explicitUserRequest?: unknown;
 }
 
 export interface AgentChannelSendToolOptions {
-  readonly shellPaths?: Pick<ShellPathService, 'resolveUserPath'>;
+  readonly shellPaths?: Pick<ShellPathService, 'resolveUserPath'> & Partial<Pick<ShellPathService, 'homeDirectory'>>;
 }
 
 function readString(value: unknown): string | undefined {
@@ -49,7 +54,7 @@ export function createAgentChannelSendTool(
   return {
     definition: {
       name: 'agent_channel_send',
-      description: 'Send one confirmed message through one configured Agent target.',
+      description: 'Preview or deliver one message through one configured Agent target. Delivery requires current recorded effect admission.',
       parameters: {
         type: 'object',
         properties: {
@@ -79,24 +84,24 @@ export function createAgentChannelSendTool(
           },
           confirm: {
             type: 'boolean',
-            description: 'Required true for confirmed delivery.',
+            description: 'Optional historical provenance; does not grant delivery authority.',
+          },
+          preview: {
+            type: 'boolean',
+            description: 'Return a read-only delivery preview without sending.',
           },
           explicitUserRequest: {
             type: 'string',
-            description: 'User request authorizing this delivery.',
+            description: 'Optional human request provenance; does not grant delivery authority.',
           },
         },
-        required: ['message', 'confirm', 'explicitUserRequest'],
+        required: ['message'],
         additionalProperties: false,
       },
       sideEffects: ['network'],
     },
-    execute: async (rawArgs: Record<string, unknown>) => {
-      const args = rawArgs as AgentChannelSendToolArgs;
-      const explicitUserRequest = readString(args.explicitUserRequest);
-      if (!explicitUserRequest) {
-        return failure('explicitUserRequest is required so channel delivery stays tied to a direct user request.');
-      }
+    execute: async (rawArgs: Record<string, unknown>, executionOptions) => {
+      const args = snapshotJudgmentInput(rawArgs) as AgentChannelSendToolArgs;
       const input = {
         message: readString(args.message) ?? '',
         ...(readString(args.title) ? { title: readString(args.title) } : {}),
@@ -111,13 +116,27 @@ export function createAgentChannelSendTool(
       } catch (error) {
         return failure(error instanceof Error ? error.message : String(error));
       }
-      if (!readBoolean(args.confirm)) {
-        return failure([
-          formatAgentChannelDeliveryPreview(preview, channelDeliveryRouter.listStrategies().length),
-          '',
-          'Model tool confirmation required. Call this tool with confirm:true only when the user explicitly asked GoodVibes Agent to send this channel message.',
-        ].join('\n'));
+      if (readBoolean(args.preview)) {
+        return output(formatAgentChannelDeliveryPreview(preview, channelDeliveryRouter.listStrategies().length));
       }
+      const ledger = getSessionUntrustedContentLedger();
+      const ledgerSnapshot = () => JSON.stringify([ledger.originsThisTurn(), ledger.exposuresThisTurn(), ledger.taintSourcesThisTurn()]);
+      const sources = ledgerSnapshot();
+      const receiptPaths = options.shellPaths, receiptResolver = receiptPaths?.resolveUserPath, receiptHome = receiptPaths?.homeDirectory;
+      const receiptPath = receiptPaths && agentChannelDeliveryReceiptPath(receiptPaths);
+      const receiptRoot = receiptHome && realpathSync(receiptHome);
+      const deliver = channelDeliveryRouter.deliver, listStrategies = channelDeliveryRouter.listStrategies;
+      const strategies = listStrategies.call(channelDeliveryRouter).map(strategy => ({ strategy, canHandle: strategy.canHandle, deliver: strategy.deliver }));
+      const assertCurrent = () => {
+        executionOptions?.signal?.throwIfAborted();
+        if (!harnessCatalogInvocationAuthority(rawArgs, executionOptions, 'send')) throw new ToolInputProjectionError('held');
+        const current = listStrategies.call(channelDeliveryRouter);
+        if (channelDeliveryRouter.deliver !== deliver || channelDeliveryRouter.listStrategies !== listStrategies
+          || getSessionUntrustedContentLedger() !== ledger || ledgerSnapshot() !== sources
+          || current.length !== strategies.length || strategies.some((source, index) => current[index] !== source.strategy
+            || source.strategy.canHandle !== source.canHandle || source.strategy.deliver !== source.deliver)) throw new ToolInputProjectionError('held');
+      };
+      try { assertCurrent(); } catch (error) { return failure(error instanceof Error ? error.message : String(error)); }
       // Delivering a channel message is an outward effect and had no
       // untrusted-content gate at all, the ledger was never consulted here, so
       // a page or a mailbox the agent had just read could dictate the text of a
@@ -137,7 +156,7 @@ export function createAgentChannelSendTool(
           // a refusal has to say the thing the reader typed.
           description: `sending a channel message to ${input.channel ?? input.route ?? input.webhook ?? input.link ?? 'the configured target'}`,
         },
-        ledger: getSessionUntrustedContentLedger(),
+        ledger,
         content: {
           message: input.message,
           title: input.title,
@@ -147,22 +166,29 @@ export function createAgentChannelSendTool(
           link: input.link,
         },
         taintOptions: {
+          signal: executionOptions?.signal,
           // Where the message GOES. A webhook URL lifted out of a page is the
           // redirect attack in its purest form, and it is short enough to pass
           // both length thresholds, so these are tested by containment.
           exactMatchFields: ['channel', 'route', 'webhook', 'link'],
         },
-        requestedBy: 'owner-direct',
       });
+      assertCurrent();
       if (!outwardDecision.allowed) {
-        return failure(`${outwardDecision.reason ?? 'Refused.'} ${outwardDecision.fix ?? ''}`.trim());
+        return failure(outwardDecision.reason ?? 'Outward channel delivery held.');
       }
       try {
-        const result = await deliverAgentChannelMessage(channelDeliveryRouter, input);
+        const result = await deliverAgentChannelMessage(channelDeliveryRouter, input, { signal: executionOptions?.signal, assertCurrent });
         const lines = [formatAgentChannelDeliveryResult(result)];
         if (options.shellPaths) {
           try {
-            const receipt = recordAgentChannelDeliveryReceipt(options.shellPaths, {
+            assertCurrent();
+            if (!receiptPaths || !receiptHome || !receiptRoot || !receiptPath || options.shellPaths !== receiptPaths
+              || receiptPaths.resolveUserPath !== receiptResolver || receiptPaths.homeDirectory !== receiptHome
+              || realpathSync(receiptHome) !== receiptRoot || agentChannelDeliveryReceiptPath(receiptPaths) !== receiptPath) throw new ToolInputProjectionError('held');
+            resolveAndValidatePath(receiptPath, receiptHome);
+            if (lstatSync(receiptPath, { throwIfNoEntry: false })?.isSymbolicLink()) realpathSync(receiptPath);
+            const receipt = recordAgentChannelDeliveryReceipt(receiptPaths, {
               source: 'model-tool',
               deliveryInput: input,
               result,

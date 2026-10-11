@@ -16,11 +16,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import {
   REDACTED_VALUE,
   collectSensitiveConfigValues,
   isSensitiveConfigPath,
+  isRedactedValue,
   redactConfig,
   redactSerializedSecrets,
   redactText,
@@ -80,16 +81,46 @@ const MIDDLE_WORD_PATHS: readonly string[] = [
 ];
 
 /** Stand-in for the model on the paths these tests use: a key naming a credential is one. */
-let answer: (key: string) => number = (key) => (/password|token|secret|apikey|card|cvv/i.test(key) ? 0.97 : 0.03);
+const credentialFixtures = new Set([
+  ...CREDENTIAL_PATHS,
+  'payments.cardNumber', 'payments.cardExpiry', 'payments.cardCvv', 'payments.cardholderName',
+  'PAYMENTS.CARDNUMBER', 'PAYMENTS.CARDEXPIRY', 'PAYMENTS.CARDCVV', 'PAYMENTS.CARDHOLDERNAME',
+  'mcp.servers.github.env.GITHUB_TOKEN',
+]);
+let answer: (key: string) => number = (key) => credentialFixtures.has(key) ? 0.97 : 0.03;
 let asked: string[] = [];
 let previous: JudgmentPort | undefined;
 beforeEach(() => {
   asked = [];
-  answer = (key) => (/password|token|secret|apikey|card|cvv/i.test(key) ? 0.97 : 0.03);
-  previous = installJudgmentPort(fakePort((_name, _question, state) => {
-    const key = (state as { key: string }).key;
-    asked.push(key);
-    return noulAnswer(answer(key));
+  answer = (key) => credentialFixtures.has(key) ? 0.97 : 0.03;
+  previous = installJudgmentPort(fakePort((name, question, state) => {
+    if (state === null || typeof state !== 'object' || Array.isArray(state)) throw new Error('Unexpected redaction fixture input.');
+    if ('key' in state && typeof state.key === 'string') {
+      asked.push(state.key);
+      return noulAnswer(answer(state.key));
+    }
+    const textSecretFields = new Set(['password', 'api_key', 'access_token']);
+    if (question.type === 'choice' && 'field' in state && typeof state.field === 'string')
+      return choiceAnswer(question, textSecretFields.has(state.field) ? 'secret' : 'other', 0.99);
+    if ('parts' in state && Array.isArray(state.parts)) {
+      if (name === 'credentialRemains') {
+        if (state.parts.some(part => part === null || typeof part !== 'object' || Array.isArray(part)
+          || !('kind' in part) || (part.kind !== 'text' && part.kind !== 'withheld'))) throw new Error('Unexpected residual redaction fixture.');
+        return noulAnswer(0.03);
+      }
+      if (name !== 'lineHasCredential' && name !== 'spanIsCredential') throw new Error('Unexpected source redaction fixture question.');
+      const spans = state.parts.filter((part) => part !== null && typeof part === 'object' && !Array.isArray(part)
+        && 'kind' in part && part.kind === 'span');
+      if (spans.length === 0 || spans.some((part) => part !== null && typeof part === 'object' && !Array.isArray(part)
+        && !('field' in part))) return noulAnswer(0.5);
+      const secretParts = state.parts.filter((part) => part !== null && typeof part === 'object' && !Array.isArray(part)
+        && 'field' in part && typeof part.field === 'string' && textSecretFields.has(part.field));
+      const credential = name === 'lineHasCredential' ? secretParts.length > 0
+        : secretParts.some((part) => part !== null && typeof part === 'object' && !Array.isArray(part)
+          && 'reference' in part && part.reference === state.target);
+      return noulAnswer(credential ? 0.97 : 0.03);
+    }
+    throw new Error('Unexpected redaction fixture question.');
   }).port);
 });
 afterEach(() => {
@@ -223,27 +254,33 @@ describe('redactSerializedSecrets', () => {
       config,
       diagnostics: { logTail: 'CalDAV auth failed for principal using caldav-pw-9times' },
     });
-    const swept = redactSerializedSecrets(blob, values);
+    const swept = await redactSerializedSecrets(blob, values);
+    expect(() => JSON.parse(swept)).not.toThrow();
     expect(swept).not.toContain('caldav-pw-9times');
     expect(swept).toContain(REDACTED_VALUE);
   });
 });
 
+test('bundle import recognizes every fixed shared redaction marker', () => {
+  for (const marker of [REDACTED_VALUE, '[REDACTED]', '[REDACTED_PROFILE]', '[REDACTED_TEXT]']) expect(isRedactedValue(marker)).toBe(true);
+  expect(isRedactedValue('ordinary-value')).toBe(false);
+});
+
 describe('redactText', () => {
-  test('masks assignment and colon forms in a log tail', () => {
-    expect(redactText('imap password=hunter2 rejected')).not.toContain('hunter2');
-    expect(redactText('api_key: sk-live-abcdefgh')).not.toContain('sk-live-abcdefgh');
-    expect(redactText('access_token=ya29.a0Af')).not.toContain('ya29.a0Af');
+  test('masks assignment and colon forms in a log tail', async () => {
+    expect(await redactText('imap password=hunter2 rejected')).not.toContain('hunter2');
+    expect(await redactText('api_key: sk-live-abcdefgh')).not.toContain('sk-live-abcdefgh');
+    expect(await redactText('access_token=ya29.a0Af')).not.toContain('ya29.a0Af');
   });
 
-  test('does not fire on ordinary words that merely end in the keyword letters', () => {
-    expect(redactText('monkey=banana')).toContain('banana');
-    expect(redactText('donkey=grey')).toContain('grey');
+  test('does not fire on ordinary words that merely end in the keyword letters', async () => {
+    expect(await redactText('monkey=banana')).toContain('banana');
+    expect(await redactText('donkey=grey')).toContain('grey');
   });
 
-  test('still masks the vendor-shaped literals', () => {
-    expect(redactText('found sk-abcdefghijklmnopqrst in the log')).not.toContain('sk-abcdefghijklmnopqrst');
-    expect(redactText('bot xoxb-1234567890-abcdefghij here')).not.toContain('xoxb-1234567890-abcdefghij');
+  test('still masks the vendor-shaped literals', async () => {
+    expect(await redactText('found sk-abcdefghijklmnopqrst in the log')).not.toContain('sk-abcdefghijklmnopqrst');
+    expect(await redactText('bot xoxb-1234567890-abcdefghij here')).not.toContain('xoxb-1234567890-abcdefghij');
   });
 });
 
@@ -271,11 +308,10 @@ describe('a support bundle never carries card material', () => {
 
   test('every card field is redacted out of a bundled config', async () => {
     const { value } = await redactConfig(CARD_CONFIG);
-    const payments = value.payments;
-    expect(payments.cardNumber).toBe(REDACTED_VALUE);
-    expect(payments.cardExpiry).toBe(REDACTED_VALUE);
-    expect(payments.cardCvv).toBe(REDACTED_VALUE);
-    expect(payments.cardholderName).toBe(REDACTED_VALUE);
+    expect(value).toMatchObject({ payments: {
+      cardNumber: REDACTED_VALUE, cardExpiry: REDACTED_VALUE,
+      cardCvv: REDACTED_VALUE, cardholderName: REDACTED_VALUE,
+    } });
   });
 
   test('the card number never survives anywhere in the serialised bundle', async () => {
@@ -286,7 +322,7 @@ describe('a support bundle never carries card material', () => {
 
   test('an ordinary payments setting is left alone, so this is not blanket masking', async () => {
     const { value } = await redactConfig(CARD_CONFIG);
-    expect(value.payments.currency).toBe('USD');
+    expect(value).toMatchObject({ payments: { currency: 'USD' } });
   });
 
   test('each card field is recognised individually', async () => {

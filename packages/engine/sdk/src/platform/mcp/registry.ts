@@ -30,6 +30,8 @@ import type {
   McpProcessSpec,
 } from './client.js';
 import type { McpToolInfo, McpToolSchema } from './client.js';
+import type { McpToolCallOptions } from './client-types.js';
+import { captureMcpBackendMethods, captureMcpCallRestrictions } from './call-currentness.js';
 import {
   parseElicitationParams,
   type McpElicitationHandler,
@@ -293,19 +295,32 @@ export class McpRegistry {
    * getToolSchema, Fetch full JSON schema for a qualified tool name.
    * Triggers lazy schema load and caches within McpClient.
    */
-  async getToolSchema(qualifiedName: string): Promise<McpToolSchema | null> {
+  async getToolSchema(qualifiedName: string, options?: McpToolCallOptions): Promise<McpToolSchema | null> {
+    const caller = captureMcpCallRestrictions(options);
+    const assertCaller = caller.assertCurrent;
     const parsed = this._parseQualifiedName(qualifiedName);
     if (!parsed) return null;
     const client = this.clients.get(parsed.serverName);
     if (!client || !client.isConnected) return null;
-    return client.getToolSchema(parsed.toolName);
+    const assertBackend = captureMcpBackendMethods(client, ['getToolSchema', 'captureToolScope']);
+    const transport = client.captureToolScope();
+    const assertCurrent = () => {
+      assertCaller(); assertBackend(); transport.assertCurrent();
+      this.executionByClient.get(client)?.assertCurrent();
+      if (this.clients.get(parsed.serverName) !== client) throw new Error('MCP schema owner changed');
+    };
+    const schema = await client.getToolSchema(parsed.toolName, { signal: caller.signal, assertCurrent });
+    if (caller.expectedSchema !== undefined && schema !== caller.expectedSchema) throw new Error('MCP selected schema changed');
+    assertCurrent(); return schema;
   }
 
   /**
    * callTool, Execute a tool by its qualified name.
    * Fetches the full schema on first use.
    */
-  async callTool(qualifiedName: string, args: Record<string, unknown>, options?: { readonly signal?: AbortSignal | undefined }): Promise<unknown> {
+  async callTool(qualifiedName: string, args: Record<string, unknown>, options?: McpToolCallOptions): Promise<unknown> {
+    const caller = captureMcpCallRestrictions(options);
+    const assertCaller = caller.assertCurrent;
     const source = currentExternalOperationSource();
     args = snapshotJudgmentInput(args, qualifiedName) as Record<string, unknown>;
     const parsed = this._parseQualifiedName(qualifiedName);
@@ -319,13 +334,14 @@ export class McpRegistry {
     if (!client.isConnected) {
       throw new Error(`McpRegistry: server '${parsed.serverName}' is not connected`);
     }
+    const assertBackend = captureMcpBackendMethods(client, ['getToolSchema', 'captureToolScope', 'captureToolSchemaScope', 'callTool']);
     const sourceRevision = source ? autonomousSourceRevision(source.sourceOf()) : undefined;
     const policyLife = this.policyLifetime(parsed.serverName);
     const host = this.permissionHost;
     const transport = client.captureToolScope();
     const configLife = new AbortController();
     const signal = AbortSignal.any([policyLife.signal, transport.signal, configLife.signal,
-      ...(host ? [host.signal] : []), ...(source?.signal ? [source.signal] : []), ...(options?.signal ? [options.signal] : [])]);
+      ...(host ? [host.signal] : []), ...(source?.signal ? [source.signal] : []), ...(caller.signal ? [caller.signal] : [])]);
     const policySnapshot = () => {
       const record = this.permissions.getServerPermissions(parsed.serverName);
       return snapshotJudgmentInput(record ? {
@@ -339,8 +355,10 @@ export class McpRegistry {
     const revision = autonomousRevision(serverPolicy);
     const externalRequestEvidence = captureExternalRequestEvidence({ destination: transport.destination, serverPolicy });
     let assertWorkspaceCurrent: (() => void) | undefined;
+    let schemaScope: ReturnType<McpClient['captureToolSchemaScope']> | undefined;
     const assertCurrent = () => {
-      signal.throwIfAborted(); transport.assertCurrent(); source?.assertCurrent(); assertWorkspaceCurrent?.();
+      assertCaller(); assertBackend(); signal.throwIfAborted(); transport.assertCurrent(); source?.assertCurrent(); assertWorkspaceCurrent?.();
+      schemaScope?.assertCurrent();
       this.executionByClient.get(client)?.assertCurrent();
       if (source && autonomousSourceRevision(source.sourceOf()) !== sourceRevision) throw new Error('MCP original operation source changed');
       if (policyRevision() !== revision || this.permissionHost !== host) throw new Error('MCP server policy changed');
@@ -353,6 +371,12 @@ export class McpRegistry {
     try {
       assertCurrent();
       if (host && !operation) throw new Error(`MCP call '${qualifiedName}' has unresolved permission: original operation source is unavailable`);
+      const schema = await client.getToolSchema(parsed.toolName, { signal, assertCurrent });
+      assertCurrent();
+      if (!schema) throw new Error('MCP tool schema is unavailable');
+      if (caller.expectedSchema !== undefined && schema !== caller.expectedSchema) throw new Error('MCP selected schema changed');
+      schemaScope = client.captureToolSchemaScope(parsed.toolName);
+      assertCurrent();
       if (host) assertWorkspaceCurrent = await prepareExternalWorkspaceRevision(host, signal);
       assertCurrent();
       if (this.freshness.isQuarantined(parsed.serverName)) {

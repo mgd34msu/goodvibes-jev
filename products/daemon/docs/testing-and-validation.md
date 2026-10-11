@@ -102,7 +102,7 @@ structure. Source accounting and independent product acceptance are tracked in
 [THE-18](https://linear.app/the-artificery/issue/TA-18/port-daemon-composition-and-remote-cluster-infrastructure); passing workspace checks does not close them.
 
 Remaining deployment/qualification gates include configured standalone protected
-screening bootstrap, a complete configured Discord inbox/DM catalog, product release
+screening bootstrap, configured account-bound Discord bot DM registry qualification, product release
 and update policy, final native cross-platform execution and live-provider/Jev
 calibration. Real Jev wiring is not equivalent to live semantic qualification.
 

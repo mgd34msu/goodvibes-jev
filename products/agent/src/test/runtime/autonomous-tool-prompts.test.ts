@@ -1,5 +1,6 @@
 import { expect, spyOn, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import * as childProcess from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withDecisionLog } from '@goodvibes-jev/judgment';
@@ -63,11 +64,42 @@ test('actual agent graph public terminal control preserves Jev ownership and lif
     expect(fetched[0]!.success, fetched[0]!.error ?? fetched[0]!.output).toBe(true);
     expect(fetched[0]!.output).toContain('owned-local-preview'); expect(sawLocalhost).toBe(true); expect(localRequests).toBe(1);
     configManager.set('sandbox.enabled', true);
-    const { toolRegistry: sandboxRegistry } = composeAgentToolRegistry({ services, configManager, homeDirectory: root,
-      resolveSessionId: () => 'owned-terminal', getLastUserMessage: () => 'Confirm only the owned local fixture' });
-    await executeToolCalls({ ...deps, toolRegistry: sandboxRegistry }, 'owned-sandbox', [{ id: 'owned-sandbox-call', name: 'exec', arguments: { commands: [{ cmd: 'printf owned-sandbox-control', timeout_ms: 1000 }] } }]);
-    expect(sawSandbox).toBe(true); // The host may refuse native network isolation; this asserts admission wiring, not process success.
+    configManager.flushConfigFileChanges();
+    // The injected OS adapter accepts availability probes and refuses all
+    // commands. The actual product still owns the sandbox plan and admission.
+    const sandboxBin = join(root, 'sandbox-host');
+    mkdirSync(sandboxBin);
+    writeFileSync(join(sandboxBin, 'bwrap'), '#!/bin/sh\nfor arg do last="$arg"; done\nif [ "$last" = /bin/true ]; then exit 0; fi\nprintf "owned-sandbox-adapter-refused\\n" >&2\nexit 73\n', { mode: 0o700 });
+    const previousPath = process.env.PATH;
+    // Bun's default child-process environment retains its initial PATH. Give
+    // only the native resolution call this fixture's current environment; the
+    // real host probes and command subprocesses still run without interception.
+    const hostSpawnSync = childProcess.spawnSync;
+    const hostResolution = spyOn(childProcess, 'spawnSync').mockImplementation(new Proxy(hostSpawnSync, {
+      apply(target, receiver, args: unknown[]) {
+        if (args[0] === 'sh' && Array.isArray(args[1]) && args[1].length === 2
+          && args[1][0] === '-c' && args[1][1] === 'command -v bwrap'
+          && args[2] !== null && typeof args[2] === 'object') {
+          return Reflect.apply(target, receiver, [args[0], args[1], { ...args[2], env: { ...process.env } }]);
+        }
+        return Reflect.apply(target, receiver, args);
+      },
+    }));
+    try {
+      process.env.PATH = `${sandboxBin}:${previousPath ?? ''}`;
+      const { toolRegistry: sandboxRegistry } = composeAgentToolRegistry({ services, configManager, homeDirectory: root,
+        resolveSessionId: () => 'owned-terminal', getLastUserMessage: () => 'Confirm only the owned local fixture' });
+      const sandboxed = await executeToolCalls({ ...deps, toolRegistry: sandboxRegistry }, 'owned-sandbox', [{ id: 'owned-sandbox-call', name: 'exec', arguments: { commands: [{ cmd: 'printf owned-sandbox-control', timeout_ms: 1000 }] } }]);
+      expect(sawSandbox).toBe(true);
+      expect(JSON.parse(sandboxed[0]!.output ?? '{}')).toMatchObject({ sandboxed: true, exit_code: 73, stdout: '' });
+      expect(sandboxed[0]!.output).toContain('owned-sandbox-adapter-refused');
+    } finally {
+      hostResolution.mockRestore();
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    }
     configManager.set('sandbox.enabled', false);
+    configManager.flushConfigFileChanges();
     phase = 'dispose'; intercepted = false;
     const disposed = await run('owned-disposal');
     expect(intercepted).toBe(true); expect(disposed[0]!.success).toBe(false);

@@ -7,6 +7,7 @@ export const coreConfigDefaults = {
     collapseThreshold: 30,
     theme: 'goodvibes',
     themeMode: 'auto',
+    treeGlyphs: 'rounded',
     showThinking: false,
     showReasoningSummary: false,
     showTokenSpeed: false,
@@ -190,6 +191,13 @@ export const coreHeadConfigSettings: ConfigSettingDefinition[] = [
     default: 'auto',
     description: 'Light/dark appearance: auto probes the terminal background colour (OSC 11) once at startup and picks light or dark; dark/light force a fixed appearance regardless of terminal background. Independent of display.theme, which picks the color palette.',
     enumValues: ['auto', 'dark', 'light'],
+  },
+  {
+    key: 'display.treeGlyphs',
+    type: 'enum',
+    default: 'rounded',
+    description: 'Work tree connector style: rounded, square or ASCII. Terminals without Unicode support always use ASCII.',
+    enumValues: ['rounded', 'square', 'ascii'],
   },
   {
     key: 'display.showThinking',

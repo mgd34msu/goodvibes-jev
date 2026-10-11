@@ -223,5 +223,5 @@ export function wireRuntimeNotificationBridge(
 
 /** The shell's conversation notice sink: every system notice is a toast and a history entry (core/notices.ts). */
 export function createShellNoticeSink(feed: NotificationFeed = getSharedNotificationFeed()): NoticeSink {
-  return (content, options) => publishNotice(feed, content, options);
+  return async (content, options) => { await publishNotice(feed, content, options); };
 }

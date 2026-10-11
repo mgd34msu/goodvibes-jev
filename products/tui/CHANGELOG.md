@@ -1775,7 +1775,7 @@ First release of the best-in-class program: a full UX-first review of the codeba
 - `bun run tsc --noEmit --pretty false`
 - `bun run smoke:daemon`
 - local `npm pack` install smoke with `GOODVIBES_ASSET_SOURCE_DIR=dist`
-- `/home/buzzkill/Projects/goodvibes-tui/dist/goodvibes-linux-x64 --version` from `/home/buzzkill/Projects/ttest1`
+- `dist/goodvibes-linux-x64 --version` from a separate consumer workspace
 
 ---
 
