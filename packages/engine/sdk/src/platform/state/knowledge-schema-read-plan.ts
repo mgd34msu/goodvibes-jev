@@ -46,15 +46,21 @@ const emptyTables = Object.freeze(['work_ledgers', 'native_work_executions', 'na
 /** Fixed readonly SQL and data comparisons, never a borrowed validation callback.
  * A populated authority table requires the original full validator and clone. */
 export function validateNativeKnowledgeReadSchema(db: Pick<SqlDatabase, 'exec'>): boolean {
-  for (const [table, expected] of layouts) {
-    const rows = db.exec(`PRAGMA table_info(${table})`)[0]?.values;
+  const layoutResults = db.exec(layouts.map(([table]) => `PRAGMA table_info(${table})`).join(';'));
+  // sql.js omits empty statement results. Never attribute a shifted result to
+  // the next table when one layout or index list is missing.
+  if (layoutResults.length !== layouts.length) return false;
+  for (const [ordinal, [, expected]] of layouts.entries()) {
+    const rows = layoutResults[ordinal]?.values;
     if (!rows || rows.length !== expected.length || expected.some(([name, type, required, primary]) => {
       const row = rows.find(value => value[1] === name);
       return !row || row[2] !== type || row[3] !== required || row[5] !== primary;
     })) return false;
   }
-  for (const [table, expected] of uniqueIndexes) {
-    const indexes = db.exec(`PRAGMA index_list(${table})`)[0]?.values ?? [];
+  const indexResults = db.exec(uniqueIndexes.map(([table]) => `PRAGMA index_list(${table})`).join(';'));
+  if (indexResults.length !== uniqueIndexes.length) return false;
+  for (const [ordinal, [, expected]] of uniqueIndexes.entries()) {
+    const indexes = indexResults[ordinal]?.values ?? [];
     if (!indexes.some(index => index[2] === 1 && index[4] === 0
       && JSON.stringify(db.exec(`PRAGMA index_info('${String(index[1]).replaceAll("'", "''")}')`)[0]?.values.map(row => row[2])) === JSON.stringify(expected))) return false;
   }
@@ -62,6 +68,6 @@ export function validateNativeKnowledgeReadSchema(db: Pick<SqlDatabase, 'exec'>)
   for (const [name, sql] of knowledgeEdgeChangeTriggers) {
     if (installed.find(row => row[0] === name)?.[1] !== sql.replace('IF NOT EXISTS ', '')) return false;
   }
-  for (const table of emptyTables) if ((db.exec(`SELECT 1 FROM ${table} LIMIT 1`)[0]?.values.length ?? 0) !== 0) return false;
-  return true;
+  const authorityResults = db.exec(emptyTables.map(table => `SELECT 1 FROM ${table} LIMIT 1`).join(';'));
+  return authorityResults.every(result => result.values.length === 0);
 }
