@@ -7,7 +7,12 @@
     "lib": ["ES2024", "ESNext.Disposable", "DOM"],
     "types": ["node", "bun"]
   },
-  "include": ["test/**/*.ts", "scripts/**/*.ts"],
+  "include": [
+    "test/**/*.ts",
+    "scripts/**/*.ts",
+    "../../products/agent/src/config/host-settings.ts",
+    "../../products/tui/src/config/host-settings.ts"
+  ],
   // test/types/** is the CONSUMER-vantage type-test project. It resolves
   // everything through the package NAME, which is the only vantage point from
   // which a declaration-emit gap is visible, and it is compiled by

@@ -1975,6 +1975,16 @@ export const CONFIG_SCHEMA_ENTRIES: readonly ConfigSchemaEntry[] = [
     "validationHint": "integer in [10, 3600]"
   },
   {
+    "key": "surfaces.hostedInboxScreening",
+    "type": "enum",
+    "default": "disabled",
+    "description": "Hosted inbox screening: disabled keeps screening off. abacus-typesafe-provider-managed authorizes sending raw text from configured Discord bot one-to-one DMs and enabled Slack/email inboxes to Abacus route-llm and TypeSafe Jev. Providers manage retention; zero retention is unverified.",
+    "enumValues": [
+      "disabled",
+      "abacus-typesafe-provider-managed"
+    ]
+  },
+  {
     "key": "surfaces.slack.enabled",
     "type": "boolean",
     "default": false,
@@ -2009,6 +2019,13 @@ export const CONFIG_SCHEMA_ENTRIES: readonly ConfigSchemaEntry[] = [
     "type": "string",
     "default": "",
     "description": "Slack workspace identifier for route binding"
+  },
+  {
+    "key": "surfaces.slack.inboxUserId",
+    "type": "string",
+    "default": "",
+    "description": "Expected Slack user ID for protected inbox reads; configure it explicitly. The token must prove this identity before reading messages. Empty keeps the inbox unconfigured.",
+    "validationHint": "an explicitly configured Slack user ID, or empty to keep the inbox unconfigured"
   },
   {
     "key": "surfaces.discord.enabled",
@@ -4970,7 +4987,8 @@ export const FEATURE_SETTINGS: readonly FeatureSettingMeta[] = [
       "surfaces.slack.botToken",
       "surfaces.slack.appToken",
       "surfaces.slack.defaultChannel",
-      "surfaces.slack.workspaceId"
+      "surfaces.slack.workspaceId",
+      "surfaces.slack.inboxUserId"
     ],
     "restartRequired": false,
     "defaultEnabled": true

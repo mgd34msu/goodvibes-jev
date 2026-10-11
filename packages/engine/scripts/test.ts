@@ -146,7 +146,7 @@ export async function runTests(resolvePlans: () => readonly (readonly string[])[
               return runOwnedTestChild({
                 ownProcessGroup: process.platform !== 'win32',
                 expectedParentPid,
-                ...(plans.length > 1 ? { deadlineAt, stdout: output, stderr: output } : {}),
+                ...(output ? { deadlineAt, stdout: output, stderr: output } : {}),
                 argv: [...timeoutArgs, ...testArgs],
                 cwd: SDK_ROOT,
                 ...(projectTmpRoot ? { fixtureEnv: { GOODVIBES_TEST_PROJECT_TMP_ROOT: projectTmpRoot } } : {}),
