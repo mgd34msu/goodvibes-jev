@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { types as nodeTypes } from 'node:util';
 import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { ProcessManager, ToolRegistry, ToolInputProjectionError, assertCurrentToolInvocation, type BackgroundProcess } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { getOperatorContract } from '@goodvibes-jev/engine/sdk/contracts';
@@ -410,16 +411,40 @@ describe('canonical semantic record catalogs', () => {
   for (const entry of cases) {
     test(`${entry.kind} reads every candidate before applying the limit and permits counter-lexical results`, async () => {
       const f = fixture(), fake = readings({ [entry.chosen]: 0.99 }); installJudgmentPort(fake.port);
-      const all = await entry.summary(f.context, {}, options());
-      const expectedTotal = Number(all.total);
-      const result = await entry.summary(f.context, { query: 'mail', limit: 1 }, options());
-      expect(result[entry.field]).toMatchObject([{ [entry.id]: entry.chosen, judgment: { reading: { verdict: 'yes' } } }]);
-      expect(result.total).toBe(expectedTotal);
-      const catalogRequests = fake.requests.filter(request => request.context?.battery === 'engine.tools.registry-rank');
-      expect(catalogRequests).toHaveLength(expectedTotal);
-      expect(new Set(catalogRequests.map(request => (request.state as unknown as { candidate: { name: string } }).candidate.name)).size).toBe(expectedTotal);
-      const detail = await entry.detail(f.context, { query: 'mail' }, options());
-      expect(detail.status).toBe('found');
+      let invocation: 'literal' | 'filtered' | 'detail' = 'literal';
+      try {
+        const all = await entry.summary(f.context, {}, options());
+        const expectedTotal = Number(all.total);
+        invocation = 'filtered';
+        const result = await entry.summary(f.context, { query: 'mail', limit: 1 }, options());
+        expect(result[entry.field]).toMatchObject([{ [entry.id]: entry.chosen, judgment: { reading: { verdict: 'yes' } } }]);
+        expect(result.total).toBe(expectedTotal);
+        const catalogRequests = fake.requests.filter(request => request.context?.battery === 'engine.tools.registry-rank');
+        expect(catalogRequests).toHaveLength(expectedTotal);
+        expect(new Set(catalogRequests.map(request => (request.state as unknown as { candidate: { name: string } }).candidate.name)).size).toBe(expectedTotal);
+        invocation = 'detail';
+        const detail = await entry.detail(f.context, { query: 'mail' }, options());
+        expect(detail.status).toBe('found');
+      } catch (error) {
+        if (entry.kind === 'autonomy' && !nodeTypes.isProxy(error) && error instanceof ToolInputProjectionError) {
+          const cause: unknown = Object.getOwnPropertyDescriptor(error, 'cause')?.value;
+          if (cause && typeof cause === 'object' && !nodeTypes.isProxy(cause)
+            && Reflect.ownKeys(cause).length === 2) {
+            const code = Object.getOwnPropertyDescriptor(cause, 'code');
+            const reason = Object.getOwnPropertyDescriptor(cause, 'reason');
+            if (code && Object.hasOwn(code, 'value') && code.value === 'source-screening-held'
+              && reason && Object.hasOwn(reason, 'value')) {
+              const value: unknown = reason.value;
+              switch (value) {
+                case 'route-unavailable': case 'protected-input': case 'malformed': case 'unsettled':
+                case 'cancelled': case 'stale': case 'capacity': case 'busy':
+                  console.error(JSON.stringify({ diagnostic: 'autonomy-native-screening-hold', invocation, reason: value }));
+              }
+            }
+          }
+        }
+        throw error;
+      }
     });
 
     test(`${entry.kind} keeps one uncertain candidate visible and ambiguous`, async () => {

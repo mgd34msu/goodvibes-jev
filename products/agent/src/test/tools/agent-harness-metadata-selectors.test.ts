@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
+import { JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { KeybindingsManager } from '../../input/keybindings.ts';
@@ -9,21 +9,24 @@ import { describeHarnessCliCommand, listHarnessCliCommands, totalHarnessCliComma
 import { describeHarnessKeybinding, listHarnessKeybindings, listHarnessShortcuts, runHarnessKeybinding, setHarnessKeybinding, totalHarnessKeybindings, totalHarnessShortcuts } from '../../tools/agent-harness-keybinding-metadata.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import { cleanupResearchScreeningFixtures, ordinaryResearchOwner, researchScreeningFixture, exactSensitiveSpans } from '../helpers/research-screening.ts';
+import { createRequestCountDiagnostics } from '../helpers/judgment-request-count-diagnostics.ts';
 
+const requestDiagnostics = createRequestCountDiagnostics('agent-harness-metadata-selectors');
+const installJudgmentPort = requestDiagnostics.installPort;
 let previous: ReturnType<typeof installJudgmentPort>;
-beforeEach(() => { previous = installJudgmentPort(undefined); });
-afterEach(() => { installJudgmentPort(previous); });
+beforeEach(() => { requestDiagnostics.beginFixture(); previous = installJudgmentPort(undefined); });
+afterEach(() => { installJudgmentPort(previous); requestDiagnostics.endFixture(); });
 afterAll(cleanupResearchScreeningFixtures);
 const options = () => ({ sourceOwner: ordinaryResearchOwner() });
 const emptyContext = { workspace: {} };
 
 function readings(fits: Readonly<Record<string, number>>) {
-  return fakePort((name, _question, state) => {
+  return requestDiagnostics.track(fakePort((name, _question, state) => {
     if (name !== 'match' || state === null || typeof state !== 'object' || !('candidate' in state)
       || state.candidate === null || typeof state.candidate !== 'object' || !('name' in state.candidate)
       || typeof state.candidate.name !== 'string') throw new Error('Unexpected metadata reading');
     return noulAnswer(fits[state.candidate.name] ?? 0.01);
-  });
+  }), 'readings');
 }
 
 async function withManager<T>(fn: (fixture: {
@@ -179,6 +182,7 @@ describe('canonical CLI and keybinding metadata selectors', () => {
     const screening = researchScreeningFixture({ spans: exactSensitiveSpans([sensitive]) });
     const fake = readings({ doctor: 0.99 }); installJudgmentPort(fake.port);
     await expect(listHarnessCliCommands({ query: `Find ${sensitive}` }, { sourceOwner: screening.owner })).rejects.toBeInstanceOf(ToolInputProjectionError);
+    requestDiagnostics.reportUnexpectedCount(fake, 0, 'private metadata source');
     expect(fake.requests).toHaveLength(0);
     expect(JSON.stringify(screening.calls)).toContain(sensitive);
   });

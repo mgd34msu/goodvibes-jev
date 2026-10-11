@@ -11,12 +11,13 @@ export function researchScreeningFixture(options: {
   role?: (name: string) => number;
   complete?: number;
   assertCurrent?: () => void;
+  recordCalls?: boolean;
 } = {}) {
   const calls: { path: string; body: Record<string, unknown> }[] = [];
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
     const path = new URL(request.url).pathname;
     const body = await request.json() as Record<string, unknown>;
-    calls.push({ path, body });
+    if (options.recordCalls !== false) calls.push({ path, body });
     if (path === '/v1/chat/completions') {
       const messages = body.messages as { content: string }[];
       const source = JSON.parse(messages[1]!.content) as Proposal;
@@ -40,7 +41,7 @@ export function researchScreeningFixture(options: {
 }
 
 let ordinary: ReturnType<typeof researchScreeningFixture> | undefined;
-export function ordinaryResearchOwner() { return (ordinary ??= researchScreeningFixture()).owner; }
+export function ordinaryResearchOwner() { return (ordinary ??= researchScreeningFixture({ recordCalls: false })).owner; }
 export function exactSensitiveSpans(needles: readonly string[]) {
   return (source: Proposal): readonly Span[] => source.parts.flatMap((text, part) => {
     const spans: Span[] = [];

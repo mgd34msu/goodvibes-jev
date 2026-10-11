@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import * as operatorContracts from '@goodvibes-jev/engine/sdk/contracts';
-import { judgmentPort, installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
+import { judgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { ToolRegistry, assertCurrentToolExecution } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { DEFAULT_CONFIG, type GoodVibesConfig } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -19,16 +19,20 @@ import { prepareHarnessCatalog, rankHarnessCatalog } from '../../tools/agent-har
 import { contractMethodsForAutonomy, contractMethodsForLane } from '../../tools/agent-harness-personal-ops-discovery.ts';
 import { captureModelReadingInput, captureModelReadingSnapshotGuard } from '../../tools/agent-harness-model-reading-source.ts';
 import { ordinaryResearchOwner, cleanupResearchScreeningFixtures, researchScreeningFixture, exactSensitiveSpans } from '../helpers/research-screening.ts';
+import { createRequestCountDiagnostics } from '../helpers/judgment-request-count-diagnostics.ts';
 
 type ToolExecuteOptions = NonNullable<Parameters<Tool['execute']>[1]>;
+const requestDiagnostics = createRequestCountDiagnostics('agent-harness-catalog-ranking');
+const installJudgmentPort = requestDiagnostics.installPort;
 
 afterAll(cleanupResearchScreeningFixtures);
 let previous: ReturnType<typeof installJudgmentPort>;
 const metadataLoggers: ActivityLogger[] = [];
-beforeEach(() => { previous = installJudgmentPort(undefined); });
+beforeEach(() => { requestDiagnostics.beginFixture(); previous = installJudgmentPort(undefined); });
 afterEach(() => {
   for (const logger of metadataLoggers.splice(0)) logger.dispose();
   installJudgmentPort(previous);
+  requestDiagnostics.endFixture();
 });
 
 function nativeMetadataReading() {
@@ -55,7 +59,7 @@ function operationRequests(requests: readonly ObservedRequest[]): ObservedReques
 }
 
 function readings(fits: Readonly<Record<string, number>>) {
-  return fakePort((name, question, state) => {
+  return requestDiagnostics.track(fakePort((name, question, state) => {
     if (name === 'match') return noulAnswer(fits[(state as unknown as { candidate: { name: string } }).candidate.name] ?? 0.01);
     if (question === fieldKind.items.kind.question) {
       expect(state).toEqual({ field: 'battery' });
@@ -63,7 +67,7 @@ function readings(fits: Readonly<Record<string, number>>) {
     }
     if (question.type === 'choice') return choiceAnswer(question, name === 'disposition' ? 'act' : name === 'kind' ? 'read' : name === 'hazard' ? 'none' : 'generic', 0.999);
     return noulAnswer(0.001);
-  });
+  }), 'readings');
 }
 
 function fixture(owner = ordinaryResearchOwner(), registry = new ToolRegistry()) {
@@ -540,6 +544,7 @@ test('oversized structural backend replacement during the reading cannot publish
   await expect(rankHarnessCatalog(entries, 'Select the complete schema', entry => entry, 'agent.test.structural-catalog', {
     sourceOwner: ordinaryResearchOwner(), requirePreservedSource: true,
   })).rejects.toThrow();
+  requestDiagnostics.reportUnexpectedCount(fake, 1, 'oversized structural backend replacement');
   expect(fake.requests).toHaveLength(1);
 });
 
@@ -553,12 +558,12 @@ test('structural framing does not split an oversized semantic string or enlarge 
 });
 
 function preparedReadings(query: string, entry: { readonly id: string; readonly description: string; readonly evidence?: unknown }, probability = 0.99) {
-  return fakePort((name, question, state) => {
+  return requestDiagnostics.track(fakePort((name, question, state) => {
     if (name !== 'match' || question.type !== 'noul') throw new Error('Unexpected prepared catalog question');
     expect(state).toEqual({ query, candidate: { type: 'tool', name: entry.id, description: entry.description,
       evidenceJson: JSON.stringify(entry.evidence ?? null) } });
     return noulAnswer(probability);
-  });
+  }), 'preparedReadings');
 }
 
 test('prepared catalog preserves complete aliases and tails while every distinct query is screened and read', async () => {
@@ -573,7 +578,9 @@ test('prepared catalog preserves complete aliases and tails while every distinct
     const result = await rankHarnessCatalog(prepared, query, describeEntry, 'agent.test.prepared-complete', {
       sourceOwner: screening.owner, requirePreservedSource: true,
     });
-    expect(result.matches[0]?.entry).toEqual(entry); expect(fake.requests).toHaveLength(1);
+    expect(result.matches[0]?.entry).toEqual(entry);
+    requestDiagnostics.reportUnexpectedCount(fake, 1, 'prepared complete query');
+    expect(fake.requests).toHaveLength(1);
   }
   expect(described).toBe(1);
   const proposals = screening.calls.filter(call => call.path === '/v1/chat/completions');

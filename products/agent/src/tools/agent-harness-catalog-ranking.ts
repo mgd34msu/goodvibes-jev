@@ -1,7 +1,7 @@
 import { types as nodeTypes } from 'node:util';
 import { judgmentPort, captureJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { gateJudgmentRegistry, prepareJudgmentResult, snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
-import { SOURCE_SCREENING_LIMITS, type ProtectedSourceOwner, type ProtectedSource, type SourceScreeningReceipt } from '@goodvibes-jev/engine/sdk/platform/security';
+import { SOURCE_SCREENING_LIMITS, type ProtectedSourceOwner, type ProtectedSource, type SourceScreeningReceipt, type SourceScreeningHold } from '@goodvibes-jev/engine/sdk/platform/security';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Ranked, Rerank } from '@goodvibes-jev/judgment';
 import { withModelReadingSource } from './agent-harness-model-reading-source.ts';
@@ -113,6 +113,35 @@ interface PreparedCatalog {
   readonly parts: readonly string[];
 }
 const preparedCatalogs = new WeakMap<object, PreparedCatalog>();
+
+const sourceScreeningHolds = Object.freeze({
+  'route-unavailable': true, 'protected-input': true, malformed: true, unsettled: true,
+  cancelled: true, stale: true, capacity: true, busy: true,
+} satisfies Record<SourceScreeningHold, true>);
+
+function screeningResultFields(value: unknown): PropertyDescriptorMap | undefined {
+  if (!value || typeof value !== 'object' || nodeTypes.isProxy(value)) return undefined;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null || Reflect.ownKeys(value).length !== 2) return undefined;
+  const fields = Object.getOwnPropertyDescriptors(value);
+  if (!Object.hasOwn(fields, 'status') || Object.values(fields).some(field => !Object.hasOwn(field, 'value'))) return undefined;
+  return fields;
+}
+
+function isSourceScreeningHold(value: unknown): value is SourceScreeningHold {
+  return typeof value === 'string' && Object.hasOwn(sourceScreeningHolds, value);
+}
+
+/** Preserve only the native owner's finite operational refusal, never its input. */
+function screeningHeldError(fields: PropertyDescriptorMap | undefined): ToolInputProjectionError {
+  const error = new ToolInputProjectionError('held');
+  const status: unknown = fields?.status?.value;
+  const reason: unknown = fields && Object.hasOwn(fields, 'reason') ? fields.reason?.value : undefined;
+  if (status === 'held' && isSourceScreeningHold(reason)) {
+    Object.defineProperty(error, 'cause', { value: Object.freeze({ code: 'source-screening-held', reason }) });
+  }
+  return error;
+}
 
 function catalogEntryDescriptors(entries: readonly unknown[]) {
   if (!Array.isArray(entries) || nodeTypes.isProxy(entries) || Object.getPrototypeOf(entries) !== Array.prototype
@@ -254,7 +283,10 @@ export async function rankHarnessCatalog<T>(
       assertCurrent();
       const result = await ownerMethods.screen.call(owner, handle);
       assertCurrent();
-      if (result.status !== 'settled') throw new ToolInputProjectionError('held');
+      const fields = screeningResultFields(result);
+      const receipt: unknown = fields && Object.hasOwn(fields, 'receipt') ? fields.receipt?.value : undefined;
+      if (!fields || !receipt || typeof receipt !== 'object' || nodeTypes.isProxy(receipt)
+        || result.status !== 'settled') throw screeningHeldError(fields);
       const projection = ownerMethods.project.call(owner, result.receipt);
       receipts.push({ receipt: result.receipt, projection }); projected.push(...projection);
     }
