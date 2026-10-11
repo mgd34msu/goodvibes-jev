@@ -3,6 +3,7 @@ import { InfiniteBuffer, SelectionManager } from '@goodvibes-jev/engine/terminal
 import type { InputToken } from '@goodvibes-jev/engine/sdk/platform/core';
 import { ConversationManager } from '../../core/conversation.ts';
 import { InputHandler } from '../../input/handler.ts';
+import { getActiveModalName } from '../../input/handler-ui-state.ts';
 import { CommandRegistry, directOwnerRemoteInput, type CommandContext } from '../../input/command-registry.ts';
 import { registerHostPairingCommands } from '../../input/commands/host-pairing.ts';
 import { wireHostPairingShell } from '../../shell/host-pairing-shell.ts';
@@ -81,7 +82,24 @@ describe('host pairing shell over the real InputHandler', () => {
     s.input.feed('/host pair --bootstrap-shared --apply');
     expect(s.input.commandMode).toBe(true);
     s.input.feed('\r');
-    await untilPairing(() => /PAIR [0-9a-f]{12}/.test(s.text()), 'wired command confirmation');
+    try {
+      await untilPairing(() => /PAIR [0-9a-f]{12}/.test(s.text()), 'wired command confirmation');
+    } catch (error) {
+      const lines = s.text().split('\n').map(line => line.trim());
+      const previewStatus = ['preview', 'blocked', 'already-paired', 'cancelled', 'changed',
+        'unknown', 'paired', 'paired-unverified'].find(status => lines.includes(`TUI host pairing: ${status}`)) ?? 'not-published';
+      console.error('Host pairing initial confirmation state', JSON.stringify({
+        controllerActive: s.controller.active, ownsInput: s.controller.ownsInput,
+        commandMode: s.input.commandMode, promptEmpty: s.input.prompt === '',
+        concealedInput: s.input.concealedInput !== null, surfaceModal: s.input.surfaceModals.active,
+        modalStack: s.input.modalStack.length > 0,
+        otherModalActive: ![null, 'command'].includes(getActiveModalName(s.input)),
+        search: s.input.searchManager.active, historySearch: s.input.historySearch.active,
+        authCalls: s.fixture.authCalls(), returned: s.fixture.returned(), migrations: s.fixture.migrations(),
+        previewStatus,
+      }));
+      throw error;
+    }
     expect(s.input.hostPairing).toBe(s.controller);
     expect(s.controller.active).toBe(true);
     expect(s.input.commandMode).toBe(false);
