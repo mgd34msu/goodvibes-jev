@@ -10,10 +10,10 @@ import {
   type EntryType, type JudgmentPort, type JudgmentRetryProgress,
 } from '@goodvibes-jev/judgment';
 import {
-  captureJevDecisionContext, JEV_DECISION_BINDING_KEYS, type JevContinuation, type JevDecision,
+  type JevContinuation, type JevDecision,
   type JevDecisionBinding, type JevDecisionContext, type JevVersionRef,
 } from '@goodvibes-jev/judgment/decisions';
-import { decideAutonomous, inspectDecisionProtocolReferences } from '../gate/autonomous-decision.js';
+import { captureAutonomousCatalogContext, decideAutonomous } from '../gate/autonomous-decision.js';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 
 /** Captured from the actual request/contract owner, never reconstructed from tool prose. */
@@ -38,14 +38,15 @@ export function assertAutonomousData(value: unknown, seen = new Set<object>()): 
 }
 
 /** Validate host-source structure before recording, hashing or transmitting it. */
-export function captureAutonomousSource(value: unknown): AutonomousToolSource {
+export function captureAutonomousSourceFrame(value: unknown) {
   if (!value || typeof value !== 'object' || nodeTypes.isProxy(value)) throw new JudgmentError('invalid-request', 'autonomous host source must be owned data');
   assertAutonomousData(value);
   const criteria = Object.getOwnPropertyDescriptor(value, 'criteria');
   if (!criteria || !('value' in criteria) || !Array.isArray(criteria.value) || nodeTypes.isProxy(criteria.value)) throw new JudgmentError('invalid-request', 'autonomous criteria must be owned data');
   const selectedDiff = Object.hasOwn(value, 'selectedDiffContext')
     ? captureNativeSelectedDiffContext(Object.getOwnPropertyDescriptor(value, 'selectedDiffContext')!.value) : undefined;
-  const semantic = selectedDiff ? { ...value, selectedDiffContext: nativeSelectedDiffEvidence(selectedDiff) } : value;
+  const selectedDiffEvidence = selectedDiff ? nativeSelectedDiffEvidence(selectedDiff) : undefined;
+  const semantic = selectedDiffEvidence ? { ...value, selectedDiffContext: selectedDiffEvidence } : value;
   const captured = snapshotJudgmentInput(semantic) as Partial<AutonomousToolSource> | null;
   if (!captured || typeof captured !== 'object' || Array.isArray(captured)
     || Object.keys(captured).length !== (2 + (Object.hasOwn(captured, 'conversationContext') ? 1 : 0) + (Object.hasOwn(captured, 'selectedDiffContext') ? 1 : 0)) || typeof captured.goal !== 'string' || !captured.goal.trim()
@@ -56,14 +57,19 @@ export function captureAutonomousSource(value: unknown): AutonomousToolSource {
     const context = array(nativeConversationContinuationMessageSchema).max(NATIVE_CONVERSATION_CONTINUATION_MAX_MESSAGES).safeParse(captured.conversationContext);
     if (!context.success || new TextEncoder().encode(JSON.stringify(context.data)).byteLength > NATIVE_CONVERSATION_CONTINUATION_MAX_BYTES) throw new JudgmentError('invalid-request', 'autonomous conversation evidence must be complete bounded host data');
   }
-  return Object.freeze({ ...captured, ...(selectedDiff ? { selectedDiffContext: selectedDiff } : {}) }) as AutonomousToolSource;
+  const source = Object.freeze({ ...captured, ...(selectedDiff ? { selectedDiffContext: selectedDiff } : {}) }) as AutonomousToolSource;
+  const { selectedDiffContext, ...original } = source;
+  const evidence = Object.freeze({ ...original, ...(selectedDiffContext && selectedDiffEvidence ? { selectedDiffContext: selectedDiffEvidence } : {}) });
+  return Object.freeze({ source, evidence });
+}
+
+export function captureAutonomousSource(value: unknown): AutonomousToolSource {
+  return captureAutonomousSourceFrame(value).source;
 }
 
 /** Privacy-safe semantic projection; full validated identity still binds tool-source hashes and retries. */
 export function autonomousSourceEvidence(source: AutonomousToolSource) {
-  const captured = captureAutonomousSource(source);
-  const { selectedDiffContext, ...original } = captured;
-  return Object.freeze({ ...original, ...(selectedDiffContext ? { selectedDiffContext: nativeSelectedDiffEvidence(selectedDiffContext) } : {}) });
+  return captureAutonomousSourceFrame(source).evidence;
 }
 
 /** A host-offered alternative, never a model-generated executable payload. */
@@ -116,12 +122,7 @@ export function captureAutonomousChoices(value: AutonomousToolChoices): Autonomo
     || (choices.revisions !== undefined && !Array.isArray(choices.revisions))) {
     throw new JudgmentError('invalid-request', 'autonomous host choice catalog is invalid');
   }
-  const context = captureJevDecisionContext({
-    decisionId: 'catalog', binding: Object.fromEntries(JEV_DECISION_BINDING_KEYS.map(key => [key, 'catalog'])),
-    judgmentDecisionIds: [], evidence: [], continuations: (choices.revisions ?? []).map(item => item.ref),
-    resumeConditions: choices.resumeConditions ?? [],
-  });
-  inspectDecisionProtocolReferences(context);
+  const context = captureAutonomousCatalogContext((choices.revisions ?? []).map(item => item.ref), choices.resumeConditions ?? []);
   const revisions = (choices.revisions ?? []).map((revision, index) => {
     if (!revision || typeof revision !== 'object' || Object.keys(revision).length !== 3
       || Object.keys(revision).some(key => !['ref', 'toolName', 'args'].includes(key))

@@ -6,7 +6,7 @@ import { hashState, JudgmentError, type EntryType, type JudgmentPort } from '@go
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { captureOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { getProcessUntrustedContentLedger } from '../security/untrusted-content.js';
-import { autonomousSourceEvidence, autonomousRevision, assertAutonomousData, captureAutonomousChoices, captureAutonomousSource, decideAutonomousTool, type AutonomousToolChoices, type AutonomousToolRevision, type AutonomousToolSource } from './autonomous.js';
+import { autonomousSourceEvidence, autonomousRevision, assertAutonomousData, captureAutonomousChoices, captureAutonomousSourceFrame, decideAutonomousTool, type AutonomousToolChoices, type AutonomousToolRevision, type AutonomousToolSource } from './autonomous.js';
 import { AutonomousChoiceProjectionOwner, type AutonomousChoiceProjection } from './autonomous-input-projection.js';
 import type { PreparedToolCall, ToolRegistry, ToolExecutionEffect } from '../tools/registry.js';
 import { assertProjectionCurrent, projectionFunction, projectionProperty, ToolInputProjectionError, type ToolPreparedSettingsMutation } from '../tools/input-projection.js';
@@ -508,8 +508,8 @@ export class PermissionManager {
       sessionGrants: [...this.sessionApprovals], sessionPublication: this.sessionApprovalRevision, exposure };
     assertAutonomousData(choices);
     assertAutonomousData(frame);
-    const capturedSource = captureAutonomousSource(source);
-    const normalizedFrame = { ...frame, source: autonomousSourceEvidence(capturedSource) };
+    const { source: capturedSource, evidence: sourceEvidence } = captureAutonomousSourceFrame(source);
+    const normalizedFrame = { ...frame, source: sourceEvidence };
     // Currentness is called only inside an authentic admission. Its complete
     // structural capture is compared with the already screened authority hash;
     // changed bytes cannot grant authority or become a new reading.
@@ -542,6 +542,7 @@ export class PermissionManager {
       assertPermissionActive(signal);
       if (this.autonomousClaims.has(sourceId) || hashState(this.autonomousAuthority(sourceId, sourceOf, choiceProjection) as unknown as EntryType) !== revision)
         throw new Error('Autonomous preparation authority changed or source was claimed');
+      assertPermissionActive(signal);
     };
     const base = judgmentPort('engine.gate.autonomous-preparation');
     const installed = decoratePort?.(base) ?? base;

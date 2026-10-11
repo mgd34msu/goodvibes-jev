@@ -42,18 +42,36 @@ export interface AutonomousDecision {
  * candidates. Other reference text still crosses the existing privacy check;
  * naming a field as metadata does not exempt secret-shaped content.
  */
+function protocolIdentity(value: string): string {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+    || /^[0-9a-f]{64}$/i.test(value) ? '[host-protocol-identity]' : value;
+}
+
+function protocolReference(value: JevVersionRef) {
+  return { id: protocolIdentity(value.id), revision: protocolIdentity(value.revision) };
+}
+
 export function inspectDecisionProtocolReferences(context: JevDecisionContext): void {
-  const identity = (value: string): string =>
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
-      || /^[0-9a-f]{64}$/i.test(value) ? '[host-protocol-identity]' : value;
-  const ref = (value: JevVersionRef) => ({ id: identity(value.id), revision: identity(value.revision) });
   snapshotJudgmentInput({
-    decisionId: identity(context.decisionId),
-    binding: Object.fromEntries(JEV_DECISION_BINDING_KEYS.map(key => [key, identity(context.binding[key])])),
-    judgmentDecisionIds: context.judgmentDecisionIds.map(identity), evidence: context.evidence.map(ref),
-    continuations: context.continuations.map(value => ({ ...ref(value), kind: value.kind })),
-    resumeConditions: context.resumeConditions.map(ref),
+    decisionId: protocolIdentity(context.decisionId),
+    binding: Object.fromEntries(JEV_DECISION_BINDING_KEYS.map(key => [key, protocolIdentity(context.binding[key])])),
+    judgmentDecisionIds: context.judgmentDecisionIds.map(protocolIdentity), evidence: context.evidence.map(protocolReference),
+    continuations: context.continuations.map(value => ({ ...protocolReference(value), kind: value.kind })),
+    resumeConditions: context.resumeConditions.map(protocolReference),
   });
+}
+
+/** Capture and screen every supplied reference under the fixed local catalog context. */
+export function captureAutonomousCatalogContext(continuations: readonly JevContinuation[], resumeConditions: readonly JevVersionRef[]): JevDecisionContext {
+  const context = captureJevDecisionContext({
+    decisionId: 'catalog', binding: Object.fromEntries(JEV_DECISION_BINDING_KEYS.map(key => [key, 'catalog'])),
+    judgmentDecisionIds: [], evidence: [], continuations, resumeConditions,
+  });
+  snapshotJudgmentInput({
+    continuations: context.continuations.map(value => ({ ...protocolReference(value), kind: value.kind })),
+    resumeConditions: context.resumeConditions.map(protocolReference),
+  });
+  return context;
 }
 
 /** One semantic reading, with at most one non-executing resolution of an uncertain act candidate. */
