@@ -587,3 +587,83 @@ test.each(['proxy', 'accessor'] as const)('an observable global receiver %s cann
   expect(consumed).toBe(false); expect(borrowedGetter).toBe(0);
   expect(readFileSync(filename)).toEqual(before);
 });
+
+test('a late global capture setter cannot omit complete private native facts', async () => {
+  // A separate actual source module keeps this acquisition control from
+  // changing the engine provenance used by every other whole-file control.
+  const modulePath = '../sdk/src/platform/state/sqlite-store.js?native-global-facts-own-append';
+  const isolated: typeof import('../sdk/src/platform/state/sqlite-store.js') = await import(modulePath);
+  if (isolated.loadSqlJsEngine === loadSqlJsEngine) throw new Error('The acquisition control requires a distinct actual source loader');
+  const own = Object.getOwnPropertyDescriptor;
+  const parent = Object.getPrototypeOf, define = Object.defineProperty, remove = Reflect.deleteProperty, apply = Reflect.apply;
+  const push = Array.prototype.push, isArray = Array.isArray;
+  const pushSlot = own(Array.prototype, 'push'), parentSlot = own(Object, 'getPrototypeOf');
+  const zeroSlot = own(Array.prototype, '0');
+  if (!pushSlot || !parentSlot || zeroSlot) throw new Error('No original native acquisition reflection slots');
+  let armed = false, captured = 0, restored = 0, exposed = 0;
+  const isStatement = (target: object) => {
+    const pointer: unknown = own(target, 'Qa')?.value, buffers: unknown = own(target, 'mb')?.value;
+    return typeof pointer === 'number' && Number.isSafeInteger(pointer) && pointer > 0
+      && own(target, 'Oa')?.value === 1 && typeof own(target, 'db')?.value === 'object' && isArray(buffers);
+  };
+  const restore = () => {
+    remove(Array.prototype, '0');
+    define(Array.prototype, 'push', pushSlot);
+    define(Object, 'getPrototypeOf', parentSlot);
+  };
+  const installSetter = () => {
+    if (armed) return;
+    armed = true; captured++;
+    define(Array.prototype, '0', { configurable: true, set(this: object, value: unknown) {
+      if (value && typeof value === 'object') {
+        const object: unknown = own(value, 'object')?.value, slots: unknown = own(value, 'slots')?.value;
+        if (object && (typeof object === 'object' || typeof object === 'function') && isArray(slots)) {
+          exposed++; return;
+        }
+      }
+      // Ordinary native writes still perform their exact real array append.
+      define(this, '0', { value, configurable: true, enumerable: true, writable: true });
+    } });
+  };
+  function reflectingParent(target: object): object | null {
+    const result: unknown = parent(target);
+    if (result !== null && typeof result !== 'object' && typeof result !== 'function') throw new Error('No actual native prototype');
+    if (isStatement(target) && result) {
+      if (armed) { restored++; restore(); }
+    }
+    return result;
+  }
+  function observingPush(this: unknown[], ...values: unknown[]): number {
+    const result: number = apply(push, this, values);
+    const value = values[0];
+    if (value && typeof value === 'object' && own(value, 'key')?.value === 'TextDecoder') installSetter();
+    return result;
+  }
+  try {
+    define(Object, 'getPrototypeOf', { ...parentSlot, value: reflectingParent });
+    define(Array.prototype, 'push', { ...pushSlot, value: observingPush });
+    await isolated.loadSqlJsEngine();
+  } finally { restore(); }
+  expect(captured).toBe(1); expect(restored).toBe(1); expect(exposed).toBe(0);
+  const filename = path();
+  const sqlite = new isolated.SQLiteStore(filename, { coordinated: true });
+  databases.push(sqlite);
+  await sqlite.init(db => { db.run('CREATE TABLE IF NOT EXISTS knowledge_sources(id TEXT PRIMARY KEY,title TEXT)'); });
+  sqlite.run("INSERT INTO knowledge_sources VALUES('original','Complete original source')");
+  await sqlite.save();
+  const before = readFileSync(filename), shared = Function.prototype;
+  const key = Symbol('original complete acquisition prototype field');
+  const read = () => sqlite.readPersistedRow('knowledge_sources', 'id', 'original')[0]?.values;
+  let consumed = false, getter = 0, caught: unknown;
+  try {
+    sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', 'Complete original source']]);
+      define(shared, key, { configurable: true, get() { getter++; throw new Error('Borrowed omitted complete acquisition field'); } });
+      try { sqlite.assertPersistedReadFrame(() => { read(); consumed = true; }); }
+      finally { remove(shared, key); }
+    });
+  } catch (error) { caught = error; }
+  expect(caught).toBeInstanceOf(isolated.SQLiteObservationRetiredError);
+  expect(consumed).toBe(false); expect(getter).toBe(0);
+  expect(readFileSync(filename)).toEqual(before);
+});

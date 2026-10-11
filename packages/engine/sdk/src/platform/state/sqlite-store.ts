@@ -317,7 +317,7 @@ function uniqueNativeScalarGlobalFacts(globals: NativeScalarRuntime['globals']):
         duplicate = true;
         break;
       }
-      if (!duplicate) unique[unique.length] = facts;
+      if (!duplicate) nativeDefineProperty(unique, unique.length, { value: facts, configurable: true, enumerable: true, writable: true });
     }
   }
   return nativeFreeze(unique);
