@@ -114,10 +114,19 @@ async function promoteRepairSourcesWithinBudget(
     const assertCurrent = () => { context.store.assertRecordSnapshotFrame(() => { assertRequestCurrent(); selected.assertCurrent(); prepared.assertCurrent(); }); };
     assertCurrent(); return { ...prepared, assertCurrent };
   };
+  let completedLinkSourceIds: readonly string[] | undefined;
+  const sameSourceIds = (left: readonly string[], right: readonly string[]) => {
+    if (left.length !== right.length) return false;
+    for (let index = 0; index < left.length; index++) if (left[index] !== right[index]) return false;
+    return true;
+  };
   const linkSubjects = async (ids: readonly string[]) => {
     await beginNextPass();
-    return linkPromotedFactsToRepairSubjects(context.store, spaceId, gap, ids,
+    const originalIds = Object.freeze([...ids]);
+    await linkPromotedFactsToRepairSubjects(context.store, spaceId, gap, ids,
       usefulness, signal, context.shouldStop, generatedClaims.relinking);
+    assertRequestCurrent();
+    completedLinkSourceIds = originalIds;
   };
   const promote = async (ids: readonly string[]) => {
     await beginNextPass();
@@ -125,20 +134,30 @@ async function promoteRepairSourcesWithinBudget(
       usefulness, signal, context.shouldStop, generatedClaims.rememberGenerated, assertRequestCurrent);
   };
   const processedSourceIds: string[] = [];
+  let sufficientCount: {
+    readonly sourceIds: readonly string[];
+    readonly prepared: Awaited<ReturnType<typeof countUsable>>;
+  } | undefined;
+  const reachedRepairTarget = async () => {
+    const prepared = await countUsable(processedSourceIds);
+    if (prepared.count < targetUsableFactCount) return false;
+    sufficientCount = { sourceIds: Object.freeze([...processedSourceIds]), prepared };
+    return true;
+  };
   if (context.enrichSource) {
     for (const [index, sourceId] of sourceIds.entries()) {
       await yieldEvery(index, 2);
       assertSemanticWriteAllowed(signal, context.shouldStop);
       processedSourceIds.push(sourceId);
       await linkSubjects([sourceId]);
-      if ((await countUsable(processedSourceIds)).count >= targetUsableFactCount) break;
+      if (await reachedRepairTarget()) break;
       await promote([sourceId]);
       await linkSubjects([sourceId]);
-      if ((await countUsable(processedSourceIds)).count >= targetUsableFactCount) break;
+      if (await reachedRepairTarget()) break;
       await waitForRepairSourceText(context.store, sourceId, Math.min(deadlineAt, Date.now() + REPAIR_SOURCE_TEXT_WAIT_MS));
       await promote([sourceId]);
       await linkSubjects([sourceId]);
-      if ((await countUsable(processedSourceIds)).count >= targetUsableFactCount) break;
+      if (await reachedRepairTarget()) break;
       const remainingMs = Math.max(0, deadlineAt - Date.now());
       if (remainingMs < 1_000) break;
       try {
@@ -165,7 +184,7 @@ async function promoteRepairSourcesWithinBudget(
       await waitForRepairSourceText(context.store, sourceId, Math.min(deadlineAt, Date.now() + REPAIR_SOURCE_TEXT_WAIT_MS));
       await promote([sourceId]);
       await linkSubjects([sourceId]);
-      if ((await countUsable(processedSourceIds)).count >= targetUsableFactCount) break;
+      if (await reachedRepairTarget()) break;
       await yieldToEventLoop();
     }
   }
@@ -174,8 +193,19 @@ async function promoteRepairSourcesWithinBudget(
   const promotedFactCount = processedSourceIds.length > 0
     ? 0
     : await promote(sourceIds);
-  await linkSubjects(promotionSourceIds);
-  const finalUsefulness = await countUsable(promotionSourceIds);
+  let finalUsefulness: Awaited<ReturnType<typeof countUsable>>;
+  if (sufficientCount && completedLinkSourceIds
+    && sameSourceIds(sufficientCount.sourceIds, promotionSourceIds)
+    && sameSourceIds(completedLinkSourceIds, promotionSourceIds)) {
+    // The identical complete link/count pass already settled. Keep its original
+    // native read set through bookkeeping instead of publishing it a second time.
+    await beginNextPass();
+    sufficientCount.prepared.assertCurrent();
+    finalUsefulness = sufficientCount.prepared;
+  } else {
+    await linkSubjects(promotionSourceIds);
+    finalUsefulness = await countUsable(promotionSourceIds);
+  }
   const usableFactCount = promotedFactCount > 0 ? promotedFactCount : finalUsefulness.count;
   assertSemanticWriteAllowed(signal, context.shouldStop);
   const repairComplete = usableFactCount >= targetUsableFactCount;
