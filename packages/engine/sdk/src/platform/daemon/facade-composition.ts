@@ -622,8 +622,8 @@ export function createDaemonFacadeCollaborators(
   const transportEventsHelper = new DaemonTransportEventsHelper({
     runtimeBus: runtime.runtimeBus,
     hookDispatcher: runtime.runtimeServices.hookDispatcher,
-    host: runtime.host,
-    port: runtime.port,
+    get host() { return options.transportBinding().host; },
+    get port() { return options.transportBinding().port; },
     tlsState: options.tlsState,
   });
   const batchManager = new DaemonBatchManager({

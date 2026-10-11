@@ -375,12 +375,12 @@ async function proveAutonomousRead(): Promise<void> {
 
     daemon.enable({ daemon: true }, TEST_TOKEN);
     await daemon.start();
+    const acquiredPort = daemon.boundPort;
+    expect(acquiredPort).toBeGreaterThan(0);
     await daemon.stop();
 
-    // Transport IDs/endpoints are built from the CONFIGURED port, which is 0
-    // here (ephemeral bind). DaemonServer never rewrites this.port to the OS-
-    // assigned port, so these strings stay deterministically ':0', the real
-    // bound port is captured separately (boundPort) for the fetch-based tests.
+    // Initialization reports selection; connected/disconnected identify the
+    // actual acquired native listener, including an ephemeral port.
     expect(transportEvents).toEqual([
       {
         type: 'TRANSPORT_INITIALIZING',
@@ -389,12 +389,12 @@ async function proveAutonomousRead(): Promise<void> {
       },
       {
         type: 'TRANSPORT_CONNECTED',
-        transportId: 'daemon:http:127.0.0.1:0',
-        endpoint: 'http://127.0.0.1:0',
+        transportId: `daemon:http:127.0.0.1:${acquiredPort}`,
+        endpoint: `http://127.0.0.1:${acquiredPort}`,
       },
       {
         type: 'TRANSPORT_DISCONNECTED',
-        transportId: 'daemon:http:127.0.0.1:0',
+        transportId: `daemon:http:127.0.0.1:${acquiredPort}`,
         reason: 'Daemon server stopped',
         willRetry: false,
       },

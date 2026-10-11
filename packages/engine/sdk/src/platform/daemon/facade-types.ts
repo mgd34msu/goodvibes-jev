@@ -114,6 +114,7 @@ type JsonBody = Record<string, unknown>;
 export interface CreateDaemonFacadeCollaboratorsOptions {
   readonly paymentReplies?: import('../payments/reply-inbox.js').PaymentReplyInbox | undefined;
   readonly runtime: ResolvedDaemonFacadeRuntime;
+  readonly transportBinding: () => Pick<ResolvedDaemonFacadeRuntime, 'host' | 'port'>;
   readonly pendingSurfaceReplies: Map<string, PendingSurfaceReply>;
   readonly authToken: () => string | null;
   readonly settingsLifetime?: (() => object | null) | undefined;

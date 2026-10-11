@@ -38,6 +38,7 @@ import type { DaemonControlPlaneHelper, ControlPlaneWebSocketData } from './cont
 import type { DaemonSurfaceDeliveryHelper } from './surface-delivery.js';
 import type { DaemonSurfaceActionHelper } from './surface-actions.js';
 import type { DaemonTransportEventsHelper } from './transport-events.js';
+import type { ResolvedDaemonFacadeRuntime } from './facade-types.js';
 import type { DaemonHttpRouter } from './http/router.js';
 import type { CompanionChatManager } from '../companion/companion-chat-manager.js';
 import type { HostedSessionManager } from '../hosted-sessions/index.js';
@@ -117,6 +118,7 @@ export class DaemonServer {
   private server: ReturnType<typeof Bun.serve> | null = null;
   private port: number;
   private host: string;
+  private acceptedTransportBinding: Pick<ResolvedDaemonFacadeRuntime, 'host' | 'port'> | null = null;
   private agentManager: AgentManager;
   private readonly runtimeServices: RuntimeServices;
   /** Whether this server constructed its runtime graph, and so may dispose it on stop(). */
@@ -237,6 +239,7 @@ export class DaemonServer {
     const collaborators = createDaemonFacadeCollaborators({
       paymentReplies: config.paymentReplies,
       runtime: resolved,
+      transportBinding: () => this.acceptedTransportBinding ?? { host: this.boundHost, port: this.boundPort },
       pendingSurfaceReplies: this.pendingSurfaceReplies,
       authToken: () => this.authToken,
       settingsLifetime: () => this.settingsLifetime,
@@ -615,6 +618,7 @@ export class DaemonServer {
       this.tlsState = null;
       this.controlPlaneGateway.setServerState({ enabled: this.enabled, host: this.host, port: this.port });
       this.transportEventsHelper.emitTransportTerminalFailure(message);
+      this.acceptedTransportBinding = null;
       const rollbackDrain = this.workProposals.flush();
       // A second start must not reopen admission during failed-start cleanup.
       // An already-admitted full stop keeps ownership of its larger barrier.
@@ -674,6 +678,7 @@ export class DaemonServer {
         return false;
       }
       this.server = server;
+      this.acceptedTransportBinding = { host: this.boundHost, port: this.boundPort };
       return true;
     } catch (error) {
       if (this.settingsLifetime === lifetime) this.settingsLifetime = null;
@@ -878,10 +883,11 @@ export class DaemonServer {
     this.controlPlaneGateway.setServerState({ enabled: this.enabled, host: this.host, port: this.port });
     // A daemon that never listened has no disconnect to announce and no "stopped" to claim; everything above was released either way.
     await this._restartingPromise;
-    const hadListener = this.server !== null || this.listenerDrain !== null;
+    const hadListener = this.acceptedTransportBinding !== null || this.server !== null || this.listenerDrain !== null;
     await this.detachControlPlaneListener();
     if (hadListener) { this.transportEventsHelper.emitTransportDisconnected('Daemon server stopped', false); logger.info('DaemonServer stopped'); }
     else logger.debug('DaemonServer released without ever binding a socket');
+    this.acceptedTransportBinding = null;
     if (runtimeCloseFailures.length > 0) throw new AggregateError(runtimeCloseFailures, 'Daemon runtime services cleanup failed');
   }
 

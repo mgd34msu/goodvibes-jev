@@ -6,6 +6,7 @@ import { CompanionChatManager } from '@goodvibes-jev/engine/sdk/platform/compani
 import { captureRemoteSettingsPrecondition, applyRemoteSettingsPrecondition, type ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { WorkspaceRegistrationStore, sharedWorkspaceRegisterPath, legacyWorkspaceRegisterPath } from '@goodvibes-jev/engine/sdk/platform/workspace';
 import type { DaemonFixture } from '../../testing/daemon-fixture.js';
+import type { TransportEvent } from '../../runtime/index.js';
 import { startGatewayFixture } from '../helpers/gateway-route-fixture.js';
 
 const fixtures: DaemonFixture[] = [];
@@ -95,6 +96,18 @@ test('binding reconfiguration retains live hosted owners and existing/new native
 test('concurrent binding mutations use the latest actual configuration after native close drains', async () => {
   const capture = captureNativeListener();
   const { f, create } = await fixture();
+  const events: TransportEvent[] = [];
+  const unsubscribe = f.services.runtimeBus.onDomain('transport', ({ payload }) => {
+    if (payload.type === 'TRANSPORT_CONNECTED' || payload.type === 'TRANSPORT_DISCONNECTED') events.push(payload);
+  });
+  restores.push(unsubscribe);
+  const hooks: unknown[] = [];
+  const originalFire = f.services.hookDispatcher.fire;
+  const observingHooks = spyOn(f.services.hookDispatcher, 'fire').mockImplementation((...args) => {
+    if (args[0].path === 'Lifecycle:transport:connected') hooks.push(args[0].payload);
+    return originalFire.apply(f.services.hookDispatcher, args);
+  });
+  restores.push(() => observingHooks.mockRestore());
   const listener = capture.current(); capture.restore();
   const oldPort = f.daemon.boundPort;
   const available = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('owned port acquisition') });
@@ -114,12 +127,22 @@ test('concurrent binding mutations use the latest actual configuration after nat
     close.release(); await f.daemon.waitForRestart();
     expect(f.daemon.boundHost).toBe('127.0.0.1'); expect(f.daemon.boundPort).toBe(latestPort);
     expect((await create()).status).toBe(200);
+    expect(events).toEqual([{ type: 'TRANSPORT_CONNECTED', transportId: `daemon:http:127.0.0.1:${latestPort}`, endpoint: `http://127.0.0.1:${latestPort}` }]);
+    expect(hooks).toEqual([{ transportId: `daemon:http:127.0.0.1:${latestPort}`, endpoint: `http://127.0.0.1:${latestPort}` }]);
+    await f.daemon.stop();
+    await Promise.resolve();
+    expect(events.at(-1)).toEqual({ type: 'TRANSPORT_DISCONNECTED', transportId: `daemon:http:127.0.0.1:${latestPort}`, reason: 'Daemon server stopped', willRetry: false });
   } finally { close.release(); }
 }, 60_000);
 
 test('permanent stop waits for actual detached native close and fences late rebinding', async () => {
   const capture = captureNativeListener(); const { f, url } = await fixture();
   const listener = capture.current(); capture.restore(); const originalUrl = url();
+  const disconnected: string[] = [];
+  const unsubscribe = f.services.runtimeBus.onDomain('transport', ({ payload }) => {
+    if (payload.type === 'TRANSPORT_DISCONNECTED') disconnected.push(payload.transportId);
+  });
+  restores.push(unsubscribe);
   const close = holdActualClose(listener);
   let stopping: Promise<void> | undefined;
   try {
@@ -130,6 +153,7 @@ test('permanent stop waits for actual detached native close and fences late rebi
     f.services.configManager.set('controlPlane.port', Number(new URL(originalUrl).port));
     close.release(); await stopping; await f.daemon.waitForRestart();
     expect(f.daemon.isRunning).toBe(false);
+    expect(disconnected).toEqual([`daemon:http:127.0.0.1:${new URL(originalUrl).port}`]);
     await expect(fetch(originalUrl + '/status', { signal: AbortSignal.timeout(1_000) })).rejects.toThrow();
   } finally { close.release(); await stopping; }
 }, 60_000);
@@ -179,8 +203,12 @@ test.each(['synchronous', 'queued'] as const)('%s config mutation during native 
   const latestPort = available.port; await available.stop(true);
   if (latestPort === undefined) throw new Error('The actual latest port was absent');
   const publishedPorts: number[] = [];
+  const publishedBindings: { transportId: string; endpoint: string }[] = [];
   const unsubscribe = f.services.runtimeBus.onDomain('transport', ({ payload }) => {
-    if (payload.type === 'TRANSPORT_CONNECTED') publishedPorts.push(f.daemon.boundPort);
+    if (payload.type === 'TRANSPORT_CONNECTED') {
+      publishedPorts.push(f.daemon.boundPort);
+      publishedBindings.push({ transportId: payload.transportId, endpoint: payload.endpoint });
+    }
   });
   restores.push(unsubscribe);
   const original = Bun.serve; let mutated = false;
@@ -198,6 +226,7 @@ test.each(['synchronous', 'queued'] as const)('%s config mutation during native 
   await f.daemon.waitForRestart();
   expect(mutated).toBe(true);
   expect(publishedPorts).toEqual([latestPort]);
+  expect(publishedBindings).toEqual([{ transportId: `daemon:http:127.0.0.1:${latestPort}`, endpoint: `http://127.0.0.1:${latestPort}` }]);
   expect(f.daemon.boundPort).toBe(latestPort);
 }, 60_000);
 
@@ -221,8 +250,13 @@ test('initial native listener construction A to B to A selects the latest owned 
     const server = original(options);
     if (server.port !== undefined) acquiredPorts.push(server.port);
     if (!config) throw new Error('The actual native config owner was unavailable');
-    if (acquiredPorts.length === 1) config.set('controlPlane.port', second);
-    else if (acquiredPorts.length === 2) config.set('controlPlane.port', first);
+    if (acquiredPorts.length === 1) {
+      config.set('controlPlane.port', second);
+      config.flushConfigFileChanges();
+    } else if (acquiredPorts.length === 2) {
+      config.set('controlPlane.port', first);
+      config.flushConfigFileChanges();
+    }
     return server;
   });
   restores.push(() => reenter.mockRestore());
