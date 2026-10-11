@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,8 +10,8 @@ import { DaemonSurfaceDeliveryHelper } from '../sdk/src/platform/daemon/surface-
 import { ServiceRegistry } from '../sdk/src/platform/config/service-registry.js';
 import type { BuiltinChannelRuntimeDeps } from '../sdk/src/platform/channels/builtin/shared.js';
 import type { ChannelSurface } from '../sdk/src/platform/channels/types.js';
-import type { ConfigManager } from '../sdk/src/platform/config/manager.js';
-import type { SecretsManager } from '../sdk/src/platform/config/secrets.js';
+import { ConfigManager } from '../sdk/src/platform/config/manager.js';
+import { SecretsManager } from '../sdk/src/platform/config/secrets.js';
 import type { SubscriptionManager } from '../sdk/src/platform/config/subscriptions.js';
 
 type MutableConfig = ConfigManager & { readonly values: Map<string, unknown> };
@@ -259,5 +259,79 @@ describe('Slack surface credentials', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe('Discord socket identity credentials', () => {
+  function fixture(value: string, secretValues: Record<string, string> = {}, serviceToken: string | null = null) {
+    const root = mkdtempSync(join(tmpdir(), 'goodvibes-discord-native-identity-'));
+    const storePath = join(root, 'native-secrets.json');
+    writeFileSync(storePath, JSON.stringify(secretValues), { mode: 0o600 });
+    const configManager = new ConfigManager({ homeDir: root, workingDir: root, surfaceRoot: 'daemon' });
+    configManager.set('surfaces.discord.botToken', value);
+    const secretsManager = new SecretsManager({ projectRoot: root, globalHome: root, daemonHome: join(root, 'daemon'),
+      surfaceRoot: 'daemon', policy: 'plaintext_allowed', plaintextDaemonFilePath: storePath, diagnosticMode: 'structural' });
+    const manager = new ChannelProviderRuntimeManager({ configManager, secretsManager,
+      serviceRegistry: makeServiceRegistry(async () => serviceToken),
+      buildSurfaceAdapterContext() { throw new Error('Identity-only proof cannot consume or send a message'); } });
+    return { root, storePath, configManager, secretsManager, manager, close() { manager.stop('discord'); rmSync(root, { recursive: true, force: true }); } };
+  }
+
+  for (const scenario of [
+    { name: 'native private alias', configured: 'goodvibes://secrets/goodvibes/OWNED_DISCORD_ALIAS',
+      secrets: { OWNED_DISCORD_ALIAS: 'goodvibes://secrets/goodvibes/OWNED_DISCORD_TOKEN', OWNED_DISCORD_TOKEN: 'synthetic-private-alias-token' },
+      service: null, expected: 'synthetic-private-alias-token' },
+    { name: 'configured literal', configured: 'synthetic-private-config-token', secrets: {}, service: null, expected: 'synthetic-private-config-token' },
+    { name: 'service precedence over resolved config', configured: 'goodvibes://secrets/goodvibes/OWNED_DISCORD_TOKEN',
+      secrets: { OWNED_DISCORD_TOKEN: 'synthetic-private-config-token' }, service: 'synthetic-private-service-token', expected: 'synthetic-private-service-token' },
+  ]) {
+    test(`actual Discord identity HTTP resolves ${scenario.name}`, async () => {
+      const f = fixture(scenario.configured, scenario.secrets, scenario.service);
+      const fetch = spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async (input: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1]) => {
+        const request = new Request(input, init);
+        expect(request.url).toBe('https://discord.com/api/v10/users/@me'); expect(request.method).toBe('GET');
+        expect(request.headers.get('Authorization')).toBe(`Bot ${scenario.expected}`); expect(request.body).toBeNull();
+        return Response.json({ id: '100000000000000001', bot: true });
+      }, { preconnect: globalThis.fetch.preconnect }));
+      try { expect(await f.manager.resolveDiscordApplicationId()).toBe('100000000000000001'); expect(fetch).toHaveBeenCalledTimes(1); }
+      finally { fetch.mockRestore(); f.close(); }
+    });
+  }
+
+  test('valid Discord service bypasses an inactive config secret reader that refuses', async () => {
+    const f = fixture('goodvibes://secrets/goodvibes/OWNED_DISCORD_INACTIVE_TOKEN', {}, 'synthetic-private-service-token');
+    const secret = spyOn(f.secretsManager, 'get').mockImplementation(async () => { throw new Error('Inactive native credential reader refuses'); });
+    const fetch = spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async (input: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1]) => {
+      const request = new Request(input, init);
+      expect(request.url).toBe('https://discord.com/api/v10/users/@me'); expect(request.method).toBe('GET');
+      expect(request.headers.get('Authorization')).toBe('Bot synthetic-private-service-token'); expect(request.body).toBeNull();
+      return Response.json({ id: '100000000000000001', bot: true });
+    }, { preconnect: globalThis.fetch.preconnect }));
+    try {
+      expect(await f.manager.resolveDiscordApplicationId()).toBe('100000000000000001');
+      expect(fetch).toHaveBeenCalledTimes(1); expect(secret).not.toHaveBeenCalled();
+    } finally { fetch.mockRestore(); secret.mockRestore(); f.close(); }
+  });
+
+  test('actual Discord identity uses environment only after absent service and config', async () => {
+    const previous = process.env.DISCORD_BOT_TOKEN;
+    process.env.DISCORD_BOT_TOKEN = 'synthetic-private-environment-token';
+    const f = fixture('');
+    const fetch = spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async (input: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1]) => {
+      const request = new Request(input, init);
+      expect(request.headers.get('Authorization')).toBe('Bot synthetic-private-environment-token');
+      expect(request.method).toBe('GET'); expect(request.body).toBeNull();
+      return Response.json({ id: '100000000000000001' });
+    }, { preconnect: globalThis.fetch.preconnect }));
+    try { expect(await f.manager.resolveDiscordApplicationId()).toBe('100000000000000001'); expect(fetch).toHaveBeenCalledTimes(1); }
+    finally { fetch.mockRestore(); f.close(); if (previous === undefined) delete process.env.DISCORD_BOT_TOKEN; else process.env.DISCORD_BOT_TOKEN = previous; }
+  });
+
+  test('an unavailable private Discord alias never becomes an HTTP credential or request body', async () => {
+    const previous = process.env.DISCORD_BOT_TOKEN; delete process.env.DISCORD_BOT_TOKEN;
+    const f = fixture('goodvibes://secrets/goodvibes/OWNED_MISSING_DISCORD_TOKEN');
+    const fetch = spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async () => { throw new Error('Missing alias must not dispatch'); }, { preconnect: globalThis.fetch.preconnect }));
+    try { expect(await f.manager.resolveDiscordApplicationId()).toBeNull(); expect(fetch).not.toHaveBeenCalled(); }
+    finally { fetch.mockRestore(); f.close(); if (previous !== undefined) process.env.DISCORD_BOT_TOKEN = previous; }
   });
 });

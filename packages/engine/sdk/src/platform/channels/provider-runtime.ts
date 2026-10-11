@@ -442,8 +442,9 @@ export class ChannelProviderRuntimeManager {
 
   private async resolveDiscordBotToken(): Promise<string | null> {
     const serviceValue = await this.deps.serviceRegistry.resolveSecret('discord', 'primary');
-    return serviceValue
-      || String(this.deps.configManager.get('surfaces.discord.botToken') || '')
+    if (serviceValue) return serviceValue;
+    const configValue = await this.resolveConfigSecret(this.deps.configManager.get('surfaces.discord.botToken'));
+    return configValue
       || process.env.DISCORD_BOT_TOKEN
       || null;
   }
