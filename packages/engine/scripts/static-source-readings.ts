@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, fsyncSync, openSync, readFileSync, readSync, renameSync, writeFileSync, writeSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { canonicalJson, choice, hashState, JudgmentError, noul, PINNED_MODEL, readChoice, readYesNo, STAKES_BANDS, toJson, validateContextBudget, type DecisionLog, type EntryType, type JudgmentPort, type Questions } from '@goodvibes-jev/judgment';
 import { DEFERRED_WORK_INSTRUCTIONS, deferredWork, INTERNAL_IDENTIFIER_INSTRUCTIONS, internalIdentifier, STATIC_ANCHOR_FIT_INSTRUCTIONS, STATIC_ANCHOR_INSTRUCTIONS, staticOffendingAnchor } from './batteries/static-source.ts';
@@ -183,6 +184,22 @@ export function saveStaticSourceReadings(readings: StaticSourceReadings, path = 
   renameSync(`${path}.next`, path);
 }
 
+function* completeStaticJournalLines(path: string): Generator<string> {
+  const fd = openSync(path, 'r');
+  const buffer = Buffer.alloc(64 * 1024);
+  const decoder = new StringDecoder('utf8');
+  let pending = '';
+  try {
+    let count: number;
+    while ((count = readSync(fd, buffer, 0, buffer.length, null)) > 0) {
+      const lines = (pending + decoder.write(buffer.subarray(0, count))).split('\n');
+      pending = lines.pop()!;
+      yield* lines;
+    }
+    // An unterminated final record remains audit history, including incomplete UTF-8.
+  } finally { closeSync(fd); }
+}
+
 /** Replay only complete valid journal records; malformed bytes remain audit history. */
 export function loadStaticSourceJournal(path: string, previous: StaticSourceReadings | null): StaticSourceReadings | null {
   if (!existsSync(path)) return previous;
@@ -191,7 +208,7 @@ export function loadStaticSourceJournal(path: string, previous: StaticSourceRead
   const readings: Record<string, unknown> = { ...previous?.readings };
   const captureSources: Record<string, unknown> = { ...previous?.captureSources };
   const captureBatterySources: Record<string, unknown> = { ...previous?.captureBatterySources };
-  for (const line of readFileSync(path, 'utf8').split('\n').slice(0, -1)) {
+  for (const line of completeStaticJournalLines(path)) {
     let record: StaticSourceReadings | null;
     try { record = parseStaticSourceReadings(JSON.parse(line)); } catch { continue; }
     if (!record) continue;
@@ -207,7 +224,15 @@ export function loadStaticSourceJournal(path: string, previous: StaticSourceRead
 
 /** Each answered call reaches durable storage before another dependent call starts. */
 export function openStaticSourceJournal(path: string) {
-  const incompleteTail = existsSync(path) && readFileSync(path).at(-1) !== 10;
+  let incompleteTail = false;
+  if (existsSync(path)) {
+    const tailFd = openSync(path, 'r');
+    try {
+      const size = fstatSync(tailFd).size;
+      const byte = Buffer.alloc(1);
+      incompleteTail = size === 0 || readSync(tailFd, byte, 0, 1, size - 1) !== 1 || byte[0] !== 10;
+    } finally { closeSync(tailFd); }
+  }
   const fd = openSync(path, 'a');
   const append = (text: string): void => {
     const bytes = Buffer.from(text);

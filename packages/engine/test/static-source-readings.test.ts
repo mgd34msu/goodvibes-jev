@@ -131,6 +131,79 @@ test('journal recovery rejects torn or malformed records without altering origin
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('chunked journal replay preserves original complete-line order, UTF-8 and own keys', () => {
+  const root = mkdtempSync(join(tmpdir(), 'static-chunked-journal-'));
+  try {
+    const path = join(root, 'checkpoint.journal');
+    const prefix = '{"format":1,"decisionSourceHash":"first","readingPlanVersion":2,"readings":{"unicode":{"text":"';
+    const text = `${'x'.repeat(64 * 1024 - Buffer.byteLength(prefix) - 1)}😀é`;
+    const first = Buffer.from(`${prefix}${text}"},"replaced":"first"}}\n`);
+    expect(first.subarray(64 * 1024 - 1, 64 * 1024 + 3)).toEqual(Buffer.from('😀'));
+    const next = { format: 1, decisionSourceHash: 'last', readingPlanVersion: 3,
+      readings: { replaced: 'last', ['__proto__']: { retained: true }, large: 'y'.repeat(128 * 1024) },
+      captureSources: { first: [['source.ts', 'hash']], ['__proto__']: { retained: true } },
+      captureBatterySources: { battery: 'complete source' } };
+    const torn = Buffer.concat([Buffer.from('{"format":1,"decisionSourceHash":"torn","readings":{"text":"'), Buffer.from([0xf0, 0x9f])]);
+    const bytes = Buffer.concat([first,
+      Buffer.from('{"format":1,"decisionSourceHash":"ignored","readingPlanVersion":4,"readings":{}}\n'),
+      Buffer.from([0xc3, 10]), Buffer.from('null\n'), Buffer.from(`${JSON.stringify(next)}\n`), torn]);
+    writeFileSync(path, bytes);
+    let decisionSourceHash: string | undefined;
+    let readingPlanVersion: StaticSourceReadings['readingPlanVersion'];
+    const readings: Record<string, unknown> = {};
+    const captureSources: Record<string, unknown> = {};
+    const captureBatterySources: Record<string, unknown> = {};
+    // The previous whole-string algorithm is the exact replay compatibility oracle.
+    for (const line of bytes.toString('utf8').split('\n').slice(0, -1)) {
+      let record: StaticSourceReadings | null;
+      try { record = parseStaticSourceReadings(JSON.parse(line)); } catch { continue; }
+      if (!record) continue;
+      decisionSourceHash = record.decisionSourceHash;
+      readingPlanVersion = record.readingPlanVersion;
+      Object.defineProperties(readings, Object.getOwnPropertyDescriptors(record.readings));
+      Object.defineProperties(captureSources, Object.getOwnPropertyDescriptors(record.captureSources ?? {}));
+      Object.defineProperties(captureBatterySources, Object.getOwnPropertyDescriptors(record.captureBatterySources ?? {}));
+    }
+    if (decisionSourceHash === undefined) throw new Error('Missing complete compatibility record');
+    const expected: StaticSourceReadings = { format: 1, decisionSourceHash, readings, captureSources, captureBatterySources,
+      ...(readingPlanVersion === undefined ? {} : { readingPlanVersion }) };
+    const replayed = loadStaticSourceJournal(path, null);
+    expect(replayed).toEqual(expected);
+    expect(replayed?.readings.unicode).toEqual({ text });
+    expect(replayed?.readings.replaced).toBe('last');
+    expect(Object.hasOwn(replayed!.readings, '__proto__')).toBe(true);
+    expect(Object.getPrototypeOf(replayed!.readings)).toBe(Object.prototype);
+    expect(Object.hasOwn(replayed!.captureSources!, '__proto__')).toBe(true);
+    expect(readFileSync(path)).toEqual(bytes);
+    {
+      using journal = openStaticSourceJournal(path);
+      journal.append({ format: 1, decisionSourceHash: 'appended', readings: { after: true } });
+    }
+    const after = readFileSync(path);
+    expect(after.subarray(0, bytes.length)).toEqual(bytes);
+    expect(after.subarray(bytes.length).toString('utf8').startsWith('\tINCOMPLETE_RECORD\n')).toBe(true);
+    expect(loadStaticSourceJournal(path, null)).toEqual({ format: 1, decisionSourceHash: 'appended',
+      readings: { ...readings, after: true }, captureSources, captureBatterySources });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the single-byte journal tail check preserves absent, empty and complete file behavior', () => {
+  const root = mkdtempSync(join(tmpdir(), 'static-journal-tail-'));
+  try {
+    const record: StaticSourceReadings = { format: 1, decisionSourceHash: 'current', readings: {} };
+    for (const [name, original] of [['absent', undefined], ['empty', ''], ['complete', `${JSON.stringify(record)}\n`]] as const) {
+      const path = join(root, `${name}.journal`);
+      if (original !== undefined) writeFileSync(path, original);
+      {
+        using journal = openStaticSourceJournal(path);
+        journal.append(record);
+      }
+      expect(readFileSync(path, 'utf8')).toBe(`${original ?? ''}${original === '' ? '\tINCOMPLETE_RECORD\n' : ''}${JSON.stringify(record)}\n`);
+      expect(loadStaticSourceJournal(path, null)).toEqual({ ...record, captureSources: {}, captureBatterySources: {} });
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('a stale partial policy cannot affect new source capture or revive its old answer', async () => {
   const captured = input();
   const original = await preparedStaticReadings([captured], 0.2);
