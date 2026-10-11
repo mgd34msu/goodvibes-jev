@@ -1,7 +1,7 @@
 import { answerExecPrompt, commitExecPromptAnswer, discardExecPromptAnswer } from '../sdk/src/platform/runtime/permissions/autonomous-tool-prompts.ts';
 import { runInteractiveCommand, detectPtyAvailability, probePtyHost } from '../sdk/src/platform/tools/exec/interactive.ts';
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withDecisionLog, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
@@ -120,9 +120,27 @@ test('Jev may refuse fixed terminal controls without a human fallback', async ()
 });
 
 test.skipIf(!detectPtyAvailability(probePtyHost()).available)('real PTY output changed during callback prevents old bytes from being sent', async () => {
-  const result = await runInteractiveCommand({ cmdStr: 'printf "Continue? [y/n]: "; sleep 0.3; printf "changed prompt: "; read answer; echo "SENT=$answer"',
+  let firstPrompt: string | undefined;
+  let observedNativeStale = false;
+  const result = await runInteractiveCommand({ cmdStr: 'printf "Continue? [y/n]: "; while [ ! -f prompt-change-ready ]; do sleep 0.01; done; printf "changed prompt: "; read answer; echo "SENT=$answer"',
     cwd: root, env: { PATH: process.env.PATH ?? '/usr/bin:/bin' }, timeoutMs: 1000, startTime: Date.now(), sandboxArgv: [],
     interaction: { availability: detectPtyAvailability(probePtyHost()), quietWindowMs: 10,
-      requestPromptAnswer: async () => { await new Promise(resolve => setTimeout(resolve, 400)); return { answered: true, text: 'y' }; } } });
+      requestPromptAnswer: async (ask, execution) => {
+        if (firstPrompt !== undefined) return { answered: false };
+        firstPrompt = ask.prompt;
+        if (!execution || firstPrompt !== 'Continue? [y/n]:') throw new Error('Original native prompt was not captured');
+        execution.assertCurrent();
+        writeFileSync(join(root, 'prompt-change-ready'), 'Original native prompt captured');
+        while (!observedNativeStale) {
+          try { execution.assertCurrent(); }
+          catch (error: unknown) {
+            if (!(error instanceof Error) || error.message !== 'Terminal prompt changed before response') throw error;
+            observedNativeStale = true;
+          }
+          if (!observedNativeStale) await new Promise<void>(resolve => setImmediate(resolve));
+        }
+        return { answered: true, text: 'y' };
+      } } });
+  expect(firstPrompt).toBe('Continue? [y/n]:'); expect(observedNativeStale).toBe(true); expect(result.stdout).toContain('changed prompt:');
   expect(result.success).toBe(false); expect(result.prompts_answered).toBeUndefined(); expect(result.stdout).not.toContain('SENT=y');
 }, 10000);
