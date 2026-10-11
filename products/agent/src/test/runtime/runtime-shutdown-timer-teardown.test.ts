@@ -48,7 +48,7 @@
 import { beforeAll, expect, test } from 'bun:test';
 import { dirname, join } from 'node:path';
 
-import { withRunTmpDir } from '../../../../../packages/engine/toolchain/src/test-runner/test-run-tmp.ts';
+import { withRunTmpDir } from '@goodvibes-jev/engine/toolchain/test-runner';
 import type { ShutdownProbeReport } from '../fixtures/runtime-shutdown-probe.ts';
 import { projectTestTmpRoot } from '../helpers/project-temp.ts';
 

@@ -2,3 +2,4 @@
 export { runOwnedTestChild } from './owned-test-child.js';
 export type { OwnedTestChildResult, OwnedTestChildStop } from './owned-test-child.js';
 export { isolatedTestEnvironment } from './test-isolation.js';
+export { withRunTmpDir } from './test-run-tmp.js';
