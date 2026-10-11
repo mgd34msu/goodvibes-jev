@@ -1,5 +1,14 @@
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { ToolDefinition } from '@goodvibes-jev/engine/sdk/platform/types';
+import { captureCatalogData } from './agent-harness-catalog-ranking.ts';
+
+const ownedDefinitions = new WeakSet<ToolDefinition>();
+
+export function captureAgentToolDefinition(definition: ToolDefinition): ToolDefinition {
+  const owned = captureCatalogData(definition);
+  ownedDefinitions.add(owned);
+  return owned;
+}
 
 const DEFAULT_TOOL_DESCRIPTION_LIMIT = 56;
 
@@ -89,6 +98,8 @@ function compactText(value: string, limit: number): string {
   return `${normalized.slice(0, limit - 3).trimEnd()}...`;
 }
 
+function stripSchemaDescriptions(value: Record<string, unknown>): Record<string, unknown>;
+function stripSchemaDescriptions(value: unknown): unknown;
 function stripSchemaDescriptions(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripSchemaDescriptions);
   if (!value || typeof value !== 'object') return value;
@@ -106,11 +117,23 @@ function compactToolDefinition(definition: ToolDefinition): void {
     TOOL_DESCRIPTION_OVERRIDES[definition.name] ?? definition.description,
     DEFAULT_TOOL_DESCRIPTION_LIMIT,
   );
-  definition.parameters = stripSchemaDescriptions(definition.parameters) as Record<string, unknown>;
+  definition.parameters = stripSchemaDescriptions(definition.parameters);
 }
 
 export function compactRegisteredToolDefinitions(toolRegistry: ToolRegistry): void {
-  for (const definition of toolRegistry.getToolDefinitions()) {
-    compactToolDefinition(definition);
+  for (const tool of toolRegistry.list()) {
+    const definition = tool.definition;
+    if (!ownedDefinitions.has(definition)) {
+      compactToolDefinition(definition);
+      continue;
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(definition);
+    descriptors.description = { ...descriptors.description, value: compactText(
+      TOOL_DESCRIPTION_OVERRIDES[definition.name] ?? definition.description,
+      DEFAULT_TOOL_DESCRIPTION_LIMIT,
+    ) };
+    descriptors.parameters = { ...descriptors.parameters, value: stripSchemaDescriptions(definition.parameters) };
+    const compacted: ToolDefinition = Object.create(null, descriptors);
+    tool.definition = captureAgentToolDefinition(compacted);
   }
 }

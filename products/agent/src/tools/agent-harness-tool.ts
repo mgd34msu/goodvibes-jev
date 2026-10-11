@@ -1,4 +1,5 @@
 import { captureCatalogData } from './agent-harness-catalog-ranking.ts';
+import { captureAgentToolDefinition } from './tool-definition-compaction.ts';
 import { resolveSetupSmokeNativeEvidence } from './agent-setup-smoke-reference.ts';
 import { captureTranscriptSource } from '../input/commands/transcript-reading.ts';
 import { createPreferredSettingsProjector, executeAdmittedPreferredSettings } from './agent-settings-admission.ts';
@@ -147,7 +148,7 @@ function detailedHarnessModelAccessGuide(): Record<string, string> {
 
 export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
   const tool: Tool = {
-    definition: {
+    definition: captureAgentToolDefinition({
       name: 'agent_harness',
       description: 'Inspect or operate Agent harness surfaces; mode:"modes" lists all.',
       parameters: {
@@ -158,7 +159,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
       },
       sideEffects: ['state'],
       concurrency: 'serial',
-    },
+    } satisfies Tool['definition']),
     execute: async (rawArgs, options) => {
       const assertCatalogExecution = harnessCatalogExecutionGuard(rawArgs, options);
       const signal = modelReadingServicePath(options, ['signal']) as AbortSignal | undefined;
