@@ -311,3 +311,40 @@ test.each(['definition', 'execute'] as const)('empty-catalog final %s mutation r
     expect(replacements).toBe(0);
   }
 });
+
+
+test.each(['private-source', 'private-choice', 'accessor', 'proxy'] as const)(
+  'pending projection holds a complete changed %s and drains its owned capture', async kind => {
+    const started = latch(); const resume = latch();
+    const f = fixture({ beforeProject: async () => { started.resolve(); await resume.promise; } });
+    const pending = f.manager.projectAutonomousChoices('private-catalog-source', 'original-call', f.sourceOf, f.registry);
+    await started.promise;
+    let accessed = 0;
+    if (kind === 'private-source') f.source.goal = 'password=synthetic-changed-source';
+    else if (kind === 'private-choice') f.revisions[0]!.args.url = 'https://synthetic.invalid/reference?password=synthetic-changed-choice';
+    else if (kind === 'accessor') Object.defineProperty(f.revisions[0]!.args, 'hidden', { get() { accessed++; return 'ordinary'; } });
+    else f.revisions[0]!.args = new Proxy(f.revisions[0]!.args, { ownKeys() { accessed++; return []; } });
+    resume.resolve();
+    await expect(pending).rejects.toThrow();
+    expect(accessed).toBe(0); expect(requests).toHaveLength(0); expect(f.executed).toHaveLength(0);
+    expect(f.released).toEqual([RAW]);
+  },
+);
+
+test('a failed initial projection capture never advances a later attempt beyond its privacy baseline', async () => {
+  const f = fixture();
+  const originalGoal = f.source.goal;
+  f.source.goal = 'password=synthetic-initial-source';
+  await expect(f.manager.projectAutonomousChoices('repeated-private-catalog', 'original-call', f.sourceOf, f.registry))
+    .rejects.toMatchObject({ problem: 'credential-material' });
+  f.source.goal = originalGoal;
+  f.revisions[0]!.args.url = 'https://synthetic.invalid/reference?password=synthetic-initial-choice';
+  await expect(f.manager.projectAutonomousChoices('repeated-private-catalog', 'original-call', f.sourceOf, f.registry))
+    .rejects.toMatchObject({ problem: 'credential-material' });
+  expect(f.projected).toHaveLength(0); expect(requests).toHaveLength(0); expect(f.executed).toHaveLength(0);
+  f.revisions[0]!.args.url = RAW;
+  const handle = await f.manager.projectAutonomousChoices('repeated-private-catalog', 'original-call', f.sourceOf, f.registry);
+  try { expect(f.projected).toHaveLength(1); expect(requests).toHaveLength(0); }
+  finally { await f.manager.releaseAutonomousChoices(handle); }
+  expect(f.released).toEqual([RAW]);
+});

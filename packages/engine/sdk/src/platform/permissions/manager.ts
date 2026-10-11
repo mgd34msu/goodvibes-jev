@@ -6,7 +6,7 @@ import { hashState, JudgmentError, type EntryType, type JudgmentPort } from '@go
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { captureOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { getProcessUntrustedContentLedger } from '../security/untrusted-content.js';
-import { autonomousSourceEvidence, autonomousRevision, assertAutonomousData, captureAutonomousChoices, captureAutonomousSourceFrame, decideAutonomousTool, type AutonomousToolChoices, type AutonomousToolRevision, type AutonomousToolSource } from './autonomous.js';
+import { autonomousSourceEvidence, autonomousRevision, assertAutonomousData, captureAutonomousChoices, captureAutonomousSourceFrame, captureCurrentAutonomousChoices, captureCurrentAutonomousSourceFrame, decideAutonomousTool, type AutonomousToolChoices, type AutonomousToolRevision, type AutonomousToolSource } from './autonomous.js';
 import { AutonomousChoiceProjectionOwner, type AutonomousChoiceProjection } from './autonomous-input-projection.js';
 import type { PreparedToolCall, ToolRegistry, ToolExecutionEffect } from '../tools/registry.js';
 import { assertProjectionCurrent, projectionFunction, projectionProperty, ToolInputProjectionError, type ToolPreparedSettingsMutation } from '../tools/input-projection.js';
@@ -508,14 +508,15 @@ export class PermissionManager {
       sessionGrants: [...this.sessionApprovals], sessionPublication: this.sessionApprovalRevision, exposure };
     assertAutonomousData(choices);
     assertAutonomousData(frame);
-    const { source: capturedSource, evidence: sourceEvidence } = captureAutonomousSourceFrame(source);
+    const { source: capturedSource, evidence: sourceEvidence } = purpose === 'currentness'
+      ? captureCurrentAutonomousSourceFrame(source) : captureAutonomousSourceFrame(source);
     const normalizedFrame = { ...frame, source: sourceEvidence };
-    // Currentness is called only inside an authentic admission. Its complete
-    // structural capture is compared with the already screened authority hash;
+    // Currentness is used only after the operation captured its privacy-screened
+    // baseline. Its complete structural capture is compared with that baseline;
     // changed bytes cannot grant authority or become a new reading.
     const ownedFrame = (purpose === 'currentness' ? captureOwnedJson(normalizedFrame)
       : snapshotJudgmentInput(normalizedFrame)) as Record<string, unknown>;
-    const captured = Object.freeze({ ...ownedFrame, source: capturedSource, autonomousChoices: captureAutonomousChoices(choices) });
+    const captured = Object.freeze({ ...ownedFrame, source: capturedSource, autonomousChoices: purpose === 'currentness' ? captureCurrentAutonomousChoices(choices) : captureAutonomousChoices(choices) });
     return choiceProjection === undefined ? captured : Object.freeze({ ...captured,
       autonomousChoices: this.autonomousChoiceProjections.choices(choiceProjection, sourceId, captured) });
   }
@@ -525,8 +526,14 @@ export class PermissionManager {
     registry: ToolRegistry, signal?: AbortSignal): Promise<AutonomousChoiceProjection> {
     assertPermissionActive(signal);
     if (this.autonomousClaims.has(sourceId)) throw new Error('Autonomous tool source was already claimed');
-    return this.autonomousChoiceProjections.project(sourceId, callId, registry,
-      () => this.autonomousAuthority(sourceId, sourceOf), signal);
+    let captured = false;
+    return this.autonomousChoiceProjections.project(sourceId, callId, registry, () => {
+      // The owner asks once for its baseline, then only for complete equality
+      // checks. A failed initial privacy capture never enters currentness mode.
+      const authority = this.autonomousAuthority(sourceId, sourceOf, undefined, captured ? 'currentness' : 'admission');
+      captured = true;
+      return authority;
+    }, signal);
   }
 
   /** Release every alternative after the entire logical call, including unused alternatives. */
@@ -540,7 +547,7 @@ export class PermissionManager {
     const revision = hashState(this.autonomousAuthority(sourceId, sourceOf, choiceProjection) as unknown as EntryType);
     const assertCurrent = () => {
       assertPermissionActive(signal);
-      if (this.autonomousClaims.has(sourceId) || hashState(this.autonomousAuthority(sourceId, sourceOf, choiceProjection) as unknown as EntryType) !== revision)
+      if (this.autonomousClaims.has(sourceId) || hashState(this.autonomousAuthority(sourceId, sourceOf, choiceProjection, 'currentness') as unknown as EntryType) !== revision)
         throw new Error('Autonomous preparation authority changed or source was claimed');
       assertPermissionActive(signal);
     };
@@ -629,7 +636,7 @@ export class PermissionManager {
     const assertWorkspace = await this.autonomousWorkspaceConstraint(category, signal);
     const settingsMutation = preparedCall?.registry.readPreparedSettingsMutation(preparedCall.call);
     const ledger = this.gate.ledger ?? getProcessUntrustedContentLedger();
-    const authority = () => this.autonomousAuthority(sourceId, sourceOf, choiceProjection);
+    const authority = () => this.autonomousAuthority(sourceId, sourceOf, choiceProjection, 'currentness');
     // A running selected projection is already claimed. Its body compares the
     // raw owner frame rather than re-entering preclaim catalog/source guards.
     const rawAuthority = this.autonomousAuthority(sourceId, sourceOf);

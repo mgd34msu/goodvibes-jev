@@ -61,12 +61,17 @@ export function inspectDecisionProtocolReferences(context: JevDecisionContext): 
   });
 }
 
-/** Capture and screen every supplied reference under the fixed local catalog context. */
-export function captureAutonomousCatalogContext(continuations: readonly JevContinuation[], resumeConditions: readonly JevVersionRef[]): JevDecisionContext {
-  const context = captureJevDecisionContext({
+/** Complete native protocol validation; equality checks do not create admission. */
+export function captureCurrentAutonomousCatalogContext(continuations: readonly JevContinuation[], resumeConditions: readonly JevVersionRef[]): JevDecisionContext {
+  return captureJevDecisionContext({
     decisionId: 'catalog', binding: Object.fromEntries(JEV_DECISION_BINDING_KEYS.map(key => [key, 'catalog'])),
     judgmentDecisionIds: [], evidence: [], continuations, resumeConditions,
   });
+}
+
+/** Capture and screen every supplied reference under the fixed local catalog context. */
+export function captureAutonomousCatalogContext(continuations: readonly JevContinuation[], resumeConditions: readonly JevVersionRef[]): JevDecisionContext {
+  const context = captureCurrentAutonomousCatalogContext(continuations, resumeConditions);
   snapshotJudgmentInput({
     continuations: context.continuations.map(value => ({ ...protocolReference(value), kind: value.kind })),
     resumeConditions: context.resumeConditions.map(protocolReference),

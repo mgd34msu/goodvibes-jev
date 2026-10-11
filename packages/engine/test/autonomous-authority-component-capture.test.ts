@@ -288,3 +288,63 @@ test.each(['none', 'source', 'conversation', 'diff-provenance', 'unselected', 'c
     expect(transmissions).toBe(originalTransmissions); expect(accessed).toBe(0);
   },
 );
+
+
+test.each(['source', 'unselected'] as const)('native preparation initially refuses private %s before any reading', part => {
+  const f = nativeFixture();
+  if (part === 'source') f.original.goal = 'password=synthetic-initial-source';
+  else f.revisions[0]!.args.operation = 'password=synthetic-initial-alternative';
+  expect(() => f.manager.autonomousPreparation('initial-private-component', f.sourceOf)).toThrow();
+  expect(transmissions).toBe(0); expect(log.query()).toHaveLength(0); expect(f.effects).toBe(0);
+});
+
+test.each(['source', 'unselected', 'condition', 'provenance'] as const)(
+  'preparation compares the original baseline after a private %s change and restoration', part => {
+    const f = nativeFixture();
+    const preparation = f.manager.autonomousPreparation('current-private-component', f.sourceOf);
+    const originalGoal = f.original.goal;
+    const originalOperation = f.revisions[0]!.args.operation;
+    const originalCondition = f.conditions[0]!.revision;
+    const originalDiff = f.original.selectedDiffContext;
+    if (part === 'source') f.original.goal = 'password=synthetic-changed-source';
+    else if (part === 'unselected') f.revisions[0]!.args.operation = 'password=synthetic-changed-alternative';
+    else if (part === 'condition') f.conditions[0]!.revision = 'password=synthetic-changed-condition';
+    else if (originalDiff.kind === 'session') f.original.selectedDiffContext = {
+      ...originalDiff, provenance: { ...originalDiff.provenance, latestCheckpointId: 'password=synthetic-changed-provenance' },
+    };
+    expect(() => preparation.assertCurrent()).toThrow('Autonomous preparation authority changed');
+    f.original.goal = originalGoal;
+    f.revisions[0]!.args.operation = originalOperation;
+    f.conditions[0]!.revision = originalCondition;
+    f.original.selectedDiffContext = originalDiff;
+    // The existing native policy permits exact restoration; a failed comparison
+    // never makes the changed data a new baseline or a new reading.
+    preparation.assertCurrent();
+    expect(transmissions).toBe(0); expect(log.query()).toHaveLength(0); expect(f.effects).toBe(0);
+  },
+);
+
+test.each(['accessor', 'proxy', 'oversized'] as const)('preparation currentness retains complete %s rejection before callbacks or wire', part => {
+  const f = nativeFixture();
+  const preparation = f.manager.autonomousPreparation('unsupported-current-component', f.sourceOf);
+  let accessed = 0;
+  if (part === 'accessor') Object.defineProperty(f.revisions[0]!.args, 'hidden', { get() { accessed++; return 'ordinary'; } });
+  else if (part === 'proxy') f.original.criteria = new Proxy(f.original.criteria, { ownKeys() { accessed++; return []; } });
+  else f.original.criteria.push('x'.repeat(1_000_001));
+  expect(() => preparation.assertCurrent()).toThrow();
+  expect(accessed).toBe(0); expect(transmissions).toBe(0); expect(log.query()).toHaveLength(0); expect(f.effects).toBe(0);
+});
+
+test.each(['unselected', 'condition'] as const)('authentic execution refuses a late private %s without a new reading', async part => {
+  const f = nativeFixture();
+  const call = await f.registry.prepareCall('private-component-call', NAME, { operation: 'execute' });
+  const admission = await f.manager.admitAutonomous('private-component-source', NAME, call.args, {
+    sourceOf: f.sourceOf, schemaRevision: call.schemaRevision, preparedCall: { registry: f.registry, call },
+  });
+  expect(admission.result.autonomousDecision?.outcome).toBe('act');
+  const originalTransmissions = transmissions;
+  if (part === 'unselected') f.revisions[0]!.args.operation = 'password=synthetic-late-alternative';
+  else f.conditions[0]!.revision = 'password=synthetic-late-condition';
+  await expect(f.registry.executePrepared(call, admission)).rejects.toThrow();
+  expect(f.effects).toBe(0); expect(transmissions).toBe(originalTransmissions);
+});
