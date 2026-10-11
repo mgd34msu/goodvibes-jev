@@ -107,10 +107,13 @@ function captureCatalogBackend(port: ReturnType<typeof judgmentPort>, decision: 
 }
 
 type CatalogDescription = { readonly id: string; readonly description: string; readonly evidence?: unknown };
+type CatalogCandidate = { readonly name: string; readonly description: string; readonly evidenceJson: string };
 interface PreparedCatalog {
   readonly describe: object;
   readonly catalog: readonly CatalogDescription[];
   readonly parts: readonly string[];
+  readonly ids: readonly string[];
+  readonly candidates: readonly CatalogCandidate[];
 }
 const preparedCatalogs = new WeakMap<object, PreparedCatalog>();
 
@@ -175,7 +178,12 @@ function catalogParts(catalog: readonly CatalogDescription[]): readonly string[]
 export function prepareHarnessCatalog<T>(entries: readonly T[], describe: (entry: T) => CatalogDescription): readonly T[] {
   const captured = Object.freeze(captureCatalogEntries(entries, catalogEntryDescriptors(entries)));
   const catalog = Object.freeze(captured.map(entry => captureCatalogDescription(describe(entry))));
-  preparedCatalogs.set(captured, Object.freeze({ describe, catalog, parts: catalogParts(catalog) }));
+  preparedCatalogs.set(captured, Object.freeze({ describe, catalog, parts: catalogParts(catalog),
+    ids: Object.freeze(catalog.map(({ id }) => id)),
+    candidates: Object.freeze(catalog.map(({ id, description, evidence }) => Object.freeze({
+      name: id, description, evidenceJson: JSON.stringify(evidence ?? null),
+    }))),
+  }));
   return captured;
 }
 
@@ -222,8 +230,8 @@ export async function rankHarnessCatalog<T>(
     return withModelReadingSource(source, { ...options, assertCurrent() { assertOptions(); originalAssert?.(); } }, async (captured, reading) => {
       let assertBackend: (() => void) | undefined;
       const assertCurrent = () => { reading.assertCurrent?.(); assertBackend?.(); };
-      return consumeProtectedCatalog(capturedEntries, captured.catalog.map(({ id }) => id), captured.query,
-        captured.catalog.map(({ id, description, evidence }) => ({ name: id, description, evidenceJson: JSON.stringify(evidence ?? null) })),
+      return consumeProtectedCatalog(capturedEntries, prepared?.ids ?? captured.catalog.map(({ id }) => id), captured.query,
+        prepared?.candidates ?? captured.catalog.map(({ id, description, evidence }) => ({ name: id, description, evidenceJson: JSON.stringify(evidence ?? null) })),
         site, decisionName, { signal: reading.signal, assertCurrent, retainCurrent: reading.retainCurrent,
           retainBackend(guard) { assertBackend = guard; },
         });
@@ -292,7 +300,8 @@ export async function rankHarnessCatalog<T>(
     }
     assertCurrent();
     if (projected.length !== parts.length || (requirePreservedSource && projected.some((part, index) => part !== parts[index]))) throw new ToolInputProjectionError('held');
-    const projectedCatalog = projected.slice(1).map((part) => {
+    const preserved = prepared && requirePreservedSource;
+    const projectedCatalog = preserved ? prepared.candidates : projected.slice(1).map((part) => {
       let value: unknown;
       try { value = JSON.parse(part); } catch { throw new ToolInputProjectionError('held'); }
       if (!Array.isArray(value) || value.length !== 3 || typeof value[0] !== 'string' || typeof value[1] !== 'string') throw new ToolInputProjectionError('held');
@@ -300,7 +309,7 @@ export async function rankHarnessCatalog<T>(
       if (typeof evidenceJson !== 'string') throw new ToolInputProjectionError('held');
       return { name: value[0], description: value[1], evidenceJson };
     });
-    return await consumeProtectedCatalog(capturedEntries, source.catalog.map(({ id }) => id), projected[0]!, projectedCatalog, site, decisionName, {
+    return await consumeProtectedCatalog(capturedEntries, preserved ? prepared.ids : source.catalog.map(({ id }) => id), projected[0]!, projectedCatalog, site, decisionName, {
       signal, assertCurrent, retainCurrent,
       retainBackend(guard) { assertBackend = guard; },
     });
@@ -309,7 +318,7 @@ export async function rankHarnessCatalog<T>(
 
 /** The canonical reader consumes only a completely protected catalog. */
 async function consumeProtectedCatalog<T>(entries: readonly T[], ids: readonly string[], query: string,
-  projectedCatalog: readonly { readonly name: string; readonly description: string; readonly evidenceJson: string }[],
+  projectedCatalog: readonly CatalogCandidate[],
   site: string, decisionName: string, options: {
     readonly signal?: AbortSignal | undefined;
     readonly assertCurrent: () => void;

@@ -673,6 +673,64 @@ test('prepared metadata never reuses a prior positive reading for uncertain or n
   }
 });
 
+test.each(['normal', 'oversized'] as const)('prepared %s candidate DTOs preserve complete fresh wire and mutable results across model owners', async shape => {
+  const entry = shape === 'oversized' ? structuralCatalog()[0]! : {
+    id: 'prepared-native', description: 'Complete ordinary native description', evidence: { tail: 'Complete ordinary metadata tail' },
+  };
+  const describeEntry = (value: typeof entry) => value, prepared = prepareHarnessCatalog([entry], describeEntry);
+  for (const [query, probability] of [['First complete query', 0.99], ['Second complete query', 0.01]] as const) {
+    const screening = researchScreeningFixture(), fake = preparedReadings(query, entry, probability);
+    installJudgmentPort(fake.port);
+    const ranked = await rankHarnessCatalog(prepared, query, describeEntry, 'agent.test.prepared-dto', {
+      sourceOwner: screening.owner, requirePreservedSource: true,
+    });
+    expect(fake.requests).toHaveLength(1);
+    expect(screening.calls.some(call => call.path === '/v1/chat/completions')).toBe(true);
+    expect(ranked.judgments[0]?.id).toBe(entry.id);
+    expect(ranked.matches).toHaveLength(probability === 0.99 ? 1 : 0);
+    expect(Object.isFrozen(ranked.matches)).toBe(false); expect(Object.isFrozen(ranked.judgments)).toBe(false);
+    const judgment = ranked.judgments[0];
+    if (!judgment) throw new Error('Expected a fresh complete candidate judgment');
+    expect(Object.isFrozen(judgment)).toBe(false);
+    expect(Reflect.set(judgment, 'id', 'Caller-local result edit')).toBe(true);
+  }
+});
+
+test.each(['normal', 'oversized'] as const)('prepared %s DTO reuse still holds a newly private current-owner tail after an earlier successful screen', async shape => {
+  const privateTail = 'Synthetic complete current-owner private tail';
+  const evidence = shape === 'oversized' ? { ...structuralCatalog()[0]!.evidence, tail: privateTail } : { tail: privateTail };
+  const entry = { id: 'prepared-native', description: 'Complete native method contract', evidence };
+  const describeEntry = (value: typeof entry) => value, prepared = prepareHarnessCatalog([entry], describeEntry);
+  const first = researchScreeningFixture(), firstReading = preparedReadings('First complete query', entry);
+  installJudgmentPort(firstReading.port);
+  expect((await rankHarnessCatalog(prepared, 'First complete query', describeEntry, 'agent.test.prepared-current-owner', {
+    sourceOwner: first.owner, requirePreservedSource: true,
+  })).matches).toHaveLength(1);
+  expect(firstReading.requests).toHaveLength(1);
+  const current = researchScreeningFixture({ spans: exactSensitiveSpans([privateTail]) }), heldReading = preparedReadings('Current complete query', entry);
+  installJudgmentPort(heldReading.port);
+  await expect(rankHarnessCatalog(prepared, 'Current complete query', describeEntry, 'agent.test.prepared-current-owner', {
+    sourceOwner: current.owner, requirePreservedSource: true,
+  })).rejects.toThrow();
+  expect(JSON.stringify(current.calls)).toContain(privateTail); expect(heldReading.requests).toHaveLength(0);
+});
+
+test('prepared metadata with a non-preserved projection sends the current masked DTO rather than its private original', async () => {
+  const privateTail = 'Synthetic complete private descriptive tail';
+  const entry = { id: 'prepared-native', description: `Ordinary description ${privateTail}`, evidence: { note: privateTail } };
+  const describeEntry = (value: typeof entry) => value, prepared = prepareHarnessCatalog([entry], describeEntry);
+  const screening = researchScreeningFixture({ spans: exactSensitiveSpans([privateTail]) });
+  const fake = preparedReadings('Read the actual protected projection', {
+    id: entry.id, description: 'Ordinary description [redacted]', evidence: { note: '[redacted]' },
+  });
+  installJudgmentPort(fake.port);
+  const ranked = await rankHarnessCatalog(prepared, 'Read the actual protected projection', describeEntry, 'agent.test.prepared-masked-dto', {
+    sourceOwner: screening.owner,
+  });
+  expect(ranked.matches).toHaveLength(1); expect(fake.requests).toHaveLength(1);
+  expect(JSON.stringify(screening.calls)).toContain(privateTail); expect(JSON.stringify(fake.requests)).not.toContain(privateTail);
+});
+
 function completeContractReadings(evidence: ReadonlyMap<string, string>, lanes: readonly string[], chosen: string | undefined) {
   const seen = new Map(lanes.map(lane => [lane, new Set<string>()]));
   const fake = fakePort((name, question, state) => {
