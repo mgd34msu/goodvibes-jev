@@ -1,11 +1,13 @@
 {
-  "//": "Opt-in local native build and private Linux CI artifact qualification. The daemon is the sole app leg. Release-cut, publish and per-job-green remain owned by private-monorepo policy; see products/daemon/docs/cli-and-package-contracts.md#native-build-and-artifact-verification. Native outputs are outside the packed dist tree.",
+  "//": "Native daemon artifacts execute on their exact Linux and Darwin hosts. Linux installation/update receipts remain separate from CI execution evidence.",
   "packageName": "@goodvibes-jev/daemon",
   "sdkPin": {
     "sdkPackage": "@goodvibes-jev/engine",
     "pinSource": "dependencies",
     "lockfile": "../../bun.lock",
-    "sourceRoots": ["src"],
+    "sourceRoots": [
+      "src"
+    ],
     "enforceExportsMap": false
   },
   "build": {
@@ -13,7 +15,13 @@
     "compileDriver": "scripts/compile.ts",
     "outDir": "native",
     "addonOutDir": "native/lib",
-    "prebuild": [["bun", "run", "scripts/check-version.ts"]],
+    "prebuild": [
+      [
+        "bun",
+        "run",
+        "scripts/check-version.ts"
+      ]
+    ],
     "targets": [
       {
         "key": "linux-x64",
@@ -36,14 +44,28 @@
         "bunTarget": "bun-darwin-x64",
         "appArtifact": "goodvibes-daemon-macos-x64",
         "nativeAddonPackage": "sqlite-vec-darwin-x64",
-        "nativeAddonFile": "vec0.dylib"
+        "nativeAddonFile": "vec0.dylib",
+        "sqliteRuntime": {
+          "libraryPath": "lib/sqlite-darwin-x64/libsqlite3.dylib",
+          "provenancePath": "lib/sqlite-darwin-x64/libsqlite3.dylib.json",
+          "sqliteVersion": "3.54.0",
+          "sourceUrl": "https://www.sqlite.org/2026/sqlite-autoconf-3540000.tar.gz",
+          "sourceSha3": "f5e3e724e9c9b3b5d512c76b02082091a59eeea9becd169a9fbf4d376403acce"
+        }
       },
       {
         "key": "darwin-arm64",
         "bunTarget": "bun-darwin-arm64",
         "appArtifact": "goodvibes-daemon-macos-arm64",
         "nativeAddonPackage": "sqlite-vec-darwin-arm64",
-        "nativeAddonFile": "vec0.dylib"
+        "nativeAddonFile": "vec0.dylib",
+        "sqliteRuntime": {
+          "libraryPath": "lib/sqlite-darwin-arm64/libsqlite3.dylib",
+          "provenancePath": "lib/sqlite-darwin-arm64/libsqlite3.dylib.json",
+          "sqliteVersion": "3.54.0",
+          "sourceUrl": "https://www.sqlite.org/2026/sqlite-autoconf-3540000.tar.gz",
+          "sourceSha3": "f5e3e724e9c9b3b5d512c76b02082091a59eeea9becd169a9fbf4d376403acce"
+        }
       }
     ]
   },

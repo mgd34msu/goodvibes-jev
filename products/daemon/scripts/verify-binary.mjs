@@ -63,7 +63,7 @@ try {
     '--ro-bind', '/usr', '/usr', '--ro-bind', '/lib', '/lib', '--ro-bind', '/lib64', '/lib64',
     '--proc', '/proc', '--dev', '/dev', '--bind', root, root, '--chdir', work, '--'];
   const env = { PATH: '/usr/bin:/bin', HOME: home, TMPDIR: join(root, 'tmp'), XDG_CONFIG_HOME: join(root, 'xdg'),
-    GOODVIBES_HOME: tree, GOODVIBES_DAEMON_HOME: daemon, GOODVIBES_WORKING_DIR: work, NO_COLOR: '1' };
+    GOODVIBES_HOME: tree, GOODVIBES_DAEMON_HOME: daemon, GOODVIBES_WORKING_DIR: work, NO_COLOR: '1', GOODVIBES_SKIP_WAKE_MODEL_DOWNLOAD: '1' };
   const probe = spawnSync('bwrap', [...boundary, '/usr/bin/test', '!', '-e', product], { env, encoding: 'utf8', timeout: 10_000 });
   assert.ifError(probe.error); assert.equal(probe.status, 0, `Filesystem containment unavailable: ${probe.stderr}`);
   const smoke = await runPostBuildSmoke({ binary, config: config.smoke, exec: (file, argv) => {

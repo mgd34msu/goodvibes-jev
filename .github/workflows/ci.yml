@@ -403,6 +403,157 @@ jobs:
       - name: Qualify isolated daemon commands and synthetic send
         run: bun run --cwd products/daemon verify:binary
 
+  # Native production occurs once per target; restored consumers never build.
+  daemon-native-produce:
+    name: Daemon native producer (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    needs: [build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-arm64
+            platform: linux
+            runner: ubuntu-22.04-arm
+          - target: darwin-x64
+            platform: darwin
+            runner: macos-15-intel
+          - target: darwin-arm64
+            platform: darwin
+            runner: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup
+      - name: Download workspace package output
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: workspace-build-output
+          path: /tmp/workspace-build-output
+      - name: Restore canonical workspace package output
+        run: tar -xzf /tmp/workspace-build-output/workspace-build-output.tgz -C .
+      - name: Build exact native target
+        env:
+          NATIVE_TARGET: ${{ matrix.target }}
+        run: bun run --cwd products/daemon build:binary --target "$NATIVE_TARGET"
+      - name: Record retained Linux ARM cohort
+        if: matrix.platform == 'linux'
+        env:
+          DAEMON_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          bun products/daemon/scripts/ci-artifact.ts record "$GITHUB_SHA" "$DAEMON_SOURCE_HEAD"
+          bun products/daemon/scripts/ci-artifact.ts verify "$GITHUB_SHA" "$DAEMON_SOURCE_HEAD"
+          tar -czf /tmp/daemon-native-linux-arm64.tgz \
+            products/daemon/native/goodvibes-daemon-linux-arm64 \
+            products/daemon/native/goodvibes-daemon-linux-arm64.bun \
+            products/daemon/native/goodvibes-daemon-linux-arm64.bun.LICENSE.md \
+            products/daemon/native/goodvibes-daemon-linux-arm64.bun.json \
+            products/daemon/native/lib/sqlite-vec-linux-arm64/vec0.so \
+            products/daemon/native/ci-artifact.json
+      - name: Record retained Darwin execution cohort
+        if: matrix.platform == 'darwin'
+        env:
+          DAEMON_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          NATIVE_TARGET: ${{ matrix.target }}
+        run: |
+          node products/daemon/scripts/native-execution-artifact.mjs record "$GITHUB_SHA" "$DAEMON_SOURCE_HEAD"
+          node products/daemon/scripts/native-execution-artifact.mjs verify "$GITHUB_SHA" "$DAEMON_SOURCE_HEAD"
+          node products/daemon/scripts/native-execution-artifact.mjs archive "$GITHUB_SHA" "$DAEMON_SOURCE_HEAD" "/tmp/daemon-native-${NATIVE_TARGET}.tgz"
+      - name: Upload exact native cohort
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: daemon-native-${{ matrix.target }}
+          path: /tmp/daemon-native-${{ matrix.target }}.tgz
+          retention-days: 7
+          if-no-files-found: error
+
+  daemon-native-execution:
+    name: Daemon restored native execution (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    needs: [build, daemon-native-produce]
+    if: always()
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-arm64
+            platform: linux
+            runner: ubuntu-22.04-arm
+          - target: darwin-x64
+            platform: darwin
+            runner: macos-15-intel
+          - target: darwin-arm64
+            platform: darwin
+            runner: macos-14
+    steps:
+      - name: Require canonical build and every native producer
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          PRODUCER_RESULT: ${{ needs.daemon-native-produce.result }}
+        run: test "$BUILD_RESULT" = success && test "$PRODUCER_RESULT" = success
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup
+      - name: Install filesystem isolation harness
+        if: matrix.platform == 'linux'
+        run: |
+          verify_host() {
+            timeout --signal=KILL 10s bwrap --die-with-parent --new-session \
+              --unshare-user --unshare-pid --unshare-ipc --unshare-uts \
+              --ro-bind / / --proc /proc --dev /dev -- /bin/true
+          }
+          if verify_host; then
+            exit 0
+          fi
+          apt_options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
+          if ! sudo -n timeout --signal=KILL 90s apt-get "${apt_options[@]}" install --no-install-recommends -y bubblewrap; then
+            sudo -n timeout --signal=KILL 60s apt-get "${apt_options[@]}" --error-on=any update
+            sudo -n timeout --signal=KILL 90s apt-get "${apt_options[@]}" install --no-install-recommends -y bubblewrap
+          fi
+          verify_host
+      - name: Download workspace package output
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: workspace-build-output
+          path: /tmp/workspace-build-output
+      - name: Restore canonical workspace package output
+        run: tar -xzf /tmp/workspace-build-output/workspace-build-output.tgz -C .
+      - name: Download exact native cohort
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: daemon-native-${{ matrix.target }}
+          path: /tmp/daemon-native-artifact
+      - name: Restore exact native cohort
+        env:
+          NATIVE_TARGET: ${{ matrix.target }}
+        run: tar -xzf "/tmp/daemon-native-artifact/daemon-native-${NATIVE_TARGET}.tgz" -C .
+      - name: Verify and execute isolated Linux ARM cohort
+        if: matrix.platform == 'linux'
+        env:
+          DAEMON_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          bun products/daemon/scripts/ci-artifact.ts verify "$GITHUB_SHA" "$DAEMON_SOURCE_HEAD"
+          node products/daemon/scripts/verify-binary.mjs --binary native/goodvibes-daemon-linux-arm64
+      - name: Verify and execute portable Darwin cohort
+        if: matrix.platform == 'darwin'
+        env:
+          DAEMON_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          node products/daemon/scripts/native-execution-artifact.mjs verify "$GITHUB_SHA" "$DAEMON_SOURCE_HEAD"
+          node products/daemon/scripts/verify-native-execution.mjs "$GITHUB_SHA" "$DAEMON_SOURCE_HEAD"
+
   # Whole E2E and headless files stay together; the complement covers every other file.
   agent-tests:
     name: Agent tests (${{ matrix.group }})
@@ -927,6 +1078,8 @@ jobs:
       - platform-matrix
       - product-tests
       - daemon-native
+      - daemon-native-produce
+      - daemon-native-execution
       - agent-tests
       - agent-tests-complete
       - tui-host-pair-terminal

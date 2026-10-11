@@ -34,7 +34,11 @@ export function parseBunCompileArgs(args: readonly string[]): { entrypoint: stri
   return { entrypoint, outfile, target, external };
 }
 
-export async function compileBunBinary(root: string, args: readonly string[]): Promise<void> {
+export interface BunCompileDefines {
+  readonly define?: Readonly<Record<string, string>>;
+}
+
+export async function compileBunBinary(root: string, args: readonly string[], defines: BunCompileDefines = {}): Promise<void> {
   const options = parseBunCompileArgs(args);
   // The library remains importable by Node; Bun is needed only when compiling.
   const { build } = await import('bun');
@@ -44,6 +48,7 @@ export async function compileBunBinary(root: string, args: readonly string[]): P
     compile: { target: options.target, outfile: resolve(root, options.outfile) },
     external: options.external,
     files: bunCompileCompatibilityFiles(root),
+    ...(defines.define === undefined ? {} : { define: { ...defines.define } }),
   });
   if (!result.success) throw new AggregateError(result.logs, 'Bun compilation failed');
 }
