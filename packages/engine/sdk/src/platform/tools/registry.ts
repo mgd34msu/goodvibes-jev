@@ -271,8 +271,10 @@ function plainMetadata(value: unknown, name: string, seen = new Set<object>()): 
 }
 
 const metadataKeys = Reflect.ownKeys;
-const metadataDescriptor = Object.getOwnPropertyDescriptor;
+const metadataDescriptors: (value: object) => Readonly<Record<PropertyKey, PropertyDescriptor>> = Object.getOwnPropertyDescriptors;
 const metadataPrototype = Object.getPrototypeOf;
+const metadataExtensible = Object.isExtensible;
+const metadataProxy = nodeTypes.isProxy;
 const sameMetadataValue = Object.is;
 
 interface MetadataSlot {
@@ -289,7 +291,8 @@ interface MetadataObject {
 }
 
 /** Pin the complete original graph, including descendants omitted from JSON.
- * The checker only compares fresh descriptors; a change returns to full capture.
+ * Permanently immutable own layouts need no repeated reads, but their mutable
+ * descendants do. Every mismatch returns to the complete original capture.
  */
 function retainPlainMetadata(value: unknown, name: string): () => void {
   const objects: MetadataObject[] = [];
@@ -297,28 +300,32 @@ function retainPlainMetadata(value: unknown, name: string): () => void {
   const unsupported = (): never => { throw new ToolError('Changed autonomous metadata requires full capture', name); };
   const capture = (entry: unknown): void => {
     if (!entry || typeof entry !== 'object' || seen.has(entry)) return;
-    if (nodeTypes.isProxy(entry)) return unsupported();
+    if (metadataProxy(entry)) return unsupported();
     seen.add(entry);
     const prototype: unknown = metadataPrototype(entry);
-    const slots = metadataKeys(entry).map(key => {
-      const descriptor = metadataDescriptor(entry, key);
+    const descriptors = metadataDescriptors(entry);
+    const slots = metadataKeys(descriptors).map(key => {
+      const descriptor = descriptors[key];
       if (!descriptor || !('value' in descriptor)) return unsupported();
       return { key, value: descriptor.value, writable: descriptor.writable,
         enumerable: descriptor.enumerable, configurable: descriptor.configurable };
     });
-    objects.push({ value: entry, prototype, slots });
+    if (metadataExtensible(entry) || slots.some(slot => slot.writable !== false || slot.configurable !== false)) {
+      objects.push({ value: entry, prototype, slots });
+    }
     for (const slot of slots) capture(slot.value);
   };
   capture(value);
   return () => {
     for (const record of objects) {
       if (metadataPrototype(record.value) !== record.prototype) return unsupported();
-      const keys = metadataKeys(record.value);
+      const descriptors = metadataDescriptors(record.value);
+      const keys = metadataKeys(descriptors);
       if (keys.length !== record.slots.length) return unsupported();
       for (let index = 0; index < keys.length; index++) {
         const slot = record.slots[index];
         if (!slot || keys[index] !== slot.key) return unsupported();
-        const descriptor = metadataDescriptor(record.value, slot.key);
+        const descriptor = descriptors[slot.key];
         if (!descriptor || !('value' in descriptor) || !sameMetadataValue(descriptor.value, slot.value)
           || descriptor.writable !== slot.writable || descriptor.enumerable !== slot.enumerable
           || descriptor.configurable !== slot.configurable) return unsupported();

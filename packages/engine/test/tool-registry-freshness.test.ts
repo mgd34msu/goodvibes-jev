@@ -93,7 +93,120 @@ function authorityCounts(f: Fixture) {
   return [f.counts.capture, f.counts.owner, f.counts.result];
 }
 
-test.each(['reordered-enumerable-keys', 'descriptor-flags-only'] as const)(
+function freezeDefinitionParents(f: Fixture): void {
+  Object.freeze(f.parameters.properties.model);
+  Object.freeze(f.parameters.properties);
+  Object.freeze(f.parameters);
+  Object.freeze(f.tool.definition);
+}
+
+function freezeDefinition(f: Fixture): void {
+  Object.freeze(f.parameters.properties.model.enum);
+  Object.freeze(f.parameters.required);
+  freezeDefinitionParents(f);
+}
+
+test('preparation preserves the observable mutability of borrowed metadata', async () => {
+  const f = fixture();
+  const prepared = await f.registry.prepareCall('borrowed-metadata', TOOL_NAME, args(), f.options);
+  for (const value of [f.tool.definition, f.parameters, f.parameters.properties, f.parameters.properties.model,
+    f.parameters.properties.model.enum, f.parameters.required]) expect(Object.isFrozen(value)).toBe(false);
+  f.parameters.properties.model.enum[1] = 'catalog-model-c';
+  let claims = 0;
+  await expectRefusedAsync(() => f.registry.executePrepared(prepared, () => { claims++; }));
+  expect(claims).toBe(0);
+  expect(f.counts).toMatchObject({ bodies: 0, reads: 0, releases: 1 });
+});
+
+test('a complete immutable definition still executes with fresh owner callbacks and one claim', async () => {
+  const f = fixture();
+  freezeDefinition(f);
+  const projected = await f.registry.projectCall('immutable-control', TOOL_NAME, args(), f.options);
+  const prepared = await f.registry.prepareCall('immutable-control', TOOL_NAME, projected.args, f.options);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const before = authorityCounts(f);
+    f.registry.assertProjectedSnapshot(projected);
+    expect(authorityCounts(f)).toEqual(before);
+    f.registry.assertProjected(projected);
+    expect(f.counts.capture).toBeGreaterThan(before[0]!);
+    expect(f.counts.owner).toBeGreaterThan(before[1]!);
+    expect(f.counts.result).toBeGreaterThan(before[2]!);
+  }
+  let claims = 0;
+  let callbacksAtClaim: number[] = [];
+  expect(await f.registry.executePrepared(prepared, () => {
+    claims++; callbacksAtClaim = authorityCounts(f);
+  })).toMatchObject({ success: true });
+  expect(authorityCounts(f)).toEqual(callbacksAtClaim);
+  expect(claims).toBe(1);
+  expect(f.counts).toMatchObject({ bodies: 1, reads: 0, releases: 1 });
+});
+
+test.each(['writable-data', 'configurable-data'] as const)(
+  'nonextensible %s metadata retains mutable-slot checks', async kind => {
+    const f = fixture();
+    const values = f.parameters.properties.model.enum;
+    if (kind === 'configurable-data') Object.defineProperty(values, '1', { writable: false, configurable: true });
+    Object.preventExtensions(values);
+    const prepared = await f.registry.prepareCall('nonextensible-metadata', TOOL_NAME, args(), f.options);
+    const before = authorityCounts(f);
+    if (kind === 'writable-data') values[1] = 'catalog-model-c';
+    else Object.defineProperty(values, '1', { value: 'catalog-model-c' });
+    let claims = 0;
+    await expectRefusedAsync(() => f.registry.executePrepared(prepared, () => { claims++; }));
+    expect(authorityCounts(f)).toEqual(before);
+    expect(claims).toBe(0);
+    expect(f.counts).toMatchObject({ bodies: 0, reads: 0, releases: 1 });
+  },
+);
+
+test.each(['enum-member', 'hidden-getter', 'hidden-proxy'] as const)(
+  'immutable parents retain every mutable descendant for %s', async kind => {
+    const f = fixture();
+    const hidden = { nested: { value: 'synthetic hidden metadata' } };
+    Object.defineProperty(f.tool.definition, 'hidden', { value: hidden });
+    Object.freeze(hidden);
+    freezeDefinitionParents(f);
+    const projected = await f.registry.projectCall('immutable-parent', TOOL_NAME, args(), f.options);
+    const prepared = await f.registry.prepareCall('immutable-parent', TOOL_NAME, projected.args, f.options);
+    const before = authorityCounts(f);
+    let traps = 0;
+    if (kind === 'enum-member') f.parameters.properties.model.enum[1] = 'catalog-model-c';
+    if (kind === 'hidden-getter') Object.defineProperty(hidden.nested, 'value', {
+      get() { traps++; throw new Error(PRIVATE_MARKER); },
+    });
+    if (kind === 'hidden-proxy') Object.defineProperty(hidden.nested, 'value', {
+      value: new Proxy({}, {
+        ownKeys() { traps++; throw new Error(PRIVATE_MARKER); },
+        getOwnPropertyDescriptor() { traps++; throw new Error(PRIVATE_MARKER); },
+        getPrototypeOf() { traps++; throw new Error(PRIVATE_MARKER); },
+      }),
+    });
+    expectRefused(() => f.checkProjectCurrent());
+    expectRefused(() => f.registry.assertProjectedSnapshot(projected));
+    let claims = 0;
+    await expectRefusedAsync(() => f.registry.executePrepared(prepared, () => { claims++; }));
+    expect(authorityCounts(f)).toEqual(before);
+    expect(traps).toBe(0);
+    expect(claims).toBe(0);
+    expect(f.counts).toMatchObject({ bodies: 0, reads: 0, releases: 1 });
+  },
+);
+
+test.each(['capture', 'owner', 'result'] as const)(
+  'a %s callback cannot mutate a descendant of immutable metadata parents', async callback => {
+    const f = fixture();
+    freezeDefinitionParents(f);
+    const projected = await f.registry.projectCall('immutable-parent-callback', TOOL_NAME, args(), f.options);
+    f.controls[callback] = () => { f.parameters.properties.model.enum[1] = `password=${PRIVATE_MARKER}`; };
+    expectRefused(() => f.registry.assertProjected(projected));
+    expect(f.counts).toMatchObject({ bodies: 0, reads: 0 });
+    await f.registry.releaseProjected(projected);
+    expect(f.counts.releases).toBe(1);
+  },
+);
+
+test.each(['reordered-enumerable-keys', 'reordered-original-own-keys', 'descriptor-flags-only'] as const)(
   'fresh captures preserve canonical equivalence for %s through preparation and dispatch', async change => {
     const f = fixture();
     const projected = await f.registry.projectCall('equivalent', TOOL_NAME, args(), f.options);
@@ -104,6 +217,11 @@ test.each(['reordered-enumerable-keys', 'descriptor-flags-only'] as const)(
           properties: { model: { enum: ['catalog-model-a', 'catalog-model-b'], type: 'string' } }, type: 'object' },
         description: f.tool.definition.description, name: TOOL_NAME,
       };
+    } else if (change === 'reordered-original-own-keys') {
+      const descriptor = Object.getOwnPropertyDescriptor(f.tool.definition, 'description');
+      if (!descriptor) throw new Error('Fixture description is missing');
+      expect(Reflect.deleteProperty(f.tool.definition, 'description')).toBe(true);
+      Object.defineProperty(f.tool.definition, 'description', descriptor);
     } else {
       Object.defineProperty(f.tool.definition, 'description', { writable: false, configurable: false });
       Object.defineProperty(f.parameters.properties.model.enum, '0', { writable: false, configurable: false });
@@ -128,6 +246,27 @@ test.each(['reordered-enumerable-keys', 'descriptor-flags-only'] as const)(
     expect(f.counts).toMatchObject({ projects: 1, bodies: 1, reads: 0, releases: 1 });
   },
 );
+
+test('an equal replacement of immutable metadata never becomes the original freshness baseline', async () => {
+  const f = fixture();
+  Object.freeze(f.parameters.properties.model.enum);
+  Object.freeze(f.parameters.properties.model);
+  const projected = await f.registry.projectCall('immutable-child-replacement', TOOL_NAME, args(), f.options);
+  const prepared = await f.registry.prepareCall('immutable-child-replacement', TOOL_NAME, projected.args, f.options);
+  f.parameters.properties.model = { type: 'string', enum: ['catalog-model-a', 'catalog-model-b'] };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    f.registry.assertProjectedSnapshot(projected);
+    f.registry.assertPrepared(prepared);
+  }
+  const before = authorityCounts(f);
+  f.parameters.properties.model.enum[1] = 'catalog-model-c';
+  expectRefused(() => f.registry.assertProjectedSnapshot(projected));
+  let claims = 0;
+  await expectRefusedAsync(() => f.registry.executePrepared(prepared, () => { claims++; }));
+  expect(authorityCounts(f)).toEqual(before);
+  expect(claims).toBe(0);
+  expect(f.counts).toMatchObject({ bodies: 0, reads: 0, releases: 1 });
+});
 
 const definitionChanges = [
   { name: 'changed-enum-member', mutate(f: Fixture) { f.parameters.properties.model.enum[1] = 'catalog-model-c'; } },
@@ -237,9 +376,13 @@ test.each(['overlong-string', 'too-many-nodes', 'oversized-sparse-array', 'too-d
   },
 );
 
-test.each(['executor', 'projector', 'owner-callback', 'owner-signal-identity', 'registration', 'owner-abort', 'caller-abort', 'result-abort', 'capture-authority'] as const)(
-  'an unchanged schema never caches authority across %s revocation', async revoke => {
+const authorityRevocations = ['executor', 'projector', 'owner-callback', 'owner-signal-identity', 'registration',
+  'owner-abort', 'caller-abort', 'result-abort', 'capture-authority'] as const;
+
+test.each(['mutable', 'immutable'].flatMap(layout => authorityRevocations.map(revoke => ({ layout, revoke }))))(
+  'an unchanged $layout schema never caches authority across $revoke revocation', async ({ layout, revoke }) => {
     const f = fixture();
+    if (layout === 'immutable') freezeDefinition(f);
     const projected = await f.registry.projectCall('revoked', TOOL_NAME, args(), f.options);
     const prepared = await f.registry.prepareCall('revoked', TOOL_NAME, projected.args, f.options);
     const revision = prepared.schemaRevision;
