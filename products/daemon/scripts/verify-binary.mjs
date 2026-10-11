@@ -60,7 +60,7 @@ try {
   // Only OS libraries and this owned fixture are mounted. The checkout and
   // its source/node_modules do not exist in the child filesystem namespace.
   const boundary = ['--die-with-parent', '--new-session', '--unshare-user', '--unshare-pid', '--unshare-ipc', '--unshare-uts',
-    '--ro-bind', '/usr', '/usr', '--ro-bind', '/lib', '/lib', '--ro-bind', '/lib64', '/lib64',
+    '--ro-bind', '/usr', '/usr', '--ro-bind', '/lib', '/lib', ...(process.arch === 'arm64' ? [] : ['--ro-bind', '/lib64', '/lib64']),
     '--proc', '/proc', '--dev', '/dev', '--bind', root, root, '--chdir', work, '--'];
   const env = { PATH: '/usr/bin:/bin', HOME: home, TMPDIR: join(root, 'tmp'), XDG_CONFIG_HOME: join(root, 'xdg'),
     GOODVIBES_HOME: tree, GOODVIBES_DAEMON_HOME: daemon, GOODVIBES_WORKING_DIR: work, NO_COLOR: '1', GOODVIBES_SKIP_WAKE_MODEL_DOWNLOAD: '1' };
