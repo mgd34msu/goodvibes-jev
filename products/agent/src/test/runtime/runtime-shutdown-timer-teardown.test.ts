@@ -46,9 +46,11 @@
  */
 
 import { beforeAll, expect, test } from 'bun:test';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
+import { withRunTmpDir } from '../../../../../packages/engine/toolchain/src/test-runner/test-run-tmp.ts';
 import type { ShutdownProbeReport } from '../fixtures/runtime-shutdown-probe.ts';
+import { projectTestTmpRoot } from '../helpers/project-temp.ts';
 
 /**
  * Modules that own repeating work started by the runtime graph. A handle
@@ -76,21 +78,40 @@ const PROBE = join(import.meta.dir, '..', 'fixtures', 'runtime-shutdown-probe.ts
 let report: ShutdownProbeReport;
 
 beforeAll(async () => {
-  const proc = Bun.spawn(['bun', 'run', PROBE], {
-    cwd: join(import.meta.dir, '..', '..', '..'),
-    stdout: 'pipe',
-    stderr: 'pipe',
+  const deadline = Date.now() + 120_000;
+  // The probe's immediate parent must issue its checkout-root lease. The
+  // suite runner's inherited lease belongs to this process's parent.
+  await withRunTmpDir(dirname(projectTestTmpRoot()), async (projectRoot) => {
+    const proc = Bun.spawn(['bun', '--no-env-file', 'run', '--preload',
+      join(import.meta.dir, '../../../../../packages/engine/toolchain/src/test-runner/test-network-preload.ts'),
+      PROBE], {
+      cwd: join(import.meta.dir, '..', '..', '..'),
+      env: { ...process.env, GOODVIBES_TEST_PROJECT_TMP_ROOT: projectRoot },
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: Math.max(1, deadline - Date.now()),
+      killSignal: 'SIGKILL',
+    });
+    const reads = [
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ] as const;
+    const drained = Promise.all(reads);
+    try {
+      const [stdout, stderr, exitCode] = await drained;
+      const line = stdout.split('\n').find((entry) => entry.startsWith('__PROBE__'));
+      if (exitCode !== 0 || !line) {
+        throw new Error(`shutdown probe produced no successful report (exit ${exitCode}).\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+      }
+      report = JSON.parse(line.slice('__PROBE__'.length)) as ShutdownProbeReport;
+    } finally {
+      proc.kill('SIGKILL');
+      await proc.exited;
+      // Keep the lease until both streams have settled, including a failed run.
+      await Promise.allSettled(reads);
+    }
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  const line = stdout.split('\n').find((entry) => entry.startsWith('__PROBE__'));
-  if (!line) {
-    throw new Error(`shutdown probe produced no report (exit ${exitCode}).\nstdout:\n${stdout}\nstderr:\n${stderr}`);
-  }
-  report = JSON.parse(line.slice('__PROBE__'.length)) as ShutdownProbeReport;
   // The probe's own drain budget is 10s; give the subprocess room above it so a
   // regression reads as the pollers that survived rather than as a timeout.
 }, 120_000);
