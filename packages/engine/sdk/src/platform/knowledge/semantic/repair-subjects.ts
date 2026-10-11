@@ -57,17 +57,24 @@ async function prepareRepairSubjects(input: RepairSubjectInput): Promise<RepairS
     const references = { source, extraction, proof: captureKnowledgeSourceReferences(store, source, extraction) };
     return { source, extraction, references };
   });
-  const excludedAdmissions = input.nodes.filter((node): node is KnowledgeNodeRecord => node !== undefined && input.excludedNodeIds?.includes(node.id) === true)
-    .map(node => prepareKnowledgeRecordAdmission(store, 'node', node));
-  const admissions = [
-    ...evidence.flatMap(({ source, extraction, references }) => [prepareKnowledgeRecordAdmission(store, 'source', source, references),
-      ...(extraction ? [prepareKnowledgeRecordAdmission(store, 'extraction', extraction, references)] : [])]),
-    ...input.nodes.filter((node): node is KnowledgeNodeRecord => node !== undefined && !input.excludedNodeIds?.includes(node.id))
-      .map(node => prepareKnowledgeRecordAdmission(store, 'node', node)),
-    ...('gap' in context ? [prepareKnowledgeRecordAdmission(store, 'node', context.gap)]
-      : [prepareKnowledgeRecordAdmission(store, 'source', context.source, references),
+  const captureAdmissions = () => {
+    const excludedAdmissions = input.nodes.filter((node): node is KnowledgeNodeRecord => node !== undefined && input.excludedNodeIds?.includes(node.id) === true)
+      .map(node => prepareKnowledgeRecordAdmission(store, 'node', node));
+    const admissions = [
+      ...evidence.flatMap(({ source, extraction, references }) => [prepareKnowledgeRecordAdmission(store, 'source', source, references),
         ...(extraction ? [prepareKnowledgeRecordAdmission(store, 'extraction', extraction, references)] : [])]),
-  ];
+      ...input.nodes.filter((node): node is KnowledgeNodeRecord => node !== undefined && !input.excludedNodeIds?.includes(node.id))
+        .map(node => prepareKnowledgeRecordAdmission(store, 'node', node)),
+      ...('gap' in context ? [prepareKnowledgeRecordAdmission(store, 'node', context.gap)]
+        : [prepareKnowledgeRecordAdmission(store, 'source', context.source, references),
+          ...(extraction ? [prepareKnowledgeRecordAdmission(store, 'extraction', extraction, references)] : [])]),
+    ];
+    return { excludedAdmissions, admissions };
+  };
+  let captured: ReturnType<typeof captureAdmissions> | undefined;
+  store.assertRecordSnapshotFrame(() => { captured = captureAdmissions(); });
+  if (!captured) throw new Held('stale');
+  const { excludedAdmissions, admissions } = captured;
   assertKnowledgeRecordContainers(data(), [...admissions, ...excludedAdmissions]);
   // Explicit entity overlays are absent from this decision, but their complete
   // original rows still receive privacy admission before the authorized overwrite.

@@ -47,12 +47,17 @@ export async function prepareRepairSourceAuthorities(input: {
   const gapRecord = store.getNode(input.gap.id);
   const references = input.sources.map(({ source, extraction }) => captureKnowledgeSourceReferences(store, source, extraction));
   const structural = snapshot.sources.map(({ source, extraction }, index) => projectKnowledgeSourceReferences(source, extraction, references[index]));
-  const admissions = [prepareKnowledgeRecordAdmission(store, 'node', input.gap),
-    ...input.subjects.map(subject => prepareKnowledgeRecordAdmission(store, 'node', subject)),
-    ...input.sources.flatMap(({ source, extraction }, index) => [
-      prepareKnowledgeRecordAdmission(store, 'source', source, { source, extraction, proof: references[index] }),
-      prepareKnowledgeRecordAdmission(store, 'extraction', extraction, { source, extraction, proof: references[index] }),
-    ])];
+  let capturedAdmissions: ReturnType<typeof prepareKnowledgeRecordAdmission>[] | undefined;
+  store.assertRecordSnapshotFrame(() => {
+    capturedAdmissions = [prepareKnowledgeRecordAdmission(store, 'node', input.gap),
+      ...input.subjects.map(subject => prepareKnowledgeRecordAdmission(store, 'node', subject)),
+      ...input.sources.flatMap(({ source, extraction }, index) => [
+        prepareKnowledgeRecordAdmission(store, 'source', source, { source, extraction, proof: references[index] }),
+        prepareKnowledgeRecordAdmission(store, 'extraction', extraction, { source, extraction, proof: references[index] }),
+      ])];
+  });
+  if (!capturedAdmissions) throw new Held('stale');
+  const admissions = capturedAdmissions;
   assertKnowledgeRecordContainers(originals, admissions);
   const sameSpace = (record: KnowledgeSourceRecord | KnowledgeExtractionRecord | KnowledgeNodeRecord) => {
     if (getKnowledgeSpaceId(record) !== spaceId) throw new Held('foreign-space');
