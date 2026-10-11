@@ -315,9 +315,9 @@ async function markNodeStale(
     confidence: node.confidence,
     sourceId: node.sourceId,
     metadata: buildHomeGraphMetadata(spaceId, installationId, {
-      ...node.metadata,
+      ...knowledgeRawRepresentation(node).metadata,
       staleReason,
-      staleAt,
+      staleAt: knowledgeClockIso(staleAt),
     }),
   });
 }
@@ -330,7 +330,8 @@ async function markSourceStale(
   staleReason: string,
   staleAt: number,
 ): Promise<void> {
-  await store.upsertSource({
+  const raw = knowledgeRawRepresentation(source);
+  const input = {
     id: source.id,
     connectorId: source.connectorId,
     sourceType: source.sourceType,
@@ -341,18 +342,22 @@ async function markSourceStale(
     description: source.description,
     tags: source.tags,
     folderPath: source.folderPath,
-    status: 'stale',
+    status: 'stale' as const,
     artifactId: source.artifactId,
     contentHash: source.contentHash,
     lastCrawledAt: source.lastCrawledAt,
     crawlError: source.crawlError,
     sessionId: source.sessionId,
     metadata: buildHomeGraphMetadata(spaceId, installationId, {
-      ...source.metadata,
+      ...raw.metadata,
       staleReason,
-      staleAt,
+      staleAt: knowledgeClockIso(staleAt),
     }),
-  });
+  };
+  await store.upsertSource(retainKnowledgeRepresentation(input, {
+    ...knowledgeRawRepresentation(input),
+    lastCrawledAt: raw.lastCrawledAt,
+  }));
 }
 
 function snapshotRetirementObjectKinds(input: HomeGraphSnapshotInput): ReadonlySet<string> {
