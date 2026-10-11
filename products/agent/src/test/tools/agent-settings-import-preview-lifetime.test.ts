@@ -27,6 +27,7 @@ import { cleanupResearchScreeningFixtures, researchScreeningFixture } from '../h
 import { createTestProviderRegistry } from '../helpers/test-managers.ts';
 
 type ExecuteOptions = NonNullable<Parameters<Tool['execute']>[1]>;
+type AdmissionResult = Pick<Awaited<ReturnType<Tool['execute']>>, 'success' | 'error' | 'output'>;
 const request = () => ({ mode: 'run_workspace_action', actionId: 'import-goodvibes-tui-settings' });
 let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => { previous = installJudgmentPort(undefined); });
@@ -76,7 +77,7 @@ function fixture(screening: Parameters<typeof researchScreeningFixture>[0] = {})
       }
     },
     async admitted(args: Record<string, unknown>, mode: 'prompt' | 'plan' = 'prompt', afterCapture?: () => void,
-      afterBody?: (result: Awaited<ReturnType<Tool['execute']>>) => void, executeOptions?: ExecuteOptions) {
+      afterBody?: (result: Awaited<ReturnType<Tool['execute']>>) => void, executeOptions?: ExecuteOptions): Promise<AdmissionResult> {
       config.set('permissions.mode', mode);
       const manager = new PermissionManager(undefined, createPermissionConfigReader(config), new PolicyRuntimeState());
       const registry = new ToolRegistry(manager);
@@ -175,8 +176,8 @@ describe('workspace settings import preview lifetime', () => {
       expect(completedBodies).toBe(1);
       expect(readFileSync(f.path, 'utf8')).toBe(original);
       expect(f.config.get('behavior.saveHistory')).toBe(!f.nextSaveHistory);
-      expect(f.config.getConfigurationIncarnation()).toBe(configIncarnation);
-      expect(readFileSync(f.config.getConfigPath(), 'utf8')).toBe(configBytes);
+      expect(f.config.getConfigurationIncarnation()).toBe<typeof configIncarnation>(configIncarnation);
+      expect(readFileSync(f.config.getConfigPath(), 'utf8')).toBe<typeof configBytes>(configBytes);
       expect(await f.secrets.get(buildGoodVibesSecretKey('surfaces.slack.botToken'))).toBeNull();
       expect(result.success).toBe(false);
       expect(result.output).toBeUndefined();
