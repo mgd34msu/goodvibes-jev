@@ -665,8 +665,9 @@ export async function describePersonalOpsLane(context: CommandContext, args: Age
   }
   const normalized = input.toLowerCase();
   const tools = await mcpToolRecords(context, options);
+  const exactLane = args.laneId === 'notes' || args.laneId === 'reminders' ? args.laneId : undefined;
   const lanes = await buildLanes(context, {
-    ...options, toolsByServer: toolsByServer(tools), schemasByQualifiedName: await mcpToolSchemas(context, tools, options) });
+    ...options, toolsByServer: toolsByServer(tools), schemasByQualifiedName: await mcpToolSchemas(context, tools, options) }, exactLane);
   options.signal?.throwIfAborted();
   const exact = lanes.find((lane) => lane.id === normalized);
   if (exact) return { status: 'found', lane: describeLane(exact, true) };

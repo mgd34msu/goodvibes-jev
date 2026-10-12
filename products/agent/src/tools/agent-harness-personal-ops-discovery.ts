@@ -39,6 +39,11 @@ export function partitionInvokableMethods(methods: readonly OperatorContractMeth
   return { available: ids(true), unavailable: ids(false) };
 }
 
+/** Retain the complete native contract source without selecting an unrelated lane. */
+export async function retainPersonalOpsContractSource(options: CatalogRankingOptions): Promise<void> {
+  await readContractMethodLanes([], options);
+}
+
 export async function contractMethodsForLane(lane: DiscoveryLane, options: CatalogRankingOptions): Promise<{
   readonly available: readonly string[]; readonly unavailable: readonly string[];
 }> {

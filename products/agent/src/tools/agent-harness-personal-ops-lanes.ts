@@ -3,7 +3,7 @@ import { withModelReadingSource } from './agent-harness-model-reading-source.ts'
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext } from '../input/command-registry.ts';
 import { buildAgentWorkspaceRuntimeSnapshot } from '../input/agent-workspace-snapshot.ts';
-import { calendarWorkflows, connectorSignalsMatching, inboxWorkflows, contractMethodsForLanes, reminderWorkflows, taskWorkflows } from './agent-harness-personal-ops-discovery.ts';
+import { calendarWorkflows, connectorSignalsMatching, inboxWorkflows, contractMethodsForLane, contractMethodsForLanes, retainPersonalOpsContractSource, reminderWorkflows, taskWorkflows } from './agent-harness-personal-ops-discovery.ts';
 import { providerBackedQueueRecords } from './agent-harness-personal-ops-provider-records.ts';
 import { providerBackedReminderRecords, providerBackedTaskRecords } from './agent-harness-personal-ops-provider-task-records.ts';
 import { channelRecords, connectorRecords, localRecord, refreshableSavedRecordCount, reminderOperationRecords, routineReceiptRecord, savedProviderEffectReceiptRecords, savedReviewArtifactRecords, savedReviewQueueRecords, taskOperationRecords } from './agent-harness-personal-ops-records.ts';
@@ -17,13 +17,70 @@ import type { McpToolRecord, McpToolSchema, PersonalOpsLane, PersonalOpsLiveReco
 // The composer stays as tested internal code; do not re-advertise it here until
 // the sent-corpus input and a real compose route ship together.
 
+function notesLane(snapshot: ReturnType<typeof buildAgentWorkspaceRuntimeSnapshot>): PersonalOpsLane {
+  return {
+    id: 'notes',
+    label: 'Notes',
+    status: 'ready',
+    outcome: 'Capture working context, source triage, decisions, and handoff notes without polluting durable memory.',
+    current: `Agent-local notes are available: ${snapshot.localNoteCount} note(s), ${snapshot.localNoteReviewQueueCount} needing review.`,
+    next: snapshot.localNoteCount > 0
+      ? 'Review or promote selected notes into memory, skills, routines, or Agent Knowledge when useful.'
+      : 'Create a note from the Personal Ops or Notes workspace when the next decision or source needs tracking.',
+    userRoute: 'Agent Workspace -> Personal Ops -> Create note',
+    modelRoute: 'agent_local_registry domain:"notes" action:"create"',
+    signals: [
+      `${snapshot.localNoteCount} local note(s)`,
+      `${snapshot.localNoteReviewQueueCount} note(s) in review queue`,
+    ],
+    liveRecords: snapshot.localNotes.slice(0, 5).map((note) => localRecord('note', note)),
+  };
+}
+
+function remindersLane(scheduleMethods: readonly string[], reminderProviderRecords: readonly PersonalOpsLiveRecord[],
+  reminderEffectReceiptRecords: readonly PersonalOpsLiveRecord[], configuredTargets: number, readyChannels: number): PersonalOpsLane {
+  return {
+    id: 'reminders',
+    label: 'Reminders',
+    status: reminderProviderRecords.length > 0 || scheduleMethods.length > 0 || reminderEffectReceiptRecords.length > 0 ? 'ready' : 'partial',
+    outcome: 'Turn a user request into a visible reminder or autonomous schedule with delivery target and cancellation path.',
+    current: reminderProviderRecords.length > 0
+      ? `Fresh provider-backed reminder records are published by the connected daemon or SDK read model; Agent can review ${reminderProviderRecords.length} current reminder record(s) before any edit, snooze, complete, or delete route.`
+      : reminderEffectReceiptRecords.length > 0
+        ? 'Saved reminder provider-effect receipts are available for audit and follow-up; no fresh reminder provider record is currently ready.'
+      : `Reminder and autonomous schedule creation are available through Agent tools; ${scheduleMethods.length} schedule/reminder daemon method(s) are discoverable.`,
+    next: reminderProviderRecords.length > 0
+      ? 'Inspect one provider reminder record, then use only a published confirmed follow-up route for edits, snooze, completion, cancellation, or delete.'
+      : reminderEffectReceiptRecords.length > 0
+        ? 'Review saved reminder provider-effect receipts, then repair or refresh the reminder provider before another provider update.'
+      : 'Create one confirmed reminder or autonomous schedule with title, time, scope, delivery target, success criteria, and explicit user request.',
+    userRoute: 'Agent Workspace -> Personal Ops -> Create reminder',
+    modelRoute: 'schedule action:"remind|create"',
+    signals: [
+      `${reminderProviderRecords.length} fresh provider-backed reminder record(s)`,
+      `${reminderEffectReceiptRecords.length} saved reminder provider-effect receipt(s)`,
+      `${scheduleMethods.length} schedule/reminder daemon method(s)`,
+      `${configuredTargets} configured delivery target(s)`,
+    ],
+    methodIds: scheduleMethods,
+    workflows: reminderWorkflows(scheduleMethods, configuredTargets > 0 || readyChannels > 0),
+    liveRecords: [
+      ...reminderProviderRecords,
+      ...reminderEffectReceiptRecords,
+      ...reminderOperationRecords(scheduleMethods, configuredTargets > 0 || readyChannels > 0),
+    ],
+  };
+}
+
 export async function buildLanes(
   context: CommandContext,
   options: CatalogRankingOptions & {
     readonly toolsByServer?: ReadonlyMap<string, readonly McpToolRecord[]>;
     readonly schemasByQualifiedName?: ReadonlyMap<string, McpToolSchema>;
   } = {},
+  exactLane?: 'notes' | 'reminders',
 ): Promise<readonly PersonalOpsLane[]> {
+  if (exactLane !== undefined && exactLane !== 'notes' && exactLane !== 'reminders') throw new ToolInputProjectionError('invalid');
   const optionsCurrent = captureCatalogMethods(options, ['signal', 'assertCurrent', 'retainCurrent', 'sourceOwner', 'toolsByServer', 'schemasByQualifiedName']);
   const signal = options.signal, callerCurrent = options.assertCurrent, retainCurrent = options.retainCurrent;
   const sourceOwner = options.sourceOwner;
@@ -67,10 +124,17 @@ export async function buildLanes(
   // method the contract marks invokable:false has no serving route, so it
   // must not make a lane read "ready"/"partial". The unavailable lists feed
   // honest degraded wording instead.
-  const { inbox: email, calendar, tasks, reminders } = await readChild(() => contractMethodsForLanes(childOptions));
-  const emailMethods = email.available, unavailableEmailMethods = email.unavailable;
-  const calendarMethods = calendar.available, unavailableCalendarMethods = calendar.unavailable;
-  const taskMethods = tasks.available, scheduleMethods = reminders.available;
+  let contract: { readonly scope: 'all'; readonly values: Awaited<ReturnType<typeof contractMethodsForLanes>> }
+    | { readonly scope: 'reminders'; readonly values: Awaited<ReturnType<typeof contractMethodsForLane>> }
+    | { readonly scope: 'notes' };
+  if (exactLane === 'notes') {
+    await readChild(() => retainPersonalOpsContractSource(childOptions));
+    contract = { scope: 'notes' };
+  } else if (exactLane === 'reminders') {
+    contract = { scope: 'reminders', values: await readChild(() => contractMethodsForLane('reminders', childOptions)) };
+  } else {
+    contract = { scope: 'all', values: await readChild(() => contractMethodsForLanes(childOptions)) };
+  }
   const toolsByName = options.toolsByServer ?? new Map<string, readonly McpToolRecord[]>();
   const schemasByQualifiedName = options.schemasByQualifiedName ?? new Map<string, McpToolSchema>();
   const emailConnectors = await readChild(() => connectorSignalsMatching(context, { ...childOptions, lane: 'inbox', toolsByServer: toolsByName, schemasByQualifiedName }));
@@ -97,6 +161,13 @@ export async function buildLanes(
     && routine.reviewState === 'reviewed'
     && (routine.missingRequirementCount ?? 0) === 0
   )).length;
+  if (contract.scope === 'notes') return [notesLane(snapshot)];
+  if (contract.scope === 'reminders') return [remindersLane(contract.values.available, reminderProviderRecords,
+    reminderEffectReceiptRecords, configuredTargets, readyChannels)];
+  const { inbox: email, calendar, tasks, reminders } = contract.values;
+  const emailMethods = email.available, unavailableEmailMethods = email.unavailable;
+  const calendarMethods = calendar.available, unavailableCalendarMethods = calendar.unavailable;
+  const taskMethods = tasks.available, scheduleMethods = reminders.available;
   return [
     {
       id: 'inbox',
@@ -208,23 +279,7 @@ export async function buildLanes(
         ...connectorRecords(calendarConnectors, 'Calendar', 'calendar'),
       ],
     },
-    {
-      id: 'notes',
-      label: 'Notes',
-      status: 'ready',
-      outcome: 'Capture working context, source triage, decisions, and handoff notes without polluting durable memory.',
-      current: `Agent-local notes are available: ${snapshot.localNoteCount} note(s), ${snapshot.localNoteReviewQueueCount} needing review.`,
-      next: snapshot.localNoteCount > 0
-        ? 'Review or promote selected notes into memory, skills, routines, or Agent Knowledge when useful.'
-        : 'Create a note from the Personal Ops or Notes workspace when the next decision or source needs tracking.',
-      userRoute: 'Agent Workspace -> Personal Ops -> Create note',
-      modelRoute: 'agent_local_registry domain:"notes" action:"create"',
-      signals: [
-        `${snapshot.localNoteCount} local note(s)`,
-        `${snapshot.localNoteReviewQueueCount} note(s) in review queue`,
-      ],
-      liveRecords: snapshot.localNotes.slice(0, 5).map((note) => localRecord('note', note)),
-    },
+    notesLane(snapshot),
     {
       id: 'tasks',
       label: 'Tasks',
@@ -256,37 +311,7 @@ export async function buildLanes(
         ...taskOperationRecords(taskMethods),
       ],
     },
-    {
-      id: 'reminders',
-      label: 'Reminders',
-      status: reminderProviderRecords.length > 0 || scheduleMethods.length > 0 || reminderEffectReceiptRecords.length > 0 ? 'ready' : 'partial',
-      outcome: 'Turn a user request into a visible reminder or autonomous schedule with delivery target and cancellation path.',
-      current: reminderProviderRecords.length > 0
-        ? `Fresh provider-backed reminder records are published by the connected daemon or SDK read model; Agent can review ${reminderProviderRecords.length} current reminder record(s) before any edit, snooze, complete, or delete route.`
-        : reminderEffectReceiptRecords.length > 0
-          ? 'Saved reminder provider-effect receipts are available for audit and follow-up; no fresh reminder provider record is currently ready.'
-        : `Reminder and autonomous schedule creation are available through Agent tools; ${scheduleMethods.length} schedule/reminder daemon method(s) are discoverable.`,
-      next: reminderProviderRecords.length > 0
-        ? 'Inspect one provider reminder record, then use only a published confirmed follow-up route for edits, snooze, completion, cancellation, or delete.'
-        : reminderEffectReceiptRecords.length > 0
-          ? 'Review saved reminder provider-effect receipts, then repair or refresh the reminder provider before another provider update.'
-        : 'Create one confirmed reminder or autonomous schedule with title, time, scope, delivery target, success criteria, and explicit user request.',
-      userRoute: 'Agent Workspace -> Personal Ops -> Create reminder',
-      modelRoute: 'schedule action:"remind|create"',
-      signals: [
-        `${reminderProviderRecords.length} fresh provider-backed reminder record(s)`,
-        `${reminderEffectReceiptRecords.length} saved reminder provider-effect receipt(s)`,
-        `${scheduleMethods.length} schedule/reminder daemon method(s)`,
-        `${configuredTargets} configured delivery target(s)`,
-      ],
-      methodIds: scheduleMethods,
-      workflows: reminderWorkflows(scheduleMethods, configuredTargets > 0 || readyChannels > 0),
-      liveRecords: [
-        ...reminderProviderRecords,
-        ...reminderEffectReceiptRecords,
-        ...reminderOperationRecords(scheduleMethods, configuredTargets > 0 || readyChannels > 0),
-      ],
-    },
+    remindersLane(scheduleMethods, reminderProviderRecords, reminderEffectReceiptRecords, configuredTargets, readyChannels),
     {
       id: 'routines',
       label: 'Routines',
