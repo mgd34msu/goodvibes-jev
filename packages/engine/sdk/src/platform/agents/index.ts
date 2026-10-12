@@ -21,3 +21,6 @@ export * from './orchestrator.js';
 export type { TurnInjectionRecord } from './turn-knowledge-injection.js';
 export * from './session.js';
 export * from './worktree.js';
+
+export * from './archetype-family.js';
+export * from './planning-goal.js';

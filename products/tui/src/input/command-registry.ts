@@ -108,6 +108,10 @@ export interface CommandUiActions {
   shareReading?: import('./commands/schedule-reading-lifetime.ts').ScheduleReadingLifetime;
   /** Owned natural-language schedule submission; revoked by the same shell lifecycle. */
   scheduleReading?: import('./commands/schedule-reading-lifetime.ts').ScheduleReadingLifetime;
+  /** Owned archetype listing; retired by Escape/session changes/shutdown. */
+  teamworkReading?: import('./commands/schedule-reading-lifetime.ts').ScheduleReadingLifetime;
+  /** Owned free planning-goal observation with the same shell lifetime. */
+  planningReading?: import('./commands/schedule-reading-lifetime.ts').ScheduleReadingLifetime;
   /**
    * Cancel JUST the currently-running tool call (the live transcript row),
    * leaving the turn to continue, the local-session equivalent of the
@@ -214,6 +218,8 @@ export interface CommandShellUiOpeners {
    */
   openModal?: (name: string) => void;
   openSessionPicker?: () => void;
+  /** Resume a saved session through the runtime's native resume owner. */
+  resumeSession?: (sessionId: string) => Promise<void>;
   openProfilePicker?: () => void;
   openShortcutsOverlay?: () => void;
   getScrollTop?: () => number;

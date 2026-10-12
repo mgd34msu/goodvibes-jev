@@ -3,14 +3,8 @@ import { routeNativeConversationInput } from '../../runtime/native-conversation-
 import { openModalCommand, requirePlanManager } from './runtime-services.ts';
 import { togglePlanMode, permissionModeLabel, type PermissionModeValue } from '../../core/permission-mode.ts';
 import { parsePlanningActionTarget } from './planning-action-target.ts';
-
-/**
- * Single-token verbs that look like a `/project-plan` subcommand but are not real ones.
- * A lone one of these is refused rather than submitted as a new native goal.
- * Explicit historical `dismiss`, `answer` and `approve` commands are handled
- * separately and never enter native intake.
- */
-const PSEUDO_SUBCOMMAND_VERBS = new Set(['pause', 'stop', 'cancel']);
+import { readPlanningGoal } from '@goodvibes-jev/engine/sdk/platform/agents';
+import { beginCommandReading } from './command-reading-lifetime.ts';
 
 export function registerPlanningRuntimeCommands(registry: CommandRegistry): void {
   registry.register({
@@ -20,6 +14,7 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
     usage: '[panel | history | approve | dismiss | answer <n> <text> | list | show <id> | mode | explain | override <strategy> | status | clear | <planning goal>]',
     argsHint: '[panel|history|<goal>]',
     async handler(args, ctx) {
+      ctx.planningReading?.cancel();
       const plannerSubs = ['mode', 'explain', 'override', 'status', 'clear'];
       if (args.length > 0 && plannerSubs.includes(args[0].toLowerCase())) {
         const result = ctx.ops.planRuntime
@@ -190,21 +185,6 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
         return;
       }
 
-      // Defense (review finding): a single verb-looking token is almost never a
-      // real planning goal, it is a mistyped or removed subcommand. The
-      // Planning modal used to dispatch `/plan dismiss`, which has no
-      // subcommand and silently fell through to this free-form branch, seeding
-      // the goal with the literal "dismiss". Refuse to seed on a lone
-      // known-or-formerly-planned verb and point at the real usage instead of
-      // corrupting the goal.
-      if (args.length === 1 && PSEUDO_SUBCOMMAND_VERBS.has(args[0].toLowerCase())) {
-        ctx.print(
-          `Unknown /project-plan subcommand "${args[0]}": did you mean panel, history, list, show, or status? ` +
-          `To submit a new native request, use /project-plan <a real sentence describing the change>.`,
-        );
-        return;
-      }
-
       const source = directOwnerPlanningInput(ctx);
       if (!source) {
         ctx.print('Submit a new request from the terminal with /project-plan <goal> or /planning <goal>. Original owner input is required.');
@@ -215,9 +195,31 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
         ctx.print('Native conversation intake is unavailable. No ordinary turn or historical planning state was started.');
         return;
       }
-      await routeNativeConversationInput({ intake: ctx.nativeConversationIntake, source,
-        notify: line => ctx.print(line), dispatch: ctx.dispatchNativeIntakeTurn });
-      ctx.renderRequest();
+      let submission: ReturnType<typeof beginCommandReading> | undefined;
+      let enteredNativeIntake = false;
+      try {
+        submission = beginCommandReading(ctx, args, 'planningReading');
+        const reading = await readPlanningGoal(source, { signal: submission.signal, assertCurrent: submission.assertCurrent });
+        reading.assertCurrent(); submission.assertCurrent();
+        if (reading.conclusion !== 'goal') {
+          ctx.print(reading.conclusion === 'command'
+            ? 'This text does not state a planning goal. Use /project-plan <a change to make>, or an explicit planning command.'
+            : 'Planning goal reading is unsettled. No native request was submitted.');
+          return;
+        }
+        // Reading ownership ends at the exact native handoff. The existing
+        // durable intake owns admission, cancellation, retries and recovery.
+        reading.assertCurrent(); submission.assertCurrent();
+        submission.finish();
+        enteredNativeIntake = true;
+        await routeNativeConversationInput({ intake: ctx.nativeConversationIntake, source,
+          notify: line => ctx.print(line), dispatch: ctx.dispatchNativeIntakeTurn });
+        ctx.renderRequest();
+      } catch {
+        if (!submission?.signal.aborted) ctx.print(enteredNativeIntake
+          ? 'Planning submission requires inspection. Use /work intake-status to inspect any durable native input.'
+          : 'Planning goal reading is unavailable or retired. No native request was submitted.');
+      } finally { submission?.finish(); }
     },
   });
 

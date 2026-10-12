@@ -139,3 +139,9 @@ registry.register(localEngineFailureReading);
 // Owner profile: named People prose, never read/disclosure authority.
 import { profilePersonLine } from '../owner-profile/person-reading.js';
 registry.register(profilePersonLine);
+
+// Native archetype purpose and complete owner planning text.
+import { archetypeFamily } from '../agents/batteries/archetype-family.js';
+import { planningGoal } from '../agents/batteries/planning-goal.js';
+registry.register(archetypeFamily);
+registry.register(planningGoal);

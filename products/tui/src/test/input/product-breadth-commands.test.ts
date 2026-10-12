@@ -1,7 +1,12 @@
 import { seedBenchmarkCacheFixture } from '../helpers/benchmark-cache-fixture.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fieldKind } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { isDeepStrictEqual } from 'node:util';
 import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import { recordedBuiltinArchetypes, recordedFamilyPort } from '../helpers/teamwork-family-reading.ts';
+import { ScheduleReadingLifetime } from '../../input/commands/schedule-reading-lifetime.ts';
+import { createTaskManager } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { SurfaceModalHost } from '../../input/surface-modal-host.ts';
 import { ConversationManager } from '../../core/conversation.ts';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -2204,32 +2209,34 @@ describe('product breadth commands', () => {
     const out: string[] = [];
     const created: Array<{ kind: string; owner: string; title: string; description?: string }> = [];
     const ctx = makeContext(out) as ReturnType<typeof makeContext> & { clients?: NonNullable<CommandContext['clients']> };
-    ctx.clients = {
-      ...ctx.clients,
-      opsApi: {
-        tasks: {
-          snapshot: () => ({ tasks: [] }),
-          list: () => [],
-          get: () => null,
-          running: () => [],
-          create(input) {
-            created.push(input);
-            return { id: `task-${created.length}` } as never;
-          },
-          update: () => ({ id: 'task-update' } as never),
-          complete: () => ({ id: 'task-complete' } as never),
-          fail: () => ({ id: 'task-fail' } as never),
-          cancel: () => {},
-          pause: () => {},
-          resume: () => {},
-          retry: () => {},
-        },
-        agents: {
-          cancel: () => {},
-        },
-      },
-    };
-
+    const readModels = ctx.platform.readModels;
+    if (!readModels) throw new Error('Native task read model is required.');
+    const taskManager = createTaskManager(runtimeServices.runtimeStore, runtimeServices.runtimeBus, ctx.session.runtime.sessionId, createProductFeatureFlags());
+    const opsApi = createRuntimeOpsApi({ tasksReadModel: readModels.tasks, taskManager });
+    const create = opsApi.tasks.create;
+    opsApi.tasks.create = input => { created.push(input); return create(input); };
+    ctx.clients = { ...ctx.clients, opsApi };
+    const lifetime = new ScheduleReadingLifetime(() => ctx.session.runtime.sessionId, () => true);
+    ctx.teamworkReading = lifetime;
+    const doc = { name: 'doc-specialist', description: 'Documentation specialist for operator handoff notes', tools: ['read', 'write', 'analyze'], family: 'implement' as const };
+    const builtin = recordedFamilyPort(recordedBuiltinArchetypes);
+    // The native loader logs the absent custom directory before its listing.
+    // The logger reads only this field name, separately from archetype purpose.
+    const missingDirectory = fakePort((name, question, state) => {
+      if (name !== 'kind' || !isDeepStrictEqual(question, fieldKind.items.kind.question)
+        || !isDeepStrictEqual(state, { field: 'dir' })) throw new Error('Unexpected missing-directory field reading.');
+      return choiceAnswer(question, 'other', 0.99);
+    });
+    const previous = installJudgmentPort({ ...builtin.port, ask: request => {
+      if (request.context?.battery !== fieldKind.name) return builtin.port.ask(request);
+      if (!isDeepStrictEqual(request.context, { battery: fieldKind.name, batteryVersion: fieldKind.version,
+        pattern: 'battery', site: 'engine.redaction.field-kind' })
+        || !isDeepStrictEqual(request.questions, { kind: fieldKind.items.kind.question })) {
+        throw new Error('Unexpected missing-directory request contract.');
+      }
+      return missingDirectory.port.ask(request);
+    } });
+    try {
     await teamwork!.handler(['review'], ctx);
     expect(out.join('\n')).toContain('Teamwork Review');
     expect(out.join('\n')).toContain('modes:');
@@ -2263,6 +2270,8 @@ describe('product breadth commands', () => {
       'You write precise operator-facing docs.',
     ].join('\n'));
 
+    const listing = recordedFamilyPort([...recordedBuiltinArchetypes, doc]);
+    installJudgmentPort(listing.port);
     out.length = 0;
     await teamwork!.handler(['archetypes'], ctx);
     expect(out.join('\n')).toContain('doc-specialist');
@@ -2282,6 +2291,49 @@ describe('product breadth commands', () => {
     expect(out.join('\n')).toContain('Created teamwork task');
     expect(created[1]?.kind).toBe('agent');
     expect(created[1]?.owner).toBe('custom:doc-specialist');
+    expect(missingDirectory.requests).toHaveLength(1);
+    expect(missingDirectory.requests[0]?.context).toEqual({ battery: fieldKind.name, batteryVersion: fieldKind.version,
+      pattern: 'battery', site: 'engine.redaction.field-kind' });
+    expect(missingDirectory.requests[0]?.state).toEqual({ field: 'dir' });
+    expect(missingDirectory.requests[0]?.questions).toEqual({ kind: fieldKind.items.kind.question });
+    expect(builtin.requests).toHaveLength(1);
+    expect(builtin.requests[0]?.context).toEqual({ battery: 'engine.agents.archetype-family', pattern: 'fan-out', site: 'agents.archetype-family' });
+    expect(builtin.requests[0]?.state).toEqual({ archetypes: recordedBuiltinArchetypes.map(({ name, description, tools }) => ({ name, description, tools })) });
+    expect(Object.keys(builtin.requests[0]?.questions ?? {})).toEqual(recordedBuiltinArchetypes.map((_, index) => `archetype${index}__family`));
+    expect(listing.requests).toHaveLength(4);
+    for (const request of listing.requests) {
+      expect(Object.keys(request.questions)).toHaveLength(9);
+      expect(request.context).toEqual({ battery: 'engine.agents.archetype-family', pattern: 'fan-out', site: 'agents.archetype-family' });
+      expect(request.state).toEqual({ archetypes: [...recordedBuiltinArchetypes, doc].map(({ name, description, tools }) => ({ name, description, tools })) });
+      expect(Object.keys(request.questions)).toEqual([...recordedBuiltinArchetypes, doc].map((_, index) => `archetype${index}__family`));
+    }
+    const stored = opsApi.tasks.list();
+    expect(stored).toHaveLength(2);
+    expect(stored.map(task => task.description).toSorted()).toEqual(created.map(task => task.description).toSorted());
+    for (const input of created) expect(input.description).not.toContain('reviewMode');
+    expect(created[1]?.description).toContain('"family":"implement"');
+    expect(created[1]?.description).toContain('"executionProtocol":"gather-plan-apply"');
+    const held = recordedFamilyPort([...recordedBuiltinArchetypes, { ...doc, family: 'unknown' }]);
+    installJudgmentPort(held.port);
+    await teamwork!.handler(['create-archetype', 'doc-specialist', 'Held', 'work'], ctx);
+    expect(held.requests).toHaveLength(1);
+    expect(created).toHaveLength(2);
+    expect(opsApi.tasks.list()).toHaveLength(2);
+    expect(out.join('\n')).toContain('no settled family');
+    for (const family of ['review', 'test', 'research', 'general'] as const) {
+      const chosen = recordedFamilyPort([...recordedBuiltinArchetypes, { ...doc, family }]);
+      installJudgmentPort(chosen.port);
+      await teamwork!.handler(['create-archetype', 'doc-specialist', 'Recorded', family], ctx);
+      expect(chosen.requests).toHaveLength(1);
+      const task = opsApi.tasks.list().find(task => task.title === `Recorded ${family}`);
+      expect(task).toBeDefined();
+      expect(task?.description).toContain(`"family":"${family}"`);
+      expect(task?.description).toContain(`"executionProtocol":"${family === 'research' ? 'gather-plan-apply' : 'direct'}"`);
+      expect(task?.description).not.toContain('reviewMode');
+    }
+    expect(opsApi.tasks.list()).toHaveLength(6);
+    } finally { lifetime.dispose(); installJudgmentPort(previous); }
+
   });
 
   test('health command exposes unified setup, service, sandbox, and provider surfaces', async () => {

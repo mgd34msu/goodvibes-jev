@@ -11,6 +11,8 @@ import {
 } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { KillRing } from '../../input/kill-ring.ts';
+import { recordedPlanningGoalPort } from '../helpers/planning-goal-reading.ts';
+import { ScheduleReadingLifetime } from '../../input/commands/schedule-reading-lifetime.ts';
 import { registerPlanningRuntimeCommands } from '../../input/commands/planning-runtime.ts';
 import { handlePromptTextToken, handlePromptKeyToken, type KeyRouteState } from '../../input/handler-feed-routes.ts';
 
@@ -325,15 +327,25 @@ describe('/project-plan project planning runtime command', () => {
     expect(out.join('\n')).toContain('1. What scope? (q1)');
   });
 
-  test('remaining pseudo-subcommand verbs (pause/stop/cancel) are still refused as lone tokens', async () => {
+  test('recorded lone command-word readings refuse native intake without historical seeding', async () => {
     for (const verb of ['pause', 'stop', 'cancel']) {
-      const registry = new CommandRegistry();
-      registerPlanningRuntimeCommands(registry);
-      const out: string[] = [];
-      const fake = makeService();
-      await registry.execute('project-plan', [verb], makeContext(fake.service, out, []));
-      expect(fake.state()).toBeNull();
-      expect(out.join('\n')).toContain(`Unknown /project-plan subcommand "${verb}"`);
+      const registry = new CommandRegistry(); registerPlanningRuntimeCommands(registry);
+      const out: string[] = []; const fake = makeService();
+      const ctx = makeContext(fake.service, out, []);
+      const lifetime = new ScheduleReadingLifetime(() => ctx.session.runtime.sessionId, () => true);
+      ctx.planningReading = lifetime;
+      let submitted = 0;
+      ctx.nativeConversationIntake = { submit: async () => { submitted++; return undefined; }, status: async () => undefined,
+        retry: async () => undefined, resume: async () => undefined, cancel: async () => undefined, close: () => {} };
+      ctx.dispatchNativeIntakeTurn = async () => { throw new Error('A command word cannot dispatch a native turn.'); };
+      const reading = recordedPlanningGoalPort(new Map([[verb, .01]]));
+      const previous = installJudgmentPort(reading.port);
+      try {
+        await registry.executeFromOwner('project-plan', [verb], ctx, `/project-plan ${verb}`);
+        expect(fake.state()).toBeNull(); expect(submitted).toBe(0);
+        expect(reading.requests).toHaveLength(1); expect(reading.requests[0]?.state).toMatchObject({ text: verb });
+        expect(out.join('\n')).toContain('does not state a planning goal');
+      } finally { lifetime.dispose(); installJudgmentPort(previous); }
     }
   });
 

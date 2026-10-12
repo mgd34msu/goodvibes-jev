@@ -1,13 +1,23 @@
-import { expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { registerPlanningRuntimeCommands } from '../../input/commands/planning-runtime.ts';
 import { handleCommandModeToken, type CommandModeRouteState } from '../../input/handler-command-route.ts';
 import { handlePromptKeyToken, type KeyRouteState } from '../../input/handler-feed-routes.ts';
 import { nativeConversationIntakeFixture } from '../helpers/native-conversation-intake.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { recordedPlanningGoalPort } from '../helpers/planning-goal-reading.ts';
+import { ScheduleReadingLifetime } from '../../input/commands/schedule-reading-lifetime.ts';
 import type { NativeConversationIntakeState } from '../../runtime/native-conversation-intake.ts';
 
 const enter = { type: 'key' as const, name: 'enter', logicalName: 'enter', ctrl: false, shift: false, meta: false };
 const original = '  Repair  the\r\n界 e\u0301 😀\t  ';
+let previous: ReturnType<typeof installJudgmentPort>;
+const readingLifetimes: ScheduleReadingLifetime[] = [];
+beforeEach(() => { previous = installJudgmentPort(recordedPlanningGoalPort(new Map([
+  [original, .99], ['request', .99], ['different source', .99], ['replacement', .99],
+  ['Use !@a.ts @folder [TEXT: p1, 9 lines] [IMAGE: img1, clip, 2KB]', .99],
+])).port); });
+afterEach(() => { for (const lifetime of readingLifetimes.splice(0)) lifetime.dispose(); installJudgmentPort(previous); });
 function fixture() {
   const native = nativeConversationIntakeFixture();
   const registry = new CommandRegistry(); registerPlanningRuntimeCommands(registry);
@@ -15,9 +25,12 @@ function fixture() {
   const context = { nativeConversationIntake: native.controls,
     dispatchNativeIntakeTurn: async (state: NativeConversationIntakeState) => { dispatched.push(state); },
     print: (line: string) => output.push(line), renderRequest: () => { renders++; },
+    platform: {}, provider: {},
     workspace: { projectPlanningService: new Proxy({}, { get() { throw new Error('Legacy planning access is forbidden'); } }) },
-    session: { contractOperator: { start: () => { throw new Error('Legacy start is forbidden'); } } },
+    session: { runtime: { sessionId: 'planning-native-fixture' }, contractOperator: { start: () => { throw new Error('Legacy start is forbidden'); } } },
   } as unknown as CommandContext;
+  context.planningReading = new ScheduleReadingLifetime(() => context.session.runtime.sessionId, () => true);
+  readingLifetimes.push(context.planningReading);
   context.executeCommand = (name, args) => registry.execute(name, args, context);
   const submit = (raw: string, fallback = false) => {
     const state = { prompt: raw, cursorPos: raw.length, inputScrollTop: 0, commandMode: !fallback,
