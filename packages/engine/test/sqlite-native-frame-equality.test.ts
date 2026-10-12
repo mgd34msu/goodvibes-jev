@@ -847,3 +847,45 @@ test('a late statement capture setter cannot omit complete private native facts'
   expect(consumed).toBe(false); expect(getter).toBe(0);
   expect(readFileSync(filename)).toEqual(before);
 });
+
+
+test.each(['writable', 'enumerable'] as const)('every fresh native slot comparison rejects changed %s metadata with the original method value', async flag => {
+  const { sqlite, filename, read, statementPrototype, heldError } = await nativePrefixFixture();
+  const before = readFileSync(filename), key = 'step';
+  const descriptor = Object.getOwnPropertyDescriptor(statementPrototype, key);
+  if (!descriptor || !('value' in descriptor) || typeof descriptor.value !== 'function'
+    || !descriptor.configurable || typeof descriptor[flag] !== 'boolean') throw new Error('No genuine mutable native method metadata');
+  let consumed = false, reachedMutation = false, nestedAttempt = false, caught: unknown;
+  try {
+    sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', 'Complete original source']]);
+      requireNativePrefixFrame(sqlite);
+      Object.defineProperty(statementPrototype, key, { ...descriptor, [flag]: !descriptor[flag] });
+      reachedMutation = true;
+      try { nestedAttempt = true; sqlite.assertPersistedReadFrame(() => { read(); consumed = true; }); }
+      finally { Object.defineProperty(statementPrototype, key, descriptor); }
+    });
+  } catch (error) { caught = error; }
+  expect(caught).toBeInstanceOf(heldError);
+  expect(reachedMutation).toBe(true); expect(nestedAttempt).toBe(true);
+  expect(consumed).toBe(false);
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test('a genuine unchanged native descriptor restamp remains eligible for fresh complete comparisons', async () => {
+  const { sqlite, filename, read, statementPrototype } = await nativePrefixFixture();
+  const before = readFileSync(filename), descriptor = Object.getOwnPropertyDescriptor(statementPrototype, 'step');
+  if (!descriptor || !('value' in descriptor) || typeof descriptor.value !== 'function'
+    || !descriptor.configurable) throw new Error('No genuine native method descriptor');
+  let consumed = false;
+  sqlite.assertPersistedReadFrame(() => {
+    expect(read()).toEqual([['original', 'Complete original source']]);
+    requireNativePrefixFrame(sqlite);
+    Object.defineProperty(statementPrototype, 'step', { ...descriptor });
+    sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', 'Complete original source']]); consumed = true;
+    });
+  });
+  expect(consumed).toBe(true);
+  expect(readFileSync(filename)).toEqual(before);
+});

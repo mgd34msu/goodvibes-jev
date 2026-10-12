@@ -214,8 +214,15 @@ function nativeDescriptorMatches(current: PropertyDescriptor | undefined, origin
     && current.writable === original.writable && current.get === original.get && current.set === original.set;
 }
 function nativeObjectFactsMatch(facts: NativeObjectFacts): boolean {
-  return nativeGetPrototypeOf(facts.object) === facts.prototype && nativeOwnKeys(facts.object).length === facts.slots.length
-    && nativeEvery(facts.slots, ({ key, descriptor }) => nativeDescriptorMatches(nativeGetDescriptor(facts.object, key), descriptor));
+  if (nativeGetPrototypeOf(facts.object) !== facts.prototype || nativeOwnKeys(facts.object).length !== facts.slots.length) return false;
+  const slots = facts.slots;
+  for (let index = 0; index < slots.length; index++) {
+    const slot = slots[index];
+    if (slot === undefined) return false;
+    const { key, descriptor } = slot;
+    if (!nativeDescriptorMatches(nativeGetDescriptor(facts.object, key), descriptor)) return false;
+  }
+  return true;
 }
 function captureNativePrototypeFacts(prototype: object | null): readonly NativeObjectFacts[] {
   const facts: NativeObjectFacts[] = [], seen = new Set<object>();
