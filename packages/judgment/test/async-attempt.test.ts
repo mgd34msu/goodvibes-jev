@@ -134,20 +134,23 @@ describe('asynchronous judgment attempt admission', () => {
     expect(calls).toBe(0);
   });
 
-  test('every fallback and retry completes a fresh gate before its synchronous check and wire attempt', async () => {
+  test('every configured fallback completes a fresh gate before its synchronous check and wire attempt', async () => {
     const steps: string[] = []; const urls: string[] = []; let gates = 0;
     const port = createSystemOnePort({ ...config(async (url) => {
       steps.push(`fetch ${gates}`); urls.push(String(url));
       return urls.length < 3 ? unavailable() : good();
-    }), fallbacks: [{ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:2', apiKey: 'fallback-key' }, model: PINNED_MODEL }] });
+    }), fallbacks: [
+      { endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:2', apiKey: 'fallback-key' }, model: PINNED_MODEL },
+      { endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:3', apiKey: 'last-key' }, model: PINNED_MODEL },
+    ] });
     const result = await port.ask({ ...request,
       beforeAsyncAttempt: async () => { const gate = ++gates; steps.push(`begin ${gate}`); await tick(); steps.push(`end ${gate}`); },
       beforeAttempt: () => { steps.push(`sync ${gates}`); },
     });
     expect(gates).toBe(3);
     expect(steps).toEqual([1, 2, 3].flatMap((gate) => [`begin ${gate}`, `end ${gate}`, `sync ${gate}`, `fetch ${gate}`]));
-    expect(urls).toEqual(['http://127.0.0.1:1/v1/systemone', 'http://127.0.0.1:2/v1/systemone', 'http://127.0.0.1:1/v1/systemone']);
-    expect(result.lineage?.attempts.map((attempt) => [attempt.endpointIndex, attempt.outcome])).toEqual([[0, 'unavailable'], [1, 'unavailable'], [0, 'answered']]);
+    expect(urls).toEqual(['http://127.0.0.1:1/v1/systemone', 'http://127.0.0.1:2/v1/systemone', 'http://127.0.0.1:3/v1/systemone']);
+    expect(result.lineage?.attempts.map((attempt) => [attempt.endpointIndex, attempt.outcome])).toEqual([[0, 'unavailable'], [1, 'unavailable'], [2, 'answered']]);
   });
 
   test('denial after backoff prevents the next retry without altering prior attempt evidence', async () => {

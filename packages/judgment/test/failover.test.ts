@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { createSystemOnePort, JudgmentError, noul, PINNED_MODEL, SqliteDecisionLog, withDecisionLog, type JudgmentConfig } from '../src/index.ts';
+import { getEventListeners } from 'node:events';
+import { choice, createSystemOnePort, JudgmentError, noul, PINNED_MODEL, SqliteDecisionLog, withDecisionLog, type JudgmentConfig } from '../src/index.ts';
 
 const request = { state: 'synthetic state', questions: { yes: noul('Synthetic question') } };
 const primary = { kind: 'hosted' as const, baseURL: 'https://primary.test', apiKey: 'primary-test-key' };
@@ -14,31 +15,31 @@ const failure = async (promise: Promise<unknown>): Promise<JudgmentError> => {
   catch (error) { expect(error).toBeInstanceOf(JudgmentError); return error as JudgmentError; }
 };
 
-describe('persistent System One availability retry', () => {
-  test.each([408, 429, 500, 529])('retries HTTP %i in order with one logical result and request lineage', async (status) => {
+describe('configured System One failover and primary-only retry', () => {
+  test.each([408, 429, 500, 529])('advances after HTTP %i with one logical result and request lineage', async (status) => {
     const urls: string[] = [];
     const port = createSystemOnePort(config(async (url, init) => {
       urls.push(String(url));
       expect(init?.redirect).toBe('error');
       expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${urls.length % 2 === 1 ? primary.apiKey : secondary.apiKey}`);
-      return urls.length <= 2 ? bad(status, `req-${urls.length}`) : good('req-3');
+      return urls.length < 2 ? bad(status, `req-${urls.length}`) : good('req-2');
     }));
     using log = new SqliteDecisionLog(':memory:');
     const result = await withDecisionLog(port, log).ask(request);
-    expect(urls).toEqual([`${primary.baseURL}/v1/systemone`, `${secondary.baseURL}/v1/systemone`, `${primary.baseURL}/v1/systemone`]);
-    expect(result.lineage?.attempts.map((a) => [a.endpointIndex, a.outcome, a.requestId])).toEqual([[0, 'unavailable', 'req-1'], [1, 'unavailable', 'req-2'], [0, 'answered', 'req-3']]);
+    expect(urls).toEqual([`${primary.baseURL}/v1/systemone`, `${secondary.baseURL}/v1/systemone`]);
+    expect(result.lineage?.attempts.map((a) => [a.endpointIndex, a.outcome, a.requestId])).toEqual([[0, 'unavailable', 'req-1'], [1, 'answered', 'req-2']]);
     expect(log.query()).toHaveLength(1);
     expect(log.query()[0]?.lineage).toEqual(result.lineage);
-    expect(port.health?.().map((h) => [h.attempts, h.consecutiveFailures, h.lastOutcome])).toEqual([[2, 0, 'answered'], [1, 1, 'unavailable']]);
+    expect(port.health?.().map((h) => [h.attempts, h.consecutiveFailures, h.lastOutcome])).toEqual([[1, 1, 'unavailable'], [1, 0, 'answered']]);
     expect(JSON.stringify(log.query())).not.toContain(primary.apiKey);
     expect(JSON.stringify(log.query())).not.toContain(primary.baseURL);
   });
 
-  test('an outage remains pending past former retry caps, with one final log and bounded lineage', async () => {
+  test('a primary-only outage remains pending past former retry caps, with one final log and bounded lineage', async () => {
     let calls = 0;
     const progress: number[] = [];
     const ids = new Set<string>();
-    const port = createSystemOnePort(config(async () => { if (++calls < 150) throw new Error(`network ${primary.apiKey}`); return good(); }));
+    const port = createSystemOnePort(config(async () => { if (++calls < 150) throw new Error(`network ${primary.apiKey}`); return good(); }, { fallbacks: [] }));
     using log = new SqliteDecisionLog(':memory:');
     let effects = 0;
     const result = await withDecisionLog(port, log).ask({ ...request, onRetry: (event) => {
@@ -59,6 +60,169 @@ describe('persistent System One availability retry', () => {
     expect(log.query()).toHaveLength(1);
     expect(log.query()[0]?.lineage).toEqual(result.lineage);
     expect(JSON.stringify(log.query())).not.toContain(primary.apiKey);
+  });
+
+  test.each([408, 429, 500, 529])('HTTP %i exhausts the configured chain once with one failed log', async (status) => {
+    const urls: string[] = [];
+    const bodies: unknown[] = [];
+    const retries: number[] = [];
+    const controller = new AbortController();
+    const port = createSystemOnePort(config(async (url, init) => {
+      urls.push(String(url));
+      bodies.push(JSON.parse(String(init?.body)));
+      expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${urls.length === 1 ? primary.apiKey : secondary.apiKey}`);
+      return bad(status, `failed-${urls.length}`, urls.length === 2 ? { 'retry-after': '3600' } : {});
+    }));
+    using log = new SqliteDecisionLog(':memory:');
+    let effects = 0;
+    const pending = withDecisionLog(port, log).ask({ ...request, signal: controller.signal, onRetry: (event) => {
+      expect(log.query()).toHaveLength(0);
+      retries.push(event.attempt.endpointIndex);
+      // If the final endpoint incorrectly advertises another attempt, stop the bad path.
+      if (event.attempt.endpointIndex === 1) controller.abort();
+    } }).then((result) => { effects++; return result; });
+    const error = await failure(pending);
+    expect(error.kind).toBe('unavailable');
+    expect(error.status).toBe(status);
+    expect(error.requestId).toBe('failed-2');
+    expect(error.cause).toBeUndefined();
+    expect(error.message).toBe('the judgment provider could not answer');
+    expect(error.lineage?.attempts.map((attempt) => [attempt.attempt, attempt.endpointIndex, attempt.outcome, attempt.status, attempt.requestId]))
+      .toEqual([[1, 0, 'unavailable', status, 'failed-1'], [2, 1, 'unavailable', status, 'failed-2']]);
+    expect(error.lineage?.omittedAttempts).toBeUndefined();
+    expect(urls).toEqual([`${primary.baseURL}/v1/systemone`, `${secondary.baseURL}/v1/systemone`]);
+    expect(bodies).toEqual([request, request].map((input) => ({ ...input, model: PINNED_MODEL })));
+    expect(retries).toEqual([0]);
+    expect(effects).toBe(0);
+    expect(log.query()).toHaveLength(1);
+    expect(log.query()[0]?.status).toBe('failed');
+    const entry = log.query()[0];
+    if (!entry || entry.status !== 'failed') throw new Error('expected one failed decision entry');
+    expect(entry.error.kind).toBe('unavailable');
+    expect(entry.lineage).toEqual(error.lineage);
+    expect(entry).not.toHaveProperty('answers');
+    expect(port.health?.().map((endpoint) => [endpoint.attempts, endpoint.consecutiveFailures, endpoint.lastOutcome]))
+      .toEqual([[1, 1, 'unavailable'], [1, 1, 'unavailable']]);
+    for (const secret of [primary.apiKey, secondary.apiKey, primary.baseURL, secondary.baseURL]) {
+      expect(JSON.stringify(error)).not.toContain(secret);
+      expect(JSON.stringify(log.query())).not.toContain(secret);
+    }
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+  });
+
+  test('network exhaustion keeps only sanitized attempt evidence and a later call can recover', async () => {
+    let available = false;
+    const urls: string[] = [];
+    const controller = new AbortController();
+    const port = createSystemOnePort(config(async (url) => {
+      urls.push(String(url));
+      if (available) return good('recovered');
+      if (urls.length === 1) return bad(503, primary.apiKey);
+      throw new Error(`network ${secondary.apiKey} ${secondary.baseURL}`);
+    }));
+    using log = new SqliteDecisionLog(':memory:');
+    const recorded = withDecisionLog(port, log);
+    const error = await failure(recorded.ask({ ...request, signal: controller.signal, onRetry: (event) => {
+      if (event.attempt.endpointIndex === 1) controller.abort();
+    } }));
+    expect(error.kind).toBe('unavailable');
+    expect(error.status).toBeUndefined();
+    expect(error.requestId).toBeUndefined();
+    expect(error.cause).toBeUndefined();
+    expect(error.lineage?.attempts.map((attempt) => [attempt.endpointIndex, attempt.outcome, attempt.requestId])).toEqual([[0, 'unavailable', undefined], [1, 'unavailable', undefined]]);
+    expect(log.query()).toHaveLength(1);
+    available = true;
+    const result = await recorded.ask(request);
+    expect(result.answers.yes.noul).toBe(0.9);
+    expect(result.lineage?.attempts.map((attempt) => [attempt.attempt, attempt.endpointIndex, attempt.outcome])).toEqual([[1, 0, 'answered']]);
+    expect(result.lineage?.logicalRequestId).not.toBe(error.lineage?.logicalRequestId);
+    expect(urls).toEqual([`${primary.baseURL}/v1/systemone`, `${secondary.baseURL}/v1/systemone`, `${primary.baseURL}/v1/systemone`]);
+    expect(log.query()).toHaveLength(2);
+    expect(log.query().filter((entry) => entry.status === 'failed')).toHaveLength(1);
+    expect(log.query().filter((entry) => entry.status === 'answered')).toHaveLength(1);
+    expect(port.health?.().map((endpoint) => [endpoint.attempts, endpoint.consecutiveFailures, endpoint.lastOutcome])).toEqual([[2, 0, 'answered'], [1, 1, 'unavailable']]);
+    for (const secret of [primary.apiKey, secondary.apiKey, primary.baseURL, secondary.baseURL]) {
+      expect(JSON.stringify(error)).not.toContain(secret);
+      expect(JSON.stringify(log.query())).not.toContain(secret);
+    }
+  });
+
+  test('the final compatible attempt timeout exhausts and releases cancellation ownership', async () => {
+    const signals: AbortSignal[] = [];
+    const retries: number[] = [];
+    const controller = new AbortController();
+    const port = createSystemOnePort(config(async (_url, init) => {
+      if (init?.signal) signals.push(init.signal);
+      return await new Promise<Response>(() => {});
+    }, { timeoutMs: 15 }));
+    using log = new SqliteDecisionLog(':memory:');
+    const error = await failure(withDecisionLog(port, log).ask({ ...request, signal: controller.signal, onRetry: (event) => {
+      retries.push(event.attempt.endpointIndex);
+      if (event.attempt.endpointIndex === 1) controller.abort();
+    } }));
+    expect(error.kind).toBe('unavailable');
+    expect(error.lineage?.attempts.map((attempt) => [attempt.endpointIndex, attempt.outcome])).toEqual([[0, 'unavailable'], [1, 'unavailable']]);
+    expect(signals).toHaveLength(2);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(retries).toEqual([0]);
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+    expect(log.query()).toHaveLength(1);
+    expect(log.query()[0]?.lineage).toEqual(error.lineage);
+  });
+
+  test('cancelling the final attempt ignores its late answer and records one aborted result', async () => {
+    let calls = 0;
+    let entered = () => {};
+    let release = (_response: Response) => {};
+    const finalEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const controller = new AbortController();
+    const port = createSystemOnePort(config(async () => {
+      if (++calls === 1) return bad();
+      const response = new Promise<Response>((resolve) => { release = resolve; });
+      entered();
+      return await response;
+    }));
+    using log = new SqliteDecisionLog(':memory:');
+    const rejected = failure(withDecisionLog(port, log).ask({ ...request, signal: controller.signal }));
+    await finalEntered;
+    controller.abort();
+    const error = await rejected;
+    expect(error.kind).toBe('aborted');
+    expect(error.lineage?.attempts.map((attempt) => [attempt.endpointIndex, attempt.outcome])).toEqual([[0, 'unavailable'], [1, 'aborted']]);
+    expect(calls).toBe(2);
+    expect(log.query()).toHaveLength(1);
+    expect(log.query()[0]?.lineage).toEqual(error.lineage);
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+    const finalLog = JSON.stringify(log.query());
+    release(good('too-late'));
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    expect(JSON.stringify(log.query())).toBe(finalLog);
+    expect(calls).toBe(2);
+    expect(port.health?.().map((endpoint) => endpoint.lastOutcome)).toEqual(['unavailable', 'aborted']);
+  });
+
+  test.each(['held', 'revise', 'defer', 'reject', 'unsure'] as const)('semantic %s is returned without asking a fallback', async (selected) => {
+    let calls = 0;
+    let retries = 0;
+    const criteria = { act: null, held: null, revise: null, defer: null, reject: null, unsure: null };
+    const answers = { disposition: { type: 'choice', choice: selected, confidence: 0.5,
+      probabilities: Object.fromEntries(Object.keys(criteria).map((key) => [key, key === selected ? 1 : 0])),
+    } };
+    const port = createSystemOnePort(config(async (url) => {
+      expect(String(url)).toStartWith(primary.baseURL);
+      calls++;
+      return Response.json({ model: PINNED_MODEL, answers, usage: { input_tokens: 1, output_tokens: 1 } });
+    }));
+    using log = new SqliteDecisionLog(':memory:');
+    const result = await withDecisionLog(port, log).ask({ state: request.state, questions: { disposition: choice('Synthetic disposition', criteria) }, onRetry: () => { retries++; } });
+    expect(result.answers.disposition.choice).toBe(selected);
+    expect(result.answers.disposition.confidence).toBe(0.5);
+    expect(calls).toBe(1);
+    expect(retries).toBe(0);
+    expect(result.lineage?.attempts.map((attempt) => [attempt.endpointIndex, attempt.outcome])).toEqual([[0, 'answered']]);
+    expect(log.query()).toHaveLength(1);
+    expect(log.query()[0]?.status).toBe('answered');
+    expect(port.health?.().map((endpoint) => endpoint.attempts)).toEqual([1, 0]);
   });
 
   test.each([400, 401, 403, 404, 422])('HTTP %i does not retry or leak to a fallback', async (status) => {
@@ -141,11 +305,18 @@ describe('persistent System One availability retry', () => {
     expect((await failure(port.ask({ ...request, signal: controller.signal }))).kind).toBe('aborted');
   });
 
-  test('incompatible fallback models are skipped, never silently used', async () => {
+  test('incompatible fallback models are skipped and the compatible chain exhausts', async () => {
     let calls = 0;
-    const port = createSystemOnePort(config(async (url) => { expect(String(url)).toStartWith(primary.baseURL); return ++calls < 4 ? bad() : good(); }, { fallbacks: [{ endpoint: secondary, model: 'jev-9.0.0' }] }));
-    expect((await port.ask(request)).answers.yes.noul).toBe(0.9);
-    expect(calls).toBe(4);
+    let retries = 0;
+    const controller = new AbortController();
+    const port = createSystemOnePort(config(async (url) => { expect(String(url)).toStartWith(primary.baseURL); calls++; return bad(); }, { fallbacks: [{ endpoint: secondary, model: 'jev-9.0.0' }] }));
+    const error = await failure(port.ask({ ...request, signal: controller.signal, onRetry: () => { retries++; controller.abort(); } }));
+    expect(error.kind).toBe('unavailable');
+    expect(error.message).toContain('all compatible configured judgment endpoints');
+    expect(error.lineage?.attempts.map((attempt) => [attempt.endpointIndex, attempt.outcome])).toEqual([[0, 'unavailable']]);
+    expect(calls).toBe(1);
+    expect(retries).toBe(0);
+    expect(port.health?.().map((endpoint) => endpoint.attempts)).toEqual([1, 0]);
   });
 
   test('model drift fails closed and aliases cannot enable failover', async () => {

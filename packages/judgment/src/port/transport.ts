@@ -8,7 +8,7 @@ import { withRequestId } from './request-id.ts';
 import { delay, interruptible, retryable, retryDelay, retryPolicy } from './retry.ts';
 import type { JudgmentAttempt, JudgmentEndpointHealth, JudgmentPort, JudgmentRequest, JudgmentResult } from './types.ts';
 
-/** One retry owner for every configured System One exposure; outages remain pending until cancelled. */
+/** One attempt owner: configured failover exhausts once; a primary-only outage retries until cancelled. */
 export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
   validateJudgmentConfig(config);
   const targets = [{ endpoint: { ...config.endpoint }, model: config.model }, ...(config.fallbacks ?? []).map((t) => ({ ...t, endpoint: { ...t.endpoint } }))];
@@ -58,7 +58,7 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
         validateQuestions(questions);
         validateContextBudget(state, questions);
         if (strictModel && !isPinnedJudgmentModel(requestedModel)) throw new JudgmentError('invalid-request', 'judgment failover requires a pinned requested model, not an alias');
-        // Visit compatible configured targets once per round, then repeat without an outage budget.
+        // Configured failover visits compatible targets once; a primary-only port keeps retrying.
         const eligible = targets.map((target, endpointIndex) => ({ target, endpointIndex }))
           .filter(({ target, endpointIndex }) => endpointIndex === 0 || target.model === requestedModel);
         let retry = 0;
@@ -141,6 +141,12 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
               controller.signal.removeEventListener('abort', abortAttempt);
             }
             checkCancellation();
+            if (strictModel && endpointIndex === eligible.at(-1)?.endpointIndex) {
+              const last = toJudgmentError(failure);
+              throw new JudgmentError('unavailable', 'all compatible configured judgment endpoints are unavailable', {
+                ...(last.status === undefined ? {} : { status: last.status }), ...(requestId ? { requestId } : {}),
+              });
+            }
             const nextDelayMs = retryDelay(failure, retry, policy);
             retry = Math.min(retry + 1, 30);
             // Observers cannot change evidence or turn an outage into a terminal failure.

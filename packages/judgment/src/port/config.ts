@@ -38,7 +38,7 @@ export interface JudgmentConfig {
   readonly model: string;
   /** Timeout per attempt in milliseconds. */
   readonly timeoutMs: number;
-  /** Backoff timing for persistent retry of rate limits, overload and connection failures. */
+  /** Backoff between transient failures: a configured chain runs once; primary-only retries persist. */
   readonly retry: Partial<JudgmentRetryPolicy>;
   /** Additional System One targets. No discovery or implicit alternate providers. */
   readonly fallbacks?: readonly JudgmentFallback[];
