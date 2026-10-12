@@ -645,13 +645,23 @@ export async function autonomyIntakeSummary(_context: CommandContext, args: Agen
   const publishedMethods = operatorMethodIds();
   const publication = JSON.stringify([...publishedMethods].sort());
   const originalCurrent = options.assertCurrent;
-  const assertCurrent = () => { options.signal?.throwIfAborted();
+  const originalRetain = options.retainCurrent;
+  const sourceOwner = options.sourceOwner;
+  const signal = options.signal;
+  const assertOperatorCurrent = () => {
+    signal?.throwIfAborted();
+    if (options.signal !== signal || options.sourceOwner !== sourceOwner || options.assertCurrent !== originalCurrent || options.retainCurrent !== originalRetain
+      || JSON.stringify([...operatorMethodIds()].sort()) !== publication) throw new Error('Autonomy operator contract changed.');
+  };
+  originalRetain?.(assertOperatorCurrent, 'agent.autonomy-intake.operator-contract');
+  const assertCurrent = () => { signal?.throwIfAborted();
     const assertion: unknown = originalCurrent?.();
     if (assertion !== undefined) {
       try { void Promise.resolve(assertion).catch(() => {}); } catch { /* Refuse asynchronous authority. */ }
       throw new Error('Autonomy intake authority must be synchronous.');
     }
-    if (options.assertCurrent !== originalCurrent || JSON.stringify([...operatorMethodIds()].sort()) !== publication) throw new Error('Autonomy operator contract changed.'); };
+    assertOperatorCurrent();
+  };
   const readingOptions = { ...options, assertCurrent };
   assertCurrent();
   const watcherContract = watcherEvidenceContract(publishedMethods);

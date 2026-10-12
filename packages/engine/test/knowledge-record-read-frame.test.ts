@@ -1782,7 +1782,9 @@ test.each(['writer rollback', 'native alias restore', 'identical file replacemen
     const bytes = readFileSync(store.storagePath), stringify = JSON.stringify;
     let changed = false, published = false;
     const observing = spyOn(JSON, 'stringify').mockImplementation((value, replacer, space) => {
-      const result = stringify(value, replacer, space);
+      const result = typeof replacer === 'function'
+        ? stringify(value, replacer, space)
+        : stringify(value, replacer, space);
       if (!changed && Array.isArray(value) && value.some(entry => Array.isArray(entry) && entry[0] === 'id' && entry[1] === source.id)) {
         changed = true;
         if (mutation === 'writer rollback') {

@@ -257,10 +257,10 @@ describe('verified native lifecycle admission', () => {
     await applyVerifiedUpdate({ targets: f.targets, platform: 'linux', io: realUpdateFileIo,
       daemonNative: { execPath: f.execPath, platform: 'linux', arch: 'x64', version: next.receipt.version }, downloadBaseUrl: base,
       fetchImpl: async (url) => {
-        requests.push(url); const name = url.slice(base.length + 1);
+        const requestedUrl = String(url); requests.push(requestedUrl); const name = requestedUrl.slice(base.length + 1);
         const bytes = name === 'SHA256SUMS.txt' ? Buffer.from(next.checksumManifest) : next.assets[name];
         if (!bytes) throw new Error('Unexpected synthetic native asset');
-        return { ok: true, status: 200, text: async () => bytes.toString(), arrayBuffer: async () => Uint8Array.from(bytes).buffer };
+        return { ok: true, status: 200, url: requestedUrl, headers: new Headers(), text: async () => bytes.toString(), arrayBuffer: async () => Uint8Array.from(bytes).buffer };
       },
     });
     expect(requests).toHaveLength(f.targets.length + 1);

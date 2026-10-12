@@ -310,10 +310,10 @@ test('native verified apply and rollback each permit the newly running artifact 
   await applyVerifiedUpdate({ targets: native.targets, io: native.memory.io, platform: 'linux', downloadBaseUrl: base,
     daemonNative: { execPath: native.execPath, platform: 'linux', arch: 'x64', version: '2.0.0' },
     fetchImpl: async (url) => {
-      requests.push(url); const name = url.slice(base.length + 1);
+      const requestedUrl = String(url); requests.push(requestedUrl); const name = requestedUrl.slice(base.length + 1);
       const bytes = name === 'SHA256SUMS.txt' ? Buffer.from(next.checksumManifest) : next.assets[name];
       if (!bytes) throw new Error('Unexpected synthetic asset');
-      return { ok: true, status: 200, text: async () => bytes.toString(), arrayBuffer: async () => Uint8Array.from(bytes).buffer };
+      return { ok: true, status: 200, url: requestedUrl, headers: new Headers(), text: async () => bytes.toString(), arrayBuffer: async () => Uint8Array.from(bytes).buffer };
     },
   });
   expect(requests).toHaveLength(native.targets.length + 1); expect(() => first.assertCurrent!()).toThrow();

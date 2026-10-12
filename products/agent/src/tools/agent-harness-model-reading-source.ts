@@ -357,8 +357,8 @@ export function modelReadingOptions(context: CommandContext, registry?: ToolRegi
     return value;
   };
   const configRevision = configIncarnation();
-  return { sourceOwner, signal, retainCurrent, assertCurrent() {
-    signal?.throwIfAborted(); assertExecution?.();
+  const assertSourceCurrent = () => {
+    signal?.throwIfAborted();
     if (agentResearchSourceOwner(registry) !== sourceOwner || path(context, ['session', 'runtime']) !== session || slot(session, 'sessionId') !== sessionId
       || path(context, ['clients', 'providerApi']) !== api || path(context, ['provider', 'providerRegistry']) !== provider || path(context, ['platform', 'config']) !== config
       || path(context, ['platform', 'configManager']) !== manager || path(context, ['platform', 'artifactStore']) !== artifact || path(context, ['platform', 'readModels']) !== readModels)
@@ -370,6 +370,10 @@ export function modelReadingOptions(context: CommandContext, registry?: ToolRegi
       if (path(context, source.keys) !== source.source) throw new ToolInputProjectionError('held');
       for (const method of source.methods) if (slot(source.source, method.key) !== method.value) throw new ToolInputProjectionError('held');
     }
+  };
+  retainCurrent?.(assertSourceCurrent, 'model-reading.native-source');
+  return { sourceOwner, signal, retainCurrent, assertCurrent() {
+    signal?.throwIfAborted(); assertExecution?.(); assertSourceCurrent();
   } };
 }
 

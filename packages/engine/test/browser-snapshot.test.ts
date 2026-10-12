@@ -114,7 +114,7 @@ describe('element refs', () => {
     await expect(resolveRef(page, snapshotWith('https://example.com/'), 'e1'))
       .rejects.toThrow(/points at a different element/);
     expect(judgments.requests).toHaveLength(1);
-    expect(judgments.requests[0]?.state).toEqual(changedControlEvidence);
+    expect<unknown>(judgments.requests[0]?.state).toEqual(changedControlEvidence);
     const [entry] = decisionLog.query({ status: 'answered' });
     expect(decisionLog.query()).toHaveLength(1);
     expect(entry).toMatchObject({ context: { battery: browserControlIdentity.name,

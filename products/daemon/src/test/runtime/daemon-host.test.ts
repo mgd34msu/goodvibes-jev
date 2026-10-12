@@ -915,7 +915,7 @@ for (const retirement of ['payload', 'cancel'] as const) test(`late native start
 
 function inertNativeHostServer(): NonNullable<DaemonHost['daemon']> {
   let running = false;
-  return { enable() {}, async start() { running = true; }, async stop() { running = false; }, fenceRestartAdmission() {},
+  return { enable() { return true; }, async start() { running = true; }, async stop() { running = false; }, fenceRestartAdmission() {},
     async waitForRestart() {}, get isRunning() { return running; }, boundHost: '127.0.0.1', boundPort: 0, boundScheme: 'http' };
 }
 
@@ -968,8 +968,12 @@ test('configured native host forwards only its complete retained installation an
   const artifact = resolveInstalledDaemonUpdateArtifact({ isOverridden: false }, native.options);
   expect(artifact).toBeDefined(); if (!artifact) throw new Error('Native fixture admission missing'); let constructed = 0;
   const fx = fixture(undefined, { createServer(config) {
-    constructed++; expect(config.updateArtifact).toBe(artifact); expect(config.hasOverriddenHome).toBe(false);
-    config.updateArtifact!.assertCurrent!(); return inertNativeHostServer();
+    constructed++;
+    if (!config) throw new Error('Expected owned native server configuration');
+    expect(config.updateArtifact).toBe(artifact); expect(config.hasOverriddenHome).toBe(false);
+    const forwarded = config.updateArtifact;
+    if (!forwarded?.assertCurrent) throw new Error('Expected retained native installation guard');
+    forwarded.assertCurrent(); return inertNativeHostServer();
   } }, { updateArtifact: artifact, hasOverriddenHome: false });
   await fx.host.start(); expect(constructed).toBe(1); expect(fx.host.daemon?.isRunning).toBe(true);
   await fx.host.close(); expect(fx.host.daemon?.isRunning).toBe(false);

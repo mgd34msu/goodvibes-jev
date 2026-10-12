@@ -213,7 +213,11 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           || deps.commandContext.session?.runtime?.sessionId !== personalOpsSessionId
           || (deps.commandContext.clients?.mcpApi ?? deps.commandContext.extensions?.mcpRegistry) !== personalOpsApi) throw new Error('PersonalOps source owner changed.');
       } };
-      const catalogOptions = { ...personalOpsOptions, retainCurrent: retainHarnessCatalogCurrent(rawArgs), assertCurrent: () => { assertCatalogExecution(); personalOpsOptions.assertCurrent(); } };
+      const retainCatalogCurrent = retainHarnessCatalogCurrent(rawArgs);
+      // Keep native source identities through publication and cleanup without
+      // retaining the one-use invocation callback that visits this same map.
+      retainCatalogCurrent(personalOpsOptions.assertCurrent, 'agent.catalog.personal-ops-source');
+      const catalogOptions = { ...personalOpsOptions, retainCurrent: retainCatalogCurrent, assertCurrent: () => { assertCatalogExecution(); personalOpsOptions.assertCurrent(); } };
       const effectCatalogOptions = { ...catalogOptions, retainCurrent: undefined };
       if (dispatchMode === 'settings' || dispatchMode === 'get_setting') {
         const originalJson = JSON.stringify(captureCatalogData(rawArgs));

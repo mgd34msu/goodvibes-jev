@@ -114,8 +114,10 @@ test('calibration truth records retain the unresolved result and untouched nativ
   if (!complete) throw new Error('Missing recorded complete fixture');
   expect(complete).toMatchObject({ requestedModel: PINNED_MODEL, model: PINNED_MODEL,
     answers: { part_0: { type: 'noul', noul: 0.55 } } });
-  expect(truthOf(complete)).toEqual({ source: 'fixture', checks: [decision.checks[0]] });
-  expect(decision.checks[0]).toMatchObject({ expected: 'false', got: 'uncertain', correct: false });
+  const completeCheck = decision.checks[0];
+  if (!completeCheck) throw new Error('Missing complete calibration fixture check');
+  expect(truthOf(complete)).toEqual({ source: 'fixture', checks: [completeCheck] });
+  expect(completeCheck).toMatchObject({ expected: 'false', got: 'uncertain', correct: false });
 });
 
 test.each(['missing', 'malformed'] as const)('canonical %s answer fails calibration without manufacturing false', async kind => {

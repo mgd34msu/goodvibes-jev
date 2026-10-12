@@ -1126,3 +1126,34 @@ test.each(['unchanged', 'incarnation', 'method', 'accessor'] as const)('raw read
   else { await expect(pending).rejects.toThrow(); expect(delivered).toBe(0); }
   expect(touched).toBe(0); expect(f.effects).toEqual([]);
 });
+
+
+test('native model source restrictions survive an expired execution without retaining its callback', () => {
+  const f = fixture(), guards: (() => void)[] = [];
+  let live = true, calls = 0;
+  const current = modelReadingOptions(f.context, f.registry, undefined,
+    () => { calls++; if (!live) throw new Error('Retired native execution fixture.'); },
+    guard => { guards.push(guard); });
+  current.assertCurrent?.(); expect(calls).toBe(1); expect(guards).toHaveLength(1);
+  live = false;
+  for (const guard of guards) guard();
+  expect(calls).toBe(1);
+  expect(() => current.assertCurrent?.()).toThrow();
+  expect(f.effects).toEqual([]);
+});
+
+test.each(['method', 'accessor', 'owner', 'signal'] as const)(
+  'retained native model source restrictions reject late %s changes without invoking the retired caller', changed => {
+    const f = fixture(), controller = new AbortController(), guards: (() => void)[] = [];
+    let calls = 0, touched = 0;
+    const current = modelReadingOptions(f.context, f.registry, controller.signal,
+      () => { calls++; }, guard => { guards.push(guard); });
+    current.assertCurrent?.(); expect(calls).toBe(1); expect(guards).toHaveLength(1);
+    if (changed === 'method') Object.defineProperty(f.providerApi, 'listModels', { value: async () => [] });
+    if (changed === 'accessor') Object.defineProperty(f.providerApi, 'listModels', { get() { touched++; return async () => []; } });
+    if (changed === 'owner') bindAgentResearchSourceOwner(f.registry, researchScreeningFixture().owner);
+    if (changed === 'signal') controller.abort();
+    expect(() => { for (const guard of guards) guard(); }).toThrow();
+    expect(calls).toBe(1); expect(touched).toBe(0); expect(f.effects).toEqual([]);
+  },
+);

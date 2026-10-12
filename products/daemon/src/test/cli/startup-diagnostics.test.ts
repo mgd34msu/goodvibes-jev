@@ -451,7 +451,7 @@ test('startup maintenance failures are non-fatal and diagnostics contain no raw 
 
 function inertConfiguredNativeServer(): hosts.DaemonHostServer {
   let running = false;
-  return { enable() {}, async start() { running = true; }, async stop() { running = false; }, fenceRestartAdmission() {},
+  return { enable() { return true; }, async start() { running = true; }, async stop() { running = false; }, fenceRestartAdmission() {},
     async waitForRestart() {}, get isRunning() { return running; }, boundHost: '127.0.0.1', boundPort: 3499, boundScheme: 'http' };
 }
 
@@ -464,10 +464,15 @@ for (const home of ['default', 'override'] as const) test(`configured CLI ${home
     return resolveArtifact(ownership, { ...options, ...native.options });
   }));
   const f = await fixture(undefined, { createServer(config) {
-    server++; expect(config.hasOverriddenHome).toBe(home === 'override');
+    server++;
+    if (!config) throw new Error('Expected owned native server configuration');
+    expect(config.hasOverriddenHome).toBe(home === 'override');
     if (home === 'default') {
       expect(config.updateArtifact?.execPath).toBe(native.execPath);
-      expect(config.updateArtifact?.version).toBe(getPackageVersion()); config.updateArtifact!.assertCurrent!();
+      expect(config.updateArtifact?.version).toBe(getPackageVersion());
+      const artifact = config.updateArtifact;
+      if (!artifact?.assertCurrent) throw new Error('Expected retained native installation guard');
+      artifact.assertCurrent();
     } else expect(config.updateArtifact).toBeUndefined();
     return inertConfiguredNativeServer();
   } }, home);
@@ -504,6 +509,7 @@ test('reporting cannot turn an already resolved home override into native lifecy
     if (result) admitted++; return result;
   }));
   const f = await fixture(undefined, { createServer(config) {
+    if (!config) throw new Error('Expected owned native server configuration');
     expect(config.hasOverriddenHome).toBe(true); expect(config.updateArtifact).toBeUndefined(); return inertConfiguredNativeServer();
   } });
   const handle = f.start(() => { Object.defineProperty(f.configuration, 'isOverridden', { value: false }); });

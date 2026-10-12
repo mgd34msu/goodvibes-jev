@@ -106,13 +106,18 @@ export async function readAutonomyIntake(request: string, options: AutonomyIntak
   const clock = Object.freeze({ now: Date.now(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
   const source = captureOwnedJson({ request });
   assertJudgmentInput(source);
+  const assertOriginalBindings = () => {
+    signal?.throwIfAborted();
+    if (options.signal !== signal || options.sourceOwner !== owner || options.assertCurrent !== originalCurrent || options.retainCurrent !== retainCurrent || owner?.capture !== capture || owner?.screen !== screen || owner?.project !== project || owner?.release !== release || owner?.close !== close) throw new Error('Autonomy intake source changed.');
+  };
   const current = () => { signal?.throwIfAborted();
     const assertion: unknown = originalCurrent?.();
     if (assertion !== undefined) {
       try { void Promise.resolve(assertion).catch(() => {}); } catch { /* Refuse asynchronous authority. */ }
       throw new Error('Autonomy intake authority must be synchronous.');
     }
-    if (options.signal !== signal || options.sourceOwner !== owner || options.assertCurrent !== originalCurrent || options.retainCurrent !== retainCurrent || owner?.capture !== capture || owner?.screen !== screen || owner?.project !== project || owner?.release !== release || owner?.close !== close) throw new Error('Autonomy intake source changed.'); };
+    assertOriginalBindings();
+  };
   current();
   if (!owner) return { status: 'held', reason: 'source-unavailable', unsettled: [], judgment: null };
   if (request.length > SOURCE_SCREENING_LIMITS.characters) return { status: 'held', reason: 'protected-source', unsettled: [], judgment: null };
@@ -156,7 +161,10 @@ export async function readAutonomyIntake(request: string, options: AutonomyIntak
     run.recordAction(result.status === 'ready' ? 'publish read-only autonomy intake classification' : 'hold autonomy intake: unresolved readings');
     const effectRestriction = authority.consumeObservation();
     publicationCurrent = () => { current(); effectRestriction.assertCurrent(); };
-    retainCurrent?.(publicationCurrent, autonomyIntake.name);
+    // A retained backend restriction outlives this reading's receipt and its
+    // caller's execution lease. The caller still runs at every live boundary.
+    const assertRetainedCurrent = () => { assertOriginalBindings(); effectRestriction.assertCurrent(); };
+    retainCurrent?.(assertRetainedCurrent, autonomyIntake.name);
     publicationCurrent();
     return result;
   } finally {

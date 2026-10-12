@@ -191,4 +191,58 @@ describe('canonical autonomous intake reading', () => {
     guards[0]?.(); installJudgmentPort(fixture().port);
     expect(() => guards[0]?.()).toThrow();
   });
+  test('retained native restrictions do not call their own caller aggregation or its retired execution lease', async () => {
+    const f = fixture(); installJudgmentPort(f.port);
+    const guards = new Map<string | (() => void), () => void>();
+    let live = true, calls = 0;
+    const current: AutonomyIntakeOptions = { ...f.options,
+      assertCurrent() {
+        calls++;
+        if (!live) throw new Error('Retired native execution fixture.');
+        for (const guard of guards.values()) guard();
+      },
+      retainCurrent(guard, key) { guards.set(key ?? guard, guard); },
+    };
+    const result = await readAutonomyIntake('A synthetic ongoing-work request.', current);
+    expect(result.status).toBe('ready'); expect(guards.size).toBe(1);
+    expect(f.requests).toHaveLength(1); expect(calls).toBeGreaterThan(0);
+    const settledCalls = calls; live = false;
+    for (const guard of guards.values()) guard();
+    expect(calls).toBe(settledCalls); expect(f.requests).toHaveLength(1);
+    installJudgmentPort(fixture().port);
+    expect(() => { for (const guard of guards.values()) guard(); }).toThrow();
+  });
+
+  test.each(['caller', 'owner', 'owner-method', 'registrar', 'signal'] as const)(
+    'retained native restrictions reject original %s replacement without invoking a retired caller', async changed => {
+      const f = fixture(); installJudgmentPort(f.port);
+      const guards: (() => void)[] = [];
+      const controller = new AbortController();
+      let calls = 0;
+      const current = { ...f.options, signal: controller.signal,
+        assertCurrent() { calls++; }, retainCurrent(guard: () => void) { guards.push(guard); },
+      };
+      expect((await readAutonomyIntake('A synthetic ongoing-work request.', current)).status).toBe('ready');
+      const settledCalls = calls;
+      if (changed === 'caller') current.assertCurrent = () => { calls++; };
+      if (changed === 'owner') current.sourceOwner = fixture().owner;
+      if (changed === 'owner-method') Object.defineProperty(f.owner, 'project', { value: () => [], configurable: true });
+      if (changed === 'registrar') current.retainCurrent = () => {};
+      if (changed === 'signal') current.signal = new AbortController().signal;
+      expect(() => { for (const guard of guards) guard(); }).toThrow();
+      expect(calls).toBe(settledCalls); expect(f.requests).toHaveLength(1);
+    },
+  );
+
+  test('retained native restrictions remain canceled after the original invocation has completed', async () => {
+    const f = fixture(); installJudgmentPort(f.port);
+    const controller = new AbortController(), guards: (() => void)[] = [];
+    expect((await readAutonomyIntake('A synthetic ongoing-work request.', {
+      ...f.options, signal: controller.signal, retainCurrent: guard => { guards.push(guard); },
+    })).status).toBe('ready');
+    controller.abort();
+    expect(() => { for (const guard of guards) guard(); }).toThrow();
+    expect(f.requests).toHaveLength(1);
+  });
+
 });
