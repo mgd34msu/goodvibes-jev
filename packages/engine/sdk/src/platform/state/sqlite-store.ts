@@ -602,27 +602,27 @@ function preparePrivateNativeScalar(state: OwnedSqlDatabase, engine: SqlJsStatic
     } finally { dispose(); }
     throw error;
   }
+  const current = (assertDependencies: () => void) => {
+    assertDependencies();
+    if (released || !nativeObjectFactsMatch(birth) || !nativeScalarRuntimeMatches(runtime)) throw new SQLiteObservationRetiredError();
+  };
   return nativeFreeze({ dispose, read(assertDependencies: () => void): boolean | undefined {
-    const current = () => {
-      assertDependencies();
-      if (released || !nativeObjectFactsMatch(birth) || !nativeScalarRuntimeMatches(runtime)) throw new SQLiteObservationRetiredError();
-    };
-    current();
+    current(assertDependencies);
     if (runtime.clear(pointer) !== 0 || runtime.reset(pointer) !== 0) return undefined;
     let result: boolean | undefined;
     try {
       const first = runtime.step(pointer);
-      current();
+      current(assertDependencies);
       if (first === 100 && runtime.count(pointer) === 1 && runtime.dataCount(pointer) === 1
         && runtime.type(pointer, 0) === 1 && runtime.decode(runtime.name(pointer, 0)) === 'frame_matches') {
         const value = runtime.value(pointer, 0);
-        current();
+        current(assertDependencies);
         if ((value === 0 || value === 1) && runtime.step(pointer) === 101) result = value === 1;
       }
     } finally {
       if (runtime.reset(pointer) !== 0) result = undefined;
     }
-    current();
+    current(assertDependencies);
     return result;
   } });
 }
