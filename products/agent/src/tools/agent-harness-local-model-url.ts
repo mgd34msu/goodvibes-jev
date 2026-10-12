@@ -1,14 +1,9 @@
-export function localStackFor(value: string): string | null {
-  const normalized = value.toLowerCase();
-  if (/ollama[-_\s]?cloud/.test(normalized)) return null;
-  if (/\bollama\b/.test(normalized)) return 'ollama';
-  if (/llama[.-]?cpp|llamacpp/.test(normalized)) return 'llama.cpp';
-  if (/\bvllm\b/.test(normalized)) return 'vllm';
-  if (/lm[-_\s]?studio/.test(normalized)) return 'openai-compatible';
-  if (/localai|text-generation-inference|\btgi\b/.test(normalized)) return 'openai-compatible';
-  if (/localhost|127\.0\.0\.1|\[?::1\]?/.test(normalized)) return 'openai-compatible';
-  if (/openai-compatible|openai compatible|custom-provider|custom provider/.test(normalized)) return 'openai-compatible';
-  return null;
+import { readLocalModelStack, type LocalModelStack } from './agent-harness-local-model-readings.ts';
+import type { ModelReadingOptions } from './agent-harness-model-reading-source.ts';
+export type { LocalModelStack } from './agent-harness-local-model-readings.ts';
+
+export async function localStackFor(value: string, options: ModelReadingOptions, evidence: unknown = value): Promise<LocalModelStack | null> {
+  return readLocalModelStack(value, evidence, options);
 }
 
 export function cleanUrlCandidate(value: string): string {
@@ -59,7 +54,7 @@ export function isPrivateOrLocalUrl(raw: string): boolean {
 export function normalizeLocalBaseUrl(raw: string, stackHint?: string | null): string | null {
   const url = parseUrlCandidate(raw);
   if (!url || !/^https?:$/.test(url.protocol)) return null;
-  const stack = stackHint ?? localStackFor(raw) ?? (isPrivateOrLocalHost(url.hostname) ? 'openai-compatible' : null);
+  const stack = stackHint ?? (isPrivateOrLocalHost(url.hostname) ? 'openai-compatible' : null);
   if (!isPrivateOrLocalUrl(url.href)) return null;
 
   let pathname = url.pathname.replace(/\/+$/g, '');

@@ -1,12 +1,12 @@
 import { types as nodeTypes } from 'node:util';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolInputProjector, ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { agentResearchSourceOwner, captureResearchInput, hasPreparedResearchReport, inheritPreparedResearchReport, prepareProtectedResearchReport } from '../agent/protected-research-report.ts';
-import { resolveWorkspaceActionDetail } from './agent-harness-workspace-actions.ts';
+import { agentResearchReportSourceOwner, captureResearchInput, hasPreparedResearchReport, inheritPreparedResearchReport, prepareProtectedResearchReport } from '../agent/protected-research-report.ts';
+import { resolveWorkspaceActionIdentity } from './agent-harness-workspace-actions.ts';
 
 export function isResearchReportEditor(args: Record<string, unknown>): boolean {
   if (args.mode === 'run_workspace_action') {
-    const resolved = resolveWorkspaceActionDetail(args);
+    const resolved = resolveWorkspaceActionIdentity(args);
     // Other editors can legitimately have a field named sources (for example,
     // browser-history import). Their explicit route retains its own boundary.
     if (resolved?.status === 'found') return resolved.action.editorKind === 'research-report';
@@ -24,7 +24,7 @@ export function createAgentHarnessResearchProjector(registry: ToolRegistry, isRe
     } };
     const fields = args.fields;
     if (!fields || typeof fields !== 'object' || Array.isArray(fields)) return { status: 'held' };
-    const prepared = await prepareProtectedResearchReport(agentResearchSourceOwner(registry), {
+    const prepared = await prepareProtectedResearchReport(agentResearchReportSourceOwner(registry), {
       ...args, sources: (fields as Record<string, unknown>).sources,
     }, { signal: request.signal, assertCurrent: request.assertCurrent });
     const { sources: _sources, ...projected } = prepared.args;
@@ -68,7 +68,7 @@ export function protectAgentHarnessResearchTool(tool: Tool, registry: ToolRegist
     if (!isReport(reportRouting(input))) return execute(input, options);
     const args = captureResearchInput(input);
     if (!isReport(args)) return execute(input, options);
-    if (hasPreparedResearchReport(input, agentResearchSourceOwner(registry))) return execute(input, options);
+    if (hasPreparedResearchReport(input, agentResearchReportSourceOwner(registry))) return execute(input, options);
     const projected = await projector.project({ callId: 'research-editor-direct', name: tool.definition.name, args,
       signal: options?.signal, assertCurrent: () => { options?.signal?.throwIfAborted(); } });
     try {

@@ -1,3 +1,4 @@
+import { types as nodeTypes } from 'node:util';
 import { checkAnswers, projectAnswers } from '../port/answers.ts';
 import { JudgmentError, type JudgmentErrorKind } from '../port/errors.ts';
 import {
@@ -189,7 +190,8 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
       const started = performance.now();
       let requestedModel: string | undefined;
       let logAssertion: (() => void) | undefined;
-      try { logAssertion = request.assertLogCurrent; }
+      let resultCapture: JudgmentRequest<Q>['captureResult'];
+      try { logAssertion = request.assertLogCurrent; resultCapture = request.captureResult; }
       catch { throw new JudgmentError('rejected', FAILURE_MESSAGES.rejected); }
       assertLogCurrent(logAssertion);
       // Admit one immutable payload before settings/key acquisition can await.
@@ -212,13 +214,29 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
         questions,
       };
       let result: JudgmentResult<Q>;
+      let resultToReturn: JudgmentResult<Q>;
       try {
         requestedModel = identifier(request.model ?? inner.model, true);
         if (requestedModel === undefined) throw new JudgmentError('invalid-request', FAILURE_MESSAGES['invalid-request']);
         checkCancellation(signal);
-        const response = await inner.ask(Object.freeze({ ...captureRequest(request, logAssertion), ...input, context: call.context, model: requestedModel }));
+        const original = await inner.ask(Object.freeze({ ...captureRequest(request, logAssertion), ...input, context: call.context, model: requestedModel }));
         checkCancellation(signal);
+        // An owned strict scope must see every original field before the
+        // ordinary known-field projection can discard it or record success.
+        const response = (() => {
+          if (!resultCapture) return original;
+          assertLogCurrent(logAssertion);
+          const admitted = resultCapture(original);
+          if (nodeTypes.isPromise(admitted)) {
+            void Promise.prototype.then.call(admitted, undefined, () => {});
+            throw invalidResponse();
+          }
+          checkCancellation(signal);
+          assertLogCurrent(logAssertion);
+          return admitted;
+        })();
         result = projectResult(questions as unknown as Q, requestedModel, response);
+        resultToReturn = resultCapture ? response : result;
         checkCancellation(signal);
       } catch (error) {
         const failure = asFailure(error, cancellationKind(signal));
@@ -251,7 +269,7 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
       }));
       assertLogCurrent(logAssertion);
       const decisionId = recorded(() => log.record(entry));
-      return { ...result, decisionId };
+      return { ...resultToReturn, decisionId };
     },
   };
 }

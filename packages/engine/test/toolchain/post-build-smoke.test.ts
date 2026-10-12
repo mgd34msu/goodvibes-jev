@@ -1,3 +1,4 @@
+import { screeningAnswers } from '../_helpers/screening-answers.js';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { evaluateSmokeOutput, runPostBuildSmoke, scanArtifactForEagerNamespaceReads, captureLogger, realExec } from '@goodvibes-jev/engine/toolchain';
 import { scriptedExec } from './_helpers.ts';
@@ -31,7 +32,7 @@ function protectedDiagnosticOwner(options: { readonly redactPart?: number; reado
       const spans = part !== undefined && typeof text === 'string' ? [{ part, start: 0, end: text.length }] : [];
       return Response.json({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify({ revision: source.revision, spans }) } }] });
     }
-    return Response.json({ model: 'jev-1.13.0', answers: { complete: { type: 'noul', noul: options.screeningProbability ?? 1 }, precise: { type: 'noul', noul: 1 } }, usage: { input_tokens: 10, output_tokens: 2 } });
+    return Response.json({ model: 'jev-1.13.0', answers: screeningAnswers(body, { complete: options.screeningProbability ?? 1, precise: 1 }), usage: { input_tokens: 10, output_tokens: 2 } });
   } });
   const endpoint = `http://127.0.0.1:${server.port}`;
   const owner = createProtectedSourceOwner({

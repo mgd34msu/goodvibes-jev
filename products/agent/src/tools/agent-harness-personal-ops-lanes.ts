@@ -8,14 +8,7 @@ import { providerBackedQueueRecords } from './agent-harness-personal-ops-provide
 import { providerBackedReminderRecords, providerBackedTaskRecords } from './agent-harness-personal-ops-provider-task-records.ts';
 import { channelRecords, connectorRecords, localRecord, refreshableSavedRecordCount, reminderOperationRecords, routineReceiptRecord, savedProviderEffectReceiptRecords, savedReviewArtifactRecords, savedReviewQueueRecords, taskOperationRecords } from './agent-harness-personal-ops-records.ts';
 import type { McpToolRecord, McpToolSchema, PersonalOpsLane, PersonalOpsLiveRecord } from './agent-harness-personal-ops-types.ts';
-// Capability-honesty note: the writing-style-matched draft-reply composer
-// (styleReplyWorkflow / buildStyleReplyLaneAdditions, now in the SDK's
-// @goodvibes-jev/engine/sdk/platform/email entry) is NOT wired into the
-// advertised inbox lane. The Agent has no reader for the user's own sent-message
-// corpus, so it cannot honestly claim a style match, and competitive-feature-
-// inventory.ts records writing-style-matched draft replies as "not yet shipped".
-// The composer stays as tested internal code; do not re-advertise it here until
-// the sent-corpus input and a real compose route ship together.
+import { personalOpsStyleDraftRecord, personalOpsStyleDraftWorkflow } from './agent-harness-personal-ops-style-draft.ts';
 
 function notesLane(snapshot: ReturnType<typeof buildAgentWorkspaceRuntimeSnapshot>): PersonalOpsLane {
   return {
@@ -130,8 +123,9 @@ function inboxLane({ snapshot, emailMethods, unavailableEmailMethods, emailConne
     ],
     methodIds: emailMethods,
     connectorSignals: emailConnectors,
-    workflows: inboxWorkflows(emailMethods, emailConnectors, unavailableEmailMethods),
+    workflows: [...inboxWorkflows(emailMethods, emailConnectors, unavailableEmailMethods), personalOpsStyleDraftWorkflow()],
     liveRecords: [
+      personalOpsStyleDraftRecord(),
       ...inboxProviderRecords,
       ...inboxReviewQueueRecords,
       ...inboxArtifactRecords,

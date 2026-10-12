@@ -2,6 +2,7 @@ import type { KnowledgeScopeSelectionOptions } from '../scope-selection.js';
 import { KnowledgeScopeSelectionHeldError } from '../scope-selection.js';
 import { createKnowledgeFactQualityReader } from './fact-quality.js';
 import { createSemanticWriteGuard } from './primary-source-plan.js';
+import { prepareSelfImprovementAssessment } from './self-improvement-assessment/plan.js';
 import type { KnowledgeObjectProfilePolicy } from '../extensions.js';
 import { REPAIRS_GAP_RELATION } from '../home-graph/types.js';
 import {
@@ -19,11 +20,8 @@ import { canonicalRepairSubjectNodes, captureRepairSubjectReadSet } from './repa
 import {
   factsForObject,
   factsForSource,
-  isConcreteRepairSubject,
   isSelfImprovementFactCandidate,
   linkedObjectsForSource,
-  matchingObjectProfiles,
-  repairTargetFactCount,
   sourcesForObject,
   uniqueById,
 } from './self-improvement-graph.js';
@@ -139,7 +137,12 @@ export async function classifyGap(
     const candidates = repairEvidenceCandidates(context);
     const quality = await reader.prepare(candidates);
     assertCurrent = () => { context.assertCurrent?.(); quality.assertCurrent(); };
-    usefulEvidence = quality.facts.length >= repairTargetFactCount(context.gap);
+    const coverage = await prepareSelfImprovementAssessment({ kind: 'coverage', store, spaceId: getKnowledgeSpaceId(context.gap),
+      query: [context.gap.title, context.gap.summary].filter(Boolean).join('\n\n'), gap: context.gap,
+      subjects: context.linkedObjects, sources: context.sources, facts: quality.facts, objectProfiles, ...options, assertCurrent });
+    if (coverage.kind !== 'coverage') throw new KnowledgeScopeSelectionHeldError('malformed');
+    assertCurrent = coverage.assertCurrent;
+    usefulEvidence = coverage.sufficient;
   }
   const repairedWithFacts = status === 'repaired' && usefulEvidence;
   if (!force && repairedWithFacts) return { action: 'skip', reason: 'Gap already has promoted repair facts.', status: 'repaired', assertCurrent };
@@ -148,12 +151,17 @@ export async function classifyGap(
   if (isDefaultUnanchoredAnswerGap(context)) {
     return { action: 'skip', reason: 'Default answer gaps without a linked subject are not automatically web-repaired.', status: 'needs_context', markAttempt: true, assertCurrent };
   }
-  if (isNotApplicableGap(context, objectProfiles)) return { action: 'suppress', reason: 'The gap is not applicable to the linked subject.', assertCurrent };
-  if (!hasConcreteSubject(context, objectProfiles)) {
+  if (context.sources.length === 0 && context.linkedObjects.length === 0) {
     return { action: 'skip', reason: 'Gap has no concrete source or subject for automatic repair.', status: 'needs_context', markAttempt: true, assertCurrent };
   }
-  if (context.sources.length === 0 && context.linkedObjects.length === 0) {
-    return { action: 'skip', reason: 'Gap has no source context for automatic repair.', status: 'needs_context', markAttempt: true, assertCurrent };
+  const assessment = await prepareSelfImprovementAssessment({ kind: 'context', store, spaceId: getKnowledgeSpaceId(context.gap),
+    query: [context.gap.title, context.gap.summary].filter(Boolean).join('\n\n'), gap: context.gap,
+    subjects: context.linkedObjects, sources: context.sources, facts: [], objectProfiles, ...options, assertCurrent });
+  if (assessment.kind !== 'context') throw new KnowledgeScopeSelectionHeldError('malformed');
+  assertCurrent = assessment.assertCurrent;
+  if (!assessment.applicable) return { action: 'suppress', reason: 'The gap is not applicable to the linked subject.', assertCurrent };
+  if (!assessment.concrete) {
+    return { action: 'skip', reason: 'Gap has no concrete source or subject for automatic repair.', status: 'needs_context', markAttempt: true, assertCurrent };
   }
   return { action: 'repair', assertCurrent };
 }
@@ -227,35 +235,6 @@ function repairEvidenceCandidates(context: GapContext): KnowledgeNodeRecord[] {
     && isSelfImprovementFactCandidate(fact, subjectIds)
   ));
   return usableFacts;
-}
-
-function isNotApplicableGap(context: GapContext, objectProfiles: readonly KnowledgeObjectProfilePolicy[]): boolean {
-  const text = `${context.gap.title} ${context.gap.summary ?? ''}`.toLowerCase();
-  const suppressedByProfile = matchingObjectProfiles(context.linkedObjects, objectProfiles)
-    .flatMap((profile) => profile.suppressedGapKinds ?? [])
-    .some((kind) => kind.trim().length > 0 && text.includes(kind.trim().toLowerCase()));
-  if (suppressedByProfile) return true;
-  if (text.includes('battery')) {
-    return context.linkedObjects.length > 0
-      && !/\b(remote|controller|accessory|handset)\b/.test(text)
-      && context.linkedObjects.every((node) => !batteryCanBeIntrinsicToSubject(node));
-  }
-  return false;
-}
-
-function batteryCanBeIntrinsicToSubject(node: KnowledgeNodeRecord): boolean {
-  if (node.metadata.batteryPowered === true) return true;
-  const batteryType = readString(node.metadata.batteryType);
-  if (batteryType && batteryType !== 'none') return true;
-  const text = `${node.kind} ${node.title} ${node.summary ?? ''} ${node.aliases.join(' ')} ${JSON.stringify(node.metadata)}`.toLowerCase();
-  return /\b(battery|button|keypad|leak sensor|motion sensor|contact sensor|door sensor|window sensor|remote|lock|thermostat|phone|watch|handheld|portable|ble beacon|ibeacon|tag)\b/.test(text);
-}
-
-function hasConcreteSubject(context: GapContext, objectProfiles: readonly KnowledgeObjectProfilePolicy[]): boolean {
-  return context.linkedObjects.some((node) => {
-    if (isConcreteRepairSubject(node, objectProfiles)) return true;
-    return Boolean(readString(node.metadata.manufacturer) && readString(node.metadata.model));
-  }) || context.sources.some((source) => Boolean(source.title || source.url || source.sourceUri || source.canonicalUri));
 }
 
 async function repairSubjectsForGap(

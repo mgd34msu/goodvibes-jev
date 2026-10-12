@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, scoreAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { judgmentInputProblem, JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { semanticFactId } from '../sdk/src/platform/knowledge/semantic/utils.js';
@@ -21,7 +21,10 @@ let previous: JudgmentPort | undefined;
 const roots: string[] = [];
 beforeEach(() => { previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-function readings() { const fake = fakePort(() => noulAnswer(0.99)); installJudgmentPort(fake.port); return fake; }
+function readings() { const fake = fakePort((name, question) => {
+    if (name === 'factTrust' || name === 'sourceSupport' || name === 'subjectSupport') return scoreAnswer(question, 4, 0.99); // Authored supported synthetic facts; grading behavior has separate controls.
+    return noulAnswer(0.99);
+  }); installJudgmentPort(fake.port); return fake; }
 function input(claimId = actualClaimId, subjectId = 'subject'): GeneratedFactSupportInput {
   return {
     spaceId,

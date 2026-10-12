@@ -1,3 +1,5 @@
+import { captureNativeReadBindings, captureNativeReadRestrictions } from './read-restrictions.ts';
+import { retainCliConfig } from '@goodvibes-jev/engine/terminal-shell';
 import { canonicalizePairingHost } from './connected-host-pairing-store.ts';
 import { resolveConnectedHostBaseUrl } from '../config/connected-host-dial.ts';
 import { createOperatorSdk } from '@goodvibes-jev/engine/operator-sdk';
@@ -13,7 +15,18 @@ export interface ConnectedHostReadiness {
 /** Fresh, read-only evidence for the exact host and effective credential used by native intake.
  * Never returns credentials, raw remote errors, or a durable authority claim.
  */
-export async function readConnectedHostReadiness(options: AgentDaemonVerbCallerOptions): Promise<ConnectedHostReadiness> {
+export async function readConnectedHostReadiness(options: AgentDaemonVerbCallerOptions, ownership: { readonly signal?: AbortSignal | undefined; readonly assertCurrent?: (() => void) | undefined } = {}): Promise<ConnectedHostReadiness> {
+  const optionBindings = captureNativeReadBindings(options);
+  const restrictions = captureNativeReadRestrictions(ownership);
+  optionBindings(); restrictions();
+  const retainedConfig = retainCliConfig(options.configManager);
+  const originalSignal = ownership.signal;
+  const assertCurrent = () => {
+    optionBindings(); restrictions();
+    retainedConfig.assertCurrent();
+    optionBindings(); retainedConfig.assertCurrent(); restrictions();
+  };
+  assertCurrent();
   if (!resolveConnectedHostDialEnabled(options.configManager)) {
     return { status: 'disabled', detail: 'Connected-host dialing is disabled; no auth probe was made.' };
   }
@@ -25,14 +38,31 @@ export async function readConnectedHostReadiness(options: AgentDaemonVerbCallerO
   let operator: ReturnType<typeof createOperatorSdk> | undefined;
   let result: ConnectedHostReadiness;
   try {
-    operator = createOperatorSdk({ baseUrl: selected.baseUrl, authToken: selected.token, ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}) });
-    const auth = await operator.invoke('control.auth.current', {}, { signal: AbortSignal.timeout(1500) });
+    const nativeFetch = options.fetchImpl ?? fetch;
+    const assertConnection = () => {
+      assertCurrent();
+      const current = resolveConnectedHostConnection(options);
+      if ('reason' in current || current.baseUrl !== selected.baseUrl || current.token !== selected.token
+        || current.selectionIdentity !== selected.selectionIdentity || current.expectedPrincipalId !== selected.expectedPrincipalId)
+        throw new Error('Connected-host read source changed.');
+    };
+    const fetchImpl = Object.assign((...args: Parameters<typeof fetch>): ReturnType<typeof fetch> => {
+      assertConnection();
+      return nativeFetch(...args);
+    }, { preconnect: nativeFetch.preconnect });
+    assertConnection();
+    operator = createOperatorSdk({ baseUrl: selected.baseUrl, authToken: selected.token, fetchImpl });
+    const timeout = AbortSignal.timeout(1500);
+    const auth = await operator.invoke('control.auth.current', {}, { signal: originalSignal ? AbortSignal.any([originalSignal, timeout]) : timeout });
+    assertConnection();
     result = isNativePairedPrincipal(auth, selected.expectedPrincipalId)
       ? { status: 'ready', detail: 'The selected host verified the current credential as a paired owner with native intake scopes.' }
       : { status: 'unsupported-principal', detail: 'The selected host did not verify a paired owner with read:work-ledger and write:work-ledger. A shared token is insufficient.' };
   } catch {
+    assertCurrent();
     result = { status: 'unavailable', detail: 'Live connected-host auth could not be verified. Rerun setup status after checking the selected host and credential.' };
   } finally { operator?.dispose(); }
+  assertCurrent();
   const current = resolveConnectedHostConnection(options);
   if ('reason' in current || current.baseUrl !== selected.baseUrl || current.token !== selected.token
     || current.selectionIdentity !== selected.selectionIdentity || current.expectedPrincipalId !== selected.expectedPrincipalId) {

@@ -218,7 +218,7 @@ async function main() {
     },
     render: () => render(),
     listCalendarEvents: buildCalendarEventsLister(ctx.services.shellPaths),
-    onAwayDigest: buildSkillDraftProposer(ctx.services.shellPaths, commandContext),
+    onAwayDigest: buildSkillDraftProposer(toolRegistry, ctx),
   });
 
   // The Activity modal's view (Ctrl+O, /activity), read live on every paint of it:
@@ -312,9 +312,9 @@ async function main() {
     } catch (error) { spokenOutputDrain = Promise.reject(error); }
     unsubs.forEach(fn => fn());
     // Persist last-seen before shutdown so the next launch can compute the digest.
-    autonomy.stop();
+    const autonomyDrain = autonomy.stop();
     const snapshot = buildCurrentSessionSnapshot();
-    const runtimeShutdown = ctx.shutdown(snapshot);
+    const runtimeShutdown = autonomyDrain.then(() => ctx.shutdown(snapshot));
     const exitCompletion = settleInteractiveExit(runtimeShutdown, spokenOutputDrain);
     if (recoveryInterval !== null) { clearInterval(recoveryInterval); recoveryInterval = null; }
     // Scoped to this session only, a keyless call would clear every snapshot in the recovery dir.

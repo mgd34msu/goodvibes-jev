@@ -1,3 +1,5 @@
+import { extractionValueFixtureFor } from './_helpers/knowledge-extraction-value-readings.js';
+import { gapAssessmentFixture, intrinsicAssessmentFixture, answerGapAssessmentFixtures, semanticRepairAssessmentCoverage } from './_helpers/knowledge-self-improvement-readings.js';
 import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
 import { seedKnowledgeResearchTask, useSemanticActivationFixtures } from './_helpers/knowledge-semantic-activation-fixtures.js';
 import { describe, expect, test } from 'bun:test';
@@ -48,6 +50,8 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
+    answerReadings.addAssessments(answerGapAssessmentFixtures(['What HDR and display features does the TV have?'], [device], 0.01));
     const generated = await store.upsertSource({
       connectorId: 'homeassistant',
       sourceType: 'document',
@@ -165,6 +169,8 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
+    answerReadings.addAssessments(answerGapAssessmentFixtures(['What features does the LG 86NANO90UNA have?'], [device], 0.99));
     const generated = await store.upsertSource({
       connectorId: 'homeassistant',
       sourceType: 'document',
@@ -228,6 +234,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
     });
     expect(seed.answer.gaps.map((gap) => gap.title)).toContain('What features does the LG 86NANO90UNA have?');
 
+    answerReadings.addAssessments(seed.answer.gaps.map(gap => gapAssessmentFixture(gap, [device], 0.99, 0.99, semanticRepairAssessmentCoverage, 0.99)));
     const background = semantic.selfImprove({
       knowledgeSpaceId: spaceId,
       gapIds: seed.answer.gaps.map((gap) => gap.id),
@@ -270,6 +277,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
     const official = await store.upsertSource({
       id: 'synthetic-edge-enrichment-source',
       connectorId: 'semantic-gap-repair',
@@ -304,6 +312,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       metadata: { knowledgeSpaceId: spaceId },
     });
 
+    answerReadings.addExtractionValue(...extractionValueFixtureFor(official, store.getExtractionBySourceId(official.id), 0.99));
     await semantic.enrichSource(official.id);
     const facts = store.listNodes(100).filter((node) => node.kind === 'fact' && node.sourceId === official.id);
 
@@ -344,6 +353,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
     const gap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'edge-only-gap',
@@ -358,6 +368,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
         sourceIds: [official.id],
       },
     });
+    answerReadings.addAssessments([gapAssessmentFixture(gap, [device], 0.99, 0.99, semanticRepairAssessmentCoverage, 0.99)]);
     await store.upsertEdge({
       fromKind: 'node',
       fromId: device.id,
@@ -367,13 +378,16 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       metadata: { knowledgeSpaceId: spaceId },
     });
     const semantic = new KnowledgeSemanticService(store, {
-      gapRepairer: async () => ({
+      gapRepairer: async () => {
+        answerReadings.addExtractionValue(...extractionValueFixtureFor(official, store.getExtractionBySourceId(official.id), 0.99));
+        return ({
         searched: true,
         evidenceSufficient: true,
         acceptedSourceIds: [official.id],
         ingestedSourceIds: [],
         skippedUrls: [],
-      }),
+        });
+      },
     });
 
     const result = await semantic.selfImprove({ knowledgeSpaceId: spaceId, gapIds: [gap.id], force: true });
@@ -398,7 +412,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       metadata: { knowledgeSpaceId: spaceId },
     });
     for (const slug of ['pause-gap-1', 'pause-gap-2', 'pause-gap-3']) {
-      await seedKnowledgeResearchTask(store, {
+      const assessmentFixtureGap = await seedKnowledgeResearchTask(store, {
         kind: 'knowledge_gap',
         slug,
         title: `What does ${slug} need?`,
@@ -407,6 +421,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
         sourceId: official.id,
         metadata: { knowledgeSpaceId: spaceId, semanticKind: 'gap', gapKind: 'answer', sourceIds: [official.id] },
       });
+      answerReadings.addAssessments([gapAssessmentFixture(assessmentFixtureGap, [], 0.99, 0.99)]);
     }
     let paused = false;
     let repairCalls = 0;
@@ -629,7 +644,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       llm: new GapRepairAnswerLlm(),
       gapRepairer: async (request) => {
         calls.push(request);
-        await store.upsertSource({
+        const extractionFixtureRepairSource = await store.upsertSource({
           id: 'repair-source',
           connectorId: 'semantic-gap-repair',
           sourceType: 'url',
@@ -648,6 +663,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
           },
           metadata: { knowledgeSpaceId: 'homeassistant:test' },
         });
+        answerReadings.addExtractionValue(...extractionValueFixtureFor(extractionFixtureRepairSource, store.getExtractionBySourceId(extractionFixtureRepairSource.id), 0.99));
         // Once the fixture repair text exists, measured evidence is sufficient.
         // The old generator still gives its partial manual answer; the literal
         // candidate is independently complete and must be preferred.
@@ -679,6 +695,8 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       confidence: 90,
       metadata: knowledgeSpaceMetadata('homeassistant:test', { manufacturer: 'LG', model: '86NANO90UNA' }),
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
+    answerReadings.addAssessments(answerGapAssessmentFixtures(['lg 86nano90una full specifications', 'what features does the TV have?'], [device], 0.99));
     await store.upsertEdge({
       fromKind: 'source',
       fromId: source.id,
@@ -743,6 +761,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       confidence: 90,
       metadata: knowledgeSpaceMetadata('homeassistant:test', { manufacturer: 'LG', model: '86NANO90UNA' }),
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
     const gap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'lg-tv-features-gap',
@@ -758,6 +777,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
         sourceIds: [manual.id],
       },
     });
+    answerReadings.addAssessments([gapAssessmentFixture(gap, [device], 0.99, 0.99, semanticRepairAssessmentCoverage, 0.99)]);
     await store.upsertEdge({ fromKind: 'source', fromId: manual.id, toKind: 'node', toId: device.id, relation: 'has_manual' });
     await store.upsertEdge({ fromKind: 'node', fromId: device.id, toKind: 'node', toId: gap.id, relation: 'has_gap' });
     const semantic = new KnowledgeSemanticService(store, {
@@ -818,6 +838,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       confidence: 90,
       metadata: knowledgeSpaceMetadata('homeassistant:test', { manufacturer: 'LG', model: '86NANO90UNA' }),
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
     const gap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'lg-tv-rich-features-gap',
@@ -831,6 +852,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
         linkedObjectIds: [device.id],
       }),
     });
+    answerReadings.addAssessments([gapAssessmentFixture(gap, [device], 0.99, 0.99, semanticRepairAssessmentCoverage, 0.99)]);
     await store.upsertEdge({ fromKind: 'node', fromId: device.id, toKind: 'node', toId: gap.id, relation: 'has_gap' });
     let release!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
@@ -848,17 +870,21 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
         },
         completeText: async () => null,
       },
-      gapRepairer: async () => ({
+      gapRepairer: async () => {
+        answerReadings.addExtractionValue(...extractionValueFixtureFor(repairSource, store.getExtractionBySourceId(repairSource.id), 0.99));
+        return ({
         searched: true,
         evidenceSufficient: true,
         acceptedSourceIds: [repairSource.id],
         ingestedSourceIds: [],
         skippedUrls: [],
-      }),
+        });
+      },
     });
 
     // Start enrichment and hold its actual LLM call. Promotion must close the
     // gap using the indexed text while enrichment is still pending.
+    answerReadings.addExtractionValue(...extractionValueFixtureFor(repairSource, store.getExtractionBySourceId(repairSource.id), 0.99));
     const enrichment = semantic.enrichSource(repairSource.id, { knowledgeSpaceId: 'homeassistant:test' });
     let improvement: ReturnType<KnowledgeSemanticService['selfImprove']> | undefined;
     const graphSnapshot = () => JSON.stringify({ nodes: store.listNodes(100), edges: store.listEdges() });
@@ -912,6 +938,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       confidence: 90,
       metadata: knowledgeSpaceMetadata('homeassistant:test', { manufacturer: 'LG', model: '86NANO90UNA' }),
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
     const otherDevice = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'sony-tv-existing-facts',
@@ -920,6 +947,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       confidence: 90,
       metadata: knowledgeSpaceMetadata('homeassistant:test', { manufacturer: 'Sony', model: 'XBR-55X850B' }),
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(otherDevice, [{ facts: [], probability: 0.01 }])]);
     const gap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'lg-tv-existing-source-gap',
@@ -933,6 +961,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
         linkedObjectIds: [device.id],
       }),
     });
+    answerReadings.addAssessments([gapAssessmentFixture(gap, [device], 0.99, 0.99, semanticRepairAssessmentCoverage, 0.99)]);
     await store.upsertEdge({ fromKind: 'node', fromId: device.id, toKind: 'node', toId: gap.id, relation: 'has_gap' });
     const goodFactPairs: Array<[string, string]> = [
       ['Display and picture specifications', 'Display and picture specifications: 4K UHD resolution, HDR10, Dolby Vision, and 120 Hz refresh rate.'],
@@ -978,13 +1007,16 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
     });
     await store.upsertEdge({ fromKind: 'source', fromId: repairSource.id, toKind: 'node', toId: unrelated.id, relation: 'supports_fact' });
     const semantic = new KnowledgeSemanticService(store, {
-      gapRepairer: async () => ({
+      gapRepairer: async () => {
+        answerReadings.addExtractionValue(...extractionValueFixtureFor(repairSource, store.getExtractionBySourceId(repairSource.id), 0.99));
+        return ({
         searched: true,
         evidenceSufficient: true,
         acceptedSourceIds: [repairSource.id],
         ingestedSourceIds: [],
         skippedUrls: [],
-      }),
+        });
+      },
     });
 
     const result = await semantic.selfImprove({ knowledgeSpaceId: 'homeassistant:test', gapIds: [gap.id], maxRunMs: 5_000 });
@@ -1111,6 +1143,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
     });
     const semantic = new KnowledgeSemanticService(store);
 
+    answerReadings.addExtractionValue(...extractionValueFixtureFor(source, store.getExtractionBySourceId(source.id), 0.99));
     await semantic.enrichSource(source.id, { knowledgeSpaceId: 'default' });
 
     expect(store.listNodes(100).filter((node) => node.metadata.semanticKind === 'fact')).toEqual([]);

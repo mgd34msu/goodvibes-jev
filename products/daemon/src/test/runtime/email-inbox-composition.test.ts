@@ -1,3 +1,4 @@
+import { screeningAnswers } from '../helpers/screening-answers.js';
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -103,7 +104,7 @@ function remote() {
       const spans = source.parts.flatMap((part, index) => Array.from(part.matchAll(/person@example\.test/g), match => ({ part: index, start: match.index!, end: match.index! + sensitive.length })));
       return Response.json({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify({ revision: source.revision, spans }) } }] });
     }
-    return Response.json({ model: 'jev-1.13.0', answers: { complete: { type: 'noul', noul: 1 }, precise: { type: 'noul', noul: 1 } }, usage: { input_tokens: 10, output_tokens: 2 } });
+    return Response.json({ model: 'jev-1.13.0', answers: screeningAnswers(data, { complete: 1, precise: 1 }), usage: { input_tokens: 10, output_tokens: 2 } });
   } });
   cleanups.push(() => server.stop(true));
   const screening: ProtectedSourceOwnerOptions = {

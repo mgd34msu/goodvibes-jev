@@ -1,3 +1,4 @@
+import { assertSecurityReadSource, captureSecurityReadBindings } from '../security/read-source.js';
 import { prepareExternalExecution, prepareExternalWorkspaceRevision } from '../permissions/external-execution.js';
 import { autonomousSourceRevision } from '../permissions/autonomous-protocol-binding.js';
 import { captureExternalRequestEvidence } from '../permissions/external-request-evidence.js';
@@ -5,7 +6,8 @@ import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { admitExternalRequest, type ExternalPermissionHost } from '../permissions/external-request.js';
 import { autonomousRevision } from '../permissions/autonomous.js';
 import { awaitPermission } from '../permissions/cancellation.js';
-import { snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { captureOwnedJson, retainOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { isDeepStrictEqual, types as nodeTypes } from 'node:util';
 import { currentExternalOperationSource } from '../permissions/external-operation-scope.js';
 /**
  * McpRegistry, manages all connected MCP servers.
@@ -22,7 +24,7 @@ import {
   removeMcpServerConfig,
   upsertMcpServerConfig,
 } from './config.js';
-import { McpClient } from './client.js';
+import { McpClient, captureMcpClientToolCatalog } from './client.js';
 import type {
   McpClientNotification,
   McpClientServerRequest,
@@ -44,7 +46,7 @@ import type {
 } from './config.js';
 import type { HookDispatcher } from '../hooks/dispatcher.js';
 import type { HookEvent } from '../hooks/types.js';
-import { McpPermissionManager } from '../runtime/mcp/permissions.js';
+import { McpPermissionManager, captureMcpDecisionHistoryReadSource } from '../runtime/mcp/permissions.js';
 import { McpSchemaFreshnessTracker } from '../runtime/mcp/schema-freshness.js';
 import type { McpDecisionRecord, QuarantineReason, SchemaFreshness } from '../runtime/mcp/types.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
@@ -101,7 +103,18 @@ function sameServerConfig(a: McpServerConfig | undefined, b: McpServerConfig | u
   return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
 
+const mcpSecurityReadSources = new WeakMap<McpRegistry, () => () => void>();
+const getMcpSecurityReadSources = mcpSecurityReadSources.get.bind(mcpSecurityReadSources);
+const setMcpSecurityReadSources = mcpSecurityReadSources.set.bind(mcpSecurityReadSources);
+
+export function captureMcpSecurityDecisionReadSource(registry: McpRegistry): () => void {
+  const capture = getMcpSecurityReadSources(registry);
+  assertSecurityReadSource(capture !== undefined);
+  return capture();
+}
+
 export class McpRegistry {
+  readonly #catalogFactoryOwner = Object.freeze({});
   private clients = new Map<string, McpClient>();
   private readonly executionByClient = new WeakMap<McpClient, { assertCurrent: () => void; close: () => void }>();
   private serverConfigs = new Map<string, McpServerConfig>();
@@ -138,6 +151,11 @@ export class McpRegistry {
   }) {
     this.hookDispatcher = options.hookDispatcher;
     this.sandboxSessions = options.sandboxSessions;
+    setMcpSecurityReadSources(this, () => {
+      const binding = captureSecurityReadBindings(this, ['permissions', 'listRecentSecurityDecisions', 'captureSecurityDecisionReadSource']);
+      const decisionCurrent = captureMcpDecisionHistoryReadSource(this.permissions);
+      return () => { binding(); decisionCurrent(); binding(); };
+    });
   }
 
   setRuntimeBus(runtimeBus: RuntimeEventBus | null): void {
@@ -264,6 +282,56 @@ export class McpRegistry {
     }
 
     return { added, changed, removed, unchanged, servers: results };
+  }
+
+  /** Own the exact native catalog acquisition and retain it through read-only interpretation. */
+  captureToolCatalog(options?: McpToolCallOptions): { readonly listAllTools: () => Promise<readonly RegisteredTool[]>; readonly assertCurrent: () => void } {
+    const factoryOwner = this.#catalogFactoryOwner;
+    const clients = this.clients, configs = this.serverConfigs, permissions = this.permissions, freshness = this.freshness;
+    const originalClients = [...clients], originalConfigs = [...configs];
+    const configSources = originalConfigs.map(([, config]) => retainOwnedJson(config, nodeTypes.isProxy));
+    const assertMethods = captureMcpBackendMethods(this, ['captureToolCatalog', 'listAllTools', 'listServerSecurity']);
+    const originalSecurity = captureOwnedJson(this.listServerSecurity(), nodeTypes.isProxy);
+    const sources = originalClients.map(([name, client]) => {
+      const assertClient = captureMcpBackendMethods(client, ['captureToolCatalog', 'listTools']);
+      const native = captureMcpClientToolCatalog(client), connected = native.connected;
+      const policy = this.policyLifetime(name), execution = this.executionByClient.get(client);
+      return { name, client, connected, native, policy, execution, assertClient };
+    });
+    const assertCurrent = () => {
+      assertMethods(); for (const source of configSources) source.assertCurrent();
+      if (this.#catalogFactoryOwner !== factoryOwner || this.clients !== clients || this.serverConfigs !== configs || this.permissions !== permissions || this.freshness !== freshness
+        || clients.size !== originalClients.length || configs.size !== originalConfigs.length
+        || [...clients].some(([name, client], index) => name !== originalClients[index]?.[0] || client !== originalClients[index]?.[1])
+        || [...configs].some(([name, config], index) => name !== originalConfigs[index]?.[0] || config !== originalConfigs[index]?.[1])
+        || !isDeepStrictEqual(captureOwnedJson(this.listServerSecurity(), nodeTypes.isProxy), originalSecurity)) throw new Error('MCP catalog registry changed');
+      for (const source of sources) {
+        source.assertClient(); source.policy.signal.throwIfAborted();
+        if (this.policyLifetimes.get(source.name) !== source.policy
+          || this.executionByClient.get(source.client) !== source.execution) throw new Error('MCP catalog source changed');
+        source.execution?.assertCurrent(); source.native.assertCurrent();
+      }
+    };
+    let pending: Promise<readonly RegisteredTool[]> | undefined;
+    assertCurrent();
+    const caller = captureMcpCallRestrictions(options);
+    const assertCollectionCurrent = () => { caller.assertCurrent(); assertCurrent(); };
+    const listAllTools = () => {
+      assertCollectionCurrent();
+      if (pending) return pending;
+      pending = (async () => {
+        const results: RegisteredTool[] = [];
+        for (const source of sources) {
+          assertCollectionCurrent(); if (!source.connected) continue;
+          const tools = await awaitPermission(() => source.native.listTools(options), caller.signal); assertCollectionCurrent();
+          for (const tool of tools) results.push({ qualifiedName: `mcp:${source.name}:${tool.name}`,
+            serverName: source.name, toolName: tool.name, description: tool.description });
+        }
+        assertCollectionCurrent(); return results;
+      })();
+      return pending;
+    };
+    assertCollectionCurrent(); return Object.freeze({ listAllTools, assertCurrent });
   }
 
   /**
@@ -628,6 +696,8 @@ export class McpRegistry {
     this.permissions.setServerRole(serverName, role);
     this._emitPolicyUpdate(serverName);
   }
+
+  captureSecurityDecisionReadSource(): () => void { return captureMcpSecurityDecisionReadSource(this); }
 
   listRecentSecurityDecisions(limit = 8): McpDecisionRecord[] {
     return this.permissions.listRecentDecisions(limit);

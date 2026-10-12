@@ -1,3 +1,7 @@
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { withNativeCatalog, rankResearchRecords } from './agent-harness-research-catalog-source.ts';
+import { selectHarnessCatalog } from './agent-harness-catalog-selection.ts';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { previewHarnessText } from './agent-harness-text.ts';
@@ -117,9 +121,7 @@ function normalized(value: string): string {
   return value.toLowerCase();
 }
 
-function artifactSearchText(artifact: ReleaseEvidenceArtifact): string {
-  return `${artifact.id}\n${artifact.path}\n${artifact.kind}\n${artifact.description}`.toLowerCase();
-}
+
 
 function releaseEvidenceModelRoute(artifact?: ReleaseEvidenceArtifact): string {
   if (artifact) return 'audit action:"artifact"';
@@ -286,18 +288,9 @@ function summarizeLoadedArtifact(
   };
 }
 
-function releaseEvidenceCandidates(artifacts: readonly ReleaseEvidenceArtifact[]): readonly Record<string, unknown>[] {
-  return artifacts.slice(0, 10).map((artifact) => ({
-    id: artifact.id,
-    path: artifact.path,
-    kind: artifact.kind,
-    summary: previewHarnessText(artifact.description),
-    modelRoute: releaseEvidenceModelRoute(artifact),
-  }));
-}
 
-export function releaseEvidenceBundleStatus(): Record<string, unknown> {
-  const loaded = RELEASE_EVIDENCE_ARTIFACTS.map(loadArtifact);
+
+function evidenceBundleStatus(loaded: readonly ReleaseEvidenceArtifactLoadResult[]): Record<string, unknown> {
   const available = loaded.filter((artifact) => artifact.status === 'available').length;
   return {
     status: available === RELEASE_EVIDENCE_ARTIFACTS.length ? 'available' : available > 0 ? 'degraded' : 'unavailable',
@@ -308,18 +301,23 @@ export function releaseEvidenceBundleStatus(): Record<string, unknown> {
   };
 }
 
-export function releaseEvidenceSummary(args: ReleaseEvidenceArgs): Record<string, unknown> {
+export async function releaseEvidenceBundleStatus(options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  return withNativeCatalog({}, options, RELEASE_EVIDENCE_ARTIFACTS.map(artifact => join(packageRoot(), artifact.path)),
+    () => RELEASE_EVIDENCE_ARTIFACTS.map(loadArtifact), async (_args, loaded) => evidenceBundleStatus(loaded));
+}
+
+export async function releaseEvidenceSummary(rawArgs: ReleaseEvidenceArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  return withNativeCatalog(rawArgs, options, RELEASE_EVIDENCE_ARTIFACTS.map(artifact => join(packageRoot(), artifact.path)),
+    () => RELEASE_EVIDENCE_ARTIFACTS.map(loadArtifact), async (args, allLoaded, options) => {
   const query = readString(args.query || args.target);
-  const filtered = query
-    ? RELEASE_EVIDENCE_ARTIFACTS.filter((artifact) => artifactSearchText(artifact).includes(normalized(query)))
-    : RELEASE_EVIDENCE_ARTIFACTS;
+  const selected = await rankResearchRecords(allLoaded, query, loaded => ({ id: loaded.artifact.id, description: loaded.artifact.description, evidence: loaded }), options, 'agent.release.evidence');
   const limit = readLimit(args.limit, 100);
-  const loaded = filtered.slice(0, limit).map(loadArtifact);
-  const status = releaseEvidenceBundleStatus();
+  const loaded = selected.slice(0, limit);
+  const status = evidenceBundleStatus(allLoaded);
   return {
     mode: 'release_evidence',
     ...status,
-    filtered: filtered.length,
+    filtered: selected.length,
     returned: loaded.length,
     artifactsList: loaded.map((artifact) => summarizeLoadedArtifact(artifact, { includeSource: args.includeParameters === true })),
     policy: releaseEvidencePolicy(),
@@ -330,9 +328,19 @@ export function releaseEvidenceSummary(args: ReleaseEvidenceArgs): Record<string
     },
     artifactLookup: 'Use audit action:"artifact" with artifactId, target, or query to inspect one release evidence artifact; lower-level agent_harness mode:"release_evidence_artifact" remains available.',
   };
+
+  });
 }
 
-export function describeHarnessReleaseEvidenceArtifact(args: ReleaseEvidenceArgs): ReleaseEvidenceArtifactResolution {
+function capturedArtifact(loaded: readonly ReleaseEvidenceArtifactLoadResult[], id: ReleaseEvidenceArtifactId): ReleaseEvidenceArtifactLoadResult {
+  const original = loaded.find(entry => entry.artifact.id === id);
+  if (!original) throw new ToolInputProjectionError('held');
+  return original;
+}
+
+export async function describeHarnessReleaseEvidenceArtifact(rawArgs: ReleaseEvidenceArgs, options: CatalogRankingOptions = {}): Promise<ReleaseEvidenceArtifactResolution> {
+  return withNativeCatalog(rawArgs, options, RELEASE_EVIDENCE_ARTIFACTS.map(artifact => join(packageRoot(), artifact.path)),
+    () => RELEASE_EVIDENCE_ARTIFACTS.map(loadArtifact), async (args, allLoaded, options) => {
   const lookup = evidenceLookupFromArgs(args);
   if (!lookup) {
     return {
@@ -347,7 +355,7 @@ export function describeHarnessReleaseEvidenceArtifact(args: ReleaseEvidenceArgs
     return {
       status: 'found',
       lookup: { ...lookup, resolvedBy: 'id' },
-      artifact: summarizeLoadedArtifact(loadArtifact(exactId), { includeSource: true }),
+      artifact: summarizeLoadedArtifact(capturedArtifact(allLoaded, exactId.id), { includeSource: true }),
     };
   }
 
@@ -357,7 +365,7 @@ export function describeHarnessReleaseEvidenceArtifact(args: ReleaseEvidenceArgs
     return {
       status: 'found',
       lookup: { ...lookup, resolvedBy: 'case-insensitive-id' },
-      artifact: summarizeLoadedArtifact(loadArtifact(insensitiveId), { includeSource: true }),
+      artifact: summarizeLoadedArtifact(capturedArtifact(allLoaded, insensitiveId.id), { includeSource: true }),
     };
   }
 
@@ -366,29 +374,18 @@ export function describeHarnessReleaseEvidenceArtifact(args: ReleaseEvidenceArgs
     return {
       status: 'found',
       lookup: { ...lookup, resolvedBy: 'path' },
-      artifact: summarizeLoadedArtifact(loadArtifact(path), { includeSource: true }),
+      artifact: summarizeLoadedArtifact(capturedArtifact(allLoaded, path.id), { includeSource: true }),
     };
   }
 
-  const searched = RELEASE_EVIDENCE_ARTIFACTS.filter((artifact) => artifactSearchText(artifact).includes(input));
-  if (searched.length === 1) {
-    return {
-      status: 'found',
-      lookup: { ...lookup, resolvedBy: 'search' },
-      artifact: summarizeLoadedArtifact(loadArtifact(searched[0]!), { includeSource: true }),
-    };
-  }
-  if (searched.length > 1) {
-    return {
-      status: 'ambiguous',
-      input: lookup.input,
-      candidates: releaseEvidenceCandidates(searched),
-    };
-  }
+  const selected = await selectHarnessCatalog(allLoaded, lookup.input, loaded => ({ id: loaded.artifact.id, description: loaded.artifact.description, evidence: loaded }), options, 'agent.release.evidence.artifact');
+  if (selected) return { status: 'found', lookup: { ...lookup, resolvedBy: 'search' }, artifact: summarizeLoadedArtifact(selected, { includeSource: true }) };
 
   return {
     status: 'not_found',
     input: lookup.input,
     total: RELEASE_EVIDENCE_ARTIFACTS.length,
   };
+
+  });
 }

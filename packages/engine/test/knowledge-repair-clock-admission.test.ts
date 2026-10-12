@@ -1,3 +1,6 @@
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+import { intrinsicAssessmentFixture } from './_helpers/knowledge-self-improvement-readings.js';
+const answerReadings = useKnowledgeAnswerReadings();
 import { afterEach, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -148,7 +151,9 @@ test('actual intrinsic rediscovery carries retry clocks when a subject change fo
   const { store } = await fixture();
   const subjectInput = { id: 'display-device', kind: 'ha_device' as const, slug: 'display-device', title: 'Display model XR100',
     status: 'active' as const, metadata: { knowledgeSpaceId: 'repair-clock', manufacturer: 'Example', model: 'XR100' } };
-  await seedHomeAssistantObservation(store, subjectInput);
+  const subject = await seedHomeAssistantObservation(store, subjectInput);
+  answerReadings.set({ repairSubjects: [[subject.title, 0.99]] });
+  answerReadings.addAssessments([intrinsicAssessmentFixture(subject, [{ facts: [], probability: 0.01 }])]);
   expect(await discoverIntrinsicGaps(store, 'repair-clock', null, [])).toBe(1);
   const intrinsic = store.listNodesInSpace('repair-clock').find(node => node.metadata.gapKind === 'intrinsic_features')!;
   const extra = { nested: ['retained original'] };
@@ -156,7 +161,9 @@ test('actual intrinsic rediscovery carries retry clocks when a subject change fo
     title: intrinsic.title, status: intrinsic.status, metadata: { extra } }, 'research-task', intrinsic, () => store.getNode(intrinsic.id));
   const deferred = await markGapRepairAttempt(store, withExtra, 'repair-clock', { status: 'deferred' });
   expect(() => prepareKnowledgeRecordAdmission(store, 'node', deferred)).not.toThrow();
-  await seedHomeAssistantObservation(store, { ...subjectInput, title: 'Living room display XR100' });
+  const renamed = await seedHomeAssistantObservation(store, { ...subjectInput, title: 'Living room display XR100' });
+  answerReadings.set({ repairSubjects: [[renamed.title, 0.99]] });
+  answerReadings.addAssessments([intrinsicAssessmentFixture(renamed, [{ facts: [], probability: 0.01 }])]);
   expect(await discoverIntrinsicGaps(store, 'repair-clock', null, [])).toBe(0);
   const refreshed = store.getNode(intrinsic.id)!;
   expect(refreshed).not.toBe(deferred); expect(refreshed.title).toContain('Living room display');

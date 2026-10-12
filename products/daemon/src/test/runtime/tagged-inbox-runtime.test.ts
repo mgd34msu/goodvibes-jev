@@ -1,3 +1,4 @@
+import { screeningAnswers } from '../helpers/screening-answers.js';
 /** Actual production source membership and runtime permission owner; only remote transport data is synthetic. */
 import { afterEach, expect, spyOn, test } from 'bun:test';
 import { mkdirSync } from 'node:fs';
@@ -49,7 +50,7 @@ async function fixture(provider: 'slack' | 'email' = 'slack', tagging = true) {
       const source = JSON.parse(body.messages[1]!.content) as { revision: string };
       return Response.json({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify({ revision: source.revision, spans: [] }) } }] });
     }
-    return Response.json({ model: 'jev-1.13.0', answers: { complete: { type: 'noul', noul: 1 }, precise: { type: 'noul', noul: 1 } }, usage: { input_tokens: 10, output_tokens: 2 } });
+    return Response.json({ model: 'jev-1.13.0', answers: screeningAnswers(await request.json(), { complete: 1, precise: 1 }), usage: { input_tokens: 10, output_tokens: 2 } });
   } });
   cleanups.push(async () => { await slack.stop(true); await screening.stop(true); });
   const authority: ProtectedSourceOwnerOptions = { authority: { ownerId: 'synthetic-loopback-screening', revision: 'one', retention: 'ephemeral-no-log', signal: new AbortController().signal, assertCurrent() {} }, proposal: { endpoint: `http://127.0.0.1:${screening.port}`, model: 'synthetic-proposer' }, judgment: { endpoint: `http://127.0.0.1:${screening.port}`, model: 'jev-1.13.0' } };

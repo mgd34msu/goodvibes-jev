@@ -1,3 +1,7 @@
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureCatalogMethods, captureCatalogSnapshot, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureCatalogReadRequest, selectHarnessCatalog } from './agent-harness-catalog-selection.ts';
+import { withModelReadingSource } from './agent-harness-model-reading-source.ts';
 /**
  * agent-harness-connected-host-capabilities.ts, the connected-host capability
  * map the harness serves, and the route families behind it.
@@ -227,20 +231,6 @@ function relatedConnectedHostRouteFamilies(capability: Record<string, unknown>):
   });
 }
 
-function describeConnectedHostCapabilityCandidates(
-  entries: readonly { readonly status: 'allowed' | 'blocked'; readonly capability: Record<string, unknown> }[],
-): readonly Record<string, unknown>[] {
-  return entries.slice(0, 8).map((entry) => ({
-    status: entry.status,
-    capabilityId: typeof entry.capability.id === 'string' ? entry.capability.id : '',
-    purpose: typeof entry.capability.purpose === 'string' ? entry.capability.purpose : undefined,
-    reason: typeof entry.capability.reason === 'string' ? entry.capability.reason : undefined,
-    modelRoute: entry.status === 'allowed'
-      ? connectedHostCapabilityModelRoute(entry.capability)
-      : blockedConnectedHostModelRoute(),
-  }));
-}
-
 function connectedHostCapabilityDetail(entry: { readonly status: 'allowed' | 'blocked'; readonly capability: Record<string, unknown> }): Record<string, unknown> {
   if (entry.status === 'allowed') {
     return {
@@ -282,26 +272,40 @@ function connectedHostCapabilityDetail(entry: { readonly status: 'allowed' | 'bl
   };
 }
 
-export function describeConnectedHostCapability(
-  toolRegistry: ToolRegistry,
-  rawQuery: string,
-): ConnectedHostCapabilityResolution | null {
-  const query = normalizeCapabilityQuery(rawQuery);
-  if (!query) return null;
-
+export async function describeConnectedHostCapability(toolRegistry: ToolRegistry, rawQuery: string,
+  options: CatalogRankingOptions = {}): Promise<ConnectedHostCapabilityResolution | null> {
+  const request = captureCatalogReadRequest({ query: rawQuery }, options), query = normalizeCapabilityQuery(request.input.query);
+  if (!query) { request.assertCurrent(); return null; }
+  const assertRegistry = captureCatalogMethods(toolRegistry, ['getToolDefinitions', 'list', 'registrationRevision']);
+  const getDefinitions = toolRegistry.getToolDefinitions, listTools = toolRegistry.list;
+  assertRegistry();
+  const tools = listTools.call(toolRegistry);
+  const toolSlots = tools.map(tool => captureCatalogMethods(tool, ['definition', 'execute']));
+  const originalDefinitions = getDefinitions.call(toolRegistry), definitions = captureCatalogSnapshot(originalDefinitions);
+  const assertSource = () => {
+    assertRegistry();
+    const current = listTools.call(toolRegistry);
+    if (current.length !== tools.length || current.some((tool, index) => tool !== tools[index])) throw new ToolInputProjectionError('held');
+    for (const guard of toolSlots) guard();
+    definitions.assertCurrent(originalDefinitions); definitions.assertCurrent(getDefinitions.call(toolRegistry));
+    for (const guard of toolSlots) guard();
+    assertRegistry();
+  };
+  request.retain(assertSource, 'read-catalog.connected-host.registry');
   const entries = [
-    ...connectedHostCapabilityMap(toolRegistry).map((capability) => ({ status: 'allowed' as const, capability })),
-    ...blockedConnectedHostCapabilities().map((capability) => ({ status: 'blocked' as const, capability })),
+    ...connectedHostCapabilityMap(toolRegistry).map(capability => ({ status: 'allowed' as const, capability })),
+    ...blockedConnectedHostCapabilities().map(capability => ({ status: 'blocked' as const, capability })),
   ];
-  const exact = entries.find((entry) => entry.capability.id === rawQuery);
-  if (exact) return { status: 'found', detail: connectedHostCapabilityDetail(exact) };
-  const insensitive = entries.find((entry) => typeof entry.capability.id === 'string' && entry.capability.id.toLowerCase() === query);
-  if (insensitive) return { status: 'found', detail: connectedHostCapabilityDetail(insensitive) };
-  const searched = entries.filter((entry) => recordTextMatches(entry.capability, query));
-  if (searched.length === 1) return { status: 'found', detail: connectedHostCapabilityDetail(searched[0]!) };
-  if (searched.length > 1) return { status: 'ambiguous', input: rawQuery, candidates: describeConnectedHostCapabilityCandidates(searched) };
-
-  return null;
+  request.assertCurrent();
+  return withModelReadingSource({ query: request.input.query, definitions: definitions.captured, entries }, request.options, async (captured, current): Promise<ConnectedHostCapabilityResolution | null> => {
+    const exact = captured.entries.find(entry => entry.capability.id === request.input.query);
+    const insensitive = exact ?? captured.entries.find(entry => typeof entry.capability.id === 'string' && entry.capability.id.toLowerCase() === query);
+    const selected = insensitive ?? await selectHarnessCatalog(captured.entries, request.input.query,
+      entry => { const id = entry.capability.id; if (typeof id !== 'string') throw new ToolInputProjectionError('held');
+        return { id, description: `Connected host capability ${id}`, evidence: entry }; }, current, 'agent.connected-host-capability.select');
+    current.assertCurrent?.();
+    return selected ? { status: 'found', detail: connectedHostCapabilityDetail(selected) } : null;
+  });
 }
 
 export function connectedHostSummary(

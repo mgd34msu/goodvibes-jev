@@ -1,4 +1,4 @@
-import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
+import { agentResearchReportSourceOwner } from '../agent/protected-research-report.ts';
 import { submitProtectedAgentResearchReport } from './agent-workspace-research-report-editor.ts';
 import { WorkspaceEditorMessage } from './agent-workspace-editor-message.ts';
 import type { MemoryApi } from '@goodvibes-jev/engine/sdk/platform/knowledge';
@@ -679,7 +679,7 @@ export class AgentWorkspace {
     this.status = 'Preparing research report privately...'; requestRender?.();
     try {
       await submitProtectedAgentResearchReport(editor, fields, this.hasPromptDispatch(),
-        agentResearchSourceOwner(context?.extensions?.toolRegistry), { signal: controller.signal, assertCurrent }, result => {
+        agentResearchReportSourceOwner(context?.extensions?.toolRegistry), { signal: controller.signal, assertCurrent }, result => {
           assertCurrent();
           // Detach this operation before the editor setter invalidates edits.
           this.researchSubmission = null;

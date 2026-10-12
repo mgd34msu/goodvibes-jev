@@ -1,5 +1,9 @@
+import { type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureCatalogReadRequest, selectHarnessCatalog } from './agent-harness-catalog-selection.ts';
+import { captureStatefulCatalogRequest, rankStatefulCatalog } from './agent-harness-stateful-catalog-source.ts';
 import { existsSync, readFileSync } from 'node:fs';
-import { buildMcpAttackPathReview } from '@/runtime/index.ts';
+import { buildMcpAttackPathReview, captureUiSecurityReadSource } from '@/runtime/index.ts';
+import { capturePolicyRuntimeReadSource } from '@goodvibes-jev/engine/sdk/platform/runtime/security';
 import { listBuiltinSubscriptionProviders } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { CommandContext } from '../input/command-registry.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
@@ -137,26 +141,7 @@ function severityRank(severity: SecurityFindingSeverity): number {
   return 2;
 }
 
-function findingSearchText(finding: SecurityFinding): string {
-  return [
-    finding.findingId,
-    finding.source,
-    finding.severity,
-    finding.title,
-    finding.summary,
-    JSON.stringify(finding.detail ?? {}),
-  ].join('\n').toLowerCase();
-}
 
-function describeFindingCandidate(finding: SecurityFinding): Record<string, unknown> {
-  return {
-    findingId: finding.findingId,
-    source: finding.source,
-    severity: finding.severity,
-    title: finding.title,
-    modelRoute: securityFindingModelRoute(),
-  };
-}
 
 function securityFindingModelRoute(): string {
   return 'security action:"finding" or workspace action:"run_command"';
@@ -220,9 +205,8 @@ function buildTokenFindings(securitySnapshot: Record<string, unknown> | null): r
     .filter((finding): finding is SecurityFinding => finding !== null);
 }
 
-function buildPolicyFindings(context: CommandContext): readonly SecurityFinding[] {
-  const policySnapshot = context.extensions.policyRuntimeState?.getSnapshot();
-  if (!policySnapshot) return [];
+function buildPolicyFindings(policySnapshot: unknown): readonly SecurityFinding[] {
+  if (!isRecord(policySnapshot)) return [];
   const lintFindings = readRecordArray(policySnapshot.lintFindings);
   const findings = lintFindings.map((finding, index): SecurityFinding => {
     const level = safeText(finding.level ?? finding.severity, 'warn').toLowerCase();
@@ -382,11 +366,11 @@ function readSecuritySnapshot(context: CommandContext): Record<string, unknown> 
   }
 }
 
-function buildSecurityFindings(context: CommandContext): readonly SecurityFinding[] {
-  const securitySnapshot = readSecuritySnapshot(context);
+function buildSecurityFindings(context: CommandContext, securitySnapshot = readSecuritySnapshot(context),
+  policySnapshot: unknown = context.extensions.policyRuntimeState?.getSnapshot()): readonly SecurityFinding[] {
   return [
     ...buildTokenFindings(securitySnapshot),
-    ...buildPolicyFindings(context),
+    ...buildPolicyFindings(policySnapshot),
     ...buildMcpFindings(securitySnapshot),
     ...buildPluginFindings(securitySnapshot),
     ...buildIncidentFindings(securitySnapshot),
@@ -407,8 +391,29 @@ export function securityPostureCatalogStatus(context: CommandContext): Record<st
   };
 }
 
-export async function securityPostureSummary(context: CommandContext, args: AgentHarnessSecurityArgs): Promise<Record<string, unknown>> {
-  const securitySnapshot = readSecuritySnapshot(context);
+function captureSecurityRequest(context: CommandContext, args: AgentHarnessSecurityArgs, options: CatalogRankingOptions) {
+  const captured: { securitySnapshot: Record<string, unknown> | null; policySnapshot: ReturnType<typeof capturePolicyRuntimeReadSource>['snapshot'] | null } = { securitySnapshot: null, policySnapshot: null };
+  const request = captureStatefulCatalogRequest(context, args, options, [
+    ['platform', 'readModels', 'security', 'getSnapshot'], ['platform', 'subscriptionManager', 'list'],
+    ['platform', 'subscriptionManager', 'listPending'], ['platform', 'serviceRegistry', 'getAll'],
+    ['platform', 'secretsManager', 'list'], ['extensions', 'policyRuntimeState', 'getSnapshot'],
+  ], () => {
+    const model = context.platform.readModels?.security;
+    const nativeSecurity = model ? captureUiSecurityReadSource(model) : undefined;
+    const policy = context.extensions.policyRuntimeState;
+    const nativePolicy = policy ? capturePolicyRuntimeReadSource(policy) : undefined;
+    const capturedSnapshot: unknown = nativeSecurity?.snapshot;
+    captured.securitySnapshot = isRecord(capturedSnapshot) ? capturedSnapshot : null;
+    captured.policySnapshot = nativePolicy?.snapshot ?? null;
+    return [...(nativeSecurity ? [nativeSecurity.assertCurrent] : []), ...(nativePolicy ? [nativePolicy.assertCurrent] : [])];
+  });
+  request.assertCurrent();
+  return { request, ...captured };
+}
+
+export async function securityPostureSummary(context: CommandContext, args: AgentHarnessSecurityArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const { request, securitySnapshot, policySnapshot } = captureSecurityRequest(context, args, options);
+  args = request.input;
   if (!securitySnapshot) {
     return {
       status: 'unavailable',
@@ -424,19 +429,23 @@ export async function securityPostureSummary(context: CommandContext, args: Agen
   const plugins = readRecordArray(securitySnapshot.plugins);
   const subscriptions = context.platform.subscriptionManager;
   const services = context.platform.serviceRegistry;
-  const query = readString(args.query).toLowerCase();
-  const findings = buildSecurityFindings(context);
-  const filtered = findings
-    .filter((finding) => !query || findingSearchText(finding).includes(query))
-    .slice(0, readLimit(args.limit, 100));
+  const query = readString(args.query);
+  const findings = buildSecurityFindings(context, securitySnapshot, policySnapshot);
+  const ranked = query ? await rankStatefulCatalog(findings, query, finding => ({ id: finding.findingId, description: finding.title, evidence: { finding, securitySnapshot, policySnapshot, args: request.input } }), 'agent.security.findings', request.options) : findings;
+  request.assertCurrent();
+  const filtered = ranked.slice(0, readLimit(args.limit, 100));
   let secretRefCount: number | null = null;
   if (args.includeParameters === true && context.platform.secretsManager) {
     try {
+      request.assertCurrent();
       secretRefCount = (await context.platform.secretsManager.list()).length;
+      request.assertCurrent();
     } catch {
+      request.assertCurrent();
       secretRefCount = null;
     }
   }
+  request.assertCurrent();
   return {
     status: 'available',
     summary: {
@@ -488,7 +497,9 @@ export async function securityPostureSummary(context: CommandContext, args: Agen
   };
 }
 
-export function describeHarnessSecurityFinding(context: CommandContext, args: AgentHarnessSecurityArgs): SecurityFindingResolution {
+export async function describeHarnessSecurityFinding(context: CommandContext, args: AgentHarnessSecurityArgs, options: CatalogRankingOptions = {}): Promise<SecurityFindingResolution> {
+  const { request, securitySnapshot, policySnapshot } = captureSecurityRequest(context, args, options);
+  args = request.input;
   const findingId = readString(args.findingId);
   const target = readString(args.target);
   const query = readString(args.query);
@@ -499,37 +510,22 @@ export function describeHarnessSecurityFinding(context: CommandContext, args: Ag
       usage: 'security_finding requires findingId, target, or query. Use mode:"security_posture" to inspect current finding ids.',
     };
   }
-  const findings = buildSecurityFindings(context);
+  const findings = buildSecurityFindings(context, securitySnapshot, policySnapshot);
+  request.assertCurrent();
   const exact = findings.find((finding) => finding.findingId === input);
   if (exact) return { status: 'found', finding: describeFinding(exact, true, { source: findingId ? 'findingId' : target ? 'target' : 'query', input, resolvedBy: 'id' }) };
   const normalized = input.toLowerCase();
   const insensitive = findings.find((finding) => finding.findingId.toLowerCase() === normalized);
   if (insensitive) return { status: 'found', finding: describeFinding(insensitive, true, { source: findingId ? 'findingId' : target ? 'target' : 'query', input, resolvedBy: 'case-insensitive-id' }) };
-  const searched = findings.filter((finding) => findingSearchText(finding).includes(normalized));
-  if (searched.length === 1) return { status: 'found', finding: describeFinding(searched[0]!, true, { source: findingId ? 'findingId' : target ? 'target' : 'query', input, resolvedBy: 'search' }) };
-  if (searched.length > 1) {
-    return {
-      status: 'ambiguous',
-      input,
-      candidates: searched.slice(0, 8).map(describeFindingCandidate),
-    };
-  }
+  const selected = await selectHarnessCatalog(findings, input, finding => ({ id: finding.findingId, description: finding.title, evidence: { finding, securitySnapshot, policySnapshot, args: request.input } }), request.options, 'agent.security.finding');
+  request.assertCurrent();
+  if (selected) return { status: 'found', finding: describeFinding(selected, true, { source: findingId ? 'findingId' : target ? 'target' : 'query', input, resolvedBy: 'search' }) };
   return {
     status: 'missing_lookup',
     usage: `Unknown security finding ${input}. Use mode:"security_posture" to inspect current finding ids.`,
   };
 }
 
-function bundleRouteSearchText(route: typeof SUPPORT_BUNDLE_ROUTES[number]): string {
-  return [
-    route.bundleType,
-    route.defaultPath,
-    route.inspectCommand,
-    route.exportCommand,
-    route.importCommand ?? '',
-    ...route.workspaceActionIds,
-  ].join('\n').toLowerCase();
-}
 
 export function supportBundleCatalogStatus(): Record<string, unknown> {
   return {
@@ -539,10 +535,13 @@ export function supportBundleCatalogStatus(): Record<string, unknown> {
   };
 }
 
-export function supportBundleSummary(args: AgentHarnessSecurityArgs): Record<string, unknown> {
-  const query = readString(args.query).toLowerCase();
-  const routes = SUPPORT_BUNDLE_ROUTES
-    .filter((route) => !query || bundleRouteSearchText(route).includes(query))
+export async function supportBundleSummary(args: AgentHarnessSecurityArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const request = captureCatalogReadRequest(args, options);
+  args = request.input;
+  const query = readString(args.query);
+  const ranked = query ? await rankStatefulCatalog(SUPPORT_BUNDLE_ROUTES, query, route => ({ id: route.bundleType, description: route.inspectCommand, evidence: { route, args: request.input } }), 'agent.support.bundle-routes', request.options) : SUPPORT_BUNDLE_ROUTES;
+  request.assertCurrent();
+  const routes = ranked
     .slice(0, readLimit(args.limit, 100))
     .map((route) => ({
       bundleType: route.bundleType,

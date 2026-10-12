@@ -122,7 +122,7 @@ function assertIssuerSafeJsonScalars(text: string): void {
   }
 }
 
-export function redactSetupSmokeEvidenceFull(input: string): string {
+function captureSetupSmokeEvidenceFull(input: string): { readonly displayText: string; readonly validationText: string } {
   const text = redactIssuerCredentials(input);
   const jsonStringSpans: { start: number; end: number }[] = [];
   const trimmed = text.trimStart();
@@ -233,7 +233,17 @@ export function redactSetupSmokeEvidenceFull(input: string): string {
   assertIssuerSafeJsonScalars(remaining);
   try { snapshotJudgmentInput({ text: remaining }, 'agent_harness'); }
   catch { throw new ToolInputProjectionError('held'); }
-  return cleared;
+  return { displayText: cleared, validationText: remaining };
+}
+
+export function redactSetupSmokeEvidenceFull(input: string): string {
+  return captureSetupSmokeEvidenceFull(input).displayText;
+}
+
+/** Both views retain the exact original span parse. The validation view keeps
+ * complete surrounding declarations/JSON; neither view is an authority receipt. */
+export function projectSetupSmokeEvidenceFull(input: string): { readonly displayText: string; readonly validationText: string } {
+  return captureSetupSmokeEvidenceFull(input);
 }
 
 export function redactSetupSmokeEvidence(input: string): string {

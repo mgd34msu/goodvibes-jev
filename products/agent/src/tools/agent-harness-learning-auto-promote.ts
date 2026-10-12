@@ -1,19 +1,17 @@
-import type { CommandContext } from '../input/command-registry.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { types as nodeTypes } from 'node:util';
+import { prepareMemoryApiAdd } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import type { MemoryApi } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import type { ShellPathService } from '@/runtime/index.ts';
 import { AgentPersonaRegistry } from '../agent/persona-registry.ts';
 import { AgentRoutineRegistry } from '../agent/routine-registry.ts';
 import { AgentSkillRegistry } from '../agent/skill-registry.ts';
-import { runSkillDraftProposer } from '../agent/skill-draft-runner.ts';
-import { buildLearningCandidates } from './agent-harness-learning-curator-proposals.ts';
+import { runSkillDraftProposer, assertSkillDraftRunResultCurrent, type SkillDraftRunResult } from '../agent/skill-draft-runner.ts';
+import { buildLearningCandidates, assertLearningCandidateCollection } from './agent-harness-learning-curator-proposals.ts';
 import type { LearningCandidate } from './agent-harness-learning-curator-types.ts';
-import {
-  deleteDuplicate,
-  domainForCandidate,
-  markDuplicateStale,
-  updateSurvivor,
-} from './agent-learning-consolidation-core.ts';
-import type { MemoryRegistry } from '@goodvibes-jev/engine/sdk/platform/state';
+import { captureCatalogMethods, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureModelReadingSnapshotGuard, modelReadingServicePath } from './agent-harness-model-reading-source.ts';
+import type { LearningCandidateCollection, LearningCuratorNativeContext } from './agent-harness-learning-curator-source.ts';
 
 const AUTO_PROMOTE_PROVENANCE = 'learning-curator-auto-promote';
 
@@ -36,255 +34,315 @@ export interface AutoPromoteResult {
   readonly log: readonly string[];
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+const issuedResults = new WeakMap<AutoPromoteResult, {
+  readonly context: LearningCuratorNativeContext;
+  readonly options: CatalogRankingOptions;
+  readonly assertOutput: (current: unknown) => void;
+  readonly assertCurrent: () => void;
+}>();
 
-function extractProposalFields(
-  candidate: LearningCandidate,
-): Record<string, string> {
-  return candidate.proposalFields ?? {};
+/** Check the exact issued result after rendering and before publication. */
+export function assertAutoPromoteResultCurrent(
+  result: AutoPromoteResult,
+  context: LearningCuratorNativeContext,
+  options: CatalogRankingOptions,
+): void {
+  const issued = issuedResults.get(result);
+  if (!issued || issued.context !== context || issued.options !== options)
+    throw new ToolInputProjectionError('held');
+  issued.assertOutput(result);
+  issued.assertCurrent();
+  issued.assertOutput(result);
 }
 
-async function tryPromoteMemory(
-  memoryApi: MemoryApi,
-  candidate: LearningCandidate,
+function issueResult(result: AutoPromoteResult, context: LearningCuratorNativeContext,
+  options: CatalogRankingOptions, assertCurrent: () => void): AutoPromoteResult {
+  issuedResults.set(result, { context, options, assertCurrent,
+    assertOutput: captureModelReadingSnapshotGuard(result) });
+  assertAutoPromoteResultCurrent(result, context, options);
+  return result;
+}
+
+type LocalRecord = ReturnType<AgentPersonaRegistry['create']>
+  | ReturnType<AgentSkillRegistry['create']> | ReturnType<AgentRoutineRegistry['create']>;
+type TransitionIntent = Exclude<Parameters<LearningCandidateCollection['prepareTransition']>[0], { readonly domain: 'memory' }>;
+class PromotionRestrictionFailure {
+  constructor(readonly failure: unknown) {}
+}
+
+function splitList(value: string | undefined): string[] {
+  return value ? value.split(/[,;]+/).map(entry => entry.trim()).filter(Boolean) : [];
+}
+
+function memoryClass(value: string): Parameters<MemoryApi['add']>[0]['cls'] {
+  switch (value) {
+    case 'decision': case 'constraint': case 'incident': case 'pattern': case 'fact':
+    case 'risk': case 'runbook': case 'architecture': case 'ownership': return value;
+    default: throw new ToolInputProjectionError('held');
+  }
+}
+function memoryScope(value: string): Parameters<MemoryApi['add']>[0]['scope'] {
+  switch (value) {
+    case 'session': case 'project': case 'team': return value;
+    default: throw new ToolInputProjectionError('held');
+  }
+}
+
+function writeLocalRecord(
+  collection: LearningCandidateCollection,
+  intent: TransitionIntent,
+  write: (effects: ReturnType<LearningCandidateCollection['prepareTransition']>['effects']) => LocalRecord,
+  context: LearningCuratorNativeContext, options: CatalogRankingOptions, assertOwnership: () => void,
+): LocalRecord {
+  let transition: ReturnType<LearningCandidateCollection['prepareTransition']>;
+  try { assertOwnership(); assertLearningCandidateCollection(collection, context, options); assertOwnership(); transition = collection.prepareTransition(intent); }
+  catch (error) { throw new PromotionRestrictionFailure(error); }
+  let restricted = false;
+  let returned = false;
+  try {
+    const result = write({
+      assertCurrent: () => {
+        try { assertOwnership(); assertLearningCandidateCollection(collection, context, options); transition.effects.assertCurrent(); assertOwnership(); }
+        catch (error) { restricted = true; throw error; }
+      },
+      onEffect: published => {
+        try { assertOwnership(); transition.effects.onEffect(published); assertOwnership(); }
+        catch (error) { restricted = true; throw error; }
+      },
+    });
+    returned = true;
+    transition.commit(result); assertOwnership(); assertLearningCandidateCollection(collection, context, options); assertOwnership();
+    return result;
+  } catch (error) {
+    try { transition.abort(); } catch (failure) { throw new PromotionRestrictionFailure(failure); }
+    if (returned || restricted || error instanceof ToolInputProjectionError || collection.options.signal?.aborted)
+      throw new PromotionRestrictionFailure(error);
+    try { assertOwnership(); assertLearningCandidateCollection(collection, context, options); assertOwnership(); } catch (failure) { throw new PromotionRestrictionFailure(failure); }
+    throw error;
+  }
+}
+
+async function promoteMemory(
+  api: MemoryApi, candidate: LearningCandidate, collection: LearningCandidateCollection,
+  options: CatalogRankingOptions, context: LearningCuratorNativeContext, assertOwnership: () => void,
 ): Promise<string> {
-  const fields = extractProposalFields(candidate);
+  const fields = candidate.proposalFields ?? {};
   const summary = (fields.summary ?? fields.detail ?? candidate.label).trim();
-  if (!summary) throw new Error('Missing summary for memory candidate.');
   const detail = (fields.detail ?? '').trim();
-  const cls = (fields.cls ?? 'fact').trim() as Parameters<typeof memoryApi.add>[0]['cls'];
-  const scope = (fields.scope ?? 'project').trim() as Parameters<typeof memoryApi.add>[0]['scope'];
-  const tags = fields.tags
-    ? fields.tags.split(/[,;]+/).map((t) => t.trim()).filter(Boolean)
-    : [];
-  // assertNoSecretLikeText is called inside memoryApi.add
-  const record = await memoryApi.add({
-    scope,
-    cls,
-    summary,
-    detail,
-    tags,
+  const confidence = fields.confidence === undefined ? undefined : Number(fields.confidence);
+  if (!summary || !detail || confidence === undefined || !Number.isFinite(confidence)
+    || confidence < 0 || confidence > 100 || String(confidence) !== fields.confidence)
+    throw new ToolInputProjectionError('held');
+  const input = {
+    scope: memoryScope((fields.scope ?? 'project').trim()),
+    cls: memoryClass((fields.cls ?? 'fact').trim()), summary,
+    detail, tags: splitList(fields.tags), review: { confidence },
     provenance: [{ kind: 'event', ref: AUTO_PROMOTE_PROVENANCE }],
-  });
-  return `memory:${record.id}  ${summary.slice(0, 60)}`;
+  } satisfies Parameters<MemoryApi['add']>[0];
+  let transition: ReturnType<LearningCandidateCollection['prepareTransition']> | undefined;
+  try {
+    assertOwnership(); assertLearningCandidateCollection(collection, context, options); assertOwnership();
+    const plan = prepareMemoryApiAdd(api, input, { signal: options.signal, assertCurrent: options.assertCurrent });
+    assertOwnership(); assertLearningCandidateCollection(collection, context, options); assertOwnership();
+    const assertReturned = captureModelReadingSnapshotGuard(plan.record);
+    const owned = collection.prepareTransition({ kind: 'create', domain: 'memory', input, preparedRecord: plan.record });
+    transition = owned;
+    let published = false;
+    const record = await plan.commit({
+      signal: options.signal,
+      assertCurrent: () => {
+        assertOwnership(); assertLearningCandidateCollection(collection, context, options); assertOwnership();
+        if (!published) owned.effects.assertCurrent();
+      },
+      onPublished: receipt => {
+        assertOwnership(); plan.assertPublication(receipt);
+        owned.effects.onEffect(true);
+        owned.commit(plan.record);
+        published = true; assertOwnership();
+      },
+    });
+    assertOwnership(); assertReturned(record); assertLearningCandidateCollection(collection, context, options); assertOwnership();
+    return `memory:${record.id}  ${summary.slice(0, 60)}`;
+  } catch (error) {
+    try { transition?.abort(); } catch (failure) { throw new PromotionRestrictionFailure(failure); }
+    throw new PromotionRestrictionFailure(error);
+  }
 }
 
-function tryPromotePersona(
-  shellPaths: ShellPathService,
-  candidate: LearningCandidate,
-): string {
-  const fields = extractProposalFields(candidate);
+function promotePersona(paths: ShellPathService, candidate: LearningCandidate, collection: LearningCandidateCollection, context: LearningCuratorNativeContext, options: CatalogRankingOptions, assertOwnership: () => void): string {
+  const fields = candidate.proposalFields ?? {};
   const name = (fields.name ?? candidate.label).trim();
-  if (!name) throw new Error('Missing name for persona candidate.');
-  const description = (fields.description ?? name).trim();
   const body = (fields.body ?? fields.detail ?? '').trim();
-  if (!body) throw new Error('Missing body for persona candidate.');
-  const triggers = fields.triggers
-    ? fields.triggers.split(/[,;]+/).map((t) => t.trim()).filter(Boolean)
-    : [];
-  const tags = fields.tags
-    ? fields.tags.split(/[,;]+/).map((t) => t.trim()).filter(Boolean)
-    : [];
-  // assertNoSecretLikeText is called inside AgentPersonaRegistry.create
-  const record = AgentPersonaRegistry.fromShellPaths(shellPaths).create({
-    name,
-    description,
-    body,
-    triggers,
-    tags,
-    source: 'agent',
-    provenance: AUTO_PROMOTE_PROVENANCE,
-  });
+  if (!name || !body) throw new ToolInputProjectionError('held');
+  const input = {
+    name, description: (fields.description ?? name).trim(),
+    body, triggers: splitList(fields.triggers),
+    tags: splitList(fields.tags), source: 'agent', provenance: AUTO_PROMOTE_PROVENANCE,
+  } satisfies Parameters<AgentPersonaRegistry['create']>[0];
+  const record = writeLocalRecord(collection, { kind: 'create', domain: 'persona', input },
+    effects => AgentPersonaRegistry.fromShellPaths(paths, effects).create(input), context, options, assertOwnership);
   return `persona:${record.id}  ${name.slice(0, 60)}`;
 }
 
-function tryPromoteRoutine(
-  shellPaths: ShellPathService,
-  candidate: LearningCandidate,
-): string {
-  const fields = extractProposalFields(candidate);
+function promoteRoutine(paths: ShellPathService, candidate: LearningCandidate, collection: LearningCandidateCollection, context: LearningCuratorNativeContext, options: CatalogRankingOptions, assertOwnership: () => void): string {
+  const fields = candidate.proposalFields ?? {};
   const name = (fields.name ?? candidate.label).trim();
-  if (!name) throw new Error('Missing name for routine candidate.');
-  const description = (fields.description ?? name).trim();
   const steps = (fields.steps ?? fields.notes ?? fields.detail ?? '').trim();
-  if (!steps) throw new Error('Missing steps for routine candidate.');
-  const triggers = fields.triggers
-    ? fields.triggers.split(/[,;]+/).map((t) => t.trim()).filter(Boolean)
-    : [];
-  const tags = fields.tags
-    ? fields.tags.split(/[,;]+/).map((t) => t.trim()).filter(Boolean)
-    : [];
-  // assertNoSecretLikeText is called inside AgentRoutineRegistry.create
-  const record = AgentRoutineRegistry.fromShellPaths(shellPaths).create({
-    name,
-    description,
+  if (!name || !steps) throw new ToolInputProjectionError('held');
+  const input = {
+    name, description: (fields.description ?? name).trim(),
     steps,
-    triggers,
-    tags,
-    enabled: true,
-    source: 'agent',
-    provenance: AUTO_PROMOTE_PROVENANCE,
-  });
+    triggers: splitList(fields.triggers), tags: splitList(fields.tags), enabled: true,
+    source: 'agent', provenance: AUTO_PROMOTE_PROVENANCE,
+  } satisfies Parameters<AgentRoutineRegistry['create']>[0];
+  const record = writeLocalRecord(collection, { kind: 'create', domain: 'routine', input },
+    effects => AgentRoutineRegistry.fromShellPaths(paths, effects).create(input), context, options, assertOwnership);
   return `routine:${record.id}  ${name.slice(0, 60)}`;
 }
 
-/**
- * Consolidate a duplicate candidate for non-memory domains (persona/skill/routine).
- * Memory domain consolidation is skipped here because it requires MemoryRegistry,
- * which is not accessible from CommandContext (it is a service-level dependency).
- */
-function tryConsolidateNonMemoryCandidate(
-  shellPaths: ShellPathService,
-  candidate: LearningCandidate,
-): readonly string[] {
+function consolidate(
+  paths: ShellPathService, candidate: LearningCandidate, collection: LearningCandidateCollection,
+  context: LearningCuratorNativeContext, options: CatalogRankingOptions, assertOwnership: () => void,
+): { readonly count: number; readonly lines: readonly string[] } {
   const plan = candidate.consolidation;
-  if (!plan) throw new Error('No consolidation plan on candidate.');
-  const domain = domainForCandidate(candidate);
-
-  // Use a no-op MemoryRegistry sentinel, it is never called because domain
-  // is already checked above (domainForCandidate throws for non-consolidatable domains).
-  const nullMemory = null as unknown as MemoryRegistry;
+  const domain = candidate.domain;
+  if (!plan || (domain !== 'persona' && domain !== 'skill' && domain !== 'routine'))
+    throw new Error('Unsupported local consolidation.');
   const lines: string[] = [];
-
-  if (plan.updateFields) {
-    updateSurvivor(shellPaths, nullMemory, domain, plan.survivorId, plan.updateFields);
+  const update = plan.updateFields;
+  if (update) {
+    const input = {
+      ...(update.description === undefined ? {} : { description: update.description }),
+      ...(update.tags === undefined ? {} : { tags: [...update.tags] }),
+      ...(update.triggers === undefined ? {} : { triggers: [...update.triggers] }),
+      provenance: 'learning-curator-consolidation',
+    };
+    writeLocalRecord(collection, { kind: 'update', domain, id: plan.survivorId, input }, effects => {
+      if (domain === 'persona') return AgentPersonaRegistry.fromShellPaths(paths, effects).update(plan.survivorId, input);
+      if (domain === 'skill') return AgentSkillRegistry.fromShellPaths(paths, effects).update(plan.survivorId, input);
+      return AgentRoutineRegistry.fromShellPaths(paths, effects).update(plan.survivorId, input);
+    }, context, options, assertOwnership);
     lines.push(`merged survivor ${domain}:${plan.survivorId}`);
   }
-
-  for (const dupId of plan.duplicateIds) {
-    try {
-      markDuplicateStale(shellPaths, nullMemory, domain, dupId, plan.survivorId);
-      deleteDuplicate(shellPaths, nullMemory, domain, dupId);
-      lines.push(`consolidated duplicate ${domain}:${dupId} -> ${plan.survivorId}`);
-    } catch (err) {
-      lines.push(`skipped duplicate ${domain}:${dupId}: ${String(err)}`);
-    }
+  let count = 0;
+  for (const id of plan.duplicateIds) {
+    const reason = `Duplicate of ${plan.survivorId}; staged by learning curator consolidation.`;
+    writeLocalRecord(collection, { kind: 'stale', domain, id, reason }, effects => {
+      if (domain === 'persona') return AgentPersonaRegistry.fromShellPaths(paths, effects).markStale(id, reason);
+      if (domain === 'skill') return AgentSkillRegistry.fromShellPaths(paths, effects).markStale(id, reason);
+      return AgentRoutineRegistry.fromShellPaths(paths, effects).markStale(id, reason);
+    }, context, options, assertOwnership);
+    writeLocalRecord(collection, { kind: 'delete', domain, id }, effects => {
+      if (domain === 'persona') return AgentPersonaRegistry.fromShellPaths(paths, effects).deletePersona(id);
+      if (domain === 'skill') return AgentSkillRegistry.fromShellPaths(paths, effects).deleteSkill(id);
+      return AgentRoutineRegistry.fromShellPaths(paths, effects).deleteRoutine(id);
+    }, context, options, assertOwnership);
+    count++; lines.push(`consolidated duplicate ${domain}:${id} -> ${plan.survivorId}`);
   }
-
-  return lines;
+  return { count, lines };
 }
 
-// ---------------------------------------------------------------------------
-// Main executor
-// ---------------------------------------------------------------------------
-
-/**
- * Run the promotion pass. Promotes `ready-to-promote` candidates and resolves
- * `needs-consolidation` duplicates (non-memory domains).
- *
- * The caller (agent_harness mode:"learning_auto_promote") gates this pass behind
- * an explicit user request plus confirm:true, because it creates and deletes
- * memory records, personas, and routines. This function assumes that gate has
- * already been cleared.
- *
- * Secret scanning is enforced by each registry's create() method, this
- * function does NOT bypass it.
- *
- * Memory domain consolidation is intentionally skipped: MemoryRegistry is a
- * service-level dependency not available in CommandContext. Memory promotions
- * (new records from proposal candidates) ARE supported via MemoryApi.
- */
+/** Use the caller's recorded admission for all planned local promotions. */
 export async function runAutoPromoter(
-  context: CommandContext,
-  skillRegistry: AgentSkillRegistry,
-  memoryApi: MemoryApi,
+  context: LearningCuratorNativeContext, skillRegistry: AgentSkillRegistry, memoryApi: MemoryApi,
+  options: CatalogRankingOptions,
 ): Promise<AutoPromoteResult> {
-  const shellPaths = context.workspace?.shellPaths;
-  if (!shellPaths) {
-    return {
-      eligible: 0,
-      promoted: 0,
-      skipped: 0,
-      consolidated: 0,
-      domains: {},
-      log: ['No active workspace; promotion skipped.'],
-    };
-  }
-
-  const all = buildLearningCandidates(context);
-  const promotionCandidates = all.filter((c) => c.status === 'ready-to-promote');
-  // Only consolidate non-memory domains (MemoryRegistry not available here)
-  const consolidationCandidates = all.filter(
-    (c) => c.status === 'needs-consolidation' && c.consolidation !== undefined && c.domain !== 'memory',
-  );
-  const eligible = promotionCandidates.length + consolidationCandidates.length;
-
-  const log: string[] = [];
-  const domains: Record<string, number> = {};
-  let promoted = 0;
-  let skipped = 0;
-  let consolidated = 0;
-
-  function bump(domain: string): void {
-    domains[domain] = (domains[domain] ?? 0) + 1;
-  }
-
-  // --- Skill promotions via runSkillDraftProposer (handles dedup + ledger) ---
-  const skillResult = runSkillDraftProposer(context, skillRegistry);
-  if (skillResult.proposed > 0) {
-    for (const entry of skillResult.entries) {
-      log.push(`promoted skill:${entry.skillId}  ${entry.name}`);
-      bump('skill');
+  const assertOptions = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'retainCurrent', 'requirePreservedSource']);
+  const signal = options.signal, caller = options.assertCurrent;
+  const assertSignal = signal ? captureCatalogMethods(signal, ['throwIfAborted']) : () => {};
+  if (typeof caller !== 'function') throw new ToolInputProjectionError('unavailable');
+  const assertCaller = () => {
+    assertOptions(); assertSignal(); signal?.throwIfAborted();
+    const result: unknown = caller();
+    if (result !== undefined) {
+      if (nodeTypes.isPromise(result)) Promise.prototype.then.call(result, undefined, () => {});
+      throw new ToolInputProjectionError('stale');
     }
-    promoted += skillResult.proposed;
+    assertOptions(); assertSignal(); signal?.throwIfAborted();
+  };
+  assertCaller();
+  const assertWorkspace = captureCatalogMethods(context, ['workspace']);
+  const paths = context.workspace?.shellPaths;
+  if (!paths) {
+    const workspace = context.workspace;
+    const assertPath = workspace ? captureCatalogMethods(workspace, ['shellPaths']) : () => {};
+    const assertEmpty = () => {
+      assertWorkspace(); assertPath(); assertCaller(); assertWorkspace(); assertPath();
+      if (context.workspace !== workspace || modelReadingServicePath(context, ['workspace', 'shellPaths']) !== paths)
+        throw new ToolInputProjectionError('stale');
+    };
+    return issueResult({ eligible: 0, promoted: 0, skipped: 0, consolidated: 0,
+      domains: {}, log: ['No active workspace; promotion skipped.'] }, context, options, assertEmpty);
   }
-  skipped += skillResult.skipped;
-
-  // --- Non-skill ready-to-promote candidates ---
-  for (const candidate of promotionCandidates) {
-    if (candidate.proposalTarget === 'skill') continue; // handled above
-
+  const assertApi = captureCatalogMethods(memoryApi, ['add', 'getAll']);
+  const factories = [AgentPersonaRegistry, AgentSkillRegistry, AgentRoutineRegistry]
+    .map(factory => captureCatalogMethods(factory, ['prototype', 'fromShellPaths']));
+  const nativeMethods = [
+    captureCatalogMethods(AgentPersonaRegistry.prototype, ['constructor', 'snapshot', 'readStore', 'writeStore', 'nextId', 'validateRequired', 'create', 'update', 'markStale', 'deletePersona']),
+    captureCatalogMethods(AgentSkillRegistry.prototype, ['constructor', 'snapshot', 'readStore', 'writeStore', 'nextId', 'validateRequired', 'create', 'update', 'markStale', 'deleteSkill']),
+    captureCatalogMethods(AgentRoutineRegistry.prototype, ['constructor', 'snapshot', 'readStore', 'writeStore', 'nextId', 'validateRequired', 'create', 'update', 'markStale', 'deleteRoutine']),
+  ];
+  const assertOwnership = () => {
+    assertOptions(); assertSignal(); assertWorkspace(); assertApi(); for (const guard of [...factories, ...nativeMethods]) guard();
+    signal?.throwIfAborted();
+    if (context.workspace?.shellPaths !== paths || context.clients?.agentKnowledgeApi?.memory !== memoryApi)
+      throw new ToolInputProjectionError('stale');
+  };
+  assertOwnership(); assertCaller(); assertOwnership();
+  const collection = await buildLearningCandidates(context, options);
+  assertLearningCandidateCollection(collection, context, options);
+  let skillResult: SkillDraftRunResult | undefined;
+  const assertCurrent = () => {
+    assertOwnership(); assertLearningCandidateCollection(collection, context, options);
+    if (skillResult) assertSkillDraftRunResultCurrent(skillResult, context, options);
+    assertOwnership();
+  };
+  assertCurrent();
+  const promotions = collection.candidates.filter(candidate => candidate.status === 'ready-to-promote'
+    || candidate.status === 'proposal-ready');
+  const consolidations = collection.candidates.filter(candidate => candidate.status === 'needs-consolidation'
+    && candidate.consolidation !== undefined && candidate.domain !== 'memory');
+  const eligible = promotions.length + consolidations.length;
+  const log: string[] = [], domains: Record<string, number> = {};
+  let promoted = 0, skipped = 0, consolidated = 0;
+  const bump = (domain: string) => { domains[domain] = (domains[domain] ?? 0) + 1; };
+  const skills = await runSkillDraftProposer(context, skillRegistry, options, collection);
+  skillResult = skills;
+  assertCurrent();
+  for (const entry of skills.entries) { log.push(`promoted skill:${entry.skillId}  ${entry.name}`); bump('skill'); }
+  promoted += skills.proposed; skipped += skills.skipped;
+  for (const candidate of promotions) {
+    if (candidate.proposalTarget === 'skill') continue;
+    assertCurrent();
+    collection.assertCandidateCurrent(candidate);
+    assertCurrent();
     try {
       let line: string;
-      switch (candidate.proposalTarget) {
-        case 'memory': {
-          line = await tryPromoteMemory(memoryApi, candidate);
-          promoted += 1;
-          bump('memory');
-          break;
-        }
-        case 'persona': {
-          line = tryPromotePersona(shellPaths, candidate);
-          promoted += 1;
-          bump('persona');
-          break;
-        }
-        case 'routine': {
-          line = tryPromoteRoutine(shellPaths, candidate);
-          promoted += 1;
-          bump('routine');
-          break;
-        }
-        default: {
-          // No create path for this target (e.g. notes-to-knowledge is a
-          // workspace action that requires a browser session, skip it).
-          skipped += 1;
-          continue;
-        }
-      }
-      log.push(`promoted ${line}`);
-    } catch (err) {
-      log.push(`skipped ${candidate.label}: ${String(err)}`);
-      skipped += 1;
+      if (candidate.proposalTarget === 'memory') line = await promoteMemory(memoryApi, candidate, collection, options, context, assertOwnership);
+      else if (candidate.proposalTarget === 'persona') line = promotePersona(paths, candidate, collection, context, options, assertOwnership);
+      else if (candidate.proposalTarget === 'routine') line = promoteRoutine(paths, candidate, collection, context, options, assertOwnership);
+      else { skipped++; continue; }
+      assertCurrent();
+      promoted++; bump(candidate.proposalTarget); log.push(`promoted ${line}`);
+    } catch (error) {
+      if (error instanceof PromotionRestrictionFailure) throw error.failure;
+      if (error instanceof ToolInputProjectionError || signal?.aborted) throw error;
+      assertCurrent(); skipped++; log.push('Promotion did not complete.');
     }
   }
-
-  // --- Non-memory consolidation candidates ---
-  for (const candidate of consolidationCandidates) {
+  for (const candidate of consolidations) {
+    assertCurrent();
+    collection.assertCandidateCurrent(candidate);
+    assertCurrent();
     try {
-      const lines = tryConsolidateNonMemoryCandidate(shellPaths, candidate);
-      const dupeCount = candidate.consolidation?.duplicateIds.length ?? 0;
-      consolidated += dupeCount;
-      promoted += dupeCount;
-      bump(candidate.domain);
-      log.push(...lines);
-    } catch (err) {
-      log.push(`skipped ${candidate.label}: ${String(err)}`);
-      skipped += 1;
+      const result = consolidate(paths, candidate, collection, context, options, assertOwnership);
+      assertCurrent(); consolidated += result.count; promoted += result.count; bump(candidate.domain); log.push(...result.lines);
+    } catch (error) {
+      if (error instanceof PromotionRestrictionFailure) throw error.failure;
+      if (error instanceof ToolInputProjectionError || signal?.aborted) throw error;
+      assertCurrent(); skipped++; log.push('Consolidation did not complete.');
     }
   }
-
-  return { eligible, promoted, skipped, consolidated, domains, log };
+  assertCurrent();
+  return issueResult({ eligible, promoted, skipped, consolidated, domains, log }, context, options, assertCurrent);
 }

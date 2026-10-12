@@ -1,3 +1,4 @@
+import { screeningAnswers } from '../helpers/screening-answers.js';
 import type { Socket } from 'node:net';
 import { EmailService } from '@goodvibes-jev/engine/sdk/platform/email';
 import type { EmailInboxAccount, ImapUidCheckpoint } from '@goodvibes-jev/engine/sdk/platform/intake';
@@ -61,7 +62,7 @@ function endpoints() {
       }) } }] });
     }
     sourceCalls.push({ path });
-    return Response.json({ model: 'jev-1.13.0', answers: { complete: { type: 'noul', noul: semanticHeld ? 0 : 1 }, precise: { type: 'noul', noul: semanticHeld ? 0 : 1 } }, usage: { input_tokens: 10, output_tokens: 2 } });
+    return Response.json({ model: 'jev-1.13.0', answers: screeningAnswers(body, { complete: semanticHeld ? 0 : 1, precise: semanticHeld ? 0 : 1 }), usage: { input_tokens: 10, output_tokens: 2 } });
   } });
   cleanups.push(async () => { await local.stop(true); await slack.stop(true); });
   const authority = new AbortController();

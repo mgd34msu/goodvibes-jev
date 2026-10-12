@@ -1,3 +1,4 @@
+import { screeningAnswers } from '../helpers/screening-answers.js';
 import { afterEach, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { mkdirSync, readdirSync } from 'node:fs';
@@ -52,7 +53,7 @@ async function fixture(provider: 'slack' | 'email', held = false) {
       const input = JSON.parse(body.messages[1]!.content) as { revision: string };
       return Response.json({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify({ revision: input.revision, spans: [] }) } }] });
     }
-    return Response.json({ model: 'jev-1.13.0', answers: { complete: { type: 'noul', noul: 1 }, precise: { type: 'noul', noul: 1 } }, usage: { input_tokens: 1, output_tokens: 1 } });
+    return Response.json({ model: 'jev-1.13.0', answers: screeningAnswers(await request.json(), { complete: 1, precise: 1 }), usage: { input_tokens: 1, output_tokens: 1 } });
   } });
   cleanups.push(() => source.stop(true));
   const screening: ProtectedSourceOwnerOptions = {

@@ -1,7 +1,9 @@
 import { awaitPermission } from '../permissions/cancellation.js';
 import type { ExternalOperationSource } from '../permissions/external-request.js';
 import { commitMcpElicitation, discardMcpElicitation } from './elicitation-autonomous.js';
-import { snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { retainOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { types as nodeTypes } from 'node:util';
+import { captureSecurityReadBindings } from '../security/read-source.js';
 /**
  * Streamable HTTP connection for the MCP client.
  *
@@ -57,6 +59,11 @@ export interface McpHttpConnectionOptions {
   readonly handlers?: McpHttpServerMessageHandlers | undefined;
 }
 
+const nativeApply = Reflect.apply;
+function applyNative<Args extends unknown[], Result>(method: (...args: Args) => Result, receiver: unknown, args: Args): Result {
+  return nativeApply(method, receiver, args);
+}
+
 interface JsonRpcErrorShape {
   code: number;
   message: string;
@@ -103,6 +110,14 @@ class SseEventParser {
 }
 
 export class McpHttpConnection {
+  // These exact native delegates remain owned across response and stream awaits.
+  static readonly #post = McpHttpConnection.prototype.post;
+  static readonly #captureSessionId = McpHttpConnection.prototype.captureSessionId;
+  static readonly #resolveJsonRpcResponse = McpHttpConnection.prototype.resolveJsonRpcResponse;
+  static readonly #readSseResponse = McpHttpConnection.prototype.readSseResponse;
+  static readonly #dispatchStreamMessage = McpHttpConnection.prototype.dispatchStreamMessage;
+  static readonly #answerServerRequest = McpHttpConnection.prototype.answerServerRequest;
+
   private negotiatedProtocol: McpNegotiatedProtocol | null = null;
   private sessionId: string | null = null;
   private closed = false;
@@ -110,7 +125,41 @@ export class McpHttpConnection {
   private sessionEpoch = 0;
   private readonly lifetime = new AbortController();
 
-  constructor(private readonly options: McpHttpConnectionOptions) {}
+  readonly #catalogOptions: McpHttpConnectionOptions;
+  readonly #handlers: McpHttpServerMessageHandlers | undefined;
+  readonly #onNotification: McpHttpServerMessageHandlers['onNotification'];
+  readonly #onServerRequest: McpHttpServerMessageHandlers['onServerRequest'];
+  constructor(private readonly options: McpHttpConnectionOptions) {
+    this.#catalogOptions = options;
+    this.#handlers = options.handlers;
+    this.#onNotification = this.#handlers?.onNotification;
+    this.#onServerRequest = this.#handlers?.onServerRequest;
+  }
+
+  /** Retain transport bindings, without freezing its request counters or stream progress. */
+  captureToolCatalogSource(): () => void {
+    const originalOptions = this.#catalogOptions;
+    assertNativeHttpCatalogSlots(this);
+    const assertFields = captureSecurityReadBindings(this, ['options', 'lifetime', 'closed', 'negotiatedProtocol']);
+    if (this.options !== originalOptions) throw new Error('MCP HTTP catalog options changed');
+    const options = this.options, lifetime = this.lifetime;
+    const assertOptions = captureSecurityReadBindings(options, ['serverName', 'url', 'clientInfo', 'clientCapabilities', 'timeoutMs', 'fetchImpl', 'handlers']);
+    const clientInfo = retainOwnedJson(options.clientInfo, nodeTypes.isProxy);
+    const capabilities = retainOwnedJson(options.clientCapabilities, nodeTypes.isProxy);
+    const handlers = options.handlers;
+    const assertHandlers = handlers ? captureSecurityReadBindings(handlers, ['onNotification', 'onServerRequest']) : () => {};
+    const protocol = retainOwnedJson(this.negotiatedProtocol, nodeTypes.isProxy);
+    const fetchImpl = this.fetchImpl;
+    const assertCurrent = () => {
+      assertNativeHttpCatalogSlots(this); assertFields(); assertOptions(); assertHandlers();
+      clientInfo.assertCurrent(); capabilities.assertCurrent(); protocol.assertCurrent();
+      if (handlers !== this.#handlers || handlers?.onNotification !== this.#onNotification
+        || handlers?.onServerRequest !== this.#onServerRequest) throw new Error('MCP HTTP catalog notification owner changed');
+      lifetime.signal.throwIfAborted();
+      if (this.#catalogOptions !== originalOptions || this.fetchImpl !== fetchImpl) throw new Error('MCP HTTP catalog transport changed');
+    };
+    assertCurrent(); return assertCurrent;
+  }
 
   /** Monotonic session identity; a pending input response cannot cross a session replacement. */
   get sessionGeneration(): number { return this.sessionEpoch; }
@@ -283,7 +332,7 @@ export class McpHttpConnection {
   ): Promise<unknown> {
     const id = this.nextId++;
     const body = { jsonrpc: '2.0', id, method, params };
-    const response = await this.post(body, { ...options, method, params });
+    const response = await applyNative(McpHttpConnection.#post, this, [body, { ...options, method, params }]);
 
     if (response.status === 202) {
       throw new Error(`MCP server '${this.options.serverName}': request '${method}' was accepted as a notification (202) instead of answered`);
@@ -296,13 +345,13 @@ export class McpHttpConnection {
     }
 
     this.lifetime.signal.throwIfAborted();
-    this.captureSessionId(response);
+    applyNative(McpHttpConnection.#captureSessionId, this, [response]);
     const contentType = response.headers.get('content-type') ?? '';
     if (contentType.includes('text/event-stream')) {
-      return this.readSseResponse(response, id, method, options.operation);
+      return applyNative(McpHttpConnection.#readSseResponse, this, [response, id, method, options.operation]);
     }
     const parsed: unknown = await response.json();
-    return this.resolveJsonRpcResponse(parsed, method);
+    return applyNative(McpHttpConnection.#resolveJsonRpcResponse, this, [parsed, method]);
   }
 
   private async post(
@@ -365,9 +414,9 @@ export class McpHttpConnection {
           }
           if (!isRecord(message)) continue;
           if (message.id === requestId && !('method' in message)) {
-            return this.resolveJsonRpcResponse(message, method);
+            return applyNative(McpHttpConnection.#resolveJsonRpcResponse, this, [message, method]);
           }
-          this.dispatchStreamMessage(message, boundOperation);
+          applyNative(McpHttpConnection.#dispatchStreamMessage, this, [message, boundOperation]);
         }
       }
     } finally {
@@ -384,11 +433,11 @@ export class McpHttpConnection {
     const id = message.id;
     if (typeof id === 'number' || typeof id === 'string') {
       // Legacy servers may send JSON-RPC requests on SSE streams; answer via POST.
-      void this.answerServerRequest(id, method, message.params, operation);
+      void applyNative(McpHttpConnection.#answerServerRequest, this, [id, method, message.params, operation]);
       return;
     }
     try {
-      this.options.handlers?.onNotification?.(method, message.params);
+      if (this.#onNotification) applyNative(this.#onNotification, this.#handlers, [method, message.params]);
     } catch (err) {
       logger.warn('McpHttpConnection: notification observer threw', {
         server: this.options.serverName,
@@ -407,10 +456,10 @@ export class McpHttpConnection {
     let outcome: unknown;
     let body: Record<string, unknown>;
     try {
-      const handler = this.options.handlers?.onServerRequest;
+      const handler = this.#onServerRequest;
       const ownedParams = snapshotJudgmentInput(params);
       assertCurrent();
-      const result = handler ? await handler(id, method, ownedParams, operation) : undefined;
+      const result = handler ? await applyNative(handler, undefined, [id, method, ownedParams, operation]) : undefined;
       outcome = result;
       assertCurrent();
       body = result === undefined
@@ -430,4 +479,32 @@ export class McpHttpConnection {
       });
     } finally { discardMcpElicitation(outcome); }
   }
+}
+
+
+const nativeHttpCatalogSlots = Object.freeze([
+  'captureToolCatalogSource', 'request', 'modernMeta', 'buildHeaders', 'postAndParse', 'post',
+  'captureSessionId', 'resolveJsonRpcResponse', 'readSseResponse', 'dispatchStreamMessage', 'answerServerRequest',
+  'fetchImpl', 'sessionGeneration', 'isOpen',
+].map(key => {
+  const descriptor = Object.getOwnPropertyDescriptor(McpHttpConnection.prototype, key);
+  if (!descriptor) throw new Error('MCP native HTTP catalog method is unavailable');
+  return Object.freeze({ key, descriptor: Object.freeze(descriptor) });
+}));
+const nativeHttpCatalogSourceFactory = McpHttpConnection.prototype.captureToolCatalogSource;
+
+function assertNativeHttpCatalogSlots(connection: McpHttpConnection): void {
+  if (nodeTypes.isProxy(connection) || Object.getPrototypeOf(connection) !== McpHttpConnection.prototype)
+    throw new Error('MCP HTTP catalog transport is unavailable');
+  for (const { key, descriptor } of nativeHttpCatalogSlots) {
+    const current = Object.getOwnPropertyDescriptor(McpHttpConnection.prototype, key);
+    if (Object.hasOwn(connection, key) || !current || current.value !== descriptor.value || current.get !== descriptor.get
+      || current.set !== descriptor.set || current.writable !== descriptor.writable || current.enumerable !== descriptor.enumerable
+      || current.configurable !== descriptor.configurable) throw new Error('MCP HTTP catalog transport method changed');
+  }
+}
+
+/** Only the original native transport factory can issue this read restriction. */
+export function captureMcpHttpToolCatalogSource(connection: McpHttpConnection): () => void {
+  return applyNative(nativeHttpCatalogSourceFactory, connection, []);
 }

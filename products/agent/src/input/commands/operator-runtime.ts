@@ -6,7 +6,7 @@ import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { requireYesFlag, stripYesFlag } from './confirmation.ts';
 import { handleContextWindowSubcommand } from './context-window.ts';
-import { AGENT_NOTIFICATIONS_METADATA_ONLY_KEY } from '../../config/host-settings.ts';
+import { isAgentHostSettingKey } from '../../config/host-settings.ts';
 import {
   formatHarnessError,
   formatHarnessMutation,
@@ -89,7 +89,7 @@ export function nativeSettingsCommandMutation(command: SlashCommand, args: reado
   if (tokens[0] !== 'set') return undefined;
   const rawValue = tokens.slice(2).join(' ');
   if (!rawValue) return undefined;
-  const value = key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY && (rawValue === 'true' || rawValue === 'false')
+  const value = isAgentHostSettingKey(key) && (rawValue === 'true' || rawValue === 'false')
     ? rawValue === 'true' : rawValue;
   return { action: 'set', key, value };
 }
@@ -155,8 +155,8 @@ export function registerOperatorRuntimeCommands(registry: CommandRegistry): void
         try {
           // Text commands supply tokens; only the exact host boolean literals
           // become booleans. JSON-string values and friendly aliases are not
-          // permission to include private notification details.
-          const value = key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY
+          // permission to include private notification details or screen raw research.
+          const value = isAgentHostSettingKey(key)
             && (rawValue === 'true' || rawValue === 'false') ? rawValue === 'true' : rawValue;
           const result = await setHarnessSetting(ctx.platform.configManager, ctx.platform.secretsManager, key, value);
           ctx.print(formatHarnessMutation(result));

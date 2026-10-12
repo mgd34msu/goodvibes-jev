@@ -1280,3 +1280,205 @@ test('the actual transient native alias copy outlives its original name allocati
     expect(liveStatements()).toEqual([]); expect(readFileSync(filename)).toEqual(before);
   } finally { namePointer = 0; allocation?.dispose(); }
 });
+
+
+test('an acquired private lookup cannot substitute a facts checker and suppress a fresh native comparison', async () => {
+  const own = Object.getOwnPropertyDescriptor, define = Object.defineProperty, apply = Reflect.apply;
+  const descriptor = own(WeakMap.prototype, 'get'), get = WeakMap.prototype.get;
+  if (!descriptor || !('value' in descriptor) || descriptor.value !== get || !descriptor.configurable) {
+    throw new Error('No original private lookup dispatch');
+  }
+  let substituted = 0, invoked = 0, lookupReads = 0;
+  const borrowing = function(this: WeakMap<object, unknown>, key: object): unknown {
+    lookupReads++;
+    if (key && typeof key === 'object') {
+      const object = own(key, 'object'), prototype = own(key, 'prototype'), slots = own(key, 'slots');
+      if (object && prototype && slots && 'value' in object && 'value' in prototype && 'value' in slots
+        && Array.isArray(slots.value)) {
+        substituted++;
+        return () => { invoked++; return true; };
+      }
+    }
+    return apply(get, this, [key]);
+  };
+  const modulePath = '../sdk/src/platform/state/sqlite-store.js?native-source-predicate-private-lookup';
+  let native: typeof import('../sdk/src/platform/state/sqlite-store.js');
+  try {
+    define(WeakMap.prototype, 'get', { ...descriptor, value: borrowing });
+    native = await import(modulePath);
+    if (native.loadSqlJsEngine === loadSqlJsEngine) throw new Error('The acquisition control requires a distinct actual source loader');
+    await native.loadSqlJsEngine();
+  } finally { define(WeakMap.prototype, 'get', descriptor); }
+  const afterAcquisitionReads = lookupReads;
+  const { sqlite, filename, read, statementPrototype } = await fixture(true, false, native);
+  const key = Reflect.ownKeys(statementPrototype).find(key => {
+    const field = own(statementPrototype, key);
+    return !!field?.configurable && 'value' in field && typeof field.value === 'function' && key !== 'constructor';
+  });
+  if (key === undefined) throw new Error('No actual mutable native data slot');
+  const field = own(statementPrototype, key);
+  if (!field) throw new Error('No original native data slot');
+  const before = readFileSync(filename);
+  let reachedMutation = false, nestedAttempt = false, consumed = false, caught: unknown;
+  try {
+    sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', 'Complete original source']]);
+      requireNativePrefixFrame(sqlite);
+      define(statementPrototype, key, { ...field, value: () => undefined }); reachedMutation = true;
+      try {
+        nestedAttempt = true;
+        sqlite.assertPersistedReadFrame(() => { read(); consumed = true; });
+      } finally { define(statementPrototype, key, field); }
+    });
+  } catch (error) { caught = error; }
+  finally { define(statementPrototype, key, field); }
+  expect(reachedMutation).toBe(true); expect(nestedAttempt).toBe(true);
+  expect(caught).toBeInstanceOf(native.SQLiteObservationRetiredError);
+  expect(lookupReads).toBeGreaterThan(afterAcquisitionReads);
+  expect(substituted).toBe(0); expect(invoked).toBe(0); expect(consumed).toBe(false);
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test('a retained original comparator retains equivalent native own-slot reordering', async () => {
+  const { sqlite, filename, read, statementPrototype } = await nativePrefixFixture();
+  const own = Object.getOwnPropertyDescriptor, define = Object.defineProperty, remove = Reflect.deleteProperty;
+  const key = Reflect.ownKeys(statementPrototype).find(key => {
+    const field = own(statementPrototype, key);
+    return !!field?.configurable && 'value' in field && typeof field.value === 'function' && key !== 'constructor';
+  });
+  if (key === undefined) throw new Error('No actual reorderable native data slot');
+  const original = own(statementPrototype, key);
+  if (!original) throw new Error('No original native data slot');
+  const before = readFileSync(filename);
+  expect(() => sqlite.assertPersistedReadFrame(() => {
+    expect(read()).toEqual([['original', 'Complete original source']]);
+    requireNativePrefixFrame(sqlite);
+    if (!remove(statementPrototype, key)) throw new Error('The actual native slot could not be removed');
+    define(statementPrototype, key, original);
+    sqlite.assertPersistedReadFrame(() => { expect(read()).toEqual([['original', 'Complete original source']]); });
+  })).not.toThrow();
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test('the original expected-side inherited descriptor read retains its mutation-before-restoration boundary', async () => {
+  const own = Object.getOwnPropertyDescriptor, define = Object.defineProperty, remove = Reflect.deleteProperty;
+  const parent = Object.getPrototypeOf, setParent = Object.setPrototypeOf, freeze = Object.freeze;
+  // The preceding legal reorder changes live keys. Acquire this control's
+  // genuine expected slot order after that change rather than reusing an older loader.
+  const SQL = await loadSqlJsEngine(), scratch = new SQL.Database(), sample = scratch.prepare('SELECT 1');
+  let statementPrototype: object;
+  try {
+    const prototype: unknown = parent(sample);
+    if (!prototype || typeof prototype !== 'object') throw new Error('No actual native statement prototype');
+    statementPrototype = prototype;
+  } finally { sample.free(); scratch.close(); }
+  const candidates = Reflect.ownKeys(statementPrototype).flatMap(key => {
+    const descriptor = own(statementPrototype, key);
+    return descriptor?.configurable && 'value' in descriptor && typeof descriptor.value === 'function' && key !== 'constructor'
+      ? [{ key, descriptor }] : [];
+  });
+  const first = candidates[0], later = candidates.at(-1);
+  if (!first || !later || first.key === later.key || first.descriptor.value === later.descriptor.value) throw new Error('No actual ordered native data pair');
+  const descriptorParent: unknown = parent(first.descriptor);
+  if (!descriptorParent || typeof descriptorParent !== 'object' || parent(descriptorParent) !== null || own(descriptorParent, 'get')) {
+    throw new Error('No actual ordinary descriptor parent');
+  }
+  const freezeSlot = own(Object, 'freeze');
+  if (!freezeSlot || !('value' in freezeSlot) || freezeSlot.value !== freeze || !freezeSlot.configurable) {
+    throw new Error('No original capture freeze dispatch');
+  }
+  let retainedDescriptor: object | undefined, captured = 0;
+  const observingFreeze = <T>(value: T): Readonly<T> => {
+    if (!retainedDescriptor && value && typeof value === 'object'
+      && own(value, 'value')?.value === first.descriptor.value && own(value, 'writable')
+      && own(value, 'configurable') && own(value, 'enumerable')) {
+      retainedDescriptor = value; captured++;
+    }
+    return freeze(value);
+  };
+  const modulePath = '../sdk/src/platform/state/sqlite-store.js?native-source-predicate-expected-read-order';
+  let native: typeof import('../sdk/src/platform/state/sqlite-store.js');
+  try {
+    define(Object, 'freeze', { ...freezeSlot, value: observingFreeze });
+    native = await import(modulePath);
+    if (native.loadSqlJsEngine === loadSqlJsEngine) throw new Error('The expected-read control requires a distinct actual source loader');
+    await native.loadSqlJsEngine();
+  } finally { define(Object, 'freeze', freezeSlot); }
+  if (!retainedDescriptor) throw new Error('No actual retained native descriptor was observed');
+  const { sqlite, filename, read, statementPrototype: actualPrototype } = await fixture(true, false, native);
+  if (actualPrototype !== statementPrototype) throw new Error('The fixture changed the original native prototype');
+  const receiver = globalThis, self = own(receiver, 'globalThis');
+  if (!self || !self.configurable) throw new Error('No replaceable original native global receiver');
+  const replacement = setParent({ ...later.descriptor, value: () => undefined }, null);
+  let armed = 0, inheritedCalls = 0, selectedReads = 0, freshReads = 0, expectedReads = 0;
+  let restored = 0, consumed = false, reachedMutation = false, nestedAttempt = false, caught: unknown;
+  const observing = new Proxy(receiver, { getOwnPropertyDescriptor(target, key) {
+    if (key === 'BigInt' && armed) { restored++; define(statementPrototype, later.key, later.descriptor); }
+    return own(target, key);
+  } });
+  const expectedDescriptor = retainedDescriptor;
+  const before = readFileSync(filename);
+  try {
+    sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', 'Complete original source']]);
+      requireNativePrefixFrame(sqlite);
+      define(receiver, 'globalThis', { configurable: self.configurable, enumerable: self.enumerable, writable: true, value: observing });
+      define(descriptorParent, 'get', { configurable: true, get(this: object) {
+        inheritedCalls++;
+        if (!armed && own(this, 'value')?.value === first.descriptor.value) {
+          selectedReads++;
+          if (this === expectedDescriptor) {
+            expectedReads++;
+            armed++; remove(descriptorParent, 'get'); define(statementPrototype, later.key, replacement);
+            reachedMutation = true;
+          } else freshReads++;
+        }
+        return undefined;
+      } });
+      try {
+        nestedAttempt = true;
+        sqlite.assertPersistedReadFrame(() => { read(); consumed = true; });
+      } finally {
+        remove(descriptorParent, 'get'); define(statementPrototype, later.key, later.descriptor); define(receiver, 'globalThis', self);
+      }
+    });
+  } catch (error) { caught = error; }
+  finally {
+    remove(descriptorParent, 'get'); define(statementPrototype, later.key, later.descriptor); define(receiver, 'globalThis', self);
+  }
+  expect(captured).toBe(1); expect(reachedMutation).toBe(true); expect(nestedAttempt).toBe(true);
+  expect(freshReads).toBe(1); expect(expectedReads).toBe(1); expect(selectedReads).toBe(2);
+  expect(caught).toBeInstanceOf(native.SQLiteObservationRetiredError);
+  expect(inheritedCalls).toBeGreaterThan(0); expect(armed).toBe(1); expect(restored).toBe(0); expect(consumed).toBe(false);
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+
+test('a call-through stringifier rejection remains the original native read failure', async () => {
+  const { sqlite, filename, read } = await nativePrefixFixture();
+  const own = Object.getOwnPropertyDescriptor, define = Object.defineProperty;
+  const stringify = JSON.stringify, descriptor = own(JSON, 'stringify');
+  if (!descriptor || !('value' in descriptor) || descriptor.value !== stringify || !descriptor.configurable) {
+    throw new Error('No original stringifier dispatch');
+  }
+  const before = readFileSync(filename), refused = new Error('Original stringifier rejected the native generation input');
+  let invoked = 0, consumed = false, caught: unknown;
+  const rejecting = (...args: Parameters<typeof JSON.stringify>) => {
+    Reflect.apply(stringify, JSON, args);
+    invoked++; throw refused;
+  };
+  try {
+    sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', 'Complete original source']]);
+      requireNativePrefixFrame(sqlite);
+      define(JSON, 'stringify', { ...descriptor, value: rejecting });
+      try {
+        sqlite.readPersistedRowGeneration('knowledge_sources', 'id', 'original');
+        consumed = true;
+      } finally { define(JSON, 'stringify', descriptor); }
+    });
+  } catch (error) { caught = error; }
+  finally { define(JSON, 'stringify', descriptor); }
+  expect(caught).toBe(refused); expect(invoked).toBe(1); expect(consumed).toBe(false);
+  expect(readFileSync(filename)).toEqual(before);
+});

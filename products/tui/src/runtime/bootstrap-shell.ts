@@ -328,6 +328,7 @@ export function createBootstrapShell(options: BootstrapShellOptions): BootstrapS
     componentHealthMonitor: services.componentHealthMonitor,
     hydrateSessionUsage,
   });
+  commandContext.resumeSession = resumeSession;
   commandContextRef = commandContext;
 
   const gitStatusProvider = new GitStatusProvider(services.workingDirectory);

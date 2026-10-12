@@ -11,8 +11,6 @@ import type { HomeGraphPageSourceReader } from './page-quality.js';
 
 type ExtractionBySourceId = ReadonlyMap<string, ReturnType<KnowledgeStore['getExtractionBySourceId']>>;
 const MAX_PROFILE_SOURCES_PER_DEVICE_PAGE = 8;
-const PAGE_PROFILE_SOURCE_WEIGHT = 0.78;
-const PAGE_PROFILE_DESCRIBES_WEIGHT = 0.76;
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new GoodVibesSdkError('Home Graph device passport refresh was cancelled.', {
     category: 'timeout', source: 'runtime', operation: 'homegraph.refreshDevicePassport',
@@ -20,7 +18,7 @@ function throwIfAborted(signal?: AbortSignal): void {
 }
 
 export interface DevicePageProfileFactPlan {
-  readonly node: KnowledgeNodeRecord;
+  readonly node: Omit<KnowledgeNodeRecord, 'confidence'>;
   readonly source: KnowledgeSourceRecord;
   readonly extraction: KnowledgeExtractionRecord;
   readonly title: string;
@@ -86,7 +84,6 @@ export async function buildDevicePageProfileFacts(input: {
           summary: profileFact.summary,
           aliases: profileFact.aliases,
           status: 'active',
-          confidence: 72,
           sourceId: source.id,
           metadata: buildHomeGraphMetadata(input.spaceId, input.installationId, {
             semanticKind: 'fact',
@@ -138,9 +135,6 @@ export function devicePageProfileFactInput(
     evidence: fact.evidence,
     classification: fact.classification,
     extractor: 'page-profile',
-    confidence: 72,
-    supportWeight: PAGE_PROFILE_SOURCE_WEIGHT,
-    describesWeight: PAGE_PROFILE_DESCRIBES_WEIGHT,
     edgeMetadata: {
       linkedBy: 'generated-page-profile',
     },

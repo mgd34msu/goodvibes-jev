@@ -1,5 +1,7 @@
 import { previewHarnessText } from './agent-harness-text.ts';
 import { readRecord, readString } from './agent-harness-model-routing-utils.ts';
+import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { readMemorySchemaCertified } from './agent-harness-memory-provider-readings.ts';
 
 export interface MemoryExternalProviderCertification {
   readonly schemaStatus: 'certified' | 'legacy';
@@ -16,18 +18,9 @@ export interface MemoryExternalProviderCertification {
   readonly policy: string;
 }
 
-const MEMORY_CERT_SECRET_PATTERNS: readonly [RegExp, string][] = [
-  [/secret:\/\/[^\s,'"}]+/gi, 'secret://<redacted>'],
-  [/("?\b(?:api[-_]?key|apikey|token|secret|password|passwd|credential|authorization)\b"?\s*:\s*)("[^"]*"|'[^']*'|[^\s,}]+)/gi, '$1"<redacted>"'],
-  [/\b([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTHORIZATION|BEARER)[A-Z0-9_]*)=("[^"]*"|'[^']*'|[^\s]+)/gi, '$1=<redacted>'],
-  [/(\b(?:token|secret|password|passwd|api[-_]?key|apikey|authorization|credential)\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}]+)/gi, '$1<redacted>'],
-  [/(Authorization:\s*Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1<redacted>'],
-];
-
+/** Credential values have already been removed from the complete producer DTO. A native reference URI never exposes its private name. */
 function redactedPreview(value: unknown, limit = 180): string {
-  const raw = readString(value);
-  const redacted = MEMORY_CERT_SECRET_PATTERNS.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), raw);
-  return previewHarnessText(redacted, limit);
+  return previewHarnessText(readString(value).replace(/secret:\/\/[^\s,'"}]+/gi, 'secret://<redacted>'), limit);
 }
 
 function firstString(record: Readonly<Record<string, unknown>>, keys: readonly string[]): string {
@@ -68,17 +61,6 @@ function firstAcross(records: readonly Readonly<Record<string, unknown>>[], keys
   return '';
 }
 
-function normalizeSchemaStatus(records: readonly Readonly<Record<string, unknown>>[]): MemoryExternalProviderCertification['schemaStatus'] {
-  const explicit = firstAcross(records, ['schemaStatus', 'receiptSchemaStatus', 'certificationStatus'])
-    .toLowerCase()
-    .replace(/[_\s]+/g, '-');
-  if (['certified', 'valid', 'verified', 'schema-certified'].includes(explicit)) return 'certified';
-  const schemaVersion = firstAcross(records, ['schemaVersion', 'receiptSchemaVersion', 'contractVersion']);
-  const publicationGuarantee = firstAcross(records, ['publicationGuarantee', 'hostPublicationGuarantee', 'providerPublicationGuarantee', 'memoryPublicationGuarantee']);
-  const proof = firstAcross(records, ['methodId', 'sourceTool', 'actionId', 'publisher', 'publisherId', 'daemonId', 'hostId']);
-  return schemaVersion && publicationGuarantee && proof ? 'certified' : 'legacy';
-}
-
 function receiptIds(record: Readonly<Record<string, unknown>>, records: readonly Readonly<Record<string, unknown>>[], extraIds: readonly string[]): readonly string[] {
   const explicit = [
     ...extraIds,
@@ -102,13 +84,13 @@ function provenance(record: Readonly<Record<string, unknown>>, records: readonly
   return [...new Set(values.map((entry) => redactedPreview(entry, 180)).filter(Boolean))].slice(0, 8);
 }
 
-function certifiedBase(input: {
+async function certifiedBase(input: {
   readonly record: Readonly<Record<string, unknown>>;
   readonly sourcePath: string;
   readonly receiptIds?: readonly string[];
-}): Omit<MemoryExternalProviderCertification, 'missingSignals' | 'policy'> & { readonly rawPublicationGuarantee: string; readonly rawPublisher: string; readonly rawReceiptRoute: string; readonly rawReceiptStreamStatus: string; readonly rawReceiptStatus: string; readonly rawSchemaVersion: string; readonly receiptIdsValue: readonly string[]; readonly schemaStatusValue: MemoryExternalProviderCertification['schemaStatus'] } {
+}, options: CatalogRankingOptions): Promise<Omit<MemoryExternalProviderCertification, 'missingSignals' | 'policy'> & { readonly rawPublicationGuarantee: string; readonly rawPublisher: string; readonly rawReceiptRoute: string; readonly rawReceiptStreamStatus: string; readonly rawReceiptStatus: string; readonly rawSchemaVersion: string; readonly receiptIdsValue: readonly string[]; readonly schemaStatusValue: MemoryExternalProviderCertification['schemaStatus'] }> {
   const records = recordsForCertification(input.record);
-  const schemaStatus = normalizeSchemaStatus(records);
+  const schemaStatus = await readMemorySchemaCertified({ record: input.record, sourcePath: input.sourcePath }, options) ? 'certified' : 'legacy';
   const schemaVersion = firstAcross(records, ['schemaVersion', 'receiptSchemaVersion', 'contractVersion']);
   const publicationGuarantee = firstAcross(records, ['publicationGuarantee', 'hostPublicationGuarantee', 'providerPublicationGuarantee', 'memoryPublicationGuarantee']);
   const publisher = firstAcross(records, ['publisher', 'publisherId', 'daemonId', 'hostId']);
@@ -139,7 +121,7 @@ function certifiedBase(input: {
   };
 }
 
-export function memoryExternalProviderLiveCertification(input: {
+export async function memoryExternalProviderLiveCertification(input: {
   readonly record: Readonly<Record<string, unknown>>;
   readonly sourcePath: string;
   readonly providerId: string;
@@ -149,8 +131,8 @@ export function memoryExternalProviderLiveCertification(input: {
   readonly forgetContractPublished: boolean;
   readonly receiptIds: readonly string[];
   readonly receiptRoute: string | null;
-}): MemoryExternalProviderCertification {
-  const base = certifiedBase({ record: input.record, sourcePath: input.sourcePath, receiptIds: input.receiptIds });
+}, options: CatalogRankingOptions): Promise<MemoryExternalProviderCertification> {
+  const base = await certifiedBase({ record: input.record, sourcePath: input.sourcePath, receiptIds: input.receiptIds }, options);
   const {
     rawPublicationGuarantee,
     rawPublisher,
@@ -183,13 +165,13 @@ export function memoryExternalProviderLiveCertification(input: {
   };
 }
 
-export function memoryExternalProviderReceiptCertification(input: {
+export async function memoryExternalProviderReceiptCertification(input: {
   readonly metadata: Readonly<Record<string, unknown>>;
   readonly sourcePath: string;
   readonly providerId: string;
   readonly artifactId: string;
-}): MemoryExternalProviderCertification {
-  const base = certifiedBase({ record: input.metadata, sourcePath: input.sourcePath });
+}, options: CatalogRankingOptions): Promise<MemoryExternalProviderCertification> {
+  const base = await certifiedBase({ record: input.metadata, sourcePath: input.sourcePath }, options);
   const {
     rawPublicationGuarantee,
     rawPublisher,

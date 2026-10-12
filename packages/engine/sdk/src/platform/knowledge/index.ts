@@ -1,3 +1,4 @@
+export { KnowledgeUriCanonicalizationHeldError } from './uri-canonicalization/types.js';
 export { KnowledgeConnectorRegistry, createDefaultKnowledgeConnectorRegistry } from './connectors.js';
 export {
   GOODVIBES_AGENT_KNOWLEDGE_DB_FILE,
@@ -5,7 +6,8 @@ export {
   REGULAR_KNOWLEDGE_DB_FILE,
 } from './store-config.js';
 export type { MemoryApi } from './knowledge-api.js';
-export { createMemoryApi } from './knowledge-api.js';
+export { createMemoryApi, prepareMemoryApiAdd } from './knowledge-api.js';
+export type { MemoryPreparedAdd, MemoryPreparedAddCommitOptions, MemoryAddPublication } from '../state/memory-store.js';
 export { renderPacket } from './shared.js';
 export { extractKnowledgeArtifact } from './extractors.js';
 export {

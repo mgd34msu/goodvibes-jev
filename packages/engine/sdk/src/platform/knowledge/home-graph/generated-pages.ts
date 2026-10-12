@@ -1,3 +1,4 @@
+import { retainGeneratedFactRecordReferences } from '../generated-fact-record-references.js';
 import { rankHomeGraphPageCandidates, HomeGraphPagePriorityHeldError } from './page-priority.js';
 import { prioritySubject } from './pages.js';
 import { knowledgeClockIso, knowledgeRawRepresentation } from '../store-record-representation.js';
@@ -427,6 +428,13 @@ async function refreshHomeGraphDevicePassportNow(
         deviceId: input.deviceId,
       },
     }, graph);
+  // Register only nodes returned by this actual atomic native publication.
+  for (const plan of new Map(preparedProfileFacts.plans.map(plan => [plan.factId, plan])).values()) {
+    const fact = generated.nodes?.find(node => node.id === plan.factId);
+    if (!fact || store.getNode(fact.id) !== fact) throw new Error('Atomic device passport publication omitted its generated fact.');
+    const supportPlans = preparedProfileFacts.plans.filter(candidate => candidate.factId === plan.factId).flatMap(candidate => candidate.supportPlans);
+    retainGeneratedFactRecordReferences(store, fact, supportPlans, plan.previousFact ?? undefined, plan.factIdentity);
+  }
   const passport = generated.nodes?.find(node => node.id === passportId);
   if (!passport) throw new Error('Atomic device passport publication omitted its passport node.');
   return {

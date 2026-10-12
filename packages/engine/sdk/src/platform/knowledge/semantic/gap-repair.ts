@@ -1,7 +1,7 @@
 import { captureStrictRepairJson, admitRepairJson } from './web-gap-repair/admission.js';
 import { knowledgeSearchStamp, sameKnowledgeRecord } from '../store-record-representation.js';
 import { JudgmentInputError } from '../../gate/judgment-input.js';
-import { canonicalizeUri } from '../shared.js';
+import { createKnowledgeUriCanonicalizer } from '../uri-canonicalization/reader.js';
 import type { KnowledgeIngestOwnership } from '../ingest-context.js';
 import type { KnowledgeSourceType } from '../types.js';
 import type { WebSearchRequest, WebSearchResponse, WebSearchResult } from '../../web-search/types.js';
@@ -64,7 +64,8 @@ async function repair(request: KnowledgeSemanticGapRepairRequest, options: WebGa
     for (const response of responses) if (!sameKnowledgeRecord(captureStrictRepairJson(response.original), response.snapshot)) throw new Held('stale');
   };
   const reader = createWebGapReadings({ signal, assertCurrent: ownerCurrent });
-  const check = () => { ownerCurrent(); reader.assertCurrent(); };
+  const uris = createKnowledgeUriCanonicalizer({ signal, assertCurrent: ownerCurrent });
+  const check = () => { ownerCurrent(); reader.assertCurrent(); uris.assertCurrent(); };
   let rejectStop: (error: Error) => void = () => {};
   const stopped = new Promise<never>((_, reject) => { rejectStop = reject; });
   const abort = () => rejectStop(new Held(timedOut ? 'budget' : 'aborted'));
@@ -95,6 +96,9 @@ async function repair(request: KnowledgeSemanticGapRepairRequest, options: WebGa
       sources: request.sources.map(source => ({ title: source.title, summary: source.summary, description: source.description, sourceType: source.sourceType, ...knowledgeSourceJudgmentUris(source) })),
       facts: input.facts.map(fact => ({ title: fact.title, summary: fact.summary, value: fact.metadata.value })) };
     reader.preflight(context);
+    // Complete original URI/ref admission precedes deduplication and any query dispatch.
+    await uris.canonicalizeAll(input.sources.flatMap(source => [source.url, source.sourceUri, source.canonicalUri].filter((url): url is string => url !== undefined)));
+    check();
     const subjectText = subjects.map(subject => [subject.title, ...Object.values(subject.identity ?? {})].join(' ')).join('\n');
     // Preserve every original character and field separator. The generic
     // uniqueStrings helper normalizes whitespace/case and is not query identity.
@@ -117,13 +121,13 @@ async function repair(request: KnowledgeSemanticGapRepairRequest, options: WebGa
         || source.metadata.projectionKind === 'device-passport' || source.metadata.projectionKind === 'room-page') continue;
       const url = source.url ?? source.sourceUri ?? source.canonicalUri;
       if (!url || !domain(url)) continue;
-      const key = canonicalizeUri(url); if (!key || canonical.has(key)) continue;
+      const key = await uris.canonicalize(url); check(); if (!key || canonical.has(key)) continue;
       canonical.add(key);
       await assess({ rank: 0, url, title: source.title, snippet: [source.summary, source.description, ...source.tags].filter(value => value !== undefined).join('\n'),
         type: 'organic', providerId: 'indexed', metadata: {} }, input.query, source.id, source.status);
     }
     // Existing rejected/ineligible URLs cannot be refreshed under the old read receipt.
-    for (const source of input.sources) for (const url of [source.url, source.sourceUri, source.canonicalUri]) { const key = canonicalizeUri(url ?? ''); if (key) canonical.add(key); }
+    for (const source of input.sources) for (const url of [source.url, source.sourceUri, source.canonicalUri]) { const key = await uris.canonicalize(url ?? ''); check(); if (key) canonical.add(key); }
     const select = () => {
       const domains = new Set<string>();
       // Declared consumer preference over settled publisher categories, not semantic scoring.
@@ -147,9 +151,10 @@ async function repair(request: KnowledgeSemanticGapRepairRequest, options: WebGa
       const snapshot = admitRepairJson(response) as WebSearchResponse;
       responses.push({ original: response, snapshot });
       if (!Array.isArray(snapshot.results) || snapshot.results.length + all.length > LIMITS.candidates) throw new Held('budget');
+      await uris.canonicalizeAll(snapshot.results.map(source => source.url)); check();
       for (const source of snapshot.results) {
         if (typeof source.url !== 'string' || typeof source.rank !== 'number' || !Number.isFinite(source.rank)) throw new Held('malformed');
-        const key = canonicalizeUri(source.url);
+        const key = await uris.canonicalize(source.url); check();
         if (!key || !domain(source.url) || canonical.has(key)) continue;
         canonical.add(key); await assess(source, query);
       }

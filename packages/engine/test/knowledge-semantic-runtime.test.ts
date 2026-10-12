@@ -1,3 +1,5 @@
+import { extractionValueFixtureFor } from './_helpers/knowledge-extraction-value-readings.js';
+import { gapAssessmentFixture, intrinsicAssessmentFixture, answerGapAssessmentFixtures, semanticRepairAssessmentCoverage } from './_helpers/knowledge-self-improvement-readings.js';
 import { KnowledgeRepairBudgetError } from '../sdk/src/platform/knowledge/semantic/self-improvement-budget.js';
 import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
 import { seedKnowledgeResearchTask, useSemanticActivationFixtures } from './_helpers/knowledge-semantic-activation-fixtures.js';
@@ -70,6 +72,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       metadata: { knowledgeSpaceId: spaceId },
     });
 
+    answerReadings.addExtractionValue(...extractionValueFixtureFor(source, store.getExtractionBySourceId(source.id), 0.99));
     const result = await semantic.reindex({ knowledgeSpaceId: spaceId, limit: 10 });
 
     expect(result.scanned).toBe(1);
@@ -109,6 +112,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
           },
           metadata: { knowledgeSpaceId: spaceId },
         });
+        answerReadings.addExtractionValue(...extractionValueFixtureFor(source, store.getExtractionBySourceId(source.id), 0.99));
         return {
           searched: true,
           query: 'LG 86NANO90UNA product specifications',
@@ -144,6 +148,8 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
+    answerReadings.addAssessments(answerGapAssessmentFixtures(['LG 86NANO90UNA product specifications'], [device], 0.99));
     await store.upsertEdge({
       fromKind: 'source',
       fromId: manual.id,
@@ -186,6 +192,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
     const gap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'budget-gap',
@@ -199,6 +206,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
         linkedObjectIds: [device.id],
       },
     });
+    answerReadings.addAssessments([gapAssessmentFixture(gap, [device], 0.99, 0.99, semanticRepairAssessmentCoverage, 0.99)]);
 
     const result = await semantic.selfImprove({ knowledgeSpaceId: spaceId, gapIds: [gap.id], force: true, maxRunMs: 5 });
     const task = store.listRefinementTasks(10, { spaceId })[0];
@@ -251,6 +259,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
     await store.upsertEdge({
       fromKind: 'source',
       fromId: manual.id,
@@ -282,6 +291,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
         linkedObjectIds: [device.id],
       },
     });
+    answerReadings.addAssessments([gapAssessmentFixture(gap, [device], 0.99, 0.99, semanticRepairAssessmentCoverage, 0.99)]);
     await store.upsertEdge({
       fromKind: 'node',
       fromId: device.id,
@@ -316,6 +326,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, batteryPowered: false, batteryType: 'none' },
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
     const gap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'battery-gap',
@@ -328,6 +339,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
         linkedObjectIds: [device.id],
       },
     });
+    answerReadings.addAssessments([gapAssessmentFixture(gap, [device], 0.01, 0.99)]);
     await store.upsertEdge({
       fromKind: 'node',
       fromId: device.id,
@@ -351,7 +363,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
     const spaceId = homeAssistantKnowledgeSpaceId('house');
     const semantic = new KnowledgeSemanticService(store);
     for (let i = 0; i < 60; i += 1) {
-      await seedKnowledgeResearchTask(store, {
+      const assessmentFixtureGap = await seedKnowledgeResearchTask(store, {
         kind: 'knowledge_gap',
         slug: `broad-gap-${i}`,
         title: `What are the complete features and specifications for device ${i}?`,
@@ -363,6 +375,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
           gapKind: 'intrinsic_features',
         },
       });
+      answerReadings.addAssessments([gapAssessmentFixture(assessmentFixtureGap, [], 0.99, 0.99)]);
     }
 
     const result = await semantic.selfImprove({ knowledgeSpaceId: spaceId, limit: 500, reason: 'manual' });
@@ -406,6 +419,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
     await store.upsertEdge({
       fromKind: 'source',
       fromId: source.id,
@@ -414,7 +428,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       relation: 'source_for',
       metadata: { knowledgeSpaceId: spaceId },
     });
-    await seedKnowledgeResearchTask(store, {
+    const assessmentFixtureGap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'coalesced-limit-gap',
       title: 'What are the complete features and specifications for LG 86NANO90UNA?',
@@ -429,6 +443,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
         linkedObjectIds: [device.id],
       },
     });
+      answerReadings.addAssessments([gapAssessmentFixture(assessmentFixtureGap, [device], 0.99, 0.99, semanticRepairAssessmentCoverage, 0.99)]);
 
     const first = semantic.selfImprove({ knowledgeSpaceId: spaceId, limit: 5, reason: 'manual' });
     await waitFor(() => store.listRefinementTasks(10, { spaceId }).some((task) => task.state === 'searching'), 250);
@@ -464,6 +479,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
     await store.upsertEdge({
       fromKind: 'source',
       fromId: manual.id,
@@ -489,6 +505,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
           linkedObjectIds: [device.id],
         },
       });
+    answerReadings.addAssessments([gapAssessmentFixture(gap, [device], 0.99, 0.99, semanticRepairAssessmentCoverage, 0.99)]);
       gaps.push(gap);
       await store.upsertEdge({
         fromKind: 'node',
@@ -548,6 +565,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
     await store.upsertEdge({
       fromKind: 'source',
       fromId: source.id,
@@ -571,6 +589,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
         linkedObjectIds: [device.id],
       },
     });
+    answerReadings.addAssessments([gapAssessmentFixture(gap, [device], 0.99, 0.99, semanticRepairAssessmentCoverage, 0.99)]);
     await store.upsertEdge({
       fromKind: 'node',
       fromId: device.id,
@@ -614,8 +633,8 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
         format: 'text',
         structure: { searchText: `Manual ${i} says the device supports HDMI and Bluetooth features.` },
       });
+      answerReadings.addExtractionValue(...extractionValueFixtureFor(source, store.getExtractionBySourceId(source.id), 0.99));
     }
-
     const result = await semantic.reindex();
 
     expect(result.scanned).toBe(5);

@@ -3,6 +3,7 @@ import type { KnowledgeEdgeUpsertInput, KnowledgeNodeUpsertInput } from '../type
 import { semanticSlug } from './utils.js';
 import { getKnowledgeSpaceId } from '../spaces.js';
 import type { SourceLinkedRepairProfileFactInput } from './self-improvement-promotion.js';
+import type { RepairFactScoringReading } from './repair-fact-scoring/types.js';
 import { generatedFactSupportMetadata } from './fact-support-write-plan.js';
 import { repairSubjectHints } from './repair-subjects.js';
 import { semanticMetadata } from './utils.js';
@@ -11,7 +12,7 @@ import { KnowledgeGeneratedFactSupportHeldError, type GeneratedFactSupportPlan }
 /** Resolve producer metadata callbacks before any affected persistence mutation. */
 export function prepareRepairProfileWriteData(
   input: SourceLinkedRepairProfileFactInput, primarySourceId: string, sourceIds: readonly string[],
-  plans: readonly GeneratedFactSupportPlan[], previousSupport: unknown,
+  plans: readonly GeneratedFactSupportPlan[], previousSupport: unknown, scoring: RepairFactScoringReading,
 ) {
   const builder = input.metadataBuilder ?? ((metadata: Record<string, unknown>) => semanticMetadata(input.spaceId, metadata));
   const build = (metadata: Record<string, unknown>): Record<string, unknown> => {
@@ -34,15 +35,17 @@ export function prepareRepairProfileWriteData(
     targetHints: repairSubjectHints(input.subjects), linkedObjectIds: subjectIds,
   };
   const generatedFactSupport = generatedFactSupportMetadata(plans, previousSupport);
+  const factScoring = { ...scoring, sourceId: input.source.id, trustSourceId: primarySourceId };
   const factMetadata = build({
     ...(input.factMetadata ?? {}), ...attested,
-    extractor: input.extractor, sourceAuthority: input.authority, generatedFactSupport,
+    extractor: input.extractor, sourceAuthority: input.authority, generatedFactSupport, factScoring,
   });
   // A metadata adapter may add namespace/display fields, never change the claim
   // or overwrite its new receipts after it has been verified.
   for (const key of Object.keys(attested) as Array<keyof typeof attested>) {
     if (JSON.stringify(factMetadata[key]) !== JSON.stringify(attested[key])) throw new KnowledgeGeneratedFactSupportHeldError('malformed');
   }
+  if (JSON.stringify(factMetadata.factScoring) !== JSON.stringify(factScoring)) throw new KnowledgeGeneratedFactSupportHeldError('malformed');
   if (JSON.stringify(factMetadata.generatedFactSupport) !== JSON.stringify(generatedFactSupport)) throw new KnowledgeGeneratedFactSupportHeldError('malformed');
   const supportMetadata = build({
     ...(input.edgeMetadata ?? {}),
@@ -58,13 +61,13 @@ export function prepareRepairProfileWriteData(
 /** The exact ordinary node input used by both preflight and persistence. */
 export function repairProfileNodeInput(plan: {
   readonly input: SourceLinkedRepairProfileFactInput; readonly factId: string;
-  readonly primarySourceId: string; readonly writeData: ReturnType<typeof prepareRepairProfileWriteData>;
+  readonly primarySourceId: string; readonly scoring: RepairFactScoringReading; readonly writeData: ReturnType<typeof prepareRepairProfileWriteData>;
 }): KnowledgeNodeUpsertInput {
   const { input, factId, primarySourceId, writeData } = plan;
   return {
     id: factId, kind: 'fact', slug: semanticSlug(`${input.spaceId}-${input.title}-${input.summary}-${input.source.id}`),
     title: input.title, summary: input.summary, aliases: input.classification.aliases, status: 'active',
-    confidence: input.confidence ?? (input.authority === 'official-vendor' ? 90 : input.authority === 'vendor' ? 82 : 76),
+    confidence: plan.scoring.trust * 100,
     sourceId: primarySourceId, metadata: writeData.factMetadata,
   };
 }
@@ -72,15 +75,15 @@ export function repairProfileNodeInput(plan: {
 /** The same settled support and attachment edges used by atomic page publication. */
 export function repairProfileEdgeInputs(plan: {
   readonly input: SourceLinkedRepairProfileFactInput; readonly factId: string;
-  readonly writeData: ReturnType<typeof prepareRepairProfileWriteData>;
+  readonly writeData: ReturnType<typeof prepareRepairProfileWriteData>; readonly scoring: RepairFactScoringReading;
 }): readonly KnowledgeEdgeUpsertInput[] {
   const { input, factId, writeData } = plan;
   return [
     { fromKind: 'source', fromId: input.source.id, toKind: 'node', toId: factId,
-      relation: 'supports_fact', weight: input.supportWeight ?? (input.authority === 'official-vendor' ? 0.96 : 0.84),
+      relation: 'supports_fact', weight: plan.scoring.sourceSupport,
       metadata: writeData.supportMetadata },
     ...input.subjects.map(subject => ({ fromKind: 'node' as const, fromId: factId, toKind: 'node' as const, toId: subject.id,
-      relation: 'describes', weight: input.describesWeight ?? (input.authority === 'official-vendor' ? 0.95 : 0.82),
+      relation: 'describes', weight: plan.scoring.subjectSupport,
       metadata: writeData.describesMetadata })),
   ];
 }

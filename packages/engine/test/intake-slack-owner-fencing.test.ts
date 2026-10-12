@@ -1,3 +1,4 @@
+import { screeningAnswers } from './_helpers/screening-answers.js';
 import { afterEach, expect, spyOn, test } from 'bun:test';
 import { Client } from 'undici/index.js';
 import * as directClient from '../sdk/src/platform/security/source-screening/direct-client.ts';
@@ -150,7 +151,7 @@ test('an older held mapping cannot restore credential proof after a concurrent a
         revision: source.revision, spans: [{ part: 1, start: 8, end: 27 }, { part: 3, start: 8, end: 27 }],
       }) } }] });
     }
-    return Response.json({ model: 'jev-1.13.0', answers: { complete: { type: 'noul', noul: 1 }, precise: { type: 'noul', noul: 1 } },
+    return Response.json({ model: 'jev-1.13.0', answers: screeningAnswers(await incoming.json(), { complete: 1, precise: 1 }),
       usage: { input_tokens: 10, output_tokens: 2 } });
   } });
   cleanups.push(() => local.stop(true));

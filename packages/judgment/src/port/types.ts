@@ -65,6 +65,13 @@ export interface JudgmentRequest<Q extends Questions> {
    * Omitted preserves normal recording, including cancelled-call failures.
    */
   readonly assertLogCurrent?: () => void;
+  /**
+   * Synchronous complete response admission before a recording decorator
+   * projects or records an answer. Return its detached admitted snapshot;
+   * throws refuse the answer. It grants no reading or execution authority.
+   * Omitted keeps the recording decorator's documented-field projection.
+   */
+  readonly captureResult?: <T extends JudgmentResult<Q>>(result: T) => T;
   /** Observes temporary unavailability without settling the reading. Observer errors are ignored. */
   readonly onRetry?: (progress: JudgmentRetryProgress) => void;
   /** Attribution for the decision log; never sent to the model. */

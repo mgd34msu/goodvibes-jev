@@ -6,6 +6,7 @@ import { TRIAGE_MODEL } from '../battery.js';
 import { captureTriageData } from '../evidence.js';
 import { current, type TaggerGuard, type TriageProviderTag } from './shared.js';
 
+const meaningBand = { ...STAKES_BANDS.high.confidence };
 export const triageTagMeaning = defineBattery({
   name: 'engine.intake.triage-tag-meaning', version: 1, model: TRIAGE_MODEL, accuracyFloor: .95,
   description: 'Interpret the complete caller-defined triage label for a provider reaction. Canonical labels are exact code; arbitrary labels require a settled reading.',
@@ -14,7 +15,7 @@ export const triageTagMeaning = defineBattery({
     priority: 'The label denotes priority or urgent messages.',
     normal: 'The label clearly denotes neither spam nor priority.',
     unknown: 'The intended label meaning is ambiguous, contradictory, or unavailable.',
-  }, STAKES_BANDS.high.confidence) },
+  }, meaningBand) },
   fixtures: [
     { name: 'custom junk label', state: { tag: 'Unsolicited junk' }, expect: { meaning: 'spam' } },
     { name: 'custom important label', state: { tag: 'Needs urgent attention' }, expect: { meaning: 'priority' } },

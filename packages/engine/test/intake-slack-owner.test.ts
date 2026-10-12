@@ -1,3 +1,4 @@
+import { screeningAnswers } from './_helpers/screening-answers.js';
 import { afterEach, expect, test } from 'bun:test';
 import { Client } from 'undici/index.js';
 import { createSlackInboxOwner, type SlackInboxAccount, type SlackInboxOwner, type SlackInboxOwnerOptions } from '../sdk/src/platform/intake/providers/slack-owner.ts';
@@ -38,7 +39,7 @@ async function fixture(options: { account?: SlackInboxAccount; sourceGate?: Prom
       return Response.json({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify({ revision: source.revision, spans: [{ part: 1, start: 8, end: 27 }, { part: 3, start: 8, end: 27 }] }) } }] });
     }
     sourceCalls.push({ path });
-    return Response.json({ model: 'jev-1.13.0', answers: { complete: { type: 'noul', noul: 1 }, precise: { type: 'noul', noul: 1 } }, usage: { input_tokens: 10, output_tokens: 2 } });
+    return Response.json({ model: 'jev-1.13.0', answers: screeningAnswers(body, { complete: 1, precise: 1 }), usage: { input_tokens: 10, output_tokens: 2 } });
   } });
   cleanups.push(() => local.stop(true), () => slack.stop(true));
   const signal = new AbortController();

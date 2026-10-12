@@ -224,10 +224,12 @@ export function createProtectedSourceOwner(options: ProtectedSourceOwnerOptions)
       const handle = Object.freeze({}) as ProtectedResearchReference;
       sources.set(handle, { source, reference, lifetime: new AbortController(), released: false }); return handle;
     },
-    screen(handle) {
+    screen(handle, options) {
       const source = sources.get(handle);
       if (!source || source.reference) return Promise.resolve(held('stale'));
-      return screen(source) as Promise<SourceScreeningResult>;
+      let operation: ResearchReferenceOperation | undefined;
+      try { operation = captureOperation(options); } catch { return Promise.resolve(held('malformed')); }
+      return screen(source, operation) as Promise<SourceScreeningResult>;
     },
     screenResearchReference(handle, options) {
       const source = sources.get(handle);

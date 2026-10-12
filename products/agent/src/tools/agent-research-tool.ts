@@ -1,5 +1,5 @@
 import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
-import { prepareProtectedResearchReport, agentResearchSourceOwner, createAgentResearchReportProjector, inheritPreparedResearchReport, type PreparedResearchReport } from '../agent/protected-research-report.ts';
+import { prepareProtectedResearchReport, agentResearchReportSourceOwner, createAgentResearchReportProjector, inheritPreparedResearchReport, type PreparedResearchReport } from '../agent/protected-research-report.ts';
 import type { ProtectedSourceOwner } from '@goodvibes-jev/engine/sdk/platform/security';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { assertCurrentToolInvocation, assertCurrentToolExecution, assertCurrentToolEffect, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -373,7 +373,7 @@ function reportArgs(args: AgentResearchToolArgs): Record<string, unknown> {
 }
 
 export function createAgentResearchTool(deps: AgentResearchToolDeps): Tool {
-  const sourceOwner = deps.sourceOwner ?? agentResearchSourceOwner(deps.toolRegistry);
+  const sourceOwner = deps.sourceOwner ?? agentResearchReportSourceOwner(deps.toolRegistry);
   const shellPaths = deps.commandContext.workspace?.shellPaths;
   const registered = (name: string) => deps.toolRegistry.list().find(tool => tool.definition.name === name);
   const harnessTool = deps.harnessTool ?? registered('agent_harness') ?? createAgentHarnessTool({
@@ -533,7 +533,7 @@ export function registerAgentResearchTool(
   commandContext: CommandContext,
 ): void {
   if (!registry.has('research')) registry.register(createAgentResearchTool({ commandRegistry, commandContext, toolRegistry: registry }), {
-    inputProjection: createAgentResearchReportProjector(agentResearchSourceOwner(registry), args => readAction(args) === 'report'
+    inputProjection: createAgentResearchReportProjector(agentResearchReportSourceOwner(registry), args => readAction(args) === 'report'
       || ['sources', 'reportMarkdown', 'findings', 'gaps', 'recommendations', 'methodology', 'requireCitationCoverage', 'visualReport'].some(key => Object.hasOwn(args, key))),
   });
 }

@@ -1,4 +1,13 @@
-import type { CommandContext } from '../input/command-registry.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureCatalogMethods, captureCatalogSnapshot, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureCatalogReadRequest, selectHarnessCatalog } from './agent-harness-catalog-selection.ts';
+import { withModelReadingSource } from './agent-harness-model-reading-source.ts';
+import type { McpApi } from '@goodvibes-jev/engine/sdk/platform/mcp';
+
+type McpCatalogContext = {
+  readonly clients?: { readonly mcpApi?: Pick<McpApi, 'listServerSecurity' | 'listAllTools' | 'captureToolCatalog'> };
+  readonly extensions?: { readonly mcpRegistry?: Pick<McpApi, 'listServerSecurity' | 'listAllTools' | 'captureToolCatalog'> };
+};
 import { previewHarnessText } from './agent-harness-text.ts';
 
 export interface AgentHarnessMcpArgs {
@@ -16,13 +25,8 @@ type McpServerResolution =
   | { readonly status: 'ambiguous'; readonly input: string; readonly candidates: readonly Record<string, unknown>[] }
   | { readonly status: 'missing_lookup'; readonly usage: string };
 
-type McpServerRecord = ReturnType<NonNullable<NonNullable<CommandContext['clients']>['mcpApi']>['listServerSecurity']>[number];
-
-interface McpToolRecord {
-  readonly serverName: string;
-  readonly toolName: string;
-  readonly description?: string;
-}
+type McpServerRecord = ReturnType<McpApi['listServerSecurity']>[number];
+type McpToolRecord = Awaited<ReturnType<McpApi['listAllTools']>>[number];
 
 function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -34,7 +38,7 @@ function readLimit(value: unknown, fallback: number): number {
   return Math.max(1, Math.min(500, Math.trunc(parsed)));
 }
 
-function resolveMcpApi(context: CommandContext): {
+function resolveMcpApi(context: McpCatalogContext): {
   readonly listServerSecurity: () => readonly McpServerRecord[];
   readonly listAllTools?: (() => Promise<readonly McpToolRecord[]>) | undefined;
 } | null {
@@ -42,8 +46,8 @@ function resolveMcpApi(context: CommandContext): {
   if (!api || typeof api.listServerSecurity !== 'function') return null;
   return {
     listServerSecurity: () => api.listServerSecurity(),
-    ...(typeof (api as { readonly listAllTools?: unknown }).listAllTools === 'function'
-      ? { listAllTools: () => (api as { listAllTools: () => Promise<readonly McpToolRecord[]> }).listAllTools() }
+    ...(typeof api.listAllTools === 'function'
+      ? { listAllTools: () => api.listAllTools() }
       : {}),
   };
 }
@@ -55,30 +59,6 @@ function lookupFromArgs(args: AgentHarnessMcpArgs): { readonly source: McpServer
   if (target) return { source: 'target', input: target };
   const query = readString(args.query);
   return query ? { source: 'query', input: query } : null;
-}
-
-function serverSearchText(server: McpServerRecord): string {
-  return [
-    server.name,
-    server.connected ? 'connected' : 'disconnected',
-    server.trustMode,
-    server.role,
-    server.schemaFreshness,
-    server.quarantineReason ?? '',
-    server.quarantineDetail ?? '',
-    ...server.allowedHosts,
-  ].join('\n').toLowerCase();
-}
-
-function describeCandidate(server: McpServerRecord): Record<string, unknown> {
-  return {
-    mcpServerId: server.name,
-    connected: server.connected,
-    trustMode: server.trustMode,
-    role: server.role,
-    schemaFreshness: server.schemaFreshness,
-    modelRoute: mcpServerModelRoute(),
-  };
 }
 
 function mcpServerModelRoute(): string {
@@ -157,16 +137,64 @@ function describeServer(
   };
 }
 
-async function readMcpTools(api: ReturnType<typeof resolveMcpApi>, includeParameters: boolean): Promise<readonly McpToolRecord[]> {
-  if (!includeParameters || !api?.listAllTools) return [];
-  try {
-    return await api.listAllTools();
-  } catch {
-    return [];
-  }
+function captureMcpRead(context: McpCatalogContext, args: AgentHarnessMcpArgs, options: CatalogRankingOptions) {
+  const request = captureCatalogReadRequest(args, options);
+  const assertContext = captureCatalogMethods(context, ['clients', 'extensions']);
+  const clients = context.clients, extensions = context.extensions;
+  const assertClients = clients ? captureCatalogMethods(clients, ['mcpApi']) : () => {};
+  const assertExtensions = extensions ? captureCatalogMethods(extensions, ['mcpRegistry']) : () => {};
+  const api = clients?.mcpApi ?? extensions?.mcpRegistry;
+  if (!api) { request.retain(() => { assertContext(); assertClients(); assertExtensions(); }, 'read-catalog.mcp.owner');
+    return { request, source: null }; }
+  const assertMethods = captureCatalogMethods(api, ['listServerSecurity', 'listAllTools', 'captureToolCatalog']);
+  const listServers = api.listServerSecurity, listTools = api.listAllTools, captureCatalog = api.captureToolCatalog;
+  const assertOwner = () => {
+    assertContext(); assertClients(); assertExtensions(); assertMethods();
+    if (context.clients !== clients || context.extensions !== extensions
+      || (clients?.mcpApi ?? extensions?.mcpRegistry) !== api) throw new ToolInputProjectionError('held');
+  };
+  assertOwner();
+  if (typeof captureCatalog !== 'function') throw new ToolInputProjectionError('unavailable');
+  const catalog = captureCatalog.call(api, options);
+  const assertCatalogMethods = captureCatalogMethods(catalog, ['listAllTools', 'assertCurrent']);
+  const ownedListTools = catalog.listAllTools, nativeAssertCurrent = catalog.assertCurrent;
+  if (typeof ownedListTools !== 'function' || typeof nativeAssertCurrent !== 'function') throw new ToolInputProjectionError('held');
+  const assertCatalog = () => {
+    assertOwner(); assertCatalogMethods();
+    const result = nativeAssertCurrent.call(catalog);
+    assertOwner(); assertCatalogMethods();
+    return result;
+  };
+  request.retain(assertCatalog, 'read-catalog.mcp.catalog');
+  const originalServers = listServers.call(api);
+  const servers = captureCatalogSnapshot(originalServers);
+  const assertServers = () => {
+    assertOwner(); servers.assertCurrent(originalServers); servers.assertCurrent(listServers.call(api)); assertOwner();
+  };
+  request.retain(assertServers, 'read-catalog.mcp.servers');
+  return { request, source: { api, listTools, catalog, ownedListTools, servers: servers.captured, assertOwner } };
 }
 
-export function mcpServerCatalogStatus(context: CommandContext): Record<string, unknown> {
+async function captureMcpTools(source: NonNullable<ReturnType<typeof captureMcpRead>['source']>,
+  request: ReturnType<typeof captureCatalogReadRequest<AgentHarnessMcpArgs>>, needed: boolean) {
+  if (!needed) return { tools: [], assertFresh: async () => { request.assertCurrent(); } };
+  source.assertOwner(); request.assertCurrent();
+  let originalTools: readonly McpToolRecord[];
+  try { originalTools = await source.ownedListTools.call(source.catalog); }
+  catch { source.assertOwner(); request.assertCurrent(); throw new ToolInputProjectionError('held'); }
+  source.assertOwner(); request.assertCurrent();
+  const tools = captureCatalogSnapshot(originalTools);
+  request.retain(() => { source.assertOwner(); tools.assertCurrent(originalTools); }, 'read-catalog.mcp.tools');
+  return { tools: tools.captured, assertFresh: async () => {
+    source.assertOwner(); request.assertCurrent();
+    let current: readonly McpToolRecord[];
+    try { current = await source.listTools.call(source.api); }
+    catch { source.assertOwner(); request.assertCurrent(); throw new ToolInputProjectionError('held'); }
+    source.assertOwner(); tools.assertCurrent(current); request.assertCurrent(); tools.assertCurrent(current);
+  } };
+}
+
+export function mcpServerCatalogStatus(context: McpCatalogContext): Record<string, unknown> {
   const api = resolveMcpApi(context);
   if (!api) {
     return {
@@ -185,72 +213,52 @@ export function mcpServerCatalogStatus(context: CommandContext): Record<string, 
   };
 }
 
-export async function mcpServerSummary(context: CommandContext, args: AgentHarnessMcpArgs): Promise<Record<string, unknown>> {
-  const api = resolveMcpApi(context);
-  if (!api) {
-    return {
-      status: 'unavailable',
-      servers: [],
-      returned: 0,
-      total: 0,
-      policy: 'MCP runtime API is unavailable in this Agent context.',
-    };
-  }
-  const query = readString(args.query).toLowerCase();
-  const includeParameters = args.includeParameters === true;
-  const servers = api.listServerSecurity();
-  const tools = toolsByServer(await readMcpTools(api, includeParameters));
-  const filtered = servers
-    .filter((server) => !query || serverSearchText(server).includes(query))
-    .slice(0, readLimit(args.limit, 100));
-  return {
-    servers: filtered.map((server) => describeServer(server, {
-      includeParameters,
-      tools: tools.get(server.name) ?? [],
-    })),
-    returned: filtered.length,
-    total: servers.length,
-    connected: servers.filter((server) => server.connected).length,
-    attention: servers.filter((server) => !server.connected || server.schemaFreshness === 'quarantined').length,
-    policy: 'Read-only MCP server posture. Use confirmed workspace actions or slash-command mirrors for add/remove/reload/trust/role/quarantine mutations.',
-  };
+export async function mcpServerSummary(context: McpCatalogContext, args: AgentHarnessMcpArgs,
+  options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const { request, source } = captureMcpRead(context, args, options);
+  if (!source) return { status: 'unavailable', servers: [], returned: 0, total: 0,
+    policy: 'MCP runtime API is unavailable in this Agent context.' };
+  const query = readString(request.input.query), includeParameters = request.input.includeParameters === true;
+  const acquired = await captureMcpTools(source, request, includeParameters || query.length > 0), tools = acquired.tools;
+  request.assertCurrent();
+  const result = await withModelReadingSource({ invocation: request.input, servers: source.servers, tools }, request.options, async (captured, current) => {
+    const descriptions = (server: McpServerRecord) => ({ id: server.name,
+      description: `MCP server ${server.name}`, evidence: { server, tools: captured.tools.filter(tool => tool.serverName === server.name) } });
+    const selected = query ? await rankHarnessCatalog(captured.servers, query, descriptions, 'agent.mcp-server.search',
+      { ...current, requirePreservedSource: true }) : { matches: captured.servers.map(entry => ({ entry })), judgments: [] };
+    current.assertCurrent?.();
+    const filtered = selected.matches.map(({ entry }) => entry).slice(0, readLimit(captured.invocation.limit, 100));
+    const grouped = toolsByServer(captured.tools);
+    return { servers: filtered.map(server => describeServer(server, { includeParameters, tools: grouped.get(server.name) ?? [] })),
+      returned: filtered.length, total: captured.servers.length,
+      connected: captured.servers.filter(server => server.connected).length,
+      attention: captured.servers.filter(server => !server.connected || server.schemaFreshness === 'quarantined').length,
+      ...(query ? { judgments: selected.judgments } : {}),
+      policy: 'Read-only MCP server posture. Use confirmed workspace actions or slash-command mirrors for add/remove/reload/trust/role/quarantine mutations.' };
+  });
+  await acquired.assertFresh(); request.assertCurrent();
+  return result;
 }
 
-export async function describeHarnessMcpServer(context: CommandContext, args: AgentHarnessMcpArgs): Promise<McpServerResolution> {
-  const lookup = lookupFromArgs(args);
-  if (!lookup) {
-    return {
-      status: 'missing_lookup',
-      usage: 'mcp_server requires mcpServerId, target, or query. Use mode:"mcp_servers" to inspect MCP server ids.',
-    };
-  }
-  const api = resolveMcpApi(context);
-  if (!api) {
-    return {
-      status: 'missing_lookup',
-      usage: 'MCP runtime API is unavailable in this Agent context.',
-    };
-  }
-  const servers = api.listServerSecurity();
-  const normalized = lookup.input.toLowerCase();
-  const exact = servers.find((server) => server.name === lookup.input);
-  const tools = toolsByServer(await readMcpTools(api, true));
-  if (exact) return { status: 'found', server: describeServer(exact, { includeParameters: true, tools: tools.get(exact.name) ?? [], lookup: { ...lookup, resolvedBy: 'id' } }) };
-  const insensitive = servers.find((server) => server.name.toLowerCase() === normalized);
-  if (insensitive) return { status: 'found', server: describeServer(insensitive, { includeParameters: true, tools: tools.get(insensitive.name) ?? [], lookup: { ...lookup, resolvedBy: 'case-insensitive-id' } }) };
-  const searched = servers.filter((server) => serverSearchText(server).includes(normalized));
-  if (searched.length === 1) {
-    return { status: 'found', server: describeServer(searched[0]!, { includeParameters: true, tools: tools.get(searched[0]!.name) ?? [], lookup: { ...lookup, resolvedBy: 'search' } }) };
-  }
-  if (searched.length > 1) {
-    return {
-      status: 'ambiguous',
-      input: lookup.input,
-      candidates: searched.slice(0, 8).map(describeCandidate),
-    };
-  }
-  return {
-    status: 'missing_lookup',
-    usage: `Unknown MCP server ${lookup.input}. Use mode:"mcp_servers" to inspect MCP server ids.`,
-  };
+export async function describeHarnessMcpServer(context: McpCatalogContext, args: AgentHarnessMcpArgs,
+  options: CatalogRankingOptions = {}): Promise<McpServerResolution> {
+  const { request, source } = captureMcpRead(context, args, options), lookup = lookupFromArgs(request.input);
+  if (!lookup) return { status: 'missing_lookup', usage: 'mcp_server requires mcpServerId, target, or query. Use mode:"mcp_servers" to inspect MCP server ids.' };
+  if (!source) return { status: 'missing_lookup', usage: 'MCP runtime API is unavailable in this Agent context.' };
+  const acquired = await captureMcpTools(source, request, true), tools = acquired.tools;
+  request.assertCurrent();
+  const result = await withModelReadingSource({ invocation: request.input, servers: source.servers, tools }, request.options, async (captured, current): Promise<McpServerResolution> => {
+    const exact = captured.servers.find(server => server.name === lookup.input);
+    const insensitive = exact ?? captured.servers.find(server => server.name.toLowerCase() === lookup.input.toLowerCase());
+    const selected = insensitive ?? await selectHarnessCatalog(captured.servers, lookup.input,
+      server => ({ id: server.name, description: `MCP server ${server.name}`,
+        evidence: { server, tools: captured.tools.filter(tool => tool.serverName === server.name) } }), current, 'agent.mcp-server.select');
+    current.assertCurrent?.();
+    if (!selected) return { status: 'missing_lookup', usage: `No MCP server was selected for ${lookup.input}. Use mode:"mcp_servers" to inspect MCP server ids.` };
+    const grouped = toolsByServer(captured.tools);
+    return { status: 'found', server: describeServer(selected, { includeParameters: true, tools: grouped.get(selected.name) ?? [],
+      lookup: { ...lookup, resolvedBy: exact ? 'id' : insensitive ? 'case-insensitive-id' : 'selection' } }) };
+  });
+  await acquired.assertFresh(); request.assertCurrent();
+  return result;
 }

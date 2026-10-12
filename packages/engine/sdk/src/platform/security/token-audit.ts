@@ -12,6 +12,8 @@
  * In advisory mode, violations are reported but not blocked.
  */
 
+import { assertSecurityReadSource, captureSecurityReadBindings, retainSecurityReadMap } from './read-source.js';
+import { captureFeatureFlagReadSource } from '../runtime/feature-flags/manager.js';
 import { logger } from '../utils/logger.js';
 import type { SecurityEvent } from '../../events/security.js';
 import type { FeatureFlagReader } from '../runtime/feature-flags/index.js';
@@ -192,7 +194,18 @@ export type SecurityEventEmitter = (event: SecurityEvent) => void;
  * const report = auditor.auditAll();
  * ```
  */
+const tokenReadSources = new WeakMap<ApiTokenAuditor, (now: number) => () => void>();
+const getTokenReadSources = tokenReadSources.get.bind(tokenReadSources);
+const setTokenReadSources = tokenReadSources.set.bind(tokenReadSources);
+
+export function captureTokenAuditReadSource(auditor: ApiTokenAuditor, now = Date.now()): () => void {
+  const capture = getTokenReadSources(auditor);
+  assertSecurityReadSource(capture !== undefined);
+  return capture(now);
+}
+
 export class ApiTokenAuditor {
+  private _readRevision = 0;
   private readonly _policies = new Map<string, TokenScopePolicy>();
   private readonly _tokens = new Map<string, ApiTokenMetadata>();
   private readonly _config: TokenAuditorConfig;
@@ -203,6 +216,35 @@ export class ApiTokenAuditor {
     options?: { emitter?: SecurityEventEmitter },
   ) {
     this._config = config;
+    setTokenReadSources(this, (now) => {
+      const binding = captureSecurityReadBindings(this, ['_readRevision', '_config', '_tokens', '_policies', '_managedBlockingEnabled', 'auditAll']);
+      const revision = this._readRevision;
+      const configBinding = captureSecurityReadBindings(config, Reflect.ownKeys(config).filter((key): key is string => typeof key === 'string'));
+      const tokenCurrent = retainSecurityReadMap(this._tokens), policyCurrent = retainSecurityReadMap(this._policies);
+      const flags = config.featureFlags;
+      const flagsCurrent = flags ? captureFeatureFlagReadSource(flags) : undefined;
+      const enabled = this._managedBlockingEnabled();
+      let expiresAt = Number.POSITIVE_INFINITY;
+      for (const token of this._tokens.values()) {
+        const policy = this._policies.get(token.policyId);
+        assertSecurityReadSource(policy !== undefined);
+        const cadence = policy.rotationCadenceMs ?? config.defaultRotationCadenceMs ?? DEFAULT_ROTATION_CADENCE_MS;
+        const warning = policy.rotationWarningThresholdMs ?? config.defaultRotationWarningThresholdMs ?? DEFAULT_ROTATION_WARNING_THRESHOLD_MS;
+        const due = token.issuedAt + cadence;
+        assertSecurityReadSource(Number.isFinite(due) && Number.isFinite(warning));
+        for (const boundary of [Math.ceil(due - warning), Math.floor(due) + 1]) {
+          if (boundary > now) expiresAt = Math.min(expiresAt, boundary);
+        }
+      }
+      const nowMethod = Date.now;
+      const assertCurrent = () => {
+        binding(); configBinding(); tokenCurrent(); policyCurrent(); flagsCurrent?.();
+        assertSecurityReadSource(this._readRevision === revision && Date.now === nowMethod
+          && nowMethod() >= now && nowMethod() < expiresAt && this._managedBlockingEnabled() === enabled);
+        binding(); configBinding(); tokenCurrent(); policyCurrent(); flagsCurrent?.();
+      };
+      assertCurrent(); return assertCurrent;
+    });
     this._emitter = options?.emitter ?? ((_event: SecurityEvent) => {});
   }
 
@@ -219,6 +261,7 @@ export class ApiTokenAuditor {
    * reference them.
    */
   registerPolicy(policy: TokenScopePolicy): void {
+    this._readRevision++;
     this._policies.set(policy.id, policy);
     logger.debug('ApiTokenAuditor: registered policy', { policyId: policy.id });
   }
@@ -233,6 +276,7 @@ export class ApiTokenAuditor {
         `ApiTokenAuditor: policyId '${metadata.policyId}' not registered, register the policy before the token`,
       );
     }
+    this._readRevision++;
     this._tokens.set(metadata.id, metadata);
     logger.debug('ApiTokenAuditor: registered token', { tokenId: metadata.id, label: metadata.label });
   }
@@ -242,7 +286,9 @@ export class ApiTokenAuditor {
    * then registerToken with the new metadata).
    */
   deregisterToken(tokenId: string): boolean {
-    return this._tokens.delete(tokenId);
+    const deleted = this._tokens.delete(tokenId);
+    if (deleted) this._readRevision++;
+    return deleted;
   }
 
   // -------------------------------------------------------------------------

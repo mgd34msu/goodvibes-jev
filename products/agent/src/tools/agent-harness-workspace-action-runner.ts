@@ -1,3 +1,4 @@
+import { captureStatefulCatalogRequest } from './agent-harness-stateful-catalog-source.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { AgentHarnessToolDeps } from './agent-harness-tool-types.ts';
 import { clearSetupCheckpoint, markSetupCheckpoint, setupCheckpointSummary } from './agent-harness-setup-posture.ts';
@@ -19,7 +20,21 @@ export async function runWorkspaceAction(
   args: Record<string, unknown>,
   options?: Parameters<Tool['execute']>[1],
 ): Promise<{ readonly success: boolean; readonly output?: string; readonly error?: string }> {
-  const resolved = resolveWorkspaceActionDetail(args);
+  const assertExecution = harnessCatalogExecutionGuard(args, options);
+  const sourceOwner = agentResearchSourceOwner(deps.toolRegistry);
+  const sourceCurrent = () => {
+    options?.signal?.throwIfAborted();
+    if (agentResearchSourceOwner(deps.toolRegistry) !== sourceOwner) throw new Error('Workspace source owner changed.');
+  };
+  const retainCurrent = retainHarnessCatalogCurrent(args);
+  retainCurrent(sourceCurrent, 'workspace:original-source-owner');
+  const request = captureStatefulCatalogRequest(deps.commandContext, args, {
+    signal: options?.signal, sourceOwner, retainCurrent,
+    assertCurrent: () => { assertExecution(); sourceCurrent(); },
+  });
+  const effectCatalogOptions = request.options;
+  const resolved = await resolveWorkspaceActionDetail(args, effectCatalogOptions);
+  request.assertCurrent();
   if (resolved?.status === 'ambiguous') return error(`Ambiguous Agent workspace action ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
   if (!resolved) return error('run_workspace_action requires a valid actionId, command, target, or query. Use mode:"workspace_actions" to inspect available actions.');
   const { category, action, lookup } = resolved;
@@ -86,10 +101,12 @@ export async function runWorkspaceAction(
   if (action.kind === 'setup-checkpoint') {
     const operation = action.setupCheckpointOperation ?? 'show';
     if (operation === 'show') {
+      const checkpoint = await setupCheckpointSummary(deps.commandContext, effectCatalogOptions);
+      request.assertCurrent();
       return output({
         status: 'checkpoint_inspected',
         action: describeWorkspaceAction(category, action, { lookup }),
-        checkpoint: await setupCheckpointSummary(deps.commandContext),
+        checkpoint,
       });
     }
     const confirmationError = requireConfirmedAction(args, options, operation === 'clear' ? 'Setup wizard checkpoint clear' : 'Setup wizard checkpoint save');

@@ -1,3 +1,6 @@
+import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { withNativeCatalog, rankResearchRecords } from './agent-harness-research-catalog-source.ts';
+import { selectHarnessCatalog } from './agent-harness-catalog-selection.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -91,17 +94,7 @@ function normalized(value: string): string {
   return value.toLowerCase();
 }
 
-function itemSearchText(item: Record<string, unknown>): string {
-  const fields: string[] = [];
-  for (const key of ['id', 'capability', 'owner', 'status', 'evidence', 'action'] as const) {
-    const value = item[key];
-    if (typeof value === 'string') fields.push(value);
-  }
-  if (isRecord(item.quality)) {
-    fields.push(...Object.values(item.quality).filter((value): value is string => typeof value === 'string'));
-  }
-  return fields.join('\n').toLowerCase();
-}
+
 
 function releaseReadinessModelRoute(item?: Record<string, unknown>): string {
   if (item) return 'audit action:"item"';
@@ -170,18 +163,10 @@ function readinessLookupFromArgs(args: ReleaseReadinessArgs): ReleaseReadinessLo
   return query ? { source: 'query', input: query } : null;
 }
 
-function releaseReadinessCandidates(items: readonly Record<string, unknown>[]): readonly Record<string, unknown>[] {
-  return items.slice(0, 10).map((item) => ({
-    id: item.id,
-    capability: item.capability,
-    owner: item.owner,
-    status: item.status,
-    modelRoute: releaseReadinessModelRoute(item),
-  }));
-}
 
-export function releaseReadinessInventoryStatus(): Record<string, unknown> {
-  const loaded = loadReleaseReadiness();
+
+export async function releaseReadinessInventoryStatus(options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  return withNativeCatalog({}, options, [RELEASE_READINESS_PATH], loadReleaseReadiness, async (_args, loaded) => {
   if (loaded.status !== 'available') {
     return {
       status: loaded.status,
@@ -200,131 +185,123 @@ export function releaseReadinessInventoryStatus(): Record<string, unknown> {
     modelRoute: releaseReadinessModelRoute(),
     policy: releaseReadinessPolicy(),
   };
+  });
 }
 
-export function releaseReadinessSummary(args: ReleaseReadinessArgs): Record<string, unknown> {
-  const loaded = loadReleaseReadiness();
-  if (loaded.status !== 'available') {
+export async function releaseReadinessSummary(rawArgs: ReleaseReadinessArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  return withNativeCatalog(rawArgs, options, [RELEASE_READINESS_PATH], loadReleaseReadiness,
+    async (args, loaded, options) => {
+    if (loaded.status !== 'available') {
+      return {
+        mode: 'release_readiness',
+        status: loaded.status,
+        path: RELEASE_READINESS_RELATIVE_PATH,
+        reason: loaded.reason,
+      };
+    }
+
+    const items = releaseReadinessItems(loaded.root);
+    const query = readString(args.query || args.target);
+    const filtered = await rankResearchRecords(items, query, item => ({ id: readString(item.id), description: readString(item.capability), evidence: item }), options, 'agent.release.readiness');
+    const limit = readLimit(args.limit, 100);
+    const includeQuality = args.includeParameters === true;
+    const sources = releaseReadinessSources(loaded.root);
+    const completeQualityDimensions = items.reduce((sum, item) => sum + qualityDimensionCount(item), 0);
+
     return {
       mode: 'release_readiness',
-      status: loaded.status,
+      status: 'available',
       path: RELEASE_READINESS_RELATIVE_PATH,
-      reason: loaded.reason,
+      gate: loaded.root.gate,
+      schemaVersion: loaded.root.schemaVersion,
+      checkedAt: loaded.root.checkedAt,
+      policy: loaded.root.policy,
+      operatorAuditPolicy: releaseReadinessPolicy(),
+      modelAccess: {
+        listItems: 'audit action:"readiness"',
+        inspectItem: 'audit action:"item" with itemId, target, or query',
+        lowerLevelItem: 'agent_harness mode:"release_readiness_item" itemId:"..." includeParameters:true',
+      },
+      totals: {
+        items: items.length,
+        filtered: filtered.length,
+        returned: Math.min(filtered.length, limit),
+        statuses: countBy(items, 'status'),
+        owners: countBy(items, 'owner'),
+        requiredQualityDimensions: QUALITY_DIMENSIONS,
+        completeQualityDimensions,
+        expectedQualityDimensions: items.length * QUALITY_DIMENSIONS.length,
+      },
+      sources: includeQuality ? sources : sources.map(summarizeSource),
+      items: filtered.slice(0, limit).map((item) => summarizeItem(item, { includeQuality })),
+      itemLookup: 'Use audit action:"item" with itemId, target, or query to inspect one readiness item; lower-level agent_harness mode:"release_readiness_item" remains available.',
     };
-  }
 
-  const items = releaseReadinessItems(loaded.root);
-  const query = readString(args.query || args.target);
-  const filtered = query ? items.filter((item) => itemSearchText(item).includes(normalized(query))) : items;
-  const limit = readLimit(args.limit, 100);
-  const includeQuality = args.includeParameters === true;
-  const sources = releaseReadinessSources(loaded.root);
-  const completeQualityDimensions = items.reduce((sum, item) => sum + qualityDimensionCount(item), 0);
-
-  return {
-    mode: 'release_readiness',
-    status: 'available',
-    path: RELEASE_READINESS_RELATIVE_PATH,
-    gate: loaded.root.gate,
-    schemaVersion: loaded.root.schemaVersion,
-    checkedAt: loaded.root.checkedAt,
-    policy: loaded.root.policy,
-    operatorAuditPolicy: releaseReadinessPolicy(),
-    modelAccess: {
-      listItems: 'audit action:"readiness"',
-      inspectItem: 'audit action:"item" with itemId, target, or query',
-      lowerLevelItem: 'agent_harness mode:"release_readiness_item" itemId:"..." includeParameters:true',
-    },
-    totals: {
-      items: items.length,
-      filtered: filtered.length,
-      returned: Math.min(filtered.length, limit),
-      statuses: countBy(items, 'status'),
-      owners: countBy(items, 'owner'),
-      requiredQualityDimensions: QUALITY_DIMENSIONS,
-      completeQualityDimensions,
-      expectedQualityDimensions: items.length * QUALITY_DIMENSIONS.length,
-    },
-    sources: includeQuality ? sources : sources.map(summarizeSource),
-    items: filtered.slice(0, limit).map((item) => summarizeItem(item, { includeQuality })),
-    itemLookup: 'Use audit action:"item" with itemId, target, or query to inspect one readiness item; lower-level agent_harness mode:"release_readiness_item" remains available.',
-  };
+  });
 }
 
-export function describeHarnessReleaseReadinessItem(args: ReleaseReadinessArgs): ReleaseReadinessItemResolution {
-  const loaded = loadReleaseReadiness();
-  if (loaded.status !== 'available') {
-    return {
-      status: 'unavailable',
-      path: RELEASE_READINESS_RELATIVE_PATH,
-      reason: loaded.reason,
-    };
-  }
+export async function describeHarnessReleaseReadinessItem(rawArgs: ReleaseReadinessArgs, options: CatalogRankingOptions = {}): Promise<ReleaseReadinessItemResolution> {
+  return withNativeCatalog(rawArgs, options, [RELEASE_READINESS_PATH], loadReleaseReadiness,
+    async (args, loaded, options) => {
+    if (loaded.status !== 'available') {
+      return {
+        status: 'unavailable',
+        path: RELEASE_READINESS_RELATIVE_PATH,
+        reason: loaded.reason,
+      };
+    }
 
-  const items = releaseReadinessItems(loaded.root);
-  const lookup = readinessLookupFromArgs(args);
-  if (!lookup) {
-    return {
-      status: 'missing_lookup',
-      path: RELEASE_READINESS_RELATIVE_PATH,
-      total: items.length,
-      usage: 'Provide itemId, target, or query for mode:"release_readiness_item".',
-    };
-  }
+    const items = releaseReadinessItems(loaded.root);
+    const lookup = readinessLookupFromArgs(args);
+    if (!lookup) {
+      return {
+        status: 'missing_lookup',
+        path: RELEASE_READINESS_RELATIVE_PATH,
+        total: items.length,
+        usage: 'Provide itemId, target, or query for mode:"release_readiness_item".',
+      };
+    }
 
-  const exactId = items.find((item) => item.id === lookup.input);
-  if (exactId) {
-    return {
-      status: 'found',
-      path: RELEASE_READINESS_RELATIVE_PATH,
-      lookup: { ...lookup, resolvedBy: 'id' },
-      item: summarizeItem(exactId, { includeQuality: true }),
-    };
-  }
+    const exactId = items.find((item) => item.id === lookup.input);
+    if (exactId) {
+      return {
+        status: 'found',
+        path: RELEASE_READINESS_RELATIVE_PATH,
+        lookup: { ...lookup, resolvedBy: 'id' },
+        item: summarizeItem(exactId, { includeQuality: true }),
+      };
+    }
 
-  const input = normalized(lookup.input);
-  const insensitiveId = items.find((item) => readString(item.id).toLowerCase() === input);
-  if (insensitiveId) {
-    return {
-      status: 'found',
-      path: RELEASE_READINESS_RELATIVE_PATH,
-      lookup: { ...lookup, resolvedBy: 'case-insensitive-id' },
-      item: summarizeItem(insensitiveId, { includeQuality: true }),
-    };
-  }
+    const input = normalized(lookup.input);
+    const insensitiveId = items.find((item) => readString(item.id).toLowerCase() === input);
+    if (insensitiveId) {
+      return {
+        status: 'found',
+        path: RELEASE_READINESS_RELATIVE_PATH,
+        lookup: { ...lookup, resolvedBy: 'case-insensitive-id' },
+        item: summarizeItem(insensitiveId, { includeQuality: true }),
+      };
+    }
 
-  const capability = items.find((item) => readString(item.capability).toLowerCase() === input);
-  if (capability) {
-    return {
-      status: 'found',
-      path: RELEASE_READINESS_RELATIVE_PATH,
-      lookup: { ...lookup, resolvedBy: 'capability' },
-      item: summarizeItem(capability, { includeQuality: true }),
-    };
-  }
+    const capability = items.find((item) => readString(item.capability).toLowerCase() === input);
+    if (capability) {
+      return {
+        status: 'found',
+        path: RELEASE_READINESS_RELATIVE_PATH,
+        lookup: { ...lookup, resolvedBy: 'capability' },
+        item: summarizeItem(capability, { includeQuality: true }),
+      };
+    }
 
-  const searched = items.filter((item) => itemSearchText(item).includes(input));
-  if (searched.length === 1) {
+    const selected = await selectHarnessCatalog(items, lookup.input, item => ({ id: readString(item.id), description: readString(item.capability), evidence: item }), options, 'agent.release.readiness.item');
+    if (selected) return { status: 'found', path: RELEASE_READINESS_RELATIVE_PATH, lookup: { ...lookup, resolvedBy: 'search' }, item: summarizeItem(selected, { includeQuality: true }) };
+
     return {
-      status: 'found',
-      path: RELEASE_READINESS_RELATIVE_PATH,
-      lookup: { ...lookup, resolvedBy: 'search' },
-      item: summarizeItem(searched[0]!, { includeQuality: true }),
-    };
-  }
-  if (searched.length > 1) {
-    return {
-      status: 'ambiguous',
+      status: 'not_found',
       path: RELEASE_READINESS_RELATIVE_PATH,
       input: lookup.input,
-      candidates: releaseReadinessCandidates(searched),
+      total: items.length,
     };
-  }
 
-  return {
-    status: 'not_found',
-    path: RELEASE_READINESS_RELATIVE_PATH,
-    input: lookup.input,
-    total: items.length,
-  };
+  });
 }

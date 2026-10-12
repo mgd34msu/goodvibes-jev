@@ -6,7 +6,7 @@ import { FocusTracker } from '@goodvibes-jev/engine/sdk/platform/runtime/operati
 import type { PermissionPromptRequest } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { SlackIntegration } from '@goodvibes-jev/engine/sdk/platform/integrations';
 import { defaultStore } from '@goodvibes-jev/engine/sdk/platform/runtime/settings';
-import { AgentConfigManager, AGENT_NOTIFICATIONS_METADATA_ONLY_KEY as KEY, readAgentHostSetting } from '../../config/host-settings.ts';
+import { AgentConfigManager, AGENT_NOTIFICATIONS_METADATA_ONLY_KEY as KEY, AGENT_HOSTED_RESEARCH_SCREENING_KEY as RESEARCH_KEY, readAgentHostSetting } from '../../config/host-settings.ts';
 import { getHarnessSetting, resetHarnessSetting, setHarnessSetting } from '../../agent/harness-control.ts';
 import { agentWorkspaceSettingSchema, applyAgentWorkspaceSettingValue, buildAgentWorkspaceSettingActionEffect, previewAgentWorkspaceTuiSettingsImport, importAgentWorkspaceTuiSettings } from '../../input/agent-workspace-settings.ts';
 import { AGENT_WORKSPACE_CATEGORIES } from '../../input/agent-workspace-categories.ts';
@@ -298,5 +298,28 @@ test.each(['toggle', 'adjust'])('Features %s cannot repair unavailable policy or
     selectFeature(); apply();
     expect(config.get(key)).not.toBe(before);
     expect(config.getHostBooleanSetting(KEY).get()).toBe(true);
+  } finally { modal.close(); }
+});
+
+
+test('research screening consent is explicit, visible in the native modal, durable, and resettable', () => {
+  const { root, configDir, config } = fixture();
+  const modal = new SettingsModal();
+  modal.open(config, createFeatureFlagManager(), new SubscriptionManager(join(root, 'subscriptions.json')), { getAll: () => ({}) });
+  try {
+    modal.selectTarget(RESEARCH_KEY);
+    expect(modal.getSelected()?.setting.key).toBe(RESEARCH_KEY);
+    const researchAction = AGENT_WORKSPACE_CATEGORIES.flatMap(category => category.actions).find(action => action.id === 'research-hosted-screening');
+    expect(researchAction?.settingKey).toBe(RESEARCH_KEY);
+    expect(researchAction?.detail).toContain('Providers manage retention; zero retention is unverified');
+    expect(modal.getSelected()?.currentValue).toBe(false);
+    expect(modal.getSelected()?.setting.description).toContain('raw research report');
+    expect(modal.getSelected()?.setting.description).toContain('Providers manage retention; zero retention is unverified');
+    modal.activateSelected();
+    expect(config.getHostBooleanSetting(RESEARCH_KEY).get()).toBe(true);
+    expect(new AgentConfigManager({ configDir }).getHostBooleanSetting(RESEARCH_KEY).get()).toBe(true);
+    modal.resetSelected();
+    expect(config.getHostBooleanSetting(RESEARCH_KEY).get()).toBe(false);
+    expect(new AgentConfigManager({ configDir }).getHostBooleanSetting(RESEARCH_KEY).get()).toBe(false);
   } finally { modal.close(); }
 });

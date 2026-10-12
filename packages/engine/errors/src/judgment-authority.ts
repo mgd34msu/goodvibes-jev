@@ -1,4 +1,4 @@
-import type { JudgmentPort, Questions } from '@goodvibes-jev/judgment/decisions';
+import type { JudgmentPort, JudgmentRequest, JudgmentResult, Questions } from '@goodvibes-jev/judgment/decisions';
 import { JudgmentPortMissingError, judgmentPortInstallation } from './judgment-port.js';
 
 /** A composition-owned observation. It is never execution permission. */
@@ -73,7 +73,7 @@ export function bindJudgmentPortAuthority(port: JudgmentPort, capture: () => Jud
 function synchronous(check: (() => void) | undefined): void {
   const value: unknown = check?.();
   if (value === undefined) return;
-  try { void Promise.resolve(value).catch(() => {}); } catch { /* Refuse borrowed accessors. */ }
+  try { void Promise.prototype.then.call(value, undefined, () => {}); } catch { /* Only genuine promises need rejection draining. */ }
   throw new JudgmentAuthorityRetiredError();
 }
 
@@ -204,19 +204,46 @@ function capture(site: string, options: JudgmentReadingOptions): JudgmentPortCap
       recordAction(id, action) { checkDecision(id); recordAction!.call(recorder, id, action); checkDecision(id); },
     } satisfies NonNullable<JudgmentPort['recorder']> } : {}),
     ...(health ? { health: () => { current(); const result = health.call(base); current(); return result; } } : {}),
-    async ask(request) {
+    async ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>> {
       current();
       // Scoped strict consumers bind the ORIGINAL data property before any
       // property read or deferred dispatch. Materialize descriptors, not a
       // spread of a borrowed request that may grow accessors while awaiting.
+      const strictResultCapture = Boolean(prepareResultCapture || captureResult || assertResult);
+      let assertOriginalResultCapture: (() => void) | undefined;
+      const originalResultCapture = (() => {
+        if (!strictResultCapture) return undefined;
+        assertOriginalResultCapture = retainPropertyPlan(request, ['captureResult']);
+        assertOriginalResultCapture();
+        // Retain the actual hook before any preparer runs. Its public contract
+        // also permits non-enumerable and inherited native data methods.
+        let owner: object | null = request, depth = 0, selected = false;
+        let original: unknown;
+        while (owner !== null) {
+          if (depth++ >= 64) throw new JudgmentAuthorityRetiredError();
+          const descriptor = Object.getOwnPropertyDescriptor(owner, 'captureResult');
+          if (!selected && descriptor) {
+            if (!('value' in descriptor)) throw new JudgmentAuthorityRetiredError();
+            original = descriptor.value; selected = true;
+          }
+          const prototype: unknown = Object.getPrototypeOf(owner);
+          if (prototype !== null && typeof prototype !== 'object' && typeof prototype !== 'function') throw new JudgmentAuthorityRetiredError();
+          owner = prototype;
+        }
+        assertOriginalResultCapture();
+        if (original !== undefined && typeof original !== 'function') throw new JudgmentAuthorityRetiredError();
+        return original;
+      })();
       const descriptors = prepareResultCapture ? Object.getOwnPropertyDescriptors(request) : undefined;
       if (descriptors && (!descriptors.questions || !('value' in descriptors.questions)
         || !descriptors.questions.enumerable || Object.values(descriptors).some(d => !('value' in d)))) throw new JudgmentAuthorityRetiredError();
       const input = descriptors ? Object.fromEntries(Object.entries(descriptors).filter(([, d]) => d.enumerable).map(([key, d]) => [key, d.value])) as typeof request : request;
       const originalQuestions = input.questions;
       const resultFrame = prepareResultCapture?.(originalQuestions);
+      assertOriginalResultCapture?.();
       const dispatchedQuestions = (resultFrame?.questions ?? originalQuestions) as typeof request.questions;
       let ownedRequest: typeof request | undefined;
+      let assertOwnedResultCapture: (() => void) | undefined;
       const questionsCurrent = (value: typeof request, expected: Questions) => {
         const descriptor = Object.getOwnPropertyDescriptor(value, 'questions');
         if (!descriptor || !('value' in descriptor) || !descriptor.enumerable || descriptor.value !== expected) throw new JudgmentAuthorityRetiredError();
@@ -226,9 +253,11 @@ function capture(site: string, options: JudgmentReadingOptions): JudgmentPortCap
       const check = () => {
         if (active.aborted) throw new JudgmentAuthorityRetiredError();
         if (resultFrame) { questionsCurrent(request, originalQuestions); if (ownedRequest) questionsCurrent(ownedRequest, dispatchedQuestions); }
+        assertOriginalResultCapture?.(); assertOwnedResultCapture?.();
         current(); synchronous(resultFrame?.assertCurrent);
         // Caller/source checks are arbitrary callbacks; validate again afterward.
         if (resultFrame) { questionsCurrent(request, originalQuestions); if (ownedRequest) questionsCurrent(ownedRequest, dispatchedQuestions); }
+        assertOriginalResultCapture?.(); assertOwnedResultCapture?.();
       };
       const beforeAttempt = input.beforeAttempt;
       const beforeAsyncAttempt = input.beforeAsyncAttempt;
@@ -242,7 +271,24 @@ function capture(site: string, options: JudgmentReadingOptions): JudgmentPortCap
           beforeAsyncAttempt: async () => { check(); await beforeAsyncAttempt?.(); check(); },
           assertLogCurrent: () => { check(); synchronous(assertLogCurrent); check(); },
           onRetry: (progress: Parameters<NonNullable<typeof onRetry>>[0]) => { check(); onRetry?.(progress); check(); },
+          ...(strictResultCapture ? { captureResult: <T extends JudgmentResult<Q>>(original: T): T => {
+            check(); assertResult?.(original); check();
+            const admitted = resultFrame ? resultFrame.capture(original) : captureResult ? captureResult(original) : original;
+            check();
+            // A caller restriction cannot replace, project or bypass the
+            // scope-owned complete original admission. It sees its snapshot.
+            if (originalResultCapture) {
+              const restricted: unknown = originalResultCapture(admitted);
+              if (restricted !== admitted) {
+                try { void Promise.prototype.then.call(restricted, undefined, () => {}); } catch { /* Only genuine promises need rejection draining. */ }
+                throw new JudgmentAuthorityRetiredError();
+              }
+              check();
+            }
+            check(); return admitted;
+          } } : {}),
         };
+        assertOwnedResultCapture = strictResultCapture ? retainPropertyPlan(ownedRequest, ['captureResult']) : undefined;
         check();
         return ownedAsk(ownedRequest);
       }), active);

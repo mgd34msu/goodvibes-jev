@@ -1,3 +1,5 @@
+import { createKnowledgeIngestUriCanonicalizer } from './uri-canonicalization/ingest-owner.js';
+import { KnowledgeUriCanonicalizationHeldError } from './uri-canonicalization/reader.js';
 import { randomUUID } from 'node:crypto';
 import { snapshotNodeInput } from './activation/projection.js';
 import { KnowledgeNodeActivationHeldError } from './activation/types.js';
@@ -18,7 +20,6 @@ import { createSemanticWriteGuard } from './semantic/primary-source-plan.js';
 import { finalizeKnowledgeIngestedSource } from './ingest-compile.js';
 import type { KnowledgeIngestContext, KnowledgeIngestOwnership } from './ingest-context.js';
 import {
-  canonicalizeUri,
   inferSourceTypeFromArtifact,
   isHttpUri,
   isSourcePastRefreshWindow,
@@ -67,11 +68,13 @@ export async function ingestKnowledgeUrl(
   input = { ...snapshotNodeInput(values), signal };
   await context.store.init();
   assertOwned();
-  const canonicalUri = canonicalizeUri(input.url) ?? undefined;
+  const uris = createKnowledgeIngestUriCanonicalizer(context, ownership, assertOwned, signal);
+  const canonicalUri = await uris.canonicalize(input.url) ?? undefined;
   const sourceId = reserveSourceId(context, canonicalUri);
+  uris.reserveSource(sourceId, canonicalUri);
   const connectorId = input.connectorId ?? (input.sourceType === 'bookmark' ? 'bookmark' : 'url');
   const sourceCurrent = knowledgeIngestGuard(context, sourceId, canonicalUri, signal);
-  const assertCurrent = () => { assertOwned(); sourceCurrent(); };
+  const assertCurrent = () => { assertOwned(); uris.assertCurrent(); sourceCurrent(); };
   assertCurrent();
   const preparation = await capturePreparation(async () => {
     const artifact = await context.artifactStore.create({
@@ -80,7 +83,8 @@ export async function ingestKnowledgeUrl(
       metadata: { sourceConnector: connectorId, requestedAt: Date.now() },
     }, { signal, assertCurrent });
     assertCurrent();
-    return prepareKnowledgeExtraction(context, sourceId, artifact.id, { signal, assertCurrent });
+    uris.attachArtifact(artifact.id);
+    return prepareKnowledgeExtraction(context, sourceId, artifact.id, uris, { signal, assertCurrent });
   });
   assertCurrent();
   const pending = stageKnowledgePendingSource(context, {
@@ -119,7 +123,7 @@ export async function ingestKnowledgeUrl(
         ...pending.metadata,
         ...(input.metadata ?? {}),
       },
-    }, { ...ownership, signal, assertCurrent: assertOwned });
+    }, uris, { ...ownership, signal, assertCurrent: assertOwned });
     const issues = await context.lint();
     context.emitIfReady((bus, ctx) => emitKnowledgeIngestCompleted(bus, ctx, {
       sourceId: result.source.id,
@@ -130,7 +134,7 @@ export async function ingestKnowledgeUrl(
     return { ...result, issues };
   } catch (error) {
     if (ownership.assertCurrent || ownership.onCommitted || ownership.signal) throw error;
-    if (error instanceof KnowledgeEntityAliasHoldError || error instanceof KnowledgeExtractionJudgmentHoldError || error instanceof KnowledgeNodeActivationHeldError || error instanceof KnowledgeNodeMutationHeldError || error instanceof JudgmentInputError) throw error;
+    if (error instanceof KnowledgeUriCanonicalizationHeldError || error instanceof KnowledgeEntityAliasHoldError || error instanceof KnowledgeExtractionJudgmentHoldError || error instanceof KnowledgeNodeActivationHeldError || error instanceof KnowledgeNodeMutationHeldError || error instanceof JudgmentInputError) throw error;
     const store = context.store, artifactStore = context.artifactStore;
     const sourceGuard = createSemanticWriteGuard(store);
     sourceGuard.source(pending.id);
@@ -192,6 +196,10 @@ export async function ingestKnowledgeArtifact(
   input = { ...snapshotNodeInput(values), signal };
   await context.store.init();
   assertOwned();
+  const uris = createKnowledgeIngestUriCanonicalizer(context, ownership, assertOwned, signal);
+  // A URI role must settle before this route performs an external artifact fetch.
+  if (input.uri) await uris.canonicalize(input.uri);
+  assertOwned(); uris.assertCurrent();
   let artifactId = input.artifactId;
   let sourceUri = input.uri;
   if (!artifactId) {
@@ -202,7 +210,8 @@ export async function ingestKnowledgeArtifact(
           sourceConnector: input.connectorId ?? 'artifact',
           requestedAt: Date.now(),
         },
-      });
+      }, { signal, assertCurrent: () => { assertOwned(); uris.assertCurrent(); } });
+      assertOwned(); uris.assertCurrent();
       artifactId = artifact.id;
       sourceUri = input.path;
     } else if (input.uri) {
@@ -213,7 +222,8 @@ export async function ingestKnowledgeArtifact(
           sourceConnector: input.connectorId ?? 'artifact',
           requestedAt: Date.now(),
         },
-      });
+      }, { signal, assertCurrent: () => { assertOwned(); uris.assertCurrent(); } });
+      assertOwned(); uris.assertCurrent();
       artifactId = artifact.id;
       sourceUri = artifact.sourceUri ?? input.uri;
     }
@@ -221,12 +231,17 @@ export async function ingestKnowledgeArtifact(
   if (!artifactId) throw new Error('Artifact ingest requires artifactId, path, or uri.');
   const record = context.artifactStore.getRecord(artifactId);
   if (!record) throw new Error(`Unknown artifact: ${artifactId}`);
-  const canonicalUri = canonicalizeUri(sourceUri ?? '') ?? undefined;
+  sourceUri ??= record.sourceUri;
+  const recordBefore = JSON.stringify(record);
+  const canonicalUri = await uris.canonicalize(sourceUri ?? '') ?? undefined;
+  if (JSON.stringify(context.artifactStore.getRecord(artifactId)) !== recordBefore) throw new KnowledgeUriCanonicalizationHeldError('stale');
   const sourceId = reserveSourceId(context, canonicalUri);
+  uris.reserveSource(sourceId, canonicalUri);
   const sourceCurrent = knowledgeIngestGuard(context, sourceId, canonicalUri, signal);
-  const assertCurrent = () => { assertOwned(); sourceCurrent(); };
+  const assertCurrent = () => { assertOwned(); uris.assertCurrent(); sourceCurrent(); };
   assertCurrent();
-  const preparation = await capturePreparation(() => prepareKnowledgeExtraction(context, sourceId, artifactId));
+  uris.attachArtifact(artifactId);
+  const preparation = await capturePreparation(() => prepareKnowledgeExtraction(context, sourceId, artifactId, uris, { signal, assertCurrent }));
   assertCurrent();
   const pending = stageKnowledgePendingSource(context, {
     id: sourceId,
@@ -267,7 +282,7 @@ export async function ingestKnowledgeArtifact(
         ...pending.metadata,
         ...(input.metadata ?? {}),
       },
-    }, { ...ownership, signal, assertCurrent: assertOwned });
+    }, uris, { ...ownership, signal, assertCurrent: assertOwned });
     const issues = await context.lint();
     context.emitIfReady((bus, ctx) => emitKnowledgeIngestCompleted(bus, ctx, {
       sourceId: result.source.id,
@@ -280,7 +295,7 @@ export async function ingestKnowledgeArtifact(
     // Host-owned operations never turn a revoked/precommit failure into a new
     // failed-source write, or overwrite a committed receipt after bookkeeping fails.
     if (ownership.assertCurrent || ownership.onCommitted || ownership.signal) throw error;
-    if (error instanceof KnowledgeEntityAliasHoldError || error instanceof KnowledgeExtractionJudgmentHoldError || error instanceof KnowledgeNodeActivationHeldError || error instanceof KnowledgeNodeMutationHeldError || error instanceof JudgmentInputError) throw error;
+    if (error instanceof KnowledgeUriCanonicalizationHeldError || error instanceof KnowledgeEntityAliasHoldError || error instanceof KnowledgeExtractionJudgmentHoldError || error instanceof KnowledgeNodeActivationHeldError || error instanceof KnowledgeNodeMutationHeldError || error instanceof JudgmentInputError) throw error;
     const store = context.store, artifactStore = context.artifactStore;
     const sourceGuard = createSemanticWriteGuard(store);
     sourceGuard.source(pending.id);
@@ -466,7 +481,7 @@ type ExtractionPreparation =
 async function capturePreparation(read: () => Promise<PreparedKnowledgeExtraction>): Promise<ExtractionPreparation> {
   try { return { ready: true, token: await read() }; }
   catch (error) {
-    if (error instanceof KnowledgeExtractionJudgmentHoldError || error instanceof JudgmentInputError) throw error;
+    if (error instanceof KnowledgeUriCanonicalizationHeldError || error instanceof KnowledgeExtractionJudgmentHoldError || error instanceof JudgmentInputError) throw error;
     return { ready: false, error };
   }
 }

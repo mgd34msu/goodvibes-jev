@@ -1,3 +1,4 @@
+import { screeningAnswers } from './screening-answers.js';
 import { createProtectedSourceOwner } from '../../sdk/src/platform/security/source-screening/owner.js';
 
 export interface RouteSourceProposal { readonly revision: string; readonly parts: readonly string[]; }
@@ -33,7 +34,7 @@ export function taskRouteSourceFixture(options: {
       return Response.json({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify({ revision: source.revision, spans: options.spans?.(source) ?? [] }) } }] });
     }
     if (path !== '/v1/systemone') return new Response('', { status: 404 });
-    return Response.json({ model: 'jev-1.13.0', answers: { complete: { type: 'noul', noul: options.complete ?? 1 }, precise: { type: 'noul', noul: 1 } }, usage: { input_tokens: 1, output_tokens: 1 } });
+    return Response.json({ model: 'jev-1.13.0', answers: screeningAnswers(body, { complete: options.complete ?? 1, precise: 1 }), usage: { input_tokens: 1, output_tokens: 1 } });
   } });
   const lifetime = new AbortController();
   const owner = createProtectedSourceOwner({

@@ -1,3 +1,6 @@
+import { captureCatalogReadRequest, selectHarnessCatalog } from './agent-harness-catalog-selection.ts';
+import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { rankStatefulCatalog } from './agent-harness-stateful-catalog-source.ts';
 import type { OnboardingStep1CapabilityItem } from '../runtime/onboarding/index.ts';
 import type { AgentSetupWizard } from '../agent/setup-wizard.ts';
 import { DEFAULT_AGENT_SETUP_WIZARD_REVIEW_ROUTE } from '../agent/setup-wizard.ts';
@@ -5,51 +8,6 @@ import { previewHarnessText } from './agent-harness-text.ts';
 import { setupHandoffsForItem } from './agent-harness-setup-handoffs.ts';
 import { collectSnapshot, lookupFromArgs, readLimit, safeIso, summarizeLocalBehavior } from './agent-harness-setup-posture-utils.ts';
 import type { AgentHarnessSetupArgs, SetupHandoffCard, SetupPlanItem, SetupRepairCard, SetupRepairDecision, SetupServiceLifecycleDecision } from './agent-harness-setup-posture-types.ts';
-
-export function planSearchText(item: SetupPlanItem): string {
-  return [
-    item.id,
-    item.label,
-    item.status,
-    item.reason,
-    item.nextAction,
-    item.userRoute,
-    item.modelRoute,
-    item.relatedSetupItemId ?? '',
-    item.signals?.join('\n') ?? '',
-    JSON.stringify(item.localModelReadiness ?? {}),
-    setupHandoffsForItem(item).map((handoff) => [
-      handoff.id,
-      handoff.label,
-      handoff.kind,
-      handoff.effect,
-      handoff.modelRoute,
-      handoff.userRoute,
-      handoff.nextStep,
-      handoff.safety,
-      handoff.prerequisite ?? '',
-    ].join(' ')).join('\n'),
-    item.repairCards?.map((card) => [
-      card.id,
-      card.label,
-      card.state,
-      card.effect,
-      card.methodId ?? '',
-      card.modelRoute ?? '',
-      card.prerequisite ?? '',
-      card.recommendation,
-      card.liveEvidence?.probeStatus ?? '',
-      card.liveEvidence?.summary ?? '',
-      card.recommendedWhen,
-      card.safety,
-    ].join(' ')).join('\n') ?? '',
-    JSON.stringify(item.serviceLifecycleDecision ?? {}),
-    JSON.stringify(item.serviceProbe ?? {}),
-    JSON.stringify(item.authPosture ?? {}),
-    JSON.stringify(item.installSmokePlan ?? {}),
-    JSON.stringify(item.sudoPosture ?? {}),
-  ].join('\n').toLowerCase();
-}
 
 export function describeRepairCard(card: SetupRepairCard): Record<string, unknown> {
   return {
@@ -268,30 +226,8 @@ export function primarySetupRepairDecision(item: SetupPlanItem): SetupRepairDeci
   };
 }
 
-export function setupRepairPlanCandidates(plan: readonly SetupPlanItem[], input: string): readonly SetupPlanItem[] {
-  const normalized = input.toLowerCase();
-  const tokens = normalized.split(/[^a-z0-9]+/).filter((token) => token.length > 0);
-  const scored = plan
-    .map((item, index) => {
-      const id = item.id.toLowerCase();
-      const label = item.label.toLowerCase();
-      const text = planSearchText(item);
-      let score = 0;
-      if (id === normalized || label === normalized) score += 10_000;
-      if (id.includes(normalized) || label.includes(normalized)) score += 3_000;
-      for (const token of tokens) {
-        if (id.includes(token)) score += 1_000;
-        if (label.includes(token)) score += 700;
-        if (text.includes(token)) score += 120;
-      }
-      if (item.blocksAutonomy && item.status !== 'ready') score += 200;
-      if (item.status === 'blocked') score += 120;
-      if (item.status === 'check') score += 60;
-      return { item, index, score };
-    })
-    .filter((entry) => entry.score > 0)
-    .sort((left, right) => right.score - left.score || left.item.priority - right.item.priority || left.index - right.index);
-  return scored.map((entry) => entry.item);
+export async function setupRepairPlanCandidates(plan: readonly SetupPlanItem[], input: string, options: CatalogRankingOptions = {}, source?: unknown): Promise<readonly SetupPlanItem[]> {
+  return rankStatefulCatalog(plan, input, item => ({ id: item.id, description: item.label, evidence: { item, source } }), 'agent.setup.repair-rank', options);
 }
 
 export function defaultSetupRepairItem(plan: readonly SetupPlanItem[], wizard: AgentSetupWizard): SetupPlanItem | null {
@@ -299,68 +235,39 @@ export function defaultSetupRepairItem(plan: readonly SetupPlanItem[], wizard: A
     ? plan.find((item) => item.id === wizard.currentStepId)
     : null;
   if (current) return current;
-  return plan.find((item) => item.blocksAutonomy && item.status !== 'ready')
-    ?? plan.find((item) => item.status === 'blocked')
-    ?? plan.find((item) => item.status === 'check')
-    ?? plan.find((item) => item.status === 'recommended')
-    ?? plan[0]
-    ?? null;
+  return null;
 }
 
-export function setupRepairTarget(
+export async function setupRepairTarget(
   plan: readonly SetupPlanItem[],
   wizard: AgentSetupWizard,
   args: AgentHarnessSetupArgs,
-): { readonly item: SetupPlanItem; readonly lookup: Record<string, unknown> } | { readonly error: Record<string, unknown> } {
-  const lookup = lookupFromArgs(args);
+  options: CatalogRankingOptions = {},
+): Promise<{ readonly item: SetupPlanItem; readonly lookup: Record<string, unknown> } | { readonly error: Record<string, unknown> }> {
+  const request = captureCatalogReadRequest({ plan, wizard, args }, options);
+  request.assertCurrent();
+  const lookup = lookupFromArgs(request.input.args);
   if (!lookup) {
-    const item = defaultSetupRepairItem(plan, wizard);
-    if (!item) {
-      return {
-        error: {
-          status: 'no_setup_items',
-          usage: 'No setup repair target is available. Inspect setup action:"status".',
-        },
-      };
-    }
-    return {
-      item,
-      lookup: {
-        source: 'setup_wizard',
-        resolvedBy: wizard.currentStepId === item.id ? 'current-step' : 'first-actionable-plan-item',
-      },
-    };
+    const current = defaultSetupRepairItem(plan, wizard);
+    if (current) return { item: current, lookup: { source: 'setup_wizard', resolvedBy: 'current-step' } };
   }
-
-  const normalized = lookup.input.toLowerCase();
-  const exact = plan.find((item) => item.id === lookup.input);
-  if (exact) return { item: exact, lookup: { ...lookup, resolvedBy: 'plan-id' } };
-  const insensitive = plan.find((item) => item.id.toLowerCase() === normalized);
-  if (insensitive) return { item: insensitive, lookup: { ...lookup, resolvedBy: 'case-insensitive-plan-id' } };
-  const candidates = setupRepairPlanCandidates(plan, lookup.input);
-  if (candidates.length === 1) return { item: candidates[0]!, lookup: { ...lookup, resolvedBy: 'repair-search' } };
-  if (candidates.length > 1) {
-    const best = candidates[0]!;
-    return {
-      item: best,
-      lookup: {
-        ...lookup,
-        resolvedBy: 'ranked-repair-search',
-        candidates: candidates.slice(0, 6).map((item) => ({
-          setupItemId: item.id,
-          label: item.label,
-          status: item.status,
-          modelRoute: item.modelRoute,
-        })),
-      },
-    };
+  if (lookup) {
+    const normalized = lookup.input.toLowerCase();
+    const exact = plan.find(item => item.id === lookup.input);
+    if (exact) return { item: exact, lookup: { ...lookup, resolvedBy: 'plan-id' } };
+    const insensitive = plan.find(item => item.id.toLowerCase() === normalized);
+    if (insensitive) return { item: insensitive, lookup: { ...lookup, resolvedBy: 'case-insensitive-plan-id' } };
   }
-  return {
-    error: {
-      status: 'missing_lookup',
-      usage: `Unknown setup repair target ${lookup.input}. Use setup action:"status" to inspect setup item ids.`,
-    },
-  };
+  const query = lookup?.input ?? 'Choose the next setup repair from the complete current wizard and plan, or none when no repair is appropriate.';
+  const candidates = await setupRepairPlanCandidates(plan, query, request.options, { plan, wizard: request.input.wizard, args: request.input.args });
+  request.assertCurrent();
+  const selected = await selectHarnessCatalog(candidates, query, item => ({ id: item.id, description: item.label, evidence: { item, plan: request.input.plan, wizard: request.input.wizard, args: request.input.args } }), request.options, 'agent.setup.repair-select');
+  request.assertCurrent();
+  if (selected) return { item: selected, lookup: { ...(lookup ?? { source: 'setup_wizard' }), resolvedBy: 'ranked-repair-search' } };
+  return { error: {
+    status: plan.length ? 'missing_lookup' : 'no_setup_items',
+    usage: 'No setup repair target was selected. Use setup action:"status" to inspect the complete current plan.',
+  } };
 }
 
 export function describePlanItem(item: SetupPlanItem, includeParameters: boolean): Record<string, unknown> {

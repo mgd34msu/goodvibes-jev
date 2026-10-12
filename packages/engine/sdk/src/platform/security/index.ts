@@ -1,3 +1,4 @@
+export { SecurityReadSourceRetiredError } from './read-source.js';
 export { SpawnTokenManager } from './spawn-tokens.js';
 export type { SpawnToken, OrchestrationPolicyConfig } from './spawn-tokens.js';
 export { UserAuthManager } from './user-auth.js';

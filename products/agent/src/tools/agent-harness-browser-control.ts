@@ -1,6 +1,7 @@
+import { types as nodeTypes } from 'node:util';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext } from '../input/command-registry.ts';
-import { interactiveRuntimeCapabilitySummary, interactiveRuntimeParityStatus } from './agent-harness-interactive-runtime-records.ts';
+import { acquireInteractiveRuntimeSnapshot, type InteractiveRuntimeSnapshot } from './agent-harness-interactive-runtime-records.ts';
 import { isAgentMcpCallRouteInstalled } from './agent-mcp-call-route.ts';
 import { toolsDeclaringCapability } from './agent-tool-capability-declarations.ts';
 import type { AgentHarnessInteractiveRuntimeRecord } from './agent-harness-interactive-runtime-records.ts';
@@ -234,7 +235,7 @@ function browserInvocationRoutes(
   return routes;
 }
 
-export function browserControlPosture(context: CommandContext, toolRegistry?: ToolRegistry): BrowserControlPosture {
+function projectBrowserControlPosture(context: CommandContext, toolRegistry: ToolRegistry | undefined, snapshot: InteractiveRuntimeSnapshot): BrowserControlPosture {
   const registry = toolRegistry ?? context.extensions?.toolRegistry;
   const registeredNames = new Set(safeToolDefinitions(registry).map((tool) => tool.name));
   const declaredControlTools = toolsDeclaringCapability('browser-control')
@@ -246,8 +247,8 @@ export function browserControlPosture(context: CommandContext, toolRegistry?: To
     .sort((left, right) => left.name.localeCompare(right.name));
 
   const needsReview = mcpServers.some((server) => server.readiness === 'attention');
-  const runtime = interactiveRuntimeCapabilitySummary(context);
-  const runtimeParity = interactiveRuntimeParityStatus(context);
+  const runtime = snapshot.capabilitySummary;
+  const runtimeParity = snapshot.parityStatus;
   const certifiedExecuteRoute = runtimeParity.browserDesktopRecords[0]?.routes
     .find((route) => route.id === 'execute')?.modelRoute ?? null;
   const invocationRoutes = browserInvocationRoutes(registry, mcpServers, certifiedExecuteRoute);
@@ -293,6 +294,74 @@ export function browserControlPosture(context: CommandContext, toolRegistry?: To
     recommendedRoute,
     policy: 'Browser and desktop control stays explicit: no live UI control is assumed unless a trusted tool, fresh constrained MCP server, or certified daemon browser/desktop command receipt is configured.',
   };
+}
+
+export async function captureBrowserControlPosture(context: CommandContext, toolRegistry?: ToolRegistry, options: CatalogRankingOptions = {}): Promise<{
+  readonly posture: BrowserControlPosture; readonly assertCurrent: () => void; readonly assertSourceCurrent: () => void;
+}> {
+  const optionSlots = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'retainCurrent', 'requirePreservedSource']);
+  const registry = toolRegistry ?? context.extensions?.toolRegistry;
+  const nativeGuards = [captureCatalogMethods(context, ['clients', 'extensions']), captureCatalogMethods(context.extensions, ['toolRegistry', 'mcpRegistry'])];
+  if (context.clients) nativeGuards.push(captureCatalogMethods(context.clients, ['mcpApi']));
+  if (registry) nativeGuards.push(captureCatalogMethods(registry, ['getToolDefinitions']));
+  const mcp = context.clients?.mcpApi ?? context.extensions?.mcpRegistry;
+  if (mcp) nativeGuards.push(captureCatalogMethods(mcp, ['listServerSecurity']));
+  optionSlots();
+  const originalRetainCurrent = options.retainCurrent, originalAssertCurrent = options.assertCurrent, signal = options.signal;
+  if ((originalRetainCurrent !== undefined && (typeof originalRetainCurrent !== 'function' || nodeTypes.isProxy(originalRetainCurrent)))
+    || (originalAssertCurrent !== undefined && (typeof originalAssertCurrent !== 'function' || nodeTypes.isProxy(originalAssertCurrent))))
+    throw new ToolInputProjectionError('invalid');
+  const throwIfAborted = AbortSignal.prototype.throwIfAborted;
+  const checkSignal = (): void => { if (signal) Reflect.apply(throwIfAborted, signal, []); };
+  const dispatchRetainCurrent = (guard: () => void, key?: string): void => {
+    optionSlots(); checkSignal();
+    let result: unknown;
+    try { result = originalRetainCurrent?.(guard, key); }
+    finally {
+      if (nodeTypes.isPromise(result)) void Promise.prototype.then.call(result, undefined, () => {});
+      optionSlots(); checkSignal();
+    }
+    if (result !== undefined) throw new ToolInputProjectionError('held');
+  };
+  const assertBorrowedCurrent = (): void => {
+    optionSlots(); checkSignal();
+    let result: unknown;
+    try { result = originalAssertCurrent?.(); }
+    finally {
+      if (nodeTypes.isPromise(result)) void Promise.prototype.then.call(result, undefined, () => {});
+      optionSlots(); checkSignal();
+    }
+    if (result !== undefined) throw new ToolInputProjectionError('held');
+  };
+  const retained = new Set<() => void>();
+  const retainCurrent = (guard: () => void, key?: string): void => {
+    optionSlots(); checkSignal();
+    retained.add(guard);
+    dispatchRetainCurrent(guard, key);
+  };
+  assertBorrowedCurrent();
+  const snapshot = await acquireInteractiveRuntimeSnapshot(context, { ...options, retainCurrent });
+  snapshot.assertCurrent();
+  for (const guard of retained) guard();
+  optionSlots();
+  for (const guard of nativeGuards) guard();
+  const posture = projectBrowserControlPosture(context, registry, snapshot);
+  const revision = JSON.stringify(captureCatalogData(posture));
+  const assertSourceCurrent = () => {
+    optionSlots(); checkSignal();
+    for (const guard of nativeGuards) guard();
+    for (const guard of retained) guard();
+    if (JSON.stringify(captureCatalogData(projectBrowserControlPosture(context, registry, snapshot))) !== revision)
+      throw new ToolInputProjectionError('stale');
+  };
+  const assertCurrent = () => { assertSourceCurrent(); assertBorrowedCurrent(); assertSourceCurrent(); };
+  dispatchRetainCurrent(assertSourceCurrent, 'agent.browser-control.posture.sources');
+  assertCurrent();
+  return { posture, assertCurrent, assertSourceCurrent };
+}
+
+export async function browserControlPosture(context: CommandContext, toolRegistry?: ToolRegistry, options: CatalogRankingOptions = {}): Promise<BrowserControlPosture> {
+  return (await captureBrowserControlPosture(context, toolRegistry, options)).posture;
 }
 
 function workflowSearchText(workflow: BrowserControlWorkflow): string {
@@ -403,13 +472,13 @@ export async function browserControlRouteSummary(
     if ((context.clients?.mcpApi ?? context.extensions?.mcpRegistry) !== mcp) throw new ToolInputProjectionError('stale');
   };
   assertBackendsCurrent();
-  const posture = browserControlPosture(context, toolRegistry);
-  const originalPosture = JSON.stringify(captureCatalogData(posture));
+  const acquired = await captureBrowserControlPosture(context, toolRegistry, options);
+  const posture = acquired.posture;
   const assertSourceCurrent = () => {
     options.signal?.throwIfAborted();
     assertBackendsCurrent();
-    if (JSON.stringify(captureCatalogData(args)) !== source
-      || JSON.stringify(captureCatalogData(browserControlPosture(context, toolRegistry))) !== originalPosture) throw new ToolInputProjectionError('stale');
+    acquired.assertSourceCurrent();
+    if (JSON.stringify(captureCatalogData(args)) !== source) throw new ToolInputProjectionError('stale');
   };
   options.retainCurrent?.(assertSourceCurrent, 'agent.browser-control.workflow.sources');
   const assertCurrent = () => { options.assertCurrent?.(); assertSourceCurrent(); };

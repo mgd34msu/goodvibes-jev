@@ -1,12 +1,19 @@
+import { types as nodeTypes } from 'node:util';
 import { redactText } from '@goodvibes-jev/engine/terminal-shell';
-import { captureJudgmentPort, type JudgmentPortCapture, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { captureJudgmentPort, type JudgmentPortCapture } from '@goodvibes-jev/engine/errors';
+import { assertProjectionCurrent } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
+import { captureModelReadModelData, captureModelProviderReadingFacts, MODEL_PROVIDER_READING_FACT_FIELDS, captureModelReadingInput, assertModelReadingInputCurrent, modelReadingServicePath, withModelReadingSource, type ModelReadingOptions } from './agent-harness-model-reading-source.ts';
+import { protectPersonalOpsData } from './agent-harness-personal-ops-source.ts';
+import { readLocalServingBoolean, readLocalServingStatus, readLocalResourcePressure, readLocalServingSchemaStatus } from './agent-harness-local-model-readings.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import type { LocalModelDetection, LocalModelEndpointSource, LocalModelServerDefaultEndpoint, LocalModelServerDiagnosticsPublication, LocalModelServerEndpoint, LocalModelServerHealthMap, LocalModelServerServingDiagnostics, MutableLocalModelServerEndpoint } from './agent-harness-model-routing-types.ts';
-import { listProviderIds, listProviderRegistryProviders, listRegistryModels, modelDisplayName, modelModelId, modelProviderId, modelRegistryKey, readProviderModels } from './agent-harness-model-catalog.ts';
+import { listProviderRegistryProviders, listRegistryModels, modelDisplayName, modelModelId, modelProviderId, modelRegistryKey, readProviderModels } from './agent-harness-model-catalog.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 import { readLimit, readRecord, readString } from './agent-harness-model-routing-utils.ts';
 import { extractUrls, isPrivateOrLocalUrl, localStackFor, modelsUrlFor, normalizeLocalBaseUrl, parseUrlCandidate } from './agent-harness-local-model-url.ts';
 
+export type { LocalModelStack } from './agent-harness-local-model-url.ts';
 export { cleanUrlCandidate, extractUrls, isPrivateOrLocalHost, isPrivateOrLocalUrl, localStackFor, modelsUrlFor, normalizeLocalBaseUrl, parseUrlCandidate } from './agent-harness-local-model-url.ts';
 
 export function localProviderNameFor(providerId: string | null, stack: string | null, fallback: string): string {
@@ -94,16 +101,6 @@ function readNumber(value: unknown): number | null {
   return typeof parsed === 'number' && Number.isFinite(parsed) ? parsed : null;
 }
 
-function readBoolean(value: unknown): boolean | null {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (['true', 'yes', '1', 'supported', 'enabled'].includes(normalized)) return true;
-    if (['false', 'no', '0', 'unsupported', 'disabled'].includes(normalized)) return false;
-  }
-  return null;
-}
-
 function readStringArray(value: unknown): readonly string[] {
   const values = Array.isArray(value) ? value : [];
   return [...new Set(values.map((entry) => {
@@ -129,9 +126,9 @@ function firstNumber(record: Record<string, unknown>, keys: readonly string[]): 
   return null;
 }
 
-function firstBoolean(record: Record<string, unknown>, keys: readonly string[]): boolean | null {
+async function firstBoolean(record: Record<string, unknown>, keys: readonly string[], options: ModelReadingOptions): Promise<boolean | null> {
   for (const key of keys) {
-    const value = readBoolean(record[key]);
+    const value = await readLocalServingBoolean(record[key], key, record, options);
     if (value !== null) return value;
   }
   return null;
@@ -146,26 +143,19 @@ function isoFromDiagnosticValue(value: unknown): string | null {
   return Number.isNaN(timestamp) ? null : new Date(timestamp).toISOString();
 }
 
-function localServingStatus(record: Record<string, unknown>, loadedModelCount: number): LocalModelServerServingDiagnostics['status'] {
-  const value = firstString(record, ['status', 'healthStatus', 'state', 'result', 'outcome']).toLowerCase().replace(/[_\s]+/g, '-');
-  if (['ready', 'ok', 'healthy', 'running', 'online', 'passed', 'success', 'succeeded', 'available'].includes(value)) return 'ready';
-  if (['blocked', 'missing', 'unavailable', 'unreachable', 'offline', 'not-running', 'needs-setup'].includes(value)) return 'blocked';
-  if (['degraded', 'attention', 'warning', 'slow', 'resource-pressure', 'limited'].includes(value)) return 'attention';
-  if (loadedModelCount > 0) return 'ready';
-  return 'unknown';
+async function localServingStatus(record: Record<string, unknown>, options: ModelReadingOptions): Promise<LocalModelServerServingDiagnostics['status']> {
+  return readLocalServingStatus(firstString(record, ['status', 'healthStatus', 'state', 'result', 'outcome']), record, options);
 }
 
-function localResourcePressure(record: Record<string, unknown>): LocalModelServerServingDiagnostics['resourcePressure'] {
-  const value = firstString(record, ['resourcePressure', 'pressure', 'memoryPressure', 'vramPressure']).toLowerCase().replace(/[_\s]+/g, '-');
-  if (['low', 'ok', 'normal', 'healthy'].includes(value)) return 'low';
-  if (['moderate', 'medium', 'warning', 'attention'].includes(value)) return 'moderate';
-  if (['high', 'critical', 'exhausted', 'oom'].includes(value)) return 'high';
+async function localResourcePressure(record: Record<string, unknown>, options: ModelReadingOptions): Promise<LocalModelServerServingDiagnostics['resourcePressure']> {
+  const value = firstString(record, ['resourcePressure', 'pressure', 'memoryPressure', 'vramPressure']);
+  if (value) return readLocalResourcePressure(value, record, options);
   const usage = firstNumber(record, ['memoryUsagePercent', 'memoryPercent', 'vramUsagePercent', 'gpuMemoryPercent']);
   if (usage !== null) return usage >= 90 ? 'high' : usage >= 70 ? 'moderate' : 'low';
   return 'unknown';
 }
 
-async function localResourceSummary(record: Record<string, unknown>, pressure: LocalModelServerServingDiagnostics['resourcePressure'], options: JudgmentReadingOptions): Promise<string | undefined> {
+async function localResourceSummary(record: Record<string, unknown>, pressure: LocalModelServerServingDiagnostics['resourcePressure'], options: ModelReadingOptions): Promise<string | undefined> {
   const explicit = firstString(record, ['resourceSummary', 'resources', 'resourceDetail']);
   if (explicit) return previewHarnessText(await redactText(explicit, options), 180);
   const parts = [
@@ -185,17 +175,17 @@ function firstStringFromRecords(records: readonly Record<string, unknown>[], key
   return '';
 }
 
-function localServingSchemaStatus(record: Record<string, unknown>): LocalModelServerServingDiagnostics['schemaStatus'] {
+async function localServingSchemaStatus(record: Record<string, unknown>, options: ModelReadingOptions): Promise<LocalModelServerServingDiagnostics['schemaStatus']> {
   const records = [record, readRecord(record.schema), readRecord(record.contract), readRecord(record.receipt)];
-  const explicit = firstStringFromRecords(records, ['schemaStatus', 'receiptSchemaStatus', 'certificationStatus']).toLowerCase().replace(/[_\s]+/g, '-');
-  if (['certified', 'valid', 'verified', 'schema-certified'].includes(explicit)) return 'certified';
+  const explicit = firstStringFromRecords(records, ['schemaStatus', 'receiptSchemaStatus', 'certificationStatus']);
+  if (explicit) return await readLocalServingSchemaStatus(explicit, record, options) ? 'certified' : 'legacy';
   const schemaVersion = firstStringFromRecords(records, ['schemaVersion', 'receiptSchemaVersion', 'contractVersion']);
   const provenance = firstStringFromRecords(records, ['methodId', 'sourceTool', 'actionId']);
   const publicationGuarantee = firstStringFromRecords(records, ['publicationGuarantee', 'hostPublicationGuarantee', 'servingPublicationGuarantee']);
   return schemaVersion && provenance && publicationGuarantee ? 'certified' : 'legacy';
 }
 
-async function routeTextFromDiagnosticValue(value: unknown, options: JudgmentReadingOptions): Promise<string> {
+async function routeTextFromDiagnosticValue(value: unknown, options: ModelReadingOptions): Promise<string> {
   const direct = readString(value);
   if (direct) return previewHarnessText(await redactText(direct, options), 260);
   const record = readRecord(value);
@@ -203,7 +193,7 @@ async function routeTextFromDiagnosticValue(value: unknown, options: JudgmentRea
   return route ? previewHarnessText(await redactText(route, options), 260) : '';
 }
 
-async function diagnosticRouteFromRecord(record: Record<string, unknown>, keys: readonly string[], options: JudgmentReadingOptions): Promise<string> {
+async function diagnosticRouteFromRecord(record: Record<string, unknown>, keys: readonly string[], options: ModelReadingOptions): Promise<string> {
   for (const key of keys) {
     const route = await routeTextFromDiagnosticValue(record[key], options);
     if (route) return route;
@@ -218,7 +208,7 @@ async function diagnosticRouteFromRecord(record: Record<string, unknown>, keys: 
   return '';
 }
 
-async function diagnosticPublicationGuarantee(record: Record<string, unknown>, options: JudgmentReadingOptions): Promise<string> {
+async function diagnosticPublicationGuarantee(record: Record<string, unknown>, options: ModelReadingOptions): Promise<string> {
   const value = firstStringFromRecords(
     [record, readRecord(record.schema), readRecord(record.contract), readRecord(record.receipt)],
     ['publicationGuarantee', 'hostPublicationGuarantee', 'servingPublicationGuarantee'],
@@ -230,7 +220,7 @@ async function localServingProvenance(
   record: Record<string, unknown>,
   startRoute: string,
   repairRoute: string,
-  options: JudgmentReadingOptions,
+  options: ModelReadingOptions,
 ): Promise<readonly string[]> {
   const explicit = readStringArray(record.provenance);
   const values = [
@@ -246,51 +236,46 @@ async function localServingProvenance(
 }
 
 function setupServingReadModelSources(context: CommandContext): readonly LocalModelServingReadModelSource[] {
-  const contextRecord = context as unknown as Record<string, unknown>;
-  const platform = readRecord(contextRecord.platform);
-  const clients = readRecord(contextRecord.clients);
-  const readModels = readRecord(platform.readModels);
-  const modelReadModels = readRecord(readModels.models);
-  const localModels = readRecord(readModels.localModels);
-  const ollama = readRecord(readModels.ollama);
-  const llamaCpp = readRecord(readModels.llamaCpp);
-  const vllm = readRecord(readModels.vllm);
-  const localAi = readRecord(readModels.localAi);
-  const openAiCompatible = readRecord(readModels.openAiCompatible);
-  const operator = readRecord(clients.operator);
-  const operatorModels = readRecord(operator.models);
-  return [
-    { path: 'context.platform.readModels.localModelServers', source: readModels.localModelServers },
-    { path: 'context.platform.readModels.localModelServing', source: readModels.localModelServing },
-    { path: 'context.platform.readModels.localModelDiagnostics', source: readModels.localModelDiagnostics },
-    { path: 'context.platform.readModels.models.localServers', source: modelReadModels.localServers },
-    { path: 'context.platform.readModels.models.servingDiagnostics', source: modelReadModels.servingDiagnostics },
-    { path: 'context.platform.readModels.localModels.servingDiagnostics', source: localModels.servingDiagnostics },
-    { path: 'context.platform.readModels.ollama.servingDiagnostics', source: ollama.servingDiagnostics },
-    { path: 'context.platform.readModels.llamaCpp.servingDiagnostics', source: llamaCpp.servingDiagnostics },
-    { path: 'context.platform.readModels.vllm.servingDiagnostics', source: vllm.servingDiagnostics },
-    { path: 'context.platform.readModels.localAi.servingDiagnostics', source: localAi.servingDiagnostics },
-    { path: 'context.platform.readModels.openAiCompatible.servingDiagnostics', source: openAiCompatible.servingDiagnostics },
-    { path: 'context.platform.localModelServing', source: platform.localModelServing },
-    { path: 'context.clients.operator.models.servingDiagnostics', source: operatorModels.servingDiagnostics },
-    { path: 'context.clients.operator.localModelServingDiagnostics', source: operator.localModelServingDiagnostics },
-  ];
+  return LOCAL_MODEL_SERVING_READ_MODEL_PATHS.map(path => ({
+    path, source: modelReadingServicePath(context, path.split('.').slice(1)),
+  }));
 }
 
-function readServingSnapshot(source: unknown): unknown {
-  if (typeof source === 'function') {
-    const value = (source as () => unknown)();
-    return value instanceof Promise ? null : value;
-  }
-  const record = readRecord(source);
-  for (const methodName of ['getSnapshot', 'snapshot', 'list', 'listDiagnostics', 'listServingDiagnostics', 'listLocalServers', 'listServers', 'readSnapshot']) {
-    const method = record[methodName];
-    if (typeof method === 'function') {
-      const value = (method as () => unknown)();
-      return value instanceof Promise ? null : value;
+function sourceMethods(source: unknown, keys: readonly string[]): () => void {
+  if (source === null || source === undefined) return () => {};
+  if (typeof source !== 'object' || nodeTypes.isProxy(source)) throw new Error('Unsupported local model source.');
+  return captureCatalogMethods(source, keys);
+}
+
+const SERVING_SNAPSHOT_METHODS = ['getSnapshot', 'snapshot', 'list', 'listDiagnostics', 'listServingDiagnostics', 'listLocalServers', 'listServers', 'readSnapshot'] as const;
+function captureServingSource(context: CommandContext, entry: LocalModelServingReadModelSource): {
+  readonly data: unknown; readonly assertCurrent: () => void;
+} {
+  const source = entry.source;
+  if ((typeof source === 'function' || source !== null && typeof source === 'object') && nodeTypes.isProxy(source)) throw new Error('Unsupported local serving source.');
+  const methods = typeof source === 'function' ? () => {} : sourceMethods(source, SERVING_SNAPSHOT_METHODS);
+  const read = typeof source === 'function' ? source : SERVING_SNAPSHOT_METHODS
+    .map(key => modelReadingServicePath(source, [key])).find(method => typeof method === 'function');
+  if (typeof read === 'function' && nodeTypes.isProxy(read)) throw new Error('Unsupported local serving snapshot method.');
+  const acquire = () => {
+    methods();
+    const value: unknown = typeof read === 'function' ? Reflect.apply(read, source, []) : source;
+    if (nodeTypes.isPromise(value)) {
+      void Reflect.apply(Promise.prototype.then, value, [undefined, () => {}]);
+      throw new Error('Local serving diagnostics must publish synchronous native snapshots.');
     }
-  }
-  return source;
+    methods(); return value;
+  };
+  const original = acquire(), data = captureModelReadModelData(original, false);
+  const serialized = JSON.stringify(data);
+  const assertCurrent = () => {
+    if (modelReadingServicePath(context, entry.path.split('.').slice(1)) !== source) throw new Error('Local serving diagnostic source changed.');
+    methods();
+    assertModelReadingInputCurrent(captureModelReadModelData(original, false), serialized);
+    assertModelReadingInputCurrent(captureModelReadModelData(acquire(), false), serialized);
+    methods();
+  };
+  assertCurrent(); return { data, assertCurrent };
 }
 
 function diagnosticEntriesFromSnapshot(snapshot: unknown): readonly unknown[] {
@@ -330,13 +315,13 @@ function isLocalServingDiagnosticRecord(record: Record<string, unknown>): boolea
   );
 }
 
-async function normalizeServingDiagnosticRecord(value: unknown, source: string, options: JudgmentReadingOptions): Promise<LocalModelServingDiagnosticRecord | null> {
+async function normalizeServingDiagnosticRecord(value: unknown, source: string, options: ModelReadingOptions): Promise<LocalModelServingDiagnosticRecord | null> {
   const record = {
     ...readRecord(readRecord(value).metadata),
     ...readRecord(value),
   };
   if (!isLocalServingDiagnosticRecord(record)) return null;
-  const stack = firstString(record, ['stack', 'serverType', 'backend']) || localStackFor(JSON.stringify(record)) || null;
+  const stack = await localStackFor(firstString(record, ['stack', 'serverType', 'backend']) || JSON.stringify(record), options, record);
   const rawBaseUrl = firstString(record, ['baseUrl', 'baseURL', 'endpoint', 'url', 'serverUrl']);
   const rawModelsUrl = firstString(record, ['modelsUrl', 'modelListUrl']);
   const baseUrl = rawBaseUrl
@@ -355,17 +340,17 @@ async function normalizeServingDiagnosticRecord(value: unknown, source: string, 
       ? readStringArray(record.models)
       : readStringArray(record.modelIds);
   const loadedModelCount = firstNumber(record, ['loadedModelCount', 'modelCount']) ?? loadedModels.length;
-  const status = localServingStatus(record, loadedModelCount);
-  const resourcePressure = localResourcePressure(record);
+  const status = await localServingStatus(record, options);
+  const resourcePressure = await localResourcePressure(record, options);
   const summary = await redactText(firstString(record, ['summary', 'detail', 'message']), options)
     || `${providerIdLabel(firstString(record, ['providerId', 'provider', 'providerName']))} local serving diagnostics are ${status}.`;
   const serverVersion = firstString(record, ['serverVersion', 'version']);
   const contextWindowTokens = firstNumber(record, ['contextWindowTokens', 'contextWindow', 'maxContextTokens']);
-  const toolSupport = firstBoolean(record, ['toolSupport', 'toolCalling', 'supportsTools', 'supportsToolCalling']);
+  const toolSupport = await firstBoolean(record, ['toolSupport', 'toolCalling', 'supportsTools', 'supportsToolCalling'], options);
   const startReceiptId = firstString(record, ['startReceiptId', 'startupReceiptId']);
   const repairReceiptId = firstString(record, ['repairReceiptId', 'restartReceiptId']);
   const receiptStatus = firstString(record, ['receiptStatus', 'receiptOutcome']);
-  const schemaStatus = localServingSchemaStatus(record);
+  const schemaStatus = await localServingSchemaStatus(record, options);
   const schemaVersion = firstStringFromRecords(
     [record, readRecord(record.schema), readRecord(record.contract), readRecord(record.receipt)],
     ['schemaVersion', 'receiptSchemaVersion', 'contractVersion'],
@@ -422,36 +407,54 @@ function providerIdLabel(providerId: string): string {
   return providerId || 'Detected';
 }
 
-async function localServingDiagnosticsIndex(context: CommandContext, options: JudgmentReadingOptions): Promise<LocalModelServingDiagnosticIndex> {
+async function localServingDiagnosticsIndex(context: CommandContext, options: ModelReadingOptions): Promise<LocalModelServingDiagnosticIndex> {
+  const optionsCurrent = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'retainCurrent']);
   const signal = options.signal, callerCurrent = options.assertCurrent;
+  const retained: Array<() => void> = [];
   let owner: JudgmentPortCapture | undefined;
+  let portCurrent: (() => void) | undefined;
   const sourceCurrent = () => {
-    signal?.throwIfAborted();
+    optionsCurrent(); signal?.throwIfAborted();
     if (options.signal !== signal || options.assertCurrent !== callerCurrent) throw new Error('Local serving diagnostic owner changed.');
   };
   const assertSource = () => {
     sourceCurrent();
-    const result: unknown = callerCurrent?.();
-    if (result !== undefined) { void Promise.resolve(result).catch(() => {}); throw new Error('Local serving diagnostic ownership must be synchronous.'); }
+    assertProjectionCurrent(callerCurrent);
     sourceCurrent();
   };
-  const assertCurrent = () => { assertSource(); owner?.assertCurrent(); };
+  options.retainCurrent?.(sourceCurrent, 'agent.local-serving-diagnostics.owner');
+  const assertCurrent = () => { assertSource(); for (const guard of retained) guard(); portCurrent?.(); };
   assertCurrent();
   const records: LocalModelServingDiagnosticRecord[] = [];
   const sourcePaths = new Set<string>();
   let sawSource = false;
   let sawError = false;
+  const observations: Array<{ readonly entry: LocalModelServingReadModelSource; readonly observation: ReturnType<typeof captureServingSource> }> = [];
   for (const entry of setupServingReadModelSources(context)) {
     if (entry.source === undefined || entry.source === null) continue;
     sawSource = true;
     try {
+      const observation = captureServingSource(context, entry);
+      retained.push(observation.assertCurrent);
+      options.retainCurrent?.(observation.assertCurrent, `agent.local-serving-diagnostics.source:${entry.path}`);
+      observations.push({ entry, observation });
+    } catch { sawError = true; }
+  }
+  assertCurrent();
+  for (const { entry, observation } of observations) {
+    try {
       owner ??= captureJudgmentPort('agent.local-serving-diagnostics', { ...options, assertCurrent: assertSource });
-      const reading = { ...options, signal: owner.signal, assertCurrent: owner.assertCurrent };
-      const sourceRecords: LocalModelServingDiagnosticRecord[] = [];
-      for (const value of diagnosticEntriesFromSnapshot(readServingSnapshot(entry.source))) {
-        const record = await normalizeServingDiagnosticRecord(value, entry.path, reading);
-        if (record) sourceRecords.push(record);
-      }
+      portCurrent = owner.assertCurrent;
+      const reading = { ...options, signal: owner.signal, assertCurrent: () => { owner?.assertCurrent(); assertCurrent(); } };
+      const protectedSnapshot = await protectPersonalOpsData(observation.data, reading);
+      const sourceRecords = await withModelReadingSource(protectedSnapshot, reading, async (snapshot, scoped) => {
+        const normalized: LocalModelServingDiagnosticRecord[] = [];
+        for (const value of diagnosticEntriesFromSnapshot(snapshot)) {
+          const record = await normalizeServingDiagnosticRecord(value, entry.path, scoped);
+          if (record) normalized.push(record);
+        }
+        scoped.assertCurrent?.(); return normalized;
+      });
       assertCurrent();
       if (sourceRecords.length > 0) sourcePaths.add(entry.path);
       records.push(...sourceRecords);
@@ -470,6 +473,11 @@ async function localServingDiagnosticsIndex(context: CommandContext, options: Ju
   const missingSignals = records.length > 0
     ? []
     : ['No daemon-published local serving diagnostics read model is available to Agent yet.'];
+  if (owner) {
+    const restriction = owner.consumeObservation(); portCurrent = restriction.assertCurrent;
+    options.retainCurrent?.(restriction.assertCurrent, 'agent.local-serving-diagnostics.port');
+  }
+  assertCurrent();
   return {
     records,
     assertCurrent,
@@ -493,13 +501,31 @@ function servingDiagnosticForEndpoint(
     ?? null;
 }
 
+function localModelInspectionOptions(context: CommandContext, options: ModelReadingOptions): ModelReadingOptions {
+  const optionsCurrent = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'retainCurrent']);
+  const signal = options.signal, callerCurrent = options.assertCurrent;
+  const assertOptions = () => { optionsCurrent(); signal?.throwIfAborted(); };
+  const assertCaller = () => {
+    assertOptions();
+    assertProjectionCurrent(callerCurrent);
+    assertOptions();
+  };
+  assertCaller();
+  const native = captureLocalModelRegistry(context);
+  const assertCurrent = () => { assertCaller(); native.assertCurrent(); };
+  options.retainCurrent?.(assertOptions, 'agent.local-model.inspection-owner');
+  options.retainCurrent?.(native.assertCurrent, 'agent.local-model.inspection-registry');
+  assertCurrent(); return { ...options, assertCurrent };
+}
+
 export async function localModelServerEndpoints(
   context: CommandContext,
   includeParameters: boolean,
-  options: JudgmentReadingOptions = {},
+  options: ModelReadingOptions = {},
 ): Promise<readonly LocalModelServerEndpoint[]> {
-  const servingDiagnostics = await localServingDiagnosticsIndex(context, options);
-  const endpoints = collectLocalServerEndpointCandidates(context).map((endpoint) => describeLocalServerEndpoint(
+  const reading = localModelInspectionOptions(context, options);
+  const servingDiagnostics = await localServingDiagnosticsIndex(context, reading);
+  const endpoints = (await readLocalServerEndpointCandidates(context, reading)).map((endpoint) => describeLocalServerEndpoint(
     endpoint,
     includeParameters,
     servingDiagnosticForEndpoint(servingDiagnostics.records, endpoint),
@@ -548,41 +574,175 @@ export function localModelServerDefaults(): readonly LocalModelServerDefaultEndp
 }
 
 export function localModelDetection(context: CommandContext): LocalModelDetection {
-  const providerIds = new Set<string>();
-  const modelRoutes = new Set<string>();
-  const stacks = new Set<string>();
-  for (const providerId of listProviderIds(context)) {
-    const stack = localStackFor(providerId);
-    if (!stack) continue;
-    providerIds.add(providerId);
-    stacks.add(stack);
-  }
-  for (const model of listRegistryModels(context)) {
-    const record = readRecord(model);
-    const providerId = modelProviderId(model);
-    const registryKey = modelRegistryKey(model);
-    const fields = [
-      providerId,
-      registryKey,
-      modelModelId(model),
-      modelDisplayName(model),
-      readString(record.description),
-      readString(record.baseURL),
-      readString(record.baseUrl),
-      readString(record.serverType),
-      JSON.stringify(record.providerEnvVars ?? ''),
-    ].join('\n');
-    const stack = localStackFor(fields);
-    if (!stack) continue;
-    if (providerId) providerIds.add(providerId);
-    if (registryKey) modelRoutes.add(registryKey);
-    stacks.add(stack);
-  }
+  const endpoints = collectLocalServerEndpointCandidates(context);
   return {
-    providerIds: [...providerIds].sort((a, b) => a.localeCompare(b)),
-    modelRoutes: [...modelRoutes].sort((a, b) => a.localeCompare(b)),
-    stacks: [...stacks].sort((a, b) => a.localeCompare(b)),
+    providerIds: [...new Set(endpoints.flatMap(endpoint => endpoint.providerId ? [endpoint.providerId] : []))].sort(),
+    modelRoutes: [...new Set(endpoints.flatMap(endpoint => [...endpoint.modelRoutes]))].sort(),
+    stacks: [], // Registry wording is read only by explicit asynchronous inspection.
   };
+}
+
+interface LocalModelRegistrySnapshot {
+  readonly providers: readonly unknown[];
+  readonly models: readonly unknown[];
+  readonly providerIds: readonly string[];
+  readonly environment: readonly { readonly key: string; readonly value: string; readonly stack: string; readonly note: string }[];
+}
+
+const LOCAL_MODEL_ENV_HINTS = [
+  { key: 'OLLAMA_BASE_URL', stack: 'ollama', note: 'Environment override for the Ollama base URL.' },
+  { key: 'OLLAMA_HOST', stack: 'ollama', note: 'Environment override for the Ollama host.' },
+  { key: 'LM_STUDIO_BASE_URL', stack: 'openai-compatible', note: 'Environment override for LM Studio.' },
+  { key: 'OPENAI_COMPATIBLE_BASE_URL', stack: 'openai-compatible', note: 'Environment override for a local OpenAI-compatible server.' },
+  { key: 'OPENAI_COMPAT_BASE_URL', stack: 'openai-compatible', note: 'Environment override for a local OpenAI-compatible server.' },
+  { key: 'VLLM_BASE_URL', stack: 'vllm', note: 'Environment override for vLLM.' },
+  { key: 'LLAMA_CPP_BASE_URL', stack: 'llama.cpp', note: 'Environment override for llama.cpp.' },
+  { key: 'LITELLM_BASE_URL', stack: 'openai-compatible', note: 'Environment override for LiteLLM or a local gateway.' },
+] as const;
+
+export function captureLocalModelRegistry(context: CommandContext): {
+  readonly data: LocalModelRegistrySnapshot; readonly assertCurrent: () => void;
+} {
+  const registry = modelReadingServicePath(context, ['provider', 'providerRegistry']);
+  const api = modelReadingServicePath(context, ['clients', 'providerApi']);
+  const registryMethods = sourceMethods(registry, ['listProviders', 'listModels']);
+  const apiMethods = sourceMethods(api, ['listProviderIds']);
+  const providerList = registry == null ? undefined : modelReadingServicePath(registry, ['listProviders']);
+  const modelList = registry == null ? undefined : modelReadingServicePath(registry, ['listModels']);
+  const providerIdsList = api == null ? undefined : modelReadingServicePath(api, ['listProviderIds']);
+  const originalArrays: Array<() => void> = [];
+  const acquireList = (method: unknown, receiver: unknown, retain: boolean): readonly unknown[] => {
+    registryMethods(); apiMethods();
+    if (method === undefined) return [];
+    if (typeof method !== 'function' || nodeTypes.isProxy(method)) throw new Error('Local model registry list method unavailable.');
+    const result: unknown = Reflect.apply(method, receiver, []);
+    registryMethods(); apiMethods();
+    if (nodeTypes.isPromise(result)) {
+      void Reflect.apply(Promise.prototype.then, result, [undefined, () => {}]);
+      throw new Error('Local model registry must publish synchronous native arrays.');
+    }
+    if (!Array.isArray(result) || nodeTypes.isProxy(result) || Object.getPrototypeOf(result) !== Array.prototype) throw new Error('Local model registry must publish native arrays.');
+    const descriptors = Object.getOwnPropertyDescriptors(result), keys = Reflect.ownKeys(result);
+    const length: unknown = Object.getOwnPropertyDescriptor(result, 'length')?.value;
+    if (typeof length !== 'number' || !Number.isSafeInteger(length) || length < 0 || length > 20_000
+      || keys.length !== length + 1 || keys.some(key => typeof key !== 'string')) throw new Error('Unsupported complete local model registry array layout.');
+    const slots = captureCatalogMethods(result, Object.getOwnPropertyNames(result));
+    const assertArray = () => { slots(); if (Reflect.ownKeys(result).length !== keys.length) throw new Error('Local model registry array layout changed.'); };
+    assertArray();
+    const values: unknown[] = [];
+    for (let index = 0; index < length; index++) {
+      const field = descriptors[String(index)];
+      if (!field || !('value' in field)) throw new Error('Unsupported complete local model registry array layout.');
+      values.push(field.value);
+    }
+    assertArray(); if (retain) originalArrays.push(assertArray);
+    return Object.freeze(values);
+  };
+  const snapshot = (retain = false): LocalModelRegistrySnapshot => {
+    const providers = acquireList(providerList, registry, retain), models = acquireList(modelList, registry, retain);
+    const providerIds = acquireList(providerIdsList, api, retain);
+    if (!providerIds.every((id): id is string => typeof id === 'string')) throw new Error('Invalid local provider ID inventory.');
+    return { providers, models, providerIds,
+      environment: LOCAL_MODEL_ENV_HINTS.map(hint => ({ ...hint, value: readString(process.env[hint.key]) })) };
+  };
+  const original = snapshot(true);
+  const providers = [...original.providers], models = [...original.models];
+  const providerGuards = providers.map(provider => {
+    if (provider === null || typeof provider !== 'object' || nodeTypes.isProxy(provider)) throw new Error('Unsupported native provider adapter.');
+    const guard = captureCatalogMethods(provider, [...MODEL_PROVIDER_READING_FACT_FIELDS, 'isConfigured']);
+    const configured = modelReadingServicePath(provider, ['isConfigured']);
+    if (configured !== undefined && typeof configured === 'function' && nodeTypes.isProxy(configured)) throw new Error('Unsupported native provider metadata method.');
+    const configuredCall = typeof configured === 'function' ? captureCatalogMethods(configured, ['call']) : () => {};
+    if (typeof configured === 'function' && configured.call !== Function.prototype.call) throw new Error('Unsupported native provider metadata invocation.');
+    const modelsField = Object.getOwnPropertyDescriptor(provider, 'models');
+    return () => {
+      guard(); configuredCall();
+      const current = Object.getOwnPropertyDescriptor(provider, 'models');
+      if ((modelsField === undefined) !== (current === undefined) || modelsField?.value !== current?.value
+        || modelsField?.get !== current?.get || modelsField?.set !== current?.set
+        || modelsField?.enumerable !== current?.enumerable || modelsField?.configurable !== current?.configurable
+        || modelsField?.writable !== current?.writable) throw new Error('Native provider model metadata changed.');
+    };
+  });
+  const metadataSnapshot = (native: LocalModelRegistrySnapshot, initial = true): LocalModelRegistrySnapshot => {
+    for (const guard of providerGuards) guard();
+    const facts = native.providers.map(provider => captureModelProviderReadingFacts(provider, initial));
+    for (const guard of providerGuards) guard();
+    return { ...native, providers: facts };
+  };
+  const data = captureModelReadingInput(metadataSnapshot(original)), serialized = JSON.stringify(data);
+  const assertCurrent = () => {
+    for (const guard of originalArrays) guard();
+    if (modelReadingServicePath(context, ['provider', 'providerRegistry']) !== registry
+      || modelReadingServicePath(context, ['clients', 'providerApi']) !== api) throw new Error('Local model registry owner changed.');
+    registryMethods(); apiMethods();
+    assertModelReadingInputCurrent(metadataSnapshot(original, false), serialized);
+    const fresh = snapshot();
+    if (fresh.providers.length !== providers.length || fresh.models.length !== models.length
+      || fresh.providers.some((provider, index) => provider !== providers[index]) || fresh.models.some((model, index) => model !== models[index])) throw new Error('Local model registration changed.');
+    assertModelReadingInputCurrent(metadataSnapshot(fresh, false), serialized);
+    registryMethods(); apiMethods();
+  };
+  assertCurrent(); return { data, assertCurrent };
+}
+
+async function readLocalRegistry(context: CommandContext, options: ModelReadingOptions): Promise<{
+  readonly detection: LocalModelDetection; readonly endpoints: readonly MutableLocalModelServerEndpoint[];
+}> {
+  const optionsCurrent = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'retainCurrent']);
+  const signal = options.signal, callerCurrent = options.assertCurrent;
+  const assertOptions = () => { optionsCurrent(); signal?.throwIfAborted(); };
+  const assertCaller = () => {
+    assertOptions();
+    assertProjectionCurrent(callerCurrent);
+    assertOptions();
+  };
+  assertCaller();
+  const native = captureLocalModelRegistry(context);
+  const assertCurrent = () => { assertCaller(); native.assertCurrent(); };
+  options.retainCurrent?.(assertOptions, 'agent.local-model.registry-owner');
+  options.retainCurrent?.(native.assertCurrent, 'agent.local-model.registry-source');
+  return withModelReadingSource(native.data, { ...options, assertCurrent }, async (snapshot, scoped) => {
+    const providerIds = new Set<string>(), modelRoutes = new Set<string>(), stacks = new Set<string>();
+    const endpoints = new Map<string, MutableLocalModelServerEndpoint>();
+    for (const providerId of snapshot.providerIds) {
+      const stack = await localStackFor(providerId, scoped, { providerId, providers: snapshot.providers, models: snapshot.models });
+      if (stack) { providerIds.add(providerId); stacks.add(stack); }
+    }
+    for (const provider of snapshot.providers) {
+      const record = readRecord(provider);
+      const providerId = firstString(record, ['name', 'id', 'providerId', 'provider']);
+      const stack = await localStackFor(JSON.stringify(record), scoped, record);
+      if (stack) { if (providerId) providerIds.add(providerId); stacks.add(stack); }
+      const fields = JSON.stringify(record), routes = readProviderModels(record.models, providerId);
+      const urls = [readString(record.baseURL), readString(record.baseUrl), readString(record.endpoint), ...extractUrls(fields)].filter(Boolean);
+      for (const baseUrl of urls) addLocalServerEndpoint(endpoints, { baseUrl, providerId: providerId || null, stack,
+        source: 'provider-registry', sourceDetail: providerId ? `provider:${providerId}` : 'provider-registry',
+        modelRoutes: routes, notes: providerId ? ['Provider already exists in the registry.'] : [] });
+    }
+    for (const model of snapshot.models) {
+      const record = readRecord(model), providerId = modelProviderId(model), registryKey = modelRegistryKey(model);
+      const stack = await localStackFor(JSON.stringify(record), scoped, record);
+      if (stack) { if (providerId) providerIds.add(providerId); if (registryKey) modelRoutes.add(registryKey); stacks.add(stack); }
+      const urls = [readString(record.baseURL), readString(record.baseUrl), readString(record.endpoint), ...extractUrls(readString(record.description))].filter(Boolean);
+      for (const baseUrl of urls) addLocalServerEndpoint(endpoints, { baseUrl, providerId: providerId || null, stack,
+        source: 'model-registry', sourceDetail: registryKey ? `model:${registryKey}` : 'model-registry', modelRoutes: registryKey ? [registryKey] : [],
+        notes: registryKey ? ['At least one model route is already registered for this endpoint.'] : [] });
+    }
+    for (const hint of snapshot.environment) if (hint.value) {
+      addLocalServerEndpoint(endpoints, { baseUrl: hint.value, stack: hint.stack, source: 'environment', sourceDetail: `env:${hint.key}`, notes: [hint.note] });
+    }
+    scoped.assertCurrent?.();
+    return { detection: { providerIds: [...providerIds].sort(), modelRoutes: [...modelRoutes].sort(), stacks: [...stacks].sort() },
+      endpoints: [...endpoints.values()].sort((left, right) => left.baseUrl.localeCompare(right.baseUrl)) };
+  });
+}
+
+export async function readLocalModelDetection(context: CommandContext, options: ModelReadingOptions): Promise<LocalModelDetection> {
+  return (await readLocalRegistry(context, options)).detection;
+}
+export async function readLocalServerEndpointCandidates(context: CommandContext, options: ModelReadingOptions): Promise<readonly MutableLocalModelServerEndpoint[]> {
+  return (await readLocalRegistry(context, options)).endpoints;
 }
 
 export function addLocalServerEndpoint(
@@ -599,7 +759,7 @@ export function addLocalServerEndpoint(
 ): void {
   const normalized = normalizeLocalBaseUrl(input.baseUrl, input.stack);
   if (!normalized) return;
-  const stack = input.stack ?? localStackFor(input.baseUrl) ?? localStackFor(`${input.providerId ?? ''}\n${input.sourceDetail}`) ?? 'openai-compatible';
+  const stack = input.stack ?? null;
   const existing = endpoints.get(normalized);
   if (existing) {
     if (!existing.providerId && input.providerId) existing.providerId = input.providerId;
@@ -637,7 +797,7 @@ export function collectLocalServerEndpointCandidates(context: CommandContext): r
       JSON.stringify(record.serviceNames ?? ''),
       JSON.stringify(record.envVars ?? ''),
     ].join('\n');
-    const stack = localStackFor(fields);
+    const stack = null;
     const routes = readProviderModels(record.models, providerId);
     const urls = [
       readString(record.baseURL),
@@ -649,7 +809,7 @@ export function collectLocalServerEndpointCandidates(context: CommandContext): r
       addLocalServerEndpoint(endpoints, {
         baseUrl,
         providerId: providerId || null,
-        stack: stack ?? localStackFor(baseUrl),
+        stack,
         source: 'provider-registry',
         sourceDetail: providerId ? `provider:${providerId}` : 'provider-registry',
         modelRoutes: routes,
@@ -673,7 +833,7 @@ export function collectLocalServerEndpointCandidates(context: CommandContext): r
       readString(record.serverType),
       JSON.stringify(record.providerEnvVars ?? ''),
     ].join('\n');
-    const stack = localStackFor(fields);
+    const stack = null;
     const urls = [
       readString(record.baseURL),
       readString(record.baseUrl),
@@ -684,7 +844,7 @@ export function collectLocalServerEndpointCandidates(context: CommandContext): r
       addLocalServerEndpoint(endpoints, {
         baseUrl,
         providerId: providerId || null,
-        stack: stack ?? localStackFor(baseUrl),
+        stack,
         source: 'model-registry',
         sourceDetail: registryKey ? `model:${registryKey}` : 'model-registry',
         modelRoutes: registryKey ? [registryKey] : [],
@@ -693,17 +853,7 @@ export function collectLocalServerEndpointCandidates(context: CommandContext): r
     }
   }
 
-  const envHints: readonly { readonly key: string; readonly stack: string; readonly note: string }[] = [
-    { key: 'OLLAMA_BASE_URL', stack: 'ollama', note: 'Environment override for the Ollama base URL.' },
-    { key: 'OLLAMA_HOST', stack: 'ollama', note: 'Environment override for the Ollama host.' },
-    { key: 'LM_STUDIO_BASE_URL', stack: 'openai-compatible', note: 'Environment override for LM Studio.' },
-    { key: 'OPENAI_COMPATIBLE_BASE_URL', stack: 'openai-compatible', note: 'Environment override for a local OpenAI-compatible server.' },
-    { key: 'OPENAI_COMPAT_BASE_URL', stack: 'openai-compatible', note: 'Environment override for a local OpenAI-compatible server.' },
-    { key: 'VLLM_BASE_URL', stack: 'vllm', note: 'Environment override for vLLM.' },
-    { key: 'LLAMA_CPP_BASE_URL', stack: 'llama.cpp', note: 'Environment override for llama.cpp.' },
-    { key: 'LITELLM_BASE_URL', stack: 'openai-compatible', note: 'Environment override for LiteLLM or a local gateway.' },
-  ];
-  for (const hint of envHints) {
+  for (const hint of LOCAL_MODEL_ENV_HINTS) {
     const value = readString(process.env[hint.key]);
     if (!value) continue;
     addLocalServerEndpoint(endpoints, {
@@ -758,10 +908,11 @@ export function describeLocalServerEndpoint(
 export async function localModelServerHealthMap(
   context: CommandContext,
   includeParameters: boolean,
-  options: JudgmentReadingOptions = {},
+  options: ModelReadingOptions = {},
 ): Promise<LocalModelServerHealthMap> {
-  const servingDiagnostics = await localServingDiagnosticsIndex(context, options);
-  const rawEndpoints = collectLocalServerEndpointCandidates(context);
+  const reading = localModelInspectionOptions(context, options);
+  const servingDiagnostics = await localServingDiagnosticsIndex(context, reading);
+  const rawEndpoints = await readLocalServerEndpointCandidates(context, reading);
   const matchedEndpointCount = rawEndpoints
     .filter((endpoint) => Boolean(servingDiagnosticForEndpoint(servingDiagnostics.records, endpoint)))
     .length;

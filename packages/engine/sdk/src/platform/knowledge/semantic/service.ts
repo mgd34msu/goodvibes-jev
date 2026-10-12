@@ -19,7 +19,7 @@ import type {
   KnowledgeSemanticSelfImproveInput,
   KnowledgeSemanticSelfImproveResult,
 } from './types.js';
-import { readRecord, readString, readStringArray, sourceSemanticHash, sourceSemanticText } from './utils.js';
+import { readRecord, readString, readStringArray, sourceSemanticHash } from './utils.js';
 import { uniqueStrings } from './utils.js';
 import { runKnowledgeSemanticSelfImprovement } from './self-improvement.js';
 import {
@@ -177,7 +177,7 @@ export class KnowledgeSemanticService {
       }
       processed += 1;
       try {
-        const llm = this.options.llm && llmAttempts < maxLlmSources && sourceCanUseLlmUpgrade(this.store, source)
+        const llm = this.options.llm && llmAttempts < maxLlmSources && sourceNeedsLlmUpgrade(this.store, source)
           ? this.options.llm
           : null;
         if (llm) llmAttempts += 1;
@@ -672,10 +672,9 @@ function activeSelfImproveResult(input: KnowledgeSemanticSelfImproveInput): Know
 }
 
 
-function sourceCanUseLlmUpgrade(store: KnowledgeStore, source: KnowledgeSourceRecord): boolean {
+function sourceNeedsLlmUpgrade(store: KnowledgeStore, source: KnowledgeSourceRecord): boolean {
   const extraction = store.getExtractionBySourceId(source.id);
-  const text = sourceSemanticText(source, extraction);
-  if (text.length < 40) return false;
+  if (!extraction) return false;
   const existingSemantic = readRecord(store.getSemanticEnrichmentState(source.id)?.metadata);
   return existingSemantic.textHash !== sourceSemanticHash(source, extraction)
     || readString(existingSemantic.extractor) !== 'llm';

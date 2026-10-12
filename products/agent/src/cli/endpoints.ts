@@ -1,7 +1,10 @@
-import type { ConfigKey, ConfigManager } from '../config/index.ts';
-
 export type RuntimeEndpointId = 'controlPlane' | 'httpListener' | 'web';
 export type RuntimeHostMode = 'local' | 'network' | 'custom';
+export type RuntimeEndpointSettingKey = `${RuntimeEndpointId}.${'hostMode' | 'host' | 'port'}`;
+
+export interface RuntimeEndpointConfigReader {
+  get(key: RuntimeEndpointSettingKey): unknown;
+}
 
 export const RUNTIME_ENDPOINT_DEFAULT_PORTS: Record<RuntimeEndpointId, number> = {
   controlPlane: 3421,
@@ -9,11 +12,13 @@ export const RUNTIME_ENDPOINT_DEFAULT_PORTS: Record<RuntimeEndpointId, number> =
   web: 3423,
 };
 
-export const RUNTIME_ENDPOINT_CONFIG_KEYS: Record<RuntimeEndpointId, {
-  readonly hostMode: ConfigKey;
-  readonly host: ConfigKey;
-  readonly port: ConfigKey;
-}> = {
+export const RUNTIME_ENDPOINT_CONFIG_KEYS: {
+  [Endpoint in RuntimeEndpointId]: {
+    readonly hostMode: `${Endpoint}.hostMode`;
+    readonly host: `${Endpoint}.host`;
+    readonly port: `${Endpoint}.port`;
+  };
+} = {
   controlPlane: {
     hostMode: 'controlPlane.hostMode',
     host: 'controlPlane.host',
@@ -46,7 +51,7 @@ export function hostModeForHostname(hostname: string): RuntimeHostMode {
 }
 
 export function resolveRuntimeEndpointBinding(
-  config: Pick<ConfigManager, 'get'>,
+  config: RuntimeEndpointConfigReader,
   endpoint: RuntimeEndpointId,
 ): RuntimeEndpointBinding {
   const keys = RUNTIME_ENDPOINT_CONFIG_KEYS[endpoint];

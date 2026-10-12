@@ -1,3 +1,4 @@
+import { screeningAnswers } from './_helpers/screening-answers.js';
 import { afterEach, expect, test } from 'bun:test';
 import { readFile } from 'node:fs/promises';
 import { createProtectedSourceOwner } from '../sdk/src/platform/security/source-screening/owner.js';
@@ -33,7 +34,7 @@ function fixture(options: {
     }
     if (path !== '/v1/systemone') return new Response('', { status: 404 });
     judgmentCalls++;
-    return options.judge ? options.judge(body, judgmentCalls) : reading(1, 1);
+    return options.judge ? options.judge(body, judgmentCalls) : reading(body, 1, 1);
   } });
   const lifetime = new AbortController();
   const config: ProtectedSourceOwnerOptions = {
@@ -46,8 +47,8 @@ function fixture(options: {
   cleanups.push(async () => { await owner.close(); await server.stop(true); });
   return { owner, calls, config, lifetime };
 }
-function reading(complete: number, precise: number, model = 'jev-1.13.0') {
-  return Response.json({ model, answers: { complete: { type: 'noul', noul: complete }, precise: { type: 'noul', noul: precise } }, usage: { input_tokens: 10, output_tokens: 2 } });
+function reading(body: Record<string, unknown>, complete: number, precise: number, model = 'jev-1.13.0') {
+  return Response.json({ model, answers: screeningAnswers(body, { complete: complete, precise: precise }), usage: { input_tokens: 10, output_tokens: 2 } });
 }
 async function projected(owner: ProtectedSourceOwner, parts: readonly string[]) {
   const result = await owner.screen(owner.capture(parts));
@@ -76,7 +77,7 @@ test('source and configured routes are captured before asynchronous work, and re
 });
 
 test.each([0.5, 0.97, 0])('semantic uncertainty or refusal %s releases no text and is not retried for a lucky answer', async probability => {
-  const f = fixture({ judge: () => reading(probability, 1) }); const handle = f.owner.capture(['Keep this ordinary sentence.']);
+  const f = fixture({ judge: body => reading(body, probability, 1) }); const handle = f.owner.capture(['Keep this ordinary sentence.']);
   expect(await f.owner.screen(handle)).toEqual({ status: 'held', reason: 'unsettled' });
   expect(await f.owner.screen(handle)).toEqual({ status: 'held', reason: 'unsettled' });
   expect(f.calls).toHaveLength(2);
@@ -150,7 +151,7 @@ test('revocation between local proposal and judgment withholds and emits no late
 
 test('canonical transient Jev retry stays pending, then returns one current receipt', async () => {
   let retries = 0;
-  const f = fixture({ onRetry: progress => { retries++; expect(JSON.stringify(progress)).not.toContain('Ordinary text'); }, judge: (_body, count) => count === 1 ? new Response('private service echo', { status: 503 }) : reading(1, 1) });
+  const f = fixture({ onRetry: progress => { retries++; expect(JSON.stringify(progress)).not.toContain('Ordinary text'); }, judge: (body, count) => count === 1 ? new Response('private service echo', { status: 503 }) : reading(body, 1, 1) });
   expect((await projected(f.owner, ['Ordinary text.'])).parts).toEqual(['Ordinary text.']);
   expect(retries).toBe(1); expect(f.calls.map(call => call.path)).toEqual(['/v1/chat/completions', '/v1/systemone', '/v1/systemone']);
 }, 10_000);
@@ -165,7 +166,7 @@ test('cancellation during canonical backoff stops retries and retires genuine re
 }, 10_000);
 
 test('different model response is operational unavailability, never a semantic result', async () => {
-  const f = fixture({ judge: (_body, count) => reading(1, 1, count === 1 ? 'jev-9.0.0' : 'jev-1.13.0') });
+  const f = fixture({ judge: (body, count) => reading(body, 1, 1, count === 1 ? 'jev-9.0.0' : 'jev-1.13.0') });
   const source = f.owner.capture(['Ordinary text.']);
   expect(await f.owner.screen(source)).toEqual({ status: 'held', reason: 'route-unavailable' });
   expect((await f.owner.screen(source)).status).toBe('settled');
@@ -182,7 +183,7 @@ test('synchronous authority failures never expose borrowed exception data', asyn
 });
 
 test('canonical retry owns an asynchronously rejected progress observer', async () => {
-  const f = fixture({ judge: (_body, count) => count === 1 ? new Response('', { status: 503 }) : reading(1, 1),
+  const f = fixture({ judge: (body, count) => count === 1 ? new Response('', { status: 503 }) : reading(body, 1, 1),
     onRetry: async () => { throw new Error('synthetic-observer-private-marker'); } });
   expect((await projected(f.owner, ['Ordinary source.'])).parts).toEqual(['Ordinary source.']); expect(f.calls).toHaveLength(3);
 }, 10_000);
@@ -234,7 +235,7 @@ test('numeric provider identifiers stay local protocol data while identical raw 
 });
 
 test('releasing and recapturing an unchanged uncertain source cannot retry for a lucky answer', async () => {
-  const f = fixture({ judge: (_body, count) => reading(count === 1 ? 0.5 : 1, 1) }), mapper = createProtectedInboxMapper(f.owner);
+  const f = fixture({ judge: (body, count) => reading(body, count === 1 ? 0.5 : 1, 1) }), mapper = createProtectedInboxMapper(f.owner);
   const original = { senderId: 'USENDER', channelId: 'DTEST', subject: 'Direct message', text: 'Ordinary unchanged source.' };
   expect(await mapper(original)).toBeNull(); expect(await mapper({ ...original })).toBeNull(); expect(f.calls).toHaveLength(2);
   expect(await mapper({ ...original, text: 'A genuinely changed source.' })).toMatchObject({ bodyPreview: 'A genuinely changed source.' }); expect(f.calls).toHaveLength(4);
@@ -248,7 +249,7 @@ test('active source retention has an explicit bound and release restores capacit
 
 test('distinct handles cannot concurrently sample the same uncertain revision', async () => {
   const gate = deferred<void>(), started = deferred<void>();
-  const f = fixture({ propose: async source => { started.resolve(); await gate.promise; return { revision: source.revision, spans: [] }; }, judge: (_body, count) => reading(count === 1 ? 0.5 : 1, 1) });
+  const f = fixture({ propose: async source => { started.resolve(); await gate.promise; return { revision: source.revision, spans: [] }; }, judge: (body, count) => reading(body, count === 1 ? 0.5 : 1, 1) });
   const a = f.owner.capture(['Same immutable source.']), b = f.owner.capture(['Same immutable source.']);
   const first = f.owner.screen(a); await started.promise;
   try {
@@ -258,7 +259,7 @@ test('distinct handles cannot concurrently sample the same uncertain revision', 
 });
 
 test('unsettled capacity never evicts an earlier hold or sends overflowing work', async () => {
-  const f = fixture({ judge: () => reading(0.5, 1) });
+  const f = fixture({ judge: body => reading(body, 0.5, 1) });
   for (let index = 0; index < 1_024; index++) {
     const source = f.owner.capture([`Ordinary held source ${index}.`]); const result = await f.owner.screen(source);
     if (result.status !== 'held' || result.reason !== 'unsettled') throw new Error('Expected a synthetic unsettled reading');
@@ -278,11 +279,62 @@ test('malformed proposal releases its reservation without manufacturing a semant
 });
 
 test('new uncertainty retires older positive receipts for the same exact source revision', async () => {
-  const f = fixture({ judge: (_body, count) => reading(count === 1 ? 1 : 0.5, 1) });
+  const f = fixture({ judge: (body, count) => reading(body, count === 1 ? 1 : 0.5, 1) });
   const a = f.owner.capture(['Same immutable original.']); const first = await f.owner.screen(a);
   expect(first.status).toBe('settled'); if (first.status !== 'settled') return;
   expect(f.owner.project(first.receipt)).toEqual(['Same immutable original.']);
   const b = f.owner.capture(['Same immutable original.']); expect(await f.owner.screen(b)).toEqual({ status: 'held', reason: 'unsettled' });
   expect(await f.owner.screen(a)).toEqual({ status: 'held', reason: 'unsettled' }); expect(() => f.owner.project(first.receipt)).toThrow();
   await f.owner.release(b); expect(() => f.owner.project(first.receipt)).toThrow(); expect(f.calls).toHaveLength(4);
+});
+
+
+test('ordinary screening retains per-call fences through actual proposal and verification', async () => {
+  const f = fixture(), lifetime = new AbortController(); let guards = 0;
+  const handle = f.owner.capture(['Ordinary guarded build note.']);
+  try {
+    const result = await f.owner.screen(handle, { signal: lifetime.signal, assertCurrent: () => { guards++; } });
+    expect(result.status).toBe('settled'); expect(guards).toBeGreaterThan(2);
+    if (result.status === 'settled') expect(f.owner.project(result.receipt)).toEqual(['Ordinary guarded build note.']);
+    expect(f.calls.map(call => call.path)).toEqual(['/v1/chat/completions', '/v1/systemone']);
+  } finally { await f.owner.release(handle); }
+});
+
+test.each(['caller', 'source'] as const)('ordinary proposal retirement of %s emits no verification request', async kind => {
+  const started = deferred<void>(), gate = deferred<void>(); let allowed = true;
+  const f = fixture({ propose: async source => { started.resolve(); await gate.promise; return { revision: source.revision, spans: [] }; } });
+  const handle = f.owner.capture(['Ordinary held proposal.']);
+  const pending = f.owner.screen(handle, { assertCurrent: () => { if (!allowed) throw new Error('Caller retired'); } });
+  let releasing: Promise<void> | undefined;
+  try {
+    await started.promise;
+    if (kind === 'caller') allowed = false; else releasing = f.owner.release(handle);
+    gate.resolve();
+    expect(await pending).toEqual({ status: 'held', reason: kind === 'source' ? 'cancelled' : 'stale' });
+    expect(f.calls.map(call => call.path)).toEqual(['/v1/chat/completions']);
+  } finally { gate.resolve(); await Promise.allSettled([pending, releasing, f.owner.release(handle)]); }
+});
+
+test('ordinary caller abort during proposal drains without a verification request', async () => {
+  const started = deferred<void>(), gate = deferred<void>(), lifetime = new AbortController();
+  const f = fixture({ propose: async source => { started.resolve(); await gate.promise; return { revision: source.revision, spans: [] }; } });
+  const handle = f.owner.capture(['Ordinary cancellable proposal.']);
+  const pending = f.owner.screen(handle, { signal: lifetime.signal });
+  try { await started.promise; lifetime.abort(); gate.resolve();
+    expect(await pending).toEqual({ status: 'held', reason: 'cancelled' });
+    expect(f.calls.map(call => call.path)).toEqual(['/v1/chat/completions']);
+  } finally { gate.resolve(); await Promise.allSettled([pending, f.owner.release(handle)]); }
+});
+
+test('ordinary per-call restrictions reject accessors and nonvoid callbacks before routing', async () => {
+  const f = fixture(); let reads = 0;
+  const handle = f.owner.capture(['Ordinary restricted source.']);
+  try {
+    const accessor = Object.defineProperty({}, 'assertCurrent', { get() { reads++; return () => {}; } });
+    expect(await f.owner.screen(handle, accessor)).toEqual({ status: 'held', reason: 'malformed' });
+    expect(reads).toBe(0);
+    expect(await f.owner.screen(handle, { assertCurrent: () => true })).toEqual({ status: 'held', reason: 'stale' });
+    expect(await f.owner.screen(handle, { assertCurrent: () => Promise.reject(new Error('Private refusal')) })).toEqual({ status: 'held', reason: 'stale' });
+    expect(f.calls).toHaveLength(0);
+  } finally { await f.owner.release(handle); }
 });

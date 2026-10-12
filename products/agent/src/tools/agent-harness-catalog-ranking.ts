@@ -59,12 +59,6 @@ export function captureCatalogData<T>(value: T, budget = { nodes: 0, characters:
   return capture(value, 0) as T;
 }
 
-type CatalogSnapshot = { readonly kind: 'value'; readonly value: unknown } | {
-  readonly kind: 'object'; readonly array: boolean; readonly length: number;
-  readonly enumerableKeys: readonly string[];
-  readonly slots: ReadonlyMap<string, { readonly enumerable: boolean; readonly value: CatalogSnapshot }>;
-};
-
 /** Retain the existing complete frozen copy alongside its fresh-data guard. */
 export function captureCatalogSnapshot<T>(source: T): {
   readonly captured: T;
@@ -81,93 +75,156 @@ export function captureCatalogSnapshotGuard(source: unknown): (current: unknown)
 }
 
 function compileCatalogSnapshotGuard(captured: unknown): (current: unknown) => void {
-  const snapshots = new WeakMap<object, CatalogSnapshot>();
-  const snapshot = (value: unknown): CatalogSnapshot => {
-    if (value === null || typeof value !== 'object') return { kind: 'value', value };
-    const existing = snapshots.get(value); if (existing) return existing;
-    const array = Array.isArray(value);
-    const slots = new Map<string, { readonly enumerable: boolean; readonly value: CatalogSnapshot }>();
-    const enumerableKeys: string[] = [];
-    const result: CatalogSnapshot = { kind: 'object', array, length: array ? value.length : 0, enumerableKeys, slots };
-    snapshots.set(value, result);
-    for (const key of ownKeys(value)) {
-      if (typeof key !== 'string') throw new ToolInputProjectionError('invalid');
-      if (array && key === 'length') continue;
-      const descriptor = ownDescriptor(value, key);
-      if (!descriptor || !('value' in descriptor)) throw new ToolInputProjectionError('invalid');
-      if (!array && descriptor.enumerable) enumerableKeys.push(key);
-      slots.set(key, { enumerable: descriptor.enumerable === true, value: snapshot(descriptor.value) });
+  const mint = {};
+  class Snapshot {
+    readonly #source: unknown;
+    readonly #object: boolean;
+    readonly #array: boolean;
+    readonly #length: number;
+    readonly #id: number;
+    readonly #slots: Record<string, { readonly enumerable: boolean; readonly value: Snapshot } | null | undefined> = { __proto__: null };
+    readonly #keys: Record<string, string | null | undefined> = { __proto__: null };
+    readonly #enumerableKeys: Record<string, string | null | undefined> = { __proto__: null };
+    #count = 0;
+    #enumerableCount = 0;
+
+    constructor(token: object, source: unknown, array: boolean, length: number, id: number) {
+      if (token !== mint) throw new ToolInputProjectionError('held');
+      this.#source = source;
+      this.#object = source !== null && typeof source === 'object';
+      this.#array = array;
+      this.#length = length;
+      this.#id = id;
     }
-    return result;
-  };
-  const original = snapshot(captured);
-  return current => {
-    const budget = { nodes: 0, characters: 0, slots: 0 };
-    const ancestors = new Set<object>();
-    const copies = new WeakMap<object, CatalogSnapshot>();
-    const compared = new WeakMap<object, WeakSet<object>>();
-    const changed = (): never => { throw new ToolInputProjectionError('held'); };
-    const equal = (left: CatalogSnapshot, right: CatalogSnapshot): void => {
-      if (left === right) return;
-      if (left.kind === 'value' || right.kind === 'value') {
-        if (left.kind !== 'value' || right.kind !== 'value' || !Object.is(left.value, right.value)) changed();
-        return;
-      }
-      if (left.array !== right.array || left.length !== right.length || left.slots.size !== right.slots.size) changed();
-      if (left.enumerableKeys.length !== right.enumerableKeys.length
-        || left.enumerableKeys.some((key, index) => key !== right.enumerableKeys[index])) changed();
-      const matches = compared.get(left) ?? new WeakSet<object>();
-      if (matches.has(right)) return;
-      matches.add(right); compared.set(left, matches);
-      for (const [key, slot] of left.slots) {
-        const other = right.slots.get(key);
-        if (!other || other.enumerable !== slot.enumerable) return changed();
-        equal(slot.value, other.value);
-      }
-    };
-    const compare = (value: unknown, expected: CatalogSnapshot, depth: number): void => {
-      if (++budget.nodes > 100_000 || depth > 64) changed();
-      if (typeof value === 'string') {
-        budget.characters += value.length;
-        if (budget.characters > 1_000_000) changed();
-      } else if (value !== null && value !== undefined && typeof value !== 'boolean'
-        && (typeof value !== 'number' || !Number.isFinite(value)) && typeof value !== 'object') changed();
-      if (value === null || typeof value !== 'object') {
-        if (typeof value === 'number' && !Number.isFinite(value)) changed();
-        if (expected.kind !== 'value' || !Object.is(value, expected.value)) changed();
-        return;
-      }
-      if (isProxy(value) || ancestors.has(value) || expected.kind !== 'object') return changed();
-      const existing = copies.get(value);
-      if (existing) { equal(existing, expected); return; }
-      const array = Array.isArray(value), prototype: unknown = prototypeOf(value);
-      if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) changed();
-      const descriptors = ownDescriptors(value), keys = ownKeys(descriptors);
-      if (keys.some(key => typeof key !== 'string') || Object.hasOwn(descriptors, 'toJSON')
-        || array && Object.hasOwn(descriptors, 'constructor')
-        || Object.values(descriptors).some(descriptor => !('value' in descriptor) || typeof descriptor.value === 'function')) changed();
-      const length: unknown = array ? descriptors.length?.value : 0;
-      if (typeof length !== 'number' || !Number.isInteger(length) || length < 0 || length > 20_000) return changed();
-      if (array && (budget.slots += length) > 100_000) changed();
-      if (array !== expected.array || length !== expected.length || keys.length !== expected.slots.size + (array ? 1 : 0)) changed();
-      ancestors.add(value);
-      try {
-        let enumerableIndex = 0;
-        for (const key of keys) {
-          if (typeof key !== 'string') return changed();
-          if (array && key === 'length') continue;
-          budget.characters += key.length;
-          if (budget.characters > 1_000_000) changed();
-          const descriptor = descriptors[key], slot = expected.slots.get(key);
-          if (!descriptor || !slot || descriptor.enumerable !== slot.enumerable) return changed();
-          if (!array && descriptor.enumerable && key !== expected.enumerableKeys[enumerableIndex++]) changed();
-          compare(descriptor.value, slot.value, depth + 1);
+
+    static compile(value: unknown): (current: unknown) => void {
+      const snapshots = new WeakMap<object, number>();
+      const nodes: Record<string, Snapshot | null | undefined> = { __proto__: null };
+      let nextId = 0;
+      const snapshot = (entry: unknown): Snapshot => {
+        if (entry === null || typeof entry !== 'object') return new Snapshot(mint, entry, false, 0, nextId++);
+        const index = snapshots.get(entry);
+        if (index !== undefined) {
+          if (typeof index !== 'number') throw new ToolInputProjectionError('held');
+          const existing = nodes[index];
+          if (!existing || existing.#source !== entry) throw new ToolInputProjectionError('held');
+          return existing;
         }
-        copies.set(value, expected);
-      } finally { ancestors.delete(value); }
-    };
-    compare(current, original, 0);
-  };
+        const array = Array.isArray(entry);
+        const result = new Snapshot(mint, entry, array, array ? entry.length : 0, nextId++);
+        nodes[result.#id] = result;
+        snapshots.set(entry, result.#id);
+        for (const key of ownKeys(entry)) {
+          if (typeof key !== 'string') throw new ToolInputProjectionError('invalid');
+          if (array && key === 'length') continue;
+          const descriptor = ownDescriptor(entry, key);
+          if (!descriptor || !('value' in descriptor)) throw new ToolInputProjectionError('invalid');
+          if (!array && descriptor.enumerable) result.#enumerableKeys[result.#enumerableCount++] = key;
+          result.#keys[result.#count++] = key;
+          result.#slots[key] = { enumerable: descriptor.enumerable === true, value: snapshot(descriptor.value) };
+        }
+        return result;
+      };
+      const original = snapshot(value);
+      return current => {
+        const budget = { nodes: 0, characters: 0, slots: 0 };
+        const ancestors = new Set<object>();
+        class Observation {
+          readonly #current: object;
+          readonly #snapshot: Snapshot;
+          constructor(token: object, source: object, expected: Snapshot) {
+            if (token !== mint) throw new ToolInputProjectionError('held');
+            this.#current = source;
+            this.#snapshot = expected;
+          }
+          static snapshot(entry: Observation, source: object): Snapshot {
+            if (entry === null || typeof entry !== 'object' || !(#current in entry) || entry.#current !== source) throw new ToolInputProjectionError('held');
+            return entry.#snapshot;
+          }
+        }
+        const readObservation = Observation.snapshot;
+        const copies = new WeakMap<object, number>();
+        const observations: Record<string, Observation | null | undefined> = { __proto__: null };
+        let nextObservation = 0;
+        const compared: Record<string, Record<string, true | null | undefined> | null | undefined> = { __proto__: null };
+        const changed = (): never => { throw new ToolInputProjectionError('held'); };
+        const equal = (left: Snapshot, right: Snapshot): void => {
+          if (left === right) return;
+          if (!left.#object || !right.#object) {
+            if (left.#object !== right.#object || !Object.is(left.#source, right.#source)) changed();
+            return;
+          }
+          if (left.#array !== right.#array || left.#length !== right.#length || left.#count !== right.#count) changed();
+          if (left.#enumerableCount !== right.#enumerableCount) changed();
+          for (let index = 0; index < left.#enumerableCount; index++) {
+            if (left.#enumerableKeys[index] !== right.#enumerableKeys[index]) changed();
+          }
+          const leftKey = left.#id, rightKey = right.#id;
+          let matches = compared[leftKey];
+          if (matches?.[rightKey]) return;
+          if (!matches) { matches = { __proto__: null }; compared[leftKey] = matches; }
+          matches[rightKey] = true;
+          for (let index = 0; index < left.#count; index++) {
+            const key = left.#keys[index];
+            if (typeof key !== 'string') return changed();
+            const slot = left.#slots[key], other = right.#slots[key];
+            if (!slot || !other || other.enumerable !== slot.enumerable) return changed();
+            equal(slot.value, other.value);
+          }
+        };
+        const compare = (entry: unknown, expected: Snapshot, depth: number): void => {
+          if (++budget.nodes > 100_000 || depth > 64) changed();
+          if (typeof entry === 'string') {
+            budget.characters += entry.length;
+            if (budget.characters > 1_000_000) changed();
+          } else if (entry !== null && entry !== undefined && typeof entry !== 'boolean'
+            && (typeof entry !== 'number' || !Number.isFinite(entry)) && typeof entry !== 'object') changed();
+          if (entry === null || typeof entry !== 'object') {
+            if (typeof entry === 'number' && !Number.isFinite(entry)) changed();
+            if (expected.#object || !Object.is(entry, expected.#source)) changed();
+            return;
+          }
+          if (isProxy(entry) || ancestors.has(entry) || !expected.#object) return changed();
+          const existing = copies.get(entry);
+          if (existing !== undefined) {
+            if (typeof existing !== 'number') return changed();
+            const observation = observations[existing];
+            if (!observation) return changed();
+            equal(readObservation(observation, entry), expected); return;
+          }
+          const array = Array.isArray(entry), prototype: unknown = prototypeOf(entry);
+          if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) changed();
+          const descriptors = ownDescriptors(entry), keys = ownKeys(descriptors);
+          if (keys.some(key => typeof key !== 'string') || Object.hasOwn(descriptors, 'toJSON')
+            || array && Object.hasOwn(descriptors, 'constructor')
+            || Object.values(descriptors).some(descriptor => !('value' in descriptor) || typeof descriptor.value === 'function')) changed();
+          const length: unknown = array ? descriptors.length?.value : 0;
+          if (typeof length !== 'number' || !Number.isInteger(length) || length < 0 || length > 20_000) return changed();
+          if (array && (budget.slots += length) > 100_000) changed();
+          if (array !== expected.#array || length !== expected.#length || keys.length !== expected.#count + (array ? 1 : 0)) changed();
+          ancestors.add(entry);
+          try {
+            let enumerableIndex = 0;
+            for (const key of keys) {
+              if (typeof key !== 'string') return changed();
+              if (array && key === 'length') continue;
+              budget.characters += key.length;
+              if (budget.characters > 1_000_000) changed();
+              const descriptor = descriptors[key], slot = expected.#slots[key];
+              if (!descriptor || !slot || descriptor.enumerable !== slot.enumerable) return changed();
+              if (!array && descriptor.enumerable && key !== expected.#enumerableKeys[enumerableIndex++]) changed();
+              compare(descriptor.value, slot.value, depth + 1);
+            }
+            const index = nextObservation++;
+            observations[index] = new Observation(mint, entry, expected);
+            copies.set(entry, index);
+          } finally { ancestors.delete(entry); }
+        };
+        compare(current, original, 0);
+      };
+    }
+  }
+  return Snapshot.compile(captured);
 }
 
 /** Compare descriptors before touching a previously acquired backend again.
@@ -319,8 +376,12 @@ export async function rankHarnessCatalog<T>(
   site: string,
   options: CatalogRankingOptions = {},
   decisionName = 'engine.tools.registry-rank',
+  contextEvidence?: unknown,
 ): Promise<{ readonly matches: readonly { readonly entry: T; readonly judgment: Ranked }[]; readonly judgments: readonly Ranked[] }> {
+  const contextSource = contextEvidence === undefined ? undefined : captureCatalogSnapshot(contextEvidence);
+  const assertContext = () => { contextSource?.assertCurrent(contextEvidence); };
   options.signal?.throwIfAborted(); options.assertCurrent?.();
+  assertContext();
   const descriptors = catalogEntryDescriptors(entries), found = preparedCatalogs.get(entries);
   const prepared = found?.describe === describe ? found : undefined;
   const capturedEntries = prepared ? entries : captureCatalogEntries(entries, descriptors);
@@ -329,6 +390,7 @@ export async function rankHarnessCatalog<T>(
   const source = {
     query: snapshotJudgmentInput(query) as string,
     catalog: prepared ? catalog : catalog.map(captureCatalogDescription),
+    ...(contextSource ? { context: contextSource.captured } : {}),
   };
   if (entries.length === 0) return { matches: [], judgments: [] };
   if (new Set(source.catalog.map(({ id }) => id)).size !== capturedEntries.length) throw new ToolInputProjectionError('held');
@@ -343,7 +405,8 @@ export async function rankHarnessCatalog<T>(
   const parts = [source.query, ...(prepared?.parts ?? catalogParts(source.catalog))];
   // Retain the original canonical whole-reading text budget across batches.
   if (parts.reduce((total, part) => total + part.length, 0) > 1_000_000) throw new ToolInputProjectionError('held');
-  if (parts.some(part => part.length > SOURCE_SCREENING_LIMITS.characters)) {
+  if (contextSource || parts.some(part => part.length > SOURCE_SCREENING_LIMITS.characters)) {
+    // Shared native context is screened once with the complete catalog.
     // Large schemas are complete structured values. Preserve every key/value
     // through the existing source framing instead of clipping a candidate or
     // splitting a semantic string. Original-returning readers require exact
@@ -351,10 +414,14 @@ export async function rankHarnessCatalog<T>(
     if (options.requirePreservedSource !== true) throw new ToolInputProjectionError('held');
     const assertOptions = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'retainCurrent', 'requirePreservedSource']);
     const originalAssert = options.assertCurrent;
-    return withModelReadingSource(source, { ...options, assertCurrent() { assertOptions(); originalAssert?.(); } }, async (captured, reading) => {
+    if (contextSource) { options.retainCurrent?.(assertContext, `${site}:context`); assertContext(); }
+    return withModelReadingSource(source, { ...options, assertCurrent() { assertOptions(); assertContext(); originalAssert?.(); assertContext(); } }, async (captured, reading) => {
       let assertBackend: (() => void) | undefined;
       const assertCurrent = () => { reading.assertCurrent?.(); assertBackend?.(); };
-      return consumeProtectedCatalog(capturedEntries, prepared?.ids ?? captured.catalog.map(({ id }) => id), captured.query,
+      const contextJson = contextSource ? JSON.stringify(captured.context) : undefined;
+      if (contextSource && typeof contextJson !== 'string') throw new ToolInputProjectionError('held');
+      const readingQuery = contextJson === undefined ? captured.query : { query: captured.query, contextJson };
+      return consumeProtectedCatalog(capturedEntries, prepared?.ids ?? captured.catalog.map(({ id }) => id), readingQuery,
         prepared?.candidates ?? captured.catalog.map(({ id, description, evidence }) => ({ name: id, description, evidenceJson: JSON.stringify(evidence ?? null) })),
         site, decisionName, { signal: reading.signal, assertCurrent, retainCurrent: reading.retainCurrent,
           retainBackend(guard) { assertBackend = guard; },
@@ -413,7 +480,7 @@ export async function rankHarnessCatalog<T>(
     const projected: string[] = [];
     for (const handle of handles) {
       assertCurrent();
-      const result = await ownerMethods.screen.call(owner, handle);
+      const result = await ownerMethods.screen.call(owner, handle, { signal, assertCurrent });
       assertCurrent();
       const fields = screeningResultFields(result);
       const receipt: unknown = fields && Object.hasOwn(fields, 'receipt') ? fields.receipt?.value : undefined;
@@ -441,7 +508,7 @@ export async function rankHarnessCatalog<T>(
 }
 
 /** The canonical reader consumes only a completely protected catalog. */
-async function consumeProtectedCatalog<T>(entries: readonly T[], ids: readonly string[], query: string,
+async function consumeProtectedCatalog<T>(entries: readonly T[], ids: readonly string[], query: Parameters<Rerank['rerank']>[1],
   projectedCatalog: readonly CatalogCandidate[],
   site: string, decisionName: string, options: {
     readonly signal?: AbortSignal | undefined;

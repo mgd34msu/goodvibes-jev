@@ -1,3 +1,7 @@
+import { withResearchCatalog, rankResearchRecords } from './agent-harness-research-catalog-source.ts';
+import { selectHarnessCatalog } from './agent-harness-catalog-selection.ts';
+import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureAsyncHarnessInput } from './agent-harness-async-input.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import {
   AgentResearchSourceRegistry,
@@ -91,27 +95,7 @@ function buildQueueItem(source: AgentResearchSourceRecord): ResearchQueueItem {
   };
 }
 
-function sourceSearchText(item: ResearchQueueItem): string {
-  const source = item.source;
-  return [
-    source.id,
-    source.question,
-    source.title,
-    source.url ?? '',
-    source.publisher ?? '',
-    source.summary,
-    source.evidence ?? '',
-    source.credibility,
-    source.status,
-    source.note ?? '',
-    source.tags.join('\n'),
-    item.inspectRoute,
-    item.bundleRoute ?? '',
-    item.reviewRoute ?? '',
-    item.reportRoute ?? '',
-    item.ingestRoute ?? '',
-  ].join('\n').toLowerCase();
-}
+
 
 function queueItems(context: CommandContext): readonly ResearchQueueItem[] {
   const shellPaths = context.workspace?.shellPaths;
@@ -166,85 +150,81 @@ function nextActions(items: readonly ResearchQueueItem[]): readonly string[] {
     .map((item) => `${item.source.title}: ${item.next}`);
 }
 
-export function researchQueueCatalogStatus(context: CommandContext): Record<string, unknown> {
-  const items = queueItems(context);
-  return {
-    modes: ['research_queue', 'research_source'],
-    sources: items.length,
-    candidates: items.filter((item) => item.source.status === 'candidate').length,
-    reviewed: items.filter((item) => item.source.status === 'reviewed').length,
-    rejected: items.filter((item) => item.source.status === 'rejected').length,
-    used: items.filter((item) => item.source.status === 'used').length,
-    readOnly: true,
-  };
-}
-
-export function researchQueueSummary(context: CommandContext, args: AgentHarnessResearchQueueArgs): Record<string, unknown> {
-  const includeParameters = args.includeParameters === true;
-  const query = readString(args.query).toLowerCase();
-  const limit = readLimit(args.limit, 100);
-  const items = queueItems(context);
-  const filtered = items.filter((item) => !query || sourceSearchText(item).includes(query));
-  const bundleItems = filtered.filter((item) => item.source.status === 'reviewed' || item.source.status === 'used');
-  return {
-    summary: {
+export async function researchQueueCatalogStatus(context: CommandContext, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  return withResearchCatalog(context, {}, options, () => null, async () => {
+    const items = queueItems(context);
+    return {
+      modes: ['research_queue', 'research_source'],
       sources: items.length,
       candidates: items.filter((item) => item.source.status === 'candidate').length,
       reviewed: items.filter((item) => item.source.status === 'reviewed').length,
       rejected: items.filter((item) => item.source.status === 'rejected').length,
       used: items.filter((item) => item.source.status === 'used').length,
-    },
-    sources: filtered.slice(0, limit).map((item) => describeSourceItem(item, includeParameters)),
-    bundle: {
-      sources: bundleItems.length,
-      route: query
-        ? `research action:"bundle" query:${routeString(query)} limit:${Math.min(limit, 20)}`
-        : `research action:"bundle" limit:${Math.min(limit, 20)}`,
-      reportRoute: 'research action:"report" requireCitationCoverage:true confirm:true explicitUserRequest:"..."',
-      next: 'Use bundle route to assemble reviewed/used sources into citation-ready report input before saving a report artifact.',
-    },
-    returned: Math.min(filtered.length, limit),
-    total: items.length,
-    nextActions: nextActions(items),
-    policy: 'Research queue is read-only in the harness. Source capture/review writes use confirmed research source actions; report artifacts and Knowledge ingest remain explicit separate steps.',
-  };
+      readOnly: true,
+    };
+  });
 }
 
-export function describeResearchSource(context: CommandContext, args: AgentHarnessResearchQueueArgs): ResearchSourceResolution {
-  const sourceId = readString(args.sourceId);
-  const target = readString(args.target);
-  const query = readString(args.query);
-  const input = sourceId || target || query;
-  if (!input) {
+export async function researchQueueSummary(context: CommandContext, rawArgs: AgentHarnessResearchQueueArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  return withResearchCatalog(context, rawArgs, options, () => null, async (rawArgs, _data, options) => {
+    const caller = captureAsyncHarnessInput(rawArgs, options), args = caller.args;
+    const includeParameters = args.includeParameters === true;
+    const query = readString(args.query);
+    const limit = readLimit(args.limit, 100);
+    const items = queueItems(context);
+    const filtered = await rankResearchRecords(items, query, item => ({ id: item.source.id, description: item.source.title, evidence: item }), options, 'agent.research.queue');
+    const bundleItems = filtered.filter((item) => item.source.status === 'reviewed' || item.source.status === 'used');
+    return {
+      summary: {
+        sources: items.length,
+        candidates: items.filter((item) => item.source.status === 'candidate').length,
+        reviewed: items.filter((item) => item.source.status === 'reviewed').length,
+        rejected: items.filter((item) => item.source.status === 'rejected').length,
+        used: items.filter((item) => item.source.status === 'used').length,
+      },
+      sources: filtered.slice(0, limit).map((item) => describeSourceItem(item, includeParameters)),
+      bundle: {
+        sources: bundleItems.length,
+        route: query
+          ? `research action:"bundle" query:${routeString(query)} limit:${Math.min(limit, 20)}`
+          : `research action:"bundle" limit:${Math.min(limit, 20)}`,
+        reportRoute: 'research action:"report" requireCitationCoverage:true confirm:true explicitUserRequest:"..."',
+        next: 'Use bundle route to assemble reviewed/used sources into citation-ready report input before saving a report artifact.',
+      },
+      returned: Math.min(filtered.length, limit),
+      total: items.length,
+      nextActions: nextActions(items),
+      policy: 'Research queue is read-only in the harness. Source capture/review writes use confirmed research source actions; report artifacts and Knowledge ingest remain explicit separate steps.',
+    };
+
+  });
+}
+
+export async function describeResearchSource(context: CommandContext, rawArgs: AgentHarnessResearchQueueArgs, options: CatalogRankingOptions = {}): Promise<ResearchSourceResolution> {
+  return withResearchCatalog(context, rawArgs, options, () => null, async (rawArgs, _data, options) => {
+    const caller = captureAsyncHarnessInput(rawArgs, options), args = caller.args;
+    const sourceId = readString(args.sourceId);
+    const target = readString(args.target);
+    const query = readString(args.query);
+    const input = sourceId || target || query;
+    if (!input) {
+      return {
+        status: 'missing_lookup',
+        usage: 'research_source requires sourceId, target, or query. Use research action:"sources" to inspect source ids.',
+      };
+    }
+    const normalized = input.toLowerCase();
+    const items = queueItems(context);
+    const exact = items.find((item) => item.source.id === input);
+    if (exact) return { status: 'found', source: describeSourceItem(exact, true, { source: sourceId ? 'sourceId' : target ? 'target' : 'query', input, resolvedBy: 'id' }) };
+    const insensitive = items.find((item) => item.source.id.toLowerCase() === normalized);
+    if (insensitive) return { status: 'found', source: describeSourceItem(insensitive, true, { source: sourceId ? 'sourceId' : target ? 'target' : 'query', input, resolvedBy: 'case-insensitive-id' }) };
+    const selected = await selectHarnessCatalog(items, input, item => ({ id: item.source.id, description: item.source.title, evidence: item }), options, 'agent.research.source');
+    if (selected) return { status: 'found', source: describeSourceItem(selected, true, { source: sourceId ? 'sourceId' : target ? 'target' : 'query', input, resolvedBy: 'search' }) };
     return {
       status: 'missing_lookup',
-      usage: 'research_source requires sourceId, target, or query. Use research action:"sources" to inspect source ids.',
+      usage: `Unknown research source ${input}. Use research action:"sources" to inspect source ids.`,
     };
-  }
-  const normalized = input.toLowerCase();
-  const items = queueItems(context);
-  const exact = items.find((item) => item.source.id === input);
-  if (exact) return { status: 'found', source: describeSourceItem(exact, true, { source: sourceId ? 'sourceId' : target ? 'target' : 'query', input, resolvedBy: 'id' }) };
-  const insensitive = items.find((item) => item.source.id.toLowerCase() === normalized);
-  if (insensitive) return { status: 'found', source: describeSourceItem(insensitive, true, { source: sourceId ? 'sourceId' : target ? 'target' : 'query', input, resolvedBy: 'case-insensitive-id' }) };
-  const matches = items.filter((item) => sourceSearchText(item).includes(normalized));
-  if (matches.length === 1) return { status: 'found', source: describeSourceItem(matches[0]!, true, { source: sourceId ? 'sourceId' : target ? 'target' : 'query', input, resolvedBy: 'search' }) };
-  if (matches.length > 1) {
-    return {
-      status: 'ambiguous',
-      input,
-      candidates: matches.slice(0, 8).map((item) => ({
-        sourceId: item.source.id,
-        title: item.source.title,
-        status: item.source.status,
-        credibility: item.source.credibility,
-        score: item.source.score,
-        modelRoute: item.modelRoute,
-      })),
-    };
-  }
-  return {
-    status: 'missing_lookup',
-    usage: `Unknown research source ${input}. Use research action:"sources" to inspect source ids.`,
-  };
+
+  });
 }

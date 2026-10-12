@@ -1,3 +1,4 @@
+import { extractionValueFixtureFor, extractionValueFixtureReading, type ExtractionValueFixtures } from './_helpers/knowledge-extraction-value-readings.js';
 import { repairSubjectFixtureReading } from './_helpers/repair-subject-fixture-readings.js';
 import { upsertObservedKnowledgeNode } from '../sdk/src/platform/knowledge/store-node-observation.js';
 import { reviewKnowledgeNodeRecord } from '../sdk/src/platform/knowledge/service-node-admin.js';
@@ -5,7 +6,7 @@ import { KnowledgeNodeActivationHeldError } from '../sdk/src/platform/knowledge/
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
-import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, scoreAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { enrichKnowledgeSource } from '../sdk/src/platform/knowledge/semantic/enrichment.js';
 import { prepareSourceLinkedRepairProfileFacts, promoteRepairSources, type SourceLinkedRepairProfileFactInput } from '../sdk/src/platform/knowledge/semantic/self-improvement-promotion.js';
 import { judgmentInputProblem, JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.js';
@@ -21,10 +22,15 @@ import { repairUsefulFixtureReading } from './_helpers/repair-profile-fixture-re
 
 const spaceId = 'primary-plan-space';
 let previous: JudgmentPort | undefined;
-beforeEach(() => { previous = installJudgmentPort(undefined); });
+const extractionValues: Array<ExtractionValueFixtures[number]> = [];
+beforeEach(() => { extractionValues.length = 0; previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); });
 function readings(value: (purpose: string, title: string) => number = () => 0.97) {
   const fake = fakePort((name, question, state) => {
+    const extractionValue = extractionValueFixtureReading(name, question, state, extractionValues);
+    if (extractionValue !== undefined) return noulAnswer(extractionValue);
+    if (name === 'factTrust' || name === 'sourceSupport' || name === 'subjectSupport') return scoreAnswer(question, 4, 0.99); // Authored supported synthetic facts; grading behavior has separate controls.
+
     if (name === 'repairSubjectSelected') return noulAnswer(repairSubjectFixtureReading(state, [['Synthetic TV-123', 0.99], ['Old TV-987', 0.99]]));
     if (name === 'wanted' || name === 'selected' || name === 'profileSupported') return noulAnswer(0.01); // Profile selection is unrelated to these authored primary-source claims.
     if (name === 'repairUseful') return noulAnswer(repairUsefulFixtureReading(state, [], [
@@ -62,6 +68,7 @@ async function addSource(store: KnowledgeStore, id: string, subjectId: string, s
     'Capped claim 0 through Capped claim 160 are synthetic note labels; each claim is supported by the synthetic reference, and each corresponding Capped claim evidence refers to that same statement.',
   ].join(' ');
   await store.upsertExtraction({ sourceId: source.id, extractorId: 'synthetic', format: 'text', excerpt: text, metadata: { knowledgeSpaceId: scope } });
+  extractionValues.push(extractionValueFixtureFor(source, store.getExtractionBySourceId(source.id), 0.99));
   return source;
 }
 function claim(title: string): KnowledgeSemanticFactInput { return { kind: 'note', title, summary: `${title} claim supported by the synthetic reference.`, evidence: `${title} evidence`, confidence: 90 }; }
@@ -149,8 +156,8 @@ describe('primary source persistence preplanning', () => {
     expect(requests).toContain('Exact display claim'); expect(requests).toContain(subject.title);
     const before = graph(store); const writes = readings();
     await expect(enrich(store, source, [fact])).rejects.toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError);
-    expect(writes.requests).toHaveLength(2);
-    expect(writes.requests.every(request => Object.keys(request.questions).length === 1 && 'repairSubjectSelected' in request.questions)).toBe(true);
+    expect(writes.requests).toHaveLength(3);
+    expect(writes.requests.map(request => Object.keys(request.questions))).toEqual([['repairSubjectSelected'], ['extractionValue'], ['repairSubjectSelected']]);
     expect(JSON.stringify(writes.requests)).not.toContain('FOREIGN_PRIVATE_SOURCE_MARKER');
     expect(graph(store)).toBe(before);
   });
@@ -321,8 +328,8 @@ describe('primary source persistence preplanning', () => {
     await seedFact(store, subject, first, [a]); await seedFact(store, subject, later, [a]);
     const before = graph(store); const fake = readings();
     await expect(enrich(store, source, [first, later])).rejects.toBeInstanceOf(JudgmentInputError);
-    expect(fake.requests).toHaveLength(1);
-    expect(Object.keys(fake.requests[0]!.questions)).toEqual(['repairSubjectSelected']);
+    expect(fake.requests).toHaveLength(2);
+    expect(fake.requests.map(request => Object.keys(request.questions))).toEqual([['repairSubjectSelected'], ['extractionValue']]);
     expect(JSON.stringify(fake.requests)).not.toContain('synthetic-private-value');
     expect(graph(store)).toBe(before);
   });

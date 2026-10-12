@@ -1,5 +1,5 @@
 import type { AgentResearchReportSource as ResearchSource } from '../agent/research-report-input.ts';
-import { prepareProtectedResearchReport, createAgentResearchReportProjector, bindAgentResearchSourceOwner, type PreparedResearchReport } from '../agent/protected-research-report.ts';
+import { prepareProtectedResearchReport, createAgentResearchReportProjector, bindAgentResearchSourceOwner, bindAgentResearchReportSourceOwner, type PreparedResearchReport } from '../agent/protected-research-report.ts';
 import type { ProtectedSourceOwner } from '@goodvibes-jev/engine/sdk/platform/security';
 import type { ArtifactDescriptor, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
@@ -549,7 +549,13 @@ export function registerAgentResearchReportTool(
   registry: ToolRegistry,
   artifactStore?: AgentResearchReportArtifactStore,
   sourceOwner?: ProtectedSourceOwner,
+  ownerScope: 'shared' | 'report-only' = 'shared',
+  sharedSourceOwner?: ProtectedSourceOwner,
 ): void {
-  if (sourceOwner) bindAgentResearchSourceOwner(registry, sourceOwner);
+  if (sharedSourceOwner) bindAgentResearchSourceOwner(registry, sharedSourceOwner);
+  if (sourceOwner) {
+    if (ownerScope === 'report-only') bindAgentResearchReportSourceOwner(registry, sourceOwner);
+    else bindAgentResearchSourceOwner(registry, sourceOwner);
+  }
   registry.register(createAgentResearchReportTool(artifactStore, sourceOwner), { inputProjection: createAgentResearchReportProjector(sourceOwner) });
 }

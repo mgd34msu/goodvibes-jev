@@ -1,7 +1,8 @@
+import { selfImprovementFixtureReading, gapAssessmentFixture } from './_helpers/knowledge-self-improvement-readings.js';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { GoodVibesSdkError, installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { JudgmentError, type JudgmentPort } from '@goodvibes-jev/judgment';
-import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { AppError } from '../sdk/src/platform/types/errors.js';
 import { KnowledgeRepairProfileHeldError } from '../sdk/src/platform/knowledge/semantic/repair-profile/types.js';
 import { captureRepairFailureReader } from '../sdk/src/platform/knowledge/semantic/self-improvement-failure.js';
@@ -18,7 +19,10 @@ function reader(options: { deadlineAt?: number; signal?: AbortSignal; shouldStop
   return captureRepairFailureReader({ deadlineAt: Date.now() + 1_000, shouldStop: () => false, ...options });
 }
 function fixture(cause: string, confidence = 0.99) {
-  const fake = fakePort((_name, question) => choiceAnswer(question, cause, confidence));
+  const fake = fakePort((_name, question, state) => {
+    const assessment = selfImprovementFixtureReading(_name, question, state, [gapAssessmentFixture({ title: 'Synthetic device features' }, [], 0.99, 0.99)]);
+    return assessment === undefined ? choiceAnswer(question, cause, confidence) : noulAnswer(assessment);
+  });
   install(fake.port); return fake;
 }
 
@@ -177,11 +181,14 @@ describe('actual semantic service failure path', () => {
     expect(Date.now() - started).toBeLessThan(7_000);
     const task = store.getRefinementTask(result.taskIds[0]!)!;
     expect(task.state).toBe('blocked'); expect(task.trace.at(-1)?.data?.failureCause).toMatchObject({ cause: 'run_budget', basis: 'owned-timer' });
-    expect(fake.requests).toHaveLength(0);
+    expect(fake.requests.filter(request => 'cause' in request.questions)).toHaveLength(0);
   }, 10_000);
 
   test('request timeout retains truthful provenance and decision receipt', async () => {
-    const fake = fakePort((_name, question) => choiceAnswer(question, 'request_timeout', 0.99));
+    const fake = fakePort((_name, question, state) => {
+      const assessment = selfImprovementFixtureReading(_name, question, state, [gapAssessmentFixture({ title: 'Synthetic device features' }, [], 0.99, 0.99)]);
+    return assessment === undefined ? choiceAnswer(question, 'request_timeout', 0.99) : noulAnswer(assessment);
+  });
     install({ ...fake.port, async ask(request) { return { ...await fake.port.ask(request), decisionId: 'synthetic-decision-1' }; } });
     const { store, service, gap, spaceId } = await serviceFixture(new Error('The remote call never completed in time'));
     const result = await service.selfImprove({ knowledgeSpaceId: spaceId, gapIds: [gap.id], force: true });
@@ -192,17 +199,21 @@ describe('actual semantic service failure path', () => {
   test('unconfigured classification records execution failure, never budget deferral', async () => {
     install();
     const { store, service, gap, spaceId } = await serviceFixture(new Error('budget exceeded'));
-    const result = await service.selfImprove({ knowledgeSpaceId: spaceId, gapIds: [gap.id], force: true });
-    const task = store.getRefinementTask(result.taskIds[0]!)!;
-    expect(task.state).toBe('failed'); expect(task.trace.at(-1)?.data?.failureCause).toMatchObject({ cause: 'unknown', basis: 'unconfigured' });
-    expect(result.nextRepairAttemptAt).toBeUndefined();
+    const before = JSON.stringify(store.getNode(gap.id));
+    await expect(service.selfImprove({ knowledgeSpaceId: spaceId, gapIds: [gap.id], force: true })).rejects.toMatchObject({ reason: 'unconfigured' });
+    expect(store.listRefinementTasks()).toEqual([]);
+    expect(JSON.stringify(store.getNode(gap.id))).toBe(before);
   });
   test.each(['cancel', 'delete', 'close', 'model-change', 'task-replaced'])('late positive reading cannot overwrite %s', async (action) => {
     const { store, service, gap, spaceId } = await serviceFixture(new Error('budget exceeded'));
     const controller = new AbortController();
-    const fake = fakePort((_name, question) => choiceAnswer(question, 'run_budget', 0.99));
+    const fake = fakePort((_name, question, state) => {
+      const assessment = selfImprovementFixtureReading(_name, question, state, [gapAssessmentFixture({ title: 'Synthetic device features' }, [], 0.99, 0.99)]);
+      return assessment === undefined ? choiceAnswer(question, 'run_budget', 0.99) : noulAnswer(assessment);
+    });
     let model = 'synthetic-first';
     install({ ...fake.port, get model() { return model; }, async ask(request) {
+      if ('gapApplicable' in request.questions) return fake.port.ask(request);
       if (action === 'cancel') controller.abort();
       if (action === 'delete') await store.deleteNode(gap.id);
       if (action === 'close') {
@@ -251,10 +262,19 @@ describe('actual semantic service failure path', () => {
 describe('failure disposition commit boundaries', () => {
   const snapshot = (value: unknown): string => JSON.stringify(value ?? null);
   test.each(['unchanged-none', 'unchanged-port', 'install', 'replace', 'model'])('structural write composition control: %s', async (change) => {
-    const fake = fakePort((_name, question) => choiceAnswer(question, 'other', 0.99));
+    const fake = fakePort((_name, question, state) => {
+      const assessment = selfImprovementFixtureReading(_name, question, state, [gapAssessmentFixture({ title: 'Synthetic device features' }, [], 0.99, 0.99)]);
+    return assessment === undefined ? choiceAnswer(question, 'other', 0.99) : noulAnswer(assessment);
+  });
     let model = 'synthetic-first';
     install(change === 'unchanged-none' || change === 'install' ? undefined : { ...fake.port, get model() { return model; } });
     const { store, service, gap, spaceId } = await serviceFixture(new KnowledgeRepairBudgetError());
+    if (change === 'unchanged-none' || change === 'install') {
+      const before = JSON.stringify(store.getNode(gap.id));
+      await expect(service.selfImprove({ knowledgeSpaceId: spaceId, gapIds: [gap.id], force: true })).rejects.toMatchObject({ reason: 'unconfigured' });
+      expect(store.listRefinementTasks()).toEqual([]); expect(fake.requests).toHaveLength(0);
+      expect(JSON.stringify(store.getNode(gap.id))).toBe(before); return;
+    }
     const originalInit = store.init.bind(store), originalTask = store.upsertRefinementTask.bind(store);
     let committing = false, paused = false;
     store.init = async () => {
@@ -271,7 +291,7 @@ describe('failure disposition commit boundaries', () => {
       finally { committing = false; }
     };
     const result = await service.selfImprove({ knowledgeSpaceId: spaceId, gapIds: [gap.id], force: true });
-    expect(paused).toBe(true); expect(fake.requests).toHaveLength(0);
+    expect(paused).toBe(true); expect(fake.requests.filter(request => 'cause' in request.questions)).toHaveLength(0);
     const task = store.getRefinementTask(result.taskIds[0]!)!;
     if (change.startsWith('unchanged')) {
       expect(task.state).toBe('blocked'); expect(result.nextRepairAttemptAt).toBeGreaterThan(Date.now());

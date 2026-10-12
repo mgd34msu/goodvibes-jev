@@ -1,7 +1,11 @@
+import { captureCatalogMethods, captureCatalogSnapshot, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureCatalogReadRequest, captureHarnessCatalogSelectionSource, selectHarnessCatalog, selectHarnessCatalogGroup } from './agent-harness-catalog-selection.ts';
+import { captureStatefulCatalogRequest } from './agent-harness-stateful-catalog-source.ts';
+import { withModelReadingSource } from './agent-harness-model-reading-source.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext } from '../input/command-registry.ts';
 import { createAgentWorkspaceEditor } from '../input/agent-workspace-activation.ts';
 import { AGENT_WORKSPACE_CATEGORIES } from '../input/agent-workspace-categories.ts';
-import { searchAgentWorkspaceActions } from '../input/agent-workspace-search.ts';
 import { buildAgentWorkspaceRuntimeSnapshot } from '../input/agent-workspace-snapshot.ts';
 import type { AgentWorkspaceAction, AgentWorkspaceCategory, AgentWorkspaceEditorKind, AgentWorkspaceLocalEditor, AgentWorkspaceLocalLibraryItem, AgentWorkspaceRuntimeSnapshot } from '../input/agent-workspace-types.ts';
 import { parseSlashCommand } from '../input/slash-command-parser.ts';
@@ -71,6 +75,23 @@ export function allWorkspaceActions(): ReadonlyArray<{
   readonly action: AgentWorkspaceAction;
 }> {
   return AGENT_WORKSPACE_CATEGORIES.flatMap((category) => category.actions.map((action) => ({ category, action })));
+}
+
+function originalWorkspaceEntry(entries: ReturnType<typeof allWorkspaceActions>, action: AgentWorkspaceAction) {
+  const entry = entries.find(entry => entry.action === action);
+  if (!entry) throw new ToolInputProjectionError('held');
+  return entry;
+}
+
+function captureWorkspaceCategories(): () => void {
+  const source = captureCatalogSnapshot(AGENT_WORKSPACE_CATEGORIES);
+  const bindings = [captureCatalogMethods(AGENT_WORKSPACE_CATEGORIES,
+    ['length', ...AGENT_WORKSPACE_CATEGORIES.map((_category, index) => String(index))])];
+  for (const category of AGENT_WORKSPACE_CATEGORIES) {
+    bindings.push(captureCatalogMethods(category, ['actions']));
+    bindings.push(captureCatalogMethods(category.actions, ['length', ...category.actions.map((_action, index) => String(index))]));
+  }
+  return () => { for (const guard of bindings) guard(); source.assertCurrent(AGENT_WORKSPACE_CATEGORIES); for (const guard of bindings) guard(); };
 }
 
 export function describeWorkspaceCategory(category: AgentWorkspaceCategory): Record<string, unknown> {
@@ -360,20 +381,43 @@ function describeWorkspaceActionSummary(
   };
 }
 
-export function listWorkspaceActions(
+export async function listWorkspaceActions(
   context: CommandContext,
   args: AgentHarnessWorkspaceActionArgs,
-): readonly Record<string, unknown>[] {
+  options: CatalogRankingOptions = {},
+): Promise<readonly Record<string, unknown>[]> {
+  const request = captureStatefulCatalogRequest(context, args, options, [], () => [captureWorkspaceCategories()]);
+  args = request.input;
   const query = readString(args.query);
   const categoryId = readString(args.categoryId || args.category);
   const limit = readLimit(args.limit, 1000);
   const includeEditor = args.includeParameters === true;
   const editorContext = includeEditor ? buildWorkspaceEditorContext(context, args) : null;
-  const source = query
-    ? searchAgentWorkspaceActions(AGENT_WORKSPACE_CATEGORIES, query).map((result) => ({ category: result.category, action: result.action }))
-    : allWorkspaceActions();
+  const entries = allWorkspaceActions().filter(entry => !categoryId || entry.category.id === categoryId);
+  const categories = AGENT_WORKSPACE_CATEGORIES.filter(category => !categoryId || category.id === categoryId);
+  const source = query ? await withModelReadingSource({ query, args, categories: AGENT_WORKSPACE_CATEGORIES },
+    request.options, async (_captured, reading) => {
+      const matches: { readonly entry: typeof entries[number]; readonly probability: number; readonly order: number }[] = [];
+      const nativeOrder = new Map<AgentWorkspaceAction, number>(entries.map((entry, index) => [entry.action, index]));
+      for (const category of categories) {
+        reading.assertCurrent?.();
+        const ranked = await rankHarnessCatalog(category.actions.map((action, index) => ({ index, action })), query,
+          row => ({ id: String(row.index), description: row.action.label, evidence: { record: row.action } }),
+          'agent.workspace.actions', { ...reading, requirePreservedSource: true }, 'engine.tools.registry-rank', { category, args });
+        reading.assertCurrent?.();
+        for (const match of ranked.matches) {
+          if (match.judgment.reading.outcome !== 'act' || match.judgment.reading.verdict !== 'yes') throw new ToolInputProjectionError('held');
+          const action = category.actions[match.entry.index];
+          const order = action && nativeOrder.get(action);
+          if (!action || order === undefined) throw new ToolInputProjectionError('held');
+          matches.push({ entry: originalWorkspaceEntry(entries, action), probability: match.judgment.probability, order });
+        }
+      }
+      reading.assertCurrent?.();
+      return matches.sort((left, right) => right.probability - left.probability || left.order - right.order).map(match => match.entry);
+    }) : entries;
+  request.assertCurrent();
   return source
-    .filter((entry) => !categoryId || entry.category.id === categoryId)
     .slice(0, limit)
     .map((entry) => includeEditor
       ? describeWorkspaceAction(entry.category, entry.action, { includeEditor, editorContext })
@@ -391,18 +435,9 @@ function workspaceActionLookupFromArgs(args: AgentHarnessWorkspaceActionArgs): {
   return query ? { source: 'query', input: query } : null;
 }
 
-function describeWorkspaceActionCandidates(
-  entries: readonly { readonly category: AgentWorkspaceCategory; readonly action: AgentWorkspaceAction }[],
-): readonly { readonly actionId: string; readonly categoryId: string; readonly label: string; readonly command?: string }[] {
-  return entries.slice(0, 8).map((entry) => ({
-    actionId: entry.action.id,
-    categoryId: entry.category.id,
-    label: entry.action.label,
-    ...(entry.action.command ? { command: entry.action.command } : {}),
-  }));
-}
 
-export function resolveWorkspaceActionDetail(args: AgentHarnessWorkspaceActionArgs): WorkspaceActionResolution | null {
+/** Native identity grammar only. Free prose must use the asynchronous complete selector. */
+export function resolveWorkspaceActionIdentity(args: AgentHarnessWorkspaceActionArgs): WorkspaceActionResolution | null {
   const lookup = workspaceActionLookupFromArgs(args);
   const categoryId = readString(args.categoryId || args.category);
   if (!lookup) return null;
@@ -422,10 +457,34 @@ export function resolveWorkspaceActionDetail(args: AgentHarnessWorkspaceActionAr
   const insensitiveLabel = entries.find((entry) => entry.action.label.toLowerCase() === normalized);
   if (insensitiveLabel) return { status: 'found', ...insensitiveLabel, lookup: { ...lookup, resolvedBy: 'case-insensitive-label' } };
 
-  const searched = searchAgentWorkspaceActions(AGENT_WORKSPACE_CATEGORIES, lookup.input)
-    .map((result) => ({ category: result.category, action: result.action }))
-    .filter((entry) => !categoryId || entry.category.id === categoryId);
-  if (searched.length === 1) return { status: 'found', ...searched[0]!, lookup: { ...lookup, resolvedBy: 'search' } };
-  if (searched.length > 1) return { status: 'ambiguous', input: lookup.input, candidates: describeWorkspaceActionCandidates(searched) };
   return null;
+}
+
+export async function resolveWorkspaceActionDetail(args: AgentHarnessWorkspaceActionArgs, options: CatalogRankingOptions = {}): Promise<WorkspaceActionResolution | null> {
+  const request = captureCatalogReadRequest(args, options);
+  args = request.input;
+  const assertNative = captureWorkspaceCategories();
+  const identity = resolveWorkspaceActionIdentity(args);
+  const lookup = workspaceActionLookupFromArgs(args);
+  const assertReaders = !identity && lookup ? captureHarnessCatalogSelectionSource('agent.workspace.action') : undefined;
+  const categoryId = readString(args.categoryId || args.category);
+  const categories = AGENT_WORKSPACE_CATEGORIES.filter(category => !categoryId || category.id === categoryId);
+  const entries = allWorkspaceActions().filter(entry => !categoryId || entry.category.id === categoryId);
+  request.retain(() => { assertNative(); assertReaders?.(); }, 'workspace:native-categories-and-readers');
+  if (identity) return identity;
+  if (!lookup) return null;
+  return withModelReadingSource({ query: lookup.input, args, categories: AGENT_WORKSPACE_CATEGORIES }, request.options,
+    async (_captured, reading) => {
+      const category = await selectHarnessCatalogGroup(categories, lookup.input,
+        category => ({ description: category.label }), reading, 'agent.workspace.action-group', args);
+      reading.assertCurrent?.();
+      if (!category) return null;
+      const actions = entries.filter(entry => entry.category === category).map(entry => entry.action);
+      const selected = await selectHarnessCatalog(actions, lookup.input,
+        action => ({ id: action.id, description: action.label }), reading, 'agent.workspace.action', { category, args });
+      reading.assertCurrent?.();
+      if (!selected) return null;
+      const result: WorkspaceActionResolution = { status: 'found', ...originalWorkspaceEntry(entries, selected), lookup: { ...lookup, resolvedBy: 'search' } };
+      return result;
+    });
 }

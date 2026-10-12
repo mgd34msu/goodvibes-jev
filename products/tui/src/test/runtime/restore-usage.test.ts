@@ -13,6 +13,10 @@ import { buildShellFooter } from '../../renderer/shell-surface.ts';
 import { resumeSessionCore } from '../../core/session-resume-core.ts';
 import { createContextAccountingSource } from '../../runtime/context-accounting-source.ts';
 import { SessionPickerModal } from '../../input/session-picker-modal.ts';
+import { handleSessionPickerToken } from '../../input/handler-modal-routes.ts';
+import { clearTurnAnchors, getTurnAnchors, persistTurnAnchors, recordTurnAnchor } from '@goodvibes-jev/engine/sdk/platform/rewind';
+import { saveWorkTreeFolds } from '../../core/work-tree-fold-store.ts';
+import { SessionSpineClient, TUI_SPINE_PARTICIPANT } from '@goodvibes-jev/engine/sdk/platform/runtime/session-spine';
 import { UsageModal } from '../../input/usage-modal.ts';
 import { layerTextBlock } from '../helpers/surface-frame.ts';
 import { withPublicErrorText } from '../helpers/user-error-reading.ts';
@@ -33,16 +37,20 @@ function fixture() {
     getTurnInjections: () => [],
   };
   const runtime = { sessionId: 'previous-session', model: 'mock-model', provider: 'mock' };
+  const sessionChanges: string[] = [];
+  const pointers: string[] = [];
+  const sessionSpine = new SessionSpineClient({ participant: TUI_SPINE_PARTICIPANT });
+  cleanups.push(() => sessionSpine.dispose());
   const shell = createBootstrapShell({
     configManager: services.configManager, runtimeBus, runtimeStore, services, conversation,
     runtime: runtime as never, orchestrator: orchestrator as unknown as Orchestrator,
     requestRender: () => {}, permissionPromptRef: { requestPermission: async () => ({ approved: false }) },
-    onSessionIdChanged: () => {}, writeLastSessionPointer: () => {},
+    onSessionIdChanged: (id) => { sessionChanges.push(id); }, writeLastSessionPointer: (id) => { pointers.push(id); },
     getControlPlaneRecentEvents: () => [], toolRegistry: new ToolRegistry(),
     forensicsRegistry: new ForensicsRegistry(), policyRuntimeState: services.policyRuntimeState,
     uiServices: createUiRuntimeServices(services),
     taskManager: createTaskManager(runtimeStore, runtimeBus, runtime.sessionId, services.featureFlags),
-    sessionSpine: {} as never,
+    sessionSpine,
   });
   cleanups.push(() => { shell.gitStatusProvider.stopPolling(); shell.closeNativeWorkSubmission?.(); shell.views.dispose(); });
   const holder = new ContextAccountingHolder();
@@ -59,7 +67,7 @@ function fixture() {
     lastInputTokens: orchestrator.lastInputTokens, contextUsageAvailable: isConversationContextAvailable(orchestrator),
     runningAgentCount: 0, runningProcessCount: 0, indicatorFocused: false,
   }).lines.map((line) => line.map((cell) => cell.char).join('')).join('\n');
-  return { services, shell, conversation, orchestrator, save, resume, footer, accountingTool: createContextAccountingTool(holder) };
+  return { services, shell, conversation, orchestrator, runtime, sessionChanges, pointers, sessionSpine, save, resume, footer, accountingTool: createContextAccountingTool(holder) };
 }
 
 const validHistory = [
@@ -149,13 +157,45 @@ describe('real bootstrap usage restoration', () => {
     }
   });
 
-  test('the picker uses the same bound restore adapter', async () => {
+  test('the picker Enter route resumes the native session and uses the same bound restore adapter', async () => {
     const f = fixture();
-    f.save('picker-invalid', [{ role: 'assistant', content: 'kept', usage: null }]);
+    const target = 'picker-invalid';
+    f.services.sessionManager.save(target, [{ role: 'assistant', content: 'kept', usage: null }], {
+      title: 'Saved picker', titleSource: 'user', model: 'mock-model', provider: 'mock', timestamp: Date.now(),
+    });
+    recordTurnAnchor(target, { turnId: 'saved-turn', label: 'saved anchor', messageCount: 1, at: Date.now() });
+    persistTurnAnchors(target, f.services.surface);
+    clearTurnAnchors(target);
+    cleanups.push(() => clearTurnAnchors(target));
+    saveWorkTreeFolds(f.services.surface.sessionsDir, target, [['turn_1', true]]);
+    f.conversation.fromJSON({ messages: [{ role: 'user', content: 'old active transcript' }] });
+    let cancelledRecovery = 0;
+    f.shell.commandContext.cancelPendingRecovery = () => { cancelledRecovery++; return true; };
     const picker = new SessionPickerModal(f.services.sessionManager);
     picker.open();
-    picker.selectedIndex = picker.sessions.findIndex((session) => session.name === 'picker-invalid');
-    expect(picker.loadSelected(f.conversation)).toBe(true);
+    picker.setQuery(target);
+    const enter = { type: 'key', name: 'enter', logicalName: 'enter', ctrl: false, shift: false, meta: false } satisfies import('@goodvibes-jev/engine/sdk/platform/core').InputToken;
+    expect(handleSessionPickerToken({
+      sessionPickerModal: picker, commandContext: f.shell.commandContext,
+      requestRender: () => {}, handleEscape: () => picker.close(),
+    }, enter)).toBe(true);
+    const pending = picker.pendingResume;
+    expect(pending).not.toBeNull();
+    await pending;
+    expect(picker.active).toBe(false);
+    expect(f.runtime.sessionId).toBe(target);
+    expect(f.sessionChanges).toEqual([target]);
+    expect(f.pointers).toEqual([target]);
+    expect(f.sessionSpine.keepaliveSessionId).toBe(target);
+    expect(f.sessionSpine.pendingOps).toBe(1);
+    expect(cancelledRecovery).toBe(1);
+    expect(f.conversation.title).toBe('Saved picker');
+    expect(f.conversation.getTitleSource()).toBe('user');
+    expect(f.conversation.getMessageSnapshot().map((message) => message.content)).toEqual(['kept']);
+    expect(getTurnAnchors(target).map((anchor) => anchor.turnId)).toEqual(['saved-turn']);
+    expect(f.conversation.workTree.foldState()).toEqual([['turn_1', true]]);
+    expect(f.runtime.model).toBe('mock:mock-model');
+    expect(f.runtime.provider).toBe('mock');
     expect(f.footer()).toContain('usage unavailable');
   });
 

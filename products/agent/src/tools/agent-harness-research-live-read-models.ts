@@ -1,4 +1,11 @@
-import type { CommandContext } from '../input/command-registry.ts';
+import { types as nodeTypes } from 'node:util';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureCatalogMethods, captureCatalogSnapshot, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureCatalogPath, rankResearchRecords } from './agent-harness-research-catalog-source.ts';
+import { modelReadingServicePath, withModelReadingSource } from './agent-harness-model-reading-source.ts';
+import { captureAsyncHarnessInput } from './agent-harness-async-input.ts';
+const nativeApply = Reflect.apply, nativeIsPromise = nodeTypes.isPromise;
+
 import { previewHarnessText } from './agent-harness-text.ts';
 
 export interface ResearchLiveRecordCertification {
@@ -180,14 +187,18 @@ function safeUrl(value: string): string | null {
   }
 }
 
-function schemaStatus(records: readonly Record<string, unknown>[]): ResearchLiveRecordCertification['schemaStatus'] {
-  const explicit = firstAcross(records, ['schemaStatus', 'receiptSchemaStatus', 'certificationStatus']).toLowerCase().replace(/[_\s]+/g, '-');
-  if (['certified', 'valid', 'verified', 'schema-certified'].includes(explicit)) return 'certified';
-  return firstAcross(records, ['schemaVersion', 'receiptSchemaVersion', 'contractVersion'])
-    && firstAcross(records, ['publicationGuarantee', 'hostPublicationGuarantee', 'researchPublicationGuarantee'])
-    && firstAcross(records, ['publisher', 'publisherId', 'daemonId', 'hostId'])
-    ? 'certified'
-    : 'legacy';
+async function schemaStatus(records: readonly Record<string, unknown>[], options: CatalogRankingOptions): Promise<ResearchLiveRecordCertification['schemaStatus']> {
+  const explicit = firstAcross(records, ['schemaStatus', 'receiptSchemaStatus', 'certificationStatus']);
+  const presence = !!firstAcross(records, ['schemaVersion', 'receiptSchemaVersion', 'contractVersion'])
+    && !!firstAcross(records, ['publicationGuarantee', 'hostPublicationGuarantee', 'researchPublicationGuarantee'])
+    && !!firstAcross(records, ['publisher', 'publisherId', 'daemonId', 'hostId']);
+  if (!explicit) return presence ? 'certified' : 'legacy';
+  const matches = await rankResearchRecords([{ records, explicit }], 'Explicit schema certification',
+    entry => ({ id: 'schema', description: 'Explicit schema certification claim', evidence: entry }), options,
+    'agent.research.schema-status', 'engine.tools.research-schema-status');
+  // Preserve the original native metadata alternative; the prose reading
+  // neither authenticates these fields nor grants any effect authority.
+  return matches.length > 0 || presence ? 'certified' : 'legacy';
 }
 
 function certification(input: {
@@ -204,9 +215,8 @@ function certification(input: {
   readonly hasSourceMap?: boolean;
   readonly hasReportEvidence?: boolean;
   readonly hasVisualSections?: boolean;
-}): ResearchLiveRecordCertification {
+}, currentSchemaStatus: ResearchLiveRecordCertification['schemaStatus']): ResearchLiveRecordCertification {
   const records = certificationRecords(input.record);
-  const currentSchemaStatus = schemaStatus(records);
   const schemaVersion = firstAcross(records, ['schemaVersion', 'receiptSchemaVersion', 'contractVersion']);
   const publicationGuarantee = firstAcross(records, ['publicationGuarantee', 'hostPublicationGuarantee', 'researchPublicationGuarantee']);
   const publisher = firstAcross(records, ['publisher', 'publisherId', 'daemonId', 'hostId']);
@@ -248,51 +258,73 @@ function certification(input: {
   };
 }
 
-function callMethod(source: Record<string, unknown>, method: string): unknown {
-  const fn = source[method];
-  if (typeof fn !== 'function') return undefined;
-  try {
-    return (fn as () => unknown).call(source);
-  } catch {
-    return undefined;
-  }
-}
 
-function collectFromSource(
-  source: unknown,
-  path: string,
-  kind: 'daemon-read-model' | 'sdk-read-model',
-  wrapperKeys: readonly string[],
-  methods: readonly string[],
-  visited = new WeakSet<object>(),
-): readonly CollectedRecord[] {
-  if (!source) return [];
-  if (Array.isArray(source)) {
-    return source.flatMap((entry, index) => collectFromSource(entry, `${path}[${index}]`, kind, wrapperKeys, methods, visited));
-  }
-  if (source instanceof Map) {
-    return Array.from(source.entries()).flatMap(([key, value]) => collectFromSource(value, `${path}.${String(key)}`, kind, wrapperKeys, methods, visited));
-  }
-  if (typeof source !== 'object') return [];
+
+async function collectFromSource(source: unknown, path: string, kind: SourceCandidate['kind'], wrapperKeys: readonly string[],
+  methods: readonly string[], guards: (() => void)[], envelopes: unknown[], assertCurrent: () => void, visited = new WeakSet<object>()): Promise<readonly CollectedRecord[]> {
+  assertCurrent();
+  if (source == null || typeof source !== 'object') return [];
+  if (nodeTypes.isProxy(source)) throw new ToolInputProjectionError('held');
   if (visited.has(source)) return [];
   visited.add(source);
-  const record = source as Record<string, unknown>;
-  const fromSnapshots = SNAPSHOT_METHODS.flatMap((method) => {
-    const snapshot = callMethod(record, method);
-    return snapshot === undefined ? [] : collectFromSource(snapshot, `${path}.${method}()`, kind, wrapperKeys, methods, visited);
-  });
-  const fromMethods = methods.flatMap((method) => {
-    const snapshot = callMethod(record, method);
-    return snapshot === undefined ? [] : collectFromSource(snapshot, `${path}.${method}()`, kind, wrapperKeys, methods, visited);
-  });
-  const fromWrappers = wrapperKeys.flatMap((key) => {
-    if (!(key in record)) return [];
-    return collectFromSource(record[key], `${path}.${key}`, kind, wrapperKeys, methods, visited);
-  });
-  if (fromSnapshots.length > 0 || fromMethods.length > 0 || fromWrappers.length > 0) {
-    return [...fromSnapshots, ...fromMethods, ...fromWrappers];
+  if (Array.isArray(source)) {
+    const snapshot = captureCatalogSnapshot(source); envelopes.push(snapshot.captured); guards.push(() => snapshot.assertCurrent(source));
+    const output: CollectedRecord[] = [];
+    for (let index = 0; index < source.length; index++) output.push(...await collectFromSource(source[index], `${path}[${index}]`, kind, wrapperKeys, methods, guards, envelopes, assertCurrent, visited));
+    assertCurrent(); return output;
   }
-  return [{ path, kind, record }];
+  if (source instanceof Map) {
+    if (Reflect.ownKeys(source).length !== 0) throw new ToolInputProjectionError('held');
+    const assertMethods = captureCatalogMethods(source, ['entries']); assertMethods();
+    const originalEntries = source.entries, entries = [...originalEntries.call(source)];
+    if (entries.some(([key]) => typeof key !== 'string' && typeof key !== 'number')) throw new ToolInputProjectionError('held');
+    const snapshot = captureCatalogSnapshot(entries); envelopes.push(snapshot.captured);
+    guards.push(() => { if (Reflect.ownKeys(source).length !== 0) throw new ToolInputProjectionError('held'); assertMethods(); snapshot.assertCurrent([...originalEntries.call(source)]); });
+    const output: CollectedRecord[] = [];
+    for (const [key, value] of entries) output.push(...await collectFromSource(value, `${path}.${String(key)}`, kind, wrapperKeys, methods, guards, envelopes, assertCurrent, visited));
+    assertCurrent(); return output;
+  }
+  const keys = [...SNAPSHOT_METHODS, ...methods, ...wrapperKeys];
+  const assertMethods = captureCatalogMethods(source, keys); assertMethods(); guards.push(assertMethods);
+  const ownKeys = Reflect.ownKeys(source);
+  if (ownKeys.some(key => typeof key !== 'string')) throw new ToolInputProjectionError('held');
+  const ownerKeys = ownKeys.filter((key): key is string => typeof key === 'string');
+  const assertOwnSlots = captureCatalogMethods(source, ownerKeys);
+  const ownData = (): Record<string, unknown> => {
+    const currentKeys = Reflect.ownKeys(source);
+    if (currentKeys.length !== ownKeys.length || currentKeys.some((key, index) => key !== ownKeys[index])) throw new ToolInputProjectionError('held');
+    assertOwnSlots();
+    const data: Record<string, unknown> = Object.create(null);
+    for (const key of ownerKeys) {
+      const value = modelReadingServicePath(source, [key]);
+      if (typeof value !== 'function') Object.defineProperty(data, key, { value, enumerable: true, configurable: false, writable: false });
+    }
+    return data;
+  };
+  const backendData = captureCatalogSnapshot(ownData()); envelopes.push(backendData.captured);
+  guards.push(() => backendData.assertCurrent(ownData()));
+  const output: CollectedRecord[] = [];
+  for (const method of [...SNAPSHOT_METHODS, ...methods]) {
+    const original = modelReadingServicePath(source, [method]);
+    if (original === undefined) continue;
+    if (typeof original !== 'function') continue;
+    if (nodeTypes.isProxy(original)) throw new ToolInputProjectionError('held');
+    assertCurrent();
+    let raw: unknown;
+    try { const value: unknown = nativeApply(original, source, []); raw = nativeIsPromise(value) ? await value : value; } catch { assertCurrent(); throw new ToolInputProjectionError('held'); }
+    assertCurrent();
+    if (raw !== undefined) output.push(...await collectFromSource(raw, `${path}.${method}()`, kind, wrapperKeys, methods, guards, envelopes, assertCurrent, visited));
+  }
+  for (const key of wrapperKeys) {
+    const value = modelReadingServicePath(source, [key]);
+    if (value !== undefined) output.push(...await collectFromSource(value, `${path}.${key}`, kind, wrapperKeys, methods, guards, envelopes, assertCurrent, visited));
+  }
+  if (output.length > 0) { assertCurrent(); return output; }
+  // Empty native snapshots retain the original envelope as a legacy record.
+  // Native methods stay descriptor-bound; only complete original data is read.
+  const record = backendData.captured;
+  if (record === null || typeof record !== 'object' || Array.isArray(record)) throw new ToolInputProjectionError('held');
+  return [{ path, kind, record: readObject(record) }];
 }
 
 function sourceReceiptIds(record: Record<string, unknown>): readonly string[] {
@@ -327,7 +359,7 @@ function modelRoute(record: Record<string, unknown>, fallback: string): string {
     || fallback;
 }
 
-function normalizeRunner(entry: CollectedRecord, index: number): ResearchBrowserRunnerRecord | null {
+function normalizeRunner(entry: CollectedRecord, index: number, currentSchemaStatus: ResearchLiveRecordCertification['schemaStatus']): ResearchBrowserRunnerRecord | null {
   const runId = nestedString(entry.record, 'runId') || nestedString(entry.record, 'researchRunId');
   const question = nestedString(entry.record, 'question') || nestedString(entry.record, 'task') || nestedString(entry.record, 'title');
   const status = nestedString(entry.record, 'status') || nestedString(entry.record, 'state') || 'unknown';
@@ -366,7 +398,7 @@ function normalizeRunner(entry: CollectedRecord, index: number): ResearchBrowser
       hasVisibleControls: ['checkpoint', 'pause', 'resume', 'cancel'].some((key) => Boolean(routes[key])),
       hasSourceReceipts: receipts.length > 0,
       hasBoundedLogs: logs.length > 0 || Boolean(nestedString(entry.record, 'boundedLogDescriptor') || nestedString(entry.record, 'redaction')),
-    }),
+    }, currentSchemaStatus),
   };
 }
 
@@ -385,7 +417,7 @@ function sourceMapCount(record: Record<string, unknown>): number {
   return arrays.reduce<number>((total, value) => total + (Array.isArray(value) ? value.length : 0), 0);
 }
 
-function normalizeVisualReport(entry: CollectedRecord, index: number): ResearchVisualReportRecord | null {
+function normalizeVisualReport(entry: CollectedRecord, index: number, currentSchemaStatus: ResearchLiveRecordCertification['schemaStatus']): ResearchVisualReportRecord | null {
   const reportArtifactId = nestedString(entry.record, 'reportArtifactId') || nestedString(entry.record, 'artifactId');
   const status = nestedString(entry.record, 'status') || nestedString(entry.record, 'state') || 'unknown';
   const id = nestedString(entry.record, 'id') || nestedString(entry.record, 'renderReceiptId') || (reportArtifactId ? `visual-report:${reportArtifactId}` : `visual-report:${index}`);
@@ -416,7 +448,7 @@ function normalizeVisualReport(entry: CollectedRecord, index: number): ResearchV
       hasSourceMap: mapCount > 0 || Boolean(nestedString(entry.record, 'citationCoverage') || nestedString(entry.record, 'coverage')),
       hasReportEvidence: Boolean(reportArtifactId || nestedString(entry.record, 'renderArtifactId')),
       hasVisualSections: sections.length > 0,
-    }),
+    }, currentSchemaStatus),
   };
 }
 
@@ -437,64 +469,65 @@ function sourceCounts(entries: readonly CollectedRecord[]): Readonly<Record<stri
   return counts;
 }
 
-function runnerSources(context: CommandContext): readonly SourceCandidate[] {
-  const platform = readObject(context.platform);
-  const readModels = readObject(platform.readModels);
-  const research = readObject(readModels.research);
-  const deepResearch = readObject(readModels.deepResearch);
-  const opsResearch = readObject(readObject(context.ops).research);
-  const clients = readObject(context.clients);
-  const operator = readObject(clients.operator);
-  const operatorSdk = readObject(clients.operatorSdk);
-  return [
-    { path: 'context.platform.readModels.research.browserRuns', source: research.browserRuns, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.research.browserRunner', source: research.browserRunner, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.research.runs', source: research.runs, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.deepResearch.browserRuns', source: deepResearch.browserRuns, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.researchBrowserRuns', source: readModels.researchBrowserRuns, kind: 'daemon-read-model' },
-    { path: 'context.ops.research.browserRuns', source: opsResearch.browserRuns, kind: 'sdk-read-model' },
-    { path: 'context.clients.operator.research.browserRuns', source: readObject(operator.research).browserRuns, kind: 'sdk-read-model' },
-    { path: 'context.clients.operatorSdk.research.browserRuns', source: readObject(operatorSdk.research).browserRuns, kind: 'sdk-read-model' },
-  ];
+function runnerSources(context: object, guards: (() => void)[]): readonly SourceCandidate[] {
+  const definitions = [
+    { path: 'context.platform.readModels.research.browserRuns', keys: ["platform", "readModels", "research", "browserRuns"], kind: 'daemon-read-model' },
+    { path: 'context.platform.readModels.research.browserRunner', keys: ["platform", "readModels", "research", "browserRunner"], kind: 'daemon-read-model' },
+    { path: 'context.platform.readModels.research.runs', keys: ["platform", "readModels", "research", "runs"], kind: 'daemon-read-model' },
+    { path: 'context.platform.readModels.deepResearch.browserRuns', keys: ["platform", "readModels", "deepResearch", "browserRuns"], kind: 'daemon-read-model' },
+    { path: 'context.platform.readModels.researchBrowserRuns', keys: ["platform", "readModels", "researchBrowserRuns"], kind: 'daemon-read-model' },
+    { path: 'context.ops.research.browserRuns', keys: ["ops", "research", "browserRuns"], kind: 'sdk-read-model' },
+    { path: 'context.clients.operator.research.browserRuns', keys: ["clients", "operator", "research", "browserRuns"], kind: 'sdk-read-model' },
+    { path: 'context.clients.operatorSdk.research.browserRuns', keys: ["clients", "operatorSdk", "research", "browserRuns"], kind: 'sdk-read-model' },
+  ] satisfies readonly { path: string; keys: readonly string[]; kind: SourceCandidate['kind'] }[];
+  return definitions.map(definition => {
+    const captured = captureCatalogPath(context, definition.keys); guards.push(captured.assertCurrent);
+    return { path: definition.path, source: captured.value, kind: definition.kind };
+  });
 }
 
-function visualSources(context: CommandContext): readonly SourceCandidate[] {
-  const platform = readObject(context.platform);
-  const readModels = readObject(platform.readModels);
-  const research = readObject(readModels.research);
-  const deepResearch = readObject(readModels.deepResearch);
-  const opsResearch = readObject(readObject(context.ops).research);
-  const clients = readObject(context.clients);
-  const operator = readObject(clients.operator);
-  const operatorSdk = readObject(clients.operatorSdk);
-  return [
-    { path: 'context.platform.readModels.research.visualReports', source: research.visualReports, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.research.reportSurfaces', source: research.reportSurfaces, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.deepResearch.visualReports', source: deepResearch.visualReports, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.researchVisualReports', source: readModels.researchVisualReports, kind: 'daemon-read-model' },
-    { path: 'context.ops.research.visualReports', source: opsResearch.visualReports, kind: 'sdk-read-model' },
-    { path: 'context.clients.operator.research.visualReports', source: readObject(operator.research).visualReports, kind: 'sdk-read-model' },
-    { path: 'context.clients.operatorSdk.research.visualReports', source: readObject(operatorSdk.research).visualReports, kind: 'sdk-read-model' },
-  ];
+function visualSources(context: object, guards: (() => void)[]): readonly SourceCandidate[] {
+  const definitions = [
+    { path: 'context.platform.readModels.research.visualReports', keys: ["platform", "readModels", "research", "visualReports"], kind: 'daemon-read-model' },
+    { path: 'context.platform.readModels.research.reportSurfaces', keys: ["platform", "readModels", "research", "reportSurfaces"], kind: 'daemon-read-model' },
+    { path: 'context.platform.readModels.deepResearch.visualReports', keys: ["platform", "readModels", "deepResearch", "visualReports"], kind: 'daemon-read-model' },
+    { path: 'context.platform.readModels.researchVisualReports', keys: ["platform", "readModels", "researchVisualReports"], kind: 'daemon-read-model' },
+    { path: 'context.ops.research.visualReports', keys: ["ops", "research", "visualReports"], kind: 'sdk-read-model' },
+    { path: 'context.clients.operator.research.visualReports', keys: ["clients", "operator", "research", "visualReports"], kind: 'sdk-read-model' },
+    { path: 'context.clients.operatorSdk.research.visualReports', keys: ["clients", "operatorSdk", "research", "visualReports"], kind: 'sdk-read-model' },
+  ] satisfies readonly { path: string; keys: readonly string[]; kind: SourceCandidate['kind'] }[];
+  return definitions.map(definition => {
+    const captured = captureCatalogPath(context, definition.keys); guards.push(captured.assertCurrent);
+    return { path: definition.path, source: captured.value, kind: definition.kind };
+  });
 }
 
 export function isCertifiedResearchLiveRecord(record: { readonly certification: ResearchLiveRecordCertification }): boolean {
   return record.certification.schemaStatus === 'certified' && record.certification.missingSignals.length === 0;
 }
 
-export function researchLiveReadModelSnapshot(context: CommandContext): ResearchLiveReadModelSnapshot {
-  const runnerEntries = runnerSources(context).flatMap((candidate) =>
-    collectFromSource(candidate.source, candidate.path, candidate.kind, RUNNER_WRAPPER_KEYS, RUNNER_METHODS)
-  );
-  const visualEntries = visualSources(context).flatMap((candidate) =>
-    collectFromSource(candidate.source, candidate.path, candidate.kind, VISUAL_WRAPPER_KEYS, VISUAL_METHODS)
-  );
-  return {
-    browserRunnerRecords: dedupeById(runnerEntries.map(normalizeRunner).filter((entry): entry is ResearchBrowserRunnerRecord => entry !== null)),
-    visualReportRecords: dedupeById(visualEntries.map(normalizeVisualReport).filter((entry): entry is ResearchVisualReportRecord => entry !== null)),
-    sourceCounts: {
-      ...sourceCounts(runnerEntries),
-      ...sourceCounts(visualEntries),
-    },
-  };
+export async function researchLiveReadModelSnapshot(context: object, options: CatalogRankingOptions = {}): Promise<ResearchLiveReadModelSnapshot> {
+  const caller = captureAsyncHarnessInput({}, options), guards: (() => void)[] = [], envelopes: unknown[] = [];
+  caller.retainSourceCurrent();
+  const assertNative = (): void => { for (const guard of guards) guard(); };
+  const assertCurrent = (): void => { caller.assertCurrent(); assertNative(); caller.assertCurrent(); };
+  const runners = runnerSources(context, guards), visuals = visualSources(context, guards);
+  const runnerEntries: CollectedRecord[] = [], visualEntries: CollectedRecord[] = [];
+  for (const candidate of runners) runnerEntries.push(...await collectFromSource(candidate.source, candidate.path, candidate.kind, RUNNER_WRAPPER_KEYS, RUNNER_METHODS, guards, envelopes, assertCurrent));
+  for (const candidate of visuals) visualEntries.push(...await collectFromSource(candidate.source, candidate.path, candidate.kind, VISUAL_WRAPPER_KEYS, VISUAL_METHODS, guards, envelopes, assertCurrent));
+  assertCurrent(); caller.options.retainCurrent?.(assertNative);
+  return withModelReadingSource({ envelopes, runnerEntries, visualEntries }, { ...caller.options, assertCurrent }, async (captured, scoped) => {
+    const browserRunnerRecords: ResearchBrowserRunnerRecord[] = [], visualReportRecords: ResearchVisualReportRecord[] = [];
+    for (const [index, entry] of captured.runnerEntries.entries()) {
+      const status = await schemaStatus(certificationRecords(entry.record), scoped); scoped.assertCurrent?.();
+      const normalized = normalizeRunner(entry, index, status); if (normalized) browserRunnerRecords.push(normalized);
+    }
+    for (const [index, entry] of captured.visualEntries.entries()) {
+      const status = await schemaStatus(certificationRecords(entry.record), scoped); scoped.assertCurrent?.();
+      const normalized = normalizeVisualReport(entry, index, status); if (normalized) visualReportRecords.push(normalized);
+    }
+    scoped.assertCurrent?.();
+    return { browserRunnerRecords: dedupeById(browserRunnerRecords), visualReportRecords: dedupeById(visualReportRecords),
+      sourceCounts: { ...sourceCounts(captured.runnerEntries), ...sourceCounts(captured.visualEntries) } };
+  });
 }

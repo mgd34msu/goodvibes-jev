@@ -1,3 +1,4 @@
+import { extractionValueFixtureFor, extractionValueFixtureReading, type ExtractionValueFixtures } from './_helpers/knowledge-extraction-value-readings.js';
 import { repairSubjectFixtureReading } from './_helpers/repair-subject-fixture-readings.js';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -5,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
-import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, scoreAnswer, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { upsertObservedKnowledgeNode } from '../sdk/src/platform/knowledge/store-node-observation.js';
 import { reviewKnowledgeNodeRecord } from '../sdk/src/platform/knowledge/service-node-admin.js';
@@ -25,11 +26,21 @@ const first = 'AC-7 resolution: 4K.', last = 'AC-7 has four HDMI inputs.';
 const text = `${first}\n\n${last}`;
 const roots: string[] = [];
 let previous: JudgmentPort | undefined;
-beforeEach(() => { previous = installJudgmentPort(undefined); });
+const extractionValues: Array<ExtractionValueFixtures[number]> = [];
+beforeEach(() => { extractionValues.length = 0; previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 type State = { category?: { title: string }; candidate?: { text?: string }; text?: string; fact?: { title: string; value?: unknown; evidence?: unknown } };
 function readings(mode: 'yes' | 'uncertain' | 'unsupported' = 'yes', values: readonly (readonly [string, string])[] = [[display, first], [ports, last]]) {
   const fake = fakePort((name, question, state) => {
+    const extractionValue = extractionValueFixtureReading(name, question, state, extractionValues);
+    if (extractionValue !== undefined) return noulAnswer(extractionValue);
+    if (name === 'factTrust' || name === 'sourceSupport' || name === 'subjectSupport') return scoreAnswer(question, 4, 0.99); // Authored supported synthetic facts; grading behavior has separate controls.
+
+    if (name === 'fullProfileRequired' || name === 'repairEvidenceSufficient') {
+      if (!state || typeof state !== 'object' || !('query' in state) || state.query !== 'Full AC-7 specifications') throw new Error('Unscripted exact profile completeness query');
+      return noulAnswer(name === 'fullProfileRequired' ? 0.99 : 0.01); // These two exact spans leave the requested full profile incomplete.
+    }
+
     if (name === 'repairSubjectSelected') return noulAnswer(repairSubjectFixtureReading(state));
     const item = state as State;
     if (name === 'wanted') return noulAnswer(values.some(([category]) => category === item.category?.title) ? 0.99 : 0.01);
@@ -52,6 +63,7 @@ async function fixture() {
   const source = await store.upsertSource({ id: 'source-ac-seven', connectorId: 'synthetic', sourceType: 'manual', title: 'AC-7 specifications',
     canonicalUri: 'https://example.test/ac-seven/specifications', status: 'indexed', metadata: { knowledgeSpaceId: spaceId, privateMetadata: 'NEVER_TRANSMIT', sourceDiscovery: { linkedObjectIds: [device.id] } } });
   const extraction = await store.upsertExtraction({ sourceId: source.id, extractorId: 'synthetic', format: 'text', excerpt: text, sections: [], metadata: { knowledgeSpaceId: spaceId } });
+  extractionValues.push(extractionValueFixtureFor(source, extraction, 0.99));
   return { store, device, source, extraction };
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;

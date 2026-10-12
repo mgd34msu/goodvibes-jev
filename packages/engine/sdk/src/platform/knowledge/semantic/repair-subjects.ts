@@ -27,7 +27,7 @@ interface RepairSubjectInput {
   readonly nodes: readonly (KnowledgeNodeRecord | undefined)[];
   readonly excludedNodeIds?: readonly string[] | undefined;
   readonly evidenceSources?: readonly KnowledgeSourceRecord[] | undefined;
-  readonly context: { readonly gap: KnowledgeNodeRecord } | { readonly source: KnowledgeSourceRecord };
+  readonly context: { readonly gap: KnowledgeNodeRecord } | { readonly source: KnowledgeSourceRecord } | { readonly subject: KnowledgeNodeRecord };
   readonly text?: string | undefined;
   readonly objectProfiles?: readonly KnowledgeObjectProfilePolicy[] | undefined;
   readonly signal?: AbortSignal | undefined;
@@ -66,6 +66,7 @@ async function prepareRepairSubjects(input: RepairSubjectInput): Promise<RepairS
       ...input.nodes.filter((node): node is KnowledgeNodeRecord => node !== undefined && !input.excludedNodeIds?.includes(node.id))
         .map(node => prepareKnowledgeRecordAdmission(store, 'node', node)),
       ...('gap' in context ? [prepareKnowledgeRecordAdmission(store, 'node', context.gap)]
+        : 'subject' in context ? [prepareKnowledgeRecordAdmission(store, 'node', context.subject)]
         : [prepareKnowledgeRecordAdmission(store, 'source', context.source, references),
           ...(extraction ? [prepareKnowledgeRecordAdmission(store, 'extraction', extraction, references)] : [])]),
     ];
@@ -80,7 +81,7 @@ async function prepareRepairSubjects(input: RepairSubjectInput): Promise<RepairS
   // original rows still receive privacy admission before the authorized overwrite.
   assertKnowledgeRecordAdmissions(store, excludedAdmissions);
   const all = [...input.nodes.filter((node): node is KnowledgeNodeRecord => node !== undefined),
-    'gap' in context ? context.gap : context.source, ...(extraction ? [extraction] : []),
+    'gap' in context ? context.gap : 'subject' in context ? context.subject : context.source, ...(extraction ? [extraction] : []),
     ...evidence.flatMap(({ source, extraction }) => [source, ...(extraction ? [extraction] : [])])];
   for (const record of all) {
     if (getKnowledgeSpaceId(record) !== spaceId) throw new Held('foreign-space');

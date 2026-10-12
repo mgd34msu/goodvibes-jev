@@ -1,6 +1,11 @@
+import { captureCatalogMethods, captureCatalogSnapshot, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { selectHarnessCatalog } from './agent-harness-catalog-selection.ts';
+import { withModelReadingSource } from './agent-harness-model-reading-source.ts';
+import { captureStatefulCatalogRequest, rankStatefulCatalog } from './agent-harness-stateful-catalog-source.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { openTtsProviderPicker, openTtsVoicePicker } from '../input/tts-settings-actions.ts';
 import { openExternalUrl } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { captureVoiceListReadSource, captureVoiceProviderReadSource } from '@goodvibes-jev/engine/sdk/platform/voice';
 import { connectedBrowserCockpitRoute } from './agent-harness-browser-cockpit-route.ts';
 import type { AgentHarnessUiSurfaceArgs, UiSurfaceDefinition, UiSurfaceLookup, UiSurfaceResolution } from './agent-harness-ui-surface-types.ts';
 export type { AgentHarnessUiSurfaceArgs } from './agent-harness-ui-surface-types.ts';
@@ -117,7 +122,8 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     preferredModelRoute: `Use ${agentHarnessModes('workspace_actions', 'workspace_action', 'run_workspace_action')} for model operation; use mode:"open_ui_surface" only to visibly navigate.`,
     parameters: ['categoryId'],
     available: (context) => typeof context.openAgentWorkspace === 'function',
-    open: (context, args) => {
+    open: (context, args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('agent-workspace')!;
       if (!context.openAgentWorkspace) return routeUnavailable(surface);
       const categoryId = workspaceCategory(args);
@@ -139,9 +145,11 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
         return false;
       }
     },
-    open: async (context) => {
+    open: async (context, _args, assertCurrent, readingOptions) => {
+      assertCurrent?.();
       const surface = findSurfaceById('connected-browser-cockpit')!;
-      const route = connectedBrowserCockpitRoute(context);
+      const route = await connectedBrowserCockpitRoute(context, {}, readingOptions);
+      assertCurrent?.();
       if (route.enabled !== true) {
         return {
           status: 'setup_needed',
@@ -152,7 +160,9 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
         };
       }
       const url = typeof route.url === 'string' ? route.url : '';
+      assertCurrent?.();
       const browserOpened = url ? await openExternalUrl(url) : false;
+      assertCurrent?.();
       return browserOpened
         ? opened(surface, { url, route, browserOpened })
         : {
@@ -174,7 +184,8 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     command: 'Ctrl+P',
     preferredModelRoute: 'Use mode:"workspace_actions" for concrete model operation, or mode:"open_ui_surface" for visible routing.',
     available: (context) => typeof context.openWorkspacePicker === 'function' || typeof context.openAgentWorkspace === 'function',
-    open: (context) => {
+    open: (context, _args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('panel-picker')!;
       if (context.openWorkspacePicker) {
         context.openWorkspacePicker();
@@ -191,7 +202,8 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     command: '/security',
     preferredModelRoute: `Use mode:"workspace_actions" for security review actions or ${agentHarnessModes('run_command')} for confirmed /security review output.`,
     available: (context) => typeof context.openAgentWorkspace === 'function' || typeof context.openSecurityWorkspace === 'function',
-    open: (context, args) => {
+    open: (context, args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('security-panel')!;
       return openNamedWorkspaceSurface(context, args, surface, {
         workspaceId: 'security',
@@ -208,7 +220,8 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     command: '/knowledge',
     preferredModelRoute: `Use agent_knowledge, agent_knowledge_ingest, mode:"workspace_actions", or ${agentHarnessModes('run_command')} for confirmed /knowledge operation.`,
     available: (context) => typeof context.openAgentWorkspace === 'function' || typeof context.openKnowledgeWorkspace === 'function',
-    open: (context, args) => {
+    open: (context, args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('knowledge-panel')!;
       return openNamedWorkspaceSurface(context, args, surface, {
         workspaceId: 'knowledge',
@@ -225,7 +238,8 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     command: '/subscription',
     preferredModelRoute: `Use mode:"workspace_actions" or ${agentHarnessModes('run_command')} for confirmed /subscription mirrors.`,
     available: (context) => typeof context.openAgentWorkspace === 'function' || typeof context.openSubscriptionWorkspace === 'function',
-    open: (context, args) => {
+    open: (context, args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('subscription-panel')!;
       return openNamedWorkspaceSurface(context, args, surface, {
         workspaceId: 'subscription',
@@ -243,7 +257,8 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     preferredModelRoute: `Use ${settingsActions('list', 'get', 'set', 'reset', 'import')} for model operation; use mode:"open_ui_surface" only to visibly navigate.`,
     parameters: ['target', 'key', 'prefix'],
     available: (context) => typeof context.openSettingsModal === 'function',
-    open: (context, args) => {
+    open: (context, args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('settings')!;
       if (!context.openSettingsModal) return routeUnavailable(surface);
       const target = settingsTarget(args);
@@ -270,7 +285,8 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     preferredModelRoute: `Use ${settingsActions('get', 'set')} for direct provider.model changes, or mode:"run_command" with confirmation when a concrete model id is known.`,
     parameters: ['target'],
     available: (context) => typeof context.openModelPicker === 'function' || typeof context.openModelPickerWithTarget === 'function',
-    open: (context, args) => {
+    open: (context, args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('model-picker')!;
       const target = optionalModelTarget(args);
       if (target && context.openModelPickerWithTarget) {
@@ -291,7 +307,8 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     preferredModelRoute: `Use ${settingsActions('get', 'set')} for direct provider routing changes, or confirmed mode:"run_command" mirrors for concrete provider changes.`,
     parameters: ['target'],
     available: (context) => typeof context.openProviderPicker === 'function' || typeof context.openProviderModelPickerWithTarget === 'function',
-    open: (context, args) => {
+    open: (context, args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('provider-picker')!;
       const target = optionalModelTarget(args);
       if (target && context.openProviderModelPickerWithTarget) {
@@ -311,7 +328,8 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     command: '/effort',
     preferredModelRoute: `Use ${settingsActions('get', 'set')} for provider.reasoningEffort when a concrete level is known, or mode:"run_workspace_action" setup-reasoning-effort with confirmation.`,
     available: (context) => typeof context.openReasoningEffortPicker === 'function',
-    open: (context) => {
+    open: (context, _args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('reasoning-effort-picker')!;
       if (!context.openReasoningEffortPicker) return routeUnavailable(surface);
       const result = context.openReasoningEffortPicker();
@@ -339,10 +357,11 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     command: '/config tts.provider',
     preferredModelRoute: `Use ${settingsActions('get', 'set')} for tts.provider when a concrete provider id is known; use mode:"open_ui_surface" only to visibly navigate.`,
     available: (context) => typeof context.openSelection === 'function' && Boolean(context.platform.voiceProviderRegistry),
-    open: (context) => {
+    open: (context, _args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('tts-provider-picker')!;
       if (!context.openSelection || !context.platform.voiceProviderRegistry) return routeUnavailable(surface);
-      const handled = openTtsProviderPicker(context);
+      const handled = openTtsProviderPicker(context, { assertCurrent });
       return handled ? opened(surface, { target: 'tts.provider' }) : routeUnavailable(surface);
     },
   },
@@ -355,11 +374,12 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     preferredModelRoute: `Use ${settingsActions('get', 'set', 'reset')} for tts.voice when a concrete voice id is known; use mode:"open_ui_surface" only to visibly navigate.`,
     parameters: ['target'],
     available: (context) => typeof context.openSelection === 'function' && Boolean(context.platform.voiceService),
-    open: async (context, args) => {
+    open: async (context, args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('tts-voice-picker')!;
       if (!context.openSelection || !context.platform.voiceService) return routeUnavailable(surface);
       const providerId = providerTarget(args);
-      const handled = await openTtsVoicePicker(context, providerId);
+      const handled = await openTtsVoicePicker(context, providerId, { assertCurrent });
       return handled
         ? opened(surface, { target: 'tts.voice', providerId: providerId ?? 'configured-default' })
         : routeUnavailable(surface);
@@ -424,7 +444,8 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     preferredModelRoute: 'Use this only for visible supervision of a running process output stream; use first-class model tools or confirmed commands for actual operations.',
     parameters: ['target', 'query', 'prefix', 'key'],
     available: (context) => typeof context.openLiveTail === 'function',
-    open: (context, args) => {
+    open: (context, args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('live-tail')!;
       if (!context.openLiveTail) return routeUnavailable(surface);
       const target = surfaceInputText(args);
@@ -456,7 +477,8 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     preferredModelRoute: 'Use conversation/session/content modes for model-readable inspection; use this surface for visible transcript search navigation.',
     parameters: ['query', 'prefix', 'key'],
     available: (context) => typeof context.openConversationSearch === 'function',
-    open: (context, args) => {
+    open: (context, args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('conversation-search')!;
       if (!context.openConversationSearch) return routeUnavailable(surface);
       const query = surfaceInputText(args);
@@ -473,7 +495,8 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     preferredModelRoute: 'Use this only for visible prompt recall; accepting a result remains an explicit interactive shell action.',
     parameters: ['query', 'prefix', 'key'],
     available: (context) => typeof context.openPromptHistorySearch === 'function',
-    open: (context, args) => {
+    open: (context, args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('prompt-history-search')!;
       if (!context.openPromptHistorySearch) return routeUnavailable(surface);
       const query = surfaceInputText(args);
@@ -490,7 +513,8 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     preferredModelRoute: `Use ${agentHarnessModes('commands', 'command')} for model-readable command discovery and mode:"run_command" for confirmed command execution.`,
     parameters: ['query', 'prefix', 'key'],
     available: (context) => typeof context.openSlashCommandMode === 'function',
-    open: (context, args) => {
+    open: (context, args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('slash-command-mode')!;
       if (!context.openSlashCommandMode) return routeUnavailable(surface);
       const query = surfaceInputText(args);
@@ -514,7 +538,8 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     command: '/commands',
     preferredModelRoute: `Use ${agentHarnessModes('commands', 'command')} for model-readable slash-command discovery and mode:"run_command" for confirmed command execution.`,
     available: (context) => typeof context.executeCommand === 'function',
-    open: async (context) => {
+    open: async (context, _args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('command-browser')!;
       if (!context.executeCommand) return routeUnavailable(surface);
       const handled = await context.executeCommand('commands', []);
@@ -537,7 +562,8 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     preferredModelRoute: 'Use first-class file, workspace, or artifact tools for model operation; use this for visible file reference navigation.',
     parameters: ['target=reference|inject', 'query', 'prefix', 'key'],
     available: (context) => typeof context.openFilePicker === 'function',
-    open: (context, args) => {
+    open: (context, args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('file-picker')!;
       if (!context.openFilePicker) return routeUnavailable(surface);
       const options = filePickerOptions(args);
@@ -555,7 +581,8 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     command: 'Enter on empty prompt',
     preferredModelRoute: 'Use conversation/session/content modes or confirmed slash-command mirrors for concrete block operations; use this surface for visible block-action navigation.',
     available: (context) => typeof context.openBlockActions === 'function',
-    open: (context) => {
+    open: (context, _args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('block-actions')!;
       if (!context.openBlockActions) return routeUnavailable(surface);
       const openedBlockActions = context.openBlockActions();
@@ -597,7 +624,8 @@ const UI_SURFACES: readonly UiSurfaceDefinition[] = [
     command: '/agent',
     preferredModelRoute: `Use ${agentHarnessModes('workspace', 'workspace_actions')} or ${settingsActions('list', 'get', 'set')} for concrete setup operation.`,
     available: (context) => typeof context.openAgentWorkspace === 'function',
-    open: (context) => {
+    open: (context, _args, assertCurrent) => {
+      assertCurrent?.();
       const surface = findSurfaceById('onboarding')!;
       if (!context.openAgentWorkspace) return routeUnavailable(surface);
       context.openAgentWorkspace();
@@ -610,22 +638,6 @@ function findSurfaceById(surfaceId: string): UiSurfaceDefinition | undefined {
   return UI_SURFACES.find((surface) => surface.id === surfaceId);
 }
 
-function surfaceMatches(surface: Record<string, unknown>, query: string): boolean {
-  if (!query) return true;
-  const haystack = [
-    surface.id,
-    surface.label,
-    surface.kind,
-    surface.summary,
-    surface.command,
-    surface.modelRoute,
-    surface.preferredModelRoute,
-  ].map((value) => String(value ?? '')).join('\n').toLowerCase();
-  const normalized = query.toLowerCase().trim();
-  if (haystack.includes(normalized)) return true;
-  const tokens = normalized.split(/[^a-z0-9]+/).filter((token) => token.length > 0);
-  return tokens.length > 0 && tokens.every((token) => haystack.includes(token));
-}
 
 function surfaceLookupFromArgs(args: AgentHarnessUiSurfaceArgs): { readonly source: UiSurfaceLookup['source']; readonly input: string } | null {
   const surfaceId = readString(args.surfaceId);
@@ -692,7 +704,57 @@ function uiSurfaceModelRoute(surface: UiSurfaceDefinition): string {
   }
 }
 
-function resolveHarnessUiSurface(args: AgentHarnessUiSurfaceArgs): UiSurfaceResolution | null {
+const UI_CALLBACK_NAMES = ['openAgentWorkspace', 'openWorkspacePicker', 'openSecurityWorkspace', 'openKnowledgeWorkspace',
+  'openSubscriptionWorkspace', 'openSettingsModal', 'openMcpWorkspace', 'openModelPicker', 'openModelPickerWithTarget',
+  'openProviderPicker', 'openProviderModelPickerWithTarget', 'openReasoningEffortPicker', 'openSelection', 'openSessionPicker',
+  'openProfilePicker', 'openBookmarkModal', 'openContextInspector', 'openProcessModal', 'openLiveTail', 'openConversationSearch',
+  'openPromptHistorySearch', 'openSlashCommandMode', 'executeCommand', 'openFilePicker', 'openBlockActions', 'openHelpOverlay',
+  'openShortcutsOverlay', 'print', 'renderRequest'] as const;
+
+function captureUiRequest(context: CommandContext, args: AgentHarnessUiSurfaceArgs, options: CatalogRankingOptions) {
+  return captureStatefulCatalogRequest(context, args, options, [
+    ...UI_CALLBACK_NAMES.map(name => [name]), ['platform', 'voiceProviderRegistry', 'list'],
+    ['platform', 'voiceService', 'listVoices'], ['platform', 'artifactStore', 'list'],
+  ], () => {
+    const assertDefinitions = captureCatalogMethods(UI_SURFACES, ['length', ...UI_SURFACES.map((_, index) => String(index))]);
+    const definitions = UI_SURFACES.map(surface => captureCatalogMethods(surface, ['id', 'label', 'kind', 'summary', 'command', 'preferredModelRoute', 'parameters', 'available', 'open']));
+    const semanticData = UI_SURFACES.map(surface => ({ id: surface.id, label: surface.label, kind: surface.kind,
+      summary: surface.summary, command: surface.command, preferredModelRoute: surface.preferredModelRoute, parameters: surface.parameters }));
+    const originalSemanticData = captureCatalogSnapshot(semanticData);
+    const guards = [() => {
+      assertDefinitions(); for (const guard of definitions) guard(); originalSemanticData.assertCurrent(semanticData);
+    }];
+    if (context.platform.voiceProviderRegistry) guards.push(captureVoiceProviderReadSource(context.platform.voiceProviderRegistry));
+    if (context.platform.voiceService) guards.push(captureVoiceListReadSource(context.platform.voiceService));
+    return guards;
+  });
+}
+
+async function surfaceRows(context: CommandContext, options: CatalogRankingOptions): Promise<readonly Record<string, unknown>[]> {
+  const availability = captureCatalogSnapshot(UI_SURFACES.map(surface => surface.available(context)));
+  const assertAvailability = () => { availability.assertCurrent(UI_SURFACES.map(surface => surface.available(context))); };
+  options.retainCurrent?.(assertAvailability, 'ui:native-availability');
+  const rows: Record<string, unknown>[] = [];
+  for (const surface of UI_SURFACES) {
+    options.assertCurrent?.(); assertAvailability();
+    rows.push(await describeSurface(context, surface, { includeParameters: true }, options));
+    options.assertCurrent?.(); assertAvailability();
+  }
+  const original = captureCatalogSnapshot(rows);
+  options.retainCurrent?.(() => { original.assertCurrent(rows); assertAvailability(); }, 'ui:original-rows');
+  return rows;
+}
+
+async function withUiReadingRequest<T>(context: CommandContext, args: AgentHarnessUiSurfaceArgs, options: CatalogRankingOptions,
+  consume: (request: ReturnType<typeof captureUiRequest>, readingOptions: CatalogRankingOptions) => Promise<T>): Promise<T> {
+  const request = captureUiRequest(context, args, options);
+  return withModelReadingSource(request.input, request.options, async (_captured, scoped) => {
+    request.assertCurrent();
+    return consume(request, { ...request.options, ...scoped });
+  });
+}
+
+async function resolveHarnessUiSurface(context: CommandContext, args: AgentHarnessUiSurfaceArgs, options: CatalogRankingOptions): Promise<UiSurfaceResolution | null> {
   const lookup = surfaceLookupFromArgs(args);
   if (!lookup) return null;
   const exactId = UI_SURFACES.find((surface) => surface.id === lookup.input);
@@ -706,17 +768,33 @@ function resolveHarnessUiSurface(args: AgentHarnessUiSurfaceArgs): UiSurfaceReso
   const ciLabel = UI_SURFACES.filter((surface) => surface.label.toLowerCase() === inputLower);
   if (ciLabel.length === 1) return { status: 'found', surface: ciLabel[0]!, lookup: { ...lookup, resolvedBy: 'case-insensitive-label' } };
   if (ciLabel.length > 1) return { status: 'ambiguous', input: lookup.input, candidates: ciLabel.map(surfaceCandidate).slice(0, 8) };
-  const search = UI_SURFACES.filter((surface) => surfaceMatches(surfaceCandidate(surface), lookup.input));
-  if (search.length === 1) return { status: 'found', surface: search[0]!, lookup: { ...lookup, resolvedBy: 'search' } };
-  if (search.length > 1) return { status: 'ambiguous', input: lookup.input, candidates: search.map(surfaceCandidate).slice(0, 8) };
+  const rows = await surfaceRows(context, options);
+  options.assertCurrent?.();
+  const captured = captureCatalogSnapshot(rows);
+  const assertRows = () => { captured.assertCurrent(rows); };
+  options.retainCurrent?.(assertRows, 'ui:native-availability');
+  const selected = await selectHarnessCatalog(rows, lookup.input, row => ({ id: String(row.id), description: String(row.label), evidence: { row, args } }),
+    { ...options, assertCurrent: () => { options.assertCurrent?.(); assertRows(); } }, 'agent.ui.surface');
+  assertRows(); options.assertCurrent?.();
+  if (selected) {
+    const surface = UI_SURFACES[rows.indexOf(selected)];
+    if (!surface) throw new Error('UI surface selection is no longer current.');
+    return { status: 'found', surface, lookup: { ...lookup, resolvedBy: 'search' } };
+  }
   return null;
 }
 
-function describeSurface(
+async function describeSurface(
   context: CommandContext,
   surface: UiSurfaceDefinition,
   options: { readonly includeParameters?: boolean; readonly lookup?: UiSurfaceLookup } = {},
-): Record<string, unknown> {
+  readingOptions: CatalogRankingOptions = {},
+): Promise<Record<string, unknown>> {
+  readingOptions.assertCurrent?.(); readingOptions.signal?.throwIfAborted();
+  const available = surface.available(context);
+  const cockpit = surface.id === 'connected-browser-cockpit'
+    ? await connectedBrowserCockpitRoute(context, { includeWorkspaceCoverage: options.includeParameters === true }, readingOptions) : undefined;
+  readingOptions.assertCurrent?.(); readingOptions.signal?.throwIfAborted();
   return {
     id: surface.id,
     label: surface.label,
@@ -725,8 +803,8 @@ function describeSurface(
     command: surface.command,
     ...(options.lookup ? { lookup: options.lookup } : {}),
     modelRoute: uiSurfaceModelRoute(surface),
-    available: surface.available(context),
-    ...(surface.id === 'connected-browser-cockpit' ? { cockpit: connectedBrowserCockpitRoute(context, { includeWorkspaceCoverage: options.includeParameters === true }) } : {}),
+    available,
+    ...(cockpit === undefined ? {} : { cockpit }),
     ...(options.includeParameters ? {
       preferredModelRoute: surface.preferredModelRoute,
       parameters: surface.parameters ?? [],
@@ -743,40 +821,58 @@ export function totalHarnessUiSurfaces(): number {
   return UI_SURFACES.length;
 }
 
-export function listHarnessUiSurfaces(context: CommandContext, args: AgentHarnessUiSurfaceArgs): readonly Record<string, unknown>[] {
-  const query = readString(args.query);
-  const limit = readLimit(args.limit, 200);
-  const includeParameters = args.includeParameters === true;
-  return UI_SURFACES
-    .map((surface) => describeSurface(context, surface, { includeParameters }))
-    .filter((surface) => surfaceMatches(surface, query))
-    .slice(0, limit);
+export async function listHarnessUiSurfaces(context: CommandContext, args: AgentHarnessUiSurfaceArgs, options: CatalogRankingOptions = {}): Promise<readonly Record<string, unknown>[]> {
+  return withUiReadingRequest(context, args, options, async (request, readingOptions) => {
+    args = request.input;
+    const query = readString(args.query);
+    const rows = await surfaceRows(context, readingOptions);
+    readingOptions.assertCurrent?.();
+    const selected = query ? await rankStatefulCatalog(rows, query, row => ({ id: String(row.id), description: String(row.label), evidence: { row, args } }), 'agent.ui.surfaces', readingOptions) : rows;
+    readingOptions.assertCurrent?.();
+    const descriptors: Record<string, unknown>[] = [];
+    for (const row of selected.slice(0, readLimit(args.limit, 200))) {
+      const surface = UI_SURFACES[rows.indexOf(row)];
+      if (!surface) throw new Error('UI surface catalog is no longer current.');
+      descriptors.push(await describeSurface(context, surface, { includeParameters: args.includeParameters === true }, readingOptions));
+      readingOptions.assertCurrent?.();
+    }
+    return descriptors;
+  });
 }
 
-export function describeHarnessUiSurface(context: CommandContext, args: AgentHarnessUiSurfaceArgs): Record<string, unknown> | null {
-  const resolved = resolveHarnessUiSurface(args);
-  if (resolved?.status === 'found') return describeSurface(context, resolved.surface, { includeParameters: true, lookup: resolved.lookup });
-  if (resolved?.status === 'ambiguous') {
-    return { status: 'ambiguous', input: resolved.input, candidates: resolved.candidates };
-  }
-  return null;
+export async function describeHarnessUiSurface(context: CommandContext, args: AgentHarnessUiSurfaceArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown> | null> {
+  return withUiReadingRequest(context, args, options, async (request, readingOptions) => {
+    const resolved = await resolveHarnessUiSurface(context, request.input, readingOptions);
+    readingOptions.assertCurrent?.();
+    if (resolved?.status === 'found') {
+      const descriptor = await describeSurface(context, resolved.surface, { includeParameters: true, lookup: resolved.lookup }, readingOptions);
+      readingOptions.assertCurrent?.(); return descriptor;
+    }
+    if (resolved?.status === 'ambiguous') return { status: 'ambiguous', input: resolved.input, candidates: resolved.candidates };
+    return null;
+  });
 }
 
-export async function openHarnessUiSurface(context: CommandContext, args: AgentHarnessUiSurfaceArgs): Promise<Record<string, unknown>> {
-  const resolved = resolveHarnessUiSurface(args);
-  if (resolved?.status === 'ambiguous') {
-    return { status: 'ambiguous_ui_surface', input: resolved.input, candidates: resolved.candidates };
-  }
-  if (!resolved) {
-    return {
-      status: 'unknown_ui_surface',
-      surfaceId: readString(args.surfaceId || args.query || args.target) || '<missing>',
-      availableSurfaces: UI_SURFACES.map((entry) => entry.id),
-    };
-  }
-  const routed = await resolved.surface.open(context, args);
-  return {
-    ...routed,
-    descriptor: describeSurface(context, resolved.surface, { includeParameters: true, lookup: resolved.lookup }),
-  };
+export async function openHarnessUiSurface(context: CommandContext, args: AgentHarnessUiSurfaceArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  return withUiReadingRequest(context, args, options, async (request, readingOptions) => {
+    args = request.input;
+    const resolved = await resolveHarnessUiSurface(context, args, readingOptions);
+    readingOptions.assertCurrent?.();
+    if (resolved?.status === 'ambiguous') {
+      return { status: 'ambiguous_ui_surface', input: resolved.input, candidates: resolved.candidates };
+    }
+    if (!resolved) {
+      return {
+        status: 'unknown_ui_surface',
+        surfaceId: readString(args.surfaceId || args.query || args.target) || '<missing>',
+        availableSurfaces: UI_SURFACES.map((entry) => entry.id),
+      };
+    }
+    readingOptions.assertCurrent?.();
+    const routed = await resolved.surface.open(context, args, () => { readingOptions.assertCurrent?.(); }, readingOptions);
+    readingOptions.assertCurrent?.();
+    const descriptor = await describeSurface(context, resolved.surface, { includeParameters: true, lookup: resolved.lookup }, readingOptions);
+    readingOptions.assertCurrent?.();
+    return { ...routed, descriptor };
+  });
 }

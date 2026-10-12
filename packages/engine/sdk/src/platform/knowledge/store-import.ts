@@ -1,3 +1,4 @@
+import { knowledgeRecordSnapshotFromRows, type KnowledgeRecordSnapshot } from './store-record-snapshot.js';
 import { captureKnowledgeStoreInput, copyKnowledgeRepresentation } from './store-record-representation.js';
 import type { SQLiteStore } from '../state/sqlite-store.js';
 import { activationSourceIds } from './activation/projection.js';
@@ -6,7 +7,7 @@ import { supportHash } from './semantic/verification/projection.js';
 import { findKnowledgeEdge, prepareKnowledgeEdgeRecord, writeKnowledgeEdgeRow } from './store-edge-writes.js';
 import { prepareKnowledgeExtractionRecord, prepareKnowledgeSourceRecord, writeKnowledgeExtractionRow, writeKnowledgeSourceRow } from './store-evidence-writes.js';
 import { assertPreparedNodeWrites, markPreparedNodeWritten, preparedNodeWrites, prepareNodeActivationPass, type NodeMutationDraft } from './store-node-activation.js';
-import { recordKnowledgeNodeRevisions, writeKnowledgeNodeRow } from './store-node-history.js';
+import { recordKnowledgeNodeRevisions, writeKnowledgeNodeRow, knowledgeNodeRow } from './store-node-history.js';
 import { prepareKnowledgeIssueRecord, writeKnowledgeIssueRow } from './store-node-issue-writes.js';
 import { retainKnowledgeNodeObservation } from './store-node-observation.js';
 import type { KnowledgeStore } from './store.js';
@@ -40,6 +41,10 @@ export interface KnowledgeImportGraph {
   readonly assertCurrent?: (() => void) | undefined;
 }
 export type PrepareKnowledgeImportGraph = (stage: KnowledgeImportStage) => Promise<KnowledgeImportGraph>;
+const NativePublicationMap = Map;
+const nativePublicationApply = Reflect.apply;
+const nativePublicationMapGet = Map.prototype.get, nativePublicationMapSet = Map.prototype.set;
+
 export interface KnowledgeImportView {
   readonly sqlite: SQLiteStore;
   readonly sources: Map<string, KnowledgeSourceRecord>;
@@ -48,6 +53,8 @@ export interface KnowledgeImportView {
   readonly nodeRevisions: Map<string, KnowledgeNodeRevisionRecord[]>;
   readonly edges: Map<string, KnowledgeEdgeRecord>;
   readonly issues: Map<string, KnowledgeIssueRecord>;
+  /** Native store closure; invoked only alongside the actual committed cache rows. */
+  readonly nodePublished?: ((record: KnowledgeNodeRecord, previous: KnowledgeNodeRecord | undefined, snapshot: KnowledgeRecordSnapshot) => void) | undefined;
 }
 function extractionFor(extractions: ReadonlyMap<string, KnowledgeExtractionRecord>, sourceId: string): KnowledgeExtractionRecord | null {
   return [...extractions.values()].find((record) => record.sourceId === sourceId) ?? null;
@@ -121,12 +128,13 @@ export async function applyKnowledgeImport(store: KnowledgeStore, view: Knowledg
   const nodes = preparedNodeWrites(store, prepared, scope);
   const revisions = new Map<string, KnowledgeNodeRevisionRecord[]>();
   for (const { record } of nodes) revisions.set(record.id, [...(view.nodeRevisions.get(record.id) ?? [])]);
+  const nodePublicationSnapshots = new NativePublicationMap<KnowledgeNodeRecord, KnowledgeRecordSnapshot>();
   await view.sqlite.publishPrepared((sqlite) => {
     for (const record of sourceWrites) writeKnowledgeSourceRow(sqlite, record);
     for (const record of extractionWrites) writeKnowledgeExtractionRow(sqlite, record);
     for (const { record, existing, now } of nodes) {
-      if (record === existing) continue;
-      writeKnowledgeNodeRow(sqlite, record);
+      if (record === existing) { nativePublicationApply(nativePublicationMapSet, nodePublicationSnapshots, [record, knowledgeRecordSnapshotFromRows('node', knowledgeNodeRow(record))]); continue; }
+      nativePublicationApply(nativePublicationMapSet, nodePublicationSnapshots, [record, knowledgeRecordSnapshotFromRows('node', writeKnowledgeNodeRow(sqlite, record))]);
       recordKnowledgeNodeRevisions(sqlite, revisions, record, existing, now);
     }
     for (const record of edgeWrites) writeKnowledgeEdgeRow(sqlite, record);
@@ -144,6 +152,11 @@ export async function applyKnowledgeImport(store: KnowledgeStore, view: Knowledg
     for (const record of issueWrites) view.issues.set(record.id, record);
     nodes.forEach(({ existing, record, observationEvidence, preserveObservation }, index) => {
       retainKnowledgeNodeObservation(preserveObservation ? existing : undefined, record, observationEvidence); markPreparedNodeWritten(prepared, index);
+      if (view.nodePublished) {
+        const snapshot: KnowledgeRecordSnapshot | undefined = nativePublicationApply(nativePublicationMapGet, nodePublicationSnapshots, [record]);
+        if (!snapshot) throw new Error('Missing native node publication image');
+        view.nodePublished(record, existing, snapshot);
+      }
     });
   });
   const receipt = Object.freeze({ nodes: Object.freeze(nodes.map(({ record }) => record)), sources: Object.freeze([...sourceWrites]), edges: Object.freeze([...edgeWrites]) });

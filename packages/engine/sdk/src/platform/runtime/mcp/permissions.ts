@@ -1,3 +1,4 @@
+import { assertSecurityReadSource, captureSecurityReadBindings, retainSecurityReadData } from '../../security/read-source.js';
 import { readExternalRequestEvidence, type ExternalRequestEvidence } from '../../permissions/external-request-evidence.js';
 /**
  * MCP per-server permission and trust-level management.
@@ -210,9 +211,30 @@ function sortFindings(a: McpAttackPathFinding, b: McpAttackPathFinding): number 
  *   4. `isToolAllowed(name, tool)`, checked before every tool invocation.
  *   5. `removeServer(name)`, called on permanent disconnection.
  */
+const mcpDecisionReadSources = new WeakMap<McpPermissionManager, () => () => void>();
+const getMcpDecisionReadSources = mcpDecisionReadSources.get.bind(mcpDecisionReadSources);
+const setMcpDecisionReadSources = mcpDecisionReadSources.set.bind(mcpDecisionReadSources);
+
+export function captureMcpDecisionHistoryReadSource(manager: McpPermissionManager): () => void {
+  const capture = getMcpDecisionReadSources(manager);
+  assertSecurityReadSource(capture !== undefined);
+  return capture();
+}
+
 export class McpPermissionManager {
   private readonly permissions = new Map<string, McpServerPermissions>();
   private readonly recentDecisions: McpDecisionRecord[] = [];
+  private decisionRevision = 0;
+
+  constructor() {
+    setMcpDecisionReadSources(this, () => {
+      const binding = captureSecurityReadBindings(this, ['decisionRevision', 'recentDecisions', 'listRecentDecisions', '_recordDecision', 'captureSecurityDecisionReadSource']);
+      const revision = this.decisionRevision, rawCurrent = retainSecurityReadData(this.recentDecisions);
+      return () => { binding(); rawCurrent(); assertSecurityReadSource(this.decisionRevision === revision); };
+    });
+  }
+
+  captureSecurityDecisionReadSource(): () => void { return captureMcpDecisionHistoryReadSource(this); }
 
   // ── Registration ─────────────────────────────────────────────────────────
 
@@ -608,6 +630,7 @@ export class McpPermissionManager {
   }
 
   private _recordDecision(record: McpDecisionRecord): void {
+    this.decisionRevision++;
     this.recentDecisions.unshift(record);
     if (this.recentDecisions.length > MAX_DECISION_HISTORY) {
       this.recentDecisions.length = MAX_DECISION_HISTORY;

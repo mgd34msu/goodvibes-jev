@@ -1,3 +1,4 @@
+import { projectGeneratedFactRecordAdmission } from './generated-fact-record-references.js';
 import { projectKnowledgeSourceReferences } from './source-structural-references.js';
 import { createHash } from 'node:crypto';
 import { assertJudgmentInput, captureOwnedJson } from '../gate/judgment-input.js';
@@ -57,7 +58,8 @@ interface SourceReferences { readonly source: KnowledgeSourceRecord; readonly ex
 /** Complete raw rows are the admission source. An exact current numeric view can
  * select that row, but cannot rewrite it. A clone/extra/mutation receives ordinary
  * complete-input admission and never inherits a clock exception. */
-export function prepareKnowledgeRecordAdmission(store: KnowledgeStore, kind: RecordKind, record: EvidenceRecord, references?: SourceReferences) {
+export function prepareKnowledgeRecordAdmission(store: KnowledgeStore, kind: RecordKind, record: EvidenceRecord, references?: SourceReferences,
+  captureMetadata?: (metadata: unknown) => void) {
   const original = captureOwnedJson(record);
   const selector = Object.freeze({ kind, id: record.id });
   if (references && (kind === 'source' ? references.source !== record : kind === 'extraction' ? references.extraction !== record : true)) throw new KnowledgeRecordAdmissionHeldError('stale');
@@ -71,7 +73,8 @@ export function prepareKnowledgeRecordAdmission(store: KnowledgeStore, kind: Rec
     throw new KnowledgeRecordAdmissionHeldError('stale');
   }
   const originalRaw = captureOwnedJson(snapshot.raw) as Record<string, unknown>;
-  const raw = { ...originalRaw };
+  const generated = kind === 'node' ? projectGeneratedFactRecordAdmission(store, record as KnowledgeNodeRecord, originalRaw) : undefined;
+  const raw = generated?.raw ?? { ...originalRaw };
   // Reuse only the existing in-process producer proof for structural references.
   if (structural && kind === 'source') {
     raw.id = structural.sourceId;
@@ -90,8 +93,21 @@ export function prepareKnowledgeRecordAdmission(store: KnowledgeStore, kind: Rec
     if (!isKnowledgeClock(snapshot.raw[column])) throw new KnowledgeRecordAdmissionHeldError('malformed');
   }
   const assertGeneration = (generation: string | null) => {
+    generated?.assertCurrent();
     if (generation !== snapshot.generation || !sameKnowledgeRecord(original, record) || current() !== record) throw new KnowledgeRecordAdmissionHeldError('stale');
   };
+  if (captureMetadata) {
+    assertGeneration(kind === 'source' ? store.getSourceGeneration(selector.id) : store.getRecordGeneration(kind, selector.id));
+    try {
+      const result: unknown = captureMetadata(decoded.metadata);
+      if (result !== undefined) {
+        try { void Promise.resolve(result).catch(() => {}); } catch { /* Async callbacks cannot supply native metadata. */ }
+        throw new KnowledgeRecordAdmissionHeldError('stale');
+      }
+    } finally {
+      assertGeneration(kind === 'source' ? store.getSourceGeneration(selector.id) : store.getRecordGeneration(kind, selector.id));
+    }
+  }
   const receipt = Object.freeze({ assertCurrent: () => {
     assertGeneration(kind === 'source' ? store.getSourceGeneration(selector.id) : store.getRecordGeneration(kind, selector.id));
   } });

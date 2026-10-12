@@ -13,6 +13,17 @@
 import { FEATURE_FLAG_MAP } from './flags.js';
 import type { FlagConfig, FlagState, FlagTransition, FeatureFlag } from './types.js';
 import { summarizeError } from '../../utils/error-display.js';
+import { assertSecurityReadSource, captureSecurityReadBindings, retainSecurityReadMap } from '../../security/read-source.js';
+
+const flagReadSources = new WeakMap<object, () => () => void>();
+const getFlagReadSources = flagReadSources.get.bind(flagReadSources);
+const setFlagReadSources = flagReadSources.set.bind(flagReadSources);
+
+export function captureFeatureFlagReadSource(manager: object): () => void {
+  const capture = getFlagReadSources(manager);
+  assertSecurityReadSource(capture !== undefined);
+  return capture();
+}
 
 /** Subscriber callback type for flag state changes */
 export type FlagSubscriber = (
@@ -26,6 +37,9 @@ export type FlagSubscriber = (
  *
  */
 class FeatureFlagManagerImpl {
+  private _publicationRevision = 0;
+
+  public getPublicationRevision(): number { return this._publicationRevision; }
   /** Current state for each registered flag */
   private readonly _states: Map<string, FlagState> = new Map();
 
@@ -53,6 +67,12 @@ class FeatureFlagManagerImpl {
     for (const [id, flag] of FEATURE_FLAG_MAP) {
       this._states.set(id, flag.defaultState);
     }
+    setFlagReadSources(this, () => {
+      const bindings = captureSecurityReadBindings(this, ['_publicationRevision', '_states', 'isEnabled', 'getPublicationRevision']);
+      const revision = this._publicationRevision;
+      const statesCurrent = retainSecurityReadMap(this._states);
+      return () => { bindings(); statesCurrent(); assertSecurityReadSource(this._publicationRevision === revision); };
+    });
   }
 
   // ── Read API ────────────────────────────────────────────────────────────
@@ -366,6 +386,7 @@ class FeatureFlagManagerImpl {
     next: FlagState,
     reason?: string,
   ): void {
+    this._publicationRevision++;
     this._states.set(flagId, next);
 
     const entry: FlagTransition = {

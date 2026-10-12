@@ -12,7 +12,7 @@ import type { BackgroundProcess, ProcessManager } from '@goodvibes-jev/engine/sd
 import type { CommandContext } from '../input/command-registry.ts';
 import { sudoExecutionPosture } from './agent-harness-sudo-posture.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
-import { interactiveRuntimeCapabilitySummary, interactiveRuntimeParityStatus } from './agent-harness-interactive-runtime-records.ts';
+import { acquireInteractiveRuntimeSnapshot, type InteractiveRuntimeParity } from './agent-harness-interactive-runtime-records.ts';
 import { DEFAULT_BACKGROUND_TIMEOUT_MS, clampTimeout, processAgeMs, processStatus } from './agent-harness-process-timeout-policy.ts';
 import type {
   AgentHarnessBackgroundProcessArgs,
@@ -309,17 +309,16 @@ async function matchingProcesses(context: CommandContext, manager: ProcessManage
   const assertSourcesCurrent = retainProcessSources(context, manager, entries, options);
   const assertCurrent = () => { options.assertCurrent?.(); assertSourcesCurrent(); };
   assertCurrent();
-  if (!input) return { all: entries, matches: entries.map((entry) => ({ entry, judgment: undefined })), judgments: [] };
+  if (!input) return { all: entries, matches: entries.map((entry) => ({ entry, judgment: undefined })), judgments: [], assertCurrent };
   const ranked = await rankHarnessCatalog(entries, input, (entry) => ({ id: entry.id,
     description: `${entry.id}\n${entry.pid}\n${entry.cmd}\n${entry.status}`, evidence: entry }),
     'agent.harness.background-processes', { ...options, requirePreservedSource: true, assertCurrent });
   assertCurrent();
-  return { ...ranked, all: entries };
+  return { ...ranked, all: entries, assertCurrent };
 }
 
-function processToolParity(context?: CommandContext): readonly Record<string, unknown>[] {
+function processToolParity(context: CommandContext | undefined, interactive: InteractiveRuntimeParity | null): readonly Record<string, unknown>[] {
   const substrate = processSubstrateReport(context);
-  const interactive = context ? interactiveRuntimeParityStatus(context) : null;
   const localProcessManager = substrate.localProcessManager as Record<string, unknown>;
   const daemonContract = substrate.daemonOperatorContract as Record<string, unknown>;
   const stdinWrite = localProcessManager.stdinWrite as Record<string, unknown>;
@@ -395,7 +394,9 @@ function processToolParity(context?: CommandContext): readonly Record<string, un
   ];
 }
 
-function capabilities(context?: CommandContext): Record<string, unknown> {
+async function capabilities(context?: CommandContext, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const snapshot = context ? await acquireInteractiveRuntimeSnapshot(context, options) : null;
+  snapshot?.assertCurrent();
   const sudoPosture = sudoExecutionPosture(context);
   const substrate = processSubstrateReport(context);
   const localProcessManager = substrate.localProcessManager as Record<string, unknown>;
@@ -416,12 +417,12 @@ function capabilities(context?: CommandContext): Record<string, unknown> {
       ids: ['processId', 'processSessionId', 'sessionId', 'session_id'],
       userOutcome: 'The harness accepts the process-tool words users expect while returning stable processId/sessionId aliases.',
     },
-    parity: processToolParity(context),
+    parity: processToolParity(context, snapshot?.parityStatus ?? null),
     substrate: {
       ...substrate,
       auditedTerms: ['terminal', 'process.write', 'stdin', 'pty', 'sudo', 'sessions.inputs'],
     },
-    interactiveRuntime: context ? interactiveRuntimeCapabilitySummary(context) : null,
+    interactiveRuntime: snapshot?.capabilitySummary ?? null,
     pty: {
       status: pty.status === 'contract-discovered' ? 'contract-discovered-but-not-generic-executable' : 'not-yet-supported-in-agent-harness',
       guidance: pty.status === 'contract-discovered'
@@ -474,7 +475,7 @@ export async function backgroundProcessSummary(context: CommandContext, args: Ag
       processes: [],
       returned: 0,
       total: 0,
-      capabilities: capabilities(context),
+      capabilities: await capabilities(context, options),
       policy: 'Background process UX uses the shared GoodVibes ProcessManager when the current runtime wires it in.',
     };
   }
@@ -489,6 +490,8 @@ export async function backgroundProcessSummary(context: CommandContext, args: Ag
     if (!current) throw new ToolInputProjectionError('stale');
     return { ...describeProcessEntry(manager, current, { includeParameters: args.includeParameters === true }), ...(judgment ? { judgment } : {}) };
   });
+  const processCapabilities = await capabilities(context, { ...options, assertCurrent: selected.assertCurrent });
+  selected.assertCurrent();
   return {
     status: 'available',
     summary: {
@@ -502,7 +505,7 @@ export async function backgroundProcessSummary(context: CommandContext, args: Ag
     judgments: selected.judgments,
     returned: processes.length,
     total: all.length,
-    capabilities: capabilities(context),
+    capabilities: processCapabilities,
     policy: 'List/status/log/wait routes are read-only and bounded. Starting or stopping a background process requires current recorded effect admission.',
   };
 }
@@ -620,7 +623,7 @@ export async function runBackgroundProcessAction(context: CommandContext, args: 
 
   if (args.pty === true || readField(args, 'pty').toLowerCase() === 'true') {
     return {
-      ...(capabilities(context).pty as Record<string, unknown>),
+      ...((await capabilities(context, options)).pty as Record<string, unknown>),
       status: 'unsupported',
       capability: 'pty',
     };
@@ -658,7 +661,7 @@ export async function runBackgroundProcessAction(context: CommandContext, args: 
   if (action === 'capabilities' || action === 'doctor' || action === 'parity') {
     return {
       status: 'available',
-      capabilities: capabilities(context),
+      capabilities: await capabilities(context, options),
       methods: PROCESS_PARITY_METHODS,
       policy: 'This is a read-only process UX contract report. It does not start, stop, or write to any process.',
     };
@@ -674,7 +677,7 @@ export async function runBackgroundProcessAction(context: CommandContext, args: 
         status: 'blocked',
         capability: 'sudo',
         reason: 'Background sudo prompts are not exposed by Agent because they can hang or hide privilege escalation.',
-        guidance: capabilities(context).sudo,
+        guidance: (await capabilities(context, options)).sudo,
       };
     }
     const cwd = readCwd(context, args);

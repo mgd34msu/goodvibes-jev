@@ -71,7 +71,7 @@ export async function planAgentTaskRoute(
   const request = (typeof captured.query === 'string' ? captured.query.trim() : '') || (typeof captured.target === 'string' ? captured.target.trim() : '');
   if (!request) return planTaskRoute(captured);
   const modes = captureModelReadingInput(HARNESS_MODE_DESCRIPTORS);
-  const workspace = captureModelReadingInput(listWorkspaceActions(context, { limit: 1000 }));
+  const workspace = captureModelReadingInput(await listWorkspaceActions(context, { limit: 1000 }, options));
   freezeRouteDeclarations(workspace);
   const workspaceEvidence = new Map<string, unknown>();
   for (const category of AGENT_WORKSPACE_CATEGORIES) for (const action of category.actions) {
@@ -98,7 +98,7 @@ export async function planAgentTaskRoute(
   assertCurrent();
   return withModelReadingSource(captured, { ...options, assertCurrent }, async (protectedArgs, readingOptions) => {
     assertCurrent();
-    const memory = externalMemoryProviderCatalog(await externalMemoryLiveProviderRecords(context, readingOptions), externalMemoryReceiptEvidence(context));
+    const memory = externalMemoryProviderCatalog(await externalMemoryLiveProviderRecords(context, readingOptions), await externalMemoryReceiptEvidence(context, readingOptions));
     readingOptions.assertCurrent?.();
     const envelope = await listHarnessModes({ limit: 1000 });
     readingOptions.assertCurrent?.();

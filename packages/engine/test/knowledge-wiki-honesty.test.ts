@@ -1,3 +1,4 @@
+import { extractionValueFixtureFor, extractionValueFixtureReading } from './_helpers/knowledge-extraction-value-readings.js';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import type { Question } from '@goodvibes-jev/judgment';
@@ -196,7 +197,11 @@ describe('knowledge wiki honesty: confidence scale + non-finite guard (Findings 
       async completeText(): Promise<string | null> { return null; },
     };
     // These fixture claims are explicitly supported by the synthetic Widget extraction.
-    installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+    const extractionValues = [extractionValueFixtureFor(source, store.getExtractionBySourceId(source.id), 0.99)];
+    installJudgmentPort(fakePort((_name, question, state) => {
+      const extractionValue = extractionValueFixtureReading(_name, question, state, extractionValues);
+      return noulAnswer(extractionValue ?? 0.99);
+    }).port);
     const semantic = new KnowledgeSemanticService(store, { llm: probabilityLlm });
     const result = await semantic.enrichSource(source.id, { force: true });
 

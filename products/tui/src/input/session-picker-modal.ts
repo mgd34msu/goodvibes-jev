@@ -34,7 +34,7 @@ import { unlinkSync } from 'node:fs';
 import type { SessionInfo, SessionManager } from '@goodvibes-jev/engine/sdk/platform/sessions';
 import type { SharedSessionRecord } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 import type { CrossSurfaceView, SessionReadFacade } from '@goodvibes-jev/engine/sdk/platform/runtime/session-spine';
-import type { ConversationManager } from '../core/conversation';
+import type { CommandContext } from './command-registry.ts';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import type { HostedRosterSnapshot } from '../runtime/client/hosted-roster.ts';
 // Re-exported so the composition site (input/handler.ts) reaches the picker and
@@ -81,6 +81,11 @@ export class SessionPickerModal {
 
   /** Last status message to show in the modal (e.g. error or success). */
   public statusMessage = '';
+
+  private resumeTask: Promise<void> | null = null;
+
+  /** The selected session's native resume, including its liveness decision. */
+  get pendingResume(): Promise<void> | null { return this.resumeTask; }
 
   /**
    * The always-live search query. Filters the local sessions by name and
@@ -178,26 +183,21 @@ export class SessionPickerModal {
     return this.visibleSessions()[this.selectedIndex] ?? null;
   }
 
-  /**
-   * Load the currently selected session into the given ConversationManager.
-   * Returns true on success, false on error.
-   */
-  loadSelected(conversationManager: ConversationManager): boolean {
-    const session = this.getSelected();
-    if (!session) return false;
+  /** Resume the captured local session through the existing native owner. */
+  resumeSelected(resumeSession: NonNullable<CommandContext['resumeSession']>, dismiss: () => void): Promise<void> {
+    if (this.resumeTask) return this.resumeTask;
+    const session = this.active ? this.getSelected() : null;
+    if (!session) return Promise.resolve();
 
-    try {
-      const { meta, messages } = this.sessionManager.load(session.name);
-      conversationManager.resetAll();
-      conversationManager.fromJSON({ messages: messages as never[] });
-      if (meta.title) conversationManager.title = meta.title;
-      conversationManager.rebuildHistory();
-      this.statusMessage = `Loaded: ${session.name} (${messages.length} messages)`;
-      return true;
-    } catch (e) {
-      this.statusMessage = `Error: ${summarizeError(e)}`;
-      return false;
-    }
+    const sessionId = session.name;
+    dismiss();
+    const task = Promise.resolve().then(() => resumeSession(sessionId));
+    this.resumeTask = task;
+    const finished = (): void => {
+      if (this.resumeTask === task) this.resumeTask = null;
+    };
+    void task.then(finished, finished);
+    return task;
   }
 
   /**

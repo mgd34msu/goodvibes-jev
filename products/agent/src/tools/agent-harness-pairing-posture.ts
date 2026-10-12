@@ -1,12 +1,18 @@
-import { networkInterfaces } from 'node:os';
+import * as nativeOs from 'node:os';
+import { assertProjectionCurrent } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureCatalogMethods, captureCatalogSnapshot } from './agent-harness-catalog-ranking.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { GOODVIBES_AGENT_PAIRING_SURFACE } from '../config/surface.ts';
-import { resolveRuntimeEndpointBinding } from '../cli/endpoints.ts';
+import { resolveRuntimeEndpointBinding, type RuntimeEndpointConfigReader } from '../cli/endpoints.ts';
 import { connectedHostOperatorTokenFingerprint, readConnectedHostOperatorToken } from '../runtime/connected-host-auth.ts';
 import { buildAgentWorkspaceChannels } from '../input/agent-workspace-channels.ts';
 import { buildAgentWorkspaceVoiceMediaReadiness } from '../input/agent-workspace-voice-media.ts';
 import { requirePlatform, requireShellPaths } from '../input/commands/runtime-services.ts';
-import { browserControlPosture } from './agent-harness-browser-control.ts';
+import { browserControlPosture, type BrowserControlPosture } from './agent-harness-browser-control.ts';
+import { browserDeviceCatalogMatches } from './agent-harness-browser-device-readings.ts';
+import { captureCatalogNativeFacts, withModelReadingSource } from './agent-harness-model-reading-source.ts';
+import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureAsyncHarnessInput } from './agent-harness-async-input.ts';
 import { certifiedDeviceLiveRecords, deviceLiveReadModelSnapshot } from './agent-harness-device-live-read-models.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 
@@ -103,22 +109,37 @@ function readConfigStringArray(context: CommandContext, key: string): readonly s
   }
 }
 
-function localNetworkIp(): string {
-  try {
-    const nets = networkInterfaces();
-    for (const name of Object.keys(nets)) {
-      for (const netInfo of nets[name] ?? []) {
-        if (netInfo.family === 'IPv4' && !netInfo.internal) return netInfo.address;
-      }
-    }
-  } catch {
-    return '127.0.0.1';
+/** Bind the original local interface observation before the route's first await.
+ * This is an observed address, not a claim about future OS publications. */
+export function capturePairingAdvertisement(config: RuntimeEndpointConfigReader, assertNativeCurrent: () => void) {
+  const nativeMethods = captureCatalogMethods(nativeOs, ['networkInterfaces']);
+  nativeMethods();
+  const readInterfaces = nativeOs.networkInterfaces;
+  const assertSource = (): void => { nativeMethods(); assertProjectionCurrent(assertNativeCurrent); nativeMethods(); };
+  const get: RuntimeEndpointConfigReader['get'] = key => {
+    assertSource(); const value = config.get(key); assertSource(); return value;
+  };
+  const controlPlane = resolveRuntimeEndpointBinding({ get }, 'controlPlane');
+  const web = resolveRuntimeEndpointBinding({ get }, 'web');
+  let original: ReturnType<typeof nativeOs.networkInterfaces> | undefined;
+  if ([controlPlane.host, web.host].some(host => host === '0.0.0.0' || host === '::')) {
+    assertSource();
+    try { original = readInterfaces(); } catch { original = undefined; }
+    assertSource();
   }
-  return '127.0.0.1';
+  const interfaces = captureCatalogSnapshot(original);
+  let address = '127.0.0.1';
+  for (const entries of Object.values(interfaces.captured ?? {})) {
+    const selected = entries?.find(entry => entry.family === 'IPv4' && !entry.internal);
+    if (selected) { address = selected.address; break; }
+  }
+  const assertCurrent = (): void => { assertSource(); interfaces.assertCurrent(original); assertSource(); };
+  assertCurrent();
+  return Object.freeze({ address, source: interfaces.captured, assertCurrent });
 }
 
-function urlHostForBindHost(host: string): string {
-  if (host === '0.0.0.0' || host === '::') return localNetworkIp();
+function urlHostForBindHost(host: string, networkAddress: string): string {
+  if (host === '0.0.0.0' || host === '::') return networkAddress;
   return host || '127.0.0.1';
 }
 
@@ -222,24 +243,8 @@ function pairingRoutes(): readonly PairingRoute[] {
   ];
 }
 
-function routeSearchText(route: PairingRoute): string {
-  return [
-    route.id,
-    route.label,
-    route.detail,
-    route.effect,
-    route.command ?? '',
-    route.harnessRoute ?? '',
-    ...(route.capabilityIds ?? []),
-  ].join('\n').toLowerCase();
-}
-
-function routeMatches(route: PairingRoute, query: string): boolean {
-  if (!query) return true;
-  const text = routeSearchText(route);
-  if (text.includes(query)) return true;
-  const tokens = query.split(/\s+/).map((token) => token.trim()).filter(Boolean);
-  return tokens.length > 0 && tokens.every((token) => text.includes(token));
+function pairingCatalogDescription(route: PairingRoute): string {
+  return [route.label, route.detail, route.effect, route.command ?? '', route.harnessRoute ?? ''].join('\n');
 }
 
 function describeCandidate(route: PairingRoute): Record<string, unknown> {
@@ -255,7 +260,7 @@ function describeCandidate(route: PairingRoute): Record<string, unknown> {
 function describeRoute(route: PairingRoute, options: {
   readonly includeParameters?: boolean;
   readonly lookup?: Record<string, unknown>;
-  readonly context?: CommandContext;
+  readonly deviceCapabilityMap?: DeviceCapabilityMap;
 } = {}): Record<string, unknown> {
   return {
     pairingRouteId: route.id,
@@ -284,8 +289,8 @@ function describeRoute(route: PairingRoute, options: {
         channels: 'channels action:"status"',
       },
     } : {}),
-    ...(options.includeParameters && route.id === 'device-capability-map' && options.context ? {
-      deviceCapabilityMap: buildDeviceCapabilityMap(options.context),
+    ...(options.includeParameters && route.id === 'device-capability-map' && options.deviceCapabilityMap ? {
+      deviceCapabilityMap: options.deviceCapabilityMap,
     } : {}),
   };
 }
@@ -297,12 +302,12 @@ function pairingRouteModelRoute(route: PairingRoute): string {
   return previewHarnessText(route.harnessRoute ?? 'agent_harness mode:"pairing_route"');
 }
 
-function pairingState(context: CommandContext): Record<string, unknown> {
+function pairingState(context: CommandContext, networkAddress: string): Record<string, unknown> {
   const shellPaths = requireShellPaths(context);
   const configManager = requirePlatform(context).configManager;
   const tokenRecord = readConnectedHostOperatorToken(shellPaths.homeDirectory);
   const binding = resolveRuntimeEndpointBinding(configManager, 'controlPlane');
-  const host = urlHostForBindHost(binding.host);
+  const host = urlHostForBindHost(binding.host, networkAddress);
   return {
     surface: GOODVIBES_AGENT_PAIRING_SURFACE,
     endpoint: {
@@ -340,48 +345,33 @@ function deviceStatusRank(status: DeviceCapabilityStatus): number {
   return 3;
 }
 
-function deviceCapabilitySearchText(capability: DeviceCapability): string {
-  return [
-    capability.id,
-    capability.label,
-    capability.domain,
-    capability.status,
-    capability.userOutcome,
-    capability.summary,
-    capability.nextStep,
-    capability.modelRoute,
-    capability.userRoute ?? '',
-    ...(capability.setupRoutes ?? []),
-    ...capability.capabilities,
-  ].join('\n').toLowerCase();
+function deviceCatalogDescription(capability: DeviceCapability): string {
+  return [capability.label, capability.userOutcome, capability.summary, capability.nextStep].join('\n');
 }
 
-function deviceCapabilityMatches(capability: DeviceCapability, query: string): boolean {
+async function queryRequestsWholeDeviceMap(query: string, deviceMap: DeviceCapabilityMap,
+  options: CatalogRankingOptions): Promise<boolean> {
   if (!query) return true;
-  const text = deviceCapabilitySearchText(capability);
-  if (text.includes(query)) return true;
-  const tokens = query.split(/\s+/).map((token) => token.trim()).filter(Boolean);
-  return tokens.length > 0 && tokens.every((token) => text.includes(token));
+  const matched = await browserDeviceCatalogMatches([{ id: 'whole-device-map', deviceMap }], query, entry => ({
+    id: entry.id,
+    description: 'The complete companion and mobile device capability catalog. A request to inspect the whole map, its general device, phone or mobile posture, rather than one specific capability.',
+    evidence: entry,
+  }), options, 'agent.pairing.whole-device-map.query');
+  return matched.length === 1;
 }
 
-function queryRequestsWholeDeviceMap(query: string): boolean {
-  if (!query) return true;
-  const tokens = query.split(/\s+/).map((token) => token.trim()).filter(Boolean);
-  if (query === 'device' || query === 'mobile' || query === 'phone') return true;
-  return tokens.includes('device') && (tokens.includes('capability') || tokens.includes('capabilities') || tokens.includes('map'));
-}
-
-function liveDeviceEvidence(records: ReturnType<typeof certifiedDeviceLiveRecords>): Record<string, unknown> | undefined {
+function liveDeviceEvidence(records: Awaited<ReturnType<typeof certifiedDeviceLiveRecords>>): Record<string, unknown> | undefined {
   return records.length > 0 ? { certifiedLiveRecords: records.slice(0, 5) } : undefined;
 }
 
-function buildDeviceCapabilityMap(context: CommandContext): DeviceCapabilityMap {
-  const state = pairingState(context);
+async function buildDeviceCapabilityMap(context: CommandContext, browserPosture: BrowserControlPosture, options: CatalogRankingOptions, networkAddress: string): Promise<DeviceCapabilityMap> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const state = pairingState(context, networkAddress);
   const hasToken = tokenPresent(state);
   const controlPlaneReady = endpointEnabled(state) && hasToken;
   const webEnabled = readConfigBoolean(context, 'web.enabled', false);
   const webBinding = resolveRuntimeEndpointBinding(requirePlatform(context).configManager, 'web');
-  const webHost = urlHostForBindHost(webBinding.host);
+  const webHost = urlHostForBindHost(webBinding.host, networkAddress);
   const webUrl = `http://${webHost}:${webBinding.port}`;
   const voiceEnabled = readConfigBoolean(context, 'ui.voiceEnabled', false);
   const voiceReadiness = buildAgentWorkspaceVoiceMediaReadiness({
@@ -393,9 +383,10 @@ function buildDeviceCapabilityMap(context: CommandContext): DeviceCapabilityMap 
   const readyChannels = channels.filter((channel) => channel.ready);
   const enabledChannels = channels.filter((channel) => channel.enabled);
   const notificationWebhookCount = readConfigStringArray(context, 'notifications.webhookUrls').length;
-  const browserPosture = browserControlPosture(context);
-  const liveDevice = deviceLiveReadModelSnapshot(context);
-  const sensorRecords = certifiedDeviceLiveRecords(liveDevice, 'camera-location-sensors', ['camera', 'location', 'screen', 'device command', 'sensor']);
+  const liveDevice = await deviceLiveReadModelSnapshot(context, options);
+  options.assertCurrent?.();
+  const sensorRecords = await certifiedDeviceLiveRecords(liveDevice, 'camera-location-sensors', ['camera', 'location', 'screen', 'device command', 'sensor'], options);
+  options.assertCurrent?.();
   const sensorReady = sensorRecords.length > 0;
   const ttsStatus: DeviceCapabilityStatus = voiceReadiness.selectedTtsProviderStatus === 'ready' && voiceReadiness.ttsVoiceConfigured
     ? 'ready'
@@ -634,78 +625,123 @@ function buildDeviceCapabilityMap(context: CommandContext): DeviceCapabilityMap 
   };
 }
 
-export function pairingPostureCatalogStatus(context: CommandContext): Record<string, unknown> {
-  const state = pairingState(context);
-  const deviceMap = buildDeviceCapabilityMap(context);
-  return {
-    modes: ['pairing_posture', 'pairing_route'],
-    routes: pairingRoutes().length,
-    tokenPresent: tokenPresent(state),
-    deviceCapabilitySummary: deviceMap.summary,
-    readOnly: true,
-  };
+export async function pairingPostureCatalogStatus(context: CommandContext, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const caller = captureAsyncHarnessInput({}, options);
+  const native = captureCatalogNativeFacts(context, 'pairing');
+  caller.options.retainCurrent(native.assertCurrent, 'agent.pairing.native-source');
+  const advertisement = capturePairingAdvertisement(requirePlatform(context).configManager, native.assertCurrent);
+  caller.options.retainCurrent(advertisement.assertCurrent, 'agent.pairing.native-advertisement');
+  caller.retainSourceCurrent();
+  const browserPosture = await browserControlPosture(context, context.extensions?.toolRegistry, caller.options);
+  caller.assertCurrent();
+  const deviceMap = await buildDeviceCapabilityMap(context, browserPosture, caller.options, advertisement.address);
+  caller.assertCurrent();
+  return withModelReadingSource({ nativeProviders: native.providerEvidence, deviceMap, advertisementSource: advertisement.source, state: pairingState(context, advertisement.address) }, caller.options, async (captured, current) => {
+    const state = captured.state;
+    const result = {
+      modes: ['pairing_posture', 'pairing_route'],
+      routes: pairingRoutes().length,
+      tokenPresent: tokenPresent(state),
+      deviceCapabilitySummary: captured.deviceMap.summary,
+      readOnly: true,
+    };
+    current.assertCurrent?.();
+    return result;
+  });
 }
 
-export function pairingPostureSummary(context: CommandContext, args: AgentHarnessPairingArgs): Record<string, unknown> {
-  const query = readString(args.query).toLowerCase();
+export async function pairingPostureSummary(context: CommandContext, rawArgs: AgentHarnessPairingArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const caller = captureAsyncHarnessInput(rawArgs, options), args = caller.args;
+  const native = captureCatalogNativeFacts(context, 'pairing');
+  caller.options.retainCurrent(native.assertCurrent, 'agent.pairing.native-source');
+  const advertisement = capturePairingAdvertisement(requirePlatform(context).configManager, native.assertCurrent);
+  caller.options.retainCurrent(advertisement.assertCurrent, 'agent.pairing.native-advertisement');
+  caller.retainSourceCurrent();
+  const browserPosture = await browserControlPosture(context, context.extensions?.toolRegistry, caller.options);
+  caller.assertCurrent();
+  const query = readString(args.query);
   const includeParameters = args.includeParameters === true;
   const routes = pairingRoutes();
-  const deviceMap = buildDeviceCapabilityMap(context);
-  const limit = readLimit(args.limit, 100);
-  const filtered = routes
-    .filter((route) => routeMatches(route, query))
-    .slice(0, limit);
-  const includeWholeDeviceMap = queryRequestsWholeDeviceMap(query);
-  const filteredCapabilities = deviceMap.capabilities
-    .filter((capability) => includeWholeDeviceMap || deviceCapabilityMatches(capability, query))
-    .slice(0, limit);
-  return {
-    status: 'available',
-    summary: {
-      deviceCapabilities: deviceMap.summary,
-      returnedDeviceCapabilities: filteredCapabilities.length,
-    },
-    pairing: pairingState(context),
-    deviceCapabilities: filteredCapabilities.map((capability) => includeParameters ? capability : {
-      capabilityId: capability.id,
-      label: capability.label,
-      domain: capability.domain,
-      status: capability.status,
-      summary: previewHarnessText(capability.summary),
-      modelRoute: capability.modelRoute,
-    }),
-    routes: filtered.map((route) => describeRoute(route, { includeParameters, context })),
-    returned: filtered.length,
-    total: routes.length,
-    policy: `${deviceMap.policy} QR display, manual token display, companion connection, channel delivery, task, approval, provider/model, and attachment actions remain explicit visible user flows.`,
-  };
+  const deviceMap = await buildDeviceCapabilityMap(context, browserPosture, caller.options, advertisement.address);
+  caller.assertCurrent();
+  return withModelReadingSource({ nativeProviders: native.providerEvidence, routes, deviceMap, args, advertisementSource: advertisement.source, state: pairingState(context, advertisement.address) }, caller.options, async (captured, current) => {
+    const sourceOptions = current;
+    const limit = readLimit(args.limit, 100);
+    const matchingRoutes = await browserDeviceCatalogMatches(routes, query, route => ({
+      id: route.id, description: pairingCatalogDescription(route), evidence: route,
+    }), sourceOptions, 'agent.pairing.routes.query');
+    caller.assertCurrent();
+    const includeWholeDeviceMap = await queryRequestsWholeDeviceMap(query, deviceMap, sourceOptions);
+    caller.assertCurrent();
+    const matchingCapabilities = includeWholeDeviceMap ? deviceMap.capabilities : await browserDeviceCatalogMatches(deviceMap.capabilities, query, capability => ({
+      id: capability.id, description: deviceCatalogDescription(capability), evidence: capability,
+    }), sourceOptions, 'agent.pairing.capabilities.query');
+    caller.assertCurrent();
+    const filtered = matchingRoutes.slice(0, limit), filteredCapabilities = matchingCapabilities.slice(0, limit);
+    const result = {
+      status: 'available',
+      summary: {
+        deviceCapabilities: deviceMap.summary,
+        returnedDeviceCapabilities: filteredCapabilities.length,
+      },
+      pairing: captured.state,
+      deviceCapabilities: filteredCapabilities.map((capability) => includeParameters ? capability : {
+        capabilityId: capability.id,
+        label: capability.label,
+        domain: capability.domain,
+        status: capability.status,
+        summary: previewHarnessText(capability.summary),
+        modelRoute: capability.modelRoute,
+      }),
+      routes: filtered.map((route) => describeRoute(route, { includeParameters, deviceCapabilityMap: deviceMap })),
+      returned: filtered.length,
+      total: routes.length,
+      policy: `${deviceMap.policy} QR display, manual token display, companion connection, channel delivery, task, approval, provider/model, and attachment actions remain explicit visible user flows.`,
+    };
+    current.assertCurrent?.();
+    return result;
+  });
 }
 
-export function describeHarnessPairingRoute(context: CommandContext, args: AgentHarnessPairingArgs): PairingResolution {
-  const lookup = lookupFromArgs(args);
-  if (!lookup) {
-    return {
-      status: 'missing_lookup',
-      usage: 'pairing_route requires pairingRouteId, target, or query. Use mode:"pairing_posture" to inspect pairing route ids.',
+export async function describeHarnessPairingRoute(context: CommandContext, rawArgs: AgentHarnessPairingArgs,
+  options: CatalogRankingOptions = {}): Promise<PairingResolution> {
+  const caller = captureAsyncHarnessInput(rawArgs, options);
+  const native = captureCatalogNativeFacts(context, 'pairing');
+  caller.options.retainCurrent(native.assertCurrent, 'agent.pairing.native-source');
+  caller.retainSourceCurrent();
+  return withModelReadingSource({ args: caller.args, nativeProviders: native.providerEvidence }, caller.options, async ({ args }, current): Promise<PairingResolution> => {
+    const lookup = lookupFromArgs(args);
+    if (!lookup) return { status: 'missing_lookup', usage: 'pairing_route requires pairingRouteId, target, or query. Use mode:"pairing_posture" to inspect pairing route ids.' };
+    const routes = pairingRoutes();
+    const found = async (route: PairingRoute, resolvedBy: string): Promise<PairingResolution> => {
+      let deviceCapabilityMap: DeviceCapabilityMap | undefined;
+      if (route.id === 'device-capability-map') {
+        const advertisement = capturePairingAdvertisement(requirePlatform(context).configManager, native.assertCurrent);
+        caller.options.retainCurrent(advertisement.assertCurrent, 'agent.pairing.native-advertisement');
+        const browserPosture = await browserControlPosture(context, context.extensions?.toolRegistry, current);
+        current.assertCurrent?.();
+        const acquiredMap = await buildDeviceCapabilityMap(context, browserPosture, current, advertisement.address);
+        current.assertCurrent?.();
+        deviceCapabilityMap = await withModelReadingSource({ acquiredMap, advertisementSource: advertisement.source }, current,
+          async (captured, reading) => { reading.assertCurrent?.(); return captured.acquiredMap; });
+      }
+      const result: PairingResolution = { status: 'found', route: describeRoute(route, { includeParameters: true,
+        lookup: { ...lookup, resolvedBy }, ...(deviceCapabilityMap ? { deviceCapabilityMap } : {}),
+      }) };
+      current.assertCurrent?.();
+      return result;
     };
-  }
-  const routes = pairingRoutes();
-  const normalized = lookup.input.toLowerCase();
-  const exact = routes.find((route) => route.id === lookup.input);
-  if (exact) return { status: 'found', route: describeRoute(exact, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'id' }, context }) };
-  const insensitive = routes.find((route) => route.id.toLowerCase() === normalized);
-  if (insensitive) return { status: 'found', route: describeRoute(insensitive, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'case-insensitive-id' }, context }) };
-  const searched = routes.filter((route) => routeMatches(route, normalized));
-  if (searched.length === 1) return { status: 'found', route: describeRoute(searched[0]!, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'search' }, context }) };
-  if (searched.length > 1) {
-    return {
-      status: 'ambiguous',
-      input: lookup.input,
-      candidates: searched.slice(0, 8).map(describeCandidate),
-    };
-  }
-  return {
-    status: 'missing_lookup',
-    usage: `Unknown pairing route ${lookup.input}. Use mode:"pairing_posture" to inspect pairing route ids.`,
-  };
+    const normalized = lookup.input.toLowerCase();
+    const exact = routes.find(route => route.id === lookup.input);
+    if (exact) return found(exact, 'id');
+    const insensitive = routes.find(route => route.id.toLowerCase() === normalized);
+    if (insensitive) return found(insensitive, 'case-insensitive-id');
+    const searched = await browserDeviceCatalogMatches(routes, lookup.input, route => ({
+      id: route.id, description: pairingCatalogDescription(route), evidence: route,
+    }), current, 'agent.pairing.route.lookup');
+    current.assertCurrent?.();
+    if (searched.length === 1 && searched[0]) return found(searched[0], 'rank-band');
+    if (searched.length > 1) return { status: 'ambiguous', input: lookup.input, candidates: searched.slice(0, 8).map(describeCandidate) };
+    return { status: 'missing_lookup', usage: `Unknown pairing route ${lookup.input}. Use mode:"pairing_posture" to inspect pairing route ids.` };
+  });
 }

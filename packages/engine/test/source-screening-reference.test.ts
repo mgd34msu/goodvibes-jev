@@ -1,3 +1,4 @@
+import { screeningAnswers } from './_helpers/screening-answers.js';
 import { afterEach, expect, test } from 'bun:test';
 import { createProtectedSourceOwner } from '../sdk/src/platform/security/source-screening/owner.js';
 import type { ProtectedSourceOwnerOptions, ResearchReferenceScreeningReceipt, ProtectedSource, ProtectedResearchReference, SourceScreeningReceipt } from '../sdk/src/platform/security/source-screening/types.js';
@@ -211,7 +212,7 @@ test('reference bounds fail before requests and share the original-handle capaci
 
 test('query-role handles and receipts cannot satisfy the generic display-preview boundary, even after unsafe casts', async () => {
   const f = fixture({ judge: body => 'parameter' in (body.state as object) ? answer() : Response.json({ model: 'jev-1.13.0',
-    answers: { complete: { type: 'noul', noul: 1 }, precise: { type: 'noul', noul: 1 } } }) });
+    answers: screeningAnswers(body, { complete: 1, precise: 1 }) }) });
   const reference = f.owner.captureResearchReference('https://example.test/#section');
   expect(await f.owner.screen(reference as unknown as ProtectedSource)).toEqual({ status: 'held', reason: 'stale' });
   const result = await f.owner.screenResearchReference(reference);

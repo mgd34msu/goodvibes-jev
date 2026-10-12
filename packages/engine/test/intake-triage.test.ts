@@ -164,3 +164,48 @@ describe('typed inbox triage', () => {
     expect((await readTriageMetadataBatch([item()],store)).size).toBe(0);
   });
 });
+
+
+test('late triage imports keep earlier native decision policies current while triage bands stay immutable', async () => {
+  const benchmarkUrl = new URL('../sdk/src/platform/routing/batteries/local-benchmark-prompt.ts', import.meta.url).href;
+  const booleanUrl = new URL('../sdk/src/platform/tools/batteries/boolean-value.ts', import.meta.url).href;
+  const triageUrl = new URL('../sdk/src/platform/intake/triage/battery.ts', import.meta.url).href;
+  const meaningUrl = new URL('../sdk/src/platform/intake/triage/tagger/meaning.ts', import.meta.url).href;
+  const script = `
+    import assert from 'node:assert/strict';
+    const { STAKES_BANDS } = await import('@goodvibes-jev/judgment');
+    const { localBenchmarkPromptPolicy } = await import(${JSON.stringify(benchmarkUrl)});
+    const { booleanValuePolicy } = await import(${JSON.stringify(booleanUrl)});
+    localBenchmarkPromptPolicy.assertCurrent(); booleanValuePolicy.assertCurrent();
+    const defaults = [STAKES_BANDS.medium.yesNo, STAKES_BANDS.medium.confidence,
+      STAKES_BANDS.high.yesNo, STAKES_BANDS.high.confidence];
+    const descriptors = defaults.map(value => Object.getOwnPropertyDescriptors(value));
+    const { inboxTriage } = await import(${JSON.stringify(triageUrl)});
+    const { triageTagMeaning } = await import(${JSON.stringify(meaningUrl)});
+    localBenchmarkPromptPolicy.assertCurrent(); booleanValuePolicy.assertCurrent();
+    defaults.forEach((value, index) => assert.deepEqual(Object.getOwnPropertyDescriptors(value), descriptors[index]));
+    const owned = [inboxTriage.items.spam.band, inboxTriage.items.urgency.band, triageTagMeaning.items.meaning.band];
+    const shared = [STAKES_BANDS.high.yesNo, STAKES_BANDS.medium.yesNo, STAKES_BANDS.high.confidence];
+    owned.forEach((value, index) => { assert.notEqual(value, shared[index]); assert.deepEqual(value, shared[index]); assert(Object.isFrozen(value)); });
+    for (const [value, expected] of [[owned[0].yes, STAKES_BANDS.high.yesNo.yes],
+      [owned[0].no, STAKES_BANDS.high.yesNo.no], [owned[1].yes, STAKES_BANDS.medium.yesNo.yes],
+      [owned[1].no, STAKES_BANDS.medium.yesNo.no], [owned[2], STAKES_BANDS.high.confidence]]) {
+      assert.notEqual(value, expected); assert.deepEqual(value, expected); assert(Object.isFrozen(value));
+      const original = value.actAt;
+      assert.equal(Reflect.set(value, 'actAt', 0), false); assert.equal(value.actAt, original);
+    }
+    localBenchmarkPromptPolicy.assertCurrent(); booleanValuePolicy.assertCurrent();
+    process.stdout.write('native policy ownership retained\\n');
+  `;
+  const child = Bun.spawn({ cmd: [process.execPath, '--conditions=bun', '--eval', script], cwd: new URL('..', import.meta.url).pathname,
+    env: {}, stdout: 'pipe', stderr: 'pipe' });
+  let exited = false;
+  const deadline = setTimeout(() => child.kill(), 4_000);
+  try {
+    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    exited = true;
+    expect(stderr).toBe(''); expect(code).toBe(0); expect(stdout).toBe('native policy ownership retained\n');
+  } finally {
+    clearTimeout(deadline); if (!exited) child.kill(); await child.exited;
+  }
+});

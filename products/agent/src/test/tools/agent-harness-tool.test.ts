@@ -1,3 +1,9 @@
+import { agentOrchestrationSummary, describeAgentOrchestrationAgent } from '../../tools/agent-harness-agent-orchestration.ts';
+import { remoteReadModelSnapshot, captureNativeRemoteReadModelSnapshot, settleNativeRemotePublisherSemantics, currentNativeRemoteReadModelSnapshot } from '../../tools/agent-harness-remote-read-models.ts';
+import { captureCatalogMethods } from '../../tools/agent-harness-catalog-ranking.ts';
+import { protectPersonalOpsData } from '../../tools/agent-harness-personal-ops-source.ts';
+import { projectSetupSmokeEvidenceFull } from '../../tools/agent-harness-setup-smoke.ts';
+import { exactSensitiveSpans, researchScreeningFixture } from '../helpers/research-screening.ts';
 import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
 import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
 import { buildTestModelDefinition } from '../helpers/test-managers.ts';
@@ -6,8 +12,8 @@ import { autonomyIntake } from '@goodvibes-jev/engine/sdk/platform/routing';
 import { getOperatorContract } from '@goodvibes-jev/engine/sdk/contracts';
 import { afterAll, afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from 'bun:test';
 import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
-import { gateJudgmentRegistry } from '@goodvibes-jev/engine/sdk/platform/gate';
-import { hashState, JudgmentError, SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
+import { gateJudgmentRegistry, judgmentInputCardProblem } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { hashState, JudgmentError, SqliteDecisionLog, withDecisionLog, choice, noul, score, type JudgmentPort, type Question, type JsonValue } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { securityPort } from '../helpers/security-readings.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -17,7 +23,7 @@ import { createHash } from 'node:crypto';
 import type { ArtifactCreateInput, ArtifactDescriptor, ArtifactRecord, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { ChannelDeliveryRequest } from '@goodvibes-jev/engine/sdk/platform/channels';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import { ProcessManager, ToolRegistry, ToolInputProjectionError, assertCurrentToolEffect, assertCurrentToolExecution } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { ProcessManager, ToolRegistry, ToolInputProjectionError, assertCurrentToolEffect, assertCurrentToolExecution, learningCuratorScore, learningProposalTarget, learningDuplicateAlignment, learningSurvivorSelection, learningSurvivorEquivalence, memoryClass } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { PermissionManager, createPermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { PolicyRuntimeState } from '@goodvibes-jev/engine/sdk/platform/runtime/security';
 import { redactSensitiveDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
@@ -45,6 +51,7 @@ import { createAgentHarnessTool, registerAgentHarnessTool } from '../../tools/ag
 import { createAgentWorkspaceTool } from '../../tools/agent-workspace-tool.ts';
 import { registerAgentTerminalProcessTools } from '../../tools/agent-terminal-process-tools.ts';
 import { registerAgentSettingsTool } from '../../tools/agent-settings-tool.ts';
+import { registerAgentPersonalOpsTool } from '../../tools/agent-personal-ops-tool.ts';
 import { registerAgentLocalRegistryTool } from '../../tools/agent-local-registry-tool.ts';
 import { registerAgentResearchReportTool } from '../../tools/agent-research-report-tool.ts';
 import { registerAgentReviewPacketPresetsTool } from '../../tools/agent-review-packet-presets-tool.ts';
@@ -113,7 +120,7 @@ function makeConfig(paths: ShellPaths): ConfigManager {
   });
 }
 
-function createHarnessArtifactStore() {
+function createHarnessArtifactStore(clock: () => number = () => Date.now()) {
   const records: ArtifactRecord[] = [];
   const contents = new Map<string, Buffer>();
   const store: Pick<ArtifactStore, 'create' | 'get' | 'list' | 'readContent'> = {
@@ -127,7 +134,7 @@ function createHarnessArtifactStore() {
         ...(input.filename ? { filename: input.filename } : {}),
         sizeBytes: buffer.byteLength,
         sha256: createHash('sha256').update(buffer).digest('hex'),
-        createdAt: Date.now() + records.length,
+        createdAt: clock() + records.length,
         acquisitionMode: input.acquisitionMode ?? 'inline-data',
         fetchMode: input.fetchMode ?? 'not-applicable',
         metadata: input.metadata ?? {},
@@ -884,7 +891,25 @@ const emptyCatalogPicks: Readonly<Record<string, readonly string[]>> = {
   'zzz-no-such-tool': [], 'zzz-no-such-command': [], 'zzz-no-such-surface': [], 'zzz-no-such-cli': [],
 };
 
+type HarnessLocalAnswer = { readonly kind: 'yes-no'; readonly probability: number }
+  | { readonly kind: 'choice'; readonly choice: string };
+const harnessLocalAnswers = new Map<string, HarnessLocalAnswer>();
+function scriptHarnessLocalReading(name: string, state: unknown, answer: HarnessLocalAnswer): void {
+  harnessLocalAnswers.set(JSON.stringify({ name, state }), answer);
+}
+
 function createHarnessFixtureReadings(): JudgmentPort {
+  harnessLocalAnswers.clear();
+  const hostedModel = { provider: 'openai', modelId: 'gpt-4.1', providerEnvVars: ['OPENAI_API_KEY'] };
+  scriptHarnessLocalReading('route', { evidence_kind: 'registry', registry_text: JSON.stringify(hostedModel), record: hostedModel },
+    { kind: 'choice', choice: 'not-local' });
+  const localModels = fakePort((name, question, state) => {
+    const answer = harnessLocalAnswers.get(JSON.stringify({ name, state }));
+    if (!answer) throw new Error('Unscripted complete local model source fixture.');
+    if (answer.kind === 'yes-no' && question.type === 'noul') return noulAnswer(answer.probability);
+    if (answer.kind === 'choice' && question.type === 'choice' && Object.hasOwn(question.criteria, answer.choice)) return choiceAnswer(question, answer.choice, 0.999);
+    throw new Error('Local model fixture question does not match its authored answer schema.');
+  });
   const security = securityPort();
   const credentials = fakePort((name, _question, state) => {
     if (name !== 'credential' || !state || typeof state !== 'object' || !('name' in state) || typeof state.name !== 'string') {
@@ -1057,6 +1082,36 @@ function createHarnessFixtureReadings(): JudgmentPort {
       blocked: 'blocked', running: 'running', pending: 'running', queued: 'running' };
     return choiceAnswer(question, typeof status === 'string' ? expected[status] ?? 'other' : 'other', 0.999);
   });
+  // Exact external-memory caller controls. No general provider word parser lives in this fixture.
+  const memoryRoleChoices: Readonly<Record<string, string>> = { read: 'read', write: 'write', sync: 'sync', forget: 'forget', inspect: 'inspect', receipts: 'receipt' };
+  const memorySemantic = fakePort((name, question, state) => {
+    if (state === null || typeof state !== 'object' || Array.isArray(state)) throw new Error('Unexpected external-memory fixture state');
+    if (name === 'role' || name === 'form') {
+      const role = typeof state.field === 'string' ? memoryRoleChoices[state.field] : undefined;
+      const operation = state.container === 'routes' || state.container === 'capabilities';
+      if (question.type !== 'choice') throw new Error('Expected external-memory operation choice');
+      return choiceAnswer(question, name === 'role' ? operation && role ? role : 'none'
+        : operation && role ? state.container === 'routes' ? 'route' : 'flag' : 'none', 0.999);
+    }
+    if (name === 'state' && question.type === 'choice') return choiceAnswer(question, 'configured-secret-ref', 0.999);
+    if (name === 'status' && question.type === 'choice') return choiceAnswer(question, 'available', 0.999);
+    if (name === 'certified' && question.type === 'noul') {
+      const record = state.record;
+      if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('Missing authored memory certification record');
+      return noulAnswer(record.schemaVersion === 'goodvibes.external-memory.provider.v1' || record.schemaVersion === 'goodvibes.external-memory.receipt.v1' ? 0.999 : 0.001);
+    }
+    if (name === 'member' && question.type === 'noul') return noulAnswer(0.001);
+    if (name === 'credential' && question.type === 'noul') return noulAnswer(0.001);
+    if (name === 'pick' && question.type === 'choice') return choiceAnswer(question, '8', 0.999);
+    if (question.type === 'noul' && /^fits_[0-8]$/.test(name)) return noulAnswer(name === 'fits_8' ? 0.999 : 0.001);
+    throw new Error(`Unscripted external-memory caller question ${name}`);
+  });
+  const memoryCatalog = fakePort((name, _question, state) => {
+    if (name !== 'match' || state === null || typeof state !== 'object' || Array.isArray(state)
+      || state.query !== 'the Supermemory external-memory provider' || !state.candidate || typeof state.candidate !== 'object'
+      || Array.isArray(state.candidate)) throw new Error('Unexpected authored memory-provider catalog request');
+    return noulAnswer(state.candidate.name === 'external-memory:supermemory' ? 0.999 : 0.001);
+  });
   const admission = fakePort((name, question) => {
     if (question.type === 'choice') {
       const choice = name === 'disposition' ? 'act' : name === 'kind' ? 'read' : name === 'family' || name === 'capability' ? 'generic' : undefined;
@@ -1087,14 +1142,238 @@ function createHarnessFixtureReadings(): JudgmentPort {
     }
     throw new Error(`Unscripted harness privacy fixture ${name}`);
   });
+  const publisherFixtures: Readonly<Record<string, { readonly schema: boolean; readonly kind?: 'capture' | 'export' | 'closeout' | 'artifact' | 'other' }>> = {
+    'query-private-source': { schema: true, kind: 'capture' },
+    'query-native-workspace': { schema: true },
+    'empty-native-workspace': { schema: false },
+    'unowned-workspace': { schema: false },
+    'capture-alpha-live': { schema: true, kind: 'capture' },
+    'workspace-alpha': { schema: true },
+    'remote-publisher-opposition': { schema: false, kind: 'capture' },
+    'remote-publisher-paraphrase': { schema: true, kind: 'closeout' },
+    'remote-publisher-missing-status': { schema: false, kind: 'other' },
+  };
+  const publisherField = (state: unknown, wanted: readonly string[]): string | undefined => {
+    if (!Array.isArray(state)) throw new Error('Unexpected remote publisher field state');
+    for (const field of state) {
+      if (!field || typeof field !== 'object' || !Array.isArray(field.path) || field.path.length !== wanted.length
+        || field.path.some((part: unknown, index: number) => part !== wanted[index])) continue;
+      if (field.kind !== 'text' || !Array.isArray(field.parts)) throw new Error('Unexpected remote publisher field shape');
+      return field.parts.map((part: JsonValue) => {
+        if (!part || typeof part !== 'object' || Array.isArray(part) || part.kind !== 'text' || typeof part.text !== 'string')
+          throw new Error('Unexpected remote publisher identity text');
+        return part.text;
+      }).join('');
+    }
+    return undefined;
+  };
+  const publisher = fakePort((name, question, state) => {
+    const id = publisherField(state, ['record', 'id']) ?? publisherField(state, ['record', 'workspaceId']);
+    const fixture = id === undefined ? undefined : publisherFixtures[id];
+    if (!fixture) throw new Error('Unscripted remote publisher identity');
+    if (name === 'certified_schema' && question.type === 'noul') return noulAnswer(fixture.schema ? 0.999 : 0.001);
+    if (name === 'outcome_kind' && question.type === 'choice' && fixture.kind) return choiceAnswer(question, fixture.kind, 0.999);
+    throw new Error(`Unscripted remote publisher question ${name}`);
+  });
+  const learningObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
+  type LearningGrades = { readonly [K in keyof typeof learningCuratorScore.items]: number };
+  type LearningControl = {
+    readonly domain: string; readonly name: string; readonly nameField: 'name' | 'title' | 'summary';
+    readonly text: string; readonly textField: 'body' | 'procedure' | 'steps' | 'detail' | 'notes' | 'note';
+    readonly grades: LearningGrades; readonly target?: 'memory' | 'skill' | 'routine' | 'persona' | 'none';
+    readonly memoryClass?: 'decision';
+  };
+  const ordinaryLearningGrades: LearningGrades = { usefulness: 3, freshness: 3, source_quality: 3, risk: 1, priority: 2, confidence: 3 };
+  const limitedLearningGrades: LearningGrades = { usefulness: 2, freshness: 3, source_quality: 2, risk: 2, priority: 3, confidence: 2 };
+  // Each entry is an exact authored native record from the existing prompt or curator scenario.
+  const learningControls: readonly LearningControl[] = [
+    { domain: 'memory', nameField: 'summary', name: 'Prefers concise briefings', textField: 'detail', text: 'Lead with status, then next action.', grades: ordinaryLearningGrades },
+    { domain: 'memory', nameField: 'summary', name: 'Low confidence memory', textField: 'detail', text: 'Lead with status, then next action.', grades: limitedLearningGrades },
+    { domain: 'memory', nameField: 'summary', name: 'Unreviewed memory', textField: 'detail', text: 'Lead with status, then next action.', grades: ordinaryLearningGrades },
+    { domain: 'memory', nameField: 'summary', name: 'Use the private deployment checklist before release.', textField: 'detail', text: 'Checklist is useful but still needs review.', grades: limitedLearningGrades },
+    { domain: 'memory', nameField: 'summary', name: 'Use the private deployment checklist before release.', textField: 'detail', text: 'Duplicate copy adds UX inventory and package verification context.', grades: ordinaryLearningGrades },
+    { domain: 'persona', nameField: 'name', name: 'Reviewed prompt inspector', textField: 'body', text: 'Explain applied context before acting when context is ambiguous.', grades: ordinaryLearningGrades },
+    { domain: 'persona', nameField: 'name', name: 'Fresh operator persona', textField: 'body', text: 'Prefer concise operational answers.', grades: ordinaryLearningGrades },
+    { domain: 'persona', nameField: 'name', name: 'Reviewed release operator persona', textField: 'body', text: 'Keep release closeout concise and evidence-backed.', grades: ordinaryLearningGrades },
+    { domain: 'skill', nameField: 'name', name: 'Prompt evidence skill', textField: 'procedure', text: 'List selected context records, then ask for confirmation before changes.', grades: ordinaryLearningGrades },
+    { domain: 'skill', nameField: 'name', name: 'Blocked prompt skill', textField: 'procedure', text: 'Use an unavailable command.', grades: limitedLearningGrades },
+    { domain: 'skill', nameField: 'name', name: 'Missing command skill', textField: 'procedure', text: 'Run the missing command and summarize results.', grades: limitedLearningGrades },
+    { domain: 'skill', nameField: 'name', name: 'Missing command skill!', textField: 'procedure', text: 'Run package verification, check UX inventory, then summarize results.', grades: ordinaryLearningGrades },
+    { domain: 'routine', nameField: 'name', name: 'Prompt closeout routine', textField: 'steps', text: 'Summarize applied context, suppressed context, and next review route.', grades: ordinaryLearningGrades },
+    { domain: 'routine', nameField: 'name', name: 'Blocked prompt routine', textField: 'steps', text: 'Run unavailable setup before use.', grades: limitedLearningGrades },
+    { domain: 'note', nameField: 'title', name: 'Reviewed source note', textField: 'body', text: 'Durable source note for later knowledge ingest.', grades: ordinaryLearningGrades, target: 'none' },
+    { domain: 'note', nameField: 'title', name: 'Release checklist workflow', textField: 'body', text: 'Repeat before release: check package verification, review UX inventory, and summarize residual risks.', grades: ordinaryLearningGrades, target: 'routine' },
+    { domain: 'note', nameField: 'title', name: 'Renderer decision memory', textField: 'body', text: 'Decision: keep the existing renderer as the Agent UI foundation.', grades: ordinaryLearningGrades, target: 'memory', memoryClass: 'decision' },
+    { domain: 'work_plan', nameField: 'title', name: 'Release readiness workflow', textField: 'notes', text: 'Repeat before release: run package verification, check UX inventory, and summarize residual risks.', grades: ordinaryLearningGrades, target: 'routine' },
+    { domain: 'work_plan', nameField: 'title', name: 'Renderer decision capture', textField: 'notes', text: 'Decision: use the existing renderer for the autonomous Agent harness.', grades: ordinaryLearningGrades, target: 'memory', memoryClass: 'decision' },
+    { domain: 'research_run', nameField: 'title', name: 'Research report procedure', textField: 'note', text: 'Procedure: review source credibility, citation coverage, and report artifact before closing deep research.', grades: ordinaryLearningGrades, target: 'skill' },
+  ];
+  const sessionLearningControl: LearningControl = { domain: 'session', nameField: 'title', name: 'Release review lesson session', textField: 'body', text: 'Lesson: when asked to prepare release review, run typecheck, package verification, UX inventory, and summarize residual risks.', grades: ordinaryLearningGrades, target: 'skill' };
+  const learningControl = (value: unknown): LearningControl => {
+    if (!learningObject(value)) throw new Error('Missing complete native learning fixture record');
+    const native = learningObject(value.item) && learningObject(value.record) ? value.record : value;
+    if (learningObject(native.session) && learningObject(native.loaded)
+      && native.session.name === 'session-release-review' && native.session.title === sessionLearningControl.name
+      && learningObject(native.loaded.meta) && native.loaded.meta.title === sessionLearningControl.name
+      && JSON.stringify(native.loaded.messages) === JSON.stringify([
+        { role: 'user', content: 'Prepare the release review.' }, { role: 'assistant', content: sessionLearningControl.text },
+      ])) return sessionLearningControl;
+    const control = learningControls.find(item => native[item.nameField] === item.name && native[item.textField] === item.text);
+    if (!control) throw new Error('Unscripted complete native learning fixture content');
+    return control;
+  };
+  const assertLearningQuestion = (question: Question, expected: Question) => {
+    if (JSON.stringify(question) !== JSON.stringify(expected)) throw new Error('Learning fixture question differs from its canonical closed schema');
+  };
+  const learningDefinition = (decision: object) => {
+    const value: unknown = Object.getOwnPropertyDescriptor(decision, 'definition')?.value;
+    if (!learningObject(value)) throw new Error('Missing original canonical learning fixture definition');
+    return value;
+  };
+  const alignmentDefinition = learningDefinition(learningDuplicateAlignment);
+  const selectionDefinition = learningDefinition(learningSurvivorSelection);
+  const equivalenceDefinition = learningDefinition(learningSurvivorEquivalence);
+  if (typeof alignmentDefinition.noun !== 'string' || typeof selectionDefinition.instructions !== 'string'
+    || typeof selectionDefinition.fitInstructions !== 'string' || typeof equivalenceDefinition.condition !== 'string') throw new Error('Unexpected canonical learning definition grammar');
+  const alignmentNoun = alignmentDefinition.noun, selectionInstructions = selectionDefinition.instructions;
+  const selectionFitInstructions = selectionDefinition.fitInstructions, equivalenceCondition = equivalenceDefinition.condition;
+  const scoreItems = new Map(Object.entries(learningCuratorScore.items));
+  const duplicateLearningGroups = [
+    [learningControls[3], learningControls[4]], [learningControls[10], learningControls[11]],
+  ];
+  const duplicateLearningGroup = (left: LearningControl, right: LearningControl) => duplicateLearningGroups.find(group => group[0] && group[1]
+    && (group[0] === left && group[1] === right || group[0] === right && group[1] === left));
+  const learningGradesFor = (state: unknown): LearningGrades => {
+    if (!learningObject(state) || typeof state.proposedUse !== 'string' || typeof state.capturedAt !== 'string') throw new Error('Unexpected complete learning grade fixture state');
+    if (learningObject(state.candidate) && state.candidate.id === 'capture:reviewed-lesson'
+      && state.candidate.domain === 'capture' && state.candidate.status === 'ready'
+      && learningObject(state.record) && state.record.noUrgentCandidates === true && learningObject(state.record.source)
+      && state.record.source.capturedAt === state.capturedAt) {
+      const source = state.record.source;
+      const emptyRows = ['memoryRecords', 'workItems', 'sessions'].every(key => Array.isArray(source[key]) && source[key].length === 0);
+      const emptyLibraries = [['noteSnapshot', 'notes'], ['personaSnapshot', 'personas'], ['skillSnapshot', 'skills'], ['skillSnapshot', 'bundles'], ['routineSnapshot', 'routines']].every(([snapshot, rows]) => {
+        if (!snapshot || !rows || !learningObject(source[snapshot])) return false;
+        const library = source[snapshot];
+        return Array.isArray(library[rows]) && library[rows].length === 0;
+      });
+      if (!emptyRows || !emptyLibraries) throw new Error('Unscripted nonempty learning capture fixture source');
+      return { usefulness: 1, freshness: 3, source_quality: 3, risk: 0, priority: 1, confidence: 3 };
+    }
+    if (learningObject(state.candidate) && state.candidate.domain === 'vibe' && learningObject(state.candidate.proposalFields)
+      && typeof state.candidate.recordId === 'string' && learningObject(state.record) && Array.isArray(state.record.files)) {
+      const fields = state.candidate.proposalFields;
+      const recordId = state.candidate.recordId;
+      const body = fields.kind === 'blocked' && fields.scope === 'project' ? '# Project VIBE\n\napi_key=supersecretvalue\n'
+        : fields.kind === 'truncated' && fields.scope === 'global' ? `# Global VIBE\n\n${'Prefer calm direct answers. '.repeat(420)}\n` : undefined;
+      if (body !== undefined && state.record.files.some(file => learningObject(file) && file.path === recordId && file.body === body))
+        return fields.kind === 'blocked' ? { usefulness: 3, freshness: 3, source_quality: 3, risk: 3, priority: 3, confidence: 3 } : ordinaryLearningGrades;
+      throw new Error('Unscripted complete VIBE learning fixture content');
+    }
+    if (Array.isArray(state.record) && state.record.length === 2 && learningObject(state.candidate)
+      && state.candidate.status === 'needs-consolidation') {
+      const [left, right] = state.record.map(learningControl);
+      if (left && right && state.candidate.domain === left.domain && duplicateLearningGroup(left, right)) return { usefulness: 3, freshness: 3, source_quality: 3, risk: 1, priority: 3, confidence: 3 };
+      throw new Error('Unscripted complete learning consolidation fixture');
+    }
+    const control = learningControl(state.record);
+    const domain = learningObject(state.candidate) ? state.candidate.domain : state.domain;
+    if (domain !== control.domain) throw new Error('Learning fixture domain differs from the native source');
+    return control.grades;
+  };
+  const learningScore = fakePort((name, question, state) => {
+    const item = scoreItems.get(name);
+    if (!item || question.type !== 'score') throw new Error(`Unscripted learning score question ${name}`);
+    assertLearningQuestion(question, item.question);
+    const grades = learningGradesFor(state);
+    const grade = Object.entries(grades).find(([key]) => key === name)?.[1];
+    if (grade === undefined) throw new Error(`Missing authored learning dimension ${name}`);
+    return scoreAnswer(question, grade, 0.9999);
+  });
+  const learningTarget = fakePort((name, question, state) => {
+    if (name !== 'target' || question.type !== 'choice' || !learningObject(state) || typeof state.origin !== 'string') throw new Error('Unexpected learning target fixture schema');
+    assertLearningQuestion(question, learningProposalTarget.items.target.question);
+    const control = learningControl(state.record);
+    if (control.domain !== state.origin || control.target === undefined) throw new Error('Unscripted learning target fixture source');
+    return choiceAnswer(question, control.target, 0.9999);
+  });
+  const learningMemoryClass = fakePort((name, question, state) => {
+    if (name !== 'memory_class' || question.type !== 'choice' || !learningObject(state)
+      || state.key !== 'Agent-local durable learning proposal' || !learningObject(state.value)) throw new Error('Unexpected learning memory-class fixture schema');
+    assertLearningQuestion(question, memoryClass.items.memory_class.question);
+    const control = learningControl(state.value.record);
+    if (control.domain !== state.value.origin || control.memoryClass === undefined) throw new Error('Unscripted learning memory-class fixture source');
+    return choiceAnswer(question, control.memoryClass, 0.9999);
+  });
+  const learningAlignment = fakePort((name, question, state) => {
+    if (!learningObject(state) || !learningObject(state.entity_a) || !learningObject(state.entity_b)) throw new Error('Unexpected complete learning alignment fixture state');
+    const left = learningControl(state.entity_a), right = learningControl(state.entity_b);
+    if (left.domain !== right.domain || state.entity_a.domain !== left.domain || state.entity_b.domain !== right.domain) throw new Error('Learning alignment fixture domains differ');
+    const same = duplicateLearningGroup(left, right) !== undefined;
+    if (name === 'link' && question.type === 'score') {
+      assertLearningQuestion(question, score(`How do \`entity_a\` and \`entity_b\` relate as ${alignmentNoun}s?`, [
+        `They describe two different ${alignmentNoun}s.`,
+        `They describe closely related ${alignmentNoun}s that may or may not be the same one: a variant, a special edition, a namesake, or a record that could plausibly refer to either.`,
+        `They describe one and the same ${alignmentNoun}.`,
+      ]));
+      return scoreAnswer(question, same ? 2 : 0, 0.9999);
+    }
+    if (question.type === 'noul' && (name === 'same_content' || name === 'same_provenance')) {
+      assertLearningQuestion(question, noul(`Do \`entity_a\` and \`entity_b\` state the same ${name === 'same_content' ? 'content' : 'provenance'}?`));
+      return noulAnswer(same ? 0.9999 : 0.0001);
+    }
+    throw new Error(`Unscripted learning alignment fixture question ${name}`);
+  });
+  const learningSelection = fakePort((name, question, state) => {
+    if (!learningObject(state) || !learningObject(state.context) || !Array.isArray(state.candidates) || state.candidates.length !== 2) throw new Error('Unexpected complete learning survivor fixture state');
+    const controls = state.candidates.map(candidate => {
+      if (!learningObject(candidate) || (candidate.id !== '0' && candidate.id !== '1')) throw new Error('Unexpected native learning candidate ID');
+      return learningControl(candidate.content);
+    });
+    const left = controls[0], right = controls[1], group = left && right ? duplicateLearningGroup(left, right) : undefined;
+    if (!group || !group[1] || state.context.domain !== group[1].domain) throw new Error('Unscripted substantive learning survivor group');
+    const chosen = String(controls.indexOf(group[1]));
+    if (name === 'pick' && question.type === 'choice') {
+      assertLearningQuestion(question, choice(selectionInstructions, { '0': null, '1': null, none: 'None of the candidates does what is needed.' }));
+      return choiceAnswer(question, chosen, 0.9999);
+    }
+    if (question.type === 'noul' && (name === 'fits_0' || name === 'fits_1')) {
+      const index = name === 'fits_0' ? 0 : 1;
+      assertLearningQuestion(question, noul({ question: selectionFitInstructions, candidate: `\`candidates[${index}]\` (id ${JSON.stringify(String(index))})` }));
+      return noulAnswer(String(index) === chosen ? 0.9999 : 0.0001);
+    }
+    throw new Error(`Unscripted learning survivor fixture question ${name}`);
+  });
+  const learningEquivalence = fakePort((name, question, state) => {
+    if (name !== 'item_0' || question.type !== 'noul' || !learningObject(state) || !Array.isArray(state.items) || state.items.length !== 1
+      || !learningObject(state.items[0])) throw new Error('Unexpected complete learning equivalence fixture schema');
+    assertLearningQuestion(question, noul({ question: equivalenceCondition, item: '`items[0]`' }));
+    const selected = learningControl(state.items[0].selected), alternate = learningControl(state.items[0].alternate);
+    const group = duplicateLearningGroup(selected, alternate);
+    if (!group || group[1] !== selected || !learningObject(state.items[0].group)
+      || state.items[0].group.domain !== selected.domain) throw new Error('Unscripted substantive learning equivalence fixture');
+    return noulAnswer(0.0001);
+  });
+  const learningPorts = new Map([
+    [learningCuratorScore.name, learningScore.port], [learningProposalTarget.name, learningTarget.port],
+    [memoryClass.name, learningMemoryClass.port], [learningDuplicateAlignment.name, learningAlignment.port],
+    [learningSurvivorSelection.name, learningSelection.port], [learningSurvivorEquivalence.name, learningEquivalence.port],
+  ]);
   const port: JudgmentPort = {
     model: security.port.model,
-    ask: async request => { try { return await (request.context?.battery === 'agent.models.route-readiness' || request.context?.battery === 'agent.models.local-recipe-fit' ? readiness.port.ask(request)
+    ask: async request => { try {
+      const learning = learningPorts.get(request.context?.battery ?? '');
+      if (learning) return await learning.ask(request);
+      return await (['agent.models.local-benchmark-prompt', 'routing.local-server-identity',
+      'agent.local-model.serving-status', 'agent.local-model.resource-pressure', 'agent.local-model.schema-status'].includes(request.context?.battery ?? '') ? localModels.port.ask(request)
+      : request.context?.battery === 'agent.models.route-readiness' || request.context?.battery === 'agent.models.local-recipe-fit' ? readiness.port.ask(request)
       : request.context?.battery === 'routing.autonomy-intake' ? intake.port.ask(request)
       : request.context?.battery === 'automation.schedule' ? intakeSchedule.port.ask(request)
       : request.context?.battery === 'agent.tools.long-lived-process' ? lifetime.port.ask(request)
       : request.context?.battery === 'engine.gate.execution-verification' ? executionVerification.port.ask(request)
+      : request.context?.battery === 'agent.remote-publisher.schema-status' || request.context?.battery === 'agent.remote-publisher.outcome-kind' ? publisher.port.ask(request)
       : request.context?.battery === 'agent.personal-ops.receipt-status' ? receiptStatus.port.ask(request)
+      : ['agent.memory.route-role', 'agent.memory.credential-state', 'agent.memory.live-status', 'agent.memory.schema-certified',
+        'agent.memory.receipt-member', 'agent.memory.provider-select', 'engine.runtime.at-rest-credential'].includes(request.context?.battery ?? '') ? memorySemantic.port.ask(request)
       : ['agent.personal-ops.lane-member', 'agent.personal-ops.tool-lane', 'agent.personal-ops.sample-field'].includes(request.context?.battery ?? '')
         || request.context?.battery === 'engine.gate.side-effect' && request.context?.site === 'agent.personal-ops.tool-effect'
         ? personalOpsDiscovery.port.ask(request)
@@ -1104,6 +1383,7 @@ function createHarnessFixtureReadings(): JudgmentPort {
         || request.context?.battery === 'engine.gate.autonomous-disposition' || request.context?.battery === 'engine.gate.autonomous-refusal' ? admission.port.ask(request)
       : request.context?.battery === 'engine.tools.registry-rank'
         && ['agent.harness.cli-commands', 'agent.harness.keybindings', 'agent.harness.shortcuts'].includes(request.context?.site ?? '') ? metadata.port.ask(request)
+      : request.context?.battery === 'engine.tools.registry-rank' && request.context?.site === 'agent.memory.providers' ? memoryCatalog.port.ask(request)
       : request.context?.battery === 'engine.tools.registry-rank' ? personalOps.port.ask(request)
       : Object.keys(request.questions).length === 1 && Object.hasOwn(request.questions, 'credential')
       ? credentials.port.ask(request) : security.port.ask(request)); } catch (error) {
@@ -2666,11 +2946,453 @@ describe('agent_harness tool', () => {
     }
   });
 
+  function makeOrchestrationQueryFixture() {
+    const fixture = makeFixture();
+    const clock = 1_770_000_000_001;
+    expect(judgmentInputCardProblem(clock)).toBeUndefined();
+    const agents = [
+      { id: 'agent-alpha', task: 'An authored semantic match', template: 'engineer', status: 'running', startedAt: clock, tools: ['read'] },
+      { id: 'agent-beta', task: 'auth lexical decoy', template: 'researcher', status: 'completed', startedAt: clock, tools: ['read'] },
+    ];
+    const outcome = { id: 'query-private-source', runnerId: 'agent-alpha', kind: 'capture', status: 'succeeded',
+      task: 'Complete native auth evidence', summary: 'Native auth result token=ORCHESTRATION_SYNTHETIC_PRIVATE; Literal marker <redacted> is quoted here.',
+      completedAt: clock, schemaStatus: 'certified', schemaVersion: 'goodvibes.remote-runtime.outcome.v1',
+      publicationGuarantee: 'Native remote outcome source', publisher: 'goodvibes-daemon', receiptId: 'query-private-receipt' };
+    const snapshot = { records: [outcome] }, readModel = { getSnapshot: () => snapshot };
+    const remoteReadModels = { captureOutcomes: readModel };
+    Object.defineProperty(fixture.context.ops, 'agentManager', { value: { exportState: () => agents }, configurable: true });
+    Object.defineProperty(fixture.context.platform, 'readModels', { value: { remoteRuntime: remoteReadModels }, configurable: true });
+    registerStubTool(fixture.toolRegistry, 'agent');
+    return { fixture, agents, outcome, snapshot, readModel, remoteReadModels };
+  }
+
+  test.each(['callback', 'registration'] as const)('a remote publisher token rejects a source write at the final %s boundary before normalization', async boundary => {
+    const f = makeOrchestrationQueryFixture();
+    f.outcome.summary = 'Ordinary complete remote observation.';
+    const original = judgmentPort('remote-publisher-final-callback-control');
+    const semantic = fakePort((name, question) => name === 'certified_schema' ? noulAnswer(0.999)
+      : name === 'outcome_kind' ? choiceAnswer(question, 'capture', 0.999) : (() => { throw new Error(name); })());
+    installJudgmentPort({ ...original, ask: request => request.context?.battery === 'agent.remote-publisher.schema-status'
+      || request.context?.battery === 'agent.remote-publisher.outcome-kind' ? semantic.port.ask(request) : original.ask(request) });
+    const methods = captureCatalogMethods(f.readModel, ['getSnapshot']);
+    const nativeRoot = captureCatalogMethods(f.fixture.context.platform, ['readModels']);
+    const assertNative = () => { methods(); nativeRoot(); };
+    let armed = false, callbacks = 0, accessorReads = 0;
+    const retainedWrite = () => {
+      if (armed && ++callbacks === 2) f.outcome.summary = 'Changed after the final arbitrary callback.';
+    };
+    try {
+      const owned = captureNativeRemoteReadModelSnapshot(f.fixture.context);
+      const settlement = settleNativeRemotePublisherSemantics(owned.token, {
+        sourceOwner: ordinaryResearchOwner(), assertCurrent: assertNative, assertSourceCurrent: assertNative,
+        retainCurrent: (_guard, key) => {
+          if (boundary === 'registration' && key === 'agent.remote-publisher.settled-readings') {
+            Object.defineProperty(f.outcome, 'summary', { configurable: true, enumerable: true, get() {
+              accessorReads += 1; return 'Changed during arbitrary guard registration.';
+            } });
+          }
+        },
+      }, {
+        projectText: projectSetupSmokeEvidenceFull, projectPath: projectSetupSmokeEvidenceFull,
+        protectFields: async (value, current) => {
+          current.retainCurrent?.(retainedWrite, 'remote-publisher-final-callback-control');
+          return protectPersonalOpsData(value, current);
+        },
+      });
+      if (boundary === 'registration') {
+        await expect(settlement).rejects.toThrow();
+        expect(accessorReads).toBe(0);
+        return;
+      }
+      const settled = await settlement;
+      expect(settled.outcomes[0]?.kind).toBe('capture');
+      expect(currentNativeRemoteReadModelSnapshot(f.fixture.context, owned.token).outcomes[0]?.kind).toBe('capture');
+      armed = true;
+      expect(() => currentNativeRemoteReadModelSnapshot(f.fixture.context, owned.token)).toThrow();
+      expect(f.outcome.summary).toBe('Changed after the final arbitrary callback.');
+    } finally { f.fixture.cleanup(); }
+  }, 60_000);
+
+  test('remote publisher meanings follow canonical evidence before the actual no-query live trail is published', async () => {
+    const f = makeOrchestrationQueryFixture();
+    const original = judgmentPort('remote-publisher-original-route-control');
+    const requests: Parameters<JudgmentPort['ask']>[0][] = [];
+    Object.assign(f.outcome, { id: 'remote-publisher-opposition', kind: 'capture only; export and closeout are separate examples',
+      schemaStatus: 'certified', summary: 'The previous schema certificate was revoked. Capture is the actual operation.' });
+    installJudgmentPort({ ...original, async ask(request) { requests.push(request); return original.ask(request); } });
+    try {
+      const result = await agentOrchestrationSummary(f.fixture.context, f.fixture.toolRegistry, { includeParameters: true }, { sourceOwner: ordinaryResearchOwner() });
+      expect<unknown>(result.agents).toMatchObject([{ managedPlanCard: { liveOutcomeTrail: [{ id: 'remote-publisher-opposition', kind: 'capture', certification: { schemaStatus: 'legacy' } }] } }]);
+      expect<unknown>(result.managedExecutionPlan).toMatchObject({ remoteEvidence: { liveOutcomes: [{ id: 'remote-publisher-opposition', kind: 'capture', certification: { schemaStatus: 'legacy' } }] } });
+      expect(requests.filter(request => request.context?.battery === 'agent.remote-publisher.schema-status')).toHaveLength(1);
+      expect(requests.filter(request => request.context?.battery === 'agent.remote-publisher.outcome-kind')).toHaveLength(1);
+      expect(JSON.stringify(requests)).toContain('previous schema certificate was revoked');
+      expect(f.outcome.schemaStatus).toBe('certified');
+    } finally { f.fixture.cleanup(); }
+  }, 60_000);
+
+  test('the actual exact-ID remote trail accepts a paraphrase outside the former substring and synonym lists', async () => {
+    const f = makeOrchestrationQueryFixture();
+    Object.assign(f.outcome, { id: 'remote-publisher-paraphrase', kind: 'Finalize runner work with its completion report.',
+      schemaStatus: 'The published record passed schema validation.' });
+    try {
+      const result = await describeAgentOrchestrationAgent(f.fixture.context, { agentId: 'agent-alpha', includeParameters: true }, { sourceOwner: ordinaryResearchOwner() });
+      expect(result.status).toBe('found');
+      if (result.status !== 'found') throw new Error('Missing native exact-ID remote result');
+      expect<unknown>(result.agent).toMatchObject({ managedPlanCard: { liveOutcomeTrail: [{ id: 'remote-publisher-paraphrase', kind: 'closeout', certification: { schemaStatus: 'certified' } }] } });
+      expect(f.outcome.kind).toBe('Finalize runner work with its completion report.');
+    } finally { f.fixture.cleanup(); }
+  }, 60_000);
+
+  test.each(['agent.remote-publisher.schema-status', 'agent.remote-publisher.outcome-kind'])('an unresolved %s reading blocks the actual native return rather than reviving text fallback', async battery => {
+    const f = makeOrchestrationQueryFixture();
+    const original = judgmentPort('remote-publisher-unknown-control');
+    installJudgmentPort({ ...original, async ask(request) {
+      if (request.context?.battery !== battery) return original.ask(request);
+      return fakePort((name, question) => name === 'certified_schema' ? noulAnswer(0.5)
+        : name === 'outcome_kind' ? choiceAnswer(question, 'export', 0.2) : (() => { throw new Error(name); })()).port.ask(request);
+    } });
+    try {
+      await expect(agentOrchestrationSummary(f.fixture.context, f.fixture.toolRegistry, { includeParameters: true }, { sourceOwner: ordinaryResearchOwner() })).rejects.toThrow();
+      expect(f.outcome.kind).toBe('capture'); expect(f.outcome.schemaStatus).toBe('certified');
+    } finally { f.fixture.cleanup(); }
+  }, 60_000);
+
+  test('a changed native source method cannot adopt already-settled remote publisher readings', async () => {
+    const f = makeOrchestrationQueryFixture();
+    const original = judgmentPort('remote-publisher-native-owner-control');
+    installJudgmentPort({ ...original, async ask(request) {
+      const answer = await original.ask(request);
+      if (request.context?.battery === 'agent.remote-publisher.schema-status') Object.assign(f.readModel, { getSnapshot: () => f.snapshot });
+      return answer;
+    } });
+    try {
+      await expect(agentOrchestrationSummary(f.fixture.context, f.fixture.toolRegistry, { includeParameters: true }, { sourceOwner: ordinaryResearchOwner() })).rejects.toThrow();
+    } finally { f.fixture.cleanup(); }
+  }, 60_000);
+
+  test('orchestration query protects complete native sources and retains literal display text', async () => {
+    const f = makeOrchestrationQueryFixture(), screening = researchScreeningFixture();
+    const original = judgmentPort('orchestration-projection-control');
+    const observed: Parameters<JudgmentPort['ask']>[0][] = [];
+    installJudgmentPort({ ...original, async ask(request) { observed.push(request); return original.ask(request); } });
+    Object.defineProperty(f.outcome, 'hidden', { value: 'A complete hidden auth source password=ORCHESTRATION_HIDDEN_PRIVATE', enumerable: false });
+    const retained: (() => void)[] = [];
+    try {
+      const result = await agentOrchestrationSummary(f.fixture.context, f.fixture.toolRegistry, { query: 'auth', limit: 1 }, {
+        sourceOwner: screening.owner, retainCurrent(guard) { retained.push(guard); },
+      });
+      expect<unknown>(result.agents).toMatchObject([{ agentId: 'agent-alpha' }]);
+      expect(result.total).toBe(2); expect(result.returned).toBe(1);
+      const rankRequests = observed.filter(request => request.context?.battery === 'engine.tools.registry-rank');
+      const candidates = rankRequests.map(request => {
+        const state: unknown = request.state;
+        if (!state || typeof state !== 'object' || !('candidate' in state) || !state.candidate || typeof state.candidate !== 'object'
+          || !('name' in state.candidate) || typeof state.candidate.name !== 'string'
+          || !('evidenceJson' in state.candidate) || typeof state.candidate.evidenceJson !== 'string') throw new Error('Missing native orchestration candidate');
+        return { name: state.candidate.name, evidence: state.candidate.evidenceJson };
+      });
+      expect(candidates.map(candidate => candidate.name)).toEqual(['agent-alpha', 'agent-beta']);
+      expect(candidates[0]?.evidence).toContain('originalSources');
+      expect(candidates[0]?.evidence).toContain('hidden');
+      expect(candidates[0]?.evidence).toContain('Complete native auth evidence');
+      expect(candidates[0]?.evidence).toContain('Literal marker ');
+      expect(candidates[0]?.evidence).toContain('<redacted>');
+      expect(candidates[0]?.evidence).toContain(' is quoted here.');
+      for (const wire of [JSON.stringify(observed), JSON.stringify(screening.calls), JSON.stringify(result)]) {
+        expect(wire).not.toContain('ORCHESTRATION_SYNTHETIC_PRIVATE');
+        expect(wire).not.toContain('ORCHESTRATION_HIDDEN_PRIVATE');
+      }
+      const requests = observed.length;
+      retained.forEach(guard => guard());
+      expect(observed).toHaveLength(requests);
+      f.outcome.summary = 'Native source changed after successful query';
+      expect(() => retained.forEach(guard => guard())).toThrow();
+      expect(observed).toHaveLength(requests);
+    } finally { f.fixture.cleanup(); }
+  });
+
+  test('orchestration withholds complete header tails before every source reader', async () => {
+    const f = makeOrchestrationQueryFixture(), screening = researchScreeningFixture();
+    const original = judgmentPort('orchestration-complete-header-control');
+    const observed: Parameters<JudgmentPort['ask']>[0][] = [];
+    const rawHeader = 'Authorization: Bearer ORCHESTRATION_HEADER_PRIVATE; scope=ORCHESTRATION_HEADER_TAIL';
+    f.outcome.summary = rawHeader;
+    installJudgmentPort({ ...original, async ask(request) { observed.push(request); return original.ask(request); } });
+    try {
+      const result = await agentOrchestrationSummary(f.fixture.context, f.fixture.toolRegistry, { query: 'auth', limit: 1 }, { sourceOwner: screening.owner });
+      expect<unknown>(result.agents).toMatchObject([{ agentId: 'agent-alpha' }]);
+      expect(result.total).toBe(2); expect(result.returned).toBe(1);
+      expect(observed.some(request => request.context?.battery === 'engine.tools.registry-rank')).toBe(true);
+      expect(screening.calls.length).toBeGreaterThan(0);
+      for (const wire of [JSON.stringify(observed), JSON.stringify(screening.calls), JSON.stringify(result)]) {
+        expect(wire).not.toContain('ORCHESTRATION_HEADER_PRIVATE');
+        expect(wire).not.toContain('ORCHESTRATION_HEADER_TAIL');
+      }
+      expect(f.outcome.summary).toBe(rawHeader);
+      expect(f.agents[0]?.status).toBe('running'); expect(f.agents[1]?.status).toBe('completed');
+    } finally { f.fixture.cleanup(); }
+  });
+
+  test('orchestration protects private task and plan prose through serialized publication', async () => {
+    const f = makeOrchestrationQueryFixture(), screening = researchScreeningFixture();
+    const original = judgmentPort('orchestration-complete-output-control');
+    const observed: Parameters<JudgmentPort['ask']>[0][] = [];
+    const first = f.agents[0];
+    if (!first) throw new Error('Missing native first agent');
+    first.task = 'Auth task token=ORCHESTRATION_TASK_PRIVATE; ordinary task text';
+    Object.defineProperty(first, 'progress', { value: 'Auth progress password=ORCHESTRATION_PROGRESS_PRIVATE; ordinary progress text', enumerable: true });
+    Object.defineProperty(first, 'context', { value: 'Auth context secret=ORCHESTRATION_CONTEXT_PRIVATE; ordinary context text', enumerable: true });
+    installJudgmentPort({ ...original, async ask(request) { observed.push(request); return original.ask(request); } });
+    try {
+      const result = await agentOrchestrationSummary(f.fixture.context, f.fixture.toolRegistry, { query: 'auth', limit: 1, includeParameters: true }, { sourceOwner: screening.owner });
+      expect<unknown>(result.agents).toMatchObject([{ agentId: 'agent-alpha', status: 'running', startedAt: first.startedAt }]);
+      expect(result.total).toBe(2); expect(result.returned).toBe(1);
+      const publicText = JSON.stringify(result);
+      expect(publicText).toContain('ordinary task text');
+      expect(publicText).toContain('ordinary progress text');
+      expect(publicText).toContain('ordinary context text');
+      expect(publicText).toContain('managedExecutionPlan');
+      for (const wire of [JSON.stringify(observed), JSON.stringify(screening.calls), publicText]) {
+        expect(wire).not.toContain('ORCHESTRATION_TASK_PRIVATE');
+        expect(wire).not.toContain('ORCHESTRATION_PROGRESS_PRIVATE');
+        expect(wire).not.toContain('ORCHESTRATION_CONTEXT_PRIVATE');
+      }
+      expect(first.task).toContain('ORCHESTRATION_TASK_PRIVATE');
+      expect(first.status).toBe('running'); expect(f.agents[1]?.status).toBe('completed');
+    } finally { f.fixture.cleanup(); }
+  });
+
+  test.each(['found', 'ambiguous'] as const)('orchestration semantic %s protects candidate task and plan title', async kind => {
+    const f = makeOrchestrationQueryFixture(), screening = researchScreeningFixture();
+    const original = judgmentPort('orchestration-detail-output-control');
+    const observed: Parameters<JudgmentPort['ask']>[0][] = [];
+    const first = f.agents[0];
+    if (!first) throw new Error('Missing native first agent');
+    first.task = 'Auth task token=ORCHESTRATION_DETAIL_PRIVATE; ordinary detail text';
+    const uncertain = fakePort((name, question, state) => {
+      if (name !== 'match' || question.type !== 'noul' || !state || typeof state !== 'object' || Array.isArray(state)
+        || state.query !== 'auth' || !state.candidate || typeof state.candidate !== 'object' || Array.isArray(state.candidate)
+        || typeof state.candidate.name !== 'string' || !['agent-alpha', 'agent-beta'].includes(state.candidate.name)) {
+        throw new Error('Unexpected exact uncertain orchestration control');
+      }
+      return noulAnswer(state.candidate.name === 'agent-alpha' ? 0.575 : 0.01);
+    });
+    installJudgmentPort({ ...original, async ask(request) {
+      observed.push(request);
+      return kind === 'ambiguous' && request.context?.battery === 'engine.tools.registry-rank'
+        && request.context.site === 'agent.harness.agent-orchestration' ? uncertain.port.ask(request) : original.ask(request);
+    } });
+    try {
+      const result = await describeAgentOrchestrationAgent(f.fixture.context, { query: 'auth', includeParameters: true }, { sourceOwner: screening.owner });
+      expect(result.status).toBe(kind);
+      if (result.status === 'found') expect<unknown>(result.agent).toMatchObject({ agentId: 'agent-alpha', status: 'running' });
+      else if (result.status === 'ambiguous') {
+        expect(result.input).toBe('auth');
+        expect<unknown>(result.candidates).toMatchObject([{ agentId: 'agent-alpha', status: 'running', judgment: { reading: { verdict: 'yes', outcome: 'confirm' } } }]);
+      } else throw new Error('Unexpected missing native query result');
+      const publicText = JSON.stringify(result);
+      expect(publicText).toContain('ordinary detail text');
+      expect(publicText).toContain('managedPlanCard');
+      for (const wire of [JSON.stringify(observed), JSON.stringify(screening.calls), publicText]) expect(wire).not.toContain('ORCHESTRATION_DETAIL_PRIVATE');
+      expect(first.task).toContain('ORCHESTRATION_DETAIL_PRIVATE');
+      expect(first.status).toBe('running'); expect(f.agents[1]?.status).toBe('completed');
+    } finally { f.fixture.cleanup(); }
+  });
+
+  test.each(['map', 'snapshot'] as const)('orchestration owns %s workspace path components before readers and keeps the native reference', async layout => {
+    const f = makeOrchestrationQueryFixture(), screening = researchScreeningFixture();
+    const original = judgmentPort('orchestration-native-path-control');
+    const observed: Parameters<JudgmentPort['ask']>[0][] = [];
+    const path = '/tmp/token=ORCHESTRATION_PATH_PRIVATE/auth-worktree';
+    const workspace = { workspaceId: 'query-native-workspace', runnerId: 'agent-alpha', status: 'ready', isolationKind: 'worktree',
+      workspace: { workspacePath: path }, publicationGuarantee: 'Native workspace isolation secret=ORCHESTRATION_WORKSPACE_GUARANTEE',
+      schemaStatus: 'certified', schemaVersion: 'goodvibes.remote-runtime.workspace.v1', publisher: 'goodvibes-daemon', receiptId: 'query-workspace-receipt' };
+    const duplicate = { ...workspace, workspace: { workspacePath: '/tmp/token=ORCHESTRATION_UNSELECTED_PATH_PRIVATE/unselected-worktree' } };
+    const source = layout === 'map' ? new Map([['first-workspace', workspace], ['duplicate-workspace', duplicate]]) : { getSnapshot: () => ({ records: [workspace, duplicate] }) };
+    Object.defineProperty(f.remoteReadModels, 'workspaceIsolation', { value: source, enumerable: true });
+    const native = remoteReadModelSnapshot(f.fixture.context).workspaces;
+    expect(native).toHaveLength(1);
+    const nativeReference = native[0]?.worktreeRef;
+    if (typeof nativeReference !== 'string') throw new Error('Missing actual native workspace display');
+    expect(nativeReference).toContain('auth-worktree'); expect(nativeReference).not.toContain('ORCHESTRATION_PATH_PRIVATE');
+    installJudgmentPort({ ...original, async ask(request) { observed.push(request); return original.ask(request); } });
+    try {
+      const result = await agentOrchestrationSummary(f.fixture.context, f.fixture.toolRegistry, { query: 'auth', limit: 1, includeParameters: true }, { sourceOwner: screening.owner });
+      expect<unknown>(result.agents).toMatchObject([{ agentId: 'agent-alpha', status: 'running', managedPlanCard: {
+        workspaceEvidence: [{ id: 'query-native-workspace', worktreeRef: nativeReference, certification: { schemaStatus: 'certified', schemaVersion: workspace.schemaVersion, receiptId: workspace.receiptId } }],
+      } }]);
+      expect<unknown>(result.managedExecutionPlan).toMatchObject({ remoteEvidence: { workspaceEvidence: [{ id: 'query-native-workspace', worktreeRef: nativeReference }] } });
+      const candidateWire = observed.filter(request => request.context?.battery === 'engine.tools.registry-rank').map(request => JSON.stringify(request.state)).join('\n');
+      expect(candidateWire).toContain('unselected-worktree');
+      for (const wire of [JSON.stringify(observed), JSON.stringify(screening.calls), JSON.stringify(result)]) {
+        expect(wire).not.toContain('ORCHESTRATION_PATH_PRIVATE');
+        expect(wire).not.toContain('ORCHESTRATION_UNSELECTED_PATH_PRIVATE');
+        expect(wire).not.toContain('ORCHESTRATION_WORKSPACE_GUARANTEE');
+      }
+      expect(workspace.workspace.workspacePath).toBe(path);
+      expect(workspace.status).toBe('ready'); expect(f.agents[0]?.status).toBe('running');
+    } finally { f.fixture.cleanup(); }
+  });
+
+  test('orchestration with no agents still inspects complete raw workspace card material before readers', async () => {
+    const f = makeOrchestrationQueryFixture(), screening = researchScreeningFixture();
+    const original = judgmentPort('orchestration-empty-native-card-control');
+    const observed: Parameters<JudgmentPort['ask']>[0][] = [];
+    f.agents.length = 0;
+    const path = '/tmp/token=4111111111111111/auth-worktree';
+    const workspace = { workspaceId: 'empty-native-workspace', runnerId: 'absent-native-agent', status: 'ready', worktreePath: path };
+    Object.defineProperty(f.remoteReadModels, 'workspaceIsolation', { value: new Map([['empty-workspace', workspace]]), enumerable: true });
+    installJudgmentPort({ ...original, async ask(request) { observed.push(request); return original.ask(request); } });
+    try {
+      await expect(agentOrchestrationSummary(f.fixture.context, f.fixture.toolRegistry, { query: 'auth', limit: 1 }, { sourceOwner: screening.owner })).rejects.toBeInstanceOf(ToolInputProjectionError);
+      expect(observed).toHaveLength(0); expect(screening.calls).toHaveLength(0);
+      expect(workspace.worktreePath).toBe(path); expect(workspace.status).toBe('ready'); expect(f.agents).toHaveLength(0);
+    } finally { f.fixture.cleanup(); }
+  });
+
+  test('orchestration keeps an ordinary credential slash-value completely withheld', async () => {
+    const f = makeOrchestrationQueryFixture(), screening = researchScreeningFixture();
+    const original = judgmentPort('orchestration-scalar-slash-control');
+    const observed: Parameters<JudgmentPort['ask']>[0][] = [];
+    f.outcome.summary = 'Native auth token=ORCHESTRATION_SCALAR_PRIVATE/ORCHESTRATION_SCALAR_TAIL';
+    installJudgmentPort({ ...original, async ask(request) { observed.push(request); return original.ask(request); } });
+    try {
+      const result = await agentOrchestrationSummary(f.fixture.context, f.fixture.toolRegistry, { query: 'auth', limit: 1 }, { sourceOwner: screening.owner });
+      expect<unknown>(result.agents).toMatchObject([{ agentId: 'agent-alpha' }]);
+      for (const wire of [JSON.stringify(observed), JSON.stringify(screening.calls), JSON.stringify(result)]) {
+        expect(wire).not.toContain('ORCHESTRATION_SCALAR_PRIVATE'); expect(wire).not.toContain('ORCHESTRATION_SCALAR_TAIL');
+      }
+      expect(f.outcome.summary).toContain('ORCHESTRATION_SCALAR_TAIL');
+    } finally { f.fixture.cleanup(); }
+  });
+
+  test.each(['wrong-schema', 'wrong-path-type', 'quoted-path', 'url-path', 'unowned-path', 'encoded-unowned-path', 'query-path', 'encoded-query-path', 'marker-query-path', 'marker-unowned-path'] as const)
+    ('orchestration %s cannot borrow native path ownership before readers', async kind => {
+      const f = makeOrchestrationQueryFixture(), screening = researchScreeningFixture();
+      const original = judgmentPort('orchestration-path-refusal-control');
+      const observed: Parameters<JudgmentPort['ask']>[0][] = [];
+      const path = '/tmp/token=ORCHESTRATION_UNOWNED_PATH/auth-worktree';
+      let query = 'auth';
+      if (kind === 'query-path' || kind === 'encoded-query-path') query = kind === 'query-path' ? path : JSON.stringify(path);
+      else if (kind === 'marker-query-path') query = '/tmp/token=<redacted>/auth-worktree';
+      else if (kind === 'marker-unowned-path') f.outcome.summary = '/tmp/token=<redacted>/auth-worktree';
+      else if (kind === 'unowned-path' || kind === 'encoded-unowned-path') f.outcome.summary = kind === 'unowned-path' ? path : JSON.stringify({ ordinary: path });
+      else {
+        const source: Record<string, unknown> = { workspaceId: 'unowned-workspace', runnerId: 'agent-alpha', status: 'ready', worktreePath: path };
+        if (kind === 'wrong-schema') delete source.runnerId;
+        else if (kind === 'wrong-path-type') source.worktreePath = 123;
+        else if (kind === 'quoted-path') source.worktreePath = '/tmp/token="ORCHESTRATION_UNOWNED_PATH/auth-worktree"';
+        else source.worktreePath = 'https://workspace.invalid/?token=ORCHESTRATION_UNOWNED_PATH';
+        Object.defineProperty(f.remoteReadModels, 'workspaceIsolation', { value: new Map([['unowned-workspace', source]]), enumerable: true });
+      }
+      installJudgmentPort({ ...original, async ask(request) { observed.push(request); return original.ask(request); } });
+      try {
+        await expect(agentOrchestrationSummary(f.fixture.context, f.fixture.toolRegistry, { query, limit: 1 }, { sourceOwner: screening.owner })).rejects.toBeInstanceOf(ToolInputProjectionError);
+        expect(observed).toHaveLength(0); expect(screening.calls).toHaveLength(0);
+        expect(f.agents[0]?.status).toBe('running'); expect(f.agents[1]?.status).toBe('completed');
+      } finally { f.fixture.cleanup(); }
+    });
+
+  test.each(['hidden-card', 'raw-clock-card', 'encoded-issuer', 'nested-encoded-issuer', 'raw-marker-query', 'credential-envelope', 'credential-field', 'encoded-credential-envelope'] as const)
+    ('orchestration %s refuses before private source readings and ranking', async kind => {
+      const f = makeOrchestrationQueryFixture(), screening = researchScreeningFixture();
+      const original = judgmentPort('orchestration-initial-floor-control');
+      const observed: Parameters<JudgmentPort['ask']>[0][] = [];
+      installJudgmentPort({ ...original, async ask(request) { observed.push(request); return original.ask(request); } });
+      if (kind === 'hidden-card') Object.defineProperty(f.outcome, 'hidden', { value: '4111111111111111', enumerable: false });
+      if (kind === 'credential-envelope') Object.defineProperty(f.outcome, 'hidden', {
+        value: { key: 'apiKey', value: 'ORCHESTRATION_DECLARED_PRIVATE' }, enumerable: false,
+      });
+      if (kind === 'credential-field') Object.defineProperty(f.outcome, 'hidden', {
+        value: { apiKey: 'ORCHESTRATION_DECLARED_PRIVATE' }, enumerable: false,
+      });
+      if (kind === 'encoded-credential-envelope') Object.defineProperty(f.outcome, 'hidden', {
+        value: JSON.stringify({ key: 'apiKey', value: 'ORCHESTRATION_DECLARED_PRIVATE' }), enumerable: false,
+      });
+      if (kind === 'raw-clock-card') {
+        const first = f.agents[0];
+        if (!first) throw new Error('Missing native first agent');
+        first.startedAt = 4_111_111_111_111_111;
+      }
+      if (kind === 'encoded-issuer' || kind === 'nested-encoded-issuer') {
+        const issuer = 'ghp_' + 'A'.repeat(36);
+        const once = JSON.stringify(issuer).replace('ghp_', '\\u0067hp_');
+        const nested = JSON.stringify(once);
+        expect(once).not.toContain(issuer); expect(nested).not.toContain(issuer);
+        expect<unknown>(JSON.parse(once)).toBe(issuer);
+        expect<unknown>(JSON.parse(nested)).toBe(once);
+        Object.defineProperty(f.outcome, 'hidden', { value: kind === 'encoded-issuer' ? once : nested, enumerable: false });
+      }
+      try {
+        await expect(agentOrchestrationSummary(f.fixture.context, f.fixture.toolRegistry,
+          { query: kind === 'raw-marker-query' ? 'token=<redacted>' : 'auth', limit: 1 }, { sourceOwner: screening.owner })).rejects.toThrow();
+        expect(observed).toHaveLength(0); expect(screening.calls).toHaveLength(0);
+        expect(f.agents[0]?.status).toBe('running'); expect(f.agents[1]?.status).toBe('completed');
+      } finally { f.fixture.cleanup(); }
+    });
+
+  test.each(['mutation', 'accessor', 'cancel', 'caller-retired'] as const)
+    ('orchestration %s during canonical protection refuses publication and semantic ranking', async kind => {
+      const f = makeOrchestrationQueryFixture(), screening = researchScreeningFixture(), controller = new AbortController();
+      const original = judgmentPort('orchestration-protection-retirement-control');
+      let entered = false, touched = 0, retired = false, ranked = false;
+      installJudgmentPort({ ...original, async ask(request) {
+        ranked ||= request.context?.battery === 'engine.tools.registry-rank';
+        if (!entered && request.context?.battery === 'engine.redaction.field-kind') {
+          entered = true;
+          if (kind === 'mutation') f.outcome.summary = 'Changed native private source';
+          if (kind === 'accessor') Object.defineProperty(f.outcome, 'summary', { get() { touched++; return 'Changed source'; }, configurable: true });
+          if (kind === 'cancel') controller.abort(new Error('Original orchestration caller retired'));
+          if (kind === 'caller-retired') retired = true;
+        }
+        return original.ask(request);
+      } });
+      try {
+        await expect(agentOrchestrationSummary(f.fixture.context, f.fixture.toolRegistry, { query: 'auth' }, {
+          sourceOwner: screening.owner, signal: controller.signal,
+          assertCurrent() { if (retired) throw new Error('Original orchestration owner retired'); },
+        })).rejects.toThrow();
+        expect(entered).toBe(true); expect(touched).toBe(0); expect(ranked).toBe(false);
+        expect(screening.calls).toHaveLength(0);
+        expect(f.agents[0]?.status).toBe('running'); expect(f.agents[1]?.status).toBe('completed');
+      } finally { f.fixture.cleanup(); }
+    });
+
+  test.each(['source-mutation', 'source-replacement', 'projection-changed'] as const)
+    ('orchestration %s during protected source screening refuses publication', async kind => {
+      const f = makeOrchestrationQueryFixture();
+      let entered = false, ranked = false;
+      const screening = researchScreeningFixture({
+        beforeProposal: async () => {
+          entered = true;
+          if (kind === 'source-mutation') f.outcome.summary = 'Source changed during actual native owner screening';
+          if (kind === 'source-replacement') Object.defineProperty(f.readModel, 'getSnapshot', { value: () => ({ records: [{ ...f.outcome }] }), configurable: true });
+        },
+        ...(kind === 'projection-changed' ? { spans: exactSensitiveSpans(['Complete native auth evidence']) } : {}),
+      });
+      const original = judgmentPort('orchestration-screen-retirement-control');
+      installJudgmentPort({ ...original, async ask(request) { ranked ||= request.context?.battery === 'engine.tools.registry-rank'; return original.ask(request); } });
+      try {
+        await expect(agentOrchestrationSummary(f.fixture.context, f.fixture.toolRegistry, { query: 'auth' }, { sourceOwner: screening.owner })).rejects.toThrow();
+        expect(entered).toBe(true); expect(ranked).toBe(false);
+        expect(screening.calls.length).toBeGreaterThan(0);
+        expect(JSON.stringify(screening.calls)).not.toContain('ORCHESTRATION_SYNTHETIC_PRIVATE');
+        expect(f.agents[0]?.status).toBe('running'); expect(f.agents[1]?.status).toBe('completed');
+      } finally { f.fixture.cleanup(); }
+    });
+
   test('exposes visible Agent orchestration without spawning hidden work', async () => {
-    const artifacts = createHarnessArtifactStore();
+    const capturedTime = Date.now();
+    const timeBase = Math.floor(capturedTime / 10) * 10;
+    const timeOffsets = [0, 500, 800, 1_000, 2_000, 5_000, 6_000, 10_000];
+    const fixtureTime = Array.from({ length: 10 }, (_, offset) => timeBase + offset)
+      .find((time) => timeOffsets.every((offset) => judgmentInputCardProblem(time - offset) === undefined));
+    if (fixtureTime === undefined) throw new Error('Unable to author bounded orchestration fixture timestamps.');
+    const artifacts = createHarnessArtifactStore(() => fixtureTime);
     const fixture = makeFixture({ artifactStore: artifacts.store });
     try {
-      const now = Date.now();
+      const now = fixtureTime;
       const agents = [
         {
           id: 'agent-alpha',
@@ -2819,20 +3541,32 @@ describe('agent_harness tool', () => {
           ]),
         },
       });
-      const alphaWorkPlan = fixture.context.workspace.workPlanStore!.addItem('Investigate auth flow and report user-facing risks', {
-        status: 'in_progress',
-        owner: 'agent',
-        source: 'agent_work_plan',
-        notes: 'Agent dispatch receipt 2026-06-06T00:00:00.000Z; agent agent-alpha; route agent { mode: "spawn" }; cohort auth-work; request investigate auth risks',
-        linked: { agentId: 'agent-alpha' },
-      });
-      const betaWorkPlan = fixture.context.workspace.workPlanStore!.addItem('Cancelled browser setup investigation', {
-        status: 'done',
-        owner: 'agent',
-        source: 'agent_work_plan',
-        notes: 'Agent dispatch receipt 2026-06-06T00:00:01.000Z; agent agent-beta; route agent { mode: "batch-spawn" }; cohort browser-work; request check browser setup',
-        linked: { agentId: 'agent-beta' },
-      });
+      const [alphaWorkPlan, betaWorkPlan] = (() => {
+        const clock = spyOn(Date, 'now').mockReturnValue(now);
+        try {
+          const alphaWorkPlan = fixture.context.workspace.workPlanStore!.addItem('Investigate auth flow and report user-facing risks', {
+            status: 'in_progress',
+            owner: 'agent',
+            source: 'agent_work_plan',
+            notes: 'Agent dispatch receipt 2026-06-06T00:00:00.000Z; agent agent-alpha; route agent { mode: "spawn" }; cohort auth-work; request investigate auth risks',
+            linked: { agentId: 'agent-alpha' },
+          });
+          const betaWorkPlan = fixture.context.workspace.workPlanStore!.addItem('Cancelled browser setup investigation', {
+            status: 'done',
+            owner: 'agent',
+            source: 'agent_work_plan',
+            notes: 'Agent dispatch receipt 2026-06-06T00:00:01.000Z; agent agent-beta; route agent { mode: "batch-spawn" }; cohort browser-work; request check browser setup',
+            linked: { agentId: 'agent-beta' },
+          });
+          return [alphaWorkPlan, betaWorkPlan] as const;
+        } finally {
+          clock.mockRestore();
+        }
+      })();
+      expect(judgmentInputCardProblem({
+        artifacts: artifacts.records,
+        workPlan: fixture.context.workspace.workPlanStore!.getActivePlan({ readOnly: true }),
+      })).toBeUndefined();
       Object.assign(fixture.context.ops as unknown as Record<string, unknown>, {
         agentManager: {
           exportState: () => agents,
@@ -4892,6 +5626,11 @@ describe('agent_harness tool', () => {
       expect(external.setupGuide?.requiredHostContracts.join('\n')).toContain('Prompt-injection eligibility policy');
       expect(external.setupGuide?.credentialPolicy).toContain('raw API keys');
       expect(external.setupGuide?.confirmationPolicy).toContain('durable receipts');
+      const query = 'the Supermemory external-memory provider';
+      const selected = await executeHarnessJson<{ readonly id: string }>(fixture, { mode: 'memory_provider', query });
+      expect(selected.id).toBe('supermemory');
+      const searched = await executeHarnessJson<{ readonly providers: readonly { readonly id: string }[] }>(fixture, { mode: 'memory_posture', query });
+      expect(searched.providers.map(provider => provider.id)).toEqual(['supermemory']);
 
       const actions = await executeHarnessJson<{
         readonly actions: readonly { readonly id: string; readonly modelRoute?: string }[];
@@ -10041,6 +10780,22 @@ describe('agent_harness tool', () => {
       expect(String(heldDiagnostic)).not.toContain('raw-secret');
       servingSnapshot.servers.ollama.publicationGuarantee = 'daemon publishes local serving diagnostics after start/repair receipts';
       servingSnapshot.servers.ollama.summary = 'Ollama is ready with one loaded model.';
+      // Canonical responses bind the complete original native publisher records.
+      // Any new or changed record remains unscripted and is refused by the fixture.
+      const localModels = registry.listModels();
+      for (const record of localModels) scriptHarnessLocalReading('route',
+        { evidence_kind: 'registry', registry_text: JSON.stringify(record), record }, { kind: 'choice', choice: 'ollama' });
+      for (const record of publishedProviders) scriptHarnessLocalReading('route',
+        { evidence_kind: 'registry', registry_text: JSON.stringify(record), record }, { kind: 'choice', choice: 'ollama' });
+      const providerId = 'ollama-local';
+      scriptHarnessLocalReading('route', { evidence_kind: 'registry', registry_text: providerId,
+        record: { providerId, providers: publishedProviders, models: localModels } }, { kind: 'choice', choice: 'ollama' });
+      const diagnostic = { ...servingSnapshot.servers.ollama, id: 'ollama' };
+      scriptHarnessLocalReading('route', { evidence_kind: 'registry', registry_text: 'ollama', record: diagnostic }, { kind: 'choice', choice: 'ollama' });
+      scriptHarnessLocalReading('status', { value: diagnostic.status, record: diagnostic }, { kind: 'choice', choice: 'ready' });
+      scriptHarnessLocalReading('pressure', { value: diagnostic.resourcePressure, record: diagnostic }, { kind: 'choice', choice: 'low' });
+      scriptHarnessLocalReading('certified', { value: diagnostic.schemaStatus, record: diagnostic }, { kind: 'yes-no', probability: 0.999 });
+
 
       const cookbook = await executeHarnessJson<{
         readonly localCookbook: {
@@ -10365,12 +11120,20 @@ describe('agent_harness tool', () => {
   });
 
   test('surfaces saved local model benchmark history in cookbook and setup', async () => {
-    const artifacts = createHarnessArtifactStore();
+    const artifacts = createHarnessArtifactStore(() => 1_791_684_509_006);
+    const comparisonBody = JSON.stringify({ schema: 'goodvibes.agent.model_compare.v1', comparisonId: 'cmp_local',
+      prompt: 'Compare the local Ollama endpoint with our hosted baseline for latency and repository-task fit.',
+      candidates: [{ blindId: 'A', status: 'completed', content: 'Local route response.' }, { blindId: 'B', status: 'completed', content: 'Hosted baseline response.' }] });
+    const otherBody = JSON.stringify({ schema: 'goodvibes.agent.model_compare.v1', comparisonId: 'cmp_other',
+      prompt: 'Write a concise product update using two hosted routes.', candidates: [] });
+    const judgmentBody = JSON.stringify({ schema: 'goodvibes.agent.model_compare_judgment.v1', judgmentId: 'jdg_local', comparisonId: 'cmp_local',
+      sourceArtifactId: 'artifact-1', winnerBlindId: 'A', winnerModel: 'ollama:qwen2.5-coder:7b',
+      reasons: 'The locally served Ollama route met the repository task and responded with less waiting time than the hosted baseline.' });
     await artifacts.store.create({
       kind: 'data',
       mimeType: 'application/json',
       filename: 'blind-model-comparison-cmp_local.json',
-      text: '{}',
+      text: comparisonBody,
       metadata: {
         purpose: 'agent-model-compare',
         benchmarkKind: 'local-model-route',
@@ -10404,7 +11167,7 @@ describe('agent_harness tool', () => {
       kind: 'data',
       mimeType: 'application/json',
       filename: 'blind-model-comparison-cmp_other.json',
-      text: '{}',
+      text: otherBody,
       metadata: {
         purpose: 'agent-model-compare',
         comparisonId: 'cmp_other',
@@ -10417,7 +11180,7 @@ describe('agent_harness tool', () => {
       kind: 'data',
       mimeType: 'application/json',
       filename: 'blind-model-comparison-judgment-jdg_local.json',
-      text: '{}',
+      text: judgmentBody,
       metadata: {
         purpose: 'agent-model-compare-judgment',
         judgmentId: 'jdg_local',
@@ -10429,8 +11192,14 @@ describe('agent_harness tool', () => {
         winnerModel: 'ollama:qwen2.5-coder:7b',
       },
     });
-    for (const artifact of artifacts.records) Object.assign(artifact, { createdAt: 1700000000000 });
     const fixture = makeFixture({ artifactStore: artifacts.store });
+    const other = artifacts.records[1], savedJudgment = artifacts.records[2];
+    if (!other || !savedJudgment) throw new Error('Authored benchmark fixture artifacts are absent.');
+    const otherReading = { ...other, createdAt: new Date(other.createdAt).toISOString() };
+    const judgmentReading = { ...savedJudgment, createdAt: new Date(savedJudgment.createdAt).toISOString() };
+    scriptHarnessLocalReading('member', { artifact: { descriptor: otherReading, record: otherReading, content: otherBody } }, { kind: 'yes-no', probability: 0.001 });
+    scriptHarnessLocalReading('route', { evidence_kind: 'registry', registry_text: 'ollama:qwen2.5-coder:7b',
+      record: { descriptor: judgmentReading, record: judgmentReading, content: judgmentBody } }, { kind: 'choice', choice: 'ollama' });
     try {
       const cookbook = await executeHarnessJson<{
         readonly localCookbook: {
@@ -10520,7 +11289,8 @@ describe('agent_harness tool', () => {
       expect(setup.localModelReadiness?.benchmarkHistory?.status).toBe('history-found');
       expect(setup.localModelReadiness?.benchmarkHistory?.artifacts.map((artifact) => artifact.artifactId)).toEqual(['artifact-1']);
       expect(setup.localModelReadiness?.benchmarkHistory?.evidence?.status).toBe('reviewed-winner');
-      expect(setup.localModelReadiness?.benchmarkHistory?.evidence?.winnerStacks).toContain('ollama');
+      // Startup preserves the native linked winner but does not read a stack from its name.
+      expect(setup.localModelReadiness?.benchmarkHistory?.evidence?.winnerStacks).toEqual([]);
     } finally {
       fixture.cleanup();
     }
@@ -14892,5 +15662,97 @@ describe('agent_harness catalogs: an empty page states its cause', () => {
     } finally {
       fixture.cleanup();
     }
+  });
+});
+
+
+// Exact native admission for the supplied-corpus writing-style route. The fixture
+// keeps every ordinary privacy/permission question on the original harness port.
+describe('registered Personal Ops writing-style draft', () => {
+  let previous: JudgmentPort | undefined;
+  let log: SqliteDecisionLog;
+  beforeEach(() => { log = new SqliteDecisionLog(':memory:'); previous = installJudgmentPort(withDecisionLog(createHarnessFixtureReadings(), log)); });
+  afterEach(() => { installJudgmentPort(previous); log[Symbol.dispose](); });
+  const sentBody = 'Hi Alice,\nThe plan is ready.\nThanks';
+  const from = 'Alice Smith <alice@example.com>';
+  const styleNames = new Set(['email.style.phrase-occurrence', 'email.style.sentence-boundary', 'email.style.tone', 'email.style.sender-name']);
+  function data(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid exact style fixture state');
+    return Object.fromEntries(Object.entries(value));
+  }
+  function installStyles(controller?: AbortController) {
+    const original = judgmentPort('test.email.style'), fake = fakePort((name, question, value) => {
+      const state = data(value);
+      if (name === 'tone' && question.type === 'choice' && JSON.stringify(state) === JSON.stringify({ bodies: [sentBody] })) {
+        return choiceAnswer(question, 'neutral', 0.999);
+      }
+      if (Array.isArray(state.items) && Object.keys(state).join() === 'items' && /^item_\d+$/.test(name) && question.type === 'noul') {
+        const item = data(state.items[Number(name.slice(5))]);
+        if (item.body === sentBody && typeof item.candidate === 'string') {
+          const greetings = ['Hi', 'Hello', 'Hey', 'Dear', 'Greetings', 'Good morning', 'Good afternoon'];
+          const closings = ['Kind regards', 'Best regards', 'All the best', 'Thank you', 'Thanks', 'Sincerely', 'Take care', 'Cheers', 'Regards', 'Best'];
+          if (item.purpose === 'greeting' && greetings.includes(item.candidate)) return noulAnswer(item.candidate === 'Hi' ? 0.999 : 0.001);
+          if (item.purpose === 'signOff' && closings.includes(item.candidate)) return noulAnswer(item.candidate === 'Thanks' ? 0.999 : 0.001);
+        }
+        if (data(state.items[0]).document === sentBody && typeof item.position === 'number') {
+          return noulAnswer(item.position === sentBody.indexOf('The plan is ready.') + 'The plan is ready.'.length ? 0.999 : 0.001);
+        }
+      }
+      if (Array.isArray(state.candidates) && Object.keys(state).join() === 'context,candidates' && data(state.context).from === from) {
+        const candidates = state.candidates.map(data), chosen = candidates.find(candidate => data(candidate.content).text === 'Alice');
+        if (!chosen || typeof chosen.id !== 'string') throw new Error('Missing exact native offered name');
+        if (name === 'pick' && question.type === 'choice') return choiceAnswer(question, chosen.id, 0.999);
+        if (/^fits_\d+$/.test(name) && question.type === 'noul') return noulAnswer(data(candidates[Number(name.slice(5))]).id === chosen.id ? 0.999 : 0.001);
+      }
+      throw new Error('Unknown exact writing-style contract');
+    });
+    const recorded = withDecisionLog(fake.port, log);
+    installJudgmentPort({ model: original.model, ask(request) {
+      if (typeof request.context?.battery === 'string' && styleNames.has(request.context.battery)) {
+        expect(request.context.site).toBe(request.context.battery);
+        if (request.context.battery === 'email.style.tone') controller?.abort();
+        return recorded.ask(request);
+      }
+      return original.ask(request);
+    } });
+    return fake;
+  }
+  function invocation() {
+    return { action: 'read', laneId: 'inbox', recordId: 'inbox-style-reply-draft', fields: {
+      inbound: { from, subject: 'Project update', bodyPreview: 'Complete ordinary inbound message.' },
+      sentMessages: [{ bodyPreview: sentBody }], context: 'The milestone is ready.',
+    } };
+  }
+  test('fresh registered admission reaches actual style readings and publishes only a reviewable draft', async () => {
+    const fixture = makeFixture(), fake = installStyles();
+    try {
+      const args = invocation();
+      await fixture.tool.execute({ mode: 'run_personal_ops_read', laneId: args.laneId, recordId: args.recordId, fields: args.fields, confirm: true, explicitUserRequest: 'Draft this reply' }).then(
+        result => { expect(result.success).toBe(false); },
+        error => { expect(error).toBeInstanceOf(ToolInputProjectionError); },
+      );
+      expect(fake.requests).toHaveLength(0);
+      registerAgentPersonalOpsTool(fixture.toolRegistry, fixture.commandRegistry, fixture.context);
+      const result = await fixture.executeAdmittedCall('writing-style-supplied-corpus', 'personal_ops', args);
+      expect(result.success, result.error).toBe(true);
+      const output = data(JSON.parse(result.output ?? '{}')), draft = data(output.draft), profile = data(draft.profile);
+      expect(output.status).toBe('drafted'); expect(output.corpusSource).toBe('explicitly-supplied-sent-messages');
+      expect(draft.body).toContain('Hi Alice,'); expect(draft.body).toContain(args.fields.context);
+      expect(draft.subject).toBe('Re: Project update'); expect(draft.requiresBeforeSendReview).toBe(true);
+      expect(profile).toEqual({ greeting: 'Hi', signOff: 'Thanks', medianSentenceCount: 1, tone: 'neutral', isDefault: false });
+      expect(new Set(fake.requests.map(request => request.context?.battery))).toEqual(styleNames);
+      expect(fixture.processManager.list()).toHaveLength(0); expect(fixture.openedSurfaces).toHaveLength(0);
+      expect(fixture.printed).toHaveLength(0);
+    } finally { fixture.cleanup(); }
+  });
+  test('caller cancellation during actual admitted style reading cannot publish a draft', async () => {
+    const fixture = makeFixture(), controller = new AbortController(), fake = installStyles(controller);
+    try {
+      registerAgentPersonalOpsTool(fixture.toolRegistry, fixture.commandRegistry, fixture.context);
+      await expect(fixture.executeAdmittedCall('writing-style-cancelled', 'personal_ops', invocation(), { signal: controller.signal })).rejects.toThrow();
+      expect(controller.signal.aborted).toBe(true); expect(fake.requests.length).toBeGreaterThan(0);
+      expect(fake.requests.some(request => request.context?.battery === 'email.style.sender-name')).toBe(false);
+      expect(fixture.processManager.list()).toHaveLength(0); expect(fixture.printed).toHaveLength(0);
+    } finally { fixture.cleanup(); }
   });
 });

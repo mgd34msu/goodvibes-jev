@@ -207,3 +207,76 @@ test('foreign frozen parents retain mutable descendants through native owner awa
     expect(fake.entered()).toBe(false);
   } finally { getter.mockRestore(); }
 });
+
+test('owned catalog slots retain special keys and permit hidden-key reordering', () => {
+  const source: Record<string, unknown> = { visible: 'Original data' };
+  Object.defineProperty(source, '__proto__', { value: { value: 'Original special data' }, enumerable: true, configurable: true });
+  Object.defineProperty(source, 'constructor', { value: 'Original constructor data', enumerable: true, configurable: true });
+  Object.defineProperty(source, 'firstHidden', { value: { value: 'First hidden data' }, configurable: true });
+  Object.defineProperty(source, 'lastHidden', { value: { value: 'Last hidden data' }, configurable: true });
+  const assertCurrent = captureCatalogSnapshotGuard(source);
+  const current: Record<string, unknown> = { visible: 'Original data' };
+  Object.defineProperty(current, '__proto__', { value: { value: 'Original special data' }, enumerable: true, configurable: true });
+  Object.defineProperty(current, 'constructor', { value: 'Original constructor data', enumerable: true, configurable: true });
+  Object.defineProperty(current, 'lastHidden', { value: { value: 'Last hidden data' }, configurable: true });
+  Object.defineProperty(current, 'firstHidden', { value: { value: 'First hidden data' }, configurable: true });
+  expect(() => assertCurrent(current)).not.toThrow();
+  Object.defineProperty(current, '__proto__', { value: { value: 'Changed special data' }, enumerable: true, configurable: true });
+  expect(() => assertCurrent(current)).toThrow();
+});
+
+test('owned expected catalog nodes cannot be replaced with a memo-supplied approving object', () => {
+  const original = { left: { value: 'Original left' }, right: { value: 'Original right' } };
+  const assertCurrent = captureCatalogSnapshotGuard(original);
+  const shared = { value: 'Original left' }, current = { left: shared, right: shared };
+  const get = WeakMap.prototype.get;
+  const approving = { kind: 'object', array: false, length: 0, enumerableKeys: ['value'],
+    slots: new Map([['value', { enumerable: true, value: { kind: 'value', value: 'Original right' } }]]) };
+  let sharedReads = 0, substitutions = 0;
+  WeakMap.prototype.get = function (this: WeakMap<object, unknown>, key: object): unknown {
+    if (key === shared && ++sharedReads === 2) { substitutions++; return approving; }
+    return Reflect.apply(get, this, [key]);
+  };
+  try { expect(() => assertCurrent(current)).toThrow(); }
+  finally { WeakMap.prototype.get = get; }
+  expect(sharedReads).toBe(2);
+  expect(substitutions).toBe(1);
+  expect(current.left.value).toBe('Original left');
+});
+
+test('current catalog descriptor callbacks still run before changed complete data is compared', () => {
+  const assertCurrent = captureCatalogSnapshotGuard({ first: 'Original first', tail: 'Original tail' });
+  const current = { first: 'Original first', tail: 'Original tail' };
+  const values = Object.values;
+  let changed = false;
+  Object.values = (value: unknown) => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, 'tail');
+    const field: unknown = descriptor?.value;
+    if (!changed && field && typeof field === 'object'
+      && Object.getOwnPropertyDescriptor(field, 'value')?.value === 'Original tail') {
+      changed = true;
+      Object.defineProperty(field, 'value', { value: 'Changed complete tail', writable: true, enumerable: true, configurable: true });
+    }
+    return Reflect.apply(values, Object, [value]);
+  };
+  try { expect(() => assertCurrent(current)).toThrow(); }
+  finally { Object.values = values; }
+  expect(changed).toBe(true);
+  expect(current.tail).toBe('Original tail');
+});
+
+test('owned catalog comparison keeps both alias patterns and rechecks a hidden shared tail', () => {
+  const first = { value: 'Same data' }, second = { value: 'Same data' };
+  Object.defineProperty(first, 'hidden', { value: 'Same hidden data', configurable: true });
+  Object.defineProperty(second, 'hidden', { value: 'Same hidden data', configurable: true });
+  const assertSeparate = captureCatalogSnapshotGuard({ left: first, right: second });
+  const shared = { value: 'Same data' };
+  Object.defineProperty(shared, 'hidden', { value: 'Same hidden data', configurable: true });
+  const current = { left: shared, right: shared };
+  expect(() => assertSeparate(current)).not.toThrow();
+  const assertShared = captureCatalogSnapshotGuard(current);
+  expect(() => assertShared({ left: first, right: second })).not.toThrow();
+  Object.defineProperty(shared, 'hidden', { value: 'Changed hidden data', configurable: true });
+  expect(() => assertSeparate(current)).toThrow();
+  expect(() => assertShared(current)).toThrow();
+});

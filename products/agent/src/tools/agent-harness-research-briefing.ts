@@ -1,3 +1,8 @@
+import { captureCatalogPath, withResearchCatalog, rankResearchRecords } from './agent-harness-research-catalog-source.ts';
+import { captureCatalogMethods, captureCatalogSnapshot } from './agent-harness-catalog-ranking.ts';
+import { ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
+import { observeImportFile, assertImportFileCurrent } from '@goodvibes-jev/engine/sdk/platform/config';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { ArtifactDescriptor } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { CommandContext } from '../input/command-registry.ts';
 import {
@@ -11,7 +16,9 @@ import {
   researchSourceReportLine,
   type AgentResearchSourceRecord,
 } from '../agent/research-source-registry.ts';
-import { browserControlPosture } from './agent-harness-browser-control.ts';
+import { browserControlPosture, type BrowserControlPosture } from './agent-harness-browser-control.ts';
+import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureAsyncHarnessInput } from './agent-harness-async-input.ts';
 import { isCertifiedResearchLiveRecord, researchLiveReadModelSnapshot } from './agent-harness-research-live-read-models.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 
@@ -36,9 +43,7 @@ interface ResearchBriefingItem {
   readonly detail?: Record<string, unknown>;
 }
 
-type ArtifactListStore = {
-  readonly list?: (limit?: number) => readonly ArtifactDescriptor[];
-};
+
 
 function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -74,77 +79,58 @@ function isMutableRun(status: AgentResearchRunStatus): boolean {
   return status !== 'cancelled' && status !== 'completed' && status !== 'failed';
 }
 
-function runSearchText(run: AgentResearchRunRecord): string {
-  return [
-    run.id,
-    run.title,
-    run.question,
-    run.goal,
-    run.status,
-    run.phase,
-    run.note ?? '',
-    run.error ?? '',
-    run.reportArtifactId ?? '',
-    ...run.plan,
-    ...run.nextSteps,
-    ...run.sourceIds,
-  ].join('\n').toLowerCase();
-}
 
-function sourceSearchText(source: AgentResearchSourceRecord): string {
-  return [
-    source.id,
-    source.question,
-    source.title,
-    source.url ?? '',
-    source.publisher ?? '',
-    source.summary,
-    source.evidence ?? '',
-    source.credibility,
-    source.status,
-    source.note ?? '',
-    ...source.tags,
-  ].join('\n').toLowerCase();
-}
 
-function artifactSearchText(artifact: ArtifactDescriptor): string {
-  return [
-    artifact.id,
-    artifact.kind,
-    artifact.mimeType,
-    artifact.filename ?? '',
-    artifact.sourceUri ?? '',
-    JSON.stringify(artifact.metadata ?? {}),
-  ].join('\n').toLowerCase();
-}
 
-function reportArtifacts(context: CommandContext, query: string): readonly ArtifactDescriptor[] {
-  const store = context.platform?.artifactStore as ArtifactListStore | undefined;
-  const artifacts = store?.list?.(100) ?? [];
-  const normalized = query.toLowerCase();
-  return artifacts.filter((artifact) => {
+
+
+
+async function reportArtifacts(artifacts: readonly ArtifactDescriptor[], query: string, options: CatalogRankingOptions): Promise<readonly ArtifactDescriptor[]> {
+  const reports = artifacts.filter(artifact => {
     const metadata = artifact.metadata ?? {};
-    const purpose = typeof metadata.purpose === 'string' ? metadata.purpose : '';
-    const source = typeof metadata.source === 'string' ? metadata.source : '';
-    const sourceKind = typeof metadata.sourceKind === 'string' ? metadata.sourceKind : '';
-    const isResearchReport = [purpose, source, sourceKind].some((value) => value.toLowerCase().includes('agent-research-report'));
-    return isResearchReport && (!normalized || artifactSearchText(artifact).includes(normalized));
+    return [metadata.purpose, metadata.source, metadata.sourceKind].some(value => value === 'agent-research-report');
   });
+  return rankResearchRecords(reports, query, artifact => ({ id: artifact.id, description: artifact.filename ?? artifact.kind, evidence: artifact }), options, 'agent.research.briefing.reports');
 }
 
-function matchingSources(
-  sources: readonly AgentResearchSourceRecord[],
-  runs: readonly AgentResearchRunRecord[],
-  query: string,
-): readonly AgentResearchSourceRecord[] {
-  const normalized = query.toLowerCase();
-  const sourceIds = new Set(runs.flatMap((run) => run.sourceIds).map((id) => id.toLowerCase()));
-  return sources.filter((source) => (
-    !normalized
-    || sourceIds.has(source.id.toLowerCase())
-    || sourceSearchText(source).includes(normalized)
-    || runs.some((run) => run.question.toLowerCase() === source.question.toLowerCase())
-  ));
+function captureArtifacts(context: CommandContext) {
+  const owner = captureCatalogPath(context, ['platform', 'artifactStore']);
+  const store = context.platform?.artifactStore;
+  const native = store instanceof ArtifactStore ? store : null;
+  const assertMethods = store ? captureCatalogMethods(store, ['list', 'getRecord', 'pruneExpired', 'toDescriptor', 'removeRecordFiles', 'rootDir', 'records']) : () => {};
+  assertMethods(); const list = store?.list, getRecord = native?.getRecord;
+  const initial = list ? list.call(store, 100) : [];
+  if (initial.length > 0 && (!native || !getRecord)) throw new ToolInputProjectionError('unavailable');
+  const metadata = initial.map(artifact => {
+    const record = getRecord?.call(native, artifact.id);
+    if (!record) throw new ToolInputProjectionError('held');
+    const snapshot = captureCatalogSnapshot(record), path = snapshot.captured.metadataPath;
+    return { id: artifact.id, record, snapshot, path, observation: observeImportFile(path) };
+  });
+  const assertCurrent = (): void => {
+    owner.assertCurrent(); assertMethods();
+    for (const file of metadata) {
+      file.snapshot.assertCurrent(file.record);
+      const record = getRecord?.call(native, file.id);
+      if (record !== file.record) throw new ToolInputProjectionError('held');
+      assertImportFileCurrent(file.path, file.observation);
+    }
+  };
+  const read = () => {
+    assertCurrent();
+    const artifacts = list ? list.call(store, 100) : [];
+    assertCurrent(); return { artifacts, records: metadata.map(file => file.snapshot.captured), metadata: metadata.map(file => ({ contents: file.observation.raw })) };
+  };
+  assertCurrent(); return { read, assertCurrent };
+}
+
+async function matchingSources(sources: readonly AgentResearchSourceRecord[], runs: readonly AgentResearchRunRecord[], query: string,
+  options: CatalogRankingOptions): Promise<readonly AgentResearchSourceRecord[]> {
+  if (!query) return sources;
+  const sourceIds = new Set(runs.flatMap(run => run.sourceIds).map(id => id.toLowerCase()));
+  const linked = sources.filter(source => sourceIds.has(source.id.toLowerCase()) || runs.some(run => run.question.toLowerCase() === source.question.toLowerCase()));
+  const ranked = await rankResearchRecords(sources, query, source => ({ id: source.id, description: source.title, evidence: source }), options, 'agent.research.briefing.sources');
+  return [...new Set([...linked, ...ranked])];
 }
 
 function runItem(run: AgentResearchRunRecord, includeParameters: boolean): ResearchBriefingItem {
@@ -312,9 +298,7 @@ function workflowItem(query: string, includeParameters: boolean): ResearchBriefi
   };
 }
 
-function browserItem(context: CommandContext, includeParameters: boolean): ResearchBriefingItem {
-  const browser = browserControlPosture(context);
-  const liveResearch = researchLiveReadModelSnapshot(context);
+function browserItem(context: CommandContext, includeParameters: boolean, browser: BrowserControlPosture, liveResearch: Awaited<ReturnType<typeof researchLiveReadModelSnapshot>>): ResearchBriefingItem {
   const certifiedRunnerRecords = liveResearch.browserRunnerRecords.filter(isCertifiedResearchLiveRecord);
   const certifiedVisualReports = liveResearch.visualReportRecords.filter(isCertifiedResearchLiveRecord);
   const hasCertifiedRunner = certifiedRunnerRecords.length > 0;
@@ -354,93 +338,106 @@ function browserItem(context: CommandContext, includeParameters: boolean): Resea
   };
 }
 
-export function researchBriefingCatalogStatus(context: CommandContext): Record<string, unknown> {
-  const shellPaths = context.workspace?.shellPaths;
-  const runs = shellPaths ? AgentResearchRunRegistry.fromShellPaths(shellPaths).snapshot() : null;
-  const sources = shellPaths ? AgentResearchSourceRegistry.fromShellPaths(shellPaths).snapshot() : null;
-  const reports = reportArtifacts(context, '');
-  const liveResearch = researchLiveReadModelSnapshot(context);
-  return {
-    modes: ['research_briefing'],
-    status: shellPaths ? 'ready' : 'unavailable',
-    activeRuns: (runs?.planned.length ?? 0) + (runs?.running.length ?? 0) + (runs?.paused.length ?? 0) + (runs?.blocked.length ?? 0),
-    candidateSources: sources?.candidates.length ?? 0,
-    reviewedSources: sources?.reviewed.length ?? 0,
-    savedReports: reports.length,
-    liveBrowserRuns: liveResearch.browserRunnerRecords.length,
-    liveVisualReports: liveResearch.visualReportRecords.length,
-    readOnly: true,
-  };
-}
-
-export function researchBriefingSummary(context: CommandContext, args: AgentHarnessResearchBriefingArgs): Record<string, unknown> {
-  const includeParameters = args.includeParameters === true;
-  const query = readString(args.query) || readString(args.target);
-  const shellPaths = context.workspace?.shellPaths;
-  const runs = shellPaths ? AgentResearchRunRegistry.fromShellPaths(shellPaths).list() : [];
-  const sources = shellPaths ? AgentResearchSourceRegistry.fromShellPaths(shellPaths).list() : [];
-  const normalized = query.toLowerCase();
-  const matchedRuns = runs.filter((run) => !normalized || runSearchText(run).includes(normalized));
-  const matchedSources = matchingSources(sources, matchedRuns, query);
-  const reports = reportArtifacts(context, query);
-  const liveResearch = researchLiveReadModelSnapshot(context);
-  const certifiedRunnerRecords = liveResearch.browserRunnerRecords.filter(isCertifiedResearchLiveRecord);
-  const activeRuns = matchedRuns.filter((run) => isMutableRun(run.status));
-  const candidateSources = matchedSources.filter((source) => source.status === 'candidate');
-  const reviewedSources = matchedSources.filter((source) => source.status === 'reviewed');
-  const items = [
-    ...activeRuns.map((run) => runItem(run, includeParameters)),
-    ...matchedRuns.filter((run) => !isMutableRun(run.status) && run.reportArtifactId).map((run) => runItem(run, includeParameters)),
-    ...candidateSources.map((source) => sourceItem(source, includeParameters)),
-    ...reviewedSources.map((source) => sourceItem(source, includeParameters)),
-    ...reports.map((artifact) => reportItem(artifact, includeParameters)),
-    ...(query && matchedRuns.length === 0 ? [workflowItem(query, includeParameters)] : []),
-    browserItem(context, includeParameters),
-  ]
-    .sort((left, right) => right.priority - left.priority || left.label.localeCompare(right.label));
-  const limit = readLimit(args.limit, includeParameters ? 20 : 8);
-  const status = !shellPaths
-    ? 'unavailable'
-    : candidateSources.length > 0
-      ? 'needs-source-review'
-      : reviewedSources.length > 0
-        ? 'ready-to-report'
-        : activeRuns.length > 0
-          ? 'active'
-          : reports.length > 0
-            ? 'report-ready'
-            : query
-              ? 'needs-visible-run'
-              : 'empty';
-  return {
-    status,
-    query: query || null,
-    summary: {
-      runs: matchedRuns.length,
-      activeRuns: activeRuns.length,
-      candidateSources: candidateSources.length,
-      reviewedSources: reviewedSources.length,
+export async function researchBriefingCatalogStatus(context: CommandContext, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const caller = captureAsyncHarnessInput({}, options), native = captureArtifacts(context);
+  caller.options.retainCurrent?.(native.assertCurrent);
+  return withResearchCatalog(context, {}, { ...caller.options, assertCurrent: () => { caller.assertCurrent(); native.assertCurrent(); } }, native.read, async (_args, data, options) => {
+    const artifacts = data.artifacts;
+    const shellPaths = context.workspace?.shellPaths;
+    const runs = shellPaths ? AgentResearchRunRegistry.fromShellPaths(shellPaths).snapshot() : null;
+    const sources = shellPaths ? AgentResearchSourceRegistry.fromShellPaths(shellPaths).snapshot() : null;
+    const reports = await reportArtifacts(artifacts, '', options);
+    const liveResearch = await researchLiveReadModelSnapshot(context, options);
+    return {
+      modes: ['research_briefing'],
+      status: shellPaths ? 'ready' : 'unavailable',
+      activeRuns: (runs?.planned.length ?? 0) + (runs?.running.length ?? 0) + (runs?.paused.length ?? 0) + (runs?.blocked.length ?? 0),
+      candidateSources: sources?.candidates.length ?? 0,
+      reviewedSources: sources?.reviewed.length ?? 0,
       savedReports: reports.length,
-      browserReady: browserControlPosture(context).configured || certifiedRunnerRecords.length > 0,
       liveBrowserRuns: liveResearch.browserRunnerRecords.length,
       liveVisualReports: liveResearch.visualReportRecords.length,
-    },
-    queue: items.slice(0, limit),
-    returned: Math.min(items.length, limit),
-    total: items.length,
-    routes: {
-      plan: query ? `research action:"plan" query:${routeString(query)}` : 'research action:"plan" query:"..."',
-      search: query ? `research action:"search" query:${routeString(query)} maxResults:5` : 'research action:"search" query:"..." maxResults:5',
-      runner: 'research action:"runner"',
-      runs: 'research action:"runs"',
-      sources: query ? `research action:"sources" query:${routeString(query)}` : 'research action:"sources"',
-      reports: query ? `research action:"reports" query:${routeString(query)}` : 'research action:"reports"',
-      saveReport: query ? `research action:"report" question:${routeString(query)} sources:[...] visualReport:true requireCitationCoverage:true confirm:true explicitUserRequest:"..."` : 'research action:"report" question:"..." sources:[...] visualReport:true requireCitationCoverage:true confirm:true explicitUserRequest:"..."',
-    },
-    nextActions: items
-      .filter((item) => item.kind !== 'browser')
-      .slice(0, includeParameters ? 6 : 4)
-      .map((item) => `${item.label}: ${item.next}`),
-    policy: 'Research briefing is read-only. It does not search the web, open a browser, create run state, save sources, write reports, ingest Knowledge, export artifacts, archive artifacts, or send messages; each returned effect route requires its own confirmation boundary.',
-  };
+      readOnly: true,
+    };
+  });
+}
+
+export async function researchBriefingSummary(context: CommandContext, rawArgs: AgentHarnessResearchBriefingArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const originalCaller = captureAsyncHarnessInput(rawArgs, options), native = captureArtifacts(context);
+  const assertCurrent = (): void => { originalCaller.assertCurrent(); native.assertCurrent(); };
+  originalCaller.options.retainCurrent?.(native.assertCurrent);
+  return withResearchCatalog(context, originalCaller.args, { ...originalCaller.options, assertCurrent }, native.read, async (rawArgs, data, options) => {
+    const artifacts = data.artifacts;
+    const caller = captureAsyncHarnessInput(rawArgs, options), args = caller.args;
+    const browser = await browserControlPosture(context, context.extensions?.toolRegistry, caller.options);
+    caller.assertCurrent();
+    const includeParameters = args.includeParameters === true;
+    const query = readString(args.query) || readString(args.target);
+    const shellPaths = context.workspace?.shellPaths;
+    const runs = shellPaths ? AgentResearchRunRegistry.fromShellPaths(shellPaths).list() : [];
+    const sources = shellPaths ? AgentResearchSourceRegistry.fromShellPaths(shellPaths).list() : [];
+    const matchedRuns = await rankResearchRecords(runs, query, run => ({ id: run.id, description: run.title, evidence: run }), caller.options, 'agent.research.briefing.runs');
+    const matchedSources = await matchingSources(sources, matchedRuns, query, caller.options);
+    const reports = await reportArtifacts(artifacts, query, caller.options);
+    const liveResearch = await researchLiveReadModelSnapshot(context, options);
+    const certifiedRunnerRecords = liveResearch.browserRunnerRecords.filter(isCertifiedResearchLiveRecord);
+    const activeRuns = matchedRuns.filter((run) => isMutableRun(run.status));
+    const candidateSources = matchedSources.filter((source) => source.status === 'candidate');
+    const reviewedSources = matchedSources.filter((source) => source.status === 'reviewed');
+    const items = [
+      ...activeRuns.map((run) => runItem(run, includeParameters)),
+      ...matchedRuns.filter((run) => !isMutableRun(run.status) && run.reportArtifactId).map((run) => runItem(run, includeParameters)),
+      ...candidateSources.map((source) => sourceItem(source, includeParameters)),
+      ...reviewedSources.map((source) => sourceItem(source, includeParameters)),
+      ...reports.map((artifact) => reportItem(artifact, includeParameters)),
+      ...(query && matchedRuns.length === 0 ? [workflowItem(query, includeParameters)] : []),
+      browserItem(context, includeParameters, browser, liveResearch),
+    ]
+      .sort((left, right) => right.priority - left.priority || left.label.localeCompare(right.label));
+    const limit = readLimit(args.limit, includeParameters ? 20 : 8);
+    const status = !shellPaths
+      ? 'unavailable'
+      : candidateSources.length > 0
+        ? 'needs-source-review'
+        : reviewedSources.length > 0
+          ? 'ready-to-report'
+          : activeRuns.length > 0
+            ? 'active'
+            : reports.length > 0
+              ? 'report-ready'
+              : query
+                ? 'needs-visible-run'
+                : 'empty';
+    return {
+      status,
+      query: query || null,
+      summary: {
+        runs: matchedRuns.length,
+        activeRuns: activeRuns.length,
+        candidateSources: candidateSources.length,
+        reviewedSources: reviewedSources.length,
+        savedReports: reports.length,
+        browserReady: browser.configured || certifiedRunnerRecords.length > 0,
+        liveBrowserRuns: liveResearch.browserRunnerRecords.length,
+        liveVisualReports: liveResearch.visualReportRecords.length,
+      },
+      queue: items.slice(0, limit),
+      returned: Math.min(items.length, limit),
+      total: items.length,
+      routes: {
+        plan: query ? `research action:"plan" query:${routeString(query)}` : 'research action:"plan" query:"..."',
+        search: query ? `research action:"search" query:${routeString(query)} maxResults:5` : 'research action:"search" query:"..." maxResults:5',
+        runner: 'research action:"runner"',
+        runs: 'research action:"runs"',
+        sources: query ? `research action:"sources" query:${routeString(query)}` : 'research action:"sources"',
+        reports: query ? `research action:"reports" query:${routeString(query)}` : 'research action:"reports"',
+        saveReport: query ? `research action:"report" question:${routeString(query)} sources:[...] visualReport:true requireCitationCoverage:true confirm:true explicitUserRequest:"..."` : 'research action:"report" question:"..." sources:[...] visualReport:true requireCitationCoverage:true confirm:true explicitUserRequest:"..."',
+      },
+      nextActions: items
+        .filter((item) => item.kind !== 'browser')
+        .slice(0, includeParameters ? 6 : 4)
+        .map((item) => `${item.label}: ${item.next}`),
+      policy: 'Research briefing is read-only. It does not search the web, open a browser, create run state, save sources, write reports, ingest Knowledge, export artifacts, archive artifacts, or send messages; each returned effect route requires its own confirmation boundary.',
+    };
+  });
 }

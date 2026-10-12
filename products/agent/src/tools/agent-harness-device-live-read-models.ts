@@ -1,3 +1,8 @@
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureAsyncHarnessInput } from './agent-harness-async-input.ts';
+import { captureCatalogSnapshot, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureCatalogProducerSources, withModelReadingSource } from './agent-harness-model-reading-source.ts';
+import { readBrowserDeviceEvidence } from './agent-harness-browser-device-readings.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 
@@ -34,6 +39,19 @@ export interface DeviceLiveReadModelSnapshot {
   readonly capabilities: readonly DeviceLiveCapabilityRecord[];
   readonly sourceCounts: Readonly<Record<string, number>>;
 }
+
+interface OriginalDeviceLiveRecord {
+  readonly id: string;
+  readonly capabilityId: string;
+  readonly record: Record<string, unknown>;
+}
+
+// Complete producer evidence belongs to the exact operation snapshot, not its
+// public DTO. This stores no judgment result and grants no source authority.
+const snapshotSources = new WeakMap<DeviceLiveReadModelSnapshot, {
+  readonly records: readonly OriginalDeviceLiveRecord[];
+  readonly assertSourceCurrent: () => void;
+}>();
 
 interface SourceCandidate {
   readonly path: string;
@@ -300,26 +318,17 @@ function sourceCounts(entries: readonly CollectedRecord[]): Readonly<Record<stri
   return counts;
 }
 
-function sources(context: CommandContext): readonly SourceCandidate[] {
-  const platform = readObject(context.platform);
-  const readModels = readObject(platform.readModels);
-  const device = readObject(readModels.device);
-  const companion = readObject(readModels.companion);
-  const voice = readObject(readModels.voice);
-  const opsDevice = readObject(readObject(context.ops).device);
-  const clients = readObject(context.clients);
-  const operator = readObject(clients.operator);
-  const operatorSdk = readObject(clients.operatorSdk);
+function sources(native: ReturnType<typeof captureCatalogProducerSources>): readonly SourceCandidate[] {
   return [
-    { path: 'context.platform.readModels.device.capabilities', source: device.capabilities, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.device.sensors', source: device.sensors, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.companion.capabilities', source: companion.capabilities, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.voice.workflows', source: voice.workflows, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.deviceCapabilities', source: readModels.deviceCapabilities, kind: 'daemon-read-model' },
-    { path: 'context.platform.readModels.companionCapabilities', source: readModels.companionCapabilities, kind: 'daemon-read-model' },
-    { path: 'context.ops.device.capabilities', source: opsDevice.capabilities, kind: 'sdk-read-model' },
-    { path: 'context.clients.operator.device.capabilities', source: readObject(operator.device).capabilities, kind: 'sdk-read-model' },
-    { path: 'context.clients.operatorSdk.device.capabilities', source: readObject(operatorSdk.device).capabilities, kind: 'sdk-read-model' },
+    { path: 'context.platform.readModels.device.capabilities', source: native.source('context.platform.readModels.device.capabilities'), kind: 'daemon-read-model' },
+    { path: 'context.platform.readModels.device.sensors', source: native.source('context.platform.readModels.device.sensors'), kind: 'daemon-read-model' },
+    { path: 'context.platform.readModels.companion.capabilities', source: native.source('context.platform.readModels.companion.capabilities'), kind: 'daemon-read-model' },
+    { path: 'context.platform.readModels.voice.workflows', source: native.source('context.platform.readModels.voice.workflows'), kind: 'daemon-read-model' },
+    { path: 'context.platform.readModels.deviceCapabilities', source: native.source('context.platform.readModels.deviceCapabilities'), kind: 'daemon-read-model' },
+    { path: 'context.platform.readModels.companionCapabilities', source: native.source('context.platform.readModels.companionCapabilities'), kind: 'daemon-read-model' },
+    { path: 'context.ops.device.capabilities', source: native.source('context.ops.device.capabilities'), kind: 'sdk-read-model' },
+    { path: 'context.clients.operator.device.capabilities', source: native.source('context.clients.operator.device.capabilities'), kind: 'sdk-read-model' },
+    { path: 'context.clients.operatorSdk.device.capabilities', source: native.source('context.clients.operatorSdk.device.capabilities'), kind: 'sdk-read-model' },
   ];
 }
 
@@ -327,40 +336,59 @@ export function isCertifiedDeviceLiveRecord(record: DeviceLiveCapabilityRecord):
   return record.certification.schemaStatus === 'certified' && record.certification.missingSignals.length === 0;
 }
 
-export function certifiedDeviceLiveRecords(
+export async function certifiedDeviceLiveRecords(
   snapshot: DeviceLiveReadModelSnapshot,
   capabilityId: string,
   terms: readonly string[] = [],
-): readonly DeviceLiveCapabilityRecord[] {
-  const expected = [capabilityId, ...terms].map((term) => term.toLowerCase());
-  return snapshot.capabilities.filter((record) => {
-    if (!isCertifiedDeviceLiveRecord(record)) return false;
-    const text = [
-      record.id,
-      record.capabilityId,
-      record.label ?? '',
-      record.domain,
-      record.status,
-      record.summary ?? '',
-      record.permissionScope ?? '',
-      ...record.capabilities,
-    ].join('\n').toLowerCase();
-    return expected.some((term) => text.includes(term));
+  options: CatalogRankingOptions = {},
+): Promise<readonly DeviceLiveCapabilityRecord[]> {
+  const original = snapshotSources.get(snapshot);
+  if (!original) throw new ToolInputProjectionError('invalid');
+  original.assertSourceCurrent();
+  const caller = captureAsyncHarnessInput({ snapshot, originalRecords: original.records, capabilityId, terms }, options);
+  caller.retainSourceCurrent();
+  caller.options.retainCurrent(original.assertSourceCurrent, 'agent.device.snapshot-source');
+  return withModelReadingSource(caller.args, caller.options, async (captured, current) => {
+    original.assertSourceCurrent();
+    const matched: DeviceLiveCapabilityRecord[] = [];
+    for (const record of captured.snapshot.capabilities) {
+      if (!isCertifiedDeviceLiveRecord(record)) continue;
+      const evidence = captured.originalRecords.find(entry => entry.id === record.id && entry.capabilityId === record.capabilityId);
+      if (!evidence) throw new ToolInputProjectionError('invalid');
+      original.assertSourceCurrent();
+      const supported = await readBrowserDeviceEvidence({ kind: 'device-capability', record: evidence.record,
+        requestedCapability: captured.capabilityId, requestedTerms: captured.terms }, current);
+      current.assertCurrent?.(); original.assertSourceCurrent();
+      if (supported) matched.push(record);
+    }
+    current.assertCurrent?.(); original.assertSourceCurrent();
+    return matched;
   });
 }
 
-export function deviceLiveReadModelSnapshot(context: CommandContext): DeviceLiveReadModelSnapshot {
-  const entries = sources(context).flatMap((candidate) => collectFromSource(candidate.source, candidate.path, candidate.kind));
-  const seen = new Set<string>();
-  const capabilities: DeviceLiveCapabilityRecord[] = [];
-  for (const record of entries.map(normalizeCapability).filter((entry): entry is DeviceLiveCapabilityRecord => entry !== null)) {
-    const key = `${record.capabilityId}:${record.id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    capabilities.push(record);
-  }
-  return {
-    capabilities,
-    sourceCounts: sourceCounts(entries),
-  };
+export async function deviceLiveReadModelSnapshot(context: CommandContext,
+  options: CatalogRankingOptions = {}): Promise<DeviceLiveReadModelSnapshot> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const native = captureCatalogProducerSources(context, ["context.platform.readModels.device.capabilities", "context.platform.readModels.device.sensors", "context.platform.readModels.companion.capabilities", "context.platform.readModels.voice.workflows", "context.platform.readModels.deviceCapabilities", "context.platform.readModels.companionCapabilities", "context.ops.device.capabilities", "context.clients.operator.device.capabilities", "context.clients.operatorSdk.device.capabilities"], ["getSnapshot", "snapshot", "toJSON", "listCapabilities", "listDeviceCapabilities", "listSensors", "listVoiceWorkflows", "list"]);
+  const entries = sources(native).flatMap((candidate) => collectFromSource(candidate.source, candidate.path, candidate.kind));
+  const caller = captureAsyncHarnessInput({ entries, producerSource: native.evidence() }, options);
+  caller.options.retainCurrent(native.assertCurrent, 'agent.device.native-source');
+  caller.retainSourceCurrent();
+  return withModelReadingSource(caller.args, caller.options, async (captured, current) => {
+    const seen = new Set<string>();
+    const capabilities: DeviceLiveCapabilityRecord[] = [];
+    const originalRecords: OriginalDeviceLiveRecord[] = [];
+    for (const [index, entry] of captured.entries.entries()) {
+      const record = normalizeCapability(entry, index);
+      if (!record) continue;
+      const key = `${record.capabilityId}:${record.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key); capabilities.push(record);
+      originalRecords.push({ id: record.id, capabilityId: record.capabilityId, record: entry.record });
+    }
+    const result = captureCatalogSnapshot({ capabilities, sourceCounts: sourceCounts(captured.entries) }).captured;
+    snapshotSources.set(result, { records: originalRecords, assertSourceCurrent: caller.assertSourceCurrent });
+    current.assertCurrent?.();
+    return result;
+  });
 }

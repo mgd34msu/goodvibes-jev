@@ -1,7 +1,10 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { isDeepStrictEqual } from 'node:util';
+import { captureJudgmentPort, installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { captureStrictJudgmentJson, prepareJudgmentResult, JudgmentResultAdmissionError } from '../sdk/src/platform/gate/judgment-result.ts';
-import { JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.ts';
-import { choice, noul, type JudgmentResult, type Questions } from '@goodvibes-jev/judgment';
+import { JudgmentInputError, judgmentInputProblem } from '../sdk/src/platform/gate/judgment-input.ts';
+import { choice, noul, SqliteDecisionLog, withDecisionLog, type JudgmentResult, type Questions } from '@goodvibes-jev/judgment';
 
 const questions = () => ({ flag: noul('Does the synthetic statement hold?'), pick: choice('Pick the matching synthetic option.', { a: 'A', b: 'B' }) });
 function response() {
@@ -88,5 +91,256 @@ describe('complete original judgment response admission', () => {
       expect(error).toBeInstanceOf(DomainHeld); if (error instanceof DomainHeld) expect(error.reason).toBe('stale');
     }
     expect(() => captureStrictJudgmentJson(new Date(), reason => new DomainHeld(reason))).toThrow(DomainHeld);
+  });
+});
+
+
+describe('complete owned response admission before native recording', () => {
+  let previous: ReturnType<typeof installJudgmentPort>;
+  beforeEach(() => { previous = installJudgmentPort(undefined); });
+  afterEach(() => { installJudgmentPort(previous); });
+
+  function originalQuestionsPort() {
+    return fakePort((name, question) => {
+      if (name === 'flag' && question.type === 'noul' && isDeepStrictEqual(question, questions().flag)) return noulAnswer(0.4111111111111111);
+      if (name === 'pick' && question.type === 'choice' && isDeepStrictEqual(question, questions().pick)) return choiceAnswer(question, 'a', .999);
+      throw new Error('Unexpected original named question.');
+    });
+  }
+
+  test.each(['top', 'answer', 'usage'] as const)('private %s result data refuses before answered recording', async field => {
+    const privateValue = '4111111111111111';
+    expect(judgmentInputProblem(privateValue)).toBe('card-material');
+    const fake = originalQuestionsPort();
+    using log = new SqliteDecisionLog(':memory:');
+    installJudgmentPort(withDecisionLog({ ...fake.port, async ask(input) {
+      const original = await fake.port.ask(input);
+      if (field === 'answer') return { ...original, answers: { ...original.answers, flag: { ...original.answers.flag, undisplayed: privateValue } } };
+      if (field === 'usage') return { ...original, usage: { ...original.usage, undisplayed: privateValue } };
+      return { ...original, undisplayed: privateValue };
+    } }, log));
+    const captured = captureJudgmentPort('test.complete-response', { prepareResultCapture: prepareJudgmentResult });
+    let published = 0;
+    await expect(captured.port.ask({ state: 'synthetic complete response', questions: questions() }).then(result => { published++; return result; })).rejects.toThrow();
+    expect(published).toBe(0); expect(fake.requests).toHaveLength(1);
+    expect(log.query({ status: 'answered' })).toHaveLength(0);
+    expect(JSON.stringify(log.query())).not.toContain(privateValue);
+  });
+
+  test('complete safe extensions survive recording and exact protocol probabilities remain unchanged', async () => {
+    const fake = originalQuestionsPort();
+    using log = new SqliteDecisionLog(':memory:');
+    installJudgmentPort(withDecisionLog({ ...fake.port, async ask(input) {
+      const original = await fake.port.ask(input);
+      return { ...original, undisplayed: { detail: 'Ordinary complete response metadata.' },
+        answers: { ...original.answers, flag: { ...original.answers.flag, undisplayed: 'Ordinary answer metadata.' } },
+        usage: { ...original.usage, undisplayed: 'Ordinary usage metadata.' } };
+    } }, log));
+    const captured = captureJudgmentPort('test.complete-response', { prepareResultCapture: prepareJudgmentResult });
+    let callerCaptures = 0;
+    const result = await captured.port.ask({ state: 'synthetic complete response', questions: questions(), captureResult(result) {
+      callerCaptures++; expect(Object.isFrozen(result)).toBe(true); return result;
+    } });
+    expect(callerCaptures).toBe(1);
+    expect(result).toMatchObject({ undisplayed: { detail: 'Ordinary complete response metadata.' },
+      answers: { flag: { undisplayed: 'Ordinary answer metadata.', noul: 0.4111111111111111 } },
+      usage: { undisplayed: 'Ordinary usage metadata.' } });
+    expect(Object.isFrozen(result)).toBe(true); expect(Object.isFrozen(result.answers.flag)).toBe(true);
+    expect(result.decisionId).toBeDefined();
+    expect(log.get(result.decisionId!)).toMatchObject({ status: 'answered', answers: { flag: { noul: 0.4111111111111111 } } });
+    expect(JSON.stringify(log.query())).not.toContain('Ordinary complete response metadata.');
+  });
+
+  test('ordinary recording keeps its documented-field projection without an owned capturer', async () => {
+    const fake = originalQuestionsPort();
+    using log = new SqliteDecisionLog(':memory:');
+    const result = await withDecisionLog({ ...fake.port, async ask(input) {
+      return { ...await fake.port.ask(input), undisplayed: 'Ordinary unused metadata.' };
+    } }, log).ask({ state: 'synthetic ordinary response', questions: questions() });
+    expect(Object.hasOwn(result, 'undisplayed')).toBe(false);
+    expect(log.query({ status: 'answered' })).toHaveLength(1);
+  });
+
+  test('a caller capturer cannot replace the owned admitted response', async () => {
+    const fake = originalQuestionsPort();
+    using log = new SqliteDecisionLog(':memory:');
+    installJudgmentPort(withDecisionLog(fake.port, log));
+    const captured = captureJudgmentPort('test.complete-response', { prepareResultCapture: prepareJudgmentResult });
+    let replacements = 0, published = 0;
+    await expect(captured.port.ask({ state: 'synthetic complete response', questions: questions(), captureResult(result) {
+      replacements++; const replacement = structuredClone(result);
+      Object.defineProperty(replacement, 'model', { value: 'replacement-model', enumerable: true });
+      return replacement;
+    } }).then(result => { published++; return result; })).rejects.toThrow();
+    expect(replacements).toBe(1); expect(published).toBe(0); expect(log.query({ status: 'answered' })).toHaveLength(0);
+  });
+
+  test('caller capture cannot remove a private original field before owned admission', async () => {
+    const fake = originalQuestionsPort();
+    using log = new SqliteDecisionLog(':memory:');
+    installJudgmentPort(withDecisionLog({ ...fake.port, async ask(input) {
+      return { ...await fake.port.ask(input), undisplayed: '4111111111111111' };
+    } }, log));
+    const captured = captureJudgmentPort('test.complete-response', { prepareResultCapture: prepareJudgmentResult });
+    let callerCaptures = 0;
+    await expect(captured.port.ask({ state: 'synthetic complete response', questions: questions(), captureResult(result) {
+      callerCaptures++; const replacement = structuredClone(result); Reflect.deleteProperty(replacement, 'undisplayed'); return replacement;
+    } })).rejects.toThrow();
+    expect(callerCaptures).toBe(0); expect(log.query({ status: 'answered' })).toHaveLength(0);
+    expect(JSON.stringify(log.query())).not.toContain('4111111111111111');
+  });
+
+  test('cancellation inside the original caller restriction prevents any recording', async () => {
+    const fake = originalQuestionsPort(), lifetime = new AbortController();
+    using log = new SqliteDecisionLog(':memory:');
+    installJudgmentPort(withDecisionLog(fake.port, log));
+    const captured = captureJudgmentPort('test.complete-response', { signal: lifetime.signal, prepareResultCapture: prepareJudgmentResult });
+    let callerCaptures = 0;
+    await expect(captured.port.ask({ state: 'synthetic complete response', questions: questions(), captureResult(result) {
+      callerCaptures++; lifetime.abort(); return result;
+    } })).rejects.toThrow();
+    expect(callerCaptures).toBe(1); expect(log.query()).toHaveLength(0);
+  });
+
+  test('replacing the native owned request capturer cannot dispatch or record', async () => {
+    const fake = originalQuestionsPort();
+    using log = new SqliteDecisionLog(':memory:');
+    const recorded = withDecisionLog(fake.port, log);
+    installJudgmentPort({ ...recorded, async ask(input) {
+      Object.defineProperty(input, 'captureResult', { value: () => response(), enumerable: true });
+      return recorded.ask(input);
+    } });
+    const captured = captureJudgmentPort('test.complete-response', { prepareResultCapture: prepareJudgmentResult });
+    await expect(captured.port.ask({ state: 'synthetic complete response', questions: questions() })).rejects.toThrow();
+    expect(fake.requests).toHaveLength(0); expect(log.query()).toHaveLength(0);
+  });
+
+  test('an asynchronous caller capturer refuses and consumes its late rejection', async () => {
+    const fake = originalQuestionsPort();
+    using log = new SqliteDecisionLog(':memory:');
+    installJudgmentPort(withDecisionLog(fake.port, log));
+    const captured = captureJudgmentPort('test.complete-response', { prepareResultCapture: prepareJudgmentResult });
+    const input = { state: 'synthetic complete response', questions: questions() };
+    Object.defineProperty(input, 'captureResult', { enumerable: true, value: () => Promise.reject(new Error('private-capture-tail')) });
+    await expect(captured.port.ask(input)).rejects.toThrow();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(log.query({ status: 'answered' })).toHaveLength(0);
+    expect(JSON.stringify(log.query())).not.toContain('private-capture-tail');
+  });
+
+
+  test('the original data-slot restriction cannot be replaced by a proxy property read', async () => {
+    const fake = originalQuestionsPort(), lifetime = new AbortController();
+    using log = new SqliteDecisionLog(':memory:');
+    installJudgmentPort(withDecisionLog(fake.port, log));
+    let originalCalls = 0, replacementCalls = 0, getterCalls = 0, published = 0;
+    const original = { state: 'synthetic complete response', questions: questions(),
+      captureResult: <T extends JudgmentResult<Questions>>(result: T): T => { originalCalls++; lifetime.abort(); return result; },
+    };
+    const replacement = <T extends JudgmentResult<Questions>>(result: T): T => { replacementCalls++; return result; };
+    const input = new Proxy(original, { get(target, key, receiver) {
+      if (key === 'captureResult') { getterCalls++; return replacement; }
+      return Reflect.get(target, key, receiver);
+    } });
+    const captured = captureJudgmentPort('test.complete-response', { signal: lifetime.signal, prepareResultCapture: prepareJudgmentResult });
+    await expect(captured.port.ask(input).then(result => { published++; return result; })).rejects.toThrow();
+    expect(originalCalls).toBe(1); expect(replacementCalls).toBe(0); expect(getterCalls).toBe(0); expect(published).toBe(0);
+    expect(fake.requests).toHaveLength(1); expect(log.query()).toHaveLength(0);
+  });
+
+  test('mutation while observing the original hook descriptor refuses before dispatch', async () => {
+    const fake = originalQuestionsPort();
+    using log = new SqliteDecisionLog(':memory:');
+    installJudgmentPort(withDecisionLog(fake.port, log));
+    let originalCalls = 0, replacementCalls = 0, mutations = 0, published = 0;
+    const original = { state: 'synthetic complete response', questions: questions(),
+      captureResult: <T extends JudgmentResult<Questions>>(result: T): T => { originalCalls++; return result; },
+    };
+    const replacement = <T extends JudgmentResult<Questions>>(result: T): T => { replacementCalls++; return result; };
+    const input = new Proxy(original, { getOwnPropertyDescriptor(target, key) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+      if (key === 'captureResult' && mutations === 0) {
+        Object.defineProperty(target, 'captureResult', { value: replacement }); mutations++;
+      }
+      return descriptor;
+    } });
+    const captured = captureJudgmentPort('test.complete-response', { prepareResultCapture: prepareJudgmentResult });
+    await expect(captured.port.ask(input).then(result => { published++; return result; })).rejects.toThrow();
+    expect(mutations).toBe(1); expect(originalCalls).toBe(0); expect(replacementCalls).toBe(0); expect(published).toBe(0);
+    expect(fake.requests).toHaveLength(0); expect(log.query()).toHaveLength(0);
+  });
+
+  test.each(['caller capture', 'caller current'] as const)('a borrowed then getter in %s refuses without being read', async restriction => {
+    const fake = originalQuestionsPort();
+    using log = new SqliteDecisionLog(':memory:');
+    installJudgmentPort(withDecisionLog(fake.port, log));
+    const input = { state: 'synthetic complete response', questions: questions() };
+    let getterCalls = 0, published = 0, restrict = false;
+    const borrowed = {};
+    Object.defineProperty(borrowed, 'then', { get() { getterCalls++; throw new Error('private-borrowed-then-tail'); } });
+    const captured = captureJudgmentPort('test.complete-response', { prepareResultCapture: prepareJudgmentResult,
+      assertCurrent: () => { if (restriction === 'caller current' && restrict) return borrowed; },
+    });
+    if (restriction === 'caller capture') Object.defineProperty(input, 'captureResult', { enumerable: true, value: () => borrowed });
+    restrict = true;
+    await expect(captured.port.ask(input).then(result => { published++; return result; })).rejects.toThrow();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(getterCalls).toBe(0); expect(published).toBe(0);
+    expect(fake.requests).toHaveLength(restriction === 'caller capture' ? 1 : 0);
+    expect(log.query({ status: 'answered' })).toHaveLength(0);
+    expect(JSON.stringify(log.query())).not.toContain('private-borrowed-then-tail');
+  });
+
+  test.each([
+    ['non-enumerable', false], ['non-enumerable', true],
+    ['inherited', false], ['inherited', true],
+  ] as const)('original %s callback retains its current/cancel result %s', async (shape, cancel) => {
+    const fake = originalQuestionsPort(), lifetime = new AbortController();
+    using log = new SqliteDecisionLog(':memory:');
+    installJudgmentPort(withDecisionLog(fake.port, log));
+    const input = { state: 'synthetic complete response', questions: questions() };
+    let originalCalls = 0, published = 0;
+    const originalCapture = <T extends JudgmentResult<Questions>>(result: T): T => {
+      originalCalls++; if (cancel) lifetime.abort(); return result;
+    };
+    if (shape === 'inherited') Object.setPrototypeOf(input, { captureResult: originalCapture });
+    else Object.defineProperty(input, 'captureResult', { value: originalCapture, enumerable: false });
+    const captured = captureJudgmentPort('test.complete-response', { signal: lifetime.signal, prepareResultCapture: prepareJudgmentResult });
+    const pending = captured.port.ask(input).then(result => { published++; return result; });
+    if (cancel) { await expect(pending).rejects.toThrow(); expect(published).toBe(0); expect(log.query()).toHaveLength(0); }
+    else { await pending; expect(published).toBe(1); expect(log.query({ status: 'answered' })).toHaveLength(1); }
+    expect(originalCalls).toBe(1); expect(fake.requests).toHaveLength(1);
+  });
+
+  test('a preparer cannot replace the original request hook before binding', async () => {
+    const fake = originalQuestionsPort();
+    using log = new SqliteDecisionLog(':memory:');
+    installJudgmentPort(withDecisionLog(fake.port, log));
+    let originalCalls = 0, replacementCalls = 0;
+    const input = { state: 'synthetic complete response', questions: questions(),
+      captureResult: <T extends JudgmentResult<Questions>>(result: T): T => { originalCalls++; return result; } };
+    const captured = captureJudgmentPort('test.complete-response', { prepareResultCapture(originalQuestions) {
+      Object.defineProperty(input, 'captureResult', { enumerable: true, value: <T extends JudgmentResult<Questions>>(result: T): T => {
+        replacementCalls++; return result;
+      } });
+      return prepareJudgmentResult(originalQuestions);
+    } });
+    await expect(captured.port.ask(input)).rejects.toThrow();
+    expect(originalCalls).toBe(0); expect(replacementCalls).toBe(0);
+    expect(fake.requests).toHaveLength(0); expect(log.query()).toHaveLength(0);
+  });
+
+  test('an inherited hook accessor refuses without invocation, dispatch or recording', async () => {
+    const fake = originalQuestionsPort();
+    using log = new SqliteDecisionLog(':memory:');
+    installJudgmentPort(withDecisionLog(fake.port, log));
+    const input = { state: 'synthetic complete response', questions: questions() };
+    let getterCalls = 0;
+    const prototype = {};
+    Object.defineProperty(prototype, 'captureResult', { get() { getterCalls++; return () => response(); } });
+    Object.setPrototypeOf(input, prototype);
+    const captured = captureJudgmentPort('test.complete-response', { prepareResultCapture: prepareJudgmentResult });
+    await expect(captured.port.ask(input)).rejects.toThrow();
+    expect(getterCalls).toBe(0); expect(fake.requests).toHaveLength(0); expect(log.query()).toHaveLength(0);
   });
 });

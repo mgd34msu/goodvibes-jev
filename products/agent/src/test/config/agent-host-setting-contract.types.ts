@@ -1,5 +1,5 @@
 import type { ConfigKey, HostBooleanSettingResolved } from '@goodvibes-jev/engine/sdk/platform/config';
-import { AgentConfigManager, AGENT_NOTIFICATIONS_METADATA_ONLY_KEY as KEY } from '../../config/host-settings.ts';
+import { AgentConfigManager, AGENT_NOTIFICATIONS_METADATA_ONLY_KEY as KEY, type AgentHostSettingKey } from '../../config/host-settings.ts';
 import { getAgentSettingsSchema } from '../../config/settings-catalog.ts';
 
 // Compiled by the full Agent test project; never executed by runtime discovery.
@@ -17,7 +17,7 @@ function assertAgentHostContract(config: AgentConfigManager): void {
   config.get(builtinKey);
   for (const setting of getAgentSettingsSchema(config)) {
     if (setting.kind === 'host') {
-      const hostKey: typeof KEY = setting.key;
+      const hostKey: AgentHostSettingKey = setting.key;
       const hostDefault: boolean = setting.default;
       config.getHostBooleanSetting(hostKey).set(hostDefault);
       // @ts-expect-error A truthful host row cannot enter the builtin getter.

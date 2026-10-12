@@ -55,7 +55,7 @@ export interface ServerProbeEvidence {
 /** How many model ids the server identity reading sees. */
 const PROBE_MODEL_IDS = 20;
 
-export type LocalServerSoftware = typeof localServerIdentity.routes[number];
+export type LocalServerSoftware = 'lm-studio' | 'vllm' | 'llamacpp' | 'localai' | 'tgi' | 'ollama' | 'unknown';
 
 /** Which server software answered a probe; 'unknown' unless the reading is strong enough to act on. */
 export async function readLocalServerIdentity(evidence: ServerProbeEvidence, site: string,
@@ -63,12 +63,15 @@ export async function readLocalServerIdentity(evidence: ServerProbeEvidence, sit
   const owner = captureJudgmentPort(site, options);
   owner.assertCurrent();
   const dispatched = await localServerIdentity.route(owner.port, {
+    evidence_kind: 'probe',
     port: evidence.port,
     headers: { ...evidence.headers },
     model_ids: evidence.modelIds.slice(0, PROBE_MODEL_IDS),
   }, { site, signal: owner.signal, beforeAttempt: owner.assertCurrent });
   owner.assertCurrent();
-  const software = dispatched.reading.outcome === 'act' ? dispatched.route : 'unknown';
+  const route = dispatched.reading.outcome === 'act' ? dispatched.route : 'unknown';
+  const software: LocalServerSoftware = route === 'lm-studio' || route === 'vllm' || route === 'llamacpp'
+    || route === 'localai' || route === 'tgi' || route === 'ollama' ? route : 'unknown';
   dispatched.recordAction(`server:${software}`);
   owner.assertCurrent();
   return software;

@@ -1,3 +1,5 @@
+import { createKnowledgeIngestUriCanonicalizer, assertKnowledgeIngestUriOperation, retireKnowledgeIngestUriOperation, type KnowledgeIngestUriCanonicalizer } from './uri-canonicalization/ingest-owner.js';
+import type { KnowledgeUriCanonicalizer } from './uri-canonicalization/reader.js';
 import { knowledgeSourceCrawledNow } from './store-record-representation.js';
 import { randomUUID } from 'node:crypto';
 import { snapshotNodeInput } from './activation/projection.js';
@@ -16,7 +18,6 @@ import { logger } from '../utils/logger.js';
 import { prepareKnowledgeExtraction, consumeKnowledgeExtraction, type PreparedKnowledgeExtraction } from './prepared-extraction.js';
 import { knowledgeExtractionNeedsRefresh } from './extraction-policy.js';
 import {
-  canonicalizeUri,
   extractTaggedValues,
   mergeTags,
   readMetadataStrings,
@@ -54,17 +55,26 @@ export async function finalizeKnowledgeIngestedSource(
     readonly sessionId?: string | undefined;
     readonly metadata: Record<string, unknown>;
   },
+  uris: KnowledgeIngestUriCanonicalizer,
   ownership: KnowledgeIngestOwnership = {},
 ): Promise<{ source: KnowledgeSourceRecord; artifactId: string; extraction: KnowledgeExtractionRecord }> {
+  assertKnowledgeIngestUriOperation(context, uris, input.sourceId, input.artifactId, input.preparedExtraction);
   const { preparedExtraction, signal, ...values } = input;
   input = { ...snapshotNodeInput(values), preparedExtraction, signal };
   await context.store.init();
-  const assertCurrent = knowledgeIngestGuard(context, input.sourceId, canonicalizeUri(context.artifactStore.getRecord(input.artifactId)?.sourceUri ?? '') ?? undefined, signal);
+  const retainedRecord = supportHash(context.artifactStore.getRecord(input.artifactId));
+  const sourceCurrent = knowledgeIngestGuard(context, input.sourceId, undefined, signal);
+  const canonicalUri = await uris.canonicalize(context.artifactStore.getRecord(input.artifactId)?.sourceUri ?? '');
+  sourceCurrent(); uris.assertCurrent(); ownership.assertCurrent?.();
+  if (supportHash(context.artifactStore.getRecord(input.artifactId)) !== retainedRecord) throw new KnowledgeExtractionJudgmentHoldError();
+  const canonicalCurrent = knowledgeIngestGuard(context, input.sourceId, canonicalUri ?? undefined, signal);
+  const assertCurrent = () => { ownership.assertCurrent?.(); assertKnowledgeIngestUriOperation(context, uris, input.sourceId, input.artifactId); sourceCurrent(); canonicalCurrent(); };
   assertCurrent();
+  let consumed = false;
   try {
-    const token = input.preparedExtraction ?? await prepareKnowledgeExtraction(context, input.sourceId, input.artifactId);
-    const { record, extracted, assertCurrent: assertExtractionCurrent } = consumeKnowledgeExtraction(context, token, input.sourceId, input.artifactId);
-    const canonicalUri = canonicalizeUri(record.sourceUri ?? '');
+    const token = input.preparedExtraction ?? await prepareKnowledgeExtraction(context, input.sourceId, input.artifactId, uris, { signal, assertCurrent });
+    const { record, extracted, assertCurrent: assertExtractionCurrent } = consumeKnowledgeExtraction(context, token, input.sourceId, input.artifactId, uris);
+    consumed = true;
     const previousExtraction = context.store.getExtractionBySourceId(input.sourceId);
     const extractionEvidence = {
       title: stableText(extracted.title) ?? previousExtraction?.title,
@@ -75,6 +85,7 @@ export async function finalizeKnowledgeIngestedSource(
     let committed: { source: KnowledgeSourceRecord; extraction: KnowledgeExtractionRecord } | undefined;
     let assertAliasesCurrent = () => {};
     const assertPrepared = () => {
+      assertKnowledgeIngestUriOperation(context, uris, input.sourceId, input.artifactId, token);
       ownership.assertCurrent?.();
       assertCurrent();
       assertExtractionCurrent();
@@ -105,7 +116,7 @@ export async function finalizeKnowledgeIngestedSource(
       const entityHints = await prepareKnowledgeStructuredEntityHints(source, extraction, signal, (guard) => { assertAliasesCurrent = guard; }, () => { ownership.assertCurrent?.(); assertCurrent(); assertExtractionCurrent(); });
       const check = () => { assertPrepared(); stage.assertCurrent(); };
       const draft = stagedCompileWriter(context, check);
-      await compileKnowledgeSourceRecords(context, source, extraction, entityHints, draft.writer);
+      await compileKnowledgeSourceRecords(context, source, extraction, entityHints, draft.writer, uris);
       check();
       return { nodes: [...draft.nodes.values()], edges: draft.edges, issues: [], assertCurrent: assertPrepared };
     }, { signal }, () => ownership.onCommitted?.(input.sourceId));
@@ -134,7 +145,7 @@ export async function finalizeKnowledgeIngestedSource(
       error: summarizeError(error),
     }), input.sessionId);
     throw error;
-  }
+  } finally { if (consumed) retireKnowledgeIngestUriOperation(uris); }
 }
 
 function readKnowledgeSpaceId(metadata: Record<string, unknown>): string | undefined {
@@ -142,39 +153,48 @@ function readKnowledgeSpaceId(metadata: Record<string, unknown>): string | undef
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-interface KnowledgeCompileOptions { readonly signal?: AbortSignal | undefined; }
+interface KnowledgeCompileOptions { readonly signal?: AbortSignal | undefined; readonly assertCurrent?: (() => void) | undefined; }
 
 export async function recompileKnowledgeSource(context: KnowledgeIngestContext, source: KnowledgeSourceRecord,
-  { signal }: KnowledgeCompileOptions = {}): Promise<void> {
+  options: KnowledgeCompileOptions = {}): Promise<void> {
+  const { signal } = options;
   source = snapshotNodeInput(source);
   await context.store.init();
   const extraction = snapshotNodeInput(context.store.getExtractionBySourceId(source.id));
-  const assertCurrent = knowledgeCompileGuard(context, source, extraction, signal);
+  const sourceCurrent = knowledgeCompileGuard(context, source, extraction, signal);
+  const uris = createKnowledgeIngestUriCanonicalizer(context, options, sourceCurrent);
+  const assertCurrent = () => { sourceCurrent(); uris.assertCurrent(); };
   let refreshed: KnowledgeExtractionUpsertInput | undefined;
   let assertExtractionCurrent = () => {};
   if (source.artifactId && await abortableCompileRead(knowledgeExtractionNeedsRefresh(extraction), signal)) {
     assertCurrent();
-    const token = await abortableCompileRead(prepareKnowledgeExtraction(context, source.id, source.artifactId), signal);
-    const prepared = consumeKnowledgeExtraction(context, token, source.id, source.artifactId);
+    uris.reserveSource(source.id);
+    uris.attachArtifact(source.artifactId);
+    const token = await abortableCompileRead(prepareKnowledgeExtraction(context, source.id, source.artifactId, uris, { signal, assertCurrent }), signal);
+    const prepared = consumeKnowledgeExtraction(context, token, source.id, source.artifactId, uris);
     assertExtractionCurrent = prepared.assertCurrent;
     refreshed = { ...prepared.extracted, sourceId: source.id, artifactId: source.artifactId };
   }
   const check = () => { assertCurrent(); assertExtractionCurrent(); };
   check();
-  await commitKnowledgeCompilation(context, source, extraction, false, signal, check, refreshed);
+  try { await commitKnowledgeCompilation(context, source, extraction, false, signal, check, uris, refreshed); }
+  finally { retireKnowledgeIngestUriOperation(uris); }
 }
 
 export async function compileKnowledgeSource(
   context: KnowledgeIngestContext,
   source: KnowledgeSourceRecord,
   extraction?: KnowledgeExtractionRecord | null,
-  { signal }: KnowledgeCompileOptions = {},
+  options: KnowledgeCompileOptions = {},
 ): Promise<void> {
+  const { signal } = options;
   source = snapshotNodeInput(source);
   extraction = snapshotNodeInput(extraction);
   await context.store.init();
+  const sourceCurrent = knowledgeCompileGuard(context, source, extraction, signal);
+  const uris = createKnowledgeIngestUriCanonicalizer(context, options, sourceCurrent);
   await commitKnowledgeCompilation(context, source, extraction, false, signal,
-    knowledgeCompileGuard(context, source, extraction, signal));
+    () => { sourceCurrent(); uris.assertCurrent(); }, uris);
 }
 
 /** Caller snapshots must still describe retained evidence before gaining observation authority. */
@@ -204,7 +224,7 @@ async function abortableCompileRead<T>(read: Promise<T>, signal?: AbortSignal): 
 
 async function commitKnowledgeCompilation(context: KnowledgeIngestContext, source: KnowledgeSourceRecord,
   extraction: KnowledgeExtractionRecord | null | undefined, structuredOnly: boolean, signal: AbortSignal | undefined,
-  assertEvidenceCurrent: () => void, refreshed?: KnowledgeExtractionUpsertInput): Promise<void> {
+  assertEvidenceCurrent: () => void, uris: KnowledgeUriCanonicalizer, refreshed?: KnowledgeExtractionUpsertInput): Promise<void> {
   const initialStatus = context.store.status();
   let assertAliasesCurrent = () => {};
   const assertCurrent = () => { assertEvidenceCurrent(); assertAliasesCurrent(); };
@@ -217,7 +237,7 @@ async function commitKnowledgeCompilation(context: KnowledgeIngestContext, sourc
     check();
     const draft = stagedCompileWriter(context, check);
     if (structuredOnly) await writeKnowledgeStructuredEntityHints(source, hints, draft.writer);
-    else await compileKnowledgeSourceRecords(context, source, nextExtraction, hints, draft.writer);
+    else await compileKnowledgeSourceRecords(context, source, nextExtraction, hints, draft.writer, uris);
     check();
     return { nodes: [...draft.nodes.values()], edges: draft.edges, issues: [], assertCurrent };
   }, { signal });
@@ -261,6 +281,7 @@ async function compileKnowledgeSourceRecords(
   extraction: KnowledgeExtractionRecord | null | undefined,
   entityHints: readonly CompiledEntityHint[],
   writer: KnowledgeCompileWriter,
+  uris: KnowledgeUriCanonicalizer,
 ): Promise<void> {
   const spaceId = getKnowledgeSpaceId(source);
   if (source.artifactId) {
@@ -395,9 +416,9 @@ async function compileKnowledgeSourceRecords(
         metadata: knowledgeSpaceMetadata(spaceId),
       });
     }
-    const outboundUris = [...new Set(extraction.links
-      .map((link) => canonicalizeUri(link))
-      .filter((link): link is string => link !== null))]
+    const settledLinks = await uris.canonicalizeAll(extraction.links);
+    uris.assertCurrent();
+    const outboundUris = [...new Set(settledLinks.filter((link): link is string => link !== null))]
       .slice(0, MAX_EXTRACTION_LINK_EDGES);
     for (const canonicalOutbound of outboundUris) {
       const linked = context.store.getSourceByCanonicalUri(canonicalOutbound);
@@ -429,13 +450,16 @@ export async function compileKnowledgeStructuredEntityHints(
   context: KnowledgeIngestContext,
   source: KnowledgeSourceRecord,
   extraction?: KnowledgeExtractionRecord | null,
-  { signal }: KnowledgeCompileOptions = {},
+  options: KnowledgeCompileOptions = {},
 ): Promise<void> {
+  const { signal } = options;
   source = snapshotNodeInput(source);
   extraction = snapshotNodeInput(extraction);
   await context.store.init();
+  const sourceCurrent = knowledgeCompileGuard(context, source, extraction, signal);
+  const uris = createKnowledgeIngestUriCanonicalizer(context, options, sourceCurrent);
   await commitKnowledgeCompilation(context, source, extraction, true, signal,
-    knowledgeCompileGuard(context, source, extraction, signal));
+    () => { sourceCurrent(); uris.assertCurrent(); }, uris);
 }
 
 interface CompiledEntityHint {

@@ -14,3 +14,7 @@ registry.register(planningGoalSpecified);
 
 import { knowledgeScopeSelection } from './batteries/scope-selection.js';
 registry.register(knowledgeScopeSelection);
+
+import { selfImprovementGapContext, selfImprovementEvidenceCoverage } from './semantic/self-improvement-assessment/battery.js';
+registry.register(selfImprovementGapContext);
+registry.register(selfImprovementEvidenceCoverage);

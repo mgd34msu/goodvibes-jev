@@ -1,3 +1,5 @@
+import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureAsyncHarnessInput } from './agent-harness-async-input.ts';
 import { resolveConnectedHostBaseUrl } from '../config/connected-host-dial.ts';
 import { getOperatorContract } from '@goodvibes-jev/engine/sdk/contracts';
 import { requirePlatform, requireShellPaths } from '../input/commands/runtime-services.ts';
@@ -67,10 +69,13 @@ export function hostSetupStatus(snapshot: Awaited<ReturnType<typeof collectSnaps
 export async function connectedHostAuthPosture(
   context: CommandContext,
   snapshot: Awaited<ReturnType<typeof collectSnapshot>>,
+  options: CatalogRankingOptions = {},
 ): Promise<SetupConnectedHostAuthPosture> {
+  const caller = captureAsyncHarnessInput(snapshot, options);
   const shellPaths = requireShellPaths(context);
   const token = readConnectedHostOperatorToken(shellPaths.homeDirectory, resolveConnectedHostBaseUrl(requirePlatform(context).configManager));
-  const nativeIntake = await readConnectedHostReadiness({ configManager: requirePlatform(context).configManager, homeDirectory: () => requireShellPaths(context).homeDirectory });
+  const nativeIntake = await readConnectedHostReadiness({ configManager: requirePlatform(context).configManager, homeDirectory: () => requireShellPaths(context).homeDirectory }, caller.options);
+  caller.assertCurrent();
   const usable = Boolean(token.token);
   return {
     owner: 'connected-host',

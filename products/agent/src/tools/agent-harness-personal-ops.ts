@@ -1,3 +1,4 @@
+import { runPersonalOpsStyleDraft, STYLE_DRAFT_RECORD_ID } from './agent-harness-personal-ops-style-draft.ts';
 import { buildAgentWorkspaceRuntimeSnapshot } from '../input/agent-workspace-snapshot.ts';
 import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { captureCatalogData, captureCatalogMethods, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
@@ -487,6 +488,11 @@ export async function runPersonalOpsRead(context: CommandContext, args: AgentHar
       || JSON.stringify(captureCatalogData(originalArgs)) !== argsJson) throw new ToolInputProjectionError('stale');
   };
   assertCurrent();
+  if (args.laneId === 'inbox' && args.recordId === STYLE_DRAFT_RECORD_ID) {
+    if (readString(args.query) || readString(args.target)) throw new ToolInputProjectionError('invalid');
+    if (!harnessCatalogInvocationAuthority(invocationArgs, executionOptions)) throw new ToolInputProjectionError('held');
+    return runPersonalOpsStyleDraft(args.fields, { ...options, assertCurrent });
+  }
   const includeParameters = args.includeParameters === true;
   const tools = await mcpToolRecords(context, { ...options, assertCurrent });
   assertCurrent();

@@ -4,12 +4,11 @@ import { resolveSetupSmokeNativeEvidence } from './agent-setup-smoke-reference.t
 import { captureTranscriptSource } from '../input/commands/transcript-reading.ts';
 import { createPreferredSettingsProjector, executeAdmittedPreferredSettings } from './agent-settings-admission.ts';
 import { assertCurrentToolExecution, ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { modelReadingOptions, modelReadingServicePath, withModelReadingContext } from './agent-harness-model-reading-source.ts';
+import { catalogReadingOptions, modelReadingOptions, modelReadingServicePath, withModelReadingContext } from './agent-harness-model-reading-source.ts';
 import { processClassificationOptions } from './agent-harness-process-launch.ts';
 import { createProcessInputProjector } from './agent-process-ingress.ts';
-import { createHarnessCatalogInputProjector, isHarnessCatalogQuery, protectHarnessCatalogTool, harnessCatalogExecutionGuard, retainHarnessCatalogCurrent } from './agent-harness-catalog-ingress.ts';
+import { createHarnessCatalogInputProjector, isHarnessCatalogQuery, protectHarnessCatalogTool, harnessCatalogExecutionGuard, harnessCatalogInvocationAuthority, retainHarnessCatalogCurrent } from './agent-harness-catalog-ingress.ts';
 import { createPersonalOpsInputProjector } from './agent-personal-ops-ingress.ts';
-import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
 import { createAgentHarnessResearchProjector, protectAgentHarnessResearchTool } from './agent-research-ingress.ts';
 import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
@@ -22,8 +21,8 @@ import { channelReadinessCatalogStatus, describeHarnessChannel, describeHarnessC
 import { blockedHarnessCliCommandTokens, describeHarnessCliCommand, listHarnessCliCommands, totalHarnessCliCommands } from './agent-harness-cli-metadata.ts';
 import { describeHarnessCommand, searchHarnessCommands } from './agent-harness-command-catalog.ts';
 import { describeLearningCandidate, learningCuratorCatalogStatus, learningCuratorSummary } from './agent-harness-learning-curator.ts';
-import { runAutoPromoter } from './agent-harness-learning-auto-promote.ts';
-import { runSkillDraftProposer } from '../agent/skill-draft-runner.ts';
+import { runAutoPromoter, assertAutoPromoteResultCurrent } from './agent-harness-learning-auto-promote.ts';
+import { runSkillDraftProposer, assertSkillDraftRunResultCurrent } from '../agent/skill-draft-runner.ts';
 import { AgentSkillRegistry } from '../agent/skill-registry.ts';
 import { delegationPostureCatalogStatus, delegationPostureSummary, describeHarnessDelegationRoute } from './agent-harness-delegation-posture.ts';
 import { describeHarnessKeybinding, listHarnessKeybindings, listHarnessShortcuts, resetHarnessKeybinding, runHarnessKeybinding, setHarnessKeybinding, totalHarnessKeybindings, totalHarnessShortcuts } from './agent-harness-keybinding-metadata.ts';
@@ -202,23 +201,15 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         });
       }
 
-      const personalOpsOwner = agentResearchSourceOwner(deps.toolRegistry);
-      const personalOpsSession = deps.commandContext.session?.runtime;
-      const personalOpsSessionId = personalOpsSession?.sessionId;
-      const personalOpsApi = deps.commandContext.clients?.mcpApi ?? deps.commandContext.extensions?.mcpRegistry;
-      const personalOpsOptions = { signal, sourceOwner: personalOpsOwner, assertCurrent: () => {
-        signal?.throwIfAborted();
-        if (agentResearchSourceOwner(deps.toolRegistry) !== personalOpsOwner
-          || deps.commandContext.session?.runtime !== personalOpsSession
-          || deps.commandContext.session?.runtime?.sessionId !== personalOpsSessionId
-          || (deps.commandContext.clients?.mcpApi ?? deps.commandContext.extensions?.mcpRegistry) !== personalOpsApi) throw new Error('PersonalOps source owner changed.');
-      } };
       const retainCatalogCurrent = retainHarnessCatalogCurrent(rawArgs);
-      // Keep native source identities through publication and cleanup without
-      // retaining the one-use invocation callback that visits this same map.
-      retainCatalogCurrent(personalOpsOptions.assertCurrent, 'agent.catalog.personal-ops-source');
-      const catalogOptions = { ...personalOpsOptions, retainCurrent: retainCatalogCurrent, assertCurrent: () => { assertCatalogExecution(); personalOpsOptions.assertCurrent(); } };
+      const catalogOptions = catalogReadingOptions(deps.commandContext, deps.toolRegistry, signal, assertCatalogExecution, retainCatalogCurrent);
       const effectCatalogOptions = { ...catalogOptions, retainCurrent: undefined };
+      const assertLearningCatalogCurrent = effectCatalogOptions.assertCurrent;
+      const learningEffectOptions = Object.freeze({ ...effectCatalogOptions, assertCurrent: () => {
+        assertLearningCatalogCurrent();
+        if (!harnessCatalogInvocationAuthority(rawArgs, options, 'write')) throw new ToolInputProjectionError('held');
+        assertLearningCatalogCurrent();
+      } });
       if (dispatchMode === 'settings' || dispatchMode === 'get_setting') {
         const originalJson = JSON.stringify(captureCatalogData(rawArgs));
         const config = deps.commandContext.platform.configManager;
@@ -245,7 +236,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         if (resolved.status === 'ambiguous') return error(`Ambiguous Personal Ops lane ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
         return error(resolved.usage);
       }
-      if (dispatchMode === 'run_personal_ops_read') return output(await runPersonalOpsRead(deps.commandContext, args, effectCatalogOptions, rawArgs, options));
+      if (dispatchMode === 'run_personal_ops_read') return output(await runPersonalOpsRead(deps.commandContext, args, args.laneId === 'inbox' && args.recordId === 'inbox-style-reply-draft' ? catalogOptions : effectCatalogOptions, rawArgs, options));
         if (dispatchMode === 'modes') return output(await listHarnessModes(args, catalogOptions));
         if (dispatchMode === 'mode') {
           const mode = await describeHarnessMode(args, catalogOptions);
@@ -293,7 +284,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
             error: formatHarnessError(err),
           }));
           const mcpServers = mcpServerCatalogStatus(deps.commandContext);
-          const setupPosture = await setupPostureCatalogStatus(deps.commandContext).catch((err) => ({
+          const setupPosture = await setupPostureCatalogStatus(deps.commandContext, catalogOptions).catch((err) => ({
             modes: ['setup_posture', 'setup_item', 'setup_repair', 'setup_checkpoint', 'mark_setup_checkpoint', 'clear_setup_checkpoint', 'provision_connected_host_token', 'run_setup_smoke'],
             status: 'unavailable',
             error: formatHarnessError(err),
@@ -306,31 +297,31 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
             status: 'unavailable',
             error: formatHarnessError(err),
           }));
-          const executionPosture = executionPostureCatalogStatus(deps.commandContext, deps.toolRegistry);
+          const executionPosture = await executionPostureCatalogStatus(deps.commandContext, deps.toolRegistry, catalogOptions);
           const backgroundProcesses = backgroundProcessCatalogStatus(deps.commandContext);
           const executionHistory = executionHistoryCatalogStatus(deps.commandContext);
           const fileRecovery = fileRecoveryCatalogStatus(deps.commandContext);
           const personalOps = personalOpsCatalogStatus(deps.commandContext);
-          const memoryPosture = await memoryPostureCatalogStatus(deps.commandContext).catch((err) => ({
+          const memoryPosture = await memoryPostureCatalogStatus(deps.commandContext, catalogOptions).catch((err) => ({
             modes: ['memory_posture', 'memory_provider'],
             status: 'unavailable',
             error: formatHarnessError(err),
           }));
           const memoryRefinement = memoryRefinementCatalogStatus(deps.commandContext);
           const autonomyQueue = autonomyQueueCatalogStatus(deps.commandContext);
-          const learningCurator = learningCuratorCatalogStatus(deps.commandContext);
-          const researchBriefing = researchBriefingCatalogStatus(deps.commandContext);
-          const researchRuns = researchRunsCatalogStatus(deps.commandContext);
-          const researchQueue = researchQueueCatalogStatus(deps.commandContext);
+          const learningCurator = await learningCuratorCatalogStatus(deps.commandContext, catalogOptions);
+          const researchBriefing = await researchBriefingCatalogStatus(deps.commandContext, catalogOptions);
+          const researchRuns = await researchRunsCatalogStatus(deps.commandContext, catalogOptions);
+          const researchQueue = await researchQueueCatalogStatus(deps.commandContext, catalogOptions);
           const documentOps = documentOpsCatalogStatus(deps.commandContext);
-          const pairingPosture = pairingPostureCatalogStatus(deps.commandContext);
+          const pairingPosture = await pairingPostureCatalogStatus(deps.commandContext, catalogOptions);
           const delegationPosture = delegationPostureCatalogStatus(deps.commandContext);
           const securityPosture = securityPostureCatalogStatus(deps.commandContext);
           const supportBundles = supportBundleCatalogStatus();
           const mediaPosture = mediaPostureCatalogStatus(deps.commandContext);
           const sessions = sessionCatalogStatus(deps.commandContext);
-          const releaseEvidence = releaseEvidenceBundleStatus();
-          const releaseReadiness = releaseReadinessInventoryStatus();
+          const releaseEvidence = await releaseEvidenceBundleStatus(catalogOptions);
+          const releaseReadiness = await releaseReadinessInventoryStatus(catalogOptions);
           const operatorMethods = operatorMethodCatalogStatus();
           const servicePosture = servicePostureCatalogStatus();
           const remote = remoteCatalogStatus(deps.commandContext);
@@ -414,17 +405,17 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           return output(await describeHarnessCliCommand(args, catalogOptions));
         }
         if (dispatchMode === 'ui_surfaces') {
-          const surfaces = listHarnessUiSurfaces(deps.commandContext, args);
+          const surfaces = await listHarnessUiSurfaces(deps.commandContext, args, catalogOptions);
           return output(catalogEnvelope('surfaces', surfaces, totalHarnessUiSurfaces(), catalogFilters(args, CQ.ui_surfaces.filters), CQ.ui_surfaces.discovery));
         }
         if (dispatchMode === 'ui_surface') {
-          const surface = describeHarnessUiSurface(deps.commandContext, args);
+          const surface = await describeHarnessUiSurface(deps.commandContext, args, catalogOptions);
           return surface ? output(surface) : error(`Unknown UI surface ${readString(args.surfaceId || args.query || args.target) || '<missing>'}.`);
         }
         if (dispatchMode === 'open_ui_surface') {
           const confirmationError = requireConfirmedAction(rawArgs, options, 'UI surface routing');
           if (confirmationError) return error(confirmationError);
-          return output(await openHarnessUiSurface(deps.commandContext, args));
+          return output(await openHarnessUiSurface(deps.commandContext, args, { ...effectCatalogOptions, assertCurrent: () => { effectCatalogOptions.assertCurrent(); const confirmationError = requireConfirmedAction(rawArgs, options, 'UI surface routing'); if (confirmationError) throw new Error(confirmationError); } }));
         }
         if (dispatchMode === 'shortcuts') return output(await listHarnessShortcuts(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'keybindings') return output(await listHarnessKeybindings(deps.commandContext, args, catalogOptions));
@@ -480,15 +471,15 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (resolved.status === 'ambiguous') return error(`Ambiguous MCP server ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'setup_posture') return output(await setupPostureSummary(deps.commandContext, args));
+        if (dispatchMode === 'setup_posture') return output(await setupPostureSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'setup_item') {
-          const resolved = await describeHarnessSetupItem(deps.commandContext, args);
+          const resolved = await describeHarnessSetupItem(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.item);
           if (resolved.status === 'ambiguous') return error(`Ambiguous setup item ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'setup_repair') return output(await setupRepairSummary(deps.commandContext, args));
-        if (dispatchMode === 'setup_checkpoint') return output(await setupCheckpointSummary(deps.commandContext));
+        if (dispatchMode === 'setup_repair') return output(await setupRepairSummary(deps.commandContext, args, catalogOptions));
+        if (dispatchMode === 'setup_checkpoint') return output(await setupCheckpointSummary(deps.commandContext, catalogOptions));
         if (dispatchMode === 'mark_setup_checkpoint') {
           const confirmationError = requireConfirmedAction(rawArgs, options, 'Setup wizard checkpoint save');
           if (confirmationError) return error(confirmationError);
@@ -499,9 +490,9 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (confirmationError) return error(confirmationError);
           return output(clearSetupCheckpoint(deps.commandContext, rawArgs, options));
         }
-        if (dispatchMode === 'project_context') return output(projectContextSummary(deps.commandContext, args));
+        if (dispatchMode === 'project_context') return output(await projectContextSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'project_context_file') {
-          const resolved = describeProjectContextFile(deps.commandContext, args);
+          const resolved = await describeProjectContextFile(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.file);
           if (resolved.status === 'ambiguous') return error(`Ambiguous project context file ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
@@ -567,9 +558,9 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         if (dispatchMode === 'personal_ops_briefing') return output(await personalOpsBriefingSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'personal_ops') return output(await personalOpsSummary(deps.commandContext, args, catalogOptions));
 
-        if (dispatchMode === 'memory_posture') return output(await memoryPostureSummary(deps.commandContext, args));
+        if (dispatchMode === 'memory_posture') return output(await memoryPostureSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'memory_provider') {
-          const resolved = await describeMemoryProvider(deps.commandContext, args);
+          const resolved = await describeMemoryProvider(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.provider);
           if (resolved.status === 'ambiguous') return error(`Ambiguous memory provider ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
@@ -595,14 +586,16 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           const memoryApi = deps.commandContext.clients?.agentKnowledgeApi?.memory;
           if (!memoryApi) return error('learning_auto_promote requires an active memory registry.');
           const skillRegistry = AgentSkillRegistry.fromShellPaths(shellPaths);
-          const result = await runAutoPromoter(deps.commandContext, skillRegistry, memoryApi);
-          return output({
+          const result = await runAutoPromoter(deps.commandContext, skillRegistry, memoryApi, learningEffectOptions);
+          const rendered = output({
             ...result,
             message: result.promoted > 0
               ? `Promoted ${result.promoted} item(s); consolidated ${result.consolidated} duplicate(s).`
               : 'No items eligible for promotion this pass.',
-            policy: 'Confirmed promotion. Skills are created via the skill-draft runner. Memory, persona, routine creates call registry directly. Consolidation runs the full merge-stale-delete pipeline. Secret scanning enforced by each registry create().',
+            policy: 'Promotion under current recorded admission. Skills are created via the skill-draft runner. Memory, persona, routine creates call registry directly. Consolidation runs the full merge-stale-delete pipeline. Secret scanning enforced by each registry create().',
           });
+          assertAutoPromoteResultCurrent(result, deps.commandContext, learningEffectOptions);
+          return rendered;
         }
         if (dispatchMode === 'learning_candidate') {
           const resolved = await describeLearningCandidate(deps.commandContext, args, catalogOptions);
@@ -610,18 +603,18 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (resolved.status === 'ambiguous') return error(`Ambiguous learning candidate ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'research_briefing') return output(researchBriefingSummary(deps.commandContext, args));
-        if (dispatchMode === 'research_workflow') return output(researchWorkflowSummary(deps.commandContext, args));
-        if (dispatchMode === 'research_runs') return output(researchRunsSummary(deps.commandContext, args));
+        if (dispatchMode === 'research_briefing') return output(await researchBriefingSummary(deps.commandContext, args, catalogOptions));
+        if (dispatchMode === 'research_workflow') return output(await researchWorkflowSummary(deps.commandContext, args, catalogOptions));
+        if (dispatchMode === 'research_runs') return output(await researchRunsSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'research_run') {
-          const resolved = describeResearchRun(deps.commandContext, args);
+          const resolved = await describeResearchRun(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.run);
           if (resolved.status === 'ambiguous') return error(`Ambiguous research run ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'research_queue') return output(researchQueueSummary(deps.commandContext, args));
+        if (dispatchMode === 'research_queue') return output(await researchQueueSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'research_source') {
-          const resolved = describeResearchSource(deps.commandContext, args);
+          const resolved = await describeResearchSource(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.source);
           if (resolved.status === 'ambiguous') return error(`Ambiguous research source ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
@@ -633,9 +626,9 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (resolved.status === 'ambiguous') return error(`Ambiguous Document Ops lane ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'pairing_posture') return output(pairingPostureSummary(deps.commandContext, args));
+        if (dispatchMode === 'pairing_posture') return output(await pairingPostureSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'pairing_route') {
-          const resolved = describeHarnessPairingRoute(deps.commandContext, args);
+          const resolved = await describeHarnessPairingRoute(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.route);
           if (resolved.status === 'ambiguous') return error(`Ambiguous pairing route ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
@@ -647,14 +640,14 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (resolved.status === 'ambiguous') return error(`Ambiguous delegation route ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'security_posture') return output(await securityPostureSummary(deps.commandContext, args));
+        if (dispatchMode === 'security_posture') return output(await securityPostureSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'security_finding') {
-          const resolved = describeHarnessSecurityFinding(deps.commandContext, args);
+          const resolved = await describeHarnessSecurityFinding(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.finding);
           if (resolved.status === 'ambiguous') return error(`Ambiguous security finding ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'support_bundles') return output(supportBundleSummary(args));
+        if (dispatchMode === 'support_bundles') return output(await supportBundleSummary(args, catalogOptions));
         if (dispatchMode === 'support_bundle') {
           const resolved = describeHarnessSupportBundle(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.bundle);
@@ -690,11 +683,11 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           });
         }
         if (dispatchMode === 'workspace_actions') {
-          const actions = listWorkspaceActions(deps.commandContext, args);
+          const actions = await listWorkspaceActions(deps.commandContext, args, catalogOptions);
           return output(catalogEnvelope('actions', actions, allWorkspaceActions().length, catalogFilters(args, CQ.workspace_actions.filters), CQ.workspace_actions.discovery));
         }
         if (dispatchMode === 'workspace_action') {
-          const resolved = resolveWorkspaceActionDetail(args);
+          const resolved = await resolveWorkspaceActionDetail(args, catalogOptions);
           const editorContext = buildWorkspaceEditorContext(deps.commandContext, args);
           if (resolved?.status === 'found') {
             return output(describeWorkspaceAction(resolved.category, resolved.action, { includeEditor: true, editorContext, lookup: resolved.lookup }));
@@ -713,26 +706,26 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           };
           return protectAgentHarnessResearchTool(workspaceActionTool, deps.toolRegistry).execute(rawArgs, options);
         }
-        if (dispatchMode === 'release_evidence') return output(releaseEvidenceSummary(args));
+        if (dispatchMode === 'release_evidence') return output(await releaseEvidenceSummary(args, catalogOptions));
         if (dispatchMode === 'release_evidence_artifact') {
-          const resolved = describeHarnessReleaseEvidenceArtifact(args);
+          const resolved = await describeHarnessReleaseEvidenceArtifact(args, catalogOptions);
           if (resolved.status === 'found') return output(resolved);
           if (resolved.status === 'ambiguous') return error(`Ambiguous release evidence artifact ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           if (resolved.status === 'missing_lookup') return error(resolved.usage ?? 'release_evidence_artifact requires artifactId, target, or query.');
           return error(`Unknown release evidence artifact ${readString(args.artifactId || args.target || args.query) || '<missing>'}. Use mode:"release_evidence" to inspect available artifacts.`);
         }
-        if (dispatchMode === 'release_readiness') return output(releaseReadinessSummary(args));
+        if (dispatchMode === 'release_readiness') return output(await releaseReadinessSummary(args, catalogOptions));
         if (dispatchMode === 'release_readiness_item') {
-          const resolved = describeHarnessReleaseReadinessItem(args);
+          const resolved = await describeHarnessReleaseReadinessItem(args, catalogOptions);
           if (resolved.status === 'found') return output(resolved);
           if (resolved.status === 'ambiguous') return error(`Ambiguous release readiness item ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           if (resolved.status === 'unavailable') return output(resolved);
           if (resolved.status === 'missing_lookup') return error(resolved.usage ?? 'release_readiness_item requires itemId, target, or query.');
           return error(`Unknown release readiness item ${readString(args.itemId || args.target || args.query) || '<missing>'}. Use mode:"release_readiness" to inspect available items.`);
         }
-        if (dispatchMode === 'service_posture') return output(await servicePostureSummary(deps.commandContext, args));
+        if (dispatchMode === 'service_posture') return output(await servicePostureSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'service_endpoint') {
-          const resolved = await describeHarnessServiceEndpoint(deps.commandContext, args);
+          const resolved = await describeHarnessServiceEndpoint(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.endpoint);
           if (resolved.status === 'ambiguous') return error(`Ambiguous service endpoint ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
@@ -744,7 +737,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         }
         if (dispatchMode === 'connected_host_capability') {
           const query = readString(args.capabilityId || args.target || args.query);
-          const resolved = describeConnectedHostCapability(deps.toolRegistry, query);
+          const resolved = await describeConnectedHostCapability(deps.toolRegistry, query, catalogOptions);
           if (resolved?.status === 'found') return output(resolved.detail);
           if (resolved?.status === 'ambiguous') return error(`Ambiguous connected-host capability ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(`Unknown connected-host capability ${query || '<missing>'}. Use mode:"connected_host" to inspect allowed and blocked capability ids.`);
@@ -760,8 +753,8 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           const shellPaths = deps.commandContext.workspace?.shellPaths;
           if (!shellPaths) return error('Skill draft proposal requires an active workspace.');
           const registry = AgentSkillRegistry.fromShellPaths(shellPaths);
-          const result = runSkillDraftProposer(deps.commandContext, registry);
-          return output({
+          const result = await runSkillDraftProposer(deps.commandContext, registry, learningEffectOptions);
+          const rendered = output({
             proposed: result.proposed,
             skipped: result.skipped,
             skillIds: result.skillIds,
@@ -770,6 +763,8 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
               : 'No new skill drafts this pass.',
             policy: 'Drafted skills are disabled and require review before use. Enable them under Memory > Skills.',
           });
+          assertSkillDraftRunResultCurrent(result, deps.commandContext, learningEffectOptions);
+          return rendered;
         }
         if (dispatchMode === 'remote_snapshot') return output(remoteSnapshotSummary(args));
         if (dispatchMode === 'remote_peers') return output(remotePeersSummary(args));

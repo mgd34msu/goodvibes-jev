@@ -1,5 +1,5 @@
 import { KnowledgeRecordAdmissionHeldError, knowledgeEdgeSnapshotFromRows, knowledgeRecordGenerationFromRows, knowledgeRecordSnapshotFromRows, type KnowledgeRecordSnapshot } from './store-record-snapshot.js';
-import { captureKnowledgeStoreInput, copyKnowledgeRepresentation, prepareKnowledgeOwnedClocks } from './store-record-representation.js';
+import { sameKnowledgeRecord, captureKnowledgeStoreInput, copyKnowledgeRepresentation, prepareKnowledgeOwnedClocks } from './store-record-representation.js';
 import { captureOwnedJson, JudgmentInputError, snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { validateCurrentKnowledgeSchema } from './store-current-schema-validation.js';
 import { prepareNativeKnowledgeSchemaReadPlan } from '../state/knowledge-schema-read-plan.js';
@@ -73,7 +73,7 @@ import {
   recordKnowledgeNodeRevisions,
   resolveNodeActivation,
   upsertKnowledgeSemanticEnrichmentState,
-  writeKnowledgeNodeRow,
+  writeKnowledgeNodeRow, knowledgeNodeRow,
 } from './store-node-history.js';
 import {
   mergeKnowledgeNodeMetadata, prepareKnowledgeNodeReplacement,
@@ -147,6 +147,46 @@ import {
  */
 const MAX_RETAINED_JOB_RUNS = 500;
 
+function assertKnowledgeWriteCurrent(assertCurrent: (() => void) | undefined): void {
+  const result: unknown = assertCurrent?.();
+  if (result !== undefined) {
+    try { void Promise.resolve(result).catch(() => {}); } catch {}
+    throw new KnowledgeNodeActivationHeldError('stale');
+  }
+}
+
+const nativePublicationApply = Reflect.apply;
+const nativePublicationGet = WeakMap.prototype.get, nativePublicationSet = WeakMap.prototype.set;
+const nativePublicationHas = WeakSet.prototype.has, nativePublicationAdd = WeakSet.prototype.add;
+const nativePredecessorDeref = WeakRef.prototype.deref;
+
+interface NativeNodePublication {
+  readonly store: KnowledgeStore;
+  readonly previous: WeakRef<KnowledgeNodeRecord> | undefined;
+  readonly snapshot: KnowledgeRecordSnapshot;
+}
+const nativeNodePublicationOwners = new WeakSet<KnowledgeStore>();
+const nativeNodePublications = new WeakMap<KnowledgeNodeRecord, NativeNodePublication>();
+/** Only actual native commits populate this registry; no serialized receipt can do so. */
+export function hasKnowledgeNodePublication(store: KnowledgeStore, record: KnowledgeNodeRecord,
+  previous: KnowledgeNodeRecord | undefined): boolean {
+  const publication: NativeNodePublication | undefined = nativePublicationApply(nativePublicationGet, nativeNodePublications, [record]);
+  if (!publication || publication.store !== store) return false;
+  return publication.previous === undefined ? previous === undefined
+    : previous !== undefined && nativePublicationApply(nativePredecessorDeref, publication.previous, []) === previous;
+}
+
+/** The actual native SQL publication image, including a pending batch write.
+ * This is an expected row only; semantic admission still requires that exact
+ * complete row to be present in the current persisted image. */
+export function knowledgeNodePublicationGeneration(store: KnowledgeStore, record: KnowledgeNodeRecord,
+  previous: KnowledgeNodeRecord | undefined): string | null {
+  if (!hasKnowledgeNodePublication(store, record, previous)) return null;
+  const publication: NativeNodePublication | undefined = nativePublicationApply(nativePublicationGet, nativeNodePublications, [record]);
+  const snapshot = publication?.snapshot;
+  return snapshot?.raw && snapshot.record && sameKnowledgeRecord(record, snapshot.record) ? snapshot.generation : null;
+}
+
 export class KnowledgeStore {
   private readonly sqlite: SQLiteStore;
   private readonly dbPath: string;
@@ -181,6 +221,7 @@ export class KnowledgeStore {
     // Every writer, including ordinary saves and batches, shares this boundary.
     // Configuration supplied by a caller cannot turn coordination off.
     this.sqlite = new SQLiteStore(this.dbPath, { coordinated: true });
+    nativePublicationApply(nativePublicationAdd, nativeNodePublicationOwners, [this]);
     void this.init().catch((error: unknown) => {
       logger.error('[knowledge-store] initialization failed', {
         path: this.dbPath,
@@ -661,14 +702,17 @@ export class KnowledgeStore {
     return written[0]!.source!;
   }
 
-  async upsertSource(input: KnowledgeSourceUpsertInput): Promise<KnowledgeSourceRecord> {
+  async upsertSource(input: KnowledgeSourceUpsertInput, assertCurrent?: () => void): Promise<KnowledgeSourceRecord> {
+    assertKnowledgeWriteCurrent(assertCurrent);
     await this.init();
+    assertKnowledgeWriteCurrent(assertCurrent);
     const existing = input.id
       ? this.sources.get(input.id)
       : input.canonicalUri
         ? this.getSourceByCanonicalUri(input.canonicalUri)
         : null;
     const record = prepareKnowledgeSourceRecord(input, existing);
+    assertKnowledgeWriteCurrent(assertCurrent);
     writeKnowledgeSourceRow(this.sqlite, record);
     this.sources.set(record.id, record);
     await this.sqlite.save();
@@ -765,10 +809,14 @@ export class KnowledgeStore {
   /** Prepare a source-backed graph before committing evidence and nodes together. */
   async applyPreparedIngest(input: KnowledgeImportInput, prepareGraph: PrepareKnowledgeImportGraph,
     options: KnowledgeNodeActivationOptions = {}, onCommitted?: () => void): Promise<KnowledgeImportReceipt> {
+    if (!nativePublicationApply(nativePublicationHas, nativeNodePublicationOwners, [this])) throw new KnowledgeNodeActivationHeldError('stale');
     input = copyKnowledgeRepresentation(input, captureKnowledgeStoreInput(input));
     await this.init();
     return applyKnowledgeImport(this, { sqlite: this.sqlite, sources: this.sources, extractions: this.extractions, nodes: this.nodes,
-      nodeRevisions: this.nodeRevisions, edges: this.edges, issues: this.issues }, input,
+      nodeRevisions: this.nodeRevisions, edges: this.edges, issues: this.issues,
+      nodePublished: (record, previous, snapshot) => {
+        nativePublicationApply(nativePublicationSet, nativeNodePublications, [record, Object.freeze({ store: this, previous: previous ? new WeakRef(previous) : undefined, snapshot })]);
+      } }, input,
     (node, original) => this.prepareNodeMutation(node, undefined, original),
     this.nodeActivationConfidenceFloor, this.nodeActivationScope, options, prepareGraph, onCommitted);
   }
@@ -776,16 +824,23 @@ export class KnowledgeStore {
   assertPreparedNodeWrites(prepared: KnowledgePreparedNodeWrites): void { assertPreparedNodeWrites(this, prepared, this.nodeActivationScope); }
 
   async upsertPreparedNode(prepared: KnowledgePreparedNodeWrites, index: number): Promise<KnowledgeNodeRecord> {
+    if (!nativePublicationApply(nativePublicationHas, nativeNodePublicationOwners, [this])) throw new KnowledgeNodeActivationHeldError('stale');
     await this.init();
     const { existing, record, now, observationEvidence } = preparedNodeWrite(this, prepared, index, this.nodeActivationScope);
-    if (record === existing) { retainKnowledgeNodeObservation(existing, record, observationEvidence); markPreparedNodeWritten(prepared, index); return record; }
+    if (record === existing) {
+      retainKnowledgeNodeObservation(existing, record, observationEvidence); markPreparedNodeWritten(prepared, index);
+      const snapshot = knowledgeRecordSnapshotFromRows('node', knowledgeNodeRow(record));
+      nativePublicationApply(nativePublicationSet, nativeNodePublications, [record, Object.freeze({ store: this, previous: existing ? new WeakRef(existing) : undefined, snapshot })]);
+      return record;
+    }
     // Everything after the final guard and before save is synchronous.
-    writeKnowledgeNodeRow(this.sqlite, record);
+    const snapshot = knowledgeRecordSnapshotFromRows('node', writeKnowledgeNodeRow(this.sqlite, record));
     recordKnowledgeNodeRevisions(this.sqlite, this.nodeRevisions, record, existing, now);
     retainKnowledgeNodeObservation(existing, record, observationEvidence);
     this.nodes.set(record.id, record);
     markPreparedNodeWritten(prepared, index);
     await this.sqlite.save();
+    nativePublicationApply(nativePublicationSet, nativeNodePublications, [record, Object.freeze({ store: this, previous: existing ? new WeakRef(existing) : undefined, snapshot })]);
     return record;
   }
 
@@ -853,9 +908,12 @@ export class KnowledgeStore {
     return record;
   }
 
-  async upsertEdge(input: KnowledgeEdgeUpsertInput): Promise<KnowledgeEdgeRecord> {
+  async upsertEdge(input: KnowledgeEdgeUpsertInput, assertCurrent?: () => void): Promise<KnowledgeEdgeRecord> {
+    assertKnowledgeWriteCurrent(assertCurrent);
     await this.init();
+    assertKnowledgeWriteCurrent(assertCurrent);
     const record = prepareKnowledgeEdgeRecord(input, findKnowledgeEdge(this.edges, input));
+    assertKnowledgeWriteCurrent(assertCurrent);
     writeKnowledgeEdgeRow(this.sqlite, record);
     this.edges.set(record.id, record);
     await this.sqlite.save();
@@ -981,12 +1039,15 @@ export class KnowledgeStore {
     await this.sqlite.save();
   }
 
-  async upsertExtraction(input: KnowledgeExtractionUpsertInput): Promise<KnowledgeExtractionRecord> {
+  async upsertExtraction(input: KnowledgeExtractionUpsertInput, assertCurrent?: () => void): Promise<KnowledgeExtractionRecord> {
+    assertKnowledgeWriteCurrent(assertCurrent);
     await this.init();
+    assertKnowledgeWriteCurrent(assertCurrent);
     const existing = input.id
       ? this.extractions.get(input.id)
       : this.getExtractionBySourceId(input.sourceId);
     const record = prepareKnowledgeExtractionRecord(input, existing, this.sources.get(input.sourceId));
+    assertKnowledgeWriteCurrent(assertCurrent);
     writeKnowledgeExtractionRow(this.sqlite, record);
     this.extractions.set(record.id, record);
     await this.sqlite.save();

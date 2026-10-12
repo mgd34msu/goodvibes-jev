@@ -12,7 +12,8 @@ function setTtsConfigValue(ctx: CommandContext, key: ConfigKey, value: string): 
   ctx.platform.configManager.setDynamic(key, value);
 }
 
-export function openTtsProviderPicker(ctx: CommandContext): boolean {
+export function openTtsProviderPicker(ctx: CommandContext, ownership?: { readonly assertCurrent?: (() => void) | undefined }): boolean {
+  ownership?.assertCurrent?.();
   if (!ctx.openSelection) return false;
   const registry = ctx.platform.voiceProviderRegistry;
   if (!registry) {
@@ -36,6 +37,7 @@ export function openTtsProviderPicker(ctx: CommandContext): boolean {
     actions: '[Enter] set provider',
   }));
 
+  ownership?.assertCurrent?.();
   ctx.openSelection('Choose TTS Provider', items, { preSelectId: current, allowSearch: true }, (result) => {
     if (!result) return;
     const previous = String(ctx.platform.configManager.get('tts.provider') ?? '').trim();
@@ -51,7 +53,8 @@ export function openTtsProviderPicker(ctx: CommandContext): boolean {
   return true;
 }
 
-export async function openTtsVoicePicker(ctx: CommandContext, providerArg?: string): Promise<boolean> {
+export async function openTtsVoicePicker(ctx: CommandContext, providerArg?: string, ownership?: { readonly assertCurrent?: (() => void) | undefined }): Promise<boolean> {
+  ownership?.assertCurrent?.();
   if (!ctx.openSelection) return false;
   const service = ctx.platform.voiceService;
   if (!service) {
@@ -61,7 +64,9 @@ export async function openTtsVoicePicker(ctx: CommandContext, providerArg?: stri
 
   const providerId = (providerArg ?? String(ctx.platform.configManager.get('tts.provider') ?? '')).trim() || undefined;
   try {
+    ownership?.assertCurrent?.();
     const voices = await service.listVoices(providerId);
+    ownership?.assertCurrent?.();
     if (voices.length === 0) {
       ctx.print(providerId ? `No voices returned for ${providerId}.` : 'No TTS voices returned.');
       return true;
@@ -85,6 +90,7 @@ export async function openTtsVoicePicker(ctx: CommandContext, providerArg?: stri
       })),
     ];
 
+    ownership?.assertCurrent?.();
     ctx.openSelection(`Choose TTS Voice${providerId ? ` (${providerId})` : ''}`, items, { preSelectId: current || '__default__', allowSearch: true }, (result) => {
       if (!result) return;
       const nextVoice = result.item.id === '__default__' ? '' : result.item.id;
@@ -94,6 +100,7 @@ export async function openTtsVoicePicker(ctx: CommandContext, providerArg?: stri
     });
     return true;
   } catch (error) {
+    ownership?.assertCurrent?.();
     ctx.print(`Unable to list TTS voices: ${error instanceof Error ? error.message : String(error)}`);
     return true;
   }

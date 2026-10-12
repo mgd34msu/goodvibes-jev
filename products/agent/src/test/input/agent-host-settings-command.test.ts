@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { AgentConfigManager, AGENT_NOTIFICATIONS_METADATA_ONLY_KEY as KEY, readAgentHostSetting } from '../../config/host-settings.ts';
+import { AgentConfigManager, AGENT_NOTIFICATIONS_METADATA_ONLY_KEY as KEY, readAgentHostSetting, AGENT_HOSTED_RESEARCH_SCREENING_KEY as RESEARCH_KEY } from '../../config/host-settings.ts';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { registerOperatorRuntimeCommands } from '../../input/commands/operator-runtime.ts';
 import { describeApprovalAlert } from '../../shell/terminal-focus-mode.ts';
@@ -80,4 +80,23 @@ describe('exact notification privacy literals at the text command boundary', () 
     expect(config.getHostBooleanSetting(KEY).get()).toBe(false);
     expect(readFileSync(policyPath, 'utf8')).toBe('{invalid policy');
   });
+});
+
+
+test('native text settings require exact explicit research consent and reset revokes it durably', async () => {
+  const { config, configDir, out, run } = fixture();
+  expect(config.getHostBooleanSetting(RESEARCH_KEY).get()).toBe(false);
+  await run(['set', RESEARCH_KEY, 'true']);
+  expect(config.getHostBooleanSetting(RESEARCH_KEY).get()).toBe(false);
+  expect(out.at(-1)).toContain('without --yes');
+  await run(['set', RESEARCH_KEY, 'TRUE', '--yes']);
+  expect(config.getHostBooleanSetting(RESEARCH_KEY).get()).toBe(false);
+  await run(['set', RESEARCH_KEY, 'true', '--yes']);
+  expect(config.getHostBooleanSetting(RESEARCH_KEY).get()).toBe(true);
+  expect(new AgentConfigManager({ configDir }).getHostBooleanSetting(RESEARCH_KEY).get()).toBe(true);
+  await run(['get', RESEARCH_KEY]);
+  expect(out.at(-1)).toContain('current true');
+  await run(['reset', RESEARCH_KEY, '--yes']);
+  expect(config.getHostBooleanSetting(RESEARCH_KEY).get()).toBe(false);
+  expect(new AgentConfigManager({ configDir }).getHostBooleanSetting(RESEARCH_KEY).get()).toBe(false);
 });

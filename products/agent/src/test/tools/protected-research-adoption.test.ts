@@ -1,14 +1,15 @@
-import { afterAll, expect, test } from 'bun:test';
-import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { afterAll, afterEach, expect, test } from 'bun:test';
+import { ToolInputProjectionError, ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { ArtifactCreateInput, ArtifactDescriptor, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
-import { bindAgentResearchSourceOwner, prepareProtectedResearchReport } from '../../agent/protected-research-report.ts';
+import { bindAgentResearchSourceOwner, createAgentResearchReportProjector, prepareProtectedResearchReport } from '../../agent/protected-research-report.ts';
 import { createAgentResearchReportTool, registerAgentResearchReportTool } from '../../tools/agent-research-report-tool.ts';
 import { registerAgentResearchTool } from '../../tools/agent-research-tool.ts';
-import { createAgentHarnessTool, registerAgentHarnessTool } from '../../tools/agent-harness-tool.ts';
-import { createAgentWorkspaceTool, registerAgentWorkspaceTool } from '../../tools/agent-workspace-tool.ts';
+import { registerAgentHarnessTool } from '../../tools/agent-harness-tool.ts';
+import { registerAgentWorkspaceTool } from '../../tools/agent-workspace-tool.ts';
 import { installToolExecutionSafetyGuard } from '../../tools/tool-execution-safety.ts';
 import { cleanupResearchScreeningFixtures, exactSensitiveSpans, researchScreeningFixture } from '../helpers/research-screening.ts';
 import type { CommandContext, CommandRegistry } from '../../input/command-registry.ts';
+import { effectAdmissionFixture } from '../helpers/effect-admission.ts';
 
 afterAll(cleanupResearchScreeningFixtures);
 const base = { title: 'Report', question: 'What is supported?', summary: 'Evidence [S1].', confirm: true, explicitUserRequest: 'Save the report.', sources: [{ title: 'Source', url: 'https://example.test/article?id=123#section-2' }] };
@@ -20,14 +21,37 @@ function artifactStore() {
   } };
   return { store, records };
 }
-function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
+const deferredReleases: Array<() => void> = [];
+const pendingOperations: Promise<unknown>[] = [];
+afterEach(async () => {
+  for (const release of deferredReleases.splice(0)) release();
+  await Promise.allSettled(pendingOperations.splice(0));
+});
+function deferred() {
+  const gate = Promise.withResolvers<void>();
+  deferredReleases.push(gate.resolve);
+  return gate;
+}
+function ownPending<T>(pending: Promise<T>): Promise<T> { pendingOperations.push(pending); return pending; }
+async function awaitStarted(entered: ReturnType<typeof deferred>, pending: Promise<{ success: boolean; error?: string }>): Promise<void> {
+  await Promise.race([entered.promise, pending.then(result => { throw new Error(`Synthetic operation ended before its awaited I/O: ${result.error ?? result.success}`); })]);
+}
+function admittedReportTool(...args: Parameters<typeof createAgentResearchReportTool>) {
+  const admission = effectAdmissionFixture();
+  return admission.tool(createAgentResearchReportTool(...args), { inputProjection: createAgentResearchReportProjector(args[1]) });
+}
+function registeredTool(registry: ToolRegistry, name: string) {
+  const tool = registry.list().find(candidate => candidate.definition.name === name);
+  if (!tool) throw new Error(`Synthetic research tool was not registered: ${name}`);
+  return tool;
+}
 
 test('actual report artifact contains unbound TAB/LF/CR source references through verified spans', async () => {
   for (const control of ['\t', '\n', '\r']) {
     const reference = `https://example.test/doc${control}ument?opaque=sentinel`;
     const f = researchScreeningFixture({ spans: exactSensitiveSpans([reference]) });
     const { store, records } = artifactStore();
-    const result = await createAgentResearchReportTool(store, f.owner).execute({ ...base,
+    const result = await admittedReportTool(store, f.owner).execute({ ...base,
       title: `Before ${reference} after`, question: `What ${reference}?`, summary: `Evidence ${reference} [S1].`, reportMarkdown: `Claim ${reference} [S1].`,
       findings: [`Finding ${reference} [S1]`], gaps: [reference], recommendations: [reference], methodology: reference, confidence: reference,
       tags: [reference], explicitUserRequest: `Save ${reference}`, sources: [{ title: `Source ${reference}`, note: `Before ${reference} after.\nOrdinary second line.`, publisher: reference, credibility: reference }],
@@ -81,10 +105,10 @@ test('source-list separator redaction holds the whole report', async () => {
 
 test('missing owner and semantic uncertainty never invoke artifact persistence', async () => {
   const { store, records } = artifactStore();
-  expect((await createAgentResearchReportTool(store).execute(base)).success).toBe(false);
+  expect((await admittedReportTool(store).execute(base)).success).toBe(false);
   const f = researchScreeningFixture({ complete: 0.5 });
-  expect((await createAgentResearchReportTool(store, f.owner).execute(base)).success).toBe(false);
-  expect(records).toEqual([]);
+  expect((await admittedReportTool(store, f.owner).execute(base)).success).toBe(false);
+  expect(records).toEqual([]); expect(f.calls.length).toBeGreaterThan(0);
 });
 
 test('cancellation owns pending local requests and prevents artifact invocation', async () => {
@@ -92,20 +116,20 @@ test('cancellation owns pending local requests and prevents artifact invocation'
   const f = researchScreeningFixture({ beforeProposal: async () => { started.resolve(); await gate.promise; } });
   const { store, records } = artifactStore();
   const controller = new AbortController();
-  const pending = createAgentResearchReportTool(store, f.owner).execute(base, { signal: controller.signal });
-  await started.promise; controller.abort(); gate.resolve();
+  const pending = ownPending(admittedReportTool(store, f.owner).execute(base, { signal: controller.signal }));
+  await awaitStarted(started, pending); controller.abort(); gate.resolve();
   expect((await pending).success).toBe(false); expect(records).toEqual([]);
 });
 
 test('registered report projection precedes generic readers and actual artifact execution', async () => {
   const privateText = 'synthetic-private-contact';
   const f = researchScreeningFixture({ spans: exactSensitiveSpans([privateText]) });
-  const registry = new ToolRegistry(); installToolExecutionSafetyGuard(registry);
+  const admission = effectAdmissionFixture(); const registry = admission.registry; installToolExecutionSafetyGuard(registry);
   const { store, records } = artifactStore(); registerAgentResearchReportTool(registry, store, f.owner);
   const call = await registry.projectCall('report-projection', 'agent_research_report', { ...base, summary: `Before ${privateText} after [S1].` });
   expect(JSON.stringify(call)).not.toContain(privateText);
   await registry.releaseProjected(call);
-  const result = await registry.execute('report-execution', 'agent_research_report', { ...base, summary: `Before ${privateText} after [S1].` });
+  const result = await admission.run(registeredTool(registry, 'agent_research_report'), { ...base, summary: `Before ${privateText} after [S1].` });
   expect(result.success).toBe(true); expect(JSON.stringify(records)).not.toContain(privateText);
 });
 
@@ -148,8 +172,12 @@ test('report-shaped arguments cannot reach repair through a misspelled route', a
   const f = researchScreeningFixture({ spans: exactSensitiveSpans(['synthetic-private']) });
   const registry = new ToolRegistry(); bindAgentResearchSourceOwner(registry, f.owner);
   registerAgentResearchTool(registry, {} as CommandRegistry, { workspace: {}, platform: {} } as CommandContext);
-  const call = await registry.projectCall('typo-report', 'research', { ...base, action: 'repotr', summary: 'synthetic-private' });
-  try { expect(JSON.stringify(call)).not.toContain('synthetic-private'); } finally { await registry.releaseProjected(call); }
+  const input = { ...base, action: 'repotr', summary: 'synthetic-private' };
+  const refusal: unknown = await registry.projectCall('typo-report', 'research', input).then(
+    async call => { await registry.releaseProjected(call); return null; }, (error: unknown) => error);
+  expect(refusal).toBeInstanceOf(ToolInputProjectionError);
+  expect(JSON.stringify(refusal)).not.toContain('synthetic-private');
+  expect(f.calls).toEqual([]);
 });
 
 test('prepared reuse checks the new operation after authority callbacks and freezes derived bindings', async () => {
@@ -168,28 +196,37 @@ test('prepared reuse checks the new operation after authority callbacks and free
 for (const route of ['harness', 'workspace'] as const) {
   test(`${route} preserves exact original citation bytes through actual nested artifact execution`, async () => {
     const f = researchScreeningFixture(); const { store, records } = artifactStore();
-    const registry = new ToolRegistry(); registerAgentResearchReportTool(registry, store, f.owner);
+    const admission = effectAdmissionFixture(); const registry = admission.registry; registerAgentResearchReportTool(registry, store, f.owner);
     const context = { workspace: {}, platform: { artifactStore: store } } as unknown as CommandContext;
     const deps = { commandRegistry: {} as CommandRegistry, commandContext: context, toolRegistry: registry };
-    const tool = route === 'harness' ? createAgentHarnessTool(deps) : createAgentWorkspaceTool(deps);
+    if (route === 'harness') registerAgentHarnessTool(registry, deps.commandRegistry, context);
+    else registerAgentWorkspaceTool(registry, deps.commandRegistry, context);
+    const tool = registeredTool(registry, route === 'harness' ? 'agent_harness' : 'workspace');
     const url = 'HTTPS://EXAMPLE.TEST:443/doc%2fpart?id=one&id=two#anchor';
-    const result = await tool.execute({ ...(route === 'harness' ? { mode: 'run_workspace_action' } : { action: 'run' }), actionId: 'research-save-report', fields: { title: 'Report', question: 'Question', summary: 'Evidence [S1]', sources: `Source | ${url} | high`, confirm: 'yes' }, confirm: true, explicitUserRequest: 'Save it.' });
+    const result = await admission.run(tool, { ...(route === 'harness' ? { mode: 'run_workspace_action' } : { action: 'run' }), actionId: 'research-save-report', fields: { title: 'Report', question: 'Question', summary: 'Evidence [S1]', sources: `Source | ${url} | high`, confirm: 'yes' }, confirm: true, explicitUserRequest: 'Save it.' });
     expect(result.success).toBe(true); expect(records).toHaveLength(1);
     expect((records[0]!.metadata?.sources as { url: string }[])[0]!.url).toBe(url);
   });
   test(`${route} cancellation during nested report screening prevents artifact invocation`, async () => {
-    const started = deferred(), gate = deferred();
-    const f = researchScreeningFixture({ beforeProposal: async source => {
-      if (source.parts[0] === 'title' && source.parts[1] === 'Report') { started.resolve(); await gate.promise; }
-    } });
-    const { store, records } = artifactStore(); const registry = new ToolRegistry(); registerAgentResearchReportTool(registry, store, f.owner);
-    const context = { workspace: {}, platform: { artifactStore: store } } as unknown as CommandContext;
-    const deps = { commandRegistry: {} as CommandRegistry, commandContext: context, toolRegistry: registry };
-    const tool = route === 'harness' ? createAgentHarnessTool(deps) : createAgentWorkspaceTool(deps);
-    const controller = new AbortController();
-    const pending = tool.execute({ ...(route === 'harness' ? { mode: 'run_workspace_action' } : { action: 'run' }), actionId: 'research-save-report', fields: { title: 'Report', question: 'Question', summary: 'Evidence [S1]', sources: 'Source | https://example.test/doc | high', confirm: 'yes' }, confirm: true, explicitUserRequest: 'Save it.' }, { signal: controller.signal });
-    await started.promise; controller.abort(); gate.resolve(); await pending.catch(() => undefined);
-    expect(records).toEqual([]);
+    for (const retirement of route === 'workspace' ? ['signal', 'admission'] : ['signal']) {
+      const started = deferred(), gate = deferred();
+      const f = researchScreeningFixture({ beforeProposal: async source => {
+        if (source.parts[0] === 'title' && source.parts[1] === 'Report') { started.resolve(); await gate.promise; }
+      } });
+      const { store, records } = artifactStore(); const admission = effectAdmissionFixture(); const registry = admission.registry; registerAgentResearchReportTool(registry, store, f.owner);
+      const context = { workspace: {}, platform: { artifactStore: store } } as unknown as CommandContext;
+      const deps = { commandRegistry: {} as CommandRegistry, commandContext: context, toolRegistry: registry };
+      if (route === 'harness') registerAgentHarnessTool(registry, deps.commandRegistry, context);
+      else registerAgentWorkspaceTool(registry, deps.commandRegistry, context);
+      const tool = registeredTool(registry, route === 'harness' ? 'agent_harness' : 'workspace');
+      const controller = new AbortController();
+      const pending = ownPending(admission.run(tool, { ...(route === 'harness' ? { mode: 'run_workspace_action' } : { action: 'run' }), actionId: 'research-save-report', fields: { title: 'Report', question: 'Question', summary: 'Evidence [S1]', sources: 'Source | https://example.test/doc | high', confirm: 'yes' }, confirm: true, explicitUserRequest: 'Save it.' }, { signal: controller.signal }));
+      await awaitStarted(started, pending);
+      if (retirement === 'signal') controller.abort(); else admission.revoke();
+      gate.resolve(); await pending.catch(() => undefined);
+      expect((await pending).success).toBe(false);
+      expect(records).toEqual([]);
+    }
   });
 }
 

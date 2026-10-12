@@ -1,4 +1,6 @@
-import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
+import { prepareObservedKnowledgeNodeInput } from '../store-node-observation.js';
+import { createKnowledgeIngestUriCanonicalizer } from '../uri-canonicalization/ingest-owner.js';
+import { KnowledgeUriCanonicalizationHeldError, type KnowledgeUriCanonicalizer } from '../uri-canonicalization/reader.js';
 import { createHash } from 'node:crypto';
 import {
   emitKnowledgeIngestCompleted,
@@ -19,7 +21,7 @@ import type {
   KnowledgeSourceRecord,
   KnowledgeSourceType,
 } from '../types.js';
-import { canonicalizeUri, estimateTokens, isHttpUri, mergeTags, slugify } from '../shared.js';
+import { estimateTokens, isHttpUri, mergeTags, slugify } from '../shared.js';
 import { discoverBrowserKnowledgeProfiles } from './discover.js';
 import { readBrowserKnowledgeProfile } from './readers.js';
 import type {
@@ -34,6 +36,8 @@ import type {
 export interface BrowserKnowledgeIngestOptions extends BrowserKnowledgeFilter {
   readonly sessionId?: string | undefined;
   readonly connectorId?: string | undefined;
+  readonly signal?: AbortSignal | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
 }
 
 interface BrowserKnowledgeAggregate {
@@ -162,11 +166,14 @@ function extractionForAggregate(
   };
 }
 
-function aggregateBrowserEntries(entries: readonly BrowserKnowledgeEntry[]): BrowserKnowledgeAggregate[] {
+async function aggregateBrowserEntries(entries: readonly BrowserKnowledgeEntry[], uris: KnowledgeUriCanonicalizer): Promise<BrowserKnowledgeAggregate[]> {
   const buckets = new Map<string, BrowserKnowledgeEntry[]>();
-  for (const entry of entries) {
+  // Settle the complete URI batch before aggregation can collapse any entry.
+  const canonical = await uris.canonicalizeAll(entries.map((entry) => entry.url));
+  uris.assertCurrent();
+  for (const [index, entry] of entries.entries()) {
     if (!isHttpUri(entry.url)) continue;
-    const canonicalUri = canonicalizeUri(entry.url) ?? entry.url;
+    const canonicalUri = canonical[index] ?? entry.url;
     const bucket = buckets.get(canonicalUri) ?? [];
     bucket.push(entry);
     buckets.set(canonicalUri, bucket);
@@ -201,7 +208,9 @@ async function captureAggregate(
   aggregate: BrowserKnowledgeAggregate,
   options: Pick<BrowserKnowledgeIngestOptions, 'connectorId' | 'sessionId'>,
   onSourceStored: (source: KnowledgeSourceRecord) => void,
+  uris: KnowledgeUriCanonicalizer,
 ): Promise<{ source: KnowledgeSourceRecord; extraction: KnowledgeExtractionRecord }> {
+  uris.assertCurrent();
   const existing = context.store.getSourceByCanonicalUri(aggregate.canonicalUri);
   const sourceType = existing?.sourceType ?? sourceTypeForAggregate(aggregate);
   const connectorId = existing?.connectorId ?? options.connectorId ?? 'browser-local';
@@ -226,18 +235,20 @@ async function captureAggregate(
       ...(existing?.metadata ?? {}),
       ...metadataForAggregate(aggregate),
     },
-  });
+  }, uris.assertCurrent);
 
   onSourceStored(source);
+  uris.assertCurrent();
 
   const existingExtraction = context.store.getExtractionBySourceId(source.id);
   const extraction = existingExtraction ?? await context.store.upsertExtraction({
     sourceId: source.id,
     ...extractionForAggregate(aggregate, source),
-  });
+  }, uris.assertCurrent);
+  uris.assertCurrent();
 
   for (const entry of aggregate.entries) {
-    const browserNode = await upsertObservedKnowledgeNode(context.store, {
+    const browserInput = prepareObservedKnowledgeNodeInput(context.store, {
       kind: 'source_group',
       slug: slugify(`browser-${entry.browser}-${entry.profileName}`),
       title: `${entry.browser} ${entry.profileName}`,
@@ -251,6 +262,9 @@ async function captureAggregate(
         browserProfilePath: entry.profilePath,
       },
     }, 'browser-profile', source, () => context.store.getSource(source.id));
+    const nodes = await context.store.prepareNodeWrites([browserInput], { assertCurrent: uris.assertCurrent });
+    const browserNode = await context.store.upsertPreparedNode(nodes, 0);
+    uris.assertCurrent();
     await context.store.upsertEdge({
       fromKind: 'source',
       fromId: source.id,
@@ -265,7 +279,8 @@ async function captureAggregate(
         profileName: entry.profileName,
         ...(entry.sourceKind === 'bookmark' && entry.folderPath ? { folderPath: entry.folderPath } : {}),
       },
-    });
+    }, uris.assertCurrent);
+    uris.assertCurrent();
   }
 
   return { source, extraction };
@@ -306,8 +321,14 @@ export async function ingestBrowserKnowledge(
   options: BrowserKnowledgeIngestOptions = {},
 ): Promise<BrowserKnowledgeIngestResult> {
   await context.store.init();
-  const collected = await collectBrowserKnowledge(options);
-  const aggregates = aggregateBrowserEntries(collected.entries);
+  const uris = createKnowledgeIngestUriCanonicalizer(context, options);
+  const { signal: _signal, assertCurrent: _assertCurrent, ...filter } = options;
+  const retainedOptions = retainOwnedJson(filter);
+  const collected = await collectBrowserKnowledge(filter);
+  uris.assertCurrent(); retainedOptions.assertCurrent();
+  const retainedEntries = retainOwnedJson(collected.entries);
+  const aggregates = await aggregateBrowserEntries(collected.entries, uris);
+  uris.assertCurrent(); retainedEntries.assertCurrent();
   const sources: KnowledgeSourceRecord[] = [];
   const capturedSources: KnowledgeSourceRecord[] = [];
   const outcomes: BrowserKnowledgeIngestOutcome[] = [];
@@ -316,6 +337,7 @@ export async function ingestBrowserKnowledge(
   let failed = 0;
 
   for (const aggregate of aggregates) {
+    uris.assertCurrent(); retainedOptions.assertCurrent(); retainedEntries.assertCurrent();
     let sourceId: string | undefined;
     let captureCompleted = false;
     try {
@@ -325,10 +347,10 @@ export async function ingestBrowserKnowledge(
         sourceType: sourceTypeForAggregate(aggregate),
         uri: aggregate.canonicalUri,
       }), options.sessionId);
-      const { source, extraction } = await captureAggregate(context, aggregate, options, (stored) => { sourceId = stored.id; });
+      const { source, extraction } = await captureAggregate(context, aggregate, options, (stored) => { sourceId = stored.id; }, uris);
       captureCompleted = true;
       capturedSources.push(source);
-      await compileKnowledgeSource(context, source, extraction);
+      await compileKnowledgeSource(context, source, extraction, { signal: options.signal, assertCurrent: uris.assertCurrent });
       sources.push(source);
       imported += 1;
       outcomes.push({ canonicalUri: aggregate.canonicalUri, sourceId: source.id, capture: 'completed', compilation: 'completed' });
@@ -338,12 +360,14 @@ export async function ingestBrowserKnowledge(
         title: source.title,
       }), source.sessionId);
     } catch (error) {
+      if (error instanceof KnowledgeUriCanonicalizationHeldError || options.signal?.aborted) throw error;
+      uris.assertCurrent();
       const store = context.store, artifactStore = context.artifactStore, emit = context.emitIfReady;
-      const selectedOptions = retainOwnedJson(options), selectedAggregate = retainOwnedJson(aggregate);
+      const selectedOptions = retainOwnedJson(filter), selectedAggregate = retainOwnedJson(aggregate);
       const sourceGuard = createSemanticWriteGuard(store);
       if (sourceId) sourceGuard.source(sourceId);
       const assertDiagnosticCurrent = () => {
-        selectedOptions.assertCurrent(); selectedAggregate.assertCurrent(); sourceGuard.assertCurrent();
+        uris.assertCurrent(); selectedOptions.assertCurrent(); selectedAggregate.assertCurrent(); sourceGuard.assertCurrent();
         if (context.store !== store || context.artifactStore !== artifactStore || context.emitIfReady !== emit) throw new KnowledgeEntityAliasHoldError();
       };
       const diagnostic = await readNormalizedError(error, { site: 'engine.knowledge.browser-ingest-failure', assertCurrent: assertDiagnosticCurrent });

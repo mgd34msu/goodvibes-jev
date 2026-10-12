@@ -12,6 +12,11 @@
  * answers with no CORS header).
  */
 import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { createVoiceSetupService, captureVoiceWakeReadSource } from '@goodvibes-jev/engine/sdk/platform/runtime/voice-setup';
+import { resolveManagedWakePaths } from '../sdk/src/platform/voice/wake/provisioning.ts';
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.ts';
 import {
   createVoiceInstallHandler,
@@ -352,4 +357,50 @@ test('voice install forwards trusted cancellation and rechecks write authorizati
   expect(lifetime?.signal).toBe(controller.signal);
   lifetime?.assertCurrent?.(); allowed = false;
   expect(() => lifetime?.assertCurrent?.()).toThrow('no longer authorized');
+});
+
+
+describe('native managed wake source lifetime', () => {
+  function fixture(root: string) {
+    return createVoiceSetupService({ managedVoiceRoot: root, getConfig: () => '', setConfig() {}, resetLocalEngineFailureState() {},
+      admitExpensiveWork: () => ({ allowed: false, reason: 'No provisioning in this source control' }) });
+  }
+  test('original absent managed assets remain read-only and unrelated custom files do not retire them', () => {
+    const root = mkdtempSync(join(tmpdir(), 'native-wake-read-'));
+    try {
+      const service = fixture(root), paths = resolveManagedWakePaths(root);
+      mkdirSync(paths.modelsDir, { recursive: true }); mkdirSync(paths.frontEndDir, { recursive: true }); mkdirSync(paths.customDir, { recursive: true });
+      const current = captureVoiceWakeReadSource(service);
+      expect(service.wakeStatus().vadReady).toBe(false); current();
+      writeFileSync(join(paths.customDir, 'custom-only.txt'), 'Unrelated native custom source');
+      expect(current).not.toThrow(); expect(service.wakeStatus().vadReady).toBe(false);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+  test('creation and removal of an originally absent approved VAD asset retires custody', () => {
+    const root = mkdtempSync(join(tmpdir(), 'native-wake-read-'));
+    try {
+      const service = fixture(root), paths = resolveManagedWakePaths(root); mkdirSync(dirname(paths.vadPath), { recursive: true });
+      const current = captureVoiceWakeReadSource(service);
+      writeFileSync(paths.vadPath, 'Synthetic unverified managed VAD'); unlinkSync(paths.vadPath);
+      expect(current).toThrow(); expect(service.wakeStatus().vadReady).toBe(false);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+  test('complete original VAD bytes and attribution replacement refuse after an await boundary', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'native-wake-read-'));
+    try {
+      const service = fixture(root), paths = resolveManagedWakePaths(root); mkdirSync(dirname(paths.vadPath), { recursive: true });
+      writeFileSync(paths.vadPath, 'Synthetic unverified managed VAD'); writeFileSync(paths.vadNoticePath, 'Synthetic managed attribution');
+      const current = captureVoiceWakeReadSource(service); await Promise.resolve();
+      writeFileSync(paths.vadNoticePath, 'Changed managed attribution'); expect(current).toThrow(); expect(service.wakeStatus().vadReady).toBe(false);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+  test('copied service and late status accessor cannot borrow original managed file ownership', () => {
+    const root = mkdtempSync(join(tmpdir(), 'native-wake-read-')); let getters = 0;
+    try {
+      const service = fixture(root), current = captureVoiceWakeReadSource(service);
+      expect(() => captureVoiceWakeReadSource({ ...service })).toThrow();
+      Object.defineProperty(service, 'wakeStatus', { get() { getters++; return () => ({ vadReady: true }); } });
+      expect(current).toThrow(); expect(getters).toBe(0);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
 });

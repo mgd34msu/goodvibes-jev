@@ -1,3 +1,6 @@
+import { type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { selectHarnessCatalog } from './agent-harness-catalog-selection.ts';
+import { captureStatefulCatalogRequest } from './agent-harness-stateful-catalog-source.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import {
   buildCliServicePosture,
@@ -90,15 +93,6 @@ function describeEndpoint(
   };
 }
 
-function describeEndpointCandidate(endpoint: CliServiceEndpointPosture): Record<string, unknown> {
-  return {
-    endpointId: endpoint.id,
-    label: endpoint.label,
-    enabled: endpoint.enabled,
-    binding: endpoint.binding,
-    modelRoute: serviceEndpointModelRoute(),
-  };
-}
 
 function serviceEndpointModelRoute(): string {
   return 'host action:"service" or settings action:"get"';
@@ -113,24 +107,13 @@ function endpointLookupFromArgs(args: AgentHarnessServicePostureArgs): { readonl
   return query ? { source: 'query', input: query } : null;
 }
 
-function endpointSearchText(endpoint: CliServiceEndpointPosture): string {
-  return [
-    endpoint.id,
-    endpoint.label,
-    endpoint.binding.hostMode,
-    endpoint.binding.configuredHost,
-    endpoint.binding.host,
-    String(endpoint.binding.port),
-    endpoint.bindPosture.kind,
-    endpoint.bindPosture.label,
-  ].join('\n').toLowerCase();
-}
 
-function resolveEndpoint(
+async function resolveEndpoint(
   posture: CliServicePosture,
   args: AgentHarnessServicePostureArgs,
   options: { readonly includeParameters?: boolean } = {},
-): ServiceEndpointResolution {
+  catalogOptions: CatalogRankingOptions = {},
+): Promise<ServiceEndpointResolution> {
   const lookup = endpointLookupFromArgs(args);
   if (!lookup) {
     return {
@@ -152,17 +135,9 @@ function resolveEndpoint(
   if (label) {
     return { status: 'found', endpoint: describeEndpoint(label, { includeParameters: options.includeParameters, lookup: { ...lookup, resolvedBy: 'label' } }) };
   }
-  const searched = endpoints.filter((endpoint) => endpointSearchText(endpoint).includes(normalized));
-  if (searched.length === 1) {
-    return { status: 'found', endpoint: describeEndpoint(searched[0]!, { includeParameters: options.includeParameters, lookup: { ...lookup, resolvedBy: 'search' } }) };
-  }
-  if (searched.length > 1) {
-    return {
-      status: 'ambiguous',
-      input: lookup.input,
-      candidates: searched.map(describeEndpointCandidate),
-    };
-  }
+  const selected = await selectHarnessCatalog(endpoints, lookup.input, endpoint => ({ id: endpoint.id, description: endpoint.label, evidence: { endpoint, posture, args } }), catalogOptions, 'agent.service.endpoint');
+  catalogOptions.assertCurrent?.();
+  if (selected) return { status: 'found', endpoint: describeEndpoint(selected, { includeParameters: options.includeParameters, lookup: { ...lookup, resolvedBy: 'search' } }) };
   return {
     status: 'missing_lookup',
     usage: `Unknown service endpoint ${lookup.input}. Valid endpoint ids are controlPlane, httpListener, and web.`,
@@ -181,9 +156,13 @@ export function servicePostureCatalogStatus(): Record<string, unknown> {
 export async function servicePostureSummary(
   context: CommandContext,
   args: AgentHarnessServicePostureArgs,
+  options: CatalogRankingOptions = {},
 ): Promise<Record<string, unknown>> {
+  const request = captureStatefulCatalogRequest(context, args, options);
+  args = request.input;
   const includeDetails = args.includeParameters === true;
-  const posture = await buildCliServicePosture(servicePostureRuntime(context), servicePostureOptions(args));
+  const posture = await buildCliServicePosture(servicePostureRuntime(context), { ...servicePostureOptions(args), ...request.options });
+  request.assertCurrent();
   return {
     ownership: 'goodvibes-daemon',
     readOnly: true,
@@ -205,10 +184,17 @@ export async function servicePostureSummary(
 export async function describeHarnessServiceEndpoint(
   context: CommandContext,
   args: AgentHarnessServicePostureArgs,
+  options: CatalogRankingOptions = {},
 ): Promise<ServiceEndpointResolution> {
+  const request = captureStatefulCatalogRequest(context, args, options);
+  args = request.input;
   const posture = await buildCliServicePosture(servicePostureRuntime(context), {
     ...servicePostureOptions(args),
+    ...request.options,
     probe: true,
   });
-  return resolveEndpoint(posture, args, { includeParameters: true });
+  request.assertCurrent();
+  const result = await resolveEndpoint(posture, args, { includeParameters: true }, request.options);
+  request.assertCurrent();
+  return result;
 }

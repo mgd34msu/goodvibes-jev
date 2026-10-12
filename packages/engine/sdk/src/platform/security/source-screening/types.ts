@@ -64,7 +64,7 @@ export interface ResearchReferenceOperation {
 }
 export interface ProtectedSourceOwner {
   capture(parts: readonly string[]): ProtectedSource;
-  screen(source: ProtectedSource): Promise<SourceScreeningResult>;
+  screen(source: ProtectedSource, operation?: ResearchReferenceOperation): Promise<SourceScreeningResult>;
   /** Only this owner's genuine, current receipt can release projected source text. */
   project(receipt: SourceScreeningReceipt): readonly string[];
   /** Complete declared URL only. Query-role reading receives names, never the original URL or values. */

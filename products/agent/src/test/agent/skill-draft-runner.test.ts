@@ -1,12 +1,26 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { AgentNoteRegistry } from '../../agent/note-registry.ts';
 import { AgentSkillRegistry } from '../../agent/skill-registry.ts';
 import { runSkillDraftProposer, readSkillDraftLedger } from '../../agent/skill-draft-runner.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, scoreAnswer, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
 import type { SkillDraftRunResult } from '../../agent/skill-draft-runner.ts';
 import { createShellPathService } from '@/runtime/index.ts';
 import type { CommandContext } from '../../input/command-registry.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+
+let previous: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  previous = installJudgmentPort(undefined);
+  const readings = fakePort((name, question) => question.type === 'score' ? scoreAnswer(question, name === 'link' ? 0 : 3, 0.9999)
+    : question.type === 'choice' ? choiceAnswer(question, 'none', 0.9999) : noulAnswer(0.9999));
+  installJudgmentPort(readings.port);
+});
+afterEach(async () => { installJudgmentPort(previous); await cleanupResearchScreeningFixtures(); });
+const readingOptions = () => ({ sourceOwner: ordinaryResearchOwner(), assertCurrent: () => undefined });
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -32,7 +46,7 @@ function ledgerSiblingPath(registry: AgentSkillRegistry): string {
 function makeContextWithPaths(paths: ReturnType<typeof createShellPathService>): CommandContext {
   return {
     workspace: { shellPaths: paths } as unknown as CommandContext['workspace'],
-    session: null,
+    session: { runtime: { sessionId: 'native-empty-draft-fixture' } },
     user: null,
     conversationHistory: [],
     meta: {},
@@ -44,9 +58,9 @@ function makeContextWithPaths(paths: ReturnType<typeof createShellPathService>):
 // ---------------------------------------------------------------------------
 
 describe('runSkillDraftProposer: ledger round-trip', () => {
-  test('ledger file is created as a sibling of skills.json', () => {
+  test('ledger file is created as a sibling of skills.json', async () => {
     const { registry, paths } = tempRegistry();
-    runSkillDraftProposer(makeContextWithPaths(paths), registry);
+    await runSkillDraftProposer(makeContextWithPaths(paths), registry, readingOptions());
     // Empty pass, no new entries written, so ledger should not exist yet
     // (writeLedger only writes when newEntries.length > 0)
     // The ledger path must be in the same directory as skills.json
@@ -171,26 +185,20 @@ describe('runSkillDraftProposer: created skill shape', () => {
     expect(skill.provenance).toBe('auto-proposed-skill-draft');
   });
 
-  test('runSkillDraftProposer end-to-end: created skills have enabled:false and reviewState:fresh', () => {
-    // End-to-end test: runs the full proposer path (not registry.create directly)
-    // and verifies skills created through runSkillDraftProposer have the right shape.
-    // Empty context yields no eligible candidates so no skills are created;
-    // we verify the contract holds by checking what the registry would produce
-    // for any skill that the runner writes via registry.create.
+  test('a reviewed note actually produces a disabled native skill with its complete procedure', async () => {
     const { registry, paths } = tempRegistry();
-    const result = runSkillDraftProposer(makeContextWithPaths(paths), registry);
-    // Proposed may be 0 (empty context), but the runner must never throw
-    expect(result.proposed).toBeGreaterThanOrEqual(0);
-    expect(result.skipped).toBeGreaterThanOrEqual(0);
-    // For any skill written by the runner, verify the shape contract
-    for (const id of result.skillIds) {
-      const skill = registry.list().find((s) => s.id === id);
-      expect(skill).toBeDefined();
-      expect(skill?.enabled).toBe(false);
-      expect(skill?.reviewState).toBe('fresh');
-      expect(skill?.source).toBe('agent');
-      expect(skill?.provenance).toBe('auto-proposed-skill-draft');
-    }
+    const notes = AgentNoteRegistry.fromShellPaths(paths);
+    const body = 'First restore the backup in isolation, then verify all rows before switching traffic.';
+    const note = notes.create({ title: 'Restore verification', body }); notes.markReviewed(note.id);
+    const readings = fakePort((name, question) => question.type === 'score' ? scoreAnswer(question, name === 'link' ? 0 : 3, 0.9999)
+      : question.type === 'choice' ? choiceAnswer(question, name === 'target' ? 'skill' : 'none', 0.9999) : noulAnswer(0.9999));
+    installJudgmentPort(readings.port);
+    const result = await runSkillDraftProposer(makeContextWithPaths(paths), registry, readingOptions());
+    expect(result.proposed).toBe(1); expect(result.skillIds).toHaveLength(1);
+    const skill = registry.list().find(value => value.id === result.skillIds[0]);
+    expect(skill?.procedure).toContain(body); expect(skill?.enabled).toBe(false);
+    expect(skill?.reviewState).toBe('fresh'); expect(skill?.source).toBe('agent');
+    expect<string | undefined>(readSkillDraftLedger(registry)[0]?.skillId).toBe(skill?.id);
   });
 });
 
@@ -199,27 +207,27 @@ describe('runSkillDraftProposer: created skill shape', () => {
 // ---------------------------------------------------------------------------
 
 describe('runSkillDraftProposer: result shape', () => {
-  test('returns proposed=0, skipped=0, skillIds=[] for an empty-candidate pass', () => {
+  test('returns proposed=0, skipped=0, skillIds=[] for an empty-candidate pass', async () => {
     const { registry, paths } = tempRegistry();
-    const result: SkillDraftRunResult = runSkillDraftProposer(makeContextWithPaths(paths), registry);
+    const result: SkillDraftRunResult = await runSkillDraftProposer(makeContextWithPaths(paths), registry, readingOptions());
     expect(result.proposed).toBe(0);
     expect(result.skipped).toBeGreaterThanOrEqual(0);
     expect(result.skillIds).toHaveLength(0);
     expect(result.entries).toHaveLength(0);
   });
 
-  test('skipped count equals eligibleCount - persisted count (not proposals count)', () => {
+  test('skipped count equals eligibleCount - persisted count (not proposals count)', async () => {
     // We verify this indirectly: for an empty pass eligible=0, so skipped=0.
     // The formula is eligibleCount - newEntries.length, not eligibleCount - drafts.length.
     const { registry, paths } = tempRegistry();
-    const result: SkillDraftRunResult = runSkillDraftProposer(makeContextWithPaths(paths), registry);
+    const result: SkillDraftRunResult = await runSkillDraftProposer(makeContextWithPaths(paths), registry, readingOptions());
     // skipped must never be negative
     expect(result.skipped).toBeGreaterThanOrEqual(0);
     // proposed + skipped <= eligible (eligible=0 for empty context)
     expect(result.proposed + result.skipped).toBeGreaterThanOrEqual(0);
   });
 
-  test('skipped = eligibleCount - newEntries.length when eligible > 0 and name is pre-existing', () => {
+  test('skipped = eligibleCount - newEntries.length when eligible > 0 and name is pre-existing', async () => {
     // Seed the registry with a skill whose name will match what the proposer would generate.
     // Then add a pre-existing ledger entry for that name so the proposer skips it.
     // eligible = 0 from empty context means skipped = 0, so we verify the formula
@@ -238,7 +246,7 @@ describe('runSkillDraftProposer: result shape', () => {
       source: 'agent',
       provenance: 'auto-proposed-skill-draft',
     });
-    const result = runSkillDraftProposer(makeContextWithPaths(paths2), reg2);
+    const result = await runSkillDraftProposer(makeContextWithPaths(paths2), reg2, readingOptions());
     // With 0 eligible candidates from context, skipped must equal eligibleCount - proposed = 0 - 0 = 0
     // This verifies the formula is eligibleCount - newEntries.length, not eligibleCount - drafts.length
     expect(result.skipped).toBe(result.proposed + result.skipped - result.proposed);

@@ -10,6 +10,8 @@
 
 import { captureMemoryOperation, assertMemoryOperationCurrent, awaitMemoryOperation, type MemoryOperationOptions } from './memory-operation.js';
 import { randomUUID } from 'node:crypto';
+import { types as nodeTypes } from 'node:util';
+import { retainOwnedJson } from '../gate/judgment-input.js';
 import { rankReviewQueue, rankSemanticSearch, rerankRetrieved } from './memory-search-ranking.js';
 import { SQLiteStore } from './sqlite-store.js';
 import {
@@ -161,6 +163,90 @@ export interface MemoryAddOptions {
   };
 }
 
+/** Native publication proof; only the matching prepared add can validate it. */
+export type MemoryAddPublication = object;
+
+export interface MemoryPreparedAddCommitOptions extends MemoryOperationOptions {
+  readonly onPublished?: ((publication: MemoryAddPublication) => void) | undefined;
+}
+
+export interface MemoryPreparedAdd {
+  /** Exact canonical row getAll/get will expose after this add, allocated before effects. */
+  readonly record: Readonly<Omit<MemoryRecord, 'tags' | 'provenance'>> & {
+    readonly tags: readonly string[];
+    readonly provenance: readonly Readonly<ProvenanceLink>[];
+  };
+  assertCurrent(): void;
+  /** Valid only synchronously inside this plan's actual SQL publication callback. */
+  assertPublication(publication: MemoryAddPublication): void;
+  commit(options?: MemoryPreparedAddCommitOptions): Promise<MemoryRecord>;
+}
+
+const memoryOwnerMapGet = WeakMap.prototype.get;
+const memoryOwnerMapHas = WeakMap.prototype.has;
+const memoryOwnerMapSet = WeakMap.prototype.set;
+const memoryOwnerMapApply = Reflect.apply;
+function ownerMapGet<K extends object, V>(map: WeakMap<K, V>, key: K): V | undefined {
+  return memoryOwnerMapApply(memoryOwnerMapGet, map, [key]);
+}
+function ownerMapHas<K extends object, V>(map: WeakMap<K, V>, key: K): boolean {
+  return memoryOwnerMapApply(memoryOwnerMapHas, map, [key]);
+}
+function ownerMapSet<K extends object, V>(map: WeakMap<K, V>, key: K, value: V): void {
+  memoryOwnerMapApply(memoryOwnerMapSet, map, [key, value]);
+}
+
+const ownedMemoryStores = new WeakMap<MemoryStore, { readonly sqlite: SQLiteStore; readonly vector: SqliteVecMemoryIndex | null; readonly embeddings: MemoryEmbeddingProviderRegistry }>();
+
+/** Internal retained data-method binding. Replacement accessors are never invoked. */
+export function retainMemoryAddBinding(subject: object, keys: readonly PropertyKey[]): () => void {
+  const holders: Array<{ subject: object; prototype: unknown; key: PropertyKey; descriptor: PropertyDescriptor | undefined }> = [];
+  for (const key of keys) {
+    let holder: object | null = subject;
+    let depth = 0;
+    while (holder) {
+      if (nodeTypes.isProxy(holder) || ++depth > 64) throw new Error('Memory prepared add binding unavailable');
+      const prototype: unknown = Object.getPrototypeOf(holder);
+      const descriptor = Object.getOwnPropertyDescriptor(holder, key);
+      if (descriptor && !('value' in descriptor)) throw new Error('Memory prepared add binding unavailable');
+      holders.push({ subject: holder, prototype, key, descriptor });
+      if (descriptor) break;
+      if (prototype !== null && typeof prototype !== 'object') throw new Error('Memory prepared add binding unavailable');
+      holder = prototype;
+    }
+  }
+  return () => {
+    for (const saved of holders) {
+      const current = Object.getOwnPropertyDescriptor(saved.subject, saved.key), previous = saved.descriptor;
+      if (Object.getPrototypeOf(saved.subject) !== saved.prototype || Boolean(current) !== Boolean(previous)
+        || (current && previous && (!('value' in current) || !Object.is(current.value, previous.value)
+          || current.enumerable !== previous.enumerable || current.configurable !== previous.configurable
+          || current.writable !== previous.writable))) throw new Error('Memory prepared add binding changed');
+    }
+  };
+}
+
+const preparedOptionBindings = new WeakMap<MemoryPreparedAddCommitOptions, () => void>();
+
+/** Restrictive option capture, including the native publication callback identity. */
+export function captureMemoryPreparedAddOptions(options: MemoryPreparedAddCommitOptions = {}): MemoryPreparedAddCommitOptions {
+  const binding = retainMemoryAddBinding(options, ['signal', 'assertCurrent', 'onPublished']);
+  const lifecycle = captureMemoryOperation(options), onPublished = options.onPublished;
+  if (onPublished !== undefined && typeof onPublished !== 'function') throw new Error('Memory publication callback unavailable');
+  const captured: MemoryPreparedAddCommitOptions = Object.freeze({ signal: lifecycle.signal, onPublished, assertCurrent: () => {
+    binding(); assertMemoryOperationCurrent(lifecycle); binding();
+  } });
+  ownerMapSet(preparedOptionBindings, captured, binding);
+  return captured;
+}
+
+/** Identity/cancellation fence usable before the exact source callback adopts its native publication. */
+export function assertMemoryPreparedAddOptionsBinding(options: MemoryPreparedAddCommitOptions): void {
+  const current = ownerMapGet(preparedOptionBindings, options);
+  if (!current) throw new Error('Memory prepared options are not captured');
+  current(); options.signal?.throwIfAborted(); current();
+}
+
 export interface MemoryReviewPatch {
   state?: MemoryReviewState | undefined;
   confidence?: number | undefined;
@@ -228,6 +314,7 @@ export class MemoryStore {
           undefined,
           this.embeddingRegistry,
         );
+    ownerMapSet(ownedMemoryStores, this, { sqlite: this.sqlite, vector: this.vectorIndex, embeddings: this.embeddingRegistry });
   }
 
   async init(): Promise<void> {
@@ -331,6 +418,103 @@ export class MemoryStore {
     assertMemoryOperationCurrent(operation);
     logger.info('MemoryStore: record added', { id, cls: opts.cls });
     return record;
+  }
+
+  /** Prepare a fixed native add. Preparation itself writes nothing and grants no permission. */
+  prepareAdd(opts: MemoryAddOptions, options: MemoryOperationOptions = {}): MemoryPreparedAdd {
+    if (!ownerMapHas(ownedMemoryStores, this)) throw new Error('Memory prepared add owner unavailable');
+    const binding = retainMemoryAddBinding(this, ['prepareAdd', 'captureOperationScope', 'captureOperation',
+      'runMutation', 'createAddRecord', 'addRecordParameters', 'insertAddRecord', 'get', 'retrieve', 'save', 'sqlite', 'vectorIndex', 'embeddingRegistry', 'ready', 'backendEpoch']);
+    assertNativeMemoryAddMethods(this);
+    const owner = ownerMapGet(ownedMemoryStores, this);
+    if (!owner || owner.sqlite !== this.sqlite || owner.vector !== this.vectorIndex || owner.embeddings !== this.embeddingRegistry) {
+      throw new Error('Memory prepared add native backend unavailable');
+    }
+    const providerBinding = retainMemoryAddBinding(this.embeddingRegistry, ['getDefaultProviderOrNull']);
+    const sqliteBinding = retainMemoryAddBinding(this.sqlite, ['run', 'exec', 'save', 'close']);
+    const vectorBinding = this.vectorIndex ? retainMemoryAddBinding(this.vectorIndex, ['upsert']) : () => {};
+    const lifecycle = captureMemoryPreparedAddOptions(options), input = retainOwnedJson(opts, nodeTypes.isProxy);
+    const assertBindings = () => { binding(); providerBinding(); sqliteBinding(); vectorBinding(); };
+    assertBindings();
+    const scope = this.captureOperationScope();
+    assertBindings();
+    let expectedRevision = this.mutationRevision, consumed = false, publishing = false;
+    let publication: MemoryAddPublication | undefined;
+    let commitLifecycle: MemoryPreparedAddCommitOptions | undefined;
+    const assertCurrent = () => {
+      assertBindings(); assertMemoryOperationCurrent(lifecycle); assertBindings();
+      input.assertCurrent(); assertBindings(); scope(); assertBindings();
+      if (this.mutationRevision !== expectedRevision) throw new Error('Memory prepared add source changed');
+      if (commitLifecycle) { assertMemoryOperationCurrent(commitLifecycle); assertBindings(); }
+      input.assertCurrent(); assertBindings(); scope(); assertBindings();
+      if (this.mutationRevision !== expectedRevision) throw new Error('Memory prepared add source changed');
+    };
+    assertCurrent();
+    if (!this.ready) throw new Error('MemoryStore: not initialized');
+    const authored = this.createAddRecord(opts);
+    const canonical = rowToRecord(
+      ['id', 'scope', 'cls', 'summary', 'detail', 'tags', 'provenance', 'review_state', 'confidence',
+        'reviewed_at', 'reviewed_by', 'stale_reason', 'created_at', 'updated_at', 'valid_from', 'valid_until'],
+      this.addRecordParameters(authored),
+    );
+    const record = Object.freeze({ ...canonical,
+      tags: Object.freeze([...canonical.tags]),
+      provenance: Object.freeze(canonical.provenance.map(link => Object.freeze({ ...link }))),
+    });
+    freezeNewMemoryData(record);
+    // Internal writer/vector input is detached too; callers only receive the immutable plan row.
+    const written: MemoryRecord = { ...authored, tags: [...canonical.tags],
+      provenance: canonical.provenance.map(link => ({ ...link })) };
+    const expectedRow = JSON.stringify(canonical);
+    assertCurrent();
+    const store = this;
+    const prepared: MemoryPreparedAdd = Object.freeze({
+      record,
+      assertCurrent,
+      assertPublication(receipt: MemoryAddPublication) {
+        if (this !== prepared || !publishing || receipt !== publication) throw new Error('Memory publication is not owned by this plan');
+        assertBindings(); scope(); assertBindings(); assertMemoryOperationCurrent(lifecycle); assertBindings();
+        input.assertCurrent();
+        if (commitLifecycle) assertMemoryPreparedAddOptionsBinding(commitLifecycle);
+        assertBindings();
+        if (store.mutationRevision !== expectedRevision || JSON.stringify(store.get(written.id)) !== expectedRow) {
+          throw new Error('Memory prepared publication changed');
+        }
+        assertBindings();
+      },
+      async commit(commitOptions: MemoryPreparedAddCommitOptions = {}): Promise<MemoryRecord> {
+        if (this !== prepared || consumed) throw new Error('Memory prepared add is not available');
+        consumed = true;
+        commitLifecycle = captureMemoryPreparedAddOptions(commitOptions);
+        assertCurrent();
+        const signals = [lifecycle.signal, commitLifecycle.signal].filter((signal): signal is AbortSignal => signal !== undefined);
+        const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
+        const operation = store.captureOperation({ signal, assertCurrent });
+        store.insertAddRecord(written, operation, () => {
+          expectedRevision = store.mutationRevision;
+          assertBindings(); scope(); assertBindings(); assertMemoryOperationCurrent(lifecycle); assertBindings();
+          input.assertCurrent();
+          if (commitLifecycle) assertMemoryPreparedAddOptionsBinding(commitLifecycle);
+          assertBindings();
+          if (JSON.stringify(store.get(written.id)) !== expectedRow) throw new Error('Memory prepared publication changed');
+          assertBindings();
+          publication = Object.freeze({}); publishing = true;
+          try {
+            const outcome: unknown = commitLifecycle?.onPublished?.(publication);
+            if (outcome !== undefined) {
+              if (outcome instanceof Promise) void outcome.catch(() => {});
+              throw new TypeError('Memory publication callbacks must be synchronous');
+            }
+          } finally { publishing = false; }
+        });
+        store.vectorIndex?.upsert(written, operation);
+        await store.save(operation);
+        assertMemoryOperationCurrent(operation);
+        logger.info('MemoryStore: prepared record added', { id: written.id, cls: written.cls });
+        return { ...canonical, tags: [...canonical.tags], provenance: canonical.provenance.map(link => ({ ...link })) };
+      },
+    });
+    return prepared;
   }
 
   /** Retrieve a single record by ID. */
@@ -860,17 +1044,65 @@ export class MemoryStore {
       undefined,
       this.embeddingRegistry,
     );
+    ownerMapSet(ownedMemoryStores, this, { sqlite: this.sqlite, vector: this.vectorIndex, embeddings: this.embeddingRegistry });
     await this.init();
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────────
 
-  private runMutation(sql: Parameters<SQLiteStore['run']>[0], params: Parameters<SQLiteStore['run']>[1], operation: MemoryOperationOptions): void {
+  private createAddRecord(opts: MemoryAddOptions): MemoryRecord {
+    const now = Date.now();
+    const id = `mem_${now.toString(36)}_${randomUUID().replace(/-/g, '').slice(0, 8)}`;
+
+    const record: MemoryRecord = {
+      id,
+      scope: opts.scope ?? 'project',
+      cls: opts.cls,
+      summary: opts.summary,
+      detail: opts.detail,
+      tags: opts.tags ?? [],
+      provenance: opts.provenance ?? [],
+      reviewState: opts.review?.state ?? 'fresh',
+      confidence: clampConfidence(opts.review?.confidence ?? 60),
+      reviewedAt: opts.review?.reviewedAt,
+      reviewedBy: opts.review?.reviewedBy,
+      staleReason: opts.review?.staleReason,
+      createdAt: now,
+      updatedAt: now,
+      validFrom: opts.validFrom,
+      validUntil: opts.validUntil,
+    };
+
+    return record;
+  }
+
+  private addRecordParameters(record: MemoryRecord): Array<string | number | null> {
+    return [record.id, record.scope, record.cls, record.summary, record.detail ?? null,
+      JSON.stringify(record.tags), JSON.stringify(record.provenance), record.reviewState, record.confidence,
+      record.reviewedAt ?? null, record.reviewedBy ?? null, record.staleReason ?? null,
+      record.createdAt, record.updatedAt, record.validFrom ?? null, record.validUntil ?? null];
+  }
+
+  private insertAddRecord(record: MemoryRecord, operation: MemoryOperationOptions, onPublished?: () => void): void {
+    this.runMutation(
+      `INSERT INTO memory_records
+         (id, scope, cls, summary, detail, tags, provenance, review_state, confidence, reviewed_at, reviewed_by, stale_reason, created_at, updated_at, valid_from, valid_until)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      this.addRecordParameters(record), operation, onPublished,
+    );
+  }
+
+  private runMutation(sql: Parameters<SQLiteStore['run']>[0], params: Parameters<SQLiteStore['run']>[1], operation: MemoryOperationOptions, onPublished?: () => void): void {
     assertMemoryOperationCurrent(operation);
     const state = this.operations.get(operation);
     if (!state) throw new Error('Memory operation is not owned by this store');
     const revision = ++this.mutationRevision;
-    try { this.sqlite.run(sql, params); }
+    try {
+      this.sqlite.run(sql, params);
+      if (this.mutationRevision !== revision) throw new Error('Memory operation source changed');
+      state.revision = revision;
+      onPublished?.();
+    }
     finally {
       if (this.mutationRevision !== revision) throw new Error('Memory operation source changed');
       state.revision = revision;
@@ -885,4 +1117,39 @@ export class MemoryStore {
       logger.warn('MemoryStore: autosave failed', { error: summarizeError(err) });
     });
   }
+}
+
+function freezeNewMemoryData(value: unknown): void {
+  if (!value || typeof value !== 'object') return;
+  for (const child of Object.values(value)) freezeNewMemoryData(child);
+  Object.freeze(value);
+}
+
+const nativePrepareAdd = MemoryStore.prototype.prepareAdd;
+const nativeAddMethods = ['prepareAdd', 'captureOperationScope', 'captureOperation', 'runMutation',
+  'createAddRecord', 'addRecordParameters', 'insertAddRecord', 'get', 'retrieve', 'save']
+  .map(key => ({ key, value: Object.getOwnPropertyDescriptor(MemoryStore.prototype, key)?.value }));
+function assertNativeMemoryAddMethods(store: MemoryStore): void {
+  for (const original of nativeAddMethods) {
+    let holder: object | null = store;
+    while (holder) {
+      const slot = Object.getOwnPropertyDescriptor(holder, original.key);
+      if (slot) {
+        if (!('value' in slot) || slot.value !== original.value) throw new Error('Memory prepared add native method changed');
+        break;
+      }
+      holder = Object.getPrototypeOf(holder);
+    }
+    if (!holder) throw new Error('Memory prepared add native method unavailable');
+  }
+}
+/** Internal native bridge. A copied/constructed store cannot issue a prepared add. */
+export function prepareMemoryStoreAdd(store: MemoryStore, input: MemoryAddOptions, options?: MemoryOperationOptions): MemoryPreparedAdd {
+  if (!ownerMapHas(ownedMemoryStores, store)) throw new Error('Memory prepared add owner unavailable');
+  const current = retainMemoryAddBinding(store, ['prepareAdd']);
+  if (store.prepareAdd !== nativePrepareAdd) throw new Error('Memory prepared add owner changed');
+  current();
+  const prepared = nativePrepareAdd.call(store, input, options);
+  current();
+  return prepared;
 }

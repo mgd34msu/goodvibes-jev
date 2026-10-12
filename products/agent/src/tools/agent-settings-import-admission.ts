@@ -16,7 +16,7 @@ import { agentDaemonConfigClient, agentDaemonConfigClientRevision, buildAgentCon
 import { buildSecretBackedConfigUpdate, defaultSecretBackedScope, isSecretConfigKey } from '../config/secret-config.ts';
 import { assertAgentWorkspaceImportPreviewPrivacy, captureAgentWorkspaceTuiSettingsImport } from '../input/agent-workspace-settings.ts';
 import type { CommandContext } from '../input/command-registry.ts';
-import { resolveWorkspaceActionDetail } from './agent-harness-workspace-actions.ts';
+import { resolveWorkspaceActionIdentity } from './agent-harness-workspace-actions.ts';
 import { captureModelReadingInput, assertModelReadingInputCurrent, modelReadingServicePath } from './agent-harness-model-reading-source.ts';
 
 type Options = NonNullable<Parameters<Tool['execute']>[1]>;
@@ -27,7 +27,7 @@ export function isAgentSettingsImportMutation(name: string, args: Record<string,
   if (name === 'import_goodvibes_settings') return imports.has(action);
   if (name === 'settings') return imports.has(action) && action !== 'apply' && action !== 'confirm';
   if (name !== 'agent_harness' || args.mode !== 'run_workspace_action') return false;
-  const resolved = resolveWorkspaceActionDetail(args);
+  const resolved = resolveWorkspaceActionIdentity(args);
   return !!resolved && resolved.status !== 'ambiguous' && resolved.action.kind === 'settings-import'
     && action !== 'preview' && (imports.has(action) || args.confirm === true);
 }
@@ -42,7 +42,7 @@ export function isAgentWorkspaceSettingsImportPreview(input: Record<string, unkn
   }
   assertAgentWorkspaceImportPreviewPrivacy(args);
   if (args.mode !== 'run_workspace_action') return false;
-  const resolved = resolveWorkspaceActionDetail(args);
+  const resolved = resolveWorkspaceActionIdentity(args);
   return !!resolved && resolved.status !== 'ambiguous' && resolved.action.kind === 'settings-import'
     && !isAgentSettingsImportMutation('agent_harness', args);
 }

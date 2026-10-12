@@ -96,7 +96,8 @@ export async function collectServicePosture(context: CommandContext, ownership?:
   }
 }
 
-export async function collectSnapshot(context: CommandContext) {
+export async function collectSnapshot(context: CommandContext, ownership: { readonly signal?: AbortSignal | undefined; readonly assertCurrent?: (() => void) | undefined } = {}) {
+  ownership.signal?.throwIfAborted(); ownership.assertCurrent?.();
   const registry = surfaceRegistry(context);
   return await collectOnboardingSnapshot({
     config: requirePlatform(context).configManager,
@@ -121,7 +122,7 @@ export async function collectSnapshot(context: CommandContext) {
         },
       }),
     },
-  });
+  }, ownership);
 }
 
 export function lookupFromArgs(args: AgentHarnessSetupArgs): { readonly source: SetupLookupSource; readonly input: string } | null {
@@ -133,14 +134,6 @@ export function lookupFromArgs(args: AgentHarnessSetupArgs): { readonly source: 
   return query ? { source: 'query', input: query } : null;
 }
 
-export function itemSearchText(item: OnboardingStep1CapabilityItem): string {
-  return [
-    item.id,
-    item.label,
-    item.detail,
-    item.selected ? 'selected ready configured enabled' : 'optional attention unselected',
-  ].join('\n').toLowerCase();
-}
 export function summarizeLocalBehavior(snapshot: Awaited<ReturnType<typeof collectSnapshot>>): Record<string, unknown> {
   const discovery = snapshot.localBehaviorDiscovery;
   return {

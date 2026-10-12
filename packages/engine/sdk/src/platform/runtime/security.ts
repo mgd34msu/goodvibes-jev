@@ -72,3 +72,5 @@ export type {
   EnforceGateResult,
   SignedPolicyBundle,
 } from './permissions/index.js';
+
+export { capturePolicyRuntimeReadSource } from './permissions/policy-runtime.js';

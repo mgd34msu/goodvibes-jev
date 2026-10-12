@@ -1,4 +1,5 @@
-import { VoiceProviderRegistry } from './provider-registry.js';
+import { VoiceProviderRegistry, captureVoiceProviderReadSource } from './provider-registry.js';
+import { assertSecurityReadSource, captureSecurityReadBindings } from '../security/read-source.js';
 import { DaemonErrorCategory, GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
 import type {
   VoiceDescriptor,
@@ -28,12 +29,28 @@ export interface VoiceBillableUsage {
   readonly unit: 'characters' | 'seconds';
 }
 
+const voiceListReadSources = new WeakMap<VoiceService, () => () => void>();
+const getVoiceListReadSources = voiceListReadSources.get.bind(voiceListReadSources);
+const setVoiceListReadSources = voiceListReadSources.set.bind(voiceListReadSources);
+
+export function captureVoiceListReadSource(service: VoiceService): () => void {
+  const capture = getVoiceListReadSources(service);
+  assertSecurityReadSource(capture !== undefined);
+  return capture();
+}
+
 export class VoiceService {
   constructor(
     private readonly registry: VoiceProviderRegistry,
     /** Cost-attribution sink for METERED providers (wired by the runtime root). */
     private readonly onBillableUsage?: ((usage: VoiceBillableUsage) => void) | undefined,
-  ) {}
+  ) {
+    setVoiceListReadSources(this, () => {
+      const bindings = captureSecurityReadBindings(this, ['registry', 'listVoices']);
+      const providerCurrent = captureVoiceProviderReadSource(registry);
+      return () => { bindings(); providerCurrent(); bindings(); };
+    });
+  }
 
   /** Record a metered call; a provider with billing 'none' emits nothing (honest no-dimension). */
   private recordUsage(provider: { id: string; billing?: 'metered' | 'none' | undefined }, usage: Omit<VoiceBillableUsage, 'providerId'>): void {

@@ -1,3 +1,4 @@
+import { captureMcpBackendMethods } from './call-currentness.js';
 import type { McpToolSchema } from './client.js';
 import type { McpToolCallOptions } from './client-types.js';
 import type { RegisteredTool } from './registry.js';
@@ -59,6 +60,10 @@ export interface McpApi {
   listSandboxBindings(): readonly McpSandboxBindingRecord[];
   listRecentSecurityDecisions(limit?: number): readonly McpDecisionRecord[];
   listAllTools(): Promise<readonly RegisteredTool[]>;
+  captureToolCatalog(options?: McpToolCallOptions): {
+    readonly listAllTools: () => Promise<readonly RegisteredTool[]>;
+    readonly assertCurrent: () => void;
+  };
   setServerTrustMode(serverName: string, mode: McpTrustMode): void;
   setServerRole(serverName: string, role: McpServerRole): void;
   quarantineSchema(serverName: string, reason: QuarantineReason, detail?: string): void;
@@ -86,6 +91,7 @@ export interface McpApiRegistry {
   listServerSandboxBindings(): readonly McpSandboxBindingRecord[];
   listRecentSecurityDecisions(limit?: number): readonly McpDecisionRecord[];
   listAllTools(): Promise<readonly RegisteredTool[]>;
+  captureToolCatalog(options?: McpToolCallOptions): ReturnType<McpApi['captureToolCatalog']>;
   setServerTrustMode(serverName: string, mode: McpTrustMode): void;
   setServerRole(serverName: string, role: McpServerRole): void;
   quarantineSchema(serverName: string, reason: QuarantineReason, detail?: string): void;
@@ -93,6 +99,20 @@ export interface McpApiRegistry {
 }
 
 export function createMcpApi(registry: McpApiRegistry): McpApi {
+  const captureToolCatalog = (() => {
+    try {
+      const assertOriginal = captureMcpBackendMethods(registry, ['captureToolCatalog']);
+      const capture = registry.captureToolCatalog;
+      return (options?: McpToolCallOptions): ReturnType<McpApi['captureToolCatalog']> => {
+        assertOriginal();
+        const catalog = capture.call(registry, options);
+        assertOriginal();
+        return catalog;
+      };
+    } catch (error) {
+      return (_options?: McpToolCallOptions): ReturnType<McpApi['captureToolCatalog']> => { throw error; };
+    }
+  })();
   return {
     ...(registry.callTool ? { callTool: (name: string, args: Readonly<Record<string, unknown>>, options?: McpToolCallOptions) => registry.callTool!(name, args, options) } : {}),
     ...(registry.getToolSchema ? { getToolSchema: (name: string, options?: McpToolCallOptions) => registry.getToolSchema!(name, options) } : {}),
@@ -126,6 +146,7 @@ export function createMcpApi(registry: McpApiRegistry): McpApi {
     listAllTools() {
       return registry.listAllTools();
     },
+    captureToolCatalog,
     setServerTrustMode(serverName, mode) {
       registry.setServerTrustMode(serverName, mode);
     },

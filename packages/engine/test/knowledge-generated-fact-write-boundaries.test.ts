@@ -1,3 +1,4 @@
+import { extractionValueFixtureFor, extractionValueFixtureReading, type ExtractionValueFixtures } from './_helpers/knowledge-extraction-value-readings.js';
 import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
 import { createSchema, KNOWLEDGE_SCHEMA_VERSION } from '../sdk/src/platform/knowledge/store-schema.js';
 import { writeKnowledgeNodeRow } from '../sdk/src/platform/knowledge/store-node-history.js';
@@ -8,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
-import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, scoreAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { createKnowledgeNodeOperatorMutation, KnowledgeNodeMutationHeldError } from '../sdk/src/platform/knowledge/store-node-authority.js';
 import { semanticHash } from '../sdk/src/platform/knowledge/semantic/utils.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
@@ -25,11 +26,16 @@ const spaceId = 'support-write-space';
 const text = 'AC-7 has four HDMI inputs. AC-7 power consumption is 25 W. AC-7 does not support Bluetooth.';
 let previous: JudgmentPort | undefined;
 const roots: string[] = [];
-beforeEach(() => { previous = installJudgmentPort(undefined); });
+const extractionValues: Array<ExtractionValueFixtures[number]> = [];
+beforeEach(() => { extractionValues.length = 0; previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function readings(probability: (name: string, state: unknown) => number = () => 0.99) {
-  const fake = fakePort((name, question, state) => name === 'authority'
-    ? choiceAnswer(question, 'secondary', 0.99) : noulAnswer(probability(name, state)));
+  const fake = fakePort((name, question, state) => {
+    const extractionValue = extractionValueFixtureReading(name, question, state, extractionValues);
+    if (extractionValue !== undefined) return noulAnswer(extractionValue);
+    if (name === 'factTrust' || name === 'sourceSupport' || name === 'subjectSupport') return scoreAnswer(question, 4, 0.99); // Authored supported synthetic facts; grading behavior has separate controls.
+    return name === 'authority' ? choiceAnswer(question, 'secondary', 0.99) : noulAnswer(probability(name, state));
+  });
   installJudgmentPort(fake.port); return fake;
 }
 async function fixture() {
@@ -43,6 +49,7 @@ async function fixture() {
     summary: 'AC-7 has four HDMI inputs.', evidence: 'AC-7 has four HDMI inputs.',
     classification: { kind: 'specification', title: 'HDMI inputs', summary: 'AC-7 has four HDMI inputs.', value: 'four HDMI inputs', labels: ['HDMI'], aliases: ['HDMI inputs'] }, extractor: 'synthetic',
   };
+  extractionValues.push(extractionValueFixtureFor(source, extraction, 0.99));
   return { store, subject, source, extraction, input };
 }
 /** Simulate records already on disk before the serving gate, not new automatic approvals. */
@@ -140,16 +147,16 @@ describe('generated fact support persistence boundaries', () => {
     const outcome = run.catch((error: unknown) => error);
     await started.promise; await store.upsertSource({ ...source, summary: 'Concurrent corrected source.' }); const before = snapshot(store);
     released.resolve(extractionResult()); expect(await outcome).toBeInstanceOf(KnowledgeSourceQualityHeldError);
-    expect(fake.requests).toHaveLength(1);
-    expect(Object.keys(fake.requests[0]!.questions)).toEqual(['repairSubjectSelected']); expect(snapshot(store)).toBe(before);
+    expect(fake.requests).toHaveLength(2);
+    expect(fake.requests.map(request => Object.keys(request.questions))).toEqual([['repairSubjectSelected'], ['extractionValue']]); expect(snapshot(store)).toBe(before);
   });
   test('deadline cancellation prevents ignored-signal generation from making late writes', async () => {
     const { store, source } = await fixture(); const fake = readings(); const released = Promise.withResolvers<KnowledgeSemanticExtraction>();
     const before = snapshot(store);
     await expect(withSupportBudget((signal) => enrichKnowledgeSource({ store, llm: { async completeJson() { return released.promise; }, async completeText() { return null; } } }, source, { force: true, signal }), 10)).rejects.toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError);
     released.resolve(extractionResult()); await settleEvents(10);
-    expect(snapshot(store)).toBe(before); expect(fake.requests).toHaveLength(1);
-    expect(Object.keys(fake.requests[0]!.questions)).toEqual(['repairSubjectSelected']);
+    expect(snapshot(store)).toBe(before); expect(fake.requests).toHaveLength(2);
+    expect(fake.requests.map(request => Object.keys(request.questions))).toEqual([['repairSubjectSelected'], ['extractionValue']]);
   });
   test('a later unsupported legacy active fact prevents all subject-link rewrites', async () => {
     const fixtureState = await fixture(); const { source, subject } = fixtureState;
@@ -263,8 +270,8 @@ describe('generated fact support persistence boundaries', () => {
     const outcome = run.catch((error: unknown) => error);
     await started.promise; stopped = true; released.resolve(extractionResult());
     expect(await outcome).toBeInstanceOf(KnowledgeSourceQualityHeldError);
-    expect(fake.requests).toHaveLength(1);
-    expect(Object.keys(fake.requests[0]!.questions)).toEqual(['repairSubjectSelected']); expect(snapshot(store)).toBe(before);
+    expect(fake.requests).toHaveLength(2);
+    expect(fake.requests.map(request => Object.keys(request.questions))).toEqual([['repairSubjectSelected'], ['extractionValue']]); expect(snapshot(store)).toBe(before);
   });
   test('a lifecycle stop invalidates a prepared profile before write entry', async () => {
     const { store, input } = await fixture(); readings(); let stopped = false;

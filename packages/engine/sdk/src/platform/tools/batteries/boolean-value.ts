@@ -1,3 +1,4 @@
+import { captureNativeDecisionPolicy } from './decision-policy.js';
 /**
  * `engine.tools.boolean-value`: a tool call passed a string where the schema
  * declares a boolean parameter, and the string is not the JSON literal `true`
@@ -36,7 +37,7 @@ export function booleanValueView(tool: string, parameter: string, description: s
   return { tool, parameter, ...(description ? { description: clip(description) } : {}), value: clip(value) };
 }
 
-export const booleanValue = defineBattery({
+const booleanValueDefinition = {
   name: 'engine.tools.boolean-value',
   version: 1,
   description: 'Which boolean, if any, a string value sent for a boolean tool parameter means.',
@@ -60,4 +61,6 @@ export const booleanValue = defineBattery({
     { name: 'a sentence', state: booleanValueView('write', 'overwrite', 'Replace the file if it exists.', 'the config file for the build'), expect: { boolean_value: 'neither' } },
     { name: 'maybe', state: booleanValueView('exec', 'background', 'Run the command in the background.', 'maybe'), expect: { boolean_value: 'neither' } },
   ],
-});
+} as const;
+export const booleanValue = defineBattery(booleanValueDefinition);
+export const booleanValuePolicy = captureNativeDecisionPolicy(booleanValueDefinition, booleanValue);

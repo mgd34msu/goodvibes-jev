@@ -1,3 +1,4 @@
+import { screeningAnswers } from './_helpers/screening-answers.js';
 import { afterEach, expect, spyOn, test } from 'bun:test';
 import * as directClient from '../sdk/src/platform/security/source-screening/direct-client.ts';
 import { createProtectedSourceOwner } from '../sdk/src/platform/security/source-screening/owner.ts';
@@ -29,8 +30,8 @@ function sourceFrom(body: Record<string, unknown>): { readonly revision: string;
 function proposal(revision: string, spans: readonly { part: number; start: number; end: number }[] = []): Response {
   return Response.json({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify({ revision, spans }) } }] });
 }
-function judgment(complete = 1, precise = 1, model = 'jev-1.13.0'): Response {
-  return Response.json({ model, answers: { complete: { type: 'noul', noul: complete }, precise: { type: 'noul', noul: precise } },
+function judgment(body: Record<string, unknown>, complete = 1, precise = 1, model = 'jev-1.13.0'): Response {
+  return Response.json({ model, answers: screeningAnswers(body, { complete: complete, precise: precise }),
     usage: { input_tokens: 10, output_tokens: 2 } });
 }
 interface Call { readonly url: string; readonly headers: readonly [string, string][]; readonly body: Record<string, unknown>; }
@@ -47,7 +48,7 @@ function fixture(options: {
     const call: Call = { url: request.url, headers: [...request.headers], body };
     calls.push(call);
     if (options.respond) return options.respond(call, calls.length);
-    return call.url === routes.proposal ? proposal(sourceFrom(body).revision) : judgment();
+    return call.url === routes.proposal ? proposal(sourceFrom(body).revision) : judgment(body);
   });
   restore.push(() => stub.mockRestore());
   const lifetime = new AbortController();
@@ -81,7 +82,7 @@ async function rejection(work: Promise<unknown>): Promise<Error> {
 test('explicit hosted grant uses fixed Abacus and pinned TypeSafe protocols with private origin-bound headers', async () => {
   const text = 'Contact person@example.test, then keep the build notes. 🙂';
   const f = fixture({ respond: call => call.url === routes.proposal
-    ? proposal(sourceFrom(call.body).revision, [{ part: 1, start: 8, end: 27 }]) : judgment() });
+    ? proposal(sourceFrom(call.body).revision, [{ part: 1, start: 8, end: 27 }]) : judgment(call.body) });
   expect(await project(f.owner, ['Direct message', text])).toEqual(['Direct message', 'Contact [redacted], then keep the build notes. 🙂']);
   expect(f.calls.map(call => call.url)).toEqual([routes.proposal, routes.judgment]);
   expect(f.calls[0]?.body.model).toBe('route-llm');
@@ -174,7 +175,7 @@ test('an encoded ordinary query name keeps its exact original reference after th
 });
 
 test('hosted transport admits only two literal HTTPS targets and replaces every caller-supplied header', async () => {
-  const f = fixture();
+  const f = fixture({ respond: call => call.url === routes.proposal ? proposal(sourceFrom(call.body).revision) : Response.json({ transport: 'synthetic' }) });
   const owned = createScreeningTransport({ kind: 'hosted', credentials: f.config.credentials,
     signal: f.lifetime.signal, assertCurrent() {}, timeoutMs: 1_000 });
   closes.push(() => owned.close());
@@ -196,7 +197,7 @@ test('hosted transport admits only two literal HTTPS targets and replaces every 
 });
 
 test.each([0, 0.5, 0.97])('hosted coverage probability %s stays held without a lucky semantic retry', async complete => {
-  const f = fixture({ respond: call => call.url === routes.proposal ? proposal(sourceFrom(call.body).revision) : judgment(complete) });
+  const f = fixture({ respond: call => call.url === routes.proposal ? proposal(sourceFrom(call.body).revision) : judgment(call.body, complete) });
   const handle = f.owner.capture(['Ordinary complete source.']);
   expect(await f.owner.screen(handle)).toEqual({ status: 'held', reason: 'unsettled' });
   expect(await f.owner.screen(handle)).toEqual({ status: 'held', reason: 'unsettled' });
@@ -204,7 +205,7 @@ test.each([0, 0.5, 0.97])('hosted coverage probability %s stays held without a l
 });
 
 test('hosted model mismatch never grants calibrated source privacy authority', async () => {
-  const f = fixture({ respond: call => call.url === routes.proposal ? proposal(sourceFrom(call.body).revision) : judgment(1, 1, 'jev-9.0.0') });
+  const f = fixture({ respond: call => call.url === routes.proposal ? proposal(sourceFrom(call.body).revision) : judgment(call.body, 1, 1, 'jev-9.0.0') });
   expect(await f.owner.screen(f.owner.capture(['Ordinary source.']))).toEqual({ status: 'held', reason: 'route-unavailable' });
   expect(f.calls).toHaveLength(2);
 });
@@ -223,7 +224,7 @@ test.each(['revision', 'range', 'overlap'])('hosted malformed %s proposal cannot
 
 test('hosted semantic precision refusal cannot redact unrelated source to force completeness', async () => {
   const f = fixture({ respond: call => call.url === routes.proposal ? proposal(sourceFrom(call.body).revision, [{ part: 0, start: 0, end: 8 }])
-    : judgment(1, 0) });
+    : judgment(call.body, 1, 0) });
   expect(await f.owner.screen(f.owner.capture(['Ordinary source.']))).toEqual({ status: 'held', reason: 'unsettled' });
   expect(f.calls).toHaveLength(2);
 });
@@ -273,7 +274,7 @@ test('hosted canonical Jev retry retains fixed key, source and live grant withou
   let judgmentCalls = 0;
   const f = fixture({ respond: call => {
     if (call.url === routes.proposal) return proposal(sourceFrom(call.body).revision);
-    return ++judgmentCalls === 1 ? new Response('synthetic-private-upstream-body', { status: 503 }) : judgment();
+    return ++judgmentCalls === 1 ? new Response('synthetic-private-upstream-body', { status: 503 }) : judgment(call.body);
   } });
   expect(await project(f.owner, ['Ordinary source.'])).toEqual(['Ordinary source.']);
   expect(f.calls.map(call => call.url)).toEqual([routes.proposal, routes.judgment, routes.judgment]);

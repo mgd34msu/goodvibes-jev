@@ -1,3 +1,5 @@
+import { assertSecurityReadSource, captureSecurityReadBindings, retainSecurityReadData } from '../../security/read-source.js';
+import { captureSimulationReadSource } from './simulation.js';
 /**
  * Divergence dashboard and enforcement gate.
  *
@@ -141,7 +143,14 @@ export interface DivergenceDashboardConfig {
  * }
  * ```
  */
+const dashboardReadSources = new WeakMap<DivergenceDashboard, () => () => void>();
+const getDashboardReadSources = dashboardReadSources.get.bind(dashboardReadSources);
+const setDashboardReadSources = dashboardReadSources.set.bind(dashboardReadSources);
+export function captureDivergenceReadSource(dashboard: DivergenceDashboard): () => void {
+  const capture = getDashboardReadSources(dashboard); assertSecurityReadSource(capture !== undefined); return capture();
+}
 export class DivergenceDashboard {
+  private _readRevision = 0;
   private readonly _simulator: PermissionSimulator;
   /**
    * @remarks
@@ -166,6 +175,12 @@ export class DivergenceDashboard {
     config: DivergenceDashboardConfig = {},
   ) {
     this._simulator = simulator;
+    setDashboardReadSources(this, () => {
+      const binding = captureSecurityReadBindings(this, ['_readRevision', '_mode', '_simulator', '_threshold', '_minEvals', '_maxTrendEntries', '_trend', 'getSnapshot']);
+      const revision = this._readRevision, mode = this._mode;
+      const trendCurrent = retainSecurityReadData(this._trend), simulationCurrent = captureSimulationReadSource(simulator);
+      return () => { binding(); trendCurrent(); simulationCurrent(); assertSecurityReadSource(this._readRevision === revision && this._mode === mode); };
+    });
     this._mode = mode;
     this._threshold = config.threshold ?? DivergenceDashboard.DEFAULT_THRESHOLD;
     this._minEvals = config.minEvaluationsForGate ?? DivergenceDashboard.DEFAULT_MIN_EVALS;
@@ -244,6 +259,7 @@ export class DivergenceDashboard {
     if (this._trend.length >= this._maxTrendEntries) {
       this._trend.shift();
     }
+    this._readRevision++;
     this._trend.push(entry);
 
     return entry;
@@ -290,6 +306,7 @@ export class DivergenceDashboard {
         throw new DivergenceGateError(gate.message, gate);
       }
     }
+    this._readRevision++;
     this._mode = mode;
   }
 

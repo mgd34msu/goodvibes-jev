@@ -17,26 +17,22 @@ import type {
   KnowledgeSemanticEnrichmentStateRecord,
 } from './types.js';
 
-export function writeKnowledgeNodeRow(sqlite: Pick<SQLiteStore, 'run'>, record: KnowledgeNodeRecord): void {
+/** Exact codec shared by the native write and its private publication receipt. */
+export function knowledgeNodeRow(record: KnowledgeNodeRecord): [{ columns: string[]; values: [(string | number | null)[]] }] {
   const raw = knowledgeRawRepresentation(record);
+  return [{ columns: ['id', 'kind', 'slug', 'title', 'summary', 'aliases', 'status', 'confidence', 'source_id', 'metadata', 'created_at', 'updated_at'],
+    values: [[record.id, record.kind, record.slug, record.title, record.summary ?? null, JSON.stringify([...record.aliases]),
+      record.status, record.confidence, record.sourceId ?? null, JSON.stringify(raw.metadata), raw.createdAt, raw.updatedAt]] }];
+}
+
+export function writeKnowledgeNodeRow(sqlite: Pick<SQLiteStore, 'run'>, record: KnowledgeNodeRecord): ReturnType<typeof knowledgeNodeRow> {
+  const rows = knowledgeNodeRow(record);
   sqlite.run(`
     INSERT OR REPLACE INTO knowledge_nodes (
       id, kind, slug, title, summary, aliases, status, confidence, source_id, metadata, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `, [
-    record.id,
-    record.kind,
-    record.slug,
-    record.title,
-    record.summary ?? null,
-    JSON.stringify([...record.aliases]),
-    record.status,
-    record.confidence,
-    record.sourceId ?? null,
-    JSON.stringify(raw.metadata),
-    raw.createdAt,
-    raw.updatedAt,
-  ]);
+  `, rows[0].values[0]);
+  return rows;
 }
 
 /** Descriptive 0-100 producer score. Missing/nonfinite values never become evidence. */

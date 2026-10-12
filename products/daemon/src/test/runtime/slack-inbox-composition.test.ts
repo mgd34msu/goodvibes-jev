@@ -1,3 +1,4 @@
+import { screeningAnswers } from '../helpers/screening-answers.js';
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -99,7 +100,7 @@ function endpoints() {
       }) } }] });
     }
     sourceCalls.push({ path });
-    return Response.json({ model: 'jev-1.13.0', answers: { complete: { type: 'noul', noul: 1 }, precise: { type: 'noul', noul: 1 } }, usage: { input_tokens: 10, output_tokens: 2 } });
+    return Response.json({ model: 'jev-1.13.0', answers: screeningAnswers(body, { complete: 1, precise: 1 }), usage: { input_tokens: 10, output_tokens: 2 } });
   } });
   cleanups.push(async () => { await local.stop(true); await slack.stop(true); });
   const authority = new AbortController();

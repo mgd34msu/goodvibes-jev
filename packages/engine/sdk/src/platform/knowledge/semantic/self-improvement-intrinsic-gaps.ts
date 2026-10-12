@@ -2,6 +2,8 @@ import { knowledgeRawRepresentation } from '../store-record-representation.js';
 import { createSemanticWriteGuard } from './primary-source-plan.js';
 import { KnowledgeRepairFactUsefulnessHeldError } from './repair-usefulness/types.js';
 import { createKnowledgeFactQualityReader, type KnowledgeFactQualityPlan } from './fact-quality.js';
+import { canonicalRepairSubjectNodes } from './repair-subjects.js';
+import { prepareSelfImprovementAssessment } from './self-improvement-assessment/plan.js';
 import { prepareObservedKnowledgeNodeInput } from '../store-node-observation.js';
 import { isGeneratedKnowledgeSource } from '../generated-projections.js';
 import { yieldEvery } from '../cooperative.js';
@@ -13,14 +15,10 @@ import type {
 } from '../types.js';
 import { buildKnowledgeSemanticGraphIndex } from './graph-index.js';
 import {
-  factCoverage,
   factsForObject,
   factsForSource,
-  hasSpecificIdentity,
-  isConcreteRepairSubject,
   isSelfImprovementFactCandidate,
   linkedObjectsForSource,
-  repairTargetFactCount,
   sourcesForObject,
   subjectTitle,
 } from './self-improvement-graph.js';
@@ -56,11 +54,15 @@ export async function discoverIntrinsicGaps(
     await yieldEvery(sourceIndex++);
     const linkedObjects = linkedObjectsForSource(source.id, edges, nodesById);
     const facts = factsForSource(source.id, edges, nodesById);
-    for (const [subjectIndex, subject] of linkedObjects.filter((node) => isConcreteRepairSubject(node, objectProfiles)).entries()) {
+    const selection = await canonicalRepairSubjectNodes({ store, spaceId, context: { source }, nodes: linkedObjects,
+      text: 'Which supplied subjects need a complete intrinsic feature and specification profile?', objectProfiles,
+      signal, shouldStop, assertCurrent: graph.assertCurrent });
+    for (const [subjectIndex, subject] of selection.nodes.entries()) {
       await yieldEvery(subjectIndex, 16);
-      const quality = await prepareQuality(store, spaceId, subject, facts, signal, shouldStop, graph.assertCurrent);
-      if (!shouldCreateIntrinsicFeatureGap(subject, quality.facts, objectProfiles, source)) continue;
-      if (await upsertIntrinsicFeatureGap(store, spaceId, subject, quality.facts, [source], createdIds, quality)) created += 1;
+      const quality = await prepareQuality(store, spaceId, subject, facts, signal, shouldStop, selection.assertCurrent);
+      const coverage = await intrinsicCoverage(store, spaceId, subject, quality, [source], objectProfiles, signal, shouldStop);
+      if (coverage.sufficient) continue;
+      if (await upsertIntrinsicFeatureGap(store, spaceId, subject, [source], createdIds, coverage.assertCurrent)) created += 1;
     }
   }
 
@@ -68,17 +70,19 @@ export async function discoverIntrinsicGaps(
     let subjectIndex = 0;
     for (const subject of nodesById.values()) {
       await yieldEvery(subjectIndex++);
-      if (!isConcreteRepairSubject(subject, objectProfiles)) continue;
       const sourceList = sourcesForObject(subject.id, edges, sourcesById);
+      const selection = await canonicalRepairSubjectNodes({ store, spaceId, context: { subject }, nodes: [subject], evidenceSources: sourceList,
+        text: `What are the complete features and specifications for ${subjectTitle(subject)}?`, objectProfiles,
+        signal, shouldStop, assertCurrent: graph.assertCurrent });
+      if (selection.nodes.length === 0) continue;
       const facts = [
         ...sourceList.flatMap((source) => factsForSource(source.id, edges, nodesById)),
         ...factsForObject(subject.id, edges, nodesById),
       ];
-      const quality = await prepareQuality(store, spaceId, subject, facts, signal, shouldStop, graph.assertCurrent);
-      const coverage = factCoverage(quality.facts);
-      if (coverage.coreFactCount >= 4 && coverage.coveredAreas.size >= 3) continue;
-      if (!hasSpecificIdentity(subject, sourceList[0])) continue;
-      if (await upsertIntrinsicFeatureGap(store, spaceId, subject, quality.facts, sourceList, createdIds, quality)) created += 1;
+      const quality = await prepareQuality(store, spaceId, subject, facts, signal, shouldStop, selection.assertCurrent);
+      const coverage = await intrinsicCoverage(store, spaceId, subject, quality, sourceList, objectProfiles, signal, shouldStop);
+      if (coverage.sufficient) continue;
+      if (await upsertIntrinsicFeatureGap(store, spaceId, subject, sourceList, createdIds, coverage.assertCurrent)) created += 1;
     }
   }
 
@@ -89,24 +93,15 @@ async function upsertIntrinsicFeatureGap(
   store: KnowledgeStore,
   spaceId: string,
   subject: KnowledgeNodeRecord,
-  facts: readonly KnowledgeNodeRecord[],
   sources: readonly KnowledgeSourceRecord[],
   createdIds: Set<string>,
-  quality: KnowledgeFactQualityPlan,
+  assertCurrent: () => void,
 ): Promise<boolean> {
-  quality.assertCurrent();
+  assertCurrent();
   const id = `sem-intrinsic-gap-${semanticHash(spaceId, subject.id, 'features-specifications')}`;
   if (createdIds.has(id)) return false;
   createdIds.add(id);
   const existing = store.getNode(id);
-  const subjectIds = new Set([subject.id]);
-  const existingRepaired = existing
-    ? existing.status === 'active'
-      && readString(existing.metadata.repairStatus) === 'repaired'
-      && facts.filter((fact) => isSelfImprovementFactCandidate(fact, subjectIds)).length >= repairTargetFactCount(existing)
-    : false;
-  if (existingRepaired) return false;
-
   const title = `What are the complete features and specifications for ${subjectTitle(subject)}?`;
   const primarySource = sources[0]!;
   const gapInput = prepareObservedKnowledgeNodeInput(store, {
@@ -130,7 +125,7 @@ async function upsertIntrinsicFeatureGap(
         repairStatus: readString(existing?.metadata.repairStatus) ?? 'open',
         createdBy: 'semantic-self-improvement',
       }),
-    }, 'research-task', subject, () => { quality.assertCurrent(); return store.getNode(subject.id); });
+    }, 'research-task', subject, () => { assertCurrent(); return store.getNode(subject.id); });
   const edges: import('../types.js').KnowledgeEdgeUpsertInput[] = sources.map((source) => ({
         fromKind: 'source' as const,
         fromId: source.id,
@@ -164,7 +159,7 @@ async function upsertIntrinsicFeatureGap(
   const existingVersion = JSON.stringify(existing);
   await store.applyPreparedIngest({ sources: [], extractions: [], nodes: [], edges: [], issues: [] }, async () => ({
     nodes: [gapInput], edges, issues: [issue], assertCurrent: () => {
-      quality.assertCurrent();
+      assertCurrent();
       if (store.getNode(id) !== existing || JSON.stringify(store.getNode(id)) !== existingVersion) throw new KnowledgeRepairFactUsefulnessHeldError('stale');
     },
   }));
@@ -179,14 +174,12 @@ async function prepareQuality(store: KnowledgeStore, spaceId: string, subject: K
   return reader.prepare([...new Map(facts.filter((fact) => isSelfImprovementFactCandidate(fact)).map((fact) => [fact.id, fact])).values()]);
 }
 
-function shouldCreateIntrinsicFeatureGap(
-  subject: KnowledgeNodeRecord,
-  facts: readonly KnowledgeNodeRecord[],
-  objectProfiles: readonly KnowledgeObjectProfilePolicy[],
-  source?: KnowledgeSourceRecord,
-): boolean {
-  if (!isConcreteRepairSubject(subject, objectProfiles)) return false;
-  if (!hasSpecificIdentity(subject, source)) return false;
-  const coverage = factCoverage(facts);
-  return coverage.coreFactCount < 4 || coverage.coveredAreas.size < 3;
+async function intrinsicCoverage(store: KnowledgeStore, spaceId: string, subject: KnowledgeNodeRecord,
+  quality: KnowledgeFactQualityPlan, sources: readonly KnowledgeSourceRecord[], objectProfiles: readonly KnowledgeObjectProfilePolicy[],
+  signal?: AbortSignal, shouldStop?: () => boolean) {
+  const coverage = await prepareSelfImprovementAssessment({ kind: 'coverage', store, spaceId,
+    query: `What are the complete features and specifications for ${subjectTitle(subject)}?`, subjects: [subject], sources,
+    facts: quality.facts, objectProfiles, signal, shouldStop, assertCurrent: quality.assertCurrent });
+  if (coverage.kind !== 'coverage') throw new KnowledgeRepairFactUsefulnessHeldError('malformed');
+  coverage.assertCurrent(); return coverage;
 }

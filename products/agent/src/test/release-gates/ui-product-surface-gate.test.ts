@@ -169,7 +169,7 @@ describe('UI product surface gate', () => {
     const context = modelCatalogContext();
     const managers = createTestManagers();
 
-    const surfaces = listHarnessUiSurfaces(context, { includeParameters: true, limit: 500 }) as readonly {
+    const surfaces = await listHarnessUiSurfaces(context, { includeParameters: true, limit: 500 }) as readonly {
       readonly id?: string;
       readonly summary?: string;
       readonly modelRoute?: string;

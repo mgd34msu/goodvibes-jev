@@ -1,16 +1,18 @@
-import type { ArtifactDescriptor } from '@goodvibes-jev/engine/sdk/platform/artifacts';
-import type { CommandContext } from '../input/command-registry.ts';
+import { types as nodeTypes } from 'node:util';
 import { previewHarnessText } from './agent-harness-text.ts';
 import { memoryExternalProviderLiveCertification, memoryExternalProviderReceiptCertification } from './agent-harness-memory-provider-certification.ts';
 import type { MemoryExternalProviderCertification } from './agent-harness-memory-provider-certification.ts';
+import { captureCatalogMethods, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { modelReadingServicePath } from './agent-harness-model-reading-source.ts';
+import { capturePersonalOpsSnapshot, protectPersonalOpsData } from './agent-harness-personal-ops-source.ts';
+import { readPersonalOpsBoolean, readPersonalOpsReceiptStatus } from './agent-harness-personal-ops-readings.ts';
+import { assertMemoryCurrent, retainMemoryReadingOptions, readMemoryCredentialState, readMemoryLiveStatus, readMemoryPublicText, readMemoryReceiptMember, readMemoryRouteRole, selectMemoryProvider } from './agent-harness-memory-provider-readings.ts';
+import { findCredentialCandidates } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 
 export type MemoryExternalProviderStatus = 'not-published' | 'receipt-evidence-found' | 'available' | 'needs-setup' | 'blocked' | 'error' | 'disabled' | 'unknown';
 export type MemoryExternalProviderSetupStatus = 'contract-needed' | 'receipt-evidence-found' | 'ready' | 'needs-setup' | 'blocked' | 'error' | 'disabled';
 export type MemoryExternalProviderContractStatus = 'missing' | 'artifact-evidence-found' | 'published';
-
-interface ArtifactListLike {
-  readonly list?: (limit?: number) => readonly ArtifactDescriptor[];
-}
 
 export interface MemoryPostureProvider {
   readonly id: string;
@@ -186,25 +188,7 @@ function readNumber(value: unknown): number | null {
 }
 
 function readRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-function readBooleanLike(value: unknown): boolean | null {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    if (value === 1) return true;
-    if (value === 0) return false;
-  }
-  const raw = readString(value).toLowerCase();
-  if (['true', 'yes', 'y', '1', 'on', 'enabled', 'available', 'ready', 'configured', 'connected', 'healthy', 'supported'].includes(raw)) return true;
-  if (['false', 'no', 'n', '0', 'off', 'disabled', 'unavailable', 'not-configured', 'not_configured', 'missing', 'blocked'].includes(raw)) return false;
-  return null;
-}
-
-function readLimit(value: unknown, fallback: number): number {
-  const parsed = typeof value === 'string' && value.trim() ? Number(value) : value;
-  if (typeof parsed !== 'number' || !Number.isFinite(parsed)) return fallback;
-  return Math.max(1, Math.min(200, Math.trunc(parsed)));
+  return value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : {};
 }
 
 function readTimestamp(value: unknown): string | null {
@@ -215,18 +199,9 @@ function readTimestamp(value: unknown): string | null {
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
 }
 
-const EXTERNAL_MEMORY_SECRET_PATTERNS: readonly [RegExp, string][] = [
-  [/("?\b(?:api[-_]?key|apikey|token|secret|password|passwd|credential|authorization)\b"?\s*:\s*)("[^"]*"|'[^']*'|[^\s,}]+)/gi, '$1"<redacted>"'],
-  [/\b([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTHORIZATION|BEARER)[A-Z0-9_]*)=("[^"]*"|'[^']*'|[^\s]+)/gi, '$1=<redacted>'],
-  [/(\b(?:token|secret|password|passwd|api[-_]?key|apikey|authorization|credential)\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}]+)/gi, '$1<redacted>'],
-  [/(Authorization:\s*Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1<redacted>'],
-];
-
 function sanitizeExternalProviderText(value: unknown, limit = 160): string | null {
   const raw = readString(value);
-  if (!raw) return null;
-  const redacted = EXTERNAL_MEMORY_SECRET_PATTERNS.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), raw);
-  return previewHarnessText(redacted, limit);
+  return raw ? previewHarnessText(raw, limit) : null;
 }
 
 function titleFromProviderId(providerId: string): string {
@@ -250,130 +225,87 @@ function readRouteValue(value: unknown): string {
     || readString(record.url);
 }
 
-function upperCamel(value: string): string {
-  return value ? `${value[0]!.toUpperCase()}${value.slice(1)}` : value;
+/** Preserve stable native identities. Labels and names do not mint provider ids. */
+function readExternalProviderLiveRecordId(record: Record<string, unknown>): string {
+  return readString(record.providerId) || readString(record.externalProviderId) || readString(record.memoryProviderId)
+    || readString(record.backendId) || readString(record.id) || readString(record.key);
 }
 
-function readLiveRoute(record: Record<string, unknown>, aliases: readonly string[]): string | null {
-  const containers = [
-    record,
-    readRecord(record.routes),
-    readRecord(record.modelRoutes),
-    readRecord(record.actions),
-    readRecord(record.commands),
-    readRecord(record.links),
-  ];
-  for (const alias of aliases) {
-    for (const container of containers) {
-      const route = readRouteValue(container[`${alias}Route`])
-        || readRouteValue(container[alias])
-        || readRouteValue(container[`${alias}Command`])
-        || readRouteValue(container[`${alias}Action`]);
-      if (route) return route;
-    }
+async function readProviderIdentity(record: Record<string, unknown>, options: CatalogRankingOptions): Promise<string> {
+  const native = readExternalProviderLiveRecordId(record);
+  if (native) return native;
+  const phrase = readString(record.provider) || readString(record.name);
+  if (!phrase) return '';
+  const selected = await selectMemoryProvider(EXTERNAL_MEMORY_PROVIDERS, phrase, options);
+  return selected?.id ?? '';
+}
+
+async function readBoolean(value: unknown, parameter: string, record: unknown, options: CatalogRankingOptions): Promise<boolean> {
+  assertMemoryCurrent(options);
+  if (value === 1) return true;
+  if (value === 0) return false;
+  const state = await readPersonalOpsBoolean({ parameter, value, record }, options);
+  assertMemoryCurrent(options);
+  if (state === null) throw new ToolInputProjectionError('held');
+  return state;
+}
+
+async function firstBoolean(record: Record<string, unknown>, keys: readonly string[], options: CatalogRankingOptions): Promise<boolean | null> {
+  for (const key of keys) {
+    if (!Object.hasOwn(record, key)) continue;
+    return readBoolean(record[key], key, record, options);
   }
   return null;
 }
 
-function readCapabilityState(value: unknown): boolean | null {
-  const direct = readBooleanLike(value);
-  if (direct !== null) return direct;
-  const record = readRecord(value);
-  return readBooleanLike(record.ready)
-    ?? readBooleanLike(record.enabled)
-    ?? readBooleanLike(record.available)
-    ?? readBooleanLike(record.supported)
-    ?? readBooleanLike(record.configured)
-    ?? readBooleanLike(record.allowed)
-    ?? (readRouteValue(record) ? true : null);
+type OperationRole = Awaited<ReturnType<typeof readMemoryRouteRole>>['role'];
+interface OperationEvidence { readonly route: string | null; readonly ready: boolean | null }
+
+async function publishedOperations(record: Record<string, unknown>, options: CatalogRankingOptions): Promise<ReadonlyMap<OperationRole, OperationEvidence>> {
+  const result = new Map<OperationRole, OperationEvidence>();
+  const containers = [ { name: 'record', value: record }, ...['routes', 'modelRoutes', 'actions', 'commands', 'links',
+    'capabilities', 'operations', 'features', 'supports', 'readiness'].map(name => ({ name, value: readRecord(record[name]) })) ];
+  for (const container of containers) for (const [field, value] of Object.entries(container.value)) {
+    // The full record and field are available to the registered reader. There is no lexical shortlist.
+    const { role, form } = await readMemoryRouteRole({ record, container: container.name, field, value }, options);
+    assertMemoryCurrent(options);
+    if (role === 'none') continue;
+    const nested = readRecord(value);
+    const ready = form === 'flag' && (value === null || typeof value !== 'object')
+      ? await readBoolean(value, field, record, options)
+      : await firstBoolean(nested, ['ready', 'enabled', 'available', 'supported', 'configured', 'allowed'], options);
+    if (form === 'flag' && ready === null) throw new ToolInputProjectionError('held');
+    const route = form === 'route' ? readRouteValue(value) || null : null;
+    if (form === 'route' && route === null) throw new ToolInputProjectionError('held');
+    const previous = result.get(role);
+    // Explicit false is never overridden by the existence of a route.
+    if (previous?.ready !== null && previous?.ready !== undefined && ready !== null && previous.ready !== ready)
+      throw new ToolInputProjectionError('held');
+    if (previous?.route && route && previous.route !== route) throw new ToolInputProjectionError('held');
+    result.set(role, { route: previous?.route ?? route, ready: previous?.ready ?? ready });
+  }
+  return result;
 }
 
-function readCapabilityFlag(
-  record: Record<string, unknown>,
-  aliases: readonly string[],
-  route: string | null,
-): boolean | null {
-  const containers = [
-    record,
-    readRecord(record.capabilities),
-    readRecord(record.operations),
-    readRecord(record.features),
-    readRecord(record.supports),
-    readRecord(record.readiness),
-  ];
-  let sawFalse = false;
-  for (const alias of aliases) {
-    const keys = [alias, `${alias}Ready`, `${alias}Enabled`, `${alias}Supported`, `can${upperCamel(alias)}`];
-    for (const container of containers) {
-      for (const key of keys) {
-        const state = readCapabilityState(container[key]);
-        if (state === true) return true;
-        if (state === false) sawFalse = true;
-      }
+/** Complete producer capture precedes every semantic read; held sources never fall back to word rules. */
+async function protectExternalMemoryData(value: unknown, options: CatalogRankingOptions): Promise<unknown> {
+  const capture = capturePersonalOpsSnapshot(value);
+  const assertSource = () => { options.signal?.throwIfAborted(); capture.assertCurrent(value); };
+  options.retainCurrent?.(assertSource);
+  const current = { ...options, assertCurrent: () => { assertMemoryCurrent(options); assertSource(); } };
+  const protectedValue = await protectPersonalOpsData(capture.captured, current);
+  const visit = async (entry: unknown): Promise<unknown> => {
+    current.assertCurrent();
+    if (typeof entry === 'string') return findCredentialCandidates(entry).length ? readMemoryPublicText(entry, current) : entry;
+    if (Array.isArray(entry)) { const values: unknown[] = []; for (const child of entry) values.push(await visit(child)); return values; }
+    if (entry !== null && typeof entry === 'object') {
+      const result: Record<string, unknown> = Object.create(null);
+      for (const [key, child] of Object.entries(entry)) Object.defineProperty(result, key, { value: await visit(child), enumerable: true });
+      return result;
     }
-  }
-  if (route) return true;
-  return sawFalse ? false : null;
-}
-
-function normalizeExternalProviderCredentialState(record: Record<string, unknown>): string | null {
-  const candidate = record.credentialState
-    ?? record.authState
-    ?? record.authenticationState
-    ?? record.credentialRef
-    ?? record.secretRef
-    ?? record.credentials
-    ?? record.auth
-    ?? record.configured;
-  const boolState = readBooleanLike(candidate);
-  if (boolState === true) return 'configured-secret-ref';
-  if (boolState === false) return 'missing';
-  const candidateRecord = readRecord(candidate);
-  if (Object.keys(candidateRecord).length > 0) {
-    const nestedState = readBooleanLike(candidateRecord.present)
-      ?? readBooleanLike(candidateRecord.configured)
-      ?? readBooleanLike(candidateRecord.connected)
-      ?? readBooleanLike(candidateRecord.available)
-      ?? readBooleanLike(candidateRecord.ready);
-    if (nestedState === true) return 'configured-secret-ref';
-    if (nestedState === false) return 'missing';
-  }
-  const raw = readString(candidate).toLowerCase();
-  if (!raw) return null;
-  if (['missing', 'none', 'not-configured', 'not_configured', 'required', 'needs-setup', 'needs_setup', 'unauthenticated'].includes(raw)) return 'missing';
-  if (raw.includes('oauth') || raw.includes('connected-host')) return 'connected-host-auth';
-  if (raw.includes('secret') || raw.includes('ref') || raw.includes('configured') || raw.includes('present') || raw.includes('available')) return 'configured-secret-ref';
-  return 'published-redacted';
-}
-
-function normalizeExternalProviderLiveStatus(
-  value: unknown,
-  configured: boolean | null,
-  reachable: boolean | null,
-  enabled: boolean | null,
-): MemoryExternalProviderStatus {
-  if (enabled === false) return 'disabled';
-  const raw = readString(value).toLowerCase().replace(/_/g, '-');
-  if (['ok', 'ready', 'healthy', 'available', 'connected', 'active', 'succeeded', 'success', 'synced'].includes(raw)) return 'available';
-  if (['needs-setup', 'setup-needed', 'not-configured', 'missing-credentials', 'auth-required', 'unauthenticated'].includes(raw)) return 'needs-setup';
-  if (['blocked', 'denied', 'forbidden', 'permission-denied'].includes(raw)) return 'blocked';
-  if (['error', 'errored', 'failed', 'failure', 'unreachable'].includes(raw)) return 'error';
-  if (['disabled', 'inactive', 'off'].includes(raw)) return 'disabled';
-  if (configured === true && reachable !== false) return 'available';
-  return raw ? 'unknown' : 'unknown';
-}
-
-function readExternalProviderLiveRecordId(record: Record<string, unknown>): string {
-  return normalizeExternalProviderId(
-    readString(record.providerId)
-    || readString(record.provider)
-    || readString(record.externalProviderId)
-    || readString(record.memoryProviderId)
-    || readString(record.backendId)
-    || readString(record.id)
-    || readString(record.key)
-    || readString(record.name),
-  );
+    return entry;
+  };
+  const result = await visit(protectedValue); current.assertCurrent(); return result;
 }
 
 function readReceiptIds(value: unknown): readonly string[] {
@@ -403,132 +335,113 @@ function liveRecordReceiptIds(record: Record<string, unknown>): readonly string[
   ].filter((value, index, list) => list.indexOf(value) === index);
 }
 
-function normalizeExternalProviderLiveRecord(value: unknown, source: string): MemoryExternalProviderLiveRecord | null {
-  const record = readRecord(value);
-  const providerId = readExternalProviderLiveRecordId(record);
+async function normalizeExternalProviderLiveRecord(value: unknown, source: string, options: CatalogRankingOptions): Promise<MemoryExternalProviderLiveRecord | null> {
+  const raw = readRecord(value);
+  const nativeProviderId = readExternalProviderLiveRecordId(raw);
+  const record = readRecord(await protectExternalMemoryData(value, options));
+  if (nativeProviderId && readExternalProviderLiveRecordId(record) !== nativeProviderId) throw new ToolInputProjectionError('held');
+  const providerId = await readProviderIdentity(record, options);
   if (!providerId) return null;
   const label = readString(record.label) || readString(record.displayName) || readString(record.title) || titleFromProviderId(providerId);
-  const setupRoute = readLiveRoute(record, ['setup', 'configure', 'connect']);
-  const readRoute = readLiveRoute(record, ['read', 'search', 'query']);
-  const writeRoute = readLiveRoute(record, ['write', 'upsert', 'import']);
-  const syncRoute = readLiveRoute(record, ['sync', 'export']);
-  const forgetRoute = readLiveRoute(record, ['forget', 'delete', 'disable']);
-  const receiptRoute = readLiveRoute(record, ['receipt', 'receipts', 'history']);
-  const inspectRoute = readLiveRoute(record, ['inspect', 'status'])
-    ?? `memory action:"provider" providerId:"${providerId}" includeParameters:true`;
-  const configured = readBooleanLike(record.configured)
-    ?? readBooleanLike(record.isConfigured)
-    ?? readBooleanLike(record.ready);
-  const reachable = readBooleanLike(record.reachable)
-    ?? readBooleanLike(record.connected)
-    ?? readBooleanLike(record.available)
-    ?? readBooleanLike(record.healthy);
-  const enabled = readBooleanLike(record.enabled);
-  const readReady = readCapabilityFlag(record, ['read', 'search', 'query'], readRoute);
-  const writeReady = readCapabilityFlag(record, ['write', 'upsert', 'import'], writeRoute);
-  const syncReady = readCapabilityFlag(record, ['sync', 'export'], syncRoute);
-  const forgetReady = readCapabilityFlag(record, ['forget', 'delete', 'disable'], forgetRoute);
+  const operations = await publishedOperations(record, options);
+  const setupRoute = operations.get('setup')?.route ?? null, readRoute = operations.get('read')?.route ?? null;
+  const writeRoute = operations.get('write')?.route ?? null, syncRoute = operations.get('sync')?.route ?? null;
+  const forgetRoute = operations.get('forget')?.route ?? null, receiptRoute = operations.get('receipt')?.route ?? null;
+  const inspectRoute = operations.get('inspect')?.route ?? `memory action:"provider" providerId:${JSON.stringify(providerId)} includeParameters:true`;
+  const configured = await firstBoolean(record, ['configured', 'isConfigured', 'ready'], options);
+  const reachable = await firstBoolean(record, ['reachable', 'connected', 'available', 'healthy'], options);
+  const enabled = await firstBoolean(record, ['enabled'], options);
+  const readReady = operations.get('read')?.ready ?? null, writeReady = operations.get('write')?.ready ?? null;
+  const syncReady = operations.get('sync')?.ready ?? null, forgetReady = operations.get('forget')?.ready ?? null;
   const receiptIds = liveRecordReceiptIds(record);
+  const status = enabled === false ? 'disabled' : await readMemoryLiveStatus({ record, configured, reachable, enabled }, options);
+  const credentialState = await readMemoryCredentialState(record, options);
+  const promptEligible = await firstBoolean(record, ['promptEligible', 'promptEligibility'], options)
+    ?? await firstBoolean(readRecord(record.promptPolicy), ['eligible'], options);
+  const certification = await memoryExternalProviderLiveCertification({ record, sourcePath: source, providerId,
+    readContractPublished: readReady === true || Boolean(readRoute), writeContractPublished: writeReady === true || Boolean(writeRoute),
+    syncContractPublished: syncReady === true || Boolean(syncRoute) || Boolean(receiptRoute) || receiptIds.length > 0,
+    forgetContractPublished: forgetReady !== null || Boolean(forgetRoute), receiptIds, receiptRoute,
+  }, options);
+  assertMemoryCurrent(options);
   return {
-    providerId,
-    label,
-    status: normalizeExternalProviderLiveStatus(
-      record.status ?? record.state ?? record.readiness ?? record.connectionStatus ?? record.setupStatus,
-      configured,
-      reachable,
-      enabled,
-    ),
-    source,
-    configured,
-    reachable,
-    credentialState: normalizeExternalProviderCredentialState(record),
-    readReady,
-    writeReady,
-    syncReady,
-    forgetReady,
-    promptEligible: readBooleanLike(record.promptEligible)
-      ?? readBooleanLike(record.promptEligibility)
-      ?? readBooleanLike(readRecord(record.promptPolicy).eligible),
-    setupRoute,
-    readRoute,
-    writeRoute,
-    syncRoute,
-    forgetRoute,
-    receiptRoute,
-    receiptIds,
+    providerId, label, status, source, configured, reachable, credentialState, readReady, writeReady, syncReady, forgetReady, promptEligible,
+    setupRoute, readRoute, writeRoute, syncRoute, forgetRoute, receiptRoute, receiptIds,
     sourceCount: readNumber(record.sourceCount ?? record.sourcesCount ?? readRecord(record.stats).sourceCount),
     recordCount: readNumber(record.recordCount ?? record.memoryCount ?? record.itemCount ?? readRecord(record.stats).recordCount),
     redaction: sanitizeExternalProviderText(record.redaction ?? record.redactionPolicy, 96),
     failureReason: sanitizeExternalProviderText(record.failureReason ?? record.error ?? record.errorMessage ?? record.statusDetail),
-    lastReadAt: readTimestamp(record.lastReadAt ?? record.lastSearchAt),
-    lastWriteAt: readTimestamp(record.lastWriteAt ?? record.lastUpsertAt ?? record.lastImportAt),
-    lastSyncAt: readTimestamp(record.lastSyncAt ?? record.lastExportAt),
-    updatedAt: readTimestamp(record.updatedAt ?? record.checkedAt ?? record.createdAt),
-    inspectRoute,
-    certification: memoryExternalProviderLiveCertification({
-      record,
-      sourcePath: source,
-      providerId,
-      readContractPublished: readReady === true || Boolean(readRoute),
-      writeContractPublished: writeReady === true || Boolean(writeRoute),
-      syncContractPublished: syncReady === true || Boolean(syncRoute) || Boolean(receiptRoute) || receiptIds.length > 0,
-      forgetContractPublished: forgetReady !== null || Boolean(forgetRoute),
-      receiptIds,
-      receiptRoute,
-    }),
+    lastReadAt: readTimestamp(record.lastReadAt ?? record.lastSearchAt), lastWriteAt: readTimestamp(record.lastWriteAt ?? record.lastUpsertAt ?? record.lastImportAt),
+    lastSyncAt: readTimestamp(record.lastSyncAt ?? record.lastExportAt), updatedAt: readTimestamp(record.updatedAt ?? record.checkedAt ?? record.createdAt),
+    inspectRoute, certification,
   };
 }
 
-interface ExternalMemoryProviderReadModelSource {
-  readonly path: string;
-  readonly source: unknown;
-}
+const EXTERNAL_MEMORY_SOURCE_PATHS = [
+  ['platform', 'readModels', 'memory', 'externalProviders'], ['platform', 'readModels', 'memory', 'providers'],
+  ['platform', 'readModels', 'agentMemory', 'externalProviders'], ['platform', 'readModels', 'externalMemoryProviders'],
+  ['platform', 'readModels', 'memoryProviders'], ['platform', 'externalMemoryProviders'],
+  ['clients', 'agentKnowledgeApi', 'memory', 'externalProviders'], ['clients', 'agentKnowledgeApi', 'memory', 'providers'],
+  ['clients', 'agentKnowledgeApi', 'externalMemoryProviders'], ['extensions', 'agentKnowledgeService', 'externalMemoryProviders'],
+  ['extensions', 'externalMemoryProviders'], ['clients', 'agentKnowledgeApi', 'memory', 'listExternalProviders'],
+  ['clients', 'agentKnowledgeApi', 'memory', 'listProviders'],
+] as const;
+const SNAPSHOT_METHODS = ['getSnapshot', 'snapshot', 'listExternalProviders', 'listProviders', 'list'] as const;
 
-function externalMemoryReadModelSources(context: CommandContext): readonly ExternalMemoryProviderReadModelSource[] {
-  const platform = context.platform as unknown as Record<string, unknown>;
-  const clients = readRecord(context.clients);
-  const extensions = context.extensions as unknown as Record<string, unknown>;
-  const readModels = readRecord(platform.readModels);
-  const platformMemory = readRecord(readModels.memory);
-  const platformAgentMemory = readRecord(readModels.agentMemory);
-  const agentKnowledgeApi = readRecord(clients.agentKnowledgeApi);
-  const agentKnowledgeMemory = readRecord(agentKnowledgeApi.memory);
-  const agentKnowledgeService = readRecord(extensions.agentKnowledgeService);
-  return [
-    { path: 'context.platform.readModels.memory.externalProviders', source: platformMemory.externalProviders },
-    { path: 'context.platform.readModels.memory.providers', source: platformMemory.providers },
-    { path: 'context.platform.readModels.agentMemory.externalProviders', source: platformAgentMemory.externalProviders },
-    { path: 'context.platform.readModels.externalMemoryProviders', source: readModels.externalMemoryProviders },
-    { path: 'context.platform.readModels.memoryProviders', source: readModels.memoryProviders },
-    { path: 'context.platform.externalMemoryProviders', source: platform.externalMemoryProviders },
-    { path: 'context.clients.agentKnowledgeApi.memory.externalProviders', source: agentKnowledgeMemory.externalProviders },
-    { path: 'context.clients.agentKnowledgeApi.memory.providers', source: agentKnowledgeMemory.providers },
-    { path: 'context.clients.agentKnowledgeApi.externalMemoryProviders', source: agentKnowledgeApi.externalMemoryProviders },
-    { path: 'context.extensions.agentKnowledgeService.externalMemoryProviders', source: agentKnowledgeService.externalMemoryProviders },
-    { path: 'context.extensions.externalMemoryProviders', source: extensions.externalMemoryProviders },
-    {
-      path: 'context.clients.agentKnowledgeApi.memory.listExternalProviders()',
-      source: typeof agentKnowledgeMemory.listExternalProviders === 'function'
-        ? () => (agentKnowledgeMemory.listExternalProviders as () => unknown)()
-        : undefined,
-    },
-    {
-      path: 'context.clients.agentKnowledgeApi.memory.listProviders()',
-      source: typeof agentKnowledgeMemory.listProviders === 'function'
-        ? () => (agentKnowledgeMemory.listProviders as () => unknown)()
-        : undefined,
-    },
-  ];
-}
-
-async function readExternalProviderSnapshot(source: unknown): Promise<unknown> {
-  if (typeof source === 'function') return await (source as () => unknown | Promise<unknown>)();
-  const record = readRecord(source);
-  for (const methodName of ['getSnapshot', 'snapshot', 'listExternalProviders', 'listProviders', 'list']) {
-    const method = record[methodName];
-    if (typeof method === 'function') return await (method as () => unknown | Promise<unknown>)();
+function acquireSource(context: unknown, path: readonly string[], options: CatalogRankingOptions): {
+  readonly source: unknown; readonly receiver: object | undefined;
+  readonly assertSource: () => void; readonly assertCurrent: () => void;
+} {
+  const guards: (() => void)[] = [];
+  let receiver: object | undefined, current: unknown = context;
+  for (const key of path) {
+    if (current === undefined || current === null) break;
+    if (typeof current !== 'object') throw new ToolInputProjectionError('held');
+    guards.push(captureCatalogMethods(current, [key]));
+    receiver = current; current = modelReadingServicePath(current, [key]);
   }
-  return source;
+  const source = current;
+  const assertSource = () => { options.signal?.throwIfAborted(); for (const guard of guards) guard();
+    if (modelReadingServicePath(context, path) !== source) throw new ToolInputProjectionError('held'); };
+  const assertCurrent = () => { assertMemoryCurrent(options); assertSource(); };
+  options.retainCurrent?.(assertSource, `agent.memory.source:${path.join('.')}`);
+  assertCurrent(); return { source, receiver, assertSource, assertCurrent };
+}
+
+async function readExternalProviderSnapshot(acquired: ReturnType<typeof acquireSource>, options: CatalogRankingOptions): Promise<{
+  readonly snapshot: unknown; readonly fresh: (() => unknown) | undefined;
+}> {
+  acquired.assertCurrent();
+  let read: (() => unknown) | undefined;
+  if (typeof acquired.source === 'function') {
+    const method = acquired.source, callCurrent = captureCatalogMethods(method, ['call']);
+    options.retainCurrent?.(callCurrent);
+    read = () => { acquired.assertSource(); callCurrent(); const result: unknown = method.call(acquired.receiver); acquired.assertSource(); callCurrent(); return result; };
+  } else if (acquired.source !== null && typeof acquired.source === 'object') {
+    const methodsCurrent = captureCatalogMethods(acquired.source, SNAPSHOT_METHODS);
+    options.retainCurrent?.(methodsCurrent);
+    for (const name of SNAPSHOT_METHODS) {
+      acquired.assertCurrent(); methodsCurrent();
+      const method = modelReadingServicePath(acquired.source, [name]);
+      if (typeof method !== 'function') continue;
+      const callCurrent = captureCatalogMethods(method, ['call']); options.retainCurrent?.(callCurrent);
+      read = () => { acquired.assertSource(); methodsCurrent(); callCurrent(); const result: unknown = method.call(acquired.source);
+        acquired.assertSource(); methodsCurrent(); callCurrent(); return result; };
+      break;
+    }
+  }
+  if (read === undefined) return { snapshot: acquired.source, fresh: () => { acquired.assertSource(); return acquired.source; } };
+  acquired.assertCurrent();
+  const result = read();
+  acquired.assertCurrent();
+  if (nodeTypes.isProxy(result)) throw new ToolInputProjectionError('held');
+  if (nodeTypes.isPromise(result)) {
+    const snapshot = await awaitExternalProviderSnapshot(result, options.signal); acquired.assertCurrent();
+    return { snapshot, fresh: undefined };
+  }
+  // Admission rejects foreign thenables and accessor-backed DTOs before Promise assimilation can invoke them.
+  capturePersonalOpsSnapshot(result);
+  return { snapshot: result, fresh: read };
 }
 
 function externalProviderRecordsFromSnapshot(snapshot: unknown): readonly unknown[] {
@@ -538,15 +451,12 @@ function externalProviderRecordsFromSnapshot(snapshot: unknown): readonly unknow
     const value = record[key];
     if (Array.isArray(value)) return value;
     const valueRecord = readRecord(value);
-    if (Object.keys(valueRecord).length > 0) {
-      return Object.entries(valueRecord).map(([providerId, entry]) => {
-        const entryRecord = readRecord(entry);
-        if (Object.keys(entryRecord).length === 0 || readExternalProviderLiveRecordId(entryRecord)) return entry;
-        return { ...entryRecord, providerId };
-      });
-    }
+    if (Object.keys(valueRecord).length > 0) return Object.entries(valueRecord).map(([providerId, entry]) => {
+      const entryRecord = readRecord(entry);
+      return Object.keys(entryRecord).length === 0 || readExternalProviderLiveRecordId(entryRecord) ? entry : { ...entryRecord, providerId };
+    });
   }
-  return readExternalProviderLiveRecordId(record) ? [record] : [];
+  return readExternalProviderLiveRecordId(record) || readString(record.provider) || readString(record.name) ? [record] : [];
 }
 
 function liveProviderStatusRank(record: MemoryExternalProviderLiveRecord): number {
@@ -600,36 +510,53 @@ function awaitExternalProviderSnapshot(work: Promise<unknown>, signal?: AbortSig
   });
 }
 
-export async function externalMemoryLiveProviderRecords(
-  context: CommandContext,
-  options: { readonly signal?: AbortSignal } = {},
-): Promise<readonly MemoryExternalProviderLiveRecord[]> {
+export async function externalMemoryLiveProviderRecords(context: unknown, originalOptions: CatalogRankingOptions = {}): Promise<readonly MemoryExternalProviderLiveRecord[]> {
+  const options = retainMemoryReadingOptions(originalOptions);
   const byProvider = new Map<string, MemoryExternalProviderLiveRecord>();
-  options.signal?.throwIfAborted();
-  for (const entry of externalMemoryReadModelSources(context)) {
-    options.signal?.throwIfAborted();
-    if (entry.source === undefined || entry.source === null) continue;
-    try {
-      const snapshot = await awaitExternalProviderSnapshot(readExternalProviderSnapshot(entry.source), options.signal);
-      options.signal?.throwIfAborted();
-      for (const value of externalProviderRecordsFromSnapshot(snapshot)) {
-        const record = normalizeExternalProviderLiveRecord(value, entry.path);
-        if (!record) continue;
-        const current = byProvider.get(record.providerId);
-        byProvider.set(record.providerId, current ? preferLiveProviderRecord(current, record) : record);
+  assertMemoryCurrent(options);
+  // Capture every source identity before reading any source. A mutation of a later source retires this same invocation.
+  const sources = EXTERNAL_MEMORY_SOURCE_PATHS.map(path => ({ path, acquired: acquireSource(context, path, options) }));
+  const assertSourceRestrictions = () => { options.signal?.throwIfAborted(); for (const source of sources) source.acquired.assertSource(); };
+  const assertSources = () => { assertMemoryCurrent(options); assertSourceRestrictions(); };
+  options.retainCurrent?.(assertSourceRestrictions, 'agent.memory.sources');
+  const current = { ...options, assertCurrent: assertSources };
+  for (const entry of sources) {
+    assertSources();
+    if (entry.acquired.source === undefined || entry.acquired.source === null) continue;
+    let acquiredSnapshot: Awaited<ReturnType<typeof readExternalProviderSnapshot>>;
+    try { acquiredSnapshot = await readExternalProviderSnapshot(entry.acquired, current); }
+    catch (error: unknown) {
+      assertSources();
+      if (error instanceof ToolInputProjectionError) throw error;
+      // An installed unreadable backend cannot be presented as an absent publication.
+      throw new ToolInputProjectionError('held');
+    }
+    assertSources();
+    const snapshot = acquiredSnapshot.snapshot, capture = capturePersonalOpsSnapshot(snapshot);
+    const assertSnapshotRestriction = () => { assertSourceRestrictions(); capture.assertCurrent(snapshot);
+      if (acquiredSnapshot.fresh) {
+        const fresh = acquiredSnapshot.fresh();
+        if (nodeTypes.isPromise(fresh)) { void fresh.catch(() => {}); throw new ToolInputProjectionError('held'); }
+        capture.assertCurrent(fresh);
       }
-    } catch {
-      options.signal?.throwIfAborted();
-      // A broken host read model should not make Agent-local memory posture disappear.
+      assertSourceRestrictions();
+    };
+    const assertSnapshot = () => { assertMemoryCurrent(options); assertSnapshotRestriction(); };
+    options.retainCurrent?.(assertSnapshotRestriction, `agent.memory.snapshot:${entry.path.join('.')}`);
+    const reading = { ...options, assertCurrent: assertSnapshot };
+    for (const value of externalProviderRecordsFromSnapshot(capture.captured)) {
+      const record = await normalizeExternalProviderLiveRecord(value, `context.${entry.path.join('.')}`, reading);
+      assertSnapshot(); if (!record) continue;
+      const previous = byProvider.get(record.providerId);
+      byProvider.set(record.providerId, previous ? preferLiveProviderRecord(previous, record) : record);
     }
   }
+  assertSources();
   return [...byProvider.values()].sort((left, right) => {
     const rankDelta = liveProviderStatusRank(right) - liveProviderStatusRank(left);
     if (rankDelta !== 0) return rankDelta;
-    const leftTime = left.updatedAt ? Date.parse(left.updatedAt) : 0;
-    const rightTime = right.updatedAt ? Date.parse(right.updatedAt) : 0;
-    if (rightTime !== leftTime) return rightTime - leftTime;
-    return left.providerId.localeCompare(right.providerId);
+    const leftTime = left.updatedAt ? Date.parse(left.updatedAt) : 0, rightTime = right.updatedAt ? Date.parse(right.updatedAt) : 0;
+    return rightTime !== leftTime ? rightTime - leftTime : left.providerId.localeCompare(right.providerId);
   });
 }
 
@@ -657,11 +584,7 @@ export function liveRecordForProvider(
 }
 
 export function externalProviderLiveReady(record: MemoryExternalProviderLiveRecord | null): boolean {
-  return Boolean(record && (record.status === 'available' || (
-    record.configured === true
-    && record.reachable !== false
-    && (record.readReady === true || record.writeReady === true || record.syncReady === true)
-  )));
+  return record?.status === 'available' && record.reachable !== false;
 }
 
 export function setupStatusFromLiveRecord(record: MemoryExternalProviderLiveRecord | null): MemoryExternalProviderSetupStatus | null {
@@ -725,37 +648,18 @@ export function aggregateExternalProviderSetupStatus(
   return receipts.length > 0 ? 'receipt-evidence-found' : 'contract-needed';
 }
 
-function artifactStore(context: CommandContext): ArtifactListLike | null {
-  const candidate = (context.platform as { readonly artifactStore?: unknown }).artifactStore;
-  return candidate && typeof candidate === 'object' ? candidate as ArtifactListLike : null;
-}
-
-function normalizeExternalProviderId(value: string): string {
-  const normalized = value.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const exact = EXTERNAL_MEMORY_PROVIDERS.find((provider) => provider.id === normalized);
-  if (exact) return exact.id;
-  const label = EXTERNAL_MEMORY_PROVIDERS.find((provider) => provider.label.toLowerCase().replace(/[^a-z0-9]/g, '') === normalized);
-  return label?.id ?? normalized;
-}
-
-function isExternalMemoryReceiptArtifact(artifact: ArtifactDescriptor): boolean {
+/** Exact native artifact purpose identifiers stay deterministic; all untyped receipt membership is read. */
+async function isExternalMemoryReceiptArtifact(artifact: Readonly<Record<string, unknown>>, options: CatalogRankingOptions): Promise<boolean> {
   const metadata = readRecord(artifact.metadata);
-  const purpose = readString(metadata.purpose).toLowerCase();
-  if (EXTERNAL_MEMORY_RECEIPT_PURPOSES.has(purpose)) return true;
-  return purpose.includes('memory') && purpose.includes('receipt') && Boolean(readExternalMemoryReceiptProviderId(metadata));
+  const purpose = readString(metadata.purpose);
+  return EXTERNAL_MEMORY_RECEIPT_PURPOSES.has(purpose) || readMemoryReceiptMember(artifact, options);
 }
 
 function readExternalMemoryReceiptProviderId(metadata: Record<string, unknown>): string {
-  return normalizeExternalProviderId(
-    readString(metadata.providerId)
-    || readString(metadata.provider)
-    || readString(metadata.externalProviderId)
-    || readString(metadata.memoryProviderId)
-    || readString(metadata.backendId),
-  );
+  return readString(metadata.providerId) || readString(metadata.externalProviderId) || readString(metadata.memoryProviderId) || readString(metadata.backendId);
 }
 
-function readReceiptCreatedAt(artifact: ArtifactDescriptor, metadata: Record<string, unknown>): string | null {
+function readReceiptCreatedAt(artifact: Readonly<Record<string, unknown>>, metadata: Record<string, unknown>): string | null {
   const explicit = readString(metadata.createdAt) || readString(metadata.timestamp) || readString(metadata.completedAt);
   if (explicit) {
     const parsed = Date.parse(explicit);
@@ -766,62 +670,62 @@ function readReceiptCreatedAt(artifact: ArtifactDescriptor, metadata: Record<str
     : null;
 }
 
-function normalizeReceiptStatus(value: unknown): string {
-  const raw = readString(value).toLowerCase();
-  if (!raw) return 'unknown';
-  if (['ok', 'ready', 'success', 'succeeded', 'complete', 'completed', 'synced', 'written', 'imported', 'exported'].includes(raw)) return 'succeeded';
-  if (['blocked', 'needs-review', 'needs_setup', 'needs-setup'].includes(raw)) return 'blocked';
-  if (['fail', 'failed', 'error', 'errored'].includes(raw)) return 'failed';
-  if (['running', 'pending', 'in-progress', 'in_progress'].includes(raw)) return 'running';
-  return raw;
-}
-
-function describeExternalMemoryReceiptArtifact(artifact: ArtifactDescriptor): MemoryExternalProviderReceiptEvidence | null {
-  const metadata = readRecord(artifact.metadata);
-  if (!isExternalMemoryReceiptArtifact(artifact)) return null;
-  const providerId = readExternalMemoryReceiptProviderId(metadata);
+async function describeExternalMemoryReceiptArtifact(value: unknown, options: CatalogRankingOptions): Promise<MemoryExternalProviderReceiptEvidence | null> {
+  const original = readRecord(value), nativeArtifactId = readString(original.id);
+  if (!nativeArtifactId) throw new ToolInputProjectionError('held');
+  const artifact = readRecord(await protectExternalMemoryData(value, options)), metadata = readRecord(artifact.metadata);
+  if (readString(artifact.id) !== nativeArtifactId) throw new ToolInputProjectionError('held');
+  if (!await isExternalMemoryReceiptArtifact(artifact, options)) return null;
+  const nativeProviderId = readExternalMemoryReceiptProviderId(readRecord(original.metadata));
+  const providerId = await readProviderIdentity(metadata, options);
   if (!providerId) return null;
-  const operation = readString(metadata.operation)
-    || readString(metadata.action)
-    || readString(metadata.memoryOperation)
-    || readString(metadata.receiptOperation)
-    || 'external-memory';
-  const nextRoute = readString(metadata.nextRoute)
-    || `memory action:"provider" providerId:"${providerId}" includeParameters:true`;
+  if (nativeProviderId && readExternalMemoryReceiptProviderId(metadata) !== nativeProviderId) throw new ToolInputProjectionError('held');
+  const operation = readString(metadata.operation) || readString(metadata.action) || readString(metadata.memoryOperation) || readString(metadata.receiptOperation) || 'external-memory';
+  const nextRoute = readString(metadata.nextRoute) || `memory action:"provider" providerId:${JSON.stringify(providerId)} includeParameters:true`;
+  const status = await readPersonalOpsReceiptStatus(artifact, options);
+  const certification = await memoryExternalProviderReceiptCertification({ metadata, sourcePath: `artifact ${nativeArtifactId}`, providerId, artifactId: nativeArtifactId }, options);
+  assertMemoryCurrent(options);
   return {
-    providerId,
-    artifactId: artifact.id,
-    filename: artifact.filename ?? null,
-    operation,
-    status: normalizeReceiptStatus(metadata.status ?? metadata.outcome ?? metadata.result),
-    createdAt: readReceiptCreatedAt(artifact, metadata),
-    sourceCount: readNumber(metadata.sourceCount ?? metadata.recordCount ?? metadata.itemCount),
+    providerId, artifactId: nativeArtifactId, filename: readString(artifact.filename) || null, operation, status,
+    createdAt: readReceiptCreatedAt(artifact, metadata), sourceCount: readNumber(metadata.sourceCount ?? metadata.recordCount ?? metadata.itemCount),
     redaction: readString(metadata.redaction) || readString(metadata.redactionPolicy) || null,
-    failureReason: readString(metadata.failureReason) || readString(metadata.error) || null,
-    nextRoute,
-    inspectRoute: `agent_artifacts show artifactId:"${artifact.id}" includeContent:false`,
-    correlationId: readString(metadata.correlationId) || readString(metadata.runId) || null,
-    certification: memoryExternalProviderReceiptCertification({
-      metadata,
-      sourcePath: `artifact ${artifact.id}`,
-      providerId,
-      artifactId: artifact.id,
-    }),
+    failureReason: readString(metadata.failureReason) || readString(metadata.error) || null, nextRoute,
+    inspectRoute: `agent_artifacts show artifactId:${JSON.stringify(nativeArtifactId)} includeContent:false`,
+    correlationId: readString(metadata.correlationId) || readString(metadata.runId) || null, certification,
   };
 }
 
-export function externalMemoryReceiptEvidence(context: CommandContext): readonly MemoryExternalProviderReceiptEvidence[] {
-  const store = artifactStore(context);
-  if (!store?.list) return [];
-  return store.list(100)
-    .map(describeExternalMemoryReceiptArtifact)
-    .filter((entry): entry is MemoryExternalProviderReceiptEvidence => entry !== null)
-    .sort((left, right) => {
-      const leftTime = left.createdAt ? Date.parse(left.createdAt) : 0;
-      const rightTime = right.createdAt ? Date.parse(right.createdAt) : 0;
-      if (rightTime !== leftTime) return rightTime - leftTime;
-      return right.artifactId.localeCompare(left.artifactId);
-    });
+export async function externalMemoryReceiptEvidence(context: unknown, originalOptions: CatalogRankingOptions = {}): Promise<readonly MemoryExternalProviderReceiptEvidence[]> {
+  const options = retainMemoryReadingOptions(originalOptions);
+  const acquired = acquireSource(context, ['platform', 'artifactStore'], options);
+  if (acquired.source === null || acquired.source === undefined) return [];
+  if (typeof acquired.source !== 'object') throw new ToolInputProjectionError('held');
+  const storeCurrent = captureCatalogMethods(acquired.source, ['list']);
+  options.retainCurrent?.(storeCurrent, 'agent.memory.artifact-list');
+  const method = modelReadingServicePath(acquired.source, ['list']);
+  if (method === undefined) return [];
+  if (typeof method !== 'function') throw new ToolInputProjectionError('held');
+  const callCurrent = captureCatalogMethods(method, ['call']); options.retainCurrent?.(callCurrent);
+  acquired.assertCurrent(); storeCurrent(); callCurrent();
+  const value: unknown = method.call(acquired.source, 100);
+  acquired.assertCurrent(); storeCurrent();
+  const capture = capturePersonalOpsSnapshot(value);
+  if (!Array.isArray(capture.captured)) throw new ToolInputProjectionError('held');
+  const assertArtifactRestriction = () => { acquired.assertSource(); storeCurrent(); callCurrent(); capture.assertCurrent(value);
+    const fresh: unknown = method.call(acquired.source, 100); acquired.assertSource(); storeCurrent(); callCurrent(); capture.assertCurrent(fresh); };
+  const assertCurrent = () => { assertMemoryCurrent(options); assertArtifactRestriction(); };
+  options.retainCurrent?.(assertArtifactRestriction, 'agent.memory.artifacts');
+  const reading = { ...options, assertCurrent };
+  const result: MemoryExternalProviderReceiptEvidence[] = [];
+  for (const artifact of capture.captured) {
+    const receipt = await describeExternalMemoryReceiptArtifact(artifact, reading); assertCurrent();
+    if (receipt) result.push(receipt);
+  }
+  assertCurrent();
+  return result.sort((left, right) => {
+    const leftTime = left.createdAt ? Date.parse(left.createdAt) : 0, rightTime = right.createdAt ? Date.parse(right.createdAt) : 0;
+    return rightTime !== leftTime ? rightTime - leftTime : right.artifactId.localeCompare(left.artifactId);
+  });
 }
 
 export function receiptEvidenceForProvider(

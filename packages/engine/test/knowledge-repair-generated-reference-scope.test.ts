@@ -1,3 +1,4 @@
+import { selfImprovementFixtureReading, gapAssessmentFixture } from './_helpers/knowledge-self-improvement-readings.js';
 import { repairSubjectFixtureReading } from './_helpers/repair-subject-fixture-readings.js';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -5,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
-import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, scoreAnswer, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { KnowledgeSemanticService } from '../sdk/src/platform/knowledge/semantic/service.js';
 import { JudgmentInputError, judgmentInputProblem } from '../sdk/src/platform/gate/judgment-input.js';
@@ -26,7 +27,9 @@ afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice
 async function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'goodvibes-repair-reference-')); roots.push(root);
   const store = new KnowledgeStore({ dbPath: join(root, 'knowledge.sqlite') });
-  const fake = fakePort((name) => {
+  const fake = fakePort((name, question) => {
+    if (name === 'factTrust' || name === 'sourceSupport' || name === 'subjectSupport') return scoreAnswer(question, 4, 0.99); // Authored supported synthetic facts; grading behavior has separate controls.
+
     if (!['supported', 'attached', 'serve'].includes(name)) throw new Error(`Unexpected reference fixture question: ${name}`);
     return noulAnswer(0.99);
   });
@@ -102,6 +105,9 @@ describe('repair operation generated-reference scope', () => {
     const graph = () => JSON.stringify({ facts: item.store.listNodes().filter((node) => node.kind === 'fact'), edges: item.store.listEdges() });
     let atHold = '';
     const fake = fakePort((name, question, state) => {
+      const assessment = selfImprovementFixtureReading(name, question, state, [gapAssessmentFixture(item.gap, [item.subject], 0.99, 0.99, [{ facts: ['Input and output ports'], probability: 0.99 }, { facts: [], probability: 0.01 }], 0.01)]);
+      if (assessment !== undefined) return noulAnswer(assessment);
+      if (name === 'factTrust' || name === 'sourceSupport' || name === 'subjectSupport') return scoreAnswer(question, 4, 0.99); // Authored exact four-port profile claim.
       if (name === 'repairSubjectSelected') return noulAnswer(repairSubjectFixtureReading(state, [['AC-7', 0.99]]));
       if (name === 'authority') {
         if ((state as { source?: { title?: string } }).source?.title !== 'AC-7 reference') throw new Error('Unexpected authority fixture source');

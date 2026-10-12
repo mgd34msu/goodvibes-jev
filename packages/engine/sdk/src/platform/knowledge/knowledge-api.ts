@@ -20,6 +20,9 @@ import type {
   MemorySemanticSearchResult,
 } from '../state/memory-store.js';
 import type { MemoryVectorStats } from '../state/memory-vector-store.js';
+import { prepareMemoryRegistryAdd } from '../state/memory-registry.js';
+import { captureMemoryPreparedAddOptions, retainMemoryAddBinding, type MemoryPreparedAdd } from '../state/memory-store.js';
+import { assertMemoryOperationCurrent, type MemoryOperationOptions } from '../state/memory-operation.js';
 import type { MemoryRegistry } from '../state/memory-registry.js';
 import type { CodeChunkMode, CodeContextResult, CodeIndexBuildStats, CodeIndexStats, CodeIndexStore } from '../state/code-index-store.js';
 export type { ArtifactFetchMode } from '../artifacts/types.js';
@@ -79,7 +82,7 @@ export interface MemoryExplainResult {
 }
 
 export interface MemoryApi {
-  add(input: MemoryAddOptions): Promise<MemoryRecord>;
+  add(input: MemoryAddOptions, options?: MemoryOperationOptions): Promise<MemoryRecord>;
   search(filter?: MemorySearchFilter): Promise<readonly MemoryRecord[]>;
   searchSemantic(filter?: MemorySearchFilter): Promise<readonly MemorySemanticSearchResult[]>;
   vectorStats(): MemoryVectorStats;
@@ -297,9 +300,22 @@ function appendKnowledgeIntentMetadata(
   };
 }
 
+const memoryOwnerMapGet = WeakMap.prototype.get;
+const memoryOwnerMapSet = WeakMap.prototype.set;
+const memoryOwnerMapApply = Reflect.apply;
+function ownerMapGet<K extends object, V>(map: WeakMap<K, V>, key: K): V | undefined {
+  return memoryOwnerMapApply(memoryOwnerMapGet, map, [key]);
+}
+function ownerMapSet<K extends object, V>(map: WeakMap<K, V>, key: K, value: V): void {
+  memoryOwnerMapApply(memoryOwnerMapSet, map, [key, value]);
+}
+
+const nativeMemoryApiOwners = new WeakMap<MemoryApi, MemoryApiRegistry>();
+
 export function createMemoryApi(memoryRegistry: MemoryApiRegistry): MemoryApi {
-  return Object.freeze({
-    add: (input: MemoryAddOptions) => memoryRegistry.add(input),
+  const api: MemoryApi = Object.freeze({
+    add: (input: MemoryAddOptions, options?: MemoryOperationOptions) => options === undefined
+      ? memoryRegistry.add(input) : memoryRegistry.add(input, options),
     search: (filter: MemorySearchFilter = {}) => memoryRegistry.search(filter),
     searchSemantic: (filter: MemorySearchFilter = {}) => memoryRegistry.searchSemantic(filter),
     vectorStats: () => memoryRegistry.vectorStats(),
@@ -326,6 +342,24 @@ export function createMemoryApi(memoryRegistry: MemoryApiRegistry): MemoryApi {
       };
     },
   });
+  ownerMapSet(nativeMemoryApiOwners, api, memoryRegistry);
+  return api;
+}
+
+/** Native preparation is available only on an exact createMemoryApi-owned registry. */
+export function prepareMemoryApiAdd(api: MemoryApi, input: MemoryAddOptions, options?: MemoryOperationOptions): MemoryPreparedAdd {
+  const registry = ownerMapGet(nativeMemoryApiOwners, api);
+  if (!registry) throw new Error('Memory prepared add API unavailable');
+  const apiBinding = retainMemoryAddBinding(api, ['add', 'getAll']);
+  const lifecycle = captureMemoryPreparedAddOptions(options);
+  const assertCurrent = () => {
+    apiBinding(); assertMemoryOperationCurrent(lifecycle); apiBinding();
+    if (ownerMapGet(nativeMemoryApiOwners, api) !== registry) throw new Error('Memory prepared add API changed');
+  };
+  assertCurrent();
+  const prepared = prepareMemoryRegistryAdd(registry, input, { signal: lifecycle.signal, assertCurrent });
+  assertCurrent();
+  return prepared;
 }
 
 export function createCodeIndexApi(codeIndexStore: CodeIndexApiRegistry): CodeIndexApi {

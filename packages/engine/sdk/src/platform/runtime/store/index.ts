@@ -1,3 +1,4 @@
+import { assertSecurityReadSource, captureSecurityReadBindings } from '../../security/read-source.js';
 /**
  * Runtime store, Zustand vanilla store for the GoodVibes platform runtime.
  *
@@ -86,8 +87,29 @@ import {
 
 export type RuntimeStore = StoreApi<RuntimeState>;
 
+const runtimeSecuritySources = new WeakMap<RuntimeStore, () => () => void>();
+const getRuntimeSecuritySources = runtimeSecuritySources.get.bind(runtimeSecuritySources);
+const setRuntimeSecuritySources = runtimeSecuritySources.set.bind(runtimeSecuritySources);
+
+export function captureRuntimeSecurityReadSource(store: RuntimeStore): () => void {
+  const capture = getRuntimeSecuritySources(store); assertSecurityReadSource(capture !== undefined); return capture();
+}
+
 export function createRuntimeStore(): RuntimeStore {
-  return createStore<RuntimeState>(() => createInitialRuntimeState());
+  const store = createStore<RuntimeState>(() => createInitialRuntimeState());
+  let revision = 0;
+  let previous = store.getState();
+  // This observer belongs to the created native store, rather than an individual read.
+  store.subscribe(state => {
+    if (state.mcp !== previous.mcp || state.permissions !== previous.permissions) revision++;
+    previous = state;
+  });
+  setRuntimeSecuritySources(store, () => {
+    const binding = captureSecurityReadBindings(store, ['getState', 'setState', 'subscribe']);
+    const captured = revision;
+    return () => { binding(); assertSecurityReadSource(revision === captured); };
+  });
+  return store;
 }
 
 function mutateRuntimeStore(store: RuntimeStore, updater: (state: RuntimeState) => RuntimeState): void {

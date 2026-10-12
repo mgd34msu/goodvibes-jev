@@ -161,7 +161,7 @@ export function createAgentPersonalOpsTool(deps: AgentPersonalOpsToolDeps): Tool
           recordId: { type: 'string', description: 'Selected inbox/calendar read operation record id.' },
           query: { type: 'string', description: 'Personal operations request or lane lookup text.' },
           target: { type: 'string', description: 'Alias for query or lookup target.' },
-          fields: { type: 'object', additionalProperties: true, description: 'Connector input fields for action:read.' },
+          fields: { type: 'object', additionalProperties: true, description: 'Connector input fields for action:read; the inbox-style-reply-draft record requires inbound and explicitly supplied sentMessages, plus optional context.' },
           saveReviewCards: { type: 'boolean', description: 'For action:read, save redacted review cards as a local artifact.' },
           saveReview: { type: 'boolean', description: 'Alias for saveReviewCards.' },
           artifactTitle: { type: 'string', description: 'Optional title for a saved read-review artifact.' },

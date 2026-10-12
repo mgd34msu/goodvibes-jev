@@ -1,5 +1,6 @@
 export {
   MediaProviderRegistry,
+  captureMediaProviderReadSource,
 } from './provider-registry.js';
 export { ensureBuiltinMediaProviders } from './builtin-providers.js';
 export {

@@ -1,3 +1,4 @@
+import { assertSecurityReadSource, captureSecurityReadBindings, captureSecurityReadData, captureSecurityPluginFiles, retainSecurityReadData } from '../security/read-source.js';
 import { readJsonFileOrQuarantine, writeJsonFileAtomic } from '../utils/atomic-json-store.js';
 import { logger } from '../utils/logger.js';
 import {
@@ -99,7 +100,14 @@ export interface PluginShutdownStatus {
 /**
  * PluginManager, orchestrates plugin discovery, loading, and persistence.
  */
+const pluginReadSources = new WeakMap<PluginManager, () => () => void>();
+const getPluginReadSources = pluginReadSources.get.bind(pluginReadSources);
+const setPluginReadSources = pluginReadSources.set.bind(pluginReadSources);
+export function capturePluginSecurityReadSource(manager: PluginManager): () => void {
+  const capture = getPluginReadSources(manager); assertSecurityReadSource(capture !== undefined); return capture();
+}
 export class PluginManager {
+  private readRevision = 0;
   private plugins = new Map<string, LoadedPlugin>();
   private state: PluginState = { ...DEFAULT_STATE, enabled: {}, config: {}, trust: {}, quarantine: {} };
   private deps: PluginLoaderDeps | undefined;
@@ -129,6 +137,18 @@ export class PluginManager {
       throw new Error('PluginManager requires an explicit stateFilePath.');
     }
     this.stateFilePath = options.stateFilePath;
+    setPluginReadSources(this, () => {
+      const binding = captureSecurityReadBindings(this, ['closed', 'operations', 'readRevision', 'state', 'plugins', 'pathOptions', 'stateFilePath', 'trustStore', 'quarantineEngine', 'list', 'discoverPlugins']);
+      assertSecurityReadSource(!this.closed && this.operations.size === 0);
+      const revision = this.readRevision;
+      const rawCurrent = retainSecurityReadData([this.state, this.pathOptions]);
+      const filesCurrent = captureSecurityPluginFiles(getPluginDirectories(this.pathOptions));
+      const statusCurrent = captureSecurityReadData(() => this.list());
+      return () => {
+        binding(); rawCurrent(); filesCurrent(); statusCurrent();
+        assertSecurityReadSource(!this.closed && this.operations.size === 0 && this.readRevision === revision);
+      };
+    });
   }
 
   /**
@@ -493,6 +513,7 @@ export class PluginManager {
    */
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
+    this.readRevision++;
     this.closed = true;
     this.subscribers.clear();
     const drains: Promise<void>[] = [];
@@ -541,6 +562,7 @@ export class PluginManager {
 
   private ownOperation<T>(action: () => Promise<T>): Promise<T> {
     if (this.closed) return Promise.reject(new PluginClosedError('manager'));
+    this.readRevision++;
     const pending = Promise.resolve().then(() => {
       if (this.closed) throw new PluginClosedError('manager');
       return action();
@@ -598,6 +620,7 @@ export class PluginManager {
   }
 
   private loadState(): void {
+    this.readRevision++;
     try {
       const parsed = readJsonFileOrQuarantine<Partial<PluginState>>(this.stateFilePath, {
         label: 'plugins/state',
@@ -628,6 +651,7 @@ export class PluginManager {
   }
 
   private saveState(): void {
+    this.readRevision++;
     try {
       writeJsonFileAtomic(this.stateFilePath, this.state, { trailingNewline: false });
     } catch (err) {
@@ -652,6 +676,7 @@ export class PluginManager {
   }
 
   private notifySubscribers(): void {
+    this.readRevision++;
     if (this.closed) return;
     for (const callback of this.subscribers) {
       try {

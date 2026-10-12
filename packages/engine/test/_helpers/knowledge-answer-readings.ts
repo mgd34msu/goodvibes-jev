@@ -1,3 +1,6 @@
+import { extractionValueFixtureReading, type ExtractionValueFixtures } from './knowledge-extraction-value-readings.js';
+import { selfImprovementFixtureReading, type SelfImprovementFixtureValues } from './knowledge-self-improvement-readings.js';
+import { repairScoringFixtureReading } from './repair-scoring-fixture-readings.js';
 import { homeGraphPagePriorityInstructions } from '../../sdk/src/platform/knowledge/home-graph/batteries/page-priority.js';
 import { repairSubjectFixtureReading } from './repair-subject-fixture-readings.js';
 /** Explicit plumbing readings for synthetic answer fixtures, not a semantic evaluator. */
@@ -9,6 +12,8 @@ import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { repairProfileFixtureReading, repairUsefulFixtureReading, type RepairProfileFixtureValues, type RepairUsefulFixtureValues } from './repair-profile-fixture-readings.js';
 export interface AnswerFixtureReadings {
+  /** Exact authored complete native extraction inputs. Unlisted requests fail. */
+  extractionValue?: ExtractionValueFixtures;
   /** Exact authored offered query strings, in preference order. Unlisted queries select none. */
   scope?: ReadonlyArray<readonly ['source' | 'node' | 'issue', string, number]>;
   scopeByView?: ReadonlyArray<readonly ['source' | 'node' | 'issue', string, 'ordinary' | 'explicit' | 'all', number]>;
@@ -30,6 +35,7 @@ export interface AnswerFixtureReadings {
   /** Exact authored claim title, summary and source evidence for repair usefulness. */
   repairUseful?: RepairUsefulFixtureValues;
   objectAlignment?: readonly AnswerObjectFixtureReadings[];
+  selfImprovement?: readonly SelfImprovementFixtureValues[];
   /** Exact candidate titles with authored activation readings. Unlisted candidates never receive an implicit yes. */
   activation?: ReadonlyArray<readonly [string, number]>;
   initialEvidence?: ReadonlyArray<readonly [string, number]>;
@@ -53,13 +59,19 @@ export interface AnswerFixtureReadings {
   quality?: ReadonlyArray<readonly [string, number]>;
   authorities?: ReadonlyArray<readonly [string, 'official-vendor' | 'vendor' | 'secondary' | 'unverified']>;
 }
-export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings, 'repairProfile' | 'repairUseful' | 'objectAlignment'> = {}) {
+export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings, 'repairProfile' | 'repairUseful' | 'objectAlignment' | 'selfImprovement'> = {}) {
   let previous: JudgmentPort | undefined;
   let table: AnswerFixtureReadings = {};
   let activation: AnswerFixtureReadings['activation'] = [];
+  let extractionValue: ExtractionValueFixtures = [];
+  let assessments: readonly SelfImprovementFixtureValues[] = [];
   let fake = makePort();
   function makePort() {
     return fakePort((name, question, state) => {
+      const extraction = extractionValueFixtureReading(name, question, state, [...(table.extractionValue ?? []), ...extractionValue]);
+      if (extraction !== undefined) return noulAnswer(extraction);
+      const assessment = selfImprovementFixtureReading(name, question, state, [...(table.selfImprovement ?? defaults.selfImprovement ?? []), ...assessments]);
+      if (assessment !== undefined) return noulAnswer(assessment);
       if (name === 'included') {
         const input = state as { view: 'ordinary' | 'explicit' | 'all'; candidate: { kind: 'source' | 'node' | 'issue'; content: { title?: string; message?: string } } };
         const candidate = input.candidate;
@@ -109,6 +121,9 @@ export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings,
       }
       if (name === 'repairUseful') return noulAnswer(repairUsefulFixtureReading(state,
         table.repairProfile ?? defaults.repairProfile, table.repairUseful ?? defaults.repairUseful));
+      const scoring = repairScoringFixtureReading(name, question, state,
+        table.repairProfile ?? defaults.repairProfile, table.repairUseful ?? defaults.repairUseful);
+      if (scoring !== undefined) return scoring;
       const profile = repairProfileFixtureReading(name, state, table.repairProfile ?? defaults.repairProfile);
       if (profile !== undefined) return noulAnswer(profile);
       const alignment = answerObjectFixtureReading(name, state, table.objectAlignment ?? defaults.objectAlignment);
@@ -162,9 +177,11 @@ export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings,
       return noulAnswer(readings?.find(([snippet]) => text.includes(snippet))?.[1] ?? 0.97);
     });
   }
-  beforeEach(() => { table = {}; activation = []; fake = makePort(); previous = installJudgmentPort(fake.port); });
+  beforeEach(() => { table = {}; activation = []; extractionValue = []; assessments = []; fake = makePort(); previous = installJudgmentPort(fake.port); });
   afterEach(() => { installJudgmentPort(previous); });
   return { set(readings: AnswerFixtureReadings) { table = readings; },
+    addAssessments(readings: readonly SelfImprovementFixtureValues[]) { assessments = [...assessments, ...readings]; },
     setActivation(readings: NonNullable<AnswerFixtureReadings['activation']>) { activation = readings; },
+    addExtractionValue(...fixture: ExtractionValueFixtures[number]) { extractionValue = [...extractionValue, fixture]; },
     get requests() { return fake.requests; } };
 }

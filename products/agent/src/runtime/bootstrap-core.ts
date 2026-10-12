@@ -252,6 +252,7 @@ export async function initializeBootstrapCore(
     // Task refs are owned by the REAL runtime session, read fresh on every call.
     resolveSessionId: () => runtimeSessionIdRef.value,
     getLastUserMessage: () => conversation.getLastUserMessage(),
+    researchReportSourceOwner: services.researchReportSourceOwner,
   });
   // Captured so the permissionManager-bearing follow-up call below (issued once
   // permissionManager exists, further down this function) can replay every

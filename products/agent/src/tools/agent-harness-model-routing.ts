@@ -4,7 +4,7 @@ import type { CommandContext } from '../input/command-registry.ts';
 import { requireProviderApi } from '../input/commands/runtime-services.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 import { readLocalModelCookbook } from './agent-harness-local-model-cookbook.ts';
-import { localBenchmarkRouteLatencyMap } from './agent-harness-local-model-benchmarks.ts';
+import { localBenchmarkRouteLatencyMap, localBenchmarkRouteLatencyMapFor, readLocalModelBenchmarkSnapshot } from './agent-harness-local-model-benchmarks.ts';
 import { localModelDetection, localModelServerEndpoints, localModelServerFacts } from './agent-harness-local-model-endpoints.ts';
 import { runLocalModelServerSmoke } from './agent-harness-local-model-smoke.ts';
 import { localHardwareProfile, modelReadinessScore } from './agent-harness-model-readiness.ts';
@@ -25,8 +25,8 @@ async function readCurrentModel(context: CommandContext): Promise<unknown> {
   }
 }
 
-function attachLocalBenchmarkLatencies(context: CommandContext, models: readonly ModelCandidate[]): readonly ModelCandidate[] {
-  const latencies = localBenchmarkRouteLatencyMap(context);
+function attachLocalBenchmarkLatencies(context: CommandContext, models: readonly ModelCandidate[],
+  latencies = localBenchmarkRouteLatencyMap(context)): readonly ModelCandidate[] {
   if (latencies.size === 0) return models;
   return models.map((model) => ({
     ...model,
@@ -351,7 +351,9 @@ export async function modelRoutingSummary(context: CommandContext, args: AgentHa
     readCurrentModel(context),
   ]);
   reading.assertCurrent?.();
-  const models = attachLocalBenchmarkLatencies(context, rawModels);
+  const benchmarkSnapshot = await readLocalModelBenchmarkSnapshot(context, reading);
+  reading.signal?.throwIfAborted(); reading.assertCurrent?.();
+  const models = attachLocalBenchmarkLatencies(context, rawModels, localBenchmarkRouteLatencyMapFor(benchmarkSnapshot));
   const routes = routeCandidates(context);
   const ranked = query ? await rankModelCatalog([...routes, ...models], query, reading) : undefined;
   reading.assertCurrent?.();
@@ -370,7 +372,7 @@ export async function modelRoutingSummary(context: CommandContext, args: AgentHa
     available: modelAvailable(currentModel) === false ? false : listedCurrentModel.available,
     configured: modelConfigured(currentModel) === false ? false : listedCurrentModel.configured } : listedCurrentModel;
   reading.assertCurrent?.();
-  const cookbook = await readLocalModelCookbook(context, includeParameters, reading);
+  const cookbook = await readLocalModelCookbook(context, includeParameters, reading, benchmarkSnapshot);
   reading.assertCurrent?.();
   // Ranking snapshots entries. Equal captured facts still share enrichment;
   // an unavailable current-model override has distinct facts and stays separate.
@@ -442,7 +444,9 @@ export async function describeHarnessModelRoute(context: CommandContext, args: A
   }
   const [rawModels] = await Promise.all([loadModels(context)]);
   reading.assertCurrent?.();
-  const models = attachLocalBenchmarkLatencies(context, rawModels);
+  const benchmarkSnapshot = await readLocalModelBenchmarkSnapshot(context, reading);
+  reading.signal?.throwIfAborted(); reading.assertCurrent?.();
+  const models = attachLocalBenchmarkLatencies(context, rawModels, localBenchmarkRouteLatencyMapFor(benchmarkSnapshot));
   const routes = routeCandidates(context);
   const endpoints = await localModelServerEndpoints(context, true, reading);
   reading.signal?.throwIfAborted(); reading.assertCurrent?.();

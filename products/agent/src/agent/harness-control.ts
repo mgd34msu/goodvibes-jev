@@ -3,7 +3,7 @@ import { types as nodeTypes } from 'node:util';
 import type { Ranked } from '@goodvibes-jev/judgment';
 import { PostalAddressHeldError, postalConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ConfigManager, ConfigSetting } from '@goodvibes-jev/engine/sdk/platform/config';
-import { AGENT_NOTIFICATIONS_METADATA_ONLY_KEY } from '../config/host-settings.ts';
+import { isAgentHostSettingKey } from '../config/host-settings.ts';
 import { getAgentSettingsSchema, type AgentConfigSetting, type AgentHostReader, type AgentSettingsCatalog } from '../config/settings-catalog.ts';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { applyWakeEnablementCompanion, type WakeCompanionWrite } from '../config/wake-enablement-companion.ts';
@@ -443,15 +443,18 @@ function captureSettingCatalog(configManager: AgentSettingsCatalog, options: Cat
   const home = owner.getHomeDirectory?.();
   const builtin = configManager.getSchema(), hosts = configManager.getHostSettingsSchema?.();
   const assertDescriptors = bindSettingSchemaDescriptors([builtin, hosts]);
-  const host = hosts?.find(setting => setting.key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY);
-  // Preserve hidden host metadata for the same complete privacy screen as builtins.
-  // Reject a conflicting discriminator rather than replacing unreviewed source data.
-  const hostDescriptors: Record<string, PropertyDescriptor> | undefined = host ? Object.getOwnPropertyDescriptors(host) : undefined;
-  if (hostDescriptors?.kind && hostDescriptors.kind.value !== 'host') throw new ToolInputProjectionError('invalid');
-  const normalizedHost = hostDescriptors ? Object.defineProperties({}, {
-    ...hostDescriptors, kind: { value: 'host', enumerable: true },
-  }) as AgentConfigSetting : undefined;
-  const source: readonly AgentConfigSetting[] = normalizedHost ? [...builtin, normalizedHost] : builtin;
+  // Preserve hidden metadata for every registered Agent host row.
+  // The original complete descriptor binding remains current during screening.
+  const normalizedHosts: AgentConfigSetting[] = [];
+  for (const host of hosts ?? []) {
+    if (!isAgentHostSettingKey(host.key)) continue;
+    const hostDescriptors = Object.getOwnPropertyDescriptors(host);
+    if (hostDescriptors.kind && hostDescriptors.kind.value !== 'host') throw new ToolInputProjectionError('invalid');
+    normalizedHosts.push(Object.defineProperties({}, {
+      ...hostDescriptors, kind: { value: 'host', enumerable: true },
+    }) as AgentConfigSetting);
+  }
+  const source: readonly AgentConfigSetting[] = [...builtin, ...normalizedHosts];
   const schema = Object.freeze(source.map(setting => {
     const { validate, ...data } = Object.getOwnPropertyDescriptors(setting);
     if (validate && (!('value' in validate) || (validate.value !== undefined && typeof validate.value !== 'function'))) throw new ToolInputProjectionError('invalid');
@@ -735,7 +738,7 @@ function coerceBoolean(value: unknown): boolean {
 
 export function coerceHarnessSettingValue(setting: AgentConfigSetting, value: unknown): unknown {
   if (setting.kind === 'host') {
-    if (typeof value !== 'boolean') throw new Error(`${AGENT_NOTIFICATIONS_METADATA_ONLY_KEY} requires a literal boolean.`);
+    if (typeof value !== 'boolean') throw new Error(`${setting.key} requires a literal boolean.`);
     return value;
   }
   if (setting.type === 'boolean') return coerceBoolean(value);

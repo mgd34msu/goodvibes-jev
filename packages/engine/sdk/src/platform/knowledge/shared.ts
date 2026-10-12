@@ -75,31 +75,6 @@ export function summarizeKnowledgeInjectionProvenance(provenance: KnowledgeInjec
   ].join(', ');
 }
 
-export function canonicalizeUri(input: string): string | null {
-  try {
-    const url = new URL(input);
-    url.hash = '';
-    url.protocol = url.protocol.toLowerCase();
-    url.hostname = url.hostname.toLowerCase();
-    if ((url.protocol === 'https:' && url.port === '443') || (url.protocol === 'http:' && url.port === '80')) {
-      url.port = '';
-    }
-    const params = [...url.searchParams.entries()]
-      .filter(([key]) => !/^utm_/i.test(key) && key !== 'gclid' && key !== 'fbclid' && key !== 'ref')
-      .sort(([a], [b]) => a.localeCompare(b));
-    url.search = '';
-    for (const [key, value] of params) {
-      url.searchParams.append(key, value);
-    }
-    if (url.pathname !== '/' && url.pathname.endsWith('/')) {
-      url.pathname = url.pathname.replace(/\/+$/, '');
-    }
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
 export function mergeTags(...groups: Array<readonly string[] | undefined>): string[] {
   const seen = new Set<string>();
   const result: string[] = [];

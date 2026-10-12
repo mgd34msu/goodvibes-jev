@@ -1,4 +1,5 @@
 import type { CommandContext } from '../input/command-registry.ts';
+import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 
 export type UiSurfaceKind = 'overlay' | 'modal' | 'workspace' | 'picker';
 
@@ -23,7 +24,7 @@ export interface UiSurfaceDefinition {
   readonly preferredModelRoute: string;
   readonly parameters?: readonly string[];
   readonly available: (context: CommandContext) => boolean;
-  readonly open: (context: CommandContext, args: AgentHarnessUiSurfaceArgs) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  readonly open: (context: CommandContext, args: AgentHarnessUiSurfaceArgs, assertCurrent?: () => void, readingOptions?: CatalogRankingOptions) => Record<string, unknown> | Promise<Record<string, unknown>>;
 }
 
 export interface UiSurfaceLookup {

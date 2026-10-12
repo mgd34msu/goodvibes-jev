@@ -1,3 +1,4 @@
+import { prepareKnowledgeExtractionValueReading } from './extraction-value/reader.js';
 import { guardKnowledgeEdgeInput } from '../store-edge-writes.js';
 import { captureKnowledgeSourceReferences, knowledgeSourceJudgmentUris, projectKnowledgeSourceReferences } from '../source-structural-references.js';
 import { createSemanticNodeSlugPlanner } from './node-slug.js';
@@ -108,31 +109,59 @@ export async function enrichKnowledgeSource(
   if (!options.force && existingSemantic.textHash === textHash && !shouldUpgradeDeterministic) {
     return emptyResult(source, true, 'semantic enrichment is current');
   }
-  if (text.length < 40) {
-    await markSourceSemanticState(context.store, source, textHash, {
-      skippedReason: 'source has too little extracted text',
-    }, generationGuard.assertCurrent);
-    return emptyResult(source, true, 'source has too little extracted text');
-  }
-
   // Admit the complete original source, extraction and candidates before any
   // generation request. The reading remains live through the persistence pass.
   const generationSubjects = await linkedObjectsForSource(context.store, source, new Set(), options.signal, options.shouldStop);
   generationGuard.watch('generation-subject-selection', () => { generationSubjects.assertCurrent(); return true; });
   // Minimize and protect the complete generation input before any display cap.
   assertJudgmentInput({ source: generationSource, text, extraction: { format: extraction.format, title: extraction.title, summary: extraction.summary, sections: extraction.sections } });
+  // This source/extraction owner outlives generation. The generation guard also
+  // watches pre-write graph choices, which the native persistence pass changes.
+  const valueOwner = createSemanticWriteGuard(context.store, options.signal, options.shouldStop);
+  valueOwner.source(source.id, source);
+  valueOwner.extraction(source.id, extraction);
+  const originalStore = context.store, originalLlm = context.llm, originalGenerate = context.llm?.completeJson;
+  const originalSignal = options.signal, originalStop = options.shouldStop, originalSpace = options.knowledgeSpaceId, originalForce = options.force;
+  valueOwner.watch('extraction-caller-configuration', () => ({ store: context.store === originalStore,
+    llm: context.llm === originalLlm, generation: context.llm?.completeJson === originalGenerate,
+    signal: options.signal === originalSignal, stop: options.shouldStop === originalStop,
+    space: options.knowledgeSpaceId === originalSpace, force: options.force === originalForce }));
+  const assertValueOwnerCurrent = () => { valueOwner.assertCurrent(); scopeSelection.assertCurrent(); };
+  const extractionValue = prepareKnowledgeExtractionValueReading({
+    source: sourceRankingContent(source), text,
+    extraction: { format: extraction.format, title: extraction.title, summary: extraction.summary,
+      excerpt: extraction.excerpt, sections: extraction.sections },
+  }, { signal: options.signal, assertCurrent: assertValueOwnerCurrent });
+  const assertExtractionCurrent = () => { generationGuard.assertCurrent(); extractionValue.assertCurrent(); };
+  if (!await extractionValue.read()) {
+    assertExtractionCurrent();
+    // No extraction attempt is made. Existing native supersession/support plans
+    // still detach old support from this changed source and preserve other sources.
+    const retired = await persistSemanticExtraction(context.store, source, extraction, {
+      extractor: 'deterministic', entities: [], facts: [], relations: [], gaps: [], wikiPage: { markdown: '' },
+    }, { knowledgeSpaceId: spaceId, signal: options.signal, shouldStop: options.shouldStop,
+      textHash, assertCurrent: extractionValue.assertCurrent });
+    const assertRetirementCurrent = semanticPersistenceGuards.get(retired)!;
+    assertRetirementCurrent();
+    await markSourceSemanticState(context.store, source, textHash, {
+      skippedReason: 'source states no concrete fact worth a semantic extraction attempt',
+    }, assertRetirementCurrent);
+    assertRetirementCurrent();
+    return emptyResult(source, true, 'source states no concrete fact worth a semantic extraction attempt');
+  }
+  assertExtractionCurrent();
   const llmExtraction = await extractSemanticsWithLlm(context.llm ?? null, generationSource, extraction, text, options.signal);
-  generationGuard.assertCurrent();
+  assertExtractionCurrent();
   const extracted = normalizeSemanticExtraction(llmExtraction)
     ?? await deterministicSemanticExtraction(context.store, source, extraction, text, options.signal, options.shouldStop, generationGuard);
-  generationGuard.assertCurrent();
+  assertExtractionCurrent();
   const semantic = freezeSupport(structuredClone(extracted));
   const persisted = await persistSemanticExtraction(context.store, source, extraction, semantic, {
     knowledgeSpaceId: spaceId,
     signal: options.signal,
     shouldStop: options.shouldStop,
     textHash,
-    assertCurrent: scopeSelection.assertCurrent,
+    assertCurrent: extractionValue.assertCurrent,
   });
   assertSemanticWriteAllowed(options.signal, options.shouldStop);
   const assertPersistenceCurrent = semanticPersistenceGuards.get(persisted)!;

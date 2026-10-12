@@ -36,10 +36,16 @@ registry.register(executionVerification);
 import { editTarget } from '../tools/batteries/edit-target.js';
 import { contentRank } from '../tools/batteries/content-rank.js';
 import { registryRank } from '../tools/batteries/registry-rank.js';
+import { registrySelect } from '../tools/batteries/registry-select.js';
+import { registryCatalogGroupFit } from '../tools/batteries/registry-catalog-group.js';
+import { researchSchemaStatus } from '../tools/batteries/research-schema-status.js';
 
 registry.register(editTarget);
 registry.register(contentRank);
 registry.register(registryRank);
+registry.register(registrySelect);
+registry.register(registryCatalogGroupFit);
+registry.register(researchSchemaStatus);
 
 import { semanticDiff } from '../tools/batteries/semantic-diff.js';
 import { paramFill } from '../tools/batteries/param-fill.js';
@@ -121,3 +127,28 @@ registry.register(personalOpsToolLane);
 registry.register(personalOpsSampleField);
 registry.register(personalOpsReceiptStatus);
 registry.register(personalOpsResultField);
+
+import { remotePublisherOutcomeKind, remotePublisherSchemaStatus } from '../routing/batteries/remote-publisher.js';
+registry.register(remotePublisherSchemaStatus);
+registry.register(remotePublisherOutcomeKind);
+
+import { learningCuratorScore, learningProposalTarget, learningDuplicateAlignment, learningSurvivorSelection, learningSurvivorEquivalence } from '../tools/batteries/learning-curator.js';
+registry.register(learningCuratorScore);
+registry.register(learningProposalTarget);
+registry.register(learningDuplicateAlignment);
+registry.register(learningSurvivorSelection);
+registry.register(learningSurvivorEquivalence);
+
+import { interactiveRuntimeSchemaStatus, interactiveRuntimeKind, interactiveRuntimeStatus, interactiveRuntimeRouteRole } from './batteries/interactive-runtime.js';
+registry.register(interactiveRuntimeSchemaStatus);
+registry.register(interactiveRuntimeKind);
+registry.register(interactiveRuntimeStatus);
+registry.register(interactiveRuntimeRouteRole);
+
+import { browserDeviceEvidence } from './batteries/browser-device-evidence.js';
+registry.register(browserDeviceEvidence);
+
+import { repairFactScoring } from '../knowledge/semantic/repair-fact-scoring/battery.js';
+registry.register(repairFactScoring);
+import { repairProfileRequirement } from '../knowledge/semantic/repair-profile-requirement/battery.js';
+registry.register(repairProfileRequirement);

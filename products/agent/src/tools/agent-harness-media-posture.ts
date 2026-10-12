@@ -1,3 +1,8 @@
+import { captureAsyncHarnessInput } from './agent-harness-async-input.ts';
+import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { browserDeviceCatalogMatches } from './agent-harness-browser-device-readings.ts';
+import { selectHarnessCatalog } from './agent-harness-catalog-selection.ts';
+import { captureCatalogNativeFacts, withModelReadingSource } from './agent-harness-model-reading-source.ts';
 import { buildAgentWorkspaceVoiceMediaReadiness } from '../input/agent-workspace-voice-media.ts';
 import type { AgentWorkspaceVoiceMediaProviderStatus } from '../input/agent-workspace-voice-media.ts';
 import type { CommandContext } from '../input/command-registry.ts';
@@ -77,39 +82,12 @@ function readConfigString(context: CommandContext, key: string): string {
   }
 }
 
-function providerSearchText(provider: AgentWorkspaceVoiceMediaProviderStatus, runtimeStatus?: RuntimeProviderStatus): string {
-  return [
-    provider.id,
-    provider.label,
-    provider.domain,
-    provider.setupState,
-    provider.nextStep,
-    ...provider.features,
-    ...provider.secretKeyOptions,
-    ...(runtimeStatus ? [runtimeStatus.state, runtimeStatus.configured ? 'configured' : 'unconfigured', runtimeStatus.detail ?? ''] : []),
-  ].join('\n').toLowerCase();
+function providerCatalogDescription(provider: AgentWorkspaceVoiceMediaProviderStatus): string {
+  return [provider.label, provider.domain, provider.setupState, provider.nextStep, ...provider.features].join('\n');
 }
 
-function voiceWorkflowSearchText(workflow: VoiceInteractionWorkflow): string {
-  return [
-    workflow.id,
-    workflow.label,
-    workflow.status,
-    workflow.userOutcome,
-    workflow.summary,
-    workflow.nextStep,
-    workflow.modelRoute,
-    workflow.userRoute ?? '',
-    ...workflow.capabilities,
-  ].join('\n').toLowerCase();
-}
-
-function voiceWorkflowMatches(workflow: VoiceInteractionWorkflow, query: string): boolean {
-  if (!query) return true;
-  const text = voiceWorkflowSearchText(workflow);
-  if (text.includes(query)) return true;
-  const tokens = query.split(/\s+/).map((token) => token.trim()).filter(Boolean);
-  return tokens.length > 0 && tokens.every((token) => text.includes(token));
+function workflowCatalogDescription(workflow: VoiceInteractionWorkflow): string {
+  return [workflow.label, workflow.userOutcome, workflow.summary, workflow.nextStep].join('\n');
 }
 
 function voiceWorkflowSummary(workflows: readonly VoiceInteractionWorkflow[]): Record<string, unknown> {
@@ -135,15 +113,21 @@ function hasRegisteredVoiceFeature(readiness: ReturnType<typeof buildReadiness>,
   return readiness.voiceProviders.some((provider) => featureIds.some((feature) => provider.features.includes(feature)));
 }
 
-function buildVoiceInteractionWorkflows(
+async function buildVoiceInteractionWorkflows(
   context: CommandContext,
   readiness: ReturnType<typeof buildReadiness>,
-): readonly VoiceInteractionWorkflow[] {
-  const liveDevice = deviceLiveReadModelSnapshot(context);
-  const pushToTalkRecords = certifiedDeviceLiveRecords(liveDevice, 'push-to-talk', ['push to talk', 'speech input', 'microphone']);
-  const transcriptionRecords = certifiedDeviceLiveRecords(liveDevice, 'voice-memo-transcription', ['voice memo', 'speech-to-text', 'audio transcription']);
-  const spokenResponseRecords = certifiedDeviceLiveRecords(liveDevice, 'spoken-responses', ['tts', 'spoken response', 'speaker']);
-  const wakeRecords = certifiedDeviceLiveRecords(liveDevice, 'wake-and-speak', ['wake word', 'always listening']);
+  options: CatalogRankingOptions,
+): Promise<readonly VoiceInteractionWorkflow[]> {
+  const liveDevice = await deviceLiveReadModelSnapshot(context, options);
+  options.assertCurrent?.();
+  const pushToTalkRecords = await certifiedDeviceLiveRecords(liveDevice, 'push-to-talk', ['push to talk', 'speech input', 'microphone'], options);
+  options.assertCurrent?.();
+  const transcriptionRecords = await certifiedDeviceLiveRecords(liveDevice, 'voice-memo-transcription', ['voice memo', 'speech-to-text', 'audio transcription'], options);
+  options.assertCurrent?.();
+  const spokenResponseRecords = await certifiedDeviceLiveRecords(liveDevice, 'spoken-responses', ['tts', 'spoken response', 'speaker'], options);
+  options.assertCurrent?.();
+  const wakeRecords = await certifiedDeviceLiveRecords(liveDevice, 'wake-and-speak', ['wake word', 'always listening'], options);
+  options.assertCurrent?.();
   // The one reader for every `voice.wake.*` row (SDK settings.ts), so this posture
   // reports the same resolution the capture host itself consults, including which
   // rows refuse to start it, instead of re-deriving it from raw config reads.
@@ -332,18 +316,6 @@ function describeVoiceWorkflow(workflow: VoiceInteractionWorkflow, includeParame
   };
 }
 
-function describeProviderCandidate(provider: AgentWorkspaceVoiceMediaProviderStatus): Record<string, unknown> {
-  return {
-    mediaProviderId: `${provider.domain}:${provider.id}`,
-    id: provider.id,
-    domain: provider.domain,
-    label: provider.label,
-    setupState: provider.setupState,
-    selected: provider.selected,
-    modelRoute: mediaProviderModelRoute(),
-  };
-}
-
 function mediaProviderModelRoute(): string {
   return 'agent_media_generate or agent_harness mode:"media_provider"';
 }
@@ -400,167 +372,169 @@ function describeProvider(
   };
 }
 
-async function readRuntimeStatuses(context: CommandContext): Promise<{
-  readonly voice: readonly RuntimeProviderStatus[];
-  readonly media: readonly RuntimeProviderStatus[];
-}> {
+async function readRuntimeStatuses(context: CommandContext, options: CatalogRankingOptions) {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
   const voice = await (async () => {
-    try {
-      return (await context.platform.voiceProviderRegistry?.status() ?? []).map((status) => ({
-        id: status.id,
-        state: status.state,
-        configured: status.configured,
-        ...(status.detail ? { detail: status.detail } : {}),
-      }));
-    } catch {
-      return [];
-    }
+    try { return await context.platform.voiceProviderRegistry?.status() ?? []; }
+    catch { return []; }
   })();
+  const voiceSource = captureAsyncHarnessInput(voice, options);
+  voiceSource.retainSourceCurrent();
+  voiceSource.assertCurrent();
   const media = await (async () => {
-    try {
-      return (await context.platform.mediaProviderRegistry?.status() ?? []).map((status) => ({
-        id: status.id,
-        state: status.state,
-        configured: status.configured,
-        ...(status.detail ? { detail: status.detail } : {}),
-      }));
-    } catch {
-      return [];
-    }
+    try { return await context.platform.mediaProviderRegistry?.status() ?? []; }
+    catch { return []; }
   })();
-  return { voice, media };
+  voiceSource.assertCurrent();
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  return { voice: voiceSource.args, media };
 }
 
 function buildReadiness(context: CommandContext) {
-  return buildAgentWorkspaceVoiceMediaReadiness({
-    context,
-    voiceProviders: context.platform.voiceProviderRegistry?.list() ?? [],
-    mediaProviders: context.platform.mediaProviderRegistry?.list() ?? [],
+  const voice = context.platform.voiceProviderRegistry?.list() ?? [];
+  const media = context.platform.mediaProviderRegistry?.list() ?? [];
+  return { ...buildAgentWorkspaceVoiceMediaReadiness({ context, voiceProviders: voice, mediaProviders: media }),
+    originalProviders: { voice, media } };
+}
+
+function providersFrom(readiness: ReturnType<typeof buildReadiness>, runtimeStatuses: Awaited<ReturnType<typeof readRuntimeStatuses>>) {
+  const voiceStatuses = statusMap(runtimeStatuses.voice), mediaStatuses = statusMap(runtimeStatuses.media);
+  return [
+    ...readiness.voiceProviders.map(provider => ({ provider, runtimeStatus: voiceStatuses.get(provider.id),
+      registration: readiness.originalProviders.voice.find(entry => entry.id === provider.id) })),
+    ...readiness.mediaProviders.map(provider => ({ provider, runtimeStatus: mediaStatuses.get(provider.id),
+      registration: readiness.originalProviders.media.find(entry => entry.id === provider.id) })),
+  ];
+}
+
+export async function mediaPostureCatalogStatus(context: CommandContext, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const caller = captureAsyncHarnessInput({}, options);
+  const native = captureCatalogNativeFacts(context, 'media');
+  caller.options.retainCurrent(native.assertCurrent, 'agent.media.native-source');
+  caller.retainSourceCurrent();
+  const readiness = buildReadiness(context);
+  const source = captureAsyncHarnessInput({ ...readiness, nativeProviderEvidence: native.providerEvidence }, caller.options);
+  source.retainSourceCurrent();
+  return withModelReadingSource(source.args, source.options, async (captured, current) => {
+    const voiceWorkflows = await buildVoiceInteractionWorkflows(context, captured, current);
+    current.assertCurrent?.();
+    return {
+      modes: ['media_posture', 'media_provider'], voiceProviders: captured.voiceProviders.length,
+      mediaProviders: captured.mediaProviders.length, readyVoiceProviders: captured.readyVoiceProviderCount,
+      readyMediaProviders: captured.readyMediaProviderCount, voiceWorkflowSummary: voiceWorkflowSummary(voiceWorkflows), readOnly: true,
+    };
   });
 }
 
-export function mediaPostureCatalogStatus(context: CommandContext): Record<string, unknown> {
-  const readiness = buildReadiness(context);
-  const voiceWorkflows = buildVoiceInteractionWorkflows(context, readiness);
-  return {
-    modes: ['media_posture', 'media_provider'],
-    voiceProviders: readiness.voiceProviders.length,
-    mediaProviders: readiness.mediaProviders.length,
-    readyVoiceProviders: readiness.readyVoiceProviderCount,
-    readyMediaProviders: readiness.readyMediaProviderCount,
-    voiceWorkflowSummary: voiceWorkflowSummary(voiceWorkflows),
-    readOnly: true,
-  };
+export async function mediaPostureSummary(context: CommandContext, rawArgs: AgentHarnessMediaArgs,
+  options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const caller = captureAsyncHarnessInput(rawArgs, options);
+  const native = captureCatalogNativeFacts(context, 'media');
+  caller.options.retainCurrent(native.assertCurrent, 'agent.media.native-source');
+  caller.retainSourceCurrent();
+  return withModelReadingSource(caller.args, caller.options, async (args, inputOptions) => {
+    const readinessInput = buildReadiness(context);
+    const readinessSource = captureAsyncHarnessInput(readinessInput, inputOptions);
+    readinessSource.retainSourceCurrent();
+    const runtimeInput = await readRuntimeStatuses(context, readinessSource.options);
+    readinessSource.assertCurrent();
+    inputOptions.assertCurrent?.();
+    const source = captureAsyncHarnessInput({ readiness: readinessInput, runtimeStatuses: runtimeInput, nativeProviderEvidence: native.providerEvidence }, inputOptions);
+    source.retainSourceCurrent();
+    return withModelReadingSource(source.args, source.options, async ({ readiness, runtimeStatuses }, current) => {
+      const providers = providersFrom(readiness, runtimeStatuses);
+      const query = readString(args.query), limit = readLimit(args.limit, 100);
+      const voiceWorkflows = await buildVoiceInteractionWorkflows(context, readiness, current);
+      current.assertCurrent?.();
+      const matchingProviders = await browserDeviceCatalogMatches(providers, query, entry => ({
+        id: `${entry.provider.domain}:${entry.provider.id}`, description: providerCatalogDescription(entry.provider), evidence: entry,
+      }), current, 'agent.media.providers.query');
+      current.assertCurrent?.();
+      const matchingWorkflows = await browserDeviceCatalogMatches(voiceWorkflows, query, workflow => ({
+        id: workflow.id, description: workflowCatalogDescription(workflow), evidence: workflow,
+      }), current, 'agent.media.workflows.query');
+      current.assertCurrent?.();
+      const filtered = matchingProviders.slice(0, limit), filteredVoiceWorkflows = matchingWorkflows.slice(0, limit);
+      const result = {
+        status: 'available',
+        summary: {
+          voiceProviders: readiness.voiceProviders.length,
+          mediaProviders: readiness.mediaProviders.length,
+          readyVoiceProviders: readiness.readyVoiceProviderCount,
+          readyMediaProviders: readiness.readyMediaProviderCount,
+          selectedTtsProviderStatus: readiness.selectedTtsProviderStatus,
+          selectedTtsProviderLabel: readiness.selectedTtsProviderLabel,
+          ttsVoiceConfigured: readiness.ttsVoiceConfigured,
+          ttsResponseRouteConfigured: readiness.ttsResponseRouteConfigured,
+          voiceSurfaceEnabled: readConfigBoolean(context, 'ui.voiceEnabled', false),
+          browserToolState: readiness.browserToolState,
+          voiceWorkflows: voiceWorkflowSummary(voiceWorkflows),
+          returnedVoiceWorkflows: filteredVoiceWorkflows.length,
+          artifactStoreAvailable: Boolean(context.platform.artifactStore),
+          ttsProviderSetting: readConfigString(context, 'tts.provider') || null,
+          ttsVoiceSettingConfigured: readConfigString(context, 'tts.voice').length > 0,
+          nextSteps: readiness.nextSteps,
+        },
+        providers: filtered.map(({ provider, runtimeStatus }) => describeProvider(provider, runtimeStatus, {
+          includeParameters: args.includeParameters === true,
+        })),
+        voiceWorkflows: filteredVoiceWorkflows.map((workflow) => describeVoiceWorkflow(workflow, args.includeParameters === true)),
+        returned: filtered.length,
+        total: providers.length,
+        policy: 'Read-only voice/media posture. Media generation, voice enable/disable, TTS setting changes, and bundle export stay confirmation-gated through first-class tools, settings modes, workspace actions, or slash-command mirrors.',
+        ...(args.includeParameters === true ? { modelAccess: {
+          mediaGenerateTool: 'agent_media_generate',
+          providerCatalogMode: 'media_posture',
+          singleProviderMode: 'media_provider',
+          ttsProviderPicker: 'agent_harness mode:"open_ui_surface" surfaceId:"tts-provider-picker" confirm:true explicitUserRequest:"..."',
+          ttsVoicePicker: 'agent_harness mode:"open_ui_surface" surfaceId:"tts-voice-picker" confirm:true explicitUserRequest:"..."',
+          voiceWorkflowPosture: 'agent_harness mode:"media_posture" query:"push to talk" includeParameters:true',
+          commands: ['/media providers', '/voice review', '/tts <prompt>', '/image <path>'],
+        } } : {}),
+      };
+      current.assertCurrent?.();
+      return result;
+    });
+  });
 }
 
-export async function mediaPostureSummary(context: CommandContext, args: AgentHarnessMediaArgs): Promise<Record<string, unknown>> {
-  const readiness = buildReadiness(context);
-  const runtimeStatuses = await readRuntimeStatuses(context);
-  const voiceStatuses = statusMap(runtimeStatuses.voice);
-  const mediaStatuses = statusMap(runtimeStatuses.media);
-  const providers = [
-    ...readiness.voiceProviders.map((provider) => ({ provider, runtimeStatus: voiceStatuses.get(provider.id) })),
-    ...readiness.mediaProviders.map((provider) => ({ provider, runtimeStatus: mediaStatuses.get(provider.id) })),
-  ];
-  const query = readString(args.query).toLowerCase();
-  const limit = readLimit(args.limit, 100);
-  const voiceWorkflows = buildVoiceInteractionWorkflows(context, readiness);
-  const filtered = providers
-    .filter(({ provider, runtimeStatus }) => !query || providerSearchText(provider, runtimeStatus).includes(query))
-    .slice(0, limit);
-  const filteredVoiceWorkflows = voiceWorkflows
-    .filter((workflow) => voiceWorkflowMatches(workflow, query))
-    .slice(0, limit);
-  return {
-    status: 'available',
-    summary: {
-      voiceProviders: readiness.voiceProviders.length,
-      mediaProviders: readiness.mediaProviders.length,
-      readyVoiceProviders: readiness.readyVoiceProviderCount,
-      readyMediaProviders: readiness.readyMediaProviderCount,
-      selectedTtsProviderStatus: readiness.selectedTtsProviderStatus,
-      selectedTtsProviderLabel: readiness.selectedTtsProviderLabel,
-      ttsVoiceConfigured: readiness.ttsVoiceConfigured,
-      ttsResponseRouteConfigured: readiness.ttsResponseRouteConfigured,
-      voiceSurfaceEnabled: readConfigBoolean(context, 'ui.voiceEnabled', false),
-      browserToolState: readiness.browserToolState,
-      voiceWorkflows: voiceWorkflowSummary(voiceWorkflows),
-      returnedVoiceWorkflows: filteredVoiceWorkflows.length,
-      artifactStoreAvailable: Boolean(context.platform.artifactStore),
-      ttsProviderSetting: readConfigString(context, 'tts.provider') || null,
-      ttsVoiceSettingConfigured: readConfigString(context, 'tts.voice').length > 0,
-      nextSteps: readiness.nextSteps,
-    },
-    providers: filtered.map(({ provider, runtimeStatus }) => describeProvider(provider, runtimeStatus, {
-      includeParameters: args.includeParameters === true,
-    })),
-    voiceWorkflows: filteredVoiceWorkflows.map((workflow) => describeVoiceWorkflow(workflow, args.includeParameters === true)),
-    returned: filtered.length,
-    total: providers.length,
-    policy: 'Read-only voice/media posture. Media generation, voice enable/disable, TTS setting changes, and bundle export stay confirmation-gated through first-class tools, settings modes, workspace actions, or slash-command mirrors.',
-    ...(args.includeParameters === true ? { modelAccess: {
-      mediaGenerateTool: 'agent_media_generate',
-      providerCatalogMode: 'media_posture',
-      singleProviderMode: 'media_provider',
-      ttsProviderPicker: 'agent_harness mode:"open_ui_surface" surfaceId:"tts-provider-picker" confirm:true explicitUserRequest:"..."',
-      ttsVoicePicker: 'agent_harness mode:"open_ui_surface" surfaceId:"tts-voice-picker" confirm:true explicitUserRequest:"..."',
-      voiceWorkflowPosture: 'agent_harness mode:"media_posture" query:"push to talk" includeParameters:true',
-      commands: ['/media providers', '/voice review', '/tts <prompt>', '/image <path>'],
-    } } : {}),
-  };
-}
-
-export async function describeHarnessMediaProvider(context: CommandContext, args: AgentHarnessMediaArgs): Promise<MediaProviderResolution> {
-  const mediaProviderId = readString(args.mediaProviderId);
-  const target = readString(args.target);
-  const query = readString(args.query);
-  const input = mediaProviderId || target || query;
-  if (!input) {
-    return {
-      status: 'missing_lookup',
-      usage: 'media_provider requires mediaProviderId, target, or query. Use mode:"media_posture" to inspect provider ids.',
-    };
-  }
-  const readiness = buildReadiness(context);
-  const runtimeStatuses = await readRuntimeStatuses(context);
-  const voiceStatuses = statusMap(runtimeStatuses.voice);
-  const mediaStatuses = statusMap(runtimeStatuses.media);
-  const providers = [
-    ...readiness.voiceProviders.map((provider) => ({ provider, runtimeStatus: voiceStatuses.get(provider.id) })),
-    ...readiness.mediaProviders.map((provider) => ({ provider, runtimeStatus: mediaStatuses.get(provider.id) })),
-  ];
-  const normalized = input.toLowerCase();
-  const exact = providers.find(({ provider }) => `${provider.domain}:${provider.id}` === input || provider.id === input);
-  if (exact) {
-    return {
-      status: 'found',
-      provider: describeProvider(exact.provider, exact.runtimeStatus, { includeParameters: true, lookup: { input, source: mediaProviderId ? 'mediaProviderId' : target ? 'target' : 'query', resolvedBy: 'id' } }),
-    };
-  }
-  const insensitive = providers.find(({ provider }) => `${provider.domain}:${provider.id}`.toLowerCase() === normalized || provider.id.toLowerCase() === normalized);
-  if (insensitive) {
-    return {
-      status: 'found',
-      provider: describeProvider(insensitive.provider, insensitive.runtimeStatus, { includeParameters: true, lookup: { input, source: mediaProviderId ? 'mediaProviderId' : target ? 'target' : 'query', resolvedBy: 'case-insensitive-id' } }),
-    };
-  }
-  const searched = providers.filter(({ provider, runtimeStatus }) => providerSearchText(provider, runtimeStatus).includes(normalized));
-  if (searched.length === 1) {
-    const found = searched[0]!;
-    return {
-      status: 'found',
-      provider: describeProvider(found.provider, found.runtimeStatus, { includeParameters: true, lookup: { input, source: mediaProviderId ? 'mediaProviderId' : target ? 'target' : 'query', resolvedBy: 'search' } }),
-    };
-  }
-  if (searched.length > 1) {
-    return {
-      status: 'ambiguous',
-      input,
-      candidates: searched.slice(0, 8).map(({ provider }) => describeProviderCandidate(provider)),
-    };
-  }
-  return {
-    status: 'missing_lookup',
-    usage: `Unknown media provider ${input}. Use mode:"media_posture" to inspect provider ids.`,
-  };
+export async function describeHarnessMediaProvider(context: CommandContext, rawArgs: AgentHarnessMediaArgs,
+  options: CatalogRankingOptions = {}): Promise<MediaProviderResolution> {
+  const caller = captureAsyncHarnessInput(rawArgs, options);
+  const native = captureCatalogNativeFacts(context, 'media');
+  caller.options.retainCurrent(native.assertCurrent, 'agent.media.native-source');
+  caller.retainSourceCurrent();
+  return withModelReadingSource(caller.args, caller.options, async (args, inputOptions): Promise<MediaProviderResolution> => {
+    const mediaProviderId = readString(args.mediaProviderId), target = readString(args.target), query = readString(args.query);
+    const input = mediaProviderId || target || query;
+    if (!input) return { status: 'missing_lookup', usage: 'media_provider requires mediaProviderId, target, or query. Use mode:"media_posture" to inspect provider ids.' };
+    const readiness = buildReadiness(context);
+    const readinessSource = captureAsyncHarnessInput(readiness, inputOptions);
+    readinessSource.retainSourceCurrent();
+    const runtimeStatuses = await readRuntimeStatuses(context, readinessSource.options);
+    readinessSource.assertCurrent();
+    inputOptions.assertCurrent?.();
+    const source = captureAsyncHarnessInput({ readiness, runtimeStatuses, nativeProviderEvidence: native.providerEvidence }, inputOptions);
+    source.retainSourceCurrent();
+    return withModelReadingSource(source.args, source.options, async (captured, current): Promise<MediaProviderResolution> => {
+      const providers = providersFrom(captured.readiness, captured.runtimeStatuses);
+      const lookup = { input, source: mediaProviderId ? 'mediaProviderId' : target ? 'target' : 'query' };
+      const exact = providers.find(({ provider }) => `${provider.domain}:${provider.id}` === input || provider.id === input);
+      if (exact) return { status: 'found', provider: describeProvider(exact.provider, exact.runtimeStatus, {
+        includeParameters: true, lookup: { ...lookup, resolvedBy: 'id' },
+      }) };
+      const normalized = input.toLowerCase();
+      const insensitive = providers.find(({ provider }) => `${provider.domain}:${provider.id}`.toLowerCase() === normalized || provider.id.toLowerCase() === normalized);
+      if (insensitive) return { status: 'found', provider: describeProvider(insensitive.provider, insensitive.runtimeStatus, {
+        includeParameters: true, lookup: { ...lookup, resolvedBy: 'case-insensitive-id' },
+      }) };
+      const selected = await selectHarnessCatalog(providers, input, entry => ({
+        id: `${entry.provider.domain}:${entry.provider.id}`, description: providerCatalogDescription(entry.provider), evidence: entry,
+      }), current, 'agent.media.provider.select');
+      current.assertCurrent?.();
+      return selected ? { status: 'found', provider: describeProvider(selected.provider, selected.runtimeStatus, {
+        includeParameters: true, lookup: { ...lookup, resolvedBy: 'selection' },
+      }) } : { status: 'missing_lookup', usage: `Unknown media provider ${input}. Use mode:"media_posture" to inspect provider ids.` };
+    });
+  });
 }

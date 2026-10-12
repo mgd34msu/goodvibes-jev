@@ -17,8 +17,9 @@
  *
  * ── Everything is injected ────────────────────────────────────────────────
  *
- * Not a single line here opens a socket, reads a file, reads config or reaches
- * for a global. The transports arrive as `EmailTransportPort`, config as a
+ * The protocol service opens no socket or file and reads no ambient config.
+ * Semantic helpers capture the installed judgment owner and accept a native
+ * protected source owner with caller lifetime restrictions. The transports arrive as `EmailTransportPort`, config as a
  * getter, secrets as a `get`, the sender-claim wording as
  * `EmailSenderClaimDescriber`, the untrusted-ingest ledger as a recorder
  * callback, and the credential-shaped-text check as a `SecretLikeTextPredicate`
@@ -208,11 +209,15 @@ export {
   median,
   mostFrequent,
   replySubject,
+  StyleReplyReadingError,
 } from './style-reply.js';
 
 export type {
   DraftReplyResult,
   StyleProfile,
+  StyleReplyReadingOptions,
+  StyleReplyMessage,
+  StyleSentMessage,
 } from './style-reply.js';
 
 export {

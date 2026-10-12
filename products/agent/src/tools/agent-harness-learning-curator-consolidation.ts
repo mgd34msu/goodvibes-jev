@@ -1,20 +1,12 @@
 import type { AgentWorkspaceLocalLibraryItem } from '../input/agent-workspace-types.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
-import type { LearningCandidate, LearningConsolidationDiff, LearningConsolidationFields, LearningConsolidationPlan, LocalLearningCandidateDomain } from './agent-harness-learning-curator-types.ts';
-import { clampScore, isReviewed, itemFreshness, itemSourceQuality, localRegistryModelRoute, localRegistryRoute, routeList, routeValue, scoresForItem } from './agent-harness-learning-curator-common.ts';
+import type { LearningCandidateDraft, LearningConsolidationDiff, LearningConsolidationFields, LearningConsolidationPlan, LocalLearningCandidateDomain } from './agent-harness-learning-curator-types.ts';
+import { localRegistryRoute, routeList, routeValue } from './agent-harness-learning-curator-common.ts';
+import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import type { LearningRecord } from './agent-harness-learning-curator-source.ts';
+import { readLearningDuplicatePair, readLearningSurvivor } from './agent-harness-learning-curator-readings.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 const CONSOLIDATION_DOMAINS: readonly LocalLearningCandidateDomain[] = ['memory', 'persona', 'skill', 'routine'];
-
-function normalizeDuplicateKey(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-    .replace(/\s+/g, ' ');
-}
-
-function duplicateKeySlug(value: string): string {
-  return normalizeDuplicateKey(value).replace(/\s+/g, '-').slice(0, 52) || 'duplicate';
-}
 
 function uniqueText(values: readonly string[]): readonly string[] {
   const seen = new Set<string>();
@@ -33,24 +25,6 @@ function uniqueText(values: readonly string[]): readonly string[] {
 function uniqueSorted(values: readonly string[]): readonly string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))]
     .sort((left, right) => left.localeCompare(right));
-}
-
-function itemConsolidationScore(item: AgentWorkspaceLocalLibraryItem): number {
-  const scores = scoresForItem(item);
-  const reviewSignal = isReviewed(item) ? 26 : item.reviewState === 'fresh' ? 10 : 0;
-  const usageSignal = (item.enabled ? 12 : 0) + (item.active ? 16 : 0) + Math.min(12, (item.startCount ?? 0) * 3);
-  const confidenceSignal = item.confidence === undefined ? 0 : item.confidence / 4;
-  return scores.usefulness + scores.freshness + scores.sourceQuality - scores.risk + reviewSignal + usageSignal + confidenceSignal;
-}
-
-function chooseConsolidationSurvivor(items: readonly AgentWorkspaceLocalLibraryItem[]): AgentWorkspaceLocalLibraryItem {
-  return [...items].sort((left, right) => {
-    const byScore = itemConsolidationScore(right) - itemConsolidationScore(left);
-    if (byScore !== 0) return byScore;
-    const byReview = (isReviewed(right) ? 1 : 0) - (isReviewed(left) ? 1 : 0);
-    if (byReview !== 0) return byReview;
-    return left.id.localeCompare(right.id);
-  })[0]!;
 }
 
 function mergeableDescription(domain: LocalLearningCandidateDomain, item: AgentWorkspaceLocalLibraryItem): string {
@@ -215,16 +189,16 @@ function consolidationCandidate(
   domain: LocalLearningCandidateDomain,
   key: string,
   items: readonly AgentWorkspaceLocalLibraryItem[],
-): LearningCandidate | null {
+  survivor: AgentWorkspaceLocalLibraryItem,
+): LearningCandidateDraft | null {
   if (items.length < 2) return null;
-  const survivor = chooseConsolidationSurvivor(items);
   const duplicates = items.filter((item) => item.id !== survivor.id);
   if (duplicates.length === 0) return null;
   const updateRoute = updateRouteForConsolidation(domain, survivor, duplicates);
   const updateFields = updateFieldsForConsolidation(domain, survivor, duplicates);
   const rollbackFields = rollbackFieldsForConsolidation(domain, survivor);
   const staleRoutes = duplicates.map((item) => `${localRegistryRoute(domain, 'stale', item.id)} reason:"Duplicate of ${routeValue(survivor.id)}; staged by learning curator consolidation."`);
-  const deleteRoutes = duplicates.map((item) => `${localRegistryRoute(domain, 'delete', item.id)} confirm:true explicitUserRequest:"Delete duplicate ${routeValue(domain)} ${routeValue(item.id)} after reviewed consolidation."`);
+  const deleteRoutes = duplicates.map((item) => `${localRegistryRoute(domain, 'delete', item.id)}`);
   const rollbackRoutes = [
     ...(updateRoute ? [rollbackUpdateRouteForConsolidation(domain, survivor)] : []),
     ...duplicates.map((item) => localRegistryRoute(domain, 'review', item.id)),
@@ -242,22 +216,14 @@ function consolidationCandidate(
     deleteRoutes,
     rollbackRoutes,
   };
-  const enabledDuplicateCount = duplicates.filter((item) => item.enabled || item.active).length;
   return {
-    id: `consolidation:${domain}:${duplicateKeySlug(key)}`,
+    id: `consolidation:${domain}:${encodeURIComponent(key)}`,
     label: `Consolidate duplicate ${domain}: ${survivor.name}`,
     domain,
     recordId: survivor.id,
     status: 'needs-consolidation',
-    priority: clampScore(72 + Math.min(16, duplicates.length * 4) + enabledDuplicateCount * 5),
-    reason: `${items.length} Agent-local ${domain} records share the same normalized name.`,
+    reason: `${items.length} Agent-local ${domain} records have settled same-entity pair readings.`,
     next: 'Inspect every record, update the survivor with merged visible fields, mark duplicates stale first, then delete only after explicit review.',
-    scores: {
-      usefulness: clampScore(64 + Math.min(18, items.length * 4)),
-      freshness: Math.max(...items.map(itemFreshness)),
-      sourceQuality: Math.max(...items.map(itemSourceQuality)),
-      risk: clampScore(34 + enabledDuplicateCount * 12 + Math.min(18, duplicates.length * 4)),
-    },
     reviewState: survivor.reviewState,
     ...(survivor.enabled === undefined ? {} : { enabled: survivor.enabled }),
     ...(survivor.active === undefined ? {} : { active: survivor.active }),
@@ -275,21 +241,48 @@ function consolidationCandidate(
   };
 }
 
-export function consolidationCandidatesForDomain(
+export async function consolidationCandidatesForDomain(
   domain: LocalLearningCandidateDomain,
-  items: readonly AgentWorkspaceLocalLibraryItem[],
-): readonly LearningCandidate[] {
-  if (!CONSOLIDATION_DOMAINS.includes(domain)) return [];
-  const groups = new Map<string, AgentWorkspaceLocalLibraryItem[]>();
-  for (const item of items) {
-    const key = normalizeDuplicateKey(item.name);
-    if (key.length < 4) continue;
-    const group = groups.get(key) ?? [];
-    group.push(item);
-    groups.set(key, group);
+  records: readonly LearningRecord[],
+  options: CatalogRankingOptions,
+  context?: unknown,
+): Promise<readonly LearningCandidateDraft[]> {
+  if (!CONSOLIDATION_DOMAINS.includes(domain) || records.length < 2) return [];
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const edges = records.map(() => new Set<number>());
+  // Every same-domain pair is read. Name normalization cannot shortlist durable records.
+  for (let left = 0; left < records.length; left++) {
+    for (let right = left + 1; right < records.length; right++) {
+      const a = records[left], b = records[right];
+      if (!a || !b) throw new ToolInputProjectionError('held');
+      const same = await readLearningDuplicatePair({ left: { domain, ...a }, right: { domain, ...b } }, options);
+      options.signal?.throwIfAborted(); options.assertCurrent?.();
+      if (same) { edges[left]?.add(right); edges[right]?.add(left); }
+    }
   }
-  return [...groups.entries()].flatMap(([key, group]) => {
-    const candidate = consolidationCandidate(domain, key, group);
-    return candidate ? [candidate] : [];
-  });
+  const visited = new Set<number>();
+  const result: LearningCandidateDraft[] = [];
+  for (let first = 0; first < records.length; first++) {
+    if (visited.has(first)) continue;
+    const indexes = [first]; visited.add(first);
+    for (let cursor = 0; cursor < indexes.length; cursor++) {
+      const current = indexes[cursor];
+      if (current === undefined) throw new ToolInputProjectionError('held');
+      for (const neighbor of edges[current] ?? []) if (!visited.has(neighbor)) { visited.add(neighbor); indexes.push(neighbor); }
+    }
+    if (indexes.length < 2) continue;
+    // Alignment is not assumed transitive. Every proposed group must be a complete same-entity clique.
+    for (const left of indexes) for (const right of indexes)
+      if (left !== right && !edges[left]?.has(right)) throw new ToolInputProjectionError('held');
+    const group = indexes.map(index => {
+      const record = records[index]; if (!record) throw new ToolInputProjectionError('held'); return record;
+    }).sort((left, right) => left.item.id.localeCompare(right.item.id));
+    const selected = await readLearningSurvivor({ domain, records: group, context }, options);
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    const survivor = group[selected]; if (!survivor) throw new ToolInputProjectionError('held');
+    const key = JSON.stringify(group.map(record => record.item.id));
+    const candidate = consolidationCandidate(domain, key, group.map(record => record.item), survivor.item);
+    if (candidate) result.push(candidate);
+  }
+  options.signal?.throwIfAborted(); options.assertCurrent?.(); return result;
 }

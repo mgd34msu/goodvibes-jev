@@ -1,3 +1,4 @@
+import { screeningAnswers } from './_helpers/screening-answers.js';
 import { afterEach, expect, test } from 'bun:test';
 import { Client } from 'undici/index.js';
 import { createDiscordInboxOwner, type DiscordInboxOwnerOptions } from '../sdk/src/platform/intake/providers/discord-owner.ts';
@@ -38,7 +39,7 @@ async function fixture(options: { credentialGate?: Promise<void>; screeningGate?
         revision: source.revision, spans: [{ part: 1, start: 8, end: 27 }, { part: 3, start: 8, end: 27 }],
       }) } }] });
     }
-    return Response.json({ model: 'jev-1.13.0', answers: { complete: { type: 'noul', noul: 1 }, precise: { type: 'noul', noul: 1 } }, usage: { input_tokens: 10, output_tokens: 2 } });
+    return Response.json({ model: 'jev-1.13.0', answers: screeningAnswers(await request.json(), { complete: 1, precise: 1 }), usage: { input_tokens: 10, output_tokens: 2 } });
   } });
   cleanups.push(() => local.stop(true), () => remote.stop(true));
   const channelSignal = new AbortController(), privacySignal = new AbortController();

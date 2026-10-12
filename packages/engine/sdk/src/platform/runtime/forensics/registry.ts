@@ -1,3 +1,4 @@
+import { assertSecurityReadSource, captureSecurityReadBindings, retainSecurityReadData, retainSecurityReadMap } from '../../security/read-source.js';
 /**
  * ForensicsRegistry, in-memory store for FailureReport objects.
  *
@@ -43,7 +44,14 @@ export interface ReplaySnapshotInput {
 /** Default maximum number of failure reports retained in memory. */
 export const DEFAULT_REGISTRY_LIMIT = 100;
 
+const forensicsReadSources = new WeakMap<ForensicsRegistry, () => () => void>();
+const getForensicsReadSources = forensicsReadSources.get.bind(forensicsReadSources);
+const setForensicsReadSources = forensicsReadSources.set.bind(forensicsReadSources);
+export function captureForensicsReadSource(registry: ForensicsRegistry): () => void {
+  const capture = getForensicsReadSources(registry); assertSecurityReadSource(capture !== undefined); return capture();
+}
 export class ForensicsRegistry {
+  private _readRevision = 0;
   private readonly _reports: FailureReport[] = [];
   private readonly _byId = new Map<string, FailureReport>();
   private readonly _limit: number;
@@ -51,6 +59,11 @@ export class ForensicsRegistry {
 
   public constructor(limit: number = DEFAULT_REGISTRY_LIMIT) {
     this._limit = limit;
+    setForensicsReadSources(this, () => {
+      const binding = captureSecurityReadBindings(this, ['_readRevision', '_reports', '_byId', '_limit', 'getAll', 'latest']);
+      const revision = this._readRevision, rawCurrent = retainSecurityReadData(this._reports), mapCurrent = retainSecurityReadMap(this._byId);
+      return () => { binding(); rawCurrent(); mapCurrent(); assertSecurityReadSource(this._readRevision === revision); };
+    });
   }
 
   /**
@@ -58,6 +71,7 @@ export class ForensicsRegistry {
    * If the buffer is full, the oldest entry is evicted.
    */
   public push(report: FailureReport): void {
+    this._readRevision++;
     // Evict oldest if at capacity
     if (this._reports.length >= this._limit) {
       const evicted = this._reports.shift();

@@ -90,6 +90,8 @@ export type {
 } from './goodvibes-runtime/config-routing.js';
 
 export { ToolRegistry, assertCurrentToolExecution, assertCurrentToolInvocation, assertCurrentToolEffect, currentToolAutonomySource, commitCurrentToolSettingsPlan, currentToolSettingsPresentation, claimCurrentToolSettingsDispatch } from './registry.js';
+export { registrySelect } from './batteries/registry-select.js';
+export { registryCatalogGroupFit } from './batteries/registry-catalog-group.js';
 export type { ToolExecutionEffect, CurrentToolAutonomySource } from './registry.js';
 export type { ToolExecuteOptions } from '../types/tools.js';
 export { ToolInputProjectionError, assertProjectionExecution, assertProjectionCurrent } from './input-projection.js';
@@ -683,4 +685,9 @@ export function registerAllTools(
   registerTool(createChannelTool(channelRegistry));
   return { fileCache, projectIndex };
 }
-export { booleanValue } from './batteries/boolean-value.js';
+export { booleanValue, booleanValuePolicy } from './batteries/boolean-value.js';
+export type { NativeDecisionPolicy } from './batteries/decision-policy.js';
+
+export { learningCuratorScore, learningProposalTarget, learningDuplicateAlignment, learningSurvivorSelection, learningSurvivorEquivalence } from './batteries/learning-curator.js';
+
+export { memoryClass } from './batteries/memory-class.js';

@@ -374,6 +374,7 @@ export {
 } from './connector-config-sections.js';
 export {
   SecretsManager,
+  captureSecretsReadSource,
   SecretWriteCommittedError,
   SecretStoreUnreadableError,
   describeSecretWriteScope,
@@ -401,9 +402,9 @@ export type {
   SecretWriteEffectOwner,
   SecretsManagerOptions,
 } from './secrets.js';
-export { ServiceRegistry } from './service-registry.js';
+export { ServiceRegistry, captureServiceReadSource } from './service-registry.js';
 export type * from './service-registry.js';
-export { SubscriptionManager, sharedSubscriptionsPath } from './subscriptions.js';
+export { SubscriptionManager, captureSubscriptionReadSource, sharedSubscriptionsPath } from './subscriptions.js';
 export type {
   PreparedSubscriptionImport,
   PreparedSubscriptionImportTransition,

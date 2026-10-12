@@ -64,3 +64,20 @@ registry.register(routeReadiness);
 registry.register(localRecipeFit);
 import { modelReasonTheme } from './batteries/model-reason-theme.js';
 registry.register(modelReasonTheme);
+
+import { localServingStatus, localResourcePressure, localServingSchemaStatus } from './batteries/local-model-diagnostics.js';
+registry.register(localServingStatus);
+registry.register(localResourcePressure);
+registry.register(localServingSchemaStatus);
+
+import { atRestCredential, memoryRouteRole, memoryCredentialState, memoryLiveStatus, memoryReceiptMember, memorySchemaCertified, memoryProviderSelect } from './batteries/memory-provider.js';
+registry.register(memoryRouteRole);
+registry.register(memoryCredentialState);
+registry.register(memoryLiveStatus);
+registry.register(memoryReceiptMember);
+registry.register(memorySchemaCertified);
+registry.register(memoryProviderSelect);
+registry.register(atRestCredential);
+
+import { localBenchmarkPrompt } from './batteries/local-benchmark-prompt.js';
+registry.register(localBenchmarkPrompt);

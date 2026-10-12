@@ -4,7 +4,7 @@ import { postalConfigKey, readConfigSettingForDisplay } from '@goodvibes-jev/eng
 import type { ModelPickerTarget } from './model-picker.ts';
 import type { ConfigManager, ConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { SubscriptionManager } from '@goodvibes-jev/engine/sdk/platform/config';
-import { AGENT_NOTIFICATIONS_METADATA_ONLY_KEY } from '../config/host-settings.ts';
+import { isAgentHostSettingKey } from '../config/host-settings.ts';
 import { getAgentSettingsSchema, type AgentSettingKey } from '../config/settings-catalog.ts';
 import { getResolvedSettingLookup } from '@/runtime/index.ts';
 import type { ServiceInspectionQuery } from '@/runtime/index.ts';
@@ -177,15 +177,18 @@ export class SettingsModal {
     this.lastSettingEffectMessage = null;
     this.clearSearch();
     this.active = true;
-    if (configManager.getHostSettingsSchema?.().some((setting) => setting.key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY)) {
-      this.unsubscribeHostSetting = configManager.getHostBooleanSetting(AGENT_NOTIFICATIONS_METADATA_ONLY_KEY).subscribe(() => {
+    const hostSubscriptions: Array<() => void> = [];
+    for (const setting of configManager.getHostSettingsSchema?.() ?? []) {
+      if (!isAgentHostSettingKey(setting.key)) continue;
+      hostSubscriptions.push(configManager.getHostBooleanSetting(setting.key).subscribe(() => {
         if (!this.active || this.configManager !== configManager) return;
         for (const entries of this.groups.values()) {
           for (const entry of entries) this._refreshHostEntry(entry);
         }
         this.requestHostSettingRender?.();
-      });
+      }));
     }
+    this.unsubscribeHostSetting = () => { for (const unsubscribe of hostSubscriptions) unsubscribe(); };
   }
 
   /** Replace the search query and recompute the ranked results (an empty query clears the search). */
@@ -679,7 +682,7 @@ export class SettingsModal {
       return null; // Accepted asynchronously, not yet a completed reset.
     }
     const applied = this._setValue(key, entry.setting.default);
-    if (key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY) return applied ? { key, value: entry.setting.default } : null;
+    if (isAgentHostSettingKey(key)) return applied ? { key, value: entry.setting.default } : null;
     return { key, value: entry.setting.default };
   }
 
@@ -831,7 +834,7 @@ export class SettingsModal {
   private _setValue(key: AgentSettingKey, value: unknown): boolean {
     if (!this.configManager) return false;
     if (!this._canEditSettings()) return false;
-    if (key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY) {
+    if (isAgentHostSettingKey(key)) {
       try {
         const handle = this.configManager.getHostBooleanSetting(key);
         handle.getResolved(); // Unknown policy metadata must never be presented as editable.
@@ -895,9 +898,13 @@ export class SettingsModal {
 
   private _hostPolicyMetadataError(): string | undefined {
     const config = this.configManager;
-    if (!config?.getHostSettingsSchema?.().some(setting => setting.key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY)) return undefined;
-    try { config.getHostBooleanSetting(AGENT_NOTIFICATIONS_METADATA_ONLY_KEY).getResolved(); return undefined; }
-    catch (error) { return summarizeError(error); }
+    if (!config) return undefined;
+    try {
+      for (const setting of config.getHostSettingsSchema?.() ?? []) {
+        if (isAgentHostSettingKey(setting.key)) config.getHostBooleanSetting(setting.key).getResolved();
+      }
+      return undefined;
+    } catch (error) { return summarizeError(error); }
   }
 
   private _canEditSettings(): boolean {

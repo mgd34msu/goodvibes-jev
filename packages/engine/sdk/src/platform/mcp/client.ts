@@ -1,8 +1,8 @@
 import { captureMcpInputRequired, readProtocolRequest } from '../permissions/protocol-request.js';
 import { randomUUID } from 'node:crypto';
-import { captureOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { captureOwnedJson, retainOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { isDeepStrictEqual, types as nodeTypes } from 'node:util';
-import { captureMcpCallRestrictions } from './call-currentness.js';
+import { captureMcpBackendMethods, captureMcpCallRestrictions } from './call-currentness.js';
 import type { ExternalOperationSource, ExternalRequestScope } from '../permissions/external-request.js';
 import { awaitPermission } from '../permissions/cancellation.js';
 import { bindMcpElicitationResponse, commitMcpElicitation, discardMcpElicitation } from './elicitation-autonomous.js';
@@ -27,7 +27,7 @@ import { VERSION } from '../version.js';
 import type { McpServerConfig } from './config.js';
 import { summarizeError } from '../utils/error-display.js';
 import { isRecord } from '../utils/record-coerce.js';
-import { McpHttpConnection, McpRpcError } from './http-connection.js';
+import { McpHttpConnection, McpRpcError, captureMcpHttpToolCatalogSource } from './http-connection.js';
 import type {
   McpClientNotification,
   McpClientOptions,
@@ -63,6 +63,11 @@ import {
   type McpNegotiatedProtocol,
 } from './protocol.js';
 
+const nativeApply = Reflect.apply;
+function applyNative<Args extends unknown[], Result>(method: (...args: Args) => Result, receiver: unknown, args: Args): Result {
+  return nativeApply(method, receiver, args);
+}
+
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
@@ -91,11 +96,18 @@ export type {
 } from './client-types.js';
 
 export class McpClient {
+  // Native byte dispatch cannot be substituted while its reader is awaiting input.
+  static readonly #processBuffer = McpClient.prototype._processBuffer;
+  static readonly #dispatchLine = McpClient.prototype._dispatchLine;
+  static readonly #handleResponse = McpClient.prototype._handleResponse;
+  static readonly #handleNotification = McpClient.prototype._handleNotification;
+  static readonly #handleServerRequest = McpClient.prototype._handleServerRequest;
+
   private connectionId = randomUUID();
   private connectionLife = new AbortController();
   private readonly incoming = new Map<string, AbortController>();
   private retireConnection(): void {
-    this.connectionLife.abort();
+    this.connectionLife.abort(); this.#invalidateToolCatalog();
     for (const request of this.incoming.values()) request.abort();
     this.incoming.clear();
   }
@@ -179,6 +191,84 @@ export class McpClient {
   /** Cache: tool name → full schema (populated lazily on first callTool) */
   private schemaCache = new Map<string, McpToolSchema>();
 
+  // Only native connection retirement and tools/list_changed replace this owner.
+  #toolCatalogOwner: object = Object.freeze({});
+  #pendingToolInfo: { readonly owner: object; readonly promise: Promise<{ readonly owner: object; readonly tools: McpToolInfo[] }> } | undefined;
+  #invalidateToolCatalog(): void {
+    this.#toolCatalogOwner = Object.freeze({}); this.toolInfoCache = null;
+    this.schemaCache.clear(); this.#pendingToolInfo = undefined;
+  }
+
+  #captureToolCatalogCurrent(): () => void {
+    const owner = this.#toolCatalogOwner, lifetime = this.connectionLife, proc = this.proc, http = this.http;
+    const assertHttp = http ? captureMcpHttpToolCatalogSource(http) : undefined;
+    const session = http?.sessionGeneration, config = this.config, configSource = retainOwnedJson(config, nodeTypes.isProxy);
+    const assertMethods = captureMcpBackendMethods(this, nativeClientCatalogSlots.map(slot => slot.key));
+    const assertNativeMethods = () => {
+      assertMethods();
+      for (const slot of nativeClientCatalogSlots) if (Reflect.get(this, slot.key) !== slot.method) throw new Error('MCP native catalog factory changed');
+    };
+    assertNativeMethods();
+    const connected = this.#isConnected();
+    const assertCurrent = () => {
+      assertNativeMethods(); assertHttp?.(); lifetime.signal.throwIfAborted(); configSource.assertCurrent();
+      if (this.#toolCatalogOwner !== owner || this.connectionLife !== lifetime || this.proc !== proc || this.http !== http
+        || http?.sessionGeneration !== session || this.#isConnected() !== connected || this.config !== config) throw new Error('MCP tool catalog owner changed');
+    };
+    assertCurrent(); return assertCurrent;
+  }
+
+  #collectToolInfo(assertCurrent: () => void): Promise<{ readonly owner: object; readonly tools: McpToolInfo[] }> {
+    assertCurrent(); const owner = this.#toolCatalogOwner;
+    if (this.toolInfoCache) return Promise.resolve({ owner, tools: this.toolInfoCache });
+    if (this.#pendingToolInfo?.owner === owner) return this.#pendingToolInfo.promise;
+    const pending = { owner, promise: Promise.resolve().then(async () => {
+      assertCurrent();
+      const result = await this._request<{ tools: Array<{ name: string; description?: string }> }>('tools/list', undefined, undefined, undefined, assertCurrent);
+      assertCurrent();
+      const tools = (result.tools ?? []).map(tool => ({ name: tool.name, description: tool.description ?? '' }));
+      this.toolInfoCache = tools;
+      return { owner, tools };
+    }) };
+    this.#pendingToolInfo = pending;
+    const finished = () => { if (this.#pendingToolInfo === pending) this.#pendingToolInfo = undefined; };
+    void pending.promise.then(finished, finished); return pending.promise;
+  }
+
+  /** Native collector owns cold-cache adoption; its retained guard adds no tool-call grant or deadline. */
+  captureToolCatalog(options?: McpToolCallOptions): { readonly connected: boolean; readonly listTools: (restrictions?: McpToolCallOptions) => Promise<McpToolInfo[]>; readonly assertCurrent: () => void } {
+    const assertOwnerCurrent = this.#captureToolCatalogCurrent(), owner = this.#toolCatalogOwner;
+    const connected = this.#isConnected();
+    let cache = this.toolInfoCache, cacheSource = cache ? retainOwnedJson(cache, nodeTypes.isProxy) : undefined;
+    let pending: Promise<McpToolInfo[]> | undefined;
+    const assertCurrent = () => {
+      assertOwnerCurrent(); cacheSource?.assertCurrent();
+      if (this.toolInfoCache !== cache)
+        throw new Error('MCP tool catalog changed');
+    };
+    const caller = captureMcpCallRestrictions(options);
+    const listTools = (restrictions?: McpToolCallOptions) => {
+      assertCurrent();
+      const operation = restrictions === undefined ? caller : captureMcpCallRestrictions(restrictions);
+      const assertCollectionCurrent = () => { caller.assertCurrent(); if (operation !== caller) operation.assertCurrent(); assertCurrent(); };
+      assertCollectionCurrent();
+      if (!connected) throw new Error(`McpClient(${this.config.name}): not connected`);
+      if (pending) return pending;
+      pending = (async () => {
+        const collectCurrent = () => { caller.assertCurrent(); if (operation !== caller) operation.assertCurrent(); assertOwnerCurrent(); };
+        const signals = [caller.signal, operation.signal].filter((signal): signal is AbortSignal => signal !== undefined);
+        const signal = signals.length ? AbortSignal.any(signals) : undefined;
+        const collected = await awaitPermission(() => this.#collectToolInfo(collectCurrent), signal);
+        collectCurrent();
+        if (collected.owner !== owner || this.toolInfoCache !== collected.tools) throw new Error('MCP tool catalog acquisition changed');
+        cache = collected.tools; cacheSource = retainOwnedJson(cache, nodeTypes.isProxy);
+        assertCollectionCurrent(); return cache;
+      })();
+      return pending;
+    };
+    caller.assertCurrent(); assertCurrent(); return Object.freeze({ connected, listTools, assertCurrent });
+  }
+
   /** Minimal tool info loaded at connect time (name + description only) */
   private toolInfoCache: McpToolInfo[] | null = null;
 
@@ -191,7 +281,9 @@ export class McpClient {
     return this.config.name;
   }
 
-  get isConnected(): boolean {
+  get isConnected(): boolean { return this.#isConnected(); }
+
+  #isConnected(): boolean {
     if (this.http) return this.http.isOpen;
     if (!this.proc) return false;
     try {
@@ -223,7 +315,7 @@ export class McpClient {
         fetchImpl: this.options?.fetchImpl,
         handlers: {
           onNotification: (method, params) => {
-            this._handleNotification({ jsonrpc: '2.0', method, ...(params !== undefined ? { params } : {}) });
+            applyNative(McpClient.#handleNotification, this, [{ jsonrpc: '2.0', method, ...(params !== undefined ? { params } : {}) }]);
           },
           onServerRequest: (id, method, params, operation) => this._answerServerRequestOverHttp(id, method, params, operation),
         },
@@ -241,17 +333,7 @@ export class McpClient {
    * Full schemas are NOT fetched here; call getToolSchema() to get them.
    */
   async listTools(): Promise<McpToolInfo[]> {
-    if (!this.isConnected) {
-      throw new Error(`McpClient(${this.config.name}): not connected`);
-    }
-    if (this.toolInfoCache) return this.toolInfoCache;
-
-    const result = await this._request<{ tools: Array<{ name: string; description?: string }> }>('tools/list');
-    this.toolInfoCache = (result.tools ?? []).map((t) => ({
-      name: t.name,
-      description: t.description ?? '',
-    }));
-    return this.toolInfoCache;
+    return this.captureToolCatalog().listTools();
   }
 
   /**
@@ -259,7 +341,9 @@ export class McpClient {
    * MCP protocol provides full schemas in tools/list; we cache them on first access.
    */
   async getToolSchema(toolName: string, options?: McpToolCallOptions): Promise<McpToolSchema | null> {
-    const { assertCurrent } = captureMcpCallRestrictions(options);
+    const assertCatalogCurrent = this.#captureToolCatalogCurrent(), caller = captureMcpCallRestrictions(options);
+    const assertCurrent = () => { caller.assertCurrent(); assertCatalogCurrent(); };
+    assertCurrent();
     if (this.schemaCache.has(toolName)) {
       return this.schemaCache.get(toolName)!;
     }
@@ -608,7 +692,7 @@ export class McpClient {
           const { done, value } = await reader.read();
           if (done) break;
           this.buffer += decoder.decode(value, { stream: true });
-          this._processBuffer();
+          applyNative(McpClient.#processBuffer, this, []);
         }
       } catch (err) {
         logger.warn('McpClient: stdout read loop ended', { server: this.config.name, err: summarizeError(err) });
@@ -644,7 +728,7 @@ export class McpClient {
       const line = this.buffer.slice(0, newlineIdx).trim();
       this.buffer = this.buffer.slice(newlineIdx + 1);
       if (!line) continue;
-      this._dispatchLine(line);
+      applyNative(McpClient.#dispatchLine, this, [line]);
     }
   }
 
@@ -663,17 +747,17 @@ export class McpClient {
     }
 
     if (isJsonRpcResponse(msg)) {
-      this._handleResponse(msg);
+      applyNative(McpClient.#handleResponse, this, [msg]);
       return;
     }
 
     if (isJsonRpcRequest(msg)) {
-      this._handleServerRequest(msg);
+      applyNative(McpClient.#handleServerRequest, this, [msg]);
       return;
     }
 
     if (isJsonRpcNotification(msg)) {
-      this._handleNotification(msg);
+      applyNative(McpClient.#handleNotification, this, [msg]);
       return;
     }
 
@@ -706,6 +790,7 @@ export class McpClient {
   }
 
   private _handleNotification(notification: JsonRpcNotification): void {
+    if (notification.method === 'notifications/tools/list_changed') this.#invalidateToolCatalog();
     if (notification.method === 'notifications/cancelled' && isRecord(notification.params)) {
       const requestId = notification.params.requestId;
       if (typeof requestId === 'string' || typeof requestId === 'number') this.incoming.get(jsonRpcIdKey(requestId))?.abort();
@@ -853,8 +938,7 @@ export class McpClient {
         await this._negotiate();
         // Invalidate tool caches so they're re-fetched after restart (the
         // restarted server may advertise changed tool lists or schemas).
-        this.toolInfoCache = null;
-        this.schemaCache.clear();
+        this.#invalidateToolCatalog();
         logger.info('McpClient: restart successful', { server: this.config.name });
       } catch (err) {
         logger.error('McpClient: restart failed', { server: this.config.name, err: summarizeError(err) });
@@ -897,4 +981,15 @@ export class McpClient {
     }
     return undefined;
   }
+}
+
+const nativeClientToolCatalogFactory = McpClient.prototype.captureToolCatalog;
+const nativeClientCatalogSlots = Object.freeze(['captureToolCatalog', 'listTools', '_request', '_rawRequest',
+  '_processBuffer', '_dispatchLine', '_handleResponse', '_handleNotification', '_clientCapabilities'].map(key => Object.freeze({
+    key, method: Object.getOwnPropertyDescriptor(McpClient.prototype, key)?.value as unknown,
+  })));
+
+/** Registry acquisition invokes the original class factory, never a substituted instance factory. */
+export function captureMcpClientToolCatalog(client: McpClient, options?: McpToolCallOptions): ReturnType<McpClient['captureToolCatalog']> {
+  return applyNative(nativeClientToolCatalogFactory, client, [options]);
 }

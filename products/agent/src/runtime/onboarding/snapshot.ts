@@ -3,6 +3,7 @@ import { getProviderIdFromModel } from '../../config/provider-model.ts';
 import type { LocalAuthSnapshot } from '@goodvibes-jev/engine/sdk/platform/security';
 import { summarizeAgentBehaviorDiscovery } from '../../agent/behavior-discovery-summary.ts';
 import { readOnboardingRuntimeState } from './state.ts';
+import { captureNativeReadRestrictions } from '../read-restrictions.ts';
 import type {
   OnboardingAcknowledgementSnapshot,
   OnboardingConfigSnapshot,
@@ -15,6 +16,21 @@ import type {
   OnboardingSnapshotState,
   OnboardingSurfaceRecord,
 } from './types.ts';
+
+export interface OnboardingSnapshotReadOptions {
+  readonly signal?: AbortSignal | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
+}
+
+function snapshotReadGuard(options: OnboardingSnapshotReadOptions): () => void {
+  return captureNativeReadRestrictions(options);
+}
+
+async function drainSnapshotReads<T extends readonly unknown[]>(reads: T): Promise<{ -readonly [K in keyof T]: Awaited<T[K]> }> {
+  const drained = Promise.allSettled(reads);
+  try { return await Promise.all(reads); }
+  catch (error) { await drained; throw error; }
+}
 
 function sortUnique(values: readonly string[]): string[] {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right));
@@ -71,6 +87,7 @@ function buildRuntimeDefaultsSnapshot(
 
 async function buildServicesSnapshot(
   services: OnboardingSnapshotDependencies['services'],
+  assertCurrent: () => void,
 ): Promise<{
   snapshot: {
     total: number;
@@ -81,8 +98,11 @@ async function buildServicesSnapshot(
 }> {
   let configs: ReturnType<OnboardingSnapshotDependencies['services']['getAll']>;
   try {
+    assertCurrent();
     configs = services.getAll();
+    assertCurrent();
   } catch (error) {
+    assertCurrent();
     return {
       snapshot: {
         total: 0,
@@ -99,10 +119,12 @@ async function buildServicesSnapshot(
   }
 
   const names = Object.keys(configs).sort((left, right) => left.localeCompare(right));
-  const entryResults = await Promise.all(names.map(async (name) => {
+  const entryResults = await drainSnapshotReads(names.map(async (name) => {
     const config = configs[name]!;
     try {
+      assertCurrent();
       const inspection = await services.inspect(name);
+      assertCurrent();
 
       return {
         entry: {
@@ -122,6 +144,7 @@ async function buildServicesSnapshot(
         issue: null,
       };
     } catch (error) {
+      assertCurrent();
       return {
         entry: {
           name,
@@ -145,6 +168,7 @@ async function buildServicesSnapshot(
     }
   }));
 
+  assertCurrent();
   const entries = entryResults.map((result) => result.entry);
   const issues: OnboardingSnapshotCollectionIssue[] = [];
   for (const result of entryResults) {
@@ -295,7 +319,16 @@ function buildAcknowledgementSnapshot(
 
 export async function collectOnboardingSnapshot(
   deps: OnboardingSnapshotDependencies,
+  options: OnboardingSnapshotReadOptions = {},
 ): Promise<OnboardingSnapshotState> {
+  const assertCurrent = snapshotReadGuard(options);
+  assertCurrent();
+  const observe = async <T>(read: () => T | Promise<T>): Promise<T> => {
+    assertCurrent();
+    const value = await read();
+    assertCurrent();
+    return value;
+  };
   const capturedAt = deps.clock?.() ?? Date.now();
   const config = buildConfigSnapshot(deps.config);
   const providerRouting = buildProviderRoutingSnapshot(config);
@@ -311,45 +344,46 @@ export async function collectOnboardingSnapshot(
     secretRecordsResult,
     surfaceResult,
     providerAccountsResult,
-  ] = await Promise.all([
+  ] = await drainSnapshotReads([
     loadOptionalSnapshot(
       'subscriptions-active',
-      () => Promise.resolve(deps.subscriptions.list()),
+      () => observe(() => deps.subscriptions.list()),
       [] as ReturnType<OnboardingSnapshotDependencies['subscriptions']['list']>,
     ),
     loadOptionalSnapshot(
       'subscriptions-pending',
-      () => Promise.resolve(deps.subscriptions.listPending()),
+      () => observe(() => deps.subscriptions.listPending()),
       [] as ReturnType<OnboardingSnapshotDependencies['subscriptions']['listPending']>,
     ),
     loadOptionalSnapshot(
       'auth',
-      () => Promise.resolve(deps.auth.inspect()),
+      () => observe(() => deps.auth.inspect()),
       buildFallbackAuthSnapshot(),
     ),
-    buildServicesSnapshot(deps.services),
+    buildServicesSnapshot(deps.services, assertCurrent),
     loadOptionalSnapshot(
       'secrets-review',
-      () => deps.secrets.inspect(),
+      () => observe(() => deps.secrets.inspect()),
       buildFallbackSecretReview(config),
     ),
     loadOptionalSnapshot(
       'secrets-records',
-      () => deps.secrets.listDetailed(),
+      () => observe(() => deps.secrets.listDetailed()),
       [] as const,
     ),
     loadOptionalSnapshot(
       'surfaces',
-      deps.surfaces ? () => Promise.resolve(deps.surfaces!.list()) : undefined,
+      deps.surfaces ? () => observe(() => deps.surfaces!.list()) : undefined,
       [] as readonly OnboardingSurfaceRecord[],
     ),
     loadOptionalSnapshot(
       'provider-accounts',
-      deps.providerAccounts ? () => deps.providerAccounts!.loadSnapshot() : undefined,
+      deps.providerAccounts ? () => observe(() => deps.providerAccounts!.loadSnapshot()) : undefined,
       null,
     ),
-  ]);
+  ] as const);
 
+  assertCurrent();
   const collectionIssues: OnboardingSnapshotCollectionIssue[] = [];
   if (acknowledgementResult.issue) collectionIssues.push(acknowledgementResult.issue);
   collectionIssues.push(...servicesResult.issues);

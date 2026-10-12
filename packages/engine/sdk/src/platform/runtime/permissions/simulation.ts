@@ -1,3 +1,4 @@
+import { assertSecurityReadSource, captureSecurityReadBindings, retainSecurityReadData } from '../../security/read-source.js';
 /**
  * Runtime permissions simulation pipeline.
  *
@@ -113,6 +114,12 @@ function accumulateStats(
  * }
  * ```
  */
+const simulationReadSources = new WeakMap<PermissionSimulator, () => () => void>();
+const getSimulationReadSources = simulationReadSources.get.bind(simulationReadSources);
+const setSimulationReadSources = simulationReadSources.set.bind(simulationReadSources);
+export function captureSimulationReadSource(simulator: PermissionSimulator): () => void {
+  const capture = getSimulationReadSources(simulator); assertSecurityReadSource(capture !== undefined); return capture();
+}
 export class PermissionSimulator {
   private readonly actual: LayeredPolicyEvaluator;
   private readonly simulated: LayeredPolicyEvaluator;
@@ -145,6 +152,12 @@ export class PermissionSimulator {
     simulationMode: SimulationMode,
     config: PermissionSimulatorConfig = {},
   ) {
+    setSimulationReadSources(this, () => {
+      const binding = captureSecurityReadBindings(this, ['totalEvals', 'records', 'evalsByClass', 'evalsByPrefix', 'evalsByMode', 'getDivergenceReport']);
+      const evaluations = this.totalEvals;
+      const rawCurrent = retainSecurityReadData([this.records, this.evalsByClass, this.evalsByPrefix, this.evalsByMode]);
+      return () => { binding(); rawCurrent(); assertSecurityReadSource(this.totalEvals === evaluations); };
+    });
     this.actual = new LayeredPolicyEvaluator(actualConfig);
     this.simulated = new LayeredPolicyEvaluator(simulatedConfig);
     this.simulationMode = simulationMode;

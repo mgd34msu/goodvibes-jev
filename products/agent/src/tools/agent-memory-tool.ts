@@ -251,7 +251,8 @@ export function createAgentMemoryTool(deps: AgentMemoryToolDeps): Tool {
 function isMemoryCatalogCall(input: Record<string, unknown>): boolean {
   const args = captureModelReadingInput(input);
   const action = readAction(args);
-  return (action === 'curator' || action === 'candidate') && Boolean(readString(args.query) || readString(args.target));
+  return action === 'status' || action === 'provider'
+    || (action === 'curator' || action === 'candidate') && Boolean(readString(args.query) || readString(args.target));
 }
 
 export function registerAgentMemoryTool(

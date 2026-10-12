@@ -22,9 +22,20 @@ import type { CommandContext, CommandRegistry } from '../../input/command-regist
 afterAll(cleanupResearchScreeningFixtures);
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+const deferredReleases: Array<() => void> = [];
+const pendingOperations: Promise<unknown>[] = [];
+afterEach(async () => {
+  for (const release of deferredReleases.splice(0)) release();
+  await Promise.allSettled(pendingOperations.splice(0));
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 function paths() { const root = mkdtempSync(join(tmpdir(), 'research-effect-authority-')); roots.push(root); return { resolveProjectPath: (...parts: string[]) => join(root, ...parts) }; }
-function deferred() { let resolve: () => void = () => {}; const promise = new Promise<void>(finish => { resolve = finish; }); return { promise, resolve }; }
+function deferred() {
+  const gate = Promise.withResolvers<void>();
+  deferredReleases.push(gate.resolve);
+  return gate;
+}
+function ownPending<T>(pending: Promise<T>): Promise<T> { pendingOperations.push(pending); return pending; }
 async function awaitStarted(entered: ReturnType<typeof deferred>, pending: Promise<{ success: boolean; error?: string }>): Promise<void> {
   await Promise.race([entered.promise, pending.then(result => { throw new Error(`Synthetic operation ended before its awaited I/O: ${result.error ?? result.success}`); })]);
 }
@@ -121,8 +132,8 @@ test('revocation during report artifact commit prevents the actual write', async
   } };
   const sourceOwner = ordinaryResearchOwner();
   const tool = admitted.tool(createAgentResearchReportTool(store, sourceOwner), { inputProjection: createAgentResearchReportProjector(sourceOwner) });
-  const pending = tool.execute({ title: 'Synthetic report', question: 'Synthetic question', summary: 'Synthetic evidence [S1].', sources: [{ title: 'Synthetic source', note: 'Synthetic evidence' }] });
-  await entered.promise; admitted.revoke(); release.resolve();
+  const pending = ownPending(tool.execute({ title: 'Synthetic report', question: 'Synthetic question', summary: 'Synthetic evidence [S1].', sources: [{ title: 'Synthetic source', note: 'Synthetic evidence' }] }));
+  await awaitStarted(entered, pending); admitted.revoke(); release.resolve();
   expect(await pending).toMatchObject({ success: false }); expect(writes).toBe(0);
 });
 
@@ -135,7 +146,7 @@ test('a research run changed during nested source collection receives no later s
     webSearchTool: { definition: { name: 'web_search', description: 'Synthetic source collection', parameters: { type: 'object', additionalProperties: true } },
       async execute() { entered.resolve(); await release.promise; return { success: true, output: JSON.stringify({ results: [{ url: 'https://example.test/source', title: 'Synthetic source', snippet: 'Synthetic evidence' }] }) }; } },
   }));
-  const pending = tool.execute({ action: 'runner', runId: run.id });
+  const pending = ownPending(tool.execute({ action: 'runner', runId: run.id }));
   await awaitStarted(entered, pending); registry.pause(run.id, 'Synthetic external pause'); release.resolve();
   expect(await pending).toMatchObject({ success: false });
   expect(registry.get(run.id)?.status).toBe('paused');
@@ -177,8 +188,8 @@ test('admitted comparison preview stays available without metered sends or write
 test('revocation while selecting candidate models prevents all provider sends and persistence', async () => {
   const started = deferred(); const release = deferred();
   const f = compareFixture({ async beforeModels() { started.resolve(); await release.promise; } });
-  const pending = f.tool.execute({ mode: 'run', prompt: 'Synthetic comparison' });
-  await started.promise; f.owner.revoke(); release.resolve();
+  const pending = ownPending(f.tool.execute({ mode: 'run', prompt: 'Synthetic comparison' }));
+  await awaitStarted(started, pending); f.owner.revoke(); release.resolve();
   expect(await pending).toMatchObject({ success: false }); expect(f.chats).toBe(0); expect(f.writes).toBe(0);
 });
 
@@ -186,24 +197,24 @@ test('replacement of the captured research source owner retires comparison work 
   const started = deferred(); const release = deferred();
   const f = compareFixture({ async beforeModels() { started.resolve(); await release.promise; } });
   bindAgentResearchSourceOwner(f.owner.registry, ordinaryResearchOwner());
-  const pending = f.tool.execute({ mode: 'run', prompt: 'Synthetic comparison' });
-  await started.promise; bindAgentResearchSourceOwner(f.owner.registry, researchScreeningFixture().owner); release.resolve();
+  const pending = ownPending(f.tool.execute({ mode: 'run', prompt: 'Synthetic comparison' }));
+  await awaitStarted(started, pending); bindAgentResearchSourceOwner(f.owner.registry, researchScreeningFixture().owner); release.resolve();
   expect(await pending).toMatchObject({ success: false }); expect(f.chats).toBe(0); expect(f.writes).toBe(0);
 });
 
 test('changed source artifacts retire each child before it can publish or save comparison outputs', async () => {
   const started = deferred(); const release = deferred();
   const f = compareFixture({ async beforeChat() { started.resolve(); await release.promise; } });
-  const pending = f.tool.execute({ mode: 'run', artifactId: 'source-1', prompt: 'Synthetic comparison' });
-  await started.promise; f.replaceArtifact(); release.resolve();
+  const pending = ownPending(f.tool.execute({ mode: 'run', artifactId: 'source-1', prompt: 'Synthetic comparison' }));
+  await awaitStarted(started, pending); f.replaceArtifact(); release.resolve();
   expect(await pending).toMatchObject({ success: false }); expect(f.writes).toBe(0);
 });
 
 test.each(['owner', 'method'] as const)('changed provider %s during a metered response prevents comparison publication', async mutation => {
   const started = deferred(); const release = deferred();
   const f = compareFixture({ async beforeChat() { started.resolve(); await release.promise; } });
-  const pending = f.tool.execute({ mode: 'run', prompt: 'Synthetic comparison' });
-  await started.promise;
+  const pending = ownPending(f.tool.execute({ mode: 'run', prompt: 'Synthetic comparison' }));
+  await awaitStarted(started, pending);
   if (mutation === 'owner') f.replaceProvider(); else f.replaceProviderMethod();
   release.resolve();
   expect(await pending).toMatchObject({ success: false }); expect(f.writes).toBe(0); expect(f.drained).toBe(f.chats);
@@ -212,7 +223,7 @@ test.each(['owner', 'method'] as const)('changed provider %s during a metered re
 test.each(['provider', 'artifact'] as const)('a late %s backend accessor is held without invoking it after metered waits', async backend => {
   const entered = deferred(); const release = deferred();
   const f = compareFixture({ async beforeChat() { entered.resolve(); await release.promise; } });
-  const pending = f.tool.execute({ mode: 'run', artifactId: 'source-1', prompt: 'Synthetic comparison' });
+  const pending = ownPending(f.tool.execute({ mode: 'run', artifactId: 'source-1', prompt: 'Synthetic comparison' }));
   await awaitStarted(entered, pending); f.replaceBackendWithGetter(backend); release.resolve();
   expect(await pending).toMatchObject({ success: false }); expect(f.backendGetterReads).toBe(0);
   expect(f.writes).toBe(0); expect(f.drained).toBe(f.chats);
@@ -221,16 +232,16 @@ test.each(['provider', 'artifact'] as const)('a late %s backend accessor is held
 test('cancellation drains ignored provider waits and refuses all later artifact writes', async () => {
   const started = deferred(); const release = deferred(); const controller = new AbortController();
   const f = compareFixture({ async beforeChat() { started.resolve(); await release.promise; } });
-  const pending = f.tool.execute({ mode: 'run', prompt: 'Synthetic comparison' }, { signal: controller.signal });
-  await started.promise; controller.abort(); release.resolve();
+  const pending = ownPending(f.tool.execute({ mode: 'run', prompt: 'Synthetic comparison' }, { signal: controller.signal }));
+  await awaitStarted(started, pending); controller.abort(); release.resolve();
   expect(await pending).toMatchObject({ success: false }); expect(f.writes).toBe(0); expect(f.drained).toBe(f.chats);
 });
 
 test('revocation during comparison artifact commit prevents writes and retired result caching', async () => {
   const entered = deferred(); const release = deferred();
   const f = compareFixture({ async beforeCreate() { entered.resolve(); await release.promise; } });
-  const pending = f.tool.execute({ mode: 'run', prompt: 'Synthetic comparison' });
-  await entered.promise; f.owner.revoke(); release.resolve();
+  const pending = ownPending(f.tool.execute({ mode: 'run', prompt: 'Synthetic comparison' }));
+  await awaitStarted(entered, pending); f.owner.revoke(); release.resolve();
   expect(await pending).toMatchObject({ success: false }); expect(f.writes).toBe(0);
   const comparisonId = f.attemptedInputs[0]?.metadata?.comparisonId;
   expect(typeof comparisonId).toBe('string');
@@ -265,8 +276,8 @@ test('source replacement during local candidate screening prevents hosted admiss
   const entered = deferred(); const release = deferred();
   const screening = researchScreeningFixture({ async beforeProposal() { entered.resolve(); await release.promise; } });
   const f = compareFixture({ sourceOwner: screening.owner });
-  const pending = f.tool.execute({ mode: 'run', artifactId: 'source-1', prompt: 'Synthetic comparison' });
-  await entered.promise; f.replaceArtifact(); release.resolve();
+  const pending = ownPending(f.tool.execute({ mode: 'run', artifactId: 'source-1', prompt: 'Synthetic comparison' }));
+  await awaitStarted(entered, pending); f.replaceArtifact(); release.resolve();
   expect(await pending).toMatchObject({ success: false });
   expect(f.owner.port.requests.some(request => JSON.stringify(request.state).includes('agent_model_compare_candidate'))).toBe(false);
   expect(f.chats).toBe(0); expect(f.writes).toBe(0);
@@ -275,8 +286,8 @@ test('source replacement during local candidate screening prevents hosted admiss
 test('actual privacy receipt revocation during provider waits prevents comparison publication', async () => {
   const entered = deferred(); const release = deferred(); const screening = researchScreeningFixture();
   const f = compareFixture({ sourceOwner: screening.owner, async beforeChat() { entered.resolve(); await release.promise; } });
-  const pending = f.tool.execute({ mode: 'run', prompt: 'Synthetic comparison' });
-  await entered.promise; screening.lifetime.abort(); release.resolve();
+  const pending = ownPending(f.tool.execute({ mode: 'run', prompt: 'Synthetic comparison' }));
+  await awaitStarted(entered, pending); screening.lifetime.abort(); release.resolve();
   expect(await pending).toMatchObject({ success: false }); expect(f.writes).toBe(0); expect(f.drained).toBe(f.chats);
 });
 
@@ -299,7 +310,7 @@ test.each(['overwrite', 'symlink'] as const)('native artifact %s during provider
     modelCatalog: { listModels: () => ['a', 'b'].map(modelId => ({ modelId, providerId: 'synthetic', registryKey: `synthetic:${modelId}`, selectable: true })) },
     providerRegistry: { getForModel: () => provider },
   }));
-  const pending = tool.execute({ mode: 'run', artifactId: source.id, prompt: 'Synthetic comparison' });
+  const pending = ownPending(tool.execute({ mode: 'run', artifactId: source.id, prompt: 'Synthetic comparison' }));
   await awaitStarted(entered, pending);
   if (mutation === 'overwrite') writeFileSync(record.contentPath, 'Unrecorded physical replacement.');
   else { const outside = join(root, 'outside-source'); writeFileSync(outside, 'Unrecorded physical replacement.'); unlinkSync(record.contentPath); symlinkSync(outside, record.contentPath); }
@@ -316,7 +327,7 @@ test('replacement of a native artifact storage root during prompt-only provider 
     modelCatalog: { listModels: () => ['a', 'b'].map(modelId => ({ modelId, providerId: 'synthetic', registryKey: `synthetic:${modelId}`, selectable: true })) },
     providerRegistry: { getForModel: () => provider },
   }));
-  const pending = tool.execute({ mode: 'run', prompt: 'Synthetic comparison' }); await awaitStarted(entered, pending);
+  const pending = ownPending(tool.execute({ mode: 'run', prompt: 'Synthetic comparison' })); await awaitStarted(entered, pending);
   const outside = join(root, 'outside'); mkdirSync(outside); renameSync(store.storagePath, join(root, 'retired-artifacts')); symlinkSync(outside, store.storagePath);
   release.resolve(); expect(await pending).toMatchObject({ success: false }); expect(readdirSync(outside)).toEqual([]);
 });

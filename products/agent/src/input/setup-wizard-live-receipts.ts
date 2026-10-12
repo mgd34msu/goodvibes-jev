@@ -2,7 +2,7 @@ import type { CommandContext } from './command-registry.ts';
 import { buildSetupWizardDurableReceiptsFromReadModel, mergeSetupWizardDurableReceipts } from '../agent/setup-wizard-artifact-receipts.ts';
 import type { AgentSetupWizardDurableReceipt } from '../agent/setup-wizard.ts';
 
-interface SetupReceiptReadModelSource {
+export interface SetupReceiptReadModelSource {
   readonly path: string;
   readonly source: unknown;
 }
@@ -60,9 +60,9 @@ function readSnapshot(source: unknown): unknown {
   return source;
 }
 
-export function setupWizardLiveDurableReceipts(context: CommandContext): readonly AgentSetupWizardDurableReceipt[] {
+export function setupWizardLiveDurableReceipts(context: CommandContext, acquiredSources?: readonly SetupReceiptReadModelSource[]): readonly AgentSetupWizardDurableReceipt[] {
   const receipts: AgentSetupWizardDurableReceipt[][] = [];
-  for (const entry of setupReceiptReadModelSources(context)) {
+  for (const entry of acquiredSources ?? setupReceiptReadModelSources(context)) {
     if (entry.source === undefined || entry.source === null) continue;
     try {
       receipts.push([...buildSetupWizardDurableReceiptsFromReadModel(readSnapshot(entry.source), entry.path)]);

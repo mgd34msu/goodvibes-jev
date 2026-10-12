@@ -1,3 +1,10 @@
+import { types as nodeTypes } from 'node:util';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureCatalogData, captureCatalogMethods, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { capturePersonalOpsData, assertPersonalOpsDataCurrent } from './agent-harness-personal-ops-source.ts';
+import { captureNativeReadModelObservation } from './agent-harness-autonomy-live-records.ts';
+import { modelReadingServicePath, modelReadingOptions, withModelReadingSource } from './agent-harness-model-reading-source.ts';
+import { readRuntimeBoolean, readRuntimeKind, readRuntimeRoute, readRuntimeSchema, readRuntimeStatus, type InteractiveRuntimeEvidence } from './agent-harness-interactive-runtime-readings.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 import { readRecord, readString } from './agent-harness-model-routing-utils.ts';
@@ -58,13 +65,7 @@ function redactedPreview(value: unknown, limit = 180): string {
   return previewHarnessText(redacted, limit);
 }
 
-function readBoolean(value: unknown): boolean | null {
-  if (typeof value === 'boolean') return value;
-  const raw = readString(value).toLowerCase();
-  if (['true', 'yes', '1', 'ready', 'available', 'published', 'certified'].includes(raw)) return true;
-  if (['false', 'no', '0', 'blocked', 'missing', 'unavailable'].includes(raw)) return false;
-  return null;
-}
+
 
 function readNumber(value: unknown): number | undefined {
   const parsed = typeof value === 'string' && value.trim() ? Number(value) : value;
@@ -104,15 +105,7 @@ function certificationRecords(record: Readonly<Record<string, unknown>>): readon
   ];
 }
 
-function schemaStatus(records: readonly Readonly<Record<string, unknown>>[]): AgentHarnessInteractiveRuntimeCertification['schemaStatus'] {
-  const explicit = firstString(records, ['schemaStatus', 'receiptSchemaStatus', 'certificationStatus']).toLowerCase().replace(/[_\s]+/g, '-');
-  if (['certified', 'valid', 'verified', 'schema-certified'].includes(explicit)) return 'certified';
-  return firstString(records, ['schemaVersion', 'receiptSchemaVersion', 'contractVersion'])
-    && firstString(records, ['publicationGuarantee', 'hostPublicationGuarantee', 'runtimePublicationGuarantee'])
-    && firstString(records, ['publisher', 'publisherId', 'daemonId', 'hostId', 'methodId', 'sourceTool'])
-    ? 'certified'
-    : 'legacy';
-}
+
 
 function routeValue(value: unknown): string {
   const direct = readString(value);
@@ -121,36 +114,7 @@ function routeValue(value: unknown): string {
   return readString(record.modelRoute) || readString(record.route) || readString(record.command) || readString(record.action) || readString(record.href) || readString(record.url);
 }
 
-function routeFrom(record: Readonly<Record<string, unknown>>, aliases: readonly string[]): string {
-  const containers = [record, readRecord(record.routes), readRecord(record.modelRoutes), readRecord(record.actions), readRecord(record.commands), readRecord(record.links)];
-  for (const alias of aliases) {
-    for (const container of containers) {
-      const route = routeValue(container[alias]) || routeValue(container[`${alias}Route`]) || routeValue(container[`${alias}Command`]) || routeValue(container[`${alias}Action`]);
-      if (route) return route;
-    }
-  }
-  return '';
-}
 
-function runtimeKind(record: Readonly<Record<string, unknown>>, fallback: AgentHarnessInteractiveRuntimeKind): AgentHarnessInteractiveRuntimeKind {
-  const raw = `${readString(record.kind) || readString(record.recordKind) || readString(record.type) || readString(record.capability)}`.toLowerCase();
-  if (/pty|terminal-session|interactive-session/.test(raw)) return 'pty-session';
-  if (/sudo|credential|privilege/.test(raw)) return 'sudo-mediation';
-  if (/browser|desktop|screenshot|screen|computer|control|receipt/.test(raw)) return 'browser-desktop-receipt';
-  if (/process|output|chunk|terminal/.test(raw)) return 'process-output';
-  return fallback;
-}
-
-function normalizeStatus(value: unknown): AgentHarnessInteractiveRuntimeStatus {
-  const raw = readString(value).toLowerCase().replace(/_/g, '-');
-  if (['ready', 'available', 'published', 'certified', 'ok', 'healthy'].includes(raw)) return 'ready';
-  if (['running', 'active', 'in-progress'].includes(raw)) return 'running';
-  if (['completed', 'complete', 'succeeded', 'success', 'done'].includes(raw)) return 'completed';
-  if (['blocked', 'denied', 'permission-denied'].includes(raw)) return 'blocked';
-  if (['failed', 'failure', 'error', 'errored'].includes(raw)) return 'failed';
-  if (['attention', 'review', 'stale'].includes(raw)) return 'attention';
-  return raw ? 'unknown' : 'unknown';
-}
 
 function readId(record: Readonly<Record<string, unknown>>, kind: AgentHarnessInteractiveRuntimeKind): string {
   return readString(record.id)
@@ -162,44 +126,55 @@ function readId(record: Readonly<Record<string, unknown>>, kind: AgentHarnessInt
     || `${kind}:${readString(record.sourceId) || readString(record.action) || 'published'}`;
 }
 
-function routesFor(kind: AgentHarnessInteractiveRuntimeKind, record: Readonly<Record<string, unknown>>): readonly AgentHarnessInteractiveRuntimeRoute[] {
-  const routeSpecs: readonly [string, string, readonly string[], AgentHarnessInteractiveRuntimeRoute['effect']][] = [
-    ['inspect', 'Inspect record', ['inspect', 'status', 'show'], 'read-only'],
-    ['log', 'Read output', ['log', 'output', 'chunks', 'tail'], 'read-only'],
-    ['write', 'Write input', ['write', 'stdin', 'input', 'sendInput'], 'confirmed'],
-    ['resize', 'Resize session', ['resize'], 'confirmed'],
-    ['close', 'Close session', ['close', 'stop', 'kill', 'cancel'], 'confirmed'],
-    ['credential', 'Mediated credential prompt', ['credential', 'sudo', 'privilege', 'prompt'], 'confirmed-admin'],
-    ['execute', kind === 'browser-desktop-receipt' ? 'Execute trusted control' : 'Execute route', ['execute', 'command', 'control', 'run'], 'confirmed'],
-    ['receipt', 'Inspect receipt', ['receipt', 'receipts', 'history'], 'read-only'],
+async function routesFor(kind: AgentHarnessInteractiveRuntimeKind, evidence: InteractiveRuntimeEvidence, options: CatalogRankingOptions): Promise<readonly AgentHarnessInteractiveRuntimeRoute[]> {
+  const specs = {
+    inspect: { label: 'Inspect record', effect: 'read-only' }, log: { label: 'Read output', effect: 'read-only' },
+    write: { label: 'Write input', effect: 'confirmed' }, resize: { label: 'Resize session', effect: 'confirmed' },
+    close: { label: 'Close session', effect: 'confirmed' }, credential: { label: 'Mediated credential prompt', effect: 'confirmed-admin' },
+    execute: { label: kind === 'browser-desktop-receipt' ? 'Execute trusted control' : 'Execute route', effect: 'confirmed' },
+    receipt: { label: 'Inspect receipt', effect: 'read-only' },
+  } as const;
+  const routes: AgentHarnessInteractiveRuntimeRoute[] = [];
+  const containers: readonly { readonly path: readonly string[]; readonly value: Readonly<Record<string, unknown>> }[] = [
+    { path: [], value: evidence.record }, ...['routes', 'modelRoutes', 'actions', 'commands', 'links'].map(key => ({ path: [key], value: readRecord(evidence.record[key]) })),
   ];
-  return routeSpecs
-    .map(([id, label, aliases, effect]) => {
-      const modelRoute = routeFrom(record, aliases);
-      return modelRoute ? { id, label, modelRoute: redactedPreview(modelRoute, 220), effect } : null;
-    })
-    .filter((route): route is AgentHarnessInteractiveRuntimeRoute => route !== null);
+  for (const container of containers) {
+    for (const [key, value] of Object.entries(container.value)) {
+      const role = await readRuntimeRoute({ ...evidence, key, value, routeContainerPath: container.path }, options);
+      options.signal?.throwIfAborted(); options.assertCurrent?.();
+      if (role === 'none') continue;
+      const modelRoute = routeValue(value);
+      if (!modelRoute) throw new ToolInputProjectionError('held');
+      // Effects are a closed native mapping from the recorded role, never the publisher key.
+      const spec = specs[role];
+      routes.push({ id: role, label: spec.label, modelRoute, effect: spec.effect });
+    }
+  }
+  return routes;
 }
 
-function outputChunks(record: Readonly<Record<string, unknown>>): readonly Record<string, unknown>[] {
+async function outputChunks(evidence: InteractiveRuntimeEvidence, options: CatalogRankingOptions): Promise<readonly Record<string, unknown>[]> {
+  const record = evidence.record;
   const output = readRecord(record.output);
   const rawChunks = Array.isArray(record.outputChunks) ? record.outputChunks
     : Array.isArray(record.chunks) ? record.chunks
     : Array.isArray(output.chunks) ? output.chunks
     : [];
-  const chunks = rawChunks.flatMap((entry, index): Record<string, unknown>[] => {
+  const chunks: Record<string, unknown>[] = [];
+  for (const [index, entry] of rawChunks.entries()) {
     const chunk = readRecord(entry);
     const text = redactedPreview(chunk.text ?? chunk.preview ?? chunk.data ?? chunk.content, 600);
-    return text ? [{
+    const truncated = await readRuntimeBoolean(evidence, `outputChunks[${index}].truncated`, chunk.truncated, 'Whether this published output chunk omits output because it was truncated.', options);
+    if (text) chunks.push({
       chunkId: readString(chunk.chunkId) || readString(chunk.id) || `${index + 1}`,
       stream: readString(chunk.stream) || readString(chunk.channel) || 'stdout',
       text,
       chars: readNumber(chunk.chars) ?? text.length,
       bytes: readNumber(chunk.bytes) ?? Buffer.byteLength(text),
-      truncated: readBoolean(chunk.truncated) ?? false,
+      truncated: truncated ?? false,
       createdAt: readTimestamp(chunk.createdAt ?? chunk.timestamp),
-    }] : [];
-  });
+    });
+  }
   if (chunks.length > 0) return chunks.slice(0, 5);
   return ['stdoutTail', 'stderrTail', 'stdout', 'stderr'].flatMap((key) => {
     const text = redactedPreview(record[key] ?? output[key], 600);
@@ -207,16 +182,18 @@ function outputChunks(record: Readonly<Record<string, unknown>>): readonly Recor
   }).slice(0, 5);
 }
 
-function certification(input: {
+async function certification(input: {
   readonly record: Readonly<Record<string, unknown>>;
   readonly source: string;
   readonly kind: AgentHarnessInteractiveRuntimeKind;
   readonly id: string;
   readonly routes: readonly AgentHarnessInteractiveRuntimeRoute[];
   readonly chunks: readonly Record<string, unknown>[];
-}): AgentHarnessInteractiveRuntimeCertification {
+  readonly evidence: InteractiveRuntimeEvidence;
+  readonly options: CatalogRankingOptions;
+}): Promise<AgentHarnessInteractiveRuntimeCertification> {
   const records = certificationRecords(input.record);
-  const status = schemaStatus(records);
+  const status = await readRuntimeSchema(input.evidence, input.options);
   const publicationGuarantee = firstString(records, ['publicationGuarantee', 'hostPublicationGuarantee', 'runtimePublicationGuarantee']);
   const publisher = firstString(records, ['publisher', 'publisherId', 'daemonId', 'hostId']);
   const provenance = [...new Set([
@@ -227,7 +204,8 @@ function certification(input: {
   ].map((entry) => redactedPreview(entry, 180)).filter(Boolean))].slice(0, 8);
   const receiptId = firstString(records, ['receiptId', 'operationReceiptId', 'commandReceiptId', 'sessionReceiptId']);
   const hasRoute = (id: string) => input.routes.some((route) => route.id === id);
-  const rawSecretReturned = readBoolean(input.record.rawSecretReturned) === true || readBoolean(input.record.rawValueReturned) === true;
+  const rawSecretReturned = await readRuntimeBoolean(input.evidence, 'rawSecretReturned', input.record.rawSecretReturned, 'Whether the publisher returned raw secret material.', input.options);
+  const rawValueReturned = await readRuntimeBoolean(input.evidence, 'rawValueReturned', input.record.rawValueReturned, 'Whether the publisher returned raw credential values.', input.options);
   const missingSignals = [
     ...(status === 'certified' ? [] : [`Certified ${input.kind} schema is not published.`]),
     ...(input.id ? [] : [`Durable ${input.kind} id is not published.`]),
@@ -236,7 +214,7 @@ function certification(input: {
     ...(provenance.length > 0 ? [] : [`${input.kind} provenance is not published.`]),
     ...(input.kind === 'process-output' && input.chunks.length === 0 && !hasRoute('log') ? ['Live process output chunks or log route are not published.'] : []),
     ...(input.kind === 'pty-session' && (!hasRoute('write') || (!hasRoute('log') && input.chunks.length === 0)) ? ['PTY input and output routes are not both published.'] : []),
-    ...(input.kind === 'sudo-mediation' && (!hasRoute('credential') || rawSecretReturned) ? ['Sudo credential mediation route is missing or raw secret exposure was reported.'] : []),
+    ...(input.kind === 'sudo-mediation' && (!hasRoute('credential') || rawSecretReturned === true || rawValueReturned === true) ? ['Sudo credential mediation route is missing or raw secret exposure was reported.'] : []),
     ...(input.kind === 'browser-desktop-receipt' && (!receiptId || !hasRoute('execute') || !hasRoute('receipt')) ? ['Browser/desktop command receipt, execute route, or receipt route is not published.'] : []),
   ];
   return {
@@ -252,20 +230,20 @@ function certification(input: {
   };
 }
 
-function normalizeRecord(value: unknown, source: string, fallbackKind: AgentHarnessInteractiveRuntimeKind): AgentHarnessInteractiveRuntimeRecord | null {
-  const record = readRecord(value);
+async function normalizeRecord(evidence: InteractiveRuntimeEvidence, options: CatalogRankingOptions): Promise<AgentHarnessInteractiveRuntimeRecord | null> {
+  const { record, source } = evidence;
   if (Object.keys(record).length === 0) return null;
-  const kind = runtimeKind(record, fallbackKind);
+  const kind = await readRuntimeKind(evidence, options);
   const id = readId(record, kind);
   if (!id) return null;
-  const routes = routesFor(kind, record);
-  const chunks = outputChunks(record);
+  const routes = await routesFor(kind, evidence, options);
+  const chunks = await outputChunks(evidence, options);
   const command = redactedPreview(record.command ?? record.cmd, 180);
   const receiptId = readString(record.receiptId) || readString(record.operationReceiptId) || readString(record.commandReceiptId);
   return {
     id,
     kind,
-    status: normalizeStatus(record.status ?? record.state ?? record.outcome),
+    status: await readRuntimeStatus(evidence, options),
     source,
     label: redactedPreview(record.label ?? record.title ?? id, 96),
     summary: redactedPreview(record.summary ?? record.description ?? record.detail ?? command ?? id, 240),
@@ -279,97 +257,165 @@ function normalizeRecord(value: unknown, source: string, fallbackKind: AgentHarn
     ...(chunks.length > 0 ? { outputChunks: chunks } : {}),
     routes,
     ...(readTimestamp(record.updatedAt ?? record.createdAt ?? record.timestamp) ? { updatedAt: readTimestamp(record.updatedAt ?? record.createdAt ?? record.timestamp) } : {}),
-    certification: certification({ record, source, kind, id, routes, chunks }),
+    certification: await certification({ record, source, kind, id, routes, chunks, evidence, options }),
   };
 }
 
-function readSnapshot(source: unknown): unknown {
-  if (typeof source === 'function') {
-    const value = (source as () => unknown)();
-    return value && typeof (value as Promise<unknown>).then === 'function' ? undefined : value;
+const RUNTIME_SOURCE_PATHS: readonly (readonly string[])[] = [
+  ['platform', 'readModels', 'execution', 'interactiveRuntime'], ['platform', 'readModels', 'execution', 'processRuntime'],
+  ['platform', 'readModels', 'execution', 'ptySessions'], ['platform', 'readModels', 'execution', 'sudoMediation'],
+  ['platform', 'readModels', 'computer', 'browserDesktopReceipts'], ['platform', 'readModels', 'browser', 'controlReceipts'],
+  ['clients', 'operatorSdk', 'execution', 'interactiveRuntime'], ['extensions', 'daemonRuntime', 'interactiveRuntime'],
+];
+
+interface RuntimeSourceSnapshot { readonly source: string; readonly snapshot: unknown }
+
+function captureRuntimeSources(context: CommandContext) {
+  const guards: Array<() => void> = [];
+  const sources: RuntimeSourceSnapshot[] = [];
+  const path = (keys: readonly string[]) => {
+    let value: unknown = context;
+    for (const key of keys) {
+      if (value === undefined || value === null) return undefined;
+      if (typeof value !== 'object') throw new ToolInputProjectionError('invalid');
+      guards.push(captureCatalogMethods(value, [key]));
+      value = modelReadingServicePath(value, [key]);
+    }
+    return value;
+  };
+  const synchronous = (read: () => unknown): unknown => {
+    let value: unknown;
+    try { value = read(); } catch { throw new ToolInputProjectionError('unavailable'); }
+    if (nodeTypes.isPromise(value)) {
+      // This native catalog is synchronous. Drain rejection without borrowing a producer's then slot.
+      Promise.prototype.then.call(value, undefined, () => undefined);
+      throw new ToolInputProjectionError('held');
+    }
+    return value;
+  };
+  for (const keys of RUNTIME_SOURCE_PATHS) {
+    const source = path(keys);
+    if (source === undefined || source === null) continue;
+    if ((typeof source === 'object' || typeof source === 'function') && nodeTypes.isProxy(source)) throw new ToolInputProjectionError('held');
+    let acquire: () => unknown = () => source;
+    if (typeof source === 'function') acquire = () => synchronous(() => Reflect.apply(source, undefined, []));
+    else if (typeof source === 'object' && !Array.isArray(source)) {
+      const methods = captureCatalogMethods(source, ['getSnapshot', 'snapshot', 'list', 'records', 'subscribe']); guards.push(methods);
+      for (const name of ['getSnapshot', 'snapshot', 'list', 'records']) {
+        const read = modelReadingServicePath(source, [name]);
+        if (typeof read !== 'function') continue;
+        if (nodeTypes.isProxy(read)) throw new ToolInputProjectionError('held');
+        if (name === 'getSnapshot' && typeof modelReadingServicePath(source, ['subscribe']) === 'function') guards.push(captureNativeReadModelObservation(source));
+        acquire = () => { methods(); const value = synchronous(() => Reflect.apply(read, source, [])); methods(); return value; };
+        break;
+      }
+    }
+    const original = acquire(), snapshot = capturePersonalOpsData(original);
+    guards.push(() => { assertPersonalOpsDataCurrent(original, snapshot); assertPersonalOpsDataCurrent(acquire(), snapshot); });
+    sources.push({ source: `context.${keys.join('.')}`, snapshot });
   }
-  const record = readRecord(source);
-  for (const methodName of ['getSnapshot', 'snapshot', 'list', 'records']) {
-    const method = record[methodName];
-    if (typeof method !== 'function') continue;
-    const value = (method as () => unknown)();
-    return value && typeof (value as Promise<unknown>).then === 'function' ? undefined : value;
-  }
-  return source;
+  return { sources, assertCurrent() { for (const guard of guards) guard(); } };
 }
 
-function recordsFromSnapshot(snapshot: unknown, fallbackKind: AgentHarnessInteractiveRuntimeKind): readonly { readonly kind: AgentHarnessInteractiveRuntimeKind; readonly value: unknown }[] {
-  if (Array.isArray(snapshot)) return snapshot.map((value) => ({ kind: fallbackKind, value }));
-  const record = readRecord(snapshot);
-  const keyed: Array<readonly [string, AgentHarnessInteractiveRuntimeKind]> = [
-    ['processes', 'process-output'],
-    ['liveProcesses', 'process-output'],
-    ['outputChunks', 'process-output'],
-    ['ptySessions', 'pty-session'],
-    ['sessions', 'pty-session'],
-    ['sudoMediation', 'sudo-mediation'],
-    ['credentials', 'sudo-mediation'],
-    ['browserDesktopReceipts', 'browser-desktop-receipt'],
-    ['controlReceipts', 'browser-desktop-receipt'],
-    ['receipts', 'browser-desktop-receipt'],
-    ['records', fallbackKind],
-    ['items', fallbackKind],
-  ];
-  const values: { kind: AgentHarnessInteractiveRuntimeKind; value: unknown }[] = [];
-  for (const [key, kind] of keyed) {
+function recordsFromSnapshot(source: RuntimeSourceSnapshot): readonly InteractiveRuntimeEvidence[] {
+  const evidence = (value: unknown, containerPath: readonly string[], mapId?: string): InteractiveRuntimeEvidence => {
+    const record = readRecord(value);
+    return { ...source, containerPath, record: mapId ? { ...record, id: readString(record.id) || mapId } : record };
+  };
+  if (Array.isArray(source.snapshot)) return source.snapshot.map((value, index) => evidence(value, [String(index)]));
+  const record = readRecord(source.snapshot);
+  const values: InteractiveRuntimeEvidence[] = [];
+  // These are native publisher containers. Their paths are evidence, never a kind fallback.
+  for (const key of ['processes', 'liveProcesses', 'outputChunks', 'ptySessions', 'sessions', 'sudoMediation', 'credentials', 'browserDesktopReceipts', 'controlReceipts', 'receipts', 'records', 'items']) {
     const candidate = record[key];
-    if (Array.isArray(candidate)) values.push(...candidate.map((value) => ({ kind, value })));
-    else {
-      const map = readRecord(candidate);
-      if (Object.keys(map).length > 0) values.push(...Object.entries(map).map(([id, value]) => ({ kind, value: { ...readRecord(value), id: readString(readRecord(value).id) || id } })));
-    }
+    if (Array.isArray(candidate)) values.push(...candidate.map((value, index) => evidence(value, [key, String(index)])));
+    else for (const [id, value] of Object.entries(readRecord(candidate))) values.push(evidence(value, [key, id], id));
   }
-  return values.length > 0 ? values : Object.keys(record).length > 0 ? [{ kind: fallbackKind, value: record }] : [];
+  return values.length ? values : Object.keys(record).length ? [evidence(record, [])] : [];
 }
 
-function runtimeSources(context: CommandContext): readonly { readonly path: string; readonly source: unknown; readonly kind: AgentHarnessInteractiveRuntimeKind }[] {
-  const platform = context.platform as unknown as Record<string, unknown>;
-  const clients = readRecord(context.clients);
-  const extensions = context.extensions as unknown as Record<string, unknown>;
-  const readModels = readRecord(platform.readModels);
-  const execution = readRecord(readModels.execution);
-  const computer = readRecord(readModels.computer);
-  const browser = readRecord(readModels.browser);
-  const operatorSdk = readRecord(clients.operatorSdk);
-  const daemonRuntime = readRecord(extensions.daemonRuntime);
-  return [
-    { path: 'context.platform.readModels.execution.interactiveRuntime', source: execution.interactiveRuntime, kind: 'process-output' },
-    { path: 'context.platform.readModels.execution.processRuntime', source: execution.processRuntime, kind: 'process-output' },
-    { path: 'context.platform.readModels.execution.ptySessions', source: execution.ptySessions, kind: 'pty-session' },
-    { path: 'context.platform.readModels.execution.sudoMediation', source: execution.sudoMediation, kind: 'sudo-mediation' },
-    { path: 'context.platform.readModels.computer.browserDesktopReceipts', source: computer.browserDesktopReceipts, kind: 'browser-desktop-receipt' },
-    { path: 'context.platform.readModels.browser.controlReceipts', source: browser.controlReceipts, kind: 'browser-desktop-receipt' },
-    { path: 'context.clients.operatorSdk.execution.interactiveRuntime', source: readRecord(operatorSdk.execution).interactiveRuntime, kind: 'process-output' },
-    { path: 'context.extensions.daemonRuntime.interactiveRuntime', source: daemonRuntime.interactiveRuntime, kind: 'process-output' },
-  ];
+export interface InteractiveRuntimeSnapshot {
+  readonly records: readonly AgentHarnessInteractiveRuntimeRecord[];
+  readonly capabilitySummary: Record<string, unknown>;
+  readonly parityStatus: InteractiveRuntimeParity;
+  readonly assertCurrent: () => void;
 }
 
-export function interactiveRuntimeRecords(context: CommandContext): readonly AgentHarnessInteractiveRuntimeRecord[] {
-  const records: AgentHarnessInteractiveRuntimeRecord[] = [];
-  for (const source of runtimeSources(context)) {
-    if (source.source === undefined || source.source === null) continue;
-    try {
-      const snapshot = readSnapshot(source.source);
-      records.push(...recordsFromSnapshot(snapshot, source.kind)
-        .map((entry) => normalizeRecord(entry.value, source.path, entry.kind))
-        .filter((entry): entry is AgentHarnessInteractiveRuntimeRecord => entry !== null));
-    } catch {
-      // Runtime read models are optional; a broken publisher should not hide local execution posture.
+export async function acquireInteractiveRuntimeSnapshot(context: CommandContext, options: CatalogRankingOptions = {}): Promise<InteractiveRuntimeSnapshot> {
+  const optionSlots = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'retainCurrent', 'requirePreservedSource']);
+  optionSlots();
+  const originalAssertCurrent = options.assertCurrent, originalRetainCurrent = options.retainCurrent, signal = options.signal;
+  if ((originalAssertCurrent !== undefined && (typeof originalAssertCurrent !== 'function' || nodeTypes.isProxy(originalAssertCurrent)))
+    || (originalRetainCurrent !== undefined && (typeof originalRetainCurrent !== 'function' || nodeTypes.isProxy(originalRetainCurrent))))
+    throw new ToolInputProjectionError('invalid');
+  const throwIfAborted = AbortSignal.prototype.throwIfAborted;
+  const checkSignal = (): void => { if (signal) Reflect.apply(throwIfAborted, signal, []); };
+  const assertBorrowedCurrent = (): void => {
+    optionSlots(); checkSignal();
+    let result: unknown;
+    try { result = originalAssertCurrent?.(); }
+    finally {
+      if (nodeTypes.isPromise(result)) void Promise.prototype.then.call(result, undefined, () => {});
+      optionSlots(); checkSignal();
     }
+    if (result !== undefined) throw new ToolInputProjectionError('held');
+  };
+  const dispatchRetainCurrent = (guard: () => void, key?: string): void => {
+    optionSlots(); checkSignal();
+    let result: unknown;
+    try { result = originalRetainCurrent?.(guard, key); }
+    finally {
+      if (nodeTypes.isPromise(result)) void Promise.prototype.then.call(result, undefined, () => {});
+      optionSlots(); checkSignal();
+    }
+    if (result !== undefined) throw new ToolInputProjectionError('held');
+  };
+  assertBorrowedCurrent();
+  const native = captureRuntimeSources(context), retained: Array<() => void> = [];
+  const assertSourceCurrent = () => { optionSlots(); checkSignal(); native.assertCurrent(); };
+  const assertCurrent = () => {
+    assertSourceCurrent(); assertBorrowedCurrent(); assertSourceCurrent();
+    for (const guard of retained) guard();
+    assertSourceCurrent();
+  };
+  const retainCurrent = (guard: () => void, key?: string): void => {
+    optionSlots(); checkSignal();
+    retained.push(guard);
+    dispatchRetainCurrent(guard, key);
+  };
+  assertCurrent();
+  dispatchRetainCurrent(assertSourceCurrent, 'agent.runtime.sources');
+  let records: AgentHarnessInteractiveRuntimeRecord[] = [];
+  if (native.sources.length) {
+    const readingOptions = options.sourceOwner ? options : modelReadingOptions(context, context.extensions?.toolRegistry, options.signal, options.assertCurrent, retainCurrent);
+    records = await withModelReadingSource({ sources: native.sources }, { ...readingOptions, assertCurrent, retainCurrent }, async (captured, current) => {
+      const normalized: AgentHarnessInteractiveRuntimeRecord[] = [];
+      for (const source of captured.sources) {
+        for (const evidence of recordsFromSnapshot(source)) {
+          const record = await normalizeRecord(evidence, current);
+          current.signal?.throwIfAborted(); current.assertCurrent?.();
+          if (record) normalized.push(record);
+        }
+      }
+      return normalized;
+    });
   }
-  return records.sort((left, right) => {
+  assertCurrent();
+  records.sort((left, right) => {
     const delta = (right.updatedAt ? Date.parse(right.updatedAt) : 0) - (left.updatedAt ? Date.parse(left.updatedAt) : 0);
     return delta || left.kind.localeCompare(right.kind) || left.id.localeCompare(right.id);
   });
+  const data = captureCatalogData({ records, capabilitySummary: summarizeInteractiveRuntimeRecords(records), parityStatus: interactiveRuntimeParityForRecords(records) });
+  return { ...data, assertCurrent };
+}
+
+export async function interactiveRuntimeRecords(context: CommandContext, options: CatalogRankingOptions = {}): Promise<readonly AgentHarnessInteractiveRuntimeRecord[]> {
+  return (await acquireInteractiveRuntimeSnapshot(context, options)).records;
 }
 
 function complete(record: AgentHarnessInteractiveRuntimeRecord): boolean {
-  return record.certification.schemaStatus === 'certified' && record.certification.missingSignals.length === 0;
+  return record.certification.schemaStatus === 'certified' && record.certification.missingSignals.length === 0
+    && (record.status === 'ready' || record.status === 'running' || record.status === 'completed');
 }
 
 function kindSummary(records: readonly AgentHarnessInteractiveRuntimeRecord[], kind: AgentHarnessInteractiveRuntimeKind): Record<string, unknown> {
@@ -383,8 +429,7 @@ function kindSummary(records: readonly AgentHarnessInteractiveRuntimeRecord[], k
   };
 }
 
-export function interactiveRuntimeCapabilitySummary(context: CommandContext): Record<string, unknown> {
-  const records = interactiveRuntimeRecords(context);
+export function summarizeInteractiveRuntimeRecords(records: readonly AgentHarnessInteractiveRuntimeRecord[]): Record<string, unknown> {
   const certified = records.filter(complete);
   return {
     status: certified.length > 0 ? 'certified-live-runtime' : records.length > 0 ? 'attention' : 'not-published',
@@ -399,15 +444,17 @@ export function interactiveRuntimeCapabilitySummary(context: CommandContext): Re
   };
 }
 
-export function interactiveRuntimeParityStatus(context: CommandContext): {
+export interface InteractiveRuntimeParity {
   readonly stdinWriteContract: boolean;
   readonly ptyContract: boolean;
   readonly sudoMediationContract: boolean;
   readonly browserDesktopControlContract: boolean;
   readonly browserDesktopRoute: string | null;
   readonly browserDesktopRecords: readonly AgentHarnessInteractiveRuntimeRecord[];
-} {
-  const certified = interactiveRuntimeRecords(context).filter(complete);
+}
+
+export function interactiveRuntimeParityForRecords(records: readonly AgentHarnessInteractiveRuntimeRecord[]): InteractiveRuntimeParity {
+  const certified = records.filter(complete);
   const hasRoute = (record: AgentHarnessInteractiveRuntimeRecord, id: string) => record.routes.some((route) => route.id === id);
   const browserDesktopRecords = certified.filter((record) => record.kind === 'browser-desktop-receipt');
   return {
@@ -418,4 +465,12 @@ export function interactiveRuntimeParityStatus(context: CommandContext): {
     browserDesktopRoute: browserDesktopRecords[0]?.routes.find((route) => route.id === 'execute')?.modelRoute ?? browserDesktopRecords[0]?.routes.find((route) => route.id === 'inspect')?.modelRoute ?? null,
     browserDesktopRecords,
   };
+}
+
+export async function interactiveRuntimeCapabilitySummary(context: CommandContext, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  return (await acquireInteractiveRuntimeSnapshot(context, options)).capabilitySummary;
+}
+
+export async function interactiveRuntimeParityStatus(context: CommandContext, options: CatalogRankingOptions = {}): Promise<InteractiveRuntimeParity> {
+  return (await acquireInteractiveRuntimeSnapshot(context, options)).parityStatus;
 }

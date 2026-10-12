@@ -1,3 +1,5 @@
+import { extractionValueFixtureFor, extractionValueFixtureReading, type ExtractionValueFixtures } from './_helpers/knowledge-extraction-value-readings.js';
+import { selfImprovementFixtureReading, gapAssessmentFixture } from './_helpers/knowledge-self-improvement-readings.js';
 import { repairSubjectFixtureReading } from './_helpers/repair-subject-fixture-readings.js';
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -17,10 +19,16 @@ const spaceId = 'fact-quality-callers';
 const sourceText = 'Model K has a mass of 12 kg. Model K does not support Bluetooth. Replace its filter every six months.';
 const roots: string[] = [];
 let previous: JudgmentPort | undefined;
-beforeEach(() => { previous = installJudgmentPort(undefined); });
+const extractionValues: Array<ExtractionValueFixtures[number]> = [];
+beforeEach(() => { extractionValues.length = 0; previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function readings(probability = 0.99) {
-  const fake = fakePort((name, _question, state) => {
+  const fake = fakePort((name, question, state) => {
+    const extractionValue = extractionValueFixtureReading(name, question, state, extractionValues);
+    if (extractionValue !== undefined) return noulAnswer(extractionValue);
+
+    const assessment = selfImprovementFixtureReading(name, question, state, [gapAssessmentFixture({ title: 'What is the mass of Model K?' }, [{ title: 'Model K' }], 0.99, 0.99, [{ facts: ['Mass'], probability: 0.99 }, { facts: [], probability: 0.01 }], 0.01)]);
+    if (assessment !== undefined) return noulAnswer(assessment);
     if (name === 'repairSubjectSelected') return noulAnswer(repairSubjectFixtureReading(state));
     const input = state as { fact?: { title?: string; value?: unknown } };
     if (name === 'repairUseful') return noulAnswer(input.fact?.title === 'Mass' && input.fact.value === '12 kg' ? probability : 0.01);
@@ -45,6 +53,7 @@ async function fixture() {
   const observed = { id: 'mass-gap', kind: 'knowledge_gap' as const, slug: 'mass-gap', title: 'What is the mass of Model K?', status: 'active' as const,
     metadata: { knowledgeSpaceId: spaceId, repairStatus: 'repaired', linkedObjectIds: [subject.id] } };
   const gap = await upsertObservedKnowledgeNode(store, observed, 'research-task', observed, () => observed);
+  extractionValues.push(extractionValueFixtureFor(source, extraction, 0.99));
   return { store, subject, source, extraction, fact, gap };
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;

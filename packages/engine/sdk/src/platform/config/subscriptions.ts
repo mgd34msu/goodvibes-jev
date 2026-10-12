@@ -1,3 +1,4 @@
+import { assertSecurityReadSource, captureSecurityReadBindings, captureSecurityReadFiles } from '../security/read-source.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { readJsonFileOrQuarantine, writeJsonFileAtomic } from '../utils/atomic-json-store.js';
 import { logger } from '../utils/logger.js';
@@ -158,7 +159,21 @@ export interface SubscriptionManagerOptions {
   readonly legacyPath?: string;
 }
 
+const subscriptionReadSources = new WeakMap<SubscriptionManager, () => () => void>();
+const getSubscriptionReadSources = subscriptionReadSources.get.bind(subscriptionReadSources);
+const setSubscriptionReadSources = subscriptionReadSources.set.bind(subscriptionReadSources);
+
+/** Restriction from the original native owner; a replaced instance method cannot issue it. */
+export function captureSubscriptionReadSource(owner: SubscriptionManager): () => void {
+  const capture = getSubscriptionReadSources(owner);
+  assertSecurityReadSource(capture !== undefined);
+  return capture();
+}
+
 export class SubscriptionManager {
+  captureReadSource(): () => void {
+    return captureSubscriptionReadSource(this);
+  }
   private readonly path: string;
   private importGeneration = 0;
   private readonly preparedImports = new WeakMap<PreparedSubscriptionImport, SubscriptionImportRecord>();
@@ -247,6 +262,11 @@ export class SubscriptionManager {
   }
 
   public constructor(path: string, options: SubscriptionManagerOptions = {}) {
+    setSubscriptionReadSources(this, () => {
+      const binding = captureSecurityReadBindings(this, ['importGeneration', 'path', 'read', 'list', 'listPending', 'get', 'getAccessToken', 'getPending', 'captureReadSource']);
+      const generation = this.importGeneration, filesCurrent = captureSecurityReadFiles([this.path]);
+      return () => { binding(); filesCurrent(); assertSecurityReadSource(this.importGeneration === generation); };
+    });
     this.path = path;
     if (options.legacyPath && options.legacyPath !== path) {
       this.foldLegacyStore(options.legacyPath);

@@ -1,3 +1,5 @@
+import { withResearchCatalog, rankResearchRecords } from './agent-harness-research-catalog-source.ts';
+import { selectHarnessCatalog } from './agent-harness-catalog-selection.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import {
   AgentResearchRunRegistry,
@@ -6,7 +8,9 @@ import {
   type AgentResearchRunRecord,
   type AgentResearchRunStatus,
 } from '../agent/research-run-registry.ts';
-import { browserControlPosture } from './agent-harness-browser-control.ts';
+import { browserControlPosture, type BrowserControlPosture } from './agent-harness-browser-control.ts';
+import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureAsyncHarnessInput } from './agent-harness-async-input.ts';
 import { isCertifiedResearchLiveRecord, researchLiveReadModelSnapshot } from './agent-harness-research-live-read-models.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 
@@ -103,30 +107,7 @@ function buildRunItem(run: AgentResearchRunRecord): ResearchRunItem {
   };
 }
 
-function runSearchText(item: ResearchRunItem): string {
-  const run = item.run;
-  return [
-    run.id,
-    run.title,
-    run.question,
-    run.goal,
-    run.status,
-    run.phase,
-    run.note ?? '',
-    run.error ?? '',
-    run.reportArtifactId ?? '',
-    researchRunLogTail(run, 5).join('\n'),
-    run.plan.join('\n'),
-    run.nextSteps.join('\n'),
-    run.sourceIds.join('\n'),
-    item.inspectRoute,
-    item.checkpointRoute ?? '',
-    item.pauseRoute ?? '',
-    item.resumeRoute ?? '',
-    item.cancelRoute ?? '',
-    item.completeRoute ?? '',
-  ].join('\n').toLowerCase();
-}
+
 
 function runItems(context: CommandContext): readonly ResearchRunItem[] {
   const shellPaths = context.workspace?.shellPaths;
@@ -182,9 +163,7 @@ function describeRunItem(item: ResearchRunItem, includeParameters: boolean, look
   };
 }
 
-function researchRunnerPosture(context: CommandContext, includeParameters: boolean): Record<string, unknown> {
-  const browser = browserControlPosture(context);
-  const liveResearch = researchLiveReadModelSnapshot(context);
+function researchRunnerPosture(context: CommandContext, includeParameters: boolean, browser: BrowserControlPosture, liveResearch: Awaited<ReturnType<typeof researchLiveReadModelSnapshot>>): Record<string, unknown> {
   const certifiedRunnerRecords = liveResearch.browserRunnerRecords.filter(isCertifiedResearchLiveRecord);
   const certifiedVisualReports = liveResearch.visualReportRecords.filter(isCertifiedResearchLiveRecord);
   return {
@@ -227,29 +206,11 @@ function nextActions(items: readonly ResearchRunItem[]): readonly string[] {
     .map((item) => `${item.run.title}: ${item.next}`);
 }
 
-export function researchRunsCatalogStatus(context: CommandContext): Record<string, unknown> {
-  const items = runItems(context);
-  return {
-    modes: ['research_runs', 'research_run'],
-    runs: items.length,
-    planned: items.filter((item) => item.run.status === 'planned').length,
-    running: items.filter((item) => item.run.status === 'running').length,
-    paused: items.filter((item) => item.run.status === 'paused').length,
-    blocked: items.filter((item) => item.run.status === 'blocked').length,
-    terminal: items.filter((item) => !isMutable(item.run.status)).length,
-    cancellable: items.filter((item) => isMutable(item.run.status)).length,
-    readOnly: true,
-  };
-}
-
-export function researchRunsSummary(context: CommandContext, args: AgentHarnessResearchRunArgs): Record<string, unknown> {
-  const includeParameters = args.includeParameters === true;
-  const query = readString(args.query).toLowerCase();
-  const limit = readLimit(args.limit, 100);
-  const items = runItems(context);
-  const filtered = items.filter((item) => !query || runSearchText(item).includes(query));
-  return {
-    summary: {
+export async function researchRunsCatalogStatus(context: CommandContext, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  return withResearchCatalog(context, {}, options, () => null, async () => {
+    const items = runItems(context);
+    return {
+      modes: ['research_runs', 'research_run'],
       runs: items.length,
       planned: items.filter((item) => item.run.status === 'planned').length,
       running: items.filter((item) => item.run.status === 'running').length,
@@ -257,51 +218,69 @@ export function researchRunsSummary(context: CommandContext, args: AgentHarnessR
       blocked: items.filter((item) => item.run.status === 'blocked').length,
       terminal: items.filter((item) => !isMutable(item.run.status)).length,
       cancellable: items.filter((item) => isMutable(item.run.status)).length,
-    },
-    runs: filtered.slice(0, limit).map((item) => describeRunItem(item, includeParameters)),
-    runnerPosture: researchRunnerPosture(context, includeParameters),
-    returned: Math.min(filtered.length, limit),
-    total: items.length,
-    nextActions: nextActions(items),
-    policy: 'Research runs are read-only in the harness. Run-state writes use confirmed research lifecycle actions; sources, reports, Knowledge, and delivery stay on separate explicit routes.',
-  };
+      readOnly: true,
+    };
+  });
 }
 
-export function describeResearchRun(context: CommandContext, args: AgentHarnessResearchRunArgs): ResearchRunResolution {
-  const runId = readString(args.runId);
-  const target = readString(args.target);
-  const query = readString(args.query);
-  const input = runId || target || query;
-  if (!input) {
+export async function researchRunsSummary(context: CommandContext, rawArgs: AgentHarnessResearchRunArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  return withResearchCatalog(context, rawArgs, options, () => null, async (rawArgs, _data, options) => {
+    const caller = captureAsyncHarnessInput(rawArgs, options), args = caller.args;
+    const browser = await browserControlPosture(context, context.extensions?.toolRegistry, caller.options);
+    caller.assertCurrent();
+    const liveResearch = await researchLiveReadModelSnapshot(context, caller.options);
+    caller.assertCurrent();
+    const includeParameters = args.includeParameters === true;
+    const query = readString(args.query);
+    const limit = readLimit(args.limit, 100);
+    const items = runItems(context);
+    const filtered = await rankResearchRecords(items, query, item => ({ id: item.run.id, description: item.run.title, evidence: item }), caller.options, 'agent.research.runs');
+    return {
+      summary: {
+        runs: items.length,
+        planned: items.filter((item) => item.run.status === 'planned').length,
+        running: items.filter((item) => item.run.status === 'running').length,
+        paused: items.filter((item) => item.run.status === 'paused').length,
+        blocked: items.filter((item) => item.run.status === 'blocked').length,
+        terminal: items.filter((item) => !isMutable(item.run.status)).length,
+        cancellable: items.filter((item) => isMutable(item.run.status)).length,
+      },
+      runs: filtered.slice(0, limit).map((item) => describeRunItem(item, includeParameters)),
+      runnerPosture: researchRunnerPosture(context, includeParameters, browser, liveResearch),
+      returned: Math.min(filtered.length, limit),
+      total: items.length,
+      nextActions: nextActions(items),
+      policy: 'Research runs are read-only in the harness. Run-state writes use confirmed research lifecycle actions; sources, reports, Knowledge, and delivery stay on separate explicit routes.',
+    };
+
+  });
+}
+
+export async function describeResearchRun(context: CommandContext, rawArgs: AgentHarnessResearchRunArgs, options: CatalogRankingOptions = {}): Promise<ResearchRunResolution> {
+  return withResearchCatalog(context, rawArgs, options, () => null, async (rawArgs, _data, options) => {
+    const caller = captureAsyncHarnessInput(rawArgs, options), args = caller.args;
+    const runId = readString(args.runId);
+    const target = readString(args.target);
+    const query = readString(args.query);
+    const input = runId || target || query;
+    if (!input) {
+      return {
+        status: 'missing_lookup',
+        usage: 'research_run requires runId, target, or query. Use research action:"runs" to inspect run ids.',
+      };
+    }
+    const normalized = input.toLowerCase();
+    const items = runItems(context);
+    const exact = items.find((item) => item.run.id === input);
+    if (exact) return { status: 'found', run: describeRunItem(exact, true, { source: runId ? 'runId' : target ? 'target' : 'query', input, resolvedBy: 'id' }) };
+    const insensitive = items.find((item) => item.run.id.toLowerCase() === normalized);
+    if (insensitive) return { status: 'found', run: describeRunItem(insensitive, true, { source: runId ? 'runId' : target ? 'target' : 'query', input, resolvedBy: 'case-insensitive-id' }) };
+    const selected = await selectHarnessCatalog(items, input, item => ({ id: item.run.id, description: item.run.title, evidence: item }), caller.options, 'agent.research.run');
+    if (selected) return { status: 'found', run: describeRunItem(selected, true, { source: runId ? 'runId' : target ? 'target' : 'query', input, resolvedBy: 'search' }) };
     return {
       status: 'missing_lookup',
-      usage: 'research_run requires runId, target, or query. Use research action:"runs" to inspect run ids.',
+      usage: `Unknown research run ${input}. Use research action:"runs" to inspect run ids.`,
     };
-  }
-  const normalized = input.toLowerCase();
-  const items = runItems(context);
-  const exact = items.find((item) => item.run.id === input);
-  if (exact) return { status: 'found', run: describeRunItem(exact, true, { source: runId ? 'runId' : target ? 'target' : 'query', input, resolvedBy: 'id' }) };
-  const insensitive = items.find((item) => item.run.id.toLowerCase() === normalized);
-  if (insensitive) return { status: 'found', run: describeRunItem(insensitive, true, { source: runId ? 'runId' : target ? 'target' : 'query', input, resolvedBy: 'case-insensitive-id' }) };
-  const matches = items.filter((item) => runSearchText(item).includes(normalized));
-  if (matches.length === 1) return { status: 'found', run: describeRunItem(matches[0]!, true, { source: runId ? 'runId' : target ? 'target' : 'query', input, resolvedBy: 'search' }) };
-  if (matches.length > 1) {
-    return {
-      status: 'ambiguous',
-      input,
-      candidates: matches.slice(0, 8).map((item) => ({
-        runId: item.run.id,
-        title: item.run.title,
-        status: item.run.status,
-        phase: item.run.phase,
-        progress: item.run.progress,
-        modelRoute: item.modelRoute,
-      })),
-    };
-  }
-  return {
-    status: 'missing_lookup',
-    usage: `Unknown research run ${input}. Use research action:"runs" to inspect run ids.`,
-  };
+
+  });
 }

@@ -1,3 +1,4 @@
+import { screeningAnswers } from './_helpers/screening-answers.js';
 /** Pinned254699bf mapping assertions, with explicit autonomous/privacy-floor adaptations. */
 import { afterEach, expect, test } from 'bun:test';
 import { createProtectedSourceOwner } from '../sdk/src/platform/security/source-screening/owner.ts';
@@ -22,8 +23,7 @@ function fixture(selections: readonly { text: string; privateText: string }[] = 
       return Response.json({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify({ revision: source.revision, spans }) } }] });
     }
     calls.push({ path });
-    return Response.json({ model: 'jev-1.13.0', answers: { complete: { type: 'noul', noul: settled ? 1 : 0 },
-      precise: { type: 'noul', noul: 1 } }, usage: { input_tokens: 10, output_tokens: 2 } });
+    return Response.json({ model: 'jev-1.13.0', answers: screeningAnswers(await request.json(), { complete: settled ? 1 : 0, precise: 1 }), usage: { input_tokens: 10, output_tokens: 2 } });
   } });
   const owner = createProtectedSourceOwner({ authority: { ownerId: 'recorded-original-mapping', revision: '1', retention: 'ephemeral-no-log',
     signal: new AbortController().signal, assertCurrent() {} },

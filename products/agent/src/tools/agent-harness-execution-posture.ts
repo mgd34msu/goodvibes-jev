@@ -5,10 +5,9 @@ import { capturePersonalOpsData, assertPersonalOpsDataCurrent } from './agent-ha
 import { modelReadingServicePath } from './agent-harness-model-reading-source.ts';
 import { captureNativeReadModelObservation } from './agent-harness-autonomy-live-records.ts';
 import type { CommandContext } from '../input/command-registry.ts';
-import { browserControlPosture } from './agent-harness-browser-control.ts';
+import { captureBrowserControlPosture, type BrowserControlPosture } from './agent-harness-browser-control.ts';
 import { delegationDecisionCards } from './agent-harness-delegation-posture.ts';
 import { fileRecoveryCatalogStatus } from './agent-harness-file-recovery.ts';
-import { interactiveRuntimeCapabilitySummary } from './agent-harness-interactive-runtime-records.ts';
 import { sudoExecutionPosture } from './agent-harness-sudo-posture.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 
@@ -168,9 +167,9 @@ function registeredToolNames(toolRegistry: ToolRegistry): ReadonlySet<string> {
   return new Set(safeToolDefinitions(toolRegistry).map((tool) => tool.name));
 }
 
-function routeAvailability(route: ExecutionRoute, context: CommandContext, toolRegistry: ToolRegistry): ExecutionAvailability {
+function routeAvailability(route: ExecutionRoute, context: CommandContext, toolRegistry: ToolRegistry, browserControl: BrowserControlPosture): ExecutionAvailability {
   if (route.id === 'delegation-isolation-parallel-remote') return 'ready';
-  if (route.browserMcp) return browserControlPosture(context, toolRegistry).configured ? 'ready' : 'setup-needed';
+  if (route.browserMcp) return browserControl.configured ? 'ready' : 'setup-needed';
   const names = registeredToolNames(toolRegistry);
   if (route.toolNames?.every((name) => names.has(name))) return 'ready';
   if (route.anyToolNames?.some((name) => names.has(name))) return 'ready';
@@ -199,12 +198,12 @@ function routeSearchText(route: ExecutionRoute): string {
   ].join('\n');
 }
 
-function describeCandidate(route: ExecutionRoute, context: CommandContext, toolRegistry: ToolRegistry): Record<string, unknown> {
+function describeCandidate(route: ExecutionRoute, context: CommandContext, toolRegistry: ToolRegistry, browserControl: BrowserControlPosture): Record<string, unknown> {
   return {
     executionRouteId: route.id,
     label: route.label,
     effect: route.effect,
-    availability: routeAvailability(route, context, toolRegistry),
+    availability: routeAvailability(route, context, toolRegistry, browserControl),
     modelRoute: route.modelRoute,
   };
 }
@@ -247,12 +246,13 @@ function describeRoute(
   route: ExecutionRoute,
   context: CommandContext,
   toolRegistry: ToolRegistry,
+  browserPosture: BrowserControlPosture,
   options: { readonly includeParameters?: boolean; readonly lookup?: Record<string, unknown> } = {},
 ): Record<string, unknown> {
-  const availability = routeAvailability(route, context, toolRegistry);
+  const availability = routeAvailability(route, context, toolRegistry, browserPosture);
   const tools = availableTools(route, toolRegistry);
   const supervisionRoutes = executionSupervisionRoutes(context, route);
-  const browserControl = route.browserMcp ? browserControlPosture(context, toolRegistry) : null;
+  const browserControl = route.browserMcp ? browserPosture : null;
   const delegationCards = route.id === 'delegation-isolation-parallel-remote' ? delegationDecisionCards(context) : null;
   return {
     executionRouteId: route.id,
@@ -289,19 +289,19 @@ function describeRoute(
   };
 }
 
-function executionSources(context: CommandContext, toolRegistry: ToolRegistry, originalSources: readonly unknown[]) {
+function executionSources(context: CommandContext, toolRegistry: ToolRegistry, originalSources: readonly unknown[], browserControl: BrowserControlPosture) {
   return captureCatalogData({
     originalSources,
     sessionId: context.session.runtime.sessionId,
     routes: routeDefinitions().map(route => ({ route,
-      full: describeRoute(route, context, toolRegistry, { includeParameters: true }),
-      summary: describeRoute(route, context, toolRegistry),
+      full: describeRoute(route, context, toolRegistry, browserControl, { includeParameters: true }),
+      summary: describeRoute(route, context, toolRegistry, browserControl),
     })),
     tools: safeToolDefinitions(toolRegistry),
-    browserControl: browserControlPosture(context, toolRegistry),
+    browserControl,
     delegationCards: delegationDecisionCards(context),
     sudo: sudoExecutionPosture(context),
-    interactiveRuntime: interactiveRuntimeCapabilitySummary(context),
+    interactiveRuntime: browserControl.runtime,
     fileRecovery: fileRecoveryCatalogStatus(context),
     supervision: executionSupervisionSummary(context),
   });
@@ -377,7 +377,7 @@ function retainExecutionSources(context: CommandContext, toolRegistry: ToolRegis
   const assertSourceCurrent = () => {
     options.signal?.throwIfAborted();
     assertBackend();
-    if (JSON.stringify(executionSources(context, toolRegistry, sources.originalSources)) !== revision) throw new ToolInputProjectionError('stale');
+    if (JSON.stringify(executionSources(context, toolRegistry, sources.originalSources, sources.browserControl)) !== revision) throw new ToolInputProjectionError('stale');
     assertBackend();
   };
   options.retainCurrent?.(assertSourceCurrent, 'agent.harness.execution-posture.sources');
@@ -394,9 +394,12 @@ async function matchingRoutes(sources: ReturnType<typeof executionSources>, inpu
     { ...options, requirePreservedSource: true });
 }
 
-export function executionPostureCatalogStatus(context: CommandContext, toolRegistry: ToolRegistry): Record<string, unknown> {
+export async function executionPostureCatalogStatus(context: CommandContext, toolRegistry: ToolRegistry, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const acquired = await captureBrowserControlPosture(context, toolRegistry, options);
+  const browserControl = acquired.posture;
+  acquired.assertCurrent();
   const routes = routeDefinitions();
-  const statuses = routes.map((route) => routeAvailability(route, context, toolRegistry));
+  const statuses = routes.map((route) => routeAvailability(route, context, toolRegistry, browserControl));
   return {
     modes: ['execution_posture', 'execution_route', 'browser_control_route'],
     routes: routes.length,
@@ -411,8 +414,10 @@ export async function executionPostureSummary(context: CommandContext, toolRegis
   const query = readString(args.query);
   const includeParameters = args.includeParameters === true;
   const backend = captureExecutionBackend(context, toolRegistry);
-  const sources = executionSources(context, toolRegistry, backend.originalSources);
-  const assertCurrent = retainExecutionSources(context, toolRegistry, sources, options, backend.assertCurrent);
+  const acquired = await captureBrowserControlPosture(context, toolRegistry, options);
+  backend.assertCurrent();
+  const sources = executionSources(context, toolRegistry, backend.originalSources, acquired.posture);
+  const assertCurrent = retainExecutionSources(context, toolRegistry, sources, options, () => { backend.assertCurrent(); acquired.assertSourceCurrent(); });
   const selected = await matchingRoutes(sources, query, { ...options, assertCurrent });
   assertCurrent();
   const routes = selected.matches.slice(0, readLimit(args.limit, 100));
@@ -459,8 +464,10 @@ export async function describeHarnessExecutionRoute(context: CommandContext, too
       usage: 'execution action:"route" requires executionRouteId, target, or query. Use execution action:"status" to inspect execution route ids.',
     };
   }
-  const sources = executionSources(context, toolRegistry, backend.originalSources);
-  const assertCurrent = retainExecutionSources(context, toolRegistry, sources, options, backend.assertCurrent);
+  const acquired = await captureBrowserControlPosture(context, toolRegistry, options);
+  backend.assertCurrent();
+  const sources = executionSources(context, toolRegistry, backend.originalSources, acquired.posture);
+  const assertCurrent = retainExecutionSources(context, toolRegistry, sources, options, () => { backend.assertCurrent(); acquired.assertSourceCurrent(); });
   const all = sources.routes;
   const normalized = lookup.input.toLowerCase();
   const exact = all.find(({ route }) => route.id === lookup.input);
@@ -476,7 +483,7 @@ export async function describeHarnessExecutionRoute(context: CommandContext, too
     return {
       status: 'ambiguous',
       input: lookup.input,
-      candidates: searched.slice(0, 8).map(({ entry, judgment }) => ({ ...describeCandidate(entry.route, context, toolRegistry), judgment })),
+      candidates: searched.slice(0, 8).map(({ entry, judgment }) => ({ ...describeCandidate(entry.route, context, toolRegistry, sources.browserControl), judgment })),
     };
   }
   return {

@@ -86,22 +86,22 @@ describe('browser capability honesty', () => {
     resetToolCapabilityDeclarationsForTests();
   });
 
-  test('a ready capability always has at least one invocable route', () => {
+  test('a ready capability always has at least one invocable route', async () => {
     const registry = createToolRegistryDouble();
     registerAgentBrowserTool(registry);
-    const posture = browserControlPosture(createContext(registry, []));
+    const posture = await browserControlPosture(createContext(registry, []));
 
     expect(posture.status).toBe('ready');
     expect(posture.invocationRoutes.length).toBeGreaterThan(0);
   });
 
-  test('every route a ready capability names belongs to a registered tool', () => {
+  test('every route a ready capability names belongs to a registered tool', async () => {
     const registry = createToolRegistryDouble();
     registerAgentBrowserTool(registry);
     registry.register(mcpTool());
     installAgentMcpCallRoute(registry, createContext(registry, [BROWSER_MCP_SERVER], async () => 'ok'));
 
-    const posture = browserControlPosture(createContext(registry, [BROWSER_MCP_SERVER], async () => 'ok'));
+    const posture = await browserControlPosture(createContext(registry, [BROWSER_MCP_SERVER], async () => 'ok'));
 
     expect(posture.status).toBe('ready');
     for (const route of posture.invocationRoutes) {
@@ -110,40 +110,40 @@ describe('browser capability honesty', () => {
     }
   });
 
-  test('a connected browser MCP server alone is NOT reported ready when nothing can call it', () => {
+  test('a connected browser MCP server alone is NOT reported ready when nothing can call it', async () => {
     // This is the exact state that produced the false "ready": a browser MCP
     // server connected and fresh, with no invocation path in the session.
     const registry = createToolRegistryDouble();
     registry.register(mcpTool());
 
-    const posture = browserControlPosture(createContext(registry, [BROWSER_MCP_SERVER]));
+    const posture = await browserControlPosture(createContext(registry, [BROWSER_MCP_SERVER]));
 
     expect(posture.invocationRoutes).toHaveLength(0);
     expect(posture.status).not.toBe('ready');
     expect(posture.configured).toBe(false);
   });
 
-  test('the same MCP server becomes a real route once calling is wired', () => {
+  test('the same MCP server becomes a real route once calling is wired', async () => {
     const registry = createToolRegistryDouble();
     registry.register(mcpTool());
     installAgentMcpCallRoute(registry, createContext(registry, [BROWSER_MCP_SERVER], async () => 'ok'));
 
-    const posture = browserControlPosture(createContext(registry, [BROWSER_MCP_SERVER], async () => 'ok'));
+    const posture = await browserControlPosture(createContext(registry, [BROWSER_MCP_SERVER], async () => 'ok'));
 
     expect(posture.status).toBe('ready');
     expect(posture.invocationRoutes.map((route) => route.kind)).toContain('mcp-tool-call');
   });
 
-  test('when nothing is invocable the blockers name the situation and the fix', () => {
+  test('when nothing is invocable the blockers name the situation and the fix', async () => {
     const registry = createToolRegistryDouble();
-    const posture = browserControlPosture(createContext(registry, []));
+    const posture = await browserControlPosture(createContext(registry, []));
 
     expect(posture.status).not.toBe('ready');
     expect(posture.blockers.length).toBeGreaterThan(0);
     expect(posture.blockers.join(' ')).toContain('Fix:');
   });
 
-  test('a tool that merely mentions browsing provides nothing', () => {
+  test('a tool that merely mentions browsing provides nothing', async () => {
     const registry = createToolRegistryDouble();
     registry.register({
       definition: {
@@ -154,19 +154,19 @@ describe('browser capability honesty', () => {
       execute: async () => ({ success: true, output: '{}' }),
     });
 
-    const posture = browserControlPosture(createContext(registry, []));
+    const posture = await browserControlPosture(createContext(registry, []));
 
     expect(posture.declaredControlTools).toEqual([]);
     expect(posture.status).not.toBe('ready');
   });
 
-  test('rewording an unrelated tool to mention a browser changes no posture', () => {
+  test('rewording an unrelated tool to mention a browser changes no posture', async () => {
     // The real incident: the terminal tool's description was reworded to use a
     // browser as an example of a long-lived process, and the description scan
     // promoted terminal to a browser-control provider, flipping readiness
     // across every surface that reads this posture.
     const registry = createToolRegistryDouble();
-    const before = browserControlPosture(createContext(registry, []));
+    const before = await browserControlPosture(createContext(registry, []));
 
     registry.register({
       definition: {
@@ -176,7 +176,7 @@ describe('browser capability honesty', () => {
       },
       execute: async () => ({ success: true, output: '{}' }),
     });
-    const after = browserControlPosture(createContext(registry, []));
+    const after = await browserControlPosture(createContext(registry, []));
 
     expect(after.status).toBe(before.status);
     expect(after.declaredControlTools).toEqual(before.declaredControlTools);
@@ -184,7 +184,7 @@ describe('browser capability honesty', () => {
     expect(after.status).not.toBe('ready');
   });
 
-  test('a tool named like a browser tool but declaring nothing provides nothing', () => {
+  test('a tool named like a browser tool but declaring nothing provides nothing', async () => {
     const registry = createToolRegistryDouble();
     registry.register({
       definition: {
@@ -195,13 +195,13 @@ describe('browser capability honesty', () => {
       execute: async () => ({ success: true, output: '{}' }),
     });
 
-    const posture = browserControlPosture(createContext(registry, []));
+    const posture = await browserControlPosture(createContext(registry, []));
 
     expect(posture.declaredControlTools).toEqual([]);
     expect(posture.status).not.toBe('ready');
   });
 
-  test('an MCP server is judged by its declared role, not by its name', () => {
+  test('an MCP server is judged by its declared role, not by its name', async () => {
     const registry = createToolRegistryDouble();
     registry.register(mcpTool());
     const namedLikeABrowser = {
@@ -214,27 +214,27 @@ describe('browser capability honesty', () => {
     } as const;
     installAgentMcpCallRoute(registry, createContext(registry, [namedLikeABrowser], async () => 'ok'));
 
-    const posture = browserControlPosture(createContext(registry, [namedLikeABrowser], async () => 'ok'));
+    const posture = await browserControlPosture(createContext(registry, [namedLikeABrowser], async () => 'ok'));
 
     expect(posture.mcpServers).toEqual([]);
     expect(posture.status).not.toBe('ready');
   });
 
-  test('a declared provider that is not registered does not count', () => {
+  test('a declared provider that is not registered does not count', async () => {
     // Declaration alone is not enough: the tool has to actually be there.
     const registry = createToolRegistryDouble();
     registerAgentBrowserTool(createToolRegistryDouble());
 
-    const posture = browserControlPosture(createContext(registry, []));
+    const posture = await browserControlPosture(createContext(registry, []));
 
     expect(posture.declaredControlTools).toEqual([]);
     expect(posture.status).not.toBe('ready');
   });
 
-  test('the recommended next step names a route that can be called now', () => {
+  test('the recommended next step names a route that can be called now', async () => {
     const registry = createToolRegistryDouble();
     registerAgentBrowserTool(registry);
-    const posture = browserControlPosture(createContext(registry, []));
+    const posture = await browserControlPosture(createContext(registry, []));
 
     expect(posture.recommendedRoute).toBe(posture.invocationRoutes[0]?.modelRoute);
     expect(posture.recommendedRoute.startsWith('browser ')).toBe(true);
@@ -274,12 +274,12 @@ describe('browser capability honesty', () => {
   test('an unreadable installed browser backend is held rather than reported empty', async () => {
     const registry = createToolRegistryDouble(), context = createContext(registry, []);
     Object.defineProperty(registry, 'getToolDefinitions', { configurable: true, value: () => { throw new Error('fixture tool inventory unavailable'); } });
-    expect(() => browserControlPosture(context, registry)).toThrow(ToolInputProjectionError);
+    await expect(browserControlPosture(context, registry)).rejects.toBeInstanceOf(ToolInputProjectionError);
     await expect(browserControlRouteSummary(context, registry, { query: 'take screenshot' }, { sourceOwner: ordinaryResearchOwner() })).rejects.toBeInstanceOf(ToolInputProjectionError);
 
     const availableRegistry = createToolRegistryDouble(), unreadableContext = createContext(availableRegistry, []);
     Object.defineProperty(unreadableContext.clients?.mcpApi, 'listServerSecurity', { configurable: true, value: () => { throw new Error('fixture connector inventory unavailable'); } });
-    expect(() => browserControlPosture(unreadableContext, availableRegistry)).toThrow(ToolInputProjectionError);
+    await expect(browserControlPosture(unreadableContext, availableRegistry)).rejects.toBeInstanceOf(ToolInputProjectionError);
   });
 
   test('a replaced connector method cannot publish a pending workflow or invoke its accessor', async () => {

@@ -1,3 +1,5 @@
+import { types as nodeTypes } from 'node:util';
+import { assertSecurityReadSource, captureSecurityReadBindings, captureSecurityReadData, retainSecurityReadData } from '../security/read-source.js';
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 import type { DeliveryLifetime } from '../utils/delivery-lifetime.js';
 
@@ -85,11 +87,52 @@ export interface MediaProviderDescriptor {
   readonly capabilities: readonly MediaProviderCapability[];
 }
 
+const mediaReadSources = new WeakMap<MediaProviderRegistry, () => () => void>();
+const getMediaReadSource = mediaReadSources.get.bind(mediaReadSources);
+const setMediaReadSource = mediaReadSources.set.bind(mediaReadSources);
+
+/** An original native collection restriction; it grants no effect authority. */
+export function captureMediaProviderReadSource(registry: MediaProviderRegistry): () => void {
+  const capture = getMediaReadSource(registry);
+  assertSecurityReadSource(capture !== undefined);
+  return capture();
+}
+
 export class MediaProviderRegistry {
   private readonly providers = new Map<string, MediaProvider>();
   private incarnation = 0;
 
   getIncarnation(): number { return this.incarnation; }
+
+  captureReadSource(): () => void { return captureMediaProviderReadSource(this); }
+
+  constructor() {
+    setMediaReadSource(this, () => {
+      const bindings = captureSecurityReadBindings(this, ['providers', 'incarnation', 'get', 'list', 'status', 'getIncarnation', 'captureReadSource']);
+      bindings();
+      const revision = this.incarnation, providers = this.providers;
+      const mapBindings = captureSecurityReadBindings(providers, ['entries', 'get', 'values']);
+      mapBindings();
+      const entries = [...providers.entries()];
+      const providerBindings = entries.map(([, provider]) => {
+        assertSecurityReadSource(!nodeTypes.isProxy(provider));
+        return captureSecurityReadBindings(provider, [
+          'id', 'label', 'capabilities', 'status', 'analyze', 'transform', 'generate',
+          ...Reflect.ownKeys(provider).filter((key): key is string => typeof key === 'string'),
+        ]);
+      });
+      for (const guard of providerBindings) guard();
+      const capabilities = retainSecurityReadData(entries.map(([, provider]) => provider.capabilities));
+      const catalog = captureSecurityReadData(() => { bindings(); mapBindings(); for (const guard of providerBindings) guard(); return this.list(); });
+      return () => {
+        bindings(); mapBindings(); capabilities(); for (const guard of providerBindings) guard();
+        const current = [...providers.entries()];
+        assertSecurityReadSource(this.incarnation === revision && this.providers === providers && current.length === entries.length
+          && entries.every(([id, provider], index) => current[index]?.[0] === id && current[index]?.[1] === provider));
+        catalog(); bindings(); mapBindings(); for (const guard of providerBindings) guard();
+      };
+    });
+  }
 
   register(provider: MediaProvider, options: { readonly replace?: boolean } = {}): () => void {
     const id = provider.id.trim();

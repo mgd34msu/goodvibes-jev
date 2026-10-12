@@ -11,6 +11,8 @@ import { createAsyncDisposalScope, registerRuntimePollers } from '@goodvibes-jev
 import type { shell as RuntimeShell, bootstrap as RuntimeBootstrap } from '@goodvibes-jev/engine/sdk/platform/runtime';
 import { applyRawSecretLiteralHandling, type SecretsManager } from '../config/secrets.ts';
 import { readCheckpointGuardSettings, readCheckpointRegistrationSetting } from '../config/checkpoint-settings.ts';
+import { createAgentResearchSourceOwner } from './research-source-screening.ts';
+import type { ProtectedSourceOwner } from '@goodvibes-jev/engine/sdk/platform/security';
 import { backfillCheckpointEligibilityIfNeeded, createWorkspaceRegistrationLiveChecker, migrateLegacyWorkspaceRegistryIfNeeded } from '../config/workspace-registration.ts';
 import { FocusTracker } from '@/runtime/index.ts';
 import { ServiceRegistry } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -643,6 +645,8 @@ export interface RuntimeServices extends Omit<SdkRuntimeServices, 'sessionBroker
   readonly memorySpineTransport: MemoryTransport;
   readonly serviceRegistry: ServiceRegistry;
   readonly secretsManager: SecretsManager;
+  /** Report-only native grant; captures stay held until explicitly configured. */
+  readonly researchReportSourceOwner: ProtectedSourceOwner;
   readonly subscriptionManager: SubscriptionManager;
   readonly localUserAuthManager: UserAuthManager;
   readonly profileManager: ProfileManager;
@@ -978,6 +982,9 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   // overlaps deliberately with the poller registration further below: whichever
   // runs first does the work.
   disposalScope.registry.add('client runtime floor', () => clientFloor.close());
+  const researchScreeningLifetime = new AbortController();
+  const researchReportSourceOwner = createAgentResearchSourceOwner(configManager, secretsManager, researchScreeningLifetime.signal);
+  disposalScope.registry.add('research screening owner', () => researchReportSourceOwner.close());
   disposalScope.registry.add('agent knowledge store', () => agentKnowledgeStore.close());
   disposalScope.registry.add('home graph knowledge store', () => homeGraphKnowledgeStore.close());
   // Cancellation starts at each leaf's original position. These older entries
@@ -2294,6 +2301,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     memorySpineTransport,
     serviceRegistry,
     secretsManager,
+    researchReportSourceOwner,
     subscriptionManager,
     localUserAuthManager,
     profileManager,
@@ -2360,8 +2368,8 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     // mechanism rather than two: whichever runs first does the work, the other
     // is a no-op.
     disposeSessionWriteLedger: disposeSessionWriteLedgerOnce,
-    dispose: (): void => disposalScope.dispose(),
-    close: (): Promise<void> => disposalScope.close(),
+    dispose: (): void => { researchScreeningLifetime.abort(); disposalScope.dispose(); },
+    close: (): Promise<void> => { researchScreeningLifetime.abort(); return disposalScope.close(); },
     integrationHelpers,
     async rerootStores(newWorkingDir: string): Promise<void> {
       await projectIndex.reroot(newWorkingDir);

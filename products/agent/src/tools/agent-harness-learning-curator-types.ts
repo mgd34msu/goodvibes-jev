@@ -149,3 +149,5 @@ export type LearningCandidateResolution =
   | { readonly status: 'found'; readonly candidate: Record<string, unknown> }
   | { readonly status: 'ambiguous'; readonly input: string; readonly candidates: readonly Record<string, unknown>[] }
   | { readonly status: 'missing_lookup'; readonly usage: string };
+
+export type LearningCandidateDraft = Omit<LearningCandidate, 'priority' | 'scores'>;

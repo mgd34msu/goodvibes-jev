@@ -225,6 +225,9 @@ function nativeObjectFactsMatch(facts: NativeObjectFacts): boolean {
   }
   return true;
 }
+function nativeFactGroupMatches(facts: readonly NativeObjectFacts[]): boolean {
+  return nativeEvery(facts, nativeObjectFactsMatch);
+}
 function captureNativePrototypeFacts(prototype: object | null): readonly NativeObjectFacts[] {
   const facts: NativeObjectFacts[] = [], seen = new Set<object>();
   for (let current = prototype; current; current = nativeGetPrototypeOf(current)) {
@@ -295,22 +298,44 @@ function nativeStatementMethodsMatch(original: NativeStatementIdentity, statemen
 /** The public native execution path creates and frees its JavaScript statement
  * before returning; the private executable has a separate owned lifetime. */
 function nativeOwnerPrototypeFactsMatch(original: NativeStatementIdentity): boolean {
-  return nativeEvery(original.ownerPrototypes, facts => nativeGetPrototypeOf(facts.object) === facts.prototype
-    && nativeOwnKeys(facts.object).length === facts.slots.length
-    && nativeEvery(facts.slots, ({ key, descriptor }) => key === 'exec'
-      || nativeDescriptorMatches(nativeGetDescriptor(facts.object, key), descriptor)));
+  const facts = original.ownerPrototypes;
+  for (let index = 0; index < facts.length; index++) {
+    const fact = facts[index];
+    if (fact === undefined || nativeGetPrototypeOf(fact.object) !== fact.prototype
+      || nativeOwnKeys(fact.object).length !== fact.slots.length) return false;
+    const slots = fact.slots;
+    for (let slotIndex = 0; slotIndex < slots.length; slotIndex++) {
+      const slot = slots[slotIndex];
+      if (slot === undefined) return false;
+      const { key, descriptor } = slot;
+      if (key !== 'exec' && !nativeDescriptorMatches(nativeGetDescriptor(fact.object, key), descriptor)) return false;
+    }
+  }
+  return true;
 }
 function nativeOwnerDependenciesMatch(original: NativeStatementIdentity, raw: NativeSqlDatabase): boolean {
   // Only the loader-pinned implementation executes; public exec observers may
   // observe complete probes but cannot supply the scalar implementation.
-  return nativeOwnerPrototypeFactsMatch(original)
-    && nativeEvery(original.ownerPrototypes, facts => nativeEvery(facts.slots, ({ key }) => key === 'exec' || !nativeHasOwn(raw, key)));
+  if (!nativeOwnerPrototypeFactsMatch(original)) return false;
+  const facts = original.ownerPrototypes;
+  for (let index = 0; index < facts.length; index++) {
+    const fact = facts[index];
+    if (fact === undefined) return false;
+    const slots = fact.slots;
+    for (let slotIndex = 0; slotIndex < slots.length; slotIndex++) {
+      const slot = slots[slotIndex];
+      if (slot === undefined) return false;
+      const { key } = slot;
+      if (key !== 'exec' && nativeHasOwn(raw, key)) return false;
+    }
+  }
+  return true;
 }
 function nativeExecutionDependenciesMatch(original: NativeStatementIdentity, raw: NativeSqlDatabase): boolean {
   return nativeDescriptorMatches(nativeGetDescriptor(original.constructor, 'prototype'), original.constructorPrototype)
     && (original.uniqueExecutionFacts ? nativeEvery(original.uniqueExecutionFacts, nativeObjectFactsMatch)
       : nativeEvery(original.prototypes, nativeObjectFactsMatch)
-        && nativeEvery(original.arrayPrototypes, facts => nativeEvery(facts, nativeObjectFactsMatch)))
+        && nativeEvery(original.arrayPrototypes, nativeFactGroupMatches))
     && nativeDescriptorMatches(nativeGetDescriptor(globalThis, 'BigInt'), original.bigint)
     && nativeOwnerDependenciesMatch(original, raw);
 }
@@ -418,13 +443,19 @@ function captureNativeScalarRuntime(module: SqlJsStatic): NativeScalarRuntime | 
     uniqueGlobalFacts: uniqueNativeFacts(globals),
     step, reset, clear, finalize, count, dataCount, type, value, name, decode });
 }
+function nativeScalarGlobalFactsMatch({ key, descriptor, facts }: NativeScalarRuntime['globals'][number]): boolean {
+  return nativeDescriptorMatches(nativeGetDescriptor(globalThis, key), descriptor)
+    && nativeEvery(facts, nativeObjectFactsMatch);
+}
+function nativeScalarGlobalDescriptorMatch({ key, descriptor }: NativeScalarRuntime['globals'][number]): boolean {
+  return nativeDescriptorMatches(nativeGetDescriptor(nativeGlobalReceiver, key), descriptor);
+}
 function nativeScalarRuntimeMatches(runtime: NativeScalarRuntime): boolean {
   if (!nativeScalarExportsMatch(runtime)) return false;
   if (!runtime.uniqueGlobalFacts || !nativeGlobalReceiverMatches()) {
-    return nativeEvery(runtime.globals, ({ key, descriptor, facts }) => nativeDescriptorMatches(nativeGetDescriptor(globalThis, key), descriptor)
-      && nativeEvery(facts, nativeObjectFactsMatch));
+    return nativeEvery(runtime.globals, nativeScalarGlobalFactsMatch);
   }
-  return nativeEvery(runtime.globals, ({ key, descriptor }) => nativeDescriptorMatches(nativeGetDescriptor(nativeGlobalReceiver, key), descriptor))
+  return nativeEvery(runtime.globals, nativeScalarGlobalDescriptorMatch)
     && nativeEvery(runtime.uniqueGlobalFacts, nativeObjectFactsMatch);
 }
 const nativeEngineIdentities = new WeakMap<SqlJsStatic, {

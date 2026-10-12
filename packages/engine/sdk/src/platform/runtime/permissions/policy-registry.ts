@@ -196,6 +196,7 @@ export class PolicyRegistry {
       loadedAt: new Date().toISOString(),
     };
 
+    this._publicationRevision++;
     this._candidate = version;
     return result;
   }
@@ -214,6 +215,7 @@ export class PolicyRegistry {
     if (!this._candidate || this._candidate.state !== 'loaded') {
       return false;
     }
+    this._publicationRevision++;
     this._candidate = { ...this._candidate, state: 'simulating' };
     return true;
   }
@@ -235,6 +237,7 @@ export class PolicyRegistry {
     if (!this._candidate || this._candidate.state !== 'simulating') {
       return false;
     }
+    this._publicationRevision++;
     this._candidate = {
       ...this._candidate,
       state: 'promoting',

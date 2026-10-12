@@ -1,11 +1,9 @@
-import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { captureCatalogData, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import type { CommandContext } from '../input/command-registry.ts';
-import { buildAgentWorkspaceRuntimeSnapshot } from '../input/agent-workspace-snapshot.ts';
-import type { AgentWorkspaceLocalLibraryItem } from '../input/agent-workspace-types.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 import { buildLearningCandidates, candidateSearchText } from './agent-harness-learning-curator-proposals.ts';
-import { clampScore, localRegistryRoute, missingRequirementCount, routeValue, scoresForItem } from './agent-harness-learning-curator-common.ts';
+import { localRegistryRoute, missingRequirementCount, routeValue } from './agent-harness-learning-curator-common.ts';
+import type { LearningCandidateCollection } from './agent-harness-learning-curator-source.ts';
 import type { AgentHarnessLearningCuratorArgs, LearningCandidate, LearningCandidateResolution, LearningConsolidationBatchPlan, LearningPromptPlan, LocalLearningCandidateDomain } from './agent-harness-learning-curator-types.ts';
 export type { LearningCandidate, LearningCandidateResolution, LearningConsolidationDiff, LearningConsolidationFields, LearningConsolidationPlan } from './agent-harness-learning-curator-types.ts';
 
@@ -180,29 +178,15 @@ function promptPlanCandidate(candidate: LearningCandidate, includeParameters: bo
   };
 }
 
-function promptRecordPriority(item: AgentWorkspaceLocalLibraryItem): number {
-  const scores = scoresForItem(item);
-  return clampScore((scores.usefulness * 0.35) + (scores.freshness * 0.25) + (scores.sourceQuality * 0.30) - (scores.risk * 0.25));
-}
-
-function isPromptEligibleRecord(domain: LocalLearningCandidateDomain, item: AgentWorkspaceLocalLibraryItem): boolean {
-  // Fully autonomous learning: review gate removed, records qualify without human review.
-  if (domain === 'memory') return (item.confidence ?? 100) >= 70;
-  if (domain === 'persona') return item.active === true;
-  if (domain === 'skill' || domain === 'skill_bundle' || domain === 'routine') {
-    return item.enabled === true && missingRequirementCount(item) === 0;
-  }
-  return false;
-}
-
-function promptRecordEntry(domain: LocalLearningCandidateDomain, item: AgentWorkspaceLocalLibraryItem, includeParameters: boolean): Record<string, unknown> {
+function promptRecordEntry(record: LearningCandidateCollection['promptRecords'][number], includeParameters: boolean): Record<string, unknown> {
+  const { domain, item, priority, scores } = record;
   return {
     id: `${domain}:${item.id}`,
     label: item.name,
     domain,
     recordId: item.id,
-    priority: promptRecordPriority(item),
-    scores: scoresForItem(item),
+    priority,
+    scores,
     reason: domain === 'memory'
       ? 'High-confidence memory (confidence ≥ 70) is eligible for prompt recall.'
       : domain === 'persona'
@@ -220,35 +204,13 @@ function promptRecordEntry(domain: LocalLearningCandidateDomain, item: AgentWork
   };
 }
 
-function promptEligibleRecords(context: CommandContext, includeParameters: boolean): readonly Record<string, unknown>[] {
-  const snapshot = buildAgentWorkspaceRuntimeSnapshot(context);
-  const records = [
-    ...snapshot.localMemories
-      .filter((item) => isPromptEligibleRecord('memory', item))
-      .map((item) => promptRecordEntry('memory', item, includeParameters)),
-    ...snapshot.localPersonas
-      .filter((item) => isPromptEligibleRecord('persona', item))
-      .map((item) => promptRecordEntry('persona', item, includeParameters)),
-    ...snapshot.localSkills
-      .filter((item) => isPromptEligibleRecord('skill', item))
-      .map((item) => promptRecordEntry('skill', item, includeParameters)),
-    ...snapshot.localSkillBundles
-      .filter((item) => isPromptEligibleRecord('skill_bundle', item))
-      .map((item) => promptRecordEntry('skill_bundle', item, includeParameters)),
-    ...snapshot.localRoutines
-      .filter((item) => isPromptEligibleRecord('routine', item))
-      .map((item) => promptRecordEntry('routine', item, includeParameters)),
-  ];
-  return records.sort((left, right) => {
-    const leftPriority = typeof left.priority === 'number' ? left.priority : 0;
-    const rightPriority = typeof right.priority === 'number' ? right.priority : 0;
-    if (rightPriority !== leftPriority) return rightPriority - leftPriority;
-    return String(left.label ?? '').localeCompare(String(right.label ?? ''));
-  });
+function promptEligibleRecords(collection: LearningCandidateCollection, includeParameters: boolean): readonly Record<string, unknown>[] {
+  collection.assertCurrent();
+  return collection.promptRecords.map(record => promptRecordEntry(record, includeParameters));
 }
 
-function learningPromptPlan(context: CommandContext, candidates: readonly LearningCandidate[], includeParameters: boolean): LearningPromptPlan {
-  const promptActiveRecords = promptEligibleRecords(context, includeParameters);
+function learningPromptPlan(collection: LearningCandidateCollection, candidates: readonly LearningCandidate[], includeParameters: boolean): LearningPromptPlan {
+  const promptActiveRecords = promptEligibleRecords(collection, includeParameters);
   const reviewFirstCandidates = candidates.filter((candidate) => (
     candidate.status === 'needs-review'
     || candidate.status === 'low-confidence'
@@ -283,7 +245,7 @@ function learningPromptPlan(context: CommandContext, candidates: readonly Learni
     suppressed,
     orderingRules: [
       'Prompt context is limited to high-confidence memory (confidence ≥ 70), active personas, and enabled setup-ready behavior.',
-      'Usefulness, freshness, source-quality, and risk scores drive promotion priority and determine which records guide the assistant.',
+      'Current admitted curator readings grade usefulness, freshness, source quality, risk, confidence and priority. Sorting uses the settled priority grade.',
       'Low-confidence, stale, setup-blocked, blocked VIBE.md, and duplicate records stay suppressed until their confidence or enabled/active state is repaired.',
       'Proposals from notes, completed work, completed research, and saved sessions require explicit create or promotion routes before they can guide the assistant.',
     ],
@@ -297,8 +259,9 @@ function learningPromptPlan(context: CommandContext, candidates: readonly Learni
   };
 }
 
-export function learningCuratorCatalogStatus(context: CommandContext): Record<string, unknown> {
-  const candidates = buildLearningCandidates(context);
+export async function learningCuratorCatalogStatus(context: CommandContext, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const collection = await buildLearningCandidates(context, options); collection.assertCurrent();
+  const { candidates } = collection;
   return {
     modes: ['learning_curator', 'learning_candidate'],
     candidates: candidates.length,
@@ -313,35 +276,24 @@ export function learningCuratorCatalogStatus(context: CommandContext): Record<st
   };
 }
 
-function retainLearningCandidateSources(context: CommandContext, candidates: readonly LearningCandidate[], options: CatalogRankingOptions, consolidationOnly = false) {
-  const revision = JSON.stringify(candidates);
-  const assertSourcesCurrent = () => {
-    options.signal?.throwIfAborted();
-    const current = captureCatalogData(buildLearningCandidates(context));
-    if (JSON.stringify(consolidationOnly ? current.filter((candidate) => candidate.consolidation !== undefined) : current) !== revision) throw new ToolInputProjectionError('stale');
-  };
-  options.retainCurrent?.(assertSourcesCurrent, 'agent.harness.learning-curator.sources');
-  return assertSourcesCurrent;
-}
-
-async function matchingLearningCandidates(context: CommandContext, candidates: readonly LearningCandidate[], query: string, options: CatalogRankingOptions, consolidationOnly = false) {
-  options.signal?.throwIfAborted(); options.assertCurrent?.();
-  const assertSourcesCurrent = retainLearningCandidateSources(context, candidates, options, consolidationOnly);
-  const assertCurrent = () => { options.assertCurrent?.(); assertSourcesCurrent(); };
-  assertCurrent();
+async function matchingLearningCandidates(collection: LearningCandidateCollection, candidates: readonly LearningCandidate[], query: string) {
+  collection.assertCurrent();
   if (!query) return { matches: candidates.map((entry) => ({ entry, judgment: undefined })), judgments: [] };
-  return rankHarnessCatalog(candidates, query, (candidate) => ({ id: candidate.id, description: candidateSearchText(candidate), evidence: candidate }),
-    'agent.harness.learning-curator', { ...options, requirePreservedSource: true, assertCurrent });
+  const result = await rankHarnessCatalog(candidates, query, (candidate) => ({ id: candidate.id, description: candidateSearchText(candidate), evidence: candidate }),
+    'agent.harness.learning-curator', collection.options);
+  collection.assertCurrent(); return result;
 }
 
 export async function learningCuratorSummary(context: CommandContext, args: AgentHarnessLearningCuratorArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
   const includeParameters = args.includeParameters === true;
   const query = readString(args.query);
   const limit = readLimit(args.limit, 100);
-  const all = captureCatalogData(buildLearningCandidates(context));
-  const selected = await matchingLearningCandidates(context, all, query, options);
+  const collection = await buildLearningCandidates(context, options); collection.assertCurrent();
+  const all = collection.candidates;
+  const selected = await matchingLearningCandidates(collection, all, query);
+  collection.assertCurrent();
   const filtered = selected.matches;
-  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  options.signal?.throwIfAborted();
   const consolidationBatch = learningConsolidationBatchPlan(all, includeParameters);
   return {
     summary: {
@@ -355,7 +307,7 @@ export async function learningCuratorSummary(context: CommandContext, args: Agen
       readyToPromote: all.filter((candidate) => candidate.status === 'ready-to-promote').length,
       ready: all.filter((candidate) => candidate.status === 'ready').length,
     },
-    promptPlan: learningPromptPlan(context, all, includeParameters),
+    promptPlan: learningPromptPlan(collection, all, includeParameters),
     candidates: filtered.slice(0, limit).map(({ entry, judgment }) => ({ ...describeCandidate(entry, includeParameters), ...(judgment ? { judgment } : {}) })),
     judgments: selected.judgments,
     ...(consolidationBatch ? { consolidationBatch } : {}),
@@ -372,7 +324,7 @@ export type LearningConsolidationCandidateResolution =
   | { readonly status: 'missing_lookup'; readonly usage: string };
 
 export async function resolveLearningConsolidationCandidate(context: CommandContext, input: string, options: CatalogRankingOptions = {}): Promise<LearningConsolidationCandidateResolution> {
-  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  options.signal?.throwIfAborted();
   const lookup = input.trim();
   if (!lookup) {
     return {
@@ -380,17 +332,19 @@ export async function resolveLearningConsolidationCandidate(context: CommandCont
       usage: 'candidateId or query is required. Use memory action:"curator" query:"consolidation" to inspect candidate ids.',
     };
   }
-  const candidates = captureCatalogData(buildLearningCandidates(context)).filter((candidate) => candidate.consolidation !== undefined);
+  const collection = await buildLearningCandidates(context, options); collection.assertCurrent();
+  const candidates = collection.candidates.filter((candidate) => candidate.consolidation !== undefined);
   const normalized = lookup.toLowerCase();
   const exact = candidates.find((candidate) => candidate.id === lookup)
     ?? candidates.find((candidate) => candidate.id.toLowerCase() === normalized);
   if (exact) {
-    retainLearningCandidateSources(context, candidates, options, true)();
+    collection.assertCurrent();
     return { status: 'found', candidate: exact };
   }
-  const selected = await matchingLearningCandidates(context, candidates, lookup, options, true);
+  const selected = await matchingLearningCandidates(collection, candidates, lookup);
   const matches = selected.matches;
-  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  collection.assertCurrent();
+  options.signal?.throwIfAborted();
   if (matches.length === 1 && matches[0]!.judgment?.reading.verdict === 'yes' && matches[0]!.judgment?.reading.outcome === 'act') return { status: 'found', candidate: matches[0]!.entry };
   if (matches.length > 0) {
     return {
@@ -412,7 +366,7 @@ export async function resolveLearningConsolidationCandidate(context: CommandCont
 }
 
 export async function describeLearningCandidate(context: CommandContext, args: AgentHarnessLearningCuratorArgs, options: CatalogRankingOptions = {}): Promise<LearningCandidateResolution> {
-  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  options.signal?.throwIfAborted();
   const candidateId = readString(args.candidateId);
   const target = readString(args.target);
   const query = readString(args.query);
@@ -424,15 +378,16 @@ export async function describeLearningCandidate(context: CommandContext, args: A
     };
   }
   const normalized = input.toLowerCase();
-  const candidates = captureCatalogData(buildLearningCandidates(context));
-  retainLearningCandidateSources(context, candidates, options)();
+  const collection = await buildLearningCandidates(context, options); collection.assertCurrent();
+  const candidates = collection.candidates;
   const exact = candidates.find((candidate) => candidate.id === input);
   if (exact) return { status: 'found', candidate: describeCandidate(exact, true, { source: candidateId ? 'candidateId' : target ? 'target' : 'query', input, resolvedBy: 'id' }) };
   const insensitive = candidates.find((candidate) => candidate.id.toLowerCase() === normalized);
   if (insensitive) return { status: 'found', candidate: describeCandidate(insensitive, true, { source: candidateId ? 'candidateId' : target ? 'target' : 'query', input, resolvedBy: 'case-insensitive-id' }) };
-  const selected = candidateId ? { matches: [], judgments: [] } : await matchingLearningCandidates(context, candidates, input, options);
+  const selected = candidateId ? { matches: [], judgments: [] } : await matchingLearningCandidates(collection, candidates, input);
   const matches = selected.matches;
-  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  collection.assertCurrent();
+  options.signal?.throwIfAborted();
   if (matches.length === 1 && matches[0]!.judgment?.reading.verdict === 'yes' && matches[0]!.judgment?.reading.outcome === 'act') return { status: 'found', candidate: { ...describeCandidate(matches[0]!.entry, true, { source: target ? 'target' : 'query', input, resolvedBy: 'search' }), judgment: matches[0]!.judgment } };
   if (matches.length > 0) {
     return {

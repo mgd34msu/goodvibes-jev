@@ -138,6 +138,51 @@ describe('SessionPickerModal', () => {
     expect(modal.statusMessage).toBe('');
   });
 
+  test('Enter captures the selected native resume once and cannot import another selection while it is pending', async () => {
+    sm.save('alpha', [{ role: 'user', content: 'alpha' }], META);
+    sm.save('beta', [{ role: 'user', content: 'beta' }], META);
+    modal = new SessionPickerModal(sm);
+    modal.open();
+    modal.setQuery('beta');
+    const entered: string[] = [];
+    let dismissals = 0;
+    let release = (): void => {};
+    const waiting = new Promise<void>((resolve) => { release = resolve; });
+    const state = {
+      sessionPickerModal: modal,
+      commandContext: { resumeSession: async (id: string): Promise<void> => { entered.push(id); await waiting; } },
+      requestRender: () => {},
+      handleEscape: () => { dismissals++; modal.close(); },
+    };
+    const enter = { type: 'key', name: 'enter', logicalName: 'enter', ctrl: false, shift: false, meta: false } satisfies import('@goodvibes-jev/engine/sdk/platform/core').InputToken;
+    try {
+      expect(handleSessionPickerToken(state, enter)).toBe(true);
+      const first = modal.pendingResume;
+      expect(first).not.toBeNull();
+      await Promise.resolve();
+      expect(entered).toEqual(['beta']);
+      expect(modal.active).toBe(false);
+      expect(dismissals).toBe(1);
+      modal.open();
+      modal.setQuery('alpha');
+      expect(handleSessionPickerToken(state, enter)).toBe(true);
+      expect(modal.pendingResume).toBe(first);
+      expect(entered).toEqual(['beta']);
+      expect(modal.active).toBe(true);
+      release();
+      await first;
+      expect(modal.pendingResume).toBeNull();
+      expect(modal.query).toBe('alpha');
+      expect(handleSessionPickerToken(state, enter)).toBe(true);
+      await modal.pendingResume;
+      expect(entered).toEqual(['beta', 'alpha']);
+      expect(dismissals).toBe(2);
+    } finally {
+      release();
+      await modal.pendingResume;
+    }
+  });
+
   test('no navigation when sessions list is empty', () => {
     modal = new SessionPickerModal(sm);
     modal.sessions = [];

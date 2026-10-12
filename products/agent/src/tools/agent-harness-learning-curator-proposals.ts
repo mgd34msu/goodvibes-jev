@@ -1,27 +1,26 @@
-import type { CommandContext } from '../input/command-registry.ts';
-import { AgentResearchRunRegistry, type AgentResearchRunRecord } from '../agent/research-run-registry.ts';
-import { buildAgentWorkspaceRuntimeSnapshot } from '../input/agent-workspace-snapshot.ts';
-import type { AgentWorkspaceLocalLibraryItem } from '../input/agent-workspace-types.ts';
+import type { AgentNoteRecord } from '../agent/note-registry.ts';
+import { type AgentResearchRunRecord } from '../agent/research-run-registry.ts';
 import type { WorkPlanItem } from '@goodvibes-jev/engine/sdk/platform/workflow';
 import { previewHarnessText } from './agent-harness-text.ts';
-import { agentHarnessVibeHealth } from './agent-harness-vibe-health.ts';
-import type { LearningCandidate, LearningProposalTarget, SessionInfoLike, SessionManagerLike, VibeCandidateKind, LocalLearningCandidateDomain } from './agent-harness-learning-curator-types.ts';
-import { candidateBase, clampScore, isReviewed, itemFreshness, itemSourceQuality, itemUsefulness, localRegistryModelRoute, localRegistryRoute, missingRequirementCount, routeValue } from './agent-harness-learning-curator-common.ts';
+import { acquireLearningCuratorSource, type LearningRecord, type LearningCuratorSource, type LearningCandidateCollection, type LearningCuratorNativeContext } from './agent-harness-learning-curator-source.ts';
+import { readLearningGrade, readLearningProposalTarget, readLearningMemoryClass } from './agent-harness-learning-curator-readings.ts';
+import { captureCatalogData, captureCatalogMethods, captureCatalogSnapshotGuard, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import type { LearningCandidate, LearningCandidateDraft, LearningProposalTarget, SessionInfoLike, VibeCandidateKind, LocalLearningCandidateDomain } from './agent-harness-learning-curator-types.ts';
+import { candidateBase, isReviewed, localRegistryModelRoute, localRegistryRoute, missingRequirementCount, routeValue } from './agent-harness-learning-curator-common.ts';
 import { consolidationCandidatesForDomain } from './agent-harness-learning-curator-consolidation.ts';
-function captureCandidate(): LearningCandidate {
+function captureCandidate(): LearningCandidateDraft {
   return {
     id: 'capture:reviewed-lesson',
     label: 'Capture reviewed lesson',
     domain: 'capture',
     recordId: null,
     status: 'ready',
-    priority: 30,
     reason: 'No urgent local-learning review candidates are present.',
     next: 'After a repeated workflow, useful preference, or durable lesson appears, capture it as a local memory, skill, routine, or persona for review.',
-    scores: { usefulness: 55, freshness: 85, sourceQuality: 60, risk: 10 },
     inspectRoute: 'agent_harness mode:"workspace_action" actionId:"learned-behavior"',
     modelRoute: 'agent_harness mode:"workspace_actions" query:"learned behavior"',
-    createRoute: 'agent_harness mode:"run_workspace_action" actionId:"learned-behavior" confirm:true explicitUserRequest:"..."',
+    createRoute: 'agent_harness mode:"run_workspace_action" actionId:"learned-behavior"',
   };
 }
 
@@ -51,7 +50,7 @@ function vibeCandidate(
   path: string,
   scope: string,
   reason: string,
-): LearningCandidate {
+): LearningCandidateDraft {
   const isBlocked = kind === 'blocked';
   return {
     id: `vibe:${kind}:${stableVibeIdSuffix(path)}`,
@@ -59,17 +58,10 @@ function vibeCandidate(
     domain: 'vibe',
     recordId: path,
     status: isBlocked ? 'needs-setup' : 'needs-review',
-    priority: isBlocked ? 88 : 72,
     reason,
     next: isBlocked
       ? 'Inspect /vibe status, edit or remove blocked content, then rerun status before relying on personality instructions.'
       : 'Inspect /vibe status and shorten the file if omitted personality instructions matter for this user.',
-    scores: {
-      usefulness: 75,
-      freshness: isBlocked ? 45 : 58,
-      sourceQuality: scope === 'project' ? 76 : 70,
-      risk: isBlocked ? 86 : 58,
-    },
     ...(isBlocked ? { missingRequirements: ['VIBE.md file is not loaded into the prompt until the blocked content is repaired.'] } : {}),
     proposalFields: {
       path,
@@ -81,14 +73,15 @@ function vibeCandidate(
     inspectRoute: vibeStatusRoute(),
     modelRoute: 'memory action:"curator" query:"vibe"',
     reviewRoute: vibeCommandInspectRoute(),
-    createRoute: 'vibe action:"init" scope:"project" confirm:true explicitUserRequest:"Create or refresh the project VIBE.md starter."',
+    createRoute: 'vibe action:"init" scope:"project"',
   };
 }
 
-function vibeHealthCandidates(context: CommandContext): readonly LearningCandidate[] {
-  const health = agentHarnessVibeHealth(context);
+function vibeHealthCandidates(source: LearningCuratorSource): readonly LearningCandidateDraft[] {
+  const health = source.source.vibe;
+  if (!health) return [];
   return [
-    ...health.blockedFiles.map((file) => vibeCandidate('blocked', file.path, file.scope, file.reason)),
+    ...health.blocked.map((file) => vibeCandidate('blocked', file.path, file.scope, file.reason)),
     ...health.files
       .filter((file) => file.truncated)
       .map((file) => vibeCandidate(
@@ -100,27 +93,15 @@ function vibeHealthCandidates(context: CommandContext): readonly LearningCandida
   ];
 }
 
-function noteProposalTarget(item: AgentWorkspaceLocalLibraryItem): LearningProposalTarget | null {
-  const tags = item.tags.map((tag) => tag.toLowerCase());
-  const text = [item.name, item.description, ...tags].join('\n').toLowerCase();
-  if (tags.some((tag) => ['memory', 'fact', 'decision', 'constraint', 'risk', 'pattern', 'incident', 'architecture', 'ownership'].includes(tag))) return 'memory';
-  if (tags.some((tag) => ['routine', 'workflow', 'runbook', 'process'].includes(tag))) return 'routine';
-  if (tags.some((tag) => ['persona', 'style', 'preference', 'tone'].includes(tag))) return 'persona';
-  if (tags.some((tag) => ['skill', 'procedure', 'lesson', 'learned', 'howto'].includes(tag))) return 'skill';
-  if (/\b(memory|remember|fact|decision|constraint|risk|incident|pattern|architecture|ownership)\b/.test(text)) return 'memory';
-  if (/\b(repeat|routine|workflow|every time|checklist|runbook)\b/.test(text)) return 'routine';
-  if (/\b(style|tone|preference|respond|answer)\b/.test(text)) return 'persona';
-  if (/\b(lesson|procedure|steps|how to|when asked)\b/.test(text)) return 'skill';
-  return null;
-}
-
 function proposalSubject(target: LearningProposalTarget): string {
   return target === 'memory' ? 'durable memory' : `reusable ${target} behavior`;
 }
 
-function noteBehaviorProposalCandidate(item: AgentWorkspaceLocalLibraryItem): LearningCandidate | null {
+async function noteBehaviorProposalCandidate(record: LearningRecord, source: LearningCuratorSource): Promise<LearningCandidateDraft | null> {
+  const { item } = record;
   if (!isReviewed(item)) return null;
-  const target = noteProposalTarget(item);
+  const target = await readLearningProposalTarget({ origin: 'note', ...record }, source.options);
+  source.assertCurrent();
   if (!target) return null;
   const actionId = target === 'memory'
     ? 'notes-to-memory'
@@ -129,6 +110,18 @@ function noteBehaviorProposalCandidate(item: AgentWorkspaceLocalLibraryItem): Le
     : target === 'routine'
       ? 'notes-to-routine'
       : 'notes-to-persona';
+  const note = record.record as AgentNoteRecord;
+  if (typeof note.title !== 'string' || typeof note.body !== 'string' || !Array.isArray(note.tags))
+    throw new ToolInputProjectionError('held');
+  const proposalFields: NonNullable<LearningCandidateDraft['proposalFields']> = target === 'memory' ? {
+    cls: await readLearningMemoryClass({ origin: 'note', ...record }, source.options),
+    scope: 'project', summary: note.title, detail: note.body, tags: note.tags.join(','),
+  } : {
+    target, name: note.title, description: note.title,
+    detail: note.body, body: note.body, notes: note.body, steps: note.body,
+    triggers: '', tags: note.tags.join(','), enable: 'yes',
+  };
+  source.assertCurrent();
   const label = `${item.name} -> ${target}`;
   return {
     id: `note-proposal:${target}:${item.id}`,
@@ -136,63 +129,15 @@ function noteBehaviorProposalCandidate(item: AgentWorkspaceLocalLibraryItem): Le
     domain: 'note',
     recordId: item.id,
     status: 'proposal-ready',
-    priority: target === 'routine' ? 64 : target === 'memory' ? 62 : 60,
     reason: `Reviewed note looks like ${proposalSubject(target)}.`,
     next: `Preview the selected-note ${target} promotion, then save it only if the user wants this durable context.`,
-    scores: {
-      usefulness: clampScore(itemUsefulness(item) + 8),
-      freshness: itemFreshness(item),
-      sourceQuality: itemSourceQuality(item),
-      risk: 24,
-    },
     reviewState: item.reviewState,
     proposalTarget: target,
+    proposalFields,
     inspectRoute: localRegistryRoute('note', 'get', item.id),
     modelRoute: `agent_harness mode:"workspace_action" actionId:"${actionId}"`,
-    createRoute: `agent_harness mode:"run_workspace_action" actionId:"${actionId}" recordId:"${item.id}" confirm:true explicitUserRequest:"..."`,
+    createRoute: `agent_harness mode:"run_workspace_action" actionId:"${actionId}" recordId:"${item.id}"`,
   };
-}
-
-function workPlanProposalTarget(item: WorkPlanItem): LearningProposalTarget | null {
-  const text = [item.title, item.notes ?? '', item.source ?? '', item.owner ?? ''].join('\n').toLowerCase();
-  if (/\b(memory|remember|fact|decision|constraint|risk|incident|pattern|architecture|ownership)\b/.test(text)) return 'memory';
-  if (/\b(style|tone|preference|respond|answer|voice|persona)\b/.test(text)) return 'persona';
-  if (/\b(repeat|routine|workflow|every time|checklist|runbook|process|before release|after release)\b/.test(text)) return 'routine';
-  if (/\b(lesson|procedure|steps|how to|when asked|debug|fix|review|test|release|deploy|triage)\b/.test(text)) return 'skill';
-  return null;
-}
-
-function inferMemoryClass(text: string): string {
-  const normalized = text.toLowerCase();
-  if (/\bdecision|decided|choose|selected\b/.test(normalized)) return 'decision';
-  if (/\bconstraint|must|never|always|required\b/.test(normalized)) return 'constraint';
-  if (/\brisk|hazard|regression\b/.test(normalized)) return 'risk';
-  if (/\bincident|outage|failure\b/.test(normalized)) return 'incident';
-  if (/\bpattern|repeat|recurring\b/.test(normalized)) return 'pattern';
-  if (/\barchitecture|design|system\b/.test(normalized)) return 'architecture';
-  if (/\bowner|ownership|responsible\b/.test(normalized)) return 'ownership';
-  if (/\brunbook|checklist\b/.test(normalized)) return 'runbook';
-  return 'fact';
-}
-
-function completedWorkFreshness(item: WorkPlanItem): number {
-  if (!item.completedAt) return 70;
-  const ageDays = Math.max(0, (Date.now() - item.completedAt) / (24 * 60 * 60 * 1000));
-  return clampScore(96 - Math.min(45, ageDays * 3));
-}
-
-function completedIsoFreshness(iso: string | undefined): number {
-  if (!iso) return 70;
-  const parsed = Date.parse(iso);
-  if (!Number.isFinite(parsed)) return 70;
-  const ageDays = Math.max(0, (Date.now() - parsed) / (24 * 60 * 60 * 1000));
-  return clampScore(96 - Math.min(45, ageDays * 3));
-}
-
-function completedTimestampFreshness(timestamp: number | undefined): number {
-  if (timestamp === undefined || !Number.isFinite(timestamp) || timestamp <= 0) return 70;
-  const ageDays = Math.max(0, (Date.now() - timestamp) / (24 * 60 * 60 * 1000));
-  return clampScore(96 - Math.min(45, ageDays * 3));
 }
 
 function completedWorkDetail(item: WorkPlanItem, notes: string): string {
@@ -205,9 +150,10 @@ function completedWorkDetail(item: WorkPlanItem, notes: string): string {
   ].filter(Boolean).join('\n');
 }
 
-function workPlanCompletionCandidate(item: WorkPlanItem): LearningCandidate | null {
+async function workPlanCompletionCandidate(item: WorkPlanItem, source: LearningCuratorSource): Promise<LearningCandidateDraft | null> {
   if (item.status !== 'done') return null;
-  const target = workPlanProposalTarget(item);
+  const target = await readLearningProposalTarget({ origin: 'work_plan', record: item }, source.options);
+  source.assertCurrent();
   if (!target) return null;
   const notes = item.notes?.trim() || `Completed work item: ${item.title}`;
   const name = previewHarnessText(item.title, 80);
@@ -225,23 +171,15 @@ function workPlanCompletionCandidate(item: WorkPlanItem): LearningCandidate | nu
     domain: 'work_plan',
     recordId: item.id,
     status: 'proposal-ready',
-    priority: target === 'routine' ? 62 : target === 'memory' ? 60 : 58,
     reason: `Completed work item looks like ${proposalSubject(target)}.`,
     next: `Review the completed work notes, then capture this as Agent-local ${target} only if the user wants it reused.`,
-    scores: {
-      usefulness: clampScore(62 + Math.min(18, notes.length / 12)),
-      freshness: completedWorkFreshness(item),
-      sourceQuality: item.source ? 72 : 64,
-      risk: 28,
-    },
     proposalTarget: target,
     proposalFields: target === 'memory' ? {
-      cls: inferMemoryClass(`${item.title}\n${notes}`),
+      cls: await readLearningMemoryClass({ origin: 'work_plan', record: item }, source.options),
       scope: 'project',
       summary: previewHarnessText(item.title, 140),
       detail,
       tags: 'learned,completed-work,memory',
-      confidence: '80',
     } : {
       target,
       name,
@@ -254,28 +192,9 @@ function workPlanCompletionCandidate(item: WorkPlanItem): LearningCandidate | nu
     inspectRoute: `agent_work_plan action:"get" id:"${item.id}"`,
     modelRoute: 'agent_work_plan action:"get"',
     createRoute: target === 'memory'
-      ? 'agent_harness mode:"run_workspace_action" actionId:"memory-create" confirm:true explicitUserRequest:"..."'
-      : 'agent_harness mode:"run_workspace_action" actionId:"learned-behavior" confirm:true explicitUserRequest:"..."',
+      ? 'agent_harness mode:"run_workspace_action" actionId:"memory-create"'
+      : 'agent_harness mode:"run_workspace_action" actionId:"learned-behavior"',
   };
-}
-
-function researchRunProposalTarget(run: AgentResearchRunRecord): LearningProposalTarget | null {
-  const text = [
-    run.title,
-    run.question,
-    run.goal,
-    run.note ?? '',
-    run.reportArtifactId ?? '',
-    ...run.plan,
-    ...run.nextSteps,
-    ...run.sourceIds,
-    ...run.checkpoints.map((checkpoint) => checkpoint.note),
-  ].join('\n').toLowerCase();
-  if (/\b(memory|remember|fact|decision|constraint|risk|incident|pattern|architecture|ownership)\b/.test(text)) return 'memory';
-  if (/\b(style|tone|preference|respond|answer|voice|persona)\b/.test(text)) return 'persona';
-  if (/\b(repeat|routine|workflow|every time|checklist|runbook|process|before report|after report)\b/.test(text)) return 'routine';
-  if (/\b(lesson|procedure|steps|how to|when asked|research|source|citation|report|credibility|synthesize)\b/.test(text)) return 'skill';
-  return null;
 }
 
 function researchRunDetail(run: AgentResearchRunRecord): string {
@@ -292,9 +211,10 @@ function researchRunDetail(run: AgentResearchRunRecord): string {
   ].filter(Boolean).join('\n');
 }
 
-function researchRunCompletionCandidate(run: AgentResearchRunRecord): LearningCandidate | null {
+async function researchRunCompletionCandidate(run: AgentResearchRunRecord, source: LearningCuratorSource): Promise<LearningCandidateDraft | null> {
   if (run.status !== 'completed') return null;
-  const target = researchRunProposalTarget(run);
+  const target = await readLearningProposalTarget({ origin: 'research_run', record: run }, source.options);
+  source.assertCurrent();
   if (!target) return null;
   const name = previewHarnessText(run.title, 80);
   const detail = researchRunDetail(run);
@@ -311,23 +231,15 @@ function researchRunCompletionCandidate(run: AgentResearchRunRecord): LearningCa
     domain: 'research_run',
     recordId: run.id,
     status: 'proposal-ready',
-    priority: target === 'memory' ? 57 : 55,
     reason: `Completed research run looks like ${proposalSubject(target)}.`,
     next: `Review the run ledger and report artifact, then capture this as Agent-local ${target} only if it should guide future work.`,
-    scores: {
-      usefulness: clampScore(60 + Math.min(16, run.sourceIds.length * 3) + Math.min(10, run.checkpoints.length * 2)),
-      freshness: completedIsoFreshness(run.completedAt),
-      sourceQuality: run.reportArtifactId ? 78 : run.sourceIds.length > 0 ? 70 : 62,
-      risk: target === 'memory' ? 32 : 30,
-    },
     proposalTarget: target,
     proposalFields: target === 'memory' ? {
-      cls: inferMemoryClass(`${run.title}\n${run.note ?? ''}\n${run.goal}`),
+      cls: await readLearningMemoryClass({ origin: 'research_run', record: run }, source.options),
       scope: 'project',
       summary: previewHarnessText(run.note || run.title, 140),
       detail,
       tags: 'learned,research-run,memory',
-      confidence: run.reportArtifactId ? '82' : '76',
     } : {
       target,
       name,
@@ -340,47 +252,24 @@ function researchRunCompletionCandidate(run: AgentResearchRunRecord): LearningCa
     inspectRoute: `agent_harness mode:"research_run" runId:"${run.id}"`,
     modelRoute: 'agent_harness mode:"research_run"',
     createRoute: target === 'memory'
-      ? 'agent_harness mode:"run_workspace_action" actionId:"memory-create" confirm:true explicitUserRequest:"..."'
-      : 'agent_harness mode:"run_workspace_action" actionId:"learned-behavior" confirm:true explicitUserRequest:"..."',
+      ? 'agent_harness mode:"run_workspace_action" actionId:"memory-create"'
+      : 'agent_harness mode:"run_workspace_action" actionId:"learned-behavior"',
   };
 }
 
 function extractMessageText(message: unknown): string {
   if (typeof message === 'string') return message;
   if (typeof message !== 'object' || message === null) return '';
-  const record = message as Record<string, unknown>;
-  const content = record.content;
+  const content: unknown = 'content' in message ? message.content : undefined;
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
     return content.map((part) => {
       if (typeof part === 'string') return part;
       if (typeof part !== 'object' || part === null) return '';
-      const partRecord = part as Record<string, unknown>;
-      return typeof partRecord.text === 'string' ? partRecord.text : '';
+      return 'text' in part && typeof part.text === 'string' ? part.text : '';
     }).filter(Boolean).join('\n');
   }
   return '';
-}
-
-function sessionLoadedText(manager: SessionManagerLike, session: SessionInfoLike): string {
-  if (typeof manager.load !== 'function') return '';
-  try {
-    const loaded = manager.load(session.name);
-    const metaTitle = loaded.meta?.title ?? '';
-    const messageText = (loaded.messages ?? []).map(extractMessageText).filter(Boolean).slice(-8).join('\n');
-    return [metaTitle, messageText].filter(Boolean).join('\n');
-  } catch {
-    return '';
-  }
-}
-
-function sessionProposalTarget(text: string): LearningProposalTarget | null {
-  const normalized = text.toLowerCase();
-  if (/\b(memory|remember|fact|decision|constraint|risk|incident|pattern|architecture|ownership)\b/.test(normalized)) return 'memory';
-  if (/\b(style|tone|preference|respond|answer|voice|persona)\b/.test(normalized)) return 'persona';
-  if (/\b(repeat|routine|workflow|every time|checklist|runbook|process)\b/.test(normalized)) return 'routine';
-  if (/\b(lesson|procedure|steps|how to|when asked|debug|fix|review|test|release|deploy|triage|research|source|citation|report)\b/.test(normalized)) return 'skill';
-  return null;
 }
 
 function sessionDetail(session: SessionInfoLike, loadedText: string): string {
@@ -395,11 +284,12 @@ function sessionDetail(session: SessionInfoLike, loadedText: string): string {
   ].filter(Boolean).join('\n');
 }
 
-function sessionCompletionCandidate(manager: SessionManagerLike, session: SessionInfoLike): LearningCandidate | null {
+async function sessionCompletionCandidate(record: LearningCuratorSource['source']['sessions'][number], source: LearningCuratorSource): Promise<LearningCandidateDraft | null> {
+  const { session, loaded } = record;
   if (!session.name) return null;
-  const loadedText = sessionLoadedText(manager, session);
-  const text = [session.title ?? '', session.name, loadedText].join('\n');
-  const target = sessionProposalTarget(text);
+  const loadedText = [loaded?.meta.title ?? '', ...(loaded?.messages ?? []).map(extractMessageText)].filter(Boolean).join('\n');
+  const target = await readLearningProposalTarget({ origin: 'session', record }, source.options);
+  source.assertCurrent();
   if (!target) return null;
   const labelBase = session.title || session.name;
   const detail = sessionDetail(session, loadedText);
@@ -416,23 +306,15 @@ function sessionCompletionCandidate(manager: SessionManagerLike, session: Sessio
     domain: 'session',
     recordId: session.name,
     status: 'proposal-ready',
-    priority: target === 'memory' ? 54 : 52,
     reason: `Saved session looks like ${proposalSubject(target)}.`,
     next: `Inspect the saved session transcript, then capture this as Agent-local ${target} only if it should guide future work.`,
-    scores: {
-      usefulness: clampScore(52 + Math.min(18, (session.messageCount ?? 0) / 2) + (loadedText ? 8 : 0)),
-      freshness: completedTimestampFreshness(session.timestamp),
-      sourceQuality: loadedText ? 68 : 58,
-      risk: loadedText ? 34 : 42,
-    },
     proposalTarget: target,
     proposalFields: target === 'memory' ? {
-      cls: inferMemoryClass(text),
+      cls: await readLearningMemoryClass({ origin: 'session', record }, source.options),
       scope: 'project',
       summary: previewHarnessText(loadedText || labelBase, 140),
       detail,
       tags: 'learned,saved-session,memory',
-      confidence: loadedText ? '76' : '68',
     } : {
       target,
       name: previewHarnessText(labelBase, 80),
@@ -445,28 +327,23 @@ function sessionCompletionCandidate(manager: SessionManagerLike, session: Sessio
     inspectRoute: `sessions action:"get" sessionId:"${session.name}"`,
     modelRoute: 'sessions action:"get"',
     createRoute: target === 'memory'
-      ? 'agent_harness mode:"run_workspace_action" actionId:"memory-create" confirm:true explicitUserRequest:"..."'
-      : 'agent_harness mode:"run_workspace_action" actionId:"learned-behavior" confirm:true explicitUserRequest:"..."',
+      ? 'agent_harness mode:"run_workspace_action" actionId:"memory-create"'
+      : 'agent_harness mode:"run_workspace_action" actionId:"learned-behavior"',
   };
 }
 
-function notePromotionCandidate(item: AgentWorkspaceLocalLibraryItem): LearningCandidate | null {
-  if (!isReviewed(item) || !item.description.includes('Origin URL')) return null;
+function notePromotionCandidate(record: LearningRecord): LearningCandidateDraft | null {
+  const { item } = record;
+  const original = record.record;
+  if (!isReviewed(item) || !original || typeof original !== 'object' || !('sourceUrl' in original) || typeof original.sourceUrl !== 'string' || !original.sourceUrl) return null;
   return {
     id: `note-promote:${item.id}`,
     label: item.name,
     domain: 'note',
     recordId: item.id,
     status: 'ready-to-promote',
-    priority: 52,
     reason: 'Reviewed note appears to have a source URL that may belong in isolated Agent Knowledge.',
     next: 'Promote only if the source is durable, useful later, and the user wants it in Agent Knowledge.',
-    scores: {
-      usefulness: itemUsefulness(item),
-      freshness: itemFreshness(item),
-      sourceQuality: clampScore(itemSourceQuality(item) + 8),
-      risk: 18,
-    },
     reviewState: item.reviewState,
     inspectRoute: localRegistryRoute('note', 'get', item.id),
     modelRoute: localRegistryModelRoute('note'),
@@ -474,15 +351,15 @@ function notePromotionCandidate(item: AgentWorkspaceLocalLibraryItem): LearningC
   };
 }
 
-function candidatesForItem(domain: LocalLearningCandidateDomain, item: AgentWorkspaceLocalLibraryItem): LearningCandidate[] {
-  const candidates: LearningCandidate[] = [];
+async function candidatesForItem(domain: LocalLearningCandidateDomain, record: LearningRecord, source: LearningCuratorSource): Promise<LearningCandidateDraft[]> {
+  const { item } = record;
+  const candidates: LearningCandidateDraft[] = [];
   const missing = missingRequirementCount(item);
   if (missing > 0 && (domain === 'skill' || domain === 'skill_bundle' || domain === 'routine')) {
     candidates.push(candidateBase(
       domain,
       item,
       'needs-setup',
-      item.enabled ? 88 : 68,
       `${missing} setup requirement(s) are missing.`,
       'Resolve setup requirements before enabling, scheduling, or relying on this behavior.',
     ));
@@ -492,7 +369,6 @@ function candidatesForItem(domain: LocalLearningCandidateDomain, item: AgentWork
       domain,
       item,
       'low-confidence',
-      78 - Math.floor(item.confidence / 5),
       `Confidence is ${item.confidence}%, below the durable-memory threshold.`,
       'Review, update confidence, or mark stale before using this memory as prompt context.',
     ));
@@ -503,7 +379,6 @@ function candidatesForItem(domain: LocalLearningCandidateDomain, item: AgentWork
       domain,
       item,
       'needs-review',
-      item.reviewState === 'stale' ? 92 : enabledOrActive ? 88 : 74,
       item.reviewState === 'stale'
         ? 'Record is stale and should not silently guide the assistant.'
         : enabledOrActive
@@ -513,55 +388,13 @@ function candidatesForItem(domain: LocalLearningCandidateDomain, item: AgentWork
     ));
   }
   if (domain === 'note') {
-    const behaviorProposal = noteBehaviorProposalCandidate(item);
+    const behaviorProposal = await noteBehaviorProposalCandidate(record, source);
+    source.assertCurrent();
     if (behaviorProposal) candidates.push(behaviorProposal);
-    const promotion = notePromotionCandidate(item);
+    const promotion = notePromotionCandidate(record);
     if (promotion) candidates.push(promotion);
   }
   return candidates;
-}
-
-function workPlanCompletionCandidates(context: CommandContext): readonly LearningCandidate[] {
-  try {
-    return (context.workspace?.workPlanStore?.listItems?.() ?? [])
-      .flatMap((item) => {
-        const candidate = workPlanCompletionCandidate(item);
-        return candidate ? [candidate] : [];
-      });
-  } catch {
-    return [];
-  }
-}
-
-function researchRunCompletionCandidates(context: CommandContext): readonly LearningCandidate[] {
-  const shellPaths = context.workspace?.shellPaths;
-  if (!shellPaths) return [];
-  try {
-    return AgentResearchRunRegistry.fromShellPaths(shellPaths)
-      .snapshot()
-      .completed
-      .flatMap((run) => {
-        const candidate = researchRunCompletionCandidate(run);
-        return candidate ? [candidate] : [];
-      });
-  } catch {
-    return [];
-  }
-}
-
-function sessionCompletionCandidates(context: CommandContext): readonly LearningCandidate[] {
-  const manager = context.session?.sessionManager as SessionManagerLike | undefined;
-  if (typeof manager?.list !== 'function') return [];
-  try {
-    return manager.list()
-      .filter((session) => session.name !== context.session?.runtime?.sessionId)
-      .flatMap((session) => {
-        const candidate = sessionCompletionCandidate(manager, session);
-        return candidate ? [candidate] : [];
-      });
-  } catch {
-    return [];
-  }
 }
 
 export function candidateSearchText(candidate: LearningCandidate): string {
@@ -583,24 +416,76 @@ export function candidateSearchText(candidate: LearningCandidate): string {
   ].join('\n').toLowerCase();
 }
 
-export function buildLearningCandidates(context: CommandContext): readonly LearningCandidate[] {
-  const snapshot = buildAgentWorkspaceRuntimeSnapshot(context);
-  const candidates = [
-    ...snapshot.localMemories.flatMap((item) => candidatesForItem('memory', item)),
-    ...snapshot.localNotes.flatMap((item) => candidatesForItem('note', item)),
-    ...snapshot.localPersonas.flatMap((item) => candidatesForItem('persona', item)),
-    ...snapshot.localSkills.flatMap((item) => candidatesForItem('skill', item)),
-    ...snapshot.localSkillBundles.flatMap((item) => candidatesForItem('skill_bundle', item)),
-    ...snapshot.localRoutines.flatMap((item) => candidatesForItem('routine', item)),
-    ...consolidationCandidatesForDomain('memory', snapshot.localMemories),
-    ...consolidationCandidatesForDomain('persona', snapshot.localPersonas),
-    ...consolidationCandidatesForDomain('skill', snapshot.localSkills),
-    ...consolidationCandidatesForDomain('routine', snapshot.localRoutines),
-    ...workPlanCompletionCandidates(context),
-    ...researchRunCompletionCandidates(context),
-    ...sessionCompletionCandidates(context),
-    ...vibeHealthCandidates(context),
-  ];
-  if (candidates.length === 0) candidates.push(captureCandidate());
-  return candidates.sort((left, right) => right.priority - left.priority || left.label.localeCompare(right.label));
+const collections = new WeakMap<LearningCandidateCollection, { readonly context: LearningCuratorNativeContext; readonly options: CatalogRankingOptions; readonly assertFields: () => void; readonly assertCandidates: (current: unknown) => void; readonly assertPromptRecords: (current: unknown) => void }>();
+
+/** Only a collection issued for this exact native caller can authorize its effects. */
+export function assertLearningCandidateCollection(collection: LearningCandidateCollection, context: LearningCuratorNativeContext, options: CatalogRankingOptions): void {
+  const issued = collections.get(collection);
+  if (!issued || issued.context !== context || issued.options !== options) throw new ToolInputProjectionError('held');
+  issued.assertFields(); issued.assertCandidates(collection.candidates); issued.assertPromptRecords(collection.promptRecords);
+  collection.assertCurrent();
+  issued.assertFields(); issued.assertCandidates(collection.candidates); issued.assertPromptRecords(collection.promptRecords);
+}
+
+export async function buildLearningCandidates(context: LearningCuratorNativeContext, options: CatalogRankingOptions = {}): Promise<LearningCandidateCollection> {
+  const source = acquireLearningCuratorSource(context, options);
+  const drafts: { readonly candidate: LearningCandidateDraft; readonly record: unknown }[] = [];
+  const promptRecords: LearningCandidateCollection['promptRecords'][number][] = [];
+  for (const [domain, records] of Object.entries(source.libraries)) {
+    // Iterate the domain's closed set below rather than accepting text as a domain.
+    if (domain !== 'memory' && domain !== 'note' && domain !== 'persona' && domain !== 'skill' && domain !== 'skill_bundle' && domain !== 'routine') continue;
+    for (const record of records) {
+      const local = await candidatesForItem(domain, record, source); source.assertCurrent();
+      for (const candidate of local) drafts.push({ candidate, record });
+      const eligible = domain === 'memory' ? (record.item.confidence ?? 100) >= 70
+        : domain === 'persona' ? record.item.active === true
+        : domain !== 'note' && record.item.enabled === true && missingRequirementCount(record.item) === 0;
+      if (eligible) {
+        const grade = await readLearningGrade({ proposedUse: 'priority of existing eligible prompt context', domain, capturedAt: source.source.capturedAt, ...record }, source.options);
+        source.assertCurrent(); promptRecords.push({ domain, item: record.item, priority: grade.priority, scores: grade.scores });
+      }
+    }
+    const consolidation = await consolidationCandidatesForDomain(domain, records, source.options, source.source); source.assertCurrent();
+    for (const candidate of consolidation) drafts.push({ candidate, record: records });
+  }
+  for (const item of source.source.workItems) {
+    const candidate = await workPlanCompletionCandidate(item, source); source.assertCurrent();
+    if (candidate) drafts.push({ candidate, record: item });
+  }
+  for (const run of source.source.researchSnapshot?.completed ?? []) {
+    const candidate = await researchRunCompletionCandidate(run, source); source.assertCurrent();
+    if (candidate) drafts.push({ candidate, record: run });
+  }
+  for (const session of source.source.sessions) {
+    const candidate = await sessionCompletionCandidate(session, source); source.assertCurrent();
+    if (candidate) drafts.push({ candidate, record: session });
+  }
+  for (const candidate of vibeHealthCandidates(source)) drafts.push({ candidate, record: { health: source.source.vibe, files: source.source.vibeEvidence } });
+  if (drafts.length === 0) drafts.push({ candidate: captureCandidate(), record: { source: source.source, noUrgentCandidates: true } });
+  const candidates: LearningCandidate[] = [];
+  for (const { candidate, record } of drafts) {
+    const grade = await readLearningGrade({ capturedAt: source.source.capturedAt, proposedUse: candidate.status, candidate, record }, source.options); source.assertCurrent();
+    candidates.push({ ...candidate, scores: grade.scores, priority: grade.priority,
+      ...(candidate.proposalTarget === 'memory' && candidate.proposalFields ? { proposalFields: { ...candidate.proposalFields, confidence: String(grade.confidence) } } : {}),
+    });
+  }
+  source.assertCurrent();
+  const assertCandidateCurrent = (candidate: LearningCandidate) => {
+    assertLearningCandidateCollection(collection, context, options);
+    if (!collection.candidates.includes(candidate)) throw new ToolInputProjectionError('held');
+    const domain = candidate.domain;
+    if (domain === 'memory' || domain === 'note' || domain === 'persona' || domain === 'skill' || domain === 'skill_bundle' || domain === 'routine') {
+      const ids = candidate.consolidation ? [candidate.consolidation.survivorId, ...candidate.consolidation.duplicateIds]
+        : candidate.recordId ? [candidate.recordId] : [];
+      source.assertOriginalRecords(domain, ids);
+    }
+    assertLearningCandidateCollection(collection, context, options);
+  };
+  const collection: LearningCandidateCollection = Object.freeze({ candidates: captureCatalogData(candidates.sort((left, right) => right.priority - left.priority || left.label.localeCompare(right.label))),
+    promptRecords: captureCatalogData(promptRecords.sort((left, right) => right.priority - left.priority || left.item.name.localeCompare(right.item.name))),
+    assertCurrent: source.assertCurrent, assertCandidateCurrent, prepareTransition: source.prepareTransition, options: source.options });
+  collections.set(collection, { context, options,
+    assertFields: captureCatalogMethods(collection, ['candidates', 'promptRecords', 'assertCurrent', 'assertCandidateCurrent', 'prepareTransition', 'options']),
+    assertCandidates: captureCatalogSnapshotGuard(collection.candidates), assertPromptRecords: captureCatalogSnapshotGuard(collection.promptRecords) });
+  return collection;
 }

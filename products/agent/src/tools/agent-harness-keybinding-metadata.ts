@@ -3,6 +3,7 @@ import { logger, summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils
 import { writeStoreJson } from '@/utils/store-file.ts';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { captureCatalogData, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { readHarnessBoolean } from './agent-harness-boolean-reading.ts';
 import type { Ranked } from '@goodvibes-jev/judgment';
 import type { CommandContext } from '../input/command-registry.ts';
 import {
@@ -121,27 +122,18 @@ function isKeyAction(action: string): action is KeyAction {
   return Object.hasOwn(ACTION_DESCRIPTIONS, action);
 }
 
-function readBoolean(value: unknown): boolean | undefined {
-  if (typeof value === 'boolean') return value;
-  if (typeof value !== 'string') return undefined;
-  const normalized = value.trim().toLowerCase();
-  if (['true', 'yes', 'y', '1', 'on'].includes(normalized)) return true;
-  if (['false', 'no', 'n', '0', 'off'].includes(normalized)) return false;
-  return undefined;
-}
-
-function normalizeCombo(value: unknown): KeyCombo | null {
+async function normalizeCombo(value: unknown, evidence: HarnessKeybindingArgs, options: CatalogRankingOptions): Promise<KeyCombo | null> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const raw = value as Record<string, unknown>;
-  const key = readString(raw.key);
+  const raw = captureCatalogData(value), fields = Object.getOwnPropertyDescriptors(raw);
+  const key = readString(fields.key?.value);
   if (!key) return null;
   const combo: KeyCombo = { key };
-  const ctrl = readBoolean(raw.ctrl);
-  const shift = readBoolean(raw.shift);
-  const alt = readBoolean(raw.alt);
-  if (ctrl !== undefined) combo.ctrl = ctrl;
-  if (shift !== undefined) combo.shift = shift;
-  if (alt !== undefined) combo.alt = alt;
+  for (const parameter of ['ctrl', 'shift', 'alt'] as const) {
+    const flag = await readHarnessBoolean({ tool: 'agent_harness mode:set_keybinding', parameter, value: fields[parameter]?.value,
+      description: `Whether the ${parameter} modifier must be held for this key combination.`, evidence: { arguments: evidence, combination: raw } }, options);
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    if (flag !== undefined) combo[parameter] = flag;
+  }
   return combo;
 }
 
@@ -161,16 +153,16 @@ function parseComboLabel(value: string): KeyCombo | null {
   return combo;
 }
 
-function combosFromArgs(args: HarnessKeybindingArgs): KeyCombo[] {
+async function combosFromArgs(args: HarnessKeybindingArgs, options: CatalogRankingOptions): Promise<KeyCombo[]> {
   if (Array.isArray(args.combos)) {
-    const combos = args.combos.map(normalizeCombo);
+    const combos: Array<KeyCombo | null> = [];
+    for (const value of args.combos) combos.push(await normalizeCombo(value, args, options));
     if (combos.every((combo): combo is KeyCombo => combo !== null)) return combos;
     throw new Error('set_keybinding combos must be objects with key and optional boolean ctrl/shift/alt fields.');
   }
-  const combo = normalizeCombo(args.combo);
+  const combo = await normalizeCombo(args.combo, args, options);
   if (combo) return [combo];
-  const fields = readFieldMap(args.fields);
-  const fieldCombo = normalizeCombo(fields);
+  const fieldCombo = await normalizeCombo(args.fields, args, options);
   if (fieldCombo) return [fieldCombo];
   const labelCombo = parseComboLabel(readString(args.value));
   if (labelCombo) return [labelCombo];
@@ -794,18 +786,25 @@ export async function setHarnessKeybinding(context: KeybindingContext, args: Har
   sources.assertCurrent();
   if (resolved?.status === 'ambiguous') throw new Error(`Ambiguous keybinding action ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
   if (!resolved) throw new Error('set_keybinding requires a valid keybinding action id, target, or query.');
-  const combos = combosFromArgs(sources.input);
+  const modifierGuards = new Set<() => void>();
+  const assertModifiersCurrent = () => { sources.assertCurrent(); for (const guard of modifierGuards) guard(); };
+  const combos = await combosFromArgs(sources.input, { ...options, assertCurrent: assertModifiersCurrent,
+    retainCurrent(guard, key) { modifierGuards.add(guard); options.retainCurrent?.(guard, key); } });
+  assertModifiersCurrent();
   const configPath = manager.getConfigPath();
   const overrides = readOverrideFile(configPath);
   overrides[resolved.action] = combos.length === 1 ? combos[0] : combos;
-  sources.assertCurrent();
+  assertModifiersCurrent();
   writeOverrideFile(configPath, overrides);
   manager.loadFromDisk();
   options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const keybinding = await describeHarnessKeybinding(context, { actionId: resolved.action });
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  for (const guard of modifierGuards) guard();
   return {
     status: 'updated',
     configPath,
-    keybinding: await describeHarnessKeybinding(context, { actionId: resolved.action }),
+    keybinding,
     lookup: resolved.lookup,
     ...(resolved.judgment ? { selectionJudgment: resolved.judgment } : {}),
   };

@@ -6,9 +6,16 @@ import {
   type MemoryUsageSummary,
 } from '@goodvibes-jev/engine/sdk/platform/state';
 import type { CommandContext } from '../input/command-registry.ts';
-import { buildAgentWorkspaceRuntimeSnapshot } from '../input/agent-workspace-snapshot.ts';
+import { buildAgentWorkspaceMemorySnapshot, type buildAgentWorkspaceRuntimeSnapshot } from '../input/agent-workspace-snapshot.ts';
+import { buildAgentWorkspaceSessionMemoryCount } from '../input/agent-workspace-snapshot-builders.ts';
+import { readConfigString } from '../input/agent-workspace-snapshot-config.ts';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../config/surface.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
+import { captureCatalogMethods, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { modelReadingServicePath } from './agent-harness-model-reading-source.ts';
+import { capturePersonalOpsSnapshot, protectPersonalOpsData } from './agent-harness-personal-ops-source.ts';
+import { assertMemoryCurrent, retainMemoryReadingOptions, selectMemoryProvider } from './agent-harness-memory-provider-readings.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { EXTERNAL_MEMORY_RECEIPT_FIELDS, EXTERNAL_MEMORY_REQUIRED_CONTRACTS, aggregateExternalProviderLiveRecord, aggregateExternalProviderSetupStatus, externalMemoryLiveProviderRecords, externalMemoryProviderCatalog, externalMemoryReceiptEvidence, externalProviderLiveReady, liveRecordForProvider, receiptEvidenceForProvider, setupStatusFromLiveRecord } from './agent-harness-memory-external-providers.ts';
 import type { ExternalMemoryProviderCatalogEntry, MemoryExternalProviderContractCheck, MemoryExternalProviderContractStatus, MemoryExternalProviderLiveRecord, MemoryExternalProviderReceiptContract, MemoryExternalProviderReceiptEvidence, MemoryExternalProviderRoute, MemoryExternalProviderSetupGuide, MemoryExternalProviderStatus, MemoryPostureProvider, MemoryProviderResolution } from './agent-harness-memory-external-providers.ts';
 
@@ -32,11 +39,120 @@ function readLimit(value: unknown, fallback: number): number {
   return Math.max(1, Math.min(200, Math.trunc(parsed)));
 }
 
+type MemoryPostureSnapshot = Pick<ReturnType<typeof buildAgentWorkspaceRuntimeSnapshot>, 'localMemoryCount' | 'localMemoryReviewQueueCount'
+  | 'localMemoryPromptActiveCount' | 'localMemoryTemporallyPendingCount' | 'localMemoryTemporallyExpiredCount' | 'sessionMemoryCount' | 'embeddingProvider'>;
+function memoryPostureSnapshot(context: CommandContext): MemoryPostureSnapshot {
+  const memory = buildAgentWorkspaceMemorySnapshot(context);
+  return { localMemoryCount: memory.count, localMemoryReviewQueueCount: memory.reviewQueueCount, localMemoryPromptActiveCount: memory.promptActiveCount,
+    localMemoryTemporallyPendingCount: memory.temporallyPendingCount, localMemoryTemporallyExpiredCount: memory.temporallyExpiredCount,
+    sessionMemoryCount: buildAgentWorkspaceSessionMemoryCount(context), embeddingProvider: readConfigString(context, 'provider.embeddingProvider', '(provider default)') };
+}
+
 function memoryApi(context: CommandContext): {
   readonly vectorStats?: () => MemoryVectorStats;
   readonly doctor?: () => Promise<MemoryDoctorReport>;
 } | null {
+  // Admit every enclosing service descriptor before the typed interface is read.
+  modelReadingServicePath(context, ['clients', 'agentKnowledgeApi', 'memory']);
   return context.clients?.agentKnowledgeApi?.memory ?? null;
+}
+
+function memoryReadingOptions(context: CommandContext, args: unknown, originalOptions: CatalogRankingOptions): CatalogRankingOptions {
+  const options = retainMemoryReadingOptions(originalOptions);
+  const input = capturePersonalOpsSnapshot(args);
+  const paths = [['clients'], ['clients', 'agentKnowledgeApi'], ['clients', 'agentKnowledgeApi', 'memory'],
+    ['session'], ['session', 'runtime'], ['session', 'sessionMemoryStore'], ['platform'], ['platform', 'configManager']] as const;
+  const guards: (() => void)[] = [];
+  for (const path of paths) {
+    const receiver = path.length === 1 ? context : modelReadingServicePath(context, path.slice(0, -1));
+    if (receiver === undefined || receiver === null) continue;
+    if (typeof receiver !== 'object') throw new ToolInputProjectionError('held');
+    const key = path.at(-1); if (key === undefined) throw new ToolInputProjectionError('held');
+    guards.push(captureCatalogMethods(receiver, [key]));
+  }
+  const api = memoryApi(context);
+  const apiCurrent = api ? captureCatalogMethods(api, ['doctor', 'vectorStats', 'getAll', 'reviewQueue']) : undefined;
+  for (const binding of [ { path: ['session', 'sessionMemoryStore'], keys: ['list'] }, { path: ['platform', 'configManager'], keys: ['get'] } ]) {
+    const service = modelReadingServicePath(context, binding.path);
+    if (service !== undefined && service !== null) { if (typeof service !== 'object') throw new ToolInputProjectionError('held'); guards.push(captureCatalogMethods(service, binding.keys)); }
+  }
+  const counts = capturePersonalOpsSnapshot(memoryPostureSnapshot(context));
+  const assertSources = () => { options.signal?.throwIfAborted(); for (const guard of guards) guard(); apiCurrent?.();
+    input.assertCurrent(args); if (memoryApi(context) !== api) throw new ToolInputProjectionError('held');
+    counts.assertCurrent(memoryPostureSnapshot(context)); for (const guard of guards) guard(); apiCurrent?.();
+  };
+  options.retainCurrent?.(assertSources, 'agent.memory.posture-native');
+  const assertCurrent = () => { assertMemoryCurrent(options); assertSources(); };
+  assertCurrent(); return { ...options, assertCurrent };
+}
+
+async function awaitMemoryRead<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return work;
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason); };
+    signal.addEventListener('abort', abort, { once: true });
+    work.then(value => { signal.removeEventListener('abort', abort); signal.aborted ? reject(signal.reason) : resolve(value); },
+      (error: unknown) => { signal.removeEventListener('abort', abort); reject(signal.aborted ? signal.reason : error); });
+    if (signal.aborted) abort();
+  });
+}
+
+function protectedRecord(value: unknown): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new ToolInputProjectionError('held');
+  return Object.fromEntries(Object.entries(value));
+}
+function protectedText(value: unknown): string {
+  if (typeof value !== 'string') throw new ToolInputProjectionError('held');
+  return value;
+}
+function protectedStrings(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) throw new ToolInputProjectionError('held');
+  return value.map(protectedText);
+}
+function preserveNative(record: Record<string, unknown>, native: Readonly<Record<string, unknown>>, keys: readonly string[]): void {
+  for (const key of keys) if (!Object.is(record[key], native[key])) throw new ToolInputProjectionError('held');
+}
+function protectedVector(native: MemoryVectorStats, value: unknown): MemoryVectorStats {
+  const record = protectedRecord(value);
+  preserveNative(record, { ...native }, ['backend', 'enabled', 'available', 'dimensions', 'indexedRecords', 'embeddingProviderId']);
+  return { backend: native.backend, enabled: native.enabled, available: native.available, dimensions: native.dimensions,
+    indexedRecords: native.indexedRecords, embeddingProviderId: native.embeddingProviderId,
+    embeddingProviderLabel: protectedText(record.embeddingProviderLabel), path: protectedText(record.path),
+    ...(native.error !== undefined ? { error: protectedText(record.error) } : {}),
+    ...(native.platformLimitReason !== undefined ? { platformLimitReason: protectedText(record.platformLimitReason) } : {}) };
+}
+
+async function protectMemoryVector(value: MemoryVectorStats, options: CatalogRankingOptions): Promise<MemoryVectorStats> {
+  const source = capturePersonalOpsSnapshot(value);
+  const sourceCurrent = () => { options.signal?.throwIfAborted(); source.assertCurrent(value); };
+  options.retainCurrent?.(sourceCurrent);
+  const protectedValue = await protectPersonalOpsData(value, { ...options, assertCurrent: () => { assertMemoryCurrent(options); sourceCurrent(); } });
+  const result = protectedVector(value, protectedValue); assertMemoryCurrent(options); sourceCurrent(); return result;
+}
+
+async function protectMemoryDoctor(value: MemoryDoctorReport, options: CatalogRankingOptions): Promise<MemoryDoctorReport> {
+  const source = capturePersonalOpsSnapshot(value);
+  const sourceCurrent = () => { options.signal?.throwIfAborted(); source.assertCurrent(value); };
+  options.retainCurrent?.(sourceCurrent);
+  const protectedValue = await protectPersonalOpsData(value, { ...options, assertCurrent: () => { assertMemoryCurrent(options); sourceCurrent(); } });
+  const record = protectedRecord(protectedValue), embeddings = protectedRecord(record.embeddings);
+  if (record.checkedAt !== value.checkedAt || embeddings.activeProviderId !== value.embeddings.activeProviderId
+    || !Array.isArray(embeddings.providers) || embeddings.providers.length !== value.embeddings.providers.length) throw new ToolInputProjectionError('held');
+  const protectedProviders = embeddings.providers;
+  const providers = value.embeddings.providers.map((native, index): MemoryEmbeddingProviderStatus => {
+    const provider = protectedRecord(protectedProviders[index]);
+    preserveNative(provider, { ...native }, ['id', 'state', 'configured', 'dimensions', 'deterministic']);
+    return { id: native.id, state: native.state, configured: native.configured, dimensions: native.dimensions,
+      label: protectedText(provider.label), metadata: protectedRecord(provider.metadata),
+      ...(native.deterministic !== undefined ? { deterministic: native.deterministic } : {}),
+      ...(native.detail !== undefined ? { detail: protectedText(provider.detail) } : {}) };
+  });
+  const asyncProviders = protectedStrings(embeddings.asyncProviders), syncProviders = protectedStrings(embeddings.syncProviders);
+  if (asyncProviders.length !== value.embeddings.asyncProviders.length || asyncProviders.some((id, index) => id !== value.embeddings.asyncProviders[index])
+    || syncProviders.length !== value.embeddings.syncProviders.length || syncProviders.some((id, index) => id !== value.embeddings.syncProviders[index])) throw new ToolInputProjectionError('held');
+  const result = { checkedAt: value.checkedAt, vector: protectedVector(value.vector, record.vector), embeddings: {
+    activeProviderId: value.embeddings.activeProviderId, providers, asyncProviders, syncProviders, warnings: protectedStrings(embeddings.warnings) } };
+  assertMemoryCurrent(options); sourceCurrent(); return result;
 }
 
 /**
@@ -73,28 +189,29 @@ function buildUsageSection(summary: MemoryUsageSummary | null): Record<string, u
   };
 }
 
-async function readMemoryDoctor(context: CommandContext): Promise<MemoryDoctorReport | null> {
+async function readMemoryDoctor(context: CommandContext, options: CatalogRankingOptions): Promise<MemoryDoctorReport | null> {
+  assertMemoryCurrent(options);
   const memory = memoryApi(context);
   if (!memory || typeof memory.doctor !== 'function') return null;
-  try {
-    return await memory.doctor();
-  } catch {
-    return null;
-  }
+  let report: MemoryDoctorReport;
+  try { report = await awaitMemoryRead(memory.doctor(), options.signal); }
+  catch (error: unknown) { assertMemoryCurrent(options); if (error instanceof ToolInputProjectionError) throw error; return null; }
+  assertMemoryCurrent(options);
+  return protectMemoryDoctor(report, options);
 }
 
-function readVectorStats(context: CommandContext, doctor: MemoryDoctorReport | null): MemoryVectorStats | null {
+async function readVectorStats(context: CommandContext, doctor: MemoryDoctorReport | null, options: CatalogRankingOptions): Promise<MemoryVectorStats | null> {
+  assertMemoryCurrent(options);
   if (doctor?.vector) return doctor.vector;
   const memory = memoryApi(context);
   if (!memory || typeof memory.vectorStats !== 'function') return null;
-  try {
-    return memory.vectorStats();
-  } catch {
-    return null;
-  }
+  let vector: MemoryVectorStats;
+  try { vector = memory.vectorStats(); }
+  catch (error: unknown) { assertMemoryCurrent(options); if (error instanceof ToolInputProjectionError) throw error; return null; }
+  options.assertCurrent?.(); return protectMemoryVector(vector, options);
 }
 
-function memoryStatus(snapshot: ReturnType<typeof buildAgentWorkspaceRuntimeSnapshot>, memoryAvailable: boolean): MemoryPostureStatus {
+function memoryStatus(snapshot: MemoryPostureSnapshot, memoryAvailable: boolean): MemoryPostureStatus {
   if (!memoryAvailable) return 'unavailable';
   if (snapshot.localMemoryCount === 0) return 'empty';
   if (snapshot.localMemoryPromptActiveCount > 0) return 'ready';
@@ -119,7 +236,7 @@ function describeEmbeddingProvider(
     kind: 'embedding',
     status: provider.state,
     summary: previewHarnessText(provider.detail ?? `${provider.configured ? 'configured' : 'not configured'} memory embedding provider`, includeParameters ? 180 : 96),
-    modelRoute: `memory action:"provider" providerId:"${provider.id}"`,
+    modelRoute: `memory action:"provider" providerId:${JSON.stringify(provider.id)}`,
     setupRoute: `settings action:"set" key:"provider.embeddingProvider" value:"${provider.id}" confirm:true explicitUserRequest:"..."`,
     configured: provider.configured,
     active: provider.id === activeProviderId,
@@ -175,21 +292,21 @@ function externalProviderNextRoutes(
     {
       id: 'inspect-provider-contract',
       label: 'Inspect provider contract',
-      modelRoute: `memory action:"provider" providerId:"${provider.id}" includeParameters:true`,
+      modelRoute: `memory action:"provider" providerId:${JSON.stringify(provider.id)} includeParameters:true`,
       effect: 'read-only',
       why: 'Shows the current SDK/daemon contract checklist, missing receipt fields, credential boundary, and local fallback.',
     },
     {
       id: 'inspect-host-capability',
       label: 'Inspect host capability',
-      modelRoute: `host action:"capability" query:"${provider.id} memory provider"`,
+      modelRoute: `host action:"capability" query:${JSON.stringify(`${provider.id} memory provider`)}`,
       effect: 'read-only',
       why: 'Checks whether the connected GoodVibes host publishes a provider capability record for Agent to consume.',
     },
     {
       id: 'inspect-mcp-server',
       label: 'Inspect MCP server',
-      modelRoute: `agent_harness mode:"mcp_servers" query:"${provider.id}"`,
+      modelRoute: `agent_harness mode:"mcp_servers" query:${JSON.stringify(provider.id)}`,
       effect: 'read-only',
       why: 'Finds a matching MCP connector without reading secrets or invoking provider writes.',
     },
@@ -210,7 +327,7 @@ function externalProviderContractChecklist(
 ): readonly MemoryExternalProviderContractCheck[] {
   const providerQuery = `${provider.id} memory provider`;
   const hasReceipts = receipts.length > 0;
-  const liveInspectRoute = liveRecord?.inspectRoute ?? `host action:"capability" query:"${providerQuery}"`;
+  const liveInspectRoute = liveRecord?.inspectRoute ?? `host action:"capability" query:${JSON.stringify(providerQuery)}`;
   const providerCertificationPublished: MemoryExternalProviderContractStatus = liveRecord?.certification?.schemaStatus === 'certified'
     && liveRecord.certification.missingSignals.length === 0
     ? 'published'
@@ -255,7 +372,7 @@ function externalProviderContractChecklist(
       status: readStatus,
       requiredFor: 'Review external memories with redaction, provenance, and source limits before prompt use.',
       owner: 'goodvibes-sdk-or-daemon',
-      inspectRoute: liveRecord?.readRoute ?? `agent_harness mode:"mcp_servers" query:"${provider.id}"`,
+      inspectRoute: liveRecord?.readRoute ?? `agent_harness mode:"mcp_servers" query:${JSON.stringify(provider.id)}`,
     },
     {
       id: 'confirmed-write-upsert',
@@ -263,7 +380,7 @@ function externalProviderContractChecklist(
       status: writeStatus,
       requiredFor: 'Write external memories only after explicit user request and confirmation.',
       owner: 'goodvibes-sdk-or-daemon',
-      inspectRoute: liveRecord?.writeRoute ?? `host action:"capability" query:"${providerQuery}"`,
+      inspectRoute: liveRecord?.writeRoute ?? `host action:"capability" query:${JSON.stringify(providerQuery)}`,
     },
     {
       id: 'forget-contract',
@@ -281,7 +398,7 @@ function externalProviderContractChecklist(
       owner: 'goodvibes-sdk-or-daemon',
       inspectRoute: liveRecord?.receiptRoute ?? liveRecord?.syncRoute ?? (hasReceipts
         ? receipts[0]!.inspectRoute
-        : `memory action:"provider" providerId:"${provider.id}" includeParameters:true`),
+        : `memory action:"provider" providerId:${JSON.stringify(provider.id)} includeParameters:true`),
     },
     {
       id: 'prompt-eligibility-policy',
@@ -306,7 +423,7 @@ function externalProviderReceiptContract(
     status: liveReceiptsPublished && liveReceiptCertified ? 'published' : receipts.length > 0 && artifactReceiptCertified ? 'artifact-evidence-found' : 'missing',
     appliesTo: ['status', 'read', 'write', 'upsert', 'import', 'export', 'sync', 'forget'],
     requiredFields: EXTERNAL_MEMORY_RECEIPT_FIELDS,
-    nextWhenPublished: `memory action:"provider" providerId:"${providerId}" includeParameters:true should expose latest receipts and exact follow-up routes.`,
+    nextWhenPublished: `memory action:"provider" providerId:${JSON.stringify(providerId)} includeParameters:true should expose latest receipts and exact follow-up routes.`,
   };
 }
 
@@ -355,10 +472,10 @@ function externalProviderSetupGuide(
       ? `Review ${latestReceipt.artifactId}, then keep Agent-local memory as the active prompt path until a ready provider record and prompt-eligibility policy exist.`
       : `Inspect connected-host and MCP setup for ${provider.label}; keep Agent-local memory as the active path until a ready provider record exists.`,
     inspectRoutes: [...new Set([
-      `memory action:"provider" providerId:"${provider.id}" includeParameters:true`,
+      `memory action:"provider" providerId:${JSON.stringify(provider.id)} includeParameters:true`,
       ...liveInspectRoutes,
-      `host action:"capability" query:"${provider.id} memory provider"`,
-      `agent_harness mode:"mcp_servers" query:"${provider.id}"`,
+      `host action:"capability" query:${JSON.stringify(`${provider.id} memory provider`)}`,
+      `agent_harness mode:"mcp_servers" query:${JSON.stringify(provider.id)}`,
       'settings action:"list" query:"memory" includeHidden:true',
     ])],
     nextRoutes: externalProviderNextRoutes(provider, liveRecord),
@@ -392,7 +509,7 @@ function describeExternalProvider(
       : latestReceipt
       ? `Durable external memory receipt ${latestReceipt.artifactId} reports ${latestReceipt.operation} ${latestReceipt.status}; live provider records are still not published.`
       : 'External memory backend records are not published by the current GoodVibes SDK/daemon contract.', includeParameters ? 180 : 96),
-    modelRoute: `memory action:"provider" providerId:"${provider.id}"`,
+    modelRoute: `memory action:"provider" providerId:${JSON.stringify(provider.id)}`,
     setupRoute: 'host action:"capability" query:"memory provider"',
     configured: liveRecord?.configured ?? (liveRecord ? externalProviderLiveReady(liveRecord) : latestReceipt ? latestReceipt.status === 'succeeded' : false),
     ...(includeParameters && liveRecord ? { liveRecord } : {}),
@@ -493,6 +610,7 @@ function compactProvider(provider: MemoryPostureProvider, includeParameters: boo
 async function buildProviderRecords(
   context: CommandContext,
   args: AgentHarnessMemoryPostureArgs,
+  options: CatalogRankingOptions,
 ): Promise<{
   readonly doctor: MemoryDoctorReport | null;
   readonly vector: MemoryVectorStats | null;
@@ -501,10 +619,10 @@ async function buildProviderRecords(
   readonly liveRecords: readonly MemoryExternalProviderLiveRecord[];
 }> {
   const includeParameters = args.includeParameters === true;
-  const doctor = await readMemoryDoctor(context);
-  const vector = readVectorStats(context, doctor);
-  const receiptEvidence = externalMemoryReceiptEvidence(context);
-  const liveRecords = await externalMemoryLiveProviderRecords(context);
+  const doctor = await readMemoryDoctor(context, options);
+  const vector = await readVectorStats(context, doctor, options);
+  const receiptEvidence = await externalMemoryReceiptEvidence(context, options);
+  const liveRecords = await externalMemoryLiveProviderRecords(context, options);
   const embeddingProviders = (doctor?.embeddings.providers ?? []).map((provider) => (
     describeEmbeddingProvider(provider, doctor?.embeddings.activeProviderId, includeParameters)
   ));
@@ -526,7 +644,7 @@ async function buildProviderRecords(
 }
 
 function nextActions(
-  snapshot: ReturnType<typeof buildAgentWorkspaceRuntimeSnapshot>,
+  snapshot: MemoryPostureSnapshot,
   memoryStatusValue: MemoryPostureStatus,
   vectorStatusValue: MemoryVectorPostureStatus,
   doctor: MemoryDoctorReport | null,
@@ -565,12 +683,13 @@ function compactVector(vector: MemoryVectorStats | null): Record<string, unknown
   };
 }
 
-export async function memoryPostureCatalogStatus(context: CommandContext): Promise<Record<string, unknown>> {
-  const snapshot = buildAgentWorkspaceRuntimeSnapshot(context);
-  const doctor = await readMemoryDoctor(context);
-  const vector = readVectorStats(context, doctor);
-  const receiptEvidence = externalMemoryReceiptEvidence(context);
-  const liveRecords = await externalMemoryLiveProviderRecords(context);
+export async function memoryPostureCatalogStatus(context: CommandContext, reading: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const options = memoryReadingOptions(context, undefined, reading);
+  const snapshot = memoryPostureSnapshot(context);
+  const doctor = await readMemoryDoctor(context, options);
+  const vector = await readVectorStats(context, doctor, options);
+  const receiptEvidence = await externalMemoryReceiptEvidence(context, options);
+  const liveRecords = await externalMemoryLiveProviderRecords(context, options);
   const status = memoryStatus(snapshot, Boolean(memoryApi(context)));
   const vectorState = vectorStatus(vector);
   const usageSummary = readMemoryUsageSummary(context);
@@ -599,19 +718,22 @@ export async function memoryPostureCatalogStatus(context: CommandContext): Promi
   };
 }
 
-export async function memoryPostureSummary(context: CommandContext, args: AgentHarnessMemoryPostureArgs): Promise<Record<string, unknown>> {
+export async function memoryPostureSummary(context: CommandContext, args: AgentHarnessMemoryPostureArgs, reading: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const options = memoryReadingOptions(context, args, reading);
   const includeParameters = args.includeParameters === true;
   const limit = readLimit(args.limit, 100);
-  const query = readString(args.query).toLowerCase();
-  const snapshot = buildAgentWorkspaceRuntimeSnapshot(context);
-  const { doctor, vector, providers, receiptEvidence, liveRecords } = await buildProviderRecords(context, args);
+  const query = readString(args.query);
+  const snapshot = memoryPostureSnapshot(context);
+  const { doctor, vector, providers, receiptEvidence, liveRecords } = await buildProviderRecords(context, args, options);
   const status = memoryStatus(snapshot, Boolean(memoryApi(context)));
   const vectorState = vectorStatus(vector);
   const aggregateLiveRecord = aggregateExternalProviderLiveRecord(liveRecords);
-  const filteredProviders = providers
-    .filter((provider) => !query || providerSearchText(provider).includes(query))
-    .slice(0, limit)
-    .map((provider) => compactProvider(provider, includeParameters));
+  const ranked = query ? await rankHarnessCatalog(providers, query, provider => ({ id: `${provider.kind}:${provider.id}`,
+    description: providerSearchText(provider), evidence: provider }), 'agent.memory.providers', { ...options, requirePreservedSource: true }) : undefined;
+  if (ranked?.judgments.some(({ reading }) => reading.outcome !== 'act' || reading.verdict === 'uncertain')) throw new ToolInputProjectionError('held');
+  assertMemoryCurrent(options);
+  const filteredProviders = (ranked ? ranked.matches.map(({ entry }) => entry) : providers).slice(0, limit)
+    .map(provider => compactProvider(provider, includeParameters));
   return {
     status,
     localMemory: {
@@ -690,7 +812,8 @@ export async function memoryPostureSummary(context: CommandContext, args: AgentH
   };
 }
 
-export async function describeMemoryProvider(context: CommandContext, args: AgentHarnessMemoryPostureArgs): Promise<MemoryProviderResolution> {
+export async function describeMemoryProvider(context: CommandContext, args: AgentHarnessMemoryPostureArgs, reading: CatalogRankingOptions = {}): Promise<MemoryProviderResolution> {
+  const options = memoryReadingOptions(context, args, reading);
   const input = readString(args.providerId) || readString(args.target) || readString(args.query);
   if (!input) {
     return {
@@ -699,27 +822,14 @@ export async function describeMemoryProvider(context: CommandContext, args: Agen
     };
   }
   const includeParameters = args.includeParameters !== false;
-  const { providers } = await buildProviderRecords(context, { ...args, includeParameters });
-  const normalized = input.toLowerCase();
-  const exact = providers.find((provider) => provider.id === input || provider.id.toLowerCase() === normalized);
+  const { providers } = await buildProviderRecords(context, { ...args, includeParameters }, options);
+  const exact = providers.find(provider => provider.id === input);
+  assertMemoryCurrent(options);
   if (exact) return { status: 'found', provider: compactProvider(exact, true) };
-  const label = providers.find((provider) => provider.label.toLowerCase() === normalized);
-  if (label) return { status: 'found', provider: compactProvider(label, true) };
-  const matches = providers.filter((provider) => providerSearchText(provider).includes(normalized));
-  if (matches.length === 1) return { status: 'found', provider: compactProvider(matches[0]!, true) };
-  if (matches.length > 1) {
-    return {
-      status: 'ambiguous',
-      input,
-      candidates: matches.slice(0, 10).map((provider) => ({
-        providerId: provider.id,
-        label: provider.label,
-        kind: provider.kind,
-        status: provider.status,
-        modelRoute: provider.modelRoute,
-      })),
-    };
-  }
+  if (readString(args.providerId)) return { status: 'missing_lookup', usage: `Unknown memory provider ${input}. Use memory action:"status" to inspect available provider ids.` };
+  const selected = await selectMemoryProvider(providers, input, options);
+  assertMemoryCurrent(options);
+  if (selected) return { status: 'found', provider: compactProvider(selected, true) };
   return {
     status: 'missing_lookup',
     usage: `Unknown memory provider ${input}. Use memory action:"status" to inspect available provider ids.`,

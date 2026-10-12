@@ -1,3 +1,6 @@
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+import { gapAssessmentFixture } from './_helpers/knowledge-self-improvement-readings.js';
+const answerReadings = useKnowledgeAnswerReadings();
 /**
  * knowledge-jobruns-retention.test.ts
  *
@@ -116,11 +119,12 @@ describe('governor pause at background entrypoints', () => {
       metadata: { knowledgeSpaceId: spaceId },
     });
     for (const slug of ['pause-gap-1', 'pause-gap-2', 'pause-gap-3']) {
-      await seedKnowledgeResearchTask(store, {
+      const gap = await seedKnowledgeResearchTask(store, {
         kind: 'knowledge_gap', slug, title: `What does ${slug} need?`, aliases: [],
         confidence: 75, sourceId: source.id,
         metadata: { knowledgeSpaceId: spaceId, semanticKind: 'gap', gapKind: 'answer', sourceIds: [source.id] },
       });
+      answerReadings.addAssessments([gapAssessmentFixture(gap, [], 0.99, 0.99)]);
     }
     let paused = false;
     let repairCalls = 0;

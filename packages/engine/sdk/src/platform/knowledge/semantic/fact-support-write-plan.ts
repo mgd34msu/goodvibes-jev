@@ -1,3 +1,5 @@
+import { captureStrictJudgmentJson } from '../../gate/judgment-result.js';
+import { sameKnowledgeRecord } from '../store-record-representation.js';
 import { withStoredKnowledgeSourceReferences, withEngineGeneratedSupportReferences, type EngineGeneratedSupportReferences } from './verification/structural-references.js';
 import type { KnowledgeStore } from '../store.js';
 import type { KnowledgeExtractionRecord, KnowledgeNodeRecord } from '../types.js';
@@ -14,6 +16,24 @@ import {
   type GeneratedFactSupportReceipt,
 } from './verification/types.js';
 
+const nativeApply = Reflect.apply;
+const nativeWeakMapGet = WeakMap.prototype.get, nativeWeakMapSet = WeakMap.prototype.set;
+
+interface NativeGeneratedFactPlanReferences {
+  readonly store: KnowledgeStore;
+  readonly claimId: string;
+  readonly receipts: readonly GeneratedFactSupportReceipt[];
+  readonly assertCurrent: () => void;
+}
+// Only the actual whole-pass reader installs successful plan objects here.
+const nativeGeneratedPlans = new WeakMap<GeneratedFactSupportPlan, NativeGeneratedFactPlanReferences>();
+export function captureNativeGeneratedFactPlanReferences(store: KnowledgeStore, plan: GeneratedFactSupportPlan): NativeGeneratedFactPlanReferences {
+  const proof: NativeGeneratedFactPlanReferences | undefined = nativeApply(nativeWeakMapGet, nativeGeneratedPlans, [plan]);
+  if (!proof || proof.store !== store) throw new KnowledgeGeneratedFactSupportHeldError('stale');
+  proof.assertCurrent();
+  return proof;
+}
+
 /** Exact identifiers are not case-folded natural-language labels. */
 export function exactKnowledgeIds(values: readonly (string | undefined | null)[]): string[] {
   return [...new Set(values.filter((value): value is string => typeof value === 'string' && value.length > 0))];
@@ -25,6 +45,7 @@ export function createGeneratedFactWritePlanner(
 ) {
   const requests: GeneratedFactSupportInput[] = [];
   const slots = new Map<string, number[]>();
+  const nativeOwners: Array<{ readonly claimId: string; readonly assertCurrent: () => void }> = [];
   let settled: readonly GeneratedFactSupportPlan[] | undefined;
   let started = false;
   function add(
@@ -57,6 +78,21 @@ export function createGeneratedFactWritePlanner(
       const index = requests.length;
       const input = withStoredKnowledgeSourceReferences({ spaceId, claim, source, extraction, subjects }, store, source, store.getExtractionBySourceId(source.id));
       requests.push(generatedReferences ? withEngineGeneratedSupportReferences(input, generatedReferences) : input);
+      const originalSource = store.getSource(source.id), originalExtraction = store.getExtractionBySourceId(source.id);
+      if (!originalSource || !sameKnowledgeRecord(source, originalSource)
+        || !sameKnowledgeRecord(extraction ?? null, originalExtraction ?? null)) throw new KnowledgeGeneratedFactSupportHeldError('stale');
+      const sourceSnapshot = captureStrictJudgmentJson(originalSource), extractionSnapshot = captureStrictJudgmentJson(originalExtraction);
+      const sourceGeneration = store.getSourceGeneration(source.id);
+      const extractionGeneration = originalExtraction ? store.getRecordGeneration('extraction', originalExtraction.id) : null;
+      const claimId = claim.id;
+      nativeOwners.push({ claimId, assertCurrent() {
+        if (store.getSource(source.id) !== originalSource || store.getExtractionBySourceId(source.id) !== originalExtraction
+          || !sameKnowledgeRecord(sourceSnapshot, originalSource) || !sameKnowledgeRecord(extractionSnapshot, originalExtraction)
+          || store.getSourceGeneration(source.id) !== sourceGeneration
+          || (originalExtraction ? store.getRecordGeneration('extraction', originalExtraction.id) : null) !== extractionGeneration) {
+          throw new KnowledgeGeneratedFactSupportHeldError('stale');
+        }
+      } });
       return index;
     }));
     return key;
@@ -67,9 +103,23 @@ export function createGeneratedFactWritePlanner(
       if (started) throw new KnowledgeGeneratedFactSupportHeldError('malformed');
       started = true;
       guard.assertCurrent();
-      settled = await prepareGeneratedFactSupport(requests, options);
+      const measured = await prepareGeneratedFactSupport(requests, options);
       guard.assertCurrent();
-      if (settled.length !== requests.length) throw new KnowledgeGeneratedFactSupportHeldError('malformed');
+      if (measured.length !== requests.length) throw new KnowledgeGeneratedFactSupportHeldError('malformed');
+      const proofs = measured.map((plan, index) => {
+        const owner = nativeOwners[index];
+        if (!owner) throw new KnowledgeGeneratedFactSupportHeldError('malformed');
+        owner.assertCurrent();
+        if (plan.claimId !== owner.claimId || plan.receipts.some(receipt => receipt.claimId !== owner.claimId)) {
+          throw new KnowledgeGeneratedFactSupportHeldError('stale');
+        }
+        return { plan, proof: Object.freeze({ store, claimId: owner.claimId, receipts: plan.receipts, assertCurrent: owner.assertCurrent }) };
+      });
+      // No successful prefix escapes a failed whole-pass source check.
+      guard.assertCurrent();
+      for (const { proof } of proofs) proof.assertCurrent();
+      for (const { plan, proof } of proofs) nativeApply(nativeWeakMapSet, nativeGeneratedPlans, [plan, proof]);
+      settled = measured;
     },
     plans(key: string): readonly GeneratedFactSupportPlan[] {
       if (!settled || !slots.has(key)) throw new KnowledgeGeneratedFactSupportHeldError('malformed');

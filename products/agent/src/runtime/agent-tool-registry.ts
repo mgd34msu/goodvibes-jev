@@ -54,6 +54,8 @@ import type { ProtectedSourceOwner } from '@goodvibes-jev/engine/sdk/platform/se
 export interface AgentToolRegistryDeps {
   /** Explicit trusted local service capability; absent keeps research report writes held. */
   readonly researchSourceOwner?: ProtectedSourceOwner;
+  /** Native report-only opt-in, isolated from the general private-source owner. */
+  readonly researchReportSourceOwner?: ProtectedSourceOwner;
   readonly services: RuntimeServices;
   readonly configManager: ConfigManager;
   readonly homeDirectory: string;
@@ -183,7 +185,8 @@ export function composeAgentToolRegistry(deps: AgentToolRegistryDeps): AgentTool
   registerAgentMediaGenerateTool(toolRegistry, services.mediaProviders, services.artifactStore);
   registerAgentResearchRunsTool(toolRegistry, services.shellPaths);
   registerAgentResearchSourcesTool(toolRegistry, services.shellPaths);
-  registerAgentResearchReportTool(toolRegistry, services.artifactStore, deps.researchSourceOwner);
+  registerAgentResearchReportTool(toolRegistry, services.artifactStore, deps.researchReportSourceOwner ?? deps.researchSourceOwner,
+    deps.researchReportSourceOwner ? 'report-only' : 'shared', deps.researchSourceOwner);
   registerAgentReviewPacketPresetsTool(toolRegistry, services.artifactStore);
   registerAgentReviewPacketShareTool(toolRegistry, services.artifactStore, services.channelDeliveryRouter);
   registerAgentModelCompareTool(toolRegistry, {

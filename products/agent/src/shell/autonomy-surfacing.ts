@@ -17,9 +17,13 @@ import { LastSeenStore } from '../core/last-seen-store.ts';
 import type { AutomationRunsSinceResult } from '../agent/automation-runs-source.ts';
 import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { AgentCalendarRegistry } from '../agent/calendar-registry.ts';
-import { AgentSkillRegistry } from '../agent/skill-registry.ts';
-import { runSkillDraftProposer } from '../agent/skill-draft-runner.ts';
+import { executeToolCalls } from '@goodvibes-jev/engine/sdk/platform/core';
+import type { RuntimeServices } from '../runtime/services.ts';
 import type { CommandContext } from '../input/command-registry.ts';
+import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureCatalogMethods } from '../tools/agent-harness-catalog-ranking.ts';
+import { modelReadingServicePath } from '../tools/agent-harness-model-reading-source.ts';
 
 interface AutomationJobLike {
   readonly name: string;
@@ -78,7 +82,7 @@ export interface AutonomySurfacingOptions {
    * Should run skill draft proposal and return the count of drafts created.
    * When > 0, a line is appended to the digest feed.
    */
-  readonly onAwayDigest?: () => number;
+  readonly onAwayDigest?: (signal: AbortSignal) => Promise<number>;
 }
 
 const COMING_UP_TTL_MS = 60_000;
@@ -114,6 +118,8 @@ function aggregateFiredSchedules(
  * and offline-tolerant, failures are silent and renders are never blocked.
  */
 export function createAutonomySurfacing(options: AutonomySurfacingOptions) {
+  const lifetime = new AbortController();
+  const pendingDigests = new Set<Promise<void>>();
   const lastSeenStore = LastSeenStore.fromShellPaths(options.shellPaths);
 
   // Refresh lastSeenAt every 5 minutes so rapid restarts still detect activity.
@@ -172,7 +178,8 @@ export function createAutonomySurfacing(options: AutonomySurfacingOptions) {
   }
 
   function announceAwayDigest(): void {
-    void (async () => {
+    if (lifetime.signal.aborted) return;
+    const work = (async () => {
       try {
         const lastSeenAt = lastSeenStore.read();
         const withTimeout = <T>(get: () => T) => Promise.race([
@@ -190,6 +197,7 @@ export function createAutonomySurfacing(options: AutonomySurfacingOptions) {
             : Promise.resolve<AutomationRunsSinceResult>({ runs: [], deliveries: [] }),
           withTimeout(options.getTasksSnapshot),
         ]);
+        lifetime.signal.throwIfAborted();
         const runsSince: AutomationRunsSinceResult = runsResult.status === 'fulfilled'
           ? runsResult.value
           : { runs: [], deliveries: [] };
@@ -249,7 +257,9 @@ export function createAutonomySurfacing(options: AutonomySurfacingOptions) {
         // Invoke optional skill-draft hook once per pass.
         if (options.onAwayDigest) {
           try {
-            const drafted = options.onAwayDigest();
+            lifetime.signal.throwIfAborted();
+            const drafted = await options.onAwayDigest(lifetime.signal);
+            lifetime.signal.throwIfAborted();
             if (drafted > 0) {
               options.router.getFeed()?.push(
                 `[Status] I drafted ${drafted} skill${drafted !== 1 ? 's' : ''} from recent work, review them under Memory`,
@@ -265,11 +275,15 @@ export function createAutonomySurfacing(options: AutonomySurfacingOptions) {
         logger.debug('away-digest failed (non-fatal)', { error: err instanceof Error ? err.message : String(err) });
       }
     })();
+    pendingDigests.add(work);
+    void work.then(() => pendingDigests.delete(work), () => pendingDigests.delete(work));
   }
 
-  function stop(): void {
+  function stop(): Promise<void> {
+    lifetime.abort();
     clearInterval(lastSeenRefreshInterval);
     lastSeenStore.save();
+    return Promise.allSettled([...pendingDigests]).then(() => undefined);
   }
 
   return {
@@ -287,14 +301,62 @@ export function createAutonomySurfacing(options: AutonomySurfacingOptions) {
  * (See module-header note for history.)
  */
 export function buildSkillDraftProposer(
-  shellPaths: Parameters<typeof AgentSkillRegistry.fromShellPaths>[0],
-  context: CommandContext,
-): () => number {
-  return () =>
-    runSkillDraftProposer(
-      context,
-      AgentSkillRegistry.fromShellPaths(shellPaths),
-    ).proposed;
+  registry: ToolRegistry,
+  host: { readonly services: Pick<RuntimeServices, 'permissionManager' | 'configManager'>; readonly commandContext: CommandContext; readonly toolRegistry: ToolRegistry },
+): (signal: AbortSignal) => Promise<number> {
+  const services = host.services, context = host.commandContext;
+  const manager = services.permissionManager, config = services.configManager;
+  const session = context.session, runtime = session.runtime, sessionId = runtime.sessionId;
+  const incarnation = config.getConfigurationIncarnation();
+  const guards = [
+    captureCatalogMethods(host, ['services', 'commandContext', 'toolRegistry']),
+    captureCatalogMethods(services, ['permissionManager', 'configManager']),
+    captureCatalogMethods(config, ['getConfigurationIncarnation']),
+    captureCatalogMethods(context, ['session', 'workspace', 'clients']),
+    captureCatalogMethods(session, ['runtime']), captureCatalogMethods(runtime, ['sessionId']),
+    captureCatalogMethods(registry, ['list', 'prepareCall', 'projectCall', 'executePrepared', 'assertPrepared', 'releaseProjected']),
+    captureCatalogMethods(manager, ['prepareAutonomousOwner', 'autonomousPreparation', 'projectAutonomousChoices', 'releaseAutonomousChoices', 'admitAutonomous']),
+  ];
+  const currentHarness = () => registry.list().find(candidate => modelReadingServicePath(candidate, ['definition', 'name']) === 'agent_harness');
+  const tool = currentHarness();
+  if (!tool) throw new ToolInputProjectionError('unavailable');
+  // This is the existing configured background operation's source, not a user
+  // request or an admission. The configured manager still owns every effect.
+  const source = Object.freeze({
+    goal: 'Review Agent-local learning sources and propose supported reusable skill drafts during the away digest.',
+    criteria: Object.freeze([
+      'Use complete current native learning evidence and the canonical learning judgments.',
+      'Create only fresh disabled skill drafts for later review; do not enable skills or change other behavior.',
+      'Preserve configured admission, privacy, cancellation and source currentness throughout the operation.',
+    ]),
+  });
+  let sequence = 0;
+  return async signal => {
+    const assertCurrent = () => {
+      signal.throwIfAborted(); for (const guard of guards) guard();
+      if (host.services !== services || host.commandContext !== context || host.toolRegistry !== registry
+        || services.permissionManager !== manager || services.configManager !== config
+        || config.getConfigurationIncarnation() !== incarnation || context.session !== session
+        || session.runtime !== runtime || runtime.sessionId !== sessionId || currentHarness() !== tool)
+        throw new ToolInputProjectionError('stale');
+      signal.throwIfAborted();
+    };
+    assertCurrent();
+    const callId = `ambient-skill-drafts:${++sequence}`;
+    const results = await executeToolCalls({
+      toolRegistry: registry, permissionManager: manager, autonomousSource: () => { assertCurrent(); return source; },
+      turnSignal: signal, assertCurrent, sessionId, hookDispatcher: null, runtimeBus: null,
+      emitterContext: () => ({ sessionId, traceId: callId, source: 'agent-away-digest' }),
+    }, callId, [{ id: callId, name: 'agent_harness', arguments: { mode: 'propose_skill_drafts' } }]);
+    assertCurrent();
+    const result = results[0];
+    if (results.length !== 1 || !result) throw new ToolInputProjectionError('held');
+    if (!result.success) return 0;
+    const output: unknown = typeof result.output === 'string' ? JSON.parse(result.output) : undefined;
+    if (!output || typeof output !== 'object' || !('proposed' in output) || typeof output.proposed !== 'number'
+      || !Number.isSafeInteger(output.proposed) || output.proposed < 0) throw new ToolInputProjectionError('held');
+    return output.proposed;
+  };
 }
 
 /**

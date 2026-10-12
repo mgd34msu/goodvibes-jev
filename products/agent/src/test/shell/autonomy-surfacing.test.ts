@@ -52,7 +52,7 @@ function makeOptions(overrides: Partial<Parameters<typeof createAutonomySurfacin
 describe('announceAwayDigest: onAwayDigest wiring', () => {
   test('stub returning > 0 appends the skill-draft feed line', async () => {
     const { options, feedPushes } = makeOptions({
-      onAwayDigest: () => 2,
+      onAwayDigest: async () => 2,
     });
     const autonomy = createAutonomySurfacing(options);
     autonomy.announceAwayDigest();
@@ -68,7 +68,7 @@ describe('announceAwayDigest: onAwayDigest wiring', () => {
 
   test('stub returning 1 uses singular "skill" (not "skills")', async () => {
     const { options, feedPushes } = makeOptions({
-      onAwayDigest: () => 1,
+      onAwayDigest: async () => 1,
     });
     const autonomy = createAutonomySurfacing(options);
     autonomy.announceAwayDigest();
@@ -83,7 +83,7 @@ describe('announceAwayDigest: onAwayDigest wiring', () => {
 
   test('stub returning 0 appends no skill-draft feed line', async () => {
     const { options, feedPushes } = makeOptions({
-      onAwayDigest: () => 0,
+      onAwayDigest: async () => 0,
     });
     const autonomy = createAutonomySurfacing(options);
     autonomy.announceAwayDigest();
@@ -108,7 +108,7 @@ describe('announceAwayDigest: onAwayDigest wiring', () => {
 
   test('throwing onAwayDigest does not propagate error (silent catch)', async () => {
     const { options, feedPushes } = makeOptions({
-      onAwayDigest: () => { throw new Error('proposer exploded'); },
+      onAwayDigest: async () => { throw new Error('proposer exploded'); },
     });
     const autonomy = createAutonomySurfacing(options);
     // Should not throw

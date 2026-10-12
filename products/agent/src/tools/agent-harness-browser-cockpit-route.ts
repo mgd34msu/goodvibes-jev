@@ -1,3 +1,8 @@
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureSetupReadSource } from './agent-harness-setup-read-source.ts';
+import { captureCatalogNativeFacts, captureCatalogProducerSources, withModelReadingSource } from './agent-harness-model-reading-source.ts';
+import { captureAsyncHarnessInput } from './agent-harness-async-input.ts';
+import { captureCatalogMethods, captureCatalogSnapshot, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { resolveRuntimeEndpointBinding } from '../cli/endpoints.ts';
 import { AGENT_WORKSPACE_CATEGORIES } from '../input/agent-workspace-categories.ts';
@@ -67,16 +72,8 @@ function confirmedCategoryRoute(categoryId: string, label: string): string {
   return `agent_harness mode:"open_ui_surface" surfaceId:"agent-workspace" categoryId:"${categoryId}" confirm:true explicitUserRequest:"Open the ${label} workspace."`;
 }
 
-function browserPwaSetupReceipts(context: CommandContext): readonly AgentSetupWizardDurableReceipt[] {
-  const artifactReceipts = (() => {
-    try {
-      const artifacts = context.platform?.artifactStore?.list?.(100) ?? [];
-      return buildSetupWizardDurableReceipts(artifacts);
-    } catch {
-      return [];
-    }
-  })();
-  return mergeSetupWizardDurableReceipts(artifactReceipts, setupWizardLiveDurableReceipts(context))
+function browserPwaSetupReceipts(artifacts: Parameters<typeof buildSetupWizardDurableReceipts>[0], live: readonly AgentSetupWizardDurableReceipt[]): readonly AgentSetupWizardDurableReceipt[] {
+  return mergeSetupWizardDurableReceipts(buildSetupWizardDurableReceipts(artifacts), live)
     .filter((receipt) => receipt.stepId === 'browser-pwa');
 }
 
@@ -256,6 +253,7 @@ function browserCockpitReceipts(
   enabled: boolean,
   includeDetails: boolean,
   browserPwa: BrowserPwaReadModelSnapshot,
+  setupReceipts: readonly AgentSetupWizardDurableReceipt[],
 ): Record<string, unknown> {
   const marker = (() => {
     try {
@@ -279,7 +277,6 @@ function browserCockpitReceipts(
     }
   })();
   const certifiedFirstRun = certifiedBrowserPwaFirstRunReceipts(browserPwa);
-  const setupReceipts = browserPwaSetupReceipts(context);
   const readySetupReceipt = readyBrowserPwaSetupReceipt(setupReceipts);
   const browserFirstRunStatus = certifiedFirstRun.length > 0
     ? 'certified-live-receipt'
@@ -327,7 +324,34 @@ function browserCockpitReceipts(
   };
 }
 
-export function connectedBrowserCockpitRoute(context: CommandContext, options: { readonly includeWorkspaceCoverage?: boolean } = {}): Record<string, unknown> {
+export async function connectedBrowserCockpitRoute(context: CommandContext, rawOptions: { readonly includeWorkspaceCoverage?: boolean } = {}, readingOptions: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const caller = captureAsyncHarnessInput(rawOptions, readingOptions), options = caller.args;
+  const native = captureCatalogNativeFacts(context, 'cockpit');
+  caller.options.retainCurrent(native.assertCurrent, 'agent.cockpit.native-source');
+  caller.retainSourceCurrent();
+  const setupCurrent = captureSetupReadSource(context);
+  caller.options.retainCurrent(setupCurrent, 'agent.cockpit.setup-native-source');
+  const setupSource = captureCatalogProducerSources(context, ["context.platform.readModels.setup.receipts", "context.platform.readModels.setup.setupReceipts", "context.platform.readModels.setup.receiptEvents", "context.platform.readModels.setup.eventStream", "context.platform.readModels.setup", "context.platform.readModels.setupWizard.receipts", "context.platform.readModels.setupWizard.durableReceipts", "context.platform.readModels.setupWizard.receiptEvents", "context.platform.readModels.setupWizard.eventStream", "context.platform.readModels.setupReceipts", "context.platform.readModels.setupReceiptEvents", "context.platform.readModels.setupReceiptEventStream", "context.platform.readModels.durableSetupReceipts", "context.platform.readModels.firstRun.receipts", "context.platform.readModels.browserPwa.firstRunReceipts", "context.platform.setupReceipts", "context.platform.setupReceiptEvents", "context.clients.operator.setupReceipts", "context.clients.operator.setupReceiptEvents"], ["getSnapshot", "snapshot", "list", "listReceipts", "listEvents", "listReceiptEvents", "readEvents"], true);
+  caller.options.retainCurrent(setupSource.assertCurrent, 'agent.cockpit.receipt-native-source');
+  const setupViews = ["context.platform.readModels.setup.receipts", "context.platform.readModels.setup.setupReceipts", "context.platform.readModels.setup.receiptEvents", "context.platform.readModels.setup.eventStream", "context.platform.readModels.setup", "context.platform.readModels.setupWizard.receipts", "context.platform.readModels.setupWizard.durableReceipts", "context.platform.readModels.setupWizard.receiptEvents", "context.platform.readModels.setupWizard.eventStream", "context.platform.readModels.setupReceipts", "context.platform.readModels.setupReceiptEvents", "context.platform.readModels.setupReceiptEventStream", "context.platform.readModels.durableSetupReceipts", "context.platform.readModels.firstRun.receipts", "context.platform.readModels.browserPwa.firstRunReceipts", "context.platform.setupReceipts", "context.platform.setupReceiptEvents", "context.clients.operator.setupReceipts", "context.clients.operator.setupReceiptEvents"].map(path => ({ path, source: setupSource.source(path) }));
+  const liveReceipts = setupWizardLiveDurableReceipts(context, setupViews);
+  caller.assertCurrent();
+  const store = context.platform.artifactStore;
+  const artifactMethods = store ? captureCatalogMethods(store, ['list']) : () => {};
+  artifactMethods();
+  const artifactList = store?.list;
+  artifactMethods();
+  if (store && typeof artifactList !== 'function') throw new ToolInputProjectionError('unavailable');
+  const readArtifacts = (): ReturnType<NonNullable<typeof artifactList>> => artifactList ? Reflect.apply(artifactList, store, [100]) : [];
+  const artifacts = readArtifacts();
+  artifactMethods(); caller.assertCurrent();
+  const artifactSource = captureCatalogSnapshot(artifacts);
+  caller.options.retainCurrent(() => {
+    artifactMethods(); artifactSource.assertCurrent(artifacts);
+    artifactSource.assertCurrent(readArtifacts()); artifactMethods();
+  }, 'agent.cockpit.artifact-native-source');
+  const setupReceipts = browserPwaSetupReceipts(artifacts, liveReceipts);
+  const producerSource = setupSource.evidence();
   const configManager = context.platform?.configManager;
   let enabled = false;
   let binding = { hostMode: 'local', configuredHost: '127.0.0.1', host: '127.0.0.1', port: 3423 };
@@ -342,12 +366,13 @@ export function connectedBrowserCockpitRoute(context: CommandContext, options: {
     }
   }
   const url = publicBaseUrl || `http://${browserConnectHost(binding.host)}:${binding.port}`;
-  const browserPwa = browserPwaReadModelSnapshot(context);
+  const browserPwa = await browserPwaReadModelSnapshot(context, caller.options);
+  caller.assertCurrent();
   const nativeCategoryRoutesPublished = enabled && AGENT_WORKSPACE_CATEGORIES.every((category) =>
     Boolean(certifiedBrowserPwaCategoryRouteForCategory(browserPwa, category.id))
   );
   const browserFirstRunCertified = certifiedBrowserPwaFirstRunReceipts(browserPwa).length > 0;
-  return {
+  const result = {
     enabled,
     readiness: enabled ? nativeCategoryRoutesPublished && browserFirstRunCertified ? 'browser-native-ready' : 'ready' : 'setup-needed',
     url,
@@ -359,7 +384,7 @@ export function connectedBrowserCockpitRoute(context: CommandContext, options: {
     },
     workspaceCoverage: browserCockpitWorkspaceCoverage(enabled, options.includeWorkspaceCoverage === true, browserPwa),
     mobile: browserCockpitMobileAffordances(enabled, options.includeWorkspaceCoverage === true, browserPwa, nativeCategoryRoutesPublished),
-    receipts: browserCockpitReceipts(context, enabled, options.includeWorkspaceCoverage === true, browserPwa),
+    receipts: browserCockpitReceipts(context, enabled, options.includeWorkspaceCoverage === true, browserPwa, setupReceipts),
     setupRoutes: {
       inspectEndpoint: 'host action:"service" endpointId:"web" includeParameters:true',
       servicePosture: 'host action:"services" includeParameters:true',
@@ -368,4 +393,8 @@ export function connectedBrowserCockpitRoute(context: CommandContext, options: {
     },
     policy: 'Opens the connected GoodVibes browser cockpit only after explicit user confirmation. Agent does not host a separate browser app or bypass connected-host setup.',
   };
+  caller.assertCurrent();
+  return withModelReadingSource({ result, producerSource, artifacts }, caller.options, async (captured, current) => {
+    current.assertCurrent?.(); return captured.result;
+  });
 }

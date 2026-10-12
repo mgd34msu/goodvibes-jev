@@ -1,3 +1,4 @@
+import { screeningAnswers } from './screening-answers.js';
 import { createProtectedSourceOwner } from '@goodvibes-jev/engine/sdk/platform/security';
 
 interface Proposal { readonly revision: string; readonly parts: readonly string[]; }
@@ -27,7 +28,7 @@ export function researchScreeningFixture(options: {
     const state = body.state as Record<string, unknown>;
     const answers = typeof state.parameter === 'string'
       ? { credential: { type: 'noul', noul: options.role?.(state.parameter) ?? 0 } }
-      : { complete: { type: 'noul', noul: options.complete ?? 1 }, precise: { type: 'noul', noul: 1 } };
+      : screeningAnswers(body, { complete: options.complete ?? 1, precise: 1 });
     return Response.json({ model: 'jev-1.13.0', answers, usage: { input_tokens: 1, output_tokens: 1 } });
   } });
   const lifetime = new AbortController();

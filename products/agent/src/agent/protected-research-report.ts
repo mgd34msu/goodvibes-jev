@@ -6,9 +6,15 @@ import { prepareAgentResearchReportInput, omittedReferencePattern } from './rese
 
 const WITHHELD = '[source URL withheld]';
 const owners = new WeakMap<ToolRegistry, ProtectedSourceOwner>();
+const reportOwners = new WeakMap<ToolRegistry, ProtectedSourceOwner>();
 /** Trusted composition only. This never creates, discovers or qualifies a local service. */
 export function bindAgentResearchSourceOwner(registry: ToolRegistry, owner: ProtectedSourceOwner): void { owners.set(registry, owner); }
 export function agentResearchSourceOwner(registry: ToolRegistry | undefined): ProtectedSourceOwner | undefined { return registry && owners.get(registry); }
+/** A research report grant never authorizes unrelated private-source readers. */
+export function bindAgentResearchReportSourceOwner(registry: ToolRegistry, owner: ProtectedSourceOwner): void { reportOwners.set(registry, owner); }
+export function agentResearchReportSourceOwner(registry: ToolRegistry | undefined): ProtectedSourceOwner | undefined {
+  return registry && (reportOwners.get(registry) ?? owners.get(registry));
+}
 
 export interface ResearchReportOperation { readonly signal?: AbortSignal; readonly assertCurrent?: () => void; }
 export interface PreparedResearchReport {
@@ -165,7 +171,7 @@ export async function prepareProtectedResearchReport(
       const projected: string[] = [];
       for (const source of handles) {
         assertCurrent();
-        const result = await owner.screen(source);
+        const result = await owner.screen(source, operation);
         assertCurrent();
         if (result.status !== 'settled') refuse();
         sourceReceipts.push(result.receipt); projected.push(...owner.project(result.receipt));

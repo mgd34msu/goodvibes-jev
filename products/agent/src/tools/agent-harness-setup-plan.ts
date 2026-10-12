@@ -3,6 +3,8 @@ import type { CliServicePosture } from '../cli/service-posture.ts';
 import type { OnboardingStep1CapabilityItem } from '../runtime/onboarding/index.ts';
 import { previewAgentWorkspaceTuiSettingsImport } from '../input/agent-workspace-settings.ts';
 import { browserControlPosture } from './agent-harness-browser-control.ts';
+import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureAsyncHarnessInput } from './agent-harness-async-input.ts';
 import { localModelCookbook } from './agent-harness-model-routing.ts';
 import { sudoExecutionPosture } from './agent-harness-sudo-posture.ts';
 import { agentHarnessVibeHealth } from './agent-harness-vibe-health.ts';
@@ -17,7 +19,11 @@ export async function buildSetupPlan(
   snapshot: Awaited<ReturnType<typeof collectSnapshot>>,
   capabilities: readonly OnboardingStep1CapabilityItem[],
   servicePosture: CliServicePosture | null,
+  options: CatalogRankingOptions = {},
 ): Promise<readonly SetupPlanItem[]> {
+  const caller = captureAsyncHarnessInput({ snapshot, capabilities, servicePosture }, options);
+  const browserControl = await browserControlPosture(context, context.extensions?.toolRegistry, caller.options);
+  caller.assertCurrent();
   const providerAccess = capabilityById(capabilities, 'provider-access');
   const agentKnowledge = capabilityById(capabilities, 'agent-knowledge');
   const localBehavior = capabilityById(capabilities, 'local-behavior');
@@ -25,13 +31,13 @@ export async function buildSetupPlan(
   const automationReview = capabilityById(capabilities, 'automation-review');
   const tuiDelegation = capabilityById(capabilities, 'tui-delegation');
   const setupMarkerDone = setupCompletionMarkerExists(context);
-  const browserControl = browserControlPosture(context);
   const settingsImport = previewAgentWorkspaceTuiSettingsImport(context);
   const settingsImportChanges = settingsImportChangeCount(settingsImport);
   const localModels = localModelCookbook(context, true);
   const localModelReadiness = localModelSetupReadiness(localModels);
   const serviceProbe = connectedHostServiceProbe(servicePosture);
-  const authPosture = await connectedHostAuthPosture(context, snapshot);
+  const authPosture = await connectedHostAuthPosture(context, snapshot, caller.options);
+  caller.assertCurrent();
   const smokePlan = installSmokePlan(providerAccess, serviceProbe, authPosture);
   const vibeHealth = agentHarnessVibeHealth(context);
   const sudoPosture = sudoExecutionPosture(context);
@@ -252,5 +258,6 @@ export async function buildSetupPlan(
     },
   ];
 
+  caller.assertCurrent();
   return plan.sort((left, right) => left.priority - right.priority);
 }

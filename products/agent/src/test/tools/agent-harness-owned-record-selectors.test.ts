@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { ToolRegistry, ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
-import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { executionVerification } from '@goodvibes-jev/engine/sdk/platform/gate';
 import type { CommandContext } from '../../input/command-registry.ts';
 import type { AgentExecutionRecord } from '../../runtime/execution-ledger.ts';
@@ -33,13 +33,40 @@ function fixture() {
   const context = { extensions: { toolRegistry: registry }, clients: {}, workspace: {}, platform: { config: {} }, ops: { agentManager: manager, executionLedger: ledger }, session: { runtime: { sessionId: 'owned-record-selector' } } } as unknown as CommandContext;
   return { context, registry, records, agents, manager, ledger };
 }
+const PRIVACY_BATTERIES = new Set(['engine.redaction.field-kind', 'engine.redaction.credential', 'engine.export.credential',
+  'engine.redaction.residual-credential', 'engine.redaction.profile-distinctive']);
+/** Explicit privacy contract readings for synthetic local records. No semantic matching answer. */
+function privacyOnlyReadings() {
+  const declaredSecrets = new Set(['token', 'password', 'credential', 'apiKey', 'api_key', 'accessToken', 'access_token',
+    'refreshToken', 'refresh_token', 'clientSecret', 'client_secret', 'privateKey', 'private_key', 'unlockPassphrase']);
+  return fakePort((name, question, state) => {
+    if (name === 'kind' && question.type === 'choice' && Object.hasOwn(question.criteria, 'other')
+      && state && typeof state === 'object' && !Array.isArray(state) && typeof state.field === 'string') {
+      return choiceAnswer(question, declaredSecrets.has(state.field) ? 'secret' : 'other', 0.999);
+    }
+    if (question.type === 'noul' && ['lineHasCredential', 'spanIsCredential', 'credentialRemains', 'identifying'].includes(name)) {
+      const hasDeclaredSpan = (name === 'lineHasCredential' || name === 'spanIsCredential') && state && typeof state === 'object'
+        && !Array.isArray(state) && Array.isArray(state.parts) && state.parts.some(part => part && typeof part === 'object'
+          && !Array.isArray(part) && part.kind === 'span' && typeof part.field === 'string' && declaredSecrets.has(part.field)
+          && (name === 'lineHasCredential' || part.reference === state.target));
+      return noulAnswer(hasDeclaredSpan ? 0.999 : 0.001);
+    }
+    throw new Error(`Semantic matching or unknown privacy contract is unavailable: ${name}`);
+  });
+}
+
 function readings(fits: Readonly<Record<string, number>>, verification: Readonly<Record<string, number>> = {}) {
-  return fakePort((name, _question, state) => {
+  const canonical = fakePort((name, _question, state) => {
     if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Error('Unexpected fixture state.');
     if (name === 'verification' && typeof state.id === 'string') return noulAnswer(verification[state.id] ?? 0.001);
     if (name === 'match' && state.candidate && typeof state.candidate === 'object' && !Array.isArray(state.candidate) && typeof state.candidate.name === 'string') return noulAnswer(fits[state.candidate.name] ?? 0.001);
     throw new Error(`Unexpected fixture reading: ${name}`);
   });
+  const privacy = privacyOnlyReadings();
+  const port: JudgmentPort = { ...canonical.port, ask(request) {
+    return PRIVACY_BATTERIES.has(request.context?.battery ?? '') ? privacy.port.ask(request) : canonical.port.ask(request);
+  } };
+  return { ...canonical, port, privacyRequests: privacy.requests };
 }
 const options = () => ({ sourceOwner: ordinaryResearchOwner() });
 let previous: ReturnType<typeof installJudgmentPort>;
@@ -141,7 +168,8 @@ describe('owned canonical route and record selectors', () => {
     const readModel = createStaticUiReadModel(source);
     Object.assign(f.context.platform, { readModels: { remote: createStaticUiReadModel({ acp: {} }), remoteRuntime: { captureOutcomes: readModel } } });
     const guards: Array<() => void> = [];
-    expect((await agentOrchestrationSummary(f.context, f.registry, {}, { retainCurrent: guard => guards.push(guard) })).total).toBeGreaterThan(0);
+    installJudgmentPort(privacyOnlyReadings().port);
+    expect((await agentOrchestrationSummary(f.context, f.registry, {}, { ...options(), retainCurrent: guard => guards.push(guard) })).total).toBeGreaterThan(0);
     guards.forEach(guard => guard()); const record = source.records[0]; if (!record) throw new Error('Missing actual source record'); record.summary = 'Changed actual hidden native snapshot';
     expect(() => guards.forEach(guard => guard())).toThrow(ToolInputProjectionError);
   });
@@ -206,7 +234,7 @@ describe('owned canonical route and record selectors', () => {
     });
     test(`${entry.kind} ranks the complete candidate set before display limits`, async () => {
       const f = fixture(), fake = readings({ [entry.chosen]: 0.999 }); installJudgmentPort(fake.port);
-      const all = await entry.summary(f, {});
+      const all = await entry.summary(f, {}, entry.kind === 'orchestration' ? options() : {});
       const result = await entry.summary(f, { query: 'mail', limit: 1 }, options());
       expect(result[entry.field]).toMatchObject([{ [entry.id]: entry.chosen, judgment: { reading: { verdict: 'yes' } } }]);
       expect(result.total).toBe(all.total);
@@ -229,11 +257,13 @@ describe('owned canonical route and record selectors', () => {
         expect((await entry.summary(f, { query: 'mail' }, options()))[entry.field]).toMatchObject([{ [entry.id]: entry.chosen, judgment: { reading: { outcome: 'confirm' } } }]);
       }
     });
-    test(`${entry.kind} preserves exact IDs and literal lists when a reader is unavailable`, async () => {
+    test(`${entry.kind} preserves exact IDs and literal lists when semantic matching is unavailable`, async () => {
       const f = fixture();
       await expect(entry.summary(f, { query: 'mail' }, options())).rejects.toBeInstanceOf(JudgmentPortMissingError);
-      expect((await entry.summary(f, {})).total).toBeGreaterThan(0);
-      expect((await entry.detail(f, { [entry.id]: entry.chosen })).status).toBe('found');
+      if (entry.kind === 'orchestration') installJudgmentPort(privacyOnlyReadings().port);
+      const literalOptions = entry.kind === 'orchestration' ? options() : {};
+      expect((await entry.summary(f, {}, literalOptions)).total).toBeGreaterThan(0);
+      expect((await entry.detail(f, { [entry.id]: entry.chosen }, literalOptions)).status).toBe('found');
       expect((await entry.detail(f, { [entry.id]: 'mail' })).status).toBe('missing_lookup');
     });
   }
@@ -446,4 +476,73 @@ describe('owned canonical route and record selectors', () => {
       expect(log.query({})).toHaveLength(0);
     } finally { Object.defineProperty(question, 'instructions', descriptor); }
   });
+});
+
+
+describe('orchestration literal output preserves complete original refusal parity', () => {
+  const branches = ['no-query', 'exact-id'] as const;
+  function run(branch: typeof branches[number], f: ReturnType<typeof fixture>, opts: CatalogRankingOptions) {
+    return branch === 'no-query' ? agentOrchestrationSummary(f.context, f.registry, { limit: 1 }, opts)
+      : describeAgentOrchestrationAgent(f.context, { agentId: 'opaque-worker', includeParameters: false }, opts);
+  }
+  for (const branch of branches) {
+    test(`${branch} refuses nonempty output without its trusted source owner`, async () => {
+      const f = fixture(), privacy = privacyOnlyReadings(); installJudgmentPort(privacy.port);
+      await expect(run(branch, f, {})).rejects.toBeInstanceOf(ToolInputProjectionError);
+      expect(privacy.requests).toHaveLength(0);
+    });
+
+    test(`${branch} privately redacts permitted generic credentials without semantic matching`, async () => {
+      const f = fixture(), privacy = privacyOnlyReadings(), secret = 'ORCHESTRATION_LITERAL_PRIVATE';
+      const selected = branch === 'no-query' ? f.agents[0] : f.agents.find(agent => agent.id === 'opaque-worker');
+      if (!selected) throw new Error('Original selected agent missing');
+      selected.task = `Ordinary task token=${secret}; still visible`;
+      const screening = researchScreeningFixture(); installJudgmentPort(privacy.port);
+      const result = await run(branch, f, { sourceOwner: screening.owner });
+      expect(result).toMatchObject(branch === 'no-query' ? { total: 2 } : { status: 'found' });
+      const wire = JSON.stringify({ result, privacy: privacy.requests, screening: screening.calls });
+      expect(wire).not.toContain(secret);
+      expect(selected.task).toContain(secret);
+      expect(privacy.requests.filter(request => request.context?.battery === 'engine.tools.registry-rank')).toHaveLength(0);
+      expect(screening.calls.length).toBeGreaterThan(0);
+    });
+
+    for (const placement of ['native-workspace-component', 'selected-agent-tail', 'unselected-agent-tail', 'native-remote-tail'] as const) {
+      for (const kind of ['card', 'issuer'] as const) {
+        test(`${branch} refuses complete ${kind} material in ${placement} before any wire`, async () => {
+          const f = fixture(), privacy = privacyOnlyReadings(), screening = researchScreeningFixture();
+          const material = kind === 'card' ? '4111' + '1111'.repeat(3) : 'ghp_' + 'A'.repeat(36);
+          const selectedId = branch === 'no-query' ? 'lexical-mail' : 'opaque-worker';
+          const selected = f.agents.find(agent => agent.id === selectedId), other = f.agents.find(agent => agent.id !== selectedId);
+          if (!selected || !other) throw new Error('Original agents missing');
+          if (placement === 'native-workspace-component') {
+            const source = { workspaceId: 'literal-native-workspace', runnerId: selected.id, status: 'ready', worktreePath: `/tmp/token=${material}/owned-worktree` };
+            Object.assign(f.context.platform, { readModels: { remoteRuntime: { workspaceIsolation: new Map([['native-map-key', source]]) } } });
+          } else if (placement === 'native-remote-tail') {
+            Object.assign(f.context.platform, { readModels: { remoteRuntime: { captureOutcomes: createStaticUiReadModel({ records: [nativeRecord(`${'ordinary '.repeat(100)}${material}`)] }) } } });
+          } else {
+            (placement === 'selected-agent-tail' ? selected : other).context = `${'ordinary '.repeat(100)}${material}`;
+          }
+          installJudgmentPort(privacy.port);
+          await expect(run(branch, f, { sourceOwner: screening.owner })).rejects.toBeInstanceOf(ToolInputProjectionError);
+          expect(privacy.requests).toHaveLength(0); expect(screening.calls).toHaveLength(0);
+          expect(selected.status).toBe('completed'); expect(other.status).toBe('completed');
+        });
+      }
+    }
+  }
+
+  for (const kind of ['card', 'issuer'] as const) {
+    test(`empty no-query agent output still refuses full original workspace ${kind} before any wire`, async () => {
+      const f = fixture(), privacy = privacyOnlyReadings(), screening = researchScreeningFixture();
+      f.agents.length = 0;
+      const material = kind === 'card' ? '4111' + '1111'.repeat(3) : 'ghp_' + 'A'.repeat(36);
+      const original = { workspaceId: 'empty-native-workspace', runnerId: 'absent-native-agent', status: 'ready', worktreePath: `/tmp/token=${material}/owned-worktree` };
+      Object.assign(f.context.platform, { readModels: { remoteRuntime: { workspaceIsolation: new Map([['native-map-key', original]]) } } });
+      installJudgmentPort(privacy.port);
+      await expect(agentOrchestrationSummary(f.context, f.registry, {}, { sourceOwner: screening.owner })).rejects.toBeInstanceOf(ToolInputProjectionError);
+      expect(privacy.requests).toHaveLength(0); expect(screening.calls).toHaveLength(0); expect(f.agents).toHaveLength(0);
+      expect(original.worktreePath).toContain(material);
+    });
+  }
 });

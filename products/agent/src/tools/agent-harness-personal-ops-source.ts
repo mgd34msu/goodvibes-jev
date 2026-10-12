@@ -1,4 +1,4 @@
-import { isDeepStrictEqual } from 'node:util';
+import { isDeepStrictEqual, types as nodeTypes } from 'node:util';
 import { redactStructuredDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { captureCatalogData, captureCatalogMethods, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
@@ -32,6 +32,190 @@ export function assertPersonalOpsDataCurrent(value: unknown, captured: unknown):
   if (!isDeepStrictEqual(capturePersonalOpsData(value), captured)) throw new ToolInputProjectionError('held');
 }
 
+const normalizationDescriptor = Object.getOwnPropertyDescriptor;
+const normalizationDescriptors = Object.getOwnPropertyDescriptors;
+const normalizationPrototype = Object.getPrototypeOf;
+const normalizationIsArray = Array.isArray;
+const normalizationIs = Object.is;
+const normalizationFreeze = Object.freeze;
+const normalizationKeys = Object.keys;
+const normalizationNumber = Number;
+const normalizationString = String;
+const normalizationIsSafeInteger = Number.isSafeInteger;
+const normalizationObjectPrototype = Object.prototype;
+
+// Guard only operations consumed by capture and normalization. Unrelated
+// additions remain supported. Retain inherited lookup paths as well as own
+// descriptors, so an added shadowing accessor is refused without calling it.
+const normalizationRoots: readonly { readonly subject: object; readonly keys: readonly PropertyKey[] }[] = [
+  { subject: globalThis, keys: ['Object', 'Array', 'Number', 'String', 'Map', 'Set', 'WeakMap'] },
+  { subject: Object, keys: ['getOwnPropertyDescriptor', 'getOwnPropertyDescriptors', 'getOwnPropertySymbols', 'getPrototypeOf',
+    'hasOwn', 'values', 'entries', 'create', 'defineProperty', 'freeze', 'keys', 'is'] },
+  { subject: Array, keys: ['isArray', Symbol.species] },
+  { subject: Array.prototype, keys: ['map', 'some', Symbol.iterator, 'constructor', Symbol.toStringTag] },
+  { subject: normalizationPrototype([][Symbol.iterator]()), keys: ['next'] },
+  { subject: Number, keys: ['isFinite', 'isInteger', 'isSafeInteger'] },
+  { subject: Map.prototype, keys: ['get', 'set', 'size'] },
+  { subject: Set.prototype, keys: ['has', 'add', 'delete'] },
+  { subject: WeakMap.prototype, keys: ['get', 'set'] },
+  { subject: nodeTypes, keys: ['isProxy'] },
+];
+const normalizationOperations = normalizationRoots.map(({ subject, keys }) => {
+  const chain: object[] = [];
+  let holder: object | null = subject;
+  while (holder !== null) { chain.push(holder); holder = normalizationPrototype(holder); }
+  const slots = keys.map(key => {
+    for (let index = 0; index < chain.length; index++) {
+      const owner = chain[index];
+      if (!owner) throw new ToolInputProjectionError('invalid');
+      const descriptor = normalizationDescriptor(owner, key);
+      if (descriptor) return { key, owner, descriptor };
+    }
+    return { key, owner: undefined, descriptor: undefined };
+  });
+  return { chain, slots };
+});
+const normalizationDescriptorFields = ['value', 'get', 'set', 'enumerable', 'configurable', 'writable'];
+function assertNormalizationOperations(problem: 'invalid' | 'held'): void {
+  // Native descriptor records and definition literals inherit these absent
+  // fields. Check absence first, before reading any optional descriptor field.
+  if (normalizationPrototype(normalizationObjectPrototype) !== null) throw new ToolInputProjectionError(problem);
+  for (let index = 0; index < normalizationDescriptorFields.length; index++) {
+    const key = normalizationDescriptorFields[index];
+    if (key === undefined || normalizationDescriptor(normalizationObjectPrototype, key) !== undefined) throw new ToolInputProjectionError(problem);
+  }
+  for (let index = 0; index < normalizationOperations.length; index++) {
+    const operation = normalizationOperations[index];
+    if (!operation) throw new ToolInputProjectionError(problem);
+    for (let chainIndex = 0; chainIndex < operation.chain.length; chainIndex++) {
+      const holder = operation.chain[chainIndex];
+      if (!holder || normalizationPrototype(holder) !== (operation.chain[chainIndex + 1] ?? null)) throw new ToolInputProjectionError(problem);
+    }
+    for (let slotIndex = 0; slotIndex < operation.slots.length; slotIndex++) {
+      const slot = operation.slots[slotIndex];
+      if (!slot) throw new ToolInputProjectionError(problem);
+      let owner: object | undefined, current: PropertyDescriptor | undefined;
+      for (let chainIndex = 0; chainIndex < operation.chain.length; chainIndex++) {
+        const holder = operation.chain[chainIndex];
+        if (!holder) throw new ToolInputProjectionError(problem);
+        current = normalizationDescriptor(holder, slot.key);
+        if (current) { owner = holder; break; }
+      }
+      const before = slot.descriptor;
+      if (owner !== slot.owner) throw new ToolInputProjectionError(problem);
+      if (!before || !current) {
+        if (before !== current) throw new ToolInputProjectionError(problem);
+        continue;
+      }
+      if (!normalizationIs(before.value, current.value) || before.get !== current.get || before.set !== current.set
+        || before.enumerable !== current.enumerable || before.configurable !== current.configurable || before.writable !== current.writable)
+        throw new ToolInputProjectionError(problem);
+    }
+  }
+}
+
+type PersonalOpsComparison = { readonly kind: 'value'; readonly value: unknown } | {
+  readonly kind: 'object'; readonly array: boolean; readonly length: number;
+  readonly slots: ReadonlyMap<string, PersonalOpsComparison>;
+};
+
+/** Own a normalized baseline while keeping every fresh raw observation. The
+ * public arbitrary-baseline assertion above deliberately keeps its old path. */
+export function capturePersonalOpsSnapshot(value: unknown): {
+  readonly captured: unknown;
+  readonly assertCurrent: (current: unknown) => void;
+} {
+  if (value === null || typeof value !== 'object') {
+    const captured = capturePersonalOpsData(value);
+    return normalizationFreeze({ captured, assertCurrent(current: unknown) {
+      // Scalars keep the original complete normalization. A changed-to-object
+      // input still retains the paired reader's operation-retirement boundary.
+      const object = current !== null && typeof current === 'object';
+      if (object) assertNormalizationOperations('held');
+      assertPersonalOpsDataCurrent(current, captured);
+      if (object) assertNormalizationOperations('held');
+    } });
+  }
+  assertNormalizationOperations('invalid');
+  const captured = capturePersonalOpsData(value);
+  assertNormalizationOperations('invalid');
+  const compile = (entry: unknown): PersonalOpsComparison => {
+    if (entry === null || typeof entry !== 'object') return normalizationFreeze({ kind: 'value', value: entry });
+    const descriptors = normalizationDescriptors(entry), array = normalizationIsArray(entry);
+    const slots = new Map<string, PersonalOpsComparison>();
+    const keys = normalizationKeys(descriptors);
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index];
+      if (key === undefined || array && key === 'length') continue;
+      const descriptor = descriptors[key];
+      if (!descriptor || !('value' in descriptor)) throw new ToolInputProjectionError('invalid');
+      slots.set(key, compile(descriptor.value));
+    }
+    // Only the newly constructed normalization tree is frozen. Borrowed input
+    // and public protection results retain their original mutability.
+    normalizationFreeze(entry);
+    const length: unknown = array ? descriptors.length?.value : 0;
+    if (typeof length !== 'number') throw new ToolInputProjectionError('invalid');
+    return normalizationFreeze({ kind: 'object', array, length, slots });
+  };
+  const original = compile(captured);
+  const assertCurrent = (current: unknown): void => {
+    assertNormalizationOperations('held');
+    // Keep the complete first pass and its invalid precedence, alias grammar,
+    // depth, node, character and array-slot limits exactly as before.
+    const fresh = captureCatalogData(current);
+    assertNormalizationOperations('held');
+    let nodes = 0, characters = 0, equal = true;
+    const invalid = (): never => { throw new ToolInputProjectionError('invalid'); };
+    const compare = (entry: unknown, expected: PersonalOpsComparison | undefined): void => {
+      if (++nodes > 20_000) return invalid();
+      if (typeof entry === 'string') { characters += entry.length; if (characters > 1_000_000) return invalid(); }
+      if (entry === null || typeof entry !== 'object') {
+        if (!expected || expected.kind !== 'value' || !normalizationIs(entry, expected.value)) equal = false;
+        return;
+      }
+      const descriptors = normalizationDescriptors(entry), keys = normalizationKeys(descriptors), array = normalizationIsArray(entry);
+      const expectedObject = expected?.kind === 'object' ? expected : undefined;
+      if (!expectedObject || expectedObject.array !== array) equal = false;
+      if (array) {
+        const length: unknown = descriptors.length?.value;
+        if (typeof length !== 'number' || keys.length !== length + 1) return invalid();
+        for (let index = 0; index < keys.length; index++) {
+          const key = keys[index];
+          if (key === undefined) return invalid();
+          if (key !== 'length' && (!normalizationIsSafeInteger(normalizationNumber(key))
+            || normalizationString(normalizationNumber(key)) !== key || normalizationNumber(key) < 0 || normalizationNumber(key) >= length)) return invalid();
+        }
+        if (expectedObject?.length !== length) equal = false;
+        for (let index = 0; index < length; index++) {
+          const key = normalizationString(index), descriptor = descriptors[key];
+          if (!descriptor || !('value' in descriptor)) return invalid();
+          // Array indices carry no extra phase-two key-text charge.
+          compare(descriptor.value, expectedObject?.array ? expectedObject.slots.get(key) : undefined);
+        }
+        return;
+      }
+      if (!expectedObject || expectedObject.slots.size !== keys.length) equal = false;
+      for (let index = 0; index < keys.length; index++) {
+        const key = keys[index];
+        if (key === undefined) return invalid();
+        characters += key.length; if (characters > 1_000_000) return invalid();
+        const descriptor = descriptors[key];
+        if (!descriptor || !('value' in descriptor)) return invalid();
+        // Every hidden field becomes normalized enumerable meaning. Object
+        // insertion order and original descriptor flags do not decide equality.
+        compare(descriptor.value, expectedObject && !expectedObject.array ? expectedObject.slots.get(key) : undefined);
+      }
+    };
+    // Never stop on an unequal early field: all expanded aliases and malformed
+    // tails must finish admission before a mismatch can become held.
+    compare(fresh, original);
+    assertNormalizationOperations('held');
+    if (!equal) throw new ToolInputProjectionError('held');
+  };
+  return normalizationFreeze({ captured, assertCurrent });
+}
+
 /** JSON normalization follows serialization grammar after descriptor-safe capture. */
 export function personalOpsJson(value: unknown): JsonValue {
   const captured = capturePersonalOpsData(value);
@@ -58,14 +242,14 @@ export function personalOpsEntry(value: unknown): EntryType {
 
 /** Native producer facts remain local until the complete DTO is protected. */
 export async function protectPersonalOpsData(value: unknown, options: CatalogRankingOptions = {}): Promise<unknown> {
-  const captured = capturePersonalOpsData(value);
+  const source = capturePersonalOpsSnapshot(value), captured = source.captured;
   const optionsCurrent = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'retainCurrent']);
   const signal = options.signal, callerCurrent = options.assertCurrent, retainCurrent = options.retainCurrent;
   const assertSource = () => {
     optionsCurrent();
     if (options.signal !== signal || options.assertCurrent !== callerCurrent || options.retainCurrent !== retainCurrent) throw new ToolInputProjectionError('held');
     signal?.throwIfAborted();
-    assertPersonalOpsDataCurrent(value, captured);
+    source.assertCurrent(value);
   };
   const assertCurrent = () => {
     assertSource();

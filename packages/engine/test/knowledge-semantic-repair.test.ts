@@ -1,3 +1,5 @@
+import { extractionValueFixtureFor } from './_helpers/knowledge-extraction-value-readings.js';
+import { gapAssessmentFixture, intrinsicAssessmentFixture, answerGapAssessmentFixtures, semanticRepairAssessmentCoverage } from './_helpers/knowledge-self-improvement-readings.js';
 import { upsertObservedKnowledgeNode } from '../sdk/src/platform/knowledge/store-node-observation.js';
 import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
 import { seedKnowledgeResearchTask, useSemanticActivationFixtures } from './_helpers/knowledge-semantic-activation-fixtures.js';
@@ -340,6 +342,7 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
       },
       metadata: { knowledgeSpaceId: spaceId },
     });
+    answerReadings.addExtractionValue(...extractionValueFixtureFor(official, store.getExtractionBySourceId(official.id), 0.99));
     const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-tv-promote',
@@ -350,6 +353,8 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
+    answerReadings.addAssessments(answerGapAssessmentFixtures(['what features does the LG 86NANO90UNA have?'], [device], 0.99));
     const passport = await upsertObservedKnowledgeNode(store, {
       kind: 'ha_device_passport',
       slug: 'lg-tv-passport',
@@ -366,6 +371,7 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
       confidence: 80,
       metadata: { knowledgeSpaceId: spaceId },
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(integration, [{ facts: [], probability: 0.01 }])]);
     const gap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'official-source-gap',
@@ -381,6 +387,7 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
         linkedObjectIds: [passport.id, integration.id, device.id],
       },
     });
+    answerReadings.addAssessments([gapAssessmentFixture(gap, [device], 0.99, 0.99, semanticRepairAssessmentCoverage, 0.01)]);
     const semantic = new KnowledgeSemanticService(store, {
       gapRepairer: async () => ({
         searched: true,
@@ -444,6 +451,8 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
+    answerReadings.addAssessments(answerGapAssessmentFixtures(['What refresh rate and HDR features does the TV have?'], [device], 0.01));
     const generated = await store.upsertSource({
       connectorId: 'homeassistant',
       sourceType: 'document',
@@ -551,6 +560,8 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
+    answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
+    answerReadings.addAssessments(answerGapAssessmentFixtures(['What refresh rate and HDR features does the TV have?'], [device], 0.01));
     const source = await store.upsertSource({
       connectorId: 'semantic-gap-repair',
       sourceType: 'url',

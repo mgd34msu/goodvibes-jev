@@ -479,12 +479,12 @@ type SessionPickerRouteState = {
     active: boolean;
     query: string;
     setQuery: (query: string) => void;
-    loadSelected: (conversationManager: CommandContext['session']['conversationManager']) => void;
+    resumeSelected: (resumeSession: NonNullable<CommandContext['resumeSession']>, dismiss: () => void) => Promise<void>;
     moveUp: () => void;
     moveDown: () => void;
     deleteSelected: () => void;
   };
-  commandContext?: CommandContext;
+  commandContext?: Pick<CommandContext, 'resumeSession'>;
   requestRender: () => void;
   handleEscape: () => void;
 };
@@ -504,9 +504,9 @@ export function handleSessionPickerToken(state: SessionPickerRouteState, token: 
       return true;
     }
     if (token.logicalName === 'enter') {
-      const conversationManager = state.commandContext?.session.conversationManager;
-      if (conversationManager) {
-        modal.loadSelected(conversationManager);
+      const resumeSession = state.commandContext?.resumeSession;
+      if (resumeSession) {
+        void modal.resumeSelected(resumeSession, state.handleEscape).then(state.requestRender, state.requestRender);
       }
     } else if (token.logicalName === 'up') modal.moveUp();
     else if (token.logicalName === 'down') modal.moveDown();

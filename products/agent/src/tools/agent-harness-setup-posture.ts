@@ -1,3 +1,6 @@
+import { captureSetupReadSource } from './agent-harness-setup-read-source.ts';
+import { selectHarnessCatalog } from './agent-harness-catalog-selection.ts';
+import { captureStatefulCatalogRequest, rankStatefulCatalog } from './agent-harness-stateful-catalog-source.ts';
 import { readAgentHostPairing } from '../runtime/connected-host-pairing-store.ts';
 import { resolveConnectedHostBaseUrl } from '../config/connected-host-dial.ts';
 import { join } from 'node:path';
@@ -14,17 +17,28 @@ import { captureHarnessLocalEffect } from './agent-harness-local-effect.ts';
 import type { SetupSmokeNativeEvidence } from './agent-setup-smoke-reference.ts';
 import { DEFAULT_AGENT_SETUP_WIZARD_CLEAR_CHECKPOINT_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_INSPECT_CHECKPOINT_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_MARK_CHECKPOINT_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_REVIEW_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_RERUN_SMOKE_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_SAVE_SMOKE_ROUTE } from '../agent/setup-wizard.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
+import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureAsyncHarnessInput } from './agent-harness-async-input.ts';
 import type { AgentHarnessSetupArgs, SetupResolution } from './agent-harness-setup-posture-types.ts';
 import { buildSetupPlan } from './agent-harness-setup-plan.ts';
 import { buildSetupWizard, describeInstallSmokeCheck, installSmokeNextAction, installSmokeRunResult, installSmokeRunSummary, latestSetupSmokeEvidence, saveSetupSmokeArtifact, setupCompletionMarkerExists, setupSmokeEvidenceHistory } from './agent-harness-setup-smoke.ts';
-import { confirmedRepairCandidates, describeCandidate, describeHandoffCard, describeItem, describePlanItem, describeRepairCard, describeRepairDecision, describeServiceLifecycleDecision, nextSetupHandoffSummaries, planSearchText, planSummary, primarySetupRepairDecision, setupRepairTarget } from './agent-harness-setup-describe.ts';
+import { confirmedRepairCandidates, describeCandidate, describeHandoffCard, describeItem, describePlanItem, describeRepairCard, describeRepairDecision, describeServiceLifecycleDecision, nextSetupHandoffSummaries, planSummary, primarySetupRepairDecision, setupRepairTarget } from './agent-harness-setup-describe.ts';
 import { setupHandoffsForItem } from './agent-harness-setup-handoffs.ts';
-import { collectServicePosture, collectSnapshot, itemSearchText, lookupFromArgs, quoteRouteValue, readLimit, readString, safeFileMode, safeIso, summarizeLocalBehavior } from './agent-harness-setup-posture-utils.ts';
+import { collectServicePosture, collectSnapshot, lookupFromArgs, quoteRouteValue, readLimit, readString, safeFileMode, safeIso, summarizeLocalBehavior } from './agent-harness-setup-posture-utils.ts';
 
-export async function setupPostureCatalogStatus(context: CommandContext): Promise<Record<string, unknown>> {
-  const snapshot = await collectSnapshot(context);
-  const servicePosture = await collectServicePosture(context);
-  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture);
+function captureSetupCaller<T>(context: CommandContext, args: T, options: CatalogRankingOptions) {
+  const request = captureStatefulCatalogRequest(context, args, options, [], () => [captureSetupReadSource(context)]);
+  return captureAsyncHarnessInput(args, request.options);
+}
+
+export async function setupPostureCatalogStatus(context: CommandContext, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const caller = captureSetupCaller(context, {}, options);
+  const snapshot = await collectSnapshot(context, caller.options);
+  caller.assertCurrent();
+  const servicePosture = await collectServicePosture(context, { signal: caller.options.signal, assertCurrent: caller.assertCurrent });
+  caller.assertCurrent();
+  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture, caller.options);
+  caller.assertCurrent();
   const setupSmokeEvidence = latestSetupSmokeEvidence(context);
   const setupSmokeHistory = setupSmokeEvidenceHistory(context);
   const setupWizard = buildSetupWizard(plan, context);
@@ -45,13 +59,18 @@ export async function setupPostureCatalogStatus(context: CommandContext): Promis
   };
 }
 
-export async function setupRepairSummary(context: CommandContext, args: AgentHarnessSetupArgs): Promise<Record<string, unknown>> {
-  const snapshot = await collectSnapshot(context);
-  const servicePosture = await collectServicePosture(context);
-  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture);
+export async function setupRepairSummary(context: CommandContext, rawArgs: AgentHarnessSetupArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const caller = captureSetupCaller(context, rawArgs, options), args = caller.args;
+  const snapshot = await collectSnapshot(context, caller.options);
+  caller.assertCurrent();
+  const servicePosture = await collectServicePosture(context, { signal: caller.options.signal, assertCurrent: caller.assertCurrent });
+  caller.assertCurrent();
+  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture, caller.options);
+  caller.assertCurrent();
   const setupWizard = buildSetupWizard(plan, context);
   const includeParameters = args.includeParameters === true;
-  const target = setupRepairTarget(plan, setupWizard, args);
+  const target = await setupRepairTarget(plan, setupWizard, args, caller.options);
+  caller.assertCurrent();
   if ('error' in target) return target.error;
 
   const item = target.item;
@@ -103,22 +122,26 @@ export async function setupRepairSummary(context: CommandContext, args: AgentHar
   };
 }
 
-export async function setupPostureSummary(context: CommandContext, args: AgentHarnessSetupArgs): Promise<Record<string, unknown>> {
-  const snapshot = await collectSnapshot(context);
-  const servicePosture = await collectServicePosture(context);
-  const query = readString(args.query).toLowerCase();
+export async function setupPostureSummary(context: CommandContext, rawArgs: AgentHarnessSetupArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const caller = captureSetupCaller(context, rawArgs, options), args = caller.args;
+  const snapshot = await collectSnapshot(context, caller.options);
+  caller.assertCurrent();
+  const servicePosture = await collectServicePosture(context, { signal: caller.options.signal, assertCurrent: caller.assertCurrent });
+  caller.assertCurrent();
+  const query = readString(args.query);
   const includeParameters = args.includeParameters === true;
   const all = deriveStep1Capabilities(snapshot);
-  const plan = await buildSetupPlan(context, snapshot, all, servicePosture);
+  const plan = await buildSetupPlan(context, snapshot, all, servicePosture, caller.options);
+  caller.assertCurrent();
   const setupSmokeEvidence = latestSetupSmokeEvidence(context);
   const setupSmokeHistory = setupSmokeEvidenceHistory(context);
   const setupWizard = buildSetupWizard(plan, context);
-  const filtered = all
-    .filter((item) => !query || itemSearchText(item).includes(query))
-    .slice(0, readLimit(args.limit, 100));
-  const filteredPlan = plan
-    .filter((item) => !query || planSearchText(item).includes(query))
-    .slice(0, readLimit(args.limit, 100));
+  const ranked = query ? await rankStatefulCatalog(all, query, item => ({ id: item.id, description: item.label, evidence: { item, snapshot, servicePosture, setupWizard, capabilities: all, plan, args } }), 'agent.setup.capabilities', caller.options) : all;
+  caller.assertCurrent();
+  const rankedPlan = query ? await rankStatefulCatalog(plan, query, item => ({ id: item.id, description: item.label, evidence: { item, snapshot, servicePosture, setupWizard, capabilities: all, plan, args } }), 'agent.setup.plan', caller.options) : plan;
+  caller.assertCurrent();
+  const filtered = ranked.slice(0, readLimit(args.limit, 100));
+  const filteredPlan = rankedPlan.slice(0, readLimit(args.limit, 100));
   return {
     capturedAt: new Date(snapshot.capturedAt).toISOString(),
     setupMarker: {
@@ -174,10 +197,14 @@ export async function setupPostureSummary(context: CommandContext, args: AgentHa
   };
 }
 
-export async function setupCheckpointSummary(context: CommandContext): Promise<Record<string, unknown>> {
-  const snapshot = await collectSnapshot(context);
-  const servicePosture = await collectServicePosture(context);
-  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture);
+export async function setupCheckpointSummary(context: CommandContext, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  const caller = captureSetupCaller(context, {}, options);
+  const snapshot = await collectSnapshot(context, caller.options);
+  caller.assertCurrent();
+  const servicePosture = await collectServicePosture(context, { signal: caller.options.signal, assertCurrent: caller.assertCurrent });
+  caller.assertCurrent();
+  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture, caller.options);
+  caller.assertCurrent();
   const setupWizard = buildSetupWizard(plan, context);
   return {
     mode: 'setup_checkpoint',
@@ -204,9 +231,12 @@ export async function setupCheckpointSummary(context: CommandContext): Promise<R
 export async function markSetupCheckpoint(context: CommandContext, args: Record<string, unknown>, options?: Parameters<Tool['execute']>[1]): Promise<Record<string, unknown>> {
   const assertCurrent = captureHarnessLocalEffect(context, args, options, paths => [setupWizardCheckpointPath(paths)]);
   const platform = context.platform, config = platform.configManager, incarnation = config.getConfigurationIncarnation();
-  const snapshot = await collectSnapshot(context);
-  const servicePosture = await collectServicePosture(context);
-  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture);
+  const snapshot = await collectSnapshot(context, { signal: options?.signal, assertCurrent });
+  assertCurrent();
+  const servicePosture = await collectServicePosture(context, { signal: options?.signal, assertCurrent });
+  assertCurrent();
+  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture, { signal: options?.signal, assertCurrent });
+  assertCurrent();
   const setupWizard = buildSetupWizard(plan, context);
   const requestedStepId = readString(args.setupItemId);
   const step = requestedStepId
@@ -451,11 +481,11 @@ export async function runSetupInstallSmoke(context: CommandContext, args: AgentH
     };
   }
 
-  const snapshot = await collectSnapshot(context);
+  const snapshot = await collectSnapshot(context, { signal, assertCurrent: ownership.assertCurrent });
   ownership.assertCurrent();
   const servicePosture = await collectServicePosture(context, { signal, assertCurrent: ownership.assertCurrent });
   ownership.assertCurrent();
-  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture);
+  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture, { signal, assertCurrent: ownership.assertCurrent });
   ownership.assertCurrent();
   const installSmoke = plan.find((item) => item.id === 'install-smoke');
   const smokePlan = installSmoke?.installSmokePlan;
@@ -516,7 +546,8 @@ export async function runSetupInstallSmoke(context: CommandContext, args: AgentH
   };
 }
 
-export async function describeHarnessSetupItem(context: CommandContext, args: AgentHarnessSetupArgs): Promise<SetupResolution> {
+export async function describeHarnessSetupItem(context: CommandContext, rawArgs: AgentHarnessSetupArgs, options: CatalogRankingOptions = {}): Promise<SetupResolution> {
+  const caller = captureSetupCaller(context, rawArgs, options), args = caller.args;
   const lookup = lookupFromArgs(args);
   if (!lookup) {
     return {
@@ -524,10 +555,13 @@ export async function describeHarnessSetupItem(context: CommandContext, args: Ag
       usage: 'setup_item requires setupItemId, target, or query. Use mode:"setup_posture" to inspect setup item ids.',
     };
   }
-  const snapshot = await collectSnapshot(context);
-  const servicePosture = await collectServicePosture(context);
+  const snapshot = await collectSnapshot(context, caller.options);
+  caller.assertCurrent();
+  const servicePosture = await collectServicePosture(context, { signal: caller.options.signal, assertCurrent: caller.assertCurrent });
+  caller.assertCurrent();
   const items = deriveStep1Capabilities(snapshot);
-  const plan = await buildSetupPlan(context, snapshot, items, servicePosture);
+  const plan = await buildSetupPlan(context, snapshot, items, servicePosture, caller.options);
+  caller.assertCurrent();
   const normalized = lookup.input.toLowerCase();
   const exact = items.find((item) => item.id === lookup.input);
   if (exact) return { status: 'found', item: describeItem(exact, snapshot, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'id' } }) };
@@ -537,20 +571,14 @@ export async function describeHarnessSetupItem(context: CommandContext, args: Ag
   if (insensitive) return { status: 'found', item: describeItem(insensitive, snapshot, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'case-insensitive-id' } }) };
   const insensitivePlan = plan.find((item) => item.id.toLowerCase() === normalized);
   if (insensitivePlan) return { status: 'found', item: { ...describePlanItem(insensitivePlan, true), lookup: { ...lookup, resolvedBy: 'case-insensitive-plan-id' } } };
-  const searched = items.filter((item) => itemSearchText(item).includes(normalized));
-  const searchedPlan = plan.filter((item) => planSearchText(item).includes(normalized));
-  if (searched.length === 1 && searchedPlan.length === 0) return { status: 'found', item: describeItem(searched[0]!, snapshot, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'search' } }) };
-  if (searched.length === 0 && searchedPlan.length === 1) return { status: 'found', item: { ...describePlanItem(searchedPlan[0]!, true), lookup: { ...lookup, resolvedBy: 'plan-search' } } };
-  if (searched.length > 0 || searchedPlan.length > 0) {
-    return {
-      status: 'ambiguous',
-      input: lookup.input,
-      candidates: [
-        ...searched.map(describeCandidate),
-        ...searchedPlan.map((item) => describePlanItem(item, false)),
-      ].slice(0, 8),
-    };
-  }
+  const entries = [
+    ...items.map(item => ({ kind: 'capability' as const, item })),
+    ...plan.map(item => ({ kind: 'plan' as const, item })),
+  ];
+  const selected = await selectHarnessCatalog(entries, lookup.input, entry => ({ id: `${entry.kind}:${entry.item.id}`, description: entry.item.label, evidence: { entry, snapshot, servicePosture, items, plan, args } }), caller.options, 'agent.setup.item');
+  caller.assertCurrent();
+  if (selected?.kind === 'capability') return { status: 'found', item: describeItem(selected.item, snapshot, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'search' } }) };
+  if (selected?.kind === 'plan') return { status: 'found', item: { ...describePlanItem(selected.item, true), lookup: { ...lookup, resolvedBy: 'plan-search' } } };
   return {
     status: 'missing_lookup',
     usage: `Unknown setup item ${lookup.input}. Use mode:"setup_posture" to inspect setup item ids.`,

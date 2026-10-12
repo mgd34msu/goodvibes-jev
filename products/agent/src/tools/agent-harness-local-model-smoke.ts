@@ -2,9 +2,9 @@ import type { CommandContext } from '../input/command-registry.ts';
 import type { AgentHarnessModelRoutingArgs, LocalModelServerDefaultEndpoint, LocalModelServerEndpoint, LocalModelSmokeTarget } from './agent-harness-model-routing-types.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 import { readLimit, readRecord, readString } from './agent-harness-model-routing-utils.ts';
-import { collectLocalServerEndpointCandidates, describeLocalServerEndpoint, isPrivateOrLocalUrl, localEndpointSmokeRoute, localModelServerDefaults, parseUrlCandidate } from './agent-harness-local-model-endpoints.ts';
-import { captureCatalogData, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
-import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureLocalModelRegistry, readLocalServerEndpointCandidates, describeLocalServerEndpoint, isPrivateOrLocalUrl, localEndpointSmokeRoute, localModelServerDefaults, parseUrlCandidate } from './agent-harness-local-model-endpoints.ts';
+import { captureCatalogData, captureCatalogMethods, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { assertProjectionCurrent, ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 
 function localModelSmokeTargetFromEndpoint(endpoint: LocalModelServerEndpoint): LocalModelSmokeTarget {
   return {
@@ -84,7 +84,7 @@ async function localModelSmokeTargets(
   args: AgentHarnessModelRoutingArgs,
   options: CatalogRankingOptions,
 ): Promise<LocalModelSmokeSelection | LocalModelSmokeUnresolved> {
-  const endpoints = collectLocalServerEndpointCandidates(context)
+  const endpoints = (await readLocalServerEndpointCandidates(context, options))
     .map((endpoint) => localModelSmokeTargetFromEndpoint(describeLocalServerEndpoint(endpoint, true)));
   const defaults = localModelServerDefaults().map(localModelSmokeTargetFromDefault);
   const lookup = localModelSmokeLookup(args);
@@ -266,18 +266,23 @@ async function smokeOneLocalModelTarget(target: LocalModelSmokeTarget, timeoutMs
 }
 
 export async function runLocalModelServerSmoke(context: CommandContext, args: AgentHarnessModelRoutingArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
-  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const optionsCurrent = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'retainCurrent']);
+  const signal = options.signal, callerCurrent = options.assertCurrent;
+  const assertCaller = () => {
+    optionsCurrent(); signal?.throwIfAborted();
+    assertProjectionCurrent(callerCurrent);
+    optionsCurrent(); signal?.throwIfAborted();
+  };
+  assertCaller();
   const source = JSON.stringify(captureCatalogData(args));
-  const endpointSnapshot = () => JSON.stringify(captureCatalogData(collectLocalServerEndpointCandidates(context).map(endpoint => ({
-    ...endpoint, sources: [...endpoint.sources], sourceDetails: [...endpoint.sourceDetails], modelRoutes: [...endpoint.modelRoutes], notes: [...endpoint.notes],
-  }))));
-  const endpoints = endpointSnapshot();
+  const endpoints = captureLocalModelRegistry(context);
   const assertSourceCurrent = () => {
-    options.signal?.throwIfAborted();
-    if (JSON.stringify(captureCatalogData(args)) !== source || endpointSnapshot() !== endpoints) throw new ToolInputProjectionError('stale');
+    optionsCurrent(); signal?.throwIfAborted();
+    if (JSON.stringify(captureCatalogData(args)) !== source) throw new ToolInputProjectionError('stale');
+    endpoints.assertCurrent();
   };
   options.retainCurrent?.(assertSourceCurrent, 'agent.local-model-smoke.endpoint.sources');
-  const assertCurrent = () => { options.assertCurrent?.(); assertSourceCurrent(); };
+  const assertCurrent = () => { assertSourceCurrent(); assertCaller(); assertSourceCurrent(); };
   const reading = { ...options, assertCurrent };
   const selection = await localModelSmokeTargets(context, args, reading);
   assertCurrent();

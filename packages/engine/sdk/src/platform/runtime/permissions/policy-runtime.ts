@@ -1,3 +1,5 @@
+import { assertSecurityReadSource, captureSecurityReadBindings, retainSecurityReadData } from '../../security/read-source.js';
+import { captureDivergenceReadSource } from './divergence-dashboard.js';
 import { PolicyRegistry } from './policy-registry.js';
 import { DivergencePanel } from '../diagnostics/panels/divergence.js';
 import type { PolicyPanelSnapshot } from '../diagnostics/panels/policy.js';
@@ -29,7 +31,18 @@ export interface PermissionAuditEntry {
   readonly persisted?: boolean | undefined;
 }
 
+const policyReadSources = new WeakMap<PolicyRuntimeState, () => () => void>();
+const getPolicyReadSources = policyReadSources.get.bind(policyReadSources);
+const setPolicyReadSources = policyReadSources.set.bind(policyReadSources);
+export function capturePolicyRuntimeReadSource(state: PolicyRuntimeState): { readonly snapshot: PolicyPanelSnapshot; readonly assertCurrent: () => void } {
+  const capture = getPolicyReadSources(state); assertSecurityReadSource(capture !== undefined);
+  const assertCurrent = capture(); assertCurrent(); const snapshot = state.getSnapshot();
+  const snapshotCurrent = retainSecurityReadData(snapshot); assertCurrent();
+  return Object.freeze({ snapshot, assertCurrent() { assertCurrent(); snapshotCurrent(); assertCurrent(); } });
+}
+
 export class PolicyRuntimeState {
+  private _readRevision = 0;
   private readonly _registry: PolicyRegistry;
   private _dashboard: DivergenceDashboard | null = null;
   private _divergencePanel: DivergencePanel | null = null;
@@ -42,6 +55,18 @@ export class PolicyRuntimeState {
 
   public constructor(registry: PolicyRegistry = new PolicyRegistry()) {
     this._registry = registry;
+    setPolicyReadSources(this, () => {
+      const binding = captureSecurityReadBindings(this, ['_readRevision', '_registry', '_dashboard', '_divergencePanel', '_recentPermissionAudit', '_lintFindings', '_lastSimulationSummary', '_lastPreflightReview', 'getSnapshot']);
+      const registryBinding = captureSecurityReadBindings(registry, ['_publicationRevision', '_current', '_candidate', '_history', 'getCurrent', 'getCandidate', 'getHistory', 'getPublicationRevision', 'diff']);
+      const revision = this._readRevision, registryRevision = registry.getPublicationRevision();
+      const rawCurrent = retainSecurityReadData([registry.getCurrent(), registry.getCandidate(), registry.getHistory(),
+        this._recentPermissionAudit, this._lintFindings, this._lastSimulationSummary, this._lastPreflightReview]);
+      const dashboardCurrent = this._dashboard ? captureDivergenceReadSource(this._dashboard) : undefined;
+      return () => {
+        binding(); registryBinding(); rawCurrent(); dashboardCurrent?.();
+        assertSecurityReadSource(this._readRevision === revision && registry.getPublicationRevision() === registryRevision);
+      };
+    });
   }
 
   public getRegistry(): PolicyRegistry {
@@ -168,6 +193,7 @@ export class PolicyRuntimeState {
   }
 
   public notify(): void {
+    this._readRevision++;
     for (const cb of this._subscribers) {
       try {
         cb();

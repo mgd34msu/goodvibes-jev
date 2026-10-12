@@ -1,3 +1,4 @@
+import { extractionValueFixtureFor, extractionValueFixtureReading, type ExtractionValueFixtures } from './_helpers/knowledge-extraction-value-readings.js';
 import { repairSubjectFixtureReading } from './_helpers/repair-subject-fixture-readings.js';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -21,7 +22,8 @@ const initialText = 'The laboratory recorded a sample from the reference device 
 const capturedText = `${initialText}\n\nAC-7 resolution: 4K.`;
 const roots: string[] = [];
 let previous: JudgmentPort | undefined;
-beforeEach(() => { previous = installJudgmentPort(undefined); });
+const extractionValues: Array<ExtractionValueFixtures[number]> = [];
+beforeEach(() => { extractionValues.length = 0; previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function metadata(extra: Record<string, unknown> = {}) { return buildHomeGraphMetadata(spaceId, installationId, extra); }
 function snapshot(store: KnowledgeStore) {
@@ -216,9 +218,14 @@ async function repairTask(item: Fixture) {
 }
 async function captureRepairText(item: Fixture) {
   await item.store.upsertExtraction({ sourceId: item.source.id, extractorId: 'synthetic', format: 'text', excerpt: capturedText, metadata: metadata({ capturedBy: 'repair-worker' }) });
+  const source = item.store.getSource(item.source.id);
+  if (!source) throw new Error('Missing authored repair source');
+  extractionValues.push(extractionValueFixtureFor(source, item.store.getExtractionBySourceId(source.id), 0.99));
 }
 function repairReadings(phase: () => string) {
   const fake = fakePort((name, question, state) => {
+    const extractionValue = extractionValueFixtureReading(name, question, state, extractionValues);
+    if (extractionValue !== undefined) return noulAnswer(extractionValue);
     if (name === 'repairSubjectSelected') return noulAnswer(repairSubjectFixtureReading(state, [['AC-7', 0.99]]));
     const item = state as { category?: { title: string }; candidate?: { text?: string } };
     if (name === 'authority') return choiceAnswer(question, 'secondary', 0.99);

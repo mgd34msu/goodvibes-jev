@@ -1,10 +1,11 @@
+import { extractionValueFixtureFor, extractionValueFixtureReading, type ExtractionValueFixtures } from './_helpers/knowledge-extraction-value-readings.js';
 import * as crypto from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, scoreAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { ArtifactStore } from '../sdk/src/platform/artifacts/store.js';
@@ -26,9 +27,15 @@ import { prepareAnswerGapUniverse } from '../sdk/src/platform/knowledge/semantic
 
 const spaceId = 'homeassistant:house';
 let previous: JudgmentPort | undefined; const roots: string[] = [], services: HomeGraphService[] = [];
-beforeEach(() => { previous = installJudgmentPort(undefined); });
+const extractionValues: Array<ExtractionValueFixtures[number]> = [];
+beforeEach(() => { extractionValues.length = 0; previous = installJudgmentPort(undefined); });
 afterEach(() => { services.splice(0).forEach((service) => service.dispose()); installJudgmentPort(previous); roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })); });
-function readings() { const fake = fakePort(() => noulAnswer(0.99)); installJudgmentPort(fake.port); return fake; }
+function readings() { const fake = fakePort((name, question, state) => {
+    const extractionValue = extractionValueFixtureReading(name, question, state, extractionValues);
+    if (extractionValue !== undefined) return noulAnswer(extractionValue);
+    if (name === 'factTrust' || name === 'sourceSupport' || name === 'subjectSupport') return scoreAnswer(question, 4, 0.99); // Authored supported synthetic facts; grading behavior has separate controls.
+    return noulAnswer(0.99);
+  }); installJudgmentPort(fake.port); return fake; }
 async function fixture(hex = '0000020d') {
   const root = mkdtempSync(join(tmpdir(), 'knowledge-source-references-')); roots.push(root);
   const store = new KnowledgeStore({ dbPath: join(root, 'knowledge.sqlite') }); await store.init();
@@ -39,6 +46,7 @@ async function fixture(hex = '0000020d') {
   try { result = await service.ingestNote({ installationId: 'house', title: 'AC-7 manual', body: 'AC-7 has four HDMI ports. It does not support Bluetooth.', category: 'manual' }); }
   finally { random.mockRestore(); }
   const source = store.getSource(result.source.id)!; const extraction = store.getExtractionBySourceId(source.id)!;
+  extractionValues.push(extractionValueFixtureFor(source, extraction, 0.99));
   return { store, source, extraction, service, artifactId: result.artifactId!, dbPath: store.storagePath };
 }
 function candidate(source: GeneratedFactSupportInput['source'], extraction: GeneratedFactSupportInput['extraction']): GeneratedFactSupportInput {

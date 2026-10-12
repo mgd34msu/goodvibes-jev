@@ -1,3 +1,5 @@
+import { createKnowledgeIngestUriCanonicalizer } from '../sdk/src/platform/knowledge/uri-canonicalization/ingest-owner.js';
+import { KnowledgeUriCanonicalizationHeldError } from '../sdk/src/platform/knowledge/uri-canonicalization/reader.js';
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -97,25 +99,36 @@ test('a prepared result is bound to source, artifact and immutable artifact byte
   const first = await ctx.artifactStore.createFromStream({ kind: 'document', filename: 'first.txt', mimeType: 'text/plain', stream: ['First document.'] });
   const other = await ctx.artifactStore.createFromStream({ kind: 'document', filename: 'other.txt', mimeType: 'text/plain', stream: ['Other document.'] });
   const source = await ctx.store.upsertSource({ connectorId: 'manual', sourceType: 'document', title: 'Original', status: 'indexed', tags: [] });
-  const token = await prepareKnowledgeExtraction(ctx, source.id, first.id);
+  const prepare = async () => {
+    const uris = createKnowledgeIngestUriCanonicalizer(ctx);
+    uris.reserveSource(source.id); uris.attachArtifact(first.id);
+    return { uris, token: await prepareKnowledgeExtraction(ctx, source.id, first.id, uris) };
+  };
+  let { uris, token } = await prepare();
   const base = { sourceId: source.id, artifactId: first.id, preparedExtraction: token, connectorId: 'manual', sourceType: 'document' as const, tags: [], metadata: {} };
-  await expect(finalizeKnowledgeIngestedSource(ctx, { ...base, sourceId: 'another-source' })).rejects.toBeInstanceOf(KnowledgeExtractionJudgmentHoldError);
-  await expect(finalizeKnowledgeIngestedSource(ctx, { ...base, artifactId: other.id })).rejects.toBeInstanceOf(KnowledgeExtractionJudgmentHoldError);
+  await expect(finalizeKnowledgeIngestedSource(ctx, { ...base, sourceId: 'another-source' }, uris)).rejects.toBeInstanceOf(KnowledgeUriCanonicalizationHeldError);
+  await expect(finalizeKnowledgeIngestedSource(ctx, { ...base, artifactId: other.id }, uris)).rejects.toBeInstanceOf(KnowledgeUriCanonicalizationHeldError);
   expect(ctx.store.getExtractionBySourceId(source.id)).toBeNull();
   expect(ctx.store.getSource(source.id)).toEqual(source);
   const originalRecord = ctx.artifactStore.getRecord(first.id)!;
   const changed = spyOn(ctx.artifactStore, 'getRecord').mockReturnValue({ ...originalRecord, sha256: 'changed-fingerprint' });
-  try { await expect(finalizeKnowledgeIngestedSource(ctx, base)).rejects.toBeInstanceOf(KnowledgeExtractionJudgmentHoldError); }
+  try { await expect(finalizeKnowledgeIngestedSource(ctx, base, uris)).rejects.toBeInstanceOf(KnowledgeUriCanonicalizationHeldError); }
   finally { changed.mockRestore(); }
   expect(ctx.store.getExtractionBySourceId(source.id)).toBeNull();
-  const result = await finalizeKnowledgeIngestedSource(ctx, base);
+  // A replaced artifact method retires the original reading lifetime, even after restoration.
+  await expect(finalizeKnowledgeIngestedSource(ctx, base, uris)).rejects.toBeInstanceOf(KnowledgeUriCanonicalizationHeldError);
+  ({ uris, token } = await prepare());
+  const ready = { ...base, preparedExtraction: token };
+  const result = await finalizeKnowledgeIngestedSource(ctx, ready, uris);
   expect(result.extraction.summary).toBe('First document.');
-  await expect(finalizeKnowledgeIngestedSource(ctx, base)).rejects.toBeInstanceOf(KnowledgeExtractionJudgmentHoldError);
+  await expect(finalizeKnowledgeIngestedSource(ctx, ready, uris)).rejects.toBeInstanceOf(KnowledgeUriCanonicalizationHeldError);
   expect(ctx.store.getExtractionBySourceId(source.id)).toEqual(result.extraction);
   // Stored artifact integrity is checked before any extraction is judged.
   const record = ctx.artifactStore.getRecord(other.id)!;
   writeFileSync(record.contentPath, 'Corrupted bytes.');
-  await expect(prepareKnowledgeExtraction(ctx, source.id, other.id)).rejects.toBeInstanceOf(KnowledgeExtractionJudgmentHoldError);
+  const corrupt = createKnowledgeIngestUriCanonicalizer(ctx);
+  corrupt.reserveSource(source.id); corrupt.attachArtifact(other.id);
+  await expect(prepareKnowledgeExtraction(ctx, source.id, other.id, corrupt)).rejects.toBeInstanceOf(KnowledgeExtractionJudgmentHoldError);
 });
 
 test('ordinary parse failures retain the failed-record path', async () => {

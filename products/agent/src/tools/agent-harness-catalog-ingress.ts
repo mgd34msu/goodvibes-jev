@@ -14,13 +14,14 @@ import { captureAgentWorkspaceTuiSettingsImportPreview } from '../input/agent-wo
 
 type ToolExecuteOptions = NonNullable<Parameters<Tool['execute']>[1]>;
 
-const PRESERVED_CATALOG_MODES = new Set(['route_decision', 'browser_control_route', 'run_local_model_smoke', 'autonomy_intake', 'autonomy_queue', 'autonomy_queue_item', 'learning_curator', 'learning_candidate', 'background_processes', 'background_process', 'cli_commands', 'cli_command', 'shortcuts', 'keybindings', 'keybinding', 'set_keybinding', 'reset_keybinding', 'run_keybinding', 'agent_orchestration', 'agent_orchestration_agent', 'execution_posture', 'execution_route', 'execution_history', 'execution_history_item', 'document_ops_lane', 'delegation_posture', 'delegation_route']);
+const MEMORY_CATALOG_MODES = new Set(['memory_posture', 'memory_provider']);
+const PRESERVED_CATALOG_MODES = new Set([...MEMORY_CATALOG_MODES, 'route_decision', 'browser_control_route', 'run_local_model_smoke', 'autonomy_intake', 'autonomy_queue', 'autonomy_queue_item', 'learning_curator', 'learning_candidate', 'background_processes', 'background_process', 'cli_commands', 'cli_command', 'shortcuts', 'keybindings', 'keybinding', 'set_keybinding', 'reset_keybinding', 'run_keybinding', 'agent_orchestration', 'agent_orchestration_agent', 'execution_posture', 'execution_route', 'execution_history', 'execution_history_item', 'document_ops_lane', 'delegation_posture', 'delegation_route']);
 const CATALOG_MODES = new Set(['modes', 'mode', 'commands', 'command', 'run_command', 'tools', 'tool', 'operator_methods', 'operator_method', ...PRESERVED_CATALOG_MODES]);
 const PERSONAL_OPS_MODES = new Set(['personal_ops_briefing', 'personal_ops', 'personal_ops_queue', 'personal_ops_intake', 'personal_ops_lane', 'run_personal_ops_read']);
 const PROTECTED_COMMS_EFFECT_MODES = new Set(['channel_draft_save', 'channel_draft_send', 'channel_routing_assign', 'channel_routing_remove']);
 const projectionGuards = new WeakMap<object, () => void>();
 const forwardedGuards = new WeakMap<object, { readonly options: ToolExecuteOptions | undefined; readonly assertCurrent: () => void; readonly assertInvocation: () => boolean; readonly assertEffect: (effect: ToolExecutionEffect) => boolean }>();
-const publicationGuards = new WeakMap<object, Map<string | (() => void), () => void>>();
+const publicationGuards = new WeakMap<object, Set<() => void>>();
 interface SettingsPreviewBinding {
   readonly context: CommandContext;
   readonly registry: ToolRegistry;
@@ -38,15 +39,15 @@ export function capturedHarnessSettingsImportPreview(args: Record<string, unknow
   harnessCatalogExecutionGuard(args, options)(); binding.capture.assertCurrent();
   return binding.capture;
 }
-function retainedGuards(args: object): Map<string | (() => void), () => void> {
+function retainedGuards(args: object): Set<() => void> {
   let guards = publicationGuards.get(args);
-  if (!guards) { guards = new Map(); publicationGuards.set(args, guards); }
+  if (!guards) { guards = new Set(); publicationGuards.set(args, guards); }
   return guards;
 }
 /** Register only already-acquired backend guards; never acquire a backend here. */
 export function retainHarnessCatalogCurrent(args: object): (guard: () => void, key?: string) => void {
   const guards = retainedGuards(args);
-  return (guard, key) => { if (!guards.has(key ?? guard)) guards.set(key ?? guard, guard); };
+  return (guard, _key) => { guards.add(guard); };
 }
 
 /** Only read data routing descriptors, before screening the complete original. */
@@ -65,7 +66,7 @@ export function catalogRoutingInput(input: Record<string, unknown>): Record<stri
 
 export function isHarnessCatalogQuery(input: Record<string, unknown>): boolean {
   const routing = catalogRoutingInput(input);
-  if (typeof routing.mode === 'string' && (PERSONAL_OPS_MODES.has(routing.mode) || PROTECTED_COMMS_EFFECT_MODES.has(routing.mode))) { captureCatalogData(input); return true; }
+  if (typeof routing.mode === 'string' && (PERSONAL_OPS_MODES.has(routing.mode) || PROTECTED_COMMS_EFFECT_MODES.has(routing.mode) || MEMORY_CATALOG_MODES.has(routing.mode))) { captureCatalogData(input); return true; }
   if (routing.mode === 'model_routing' || routing.mode === 'model_route') { captureCatalogData(input); return true; }
   if (typeof routing.mode === 'string' && PRESERVED_CATALOG_MODES.has(routing.mode)) captureCatalogData(input);
   return typeof routing.mode === 'string' && CATALOG_MODES.has(routing.mode)
@@ -137,7 +138,8 @@ export function createHarnessCatalogInputProjector(registry: ToolRegistry, fallb
     const previewInspection = routing.mode === 'run_workspace_action' && isAgentWorkspaceSettingsImportPreview(request.args);
     const settingsInspection = request.name === 'settings' || routing.mode === 'settings' || routing.mode === 'get_setting' || previewInspection;
     const assertContext = protectedQuery ? catalogContextGuard(registry, context, settingsInspection) : () => {};
-    const modelInspection = routing.mode === 'model_routing' || routing.mode === 'model_route' || request.name === 'models';
+    const modelInspection = routing.mode === 'model_routing' || routing.mode === 'model_route' || request.name === 'models'
+      || routing.mode === 'memory_posture' || routing.mode === 'memory_provider' || request.name === 'memory';
     const original = protectedQuery && (modelInspection || settingsInspection) ? captureModelReadingInput(request.args) : undefined;
     const originalJson = original && JSON.stringify(original);
     let previewBinding: SettingsPreviewBinding | undefined;
@@ -148,7 +150,7 @@ export function createHarnessCatalogInputProjector(registry: ToolRegistry, fallb
       const view = captureModelReadingInput({ preview: native.preview, sources: native.sourceViews });
       native.assertCurrent(); assertContext(); request.assertCurrent(); request.signal?.throwIfAborted();
       previewBinding = { context, registry, capture: { preview: view.preview, sourceViews: view.sources, assertCurrent: native.assertCurrent }, aliases: new Set(), released: false };
-      retained.set('settings-import.preview-source', native.assertCurrent);
+      retained.add(native.assertCurrent);
     }
     const guarded = protectedQuery ? { ...request, ...(original ? { args: original } : {}), assertCurrent: () => {
       request.assertCurrent(); assertContext();
@@ -255,7 +257,7 @@ export function protectHarnessCatalogTool(tool: Tool, registry: ToolRegistry, se
     const routing = catalogRoutingInput(input);
     const previewInspection = routing.mode === 'run_workspace_action' && isAgentWorkspaceSettingsImportPreview(input);
     const assertOptions = previewInspection && options ? captureCatalogMethods(options, ['signal', 'assertCurrent', 'inputProjectionContext']) : () => {};
-    if (!forwardedGuards.has(input) && !projectionGuards.has(input)) { publicationGuards.set(input, new Map()); }
+    if (!forwardedGuards.has(input) && !projectionGuards.has(input)) { publicationGuards.set(input, new Set()); }
     const guard = harnessCatalogExecutionGuard(input, options);
     const registration = registeredTool(registry, tool.definition.name);
     const assertContext = catalogContextGuard(registry, context, tool.definition.name === 'settings' || routing.mode === 'settings' || routing.mode === 'get_setting'

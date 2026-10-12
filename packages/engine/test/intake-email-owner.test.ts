@@ -1,3 +1,4 @@
+import { screeningAnswers } from './_helpers/screening-answers.js';
 import { afterEach, expect, spyOn, test } from 'bun:test';
 import { createEmailInboxOwner, type EmailInboxOwnerOptions } from '../sdk/src/platform/intake/providers/email-owner.js';
 import type { ImapUidCheckpoint } from '../sdk/src/platform/intake/provider-adapter.js';
@@ -20,7 +21,7 @@ async function fixture(options: { gate?: Promise<void>; sockets?: SnapshotSocket
       return Response.json({ choices: [{ finish_reason: 'stop', message: { role: 'assistant',
         content: JSON.stringify({ revision: source.revision, spans }) } }] });
     }
-    return Response.json({ model: 'jev-1.13.0', answers: { complete: { type: 'noul', noul: 1 }, precise: { type: 'noul', noul: 1 } },
+    return Response.json({ model: 'jev-1.13.0', answers: screeningAnswers(body, { complete: 1, precise: 1 }),
       usage: { input_tokens: 10, output_tokens: 2 } });
   } });
   cleanups.push(() => server.stop(true));
