@@ -46,7 +46,9 @@ function reader(beforeAnswer?: (name: string, state: unknown) => void) {
       const candidate = state.candidate;
       if (!candidate || typeof candidate !== 'object' || !('name' in candidate) || typeof candidate.name !== 'string'
         || !('evidenceJson' in candidate) || typeof candidate.evidenceJson !== 'string') throw new Error('Missing complete method metadata');
-      expect(candidate.evidenceJson).toBe(expected.get(candidate.name));
+      const originalEvidence = expected.get(candidate.name);
+      if (originalEvidence === undefined) throw new Error('Unregistered original method metadata');
+      expect(candidate.evidenceJson).toBe(originalEvidence);
       seen.set(candidate.name, (seen.get(candidate.name) ?? 0) + 1);
       return noulAnswer(candidate.name === selected.id ? 0.999 : 0.001);
     }
