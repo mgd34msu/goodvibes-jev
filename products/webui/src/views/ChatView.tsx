@@ -55,6 +55,7 @@ const SUGGESTION_ICONS: Record<SuggestionIcon, typeof Mail> = {
 
 export function ChatView({
   activeSessionId,
+  chatSelection,
   sessionItems,
   onActiveSessionChange,
   onDraftSessionRequestedChange,
@@ -86,11 +87,12 @@ export function ChatView({
   // at a time, need no changes.
   const [turn, setTurn] = useState<TurnPhase>(IDLE_TURN_PHASE);
   // The session id a send just created (see the reset-on-switch effect below).
-  const sendCreatedSessionRef = useRef('');
+  const sendCreatedSessionRef = useRef<ReturnType<typeof chatSelection.capture> | null>(null);
+  const selectedChat = chatSelection.capture();
   const handleSendSessionSwitch = useCallback((sessionId: string) => {
-    sendCreatedSessionRef.current = sessionId;
     onActiveSessionChange(sessionId);
-  }, [onActiveSessionChange]);
+    sendCreatedSessionRef.current = chatSelection.capture();
+  }, [onActiveSessionChange, chatSelection]);
   const { state: turnState, error: turnError } = turn;
   const setTurnState = useCallback<Dispatch<SetStateAction<string>>>((next) => {
     setTurn((current) => ({
@@ -266,12 +268,13 @@ export function ChatView({
   // useChatSend reports the created id through sendCreatedSessionRef below; the
   // ref is consumed here so any LATER switch to the same session still resets.
   useEffect(() => {
-    if (sendCreatedSessionRef.current === activeSessionId && activeSessionId) {
-      sendCreatedSessionRef.current = '';
+    if (sendCreatedSessionRef.current === selectedChat) {
+      if (activeSessionId === selectedChat.sessionId) sendCreatedSessionRef.current = null;
       return;
     }
     setTurn(IDLE_TURN_PHASE);
-  }, [activeSessionId]);
+    setPendingUserMessageId('');
+  }, [activeSessionId, selectedChat]);
 
   const {
     isStreaming, stop, retryStream, activeToolCalls, toolActivityByMessageId, cancelToolCall: cancelToolCallRaw,
@@ -306,6 +309,7 @@ export function ChatView({
 
   const send = useChatSend({
     activeSessionId,
+    chatSelection,
     onActiveSessionChange: handleSendSessionSwitch,
     onDraftSessionRequestedChange,
     onLocalSessionCreated,

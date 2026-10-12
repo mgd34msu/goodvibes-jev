@@ -1,4 +1,6 @@
-import { Dispatch, SetStateAction, useCallback } from 'react';
+import { Dispatch, SetStateAction, useCallback, useEffect, useRef } from 'react';
+import { getClientLifetime, isClientLifetimeCurrent, type ClientLifetime } from '../../lib/client-lifetime';
+import type { ChatSelection, ChatSelectionTracker } from '../../lib/chat-selection';
 import { useMutation } from '@tanstack/react-query';
 import { sdk } from '../../lib/goodvibes';
 import { bestId } from '../../lib/object';
@@ -24,6 +26,7 @@ import type { ChatMessage } from './types';
 
 interface UseChatSendOptions {
   activeSessionId: string;
+  chatSelection: ChatSelectionTracker;
   onActiveSessionChange: (sessionId: string) => void;
   onDraftSessionRequestedChange: (requested: boolean) => void;
   onLocalSessionCreated: (session: unknown) => void;
@@ -51,7 +54,15 @@ interface UseChatSendOptions {
   onAuthExpired: () => void;
 }
 
-type SendMutation = ReturnType<typeof useMutation<undefined, Error, { body: string; files: File[]; steer?: boolean }>>;
+type SendInput = { body: string; files: File[]; steer?: boolean };
+type SendMutation = Pick<ReturnType<typeof useMutation<undefined, Error, SendInput>>, 'mutate' | 'mutateAsync' | 'reset' | 'isPending' | 'error'>;
+interface SelectionLease {
+  selection: ChatSelection;
+  sessionId: string;
+  readonly owner: ChatSelectionTracker;
+  readonly client: ClientLifetime;
+}
+interface OwnedSendInput extends SendInput { readonly lease: SelectionLease }
 
 export interface UseChatSendReturn {
   /**
@@ -62,7 +73,7 @@ export interface UseChatSendReturn {
   mutate: SendMutation['mutate'];
   isPending: boolean;
   error: Error | null;
-  /** The underlying mutation object for callers that need the full shape. */
+  /** The send controls, with pending/error state for this selection only. */
   sendMutation: SendMutation;
   /**
    * Edit a user message and branch the conversation from it, the honest-lineage
@@ -108,6 +119,7 @@ function isServerMessageId(id: string): boolean {
 
 export function useChatSend({
   activeSessionId,
+  chatSelection,
   onActiveSessionChange,
   onDraftSessionRequestedChange,
   onLocalSessionCreated,
@@ -121,12 +133,29 @@ export function useChatSend({
   turnState,
   onAuthExpired,
 }: UseChatSendOptions): UseChatSendReturn {
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  // A returned handler belongs to this render, even if navigation leaves and
+  // returns to the same session before the handler is invoked.
+  const renderedSelection = chatSelection.capture();
+  const renderedClient = getClientLifetime();
+  const captureLease = (): SelectionLease => ({
+    selection: renderedSelection, sessionId: activeSessionId,
+    owner: chatSelection, client: renderedClient,
+  });
+  const isCurrent = (lease: SelectionLease): boolean => mounted.current
+    && lease.owner === chatSelection && lease.owner.isCurrent(lease.selection)
+    && lease.selection.sessionId === lease.sessionId && isClientLifetimeCurrent(lease.client);
+
   // -------------------------------------------------------------------------
   // Core send mutation (unchanged API, still used by Composer)
   // -------------------------------------------------------------------------
-  const sendMutation = useMutation<undefined, Error, { body: string; files: File[] }>({
-    mutationFn: async ({ body, files, steer }: { body: string; files: File[]; steer?: boolean }) => {
-      if (!body && !files.length) return;
+  const ownedSendMutation = useMutation<undefined, Error, OwnedSendInput>({
+    mutationFn: async ({ body, files, steer, lease }) => {
+      if ((!body && !files.length) || !isCurrent(lease)) return;
       // Read the live stream's health at the moment the send starts (not stale,
       // react-query always calls the mutationFn captured on the latest render). A
       // send during 'reconnecting'/'stream paused' still goes over REST and does not
@@ -141,11 +170,12 @@ export function useChatSend({
           : '',
       );
 
-      let sessionId = activeSessionId;
+      let sessionId = lease.sessionId;
       if (!sessionId) {
         const createdAt = Date.now();
         const title = body.slice(0, 72) || files[0]?.name?.slice(0, 72) || 'Attachment chat';
         const created = await sdk.chat.sessions.create({ title });
+        if (!isCurrent(lease)) return;
         sessionId = extractSessionId(created);
         const createdSession = companionSessionFromDetail(created);
         onLocalSessionCreated(bestId(createdSession) ? createdSession : {
@@ -157,7 +187,13 @@ export function useChatSend({
           createdAt,
           updatedAt: createdAt,
         });
+        const previous = lease.selection;
         onActiveSessionChange(sessionId);
+        const selected = chatSelection.capture();
+        if (selected.revision !== previous.revision + 1 || selected.sessionId !== sessionId
+          || selected.view !== 'chat' || !isClientLifetimeCurrent(lease.client)) return;
+        lease.selection = selected;
+        lease.sessionId = sessionId;
         onDraftSessionRequestedChange(false);
       }
 
@@ -189,12 +225,14 @@ export function useChatSend({
       try {
         attachments = await Promise.all(files.map(async (file) => {
           const dataBase64 = await fileToBase64(file);
+          if (!isCurrent(lease)) return undefined;
           const uploaded = await sdk.artifacts.create({
             filename: file.name,
             mimeType: file.type || 'application/octet-stream',
             dataBase64,
             metadata: { surface: 'webui' },
           });
+          if (!isCurrent(lease)) return undefined;
           const artifactId = uploadedArtifactId(uploaded);
           if (!artifactId) throw new Error(`Artifact upload for ${file.name} did not return an artifact id.`);
           return {
@@ -204,14 +242,16 @@ export function useChatSend({
             mimeType: file.type || 'application/octet-stream',
             sizeBytes: file.size,
           };
-        }));
+        })).then((items) => items.filter((item): item is typeof localAttachments[number] => item !== undefined));
       } catch (error) {
+        if (!isCurrent(lease)) throw error;
         setLocalMessages((current) => current.map((message) => (
           message.id === localMessageId ? { ...message, deliveryState: 'failed' as const } : message
         )));
         throw error;
       }
 
+      if (!isCurrent(lease)) return;
       let result: unknown;
       try {
         const payload = {
@@ -226,8 +266,9 @@ export function useChatSend({
           try {
             result = await sdk.chat.messages.steer(sessionId, payload);
           } catch (steerError) {
-            if (!isMethodUnavailableError(steerError)) throw steerError;
+            if (!isCurrent(lease) || !isMethodUnavailableError(steerError)) throw steerError;
             result = await sdk.chat.messages.create(sessionId, payload);
+            if (!isCurrent(lease)) return;
             setTurnError(
               'Sent as a normal message: this daemon does not support steering '
               + '(needs SDK 1.4+), so the current reply was not interrupted.',
@@ -237,11 +278,13 @@ export function useChatSend({
           result = await sdk.chat.messages.create(sessionId, payload);
         }
       } catch (error) {
+        if (!isCurrent(lease)) throw error;
         setLocalMessages((current) => current.map((message) => (
           message.id === localMessageId ? { ...message, deliveryState: 'failed' as const } : message
         )));
         throw error;
       }
+      if (!isCurrent(lease)) return;
       const messageId = extractMessageId(result);
       setLocalMessages((current) => current.map((message) => (
         message.id === localMessageId
@@ -256,9 +299,10 @@ export function useChatSend({
       setPendingUserMessageId(messageId || localMessageId);
       await invalidateChatState(sessionId);
     },
-    onError: (error) => {
-      if (isSessionNotFoundError(error) && activeSessionId) {
-        onSessionMissing(activeSessionId);
+    onError: (error, { lease }) => {
+      if (!isCurrent(lease)) return;
+      if (isSessionNotFoundError(error) && lease.sessionId) {
+        onSessionMissing(lease.sessionId);
         setTurnError('That chat session no longer exists. Starting from the current daemon session list.');
         return;
       }
@@ -278,6 +322,43 @@ export function useChatSend({
     },
   });
 
+  const callbackOptions = (
+    input: SendInput,
+    lease: SelectionLease,
+    options: Parameters<SendMutation['mutate']>[1],
+  ): Parameters<typeof ownedSendMutation.mutate>[1] => {
+    if (!options) return undefined;
+    const callbacks: NonNullable<Parameters<typeof ownedSendMutation.mutate>[1]> = {};
+    if (options.onSuccess) callbacks.onSuccess = (data, _variables, result, context) => {
+      if (isCurrent(lease)) options.onSuccess?.(data, input, result, context);
+    };
+    if (options.onError) callbacks.onError = (error, _variables, result, context) => {
+      if (isCurrent(lease)) options.onError?.(error, input, result, context);
+    };
+    if (options.onSettled) callbacks.onSettled = (data, error, _variables, result, context) => {
+      if (isCurrent(lease)) options.onSettled?.(data, error, input, result, context);
+    };
+    return callbacks;
+  };
+  const sendCurrent = ownedSendMutation.variables !== undefined && isCurrent(ownedSendMutation.variables.lease);
+  const sendMutation: SendMutation = {
+    mutate(input, options) {
+      const lease = captureLease();
+      if (!isCurrent(lease)) return;
+      ownedSendMutation.mutate({ ...input, lease }, callbackOptions(input, lease, options));
+    },
+    mutateAsync(input, options) {
+      const lease = captureLease();
+      if (!isCurrent(lease)) return Promise.resolve(undefined);
+      return ownedSendMutation.mutateAsync({ ...input, lease }, callbackOptions(input, lease, options));
+    },
+    reset() {
+      if (isCurrent(captureLease())) ownedSendMutation.reset();
+    },
+    isPending: sendCurrent && ownedSendMutation.isPending,
+    error: sendCurrent ? ownedSendMutation.error : null,
+  };
+
   // -------------------------------------------------------------------------
   // Shared honest handling for the two lineage-forking verbs (regenerate/edit):
   // set the turn in flight, hand server truth the wheel (drop this session's local
@@ -295,9 +376,10 @@ export function useChatSend({
     setTurnState('submitted');
   }, [activeSessionId, setLocalMessages, setLiveText, setPendingUserMessageId, setTurnError, setTurnState]);
 
-  const handleLineageError = useCallback((error: unknown) => {
-    if (isSessionNotFoundError(error) && activeSessionId) {
-      onSessionMissing(activeSessionId);
+  const handleLineageError = (error: unknown, lease: SelectionLease) => {
+    if (!isCurrent(lease)) return;
+    if (isSessionNotFoundError(error) && lease.sessionId) {
+      onSessionMissing(lease.sessionId);
       setTurnState('idle');
       setTurnError('That chat session no longer exists. Starting from the current daemon session list.');
       return;
@@ -315,31 +397,33 @@ export function useChatSend({
     }
     setTurnState('error');
     setTurnError(formatError(error));
-  }, [activeSessionId, onAuthExpired, onSessionMissing, setTurnError, setTurnState]);
+  };
 
   // regenerate (companion.chat.messages.retry)
   const regenerateMutation = useMutation<CompanionRegenerateVars, Error, CompanionRegenerateVars>({
     mutationFn: async (vars) => {
+      if (!isCurrent(vars.lease)) return vars;
       beginLineageTurn();
       await sdk.chat.messages.retry(
         vars.sessionId,
         vars.messageId ? { messageId: vars.messageId } : undefined,
       );
-      await invalidateChatState(vars.sessionId);
+      if (isCurrent(vars.lease)) await invalidateChatState(vars.sessionId);
       return vars;
     },
-    onError: handleLineageError,
+    onError: (error, vars) => handleLineageError(error, vars.lease),
   });
 
   // edit-and-branch (companion.chat.messages.edit)
   const editMutation = useMutation<CompanionEditVars, Error, CompanionEditVars>({
     mutationFn: async (vars) => {
+      if (!isCurrent(vars.lease)) return vars;
       beginLineageTurn();
       await sdk.chat.messages.edit(vars.sessionId, vars.messageId, { content: vars.content });
-      await invalidateChatState(vars.sessionId);
+      if (isCurrent(vars.lease)) await invalidateChatState(vars.sessionId);
       return vars;
     },
-    onError: handleLineageError,
+    onError: (error, vars) => handleLineageError(error, vars.lease),
   });
 
   // -------------------------------------------------------------------------
@@ -349,8 +433,10 @@ export function useChatSend({
     (messageId: string, newText: string) => {
       const content = newText.trim();
       if (!content || !activeSessionId) return;
+      const lease = captureLease();
+      if (!isCurrent(lease)) return;
       if (isServerMessageId(messageId)) {
-        editMutation.mutate({ sessionId: activeSessionId, messageId, content });
+        editMutation.mutate({ sessionId: activeSessionId, messageId, content, lease });
         return;
       }
       // No server id yet (an un-persisted optimistic message), a branch has nothing
@@ -358,7 +444,7 @@ export function useChatSend({
       // branch. Honest: it is a new turn, not a rewrite of history that never persisted.
       sendMutation.mutate({ body: content, files: [] });
     },
-    [activeSessionId, editMutation, sendMutation],
+    [activeSessionId, editMutation, sendMutation, captureLease],
   );
 
   // -------------------------------------------------------------------------
@@ -367,15 +453,18 @@ export function useChatSend({
   const regenerateFrom = useCallback(
     (messageId: string, _messages: ChatMessage[]) => {
       if (!activeSessionId) return;
+      const lease = captureLease();
+      if (!isCurrent(lease)) return;
       // Target a specific assistant message only when it has a server id; otherwise
       // omit it and let the daemon regenerate the latest assistant response, the
       // honest default when the clicked message is still a streamed optimistic echo.
       regenerateMutation.mutate({
         sessionId: activeSessionId,
+        lease,
         messageId: isServerMessageId(messageId) ? messageId : undefined,
       });
     },
-    [activeSessionId, regenerateMutation],
+    [activeSessionId, regenerateMutation, captureLease],
   );
 
   return {
@@ -383,23 +472,27 @@ export function useChatSend({
     mutate: sendMutation.mutate,
     isPending: sendMutation.isPending,
     error: sendMutation.error,
-    // Full mutation object for callers that need it
+    // Send controls for callers that await the actual request outcome
     sendMutation,
     // Honest-lineage handlers (server verbs)
     editAndResend,
     regenerateFrom,
-    isLineagePending: regenerateMutation.isPending || editMutation.isPending,
-    lineageError: regenerateMutation.error ?? editMutation.error,
+    isLineagePending: (regenerateMutation.variables !== undefined && isCurrent(regenerateMutation.variables.lease) && regenerateMutation.isPending)
+      || (editMutation.variables !== undefined && isCurrent(editMutation.variables.lease) && editMutation.isPending),
+    lineageError: (regenerateMutation.variables !== undefined && isCurrent(regenerateMutation.variables.lease) ? regenerateMutation.error : null)
+      ?? (editMutation.variables !== undefined && isCurrent(editMutation.variables.lease) ? editMutation.error : null),
   };
 }
 
 interface CompanionRegenerateVars {
   sessionId: string;
+  lease: SelectionLease;
   messageId?: string;
 }
 
 interface CompanionEditVars {
   sessionId: string;
+  lease: SelectionLease;
   messageId: string;
   content: string;
 }

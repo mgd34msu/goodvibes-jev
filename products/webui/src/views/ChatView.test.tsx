@@ -10,12 +10,13 @@
  * test switches sessions via a PROP change on an already-mounted instance, matching
  * production: a remount would reset state trivially and prove nothing.
  */
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test, type Mock } from 'bun:test';
 import React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ChatViewProps } from './chat/types';
+import { createChatSelectionTracker, type ChatSelectionTracker } from '../lib/chat-selection';
 
 // ---------------------------------------------------------------------------
 // sdk mock: chat.events.stream is controllable per call, so the test can fire a
@@ -35,11 +36,29 @@ interface StreamCall {
 }
 
 const streamCalls: StreamCall[] = [];
+const createCalls: string[] = [];
+const messageCalls: string[] = [];
+const deferredRejections = new Set<() => void>();
+const fixtureSettlements = new Set<Promise<void>>();
+const streamRetirements = new Set<() => void>();
+const streamDisconnects: Mock<() => void>[] = [];
+const newSessionResult = {
+  sessionId: 'session-new',
+  session: { id: 'session-new', sessionId: 'session-new', kind: 'companion-chat', title: 'long question', status: 'active', createdAt: 1, updatedAt: 1 },
+};
+let createSessionImpl: () => Promise<unknown> = async () => newSessionResult;
+let createMessageImpl: () => Promise<unknown> = async () => ({ messageId: 'msg-1' });
 const streamMock = mock((sessionId: string, options: StreamCall['options']) => {
   streamCalls.push({ sessionId, options });
-  // Never resolves in these tests: onEvent is invoked directly against the
-  // captured options, the disconnect handle is not needed.
-  return new Promise(() => {});
+  // Keep the handshake pending while the test drives captured events. Teardown
+  // releases its real handle after unmount so the hook can close and drain it.
+  let resolve!: (disconnect: () => void) => void;
+  const disconnect = mock((): void => undefined);
+  const opening = new Promise<() => void>((yes) => { resolve = yes; });
+  streamRetirements.add(() => resolve(disconnect));
+  streamDisconnects.push(disconnect);
+  fixtureSettlements.add(opening.then(() => undefined));
+  return opening;
 });
 
 mock.module('../lib/goodvibes', () => ({
@@ -55,14 +74,11 @@ mock.module('../lib/goodvibes', () => ({
       events: { stream: streamMock },
       messages: {
         list: mock(() => Promise.resolve({ messages: [] })),
-        create: mock(() => Promise.resolve({ messageId: 'msg-1' })),
+        create: mock((sessionId: string) => { messageCalls.push(sessionId); return createMessageImpl(); }),
       },
       sessions: {
         update: mock(() => Promise.resolve({})),
-        create: mock(() => Promise.resolve({
-          sessionId: 'session-new',
-          session: { id: 'session-new', sessionId: 'session-new', kind: 'companion-chat', title: 'long question', status: 'active', createdAt: 1, updatedAt: 1 },
-        })),
+        create: mock(() => { createCalls.push('create'); return createSessionImpl(); }),
       },
     },
     operator: {
@@ -93,6 +109,7 @@ function noop(): void {}
 function baseProps(activeSessionId: string): ChatViewProps {
   return {
     activeSessionId,
+    chatSelection,
     sessionItems: [SESSION_A, SESSION_B],
     onActiveSessionChange: noop,
     onDraftSessionRequestedChange: noop,
@@ -102,11 +119,17 @@ function baseProps(activeSessionId: string): ChatViewProps {
   };
 }
 
+let chatSelection: ChatSelectionTracker;
 let container: HTMLElement;
 let root: Root;
 let client: QueryClient;
 
 function renderChatView(props: ChatViewProps): void {
+  chatSelection.update('chat', props.activeSessionId);
+  const selectedProps = { ...props, onActiveSessionChange: (id: string) => {
+    chatSelection.update('chat', id, true);
+    props.onActiveSessionChange(id);
+  } };
   flushSync(() => {
     root.render(
       React.createElement(
@@ -115,7 +138,7 @@ function renderChatView(props: ChatViewProps): void {
         React.createElement(
           ToastProvider,
           null,
-          React.createElement(PeekProvider, null, React.createElement(ChatView, props)),
+          React.createElement(PeekProvider, null, React.createElement(ChatView, selectedProps)),
         ),
       ),
     );
@@ -154,16 +177,37 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void
 }
 
 beforeEach(() => {
+  chatSelection = createChatSelectionTracker('chat', '');
   streamCalls.length = 0;
+  createCalls.length = 0;
+  messageCalls.length = 0;
+  createSessionImpl = async () => newSessionResult;
+  createMessageImpl = async () => ({ messageId: 'msg-1' });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
 });
 
-afterEach(() => {
-  flushSync(() => root.unmount());
-  if (container.parentNode) container.parentNode.removeChild(container);
+afterEach(async () => {
+  try {
+    flushSync(() => root.unmount());
+  } finally {
+    if (container.parentNode) container.parentNode.removeChild(container);
+    try {
+      for (const retire of streamRetirements) retire();
+      for (const reject of deferredRejections) reject();
+      await Promise.all(fixtureSettlements);
+      await waitFor(() => client.isMutating() === 0
+        && streamDisconnects.every((disconnect) => disconnect.mock.calls.length === 1));
+    } finally {
+      client.clear();
+      deferredRejections.clear();
+      fixtureSettlements.clear();
+      streamRetirements.clear();
+      streamDisconnects.length = 0;
+    }
+  }
 });
 
 describe('ChatView: turn lifecycle resets atomically on session switch', () => {
@@ -250,5 +294,73 @@ describe('ChatView: a send that creates its session keeps the in-flight turn', (
       flushSync(() => {});
     }
     expect(stopButton()).not.toBeNull();
+  });
+});
+
+
+function submitChat(text: string): void {
+  const textarea = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message GoodVibes"]');
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+  expect(textarea).not.toBeNull();
+  expect(setter).toBeDefined();
+  flushSync(() => {
+    setter?.call(textarea, text);
+    textarea?.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  const form = textarea?.closest('form');
+  expect(form).not.toBeNull();
+  flushSync(() => { form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+}
+
+function deferredResult() {
+  let resolveRequest!: (value: unknown) => void;
+  let rejectRequest!: (error: unknown) => void;
+  let settled = false;
+  const promise = new Promise<unknown>((yes, no) => { resolveRequest = yes; rejectRequest = no; });
+  const resolve = (value: unknown) => {
+    if (settled) return;
+    settled = true;
+    resolveRequest(value);
+  };
+  const reject = (error: unknown) => {
+    if (settled) return;
+    settled = true;
+    rejectRequest(error);
+  };
+  deferredRejections.add(() => reject(new Error('Deferred ChatView fixture was retired during teardown.')));
+  fixtureSettlements.add(promise.then(() => undefined, () => undefined));
+  return { promise, resolve, reject };
+}
+
+describe('ChatView: delayed mutations follow selection generation', () => {
+  test('late new-chat creation cannot select over an existing chat', async () => {
+    const response = deferredResult();
+    createSessionImpl = () => response.promise;
+    const selected: string[] = [];
+    renderChatView({ ...baseProps(''), onActiveSessionChange: (id) => { selected.push(id); } });
+    submitChat('first prompt');
+    await waitFor(() => createCalls.length === 1);
+    renderChatView(baseProps(SESSION_B.id));
+    response.resolve(newSessionResult);
+    await waitFor(() => client.isMutating() === 0);
+    expect(selected).toEqual([]);
+    expect(messageCalls).toEqual([]);
+    expect(stopButton()).toBeNull();
+    expect(turnNotice()).toBeNull();
+  });
+
+  test('late send failure does not reappear after leaving and returning to the same chat', async () => {
+    const response = deferredResult();
+    createMessageImpl = () => response.promise;
+    renderChatView(baseProps(SESSION_A.id));
+    submitChat('old question');
+    await waitFor(() => messageCalls.length === 1);
+    renderChatView(baseProps(SESSION_B.id));
+    renderChatView(baseProps(SESSION_A.id));
+    response.reject(new Error(DAEMON_ERROR));
+    await waitFor(() => client.isMutating() === 0);
+    expect(turnErrorAlert()).toBeNull();
+    expect(turnNotice()).toBeNull();
+    expect(stopButton()).toBeNull();
   });
 });

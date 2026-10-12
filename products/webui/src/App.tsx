@@ -54,7 +54,7 @@ import { formatError, isDaemonUnreachableError, isMethodUnavailableError, isSess
 
 export default function App() {
   const queryClient = useQueryClient();
-  const { view, setView, setTab, tab, session: activeChatSessionId, setSession, setUrlState, settings: settingsSection } = useUrlState();
+  const { view, setView, setTab, tab, session: activeChatSessionId, setSession, setUrlState, settings: settingsSection, chatSelection } = useUrlState();
   const activeView: ViewId = view;
   const [draftChatRequested, setDraftChatRequested] = useState(false);
   // One record of the companion chat sessions this browser knows about (local copies,
@@ -565,6 +565,7 @@ export default function App() {
       {activeView === 'chat' && (
         <ChatView
           activeSessionId={activeChatSessionId}
+          chatSelection={chatSelection}
           sessionItems={chatSessionItems}
           onActiveSessionChange={(sessionId) => {
             setSession(sessionId, { replace: true });

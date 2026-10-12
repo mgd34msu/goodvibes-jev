@@ -1,4 +1,5 @@
 import type { CompletedToolCall } from './message-utils';
+import type { ChatSelectionTracker } from '../../lib/chat-selection';
 
 /**
  * Represents a chat message as it flows through the UI layer.
@@ -69,6 +70,7 @@ export interface ChatMessage {
 
 export interface ChatViewProps {
   activeSessionId: string;
+  chatSelection: ChatSelectionTracker;
   sessionItems: unknown[];
   onActiveSessionChange: (sessionId: string) => void;
   onDraftSessionRequestedChange: (requested: boolean) => void;

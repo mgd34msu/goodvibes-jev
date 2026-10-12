@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { createChatSelectionTracker, type ChatSelectionTracker } from '../lib/chat-selection';
 import {
   type AppUrlState,
   type ViewId,
@@ -38,7 +39,9 @@ export interface UrlStateSetters {
   setUrlState: (partial: Partial<AppUrlState>, options?: { replace?: boolean }) => void;
 }
 
-export interface UseUrlStateReturn extends AppUrlState, UrlStateSetters {}
+export interface UseUrlStateReturn extends AppUrlState, UrlStateSetters {
+  readonly chatSelection: ChatSelectionTracker;
+}
 
 /**
  * Pure initializer: decode the current URL into initial state.
@@ -50,6 +53,7 @@ function initializeUrl(): AppUrlState {
 
 export function useUrlState(): UseUrlStateReturn {
   const [urlState, setLocalState] = useState<AppUrlState>(initializeUrl);
+  const [chatSelection] = useState(() => createChatSelectionTracker(urlState.view, urlState.session));
 
   // Normalize the URL on first mount: if no `view` param, silently replace
   // so a bare `/` becomes `/?view=chat` without adding a history entry.
@@ -82,13 +86,15 @@ export function useUrlState(): UseUrlStateReturn {
   // Subscribe to popstate (back/forward navigation)
   useEffect(() => {
     function handlePopState(): void {
-      setLocalState(decodeUrlState());
+      const nextState = decodeUrlState();
+      chatSelection.update(nextState.view, nextState.session);
+      setLocalState(nextState);
     }
     window.addEventListener('popstate', handlePopState);
     return () => {
       window.removeEventListener('popstate', handlePopState);
     };
-  }, []);
+  }, [chatSelection]);
 
   const setView = useCallback((view: ViewId, options?: { replace?: boolean; tab?: string }): void => {
     // Compute next state from the current closure value, NOT inside the
@@ -103,8 +109,9 @@ export function useUrlState(): UseUrlStateReturn {
     } else {
       pushState(nextState);
     }
+    chatSelection.update(nextState.view, nextState.session);
     setLocalState(nextState);
-  }, [urlState]);
+  }, [urlState, chatSelection]);
 
   const setTab = useCallback((tab: string, options?: { replace?: boolean }): void => {
     const { tab: _previousTab, ...rest } = urlState;
@@ -114,8 +121,9 @@ export function useUrlState(): UseUrlStateReturn {
     } else {
       replaceState(nextState);
     }
+    chatSelection.update(nextState.view, nextState.session);
     setLocalState(nextState);
-  }, [urlState]);
+  }, [urlState, chatSelection]);
 
   const setSession = useCallback((session: string, options?: { replace?: boolean }): void => {
     const nextState: AppUrlState = { ...urlState, session };
@@ -124,8 +132,9 @@ export function useUrlState(): UseUrlStateReturn {
     } else {
       pushState(nextState);
     }
+    chatSelection.update(nextState.view, nextState.session, true);
     setLocalState(nextState);
-  }, [urlState]);
+  }, [urlState, chatSelection]);
 
   const setFilters = useCallback(
     (updates: Record<string, string | undefined>, options?: { replace?: boolean }): void => {
@@ -143,9 +152,10 @@ export function useUrlState(): UseUrlStateReturn {
       } else {
         pushState(nextState);
       }
+      chatSelection.update(nextState.view, nextState.session);
       setLocalState(nextState);
     },
-    [urlState],
+    [urlState, chatSelection],
   );
 
   const resetFilters = useCallback(
@@ -156,9 +166,10 @@ export function useUrlState(): UseUrlStateReturn {
       } else {
         pushState(nextState);
       }
+      chatSelection.update(nextState.view, nextState.session);
       setLocalState(nextState);
     },
-    [urlState],
+    [urlState, chatSelection],
   );
 
   const setUrlState = useCallback(
@@ -169,13 +180,15 @@ export function useUrlState(): UseUrlStateReturn {
       } else {
         pushState(nextState);
       }
+      chatSelection.update(nextState.view, nextState.session, Object.hasOwn(partial, 'session'));
       setLocalState(nextState);
     },
-    [urlState],
+    [urlState, chatSelection],
   );
 
   return {
     ...urlState,
+    chatSelection,
     setView,
     setTab,
     setSession,

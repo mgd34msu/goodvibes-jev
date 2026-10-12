@@ -447,3 +447,61 @@ describe('useUrlState: popstate', () => {
     });
   });
 });
+
+
+describe('useUrlState: chat selection generation', () => {
+  test('batched away-and-back selection retires the original generation', () => {
+    const { getHandle, unmount } = renderHook(true);
+    flushSync(() => { getHandle().setSession('session-a'); });
+    const tracker = getHandle().chatSelection;
+    const original = tracker.capture();
+    flushSync(() => {
+      getHandle().setSession('session-b');
+      expect(tracker.isCurrent(original)).toBe(false);
+      getHandle().setSession('session-a');
+    });
+    expect(getHandle().session).toBe('session-a');
+    expect(tracker.isCurrent(original)).toBe(false);
+    expect(tracker.capture().sessionId).toBe('session-a');
+    unmount();
+  });
+
+  test('a new draft retires a previous draft even though both have no session ID', () => {
+    const { getHandle, unmount } = renderHook();
+    const original = getHandle().chatSelection.capture();
+    flushSync(() => { getHandle().setUrlState({ view: 'chat', session: '' }); });
+    expect(getHandle().chatSelection.isCurrent(original)).toBe(false);
+    unmount();
+  });
+
+  test('settings, tabs and filters preserve the current chat selection', () => {
+    const { getHandle, unmount } = renderHook();
+    const original = getHandle().chatSelection.capture();
+    flushSync(() => { getHandle().setUrlState({ settings: 'models' }); });
+    flushSync(() => { getHandle().setFilters({ kind: 'user' }); });
+    flushSync(() => { getHandle().setTab(''); });
+    expect(getHandle().chatSelection.isCurrent(original)).toBe(true);
+    unmount();
+  });
+
+  test('leaving the chat view and returning retires the original selection', () => {
+    const { getHandle, unmount } = renderHook();
+    const original = getHandle().chatSelection.capture();
+    flushSync(() => { getHandle().setView('work'); });
+    flushSync(() => { getHandle().setView('chat'); });
+    expect(getHandle().chatSelection.isCurrent(original)).toBe(false);
+    unmount();
+  });
+
+  test('actual back/forward observations retire a prior same-ID selection', () => {
+    withPopstateTrap(({ getHandle, unmount }, trigger) => {
+      const original = getHandle().chatSelection.capture();
+      window.history.pushState(null, '', '/?view=chat&session=other');
+      trigger();
+      window.history.pushState(null, '', '/?view=chat');
+      trigger();
+      expect(getHandle().chatSelection.isCurrent(original)).toBe(false);
+      unmount();
+    });
+  });
+});
