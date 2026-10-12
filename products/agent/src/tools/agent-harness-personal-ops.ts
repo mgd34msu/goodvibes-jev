@@ -497,11 +497,14 @@ export async function runPersonalOpsRead(context: CommandContext, args: AgentHar
     assertCurrent();
     if (JSON.stringify(captureCatalogData({ tools, schemas: Array.from(schemas.entries()) })) !== sourceJson) throw new ToolInputProjectionError('stale');
   };
+  const exactLane = args.laneId === 'inbox' && typeof args.recordId === 'string'
+    && args.recordId.length > 0 && args.recordId === readString(args.recordId)
+    && !readString(args.target) && !readString(args.query) ? 'inbox' : undefined;
   const lanes = await buildLanes(context, {
     ...options, assertCurrent: assertSelectionCurrent,
     toolsByServer: toolsByServer(tools),
     schemasByQualifiedName: schemas,
-  });
+  }, exactLane);
   const resolved = await resolveRunRecord(lanes, {
     laneId: readString(args.laneId),
     recordId: readString(args.recordId),
@@ -665,7 +668,7 @@ export async function describePersonalOpsLane(context: CommandContext, args: Age
   }
   const normalized = input.toLowerCase();
   const tools = await mcpToolRecords(context, options);
-  const exactLane = args.laneId === 'notes' || args.laneId === 'reminders' ? args.laneId : undefined;
+  const exactLane = args.laneId === 'notes' || args.laneId === 'reminders' || args.laneId === 'inbox' ? args.laneId : undefined;
   const lanes = await buildLanes(context, {
     ...options, toolsByServer: toolsByServer(tools), schemasByQualifiedName: await mcpToolSchemas(context, tools, options) }, exactLane);
   options.signal?.throwIfAborted();

@@ -72,15 +72,84 @@ function remindersLane(scheduleMethods: readonly string[], reminderProviderRecor
   };
 }
 
+function inboxLane({ snapshot, emailMethods, unavailableEmailMethods, emailConnectors, inboxProviderRecords, inboxArtifactRecords, inboxReviewQueueRecords, inboxEffectReceiptRecords, refreshableInboxQueueRecords, readyChannels }: {
+  readonly snapshot: ReturnType<typeof buildAgentWorkspaceRuntimeSnapshot>;
+  readonly emailMethods: readonly string[];
+  readonly unavailableEmailMethods: readonly string[];
+  readonly emailConnectors: Awaited<ReturnType<typeof connectorSignalsMatching>>;
+  readonly inboxProviderRecords: readonly PersonalOpsLiveRecord[];
+  readonly inboxArtifactRecords: readonly PersonalOpsLiveRecord[];
+  readonly inboxReviewQueueRecords: readonly PersonalOpsLiveRecord[];
+  readonly inboxEffectReceiptRecords: readonly PersonalOpsLiveRecord[];
+  readonly refreshableInboxQueueRecords: number;
+  readonly readyChannels: number;
+}): PersonalOpsLane {
+  return {
+    id: 'inbox',
+    label: 'Inbox',
+    status: inboxProviderRecords.length > 0
+      ? 'ready'
+      : emailMethods.length > 0 || emailConnectors.length > 0 || inboxArtifactRecords.length > 0 || inboxEffectReceiptRecords.length > 0 ? 'partial' : 'gap',
+    outcome: 'Triage inbound email or message inboxes, summarize threads, draft replies, and send only after confirmation.',
+    current: inboxProviderRecords.length > 0
+      ? 'Fresh provider-backed inbox thread records are published by the connected daemon or SDK read model; Personal Ops can triage current queue state without inventing sends, labels, or archive effects.'
+      : emailMethods.length > 0 && emailConnectors.length === 0 && inboxArtifactRecords.length === 0 && inboxEffectReceiptRecords.length === 0
+      ? 'The daemon contract exposes email-like methods; Personal Ops workflow cards now guide inbox triage and draft boundaries around exact methods.'
+      : emailConnectors.length > 0
+        ? 'A configured MCP connector looks email-capable; Personal Ops workflow cards now guide inbox triage, schema-derived operation records, and draft boundaries around its exact tools.'
+        : inboxArtifactRecords.length > 0
+          ? 'Saved inbox review artifacts and thread queue items are available for recap, local draft review, or promotion; no fresh email connector is currently ready.'
+          : inboxEffectReceiptRecords.length > 0
+            ? 'Saved inbox provider-effect receipts are available for audit and follow-up; no fresh email connector is currently ready.'
+      : unavailableEmailMethods.length > 0
+        ? `The operator contract advertises ${unavailableEmailMethods.length} email method(s), but they are unavailable (route not served by this daemon) and cannot be dispatched.`
+      : 'No email/IMAP/SMTP methods are present in the current GoodVibes SDK operator contract.',
+    next: inboxProviderRecords.length > 0
+      ? 'Inspect one fresh thread record, summarize or draft locally, and use only the published confirmed follow-up routes for replies, sends, labels, or archive.'
+      : emailMethods.length > 0 && emailConnectors.length === 0 && inboxArtifactRecords.length === 0 && inboxEffectReceiptRecords.length === 0
+      ? 'Use the inbox workflow cards to inspect exact methods, read selected threads, summarize priorities, and keep send as a separate confirmation.'
+      : emailConnectors.length > 0
+        ? 'Use the inbox workflow cards and operation records to inspect matching MCP connector schemas, then route triage only through reviewed connector actions.'
+        : inboxArtifactRecords.length > 0
+          ? 'Use saved thread queue records for local draft review or recap, then repair an email connector before reading fresh inbox data or sending.'
+          : inboxEffectReceiptRecords.length > 0
+            ? 'Review saved inbox provider-effect receipts, then repair an email connector before reading fresh inbox data or sending another provider effect.'
+      : 'Connect a Google account with /google connect, then triage and draft replies through the built-in google tool.',
+    userRoute: 'Agent Workspace -> Personal Ops -> Delivery channels',
+    modelRoute: emailConnectors.length > 0 ? 'agent_harness mode:"mcp_servers" query:"email"' : 'host action:"methods" query:"email"',
+    signals: [
+      `${inboxProviderRecords.length} fresh provider-backed inbox thread record(s)`,
+      `${emailMethods.length} dispatchable email-like daemon method(s)`,
+      ...(unavailableEmailMethods.length > 0 ? [`${unavailableEmailMethods.length} advertised-but-unavailable email method(s) (route not served by this daemon)`] : []),
+      `${emailConnectors.length} email-like MCP connector(s)`,
+      `${inboxArtifactRecords.length} saved inbox review artifact(s)`,
+      `${inboxReviewQueueRecords.length} saved inbox thread queue item(s)`,
+      `${inboxEffectReceiptRecords.length} saved inbox provider-effect receipt(s)`,
+      `${refreshableInboxQueueRecords} refreshable saved inbox queue item(s)`,
+      `${readyChannels}/${snapshot.channels.length} channel(s) ready for delivery`,
+    ],
+    methodIds: emailMethods,
+    connectorSignals: emailConnectors,
+    workflows: inboxWorkflows(emailMethods, emailConnectors, unavailableEmailMethods),
+    liveRecords: [
+      ...inboxProviderRecords,
+      ...inboxReviewQueueRecords,
+      ...inboxArtifactRecords,
+      ...inboxEffectReceiptRecords,
+      ...connectorRecords(emailConnectors, 'Inbox', 'inbox'),
+    ],
+  };
+}
+
 export async function buildLanes(
   context: CommandContext,
   options: CatalogRankingOptions & {
     readonly toolsByServer?: ReadonlyMap<string, readonly McpToolRecord[]>;
     readonly schemasByQualifiedName?: ReadonlyMap<string, McpToolSchema>;
   } = {},
-  exactLane?: 'notes' | 'reminders',
+  exactLane?: 'notes' | 'reminders' | 'inbox',
 ): Promise<readonly PersonalOpsLane[]> {
-  if (exactLane !== undefined && exactLane !== 'notes' && exactLane !== 'reminders') throw new ToolInputProjectionError('invalid');
+  if (exactLane !== undefined && exactLane !== 'notes' && exactLane !== 'reminders' && exactLane !== 'inbox') throw new ToolInputProjectionError('invalid');
   const optionsCurrent = captureCatalogMethods(options, ['signal', 'assertCurrent', 'retainCurrent', 'sourceOwner', 'toolsByServer', 'schemasByQualifiedName']);
   const signal = options.signal, callerCurrent = options.assertCurrent, retainCurrent = options.retainCurrent;
   const sourceOwner = options.sourceOwner;
@@ -126,12 +195,15 @@ export async function buildLanes(
   // honest degraded wording instead.
   let contract: { readonly scope: 'all'; readonly values: Awaited<ReturnType<typeof contractMethodsForLanes>> }
     | { readonly scope: 'reminders'; readonly values: Awaited<ReturnType<typeof contractMethodsForLane>> }
+    | { readonly scope: 'inbox'; readonly values: Awaited<ReturnType<typeof contractMethodsForLane>> }
     | { readonly scope: 'notes' };
   if (exactLane === 'notes') {
     await readChild(() => retainPersonalOpsContractSource(childOptions));
     contract = { scope: 'notes' };
   } else if (exactLane === 'reminders') {
     contract = { scope: 'reminders', values: await readChild(() => contractMethodsForLane('reminders', childOptions)) };
+  } else if (exactLane === 'inbox') {
+    contract = { scope: 'inbox', values: await readChild(() => contractMethodsForLane('inbox', childOptions)) };
   } else {
     contract = { scope: 'all', values: await readChild(() => contractMethodsForLanes(childOptions)) };
   }
@@ -164,66 +236,15 @@ export async function buildLanes(
   if (contract.scope === 'notes') return [notesLane(snapshot)];
   if (contract.scope === 'reminders') return [remindersLane(contract.values.available, reminderProviderRecords,
     reminderEffectReceiptRecords, configuredTargets, readyChannels)];
+  if (contract.scope === 'inbox') return [inboxLane({ snapshot, emailMethods: contract.values.available,
+    unavailableEmailMethods: contract.values.unavailable, emailConnectors, inboxProviderRecords, inboxArtifactRecords,
+    inboxReviewQueueRecords, inboxEffectReceiptRecords, refreshableInboxQueueRecords, readyChannels })];
   const { inbox: email, calendar, tasks, reminders } = contract.values;
   const emailMethods = email.available, unavailableEmailMethods = email.unavailable;
   const calendarMethods = calendar.available, unavailableCalendarMethods = calendar.unavailable;
   const taskMethods = tasks.available, scheduleMethods = reminders.available;
   return [
-    {
-      id: 'inbox',
-      label: 'Inbox',
-      status: inboxProviderRecords.length > 0
-        ? 'ready'
-        : emailMethods.length > 0 || emailConnectors.length > 0 || inboxArtifactRecords.length > 0 || inboxEffectReceiptRecords.length > 0 ? 'partial' : 'gap',
-      outcome: 'Triage inbound email or message inboxes, summarize threads, draft replies, and send only after confirmation.',
-      current: inboxProviderRecords.length > 0
-        ? 'Fresh provider-backed inbox thread records are published by the connected daemon or SDK read model; Personal Ops can triage current queue state without inventing sends, labels, or archive effects.'
-        : emailMethods.length > 0 && emailConnectors.length === 0 && inboxArtifactRecords.length === 0 && inboxEffectReceiptRecords.length === 0
-        ? 'The daemon contract exposes email-like methods; Personal Ops workflow cards now guide inbox triage and draft boundaries around exact methods.'
-        : emailConnectors.length > 0
-          ? 'A configured MCP connector looks email-capable; Personal Ops workflow cards now guide inbox triage, schema-derived operation records, and draft boundaries around its exact tools.'
-          : inboxArtifactRecords.length > 0
-            ? 'Saved inbox review artifacts and thread queue items are available for recap, local draft review, or promotion; no fresh email connector is currently ready.'
-            : inboxEffectReceiptRecords.length > 0
-              ? 'Saved inbox provider-effect receipts are available for audit and follow-up; no fresh email connector is currently ready.'
-        : unavailableEmailMethods.length > 0
-          ? `The operator contract advertises ${unavailableEmailMethods.length} email method(s), but they are unavailable (route not served by this daemon) and cannot be dispatched.`
-        : 'No email/IMAP/SMTP methods are present in the current GoodVibes SDK operator contract.',
-      next: inboxProviderRecords.length > 0
-        ? 'Inspect one fresh thread record, summarize or draft locally, and use only the published confirmed follow-up routes for replies, sends, labels, or archive.'
-        : emailMethods.length > 0 && emailConnectors.length === 0 && inboxArtifactRecords.length === 0 && inboxEffectReceiptRecords.length === 0
-        ? 'Use the inbox workflow cards to inspect exact methods, read selected threads, summarize priorities, and keep send as a separate confirmation.'
-        : emailConnectors.length > 0
-          ? 'Use the inbox workflow cards and operation records to inspect matching MCP connector schemas, then route triage only through reviewed connector actions.'
-          : inboxArtifactRecords.length > 0
-            ? 'Use saved thread queue records for local draft review or recap, then repair an email connector before reading fresh inbox data or sending.'
-            : inboxEffectReceiptRecords.length > 0
-              ? 'Review saved inbox provider-effect receipts, then repair an email connector before reading fresh inbox data or sending another provider effect.'
-        : 'Connect a Google account with /google connect, then triage and draft replies through the built-in google tool.',
-      userRoute: 'Agent Workspace -> Personal Ops -> Delivery channels',
-      modelRoute: emailConnectors.length > 0 ? 'agent_harness mode:"mcp_servers" query:"email"' : 'host action:"methods" query:"email"',
-      signals: [
-        `${inboxProviderRecords.length} fresh provider-backed inbox thread record(s)`,
-        `${emailMethods.length} dispatchable email-like daemon method(s)`,
-        ...(unavailableEmailMethods.length > 0 ? [`${unavailableEmailMethods.length} advertised-but-unavailable email method(s) (route not served by this daemon)`] : []),
-        `${emailConnectors.length} email-like MCP connector(s)`,
-        `${inboxArtifactRecords.length} saved inbox review artifact(s)`,
-        `${inboxReviewQueueRecords.length} saved inbox thread queue item(s)`,
-        `${inboxEffectReceiptRecords.length} saved inbox provider-effect receipt(s)`,
-        `${refreshableInboxQueueRecords} refreshable saved inbox queue item(s)`,
-        `${readyChannels}/${snapshot.channels.length} channel(s) ready for delivery`,
-      ],
-      methodIds: emailMethods,
-      connectorSignals: emailConnectors,
-      workflows: inboxWorkflows(emailMethods, emailConnectors, unavailableEmailMethods),
-      liveRecords: [
-        ...inboxProviderRecords,
-        ...inboxReviewQueueRecords,
-        ...inboxArtifactRecords,
-        ...inboxEffectReceiptRecords,
-        ...connectorRecords(emailConnectors, 'Inbox', 'inbox'),
-      ],
-    },
+    inboxLane({ snapshot, emailMethods, unavailableEmailMethods, emailConnectors, inboxProviderRecords, inboxArtifactRecords, inboxReviewQueueRecords, inboxEffectReceiptRecords, refreshableInboxQueueRecords, readyChannels }),
     {
       id: 'calendar',
       label: 'Calendar',
