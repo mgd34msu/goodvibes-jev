@@ -162,11 +162,12 @@ function capture(site: string, options: JudgmentReadingOptions): JudgmentPortCap
   const ownedAsk = ask.bind(base);
   const recordReadings = read(() => recorder?.recordReadings), recordAction = read(() => recorder?.recordAction);
   const callerCurrent = options.assertCurrent, assertResult = options.assertResult, captureResult = options.captureResult, prepareResultCapture = options.prepareResultCapture;
-  const readObservation = <T>(property: () => T): T => readCurrentProperty(() => {
+  const assertObservationProperties = () => {
     if (consumed || signal.aborted) throw new JudgmentAuthorityRetiredError();
     assertProperties();
     if (consumed || signal.aborted) throw new JudgmentAuthorityRetiredError();
-  }, property);
+  };
+  const readObservation = <T>(property: () => T): T => readCurrentProperty(assertObservationProperties, property);
   const installationCurrent = (observation = false) => {
     const readInstalled = observation ? readObservation : read;
     assertProperties();
