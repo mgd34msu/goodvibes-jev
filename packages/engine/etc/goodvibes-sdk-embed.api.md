@@ -170,7 +170,11 @@ export class DaemonServer {
     // Warning: (ae-forgotten-export) The symbol "McpServerConfig" needs to be exported by the entry point embed.d.ts
     registerMcpServer(config: McpServerConfig): Promise<void>;
     get sessions(): SharedSessionBroker;
-    start(): Promise<void>;
+    start(): Promise<void | {
+        readonly state: 'handover';
+        readonly drain: Promise<void>;
+        readonly cancel: () => void;
+    }>;
     // (undocumented)
     stop(): Promise<void>;
     get triggers(): RuntimeServices['triggerManager'] | undefined;
