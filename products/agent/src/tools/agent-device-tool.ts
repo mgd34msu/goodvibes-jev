@@ -2,6 +2,7 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
 import { createAgentHarnessTool } from './agent-harness-tool.ts';
+import { forwardHarnessCatalogCall } from './agent-harness-catalog-ingress.ts';
 
 type AgentDeviceAction =
   | 'status'
@@ -212,19 +213,20 @@ export function createAgentDeviceTool(deps: AgentDeviceToolDeps): Tool {
       sideEffects: ['state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs, options) => {
       const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentDeviceToolArgs;
+      const forward = (translated: Record<string, unknown>) => forwardHarnessCatalogCall(harnessTool, rawArgs, translated, options);
       const action = readAction(args);
 
-      if (action === 'status') return harnessTool.execute(statusArgs(args));
-      if (action === 'capability') return harnessTool.execute(capabilityArgs(args));
-      if (action === 'browser') return harnessTool.execute(browserArgs(args));
-      if (action === 'open_browser') return harnessTool.execute(openBrowserArgs(args));
-      if (action === 'control') return harnessTool.execute(controlArgs(args));
-      if (action === 'voice') return harnessTool.execute(voiceArgs(args));
-      if (action === 'provider') return harnessTool.execute(providerArgs(args));
-      if (action === 'open_tts_provider') return harnessTool.execute(openTtsProviderArgs(args));
-      if (action === 'open_tts_voice') return harnessTool.execute(openTtsVoiceArgs(args));
+      if (action === 'status') return forward(statusArgs(args));
+      if (action === 'capability') return forward(capabilityArgs(args));
+      if (action === 'browser') return forward(browserArgs(args));
+      if (action === 'open_browser') return forward(openBrowserArgs(args));
+      if (action === 'control') return forward(controlArgs(args));
+      if (action === 'voice') return forward(voiceArgs(args));
+      if (action === 'provider') return forward(providerArgs(args));
+      if (action === 'open_tts_provider') return forward(openTtsProviderArgs(args));
+      if (action === 'open_tts_voice') return forward(openTtsVoiceArgs(args));
 
       return error('Unknown device action. Use action:"status" for the device capability map.');
     },

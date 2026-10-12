@@ -2,6 +2,7 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
 import { createAgentHarnessTool } from './agent-harness-tool.ts';
+import { forwardHarnessCatalogCall } from './agent-harness-catalog-ingress.ts';
 
 type AgentChannelsAction = 'status' | 'channel' | 'setup' | 'triage' | 'deliveries';
 
@@ -85,12 +86,13 @@ export function createAgentChannelsTool(deps: AgentChannelsToolDeps): Tool {
       sideEffects: [],
       concurrency: 'parallel',
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs, options) => {
       const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentChannelsToolArgs;
+      const forward = (translated: Record<string, unknown>) => forwardHarnessCatalogCall(harnessTool, rawArgs, translated, options);
       const action = readAction(args);
 
       if (action === 'channel') {
-        return harnessTool.execute(compactArgs({
+        return forward(compactArgs({
           mode: 'channel',
           channelId: channelIdArg(args),
           target: args.target,
@@ -99,7 +101,7 @@ export function createAgentChannelsTool(deps: AgentChannelsToolDeps): Tool {
         }));
       }
       if (action === 'setup') {
-        return harnessTool.execute(compactArgs({
+        return forward(compactArgs({
           mode: 'channel_setup_guide',
           channelId: channelIdArg(args),
           target: args.target,
@@ -108,20 +110,20 @@ export function createAgentChannelsTool(deps: AgentChannelsToolDeps): Tool {
         }));
       }
       if (action === 'triage') {
-        return harnessTool.execute(compactArgs({
+        return forward(compactArgs({
           mode: 'channel_triage',
           limit: args.limit,
           includeParameters: args.includeParameters,
         }));
       }
       if (action === 'deliveries') {
-        return harnessTool.execute(compactArgs({
+        return forward(compactArgs({
           mode: 'channel_deliveries',
           limit: args.limit,
           includeParameters: args.includeParameters,
         }));
       }
-      return harnessTool.execute(compactArgs({
+      return forward(compactArgs({
         mode: 'channels',
         query: args.query ?? args.target,
         limit: args.limit,

@@ -11,11 +11,14 @@
  * delete as success, and must not hand a turn the whole People section.
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { rmSync } from 'node:fs';
+import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { admitLocalState } from '../helpers/local-state-admission.ts';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { PROFILE_FIELDS, PROSE_ONLY_SECTIONS } from '@goodvibes-jev/engine/sdk/platform/owner-profile';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ProfileGatewayResult } from '../../agent/owner-profile-gateway.ts';
+import type { ProfileGatewayInvoke, ProfileGatewayResult } from '../../agent/owner-profile-gateway.ts';
 import { createAgentProfileTool, registerAgentProfileTool } from '../../tools/agent-profile-tool.ts';
 import type { ProfileMethodId } from '../../tools/agent-profile-types.ts';
 
@@ -44,16 +47,29 @@ function wrote(disclosure: string, changes: readonly Record<string, unknown>[] =
   return { ok: true, reason: null, changes, disclosure };
 }
 
+const directories: string[] = [];
+afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+
+function admittedTool(invoke: ProfileGatewayInvoke): Tool {
+  const raw = createAgentProfileTool({ invoke });
+  const directory = makeProjectTempDir('agent-profile-relay'); directories.push(directory);
+  return { definition: raw.definition, async execute(args, options) {
+    if (!['set', 'append', 'forget', 'undo'].includes(String(args.action ?? args.mode))) return raw.execute(args, options);
+    const result = await admitLocalState(registry => registerAgentProfileTool(registry, { invoke }), 'profile', args,
+      { directory, signal: options?.signal, beforeEffect: () => options?.assertCurrent?.(args) });
+    return { success: result.success, output: 'output' in result && typeof result.output === 'string' ? result.output
+      : 'error' in result && typeof result.error === 'string' ? result.error : '' };
+  } };
+}
+
 function stubTool(
   respond: (methodId: ProfileMethodId, body: Record<string, unknown>) => unknown,
   calls: RecordedCall[] = [],
 ): { readonly tool: Tool; readonly calls: RecordedCall[] } {
-  const tool = createAgentProfileTool({
-    invoke: async (methodId, body): Promise<ProfileGatewayResult> => {
+  const tool = admittedTool(async (methodId, body): Promise<ProfileGatewayResult> => {
       const recorded = recordedBody(body);
       calls.push({ methodId, body: recorded });
       return { ok: true, data: respond(methodId, recorded), route: 'in-process' };
-    },
   });
   return { tool, calls };
 }
@@ -119,15 +135,15 @@ describe('profile tool: untrusted sources stay barred', () => {
     expect(result.output).toContain('overlaps content read this turn from web-page example.com');
   });
 
-  test('a write with no authority is not sent at all', async () => {
+  test('recorded admission does not need a model-authored authority flag', async () => {
     const calls: RecordedCall[] = [];
     const { tool } = stubTool(() => wrote('Noted.'), calls);
 
     const result = await tool.execute({ action: 'set', fieldId: 'contact.phone', value: '555', said: 'my number is 555' });
 
-    expect(result.success).toBe(false);
-    expect(result.output).toContain('`authority` is required');
-    expect(calls).toHaveLength(0);
+    expect(result.success).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body.authority).toBe('autonomous');
   });
 
   test('an authority this platform does not know is rejected rather than forwarded', async () => {
@@ -143,7 +159,7 @@ describe('profile tool: untrusted sources stay barred', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.output).toContain('is not a source this platform knows');
+    expect(result.output).toContain('registered schema');
     expect(calls).toHaveLength(0);
   });
 
@@ -181,7 +197,7 @@ describe('profile tool: it tells him what it recorded', () => {
     expect(result.output).not.toContain('200 Office Way');
   });
 
-  test('his verbatim words go to the daemon as said, alongside the recording surface', async () => {
+  test('native delegation reaches the daemon independently of claimed utterance provenance', async () => {
     const calls: RecordedCall[] = [];
     const { tool } = stubTool(() => wrote('Noted.'), calls);
 
@@ -194,11 +210,10 @@ describe('profile tool: it tells him what it recorded', () => {
     });
 
     expect(calls[0]?.methodId).toBe('profile.set');
-    expect(calls[0]?.body.said).toBe('ship it to my office instead');
-    // The surface names which of his surfaces recorded the line; the authority
-    // says the fact came from him. They are different questions.
+    expect(calls[0]?.body.said).toBe('');
+    // The surface remains provenance; recorded admission is independent of model-authored words.
     expect(calls[0]?.body.surface).toBe('agent');
-    expect(calls[0]?.body.authority).toBe('owner-direct');
+    expect(calls[0]?.body.authority).toBe('autonomous');
   });
 });
 
@@ -236,7 +251,7 @@ describe('profile tool: forgetting something that was not there', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(calls[0]?.body).toEqual({ section: 'Notes', text: 'Allergic to shellfish', authority: 'owner-direct' });
+    expect(calls[0]?.body).toEqual({ section: 'Notes', text: 'Allergic to shellfish', authority: 'autonomous' });
   });
 
   test('a position is never sent, whatever the caller passes', async () => {
@@ -284,8 +299,7 @@ describe('profile tool: forgetting something that was not there', () => {
       { section: 'Notes', text: 'Prefers aisle seats' },
     ];
     const calls: RecordedCall[] = [];
-    const tool = createAgentProfileTool({
-      invoke: async (methodId, body): Promise<ProfileGatewayResult> => {
+    const tool = admittedTool(async (methodId, body): Promise<ProfileGatewayResult> => {
         const recorded = recordedBody(body);
         calls.push({ methodId, body: recorded });
         const section = String(recorded.section ?? '');
@@ -296,7 +310,6 @@ describe('profile tool: forgetting something that was not there', () => {
         }
         document.splice(index, 1);
         return { ok: true, data: wrote(`Forgotten, removed a line from ${section}.`), route: 'in-process' };
-      },
     });
 
     // He inserts a line above the one that is about to be forgotten. Under the

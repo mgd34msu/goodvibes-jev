@@ -1,6 +1,7 @@
 import { HttpStatusError } from '@goodvibes-jev/engine/errors';
 import { createBrowserAgentSdk, type BrowserAgentSdk } from '@goodvibes-jev/engine/sdk/browser/agent';
 import { captureStrictJudgmentJson } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { assertProjectionCurrent } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { isDeepStrictEqual } from 'node:util';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { VERSION } from '../version.ts';
@@ -110,7 +111,7 @@ function retainKnowledgeRequest(connection: AgentKnowledgeConnection, options: A
       }
     }
   };
-  return { baseUrl, token, signal, fetch: transport, assertCurrent() { check(); assertCurrent?.(); check(); } };
+  return { baseUrl, token, signal, fetch: transport, assertCurrent() { check(); assertProjectionCurrent(assertCurrent); check(); } };
 }
 
 export async function fetchConnectedHostStatus(connection: AgentKnowledgeConnection,
@@ -178,19 +179,49 @@ export function normalizeAgentKnowledgeData<TData>(data: TData): TData {
   return normalizeAgentKnowledgeScopeAliases(data);
 }
 
-export function createAgentSdk(connection: AgentKnowledgeConnection): BrowserAgentSdk {
-  const sdk = createBrowserAgentSdk({
-    baseUrl: connection.baseUrl,
-    authToken: connection.token,
+export function createAgentSdk(connection: AgentKnowledgeConnection,
+  options: AgentKnowledgeRequestOptions = {}): BrowserAgentSdk {
+  const request = retainKnowledgeRequest(connection, options);
+  request.assertCurrent();
+  const sdkFor = (assertCurrent: () => void) => createBrowserAgentSdk({
+    baseUrl: request.baseUrl,
+    authToken: request.token,
+    retry: options.signal || options.assertCurrent ? { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 } : undefined,
+    fetch: async (input, init) => {
+      assertCurrent();
+      const signal = request.signal && init?.signal ? AbortSignal.any([request.signal, init.signal]) : request.signal ?? init?.signal;
+      try {
+        const response = await request.fetch(input, { ...init, signal });
+        assertCurrent(); return response;
+      } catch (error) { assertCurrent(); throw error; }
+    },
   });
+  const invokeCurrent = async <TInput, TData>(input: TInput,
+    call: (sdk: BrowserAgentSdk, input: TInput) => Promise<TData>): Promise<TData> => {
+    request.assertCurrent();
+    const original = captureStrictJudgmentJson(input);
+    const assertCurrent = () => {
+      request.assertCurrent();
+      if (!isDeepStrictEqual(captureStrictJudgmentJson(input), original)) throw new Error('Agent Knowledge input changed.');
+      request.assertCurrent();
+    };
+    assertCurrent();
+    let data: TData;
+    try { data = await call(sdkFor(assertCurrent), input); }
+    catch (error) { assertCurrent(); throw error; }
+    assertCurrent();
+    const normalized = normalizeAgentKnowledgeData(data);
+    assertCurrent(); return normalized;
+  };
+  const sdk = sdkFor(request.assertCurrent);
   return {
     ...sdk,
     knowledge: {
       ...sdk.knowledge,
-      ask: async (input) => normalizeAgentKnowledgeData(await sdk.knowledge.ask(input)),
-      search: async (input) => normalizeAgentKnowledgeData(await sdk.knowledge.search(input)),
-      status: async (input) => normalizeAgentKnowledgeData(await sdk.knowledge.status(input)),
-      map: async (input) => normalizeAgentKnowledgeData(await sdk.knowledge.map(input)),
+      ask: async (input) => invokeCurrent(input, (current, value) => current.knowledge.ask(value)),
+      search: async (input) => invokeCurrent(input, (current, value) => current.knowledge.search(value)),
+      status: async (input) => invokeCurrent(input, (current, value) => current.knowledge.status(value)),
+      map: async (input) => invokeCurrent(input, (current, value) => current.knowledge.map(value)),
     },
   };
 }
@@ -347,25 +378,43 @@ export async function getAgentKnowledgeJson<TData>(
   connection: AgentKnowledgeConnection,
   route: string,
   query: JsonRecord = {},
+  options: AgentKnowledgeRequestOptions = {},
 ): Promise<TData> {
-  const response = await fetch(`${connection.baseUrl}${queryRoute(route, query)}`, {
-    headers: {
-      authorization: `Bearer ${connection.token ?? ''}`,
-    },
-  });
-  const text = await response.text();
+  const request = retainKnowledgeRequest(connection, options);
+  request.assertCurrent();
+  const original = captureStrictJudgmentJson(query);
+  const assertCurrent = () => {
+    request.assertCurrent();
+    if (!isDeepStrictEqual(captureStrictJudgmentJson(query), original)) throw new Error('Agent Knowledge input changed.');
+    request.assertCurrent();
+  };
+  const url = `${request.baseUrl}${queryRoute(route, original)}`;
+  assertCurrent();
+  let response: Response;
+  try {
+    response = await request.fetch(url, { signal: request.signal,
+      headers: { authorization: `Bearer ${request.token ?? ''}` } });
+  } catch (error) {
+    assertCurrent();
+    if (error instanceof Error) knowledgeTransportFailures.set(error, assertCurrent);
+    throw error;
+  }
+  assertCurrent();
+  let text: string;
+  try { text = await response.text(); }
+  catch (error) {
+    assertCurrent();
+    if (error instanceof Error) knowledgeTransportFailures.set(error, assertCurrent);
+    throw error;
+  }
+  assertCurrent();
   let parsed: unknown = text;
   if (text.trim()) {
-    try {
-      parsed = JSON.parse(text) as unknown;
-    } catch {
-      parsed = text;
-    }
+    try { parsed = JSON.parse(text); } catch { parsed = text; }
   }
-  if (!response.ok) {
-    throw knowledgeHttpError(response);
-  }
-  return normalizeAgentKnowledgeData(parsed as TData);
+  if (!response.ok) throw knowledgeHttpError(response, assertCurrent);
+  const data = normalizeAgentKnowledgeData(parsed as TData);
+  assertCurrent(); return data;
 }
 
 export function findDisallowedKnowledgeScopeFlag(args: readonly string[]): string | null {

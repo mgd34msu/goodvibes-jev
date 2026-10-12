@@ -2,6 +2,7 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
 import { createAgentHarnessTool } from './agent-harness-tool.ts';
+import { forwardHarnessCatalogCall } from './agent-harness-catalog-ingress.ts';
 
 type AgentSessionsAction = 'list' | 'get';
 
@@ -102,12 +103,13 @@ export function createAgentSessionsTool(deps: AgentSessionsToolDeps): Tool {
       sideEffects: [],
       concurrency: 'parallel',
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs, options) => {
       const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentSessionsToolArgs;
+      const forward = (translated: Record<string, unknown>) => forwardHarnessCatalogCall(harnessTool, rawArgs, translated, options);
       const action = readAction(args);
       if (!action) return error('Unknown sessions action. Use action:"list" or action:"get".');
-      if (action === 'list') return harnessTool.execute(listArgs(args));
-      if (action === 'get') return harnessTool.execute(getArgs(args));
+      if (action === 'list') return forward(listArgs(args));
+      if (action === 'get') return forward(getArgs(args));
       return error('Unknown sessions action. Use action:"list" or action:"get".');
     },
   };

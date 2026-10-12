@@ -2,6 +2,7 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
 import { createAgentHarnessTool } from './agent-harness-tool.ts';
+import { forwardHarnessCatalogCall } from './agent-harness-catalog-ingress.ts';
 
 type AgentSupportAction = 'status' | 'bundle';
 
@@ -102,12 +103,13 @@ export function createAgentSupportTool(deps: AgentSupportToolDeps): Tool {
       sideEffects: [],
       concurrency: 'parallel',
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs, options) => {
       const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentSupportToolArgs;
+      const forward = (translated: Record<string, unknown>) => forwardHarnessCatalogCall(harnessTool, rawArgs, translated, options);
       const action = readAction(args);
       if (!action) return error('Unknown support action. Use action:"status" or action:"bundle".');
-      if (action === 'status') return harnessTool.execute(statusArgs(args));
-      if (action === 'bundle') return harnessTool.execute(bundleArgs(args));
+      if (action === 'status') return forward(statusArgs(args));
+      if (action === 'bundle') return forward(bundleArgs(args));
       return error('Unknown support action. Use action:"status" or action:"bundle".');
     },
   };

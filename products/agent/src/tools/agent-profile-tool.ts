@@ -5,15 +5,15 @@
  * Design: docs/owner-profile.md. Three parts of it are load-bearing here.
  *
  * §7, untrusted sources stay barred. The daemon enforces that, and this tool
- * neither weakens nor re-implements it. Every write carries an `authority`
- * naming where the fact came from, and the tool forwards it unchanged: a fact
+ * neither weakens nor re-implements it. Every write carries recorded native delegation. Optional `authority`
+ * names external provenance and remains restrictive: a fact
  * out of an email body, a web page, a channel message from anyone but him, or a
  * document carries THAT surface, the daemon refuses the write, and the refusal
  * and its reason are handed back for him to see. There is no retry with a
  * different authority anywhere in this file, and no path that turns a refusal
  * into a success.
  *
- * The daemon now REQUIRES `authority` on every write verb: an absent one is a
+ * The human-facing daemon protocol requires `authority` on every write verb: an absent one is a
  * 400 INVALID_ARGUMENT, not a silent fallback to `owner-direct`. `forget` and
  * `undo` are why, §7 gives them an authority check and nothing else (no
  * derivation check, no verbatim quote, because a deletion has neither a value
@@ -40,8 +40,10 @@
 
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { PROFILE_FIELDS, PROSE_ONLY_SECTIONS } from '@goodvibes-jev/engine/sdk/platform/owner-profile';
-import type { ProfileGatewayInvoke } from '../agent/owner-profile-gateway.ts';
+import { PROFILE_FIELDS, PROSE_ONLY_SECTIONS, captureProfileDelegation } from '@goodvibes-jev/engine/sdk/platform/owner-profile';
+import { captureProfileGatewayCurrent, captureProfileGatewayLocalState, type ProfileGatewayInvoke } from '../agent/owner-profile-gateway.ts';
+import { captureCatalogMethods, captureCatalogSnapshot } from './agent-harness-catalog-ranking.ts';
+import { agentLocalStateWrite, assertAgentLocalStateCurrent, createAgentLocalStateInputProjector } from './agent-local-state-admission.ts';
 import {
   isProfileAuthority,
   narrowProfileGet,
@@ -107,6 +109,14 @@ function describeProfileFieldCatalog(): string {
 
 /** The sections that hold prose lines rather than keyed fields, in file order. */
 const PROSE_SECTION_LIST = PROSE_ONLY_SECTIONS.join(', ');
+
+type ToolProfileAuthority = ProfileAuthority | 'autonomous';
+const WRITE_ACTIONS = new Set(['set', 'append', 'forget', 'undo']);
+const ACTION_METHODS = {
+  read: PROFILE_METHOD_IDS.read, get: PROFILE_METHOD_IDS.get, person: PROFILE_METHOD_IDS.person,
+  provenance: PROFILE_METHOD_IDS.provenance, status: PROFILE_METHOD_IDS.status, set: PROFILE_METHOD_IDS.set,
+  append: PROFILE_METHOD_IDS.append, forget: PROFILE_METHOD_IDS.forget, undo: PROFILE_METHOD_IDS.undo,
+} as const;
 
 type ToolOutcome = { readonly success: boolean; readonly output: string };
 
@@ -301,7 +311,7 @@ async function handleStatus(deps: AgentProfileToolDeps): Promise<ToolOutcome> {
  * failure either way, and nothing here softens it, retries it, or reports it as
  * partly done.
  */
-function notDoneOutcome(what: string, reason: string | null | undefined, authority: ProfileAuthority): ToolOutcome {
+function notDoneOutcome(what: string, reason: string | null | undefined, authority: ToolProfileAuthority): ToolOutcome {
   return fail([
     `Not done: ${what}.`,
     `  reason: ${reason ?? 'no reason given'}`,
@@ -311,23 +321,16 @@ function notDoneOutcome(what: string, reason: string | null | undefined, authori
   ]);
 }
 
-function requireAuthority(value: unknown): { readonly authority: ProfileAuthority } | ToolOutcome {
+function requireAuthority(value: unknown): { readonly authority: ToolProfileAuthority } | ToolOutcome {
   const raw = readString(value);
-  if (!raw) {
-    return fail([
-      '`authority` is required on every profile write: where this fact came from.',
-      `  one of: ${PROFILE_AUTHORITIES.join(', ')}`,
-      '  Use "owner-direct" only when he said it himself, to you, in this turn.',
-      '  A fact out of a message, a page, or a document carries that surface and will be refused.',
-    ]);
-  }
+  if (!raw || raw === 'owner-direct') return { authority: 'autonomous' };
   if (!isProfileAuthority(raw)) {
     return fail([`\`authority\` "${raw}" is not a source this platform knows.`, `  one of: ${PROFILE_AUTHORITIES.join(', ')}`]);
   }
   return { authority: raw };
 }
 
-function isOutcome(value: { readonly authority: ProfileAuthority } | ToolOutcome): value is ToolOutcome {
+function isOutcome(value: { readonly authority: ToolProfileAuthority } | ToolOutcome): value is ToolOutcome {
   return 'output' in value;
 }
 
@@ -342,7 +345,7 @@ async function handleSet(
   deps: AgentProfileToolDeps,
   fieldId: string,
   value: string,
-  authority: ProfileAuthority,
+  authority: ToolProfileAuthority,
   said: string,
 ): Promise<ToolOutcome> {
   if (!fieldId) return fail(['`fieldId` is required, e.g. fieldId:"commerce.shippingAddress".']);
@@ -365,7 +368,7 @@ async function handleAppend(
   deps: AgentProfileToolDeps,
   section: string,
   text: string,
-  authority: ProfileAuthority,
+  authority: ToolProfileAuthority,
   said: string,
 ): Promise<ToolOutcome> {
   if (!section) return fail([`\`section\` is required, one of: ${PROSE_SECTION_LIST}.`]);
@@ -401,7 +404,7 @@ async function handleForget(
   fieldId: string,
   section: string,
   text: string,
-  authority: ProfileAuthority,
+  authority: ToolProfileAuthority,
 ): Promise<ToolOutcome> {
   if (!fieldId && !(section && text)) {
     return fail([
@@ -443,7 +446,7 @@ async function handleForget(
 async function handleUndo(
   deps: AgentProfileToolDeps,
   fieldId: string,
-  authority: ProfileAuthority,
+  authority: ToolProfileAuthority,
 ): Promise<ToolOutcome> {
   if (!fieldId) return fail(['`fieldId` is required: which field to put back.']);
   const result = await deps.invoke(PROFILE_METHOD_IDS.undo, { fieldId, authority });
@@ -494,9 +497,9 @@ export function createAgentProfileTool(deps: AgentProfileToolDeps): Tool {
           authority: {
             type: 'string',
             enum: [...PROFILE_AUTHORITIES],
-            description: 'Where the fact came from. owner-direct only if he said it this turn.',
+            description: 'Optional source provenance. External-source labels further restrict independently admitted profile writes.',
           },
-          said: { type: 'string', description: 'His verbatim words for this fact. Required on set/append.' },
+          said: { type: 'string', description: 'Optional exact request provenance. This never grants write authority.' },
         },
         additionalProperties: false,
       },
@@ -505,45 +508,76 @@ export function createAgentProfileTool(deps: AgentProfileToolDeps): Tool {
       sideEffects: ['network', 'state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: unknown) => {
-      const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
-        ? rawArgs
-        : {}) as Record<string, unknown>;
-      const action = normalizeProfileAction(args.action) ?? normalizeProfileAction(args.mode);
-      if (!action) {
-        return fail([`\`action\` is required: ${PROFILE_ACTIONS.join(', ')}.`]);
-      }
-      const fieldId = readString(args.fieldId) || readString(args.field);
+    execute: async (rawArgs, options) => {
+      let assertCurrent = () => { options?.signal?.throwIfAborted(); assertAgentLocalStateCurrent(rawArgs, options); };
+      try {
+        const restrictions = options && captureCatalogMethods(options, ['signal', 'assertCurrent', 'inputProjectionContext']);
+        const input = captureCatalogSnapshot(rawArgs), args = input.captured;
+        assertCurrent();
+        const run = async (): Promise<ToolOutcome> => {
+          const action = normalizeProfileAction(args.action) ?? normalizeProfileAction(args.mode);
+          if (!action) {
+            return fail([`\`action\` is required: ${PROFILE_ACTIONS.join(', ')}.`]);
+          }
+          const writing = WRITE_ACTIONS.has(action);
+          const effects = writing ? agentLocalStateWrite(rawArgs, options) : undefined;
+          const delegation = writing ? captureProfileDelegation(rawArgs, options) : undefined;
+          const method = ACTION_METHODS[action];
+          const backend = captureCatalogMethods(deps, ['invoke']);
+          const gateway = captureProfileGatewayCurrent(deps.invoke, method);
+          assertCurrent = () => {
+            restrictions?.(); input.assertCurrent(rawArgs); backend(); gateway();
+            if (effects) effects.assertCurrent(); else assertAgentLocalStateCurrent(rawArgs, options);
+            restrictions?.(); input.assertCurrent(rawArgs); backend(); gateway();
+          };
+          assertCurrent();
+          const invoke: ProfileGatewayInvoke = async (methodId, body) => {
+            assertCurrent();
+            const result = await deps.invoke(methodId, body, { signal: options?.signal, assertCurrent, delegation,
+              onWriteIntent: () => effects?.onWriteIntent?.('profile'),
+              onEffect: published => effects?.onEffect(published, 'profile'),
+            });
+            assertCurrent(); return result;
+          };
+          const currentDeps = { invoke };
+          const fieldId = readString(args.fieldId) || readString(args.field);
 
-      switch (action) {
-        case 'read':
-          return handleRead(deps);
-        case 'get':
-          return handleGet(deps, fieldId);
-        case 'person':
-          return handlePerson(deps, readString(args.name), readString(args.namedInInstruction));
-        case 'provenance':
-          return handleProvenance(deps, fieldId);
-        case 'status':
-          return handleStatus(deps);
-        default:
-          break;
-      }
+          switch (action) {
+            case 'read':
+              return handleRead(currentDeps);
+            case 'get':
+              return handleGet(currentDeps, fieldId);
+            case 'person':
+              return handlePerson(currentDeps, readString(args.name), readString(args.namedInInstruction));
+            case 'provenance':
+              return handleProvenance(currentDeps, fieldId);
+            case 'status':
+              return handleStatus(currentDeps);
+            default:
+              break;
+          }
 
-      const authority = requireAuthority(args.authority);
-      if (isOutcome(authority)) return authority;
-      const said = readString(args.said);
+          const authority = requireAuthority(args.authority);
+          if (isOutcome(authority)) return authority;
+          const said = authority.authority === 'autonomous' ? '' : readString(args.said);
 
-      if (action === 'set') {
-        return handleSet(deps, fieldId, readString(args.value), authority.authority, said);
+          if (action === 'set') {
+            return handleSet(currentDeps, fieldId, readString(args.value), authority.authority, said);
+          }
+          if (action === 'append') {
+            return handleAppend(currentDeps, readString(args.section), readString(args.text), authority.authority, said);
+          }
+          if (action === 'forget') {
+            return handleForget(currentDeps, fieldId, readString(args.section), readString(args.text), authority.authority);
+          }
+          return handleUndo(currentDeps, fieldId, authority.authority);
+        };
+        const result = await run();
+        assertCurrent();
+        return result;
+      } catch {
+        return fail(['Profile operation held: current admitted authority or source is unavailable.']);
       }
-      if (action === 'append') {
-        return handleAppend(deps, readString(args.section), readString(args.text), authority.authority, said);
-      }
-      if (action === 'forget') {
-        return handleForget(deps, fieldId, readString(args.section), readString(args.text), authority.authority);
-      }
-      return handleUndo(deps, fieldId, authority.authority);
     },
   };
 }
@@ -556,5 +590,16 @@ export function registerAgentProfileTool(
   registry: ToolRegistry,
   options: RegisterAgentProfileToolOptions,
 ): void {
-  if (!registry.has('profile')) registry.register(createAgentProfileTool({ invoke: options.invoke }));
+  if (!registry.has('profile')) registry.register(createAgentProfileTool({ invoke: options.invoke }), {
+    inputProjection: createAgentLocalStateInputProjector(args => {
+      const descriptors = captureCatalogMethods(options, ['invoke']);
+      const action = normalizeProfileAction(args.action) ?? normalizeProfileAction(args.mode);
+      const method = action ? ACTION_METHODS[action] : undefined;
+      const gateway = captureProfileGatewayCurrent(options.invoke, method);
+      const local = method && captureProfileGatewayLocalState(options.invoke, method, action !== null && WRITE_ACTIONS.has(action));
+      return { targets: local?.targets ?? [], onWriteIntent: local?.onWriteIntent, mutationPath: local?.mutationPath,
+        assertDescriptors() { descriptors(); gateway(); local?.assertCurrent(); } };
+    }, args => { const action = normalizeProfileAction(args.action) ?? normalizeProfileAction(args.mode);
+      return action !== null && !WRITE_ACTIONS.has(action); }),
+  });
 }

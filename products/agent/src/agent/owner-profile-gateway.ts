@@ -18,7 +18,12 @@
  * gets an honest unavailable result naming which route was missing.
  */
 
-import type { GatewayMethodCatalog } from '@goodvibes-jev/engine/sdk/platform/control-plane';
+import { captureOccasionsGatewayTarget, type GatewayMethodCatalog, type GatewayMethodInvocation } from '@goodvibes-jev/engine/sdk/platform/control-plane';
+import { assertCurrentProfileDelegation, bindProfileMutationOptionsToInvocation, type ProfileMutationOptions } from '@goodvibes-jev/engine/sdk/platform/owner-profile';
+import { dirname } from 'node:path';
+import { assertProjectionCurrent } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureCatalogMethods, captureCatalogSnapshot } from '../tools/agent-harness-catalog-ranking.ts';
+import { captureOperatorConnection } from './operator-connection-owner.ts';
 import type { OperatorMethodId, OperatorMethodInput } from '@goodvibes-jev/engine/sdk/contracts';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { PROFILE_METHOD_IDS, type ProfileMethodId } from '../tools/agent-profile-types.ts';
@@ -27,7 +32,6 @@ import {
   invokeOperatorGatewayMethod,
 } from './operator-gateway-call.ts';
 import {
-  resolveAgentConnectedHostConnection,
   type AgentConnectedHostConfigReader,
 } from './routine-schedule-promotion.ts';
 
@@ -53,6 +57,7 @@ export interface ProfileGatewayResult {
 export type ProfileGatewayInvoke = <TMethodId extends ProfileMethodId>(
   methodId: TMethodId,
   body: OperatorMethodInput<TMethodId>,
+  options?: ProfileMutationOptions,
 ) => Promise<ProfileGatewayResult>;
 
 export interface ProfileGatewayOptions {
@@ -91,30 +96,84 @@ export function profileRouteLabel(methodId: ProfileMethodId): string {
 }
 
 export function createProfileGatewayInvoke(options: ProfileGatewayOptions): ProfileGatewayInvoke {
-  return async (methodId, body) => {
+  const invoke: ProfileGatewayInvoke = async (methodId, body, lifetime = {}) => {
+    const routing = captureProfileGatewayCurrent(invoke, methodId);
+    const input = captureCatalogSnapshot(body);
+    const restrictions = captureCatalogMethods(lifetime, ['signal', 'assertCurrent', 'delegation', 'onWriteIntent', 'onEffect', 'withPublication']);
+    const assertCurrent = () => {
+      restrictions(); lifetime.signal?.throwIfAborted(); assertProjectionCurrent(lifetime.assertCurrent);
+      if (lifetime.delegation) assertCurrentProfileDelegation(lifetime.delegation);
+      restrictions(); input.assertCurrent(body); routing();
+    };
+    assertCurrent();
     const catalog = options.gatewayMethods;
     if (catalog?.hasHandler(methodId)) {
       try {
-        const data = await catalog.invoke(methodId, {
-          body,
-          context: { clientKind: 'goodvibes-agent', principalKind: 'user' },
-        });
+        const invocation: GatewayMethodInvocation = {
+          body, signal: lifetime.signal,
+          isAuthorized: () => { assertCurrent(); return true; },
+          context: { clientKind: 'goodvibes-agent', principalKind: lifetime.delegation ? 'service' : 'user' },
+        };
+        bindProfileMutationOptionsToInvocation(lifetime, invocation);
+        const data = await catalog.invoke(methodId, invocation);
+        assertCurrent();
         return { ok: true, data, route: 'in-process' };
       } catch (error) {
+        assertCurrent();
         return { ok: false, data: null, error: summarizeError(error), route: 'in-process' };
       }
     }
 
-    const connection = resolveAgentConnectedHostConnection(options.configManager, options.homeDirectory);
-    const result = await invokeOperatorGatewayMethod(
-      connection,
-      methodId,
-      profileRouteLabel(methodId),
-      body,
-    );
+    const connection = captureOperatorConnection(options, options.configManager, assertCurrent);
+    assertCurrent();
+    const remoteBody = lifetime.delegation ? { ...body, admission: 'autonomous' } : body;
+    const result = await invokeOperatorGatewayMethod(connection, methodId, profileRouteLabel(methodId), remoteBody,
+      { signal: lifetime.signal, assertCurrent: () => { assertCurrent(); connection.assertCurrent(); } });
+    assertCurrent(); connection.assertCurrent();
     if (!result.ok) {
       return { ok: false, data: null, error: formatOperatorGatewayFailure(result), route: 'connected-host' };
     }
     return { ok: true, data: result.data, route: 'connected-host' };
+  };
+  gatewayOwners.set(invoke, options);
+  return invoke;
+}
+
+const gatewayOwners = new WeakMap<ProfileGatewayInvoke, ProfileGatewayOptions>();
+
+export function captureProfileGatewayCurrent(invoke: ProfileGatewayInvoke, methodId?: ProfileMethodId): () => void {
+  const options = gatewayOwners.get(invoke);
+  if (!options) return () => {};
+  const optionsCurrent = captureCatalogMethods(options, ['gatewayMethods', 'configManager', 'homeDirectory']);
+  const catalog = options.gatewayMethods, config = options.configManager, home = options.homeDirectory;
+  const catalogCurrent = catalog && captureCatalogMethods(catalog, ['get', 'hasHandler', 'invoke']);
+  const descriptor = methodId && catalog?.get(methodId);
+  const descriptorCurrent = descriptor && captureCatalogSnapshot(descriptor);
+  const inProcess = methodId !== undefined && catalog?.hasHandler(methodId);
+  const connection = inProcess ? undefined : captureOperatorConnection(options, config, () => {});
+  return () => {
+    optionsCurrent(); catalogCurrent?.(); connection?.assertCurrent();
+    if (methodId && descriptorCurrent) descriptorCurrent.assertCurrent(catalog?.get(methodId));
+    if (options.gatewayMethods !== catalog || options.configManager !== config || options.homeDirectory !== home
+      || (methodId && (catalog?.get(methodId) !== descriptor || catalog?.hasHandler(methodId) !== inProcess))) {
+      throw new Error('Profile gateway owner changed.');
+    }
+  };
+}
+
+export function captureProfileGatewayLocalState(invoke: ProfileGatewayInvoke, method: ProfileMethodId, writing: boolean) {
+  const catalog = gatewayOwners.get(invoke)?.gatewayMethods;
+  // The native registrar publishes mutation targets; reads retain the same profile owner.
+  const target = catalog && (captureOccasionsGatewayTarget(catalog, method)
+    ?? captureOccasionsGatewayTarget(catalog, PROFILE_METHOD_IDS.set));
+  if (!target) return undefined;
+  const ownerCurrent = captureCatalogMethods(target, ['profilePath', 'captureProfileRead', 'assertOwnerCurrent']);
+  const path = target.profilePath, read = target.captureProfileRead();
+  let publishing = false;
+  return {
+    targets: [{ root: dirname(path), path, access: writing ? 'write' as const : 'read' as const }],
+    assertCurrent() { ownerCurrent(); target.assertOwnerCurrent(); if (!publishing) read.assertCurrent(); },
+    mutationPath() { return path; },
+    onWriteIntent() { publishing = true; },
   };
 }

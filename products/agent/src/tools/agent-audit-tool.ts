@@ -2,6 +2,7 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
 import { createAgentHarnessTool } from './agent-harness-tool.ts';
+import { forwardHarnessCatalogCall } from './agent-harness-catalog-ingress.ts';
 
 type AgentAuditAction = 'readiness' | 'item' | 'evidence' | 'artifact';
 
@@ -133,14 +134,15 @@ export function createAgentAuditTool(deps: AgentAuditToolDeps): Tool {
       sideEffects: [],
       concurrency: 'parallel',
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs, options) => {
       const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentAuditToolArgs;
+      const forward = (translated: Record<string, unknown>) => forwardHarnessCatalogCall(harnessTool, rawArgs, translated, options);
       const action = readAction(args);
       if (!action) return error('Unknown audit action. Use action:"readiness", "item", "evidence", or "artifact".');
-      if (action === 'readiness') return harnessTool.execute(readinessArgs(args));
-      if (action === 'item') return harnessTool.execute(itemArgs(args));
-      if (action === 'evidence') return harnessTool.execute(evidenceArgs(args));
-      if (action === 'artifact') return harnessTool.execute(artifactArgs(args));
+      if (action === 'readiness') return forward(readinessArgs(args));
+      if (action === 'item') return forward(itemArgs(args));
+      if (action === 'evidence') return forward(evidenceArgs(args));
+      if (action === 'artifact') return forward(artifactArgs(args));
       return error('Unknown audit action. Use action:"readiness", "item", "evidence", or "artifact".');
     },
   };

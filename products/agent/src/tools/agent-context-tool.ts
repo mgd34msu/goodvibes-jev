@@ -2,6 +2,7 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
 import { createAgentHarnessTool } from './agent-harness-tool.ts';
+import { forwardHarnessCatalogCall } from './agent-harness-catalog-ingress.ts';
 
 type AgentContextAction =
   | 'status'
@@ -94,12 +95,13 @@ export function createAgentContextTool(deps: AgentContextToolDeps): Tool {
       sideEffects: [],
       concurrency: 'parallel',
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs, options) => {
       const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentContextToolArgs;
+      const forward = (translated: Record<string, unknown>) => forwardHarnessCatalogCall(harnessTool, rawArgs, translated, options);
       const action = readAction(args);
 
       if (action === 'files') {
-        return harnessTool.execute(compactArgs({
+        return forward(compactArgs({
           mode: 'project_context',
           target: args.target,
           query: args.query,
@@ -107,7 +109,7 @@ export function createAgentContextTool(deps: AgentContextToolDeps): Tool {
         }));
       }
       if (action === 'file') {
-        return harnessTool.execute(compactArgs({
+        return forward(compactArgs({
           mode: 'project_context_file',
           contextFileId: args.contextFileId,
           target: args.target,
@@ -116,7 +118,7 @@ export function createAgentContextTool(deps: AgentContextToolDeps): Tool {
         }));
       }
       if (action === 'receipt' || action === 'receipts') {
-        return harnessTool.execute(compactArgs({
+        return forward(compactArgs({
           mode: 'prompt_context',
           receiptId: args.receiptId,
           turnId: args.turnId,
@@ -125,7 +127,7 @@ export function createAgentContextTool(deps: AgentContextToolDeps): Tool {
           includeParameters: action === 'receipt' ? args.includeParameters ?? true : args.includeParameters,
         }));
       }
-      return harnessTool.execute(compactArgs({
+      return forward(compactArgs({
         mode: 'prompt_context',
         limit: args.limit,
         includeParameters: args.includeParameters,
