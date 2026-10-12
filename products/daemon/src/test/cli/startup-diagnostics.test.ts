@@ -16,6 +16,8 @@ import { createDaemonCliConfiguration } from '../../cli/configuration.js';
 import { getPackageVersion } from '../../cli/help.js';
 import { runConfiguredDaemonCli, type DaemonCliRuntime } from '../../cli/serve.js';
 import type { DaemonProcessExitCode, DaemonProcessHandle } from '../../daemon/process-lifecycle.js';
+import * as nativeLifecycle from '../../daemon/lifecycle.js';
+import { writeNativeInstallationFixture } from '../helpers/native-runtime-provenance.js';
 import * as hosts from '../../runtime/daemon-host.js';
 import * as maintenance from '../../cli/startup-maintenance.js';
 import { createRuntimeServices, type RuntimeServices } from '../../runtime/services.js';
@@ -48,9 +50,11 @@ afterEach(async () => {
   for (const restore of restores.reverse()) restore();
 });
 
-async function fixture(configure?: (services: RuntimeServices) => void, factories: hosts.DaemonHostFactories = {}) {
+async function fixture(configure?: (services: RuntimeServices) => void, factories: hosts.DaemonHostFactories = {},
+  home: 'override' | 'default' = 'override') {
   const root = makeOwnedTempDir('startup-diagnostics');
-  const env = { HOME: root, GOODVIBES_HOME: join(root, 'tree'), GOODVIBES_DAEMON_HOME: join(root, 'selected') };
+  const env = { HOME: root, GOODVIBES_HOME: home === 'default' ? '' : join(root, 'tree'),
+    GOODVIBES_DAEMON_HOME: home === 'default' ? '' : join(root, 'selected') };
   const configuration = createDaemonCliConfiguration({ daemonHome: undefined, workingDir: undefined }, env, root);
   const [port] = await availableLoopbackPorts(1);
   applyRuntimeConfigValue(configuration.config, 'cluster.enabled', false);
@@ -92,7 +96,7 @@ async function fixture(configure?: (services: RuntimeServices) => void, factorie
     handles.push(handle); return handle;
   };
   return { root, env, configuration, stdout, stderr, fatal, target, start, port,
-    get host() { return host; }, acquired: () => acquired, tokenPath: join(env.GOODVIBES_DAEMON_HOME, 'operator-tokens.json') };
+    get host() { return host; }, acquired: () => acquired, tokenPath: join(configuration.daemonHomeDirectory, 'operator-tokens.json') };
 }
 
 function enablePairing(f: Awaited<ReturnType<typeof fixture>>) {
@@ -443,4 +447,65 @@ test('startup maintenance failures are non-fatal and diagnostics contain no raw 
   expect(f.stderr.join('\n')).toContain('startup public URL could not be persisted');
   expect(f.stderr.join('\n')).not.toContain('synthetic-private-detail');
   await handle.shutdown();
+});
+
+function inertConfiguredNativeServer(): hosts.DaemonHostServer {
+  let running = false;
+  return { enable() {}, async start() { running = true; }, async stop() { running = false; }, fenceRestartAdmission() {},
+    async waitForRestart() {}, get isRunning() { return running; }, boundHost: '127.0.0.1', boundPort: 3499, boundScheme: 'http' };
+}
+
+for (const home of ['default', 'override'] as const) test(`configured CLI ${home} home forwards native lifecycle admission without activating real services`, async () => {
+  const native = writeNativeInstallationFixture(makeOwnedTempDir('cli-native-lifecycle'), getPackageVersion());
+  const resolveArtifact = nativeLifecycle.resolveInstalledDaemonUpdateArtifact;
+  let admissions = 0; let server = 0;
+  keep(spyOn(nativeLifecycle, 'resolveInstalledDaemonUpdateArtifact').mockImplementation((ownership, options) => {
+    admissions++; expect(ownership.isOverridden).toBe(home === 'override');
+    return resolveArtifact(ownership, { ...options, ...native.options });
+  }));
+  const f = await fixture(undefined, { createServer(config) {
+    server++; expect(config.hasOverriddenHome).toBe(home === 'override');
+    if (home === 'default') {
+      expect(config.updateArtifact?.execPath).toBe(native.execPath);
+      expect(config.updateArtifact?.version).toBe(getPackageVersion()); config.updateArtifact!.assertCurrent!();
+    } else expect(config.updateArtifact).toBeUndefined();
+    return inertConfiguredNativeServer();
+  } }, home);
+  const handle = f.start(); await handle.ready;
+  expect(admissions).toBe(1); expect(server).toBe(1);
+  expect(f.stdout.some(line => line.includes('host started'))).toBe(true);
+  expect(await handle.shutdown()).toBe(0); expect(f.host?.snapshot().state).toBe('closed');
+});
+
+test('invalid native CLI installation refuses before companion identity and graph acquisition', async () => {
+  const native = writeNativeInstallationFixture(makeOwnedTempDir('cli-native-incomplete'), getPackageVersion());
+  writeFileSync(native.targets[1]!.path, 'unowned runtime');
+  const resolveArtifact = nativeLifecycle.resolveInstalledDaemonUpdateArtifact;
+  keep(spyOn(nativeLifecycle, 'resolveInstalledDaemonUpdateArtifact').mockImplementation((ownership, options) =>
+    resolveArtifact(ownership, { ...options, ...native.options })));
+  const f = await fixture(undefined, {}, 'default'); const handle = f.start();
+  await expect(handle.ready).rejects.toThrow('Daemon startup failed'); expect(await handle.finished).toBe(1);
+  expect(f.acquired()).toBe(0); expect(existsSync(f.tokenPath)).toBe(false); expect(f.host).toBeUndefined();
+});
+
+test('shutdown before native CLI admission cannot inspect or activate an installation', async () => {
+  let admissions = 0;
+  keep(spyOn(nativeLifecycle, 'resolveInstalledDaemonUpdateArtifact').mockImplementation(() => { admissions++; throw new Error('Unexpected native admission'); }));
+  const f = await fixture(undefined, {}, 'default'); const handle = f.start();
+  f.target.emit('SIGTERM'); expect(await handle.ready).toBeUndefined(); expect(await handle.finished).toBe(0);
+  expect(admissions).toBe(0); expect(f.acquired()).toBe(0); expect(existsSync(f.tokenPath)).toBe(false);
+});
+
+test('reporting cannot turn an already resolved home override into native lifecycle admission', async () => {
+  const native = writeNativeInstallationFixture(makeOwnedTempDir('cli-native-home-retain'), getPackageVersion());
+  const resolveArtifact = nativeLifecycle.resolveInstalledDaemonUpdateArtifact; let admitted = 0;
+  keep(spyOn(nativeLifecycle, 'resolveInstalledDaemonUpdateArtifact').mockImplementation((ownership, options) => {
+    expect(ownership.isOverridden).toBe(true); const result = resolveArtifact(ownership, { ...options, ...native.options });
+    if (result) admitted++; return result;
+  }));
+  const f = await fixture(undefined, { createServer(config) {
+    expect(config.hasOverriddenHome).toBe(true); expect(config.updateArtifact).toBeUndefined(); return inertConfiguredNativeServer();
+  } });
+  const handle = f.start(() => { Object.defineProperty(f.configuration, 'isOverridden', { value: false }); });
+  await handle.ready; expect(admitted).toBe(0); expect(await handle.shutdown()).toBe(0);
 });

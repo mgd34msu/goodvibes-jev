@@ -54,6 +54,10 @@ export interface ScopedBrowserSdkOptions {
   readonly observer?: SDKObserver | undefined;
 }
 
+export interface ScopedRealtimeSubscriptionOptions {
+  readonly signal?: AbortSignal | undefined;
+}
+
 export interface ScopedEventStreamOptions {
   readonly signal?: AbortSignal | undefined;
   readonly headers?: HeadersInit | undefined;
@@ -119,7 +123,7 @@ export interface ScopedBrowserSdk<TMethodId extends OperatorTypedMethodId, TDoma
   readonly operator: ScopedOperatorClient<TMethodId>;
   readonly auth: GoodVibesAuthClient;
   readonly realtime: {
-    viaSse(): ScopedRuntimeEvents<TDomain>;
+    viaSse(options?: ScopedRealtimeSubscriptionOptions): ScopedRuntimeEvents<TDomain>;
   };
   readonly streams: ScopedRawEventStream;
   use(middleware: TransportMiddleware): void;
@@ -317,9 +321,10 @@ function createScopedRealtime<TDomain extends string>(
   domains: readonly TDomain[],
   options: ScopedBrowserSdkOptions,
   getAuthToken: () => Promise<string | null>,
-): { viaSse(): ScopedRuntimeEvents<TDomain> } {
+): { viaSse(options?: ScopedRealtimeSubscriptionOptions): ScopedRuntimeEvents<TDomain> } {
   return {
-    viaSse(): ScopedRuntimeEvents<TDomain> {
+    viaSse(subscriptionOptions?: ScopedRealtimeSubscriptionOptions): ScopedRuntimeEvents<TDomain> {
+      const callerSignal = subscriptionOptions?.signal;
       const baseUrl = resolveBrowserBaseUrl(options.baseUrl);
       const fetchImpl = resolveFetch(options.fetch);
       const feeds = new Map<TDomain, ScopedRuntimeEventFeed>();
@@ -327,6 +332,7 @@ function createScopedRealtime<TDomain extends string>(
         listenersByType: Map<string, Set<Listener<ScopedRuntimeEventEnvelope>>>;
         closed: boolean;
         disconnect?: (() => void) | undefined;
+        close: () => void;
       }>();
       // A domain's stream is torn down when its last listener goes and opened
       // again when a listener returns, so the position must outlive the stream:
@@ -338,40 +344,74 @@ function createScopedRealtime<TDomain extends string>(
       const turnGate = createTurnLifecycleGate();
 
       const ensureDomain = (domain: TDomain) => {
-        let active = activeByDomain.get(domain);
-        if (active) return active;
-        active = { listenersByType: new Map(), closed: false };
+        const existing = activeByDomain.get(domain);
+        if (existing) return existing;
+        const controller = new AbortController();
+        const active: {
+          listenersByType: Map<string, Set<Listener<ScopedRuntimeEventEnvelope>>>;
+          closed: boolean;
+          disconnect?: (() => void) | undefined;
+          close: () => void;
+        } = {
+          listenersByType: new Map(),
+          closed: false,
+          close: () => {
+            if (active.closed) return;
+            active.closed = true;
+            callerSignal?.removeEventListener('abort', active.close);
+            active.listenersByType.clear();
+            if (activeByDomain.get(domain) === active) activeByDomain.delete(domain);
+            // The native closer is available only after response readiness.
+            // This controller also owns the initial request and reconnect wait.
+            controller.abort();
+            active.disconnect?.();
+          },
+        };
         activeByDomain.set(domain, active);
+        const isCurrent = () => !active.closed
+          && !controller.signal.aborted
+          && activeByDomain.get(domain) === active;
+        if (callerSignal?.aborted) {
+          active.close();
+          return active;
+        }
+        callerSignal?.addEventListener('abort', active.close, { once: true });
         void openRawServerSentEventStream(
           fetchImpl,
           buildEventUrl(baseUrl, domain),
           {
-            onEventId: (id) => { resumePositions.set(domain, id); },
+            onEventId: (id) => {
+              if (isCurrent()) resumePositions.set(domain, id);
+            },
             onEvent: (eventName, payload) => {
-              if (eventName !== domain) return;
+              if (!isCurrent() || eventName !== domain) return;
               const envelope = normalizeEnvelope(payload);
               if (!envelope) return;
               const frame = readTurnLifecycleFrame(envelope.sessionId, envelope.payload);
               if (frame && !turnGate.accepts(frame)) return;
-              for (const listener of [...(active!.listenersByType.get(envelope.payload.type) ?? [])]) {
+              for (const listener of [...(active.listenersByType.get(envelope.payload.type) ?? [])]) {
+                if (!isCurrent()) break;
                 listener(envelope);
               }
             },
-            onError: (error) => options.realtime?.onError?.(error),
+            onError: (error) => {
+              if (isCurrent()) options.realtime?.onError?.(error);
+            },
           },
           {
+            signal: controller.signal,
             reconnect: options.realtime?.sseReconnect,
             getAuthToken,
             lastEventId: resumePositions.get(domain) ?? null,
           },
         ).then((disconnect) => {
-          if (active!.closed || activeByDomain.get(domain) !== active) {
+          if (!isCurrent()) {
             disconnect();
             return;
           }
-          active!.disconnect = disconnect;
+          active.disconnect = disconnect;
         }).catch((error) => {
-          options.realtime?.onError?.(error);
+          if (isCurrent()) options.realtime?.onError?.(error);
         });
         return active;
       };
@@ -388,9 +428,7 @@ function createScopedRealtime<TDomain extends string>(
             listeners.delete(listener);
             if (listeners.size === 0) active.listenersByType.delete(type);
             if (active.listenersByType.size === 0) {
-              active.closed = true;
-              active.disconnect?.();
-              activeByDomain.delete(domain);
+              active.close();
             }
           };
         });

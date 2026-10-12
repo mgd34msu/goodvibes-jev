@@ -1,5 +1,5 @@
-/** Owned source host for an explicitly configured daemon, not a CLI/default inbox. */
-import { DaemonServer, HttpListener, createSafeHostServeFactory } from '@goodvibes-jev/engine/sdk/platform/daemon';
+/** Owned configured daemon host; native lifecycle requires an installed caller. */
+import { DaemonServer, HttpListener, createSafeHostServeFactory, type DaemonUpdateArtifact } from '@goodvibes-jev/engine/sdk/platform/daemon';
 import { loadPersistedProviders } from '@goodvibes-jev/engine/sdk/platform/discovery';
 import { createAsyncDisposalScope } from '@goodvibes-jev/engine/sdk/platform/runtime/disposal';
 import { createDaemonProviderDiscovery, type DaemonProviderDiscoveryDependencies } from './provider-discovery.js';
@@ -21,6 +21,9 @@ export interface DaemonHostOptions {
   /** Config/home ownership has already been resolved by the caller. */
   readonly runtime: Omit<RuntimeServicesOptions, 'createBootOperations'>;
   readonly daemon?: DaemonHostBinding;
+  /** Absent for source/embedded hosts; the native CLI supplies a verified installation. */
+  readonly updateArtifact?: DaemonUpdateArtifact;
+  readonly hasOverriddenHome?: boolean;
   /** Explicit opt-in; an absent binding constructs no secondary listener. */
   readonly httpListener?: DaemonHostBinding;
 }
@@ -37,7 +40,7 @@ export interface DaemonHostFactories {
 }
 
 export interface DaemonHostSnapshot {
-  readonly state: 'idle' | 'starting' | 'ready' | 'degraded' | 'closing' | 'closed' | 'failed';
+  readonly state: 'idle' | 'starting' | 'ready' | 'degraded' | 'handover' | 'closing' | 'closed' | 'failed';
   readonly boot?: DaemonBootSnapshot;
 }
 
@@ -57,11 +60,20 @@ const INTERRUPTED = Symbol('daemon host interrupted');
 /**
  * Construction is inert so a process runner can install signals first. The
  * same graph supplies boot, hosted sessions, cluster identity and payments.
- * Every resource is owned before enable/start. No service adoption or update
- * artifact is supplied by this source-only host.
+ * Every resource is owned before enable/start. Source/embedded callers supply
+ * no update artifact; the installed native CLI retains its installation through admission.
  */
 export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHostFactories = {}): DaemonHost {
   const scope = createAsyncDisposalScope('Daemon host');
+  const updateArtifact = options.updateArtifact;
+  const hasOverriddenHome = options.hasOverriddenHome;
+  const retainedInstallationCurrent = (updateArtifact?.assertStarting ?? updateArtifact?.assertCurrent)?.bind(updateArtifact);
+  const assertInstallationCurrent = () => {
+    if (options.updateArtifact !== updateArtifact || options.hasOverriddenHome !== hasOverriddenHome) {
+      throw new Error('Daemon host lifecycle ownership changed during acquisition');
+    }
+    retainedInstallationCurrent?.();
+  };
   let services: RuntimeServices | undefined;
   let daemon: DaemonHostServer | undefined;
   let listener: DaemonHostListener | undefined;
@@ -73,6 +85,7 @@ export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHo
   let discovery: ReturnType<typeof createDaemonProviderDiscovery> | undefined;
   let bootClosing: Promise<void> | undefined;
   let startupFailure: Error | undefined;
+  let startupHandover: Exclude<Awaited<ReturnType<DaemonHostServer['start']>>, void> | undefined;
   const cleanupFailures: Error[] = [];
   let phase = 'runtime acquisition';
 
@@ -143,6 +156,7 @@ export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHo
       phase = 'server construction';
       observeNativeStartupPhase('listener-construction');
       const binding = options.daemon;
+      assertInstallationCurrent();
       daemon = (factories.createServer ?? ((config) => new DaemonServer(config)))({
         host: binding?.host, port: binding?.port,
         workingDir: runtime.workingDirectory, homeDirectory: runtime.homeDirectory,
@@ -153,9 +167,12 @@ export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHo
         clusterCoordinator: runtime.clusterCoordinator, clusterGroupVerbs: runtime.clusterGroup.verbs,
         paymentReplies: runtime.daemonHandlers.paymentReplies,
         hostedSessions: createHostedSessionOptions(runtime),
+        ...(updateArtifact ? { updateArtifact } : {}),
+        ...(hasOverriddenHome === undefined ? {} : { hasOverriddenHome }),
       });
       ownListener('daemon server', daemon);
       fence();
+      assertInstallationCurrent();
       daemon.enable({ daemon: true }, binding?.token);
       fence();
 
@@ -185,7 +202,17 @@ export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHo
       fence();
       phase = 'server startup';
       observeNativeStartupPhase('listener-startup');
-      await daemon.start();
+      assertInstallationCurrent();
+      const outcome = await daemon.start();
+      if (outcome && outcome.state === 'handover') {
+        startupHandover = outcome;
+        phase = 'native startup handover';
+        if (closed) outcome.cancel();
+        await outcome.drain;
+        fence();
+        state = 'handover';
+        return;
+      }
       fence();
       if (!daemon.isRunning) throw new Error('Daemon server did not start');
       if (listener) {
@@ -212,6 +239,9 @@ export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHo
     if (closing) return closing;
     closed = true;
     state = 'closing';
+    // Cancellation fences the exact native handover before waiting for its drain.
+    try { startupHandover?.cancel(); }
+    catch { cleanupFailures.push(new Error('Daemon native startup handover cancellation failed')); }
     void discovery?.close();
     let resolve!: () => void;
     let reject!: (error: Error) => void;

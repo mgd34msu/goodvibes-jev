@@ -1,5 +1,5 @@
 import { afterEach, expect, spyOn, test } from 'bun:test';
-import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -221,4 +221,49 @@ test('forged planning revision keeps ordinary privacy admission and cannot grant
   await expect(f.service.applyStateAction({ projectId: 'proj', expected: { kind: 'revision', revision: { ...f.selected.revision, generation } }, action: { kind: 'dismiss' } })).rejects.toMatchObject({ problem: 'card-material' });
   await expect(f.store.upsertOwnedCanonicalSources([{ input: f.selected.source, generation }], () => {}, () => {})).rejects.toMatchObject({ problem: 'card-material' });
   expect(f.fake.requests.length).toBe(requests); expect(readFileSync(f.path)).toEqual(before);
+});
+
+
+for (const state of ['existing', 'absent'] as const) {
+  test(`an unmatched ${state} planning source screens a forged revision before its held result`, async () => {
+    const f = await planning();
+    const store = state === 'existing' ? f.store : new KnowledgeStore({ dbPath: `${f.path}.absent` });
+    if (state === 'absent') { await store.init(); cleanup.push(() => store.close()); }
+    const service = state === 'existing' ? f.service : new ProjectPlanningService(store);
+    const path = store.storagePath, before = existsSync(path) ? readFileSync(path) : undefined, requests = f.fake.requests.length;
+    const generation = `${'a'.repeat(24)}4111111111111111${'a'.repeat(24)}`;
+    await expect(service.applyStateAction({ projectId: 'proj',
+      expected: { kind: 'revision', revision: { ...f.selected.revision, generation } }, action: { kind: 'dismiss' },
+    })).rejects.toMatchObject({ problem: 'card-material' });
+    expect(f.fake.requests.length).toBe(requests);
+    expect(existsSync(path)).toBe(before !== undefined);
+    if (before !== undefined) expect(readFileSync(path)).toEqual(before);
+  });
+
+  test(`an ordinary unmatched ${state} planning revision keeps its effect-free held result`, async () => {
+    const f = await planning();
+    const store = state === 'existing' ? f.store : new KnowledgeStore({ dbPath: `${f.path}.ordinary-absent` });
+    if (state === 'absent') { await store.init(); cleanup.push(() => store.close()); }
+    const service = state === 'existing' ? f.service : new ProjectPlanningService(store);
+    const path = store.storagePath, before = existsSync(path) ? readFileSync(path) : undefined, requests = f.fake.requests.length;
+    const generation = 'a'.repeat(64);
+    expect(generation).not.toBe(f.selected.revision.generation);
+    const result = await service.applyStateAction({ projectId: 'proj',
+      expected: { kind: 'revision', revision: { ...f.selected.revision, generation } }, action: { kind: 'dismiss' },
+    });
+    expect(result).toMatchObject({ applied: false, reason: state === 'existing' ? 'state-changed' : 'no-state' });
+    expect(f.fake.requests.length).toBe(requests);
+    expect(existsSync(path)).toBe(before !== undefined);
+    if (before !== undefined) expect(readFileSync(path)).toEqual(before);
+  });
+}
+
+test('a matching generation alone cannot project a foreign planning source identity', async () => {
+  const f = await planning(), before = readFileSync(f.path), requests = f.fake.requests.length;
+  const revision = { ...f.selected.revision, sourceId: 'foreign-source' };
+  await expect(f.service.applyStateAction({ projectId: 'proj',
+    expected: { kind: 'revision', revision }, action: { kind: 'dismiss' },
+  })).rejects.toMatchObject({ problem: 'card-material' });
+  expect(f.fake.requests.length).toBe(requests);
+  expect(readFileSync(f.path)).toEqual(before);
 });

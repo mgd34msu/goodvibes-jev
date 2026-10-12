@@ -418,7 +418,7 @@ export class DaemonServer {
   /**
    * Start the daemon. Refuses to start if not explicitly enabled.
    */
-  async start(): Promise<void> {
+  async start(): Promise<void | { readonly state: 'handover'; readonly drain: Promise<void>; readonly cancel: () => void }> {
     await this._restartingPromise;
     await this.stoppingRuntime;
     if (this.server === null) this.settingsLifetime = null;
@@ -439,7 +439,14 @@ export class DaemonServer {
     // Crash-loop guard, before anything that can fail: repeated boots that
     // never reached a fully-started daemon restore the kept previous binary
     // and hand over to it (facade-lifecycle.ts).
-    if (this.lifecycle?.onStarting()) return;
+    const lifecycle = this.lifecycle;
+    if (lifecycle?.onStarting()) {
+      const drain = lifecycle.drainHandovers();
+      // The host owns this drain even when startup intentionally binds no listener.
+      void drain.catch(() => {});
+      return Object.freeze({ state: 'handover' as const, drain,
+        cancel: () => lifecycle.beginStopping(false) });
+    }
 
     this.surfaceActionHelper.startDelegatedTelegram();
     new GlobalNetworkTransportInstaller().install(this.configManager);

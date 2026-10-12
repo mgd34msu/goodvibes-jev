@@ -1,8 +1,9 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { KnowledgeStore, ProjectPlanningService, type ProjectPlanningStateUpsertInput } from '@goodvibes-jev/engine/sdk/platform/knowledge';
+import { findCardNumberShapes } from '../sdk/src/platform/security/card-shapes.ts';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -107,7 +108,7 @@ test('separate processes released from one barrier cannot both win an expected-n
 }, 20000);
 
 for (const state of ['stale', 'absent'] as const) {
-  test(`an opaque generation with a card-shaped digit run remains a ${state} hold without writes`, async () => {
+  test(`a caller-authored card-shaped generation is refused on the ${state} path without writes`, async () => {
     const f = await fixture();
     const path = state === 'absent' ? `${f.path}.absent` : f.path;
     const store = state === 'absent' ? new KnowledgeStore({ dbPath: path }) : f.first;
@@ -115,9 +116,9 @@ for (const state of ['stale', 'absent'] as const) {
     const service = state === 'absent' ? new ProjectPlanningService(store) : f.firstService;
     const before = existsSync(path) ? readFileSync(path) : undefined;
     const revision = { ...f.selected.revision!, generation: `${'a'.repeat(24)}4111111111111111${'b'.repeat(24)}` };
-    const result = await service.applyStateAction({ projectId: 'fixture', expected: { kind: 'revision', revision }, action: { kind: 'approve' } });
-    expect(result).toMatchObject({ applied: false, reason: state === 'absent' ? 'no-state' : 'state-changed' });
-    expect(result.state?.executionApproved ?? false).toBe(false);
+    await expect(service.applyStateAction({ projectId: 'fixture', expected: { kind: 'revision', revision }, action: { kind: 'approve' } }))
+      .rejects.toMatchObject({ problem: 'card-material' });
+    expect((await service.getState({ projectId: 'fixture' })).state?.executionApproved ?? false).toBe(false);
     expect(existsSync(path)).toBe(before !== undefined);
     if (before !== undefined) expect(readFileSync(path)).toEqual(before);
   });
@@ -151,3 +152,31 @@ test('malformed opaque generations remain invalid before a planning action', asy
     expect(readFileSync(f.path)).toEqual(before);
   }
 });
+
+
+for (const retirement of ['replacement', 'deletion'] as const) {
+  test(`a genuine non-sensitive planning revision keeps its ${retirement} hold without writes`, async () => {
+    const clock = spyOn(Date, 'now').mockReturnValue(50_000);
+    let fixtureStores: Awaited<ReturnType<typeof fixture>> | undefined;
+    try {
+      const f = await fixture(); fixtureStores = f;
+      const revision = f.selected.revision;
+      if (!revision) throw new Error('Planning fixture lost its genuine selected revision');
+      expect(findCardNumberShapes(revision.generation, 1)).toHaveLength(0);
+      if (retirement === 'replacement') {
+        await f.secondService.upsertState({ projectId: 'fixture', state: { ...f.authored, goal: 'Changed by the other owner' } });
+      } else expect(await f.second.deleteSource(revision.sourceId)).toBe(true);
+      const before = readFileSync(f.path);
+      const result = await f.firstService.applyStateAction({ projectId: 'fixture',
+        expected: { kind: 'revision', revision }, action: { kind: 'approve' },
+      });
+      expect(result).toMatchObject({ applied: false, reason: retirement === 'replacement' ? 'state-changed' : 'no-state' });
+      expect(result.state?.executionApproved ?? false).toBe(false);
+      expect(readFileSync(f.path)).toEqual(before);
+    } finally {
+      try {
+        if (fixtureStores) { await fixtureStores.first.close(); await fixtureStores.second.close(); }
+      } finally { clock.mockRestore(); }
+    }
+  });
+}

@@ -7,6 +7,7 @@ import { getKnowledgeSpaceId, type KnowledgeSpaceScopeInput } from './spaces.js'
 import { knowledgeSourceJudgmentUris } from './source-structural-references.js';
 import { knowledgeRecordVersion } from './store-record-representation.js';
 import { KnowledgeSourceQualityHeldError } from './source-quality.js';
+import { KnowledgeRecordAdmissionHeldError } from './store-record-snapshot.js';
 import type { KnowledgeStore } from './store.js';
 import type { KnowledgeExtractionRecord, KnowledgeNodeRecord, KnowledgeSourceRecord } from './types.js';
 import { projectAnswerFactClaim } from './semantic/answer-claim-projection.js';
@@ -154,6 +155,13 @@ function publicNodeMeaning(store: KnowledgeStore, node: KnowledgeNodeRecord, nod
 export async function readPublicKnowledgeSelection(store: KnowledgeStore, input: PublicKnowledgeSelectionInput,
   options: Pick<KnowledgeScopeSelectionOptions, 'signal' | 'assertCurrent' | 'shouldStop'> = {},
 ): Promise<PublicKnowledgeSelection> {
+  const assertPreparationFrame = (assertion: () => undefined): void => {
+    try { store.assertRecordSnapshotFrame(assertion); }
+    catch (error) {
+      if (error instanceof KnowledgeRecordAdmissionHeldError && error.reason === 'stale') throw new Held('stale');
+      throw error;
+    }
+  };
   try {
     const request = requestData(input);
     if (typeof request.query !== 'string' || !['search', 'packet'].includes(request.mode)
@@ -201,11 +209,11 @@ export async function readPublicKnowledgeSelection(store: KnowledgeStore, input:
       };
       const checkPorts = captureAnswerReadingPorts(['engine.knowledge.answer-evidence-relevance',
         ...(request.mode === 'packet' ? ['engine.knowledge.answer-excerpt-selection'] : [])]);
-      const checkInitialization = () => {
+      const checkInitialization = () => { assertPreparationFrame(() => {
         if (signal.aborted) throw new Held('aborted');
         baseGuard.assertCurrent(); checkPorts(); checkCaller();
         baseGuard.assertCurrent(); checkPorts();
-      };
+      }); };
       // A cold store is initialized only after capturing the original request.
       // Even an already-ready async init yields and cannot rebind that request.
       checkInitialization();
@@ -242,9 +250,9 @@ export async function readPublicKnowledgeSelection(store: KnowledgeStore, input:
           publicNodeMeaning(store, node, structuralNodesById);
         }
       });
-      const assertBaseCurrent = () => {
+      const assertBaseCurrent = () => { assertPreparationFrame(() => {
         baseGuard.assertCurrent(); checkPorts(); checkCaller(); baseGuard.assertCurrent(); checkPorts();
-      };
+      }); };
       const assertOperationCurrent = () => {
         assertRequestCurrent(); checkPorts(); checkCaller(); assertRequestCurrent(); checkPorts();
       };
@@ -269,18 +277,21 @@ export async function readPublicKnowledgeSelection(store: KnowledgeStore, input:
       const sourcesById = new Map(sources.map((source) => [source.id, source]));
       const nodesById = new Map(nodes.map((node) => [node.id, node]));
       const guard = baseGuard;
-      guard.watch('public-retrieval-scope', () => { selection.assertCurrent(); return true; });
-      const edges = selection.edges;
-      // Incident topology stays local; only admitted endpoint pairs supply labels.
-      const incidentTo = [
-        ...sources.map((source) => ({ kind: 'source' as const, id: source.id })),
-        ...nodes.map((node) => ({ kind: 'node' as const, id: node.id })),
-      ];
-      const assertEdgesCurrent = selection.retainEdges(edges, incidentTo.length ? {
-        sourceIds: sources.map((source) => source.id), nodeIds: nodes.map((node) => node.id),
-        incidentTo, includeUnselectedEndpoints: true,
-      } : {});
-      guard.watch('selected-relations', () => { assertEdgesCurrent(); return true; });
+      let edges: typeof selection.edges = [];
+      assertPreparationFrame(() => {
+        guard.watch('public-retrieval-scope', () => { selection.assertCurrent(); return true; });
+        edges = selection.edges;
+        // Incident topology stays local; only admitted endpoint pairs supply labels.
+        const incidentTo = [
+          ...sources.map((source) => ({ kind: 'source' as const, id: source.id })),
+          ...nodes.map((node) => ({ kind: 'node' as const, id: node.id })),
+        ];
+        const assertEdgesCurrent = selection.retainEdges(edges, incidentTo.length ? {
+          sourceIds: sources.map((source) => source.id), nodeIds: nodes.map((node) => node.id),
+          incidentTo, includeUnselectedEndpoints: true,
+        } : {});
+        guard.watch('selected-relations', () => { assertEdgesCurrent(); return true; });
+      });
       const assertCurrent = () => {
         try { guard.assertCurrent(); }
         catch (error) {

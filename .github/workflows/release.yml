@@ -76,7 +76,7 @@ jobs:
   #
   # toolchain-source: workspace, the SDK MUST self-host per-job-green from the
   # checked-out commit. bunx-from-registry would deadlock the first release
-  # (this release is what publishes @goodvibes-jev/engine/toolchain) and would make
+  # (this release is what publishes @goodvibes-jev/engine) and would make
   # every later release verify itself with the PREVIOUS toolchain version.
   release-verify:
     if: >-
@@ -134,7 +134,7 @@ jobs:
       needs.release-verify.result == 'success'
     environment:
       name: production
-      url: https://www.npmjs.com/package/@goodvibes-jev/engine/sdk
+      url: https://www.npmjs.com/package/@goodvibes-jev/engine
     permissions:
       contents: read
       id-token: write
@@ -226,64 +226,112 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: bun packages/engine/scripts/align-dist-tags.ts
 
-  github-release:
-    # Create the GitHub release only after npm publish succeeds.
+  prepare-native-assets:
     if: >-
       always() &&
       (github.event_name == 'push' ||
        (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release')) &&
-      needs.publish-npm.result == 'success'
-    needs: [publish-npm]
-    # Pinned to ubuntu-24.04 (not ubuntu-latest) to prevent BSD awk semantics
-    # from silently breaking the changelog extraction step.
+      needs.publish-npm.result == 'success' &&
+      needs.release-verify.result == 'success'
+    needs: [publish-npm, release-verify]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      contents: write
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Checkout
+      - name: Checkout released source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          ref: ${{ github.ref }}
           fetch-depth: 0
-      - name: Extract version
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-      - name: Extract changelog excerpt
-        id: changelog
+      - name: Require the verified CI producer
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          RUN_ID: ${{ needs.release-verify.outputs.run_id }}
+          RECORDED_SOURCE: ${{ needs.release-verify.outputs.head_sha }}
         run: |
-          # Release notes are extracted directly from packages/engine/CHANGELOG.md. The heading
-          # pattern is kept IDENTICAL to reusable-gh-release.yml's so the two
-          # extractors cannot disagree about what a section heading is: this one
-          # matched the bracket form only, so a `## 1.2.3 - date` heading yielded
-          # an empty excerpt here and a full one there.
-          #
-          # The terminator must not accept a bare hyphen after the version: with
-          # a `-` in the class, cutting 2.0.1 matched `## [2.0.1-rc.1]` first and
-          # the body became the RC section CONCATENATED with the real one. The
-          # optional `\]` plus whitespace-or-EOL covers all three heading forms
-          # (`## [X] - date`, `## X - date`, `## [X]`) and matches a prerelease
-          # heading only when the prerelease is the version being cut.
-          EXCERPT=$(awk -v version="$VERSION" '
-            $0 ~ "^## (\\[)?" version "(\\])?([[:space:]]|$)" { in_section = 1; next }
-            in_section && /^## / { exit }
-            in_section { print }
-          ' packages/engine/CHANGELOG.md)
-          if [ -z "$EXCERPT" ]; then
-            # Non-fatal by design (scripts/check-changelog.ts owns the hard gate,
-            # and it already passed for this version), but never silent: a
-            # one-line release body means the extraction missed a section that
-            # exists.
-            echo "::warning::No packages/engine/CHANGELOG.md section matched ${VERSION}; falling back to a bare 'Release ${VERSION}' body. Check the heading form for this version."
-            echo "WARNING: no packages/engine/CHANGELOG.md section matched ${VERSION}; release body falls back to 'Release ${VERSION}'." >&2
-            EXCERPT="Release ${VERSION}"
-          fi
-          printf '%s\n' "$EXCERPT" > /tmp/release_notes.md
-          echo "body=/tmp/release_notes.md" >> "$GITHUB_OUTPUT"
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+          test -n "$RUN_ID"
+          test "$RECORDED_SOURCE" = "$GITHUB_SHA"
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup
+      - name: Select the published engine version
+        id: version
+        run: |
+          version=$(bun -e 'console.log(JSON.parse(await Bun.file("packages/engine/package.json").text()).version)')
+          test "v$version" = "$GITHUB_REF_NAME"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Download exact workspace and Agent output
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          body_path: ${{ steps.changelog.outputs.body }}
+          name: workspace-build-output
+          path: /tmp/workspace-build-output
+          run-id: ${{ needs.release-verify.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Restore exact workspace and Agent output
+        run: tar -xzf /tmp/workspace-build-output/workspace-build-output.tgz -C .
+      - name: Download admitted TUI Linux cohort
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tui-native-linux-x64
+          path: /tmp/native-release-downloads/tui-native-linux-x64
+          run-id: ${{ needs.release-verify.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download admitted Daemon Linux x64 cohort
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: daemon-native-linux-x64
+          path: /tmp/native-release-downloads/daemon-native-linux-x64
+          run-id: ${{ needs.release-verify.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download admitted Daemon Linux ARM cohort
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: daemon-native-linux-arm64
+          path: /tmp/native-release-downloads/daemon-native-linux-arm64
+          run-id: ${{ needs.release-verify.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download admitted Daemon Darwin x64 cohort
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: daemon-native-darwin-x64
+          path: /tmp/native-release-downloads/daemon-native-darwin-x64
+          run-id: ${{ needs.release-verify.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download admitted Daemon Darwin ARM cohort
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: daemon-native-darwin-arm64
+          path: /tmp/native-release-downloads/daemon-native-darwin-arm64
+          run-id: ${{ needs.release-verify.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify and stage admitted native release assets
+        env:
+          CI_RUN_ID: ${{ needs.release-verify.outputs.run_id }}
+        run: bun .github/scripts/stage-native-release-assets.mjs "$GITHUB_SHA" "$CI_RUN_ID" /tmp/native-release-downloads /tmp/native-release-assets
+      - name: Upload admitted native release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-release-assets
+          path: /tmp/native-release-assets/*
+          retention-days: 7
+          if-no-files-found: error
+
+  github-release:
+    if: >-
+      always() &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release')) &&
+      needs.publish-npm.result == 'success' &&
+      needs.prepare-native-assets.result == 'success'
+    needs: [publish-npm, prepare-native-assets]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/reusable-gh-release.yml
+    with:
+      tag: ${{ github.ref_name }}
+      artifact-name: native-release-assets
+      assets-glob: dist/*
+      changelog-path: packages/engine/CHANGELOG.md
+      toolchain-spec: '@goodvibes-jev/engine@${{ needs.prepare-native-assets.outputs.version }}'

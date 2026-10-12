@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { sdk, GOODVIBES_BASE_URL, WEBUI_VERSION, getCurrentAuth } from '../lib/goodvibes';
+import { getClientLifetime, isClientLifetimeCurrent, subscribeClientLifetime } from '../lib/client-lifetime';
 import {
   evaluateClientCompatibility,
   getObservedClientCompatibilityFloor,
@@ -90,6 +91,7 @@ export function useDaemonHealth(): DaemonHealth {
   // what flips it, and the health.route field returned at the bottom maps it to null
   // whenever the daemon is unreachable by either path.
   const storeRoute = useSyncExternalStore(subscribeActiveRoute, getActiveRoute, getActiveRoute);
+  const sourceLifetime = useSyncExternalStore(subscribeClientLifetime, getClientLifetime, getClientLifetime);
 
   // -- Client-build compatibility floor --------------------------------------
   // Reactive view of the module-level observed-floor store (lib/client-compatibility.ts),
@@ -118,10 +120,15 @@ export function useDaemonHealth(): DaemonHealth {
     // reconnect and authentication still owned by the existing SDK transport.
     setSseState('connecting');
     let mounted = true;
+    const controller = new AbortController();
     const unsubs: (() => void)[] = [];
+    const isCurrent = () => mounted && !controller.signal.aborted && isClientLifetimeCurrent(sourceLifetime);
+    const onError = () => {
+      if (isCurrent()) setSseState('error');
+    };
 
     try {
-      const events = sdk.realtime.viaSse();
+      const events = sdk.realtime.viaSse({ signal: controller.signal, onError });
 
       // Subscribe to a lightweight domain to confirm the SSE pipe is alive.
       // The 'turn' domain fires on any agent turn event.
@@ -133,10 +140,10 @@ export function useDaemonHealth(): DaemonHealth {
         // Only flip to 'active' when the first real envelope arrives from the
         // stream, proving the transport is genuinely delivering events.
         const unsubTurn = turnDomain.onEnvelope('TURN_STARTED', () => {
-          if (mounted) setSseState('active');
+          if (isCurrent()) setSseState('active');
         });
         const unsubTurnEnd = turnDomain.onEnvelope('TURN_COMPLETED', () => {
-          if (mounted) setSseState('active');
+          if (isCurrent()) setSseState('active');
         });
         unsubs.push(unsubTurn, unsubTurnEnd);
         // Intentionally NOT setting 'active' here, stay 'connecting' until
@@ -144,15 +151,16 @@ export function useDaemonHealth(): DaemonHealth {
       }
       // else: domain absent, remain 'connecting'; cannot confirm stream health.
     } catch {
-      if (mounted) setSseState('error');
+      onError();
     }
 
     return () => {
       mounted = false;
+      controller.abort();
       for (const fn of unsubs) fn();
       // Don't flip to error on unmount, component teardown, not a real failure
     };
-  }, [storeRoute]);
+  }, [storeRoute, sourceLifetime]);
 
   // -- Latency + connection probe -------------------------------------------
   const [latencyMs, setLatencyMs] = useState<number | null>(null);

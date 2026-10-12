@@ -120,6 +120,10 @@ export interface DaemonUpdateArtifact {
   readonly version: string;
   /** The executable the verified swap replaces. Defaults to process.execPath. */
   readonly execPath?: string | undefined;
+  /** Retained healthy installation; required before normal startup or promotion. */
+  readonly assertCurrent?: (() => void) | undefined;
+  /** Allows only the initial crash-loop decision to inspect a damaged current build. */
+  readonly assertStarting?: (() => void) | undefined;
 }
 
 export interface DaemonLifecycleRuntimeOptions {
@@ -214,10 +218,18 @@ export class DaemonLifecycleRuntime {
   private rollbackHandover: Promise<void> | null = null;
   private rollbackApplied = false;
   private rollbackRecovery: UpdateTransactionReceipt | null = null;
+  private installationStartRefused = false;
   private stopping = false;
   private rollbackAbort: AbortController | null = null;
 
-  constructor(private readonly options: DaemonLifecycleRuntimeOptions) {}
+  private readonly assertArtifactCurrent: (() => void) | undefined;
+  private readonly assertArtifactStarting: (() => void) | undefined;
+
+  constructor(private readonly options: DaemonLifecycleRuntimeOptions) {
+    const artifact = options.updateArtifact;
+    this.assertArtifactCurrent = artifact?.assertCurrent?.bind(artifact);
+    this.assertArtifactStarting = artifact?.assertStarting?.bind(artifact) ?? this.assertArtifactCurrent;
+  }
 
   /** Lazily-created persisted store for update/crash receipts. */
   receiptStore(): DaemonReceiptStore {
@@ -320,10 +332,23 @@ export class DaemonLifecycleRuntime {
     if (this.rollbackRecovery) return true;
     const artifact = this.options.updateArtifact;
     if (!artifact) return false;
-    if (this.rollbackApplied) return true;
+    if (this.rollbackApplied || this.appliedUpdater) return true;
     // An in-process restart cycle (a control-plane binding change re-enters
     // start()) is not a boot. See `reachedFullyStarted`.
-    if (this.reachedFullyStarted) return false;
+    if (this.reachedFullyStarted) {
+      try { this.assertArtifactCurrent?.(); }
+      catch (error) { this.installationStartRefused = true; throw error; }
+      return false;
+    }
+    try { this.assertArtifactStarting?.(); }
+    catch (error) { this.installationStartRefused = true; throw error; }
+    const completeStarting = (abandon: boolean): boolean => {
+      if (!abandon) {
+        try { this.assertArtifactCurrent?.(); }
+        catch (error) { this.installationStartRefused = true; throw error; }
+      }
+      return abandon;
+    };
     const threshold = Number(this.options.configManager.get('update.rollbackAfterFailedStarts') ?? 3);
     let attempt: ReturnType<typeof recordDaemonStartAttempt>;
     try {
@@ -332,14 +357,14 @@ export class DaemonLifecycleRuntime {
       logger.warn('DaemonServer: could not record the start attempt, crash-loop rollback is not armed this boot', {
         error: summarizeError(error),
       });
-      return false;
+      return completeStarting(false);
     }
-    if (attempt.failedStarts === 0) return false;
+    if (attempt.failedStarts === 0) return completeStarting(false);
     if (!Number.isFinite(threshold) || threshold < 1) {
       logger.warn('DaemonServer: previous boots did not reach a fully-started daemon; automatic rollback is off (update.rollbackAfterFailedStarts)', {
         failedStarts: attempt.failedStarts,
       });
-      return false;
+      return completeStarting(false);
     }
     const verdict = decideCrashLoopRollback({
       failedStarts: attempt.failedStarts,
@@ -352,9 +377,9 @@ export class DaemonLifecycleRuntime {
         rollbackAfterFailedStarts: threshold,
         reason: verdict.reason,
       });
-      return false;
+      return completeStarting(false);
     }
-    return this.rollBackToKeptPrevious(artifact.execPath ?? process.execPath, verdict.failedStarts);
+    return completeStarting(this.rollBackToKeptPrevious(artifact.execPath ?? process.execPath, verdict.failedStarts));
   }
 
   /**
@@ -511,6 +536,11 @@ export class DaemonLifecycleRuntime {
    */
   onStarted(): void {
     if (this.rollbackRecovery) return;
+    // A native committed handover owns its replacement; it never reuses the old boot admission.
+    if (!this.appliedUpdater && !this.rollbackApplied) {
+      try { this.assertArtifactCurrent?.(); }
+      catch (error) { this.installationStartRefused = true; throw error; }
+    }
     this.stopping = false;
     // Only the FIRST fully-started moment in a process can discover that the
     // process before it died: an in-process restart cycle is looking at the
@@ -588,7 +618,8 @@ export class DaemonLifecycleRuntime {
       clearInterval(this.promotionTimer);
       this.promotionTimer = null;
     }
-    if (restarting || this.rollbackRecovery) return drained;
+    // Refusing an unconfirmed native boot must not erase its crash-loop evidence.
+    if (restarting || this.rollbackRecovery || this.installationStartRefused) return drained;
     try {
       recordDaemonCleanShutdown(this.markerPath(), {
         ...this.markerOptions(),
@@ -755,14 +786,19 @@ export class DaemonLifecycleRuntime {
   }
 
   /** The service-manager actions shared by the update swap and boot promotion. */
-  private buildServiceActions(signal?: AbortSignal): AutoUpdateServiceActions {
+  private buildServiceActions(signal?: AbortSignal, assertCurrent?: () => void): AutoUpdateServiceActions {
     const serviceName = String(this.options.configManager.get('service.serviceName') ?? 'goodvibes').trim() || 'goodvibes';
     const platform = this.options.servicePlatform ?? process.platform;
     const configuredTimeout = this.options.serviceCommandTimeoutMs ?? 10_000;
     const timeoutMs = Number.isFinite(configuredTimeout) ? Math.max(1, Math.min(60_000, configuredTimeout)) : 10_000;
-    const command = (argv: readonly string[], actionSignal?: AbortSignal): Promise<ServiceHandoverOutcome> => this.hasTransactionRecovery()
-      ? Promise.resolve({ status: 'unknown', detail: 'filesystem transaction recovery is required; service action is fenced' })
-      : observeServiceCommand(this.options.serviceCommandRunner ?? runServiceCommand, argv, timeoutMs, actionSignal);
+    const command = async (argv: readonly string[], actionSignal?: AbortSignal): Promise<ServiceHandoverOutcome> => {
+      assertCurrent?.();
+      const outcome: ServiceHandoverOutcome = this.hasTransactionRecovery()
+        ? { status: 'unknown', detail: 'filesystem transaction recovery is required; service action is fenced' }
+        : await observeServiceCommand(this.options.serviceCommandRunner ?? runServiceCommand, argv, timeoutMs, actionSignal);
+      assertCurrent?.();
+      return outcome;
+    };
     return {
       isSupervised: () => {
         try {
@@ -777,9 +813,12 @@ export class DaemonLifecycleRuntime {
         if (platform !== 'linux') return { status: 'unsupported', detail: 'service adoption is only supported on systemd' };
         if (actionSignal?.aborted || this.hasTransactionRecovery()) return { status: 'unknown', detail: 'handover cancelled or filesystem recovery required' };
         try {
+          assertCurrent?.();
           const status = this.options.platformServiceManager.status();
+          assertCurrent?.();
           if (status.platform && status.platform !== 'systemd') return { status: 'unsupported', detail: `service adoption is unsupported for ${status.platform}` };
           const installed = this.options.platformServiceManager.install();
+          assertCurrent?.();
           if (installed.installed === false) return { status: 'failed', detail: 'service unit installation was not confirmed' };
           if (installed.actionError) return { status: 'failed', detail: installed.actionError };
           if (installed.lingerNote) logger.info(`DaemonServer: ${installed.lingerNote}`);
@@ -833,7 +872,7 @@ export class DaemonLifecycleRuntime {
    * without a service manager is left alone.
    */
   private promoteToServiceAtBoot(): void {
-    if (this.hasTransactionRecovery()) return;
+    if (this.hasTransactionRecovery() || this.appliedUpdater || this.rollbackApplied) return;
     if (!this.options.updateArtifact) return;
     // A daemon running out of an overridden home is a throwaway by definition,
     // and a throwaway must not become the machine's daemon. See
@@ -874,10 +913,12 @@ export class DaemonLifecycleRuntime {
       this.promotionTimer = null;
       const abort = new AbortController();
       this.promotionAbort = abort;
-      const actions = this.buildServiceActions(abort.signal);
+      const actions = this.buildServiceActions(abort.signal, this.assertArtifactCurrent);
       this.promotionTask = (async () => {
         try {
+          this.assertArtifactCurrent?.();
           const outcome = await actions.adoptIntoService();
+          this.assertArtifactCurrent?.();
           if (abort.signal.aborted || this.stopping || this.hasTransactionRecovery()) return;
           if (outcome?.status !== 'accepted') {
             this.reportIncompleteHandover('boot promotion', outcome ?? { status: 'unknown', detail: 'no outcome returned' });

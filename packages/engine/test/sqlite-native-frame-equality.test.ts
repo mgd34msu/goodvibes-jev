@@ -606,8 +606,8 @@ test('a late global capture setter cannot omit complete private native facts', a
   const parent = Object.getPrototypeOf, define = Object.defineProperty, remove = Reflect.deleteProperty, apply = Reflect.apply;
   const push = Array.prototype.push, isArray = Array.isArray;
   const pushSlot = own(Array.prototype, 'push'), parentSlot = own(Object, 'getPrototypeOf');
-  const zeroSlot = own(Array.prototype, '0');
-  if (!pushSlot || !parentSlot || zeroSlot) throw new Error('No original native acquisition reflection slots');
+  const zeroSlot = own(Array.prototype, '0'), lengthSlot = own(Array.prototype, 'length');
+  if (!pushSlot || !parentSlot || zeroSlot || !lengthSlot || !('value' in lengthSlot)) throw new Error('No original native acquisition reflection slots');
   let armed = false, captured = 0, restored = 0, exposed = 0;
   const isStatement = (target: object) => {
     const pointer: unknown = own(target, 'Qa')?.value, buffers: unknown = own(target, 'mb')?.value;
@@ -616,6 +616,7 @@ test('a late global capture setter cannot omit complete private native facts', a
   };
   const restore = () => {
     remove(Array.prototype, '0');
+    define(Array.prototype, 'length', lengthSlot);
     define(Array.prototype, 'push', pushSlot);
     define(Object, 'getPrototypeOf', parentSlot);
   };
@@ -652,6 +653,8 @@ test('a late global capture setter cannot omit complete private native facts', a
     define(Array.prototype, 'push', { ...pushSlot, value: observingPush });
     await isolated.loadSqlJsEngine();
   } finally { restore(); }
+  expect(own(Array.prototype, 'length')).toEqual(lengthSlot);
+  expect(own(Array.prototype, '0')).toBeUndefined();
   expect(captured).toBe(1); expect(restored).toBe(1); expect(exposed).toBe(0);
   const filename = path();
   const sqlite = new isolated.SQLiteStore(filename, { coordinated: true });
@@ -764,7 +767,8 @@ test('a late statement capture setter cannot omit complete private native facts'
   const isArray = Array.isArray;
   const parentSlot = own(Object, 'getPrototypeOf');
   const descriptorsSlot = own(Object, 'getOwnPropertyDescriptors'), zeroSlot = own(Array.prototype, '0');
-  if (!parentSlot || !descriptorsSlot || zeroSlot) throw new Error('No original native acquisition reflection slots');
+  const lengthSlot = own(Array.prototype, 'length');
+  if (!parentSlot || !descriptorsSlot || zeroSlot || !lengthSlot || !('value' in lengthSlot)) throw new Error('No original native acquisition reflection slots');
   let armed = false, captured = 0, restored = 0, exposed = 0;
   let statementPrototype: object | undefined;
   const isStatement = (target: object) => {
@@ -774,6 +778,7 @@ test('a late statement capture setter cannot omit complete private native facts'
   };
   const restore = () => {
     remove(Array.prototype, '0');
+    define(Array.prototype, 'length', lengthSlot);
     define(Object, 'getPrototypeOf', parentSlot);
     define(Object, 'getOwnPropertyDescriptors', descriptorsSlot);
   };
@@ -816,6 +821,8 @@ test('a late statement capture setter cannot omit complete private native facts'
     define(Object, 'getOwnPropertyDescriptors', { ...descriptorsSlot, value: reflectingDescriptors });
     await isolated.loadSqlJsEngine();
   } finally { restore(); }
+  expect(own(Array.prototype, 'length')).toEqual(lengthSlot);
+  expect(own(Array.prototype, '0')).toBeUndefined();
   expect(captured).toBe(1); expect(restored).toBe(1); expect(exposed).toBe(0);
   if (!statementPrototype) throw new Error('No actual original statement prototype');
   const filename = path();

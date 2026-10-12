@@ -135,8 +135,8 @@ test.each(['active', 'pending', 'handoff'] as const)('actual Agent permission li
   } finally {
     for (const item of broker.listApprovals()) if (item.status === 'pending' || item.status === 'claimed') await broker.cancelApproval(item.id, 'fixture-cleanup');
     await done;
-    runtime.dispose();
     installJudgmentPort(previous);
+    await runtime.close();
     rmSync(root, { recursive: true, force: true });
   }
 }, 20000);

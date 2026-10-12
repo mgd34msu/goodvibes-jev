@@ -811,11 +811,50 @@ describe('release.yml: by-reference release', () => {
     expect(prerequisites(rel, 'github-release').has('publish-npm')).toBe(true);
   });
 
+  test('GitHub release requires the complete admitted CI native assets', () => {
+    const preparation = rel.jobs!['prepare-native-assets']!;
+    const release = rel.jobs!['github-release']!;
+    expect(needsOf(release)).toContain('prepare-native-assets');
+    expect(release.uses).toBe('./.github/workflows/reusable-gh-release.yml');
+    expect(release.with).toEqual(expect.objectContaining({
+      'artifact-name': 'native-release-assets',
+      'assets-glob': 'dist/*',
+      'toolchain-spec': '@goodvibes-jev/engine@${{ needs.prepare-native-assets.outputs.version }}',
+    }));
+    const list = steps(preparation);
+    const guard = list.findIndex((step) => String(step.name) === 'Require the verified CI producer');
+    const downloads = list.filter((step) => String(step.uses ?? '').includes('download-artifact'));
+    expect(downloads).toHaveLength(6);
+    expect(downloads.map((step) => (step.with as Record<string, unknown>).name)).toEqual([
+      'workspace-build-output', 'tui-native-linux-x64',
+      'daemon-native-linux-x64', 'daemon-native-linux-arm64',
+      'daemon-native-darwin-x64', 'daemon-native-darwin-arm64',
+    ]);
+    expect(guard).toBeGreaterThanOrEqual(0);
+    for (const download of downloads) {
+      expect(download).toHaveProperty('with.run-id', '${{ needs.release-verify.outputs.run_id }}');
+      expect(guard).toBeLessThan(list.indexOf(download));
+    }
+    const staged = list.findIndex((step) => String(step.run ?? '').includes('.github/scripts/stage-native-release-assets.mjs'));
+    const uploaded = list.findIndex((step) => String(step.uses ?? '').includes('upload-artifact'));
+    expect(staged).toBeGreaterThanOrEqual(0);
+    expect(staged).toBeLessThan(uploaded);
+    expect(list[uploaded]).toHaveProperty('with.name', 'native-release-assets');
+    expect(list[uploaded]).toHaveProperty('with.if-no-files-found', 'error');
+    expect(runText(rel, 'prepare-native-assets')).not.toContain('build:binary');
+    const helper = load('reusable-gh-release.yml');
+    expect(helper).toHaveProperty('on.workflow_call.inputs.toolchain-spec.default', '@goodvibes-jev/engine');
+    expect(runText(helper, 'gh-release')).toContain('bunx --package "$TOOLCHAIN_SPEC"');
+  });
+
   test('publication guards block failed, cancelled, or skipped prerequisites on both release paths', () => {
     for (const [target, prerequisite] of [
       ['publish-npm', 'verify-tag-version'],
       ['publish-npm', 'release-verify'],
+      ['prepare-native-assets', 'publish-npm'],
+      ['prepare-native-assets', 'release-verify'],
       ['github-release', 'publish-npm'],
+      ['github-release', 'prepare-native-assets'],
     ] as const) {
       const job = rel.jobs![target]!;
       expect(needsOf(job)).toContain(prerequisite);
@@ -858,9 +897,11 @@ describe('release.yml: by-reference release', () => {
     expect(pubIf).toContain("github.event_name == 'push'");
     expect(pubIf).toContain("github.event_name == 'workflow_dispatch'");
     expect(pubIf).toContain("inputs.mode == 'release'");
-    const pub = rel.jobs!['publish-npm']!;
-    const results: Record<string, JobResult> = Object.fromEntries(needsOf(pub).map((name) => [name, 'success']));
-    expect(permitsPublication(pub, results, 'workflow_dispatch', 'dry-run')).toBe(false);
+    for (const target of ['publish-npm', 'prepare-native-assets', 'github-release']) {
+      const job = rel.jobs![target]!;
+      const results: Record<string, JobResult> = Object.fromEntries(needsOf(job).map((name) => [name, 'success']));
+      expect(permitsPublication(job, results, 'workflow_dispatch', 'dry-run')).toBe(false);
+    }
 
     const dryIf = String(rel.jobs!['dry-run']!.if);
     expect(dryIf).toContain("github.event_name == 'workflow_dispatch'");
@@ -877,9 +918,11 @@ describe('release.yml: by-reference release', () => {
   });
 
   test('the changelog fallback body is a warning, never silent', () => {
-    const text = stepText(rel.jobs!['github-release']!);
+    const owner = load('reusable-gh-release.yml');
+    expect(rel.jobs!['github-release']!.uses).toBe('./.github/workflows/reusable-gh-release.yml');
+    const text = stepText(owner.jobs!['gh-release']!);
     expect(text).toContain('::warning::');
-    expect(text).toContain('Release ${VERSION}');
+    expect(text).toContain('Release ${version}');
   });
 
   test('the shipped awk program extracts exactly one section, including next to a prerelease heading', () => {
@@ -905,7 +948,11 @@ describe('release.yml: by-reference release', () => {
     writeFileSync(path, fixture);
     try {
       for (const [wfName, jobName] of [['release.yml', 'github-release'], ['reusable-gh-release.yml', 'gh-release']] as const) {
-        const program = /awk -v version="\$\w+" '([\s\S]*?)'\s/.exec(runText(load(wfName), jobName))?.[1];
+        const caller = load(wfName).jobs![jobName]!;
+        const owner = caller.uses === './.github/workflows/reusable-gh-release.yml'
+          ? [load('reusable-gh-release.yml'), 'gh-release'] as const
+          : [load(wfName), jobName] as const;
+        const program = /awk -v version="\$\w+" '([\s\S]*?)'\s/.exec(runText(owner[0], owner[1]))?.[1];
         expect(program, `${wfName}: no awk program found`).toBeTruthy();
         const extract = (version: string): string => {
           const res = spawnSync('awk', ['-v', `version=${version}`, program!, path], { encoding: 'utf8', timeout: 30_000 });
@@ -928,7 +975,7 @@ describe('release.yml: by-reference release', () => {
   test('the tag-push publish path is preserved unchanged (manual redo)', () => {
     // Every release job that gates on a release-mode dispatch must still also
     // gate on a plain push, so pushing a v* tag by hand releases exactly as before.
-    for (const name of ['verify-tag-version', 'release-verify', 'publish-npm', 'github-release']) {
+    for (const name of ['verify-tag-version', 'release-verify', 'publish-npm', 'prepare-native-assets', 'github-release']) {
       expect(String(rel.jobs![name]!.if)).toContain("github.event_name == 'push'");
     }
   });

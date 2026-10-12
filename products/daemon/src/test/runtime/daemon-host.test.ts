@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { resolveInstalledDaemonUpdateArtifact } from '../../daemon/lifecycle.js';
+import { writeNativeInstallationFixture } from '../helpers/native-runtime-provenance.js';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
-import { DaemonServer, HttpListener } from '@goodvibes-jev/engine/sdk/platform/daemon';
+import { DaemonServer, HttpListener, PlatformServiceManager } from '@goodvibes-jev/engine/sdk/platform/daemon';
 import { persistProviders, loadPersistedProviders, type DiscoveredServer } from '@goodvibes-jev/engine/sdk/platform/discovery';
 import { HostedSessionManager, HostedSessionStore, HostedWorkspaceFloors, HOSTED_SESSION_WIRE_EVENT, type HostedSessionRecord, type HostedSessionUpdatePayload, type HostedWorkspaceFloor } from '@goodvibes-jev/engine/sdk/platform/hosted-sessions';
 import { registerInboxSurface } from '@goodvibes-jev/engine/sdk/platform/intake';
@@ -43,7 +45,8 @@ afterEach(async () => {
   for (const restore of restores.reverse()) restore();
 });
 
-function fixture(configure?: (runtime: RuntimeServices) => void, extra: DaemonHostFactories = {}) {
+function fixture(configure?: (runtime: RuntimeServices) => void, extra: DaemonHostFactories = {},
+  native: Pick<DaemonHostOptions, 'updateArtifact' | 'hasOverriddenHome'> = {}) {
   const root = makeOwnedTempDir('owned-daemon-host');
   const homeDirectory = join(root, 'home'); const workingDir = join(root, 'workspace');
   const configDir = join(homeDirectory, '.goodvibes', 'daemon');
@@ -65,6 +68,7 @@ function fixture(configure?: (runtime: RuntimeServices) => void, extra: DaemonHo
         users: [{ username: 'admin', passwordHash: UserAuthManager.hashPassword('fixture'), roles: ['admin'] }] }),
     },
     daemon: { host: '127.0.0.1', port: 0, token: 'synthetic-host-token', serveFactory },
+    ...native,
   };
   const factories: DaemonHostFactories = {
     providerDiscovery: { scan: async () => ({ servers: [], scannedHosts: 0, scannedPorts: 0, durationMs: 0 }) },
@@ -876,4 +880,114 @@ test('close fences discovery immediately while accepted boot is still held', asy
   expect(registrations).toBe(0); expect(writes).toBe(0); expect(disposed).toBe(0);
   bootHeld.resolve(); await starting; await closing;
   expect(registrations).toBe(0); expect(writes).toBe(0); expect(disposed).toBe(1);
+});
+
+for (const retirement of ['payload', 'cancel'] as const) test(`late native startup ${retirement} refuses readiness and preserves failed-start evidence through cleanup`, async () => {
+  const native = writeNativeInstallationFixture(makeOwnedTempDir('host-native-late-start'), '9.9.9-test', process.arch === 'arm64' ? 'arm64' : 'x64');
+  const abort = new AbortController();
+  const artifact = resolveInstalledDaemonUpdateArtifact({ isOverridden: false }, { ...native.options, signal: abort.signal });
+  expect(artifact).toBeDefined(); if (!artifact) throw new Error('Native fixture admission missing');
+  const entered = gate(); const release = gate(); let graphCloses = 0; let bootStarts = 0;
+  const fx = fixture((runtime) => {
+    const init = runtime.memoryStore.init.bind(runtime.memoryStore);
+    keep(spyOn(runtime.memoryStore, 'init').mockImplementation(async () => { await init(); entered.resolve(); await release.promise; }));
+    const close = runtime.close;
+    keep(spyOn(runtime, 'close').mockImplementation(async () => { graphCloses++; await close(); }));
+    const startBoot = runtime.bootTasks!.start;
+    keep(spyOn(runtime.bootTasks!, 'start').mockImplementation(() => { bootStarts++; return startBoot(); }));
+  }, {}, { updateArtifact: artifact, hasOverriddenHome: false });
+  const markerPath = join(fx.options.runtime.configManager.getControlPlaneConfigDir(), 'control-plane', 'daemon-lifecycle.json');
+  const starting = fx.host.start();
+  await entered.promise;
+  const attempted = readFileSync(markerPath, 'utf8');
+  expect(JSON.parse(attempted).failedStarts).toBe(1);
+  expect(fx.host.daemon?.isRunning).toBe(true);
+  if (retirement === 'payload') writeFileSync(native.execPath, 'retired during actual startup');
+  else abort.abort();
+  release.resolve();
+  await expect(starting).rejects.toThrow('server startup');
+  await fx.host.close();
+  expect(readFileSync(markerPath, 'utf8')).toBe(attempted);
+  expect(fx.host.daemon?.isRunning).toBe(false);
+  expect(bootStarts).toBe(0); expect(graphCloses).toBe(1);
+  expect(fx.host.snapshot().state).toBe('failed');
+});
+
+function inertNativeHostServer(): NonNullable<DaemonHost['daemon']> {
+  let running = false;
+  return { enable() {}, async start() { running = true; }, async stop() { running = false; }, fenceRestartAdmission() {},
+    async waitForRestart() {}, get isRunning() { return running; }, boundHost: '127.0.0.1', boundPort: 0, boundScheme: 'http' };
+}
+
+for (const ending of ['drain', 'cancel'] as const) test(`configured native recovery ${ending} owns facade handover before ordinary host cleanup`, async () => {
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const native = writeNativeInstallationFixture(makeOwnedTempDir('host-native-recovery'), '9.9.9-test', arch);
+  const previous = writeNativeInstallationFixture(makeOwnedTempDir('host-native-prior'), '9.9.8-test', arch);
+  for (const [index, target] of native.targets.entries()) copyFileSync(previous.targets[index]!.path, target.path + '.previous');
+  writeFileSync(native.execPath, 'damaged current daemon');
+  const artifact = resolveInstalledDaemonUpdateArtifact({ isOverridden: false }, native.options);
+  expect(artifact).toBeDefined(); if (!artifact) throw new Error('Native recovery fixture admission missing');
+  const entered = gate(); const release = gate(); let bootStarts = 0; let graphCloses = 0; let installs = 0;
+  // Unsupported native manager is inert: reach its actual refusal, never spawn a system command.
+  keep(spyOn(PlatformServiceManager.prototype, 'status').mockReturnValue({ platform: 'manual', serviceName: 'fixture', path: '',
+    installed: false, autostart: false, running: false, commandPreview: '', suggestedCommands: [] }));
+  keep(spyOn(PlatformServiceManager.prototype, 'install').mockImplementation(() => { installs++; throw new Error('Unexpected real service installation'); }));
+  const fx = fixture((runtime) => {
+    const stop = runtime.sessionBroker.stop.bind(runtime.sessionBroker);
+    keep(spyOn(runtime.sessionBroker, 'stop').mockImplementation(async () => { entered.resolve(); await release.promise; await stop(); }));
+    const close = runtime.close;
+    keep(spyOn(runtime, 'close').mockImplementation(async () => { graphCloses++; await close(); }));
+    const startBoot = runtime.bootTasks!.start;
+    keep(spyOn(runtime.bootTasks!, 'start').mockImplementation(() => { bootStarts++; return startBoot(); }));
+  }, {}, { updateArtifact: artifact, hasOverriddenHome: false });
+  const controlPlaneDirectory = join(fx.options.runtime.configManager.getControlPlaneConfigDir(), 'control-plane');
+  mkdirSync(controlPlaneDirectory, { recursive: true });
+  writeFileSync(join(controlPlaneDirectory, 'daemon-lifecycle.json'), JSON.stringify({ state: 'clean-shutdown', at: Date.now(),
+    failedStarts: 3, streakStartedAt: Date.now(), version: native.receipt.version }));
+  const starting = fx.host.start(); const started = settled(starting);
+  await entered.promise; await tick();
+  expect(started()).toBe(false); expect(graphCloses).toBe(0); expect(bootStarts).toBe(0);
+  expect(fx.host.daemon?.isRunning).toBe(false);
+  let closing: Promise<void> | undefined;
+  if (ending === 'cancel') { closing = fx.host.close(); const closed = settled(closing); await tick(); expect(closed()).toBe(false); }
+  release.resolve();
+  const outcome = await starting;
+  if (ending === 'drain') expect(outcome.state).toBe('handover');
+  await (closing ?? fx.host.close());
+  for (const [index, target] of native.targets.entries()) expect(readFileSync(target.path)).toEqual(readFileSync(previous.targets[index]!.path));
+  const receipts = readFileSync(join(controlPlaneDirectory, 'daemon-receipts.json'), 'utf8');
+  expect(receipts).toContain('rolled back to the previously installed version');
+  if (ending === 'drain') { expect(receipts).toContain('incomplete (unsupported)'); expect(receipts).not.toContain('handover cancelled'); }
+  else expect(receipts).toContain('handover cancelled during orderly stop');
+  expect(installs).toBe(0); expect(bootStarts).toBe(0); expect(graphCloses).toBe(1);
+  expect(fx.host.snapshot().state).toBe('closed');
+});
+
+test('configured native host forwards only its complete retained installation and resolved home policy', async () => {
+  const native = writeNativeInstallationFixture(makeOwnedTempDir('host-native-install'), '9.9.9-test');
+  const artifact = resolveInstalledDaemonUpdateArtifact({ isOverridden: false }, native.options);
+  expect(artifact).toBeDefined(); if (!artifact) throw new Error('Native fixture admission missing'); let constructed = 0;
+  const fx = fixture(undefined, { createServer(config) {
+    constructed++; expect(config.updateArtifact).toBe(artifact); expect(config.hasOverriddenHome).toBe(false);
+    config.updateArtifact!.assertCurrent!(); return inertNativeHostServer();
+  } }, { updateArtifact: artifact, hasOverriddenHome: false });
+  await fx.host.start(); expect(constructed).toBe(1); expect(fx.host.daemon?.isRunning).toBe(true);
+  await fx.host.close(); expect(fx.host.daemon?.isRunning).toBe(false);
+});
+
+for (const retirement of ['payload', 'binding'] as const) test(`native ${retirement} retirement during runtime acquisition prevents listener construction and drains the acquired graph`, async () => {
+  const native = writeNativeInstallationFixture(makeOwnedTempDir('host-native-retire'), '9.9.9-test');
+  const artifact = resolveInstalledDaemonUpdateArtifact({ isOverridden: false }, native.options);
+  expect(artifact).toBeDefined(); if (!artifact) throw new Error('Native fixture admission missing'); const entered = gate(); const release = gate(); let constructed = 0; let closed = 0;
+  const fx = fixture(undefined, { async createRuntime(options) {
+    const runtime = await createRuntimeServices(options); const close = runtime.close;
+    keep(spyOn(runtime, 'close').mockImplementation(async () => { closed++; await close(); }));
+    entered.resolve(); await release.promise; return runtime;
+  }, createServer() { constructed++; return inertNativeHostServer(); } }, { updateArtifact: artifact, hasOverriddenHome: false });
+  const starting = fx.host.start(); await entered.promise;
+  if (retirement === 'payload') writeFileSync(native.targets[1]!.path, 'unowned runtime replacement');
+  else Object.defineProperty(fx.options, 'updateArtifact', { value: undefined });
+  release.resolve();
+  await expect(starting).rejects.toThrow('server construction'); await fx.host.close();
+  expect(constructed).toBe(0); expect(closed).toBe(1);
 });

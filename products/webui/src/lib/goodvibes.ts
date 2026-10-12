@@ -2701,7 +2701,27 @@ export const sdk = {
   },
   artifacts: scopedSdk.artifacts,
   realtime: {
-    viaSse: () => scopedSdk.realtime.viaSse(),
+    // Errors belong to this fresh event bus, alongside its listeners and closer.
+    // Keep the native SDK in charge of authentication, resumption and reconnect.
+    viaSse: (options?: {
+      readonly signal?: AbortSignal | undefined;
+      readonly onError?: ((error: unknown) => void) | undefined;
+    }) => {
+      const lifetime = getClientLifetime();
+      const callerSignal = options?.signal;
+      const onError = options?.onError;
+      return createBrowserKnowledgeSdk({
+        baseUrl: GOODVIBES_BASE_URL,
+        tokenStore,
+        fetch: routedFetch,
+        realtime: {
+          sseReconnect: DEFAULT_SSE_RECONNECT,
+          onError: (error) => {
+            if (!callerSignal?.aborted && isClientLifetimeCurrent(lifetime)) onError?.(error);
+          },
+        },
+      }).realtime.viaSse({ signal: callerSignal });
+    },
   },
   // Raw event stream escape hatch. The scoped viaSse() per-domain filter DROPS the
   // un-domained `session-update` wire event (browser-scoped.ts), so session liveness

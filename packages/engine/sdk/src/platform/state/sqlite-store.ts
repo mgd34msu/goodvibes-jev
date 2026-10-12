@@ -117,7 +117,8 @@ function captureRecordSelectors(value: unknown): PersistedKnowledgeRecordSelecto
 
 function captureRecordSelectorGroups(value: readonly (readonly PersistedKnowledgeRecordSelector[])[]): PersistedKnowledgeRecordSelector[][] {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new TypeError('SQLiteStore: invalid record generation groups');
-  const descriptors = Object.getOwnPropertyDescriptors(value), length: unknown = descriptors.length?.value;
+  const array: object = value;
+  const descriptors = Object.getOwnPropertyDescriptors(array), length: unknown = descriptors.length?.value;
   if (typeof length !== 'number' || !Number.isSafeInteger(length) || length < 0
     || Reflect.ownKeys(descriptors).length !== length + 1) throw new TypeError('SQLiteStore: invalid record generation groups');
   const captured: PersistedKnowledgeRecordSelector[][] = [];

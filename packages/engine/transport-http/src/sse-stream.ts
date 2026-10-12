@@ -263,7 +263,7 @@ export async function openRawServerSentEventStream(
           handlers.onClose?.();
           return;
         } catch (error) {
-          if (isAbortError(error) || outerController.signal.aborted || stopped) {
+          if (outerController.signal.aborted || stopped) {
             return;
           }
           const nextAttempt = reconnectAttempts + 1;
@@ -281,7 +281,7 @@ export async function openRawServerSentEventStream(
           try {
             await sleepWithSignal(delayMs, outerController.signal);
           } catch (sleepError) {
-            if (!isAbortError(sleepError)) {
+            if (!outerController.signal.aborted && !stopped) {
               reportStreamError(sleepError, handlers);
             }
             return;
@@ -291,7 +291,7 @@ export async function openRawServerSentEventStream(
     };
 
     void loop().catch((error) => {
-      if (!isAbortError(error)) {
+      if (!outerController.signal.aborted && !stopped) {
         reportStreamError(error, handlers);
       }
     });

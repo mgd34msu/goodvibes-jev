@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { copyFileSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
@@ -206,4 +206,64 @@ describe('generic public retrieval through shared readings', () => {
     readings({ yes: 0.99, uncertain: 0.6 }); await expect(select(store)).rejects.toMatchObject({ reason: 'unsettled' });
     readings(); expect((await select(store)).accepted).toEqual([]); expect(store.listUsageRecords()).toEqual([]);
   });
+});
+
+
+test('public relation initialization translates a genuine physical replacement at its outer exit before relevance dispatch', async () => {
+  const store = await fixture(); await source(store, 'selected');
+  const fake = readings({ selected: 0.99 }), before = readFileSync(store.storagePath);
+  const frame = store.assertRecordSnapshotFrame.bind(store), window = store.getEdgeWindowGeneration.bind(store);
+  let depth = 0, armed = false, changed = false;
+  const observingWindow = spyOn(store, 'getEdgeWindowGeneration').mockImplementation((keys, incidentKeys, includeUnselectedEndpoints) => {
+    const value = window(keys, incidentKeys, includeUnselectedEndpoints);
+    if (includeUnselectedEndpoints === true) armed = true;
+    return value;
+  });
+  const observingFrame = spyOn(store, 'assertRecordSnapshotFrame').mockImplementation(assertion => {
+    frame(() => {
+      depth++;
+      try {
+        const result = assertion();
+        if (depth === 1 && armed && !changed) {
+          changed = true;
+          copyFileSync(store.storagePath, `${store.storagePath}.replacement`);
+          renameSync(`${store.storagePath}.replacement`, store.storagePath);
+        }
+        return result;
+      } finally { depth--; }
+    });
+  });
+  try {
+    await expect(select(store)).rejects.toMatchObject({ reason: 'stale' });
+    expect(armed).toBe(true); expect(changed).toBe(true);
+    expect(fake.requests.some(request => 'included' in request.questions)).toBe(true);
+    expect(fake.requests.filter(request => 'useful' in request.questions)).toHaveLength(0);
+    expect(readFileSync(store.storagePath).equals(before)).toBe(true);
+  } finally { observingFrame.mockRestore(); observingWindow.mockRestore(); await store.close(); }
+});
+
+test('public compound preparation preserves its original caller privacy error and makes no semantic request', async () => {
+  const store = await fixture(); await source(store, 'selected');
+  const fake = readings({ selected: 0.99 }), before = readFileSync(store.storagePath);
+  const original = new JudgmentInputError('unsupported-input'); let calls = 0;
+  try {
+    await expect(readPublicKnowledgeSelection(store, { query, scope: {}, mode: 'search' }, {
+      assertCurrent() { calls++; throw original; },
+    })).rejects.toBe(original);
+    expect(calls).toBe(1); expect(fake.requests).toHaveLength(0);
+    expect(readFileSync(store.storagePath).equals(before)).toBe(true);
+  } finally { await store.close(); }
+});
+
+test('public compound preparation retains cancellation on return from the original caller', async () => {
+  const store = await fixture(); await source(store, 'selected');
+  const fake = readings({ selected: 0.99 }), before = readFileSync(store.storagePath), controller = new AbortController();
+  let calls = 0;
+  try {
+    await expect(readPublicKnowledgeSelection(store, { query, scope: {}, mode: 'search' }, {
+      signal: controller.signal, assertCurrent() { calls++; controller.abort(); },
+    })).rejects.toMatchObject({ reason: 'aborted' });
+    expect(calls).toBe(1); expect(fake.requests).toHaveLength(0);
+    expect(readFileSync(store.storagePath).equals(before)).toBe(true);
+  } finally { await store.close(); }
 });

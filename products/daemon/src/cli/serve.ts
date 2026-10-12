@@ -13,6 +13,7 @@ import { RuntimeEventBus, runtimeEventBusOptionsFrom } from '@goodvibes-jev/engi
 import { isKnownConfigKey } from '../config/config-key-guard.js';
 import { getPackageVersion, renderDaemonBoundEndpoint, renderDaemonStartupBanner } from './help.js';
 import { createDaemonHost } from '../runtime/daemon-host.js';
+import { resolveInstalledDaemonUpdateArtifact } from '../daemon/lifecycle.js';
 import type { RuntimeServicesOptions } from '../runtime/services.js';
 import { runDaemonProcess, type DaemonProcessOptions } from '../daemon/process-lifecycle.js';
 import type { DaemonCliConfiguration } from './configuration.js';
@@ -57,7 +58,7 @@ export function runConfiguredDaemonCli(
   pairingOutput: ((message: string) => void) | undefined = process.stdout.isTTY === true
     ? (message) => { writeSync(1, `${message}\n`); } : undefined,
 ) {
-  const { config, homeDirectory, daemonHomeDirectory, workingDirectory } = configuration;
+  const { config, homeDirectory, daemonHomeDirectory, workingDirectory, isOverridden } = configuration;
   // runDaemonProcess constructs its owner even when shutdown won admission.
   // Keep token and graph acquisition inside start, after that admission fence.
   return runDaemonProcess(() => {
@@ -71,6 +72,8 @@ export function runConfiguredDaemonCli(
         const intended = resolveHostBinding(config.get('controlPlane.hostMode'), config.get('controlPlane.host'),
           config.get('controlPlane.port'), 'controlPlane');
         stdout(renderDaemonStartupBanner(version, { homeDir: homeDirectory, daemonHomeDir: daemonHomeDirectory, ...intended }));
+        if (closed) return undefined;
+        const updateArtifact = resolveInstalledDaemonUpdateArtifact({ isOverridden }, { signal: maintenance.signal });
         if (closed) return undefined;
         const companion = getOrCreateCompanionToken('tui', { daemonHomeDir: daemonHomeDirectory });
         if (companion.quarantined) {
@@ -91,6 +94,8 @@ export function runConfiguredDaemonCli(
             runtimeStore: createRuntimeStore(),
           },
           daemon: { token },
+          hasOverriddenHome: isOverridden,
+          ...(updateArtifact ? { updateArtifact } : {}),
           ...(config.get('danger.httpListener') ? { httpListener: { token: env.GOODVIBES_HTTP_TOKEN ?? token } } : {}),
         });
         const snapshot = await host.start();

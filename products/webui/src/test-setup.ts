@@ -16,6 +16,7 @@ import { GlobalRegistrator } from '@happy-dom/global-registrator';
 // Keep the platform Fetch objects for tests of native Request merging and abort ownership.
 // Happy DOM supplies the rendered UI; its Request copy does not honor body/null-signal overrides.
 export const nativeRequestPrimitives = Object.freeze({
+  fetch: globalThis.fetch,
   Request: globalThis.Request,
   Response: globalThis.Response,
   Headers: globalThis.Headers,

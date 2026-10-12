@@ -1,5 +1,10 @@
 import { liveControlDescriptor } from './_helpers/browser-control-descriptor.js';
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { isDeepStrictEqual } from 'node:util';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { readingsOf, SqliteDecisionLog, toJson, withDecisionLog } from '@goodvibes-jev/judgment';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { browserControlIdentity } from '../sdk/src/platform/browser/browser-control-identity.js';
 import { resolveRef, SnapshotStore, StaleElementError } from '../sdk/src/platform/browser/browser-snapshot.js';
 import type { BrowserSnapshot } from '../sdk/src/platform/browser/browser-types.js';
 
@@ -11,6 +16,32 @@ import type { BrowserSnapshot } from '../sdk/src/platform/browser/browser-types.
  */
 type Page = Parameters<typeof resolveRef>[0];
 type Locator = Awaited<ReturnType<typeof resolveRef>>['locator'];
+
+
+const changedControlEvidence = toJson({
+  recorded: { ref: 'e1', tag: 'button', role: 'button', name: 'Send it',
+    selector: 'html > body button', frameChain: [], submits: true },
+  current: liveControlDescriptor({ tag: 'button', name: 'Delete everything', submits: true }, 'https://example.com/'),
+});
+let previous: ReturnType<typeof installJudgmentPort>;
+let decisionLog: SqliteDecisionLog;
+let judgments: ReturnType<typeof fakePort>;
+beforeEach(() => {
+  decisionLog = new SqliteDecisionLog(':memory:');
+  judgments = fakePort((name, question, state) => {
+    if (name !== 'sameControl'
+      || !isDeepStrictEqual(question, toJson(browserControlIdentity.items.sameControl.question))
+      || !isDeepStrictEqual(state, changedControlEvidence)) {
+      throw new Error('Unscripted browser snapshot fixture reading.');
+    }
+    return noulAnswer(0.01);
+  });
+  previous = installJudgmentPort(withDecisionLog(judgments.port, decisionLog));
+});
+afterEach(() => {
+  installJudgmentPort(previous);
+  decisionLog[Symbol.dispose]();
+});
 
 function snapshotWith(url: string): BrowserSnapshot {
   return {
@@ -46,26 +77,32 @@ describe('element refs', () => {
     const page = fakePage({ url: 'https://example.com/', count: 1 });
     const resolved = await resolveRef(page, snapshotWith('https://example.com/'), 'e1');
     expect(resolved.element.name).toBe('Send it');
+    expect(judgments.requests).toHaveLength(0);
+    expect(decisionLog.query()).toEqual([]);
   });
 
   test('acting without a snapshot is refused rather than guessed', async () => {
     const page = fakePage({ url: 'https://example.com/', count: 1 });
     await expect(resolveRef(page, null, 'e1')).rejects.toThrow(StaleElementError);
+    expect(judgments.requests).toHaveLength(0);
   });
 
   test('a ref that is not in the snapshot is refused', async () => {
     const page = fakePage({ url: 'https://example.com/', count: 1 });
     await expect(resolveRef(page, snapshotWith('https://example.com/'), 'e99')).rejects.toThrow(/not in the current snapshot/);
+    expect(judgments.requests).toHaveLength(0);
   });
 
   test('a ref is refused once the page has navigated away from the snapshot', async () => {
     const page = fakePage({ url: 'https://example.com/other', count: 1 });
     await expect(resolveRef(page, snapshotWith('https://example.com/'), 'e1')).rejects.toThrow(/moved from/);
+    expect(judgments.requests).toHaveLength(0);
   });
 
   test('a ref whose element has disappeared is refused', async () => {
     const page = fakePage({ url: 'https://example.com/', count: 0 });
     await expect(resolveRef(page, snapshotWith('https://example.com/'), 'e1')).rejects.toThrow(/no longer present/);
+    expect(judgments.requests).toHaveLength(0);
   });
 
   test('a ref that now points at a different element is refused instead of clicked', async () => {
@@ -76,6 +113,14 @@ describe('element refs', () => {
     });
     await expect(resolveRef(page, snapshotWith('https://example.com/'), 'e1'))
       .rejects.toThrow(/points at a different element/);
+    expect(judgments.requests).toHaveLength(1);
+    expect(judgments.requests[0]?.state).toEqual(changedControlEvidence);
+    const [entry] = decisionLog.query({ status: 'answered' });
+    expect(decisionLog.query()).toHaveLength(1);
+    expect(entry).toMatchObject({ context: { battery: browserControlIdentity.name,
+      batteryVersion: browserControlIdentity.version, pattern: 'battery' }, status: 'answered' });
+    if (!entry) throw new Error('Expected the owned browser identity reading.');
+    expect(readingsOf(entry)).toMatchObject({ sameControl: { outcome: 'act', verdict: 'no' } });
   });
 
   test('every refusal tells the caller how to recover', async () => {
@@ -85,6 +130,7 @@ describe('element refs', () => {
       throw new Error('expected a refusal');
     } catch (error) {
       expect((error as StaleElementError).fix).toContain('snapshot');
+      expect(judgments.requests).toHaveLength(0);
     }
   });
 });

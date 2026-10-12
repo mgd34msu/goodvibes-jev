@@ -32,7 +32,11 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DaemonLifecycleRuntime } from '../sdk/src/platform/daemon/facade-lifecycle.ts';
+import type { ServiceCommandRunner } from '../sdk/src/platform/daemon/service-handover.ts';
+import { recordDaemonStartAttempt } from '../sdk/src/platform/daemon/lifecycle-marker.ts';
+import { applyVerifiedUpdate, inspectDaemonNativeInstallation, resolveDaemonNativeTargets, retainDaemonNativeFiles, rollbackKeptPrevious, type UpdateFileIo } from '../sdk/src/platform/runtime/self-update.ts';
+import { nativeCohortFixture, nativeMemoryIo } from './_helpers/daemon-native-cohort.ts';
+import { DaemonLifecycleRuntime, type DaemonUpdateArtifact, type DaemonLifecycleRuntimeOptions } from '../sdk/src/platform/daemon/facade-lifecycle.ts';
 import { describeSecretIsolation } from '../sdk/src/platform/runtime/secrets-composition.ts';
 
 const MACHINE_HOME = '/home/owner';
@@ -85,40 +89,52 @@ afterAll(() => {
 // Guard 1, a daemon with an overridden home never seizes the service unit
 // ---------------------------------------------------------------------------
 
-function makePromotionHarness(options: { readonly hasOverriddenHome?: boolean | undefined }): {
+function makePromotionHarness(options: { readonly hasOverriddenHome?: boolean | undefined; readonly updateArtifact?: DaemonUpdateArtifact;
+  readonly isIdle?: () => boolean; readonly serviceCommandRunner?: ServiceCommandRunner; readonly autoUpdate?: boolean; readonly promotionRetryMs?: number;
+  readonly controlPlaneDirectory?: string; readonly rollbackIo?: UpdateFileIo; readonly markerIo?: DaemonLifecycleRuntimeOptions['markerIo'];
+  readonly rollbackThreshold?: number; readonly now?: DaemonLifecycleRuntimeOptions['now'] }): {
   readonly runtime: DaemonLifecycleRuntime;
   readonly adopted: () => number;
   readonly exits: readonly number[];
+  readonly commands: readonly (readonly string[])[];
 } {
   let adopted = 0;
   const exits: number[] = [];
-  const scratch = scratchDir('gv-promotion-');
+  const commands: string[][] = [];
+  const scratch = options.controlPlaneDirectory ?? scratchDir('gv-promotion-');
   const runtime = new DaemonLifecycleRuntime({
     // `service.enabled` is deliberately TRUE here: the guard must not depend on
     // the isolated process having written its own opt-out, because that key is
     // read from the real home and the opt-out never reached it.
-    configManager: { get: (key: string) => (key === 'service.enabled' ? true : undefined) } as never,
+    configManager: { getControlPlaneConfigDir: () => scratch,
+      get: (key: string) => key === 'service.enabled' ? true : key === 'update.auto' ? options.autoUpdate === true
+        : key === 'update.releasesUrl' ? 'https://native-fixture.test/releases/latest'
+          : key === 'update.rollbackAfterFailedStarts' ? options.rollbackThreshold : undefined } as never,
     platformServiceManager: {
       status: () => ({ installed: false, running: false }),
       install: () => { adopted += 1; return {}; },
       uninstall: () => undefined,
       restart: () => undefined,
     } as never,
-    isIdle: () => true,
-    updateArtifact: { version: '1.0.0', execPath: join(scratch, 'goodvibes-daemon') },
+    isIdle: options.isIdle ?? (() => true),
+    updateArtifact: options.updateArtifact ?? { version: '1.0.0', execPath: join(scratch, 'goodvibes-daemon') },
     isCompiledBinary: () => true,
     servicePlatform: 'linux',
-    serviceCommandRunner: async () => ({ status: 'accepted' }),
+    serviceCommandRunner: async (argv: readonly string[], signal: AbortSignal) => {
+      commands.push([...argv]); return options.serviceCommandRunner ? options.serviceCommandRunner(argv, signal) : { status: 'accepted' };
+    },
+    ...(options.promotionRetryMs === undefined ? {} : { promotionRetryMs: options.promotionRetryMs }),
     exitProcess: (code: number) => { exits.push(code); },
-    markerIo: {
+    markerIo: options.markerIo ?? {
       read: () => null,
       write: () => undefined,
       remove: () => undefined,
     } as never,
-    now: () => 0,
+    ...(options.rollbackIo ? { rollbackIo: options.rollbackIo } : {}),
+    now: options.now ?? (() => 0),
     ...(options.hasOverriddenHome === undefined ? {} : { hasOverriddenHome: options.hasOverriddenHome }),
   } as never);
-  return { runtime, adopted: () => adopted, exits };
+  return { runtime, adopted: () => adopted, exits, commands };
 }
 
 describe('boot promotion', () => {
@@ -145,6 +161,173 @@ describe('boot promotion', () => {
     expect(h.adopted()).toBe(1);
     h.runtime.onStopping(false);
   });
+});
+
+function nativePromotionInstallation(version = '1.0.0') {
+  const execPath = '/native-fixture/goodvibes-daemon';
+  const cohort = nativeCohortFixture({ version, daemonBytes: `synthetic daemon ${version}` });
+  const memory = nativeMemoryIo(cohort.installation(execPath));
+  const targets = resolveDaemonNativeTargets(execPath, 'linux', 'x64');
+  if (!targets) throw new Error('Fixture target missing');
+  function admit(): DaemonUpdateArtifact {
+    const assertCurrent = retainDaemonNativeFiles(targets!, memory.io);
+    const receipt = inspectDaemonNativeInstallation(execPath, 'linux', 'x64', '', memory.io);
+    if (!receipt) throw new Error('Fixture native installation missing');
+    assertCurrent(); return Object.freeze({ version: receipt.version, execPath, assertCurrent });
+  }
+  return { execPath, cohort, memory, targets, admit };
+}
+
+function damagedNativeRecoveryInstallation() {
+  const execPath = '/native-recovery/goodvibes-daemon';
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const current = nativeCohortFixture({ version: '2.0.0', daemonBytes: 'current daemon', arch });
+  const previous = nativeCohortFixture({ version: '1.0.0', daemonBytes: 'previous daemon', arch });
+  const memory = nativeMemoryIo({ ...current.installation(execPath), ...previous.installation(execPath, '.previous') });
+  memory.io.writeFile(execPath, Buffer.from('damaged current daemon'));
+  const targets = resolveDaemonNativeTargets(execPath, 'linux', arch);
+  if (!targets) throw new Error('Fixture native target missing');
+  const admit = (): DaemonUpdateArtifact => {
+    const retained = retainDaemonNativeFiles(targets, memory.io);
+    const receipt = inspectDaemonNativeInstallation(execPath, 'linux', arch, '', memory.io, { integrity: false });
+    if (!receipt || receipt.version !== '2.0.0') throw new Error('Fixture running version missing');
+    const assertStarting = () => {
+      retained();
+      if (!inspectDaemonNativeInstallation(execPath, 'linux', arch, '.previous', memory.io)) throw new Error('Fixture prior native installation missing');
+      retained();
+    };
+    const assertCurrent = () => { retained(); inspectDaemonNativeInstallation(execPath, 'linux', arch, '', memory.io); retained(); };
+    assertStarting(); return Object.freeze({ version: receipt.version, execPath, assertStarting, assertCurrent });
+  };
+  return { execPath, arch, memory, previous, admit };
+}
+
+test('damaged native boots preserve failures through cleanup and restore a verified prior before ordinary startup', async () => {
+  const native = damagedNativeRecoveryInstallation(); const controlPlaneDirectory = scratchDir('gv-native-recovery-');
+  // Separate sidecars model consecutive starts; no fresh operating-system process is launched.
+  const now = () => 1_000;
+  const markers = new Map<string, string>(); const markerIo = { read: (path: string) => markers.get(path) ?? null,
+    write: (path: string, contents: string) => { markers.set(path, contents); } };
+  for (let boot = 0; boot < 3; boot++) {
+    const h = makePromotionHarness({ updateArtifact: native.admit(), controlPlaneDirectory, markerIo, rollbackIo: native.memory.io, autoUpdate: true, now });
+    try {
+      expect(() => h.runtime.onStarting()).toThrow();
+      expect(() => h.runtime.onStarted()).toThrow();
+      expect(h.runtime.updateStatus().armed).toBe(false);
+      expect(h.adopted()).toBe(0); expect(h.commands).toEqual([]); expect(h.exits).toEqual([]);
+    } finally { await h.runtime.onStopping(false); }
+    const marker = [...markers.values()][0]; expect(marker).toBeDefined();
+    expect(JSON.parse(marker!).failedStarts).toBe(boot + 1);
+    expect(JSON.parse(marker!).version).toBe('2.0.0');
+  }
+  const h = makePromotionHarness({ updateArtifact: native.admit(), controlPlaneDirectory, markerIo, rollbackIo: native.memory.io, autoUpdate: true, now });
+  try {
+    expect(h.runtime.onStarting()).toBe(true); await h.runtime.drainHandovers();
+    for (const [path, bytes] of Object.entries(native.previous.installation(native.execPath))) expect(native.memory.files.get(path)).toEqual(bytes);
+    expect(h.runtime.updateStatus().armed).toBe(false); expect(h.adopted()).toBe(1); expect(h.commands).toHaveLength(2); expect(h.exits).toEqual([0]);
+    expect(h.runtime.receiptStore().list().some(receipt => receipt.text.includes('rolled back to the previously installed version'))).toBe(true);
+  } finally { await h.runtime.onStopping(false); }
+});
+
+for (const retire of ['rollback-disabled', 'prior-loss', 'cancel'] as const) test(`${retire} cannot turn recovery admission into ordinary startup or service promotion`, async () => {
+  const native = damagedNativeRecoveryInstallation(); const retained = native.admit(); const abort = new AbortController();
+  const artifact = Object.freeze({ ...retained, assertStarting() { abort.signal.throwIfAborted(); retained.assertStarting!(); },
+    assertCurrent() { abort.signal.throwIfAborted(); retained.assertCurrent!(); } });
+  const controlPlaneDirectory = scratchDir('gv-native-recovery-held-'); const markers = new Map<string, string>();
+  const now = () => 1_000;
+  const markerIo = { read: (path: string) => markers.get(path) ?? null,
+    write: (path: string, contents: string) => { markers.set(path, contents); } };
+  for (let attempt = 0; attempt < 3; attempt++) recordDaemonStartAttempt(join(controlPlaneDirectory, 'control-plane', 'daemon-lifecycle.json'),
+    { io: markerIo, version: '2.0.0', now });
+  expect(JSON.parse([...markers.values()][0]!).failedStarts).toBe(3);
+  const h = makePromotionHarness({ updateArtifact: artifact, controlPlaneDirectory, markerIo, rollbackIo: native.memory.io,
+    ...(retire === 'rollback-disabled' ? { rollbackThreshold: 0 } : {}), autoUpdate: true, now });
+  if (retire === 'prior-loss') native.memory.io.writeFile(native.execPath + '.previous', Buffer.from('unowned prior replacement'));
+  if (retire === 'cancel') abort.abort();
+  try {
+    expect(() => h.runtime.onStarting()).toThrow(); expect(() => h.runtime.onStarted()).toThrow();
+    expect(h.runtime.updateStatus().armed).toBe(false); expect(h.adopted()).toBe(0); expect(h.commands).toEqual([]); expect(h.exits).toEqual([]);
+  } finally { await h.runtime.onStopping(false); }
+});
+
+test('native installation admission arms updates and promotes through observed inert service acceptance', async () => {
+  const native = nativePromotionInstallation(); const h = makePromotionHarness({ hasOverriddenHome: false, updateArtifact: native.admit(), autoUpdate: true });
+  try {
+    expect(h.runtime.onStarting()).toBe(false); h.runtime.onStarted();
+    expect(h.runtime.updateStatus().armed).toBe(true);
+    await h.runtime.drainHandovers(); expect(h.adopted()).toBe(1); expect(h.exits).toEqual([0]);
+    expect(h.commands).toEqual([['systemctl', '--user', 'daemon-reload'], ['systemctl', '--user', '--no-block', 'enable', '--now', 'goodvibes.service']]);
+  } finally { await h.runtime.onStopping(false); }
+});
+
+for (const retirement of ['healthy', 'payload', 'cancel'] as const) test(`${retirement} native in-process restart retains installation admission without another boot count`, async () => {
+  const native = nativePromotionInstallation(); const retained = native.admit(); const abort = new AbortController();
+  const artifact = Object.freeze({ ...retained, assertCurrent() { abort.signal.throwIfAborted(); retained.assertCurrent!(); } });
+  const markers = new Map<string, string>(); const markerIo = { read: (path: string) => markers.get(path) ?? null,
+    write: (path: string, contents: string) => { markers.set(path, contents); } };
+  const h = makePromotionHarness({ updateArtifact: artifact, markerIo, isIdle: () => false });
+  try {
+    expect(h.runtime.onStarting()).toBe(false); h.runtime.onStarted(); await h.runtime.onStopping(true);
+    const previousMarkers = [...markers];
+    if (retirement === 'payload') native.memory.io.writeFile(native.targets[1]!.path, Buffer.from('unowned runtime replacement'));
+    if (retirement === 'cancel') abort.abort();
+    if (retirement === 'healthy') expect(h.runtime.onStarting()).toBe(false);
+    else expect(() => h.runtime.onStarting()).toThrow();
+    expect([...markers]).toEqual(previousMarkers);
+    expect(h.adopted()).toBe(0); expect(h.commands).toEqual([]); expect(h.exits).toEqual([]);
+  } finally { await h.runtime.onStopping(false); }
+});
+
+test('changed native payload while boot promotion awaits idle cannot adopt or exit', async () => {
+  const native = nativePromotionInstallation(); const artifact = native.admit(); let idle = false;
+  const h = makePromotionHarness({ hasOverriddenHome: false, updateArtifact: artifact, isIdle: () => idle, promotionRetryMs: 1_000 });
+  try {
+    h.runtime.onStarted(); expect(h.adopted()).toBe(0);
+    native.memory.files.set(native.targets[1]!.path, Buffer.from('unowned runtime replacement')); idle = true;
+    await new Promise<void>(resolve => setTimeout(resolve, 1_150)); await h.runtime.drainHandovers();
+    expect(h.adopted()).toBe(0); expect(h.commands).toEqual([]); expect(h.exits).toEqual([]);
+  } finally { await h.runtime.onStopping(false); }
+});
+
+for (const retire of ['payload', 'cancel'] as const) test(`${retire} retirement during reload prevents service enable and successful exit`, async () => {
+  const native = nativePromotionInstallation(); const abort = new AbortController(); const retained = native.admit();
+  const artifact = Object.freeze({ ...retained, assertCurrent() { abort.signal.throwIfAborted(); retained.assertCurrent!(); } });
+  let enter!: () => void; let release!: () => void;
+  const entered = new Promise<void>(resolve => { enter = resolve; }); const pending = new Promise<void>(resolve => { release = resolve; });
+  const h = makePromotionHarness({ updateArtifact: artifact, serviceCommandRunner: async () => { enter(); await pending; return { status: 'accepted' }; } });
+  try {
+    h.runtime.onStarted(); await entered;
+    if (retire === 'payload') native.memory.files.set(native.targets[1]!.path, Buffer.from('unowned runtime replacement')); else abort.abort();
+    release(); await h.runtime.drainHandovers();
+    expect(h.adopted()).toBe(1); expect(h.commands).toHaveLength(1); expect(h.exits).toEqual([]);
+  } finally { release(); await h.runtime.onStopping(false); }
+});
+
+test('native verified apply and rollback each permit the newly running artifact to promote', async () => {
+  const native = nativePromotionInstallation(); const first = native.admit();
+  const next = nativeCohortFixture({ version: '2.0.0', daemonBytes: 'synthetic daemon 2.0.0' });
+  const base = 'https://native-fixture.test/release'; const requests: string[] = [];
+  await applyVerifiedUpdate({ targets: native.targets, io: native.memory.io, platform: 'linux', downloadBaseUrl: base,
+    daemonNative: { execPath: native.execPath, platform: 'linux', arch: 'x64', version: '2.0.0' },
+    fetchImpl: async (url) => {
+      requests.push(url); const name = url.slice(base.length + 1);
+      const bytes = name === 'SHA256SUMS.txt' ? Buffer.from(next.checksumManifest) : next.assets[name];
+      if (!bytes) throw new Error('Unexpected synthetic asset');
+      return { ok: true, status: 200, text: async () => bytes.toString(), arrayBuffer: async () => Uint8Array.from(bytes).buffer };
+    },
+  });
+  expect(requests).toHaveLength(native.targets.length + 1); expect(() => first.assertCurrent!()).toThrow();
+  const updated = native.admit(); expect(updated.version).toBe('2.0.0');
+  const updateBoot = makePromotionHarness({ updateArtifact: updated });
+  try { expect(updateBoot.runtime.onStarting()).toBe(false); updateBoot.runtime.onStarted(); await updateBoot.runtime.drainHandovers();
+    expect(updateBoot.adopted()).toBe(1); expect(updateBoot.exits).toEqual([0]);
+  } finally { await updateBoot.runtime.onStopping(false); }
+  expect(rollbackKeptPrevious(native.targets, native.memory.io, undefined, { native: true, requireComplete: true }).restored).toHaveLength(native.targets.length);
+  expect(() => updated.assertCurrent!()).toThrow(); const restored = native.admit(); expect(restored.version).toBe('1.0.0');
+  const rollbackBoot = makePromotionHarness({ updateArtifact: restored });
+  try { expect(rollbackBoot.runtime.onStarting()).toBe(false); rollbackBoot.runtime.onStarted(); await rollbackBoot.runtime.drainHandovers();
+    expect(rollbackBoot.adopted()).toBe(1); expect(rollbackBoot.exits).toEqual([0]);
+  } finally { await rollbackBoot.runtime.onStopping(false); }
 });
 
 // ---------------------------------------------------------------------------

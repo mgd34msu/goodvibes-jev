@@ -79,7 +79,7 @@ on:
       toolchain-spec:
         required: false
         type: string
-        default: "@goodvibes-jev/engine/toolchain"
+        default: "@goodvibes-jev/engine"
 
 permissions:
   contents: read
@@ -173,7 +173,7 @@ jobs:
             echo "No assets matched $ASSETS_GLOB" >&2
             exit 1
           fi
-          bunx "$TOOLCHAIN_SPEC" goodvibes-sha256sums --out "$SHA256_NAME" "${assets[@]}"
+          bunx --package "$TOOLCHAIN_SPEC" goodvibes-sha256sums --out "$SHA256_NAME" "${assets[@]}"
       - name: Create GitHub release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
