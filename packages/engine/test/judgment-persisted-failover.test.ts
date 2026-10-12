@@ -160,24 +160,33 @@ test('a primary semantic refusal is returned without asking a fallback for a dif
   } finally { primary.stop(); next.stop(); }
 });
 
-test('an all-target outage stays pending through the fallback and cancellation stops the next primary cycle', async () => {
+test('an all-target outage exhausts once without advertising a retry after the final fallback', async () => {
   const primary = endpoint(503), next = endpoint(503); const controller = new AbortController();
   using log = new SqliteDecisionLog(':memory:');
   try {
     let settled = false;
+    const retries: number[] = [];
+    const attempts = [
+      { attempt: 1, endpointIndex: 0, outcome: 'unavailable', status: 503 },
+      { attempt: 2, endpointIndex: 1, outcome: 'unavailable', status: 503 },
+    ];
     const port = withDecisionLog(createSettingsJudgmentPort(source({ 'judgment.endpoint': primary.url,
       'judgment.fallbacks': [fallback(next.url)] })), log);
     const pending = port.ask({ ...request, signal: controller.signal, onRetry: event => {
       expect(settled).toBe(false); expect(log.query()).toHaveLength(0);
+      retries.push(event.attempt.endpointIndex);
       if (event.attempt.endpointIndex === 1) controller.abort();
     } });
     void pending.then(() => { settled = true; }, () => { settled = true; });
-    await expect(pending).rejects.toMatchObject({ kind: 'aborted', lineage: { attempts: [
-      { endpointIndex: 0, outcome: 'unavailable' }, { endpointIndex: 1, outcome: 'unavailable' },
-    ] } });
+    await expect(pending).rejects.toMatchObject({ kind: 'unavailable', status: 503, lineage: { attempts } });
+    expect(retries).toEqual([0]);
+    expect(controller.signal.aborted).toBe(false);
     expect(primary.calls).toHaveLength(1); expect(next.calls).toHaveLength(1);
+    expect(primary.calls).toEqual([{ authorization: 'Bearer synthetic-primary', model: 'jev-1.13.0' }]);
+    expect(next.calls).toEqual([{ authorization: 'Bearer synthetic-fallback', model: 'jev-1.13.0' }]);
     expect(log.query()).toHaveLength(1);
-    expect(log.query()).toMatchObject([{ status: 'failed', error: { kind: 'aborted' } }]);
+    expect(log.query()).toMatchObject([{ status: 'failed', error: { kind: 'unavailable' }, lineage: { attempts } }]);
+    expect(log.query()[0]?.lineage?.attempts).toHaveLength(2);
     expect(JSON.stringify(log.query())).not.toContain('synthetic-');
   } finally { controller.abort(); primary.stop(); next.stop(); }
 });

@@ -23,10 +23,12 @@ callers already implement them:
 
 - Jev makes semantic decisions everywhere, with no human in the runtime decision
   loop. Its shared outcomes are `act`, `revise`, `defer` and `reject`.
-- One shared judgment-port transport implementation must retry transient Jev
-  unavailability until recovery with backoff and responsive lifecycle cancellation.
-  Products render waiting progress; they must not add local retry loops, prompt
-  for approval or synthesize a semantic answer during an outage. Permanent
+- One shared judgment-port transport implementation owns transient Jev
+  unavailability. A primary-only route retries until recovery or cancellation.
+  An explicit failover chain tries compatible targets once and returns typed
+  `unavailable` when every target fails. Products render waiting progress and
+  terminal errors. They must not add local retry loops, prompt for approval or
+  synthesize a semantic answer during an outage. Permanent
   request/authentication/format failures remain explicit operational failures.
 - Code still enforces authentication, capability/scope membership, revocation,
   fixed formats, monetary arithmetic and execution idempotency. A Jev receipt
@@ -58,7 +60,7 @@ The work is tracked in the Finish GoodVibes Jev Linear project. The current
 upstream targets and implementation sequence are recorded in
 [`docs/design/upstream-reconciliation.md`](docs/design/upstream-reconciliation.md).
 
-- **`packages/judgment`:** the foundation, shared autonomous receipt schema/validation and shared availability-retry transport are implemented. Transient Jev outages stay pending until recovery or owned cancellation, with per-attempt timeouts, backoff and bounded attempt history. Native runtime disposal and browser/relay cancellation use that lifecycle. Permanent request/authentication/format and decision-log failures remain terminal; autonomous consumer migration and live-provider proof remain unfinished.
+- **`packages/judgment`:** the foundation, shared autonomous receipt schema/validation and shared availability-retry transport are implemented. Primary-only transient Jev outages stay pending until recovery or owned cancellation, with per-attempt timeouts, backoff and bounded attempt history. Configured failover tries compatible targets once and returns typed `unavailable` on exhaustion. Native runtime disposal and browser/relay cancellation use that lifecycle. Permanent request/authentication/format and decision-log failures remain terminal; autonomous consumer migration and live-provider proof remain unfinished.
 - **Autonomous execution:** tool admission ([THE-118](https://linear.app/the-artificery/issue/THE-118/integrate-autonomous-jev-tool-admission)) and remembered grant scope/revocation ([THE-115](https://linear.app/the-artificery/issue/THE-115/preserve-remembered-grant-scope-and-revocation)) remain in progress as of October 3. Legacy gate, runner and product callers are migration/release gates. Shared types and passing synthetic checks do not establish autonomous execution or live-provider proof.
 - **`packages/engine`:** in progress. It holds the whole sdk tree, and its subsystems are being converted one at a time.
 - **The contract runner:** in progress.
@@ -94,7 +96,7 @@ Published as `@goodvibes-jev/judgment`, it provides:
 - **The decision log.** SQLite, one entry per reading, queryable by battery, time range and outcome.
 - **Calibration.** Runs every battery's fixtures live and reports accuracy against confidence. It fails when a battery falls below its floor.
 
-The old heuristics are being removed, not kept as backups. Legacy uncertainty must never be promoted to `act` or relabeled as approval. The default port uses one configured System One endpoint; an explicit failover chain is supported, while persisted failover settings and live calibration remain unfinished. The [judgment package README](packages/judgment/README.md) documents shared retry-until-available, owned cancellation and terminal permanent failures. Products must consume that shared lifecycle and preserve cancellation and zero effects while waiting; transport recovery does not establish autonomous consumer migration or live-provider proof.
+The old heuristics are being removed, not kept as backups. Legacy uncertainty must never be promoted to `act` or relabeled as approval. The default port uses one configured System One endpoint. Explicit failover chains and persisted fallback settings are supported; live calibration remains unfinished. The [judgment package README](packages/judgment/README.md) documents primary-only retries, configured failover exhaustion, owned cancellation and terminal permanent failures. Products must consume that shared lifecycle and preserve cancellation and zero effects while waiting; transport recovery does not establish autonomous consumer migration or live-provider proof.
 
 ## The engine (`packages/engine`)
 

@@ -25,11 +25,12 @@ validation are implemented; they are not a semantic evaluator, authorization
 service or atomic execution ledger. Historical band/log outcomes `confirm` and
 `escalate` remain readable and must never be converted into `act`.
 
-Transient outages stay pending through one shared port-owned retry
-implementation until recovery, with backoff and responsive lifecycle
-cancellation. Products consume waiting progress, not a terminal outage decision,
-and must not wrap the port in local retry loops. Permanent request/authentication/
-format and decision-log failures remain terminal operational errors. The managed
+Primary-only transient outages stay pending through the shared port until
+recovery or owner cancellation. With configured fallbacks, the port tries the
+compatible chain once and returns typed `unavailable` if every target fails.
+Products consume waiting progress and terminal errors without local retry loops.
+Permanent request/authentication/format and decision-log failures remain terminal
+operational errors. The managed
 transport, native runtime disposal and browser/relay cancellation implement this
 lifecycle; legacy autonomous consumer migration remains unfinished. See the
 [repository status](../../README.md#status) for the open admission and
@@ -83,8 +84,8 @@ MIT
 
 ## Explicit endpoint failover
 
-This section describes the shared retry-until-available transport and its owned
-cancellation lifecycle.
+This section describes ordered configured failover, primary-only availability
+retries and owned cancellation.
 
 `createSystemOnePort` still accepts the existing single `endpoint`, `model`,
 `timeoutMs` and `retry` configuration. Add `fallbacks: [{ endpoint, model }]` to
@@ -92,15 +93,25 @@ try other explicitly configured **System One** endpoints in order. Each endpoint
 uses the same `POST /v1/systemone` protocol, including owner-run loopback servers.
 A chat/completions provider is not a compatible substitute. Redirects are refused.
 
-The transport is the one retry owner; SDK retries are disabled for judgments.
-Connection failures, per-attempt timeouts, HTTP 408, 429 and 5xx stay pending and
-retry until an answer arrives or the owning signal cancels. Each round visits
-eligible configured endpoints in order. There is no attempt-count or total-time
-outage ceiling. The default capped exponential backoff starts at 500 ms, caps at
-5 seconds, and applies 25% jitter; every delay is at least 1 ms. Valid Retry-After
-or Retry-After-Ms guidance is a minimum wait, even when longer than the local cap.
-Both in-flight attempts and backoff waits are cancellable, including long waits
-that must be split to fit the platform timer range.
+The transport is the one attempt owner; SDK retries are disabled for judgments.
+Connection failures, per-attempt timeouts, HTTP 408, 429 and 5xx allow retry or
+failover. With no configured fallbacks, the primary retries until an answer
+arrives or the owning signal cancels. That mode has no attempt-count or elapsed
+outage ceiling.
+
+With a nonempty fallback list, the port tries the primary and compatible
+fallbacks once, in configured order. If every eligible attempt fails, the call
+throws `JudgmentError` with kind `unavailable` and its actual attempt lineage.
+It does not restart the primary cycle or wait after the final failure.
+`withDecisionLog` records one failed entry. Exhaustion provides no semantic answer
+or authority to act.
+
+The default capped exponential backoff between attempts starts at 500 ms, caps
+at 5 seconds, and applies 25% jitter; every delay is at least 1 ms. Valid
+Retry-After or Retry-After-Ms guidance is a minimum wait when another attempt
+remains, even when longer than the local cap. Both in-flight attempts and backoff
+waits are cancellable, including long waits that must fit the platform timer
+range.
 
 Authentication and other non-transient HTTP errors terminate as `rejected`.
 Invalid configuration/input terminates as `invalid-request`; malformed response
@@ -141,12 +152,15 @@ reading without an answer.
 The engine's existing endpoint, key-source, model and attempt-timeout settings
 are captured together before asynchronous credential resolution. A settings
 edit applies to the next reading; it cannot send an already acquired credential
-to a newly selected endpoint. Pending retries keep their original configuration
-and model until they answer or their owning lifecycle cancels them.
+to a newly selected endpoint. Attempts keep their original configuration and
+model until they answer, exhaust the configured chain or their owning lifecycle
+cancels them.
 
 Failover requires pinned `jev-X.Y.Z` model identifiers, with optional version
 suffixes. A fallback is eligible only when its model equals the logical request's
-model exactly. A different returned version fails closed because the thresholds
+model exactly. If all configured fallbacks are incompatible, only the primary is
+attempted and its retryable failure exhausts the call. A different returned
+version fails closed because the thresholds
 have not been calibrated for it. Moving aliases retain their previous behavior
 only in single-endpoint mode. Configuring a different version does not establish
 calibration: run the relevant batteries against that version before selecting it.
@@ -154,8 +168,8 @@ calibration: run the relevant batteries against that version before selecting it
 Results and failures contain `lineage`: one logical request ID and ordered wire
 attempts with endpoint index/kind, model, latency, HTTP status, outcome and safe
 server request ID. The most recent 128 attempts are retained; `omittedAttempts`
-counts earlier attempts so an indefinite outage does not grow memory without
-bound. Attempt numbers remain absolute within the logical reading. `withDecisionLog` stores this in the one answered/failed entry
+counts earlier attempts so an indefinite primary-only outage does not grow
+memory without bound. Attempt numbers remain absolute within the logical reading. `withDecisionLog` stores this in the one answered/failed entry
 for the logical reading. It never records endpoint URLs, credentials, upstream
 error bodies or causes as attempt metadata. `port.health()` reports per-target
 observed attempts, consecutive failures and last outcome without changing order.
@@ -191,4 +205,8 @@ No default outage deadline is introduced. A decision-log write failure remains
 loop. Production native, browser and gateway judgment exposures all acquire the
 managed System One port. Test doubles may intentionally return terminal failures.
 
-Engine-managed persisted failover settings are a separate integration. Until that integration is enabled, pass the complete explicit chain to `createSystemOnePort`.
+Engine-managed runtimes also read the ordered `judgment.fallbacks` setting.
+Each entry supplies an endpoint, pinned model and an environment or secret-store
+key reference. The runtime captures the chain with the primary settings before
+credential resolution. Direct callers pass the complete explicit chain to
+`createSystemOnePort`.
