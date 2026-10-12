@@ -1,4 +1,4 @@
-import { captureCatalogMethods, captureCatalogSnapshotGuard, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureCatalogMethods, captureCatalogSnapshot, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import { withModelReadingSource } from './agent-harness-model-reading-source.ts';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext } from '../input/command-registry.ts';
@@ -170,7 +170,8 @@ export async function buildLanes(
   };
   optionsCurrent(); ownerCurrent(); signal?.throwIfAborted(); assertCaller();
   const original = buildAgentWorkspaceRuntimeSnapshot(context);
-  const assertSnapshot = captureCatalogSnapshotGuard(original);
+  const workspaceCapture = captureCatalogSnapshot(original);
+  const assertSnapshot = workspaceCapture.assertCurrent;
   const assertSource = () => {
     optionsCurrent(); ownerCurrent(); signal?.throwIfAborted();
     assertSnapshot(buildAgentWorkspaceRuntimeSnapshot(context));
@@ -179,7 +180,7 @@ export async function buildLanes(
   const assertChildren = () => { for (const guards of staged.values()) for (const guard of guards) guard(); };
   const publicationCurrent = () => { assertSource(); assertChildren(); assertSource(); };
   const readOptions = { ...options, assertCurrent, retainCurrent: retainChild };
-  const lanes = await withModelReadingSource(original, readOptions, async (snapshot, current): Promise<readonly PersonalOpsLane[]> => {
+  const lanes = await withModelReadingSource(workspaceCapture.captured, readOptions, async (snapshot, current): Promise<readonly PersonalOpsLane[]> => {
   // Each child owns its active source. Previously completed children remain
   // current at phase boundaries without entering every later child's callbacks.
   const childOptions = { ...current, assertCurrent: assertCaller, retainCurrent: retainChild };

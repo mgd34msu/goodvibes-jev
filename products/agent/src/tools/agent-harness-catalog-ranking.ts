@@ -65,10 +65,22 @@ type CatalogSnapshot = { readonly kind: 'value'; readonly value: unknown } | {
   readonly slots: ReadonlyMap<string, { readonly enumerable: boolean; readonly value: CatalogSnapshot }>;
 };
 
+/** Retain the existing complete frozen copy alongside its fresh-data guard. */
+export function captureCatalogSnapshot<T>(source: T): {
+  readonly captured: T;
+  readonly assertCurrent: (current: unknown) => void;
+} {
+  const captured = captureCatalogData(source);
+  return { captured, assertCurrent: compileCatalogSnapshotGuard(captured) };
+}
+
 /** Compare fresh complete DTOs without copying them. Every call keeps the
  * original capture grammar and budgets, including alias and hidden-slot rules. */
 export function captureCatalogSnapshotGuard(source: unknown): (current: unknown) => void {
-  const captured = captureCatalogData(source);
+  return compileCatalogSnapshotGuard(captureCatalogData(source));
+}
+
+function compileCatalogSnapshotGuard(captured: unknown): (current: unknown) => void {
   const snapshots = new WeakMap<object, CatalogSnapshot>();
   const snapshot = (value: unknown): CatalogSnapshot => {
     if (value === null || typeof value !== 'object') return { kind: 'value', value };
