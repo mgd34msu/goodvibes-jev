@@ -21,6 +21,7 @@ import { renderGoodVibesDaemonHelp, renderDaemonCommandHelp, renderGoodVibesVers
 import { runCompletionCommand } from './completion.js';
 import { isRawInterceptCommand } from './command-catalog.js';
 import type { DaemonCliRuntime } from './serve.js';
+import type { ShippedServiceExecutable } from './service-executable.js';
 
 export interface DaemonCliOptions {
   readonly env?: NodeJS.ProcessEnv;
@@ -29,6 +30,8 @@ export interface DaemonCliOptions {
   readonly runtime?: DaemonCliRuntime;
   /** Explicit installed executable that composes the same runtime; never guessed from Bun. */
   readonly serviceBinaryPath?: string;
+  /** Code-owned shipped entrypoint admission, invoked only for service activation. */
+  readonly resolveServiceExecutable?: () => ShippedServiceExecutable | undefined;
   /** Trusted embedding port; ordinary commands use the real platform manager. */
   readonly serviceActionRunner?: ManagedServiceActionRunner;
   readonly process?: DaemonProcessOptions;
@@ -84,8 +87,12 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
       }));
     }
     if (cli.command === 'serve' && typeof options.runtime?.inboxFactory !== 'function') return refuse(PARTIAL);
+    let serviceExecutable: ShippedServiceExecutable | undefined;
     if (['install-service', 'start-service', 'restart-service', 'migrate-service'].includes(cli.command)) {
-      if (typeof options.runtime?.inboxFactory !== 'function' || !options.serviceBinaryPath) return refuse(`${PARTIAL} Service activation requires an explicitly composed executable.`);
+      if (typeof options.runtime?.inboxFactory !== 'function') return refuse(PARTIAL);
+      serviceExecutable = options.resolveServiceExecutable?.();
+      if (!serviceExecutable && !options.serviceBinaryPath) return refuse(`${PARTIAL} Service activation requires an explicitly composed executable.`);
+      serviceExecutable?.assertCurrent();
     }
 
     if (cli.command === 'provision-wake-model') {
@@ -138,8 +145,10 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
           return refuse('Service activation with selected tree or daemon homes currently requires systemd. No service was changed.');
         }
         const binding = resolveRuntimeEndpointBinding(config, 'controlPlane');
+        serviceExecutable?.assertCurrent();
         return result(await runDaemonServiceCli({ subcommand: cli.command,
-          binaryPath: options.serviceBinaryPath ?? resolveInstalledDaemonBinary({ moduleUrl: import.meta.url }),
+          binaryPath: serviceExecutable?.binaryPath ?? options.serviceBinaryPath ?? resolveInstalledDaemonBinary({ moduleUrl: import.meta.url }),
+          ...(serviceExecutable ? { assertCurrent: serviceExecutable.assertCurrent } : {}),
           configManager: config, homeDir: homeDirectory, daemonHomeDirectory, unitHomeDir: env.HOME?.trim() || homedir(), workingDirectory,
           requireInstalledDefinitionMatch: configuration.isOverridden || cli.flags.workingDir !== undefined
             || env.GOODVIBES_WORKING_DIR !== undefined, actionRunner: options.serviceActionRunner,

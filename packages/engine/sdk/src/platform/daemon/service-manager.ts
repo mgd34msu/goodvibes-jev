@@ -56,6 +56,8 @@ interface ManagedServicePaths {
 export interface ManagedServiceManagerOptions extends ManagedServicePaths {
   readonly definitionOverride?: ManagedServiceDefinition | undefined;
   readonly actionRunner?: ((command: string, args: readonly string[]) => ManagedServiceActionResult) | undefined;
+  /** A retained caller restriction checked before native publication and platform actions. */
+  readonly assertCurrent?: (() => void) | undefined;
   readonly surfaceRoot?: string | undefined;
   readonly binaryBaseName?: string | undefined;
   readonly defaultServiceName?: string | undefined;
@@ -331,6 +333,7 @@ export class PlatformServiceManager {
   private readonly homeDirectory: string;
   private readonly definitionOverride?: ManagedServiceDefinition | undefined;
   private readonly actionRunner?: ((command: string, args: readonly string[]) => ManagedServiceActionResult) | undefined;
+  private readonly currentRestriction?: (() => void) | undefined;
   private readonly surfaceRoot?: string | undefined;
   private readonly binaryBaseName?: string | undefined;
   private readonly defaultServiceName?: string | undefined;
@@ -343,11 +346,20 @@ export class PlatformServiceManager {
     this.homeDirectory = resolve(options.homeDirectory);
     this.definitionOverride = options.definitionOverride;
     this.actionRunner = options.actionRunner;
+    this.currentRestriction = options.assertCurrent;
     this.surfaceRoot = options.surfaceRoot;
     this.binaryBaseName = options.binaryBaseName;
     this.defaultServiceName = options.defaultServiceName;
     this.defaultServiceDescription = options.defaultServiceDescription;
     this.featureFlags = options.featureFlags ?? null;
+  }
+
+  private assertCurrent(): void {
+    const result: unknown = this.currentRestriction?.();
+    if (result !== undefined) {
+      if (result instanceof Promise) void result.catch(() => {});
+      throw new Error('Service current restriction must complete synchronously without returning a value');
+    }
   }
 
   private isEnabled(): boolean {
@@ -367,6 +379,7 @@ export class PlatformServiceManager {
 
   /** Read-only identity check; an installed definition grants no authority for another selected host. */
   installedDefinitionMatches(): boolean {
+    this.assertCurrent();
     if (!this.isEnabled()) return false;
     const platform = detectPlatform(String(this.configManager.get('service.platform')));
     const serviceName = resolveServiceName(this.configManager, this.defaultServiceName);
@@ -384,6 +397,7 @@ export class PlatformServiceManager {
   }
 
   status(): ManagedServiceStatus {
+    this.assertCurrent();
     const platform = detectPlatform(String(this.configManager.get('service.platform')));
     const serviceName = resolveServiceName(this.configManager, this.defaultServiceName);
     const path = definitionPath(platform, serviceName, this.getPaths(), this.surfaceRoot);
@@ -423,6 +437,7 @@ export class PlatformServiceManager {
   }
 
   install(): ManagedServiceStatus {
+    this.assertCurrent();
     this.requireEnabled('install service');
     const platform = detectPlatform(String(this.configManager.get('service.platform')));
     const serviceName = resolveServiceName(this.configManager, this.defaultServiceName);
@@ -435,7 +450,9 @@ export class PlatformServiceManager {
         : platform === 'windows'
           ? renderWindowsCommand(definition)
           : [definition.command, ...definition.args].join(' ');
+    this.assertCurrent();
     mkdirSync(dirname(path), { recursive: true });
+    this.assertCurrent();
     writeFileSync(path, `${contents}\n`, 'utf-8');
     const lingerNote = platform === 'systemd' ? this.ensureLinger() : undefined;
     return {
@@ -480,13 +497,16 @@ export class PlatformServiceManager {
   }
 
   uninstall(): ManagedServiceStatus {
+    this.assertCurrent();
     this.requireEnabled('uninstall service');
     const status = this.status();
     if (existsSync(status.path)) {
+      this.assertCurrent();
       rmSync(status.path, { force: true });
     }
     const pidPath = pidFilePath(status.platform, this.workingDirectory, this.surfaceRoot);
     if (existsSync(pidPath)) {
+      this.assertCurrent();
       rmSync(pidPath, { force: true });
     }
     return {
@@ -496,6 +516,7 @@ export class PlatformServiceManager {
   }
 
   start(): ManagedServiceStatus {
+    this.assertCurrent();
     this.requireEnabled('start service');
     const platform = detectPlatform(String(this.configManager.get('service.platform')));
     if (platform === 'manual') {
@@ -505,6 +526,7 @@ export class PlatformServiceManager {
   }
 
   stop(): ManagedServiceStatus {
+    this.assertCurrent();
     this.requireEnabled('stop service');
     const platform = detectPlatform(String(this.configManager.get('service.platform')));
     if (platform === 'manual') {
@@ -514,6 +536,7 @@ export class PlatformServiceManager {
   }
 
   restart(): ManagedServiceStatus {
+    this.assertCurrent();
     this.requireEnabled('restart service');
     const platform = detectPlatform(String(this.configManager.get('service.platform')));
     if (platform === 'manual') {
@@ -542,12 +565,17 @@ export class PlatformServiceManager {
     const definition = this.resolveDefinition();
     const logPath = resolveLogPath(this.configManager, platform, this.workingDirectory, this.surfaceRoot);
     const pidPath = pidFilePath(platform, this.workingDirectory, this.surfaceRoot);
+    this.assertCurrent();
     mkdirSync(dirname(pidPath), { recursive: true });
+    this.assertCurrent();
     mkdirSync(dirname(logPath), { recursive: true });
+    this.assertCurrent();
     const stdoutFd = openSync(logPath, 'a');
-    const stderrFd = openSync(logPath, 'a');
+    let stderrFd: number | undefined;
     let child: ReturnType<typeof spawn>;
     try {
+      this.assertCurrent();
+      stderrFd = openSync(logPath, 'a');
       const spawnOptions: SpawnOptions = {
         cwd: definition.workingDirectory,
         detached: true,
@@ -557,13 +585,21 @@ export class PlatformServiceManager {
           ...definition.env,
         },
       };
+      this.assertCurrent();
       child = spawn(definition.command, [...definition.args], spawnOptions);
     } finally {
       closeSync(stdoutFd);
-      closeSync(stderrFd);
+      if (stderrFd !== undefined) closeSync(stderrFd);
     }
     child.unref();
-    writeFileSync(pidPath, `${child.pid}\n`, 'utf-8');
+    try {
+      this.assertCurrent();
+      writeFileSync(pidPath, `${child.pid}\n`, 'utf-8');
+    } catch (error) {
+      // This newly acquired child belongs to this call even if its restriction retired.
+      child.kill('SIGTERM');
+      throw error;
+    }
     return {
       ...this.status(),
       lastAction: action,
@@ -574,6 +610,7 @@ export class PlatformServiceManager {
     const pidPath = pidFilePath(platform, this.workingDirectory, this.surfaceRoot);
     const pid = existsSync(pidPath) ? this.readPid(pidPath) : undefined;
     if (pid !== undefined && this.isPidRunning(pid)) {
+      this.assertCurrent();
       try {
         process.kill(pid, 'SIGTERM');
       } catch {
@@ -581,6 +618,7 @@ export class PlatformServiceManager {
       }
     }
     if (existsSync(pidPath)) {
+      this.assertCurrent();
       rmSync(pidPath, { force: true });
     }
     return {
@@ -682,9 +720,12 @@ export class PlatformServiceManager {
 
   /** Runs a service-management query/action through the injected actionRunner when present, else a real spawnSync, the single choke point start/stop/restart/status share. */
   private runQuery(command: string, args: readonly string[]): ManagedServiceActionResult {
-    return this.actionRunner
-      ? this.actionRunner(command, args)
-      : spawnSync(command, args, { stdio: 'pipe', encoding: 'utf-8' });
+    this.assertCurrent();
+    try {
+      return this.actionRunner
+        ? this.actionRunner(command, args)
+        : spawnSync(command, args, { stdio: 'pipe', encoding: 'utf-8' });
+    } finally { this.assertCurrent(); }
   }
 
   private readPid(path: string): number | undefined {

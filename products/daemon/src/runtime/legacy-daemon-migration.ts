@@ -128,6 +128,8 @@ export interface BuildManagedDaemonServiceManagerParams {
   readonly configManager?: ConfigManager | undefined;
   /** Injectable systemctl/launchctl/schtasks runner so tests never touch the host. */
   readonly actionRunner?: ManagedServiceActionRunner | undefined;
+  /** Optional retained executable restriction, checked by the native service owner. */
+  readonly assertCurrent?: (() => void) | undefined;
 }
 
 /**
@@ -186,6 +188,7 @@ export function buildManagedDaemonServiceManager(params: BuildManagedDaemonServi
     defaultServiceName: MANAGED_SERVICE_NAME,
     defaultServiceDescription: MANAGED_SERVICE_DESCRIPTION,
     actionRunner: params.actionRunner,
+    assertCurrent: params.assertCurrent,
     // No `featureFlags` passed: `isFeatureGateEnabled` treats a missing reader
     // as always-open. Both consumers here are the user's explicit request to
     // manage the service, unlike the daemon's own HTTP /api/service/* routes
@@ -390,6 +393,8 @@ export interface RunLegacyDaemonMigrationParams {
   readonly legacyUnitFileRemove?: ((path: string) => void) | undefined;
   /** Injectable systemctl runner for the legacy stop/disable/daemon-reload steps. */
   readonly actionRunner?: ManagedServiceActionRunner | undefined;
+  /** Optional retained executable restriction, checked by the native service owner. */
+  readonly assertCurrent?: (() => void) | undefined;
 }
 
 /**
@@ -430,7 +435,8 @@ export async function runLegacyDaemonMigration(
   manager: PlatformServiceManager,
   legacy: LegacyUnitInfo,
 ): Promise<LegacyDaemonMigrationResult> {
-  const { trackedServiceName } = params;
+  const { trackedServiceName, assertCurrent } = params;
+  assertCurrent?.();
   // Computed once, up front, and reused for every branch below (this is the
   // exact same single call each branch made individually before, see the
   // fix note on `resolveManagedUnitName` for why the name/path it reports
@@ -440,7 +446,9 @@ export async function runLegacyDaemonMigration(
 
   if (!legacy.present) {
     const probe = params.portProbe ?? defaultPortProbe;
+    assertCurrent?.();
     const occupied = await probe(params.host, params.port);
+    assertCurrent?.();
     if (occupied) {
       return {
         ok: false,
@@ -555,12 +563,16 @@ export async function runLegacyDaemonMigration(
       assertUnitIsNotLegacy(now, legacy, 'roll back the new unit');
       if (now.path !== currentStatus.path) return 'rollback refused: the managed unit path changed; inspect both units manually.';
       const rollbackRunner = params.actionRunner ?? defaultActionRunner(SYSTEMCTL_TIMEOUT_MS);
+      assertCurrent?.();
       const disabled = rollbackRunner('systemctl', ['--user', 'disable', '--now', `${resolvedUnitName}.service`]);
+      assertCurrent?.();
       if (disabled.status !== 0) return `rollback incomplete: could not confirm the new unit was stopped and disabled; ${now.path} was retained for recovery.`;
       const rollback = manager.uninstall();
       healthCheck = rollback;
       if (rollback.actionError || rollback.installed) return `rollback incomplete: could not confirm removal of ${now.path}; inspect it manually.`;
+      assertCurrent?.();
       const reload = rollbackRunner('systemctl', ['--user', 'daemon-reload']);
+      assertCurrent?.();
       if (reload.status !== 0) return 'rollback incomplete: the new unit file was removed, but daemon-reload was not confirmed.';
       return 'the newly-written unit has been rolled back (removed).';
     } catch {
@@ -601,8 +613,12 @@ export async function runLegacyDaemonMigration(
   const legacyName = `${LEGACY_SERVICE_UNIT_NAME}.service`;
   const retirementStatus = (action: 'stop' | 'disable' | 'daemon-reload'): number | null | undefined => {
     const args = action === 'daemon-reload' ? ['--user', action] : ['--user', action, legacyName];
-    try { return run('systemctl', args)?.status; }
-    catch { return undefined; }
+    try {
+      assertCurrent?.();
+      const status = run('systemctl', args)?.status;
+      assertCurrent?.();
+      return status;
+    } catch { return undefined; }
   };
   const retirementRefused = (action: 'stop' | 'disable'): LegacyDaemonMigrationResult => ({
     ok: false, exitCode: 1, status: healthCheck,
@@ -617,7 +633,9 @@ export async function runLegacyDaemonMigration(
   const removeFile = params.legacyUnitFileRemove ?? ((path: string) => rmSync(path, { force: true }));
   let removed = false;
   try {
+    assertCurrent?.();
     removeFile(legacy.path);
+    assertCurrent?.();
     removed = true;
   } catch { /* Keep the uncertain removal outcome explicit below. */ }
   if (!removed) {

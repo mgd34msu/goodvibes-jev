@@ -135,6 +135,8 @@ export const SERVICE_STATUS_EXIT_NOT_INSTALLED = 4;
 export interface DaemonServiceCliInput {
   readonly subcommand: DaemonServiceSubcommand;
   readonly binaryPath: string;
+  /** Retained native executable restriction; never grants service activation. */
+  readonly assertCurrent?: () => void;
   /** The GoodVibes tree home (GOODVIBES_HOME-overridable), config/state root only, never unit-path resolution. See `unitHomeDir`. */
   readonly homeDir: string;
   /** Selected daemon identity/settings directory, already resolved by the CLI. */
@@ -219,6 +221,7 @@ function buildManager(input: DaemonServiceCliInput): PlatformServiceManager {
     workingDirectory: input.workingDirectory,
     configManager: input.configManager,
     actionRunner: input.actionRunner,
+    assertCurrent: input.assertCurrent,
   });
 }
 
@@ -450,6 +453,7 @@ function runMigrateService(
       portProbe: input.portProbe,
       legacyUnitFileRemove: input.legacyUnitFileRemove,
       actionRunner: input.actionRunner,
+      assertCurrent: input.assertCurrent,
     },
     manager,
     legacy,
@@ -458,6 +462,7 @@ function runMigrateService(
 
 /** Dispatch a daemon service subcommand to the SDK's `PlatformServiceManager`. */
 export async function runDaemonServiceCli(input: DaemonServiceCliInput): Promise<DaemonServiceCliResult> {
+  input.assertCurrent?.();
   const manager = buildManager(input);
   const flagErrors = validateServiceEndpointFlags(input.subcommand, {
     hostnameProvided: input.hostnameFlagProvided ?? false,

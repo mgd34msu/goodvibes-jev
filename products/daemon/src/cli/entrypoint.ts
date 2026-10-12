@@ -5,5 +5,9 @@ initializeDaemonNativeSqlite();
 // Service imports occur only after the compiled Darwin database owner is selected.
 const { runDaemonCli } = await import('./run.js');
 const { createProductionDaemonRuntime } = await import('./production-runtime.js');
+const { resolveShippedServiceExecutable } = await import('./service-executable.js');
 
-process.exitCode = await runDaemonCli(process.argv.slice(2), { runtime: createProductionDaemonRuntime() });
+process.exitCode = await runDaemonCli(process.argv.slice(2), {
+  runtime: createProductionDaemonRuntime(),
+  resolveServiceExecutable: resolveShippedServiceExecutable,
+});
