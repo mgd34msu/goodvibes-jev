@@ -169,7 +169,8 @@ export const nativeIntakeCoverage: NativeIntakeCoverage = {
     const result = await nativeIntakeCoverage.read(port, { text: fixture.text, requirements }, run);
     const strongest = Math.max(...result.parts.map(part => part.reading.probability));
     const reading = readYesNo({ type: 'noul', noul: strongest }, { yes: STAKES_BANDS.medium.confidence, no: STAKES_BANDS.high.confidence });
-    return fixtureCheck(fixture.name, 'omitted', String(fixture.omitted), String(reading.verdict === 'yes'), Math.max(strongest, 1 - strongest), reading.outcome, { answers: ['true', 'false'] });
+    const got = reading.verdict === 'uncertain' ? 'uncertain' : String(reading.verdict === 'yes');
+    return fixtureCheck(fixture.name, 'omitted', String(fixture.omitted), got, Math.max(strongest, 1 - strongest), reading.outcome, { answers: ['true', 'false'] });
   }),
 };
 

@@ -115,6 +115,20 @@ function captureRecordSelectors(value: unknown): PersistedKnowledgeRecordSelecto
   return captured;
 }
 
+function captureRecordSelectorGroups(value: readonly (readonly PersistedKnowledgeRecordSelector[])[]): PersistedKnowledgeRecordSelector[][] {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new TypeError('SQLiteStore: invalid record generation groups');
+  const descriptors = Object.getOwnPropertyDescriptors(value), length: unknown = descriptors.length?.value;
+  if (typeof length !== 'number' || !Number.isSafeInteger(length) || length < 0
+    || Reflect.ownKeys(descriptors).length !== length + 1) throw new TypeError('SQLiteStore: invalid record generation groups');
+  const captured: PersistedKnowledgeRecordSelector[][] = [];
+  for (let index = 0; index < length; index++) {
+    const entry = descriptors[String(index)];
+    if (!entry || !('value' in entry)) throw new TypeError('SQLiteStore: invalid record generation group');
+    captured.push(captureRecordSelectors(entry.value));
+  }
+  return captured;
+}
+
 interface NativeSqlStatement {
   step(): boolean;
   get(params?: (string | number)[] | null, config?: { useBigInt: boolean }): unknown[];
@@ -1175,6 +1189,56 @@ export class SQLiteStore {
         digest: frame?.persisted, canonical, selectors: Object.freeze(captured.map(selector => Object.freeze(selector))),
         generations: originalGenerations }));
       result = Object.freeze({ expected, originalGenerations });
+    });
+    if (!result) throw new SQLiteObservationRetiredError();
+    return result;
+  }
+
+  /** Mint one synchronous group's original readsets. Every requested row is
+   * read in selector order, bypassing guard memos; the complete schema is
+   * observed once for the group. No token is returned before the exit fence. */
+  captureExpectedRecordReadsets(groups: readonly (readonly PersistedKnowledgeRecordSelector[])[]): readonly ReturnType<SQLiteStore['captureExpectedRecordReadset']>[] {
+    const captured = captureRecordSelectorGroups(groups);
+    let result: readonly ReturnType<SQLiteStore['captureExpectedRecordReadset']>[] | undefined;
+    this.assertPersistedReadFrame(() => {
+      currentNativeReadImage(this, this.persistedReadFrame, this.persistedReadFrame?.db, this.sqlEngine);
+      this.readPrivatePersistedRows('SELECT 1', [], true);
+      const frame = this.persistedReadFrame;
+      const image = currentNativeReadImage(this, frame, frame?.db, this.sqlEngine);
+      const db = frame?.db ?? this.getDb();
+      const originals: (readonly (string | null)[])[] = [];
+      for (const selectors of captured) {
+        frame?.assertCurrent();
+        originals.push(readActualRecordGenerations(db, selectors));
+        currentNativeReadImage(this, frame, frame?.db, this.sqlEngine);
+        frame?.assertCurrent();
+      }
+      const native = frame?.db ? privateMapGet(ownedDatabases, frame.db) : undefined;
+      let canonical = Boolean(frame && image?.store === this && image.origin === privateMapGet(nativeReadFrameIdentities, frame)?.identity
+        && image.digest === frame.persisted && image.state === native && image.revision === native?.revision && !native?.inFlight
+        && frame.localState && frame.persisted
+        && nativeMethodsMatch(this.sqlEngine, native?.raw) && nativeMethodsMatch(this.sqlEngine, frame.localState.raw)
+        && nativeKnowledgeSchemaReadPlanMatches(this.nativeSchemaReadPlan, this.validateCurrentSchema, this.schemaVersion));
+      if (canonical) {
+        const rows = readDatabaseRow(db, "SELECT type,name,sql FROM main.sqlite_schema WHERE name IN ('knowledge_sources','knowledge_nodes','knowledge_extractions')", [])[0]?.values;
+        canonical = Boolean(rows && rows.length === 3 && Object.entries(knowledgeRecordTableSql).every(([name, sql]) =>
+          rows.some(row => row[0] === 'table' && row[1] === name && row[2] === sql.trim().replace('IF NOT EXISTS ', ''))));
+      }
+      currentNativeReadImage(this, frame, frame?.db, this.sqlEngine);
+      frame?.assertCurrent();
+      const values: ReturnType<SQLiteStore['captureExpectedRecordReadset']>[] = [];
+      for (let index = 0; index < captured.length; index++) {
+        const selectors = captured[index], originalGenerations = originals[index];
+        if (!selectors || !originalGenerations) throw new SQLiteObservationRetiredError();
+        const expected = Object.freeze<ExpectedKnowledgeRecordReadset>({ [expectedReadsetBrand]: true });
+        privateMapSet(expectedRecordReadsets, expected, nativeFreeze({ token: expected, store: this,
+          origin: frame ? privateMapGet(nativeReadFrameIdentities, frame)?.identity : undefined, persistence: this.persistence,
+          plan: this.nativeSchemaReadPlan, validator: this.validateCurrentSchema, schemaVersion: this.schemaVersion,
+          digest: frame?.persisted, canonical, selectors: Object.freeze(selectors.map(selector => Object.freeze(selector))),
+          generations: originalGenerations }));
+        values.push(Object.freeze({ expected, originalGenerations }));
+      }
+      result = Object.freeze(values);
     });
     if (!result) throw new SQLiteObservationRetiredError();
     return result;

@@ -102,8 +102,9 @@ test('a nested restriction checks its exact parent proof while the child keeps i
   const execute = f.child.execute;
   f.child.execute = async (args, options) => {
     childEntered = true;
-    if (!retained) throw new Error('The parent restriction was not captured.');
-    expect(() => assertCurrentToolEffect(retained.args, retained.options, 'write')).toThrow();
+    const parent = retained;
+    if (!parent) throw new Error('The parent restriction was not captured.');
+    expect(() => assertCurrentToolEffect(parent.args, parent.options, 'write')).toThrow();
     const result = await execute.call(f.child, args, options);
     expect(assertCurrentToolEffect(args, options, 'write')).toBe(true);
     return result;

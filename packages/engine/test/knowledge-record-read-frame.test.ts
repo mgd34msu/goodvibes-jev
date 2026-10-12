@@ -1454,10 +1454,10 @@ test('compiled expected readsets retain missing rows and every actual node selec
 
 test('actual scope adoption rejects a compiler capture that disagrees with the original snapshot before dispatch', async () => {
   const { store } = await fixture(), fake = fakePort(() => noulAnswer(0.99));
-  const previous = installJudgmentPort(fake.port), capture = store.captureExpectedRecordReadset.bind(store);
-  const observing = spyOn(store, 'captureExpectedRecordReadset').mockImplementation(selectors => {
-    const original = capture(selectors);
-    return { expected: original.expected, originalGenerations: original.originalGenerations.map(() => null) };
+  const previous = installJudgmentPort(fake.port), capture = store.captureExpectedRecordReadsets.bind(store);
+  const observing = spyOn(store, 'captureExpectedRecordReadsets').mockImplementation(groups => {
+    const originals = capture(groups);
+    return originals.map(original => ({ expected: original.expected, originalGenerations: original.originalGenerations.map(() => null) }));
   });
   try {
     await expect(prepareKnowledgeScopeSelection(store, {}, { kinds: ['source'] })).rejects.toMatchObject({ reason: 'stale' });
@@ -1699,3 +1699,157 @@ for (const operation of ['compiler', 'matcher'] as const) {
       expect(consumed).toBe(false);
     });
 }
+
+
+test('grouped initial readsets preserve order, duplicate identities, missing rows and one fresh native image per invocation', async () => {
+  const { store, source, extraction, sqlite } = await fixture();
+  const node = await store.upsertNode({ id: source.id, kind: 'topic', slug: 'same-local-id', title: 'Separate native topic',
+    status: 'draft', confidence: 0.5, sourceId: source.id });
+  const groups: Parameters<KnowledgeStore['captureExpectedRecordReadsets']>[0] = [
+    [{ kind: 'node', id: node.id }, { kind: 'source', id: source.id }, { kind: 'extraction', id: 'absent' }],
+    [{ kind: 'extraction', id: extraction.id }, { kind: 'source', id: source.id }, { kind: 'source', id: source.id }], [],
+  ];
+  const originals = groups.map(selectors => store.captureExpectedRecordReadset(selectors).originalGenerations);
+  const images = instrument(sqlite);
+  const first = store.captureExpectedRecordReadsets(groups);
+  expect(first.map(value => value.originalGenerations)).toEqual(originals);
+  expect(images.privateImages()).toEqual({ opened: 1, closed: 1 });
+  expect(Object.isFrozen(first)).toBe(true);
+  const inputs = first.map((value, index) => {
+    const selectors = groups[index]; if (!selectors) throw new Error('No original selector group');
+    expect(Object.isFrozen(value)).toBe(true); expect(Object.isFrozen(value.originalGenerations)).toBe(true);
+    return { expected: value.expected, selectors };
+  });
+  expect(store.matchesExpectedRecordReadsets(inputs)).toEqual([true, true, true]);
+  const before = images.privateImages();
+  await Promise.resolve();
+  const second = store.captureExpectedRecordReadsets(groups);
+  expect(second.map(value => value.originalGenerations)).toEqual(originals);
+  expect(images.privateImages()).toEqual({ opened: before.opened + 1, closed: before.closed + 1 });
+  expect(second[0]?.expected).not.toBe(first[0]?.expected);
+  await store.upsertSource({ ...source, title: 'Changed source meaning' });
+  expect(store.matchesExpectedRecordReadsets(inputs)).toEqual([false, false, true]);
+});
+
+test('grouped initial readsets execute every requested raw-row callback in order with a custom validator', async () => {
+  const { store, source, extraction, sqlite } = await fixture(path(), () => {});
+  const groups: Parameters<KnowledgeStore['captureExpectedRecordReadsets']>[0] = [
+    [{ kind: 'source', id: source.id }, { kind: 'extraction', id: extraction.id }],
+    [{ kind: 'source', id: source.id }, { kind: 'node', id: 'absent' }],
+  ];
+  const expected = groups.map(selectors => store.captureExpectedRecordReadset(selectors).originalGenerations);
+  const SQL = await loadSqlJsEngine(), exec = SQL.Database.prototype.exec, seen: string[] = [];
+  const observer = spyOn(SQL.Database.prototype, 'exec').mockImplementation(function (this: InstanceType<typeof SQL.Database>, sql, params, options) {
+    if (/^SELECT \* FROM knowledge_(sources|nodes|extractions) WHERE id/.test(sql)) seen.push(sql);
+    return exec.call(this, sql, params, options);
+  });
+  try {
+    const captured = store.captureExpectedRecordReadsets(groups);
+    expect(captured.map(value => value.originalGenerations)).toEqual(expected);
+    expect(seen).toEqual([
+      'SELECT * FROM knowledge_sources WHERE id = ? LIMIT 1', 'SELECT * FROM knowledge_extractions WHERE id = ? LIMIT 1',
+      'SELECT * FROM knowledge_sources WHERE id = ? LIMIT 1', 'SELECT * FROM knowledge_nodes WHERE id = ? LIMIT 1',
+    ]);
+    expect(sqlite.readPersistedRow('knowledge_sources', 'id', source.id)[0]?.values).toHaveLength(1);
+  } finally { observer.mockRestore(); }
+});
+
+test.each(['group accessor', 'selector accessor', 'named tail', 'selected kind alias'] as const)(
+  'grouped initial readset capture rejects %s before native image acquisition', async mode => {
+    const { store, source, sqlite } = await fixture(), images = instrument(sqlite);
+    let getters = 0;
+    const selector: object = { kind: 'source', id: source.id }, group: object[] = [selector], groups = [group];
+    if (mode === 'group accessor') Object.defineProperty(groups, '0', { configurable: true, get() { getters++; return group; } });
+    else if (mode === 'selector accessor') Object.defineProperty(selector, 'id', { enumerable: true, configurable: true, get() { getters++; return source.id; } });
+    else if (mode === 'named tail') Object.defineProperty(groups, 'tail', { value: 'Extra claimed work', configurable: true });
+    else Object.defineProperty(selector, 'kind', { value: 'edge', enumerable: true, writable: true, configurable: true });
+    expect(() => Reflect.apply(store.captureExpectedRecordReadsets, store, [groups])).toThrow(TypeError);
+    expect(getters).toBe(0); expect(images.privateImages()).toEqual({ opened: 0, closed: 0 });
+  });
+
+test.each(['writer rollback', 'native alias restore', 'identical file replacement'] as const)(
+  'grouped initial mint keeps the original complete %s fence between requested groups', async mutation => {
+    const { store, source, extraction, sqlite } = await fixture();
+    let writer: SqlDatabase | undefined;
+    await sqlite.transactPersisted(db => { writer = db; db.run('UPDATE knowledge_sources SET summary=summary WHERE id=?', [source.id]);
+      return { changed: true, value: undefined }; }, () => {});
+    if (!writer) throw new Error('No actual retained native writer');
+    const retained = writer;
+    const engine = await loadSqlJsEngine(), alias = new engine.Database();
+    const main = retained.exec('PRAGMA database_list')[0]?.values.find(row => row[1] === 'main')?.[2];
+    if (typeof main !== 'string') throw new Error('No actual original native main');
+    alias.run('ATTACH DATABASE ? AS original', [main]);
+    const bytes = readFileSync(store.storagePath), stringify = JSON.stringify;
+    let changed = false, published = false;
+    const observing = spyOn(JSON, 'stringify').mockImplementation((value, replacer, space) => {
+      const result = stringify(value, replacer, space);
+      if (!changed && Array.isArray(value) && value.some(entry => Array.isArray(entry) && entry[0] === 'id' && entry[1] === source.id)) {
+        changed = true;
+        if (mutation === 'writer rollback') {
+          retained.run('BEGIN'); retained.run('UPDATE knowledge_extractions SET sections=? WHERE id=?', ['["Temporary native evidence"]', extraction.id]); retained.run('ROLLBACK');
+        } else if (mutation === 'native alias restore') {
+          alias.run('UPDATE original.knowledge_sources SET title=? WHERE id=?', ['Temporary native title', source.id]);
+          alias.run('UPDATE original.knowledge_sources SET title=? WHERE id=?', [source.title ?? null, source.id]);
+        } else {
+          copyFileSync(store.storagePath, `${store.storagePath}.replacement`); renameSync(`${store.storagePath}.replacement`, store.storagePath);
+        }
+      }
+      return result;
+    });
+    try {
+      expect(() => {
+        store.captureExpectedRecordReadsets([[{ kind: 'source', id: source.id }], [{ kind: 'extraction', id: extraction.id }]]);
+        published = true;
+      }).toThrow(SQLiteObservationRetiredError);
+      expect(changed).toBe(true); expect(published).toBe(false);
+    } finally { observing.mockRestore(); alias.close(); }
+    expect(readFileSync(store.storagePath).equals(bytes)).toBe(true);
+  });
+
+test('grouped original mint bypasses both mutable frame memo collections', async () => {
+  const { store, source, extraction, sqlite } = await fixture();
+  const groups: Parameters<KnowledgeStore['captureExpectedRecordReadsets']>[0] = [
+    [{ kind: 'source', id: source.id }], [{ kind: 'extraction', id: extraction.id }],
+  ];
+  const original = groups.map(selectors => store.captureExpectedRecordReadset(selectors).originalGenerations);
+  let captured: ReturnType<KnowledgeStore['captureExpectedRecordReadsets']> | undefined;
+  store.assertRecordSnapshotFrame(() => {
+    store.getRecordGenerations(groups.flat());
+    expectedFrameCache(sqlite, 'generations').set(JSON.stringify(['knowledge_sources', 'id', source.id]), 'f'.repeat(64));
+    expectedFrameCache(sqlite, 'rows').set(JSON.stringify(['SELECT * FROM knowledge_extractions WHERE id = ? LIMIT 1', [extraction.id]]), []);
+    captured = store.captureExpectedRecordReadsets(groups);
+  });
+  if (!captured) throw new Error('No genuine grouped original');
+  expect(captured.map(value => value.originalGenerations)).toEqual(original);
+});
+
+test('grouped original mint rejects a copied retired frame before returning any token', async () => {
+  const { store, source, sqlite } = await fixture();
+  let returned = false;
+  expect(() => sqlite.assertPersistedReadFrame(() => {
+    store.getSourceGeneration(source.id);
+    const descriptor = Object.getOwnPropertyDescriptor(sqlite, 'persistedReadFrame'), frame: unknown = descriptor?.value;
+    if (!descriptor || !frame || typeof frame !== 'object') throw new Error('No actual native frame');
+    const copy: unknown = Object.create(Object.getPrototypeOf(frame), Object.getOwnPropertyDescriptors(frame));
+    Object.defineProperty(sqlite, 'persistedReadFrame', { ...descriptor, value: copy });
+    try { store.captureExpectedRecordReadsets([[{ kind: 'source', id: source.id }]]); returned = true; }
+    finally { Object.defineProperty(sqlite, 'persistedReadFrame', descriptor); }
+  })).toThrow(SQLiteObservationRetiredError);
+  expect(returned).toBe(false);
+});
+
+test('scope grouped original capture preserves extraction lookup and cancellation before semantic dispatch', async () => {
+  const { store } = await fixture(), fake = fakePort(() => noulAnswer(0.99)), controller = new AbortController();
+  const previous = installJudgmentPort(fake.port), compile = store.captureExpectedRecordReadsets.bind(store);
+  const lookup = store.getExtractionBySourceId.bind(store);
+  let lookups = 0, entered = false;
+  const reading = spyOn(store, 'getExtractionBySourceId').mockImplementation(id => { lookups++; return lookup(id); });
+  const capturing = spyOn(store, 'captureExpectedRecordReadsets').mockImplementation(groups => {
+    entered = true; expect(lookups).toBeGreaterThanOrEqual(2);
+    const value = compile(groups); controller.abort(); return value;
+  });
+  try {
+    await expect(prepareKnowledgeScopeSelection(store, {}, { kinds: ['source'], signal: controller.signal })).rejects.toMatchObject({ reason: 'aborted' });
+    expect(entered).toBe(true); expect(fake.requests).toHaveLength(0);
+  } finally { capturing.mockRestore(); reading.mockRestore(); installJudgmentPort(previous); }
+});

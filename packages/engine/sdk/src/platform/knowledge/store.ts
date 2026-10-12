@@ -542,6 +542,10 @@ export class KnowledgeStore {
     return this.sqlite.captureExpectedRecordReadset(selectors);
   }
 
+  captureExpectedRecordReadsets(groups: readonly (readonly PersistedKnowledgeRecordSelector[])[]) {
+    return this.sqlite.captureExpectedRecordReadsets(groups);
+  }
+
   matchesExpectedRecordReadsets(inputs: readonly ExpectedKnowledgeRecordReadsetInput[]): readonly boolean[] {
     return this.sqlite.matchesExpectedRecordReadsets(inputs);
   }

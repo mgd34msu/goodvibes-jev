@@ -263,6 +263,8 @@ export async function prepareKnowledgeScopeSelection(
   type RecordSelector = Parameters<KnowledgeStore['getRecordGenerations']>[0][number];
   type ExpectedReadset = Parameters<KnowledgeStore['matchesExpectedRecordReadsets']>[0][number];
   const generationReadsets = new Map<() => void, ExpectedReadset>();
+  const pendingReadsets: { readonly check: () => void; readonly selectors: readonly RecordSelector[];
+    readonly expectedGenerations: readonly (string | null | undefined)[] }[] = [];
   let currentReadsetMatches: ReadonlyMap<() => void, boolean> | undefined;
   const currentGeneration = (selector: RecordSelector) => selector.kind === 'source'
     ? store.getSourceGeneration(selector.id) : store.getRecordGeneration(selector.kind, selector.id);
@@ -313,11 +315,6 @@ export async function prepareKnowledgeScopeSelection(
       ...(extraction ? [{ kind: 'extraction' as const, id: extraction.id }] : [])];
     const expectedGenerations = [...(value.kind === 'issue' ? [] : [originalGeneration]),
       ...(extraction ? [originalExtractionGeneration] : [])];
-    const compiled = selectors.length ? store.captureExpectedRecordReadset(selectors) : undefined;
-    if (compiled && (compiled.originalGenerations.length !== expectedGenerations.length
-      || compiled.originalGenerations.some((generation, index) => generation !== expectedGenerations[index]))) {
-      throw new KnowledgeScopeSelectionHeldError('stale');
-    }
     const check = addCheck(key, () => {
       const current = readRecord(value);
       if (!current || current.record !== original) throw new KnowledgeScopeSelectionHeldError('stale');
@@ -331,7 +328,7 @@ export async function prepareKnowledgeScopeSelection(
           || currentGeneration({ kind: 'extraction', id: currentExtraction.id }) === originalExtractionGeneration);
       if (!extractionMatch || !matchesSignature(current)) throw new KnowledgeScopeSelectionHeldError('stale');
     });
-    if (compiled) generationReadsets.set(check, { expected: compiled.expected, selectors });
+    if (selectors.length) pendingReadsets.push({ check, selectors, expectedGenerations });
     retained.set(key, check); return check;
   };
   const membership = (value: ScopeRecord, scope: KnowledgeSpaceScopeInput, currentLookup = frameLookup) => {
@@ -425,6 +422,22 @@ export async function prepareKnowledgeScopeSelection(
       assertJudgmentInput(state);
       return { key: `${value.kind}:${value.record.id}`, state: captureStrictRepairJson(state) };
     });
+    // Original source/node/extraction snapshots and every projection above
+    // remain in their old order. Mint the complete retained readsets together
+    // in this same synchronous frame, then compare every original baseline
+    // before any job or retained capability can escape.
+    if (pendingReadsets.length) {
+      const compiled = store.captureExpectedRecordReadsets(pendingReadsets.map(input => input.selectors));
+      if (compiled.length !== pendingReadsets.length) throw new KnowledgeScopeSelectionHeldError('stale');
+      for (let index = 0; index < pendingReadsets.length; index++) {
+        const input = pendingReadsets[index], value = compiled[index];
+        if (!input || !value || value.originalGenerations.length !== input.expectedGenerations.length
+          || value.originalGenerations.some((generation, slot) => generation !== input.expectedGenerations[slot])) {
+          throw new KnowledgeScopeSelectionHeldError('stale');
+        }
+        generationReadsets.set(input.check, { expected: value.expected, selectors: input.selectors });
+      }
+    }
     for (const value of candidates) if (!needsReading(value)) accepted.add(`${value.kind}:${value.record.id}`);
     return jobs;
   };
