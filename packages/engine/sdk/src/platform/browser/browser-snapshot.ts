@@ -1,8 +1,9 @@
 import type { Frame, FrameLocator, Locator, Page } from 'playwright-core';
 import { types as nodeTypes } from 'node:util';
-import { captureOwnedJson } from '../gate/judgment-input.js';
+import { captureOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { mapLimit } from '@goodvibes-jev/judgment';
 import { isCardFieldDescriptor } from '../security/card-fields.js';
+import { containsIssuerCredential } from '../utils/redaction.js';
 
 import { BrowserControlIdentityWork } from './browser-control-identity.js';
 import type { BrowserElementRef, BrowserSnapshot, CardFieldGuard } from './browser-types.js';
@@ -59,7 +60,9 @@ interface RawElement {
  * scope. It reads the DOM and never mutates it: no injected attributes, no
  * markers left behind in the user's real, logged-in page.
  */
-function collectElements(limit: number): RawElement[] {
+function collectElements(options: number | { readonly limit: number; readonly identityOnly: true }): RawElement[] | { readonly url: string; readonly title: string; readonly elements: RawElement[] } {
+  const identityOnly = typeof options !== 'number';
+  const limit = typeof options === 'number' ? options : options.limit;
   const INTERACTIVE_SELECTOR = [
     'a[href]',
     'button',
@@ -222,8 +225,9 @@ function collectElements(limit: number): RawElement[] {
     if (results.length >= limit) break;
     if (seen.has(element)) continue;
     seen.add(element);
-    if (!isVisible(element)) continue;
     const tag = element.tagName.toLowerCase();
+    // Even a hidden native password input is not available for automation.
+    if (!identityOnly && !isVisible(element)) continue;
     const input = element as HTMLInputElement;
     const isFormControl = tag === 'input' || tag === 'textarea' || tag === 'select';
     const type = (element.getAttribute('type') ?? '').toLowerCase();
@@ -233,7 +237,7 @@ function collectElements(limit: number): RawElement[] {
       role: roleFor(element),
       name: nameFor(element),
       selector: selectorFor(element),
-      value: isFormControl && type !== 'password' ? String(input.value ?? '') : null,
+      value: !identityOnly && isFormControl && type !== 'password' ? String(input.value ?? '') : null,
       disabled: isFormControl ? Boolean(input.disabled) : false,
       checked: type === 'checkbox' || type === 'radio' ? Boolean(input.checked) : null,
       depth: depthOf(element),
@@ -249,7 +253,225 @@ function collectElements(limit: number): RawElement[] {
       },
     });
   }
-  return results;
+  return identityOnly ? { url: document.URL, title: document.title, elements: results } : results;
+}
+
+
+/** Native method ownership, checked without evaluating replacement accessors. */
+export function retainBrowserMethods(subject: object, keys: readonly string[]) {
+  const chain: object[] = [];
+  let parent: object | null = subject;
+  while (parent) {
+    if (nodeTypes.isProxy(parent) || chain.length === 64) throw new StaleElementError('Browser page ownership is unavailable.', 'Read the page again.');
+    chain.push(parent); parent = Object.getPrototypeOf(parent);
+  }
+  const locate = (key: string) => {
+    for (const owner of chain) {
+      const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+      if (descriptor) {
+        if (!('value' in descriptor)) throw new StaleElementError('Browser page ownership is unavailable.', 'Read the page again.');
+        return { owner, descriptor };
+      }
+    }
+    return { owner: undefined, descriptor: undefined };
+  };
+  const slots = keys.map(key => ({ key, ...locate(key) }));
+  const assertCurrent = () => {
+    for (let index = 0; index < chain.length; index++) {
+      if (Object.getPrototypeOf(chain[index]) !== (chain[index + 1] ?? null)) throw new StaleElementError('Browser page ownership changed.', 'Read the page again.');
+    }
+    for (const slot of slots) {
+      const next = locate(slot.key), before = slot.descriptor, after = next.descriptor;
+      if (next.owner !== slot.owner || before?.value !== after?.value || before?.enumerable !== after?.enumerable
+        || before?.writable !== after?.writable || before?.configurable !== after?.configurable) throw new StaleElementError('Browser page ownership changed.', 'Read the page again.');
+    }
+  };
+  return { assertCurrent, value: (key: string): unknown => slots.find(slot => slot.key === key)?.descriptor?.value };
+}
+
+function plainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+function ownEvidenceFields(value: Record<string, unknown>, fields: readonly string[]): boolean {
+  return Object.keys(value).length === fields.length && fields.every(key => Object.hasOwn(value, key));
+}
+function credentialDocument(value: unknown) {
+  // Native evaluation admits no hidden side channel, accessors, proxies or unknown fields.
+  const layouts = new WeakSet<object>();
+  const inspectLayout = (entry: unknown): void => {
+    if (!entry || typeof entry !== 'object') return;
+    if (nodeTypes.isProxy(entry)) throw new Error('Browser page evidence is unsupported.');
+    if (layouts.has(entry)) return; layouts.add(entry);
+    for (const key of Reflect.ownKeys(entry)) {
+      const descriptor = Object.getOwnPropertyDescriptor(entry, key);
+      if (typeof key !== 'string' || !descriptor || !('value' in descriptor)
+        || (!descriptor.enumerable && !(Array.isArray(entry) && key === 'length'))) throw new Error('Browser page evidence is unsupported.');
+      if (key !== 'length' || !Array.isArray(entry)) inspectLayout(descriptor.value);
+    }
+  };
+  const detached = captureOwnedJson(value, nodeTypes.isProxy);
+  inspectLayout(value);
+  if (!plainRecord(detached) || !ownEvidenceFields(detached, ['url', 'title', 'elements'])
+    || typeof detached.url !== 'string' || typeof detached.title !== 'string' || !Array.isArray(detached.elements)) throw new Error('Browser page evidence is incomplete.');
+  let password = false;
+  const controls = detached.elements.map((element: unknown) => {
+    if (!plainRecord(element) || !ownEvidenceFields(element, ['documentUrl', 'tag', 'role', 'name', 'selector', 'value', 'disabled', 'checked', 'depth', 'submits', 'control'])
+      || typeof element.documentUrl !== 'string' || element.documentUrl !== detached.url
+      || typeof element.tag !== 'string' || typeof element.role !== 'string' || typeof element.name !== 'string' || typeof element.selector !== 'string'
+      || element.value !== null || typeof element.disabled !== 'boolean'
+      || (element.checked !== null && typeof element.checked !== 'boolean') || typeof element.depth !== 'number' || !Number.isSafeInteger(element.depth) || element.depth < 0
+      || typeof element.submits !== 'boolean' || !plainRecord(element.control)
+      || !ownEvidenceFields(element.control, ['type', 'autocomplete', 'name', 'id', 'placeholder', 'ariaLabel', 'label'])
+      || Object.values(element.control).some(field => typeof field !== 'string')) throw new Error('Browser control evidence is incomplete.');
+    password ||= element.tag === 'input' && element.control.type === 'password';
+    // Entered values never enter this DTO, even on an armed checkout page.
+    return { documentUrl: element.documentUrl, tag: element.tag, role: element.role, name: element.name, selector: element.selector,
+      disabled: element.disabled, checked: element.checked, depth: element.depth, submits: element.submits, control: element.control };
+  });
+  return { document: { url: detached.url, title: detached.title, controls }, password };
+}
+
+
+async function credentialFrameChain(frame: Frame, work: BrowserControlIdentityWork, assertSource: () => void): Promise<{ readonly chain: readonly string[]; readonly assertCurrent: () => void }> {
+  const retained: (() => void)[] = [];
+  const assertMethods = () => { for (const guard of retained) guard(); };
+  const current = () => { assertMethods(); assertSource(); assertMethods(); };
+  const original = retainBrowserMethods(frame, ['__frameChain']); retained.push(original.assertCurrent);
+  const precomputed = original.value('__frameChain'); current();
+  if (precomputed !== undefined) {
+    const captured = captureOwnedJson(precomputed, nodeTypes.isProxy);
+    if (!Array.isArray(captured) || captured.some(part => typeof part !== 'string' || !part)) throw new Error('Complete browser frames are unavailable.');
+    const chain: string[] = [];
+    for (const part of captured) { if (typeof part !== 'string') throw new Error('Complete browser frames are unavailable.'); chain.push(part); }
+    return { chain, assertCurrent: assertMethods };
+  }
+  const chain: string[] = [], visited = new Set<Frame>();
+  let selected: Frame = frame;
+  for (;;) {
+    if (visited.has(selected) || visited.size >= 64) throw new Error('Complete browser frames are unavailable.');
+    visited.add(selected);
+    const methods = retainBrowserMethods(selected, ['parentFrame', 'frameElement']); retained.push(methods.assertCurrent);
+    current(); const parent = selected.parentFrame(); current();
+    if (!parent) return { chain, assertCurrent: assertMethods };
+    const selectedFrame = selected;
+    const element = await work.wait(() => { current(); return selectedFrame.frameElement(); }); current();
+    const elementMethods = retainBrowserMethods(element, ['evaluate']); retained.push(elementMethods.assertCurrent);
+    const selector = await work.wait(() => { current(); return element.evaluate(selectorOfFrameElement); }); current();
+    if (typeof selector !== 'string' || !selector || selectedFrame.parentFrame() !== parent) throw new Error('Complete browser frames are unavailable.');
+    current(); chain.unshift(selector); selected = parent;
+  }
+}
+
+
+function credentialFrameVector(frames: readonly Frame[]): readonly Frame[] {
+    if (!Array.isArray(frames) || frames.length === 0 || nodeTypes.isProxy(frames) || Object.getPrototypeOf(frames) !== Array.prototype) throw new Error('Complete browser frames are unavailable.');
+    const frameSlots = Object.getOwnPropertyDescriptors(frames);
+    if (frames.length > 20_000 || Reflect.ownKeys(frames).length !== frames.length + 1 || Object.keys(frameSlots).some(key => {
+      const descriptor = frameSlots[key];
+      return key !== 'length' && (!descriptor || !('value' in descriptor) || !descriptor.enumerable);
+    })) throw new Error('Complete browser frames are unavailable.');
+    for (let index = 0; index < frames.length; index++) {
+      const descriptor = frameSlots[String(index)];
+      if (!descriptor || !('value' in descriptor)) throw new Error('Complete browser frames are unavailable.');
+    }
+  const result: Frame[] = [];
+  for (let index = 0; index < frames.length; index++) {
+    const frame = frames[index];
+    if (!frame || typeof frame !== 'object' || nodeTypes.isProxy(frame)) throw new Error('Complete browser frames are unavailable.');
+    result.push(frame);
+  }
+  return result;
+}
+
+/** Complete current native metadata only. No stored snapshot grants page purpose. */
+export async function captureCredentialPage(
+  page: Page, work: BrowserControlIdentityWork, assertSource: () => void, assertMetadata: (text: string) => void,
+) {
+  const pageMethods = retainBrowserMethods(page, ['url', 'frames', 'mainFrame', 'refreshFrames']);
+  const frameOwners = new Map<Frame, ReturnType<typeof retainBrowserMethods>>();
+  const chainGuards: (() => void)[] = [];
+  let initialFrames: readonly Frame[] | undefined;
+  const assertMethods = () => { pageMethods.assertCurrent(); for (const owner of frameOwners.values()) owner.assertCurrent(); for (const guard of chainGuards) guard(); };
+  const current = () => { assertMethods(); work.assertCurrent(); assertMethods(); assertSource(); assertMethods(); };
+  const refresh = pageMethods.value('refreshFrames');
+  if (refresh !== undefined && typeof refresh !== 'function') throw new Error('Complete browser frames are unavailable.');
+  const read = async () => {
+    current();
+    if (typeof refresh === 'function') { await work.wait(() => { current(); return Promise.resolve(Reflect.apply(refresh, page, [{ complete: true }])); }); current(); }
+    const frames = credentialFrameVector(page.frames()); current();
+    current();
+    if (typeof refresh !== 'function') {
+      if (initialFrames && (initialFrames.length !== frames.length || frames.some((frame, index) => frame !== initialFrames?.[index]))) throw new StaleElementError('Browser frames changed.', 'Read the page again.');
+      initialFrames ??= [...frames];
+    }
+    const mainFrame = page.mainFrame(); current();
+    if (typeof refresh !== 'function' && !frames.includes(mainFrame)) throw new Error('Complete browser frames are unavailable.');
+    const documents: Array<ReturnType<typeof credentialDocument>['document'] & { readonly frameChain: readonly string[] }> = [];
+    let password = false;
+    for (const frame of frames) {
+      let methods = frameOwners.get(frame);
+      if (!methods) { methods = retainBrowserMethods(frame, ['evaluate', 'parentFrame', 'frameElement', '__frameChain']); frameOwners.set(frame, methods); }
+      const frameMethods = methods;
+      const frameCurrent = () => { current(); frameMethods.assertCurrent(); };
+      frameCurrent();
+      const chainOwner = await credentialFrameChain(frame, work, frameCurrent); chainGuards.push(chainOwner.assertCurrent); frameCurrent();
+      const chain = chainOwner.chain;
+      const result = await work.wait(() => { frameCurrent(); return frame.evaluate(collectElements, { limit: Number.MAX_SAFE_INTEGER, identityOnly: true } satisfies Parameters<typeof collectElements>[0]); }); frameCurrent();
+      const captured = credentialDocument(result); frameCurrent();
+      password ||= captured.password;
+      documents.push({ frameChain: chain, ...captured.document });
+    }
+    current();
+    if (typeof refresh === 'function') {
+      await work.wait(() => { current(); return Promise.resolve(Reflect.apply(refresh, page, [{ complete: true }])); }); current();
+      const fresh = credentialFrameVector(page.frames()); current();
+      const chains = fresh.map((frame, index) => {
+        const owner = retainBrowserMethods(frame, ['__frameChain', 'url']); owner.assertCurrent(); current(); owner.assertCurrent();
+        const frameUrl = frame.url(); owner.assertCurrent(); current(); owner.assertCurrent();
+        if (frameUrl !== documents[index]?.url) throw new StaleElementError('Browser document changed.', 'Read the page again.');
+        return owner.value('__frameChain');
+      });
+      if (fresh.length !== documents.length || JSON.stringify(captureOwnedJson(chains, nodeTypes.isProxy)) !== JSON.stringify(documents.map(document => document.frameChain))) {
+        throw new StaleElementError('Browser frames changed.', 'Read the page again.');
+      }
+    } else {
+      const fresh = credentialFrameVector(page.frames()); current();
+      if (page.mainFrame() !== mainFrame || fresh.length !== frames.length || fresh.some((frame, index) => frame !== frames[index])) throw new StaleElementError('Browser frames changed.', 'Read the page again.');
+    }
+    // Evaluate document URL, not just a remote Page's cached URL.
+    const main = documents.find(document => document.frameChain.length === 0);
+    if (documents.filter(document => document.frameChain.length === 0).length !== 1 || !main || main.url !== page.url()) throw new StaleElementError('Browser document changed.', 'Read the page again.');
+    const state = { url: main.url, documents };
+    const encoded = JSON.stringify(state);
+    // Exact live material in metadata cannot be made safe by a display marker.
+    const inspectMetadata = (entry: unknown): void => {
+      if (typeof entry === 'string') assertMetadata(entry);
+      else if (entry && typeof entry === 'object') for (const [key, value] of Object.entries(entry)) { assertMetadata(key); inspectMetadata(value); }
+    };
+    inspectMetadata(state); assertMetadata(encoded); current();
+    const inspectIssuer = (entry: unknown, depth = 0): void => {
+      if (depth > 64) throw new Error('Browser page evidence is unsupported.');
+      if (typeof entry === 'string') {
+        if (containsIssuerCredential(entry)) throw new Error('Browser page evidence contains credentials.');
+        let decoded: unknown;
+        try { decoded = JSON.parse(entry); } catch { return; }
+        inspectIssuer(snapshotJudgmentInput(decoded), depth + 1);
+      } else if (entry && typeof entry === 'object') {
+        for (const [key, value] of Object.entries(entry)) { inspectIssuer(key, depth + 1); inspectIssuer(value, depth + 1); }
+      }
+    };
+    const admitted = snapshotJudgmentInput(state); inspectIssuer(admitted); current();
+    if (!plainRecord(admitted)) throw new Error('Browser page evidence is incomplete.');
+    return { state: admitted, encoded, password };
+  };
+  const captured = await read(); current();
+  const assertCurrent = async () => {
+    current(); const fresh = await read(); current();
+    if (fresh.encoded !== captured.encoded || fresh.password !== captured.password) throw new StaleElementError('Browser page evidence changed.', 'Read the page again.');
+  };
+  const url = captured.state.url;
+  if (typeof url !== 'string') throw new Error('Browser page evidence is incomplete.');
+  return { state: captured.state, url, password: captured.password, assertCurrent };
 }
 
 /** Reads back one element's identity so a ref can be re-verified before use. */

@@ -152,8 +152,8 @@ export function createGoogleBrowserPort(
     },
 
     async click(ref, ownership) {
-      const at = generation, expectedSnapshot = snapshotId, assertCurrent = ownership?.assertCurrent;
-      const result = await engine.click(target(), { ref }, { snapshotId: expectedSnapshot, assertCurrent: () => {
+      const at = generation, expectedSnapshot = snapshotId, assertCurrent = ownership?.assertCurrent, signal = ownership?.signal;
+      const result = await engine.click(target(), { ref }, { snapshotId: expectedSnapshot, signal, assertCurrent: () => {
         assertCurrent?.();
         if (at !== generation || expectedSnapshot !== snapshotId) throw new Error('The Google browser action is no longer current.');
       } });
@@ -162,12 +162,12 @@ export function createGoogleBrowserPort(
     },
 
     async type(ref, text, typeOptions) {
-      const at = generation, expectedSnapshot = snapshotId, assertCurrent = typeOptions?.assertCurrent;
+      const at = generation, expectedSnapshot = snapshotId, assertCurrent = typeOptions?.assertCurrent, signal = typeOptions?.signal;
       const result = await engine.type(target(), {
         ref,
         text,
         ...(typeOptions?.submit === undefined ? {} : { submit: typeOptions.submit }),
-      }, { snapshotId: expectedSnapshot, assertCurrent: () => {
+      }, { snapshotId: expectedSnapshot, signal, assertCurrent: () => {
         assertCurrent?.();
         if (at !== generation || expectedSnapshot !== snapshotId) throw new Error('The Google browser action is no longer current.');
       } });

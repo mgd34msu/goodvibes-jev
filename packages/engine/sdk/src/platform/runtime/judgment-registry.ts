@@ -112,8 +112,9 @@ registry.register(imapDraftsReading);
 // Browser host provisioning diagnoses, shared by runtime and driver installs.
 import { browserProvisionFailure } from '../browser/browser-failure-reading.js';
 registry.register(browserProvisionFailure);
-import { browserControlIdentity } from '../browser/browser-control-identity.js';
+import { browserControlIdentity, browserCredentialPage } from '../browser/browser-control-identity.js';
 registry.register(browserControlIdentity);
+registry.register(browserCredentialPage);
 // Google setup control purposes and authentication page state.
 import { googleSetupControl, googleSignInPage } from '../google/browser-readings.js';
 registry.register(googleSetupControl);

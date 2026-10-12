@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { createToolRegistryDouble } from '../helpers/tool-registry-double.ts';
 import type { BrowserEngine } from '@goodvibes-jev/engine/sdk/platform/browser';
 import { BrowserSessionError } from '@goodvibes-jev/engine/sdk/platform/browser';
@@ -186,5 +186,92 @@ describe('browser tool surface', () => {
     const result = await tool.execute({ action: 'attach', cdpEndpoint: 'http://127.0.0.1:9222' });
     expect(result.success).toBe(true);
     expect(calls.map((entry) => entry.method)).toEqual(['attach']);
+  });
+});
+
+
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { DEFAULT_CONFIG } from '@goodvibes-jev/engine/sdk/platform/config';
+import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { PolicyRuntimeState } from '@goodvibes-jev/engine/sdk/platform/runtime/security';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import type { Tool, ToolExecuteOptions } from '@goodvibes-jev/engine/sdk/platform/types';
+
+const admissionCleanup: (() => void)[] = [];
+afterEach(() => { for (const close of admissionCleanup.splice(0).reverse()) close(); });
+function admittedBrowser(tool: Tool) {
+  const permissions: typeof DEFAULT_CONFIG.permissions = { ...DEFAULT_CONFIG.permissions, mode: 'prompt' };
+  const reader: PermissionConfigReader = {
+    getAutonomousSnapshot: () => ({ permissions, autoApprove: false, directory: '/native-browser-test' }),
+    getSnapshot: () => ({ permissions }), isAutoApproveEnabled: () => false,
+    getWorkingDirectory: () => '/native-browser-test',
+  };
+  const manager = new PermissionManager(undefined, reader, new PolicyRuntimeState()), registry = new ToolRegistry(manager);
+  registry.register(tool);
+  const synthetic = fakePort((name, question) => {
+    if (question.type === 'noul') return noulAnswer(0.001);
+    if (question.type === 'choice') {
+      const label = name === 'disposition' ? 'act' : name === 'kind' ? 'read' : name === 'family' || name === 'capability' ? 'generic' : undefined;
+      if (!label || !Object.hasOwn(question.criteria, label)) throw new Error('Unexpected native browser admission question');
+      return choiceAnswer(question, label, 0.999);
+    }
+    throw new Error('Unexpected native browser admission question');
+  });
+  const log = new SqliteDecisionLog(':memory:');
+  const previous = installJudgmentPort(withDecisionLog(synthetic.port, log));
+  admissionCleanup.push(() => { installJudgmentPort(previous); log[Symbol.dispose](); });
+  return async (args: Record<string, unknown>, options: ToolExecuteOptions = {}) => {
+    const call = await registry.prepareCall('native-browser-operation', 'browser', args, { signal: options.signal });
+    const admission = await manager.admitAutonomous(call.callId, call.name, call.args, {
+      sourceOf: () => ({ goal: 'Check browser caller lifetime with synthetic admission', criteria: ['No external page effects'] }),
+      signal: options.signal, schemaRevision: call.schemaRevision, preparedCall: { registry, call },
+    });
+    expect(admission.result.autonomousDecision?.outcome).toBe('act');
+    return registry.executePrepared(call, admission, options);
+  };
+}
+function actionLifetime(value: unknown) {
+  if (!value || typeof value !== 'object' || !('signal' in value) || !(value.signal instanceof AbortSignal)
+    || !('assertCurrent' in value) || typeof value.assertCurrent !== 'function') throw new Error('Missing original browser action lifetime');
+  return { signal: value.signal, assertCurrent: value.assertCurrent };
+}
+
+describe('registered browser caller lifetime', () => {
+  test.each(['click', 'type', 'select', 'press'])('actual admission forwards the original caller to %s', async action => {
+    const calls: RecordedCall[] = [], controller = new AbortController(); let checks = 0;
+    const engine = fakeEngine(calls, { [action]: async (_target: unknown, _args: unknown, options: unknown) => {
+      const owner = actionLifetime(options); expect(owner.signal).toBe(controller.signal); owner.assertCurrent();
+      calls.push({ method: action, args: [] }); return { observed: true };
+    } });
+    const run = admittedBrowser(createAgentBrowserTool({ engine }));
+    const result = await run({ action, ref: 'e1', text: 'ordinary text', key: 'Tab', values: ['one'] }, { signal: controller.signal, assertCurrent: () => { checks++; } });
+    expect(result.success).toBe(true); expect(calls).toHaveLength(1); expect(checks).toBeGreaterThan(0);
+  });
+  test('already cancelled caller never reaches an interactive method', async () => {
+    const calls: RecordedCall[] = [], controller = new AbortController(); controller.abort();
+    const run = admittedBrowser(createAgentBrowserTool({ engine: fakeEngine(calls) }));
+    await expect(run({ action: 'click', ref: 'e1' }, { signal: controller.signal })).rejects.toThrow(); expect(calls).toEqual([]);
+  });
+  test.each(['cancel', 'retire', 'method'])('%s while an interactive call waits cannot publish success', async kind => {
+    let release: () => void = () => {}, began: () => void = () => {}, active = true, getters = 0;
+    const pending = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { began = resolve; });
+    const controller = new AbortController(), calls: RecordedCall[] = [];
+    const engine = fakeEngine(calls, { click: async (_target: unknown, _args: unknown, options: unknown) => {
+      const owner = actionLifetime(options); owner.assertCurrent(); began(); await pending; owner.assertCurrent(); return { clicked: true };
+    } });
+    const tool = createAgentBrowserTool({ engine });
+    const run = admittedBrowser(tool);
+    const result = run({ action: 'click', ref: 'e1' }, { signal: controller.signal, assertCurrent: () => { if (!active) throw new Error('Retired fixture owner'); } }).catch(error => error);
+    try {
+      await started;
+      if (kind === 'cancel') controller.abort(new Error('private cancellation fixture'));
+      if (kind === 'retire') active = false;
+      if (kind === 'method') Object.defineProperty(engine, 'click', { configurable: true, get() { getters++; throw new Error('Replacement getter'); } });
+      release(); const outcome: unknown = await result;
+      expect(outcome instanceof Error || Boolean(outcome && typeof outcome === 'object' && 'success' in outcome && outcome.success === false)).toBe(true);
+      expect(JSON.stringify(outcome)).not.toContain('private cancellation fixture'); expect(getters).toBe(0); expect(calls).toEqual([]);
+    } finally { release(); await result; }
   });
 });

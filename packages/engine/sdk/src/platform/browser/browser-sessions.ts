@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import { resolveSurfaceDirectory } from '../runtime/surface-root.js';
 import { BrowserHostClient, remoteContext, type BrowserHostOptions } from './browser-host-client.js';
-import { createBrowserProvisionIo, loadDriverModule } from './browser-provision-io.js';
+import { createBrowserProvisionIo, DRIVER_VERSION, loadDriverModule } from './browser-provision-io.js';
 import { ensureBrowserBinary } from './browser-provisioning.js';
 import type {
   BrowserLaunchResult,
@@ -243,6 +243,13 @@ export class BrowserSessionManager {
         this.driverFix(),
       );
     }
+    const resolution = this.io.resolveDriver();
+    if (!resolution.available || resolution.version !== DRIVER_VERSION) {
+      throw new BrowserSessionError(
+        'This browser driver does not support the action cancellation required by this build.',
+        'Install the supported browser driver for this build before opening a browser session.',
+      );
+    }
     return driver;
   }
 
@@ -442,25 +449,27 @@ export class BrowserSessionManager {
   private async attachThroughHost(endpoint: string): Promise<BrowserSessionInfo | null> {
     const client = new BrowserHostClient(this.hostOptions);
     await client.start();
-    const attached = await client.call<{ pages: { pages: { pageId: string; url: string }[] } }>('attach', { endpoint });
-    const pages = attached.pages.pages;
-    if (pages.length === 0) {
-      const created = await client.call<{ pageId: string }>('newPage');
-      pages.push({ pageId: created.pageId, url: 'about:blank' });
-    }
-    const context = remoteContext(client, pages);
-    const info = this.register({
-      origin: 'attached',
-      context,
-      browser: null,
-      profileDirectory: null,
-      cdpEndpoint: endpoint,
-      executablePath: null,
-      source: null,
-      headless: false,
-    });
-    this.hosts.set(info.sessionId, client);
-    return info;
+    try {
+      const attached = await client.call<{ pages: { pages: { pageId: string; url: string }[] } }>('attach', { endpoint });
+      const pages = attached.pages.pages;
+      if (pages.length === 0) {
+        const created = await client.call<{ pageId: string }>('newPage');
+        pages.push({ pageId: created.pageId, url: 'about:blank' });
+      }
+      const context = remoteContext(client, pages);
+      const info = this.register({
+        origin: 'attached',
+        context,
+        browser: null,
+        profileDirectory: null,
+        cdpEndpoint: endpoint,
+        executablePath: null,
+        source: null,
+        headless: false,
+      });
+      this.hosts.set(info.sessionId, client);
+      return info;
+    } catch (error) { client.stop(); throw error; }
   }
 
   private register(input: {

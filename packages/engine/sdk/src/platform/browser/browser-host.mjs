@@ -68,6 +68,9 @@ function compileFunction(source) {
 
 const handlers = {
   async attach({ endpoint }) {
+    if (require('playwright-core/package.json').version !== '1.62.0') {
+      throw new Error('This browser driver does not support the action cancellation required by this build.');
+    }
     const { chromium } = require('playwright-core');
     state.browser = await chromium.connectOverCDP(endpoint, { timeout: 15_000 });
     const contexts = state.browser.contexts();
@@ -136,11 +139,12 @@ const handlers = {
   },
 
   /** Every frame in a page, each with the chain of iframe selectors reaching it. */
-  async frames({ pageId }) {
+  async frames({ pageId, complete = false }) {
     const page = requirePage(pageId);
     const selectorOfFrameElement = compileFunction(FRAME_SELECTOR_SOURCE);
     const frames = [];
-    for (const frame of page.frames()) {
+    const originalFrames = page.frames(), originalMain = complete ? page.mainFrame() : undefined, originalUrl = complete ? page.url() : undefined;
+    for (const frame of originalFrames) {
       if (frame === page.mainFrame()) {
         frames.push({ chain: [], url: frame.url(), main: true });
         continue;
@@ -157,6 +161,13 @@ const handlers = {
         current = current.parentFrame();
       }
       if (addressable) frames.push({ chain, url: frame.url(), main: false });
+      else if (complete) throw new Error('Complete current browser frames are unavailable.');
+    }
+    if (complete) {
+      const fresh = page.frames();
+      if (requirePage(pageId) !== page || page.mainFrame() !== originalMain || page.url() !== originalUrl || fresh.length !== originalFrames.length
+        || fresh.some((frame, index) => frame !== originalFrames[index]) || frames.filter(frame => frame.main).length !== 1) throw new Error('Browser frames changed during complete acquisition.');
+      return { frames, url: originalUrl, complete: true };
     }
     return { frames };
   },
@@ -177,7 +188,8 @@ const handlers = {
     return { value: await frame.evaluate(fn, arg) };
   },
 
-  async locator({ pageId, frameChain, selector, method, args }) {
+  async locator({ pageId, frameChain, selector, method, args }, signal) {
+    signal?.throwIfAborted();
     const page = requirePage(pageId);
     const scope = scopeFor(page, frameChain);
     const locator = scope.locator(selector);
@@ -189,22 +201,23 @@ const handlers = {
       case 'count': return { value: await locator.count() };
       case 'describe': return { value: await first.evaluate(compileFunction(args.source), args.arg) };
       case 'click':
-        await first.click({ button: args.button ?? 'left', clickCount: args.clickCount ?? 1, timeout });
+        await first.click({ button: args.button ?? 'left', clickCount: args.clickCount ?? 1, timeout, signal });
         return { value: null };
       case 'fill':
-        await first.fill(args.text ?? '', { timeout });
+        await first.fill(args.text ?? '', { timeout, signal });
         return { value: null };
       case 'typeSequentially':
-        await first.click({ timeout });
-        await first.pressSequentially(args.text ?? '', { timeout });
+        await first.click({ timeout, signal });
+        signal?.throwIfAborted();
+        await first.pressSequentially(args.text ?? '', { timeout, signal });
         return { value: null };
       case 'press':
-        await first.press(args.key, { timeout });
+        await first.press(args.key, { timeout, signal });
         return { value: null };
       case 'selectOption':
-        return { value: await first.selectOption(args.values ?? [], { timeout }) };
+        return { value: await first.selectOption(args.values ?? [], { timeout, signal }) };
       case 'scrollIntoView':
-        await first.scrollIntoViewIfNeeded({ timeout });
+        await first.scrollIntoViewIfNeeded({ timeout, signal });
         return { value: null };
       default:
         throw new Error(`unknown locator method ${method}`);
@@ -248,12 +261,10 @@ const FRAME_SELECTOR_SOURCE = `function (element) {
   return parts.join(' > ');
 }`;
 
-createInterface({ input: process.stdin }).on('line', (line) => {
-  if (!line.trim()) return;
-  let message;
-  try {
-    message = JSON.parse(line);
-  } catch {
+const activeCalls = new Map();
+function receiveMessage(message) {
+  if (message.command === 'cancel') {
+    activeCalls.get(message.params?.id)?.abort(new Error('Browser action was cancelled.'));
     return;
   }
   const handler = handlers[message.command];
@@ -261,10 +272,27 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     send({ id: message.id, ok: false, error: `unknown command ${message.command}` });
     return;
   }
+  if (activeCalls.has(message.id)) {
+    send({ id: message.id, ok: false, error: 'Browser operation is already active.' });
+    return;
+  }
+  const controller = message.command === 'locator' ? new AbortController() : undefined;
+  if (controller) activeCalls.set(message.id, controller);
+  const finish = (response) => {
+    if (activeCalls.get(message.id) === controller) activeCalls.delete(message.id);
+    send({ id: message.id, ...response });
+  };
   Promise.resolve()
-    .then(() => handler(message.params ?? {}))
-    .then((result) => send({ id: message.id, ok: true, result }))
-    .catch((error) => send({ id: message.id, ok: false, error: error?.message ?? String(error) }));
+    .then(() => { controller?.signal.throwIfAborted(); return handler(message.params ?? {}, controller?.signal); })
+    .then((result) => { controller?.signal.throwIfAborted(); finish({ ok: true, result }); })
+    .catch((error) => finish({ ok: false, error: error?.message ?? String(error) }));
+}
+
+createInterface({ input: process.stdin }).on('line', (line) => {
+  if (!line.trim()) return;
+  let message;
+  try { message = JSON.parse(line); } catch { return; }
+  receiveMessage(message);
 });
 
 /**

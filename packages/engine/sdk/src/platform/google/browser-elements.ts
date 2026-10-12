@@ -20,6 +20,7 @@ interface SelectionLease {
   readonly url: string | undefined;
   readonly assertCurrent: () => void;
   readonly assertOwner: () => void;
+  readonly signal: AbortSignal | undefined;
 }
 const selected = new WeakMap<GoogleBrowserElement, SelectionLease>();
 
@@ -96,7 +97,7 @@ export async function findElement(
     const element = Object.freeze({ ...candidates[index]! });
     reading.recordAction('selected an offered Google setup control');
     current();
-    selected.set(element, { browser, snapshot: before, url, assertCurrent: current, assertOwner: owner.assertCurrent });
+    selected.set(element, { browser, snapshot: before, url, assertCurrent: current, assertOwner: owner.assertCurrent, signal: owner.signal });
     return element;
   } catch { throw new GoogleReadingError(); }
 }
@@ -114,8 +115,8 @@ export async function consumeGoogleElement(browser: GoogleBrowserPort, element: 
   if (JSON.stringify(googleControlSnapshot(snapshot)) !== lease.snapshot) throw new GoogleReadingError();
   lease.assertCurrent();
   selected.delete(element);
-  if (text === undefined) await browser.click(element.ref, { assertCurrent: lease.assertCurrent });
-  else await browser.type(element.ref, text, { assertCurrent: lease.assertCurrent });
+  if (text === undefined) await browser.click(element.ref, { signal: lease.signal, assertCurrent: lease.assertCurrent });
+  else await browser.type(element.ref, text, { signal: lease.signal, assertCurrent: lease.assertCurrent });
   lease.assertOwner();
 }
 

@@ -1,8 +1,9 @@
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
-import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
+import { assertCurrentToolInvocation, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import type { Tool, ToolExecuteOptions } from '@goodvibes-jev/engine/sdk/platform/types';
 import { BrowserEngine, BrowserSessionError, StaleElementError, UntrustedEffectError } from '@goodvibes-jev/engine/sdk/platform/browser';
 import type { BrowserExtractField, BrowserTarget, UntrustedContentPort } from '@goodvibes-jev/engine/sdk/platform/browser';
 import { createAgentBrowserEngine } from '../runtime/agent-browser.ts';
+import { captureCatalogMethods, captureCatalogSnapshotGuard } from './agent-harness-catalog-ranking.ts';
 import { declareToolCapability } from './agent-tool-capability-declarations.ts';
 
 /**
@@ -230,9 +231,22 @@ export function createAgentBrowserTool(options: AgentBrowserToolOptions = {}): T
       sideEffects: ['network', 'write_fs', 'state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: Record<string, unknown>) => {
+    execute: async (rawArgs: Record<string, unknown>, executionOptions?: ToolExecuteOptions) => {
+      const optionsCurrent = executionOptions ? captureCatalogMethods(executionOptions, ['signal', 'assertCurrent', 'inputProjectionContext']) : undefined;
+      const inputCurrent = executionOptions ? captureCatalogSnapshotGuard(rawArgs) : undefined;
+      optionsCurrent?.();
+      const signal = executionOptions?.signal;
+      const invocationCurrent = () => {
+        optionsCurrent?.(); inputCurrent?.(rawArgs); existingMethodCurrent?.(); signal?.throwIfAborted();
+        assertCurrentToolInvocation(rawArgs, executionOptions);
+        optionsCurrent?.(); inputCurrent?.(rawArgs); existingMethodCurrent?.(); signal?.throwIfAborted();
+      };
+      signal?.throwIfAborted();
       const args = rawArgs as BrowserToolArgs;
       const action = readString(args.action).toLowerCase().replace(/-/g, '_');
+      const interactiveAction = action === 'click' || action === 'type' || action === 'select' || action === 'press';
+      const existingMethodCurrent = executionOptions && interactiveAction && engine ? captureCatalogMethods(engine, [action]) : undefined;
+      if (executionOptions) invocationCurrent();
       if (!action) {
         return failure(`browser needs an action. Use one of: ${BROWSER_ACTIONS.join(', ')}.`);
       }
@@ -249,6 +263,15 @@ export function createAgentBrowserTool(options: AgentBrowserToolOptions = {}): T
       };
       try {
         const browser = resolveEngine();
+        const methodCurrent = existingMethodCurrent ?? (executionOptions && interactiveAction ? captureCatalogMethods(browser, [action]) : undefined);
+        const assertCurrent = () => { methodCurrent?.(); invocationCurrent(); methodCurrent?.(); };
+        const ownership = executionOptions && interactiveAction ? { signal, assertCurrent } : undefined;
+        const interactive = async (run: () => Promise<Record<string, unknown>>) => {
+          if (ownership) assertCurrent();
+          const result = await run();
+          if (ownership) assertCurrent();
+          return output(result);
+        };
         switch (action) {
           case 'status':
             return output(await browser.status());
@@ -287,31 +310,31 @@ export function createAgentBrowserTool(options: AgentBrowserToolOptions = {}): T
           case 'snapshot':
             return output(await browser.snapshot(target, { ...(readNumber(args.limit) === undefined ? {} : { limit: readNumber(args.limit) }) }));
           case 'click':
-            return output(await browser.click(target, {
+            return await interactive(() => browser.click(target, {
               ref: requireString(args.ref, 'ref', 'click'),
               ...(args.button === 'right' || args.button === 'middle' || args.button === 'left' ? { button: args.button } : {}),
               ...(timeoutMs === undefined ? {} : { timeoutMs }),
-            }));
+            }, ownership));
           case 'type':
-            return output(await browser.type(target, {
+            return await interactive(() => browser.type(target, {
               ref: requireString(args.ref, 'ref', 'type'),
               text: typeof args.text === 'string' ? args.text : '',
               ...(args.submit === true ? { submit: true } : {}),
               ...(args.replace === false ? { replace: false } : {}),
               ...(timeoutMs === undefined ? {} : { timeoutMs }),
-            }));
+            }, ownership));
           case 'select':
-            return output(await browser.select(target, {
+            return await interactive(() => browser.select(target, {
               ref: requireString(args.ref, 'ref', 'select'),
               values: readStringArray(args.values),
               ...(timeoutMs === undefined ? {} : { timeoutMs }),
-            }));
+            }, ownership));
           case 'press':
-            return output(await browser.press(target, {
+            return await interactive(() => browser.press(target, {
               ref: requireString(args.ref, 'ref', 'press'),
               key: requireString(args.key, 'key', 'press'),
               ...(timeoutMs === undefined ? {} : { timeoutMs }),
-            }));
+            }, ownership));
           case 'scroll':
             return output(await browser.scroll(target, {
               ...(readString(args.ref) ? { ref: readString(args.ref) } : {}),
@@ -355,6 +378,7 @@ export function createAgentBrowserTool(options: AgentBrowserToolOptions = {}): T
             return failure(`Unknown browser action: ${action}. Use one of: ${BROWSER_ACTIONS.join(', ')}.`);
         }
       } catch (error) {
+        if (signal?.aborted) return failure('The browser action was cancelled.');
         if (error instanceof BrowserSessionError || error instanceof StaleElementError || error instanceof UntrustedEffectError) {
           return failure(error.message, error.fix);
         }

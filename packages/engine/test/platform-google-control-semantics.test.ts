@@ -134,3 +134,29 @@ test('an entire app-password-shaped metadata field is refused before any model r
   await expect(findElement([element('credential', 'abcd efgh ijkl mnop')], { purpose: 'Create' })).rejects.toThrow();
   expect(fake.requests).toHaveLength(0);
 });
+
+
+for (const action of ['click', 'type'] as const) test(`flow owner composes both real caller signals for a pending ${action}`, async () => {
+  installJudgmentPort(selection().port);
+  const flow = new AbortController(), actionOwner = new AbortController(), signals: AbortSignal[] = [];
+  const rig = browserRig(); let begin!: () => void;
+  const started = new Promise<void>(resolve => { begin = resolve; });
+  const wait = async (signal: AbortSignal | undefined) => {
+    if (!signal) throw new Error('Actual flow signal was dropped'); signals.push(signal); begin();
+    await new Promise<void>((_resolve, reject) => {
+      const cancel = () => { signal.removeEventListener('abort', cancel); reject(signal.reason); };
+      signal.addEventListener('abort', cancel, { once: true }); if (signal.aborted) cancel();
+    });
+  };
+  rig.browser.click = async (_ref, ownership) => { await wait(ownership?.signal); rig.clicked.push('late'); };
+  rig.browser.type = async (_ref, _text, ownership) => { await wait(ownership?.signal); rig.typed.push('late'); };
+  const owned = ownGoogleBrowser(rig.browser, { signal: flow.signal }).browser;
+  const invoke = () => action === 'click' ? owned.click('submit', { signal: actionOwner.signal, assertCurrent: () => {} })
+    : owned.type('submit', 'ordinary', { signal: actionOwner.signal, assertCurrent: () => {} });
+  const result = invoke(), handled = result.catch(error => error);
+  try {
+    await started; expect(signals[0]?.aborted).toBe(false);
+    actionOwner.abort(); expect(await handled).toBeInstanceOf(Error); expect(signals[0]?.aborted).toBe(true);
+    expect(rig.clicked).toEqual([]); expect(rig.typed).toEqual([]);
+  } finally { actionOwner.abort(); flow.abort(); await handled; }
+});

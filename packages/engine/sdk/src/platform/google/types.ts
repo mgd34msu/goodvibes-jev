@@ -181,8 +181,8 @@ export interface GoogleBrowserPort {
   snapshot(): Promise<readonly GoogleBrowserElement[]>;
   /** Fresh contents without superseding the offered snapshot identity. */
   verifySnapshot?(): Promise<readonly GoogleBrowserElement[]>;
-  click(ref: string, ownership?: { readonly assertCurrent: () => void }): Promise<void>;
-  type(ref: string, text: string, options?: { readonly submit?: boolean; readonly assertCurrent?: () => void }): Promise<void>;
+  click(ref: string, ownership?: { readonly signal?: AbortSignal | undefined; readonly assertCurrent: () => void }): Promise<void>;
+  type(ref: string, text: string, options?: { readonly submit?: boolean; readonly signal?: AbortSignal | undefined; readonly assertCurrent?: () => void }): Promise<void>;
   readText(options?: { readonly maxChars?: number }): Promise<string>;
 }
 

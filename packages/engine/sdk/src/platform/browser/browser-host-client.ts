@@ -3,6 +3,8 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { BrowserContext, Page } from 'playwright-core';
+import { types as nodeTypes } from 'node:util';
+import { captureOwnedJson } from '../gate/judgment-input.js';
 
 /**
  * Talks to the Node-hosted browser process.
@@ -15,6 +17,7 @@ import type { BrowserContext, Page } from 'playwright-core';
  */
 
 interface PendingCall {
+  readonly child: ChildProcessWithoutNullStreams;
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: Error) => void;
 }
@@ -67,7 +70,7 @@ export class BrowserHostClient {
   private child: ChildProcessWithoutNullStreams | null = null;
   private readonly pending = new Map<number, PendingCall>();
   private nextId = 1;
-  private buffer = '';
+  private startupChild: ChildProcessWithoutNullStreams | null = null;
   private ready: (() => void) | null = null;
   private notReady: (() => void) | null = null;
   private startupError: string | null = null;
@@ -89,13 +92,22 @@ export class BrowserHostClient {
         const child = spawn(runtime, [script], { stdio: ['pipe', 'pipe', 'pipe'] });
         // One reader for the lifetime of the process: the ready line and every
         // later response arrive through the same parser.
+        let buffer = '';
         child.stdout.on('data', (chunk: Buffer) => {
-          this.buffer += chunk.toString();
-          this.drain();
+          buffer += chunk.toString();
+          let index = buffer.indexOf('\n');
+          while (index >= 0) {
+            const line = buffer.slice(0, index).trim();
+            buffer = buffer.slice(index + 1);
+            if (line) this.handleLine(line, child);
+            index = buffer.indexOf('\n');
+          }
         });
         const started = await this.waitForReady(child);
         if (started) {
           this.child = child;
+          this.observeHostLifetime(child);
+          if (this.child !== child) throw new BrowserHostError('The browser host exited during startup.');
           return;
         }
         lastError = this.startupError ?? `${runtime} did not start the browser host`;
@@ -111,12 +123,14 @@ export class BrowserHostClient {
   }
 
   private waitForReady(child: ChildProcessWithoutNullStreams): Promise<boolean> {
+    this.startupChild = child;
     return new Promise((resolve) => {
       let settled = false;
       const finish = (value: boolean): void => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        if (this.startupChild === child) this.startupChild = null;
         resolve(value);
       };
       const timer = setTimeout(() => finish(false), 10_000);
@@ -127,17 +141,34 @@ export class BrowserHostClient {
     });
   }
 
-  private drain(): void {
-    let index = this.buffer.indexOf('\n');
-    while (index >= 0) {
-      const line = this.buffer.slice(0, index).trim();
-      this.buffer = this.buffer.slice(index + 1);
-      if (line) this.handleLine(line);
-      index = this.buffer.indexOf('\n');
+  private retireHost(child: ChildProcessWithoutNullStreams): void {
+    if (this.child === child) this.child = null;
+  }
+
+  private settleRetiredHost(child: ChildProcessWithoutNullStreams): void {
+    this.retireHost(child);
+    for (const [id, call] of this.pending) {
+      if (call.child !== child) continue;
+      this.pending.delete(id);
+      call.reject(new BrowserHostError('The browser host stopped before the operation completed.', 'Attach again.'));
     }
   }
 
-  private handleLine(line: string): void {
+  private terminateHost(child: ChildProcessWithoutNullStreams): void {
+    this.retireHost(child);
+    try { child.kill('SIGTERM'); } catch { /* The host may already have exited. */ }
+  }
+
+  private observeHostLifetime(child: ChildProcessWithoutNullStreams): void {
+    child.once('exit', () => this.settleRetiredHost(child));
+    child.once('close', () => this.settleRetiredHost(child));
+    child.once('error', () => this.terminateHost(child));
+    child.stdin.once('error', () => this.terminateHost(child));
+    child.stdout.once('error', () => this.terminateHost(child));
+    if (child.exitCode !== null || child.signalCode !== null) this.settleRetiredHost(child);
+  }
+
+  private handleLine(line: string, child?: ChildProcessWithoutNullStreams): void {
     let message: { id?: number; ok?: boolean; result?: unknown; error?: string };
     try {
       message = JSON.parse(line) as typeof message;
@@ -146,6 +177,7 @@ export class BrowserHostClient {
     }
     if (typeof message.id !== 'number') return;
     if (message.id === 0) {
+      if (child && child !== this.startupChild) return;
       // The host's own hello line, or its refusal to run under this runtime.
       if (message.ok === false) {
         this.startupError = message.error ?? 'the browser host refused to start';
@@ -158,22 +190,47 @@ export class BrowserHostClient {
       return;
     }
     const call = this.pending.get(message.id);
-    if (!call) return;
+    if (!call || (child && call.child !== child)) return;
     this.pending.delete(message.id);
     if (message.ok) call.resolve(message.result);
     else call.reject(new BrowserHostError(message.error ?? 'the browser host reported a failure'));
   }
 
-  async call<T>(command: string, params: Record<string, unknown> = {}): Promise<T> {
+  async call<T>(command: string, params: Record<string, unknown> = {}, options: { readonly signal?: AbortSignal | undefined } = {}): Promise<T> {
+    const signal = options.signal;
+    signal?.throwIfAborted();
     const child = this.child;
     if (!child) throw new BrowserHostError('The browser host is not running.', 'Attach again.');
     const id = this.nextId;
     this.nextId += 1;
+    let retained: PendingCall | undefined;
     const response = new Promise<unknown>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      retained = { child, resolve, reject }; this.pending.set(id, retained);
     });
-    child.stdin.write(`${JSON.stringify({ id, command, params })}\n`);
-    return await response as T;
+    let sent = false, cancelled = false;
+    const cancel = (): void => {
+      if (!sent || cancelled || this.child !== child || this.pending.get(id) !== retained) return;
+      cancelled = true;
+      try { child.stdin.write(`${JSON.stringify({ command: 'cancel', params: { id } })}\n`); }
+      catch { this.terminateHost(child); }
+    };
+    signal?.addEventListener('abort', cancel, { once: true });
+    try {
+      const request = JSON.stringify({ id, command, params });
+      signal?.throwIfAborted();
+      if (this.child !== child) throw new BrowserHostError('The browser host is no longer current.');
+      try { child.stdin.write(`${request}\n`); sent = true; }
+      catch { this.terminateHost(child); }
+      if (signal?.aborted) cancel();
+      // Cancellation receives the original operation's response only after native work settles.
+      const result = await response;
+      signal?.throwIfAborted();
+      if (this.child !== child) throw new BrowserHostError('The browser host is no longer current.');
+      return result as T;
+    } finally {
+      signal?.removeEventListener('abort', cancel);
+      if (!sent && this.pending.get(id) === retained) this.pending.delete(id);
+    }
   }
 
   /**
@@ -184,12 +241,9 @@ export class BrowserHostClient {
     const child = this.child;
     this.child = null;
     if (!child) return;
-    try {
-      child.stdin.end();
-      child.kill('SIGTERM');
-    } catch {
-      // A host that already exited needs nothing.
-    }
+    this.retireHost(child);
+    try { child.stdin.end(); } catch { /* The transport may already be closed. */ }
+    try { child.kill('SIGTERM'); } catch { /* The host may already have exited. */ }
   }
 }
 
@@ -212,13 +266,15 @@ function remoteLocator(
   index?: number,
 ): Record<string, unknown> {
   const call = async (method: string, args: Record<string, unknown> = {}): Promise<unknown> => {
+    const { signal, ...nativeArgs } = args;
+    if (signal !== undefined && !(signal instanceof AbortSignal)) throw new BrowserHostError('The browser action signal is invalid.');
     const response = await client.call<{ value: unknown }>('locator', {
       pageId,
       frameChain,
       selector,
       method,
-      args: { ...args, ...(index === undefined ? {} : { index }) },
-    });
+      args: { ...nativeArgs, ...(index === undefined ? {} : { index }) },
+    }, { signal });
     return response.value;
   };
   const locator: Record<string, unknown> = {
@@ -283,9 +339,30 @@ export function remotePage(client: BrowserHostClient, pageId: string, initialUrl
   });
 
   let frames: RemoteFrameDescriptor[] = [{ chain: [], url: initialUrl, main: true }];
-  const refreshFrames = async (): Promise<void> => {
-    const response = await client.call<{ frames: RemoteFrameDescriptor[] }>('frames', { pageId });
-    frames = response.frames;
+  const refreshFrames = async (options?: { readonly complete?: boolean }): Promise<void> => {
+    if (options?.complete !== true) {
+      const response = await client.call<{ frames: RemoteFrameDescriptor[] }>('frames', { pageId });
+      frames = response.frames;
+      return;
+    }
+    const response = captureOwnedJson(await client.call<unknown>('frames', { pageId, complete: true }), nodeTypes.isProxy);
+    if (!response || typeof response !== 'object' || Array.isArray(response)
+      || !('complete' in response) || response.complete !== true || !('url' in response) || typeof response.url !== 'string'
+      || !('frames' in response) || !Array.isArray(response.frames) || Object.keys(response).length !== 3) throw new BrowserHostError('Complete current browser frames are unavailable.');
+    const currentFrames: RemoteFrameDescriptor[] = [];
+    for (const descriptor of response.frames) {
+      if (!descriptor || typeof descriptor !== 'object' || Array.isArray(descriptor) || Object.keys(descriptor).length !== 3
+        || !('chain' in descriptor) || !Array.isArray(descriptor.chain) || descriptor.chain.some((part: unknown) => typeof part !== 'string' || !part)
+        || !('url' in descriptor) || typeof descriptor.url !== 'string' || !('main' in descriptor) || typeof descriptor.main !== 'boolean') throw new BrowserHostError('Complete current browser frames are unavailable.');
+      const chain: string[] = [];
+      for (const part of descriptor.chain) { if (typeof part !== 'string') throw new BrowserHostError('Complete current browser frames are unavailable.'); chain.push(part); }
+      if (descriptor.main !== (chain.length === 0)) throw new BrowserHostError('Complete current browser frames are unavailable.');
+      currentFrames.push({ chain, url: descriptor.url, main: descriptor.main });
+    }
+    if (currentFrames.filter(frame => frame.main).length !== 1 || new Set(currentFrames.map(frame => JSON.stringify(frame.chain))).size !== currentFrames.length
+      || currentFrames.find(frame => frame.main)?.url !== response.url) throw new BrowserHostError('Complete current browser frames are unavailable.');
+    frames = currentFrames;
+    url = response.url;
   };
   const page: Record<string, unknown> = {
     url: () => url,

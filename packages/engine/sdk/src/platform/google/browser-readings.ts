@@ -90,14 +90,16 @@ export function ownGoogleBrowser(browser: GoogleBrowserPort, options: JudgmentRe
   async function call<T>(work: () => Promise<T>): Promise<T> {
     current(); const result = await work(); current(); return result;
   }
+  const actionSignal = (signal: AbortSignal | undefined): AbortSignal | undefined =>
+    owner.signal && signal && owner.signal !== signal ? AbortSignal.any([owner.signal, signal]) : owner.signal ?? signal;
   return { assertCurrent: current, consumeObservation: () => { current(); const restriction = owner.consumeObservation(); return { assertCurrent: () => { restriction.assertCurrent(); methodsCurrent(); } }; }, browser: {
     ...(methods.captureAuthority ? { captureAuthority: () => { current(); return methods.captureAuthority!.call(browser); } } : {}),
     navigate: url => call(() => methods.navigate.call(browser, url)),
     currentUrl: () => call(() => methods.currentUrl.call(browser)),
     snapshot: () => call(() => methods.snapshot.call(browser)),
     ...(methods.verifySnapshot ? { verifySnapshot: () => call(() => methods.verifySnapshot!.call(browser)) } : {}),
-    click: (ref, ownership) => call(() => methods.click.call(browser, ref, { assertCurrent: () => { current(); ownership?.assertCurrent(); current(); } })),
-    type: (ref, text, options) => call(() => methods.type.call(browser, ref, text, { ...options, assertCurrent: () => { current(); options?.assertCurrent?.(); current(); } })),
+    click: (ref, ownership) => { const signal = actionSignal(ownership?.signal); return call(() => methods.click.call(browser, ref, { signal, assertCurrent: () => { current(); ownership?.assertCurrent(); current(); } })); },
+    type: (ref, text, options) => { const signal = actionSignal(options?.signal); return call(() => methods.type.call(browser, ref, text, { ...options, signal, assertCurrent: () => { current(); options?.assertCurrent?.(); current(); } })); },
     readText: options => call(() => methods.readText.call(browser, options)),
   } };
 }

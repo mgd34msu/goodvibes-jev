@@ -4,24 +4,34 @@ import { bindJudgmentPortAuthority, installJudgmentPort } from '@goodvibes-jev/e
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { BrowserEngine } from '../sdk/src/platform/browser/browser-engine.js';
-import { BrowserControlIdentityWork } from '../sdk/src/platform/browser/browser-control-identity.js';
+import { browserCredentialPage, BrowserControlIdentityWork } from '../sdk/src/platform/browser/browser-control-identity.js';
 import { resolveRef } from '../sdk/src/platform/browser/browser-snapshot.js';
 import type { BrowserSnapshot, CardFieldGuard } from '../sdk/src/platform/browser/browser-types.js';
 import type { BrowserSessionManager } from '../sdk/src/platform/browser/browser-sessions.js';
 
 type Page = Parameters<typeof resolveRef>[0];
+const expectedPages = new Set<string>();
+const pageAnswers = fakePort((name, question, state) => {
+  expect(name).toBe('credentialPage'); expect<unknown>(question).toEqual(browserCredentialPage.items.credentialPage.question);
+  expect(expectedPages.has(JSON.stringify(state))).toBe(true); return noulAnswer(0.01);
+});
+const pagePort = (port: JudgmentPort): JudgmentPort => ({ ...port, ask: request =>
+  request.context?.battery === browserCredentialPage.name ? pageAnswers.port.ask(request) : port.ask(request) });
+const pendingReads: (() => Promise<void>)[] = [];
 let previous: ReturnType<typeof installJudgmentPort>;
-beforeEach(() => { previous = installJudgmentPort(undefined); });
-afterEach(() => { installJudgmentPort(previous); });
+beforeEach(() => { expectedPages.clear(); previous = installJudgmentPort(undefined); });
+afterEach(async () => { try { await Promise.all(pendingReads.splice(0).map(drain => drain())); } finally { installJudgmentPort(previous); } });
 function reading(probability = 0.99) {
-  const fixture = fakePort(() => noulAnswer(probability)); installJudgmentPort(fixture.port); return fixture;
+  const fixture = fakePort(() => noulAnswer(probability)), port = pagePort(fixture.port); installJudgmentPort(port); return { ...fixture, port };
 }
 function deferred() {
   let release!: () => void, began!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   const started = new Promise<void>(resolve => { began = resolve; });
   const fixture = fakePort(() => noulAnswer(0.99));
-  const port: JudgmentPort = { ...fixture.port, async ask(request) { began(); await gate; return fixture.port.ask(request); } };
+  const raw: Promise<Awaited<ReturnType<JudgmentPort['ask']>>>[] = [];
+  const port = pagePort({ ...fixture.port, ask(request) { began(); const result = gate.then(() => fixture.port.ask(request)); raw.push(result); return result; } });
+  pendingReads.push(async () => { release(); await Promise.allSettled(raw); });
   installJudgmentPort(port); return { ...fixture, port, release, started };
 }
 function fixture(recordedName = 'Send message') {
@@ -38,7 +48,14 @@ function fixture(recordedName = 'Send message') {
     selectOption: async () => { effects.push('select'); return []; }, scrollIntoViewIfNeeded: async () => { effects.push('scroll'); },
   };
   const raw = () => [{ tag: 'button', role: 'button', name: recordedName, selector: '#send', value: null, disabled: false, checked: null, depth: 1, submits: false }];
-  const frame = { parentFrame: () => null, evaluate: async () => raw() };
+  const attributes = { type: '', autocomplete: '', name: '', id: '', placeholder: '', ariaLabel: '', label: '' };
+  const currentRows = () => raw().map(row => ({ ...row, tag: actual.tag, name: actual.name, submits: actual.submits, value: null, documentUrl: url, control: attributes }));
+  const expectedPage = () => ({ url, documents: [{ frameChain: [], url, title: 'Test', controls: currentRows().map(row => ({ documentUrl: row.documentUrl, tag: row.tag, role: row.role, name: row.name, selector: row.selector, disabled: row.disabled, checked: row.checked, depth: row.depth, submits: row.submits, control: row.control })) }] });
+  const remember = () => { expectedPages.add(JSON.stringify(expectedPage())); };
+  remember();
+  const frame = { parentFrame: () => null, evaluate: async (_fn: unknown, arg?: unknown) =>
+    arg && typeof arg === 'object' && 'identityOnly' in arg && arg.identityOnly === true
+      ? { url, title: 'Test', elements: currentRows() } : raw() };
   const page = { url: () => url, locator: () => locator, title: async () => 'Test', frames: () => [frame], mainFrame: () => frame,
     waitForLoadState: async () => {}, frameLocator: () => page } as unknown as Page;
   const snapshot: BrowserSnapshot = { sessionId: 'b1', pageId: 'p1', url, title: 'Test', snapshotId: 's1', truncated: false,
@@ -46,16 +63,16 @@ function fixture(recordedName = 'Send message') {
   const sessions = { defaultSessionId: () => 'b1', page: async () => ({ pageId: 'p1', page }) } as unknown as BrowserSessionManager;
   let approve = async () => {};
   let liveMaterial = false;
-  const guard: CardFieldGuard = { disarm: () => { liveMaterial = false; }, hasLiveMaterial: () => liveMaterial, redact: (_s: string, _p: string, text: string) => text };
+  const guard: CardFieldGuard = { disarm: () => { liveMaterial = false; }, hasLiveMaterial: () => liveMaterial, redact: (_s: string, _p: string, text: string) => liveMaterial ? text.replaceAll('private-cvv-fixture', '[withheld]') : text };
   const engine = new BrowserEngine(sessions, { screenshotDirectory: '/tmp', cardFieldGuard: guard, untrusted: {
     rule: 'test', originOf: () => 'example.test', recordIngest: () => {}, label: input => ({ trust: 'untrusted', surface: 'web-page', origin: input.origin, retrievedAt: 'synthetic', text: input.text, truncated: input.truncated === true, rule: 'test' }),
     evaluateOutwardEffect: async () => { await approve(); return { allowed: true, reason: null, fix: null, untrustedOrigins: [] }; },
   } });
   return { page, snapshot, engine, effects, locator,
-    setName: (name: string) => { actual = { ...actual, name }; },
+    setName: (name: string) => { actual = { ...actual, name }; remember(); },
     malform: () => { actual = { tag: actual.tag, name: actual.name } as typeof actual; },
-    setTag: (tag: string) => { actual = { ...actual, tag }; },
-    navigate: () => { url += 'other'; }, setSubmit: () => { actual = { ...actual, submits: true }; },
+    setTag: (tag: string) => { actual = { ...actual, tag }; remember(); },
+    navigate: () => { url += 'other'; remember(); }, setSubmit: () => { actual = { ...actual, submits: true }; remember(); },
     onRead: (work: () => void) => { beforeRead = work; }, onCount: (work: () => void) => { beforeCount = work; },
     arm: () => { liveMaterial = true; },
     onApproval: (work: () => Promise<void>) => { approve = work; },
@@ -150,8 +167,8 @@ describe('BrowserEngine identity effect boundaries', () => {
     await expect(result).rejects.toThrow();
     expect(f.effects).toEqual([]); expect(JSON.stringify(model.requests)).not.toContain('private-secret-fixture');
   });
-  test.each(Object.keys(actions) as (keyof typeof actions)[])('exact identity reaches the %s consumer without a reader', async action => {
-    const f = fixture(); await f.engine.snapshot({});
+  test.each(Object.keys(actions) as (keyof typeof actions)[])('exact identity reaches the %s consumer without an identity reading', async action => {
+    const f = fixture(); await f.engine.snapshot({}); installJudgmentPort(pagePort(fakePort(() => { throw new Error('No identity reading supplied'); }).port));
     if (action === 'secret') f.arm();
     const result = await actions[action](f.engine); expect(result).toBeDefined();
     expect(f.effects.length).toBe(action === 'extract' ? 0 : 1);
@@ -172,7 +189,7 @@ describe('BrowserEngine identity effect boundaries', () => {
   test('changed labels cannot send copied live payment material to judgment', async () => {
     const f = fixture(); await f.engine.snapshot({}); f.arm(); f.setName('Submit private-cvv-fixture'); const model = reading();
     await expect(f.engine.click({}, { ref: 'e1' })).rejects.toThrow(); expect(model.requests).toHaveLength(0); expect(f.effects).toEqual([]);
-    const exact = fixture(); await exact.engine.snapshot({}); exact.arm();
+    const exact = fixture(); await exact.engine.snapshot({}); exact.arm(); reading();
     await exact.engine.type({}, { ref: 'e1', text: 'authorized local value' }); expect(exact.effects).toEqual(['fill']);
   });
   test('settled paraphrase reaches an actual engine effect', async () => {
@@ -180,7 +197,7 @@ describe('BrowserEngine identity effect boundaries', () => {
     await f.engine.click({}, { ref: 'e1' }); expect(f.effects).toEqual(['click']);
   });
   test('changed DOM after outward approval never submits', async () => {
-    const f = fixture(); await f.engine.snapshot({}); f.onApproval(async () => { f.setName('Delete account'); });
+    const f = fixture(); await f.engine.snapshot({}); reading(); f.onApproval(async () => { f.setName('Delete account'); });
     await expect(f.engine.press({}, { ref: 'e1', key: 'Enter' })).rejects.toThrow(); expect(f.effects).toEqual([]);
   });
   test.each(['caller', 'source', 'installation', 'configuration'] as const)('%s cancellation has no late effects', async kind => {

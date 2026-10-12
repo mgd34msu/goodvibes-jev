@@ -6,7 +6,7 @@ import type { Locator, Page } from 'playwright-core';
 import { BrowserSessionError, BrowserSessionManager, hasDisplay } from './browser-sessions.js';
 import type { BrowserAttachOptions, BrowserLaunchOptions } from './browser-sessions.js';
 import { describeProvisionWork } from './browser-provisioning.js';
-import { resolveRef, SnapshotStore, StaleElementError, takeSnapshot, type BrowserControlAdmission } from './browser-snapshot.js';
+import { captureCredentialPage, retainBrowserMethods, resolveRef, SnapshotStore, StaleElementError, takeSnapshot, type BrowserControlAdmission } from './browser-snapshot.js';
 import { assertCaptureAllowed, fillSecretsIntoPage } from './browser-secret-fill.js';
 import type {
   BrowserProvisionReport,
@@ -22,7 +22,6 @@ import type {
 // card-field guard together took this file past the 800-line cap. Re-exported
 // below so the platform/browser barrel's surface is unchanged.
 import {
-  credentialPageRefusal,
   DEFAULT_ACTION_TIMEOUT_MS,
   DEFAULT_NAVIGATION_TIMEOUT_MS,
   DEFAULT_TEXT_LIMIT,
@@ -386,25 +385,39 @@ export class BrowserEngine {
     return this.snapshots.get(sessionId, pageId);
   }
 
-  /**
-   * Refuses to drive a sign-in page. Called before every interactive action
-   * (click, type, press, select), never before a read-only one, since
-   * reading is exactly what lets the caller notice a sign-in page and hand
-   * the URL back instead of clicking through it. See `credentialPageRefusal`
-   * in browser-engine-contract.ts for what counts as a sign-in page and why:
-   * this method is only the plumbing that gets it a URL and the last snapshot.
-   */
-  private refuseCredentialInteraction(sessionId: string, pageId: string, page: Page, action: string): void {
-    const refusal = credentialPageRefusal(page.url(), this.currentSnapshot(sessionId, pageId)?.elements ?? [], action);
-    if (refusal) throw new BrowserSessionError(refusal.message, refusal.fix);
+  /** The original action owns one complete page reading and all fresh checks. */
+  private async credentialInteraction(page: Page, sessionId: string, pageId: string, work: BrowserControlIdentityWork, current: () => void, action: string) {
+    try {
+      const guard = this.cardGuard;
+      const guardMethods = guard ? retainBrowserMethods(guard, ['redact', 'hasLiveMaterial']) : undefined;
+      const redact = guardMethods?.value('redact');
+      if (guard && typeof redact !== 'function') throw new Error('Browser payment containment is unavailable.');
+      const assertMetadata = (text: string) => {
+        current(); guardMethods?.assertCurrent();
+        if (guard !== this.cardGuard || (guard && typeof redact === 'function' && Reflect.apply(redact, guard, [sessionId, pageId, text]) !== text)) throw new BrowserSessionError('Browser page evidence contains live payment material.', 'Finish the authorized payment flow without copying its material into page labels.');
+        guardMethods?.assertCurrent(); current();
+      };
+      const observation = await captureCredentialPage(page, work, current, assertMetadata); current();
+      if (observation.password) throw new BrowserSessionError('This page contains a native password input, so automated credential interaction is refused.', 'Only the account owner can complete authentication.');
+      const verdict = await work.credentialPage(observation.state, observation.assertCurrent); current();
+      if (verdict === 'yes') throw new BrowserSessionError(`This page looks like a sign-in page (${observation.url}), so the browser layer will not ${action} on it.`, `Give the owner this URL to open in their own browser and sign in there: ${observation.url}`);
+      if (verdict !== 'no') throw new BrowserSessionError('The current browser page purpose could not be established.', 'Read the current page before trying an interactive action.');
+      return observation.assertCurrent;
+    } catch (error) {
+      if (error instanceof BrowserSessionError || error instanceof StaleElementError) throw error;
+      work.assertCurrent();
+      throw new BrowserSessionError('The current browser page could not be safely established.', 'Read the current page before trying an interactive action.');
+    }
   }
 
   /** Bind every ref consumer to one stored snapshot and one original source. */
   private refScope(sessionId: string, pageId: string, page: Page, work: BrowserControlIdentityWork, ownership?: BrowserActionLifetime) {
     const snapshot = this.currentSnapshot(sessionId, pageId), expected = ownership?.snapshotId;
+    const pageMethods = retainBrowserMethods(page, ['url']);
     const current = () => {
-      work.assertCurrent();
-      if (snapshot !== this.currentSnapshot(sessionId, pageId) || !snapshot || page.url() !== snapshot.url
+      pageMethods.assertCurrent(); work.assertCurrent(); pageMethods.assertCurrent();
+      const currentUrl = page.url(); pageMethods.assertCurrent(); work.assertCurrent(); pageMethods.assertCurrent();
+      if (snapshot !== this.currentSnapshot(sessionId, pageId) || !snapshot || currentUrl !== snapshot.url
         || (expected !== undefined && snapshot.snapshotId !== expected)) {
         throw new StaleElementError('The selected browser snapshot is no longer current.', 'Read the page again before acting.');
       }
@@ -425,7 +438,7 @@ export class BrowserEngine {
     const scope = this.refScope(sessionId, pageId, page, work, ownership);
     const current = scope.current;
     current();
-    this.refuseCredentialInteraction(sessionId, pageId, page, 'click');
+    const credentialCurrent = await this.credentialInteraction(page, sessionId, pageId, work, current, 'click'); current();
     const { locator, element, revalidate } = await scope.resolve(args.ref);
     current();
     if (element.submits) {
@@ -447,14 +460,14 @@ export class BrowserEngine {
     }
     current();
     await revalidate(); current();
-    this.refuseCredentialInteraction(sessionId, pageId, page, 'click');
+    await credentialCurrent(); current();
     const urlBefore = page.url();
-    await locator.click({
-      button: args.button ?? 'left',
+    await work.action(signal => locator.click({
+      signal, button: args.button ?? 'left',
       clickCount: args.clickCount ?? 1,
       timeout: args.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS,
-    });
-    await page.waitForLoadState('domcontentloaded', { timeout: DEFAULT_ACTION_TIMEOUT_MS }).catch(() => undefined);
+    }));
+    await work.wait(() => page.waitForLoadState('domcontentloaded', { timeout: DEFAULT_ACTION_TIMEOUT_MS }).catch(() => undefined));
     this.snapshots.clear(sessionId, pageId);
     const navigated = page.url() !== urlBefore;
     // A navigating click replaces the DOM exactly as an explicit navigate does,
@@ -493,7 +506,7 @@ export class BrowserEngine {
     const scope = this.refScope(sessionId, pageId, page, work, ownership);
     const current = scope.current;
     current();
-    this.refuseCredentialInteraction(sessionId, pageId, page, 'type');
+    const credentialCurrent = await this.credentialInteraction(page, sessionId, pageId, work, current, 'type'); current();
     const { locator, element, revalidate } = await scope.resolve(args.ref);
     current();
     const timeout = args.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
@@ -513,22 +526,23 @@ export class BrowserEngine {
     }
     current();
     await revalidate(); current();
-    this.refuseCredentialInteraction(sessionId, pageId, page, 'type');
+    await credentialCurrent(); current();
     if (args.replace === false) {
-      await locator.click({ timeout });
+      await work.action(signal => locator.click({ timeout, signal }));
       current();
       await revalidate(); current();
-      await locator.pressSequentially(args.text, { timeout });
+      await credentialCurrent(); current();
+      await work.action(signal => locator.pressSequentially(args.text, { timeout, signal }));
     } else {
-      await locator.fill(args.text, { timeout });
+      await work.action(signal => locator.fill(args.text, { timeout, signal }));
     }
     let submitted = false;
     if (args.submit === true) {
       current();
       await revalidate(); current();
-      this.refuseCredentialInteraction(sessionId, pageId, page, 'type');
-      await locator.press('Enter', { timeout });
-      await page.waitForLoadState('domcontentloaded', { timeout }).catch(() => undefined);
+      await credentialCurrent(); current();
+      await work.action(signal => locator.press('Enter', { timeout, signal }));
+      await work.wait(() => page.waitForLoadState('domcontentloaded', { timeout }).catch(() => undefined));
       submitted = true;
     }
     if (submitted) this.snapshots.clear(sessionId, pageId);
@@ -593,11 +607,11 @@ export class BrowserEngine {
     const work = new BrowserControlIdentityWork(ownership);
     const { sessionId, pageId, page } = await work.wait(() => this.target(target));
     const scope = this.refScope(sessionId, pageId, page, work, ownership);
-    this.refuseCredentialInteraction(sessionId, pageId, page, 'select');
+    const credentialCurrent = await this.credentialInteraction(page, sessionId, pageId, work, scope.current, 'select'); scope.current();
     const { locator, element, revalidate, assertCurrent } = await scope.resolve(args.ref);
     await revalidate(); assertCurrent();
-    this.refuseCredentialInteraction(sessionId, pageId, page, 'select');
-    const selected = await locator.selectOption([...args.values], { timeout: args.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS });
+    await credentialCurrent(); assertCurrent();
+    const selected = await work.action(signal => locator.selectOption([...args.values], { timeout: args.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS, signal }));
     return { sessionId, pageId, selectedIn: { ref: args.ref, role: element.role, name: element.name }, selected };
   }
 
@@ -610,7 +624,7 @@ export class BrowserEngine {
     const work = new BrowserControlIdentityWork(ownership);
     const { sessionId, pageId, page } = await work.wait(() => this.target(target));
     const scope = this.refScope(sessionId, pageId, page, work, ownership);
-    this.refuseCredentialInteraction(sessionId, pageId, page, 'press');
+    const credentialCurrent = await this.credentialInteraction(page, sessionId, pageId, work, scope.current, 'press'); scope.current();
     const { locator, element, revalidate, assertCurrent } = await scope.resolve(args.ref);
     if (args.key === 'Enter' || args.key === 'NumpadEnter') {
       const formFields = await work.wait(() => BrowserEngine.enclosingFormFields(locator));
@@ -622,8 +636,8 @@ export class BrowserEngine {
       ));
     }
     await revalidate(); assertCurrent();
-    this.refuseCredentialInteraction(sessionId, pageId, page, 'press');
-    await locator.press(args.key, { timeout: args.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS });
+    await credentialCurrent(); assertCurrent();
+    await work.action(signal => locator.press(args.key, { timeout: args.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS, signal }));
     this.snapshots.clear(sessionId, pageId);
     return { sessionId, pageId, pressed: args.key, on: { ref: args.ref, role: element.role, name: element.name }, url: page.url() };
   }

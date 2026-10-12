@@ -118,7 +118,7 @@ export async function fillSecretsIntoPage(request: BatchSecretFillRequest): Prom
     try {
       await item.revalidate(); item.assertCurrent();
       if (!request.guard?.hasLiveMaterial(request.snapshot!.sessionId, request.snapshot!.pageId)) throw new Error('Secret redaction is no longer active.');
-      await typeOrRefuse(item.locator, item.value, request.timeoutMs, item.element);
+      await typeOrRefuse(item.locator, item.value, request.timeoutMs, item.element, work);
     } catch (error) {
       void error;
       return { ok: false, filled, failedRef: item.ref };
@@ -133,9 +133,10 @@ async function typeOrRefuse(
   value: string,
   timeout: number,
   element: BrowserElementRef,
+  work: BrowserControlIdentityWork,
 ): Promise<void> {
   try {
-    await locator.fill(value, { timeout });
+    await work.action(signal => locator.fill(value, { timeout, signal }));
   } catch (error) {
     // Discarded rather than wrapped. The failing call had the value in its
     // arguments, and Playwright's message includes the string it tried to type.

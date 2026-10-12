@@ -129,8 +129,9 @@ const KNOWN_IDENTITY_PROVIDER_HOSTS: readonly RegExp[] = [
 const SIGN_IN_ROUTE_PATTERN = /(sign[\s_-]?in|log[\s_-]?in|authorize|oauth)/i;
 
 /**
- * Whether the current page is a credential-entry page this engine should
- * refuse to drive.
+ * Legacy synchronous URL helper. Runtime browser actions use the registered
+ * credential-page reading, never this compatibility predicate.
+ * @deprecated Use the current native page observation in BrowserEngine.
  *
  * Two independent signals, either sufficient on its own:
  *   - a password-type field is present right now, which works for any site
@@ -153,28 +154,6 @@ export function looksLikeCredentialPage(url: string, hasPasswordField: boolean):
   }
   if (!KNOWN_IDENTITY_PROVIDER_HOSTS.some((pattern) => pattern.test(parsed.hostname))) return false;
   return SIGN_IN_ROUTE_PATTERN.test(parsed.pathname) || SIGN_IN_ROUTE_PATTERN.test(parsed.search);
-}
-
-/**
- * The message/fix pair for refusing an interactive action on a credential
- * page, or null when the page is not one.
- *
- * `elements` is whatever the last snapshot recorded, a plain `{ role, name }`
- * shape rather than the full `BrowserElementRef`, so this stays a pure
- * function with no dependency on the snapshot module. The engine is the only
- * caller, and it is the one place that knows whether a snapshot exists at all.
- */
-export function credentialPageRefusal(
-  url: string,
-  elements: readonly { readonly role: string; readonly name: string }[],
-  action: string,
-): { readonly message: string; readonly fix: string } | null {
-  const hasPasswordField = elements.some((element) => element.role.toLowerCase() === 'textbox' && /password/i.test(element.name));
-  if (!looksLikeCredentialPage(url, hasPasswordField)) return null;
-  return {
-    message: `This page looks like a sign-in page (${url}), so the browser layer will not ${action} on it. Automated sign-ins are not supported here, only the account owner can complete one.`,
-    fix: `Give the owner this URL to open in their own browser and sign in there: ${url}`,
-  };
 }
 
 /**

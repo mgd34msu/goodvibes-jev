@@ -1,5 +1,5 @@
 import { liveControlDescriptor } from './_helpers/browser-control-descriptor.js';
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 // `playwright-core` is an optional dependency hoisted only under
@@ -30,9 +30,22 @@ import type {
   UntrustedContentEnvelope,
   UntrustedContentPort,
 } from '../sdk/src/platform/browser/browser-types.js';
-import { useSecurityReadings } from './helpers/security-readings.ts';
+import { securityPort } from './helpers/security-readings.ts';
 
-useSecurityReadings();
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { browserCredentialPage } from '../sdk/src/platform/browser/browser-control-identity.js';
+let previousPort: ReturnType<typeof installJudgmentPort>;
+const attributes = { type: '', autocomplete: '', name: '', id: '', placeholder: '', ariaLabel: '', label: '' };
+const credentialPageState = () => ({ url: PAGE_URL, documents: [{ frameChain: [], url: PAGE_URL, title: 'Quarterly Report', controls: ELEMENTS.map(({ value: _value, ...row }) => ({ ...row, documentUrl: PAGE_URL, control: attributes })) }] });
+beforeEach(() => {
+  const security = securityPort(), pages = fakePort((name, question, state) => {
+    expect(name).toBe('credentialPage'); expect<unknown>(question).toEqual(browserCredentialPage.items.credentialPage.question);
+    expect<unknown>(state).toEqual(credentialPageState()); return noulAnswer(0.01);
+  });
+  previousPort = installJudgmentPort({ ...security.port, ask: request => request.context?.battery === browserCredentialPage.name ? pages.port.ask(request) : security.port.ask(request) });
+});
+afterEach(async () => { try { await engine?.shutdown(); } finally { installJudgmentPort(previousPort); } });
 
 // BrowserEngine.screenshot() does a real mkdirSync(screenshotDirectory, ...),
 // no test here currently calls .screenshot(), so this is not an active leak,
@@ -173,7 +186,9 @@ function fakePage(): Page {
   const mainFrame = {
     url: () => PAGE_URL,
     parentFrame: () => null,
-    evaluate: async (_fn: unknown, arg?: unknown) => (typeof arg === 'number' ? ELEMENTS : ATTACK_TEXT),
+    evaluate: async (_fn: unknown, arg?: unknown) => (typeof arg === 'number' ? ELEMENTS
+      : arg && typeof arg === 'object' && 'identityOnly' in arg && arg.identityOnly === true
+        ? { url: PAGE_URL, title: 'Quarterly Report', elements: ELEMENTS.map(row => ({ ...row, value: null, documentUrl: PAGE_URL, control: attributes })) } : ATTACK_TEXT),
   };
   return {
     url: () => PAGE_URL,
