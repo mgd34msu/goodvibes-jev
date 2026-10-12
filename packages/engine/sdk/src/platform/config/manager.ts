@@ -55,6 +55,52 @@ export type { PreparedConfigMutation, PreparedConfigMutationTransition, Prepared
   PreparedConfigMutationFacts, PreparedConfigMutationDestination, PreparedConfigMutationTransitionFacts,
   PreparedConfigMutationReceipt } from './prepared-mutation.js';
 
+// These are the existing module-acquisition primitives, not a callable authenticity test.
+const scalarGlobal = globalThis;
+const scalarObject = Object;
+const scalarReflect = Reflect;
+const scalarOwnDescriptor = Object.getOwnPropertyDescriptor;
+const scalarPrototype = Object.getPrototypeOf;
+const scalarOwnKeys = Reflect.ownKeys;
+const scalarHasOwn = Object.hasOwn;
+const scalarIs = Object.is;
+const scalarSafeInteger = Number.isSafeInteger;
+const scalarProxy = nativeTypes.isProxy;
+const scalarStringPrototype = String.prototype;
+const scalarSplit = String.prototype.split;
+const scalarSplitKey: typeof Symbol.split = Symbol.split;
+const scalarFunctionPrototype = Function.prototype;
+const scalarFunctionCall = Function.prototype.call;
+
+type SelectedScalar = string | number | boolean | null | undefined;
+type SelectedScalarSlots<T> = { readonly __proto__?: null; [index: number]: T | undefined };
+export interface ConfigScalarSelection { readonly key: string; readonly value: unknown; }
+/** False requests the caller's original per-key path; successful checks never survive a boundary. */
+export type ConfigSelectedScalarGuard = (assertBoundary: () => void) => boolean;
+let selectedScalarProducer: (receiver: unknown, selections: readonly ConfigScalarSelection[]) => ConfigSelectedScalarGuard | undefined;
+
+/** Native, local selected-data observation. Caller values are compared with the actual owner. */
+export function captureConfigSelectedScalars(receiver: unknown, selections: readonly ConfigScalarSelection[]): ConfigSelectedScalarGuard | undefined {
+  return selectedScalarProducer(receiver, selections);
+}
+function scalarData(owner: object, key: PropertyKey): PropertyDescriptor | undefined {
+  const descriptor = scalarOwnDescriptor(owner, key);
+  return descriptor && scalarHasOwn(descriptor, 'value') ? descriptor : undefined;
+}
+function scalarReflectionCurrent(): boolean {
+  return scalarData(scalarGlobal, 'Object')?.value === scalarObject
+    && scalarData(scalarGlobal, 'Reflect')?.value === scalarReflect
+    && scalarData(scalarObject, 'getOwnPropertyDescriptor')?.value === scalarOwnDescriptor
+    && scalarData(scalarObject, 'getPrototypeOf')?.value === scalarPrototype
+    && scalarData(scalarReflect, 'ownKeys')?.value === scalarOwnKeys
+    && scalarData(scalarObject, 'hasOwn')?.value === scalarHasOwn
+    && scalarData(scalarObject, 'is')?.value === scalarIs
+    && scalarData(nativeTypes, 'isProxy')?.value === scalarProxy
+    && scalarData(scalarStringPrototype, 'split')?.value === scalarSplit;
+}
+function scalarValue(value: unknown): value is SelectedScalar {
+  return value === null || value === undefined || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+}
 /** Typed values for a single daemon-settings update; scope is checked at runtime. */
 export type DaemonConfigPatch = { readonly [K in ConfigKey]?: ConfigValue<K> };
 
@@ -157,6 +203,129 @@ export class ConfigManager {
     ['getHomeDirectory', ConfigManager.prototype.getHomeDirectory],
     ['retainConfiguredWorkspace', ConfigManager.prototype.retainConfiguredWorkspace],
   ] as const;
+  readonly #selectedScalarWorkspace: { readonly workingDirectory: string | null; readonly configDir: string; readonly projectConfigPath: string | null; readonly homeDirectory: string | null };
+  static {
+    const get = ConfigManager.prototype.get;
+    const getAll = ConfigManager.prototype.getAll;
+    const resolvePath = ConfigManager.prototype.resolvePath;
+    const revision = ConfigManager.prototype.getConfigurationIncarnation;
+    const method = (receiver: object, key: string, original: unknown): boolean => {
+      let owner: object | null = receiver;
+      for (let depth = 0; owner && depth < 64; depth++) {
+        if (scalarProxy(owner)) return false;
+        const slot = scalarOwnDescriptor(owner, key);
+        if (slot) return scalarHasOwn(slot, 'value') && slot.value === original;
+        owner = scalarPrototype(owner);
+      }
+      return false;
+    };
+    const getCallCurrent = (): boolean => {
+      if (scalarPrototype(get) !== scalarFunctionPrototype) return false;
+      const own = scalarOwnDescriptor(get, 'call');
+      return (!own || scalarHasOwn(own, 'value') && own.value === scalarFunctionCall)
+        && scalarData(scalarFunctionPrototype, 'call')?.value === scalarFunctionCall;
+    };
+    const separatorCurrent = (): boolean => {
+      let owner: object | null = scalarStringPrototype;
+      for (let depth = 0; owner && depth < 64; depth++) {
+        if (scalarProxy(owner)) return false;
+        const slot = scalarOwnDescriptor(owner, scalarSplitKey);
+        if (slot) return scalarHasOwn(slot, 'value') && slot.value === undefined;
+        owner = scalarPrototype(owner);
+      }
+      return owner === null;
+    };
+    selectedScalarProducer = (receiver, selections) => {
+      // No receiver-supplied slot, method, getter or callback precedes this brand check.
+      if (receiver === null || typeof receiver !== 'object' || !(#workspaceOwner in receiver)) return undefined;
+      const owner = receiver.#workspaceOwner;
+      const workspace = receiver.#selectedScalarWorkspace;
+      if (!workspace) return undefined;
+      const nativeMode = (): boolean => scalarReflectionCurrent() && getCallCurrent() && separatorCurrent()
+        && method(receiver, 'get', get) && method(receiver, 'getAll', getAll)
+        && method(receiver, 'resolvePath', resolvePath) && method(receiver, 'getConfigurationIncarnation', revision)
+        && scalarData(receiver, 'profileFallback')?.value === null
+        && scalarData(receiver, 'workingDirectory')?.value === workspace.workingDirectory
+        && scalarData(receiver, 'configDir')?.value === workspace.configDir
+        && scalarData(receiver, 'projectConfigPath')?.value === workspace.projectConfigPath
+        && scalarData(receiver, 'homeDirectory')?.value === workspace.homeDirectory;
+      if (!nativeMode() || selections === null || typeof selections !== 'object' || scalarProxy(selections)) return undefined;
+      const length = scalarData(selections, 'length')?.value;
+      if (typeof length !== 'number' || !scalarSafeInteger(length) || length < 1) return undefined;
+      const keys = scalarOwnKeys(selections);
+      if (keys.length !== length + 1) return undefined;
+      const paths: SelectedScalarSlots<{ readonly parts: SelectedScalarSlots<string>; readonly count: number; readonly value: SelectedScalar }> = { __proto__: null };
+      for (let index = 0; index < length; index++) {
+        const value: unknown = scalarData(selections, index)?.value;
+        if (value === null || typeof value !== 'object' || scalarProxy(value)) return undefined;
+        const fields = scalarOwnKeys(value);
+        const key: unknown = scalarData(value, 'key')?.value;
+        const expected: unknown = scalarData(value, 'value')?.value;
+        if (fields.length !== 2 || typeof key !== 'string' || !scalarValue(expected)
+          || !scalarData(value, 'value')) return undefined;
+        const parts: SelectedScalarSlots<string> = { __proto__: null };
+        let part = '', count = 0;
+        for (let characterIndex = 0; characterIndex < key.length; characterIndex++) {
+          const character = key[characterIndex];
+          if (character === '.') { parts[count++] = part; part = ''; } else part += character;
+        }
+        parts[count++] = part;
+        paths[index] = { parts, count, value: expected };
+      }
+      const revisionSlot = scalarData(receiver, 'permissionIncarnation');
+      if (!revisionSlot) return undefined;
+      const initialRevision: unknown = revisionSlot.value;
+      const matches = (): boolean | undefined => {
+        if (receiver.#workspaceOwner !== owner || !nativeMode()) return undefined;
+        const config = scalarData(receiver, 'config');
+        if (!config) return undefined;
+        if (!scalarIs(scalarData(receiver, 'permissionIncarnation')?.value, initialRevision)) return false;
+        for (let index = 0; index < length; index++) {
+          const entry = paths[index];
+          if (!entry) return undefined;
+          let value: unknown = config.value;
+          for (let part = 0; part < entry.count; part++) {
+            if (value === null || typeof value !== 'object' || scalarProxy(value)) return undefined;
+            const key = entry.parts[part];
+            if (key === undefined) return undefined;
+            let owner: object | null = value, slot: PropertyDescriptor | undefined;
+            for (let depth = 0; owner && depth < 64; depth++) {
+              if (scalarProxy(owner)) return undefined;
+              slot = scalarOwnDescriptor(owner, key);
+              if (slot) break;
+              owner = scalarPrototype(owner);
+            }
+            if (!slot) {
+              if (owner !== null || part !== entry.count - 1) return undefined;
+              value = undefined;
+            } else {
+              if (!scalarHasOwn(slot, 'value')) return undefined;
+              value = slot.value;
+            }
+          }
+          if (!scalarValue(value)) return undefined;
+          if (!scalarIs(value, entry.value)) return false;
+        }
+        return true;
+      };
+      if (matches() !== true) return undefined;
+      return assertBoundary => {
+        // Unsupported mode is detected before any actual caller boundary is consumed.
+        if (!nativeMode()) return false;
+        if (typeof assertBoundary !== 'function' || scalarProxy(assertBoundary)) throw new JudgmentAuthorityRetiredError();
+        const boundary = (): void => {
+          const returned: unknown = assertBoundary();
+          if (returned !== undefined) throw new JudgmentAuthorityRetiredError();
+        };
+        boundary();
+        if (matches() !== true) throw new JudgmentAuthorityRetiredError();
+        boundary();
+        // The exit guard can itself change selected data or the native source owner.
+        if (matches() !== true) throw new JudgmentAuthorityRetiredError();
+        return true;
+      };
+    };
+  }
   private profilePostalReader: ProfilePostalReader | null = null;
   private profilePostalEpoch = 0;
   private readonly readOnly: boolean;
@@ -222,6 +391,7 @@ export class ConfigManager {
     this.projectConfigPath = this.workingDirectory
       ? resolveSurfaceDirectory(this.workingDirectory, surfaceRoot!, 'settings.json')
       : null;
+    this.#selectedScalarWorkspace = { workingDirectory, configDir: base, projectConfigPath: this.projectConfigPath, homeDirectory };
     this.#workspaceOwner = Object.freeze({ workingDirectory, configDir: base,
       projectConfigPath: this.projectConfigPath, homeDirectory });
     this.#workspaceSlots = Object.keys(this.#workspaceOwner).map(key => {

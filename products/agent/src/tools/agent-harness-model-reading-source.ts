@@ -1,3 +1,5 @@
+import { captureConfigSelectedScalars, type ConfigScalarSelection } from '@goodvibes-jev/engine/sdk/platform/config';
+import { JudgmentAuthorityRetiredError } from '@goodvibes-jev/engine/errors';
 import { captureVoiceWakeReadSource } from '@goodvibes-jev/engine/sdk/platform/runtime/voice-setup';
 import { dirname } from 'node:path';
 import { VoiceProviderRegistry, captureVoiceProviderReadSource } from '@goodvibes-jev/engine/sdk/platform/voice';
@@ -17,6 +19,47 @@ import type { CommandContext } from '../input/command-registry.ts';
 import { captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
 import type { ProviderApiLike, ArtifactListLike } from './agent-harness-model-routing-types.ts';
 import { contextWindowFor, modelRegistryKey } from './agent-harness-model-catalog.ts';
+
+const scalarBindingGlobal = globalThis;
+const scalarBindingObject = Object;
+const scalarBindingReflect = Reflect;
+const scalarBindingArray = Array;
+const scalarBindingArrayPrototype = Array.prototype;
+const scalarBindingObjectPrototype = Object.prototype;
+const scalarBindingFunctionPrototype = Function.prototype;
+const scalarBindingFunctionCall = Function.prototype.call;
+const scalarBindingIteratorKey: typeof Symbol.iterator = Symbol.iterator;
+const scalarBindingIteratorPrototype = Object.getPrototypeOf([][scalarBindingIteratorKey]());
+const scalarBindingNext = scalarBindingIteratorPrototype.next;
+const scalarBindingDescriptor = Object.getOwnPropertyDescriptor;
+const scalarBindingPrototype = Object.getPrototypeOf;
+const scalarBindingIs = Object.is;
+const scalarBindingHasOwn = Object.hasOwn;
+const scalarBindingIterator = Array.prototype[scalarBindingIteratorKey];
+const scalarBindingPush = Array.prototype.push;
+const scalarBindingDefine = Object.defineProperty;
+function scalarBindingCurrent(): boolean {
+  const data = (owner: object, key: PropertyKey, value: unknown): boolean => {
+    const descriptor = scalarBindingDescriptor(owner, key);
+    return descriptor !== undefined && scalarBindingHasOwn(descriptor, 'value') && descriptor.value === value;
+  };
+  return data(scalarBindingGlobal, 'Object', scalarBindingObject)
+    && data(scalarBindingGlobal, 'Reflect', scalarBindingReflect) && data(scalarBindingGlobal, 'Array', scalarBindingArray)
+    && data(scalarBindingObject, 'getOwnPropertyDescriptor', scalarBindingDescriptor)
+    && data(scalarBindingObject, 'getPrototypeOf', scalarBindingPrototype) && data(scalarBindingObject, 'is', scalarBindingIs)
+    && data(scalarBindingObject, 'hasOwn', scalarBindingHasOwn)
+    && data(scalarBindingArrayPrototype, scalarBindingIteratorKey, scalarBindingIterator) && data(scalarBindingArrayPrototype, 'push', scalarBindingPush)
+    && data(scalarBindingObject, 'defineProperty', scalarBindingDefine)
+    && data(scalarBindingFunctionPrototype, 'call', scalarBindingFunctionCall)
+    && data(scalarBindingIteratorPrototype, 'next', scalarBindingNext)
+    && scalarBindingPrototype(scalarBindingObjectPrototype) === null
+    && scalarBindingDescriptor(scalarBindingObjectPrototype, 'get') === undefined
+    && scalarBindingDescriptor(scalarBindingObjectPrototype, 'set') === undefined
+    && scalarBindingDescriptor(scalarBindingObjectPrototype, 'value') === undefined
+    && scalarBindingDescriptor(scalarBindingObjectPrototype, 'writable') === undefined
+    && scalarBindingDescriptor(scalarBindingObjectPrototype, 'enumerable') === undefined
+    && scalarBindingDescriptor(scalarBindingObjectPrototype, 'configurable') === undefined;
+}
 
 const consumeNativePromise = Promise.prototype.then;
 const originalCopyGet = WeakMap.prototype.get;
@@ -1051,11 +1094,33 @@ export function captureCatalogNativeFacts(context: unknown, family: 'media' | 'p
     assertBindings(); const before: unknown = revision.call(manager); assertBindings();
     if (typeof before !== 'number' || !Number.isSafeInteger(before) || before < 0) held();
     observations.push(() => { assertBindings(); if (revision.call(manager) !== before) held(); assertBindings(); });
+    let selectedScalars: ConfigScalarSelection[] = [], selectedChecks: Array<() => void> = [];
+    const flushScalars = (): void => {
+      if (selectedChecks.length === 0) return;
+      const originals = selectedChecks;
+      const group = scalarBindingCurrent() ? captureConfigSelectedScalars(manager, selectedScalars) : undefined;
+      selectedScalars = []; selectedChecks = [];
+      observations.push(() => {
+        if (group && scalarBindingCurrent()) {
+          try {
+            if (group(() => { assertBindings(); if (!scalarBindingCurrent()) held(); })) return;
+          } catch (error) { if (error instanceof JudgmentAuthorityRetiredError) held(); throw error; }
+        }
+        for (const check of originals) check();
+      });
+    };
     for (const key of CATALOG_NATIVE_CONFIG_KEYS[family]) {
       assertBindings(); const original: unknown = get.call(manager, key); assertBindings();
       const capture = captureCatalogSnapshot(original);
-      observations.push(() => { assertBindings(); capture.assertCurrent(original); const current: unknown = get.call(manager, key); assertBindings(); capture.assertCurrent(current); });
+      const check = () => { assertBindings(); capture.assertCurrent(original); const current: unknown = get.call(manager, key); assertBindings(); capture.assertCurrent(current); };
+      if (original === null || original === undefined || typeof original === 'string' || typeof original === 'number' || typeof original === 'boolean') {
+        scalarBindingDefine(selectedScalars, selectedScalars.length, { value: { key, value: original }, writable: true, enumerable: true, configurable: true });
+        scalarBindingDefine(selectedChecks, selectedChecks.length, { value: check, writable: true, enumerable: true, configurable: true });
+      } else {
+        flushScalars(); observations.push(check);
+      }
     }
+    flushScalars();
   }
   const providerDescriptors: Array<{ readonly domain: string; readonly data: unknown }> = [];
   const providerFacts: Array<{ readonly domain: string; readonly id: string; readonly data: unknown; readonly methods: readonly string[] }> = [];

@@ -8,7 +8,8 @@ export type { PostalKind, PostalParts, PostalReadOptions, PreparedPostalAddress 
  * - Pure helpers that derive values from an explicit ConfigManager instance
  */
 
-export { ConfigManager } from './manager.js';
+export { ConfigManager, captureConfigSelectedScalars } from './manager.js';
+export type { ConfigScalarSelection, ConfigSelectedScalarGuard } from './manager.js';
 export { captureJudgmentFallbackSettings, validJudgmentFallbackSettings } from './judgment-fallback-settings.js';
 export type { JudgmentFallbackSettings } from './schema-types-judgment.js';
 export type { PreparedConfigMutation, PreparedConfigMutationTransition, PreparedConfigMutationRequest,

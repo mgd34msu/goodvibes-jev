@@ -3,6 +3,7 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolInputProjector, ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { agentResearchReportSourceOwner, captureResearchInput, hasPreparedResearchReport, inheritPreparedResearchReport, prepareProtectedResearchReport } from '../agent/protected-research-report.ts';
 import { resolveWorkspaceActionIdentity } from './agent-harness-workspace-actions.ts';
+import { forwardHarnessCatalogCall, harnessCatalogExecutionGuard } from './agent-harness-catalog-ingress.ts';
 
 export function isResearchReportEditor(args: Record<string, unknown>): boolean {
   if (args.mode === 'run_workspace_action') {
@@ -63,18 +64,20 @@ function reportRouting(input: Record<string, unknown>): Record<string, unknown> 
 /** Raw factory callers retain the same report boundary as registered callers. */
 export function protectAgentHarnessResearchTool(tool: Tool, registry: ToolRegistry, isReport = isResearchReportEditor): Tool {
   const execute = tool.execute;
+  const originalBody: Tool = { definition: tool.definition, execute: (input, options) => execute(input, options) };
   const projector = createAgentHarnessResearchProjector(registry, isReport);
   return { ...tool, async execute(input, options) {
     if (!isReport(reportRouting(input))) return execute(input, options);
     const args = captureResearchInput(input);
     if (!isReport(args)) return execute(input, options);
     if (hasPreparedResearchReport(input, agentResearchReportSourceOwner(registry))) return execute(input, options);
+    const assertCurrent = harnessCatalogExecutionGuard(input, options);
     const projected = await projector.project({ callId: 'research-editor-direct', name: tool.definition.name, args,
-      signal: options?.signal, assertCurrent: () => { options?.signal?.throwIfAborted(); } });
+      signal: options?.signal, assertCurrent });
     try {
       if (projected.status !== 'projected') return { success: false, error: 'Research editor preparation is held.' };
       projected.assertCurrent?.();
-      return await execute(projected.args, options);
+      return await forwardHarnessCatalogCall(originalBody, input, projected.args, options, projected.assertCurrent);
     } finally { await projected.release?.(); }
   } };
 }

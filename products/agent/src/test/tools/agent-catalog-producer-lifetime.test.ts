@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import * as nativeOs from 'node:os';
-import { ConfigManager } from '../../config/index.ts';
+import { ConfigManager, type ConfigKey } from '../../config/index.ts';
+import { captureConfigSelectedScalars } from '@goodvibes-jev/engine/sdk/platform/config';
+import * as artifactEffects from '../../tools/agent-artifact-effect.ts';
+import { GOODVIBES_AGENT_SURFACE_ROOT } from '../../config/surface.ts';
 import { capturePairingAdvertisement } from '../../tools/agent-harness-pairing-posture.ts';
-import { mkdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { MediaProviderRegistry, type MediaProvider } from '@goodvibes-jev/engine/sdk/platform/media';
@@ -324,5 +327,240 @@ describe('retained producer operation boundaries', () => {
       expect(source.address).toBe('127.0.0.1'); expect(probe).toHaveBeenCalledTimes(0);
       config.set('controlPlane.hostMode', 'network'); expect(source.assertCurrent).toThrow(); expect(probe).toHaveBeenCalledTimes(0);
     } finally { probe.mockRestore(); }
+  });
+});
+
+
+describe('owned selected scalar configuration observations', () => {
+  function nativePairing() {
+    const f = pairingHome();
+    writeFileSync(f.file, JSON.stringify({ token: 'synthetic-owned-token', extra: 'Complete private file field' }));
+    const manager = new ConfigManager({ surfaceRoot: GOODVIBES_AGENT_SURFACE_ROOT,
+      configDir: join(f.home, GOODVIBES_AGENT_SURFACE_ROOT), workingDir: f.root, homeDir: f.home });
+    const context = { ...f.context, platform: { configManager: manager, config: manager.getAll() } };
+    return { ...f, manager, context };
+  }
+  function selected(manager: ConfigManager) {
+    const guard = captureConfigSelectedScalars(manager, [
+      { key: 'controlPlane.host', value: manager.get('controlPlane.host') },
+      { key: 'web.enabled', value: manager.get('web.enabled') },
+    ]);
+    if (!guard) throw new Error('Genuine selected scalar group was not acquired');
+    return guard;
+  }
+  test('the actual Agent source uses native scalar groups while keeping real physical entry and exit checks', () => {
+    const f = nativePairing(), original = artifactEffects.captureAgentExportPath;
+    let physical = 0;
+    const observation = spyOn(artifactEffects, 'captureAgentExportPath').mockImplementation((root, target) => {
+      const retained = original(root, target);
+      return { path: retained.path, assertCurrent(destination?: string) { physical++; retained.assertCurrent(destination); } };
+    });
+    try {
+      const native = captureCatalogNativeFacts(f.context, 'pairing'); physical = 0;
+      native.assertCurrent(); expect(physical).toBe(18);
+      writeFileSync(f.file, JSON.stringify({ token: 'synthetic-owned-token', extra: 'Changed complete private tail' }));
+      expect(native.assertCurrent).toThrow(ToolInputProjectionError);
+    } finally { observation.mockRestore(); }
+  });
+  test('selected capture does not acquire a late integer-checker method or accessor', () => {
+    const f = nativePairing(), originalBytes = readFileSync(f.file);
+    const entries = [
+      { key: 'controlPlane.host', value: f.manager.get('controlPlane.host') },
+      { key: 'web.enabled', value: f.manager.get('web.enabled') },
+    ];
+    const original = Object.getOwnPropertyDescriptor(Number, 'isSafeInteger');
+    if (!original) throw new Error('Original integer checker missing');
+    let retained: ReturnType<typeof captureConfigSelectedScalars>;
+    for (const accessor of [false, true]) {
+      let calls = 0, getters = 0, boundaries = 0, accepted: boolean | undefined;
+      const replacement = () => { calls++; throw new Error('Late integer checker was invoked'); };
+      Object.defineProperty(Number, 'isSafeInteger', accessor
+        ? { configurable: true, get() { getters++; return replacement; } }
+        : { ...original, value: replacement });
+      try {
+        retained = captureConfigSelectedScalars(f.manager, entries);
+        if (!retained) throw new Error('Genuine group was not acquired');
+        accepted = retained(() => { boundaries++; });
+      } finally { Object.defineProperty(Number, 'isSafeInteger', original); }
+      expect(getters).toBe(0); expect(calls).toBe(0);
+      expect(accepted).toBe(true); expect(boundaries).toBe(2);
+      expect(readFileSync(f.file).equals(originalBytes)).toBe(true);
+    }
+    const originalGuard = retained;
+    if (!originalGuard) throw new Error('Genuine group was not retained');
+    f.manager.setRuntimeOverride('controlPlane.host', 'changed-after-integer-dispatch');
+    expect(() => originalGuard(() => {})).toThrow();
+  });
+  test('genuine groups recheck all selected values with actual entry and exit boundaries', () => {
+    const f = nativePairing(), bytes = readFileSync(f.file), guard = selected(f.manager);
+    let boundaries = 0;
+    expect(guard(() => { boundaries++; })).toBe(true); expect(boundaries).toBe(2);
+    expect(guard(() => { boundaries++; })).toBe(true); expect(boundaries).toBe(4);
+    const native = captureCatalogNativeFacts(f.context, 'pairing'); native.assertCurrent();
+    expect(readFileSync(f.file).equals(bytes)).toBe(true);
+    f.manager.setRuntimeOverride('controlPlane.host', 'changed-native-host');
+    expect(() => guard(() => {})).toThrow(); expect(native.assertCurrent).toThrow(ToolInputProjectionError);
+  });
+  test('equal selected parent replacements retain scalar equality but changed private tails retire', () => {
+    const f = nativePairing(), guard = selected(f.manager);
+    const config: unknown = Object.getOwnPropertyDescriptor(f.manager, 'config')?.value;
+    if (!config || typeof config !== 'object') throw new Error('Actual native configuration missing');
+    const field = Object.getOwnPropertyDescriptor(config, 'controlPlane'), original: unknown = field?.value;
+    if (!field || !original || typeof original !== 'object') throw new Error('Actual native section missing');
+    Object.defineProperty(config, 'controlPlane', { ...field, value: { ...original } });
+    expect(guard(() => {})).toBe(true);
+    const replacement: unknown = Object.getOwnPropertyDescriptor(config, 'controlPlane')?.value;
+    if (!replacement || typeof replacement !== 'object') throw new Error('Actual replaced section missing');
+    Object.defineProperty(replacement, 'host', { value: 'changed-complete-scalar-tail', writable: true, enumerable: true, configurable: true });
+    expect(() => guard(() => {})).toThrow();
+  });
+  for (const phase of [1, 2]) test(`selected mutation in boundary ${phase} holds before a later restoring callback`, () => {
+    const f = nativePairing(), guard = selected(f.manager), incarnation = f.manager.getConfigurationIncarnation();
+    const config: unknown = Object.getOwnPropertyDescriptor(f.manager, 'config')?.value;
+    if (!config || typeof config !== 'object') throw new Error('Actual native configuration missing');
+    const section: unknown = Object.getOwnPropertyDescriptor(config, 'controlPlane')?.value;
+    if (!section || typeof section !== 'object') throw new Error('Actual native section missing');
+    const original = Object.getOwnPropertyDescriptor(section, 'host');
+    if (!original) throw new Error('Actual selected field missing');
+    let boundaries = 0, mutated = false, restored = false;
+    expect(() => guard(() => {
+      boundaries++;
+      if (boundaries === phase) { Object.defineProperty(section, 'host', { ...original, value: 'changed-during-boundary' }); mutated = true; }
+      if (boundaries > phase) { Object.defineProperty(section, 'host', original); restored = true; }
+    })).toThrow();
+    expect(mutated).toBe(true); expect(boundaries).toBe(phase); expect(restored).toBe(false);
+    expect(f.manager.getConfigurationIncarnation()).toBe(incarnation);
+  });
+  test('canonical source ABA retires even after the original selected value is restored', () => {
+    const f = nativePairing(), guard = selected(f.manager), original = f.manager.get('controlPlane.host');
+    f.manager.setRuntimeOverride('controlPlane.host', 'temporary-native-host');
+    f.manager.setRuntimeOverride('controlPlane.host', original);
+    expect(() => guard(() => {})).toThrow();
+  });
+  test('borrowed lookalikes, copied managers and proxies never issue a scalar group or invoke supplied slots', () => {
+    const f = nativePairing(); let getters = 0, traps = 0;
+    const entries = [{ key: 'controlPlane.host', value: f.manager.get('controlPlane.host') }];
+    const forged = Object.create(ConfigManager.prototype);
+    Object.defineProperty(forged, 'get', { get() { getters++; return f.manager.get; } });
+    const copied = { ...f.manager };
+    const proxied = new Proxy(f.manager, { get(target, key, receiver) { traps++; return Reflect.get(target, key, receiver); } });
+    expect(captureConfigSelectedScalars(forged, entries)).toBeUndefined();
+    expect(captureConfigSelectedScalars(copied, entries)).toBeUndefined();
+    expect(captureConfigSelectedScalars(proxied, entries)).toBeUndefined();
+    expect(getters).toBe(0); expect(traps).toBe(0);
+  });
+  test('wrapped native readers retain the original per-key file mutation and restoration fence', () => {
+    const f = pairingHome(), originalBytes = JSON.stringify({ token: 'synthetic-wrapped-token' });
+    writeFileSync(f.file, originalBytes);
+    const parked = join(f.root, 'original-wrapped-token');
+    let armed = false, first = 0, later = 0;
+    const nativeGet = ConfigManager.prototype.get;
+    class WrappedConfig extends ConfigManager {}
+    Object.defineProperty(WrappedConfig.prototype, 'get', { configurable: true, writable: true, value: function(this: ConfigManager, key: ConfigKey) {
+      if (armed && key === 'controlPlane.enabled') { first++; renameSync(f.file, parked); writeFileSync(f.file, JSON.stringify({ token: 'changed-wrapper-token' })); }
+      if (armed && key === 'controlPlane.hostMode') { later++; unlinkSync(f.file); renameSync(parked, f.file); }
+      const value: unknown = Reflect.apply(nativeGet, this, [key]);
+      return value;
+    } });
+    const manager = new WrappedConfig({ surfaceRoot: GOODVIBES_AGENT_SURFACE_ROOT,
+      configDir: join(f.home, GOODVIBES_AGENT_SURFACE_ROOT), workingDir: f.root, homeDir: f.home });
+    expect(captureConfigSelectedScalars(manager, [{ key: 'web.enabled', value: manager.get('web.enabled') }])).toBeUndefined();
+    const native = captureCatalogNativeFacts({ ...f.context, platform: { configManager: manager, config: manager.getAll() } }, 'pairing');
+    armed = true; expect(native.assertCurrent).toThrow(ToolInputProjectionError);
+    expect(first).toBe(1); expect(later).toBe(0); expect(readFileSync(f.file, 'utf8')).not.toBe(originalBytes);
+  });
+  for (const accessor of [false, true]) test(`the genuine reader's own call ${accessor ? 'accessor' : 'method'} retains the original physical callback fence`, () => {
+    const f = nativePairing(), parked = join(f.root, 'original-call-token'), originalGet = f.manager.get;
+    const originalSlot = Object.getOwnPropertyDescriptor(originalGet, 'call');
+    let armed = false, first = 0, later = 0, getters = 0;
+    const wrapped = function(this: unknown, receiver: ConfigManager, key: ConfigKey): unknown {
+      if (armed && key === 'controlPlane.enabled') { first++; renameSync(f.file, parked); writeFileSync(f.file, JSON.stringify({ token: 'changed-call-token' })); }
+      if (armed && key === 'controlPlane.hostMode') { later++; unlinkSync(f.file); renameSync(parked, f.file); }
+      return Reflect.apply(originalGet, receiver, [key]);
+    };
+    Object.defineProperty(originalGet, 'call', accessor
+      ? { configurable: true, get() { getters++; return wrapped; } }
+      : { configurable: true, writable: true, value: wrapped });
+    try {
+      expect(captureConfigSelectedScalars(f.manager, [{ key: 'web.enabled', value: f.manager.get('web.enabled') }])).toBeUndefined();
+      expect(getters).toBe(0);
+      const native = captureCatalogNativeFacts(f.context, 'pairing'); getters = 0; armed = true;
+      expect(native.assertCurrent).toThrow(ToolInputProjectionError);
+      expect(first).toBe(1); expect(later).toBe(0); expect(getters).toBe(accessor ? 1 : 0);
+    } finally { if (originalSlot) Object.defineProperty(originalGet, 'call', originalSlot); else Reflect.deleteProperty(originalGet, 'call'); }
+  });
+  test('a call-through split wrapper keeps the native separator callback first-read fence before restoration', () => {
+    const f = nativePairing(), parked = join(f.root, 'original-split-token');
+    const originalSlot = Object.getOwnPropertyDescriptor(String.prototype, Symbol.split), originalSplit = String.prototype.split;
+    const splitSlot = Object.getOwnPropertyDescriptor(String.prototype, 'split'), originalValueOf = String.prototype.valueOf;
+    if (!splitSlot) throw new Error('Original string splitter missing');
+    let armed = false, first = 0, later = 0, hookReached = false, mutationReached = false;
+    // Preserve actual resolvePath's key.split('.') call and delegate to the native
+    // splitter with a boxed separator so this supported wrapper consumes the hook.
+    Object.defineProperty(String.prototype, 'split', { ...splitSlot, value: function(this: unknown, separator: unknown, limit?: number): string[] {
+      return Reflect.apply(originalSplit, this, [separator === '.' ? Object(separator) : separator, limit]);
+    } });
+    Object.defineProperty(String.prototype, Symbol.split, { configurable: true, value: function(this: unknown, source: string): string[] {
+      if (armed && source === 'controlPlane.enabled') {
+        hookReached = true; first++; renameSync(f.file, parked);
+        writeFileSync(f.file, JSON.stringify({ token: 'changed-split-token' })); mutationReached = true;
+      }
+      if (armed && source === 'controlPlane.hostMode') { later++; unlinkSync(f.file); renameSync(parked, f.file); }
+      const separator: unknown = Reflect.apply(originalValueOf, this, []);
+      if (typeof separator !== 'string') throw new Error('Native separator did not retain its string value');
+      return Reflect.apply(originalSplit, source, [{ [Symbol.split]: undefined, toString() { return separator; } }]);
+    } });
+    try {
+      expect(captureConfigSelectedScalars(f.manager, [{ key: 'web.enabled', value: f.manager.get('web.enabled') }])).toBeUndefined();
+      const native = captureCatalogNativeFacts(f.context, 'pairing'); armed = true;
+      expect(native.assertCurrent).toThrow(ToolInputProjectionError);
+      Object.defineProperty(String.prototype, 'split', splitSlot);
+      expect(hookReached).toBe(true); expect(mutationReached).toBe(true);
+      expect(first).toBe(1); expect(later).toBe(0); expect(String.prototype.split).toBe(originalSplit);
+    } finally {
+      Object.defineProperty(String.prototype, 'split', splitSlot);
+      if (originalSlot) Object.defineProperty(String.prototype, Symbol.split, originalSlot); else Reflect.deleteProperty(String.prototype, Symbol.split);
+    }
+  });
+  test('installed profile callbacks retain the original first-read file fence', () => {
+    const f = nativePairing(), parked = join(f.root, 'original-profile-token'); let armed = false, callbacks = 0, restoration = 0;
+    f.manager.attachProfileFallback(() => {
+      if (armed && ++callbacks === 1) { renameSync(f.file, parked); writeFileSync(f.file, JSON.stringify({ token: 'changed-profile-token' })); }
+      else if (armed) { restoration++; unlinkSync(f.file); renameSync(parked, f.file); }
+      return undefined;
+    });
+    expect(captureConfigSelectedScalars(f.manager, [{ key: 'controlPlane.host', value: f.manager.get('controlPlane.host') }])).toBeUndefined();
+    const native = captureCatalogNativeFacts(f.context, 'pairing');
+    armed = true; expect(native.assertCurrent).toThrow(ToolInputProjectionError);
+    expect(callbacks).toBe(1); expect(restoration).toBe(0);
+  });
+  test('late reflection substitution falls back before consuming a grouped caller boundary', () => {
+    const f = nativePairing(), guard = selected(f.manager), descriptor = Object.getOwnPropertyDescriptor(Object, 'getOwnPropertyDescriptor');
+    if (!descriptor) throw new Error('Original descriptor reader missing');
+    const original = Object.getOwnPropertyDescriptor; let borrowed = 0, boundaries = 0;
+    Object.defineProperty(Object, 'getOwnPropertyDescriptor', { ...descriptor, value: function(owner: object, key: PropertyKey) {
+      borrowed++; return original(owner, key);
+    } });
+    try { expect(guard(() => { boundaries++; })).toBe(false); expect(borrowed).toBe(0); expect(boundaries).toBe(0); }
+    finally { Object.defineProperty(Object, 'getOwnPropertyDescriptor', descriptor); }
+    expect(guard(() => { boundaries++; })).toBe(true); expect(boundaries).toBe(2);
+  });
+  test('accessor and non-scalar values keep ordinary per-setting admission', () => {
+    const f = nativePairing(); let getters = 0;
+    const config: unknown = Object.getOwnPropertyDescriptor(f.manager, 'config')?.value;
+    if (!config || typeof config !== 'object') throw new Error('Actual native configuration missing');
+    const control: unknown = Object.getOwnPropertyDescriptor(config, 'controlPlane')?.value;
+    if (!control || typeof control !== 'object') throw new Error('Actual native section missing');
+    Object.defineProperty(control, 'host', { configurable: true, enumerable: true, get() { getters++; return 'ordinary-accessor-host'; } });
+    expect(captureConfigSelectedScalars(f.manager, [{ key: 'controlPlane.host', value: 'ordinary-accessor-host' }])).toBeUndefined();
+    expect(getters).toBe(0); expect(f.manager.get('controlPlane.host')).toBe('ordinary-accessor-host'); expect(getters).toBe(1);
+    expect(captureConfigSelectedScalars(f.manager, [{ key: 'notifications.webhookUrls', value: [] }])).toBeUndefined();
+  });
+  test('the complete original file observation still retires a genuine grouped native source', () => {
+    const f = nativePairing(), native = captureCatalogNativeFacts(f.context, 'pairing');
+    native.assertCurrent(); const bytes = readFileSync(f.file);
+    writeFileSync(f.file, JSON.stringify({ token: 'synthetic-owned-token', extra: 'Changed complete private field' }));
+    writeFileSync(f.file, bytes);
+    expect(native.assertCurrent).toThrow(ToolInputProjectionError);
   });
 });
