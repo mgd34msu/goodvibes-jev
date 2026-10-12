@@ -889,3 +889,394 @@ test('a genuine unchanged native descriptor restamp remains eligible for fresh c
   expect(consumed).toBe(true);
   expect(readFileSync(filename)).toEqual(before);
 });
+
+
+type AliasNativeExport = '_sqlite3_bind_text' | '_sqlite3_column_name' | '_sqlite3_column_double'
+  | '_sqlite3_prepare_v2' | '_sqlite3_finalize';
+interface AliasNativeCall {
+  readonly module: object;
+  readonly args: readonly number[];
+  invoke(args?: readonly number[]): number;
+}
+type AliasNativeHook = (call: AliasNativeCall) => number;
+let aliasFixtureSequence = 0;
+
+async function aliasNativeFixture(hooks: Partial<Record<AliasNativeExport, AliasNativeHook>>,
+  inspectDescriptor?: (target: object, key: PropertyKey, descriptor: PropertyDescriptor | undefined) => PropertyDescriptor | undefined) {
+  const own = Object.getOwnPropertyDescriptor, define = Object.defineProperty;
+  const apply = Reflect.apply, dispatch = own(Object, 'getOwnPropertyDescriptor');
+  if (!dispatch || dispatch.value !== own || !dispatch.configurable) throw new Error('No original descriptor dispatch');
+  // sql.js retains one Module promise. A distinct source owner captures that
+  // existing Module, so intercept its genuine exports before that capture.
+  const SQL = await loadSqlJsEngine();
+  const originalSlots = new Map<AliasNativeExport, PropertyDescriptor>();
+  const binding = own(SQL, '_sqlite3_bind_text');
+  if (!binding || !binding.configurable || typeof binding.value !== 'function') throw new Error('No original native text binding');
+  // The descriptor opposition can replace this field even without an export hook.
+  originalSlots.set('_sqlite3_bind_text', binding);
+  const installed = new Set<AliasNativeExport>();
+  let transferred = false;
+  const restoreExports = () => {
+    for (const [key, descriptor] of originalSlots) define(SQL, key, descriptor);
+  };
+  try {
+    define(Object, 'getOwnPropertyDescriptor', { ...dispatch, value(target: object, key: PropertyKey) {
+      const descriptor = own(target, key);
+      return inspectDescriptor ? inspectDescriptor(target, key, descriptor) : descriptor;
+    } });
+    for (const key of Object.keys(hooks)) {
+      if (key !== '_sqlite3_bind_text' && key !== '_sqlite3_column_name' && key !== '_sqlite3_column_double'
+        && key !== '_sqlite3_prepare_v2' && key !== '_sqlite3_finalize') throw new Error('Unknown native acquisition control');
+      const hook = hooks[key];
+      if (!hook) throw new Error('Missing native acquisition control');
+      const original = own(SQL, key), value: unknown = original?.value;
+      if (!original || !('value' in original) || !original.configurable || typeof value !== 'function') {
+        throw new Error('No replaceable genuine native export');
+      }
+      originalSlots.set(key, original);
+      define(SQL, key, { ...original, value(...args: number[]) {
+        return hook({ module: SQL, args, invoke(next = args) {
+          const result: unknown = apply(value, undefined, next);
+          if (typeof result !== 'number') throw new Error('Native numeric export returned an unsupported value');
+          return result;
+        } });
+      } });
+      installed.add(key);
+    }
+    const modulePath = `../sdk/src/platform/state/sqlite-store.js?native-alias-opposition-${++aliasFixtureSequence}`;
+    const native: typeof import('../sdk/src/platform/state/sqlite-store.js') = await import(modulePath);
+    if (native.loadSqlJsEngine === loadSqlJsEngine) throw new Error('Native acquisition control requires a distinct source owner');
+    await native.loadSqlJsEngine();
+    expect(installed.size).toBe(Object.keys(hooks).length);
+    const result = { ...await fixture(true, false, native), heldError: native.SQLiteObservationRetiredError };
+    observers.push({ mockRestore: restoreExports });
+    transferred = true;
+    return result;
+  } finally {
+    define(Object, 'getOwnPropertyDescriptor', dispatch);
+    if (!transferred) restoreExports();
+  }
+}
+
+function aliasNativeNumber(module: object, key: string, args: readonly number[]): number {
+  const value: unknown = Object.getOwnPropertyDescriptor(module, key)?.value;
+  if (typeof value !== 'function') throw new Error('No genuine native numeric export');
+  const result: unknown = Reflect.apply(value, undefined, args);
+  if (typeof result !== 'number') throw new Error('No native numeric result');
+  return result;
+}
+function aliasNativeText(module: object, pointer: number): string {
+  const decode: unknown = Object.getOwnPropertyDescriptor(module, 'UTF8ToString')?.value;
+  if (typeof decode !== 'function') throw new Error('No genuine native text decoder');
+  const value: unknown = Reflect.apply(decode, undefined, [pointer]);
+  if (typeof value !== 'string') throw new Error('No native decoded text');
+  return value;
+}
+function aliasTextAllocation(SQL: Awaited<ReturnType<typeof loadSqlJsEngine>>, text: string) {
+  const raw = new SQL.Database();
+  let statement: ReturnType<NativeDatabase['prepare']> | undefined;
+  try {
+    statement = raw.prepare(`SELECT CAST(X'${Buffer.from(text, 'utf8').toString('hex')}' AS TEXT)`);
+    if (!statement.step()) throw new Error('Native test text allocation has no row');
+    const pointer: unknown = Object.getOwnPropertyDescriptor(statement, 'Qa')?.value;
+    if (typeof pointer !== 'number' || !Number.isSafeInteger(pointer) || pointer <= 0) throw new Error('No genuine native test statement');
+    const textPointer = aliasNativeNumber(SQL, '_sqlite3_column_text', [pointer, 0]);
+    if (!Number.isSafeInteger(textPointer) || textPointer <= 0) throw new Error('No genuine terminated native test text');
+    const retained = statement;
+    return { pointer: textPointer, dispose() { try { retained.free(); } finally { raw.close(); } } };
+  } catch (error) {
+    try { try { statement?.free(); } finally { raw.close(); } }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Native test allocation and cleanup failed'); }
+    throw error;
+  }
+}
+
+test.each([
+  { text: '', matches: false }, { text: 'f', matches: false }, { text: 'different', matches: false },
+  { text: 'frame_matches_extra', matches: false }, { text: 'fráme_matches', matches: false },
+  { text: 'frame\0_matches', matches: false }, { text: 'frame_matches\0ignored', matches: true },
+])('the actual native alias copy preserves terminated byte comparison for $text', async ({ text, matches }) => {
+  let namePointer = 0, names = 0, binds = 0;
+  const helpers = new Set<number>(), values: number[] = [];
+  const { sqlite, filename, SQL, currentRaw, liveStatements, read, heldError } = await aliasNativeFixture({
+    _sqlite3_column_name(call) {
+      const pointer = call.invoke();
+      if (namePointer && aliasNativeText(call.module, pointer) === 'frame_matches') { names++; return namePointer; }
+      return pointer;
+    },
+    _sqlite3_bind_text(call) {
+      if (call.args[3] === -1 && call.args[4] === -1) {
+        const pointer = call.args[0];
+        if (pointer === undefined) throw new Error('No actual helper allocation');
+        helpers.add(pointer); binds++;
+      }
+      return call.invoke();
+    },
+    _sqlite3_column_double(call) {
+      const value = call.invoke(), pointer = call.args[0];
+      if (pointer !== undefined && helpers.has(pointer)) values.push(value);
+      return value;
+    },
+  });
+  const allocation = aliasTextAllocation(SQL, text), before = readFileSync(filename);
+  let consumed = false;
+  try {
+    namePointer = allocation.pointer;
+    expect(() => sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', 'Complete original source']]);
+      currentRaw().run('PRAGMA read_uncommitted=1');
+      sqlite.assertPersistedReadFrame(() => { read(); consumed = true; });
+    })).toThrow(heldError);
+    expect(names).toBeGreaterThan(0); expect(binds).toBeGreaterThan(0);
+    expect(values).toContain(matches ? 1 : 0);
+    expect(consumed).toBe(false); expect(liveStatements()).toEqual([]);
+    expect(readFileSync(filename)).toEqual(before);
+  } finally { namePointer = 0; allocation.dispose(); }
+});
+
+test('a zero native name pointer cannot bind or authorize a later changed row', async () => {
+  let armed = false, names = 0, binds = 0;
+  const { sqlite, filename, currentRaw, read, heldError } = await aliasNativeFixture({
+    _sqlite3_column_name(call) {
+      const pointer = call.invoke();
+      if (armed && aliasNativeText(call.module, pointer) === 'frame_matches') { names++; return 0; }
+      return pointer;
+    },
+    _sqlite3_bind_text(call) { if (armed && call.args[3] === -1) binds++; return call.invoke(); },
+  });
+  const before = readFileSync(filename); let consumed = false;
+  armed = true;
+  expect(() => sqlite.assertPersistedReadFrame(() => {
+    expect(read()).toEqual([['original', 'Complete original source']]);
+    currentRaw().run('PRAGMA read_uncommitted=1');
+    sqlite.assertPersistedReadFrame(() => { read(); consumed = true; });
+  })).toThrow(heldError);
+  expect(names).toBeGreaterThan(0); expect(binds).toBe(0); expect(consumed).toBe(false);
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test('an actual native bind range failure retains complete fresh observations', async () => {
+  let armed = false; const statuses: number[] = [];
+  const { sqlite, filename, currentRaw, liveStatements, read, heldError } = await aliasNativeFixture({
+    _sqlite3_bind_text(call) {
+      if (armed && call.args[3] === -1 && call.args[4] === -1) {
+        const args = [...call.args]; args[1] = 2;
+        const status = call.invoke(args); statuses.push(status); return status;
+      }
+      return call.invoke();
+    },
+  });
+  const before = readFileSync(filename); let consumed = false;
+  armed = true;
+  expect(() => sqlite.assertPersistedReadFrame(() => {
+    expect(read()).toEqual([['original', 'Complete original source']]);
+    currentRaw().run('PRAGMA read_uncommitted=1');
+    sqlite.assertPersistedReadFrame(() => { read(); consumed = true; });
+  })).toThrow(heldError);
+  expect(statuses.length).toBeGreaterThan(0); expect(statuses.every(value => value === 25)).toBe(true);
+  expect(consumed).toBe(false); expect(liveStatements()).toEqual([]);
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test.each(['SELECT FROM', 'SELECT ?1', 'SELECT 1 WHERE ?1 IS NOT NULL UNION ALL SELECT 1'] as const)(
+  'an actual unsupported helper preparation/result %s cannot grant native equality', async sql => {
+    let replacement = 0, preparations = 0, main = 0, observingMain = false;
+    const finalized: number[] = [], statuses: number[] = [];
+    const { sqlite, filename, SQL, currentRaw, liveStatements, read, heldError } = await aliasNativeFixture({
+      _sqlite3_prepare_v2(call) {
+        const pointer = call.args[1];
+        const query = pointer === undefined ? '' : aliasNativeText(call.module, pointer);
+        if (!query.includes('AS frame_matches') && !query.includes('SELECT CAST(?1 AS BLOB)')) observingMain = false;
+        if (replacement && query.includes('SELECT CAST(?1 AS BLOB)')) {
+          preparations++; const args = [...call.args]; args[1] = replacement; args[2] = -1;
+          const status = call.invoke(args); statuses.push(status); return status;
+        }
+        return call.invoke();
+      },
+      _sqlite3_column_name(call) {
+        const pointer = call.invoke();
+        if (replacement && aliasNativeText(call.module, pointer) === 'frame_matches') {
+          main = call.args[0] ?? 0; observingMain = true;
+        }
+        return pointer;
+      },
+      _sqlite3_finalize(call) {
+        const pointer = call.args[0];
+        if (observingMain && main && pointer === main) { finalized.push(pointer); observingMain = false; }
+        return call.invoke();
+      },
+    });
+    const allocation = aliasTextAllocation(SQL, sql), before = readFileSync(filename); let consumed = false;
+    try {
+      replacement = allocation.pointer;
+      expect(() => sqlite.assertPersistedReadFrame(() => {
+        expect(read()).toEqual([['original', 'Complete original source']]);
+        expect(preparations).toBeGreaterThan(0);
+        currentRaw().run('PRAGMA read_uncommitted=1');
+        sqlite.assertPersistedReadFrame(() => { read(); consumed = true; });
+      })).toThrow(heldError);
+      expect(statuses.length).toBeGreaterThan(0);
+      expect(statuses.every(status => sql === 'SELECT FROM' ? status !== 0 : status === 0)).toBe(true);
+      expect(consumed).toBe(false); expect(liveStatements()).toEqual([]);
+      if (sql === 'SELECT FROM') { expect(main).toBeGreaterThan(0); expect(finalized).toEqual([main]); }
+      expect(readFileSync(filename)).toEqual(before);
+    } finally { replacement = 0; allocation.dispose(); }
+  });
+
+test.each(['value', 'accessor'] as const)('replacing the pinned native text export with a %s holds before the next row', async kind => {
+  let binds = 0;
+  const { sqlite, filename, SQL, liveStatements, read, heldError } = await aliasNativeFixture({
+    _sqlite3_bind_text(call) { if (call.args[3] === -1 && call.args[4] === -1) binds++; return call.invoke(); },
+  });
+  const own = Object.getOwnPropertyDescriptor, define = Object.defineProperty;
+  const descriptor = own(SQL, '_sqlite3_bind_text');
+  if (!descriptor || !descriptor.configurable || typeof descriptor.value !== 'function') throw new Error('No replaceable actual binding');
+  const before = readFileSync(filename); let consumed = false, invoked = 0;
+  try {
+    expect(() => sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', 'Complete original source']]);
+      expect(binds).toBeGreaterThan(0);
+      define(SQL, '_sqlite3_bind_text', kind === 'value'
+        ? { ...descriptor, value: () => { invoked++; return 0; } }
+        : { configurable: true, get() { invoked++; throw new Error('Borrowed native binding'); } });
+      sqlite.assertPersistedReadFrame(() => { read(); consumed = true; });
+    })).toThrow(heldError);
+  } finally { define(SQL, '_sqlite3_bind_text', descriptor); }
+  expect(consumed).toBe(false); expect(invoked).toBe(0); expect(liveStatements()).toEqual([]);
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test('a failing helper finalization still releases both genuine detached allocations once', async () => {
+  const helpers = new Set<number>(), mains = new Set<number>(), released: number[] = [];
+  const original = new Error('Original row callback refusal'), failure = new Error('Native helper finalizer refusal');
+  let armed = false, failed = false;
+  const { sqlite, filename, liveStatements, read } = await aliasNativeFixture({
+    _sqlite3_bind_text(call) {
+      const pointer = call.args[0];
+      if (pointer !== undefined && call.args[3] === -1 && call.args[4] === -1) helpers.add(pointer);
+      return call.invoke();
+    },
+    _sqlite3_column_name(call) {
+      const value = call.invoke(), pointer = call.args[0];
+      if (pointer !== undefined && aliasNativeText(call.module, value) === 'frame_matches') mains.add(pointer);
+      return value;
+    },
+    _sqlite3_finalize(call) {
+      const pointer = call.args[0], value = call.invoke();
+      if (armed && pointer !== undefined && (helpers.has(pointer) || mains.has(pointer))) {
+        released.push(pointer);
+        if (helpers.has(pointer) && !failed) { failed = true; throw failure; }
+      }
+      return value;
+    },
+  });
+  const before = readFileSync(filename); let caught: unknown;
+  try {
+    sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', 'Complete original source']]);
+      expect(helpers.size).toBeGreaterThan(0); expect(mains.size).toBeGreaterThan(0);
+      armed = true; throw original;
+    });
+  } catch (error) { caught = error; }
+  finally { armed = false; }
+  expect(caught).toBe(failure); expect(failed).toBe(true);
+  expect(released.length).toBe(helpers.size + mains.size);
+  for (const pointer of [...helpers, ...mains]) expect(released.filter(value => value === pointer)).toHaveLength(1);
+  expect(liveStatements()).toEqual([]); expect(readFileSync(filename)).toEqual(before);
+});
+
+test('a binding observation cannot change the Unicode decoder before the original row boundary', async () => {
+  const own = Object.getOwnPropertyDescriptor, define = Object.defineProperty;
+  const decoder = own(String.prototype, 'charCodeAt');
+  if (!decoder || !decoder.configurable) throw new Error('No genuine mutable Unicode decoder');
+  let armed = false, callbacks = 0, invoked = 0, module: object | undefined;
+  const { sqlite, filename, SQL, read, heldError } = await aliasNativeFixture({
+    _sqlite3_bind_text(call) { module = call.module; return call.invoke(); },
+  }, (target, key, descriptor) => {
+    if (!armed || target !== module || key !== '_sqlite3_bind_text' || !descriptor) return descriptor;
+    const current = { ...descriptor };
+    define(current, 'get', { configurable: true, get() {
+      callbacks++;
+      define(String.prototype, 'charCodeAt', { ...decoder, value: () => { invoked++; throw new Error('Borrowed Unicode decoder'); } });
+      return undefined;
+    } });
+    return current;
+  });
+  module = SQL;
+  const title = 'Complete café source 日本語';
+  sqlite.run('UPDATE knowledge_sources SET title=? WHERE id=?', [title, 'original']); await sqlite.save();
+  const before = readFileSync(filename); let consumed = false;
+  try {
+    expect(() => sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', title]]);
+      armed = true;
+      try { sqlite.assertPersistedReadFrame(() => { read(); consumed = true; }); }
+      finally { armed = false; define(String.prototype, 'charCodeAt', decoder); }
+    })).toThrow(heldError);
+  } finally { armed = false; define(String.prototype, 'charCodeAt', decoder); }
+  expect(callbacks).toBeGreaterThan(0); expect(invoked).toBe(0); expect(consumed).toBe(false);
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test('loader reflection cannot select a replacement for the already pinned text binding', async () => {
+  const own = Object.getOwnPropertyDescriptor, define = Object.defineProperty;
+  let replaced = 0, invoked = 0, retained: { object: object; descriptor: PropertyDescriptor } | undefined;
+  const { sqlite, filename, read, currentRaw, heldError } = await aliasNativeFixture({}, (target, key, descriptor) => {
+    if (replaced || key !== '_sqlite3_bind_text' || !descriptor || typeof descriptor.value !== 'function'
+      || typeof own(target, 'Database')?.value !== 'function') return descriptor;
+    replaced++;
+    retained = { object: target, descriptor };
+    define(target, key, { ...descriptor, value: () => { invoked++; return 0; } });
+    return own(target, key);
+  });
+  const before = readFileSync(filename); let consumed = false;
+  try {
+    expect(() => sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', 'Complete original source']]);
+      currentRaw().run('PRAGMA read_uncommitted=1');
+      sqlite.assertPersistedReadFrame(() => { read(); consumed = true; });
+    })).toThrow(heldError);
+    expect(replaced).toBe(1); expect(invoked).toBe(0); expect(consumed).toBe(false);
+    expect(readFileSync(filename)).toEqual(before);
+  } finally { if (retained) define(retained.object, '_sqlite3_bind_text', retained.descriptor); }
+});
+
+test('the actual transient native alias copy outlives its original name allocation', async () => {
+  let allocation: ReturnType<typeof aliasTextAllocation> | undefined;
+  let copied = false, released = false, namePointer = 0, helper = 0;
+  const values: number[] = [];
+  const { sqlite, filename, SQL, liveStatements, read } = await aliasNativeFixture({
+    _sqlite3_column_name(call) {
+      const pointer = call.invoke();
+      if (namePointer && aliasNativeText(call.module, pointer) === 'frame_matches') return namePointer;
+      return pointer;
+    },
+    _sqlite3_bind_text(call) {
+      const result = call.invoke();
+      if (allocation && call.args[2] === namePointer && call.args[3] === -1 && call.args[4] === -1 && result === 0) {
+        helper = call.args[0] ?? 0; copied = true;
+        allocation.dispose(); allocation = undefined; namePointer = 0; released = true;
+      }
+      return result;
+    },
+    _sqlite3_column_double(call) {
+      const result = call.invoke();
+      if (helper && call.args[0] === helper) {
+        expect(released).toBe(true); values.push(result);
+      }
+      return result;
+    },
+  });
+  allocation = aliasTextAllocation(SQL, 'frame_matches');
+  namePointer = allocation.pointer;
+  const before = readFileSync(filename);
+  try {
+    expect(() => sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', 'Complete original source']]);
+      sqlite.assertPersistedReadFrame(() => { expect(read()).toEqual([['original', 'Complete original source']]); });
+    })).not.toThrow();
+    expect(copied).toBe(true); expect(released).toBe(true); expect(helper).toBeGreaterThan(0);
+    expect(values.length).toBeGreaterThan(0); expect(values.every(value => value === 1)).toBe(true);
+    expect(liveStatements()).toEqual([]); expect(readFileSync(filename)).toEqual(before);
+  } finally { namePointer = 0; allocation?.dispose(); }
+});

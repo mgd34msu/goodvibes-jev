@@ -155,6 +155,7 @@ interface SqlJsStatic {
   readonly _sqlite3_column_type?: ((statement: number, column: number) => number) | undefined;
   readonly _sqlite3_column_double?: ((statement: number, column: number) => number) | undefined;
   readonly _sqlite3_column_name?: ((statement: number, column: number) => number) | undefined;
+  readonly _sqlite3_bind_text?: ((statement: number, index: number, pointer: number, length: number, destructor: number) => number) | undefined;
   readonly UTF8ToString?: ((pointer: number) => string) | undefined;
 }
 
@@ -329,6 +330,32 @@ interface NativeScalarRuntime {
   readonly name: (statement: number, column: number) => number;
   readonly decode: (pointer: number) => string;
 }
+interface NativeScalarTextBinding {
+  readonly module: SqlJsStatic;
+  readonly bind: NonNullable<SqlJsStatic['_sqlite3_bind_text']>;
+  readonly descriptor: Readonly<PropertyDescriptor>;
+}
+// This loader-owned capture never passes its binding or expected descriptor to
+// a freeze hook, public statement, or mutable bookkeeping callback.
+let nativeScalarTextBinding: NativeScalarTextBinding | undefined;
+function captureNativeScalarTextBinding(module: SqlJsStatic, bind: SqlJsStatic['_sqlite3_bind_text']): void {
+  nativeScalarTextBinding = undefined;
+  if (typeof bind !== 'function' || nativeIsProxy(module)) return;
+  const descriptor = nativeGetDescriptor(module, '_sqlite3_bind_text');
+  if (!descriptor || !('value' in descriptor) || typeof descriptor.value !== 'function'
+    || typeof descriptor.writable !== 'boolean' || typeof descriptor.configurable !== 'boolean'
+    || typeof descriptor.enumerable !== 'boolean') return;
+  if (bind !== descriptor.value) return;
+  nativeScalarTextBinding = { module, bind, descriptor: { value: bind, writable: descriptor.writable,
+    configurable: descriptor.configurable, enumerable: descriptor.enumerable } };
+}
+function nativeScalarTextBindingMatches(binding: NativeScalarTextBinding, runtime: NativeScalarRuntime): boolean {
+  return binding.module === runtime.module
+    && nativeDescriptorMatches(nativeGetDescriptor(runtime.module, '_sqlite3_bind_text'), binding.descriptor);
+}
+function nativeScalarExportsMatch(runtime: NativeScalarRuntime): boolean {
+  return nativeEvery(runtime.exports, ({ key, descriptor }) => nativeDescriptorMatches(nativeGetDescriptor(runtime.module, key), descriptor));
+}
 /** Only repeated ordinary original objects can share one complete descriptor
  * traversal. Unsupported or conflicting captures keep the original checks. */
 function uniqueNativeFacts(groups: readonly { readonly facts: readonly NativeObjectFacts[] }[]): readonly NativeObjectFacts[] | undefined {
@@ -357,6 +384,8 @@ function uniqueNativeFacts(groups: readonly { readonly facts: readonly NativeObj
   return nativeFreeze(unique);
 }
 function captureNativeScalarRuntime(module: SqlJsStatic): NativeScalarRuntime | undefined {
+  // Pin the loader's export before a reflection callback can replace it.
+  const bind = module._sqlite3_bind_text;
   const step = module._sqlite3_step, reset = module._sqlite3_reset, clear = module._sqlite3_clear_bindings,
     finalize = module._sqlite3_finalize, count = module._sqlite3_column_count, dataCount = module._sqlite3_data_count,
     type = module._sqlite3_column_type, value = module._sqlite3_column_double, name = module._sqlite3_column_name,
@@ -384,12 +413,13 @@ function captureNativeScalarRuntime(module: SqlJsStatic): NativeScalarRuntime | 
       ...captureNativePrototypeFacts(constructor), ...captureNativePrototypeFacts(prototype),
     ]) }));
   }
+  captureNativeScalarTextBinding(module, bind);
   return nativeFreeze({ module, exports: nativeFreeze(exports), globals: nativeFreeze(globals),
     uniqueGlobalFacts: uniqueNativeFacts(globals),
     step, reset, clear, finalize, count, dataCount, type, value, name, decode });
 }
 function nativeScalarRuntimeMatches(runtime: NativeScalarRuntime): boolean {
-  if (!nativeEvery(runtime.exports, ({ key, descriptor }) => nativeDescriptorMatches(nativeGetDescriptor(runtime.module, key), descriptor))) return false;
+  if (!nativeScalarExportsMatch(runtime)) return false;
   if (!runtime.uniqueGlobalFacts || !nativeGlobalReceiverMatches()) {
     return nativeEvery(runtime.globals, ({ key, descriptor, facts }) => nativeDescriptorMatches(nativeGetDescriptor(globalThis, key), descriptor)
       && nativeEvery(facts, nativeObjectFactsMatch));
@@ -544,7 +574,10 @@ function constructOwnedDatabase(engine: SqlJsStatic, data?: Uint8Array | Buffer,
 /** Genuine prepare mints the native pointer; no live JavaScript statement is
  * exposed through the registry across an assertion callback. Finalization uses
  * its independent original WASM function, even after owner/helper retirement. */
-function preparePrivateNativeScalar(state: OwnedSqlDatabase, engine: SqlJsStatic, sql: string): NativeScalarExecutable | undefined {
+function withPrivateNativeScalarPointer<T>(state: OwnedSqlDatabase, engine: SqlJsStatic, sql: string,
+  adopt: (pointer: number, dispose: () => void, current: (assertDependencies: () => void) => void,
+    currentNative: (assertDependencies: () => void) => void, runtime: NativeScalarRuntime, birth: NativeObjectFacts,
+    isReleased: () => boolean) => T | undefined, reservedPointer?: number): T | undefined {
   const original = privateMapGet(nativeEngineIdentities, engine), origin = original?.statement, runtime = original?.scalar;
   const birth = privateMapGet(nativeBirthRegistries, state), registryDescriptor = nativeGetDescriptor(state.raw, 'gb');
   if (!original || !origin || !runtime || !birth || registryDescriptor?.value !== birth.object
@@ -571,9 +604,10 @@ function preparePrivateNativeScalar(state: OwnedSqlDatabase, engine: SqlJsStatic
     released = true;
     // Finalize destroys the allocation even if its status reports a prior SQL
     // error. It must never be retried or depend on the current JS registry.
-    runtime.finalize(pointer);
+    if (pointer !== reservedPointer) runtime.finalize(pointer);
   };
   try {
+    if (pointer === reservedPointer) throw new SQLiteObservationRetiredError();
     const ownerDescriptor = nativeGetDescriptor(statement, 'db'), cursor = nativeGetDescriptor(statement, 'Oa'),
       buffersDescriptor = nativeGetDescriptor(statement, 'mb'), buffers: unknown = buffersDescriptor?.value;
     const entries = nativeOwnKeys(birth.object), entry = entries.length === 1 ? nativeGetDescriptor(birth.object, nativeString(pointer)) : undefined;
@@ -606,25 +640,100 @@ function preparePrivateNativeScalar(state: OwnedSqlDatabase, engine: SqlJsStatic
     assertDependencies();
     if (released || !nativeObjectFactsMatch(birth) || !nativeScalarRuntimeMatches(runtime)) throw new SQLiteObservationRetiredError();
   };
-  return nativeFreeze({ dispose, read(assertDependencies: () => void): boolean | undefined {
-    current(assertDependencies);
-    if (runtime.clear(pointer) !== 0 || runtime.reset(pointer) !== 0) return undefined;
-    let result: boolean | undefined;
-    try {
-      const first = runtime.step(pointer);
-      current(assertDependencies);
-      if (first === 100 && runtime.count(pointer) === 1 && runtime.dataCount(pointer) === 1
-        && runtime.type(pointer, 0) === 1 && runtime.decode(runtime.name(pointer, 0)) === 'frame_matches') {
-        const value = runtime.value(pointer, 0);
+  const currentNative = (assertDependencies: () => void) => {
+    assertDependencies();
+    if (released || !nativeObjectFactsMatch(birth) || !nativeScalarExportsMatch(runtime)) throw new SQLiteObservationRetiredError();
+  };
+  try {
+    const adopted = adopt(pointer, dispose, current, currentNative, runtime, birth, () => released);
+    if (adopted === undefined) dispose();
+    return adopted;
+  } catch (error) { dispose(); throw error; }
+}
+
+function preparePrivateNativeScalar(state: OwnedSqlDatabase, engine: SqlJsStatic, sql: string): NativeScalarExecutable | undefined {
+  return withPrivateNativeScalarPointer(state, engine, sql, (pointer, dispose, current, currentNative, runtime, birth) => {
+    const binding = nativeScalarTextBinding;
+    const bindingMatches = binding && nativeScalarTextBindingMatches(binding, runtime);
+    // A binding observation can retire the original decoder before helper
+    // preparation. A changed captured runtime cannot select the full fallback.
+    if (!nativeScalarRuntimeMatches(runtime)) throw new SQLiteObservationRetiredError();
+    const alias = binding && bindingMatches
+      ? withPrivateNativeScalarPointer(state, engine, "SELECT CAST(?1 AS BLOB) = X'6672616d655f6d617463686573'",
+        (aliasPointer, disposeAlias, _currentAlias, _currentNativeAlias, aliasRuntime, aliasBirth, isReleased) => {
+          if (aliasRuntime !== runtime || aliasBirth !== birth) return undefined;
+          return { dispose: disposeAlias, isReleased, matches(namePointer: number): boolean | undefined {
+            // sqlite3_bind_text with negative length reads through the genuine
+            // NUL terminator. SQLITE_TRANSIENT copies bytes and NUL before the
+            // helper can reprepare; no fixed-size read can overrun a short name.
+            if (!nativeSafeInteger(namePointer) || namePointer <= 0
+              || runtime.clear(aliasPointer) !== 0 || runtime.reset(aliasPointer) !== 0) return undefined;
+            let result: boolean | undefined;
+            try {
+              if (binding.bind(aliasPointer, 1, namePointer, -1, -1) === 0
+                && runtime.step(aliasPointer) === 100 && runtime.count(aliasPointer) === 1
+                && runtime.dataCount(aliasPointer) === 1 && runtime.type(aliasPointer, 0) === 1) {
+                const value = runtime.value(aliasPointer, 0);
+                if ((value === 0 || value === 1) && runtime.step(aliasPointer) === 101) result = value === 1;
+              }
+            } finally {
+              try { if (runtime.reset(aliasPointer) !== 0) result = undefined; }
+              finally { if (runtime.clear(aliasPointer) !== 0) result = undefined; }
+            }
+            return result;
+          } };
+        }, pointer) : undefined;
+    if (!binding || !alias) {
+      return nativeFreeze({ dispose, read(assertDependencies: () => void): boolean | undefined {
         current(assertDependencies);
-        if ((value === 0 || value === 1) && runtime.step(pointer) === 101) result = value === 1;
-      }
-    } finally {
-      if (runtime.reset(pointer) !== 0) result = undefined;
+        if (runtime.clear(pointer) !== 0 || runtime.reset(pointer) !== 0) return undefined;
+        let result: boolean | undefined;
+        try {
+          const first = runtime.step(pointer);
+          current(assertDependencies);
+          if (first === 100 && runtime.count(pointer) === 1 && runtime.dataCount(pointer) === 1
+            && runtime.type(pointer, 0) === 1 && runtime.decode(runtime.name(pointer, 0)) === 'frame_matches') {
+            const value = runtime.value(pointer, 0);
+            current(assertDependencies);
+            if ((value === 0 || value === 1) && runtime.step(pointer) === 101) result = value === 1;
+          }
+        } finally {
+          if (runtime.reset(pointer) !== 0) result = undefined;
+        }
+        current(assertDependencies);
+        return result;
+      } });
     }
-    current(assertDependencies);
-    return result;
-  } });
+    const disposePair = () => { try { alias.dispose(); } finally { dispose(); } };
+    try {
+      return nativeFreeze({ dispose: disposePair, read(assertDependencies: () => void): boolean | undefined {
+        const assertPairDependencies = () => {
+          assertDependencies();
+          if (alias.isReleased() || !nativeScalarTextBindingMatches(binding, runtime)) throw new SQLiteObservationRetiredError();
+        };
+        // These original entry/exit fences still guard general Unicode row
+        // reads and reentrant caller boundaries. Only the two inner numeric
+        // sites use the decoder-free ABI, with every native dependency fresh.
+        current(assertPairDependencies);
+        if (runtime.clear(pointer) !== 0 || runtime.reset(pointer) !== 0) return undefined;
+        let result: boolean | undefined;
+        try {
+          const first = runtime.step(pointer);
+          currentNative(assertPairDependencies);
+          if (first === 100 && runtime.count(pointer) === 1 && runtime.dataCount(pointer) === 1
+            && runtime.type(pointer, 0) === 1 && alias.matches(runtime.name(pointer, 0)) === true) {
+            const value = runtime.value(pointer, 0);
+            currentNative(assertPairDependencies);
+            if ((value === 0 || value === 1) && runtime.step(pointer) === 101) result = value === 1;
+          }
+        } finally {
+          if (runtime.reset(pointer) !== 0) result = undefined;
+        }
+        current(assertPairDependencies);
+        return result;
+      } });
+    } catch (error) { disposePair(); throw error; }
+  });
 }
 
 interface OwnedSqlDatabase {
