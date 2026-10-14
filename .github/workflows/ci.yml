@@ -253,6 +253,9 @@ jobs:
           git config --global user.name "GoodVibes CI"
       - name: Run test suite (${{ matrix.platform }})
         run: ${{ matrix.test-cmd }}
+      - name: Check installer lifecycle
+        if: matrix.foundation
+        run: bun run test:installer
       - name: Run judgment suite
         if: matrix.foundation
         # Keep the level-0 foundation in the required Bun lane without invoking

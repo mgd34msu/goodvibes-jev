@@ -142,6 +142,16 @@ The runner is designed to run as a CLI and as the daemon's hosted-session host. 
 - **`TYPESAFE_API_KEY`:** needed for anything that calls Jev live: the proofs, calibration and a running engine.
 - **`TYPESAFE_BASE_URL`:** optional. Set it to a loopback address to use a local System One model instead of the hosted endpoint.
 
+## Install the application
+
+On Linux x64/arm64, run `./install.sh` from this checkout. It builds the full
+suite and creates the daemon's systemd user service. Bun and Node runtimes are
+supplied when needed. See [installation instructions](docs/installation.md)
+for prerequisites, credentials, custom paths and service options.
+
+Run `goodvibes-uninstall` (or `./uninstall.sh`) to remove the application and
+service while keeping your data. Add `--purge` to delete the data too.
+
 ## Common commands
 
 Run these from the repository root:

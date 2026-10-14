@@ -11,7 +11,7 @@ Copyright (c) 2026 Mike Davis.
 - [Configuration](docs/configuration.md): exact homes, layers, persistent keys and runtime overlays
 - [Hosted sessions](docs/hosted-sessions.md): Jev authority, trust, detach/kill, leases and recovery
 - [Testing and validation](docs/testing-and-validation.md): actual scripts, official runner and proof limits
-- [Local native installation and rollback](docs/local-native-installation.md): explicit offline prefix operations for the qualified Linux cohort
+- [Suite installation and uninstall](../../docs/installation.md): build this repository and configure the Linux user service
 - [Troubleshooting](docs/troubleshooting.md): startup, authentication, binding, services and tool refusals
 
 These guides reconstruct pinned upstream responsibilities against current source,
