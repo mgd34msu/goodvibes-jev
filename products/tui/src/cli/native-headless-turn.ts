@@ -4,9 +4,9 @@ import type { NativeConversationIntakeState } from '../runtime/native-conversati
 import type { NativeHeadlessTurnResult } from './native-headless.ts';
 import type { TurnEvent } from '@/runtime/index.ts';
 
-/** Fresh native turn only. Its exact permit/source enters the existing ordinary executor. */
-export async function executeAdmittedHeadlessTurn(ctx: BootstrapContext, state: NativeConversationIntakeState, signal: AbortSignal, format: string): Promise<NativeHeadlessTurnResult> {
-  let response = ''; let error = ''; let stopReason = 'native-turn-unsettled'; let exitCode = 3; let events = 0;
+/** Ordinary prompts go directly to the model; explicit native recovery retains its permit. */
+export async function executeHeadlessTurn(ctx: BootstrapContext, input: string | NativeConversationIntakeState, signal: AbortSignal, format: string): Promise<NativeHeadlessTurnResult> {
+  let response = ''; let error = ''; let stopReason = 'turn-unsettled'; let exitCode = 3; let events = 0;
   const unsubs = [
     ctx.runtimeBus.on<Extract<TurnEvent, { type: 'STREAM_DELTA' }>>('STREAM_DELTA', ({ payload }) => {
       events++;
@@ -21,7 +21,8 @@ export async function executeAdmittedHeadlessTurn(ctx: BootstrapContext, state: 
   signal.addEventListener('abort', abort, { once: true });
   try {
     if (signal.aborted) return { exitCode: 130, response: '', stopReason: 'cancelled' };
-    await dispatchNativeConversationTurn(state, ctx.orchestrator);
+    if (typeof input === 'string') await ctx.orchestrator.handleUserInput(input);
+    else await dispatchNativeConversationTurn(input, ctx.orchestrator);
     if (signal.aborted) exitCode = 130;
     return { exitCode, response, error, stopReason, sessionId: ctx.runtime.sessionId, model: ctx.runtime.model, provider: ctx.runtime.provider, events };
   } finally { signal.removeEventListener('abort', abort); for (const unsubscribe of unsubs) unsubscribe(); }

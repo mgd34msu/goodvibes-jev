@@ -22,5 +22,5 @@
       "instructions": "Is `model` a small or lightweight model (roughly 15 billion parameters or fewer, or a variant its name marks as mini, nano, lite, tiny or instant), or a special-purpose model such as an embedding, speech, image or moderation model? A mid-range general model sold as fast or balanced is not small."
     }
   },
-  "model": "jev-1.13.0"
+  "model": "jev-latest"
 }

@@ -65,6 +65,8 @@ export async function maybeEmitAdaptivePlannerDecision(
 }
 
 export interface TurnPreparationOptions {
+  /** User messages go to the conversation model without semantic admission. */
+  readonly directUserInput?: boolean;
   readonly signal?: AbortSignal;
   /** Capture the transcript boundary before awaiting a reading or cancellation. */
   readonly onMessageAdded?: () => void;
@@ -111,9 +113,9 @@ export async function prepareConversationForTurn(
   }
 
   options.onMessageAdded?.();
-  // Native admission has already read this exact source. It owns routing and
-  // planning; the legacy classifier must not reinterpret or prime it again.
-  if (nativeTurn) return null;
+  // Direct user input needs no semantic admission. Explicit native turns also
+  // retain their existing routing without a second classifier interpreting it.
+  if (nativeTurn || options.directUserInput) return preTurnPlan;
   // The submitted message is retained even if judgment fails or is cancelled.
   const classification = await classifyIntent(text, options.signal ? { signal: options.signal } : {});
   options.signal?.throwIfAborted();

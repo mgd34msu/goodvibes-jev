@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { randomUUID } from 'node:crypto';
 import { createOperatorNativeConversationIntakeClient, readNativeConversationTurnPermit, revalidateNativeConversationTurnPermit, type NativeConversationIntakeResult, type NativeConversationTurnPermit } from '../sdk/src/platform/workflow/work-ledger/native-intake-client.js';
 import type { OperatorRemoteClient } from '../operator-sdk/src/client-core.js';
@@ -86,10 +87,10 @@ describe('native ordinary-turn permit', () => {
 const model: ModelDefinition = { id: 'fixture', provider: 'fixture', registryKey: 'fixture:model', displayName: 'Fixture', description: '',
   capabilities: { toolCalling: true, codeEditing: false, reasoning: false, multimodal: false }, contextWindow: 0, selectable: true };
 const finalResponse = () => ({ content: 'Answer', toolCalls: [], stopReason: 'completed' as const, usage: { inputTokens: 1, outputTokens: 1 } });
-function orchestrator(chat: LLMProvider['chat'] = async () => finalResponse()) {
+function orchestrator(chat: LLMProvider['chat'] = async () => finalResponse(), forbidPlanReads = true) {
   const conversation = new ConversationManager(); const tools = new ToolRegistry();
   let intakeCalls = 0, spawned = 0, planReads = 0;
-  const planManager = { getActive: () => { planReads++; throw new Error('legacy plan read'); } } as unknown as NonNullable<OrchestratorCoreServices['planManager']>;
+  const planManager = { getActive: () => { planReads++; if (forbidPlanReads) throw new Error('legacy plan read'); return null; } } as unknown as NonNullable<OrchestratorCoreServices['planManager']>;
   const configManager = { get: (key: string) => key === 'behavior.notifyOnComplete' ? false : key === 'agents.contextCompactThreshold' ? 0.85 : undefined,
     getCategory: () => ({}), getWorkingDirectory: () => '/fixture' } as OrchestratorCoreServices['configManager'];
   const providerRegistry = { getCurrentModel: () => model, getForModel: () => ({ name: 'fixture', models: [model], chat }),
@@ -108,6 +109,41 @@ function orchestrator(chat: LLMProvider['chat'] = async () => finalResponse()) {
   instance.bindNativeConversationProject('native-project');
   return { instance, conversation, tools, counters: () => ({ intakeCalls, spawned, planReads }) };
 }
+
+test('user prompts are visible immediately and reach the model, including queued follow-ups and attachments, without Jev admission', async () => {
+  let judgments = 0;
+  const previous = installJudgmentPort({ model: 'test', ask: async () => { judgments++; throw new Error('Jev unavailable'); } });
+  const arrived = deferred<void>(); const release = deferred<void>();
+  const received: unknown[] = [];
+  const h = orchestrator(async request => {
+    received.push(structuredClone(request.messages.filter(message => message.role === 'user').at(-1)?.content));
+    arrived.resolve();
+    await release.promise;
+    return finalResponse();
+  }, false);
+  try {
+    const prompt = 'give this project a code review';
+    const first = h.instance.handleUserInput(prompt);
+    expect(h.conversation.getMessagesForLLM().some(message => message.role === 'user' && message.content === prompt)).toBe(true);
+    await arrived.promise;
+    await h.instance.handleUserInput('do it');
+    expect(h.instance.messageQueue.map(message => message.text)).toEqual(['do it']);
+    release.resolve(); await first;
+    const content = [{ type: 'text' as const, text: 'review this file\nAttached source content' }];
+    await h.instance.handleUserInput('review this file', content);
+    expect(received).toEqual([prompt, 'do it', content]);
+    expect(judgments).toBe(0);
+    expect(h.counters().intakeCalls).toBe(0);
+    expect(h.counters().spawned).toBe(0);
+    h.instance.setCoreServices({ memoryRegistry: { getAll: () => [{
+      id: 'optional-context', scope: 'project', cls: 'fact', summary: 'Project context', detail: undefined,
+      tags: [], provenance: [], reviewState: 'fresh', confidence: 60, createdAt: 1, updatedAt: 1,
+    }] } });
+    await h.instance.handleUserInput('???');
+    expect(received.at(-1)).toBe('???');
+    expect(judgments).toBeGreaterThan(0); // Failed optional relevance readings cannot block delivery either.
+  } finally { release.resolve(); h.instance.dispose(); installJudgmentPort(previous); }
+});
 
 describe('native ordinary turn through the real orchestrator', () => {
   test('queues authentic exact text once, suppresses all legacy intake/plan paths, and dedups settled delivery', async () => {

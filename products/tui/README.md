@@ -35,10 +35,17 @@ admitted executions. Refused/interrupted admission recovery requires explicit
 resume; a cancelled intent requires a new native attempt.
 No control asks for owner approval or automatically retries/resumes execution.
 
+## Conversation input
+
+Composer messages and `goodvibes --prompt '<text>'` go directly to the selected
+conversation model. Jev does not approve, reject or reroute these messages.
+Messages submitted during a response are queued. Composer file references,
+paste content and supported images are passed through to the conversation.
+
 ## Terminal workstream intake
 
-`/workstream start <request>` uses the same native conversation intake as ordinary
-terminal input. Jev determines the native outcome; the command name does not force
+`/workstream start <request>` explicitly submits to native work intake.
+Jev determines the native outcome; the command name does not force
 work admission. Admitted work enters the existing native execution flow, while an
 ordinary turn requires its durable dispatch claim and native turn permit. There is
 no legacy runner fallback when native intake, the paired host or the journal is

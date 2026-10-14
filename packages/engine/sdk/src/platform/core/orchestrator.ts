@@ -8,7 +8,6 @@ import { resolveSystemPrompt } from './orchestrator-system-prompt.js';
 import { JudgmentError } from '@goodvibes-jev/judgment';
 import { JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { JudgmentInputError } from '../gate/judgment-input.js';
-import type { ClassificationResult } from './intent-classifier.js';
 import { PlannerJudgmentError } from './adaptive-planner.js';
 import type { ConversationManager } from './conversation.js';
 import { resolveCompactionStrategy } from './conversation-compaction.js';
@@ -83,7 +82,6 @@ import {
 } from './orchestrator-runtime.js';
 import {
   type ChatResponseWithReasoning,
-  maybeEmitAdaptivePlannerDecision,
   prepareConversationForTurn,
 } from './orchestrator-turn-helpers.js';
 import { executeOrchestratorTurnLoop } from './orchestrator-turn-loop.js';
@@ -766,26 +764,21 @@ export class Orchestrator {
     const hookOwner = this.turnHookOwner!;
     const terminal: { publish?: () => void } = {};
 
-    // Judgment preflight shares the same cancellation and cleanup as streaming.
+    // Transcript preparation shares the same cancellation and cleanup as streaming.
     try {
       const signal = this.abortController?.signal;
       // Hooks may run external commands. A later provider error cannot prove
       // replay safe once that extensibility boundary has been entered.
       if (nativeTurn && this.hookDispatcher) markNativeConversationTurnEffectsPossible();
-      let turnClassification: ClassificationResult | undefined;
       const preTurnPlan = await prepareConversationForTurn(
         this.conversation, providerRegistry, text, content, this.sessionId, this.coreServices.planManager ?? null,
-        { ...(signal ? { signal } : {}), deferPlanPriming: true, onMessageAdded: () => { this.turnStartMessageCount = this.conversation.getMessageCount(); }, onClassification: (reading) => { turnClassification = reading; return maybeEmitAdaptivePlannerDecision(
-          text, this.flagManager?.isEnabled('adaptive-execution-planner') ?? false,
-          this.coreServices.adaptivePlanner ?? null, this.runtimeBus,
-          (id) => createEmitterContext(this.sessionId, id), turnId, reading, signal,
-        ); } },
+        { ...(signal ? { signal } : {}), directUserInput: true, onMessageAdded: () => { this.turnStartMessageCount = this.conversation.getMessageCount(); } },
       );
       signal?.throwIfAborted();
       this.turnStartMessageCount = this.conversation.getMessageCount();
       this.scrollToEnd(this.getViewportHeight());
       this.streamingInputTokens = estimateFreshTurnInputTokens(this.lastInputTokens, estimateConversationTokens(this.conversation.getMessagesForLLM()), text, content);
-      await this.runTurnStream(text, content, turnId, preTurnPlan, configManager, providerRegistry, turnClassification, (publish) => { terminal.publish = publish; });
+      await this.runTurnStream(text, content, turnId, preTurnPlan, configManager, providerRegistry, (publish) => { terminal.publish = publish; });
 
       signal?.throwIfAborted();
       // --- Phase 3: Post-turn reconciliation ---
@@ -883,7 +876,6 @@ export class Orchestrator {
     preTurnPlan: Awaited<ReturnType<typeof prepareConversationForTurn>>,
     configManager: ReturnType<typeof requireConfigManager>,
     providerRegistry: ReturnType<typeof requireProviderRegistry>,
-    turnClassification?: ClassificationResult,
     onTurnTerminal?: (publish: () => void) => void,
   ): Promise<void> {
     // A successful finalization releases the in-flight controller but does not
@@ -952,7 +944,7 @@ export class Orchestrator {
       recordTurnKnowledgeInjection: (record) => { this.recordTurnKnowledgeInjection(record); },
       nextTurnKnowledgeSequence: () => this.nextTurnKnowledgeSequence(), contractHooks: this.coreServices.contractHooks,
       contractIntake: this.contractIntake,
-      ...(turnClassification ? { turnClassification } : {}),
+      directUserInput: true,
     });
   }
 

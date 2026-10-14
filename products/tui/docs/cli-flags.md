@@ -174,7 +174,8 @@ Enable or disable a named feature flag at startup. May be repeated.
 
 ### `--prompt <text>`, `-p <text>`
 
-Seed the input buffer with a prompt before the TUI opens. Implies `run` command when no subcommand is given.
+Send a prompt directly to the selected model, print the response, and exit.
+Jev does not approve, reject or reroute the prompt. Implies `run` when no subcommand is given.
 
 ```sh
 goodvibes --prompt 'explain this file'

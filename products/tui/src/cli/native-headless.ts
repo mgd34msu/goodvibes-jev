@@ -167,6 +167,6 @@ export function writeNativeHeadlessResult(result: NativeHeadlessResult, format: 
   const { exitCode, native, ...turn } = result;
   // Capabilities remain process-local. Never spread the state containing its permit.
   const state = native ? { status: native.status, message: native.message, request: native.request, result: native.result, execution: native.execution } : undefined;
-  if (format === 'json' || format === 'stream-json') stdout(JSON.stringify({ ...(format === 'stream-json' ? { type: 'NATIVE_INTAKE_RESULT' } : {}), ok: exitCode === 0, ...turn, ...(state ? { native: state } : {}) }));
+  if (format === 'json' || format === 'stream-json') stdout(JSON.stringify({ ...(format === 'stream-json' ? { type: state ? 'NATIVE_INTAKE_RESULT' : 'TURN_RESULT' } : {}), ok: exitCode === 0, ...turn, ...(state ? { native: state } : {}) }));
   else stdout([result.response, result.error, state?.execution?.message].filter(Boolean).join('\n'));
 }

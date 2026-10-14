@@ -44,8 +44,8 @@ describe('turn-end notification', () => {
     const turnEnd = payloads.find((payload) => /heron migration/i.test(payload));
     expect(turnEnd, `OSC 9 payloads: ${JSON.stringify(payloads)}`).toBeDefined();
     expect(turnEnd!).not.toMatch(/[0-9a-f]{12}/); // no internal ids in outward text
-    expect(host.judgments.accepted).toContain('native-route');
-    expect(host.judgments.accepted).toContain('native-turn');
+    expect(host.judgments.accepted).not.toContain('native-route');
+    expect(host.judgments.accepted).not.toContain('native-turn');
     expect(host.judgments.accepted).not.toContain('route');
     expect(host.judgments.accepted).not.toContain('turn');
     expect(host.daemon.services.contractRunner.list({ includeTerminal: true })).toHaveLength(0);

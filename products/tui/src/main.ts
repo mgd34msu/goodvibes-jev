@@ -5,7 +5,7 @@ import type { HostPairingController } from './shell/host-pairing-controller.ts';
 import { isConversationUsageAvailable, isConversationContextAvailable } from './core/conversation-usage.ts';
 import type { NativeConversationIntakeState } from './runtime/native-conversation-intake.ts';
 import { captureNativeConversationInput, type ProductInputContext } from './runtime/native-conversation-input.ts';
-import { routeNativeConversationInput, dispatchNativeConversationTurn } from './runtime/native-conversation-ingress.ts';
+import { dispatchNativeConversationTurn } from './runtime/native-conversation-ingress.ts';
 import { readTuiConfigValue, subscribeTuiConfigValue } from './config/host-settings.ts';
 import { resolveGoodVibesDaemonHome, resolveGoodVibesHome } from '@goodvibes-jev/engine/sdk/platform/config';
 import { Compositor } from './renderer/compositor.ts';
@@ -179,7 +179,6 @@ async function main() {
   const typeahead = createStartupTypeaheadGate(); // keys typed before a startup modal appeared never answer it
 
   let pendingPermission: PendingPermissionState | null = null;
-  let preparingInput = false;
   let inputEpoch = 0;
   let submissionStatus: string | null = null;
   let hostPairing: HostPairingController | null = null;
@@ -311,7 +310,6 @@ async function main() {
     try {
       await refreshMemoryRecallSnapshot(ctx.services);
       if (!current()) return;
-      preparingInput = false;
       submissionStatus = null;
       render();
       await dispatchNativeConversationTurn(state, orchestrator, inputOptions);
@@ -325,16 +323,11 @@ async function main() {
   commandContext.dispatchNativeIntakeTurn = state => dispatchNativeTurn(state);
 
   const submitInput = (text: string, content?: ContentPart[], options: ProductInputContext = {}) => {
-    if (preparingInput) {
-      submissionStatus = 'A prompt is still being prepared. Ctrl+C cancels; your new text is in input history.';
-      render(); return;
-    }
     scheduleReading.cancel();
     shareReading.cancel();
     teamworkReading.cancel();
     planningReading.cancel();
     hostPairing?.cancelForTakeover();
-    const original = options.source ?? { text, unsupportedSources: [{ kind: 'context' as const, label: 'derived-input' }] };
     input.clearModalStack();
     transcript.toBottom(); // Re-lock on any user input
     conversation.dismissSplash(); // owner rule: any submission retires the splash for the run
@@ -347,52 +340,29 @@ async function main() {
       notify: (message) => systemMessageRouter.high(message),
     }).text;
     if (processedText || content) {
-      // Supersede recovery before the new intake reader, not only at dispatch.
+      // A fresh prompt supersedes provider recovery for the previous submission.
       streamResult.clearFailoverVisited();
       const epoch = ++inputEpoch;
-      preparingInput = true;
-      submissionStatus = 'Preparing prompt… Ctrl+C cancels.';
-      render();
-      void (async () => {
-        const unsupportedSources = [...original.unsupportedSources];
-        if (processedText !== text) unsupportedSources.push({ kind: 'context', label: 'composer-derived-text' });
-        if (content?.some(part => part.type !== 'text')) unsupportedSources.push({ kind: 'image', label: 'attached-content' });
-        const state = await routeNativeConversationInput({ intake: commandContext.nativeConversationIntake,
-          source: { text: original.text, unsupportedSources },
-          notify: message => { systemMessageRouter.high(message); render(); },
-          dispatch: async state => {
-            if (epoch !== inputEpoch) return;
-            await dispatchNativeTurn(state, options.spokenOutput, () => epoch === inputEpoch);
-          },
-        });
-        if (epoch !== inputEpoch) return;
-        if (!state?.turnReady) submissionStatus = state?.message ?? 'Prompt preparation stopped because the connection changed. Your text is in input history.';
-      })().catch(error => {
+      submissionStatus = null;
+      const inputOptions = options.spokenOutput ? createSpokenTurnInputOptions() : undefined;
+      if (options.spokenOutput) spokenTurns.submitNextTurn(processedText);
+      retryCtx = { count: conversation.getMessageCount(), text: processedText, content, opts: inputOptions };
+      // Chat accepts the user's message directly. Native admission belongs to
+      // explicit work submission, never to deciding whether a model may see it.
+      // Optional memory refresh must not delay displaying or sending the prompt.
+      void refreshMemoryRecallSnapshot(ctx.services);
+      void orchestrator.handleUserInput(processedText, content, inputOptions).catch(error => {
         if (epoch === inputEpoch) submissionStatus = `Prompt failed: ${summarizeError(error)}`;
-      }).finally(() => {
-        if (epoch === inputEpoch) preparingInput = false;
-        render();
-      });
+      }).finally(render);
+      render();
     } else {
       render();
     }
   };
 
-  const cancelTurn = planningReading.withCancellation(teamworkReading.withCancellation(shareReading.withCancellation(scheduleReading.withCancellation(
+  const cancelGeneration = planningReading.withCancellation(teamworkReading.withCancellation(shareReading.withCancellation(scheduleReading.withCancellation(
     createCancelGeneration(orchestrator, spokenTurns, () => streamResult.cancelPendingRecovery()),
   ))));
-  const cancelGeneration = () => {
-    if (preparingInput) {
-      const epoch = ++inputEpoch;
-      preparingInput = false;
-      submissionStatus = 'Cancelling prompt preparation…';
-      void commandContext.nativeConversationIntake?.cancel().then(state => {
-        if (epoch === inputEpoch) submissionStatus = state?.message ?? 'Prompt preparation cancelled. Your text is in input history.';
-      }).catch(error => { if (epoch === inputEpoch) submissionStatus = `Cancellation failed: ${summarizeError(error)}`; }).finally(render);
-      render(); return true;
-    }
-    return cancelTurn();
-  };
 
   const jumpToBookmark = (key: string) => {
     conversation.getDisplayBlocks();
@@ -428,7 +398,7 @@ async function main() {
     orchestrator, powerManager: ctx.services.powerManager, readPowerSurface: () => powerChipSource.get(), render: () => render(), notify: (m) => systemMessageRouter.high(m),
     getActiveToolCallId: () => streamMetrics.activeToolCallId, toggleMemoryProvenance: () => memoryProvenanceUi.toggle(),
   });
-  commandContext.isGenerating = () => preparingInput || orchestrator.isThinking;
+  commandContext.isGenerating = () => orchestrator.isThinking;
   commandContext.jumpToBookmark = jumpToBookmark; commandContext.scrollToLine = scrollToLine;
   commandContext.clearScreen = () => {
     compositor.resetDiff();

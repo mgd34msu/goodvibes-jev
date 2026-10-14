@@ -236,6 +236,8 @@ export interface OrchestratorTurnLoopContext {
    * and work routed to a contract starts one; either way the turn ends there.
    */
   readonly contractIntake: ContractIntake;
+  /** Deliver user messages to the selected model; do not divert them into work intake. */
+  readonly directUserInput?: boolean;
   readonly turnClassification?: ClassificationResult;
 }
 
@@ -280,7 +282,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
   const contractSession = nativeTurn ? undefined : bindContractSession(context.contractHooks, context.sessionId, context.turnId);
 
   // A turn that is a session-mode unit's work is not read again: the runner already owns it.
-  if (!nativeTurn && contractSession === undefined) {
+  if (!nativeTurn && !context.directUserInput && contractSession === undefined) {
     const intake = await context.contractIntake.intake({ text: context.text, sessionId: context.sessionId, signal });
     assertActiveTurn();
     if (intake.kind !== 'turn') {
@@ -455,7 +457,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         // (default-off) code-injection flag AND the embedder's storage.codeIndexEnabled
         // setting, both folded into isPassiveCodeInjectionEnabled by the orchestrator.
         const codeInjectionEnabled = !!context.codeIndex && context.isPassiveCodeInjectionEnabled();
-        const { block, assertCodeCurrent, record: turnInjectionRecord } = await buildPerTurnKnowledgeInjection({
+        const injection = await buildPerTurnKnowledgeInjection({
           memoryRegistry: context.memoryRegistry,
           // The main session has no frozen "task" distinct from the live conversation,
           // context.text (this call's originating human message) IS this turn's task, and
@@ -473,18 +475,28 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
           codeAuthority: { readAccessFilter: context.codeReadAccessFilter, signal },
           codeInjectionEnabled,
           codeLimit: context.configManager.get('agents.passiveInjection.codeLimit'),
+        }).catch((error: unknown) => {
+          signal?.throwIfAborted();
+          // Optional context may be omitted; its readings never veto the user's message.
+          logger.warn('Optional knowledge retrieval unavailable; continuing conversation', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return null;
         });
         assertActiveTurn();
-        turnKnowledgeBlock = block;
-        assertCodeInjectionCurrent = assertCodeCurrent;
-        if (turnInjectionRecord.injectedIds.length > 0) {
-          context.addInjectedKnowledgeIds(turnInjectionRecord.injectedIds);
-          // Memory provenance: only 'memory'-sourced ids reach the wire chip.
-          turnInjectionRecord.injectedIds.forEach((id, index) => {
-            if (turnInjectionRecord.injectedSources[index] === 'memory') turnMemoryRecordIds.add(id);
-          });
+        turnKnowledgeBlock = injection?.block ?? null;
+        assertCodeInjectionCurrent = injection?.assertCodeCurrent;
+        if (injection) {
+          const turnInjectionRecord = injection.record;
+          if (turnInjectionRecord.injectedIds.length > 0) {
+            context.addInjectedKnowledgeIds(turnInjectionRecord.injectedIds);
+            // Memory provenance: only 'memory'-sourced ids reach the wire chip.
+            turnInjectionRecord.injectedIds.forEach((id, index) => {
+              if (turnInjectionRecord.injectedSources[index] === 'memory') turnMemoryRecordIds.add(id);
+            });
+          }
+          context.recordTurnKnowledgeInjection(turnInjectionRecord);
         }
-        context.recordTurnKnowledgeInjection(turnInjectionRecord);
       } else {
         // Hard no-op: no budget headroom this call. Never call into retrieval for a
         // budget already known to be zero, and never keep claiming a stale block from an

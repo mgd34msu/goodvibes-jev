@@ -221,7 +221,11 @@ export async function bootstrapRuntime(
         providerRegistry.modelTiers,
         'tui.conversation-system-prompt',
         { audience: 'conversation', signal },
-      );
+      ).catch((error: unknown) => {
+        signal?.throwIfAborted();
+        logger.warn('Optional model guidance unavailable; continuing conversation', { error: summarizeError(error) });
+        return '';
+      });
       signal?.throwIfAborted();
       return joinPromptParts(runtime.systemPrompt, supplement);
     },
@@ -237,9 +241,10 @@ export async function bootstrapRuntime(
     },
   });
   conversationFollowUpRef.value = (item) => orchestrator.enqueueConversationFollowUp(item);
-  // Wire orchestratorHandleUserInputRef so COMPANION_MESSAGE_RECEIVED fires a real LLM turn (after a pre-turn recall-snapshot refresh; see main.ts's submitInput).
+  // Companion messages follow the same direct conversation path as the composer.
   orchestratorHandleUserInputRef.value = (text: string, options?: OrchestratorUserInputOptions) => {
-    void refreshMemoryRecallSnapshot(services).then(() => orchestrator.handleUserInput(text, undefined, options)).catch((err: unknown) => {
+    void refreshMemoryRecallSnapshot(services);
+    void orchestrator.handleUserInput(text, undefined, options).catch((err: unknown) => {
       logger.debug('companion handleUserInput safety catch', { error: String(err) });
     });
   };

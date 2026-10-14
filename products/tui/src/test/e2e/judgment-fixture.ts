@@ -4,6 +4,7 @@ import nativeTurn from '../fixtures/e2e-judgments/native-turn.json';
 import modelIdentity from '../fixtures/e2e-judgments/model-identity.json';
 import modelTier from '../fixtures/e2e-judgments/model-tier.json';
 import unavailableModelRoutes from '../fixtures/e2e-judgments/unavailable-model-routes.json';
+import unavailableNotices from '../fixtures/e2e-judgments/unavailable-notices.json';
 
 const prompts = ['please answer the e2e marmot question', 'describe the lighthouse keeper routine', 'summarize the heron migration notes'] as const;
 const stable = (value: unknown): string => JSON.stringify(value, (_key, entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
@@ -40,6 +41,21 @@ const privacyFieldRoles = {
   "status": "other",
   "latencyMs": "other",
   "provider": "other",
+  "providerName": "other",
+  "model": "other",
+  "baseURL": "other",
+  "endpoint": "other",
+  "endpointHost": "other",
+  "contentLength": "other",
+  "contentType": "other",
+  "elapsedSeconds": "other",
+  "thresholdSeconds": "other",
+  "messageCount": "other",
+  "toolCount": "other",
+  "totalModels": "other",
+  "childPid": "other",
+  "deadOwnerPid": "other",
+  "request": "content",
   "resumed": "other",
   "queued": "other",
   "reaped": "other",
@@ -231,6 +247,10 @@ export function startE2EJudgments(options: { readonly ordinaryHomes?: readonly s
   // Captured background registry probes intentionally receive no synthetic
   // classification. They stay unavailable; any new semantic request is a failure.
   const expectedNegative = new Set(unavailableModelRoutes.map(stable));
+  // These exact startup notices may stay unclassified. Only their generated
+  // session identifier varies; a new notice or question still fails the test.
+  const noticeShape = (value: unknown) => stable(value).replace(/user-[a-f0-9]{8}/g, 'user-<id>');
+  const expectedNoticeNegative = new Set(unavailableNotices.map(noticeShape));
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
     if (request.method !== 'POST' || new URL(request.url).pathname !== '/v1/systemone') return new Response('not found', { status: 404 });
     let body: unknown;
@@ -238,7 +258,7 @@ export function startE2EJudgments(options: { readonly ordinaryHomes?: readonly s
     const reading = e2eJudgmentAnswers(body, ordinaryMissingFiles);
     if (!reading) {
       rejected.push(body);
-      if (!expectedNegative.has(stable(body))) unexpected.push(body);
+      if (!expectedNegative.has(stable(body)) && !expectedNoticeNegative.has(noticeShape(body))) unexpected.push(body);
       return Response.json({ error: { message: 'Unknown deterministic E2E judgment; rejected' } }, { status: 422 });
     }
     accepted.push(reading.kind);

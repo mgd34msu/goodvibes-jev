@@ -50,8 +50,8 @@ describe('resize', () => {
       expect(screen.split('\n').every((line) => [...line].length <= cols)).toBe(true);
     }
     expect(tui.alive()).toBe(true);
-    expect(host.judgments.accepted).toContain('native-route');
-    expect(host.judgments.accepted).toContain('native-turn');
+    expect(host.judgments.accepted).not.toContain('native-route');
+    expect(host.judgments.accepted).not.toContain('native-turn');
     expect(host.judgments.accepted).not.toContain('route');
     expect(host.judgments.accepted).not.toContain('turn');
     expect(host.daemon.services.contractRunner.list({ includeTerminal: true })).toHaveLength(0);
