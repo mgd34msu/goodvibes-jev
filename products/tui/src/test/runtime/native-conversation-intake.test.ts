@@ -27,7 +27,8 @@ test('failed persistence forbids capture; failed dispatch durability forbids tur
 test('lost capture response reuses original identity and gets before exact replay', async () => {
   const f = fixture(); const capture = f.client.capture; let lost = true;
   f.client.capture = async request => { if (lost) { lost = false; f.calls.push('lost'); throw new Error('transport'); } return capture(request); };
-  await f.controls.submit(original); const restarted = f.create(); const state = await restarted.retry();
+  expect((await f.controls.submit(original))?.message).toContain('Prompt preparation failed (capture): transport');
+  const restarted = f.create(); const state = await restarted.retry();
   expect(f.calls.indexOf('get')).toBeLessThan(f.calls.indexOf('capture')); expect(f.ids()).toBe(2); expect(state?.turnReady).toBe(true);
   expect(f.captures[0]).toEqual({ requestId: 'id-1', inputId: 'id-2', ...original });
 });

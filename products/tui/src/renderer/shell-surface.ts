@@ -11,6 +11,7 @@ import { renderThrobberLine, type ThrobberState } from './throbber.ts';
 import { renderBackToBottomPill, type BackToBottomState } from './back-to-bottom.ts';
 import { voiceCaptureChip } from './voice-capture-chip.ts';
 import { tagFooterLine } from './footer-targets.ts';
+import { wrapText } from '../utils/terminal-width.ts';
 
 /**
  * shell-surface.ts, everything under the transcript, top to bottom:
@@ -73,6 +74,7 @@ export interface ShellFooterView {
 }
 
 export interface ShellFooterBuildOptions {
+  readonly submissionStatus?: string | null;
   readonly width: number;
   /** The keyboard is in the conversation work tree: the status line shows its keys. */
   readonly workTreeFocused?: boolean;
@@ -263,6 +265,10 @@ export function buildShellFooter(options: ShellFooterBuildOptions): ShellFooterB
   // Passive hint rows, topmost first: the retry affordance (actionable, time
   // bounded), the context pressure hint, then the user's scriptable line.
   const above: Line[] = [];
+  if (options.submissionStatus) {
+    const status = options.submissionStatus.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, ' ');
+    for (const line of wrapText(status, Math.max(1, options.width - 6)).slice(0, 4)) above.push(UIFactory.stringToLine(`   ${line}`, options.width, { fg: t.textMuted }));
+  }
   if (options.retryHint) above.push(UIFactory.stringToLine(`   ${options.retryHint}`, options.width, { fg: t.textMuted, bold: true }));
   if (options.contextStatusHint) above.push(UIFactory.stringToLine(`   ${options.contextStatusHint}`, options.width, { fg: t.textMuted }));
   if (options.scriptableStatusLine) above.push(UIFactory.stringToLine(`   ${options.scriptableStatusLine}`, options.width, { fg: t.textMuted }));

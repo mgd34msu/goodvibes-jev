@@ -13,7 +13,7 @@ export function nativeIntakeContinuationCatalog(record: NativeConversationCaptur
     description: 'Repair the proposed original requirement ranges within the remaining bounded proposal budget; never change the source.',
     input: { proposalsSpent: record.proposalsSpent, limit: NATIVE_CONVERSATION_MAX_PROPOSALS } };
   const resolve: AutonomousContinuation = { ref: { kind: 'gather-evidence', id: hash({ sourceId: record.sourceId, operation: 'resolve-original-source' }), revision: record.sourceRevision },
-    description: 'Inspect the registered original-source resolver. If required context is absent or unsupported, hold this input without inventing requirements or asking for approval.',
+    description: 'Hold this input because answering it requires specific source material that is missing or unsupported. This stops the conversation; use only when the missing material is necessary to handle the message.',
     input: { unsupportedSources: record.unsupportedSources.map(source => ({ kind: source.kind, label: source.label })), supportedSource: 'Complete immutable text in the input part only' } };
   const continuations = [resolve, ...(record.route === 'contract' && record.unsupportedSources.length === 0 && record.proposalsSpent < NATIVE_CONVERSATION_MAX_PROPOSALS ? [repair] : [])];
   return { repair, resolve, continuations };

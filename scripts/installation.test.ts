@@ -14,10 +14,14 @@ let actions: string[][];
 let execute: Run;
 let hooks: InstallHooks;
 const COMMIT = 'a'.repeat(40);
-beforeEach(() => {
+beforeEach(async () => {
   home = mkdtempSync(join(tmpdir(), 'jev-suite-test-'));
   previousHome = process.env.HOME; process.env.HOME = home;
   options = parseOptions(['--no-service'], home);
+  const listener = createServer();
+  await new Promise<void>(resolve => listener.listen(0, '127.0.0.1', resolve));
+  options.port = (listener.address() as { port: number }).port;
+  await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
   state = 'inactive'; actions = [];
   execute = (command, args) => {
     actions.push([command, ...args]);

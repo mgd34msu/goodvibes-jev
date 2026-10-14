@@ -179,6 +179,9 @@ async function main() {
   const typeahead = createStartupTypeaheadGate(); // keys typed before a startup modal appeared never answer it
 
   let pendingPermission: PendingPermissionState | null = null;
+  let preparingInput = false;
+  let inputEpoch = 0;
+  let submissionStatus: string | null = null;
   let hostPairing: HostPairingController | null = null;
   // One-key jump/attach to a spawned CI fix-session: the affordance ARMS the id; the next 'j' runs the resume so the user never retypes it.
   let fixSessionAttachArmed: string | null = null;
@@ -298,23 +301,34 @@ async function main() {
   stopSpokenOutputForExit = ambience.stopSpokenOutputForExit;
   const { spokenTurns, scriptableStatusline } = ambience;
   unsubs.push(...ambience.unsubs);
-  const dispatchNativeTurn = async (state: NativeConversationIntakeState, spokenOutput = false): Promise<void> => {
+  const dispatchNativeTurn = async (state: NativeConversationIntakeState, spokenOutput = false, current: () => boolean = () => true): Promise<void> => {
     if (!state.turnReady || !state.turnPermit || state.result?.kind !== 'turn') return;
     const inputOptions = { ...(spokenOutput ? createSpokenTurnInputOptions() : {}), nativeConversationTurnPermit: state.turnPermit };
     if (spokenOutput) spokenTurns.submitNextTurn(state.result.text);
     // Provider failover retains the exact same source identity and opaque permit.
     retryCtx = { count: conversation.getMessageCount(), text: state.result.text, opts: inputOptions };
     streamResult.clearFailoverVisited();
-    await refreshMemoryRecallSnapshot(ctx.services);
-    try { await dispatchNativeConversationTurn(state, orchestrator, inputOptions); }
-    catch {
-      systemMessageRouter.high('Native turn dispatch requires recovery. Its durable claim was preserved; no legacy fallback was started.');
+    try {
+      await refreshMemoryRecallSnapshot(ctx.services);
+      if (!current()) return;
+      preparingInput = false;
+      submissionStatus = null;
+      render();
+      await dispatchNativeConversationTurn(state, orchestrator, inputOptions);
+    } catch (error) {
+      if (!current()) return;
+      submissionStatus = `Prompt dispatch failed: ${summarizeError(error)}. Inspect /work intake-status before retrying.`;
+      systemMessageRouter.high(submissionStatus);
       render();
     }
   };
   commandContext.dispatchNativeIntakeTurn = state => dispatchNativeTurn(state);
 
   const submitInput = (text: string, content?: ContentPart[], options: ProductInputContext = {}) => {
+    if (preparingInput) {
+      submissionStatus = 'A prompt is still being prepared. Ctrl+C cancels; your new text is in input history.';
+      render(); return;
+    }
     scheduleReading.cancel();
     shareReading.cancel();
     teamworkReading.cancel();
@@ -335,24 +349,50 @@ async function main() {
     if (processedText || content) {
       // Supersede recovery before the new intake reader, not only at dispatch.
       streamResult.clearFailoverVisited();
+      const epoch = ++inputEpoch;
+      preparingInput = true;
+      submissionStatus = 'Preparing prompt… Ctrl+C cancels.';
+      render();
       void (async () => {
         const unsupportedSources = [...original.unsupportedSources];
         if (processedText !== text) unsupportedSources.push({ kind: 'context', label: 'composer-derived-text' });
         if (content?.some(part => part.type !== 'text')) unsupportedSources.push({ kind: 'image', label: 'attached-content' });
-        await routeNativeConversationInput({ intake: commandContext.nativeConversationIntake,
+        const state = await routeNativeConversationInput({ intake: commandContext.nativeConversationIntake,
           source: { text: original.text, unsupportedSources },
           notify: message => { systemMessageRouter.high(message); render(); },
-          dispatch: state => dispatchNativeTurn(state, options.spokenOutput),
+          dispatch: async state => {
+            if (epoch !== inputEpoch) return;
+            await dispatchNativeTurn(state, options.spokenOutput, () => epoch === inputEpoch);
+          },
         });
-      })();
+        if (epoch !== inputEpoch) return;
+        if (!state?.turnReady) submissionStatus = state?.message ?? 'Prompt preparation stopped because the connection changed. Your text is in input history.';
+      })().catch(error => {
+        if (epoch === inputEpoch) submissionStatus = `Prompt failed: ${summarizeError(error)}`;
+      }).finally(() => {
+        if (epoch === inputEpoch) preparingInput = false;
+        render();
+      });
     } else {
       render();
     }
   };
 
-  const cancelGeneration = planningReading.withCancellation(teamworkReading.withCancellation(shareReading.withCancellation(scheduleReading.withCancellation(
+  const cancelTurn = planningReading.withCancellation(teamworkReading.withCancellation(shareReading.withCancellation(scheduleReading.withCancellation(
     createCancelGeneration(orchestrator, spokenTurns, () => streamResult.cancelPendingRecovery()),
   ))));
+  const cancelGeneration = () => {
+    if (preparingInput) {
+      const epoch = ++inputEpoch;
+      preparingInput = false;
+      submissionStatus = 'Cancelling prompt preparation…';
+      void commandContext.nativeConversationIntake?.cancel().then(state => {
+        if (epoch === inputEpoch) submissionStatus = state?.message ?? 'Prompt preparation cancelled. Your text is in input history.';
+      }).catch(error => { if (epoch === inputEpoch) submissionStatus = `Cancellation failed: ${summarizeError(error)}`; }).finally(render);
+      render(); return true;
+    }
+    return cancelTurn();
+  };
 
   const jumpToBookmark = (key: string) => {
     conversation.getDisplayBlocks();
@@ -388,7 +428,7 @@ async function main() {
     orchestrator, powerManager: ctx.services.powerManager, readPowerSurface: () => powerChipSource.get(), render: () => render(), notify: (m) => systemMessageRouter.high(m),
     getActiveToolCallId: () => streamMetrics.activeToolCallId, toggleMemoryProvenance: () => memoryProvenanceUi.toggle(),
   });
-  commandContext.isGenerating = () => orchestrator.isThinking;
+  commandContext.isGenerating = () => preparingInput || orchestrator.isThinking;
   commandContext.jumpToBookmark = jumpToBookmark; commandContext.scrollToLine = scrollToLine;
   commandContext.clearScreen = () => {
     compositor.resetDiff();
@@ -579,6 +619,7 @@ async function main() {
       branch: lastGitInfoRef.value?.branch,
       contextWindow: knownContextWindow,
       contextStatusHint,
+      submissionStatus,
       retryHint: retryAffordanceHint(retryAffordance),
       scriptableStatusLine: scriptableStatusline.current(),
       // behavior.autoCompactThreshold is stored as a percent integer (e.g. 80);

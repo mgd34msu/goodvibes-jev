@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { COMMANDS, PACKAGE, SERVICE, assertOwnedFiles, atomicWrite, contained, dataOwner, digest, plainPath, present, quote, readDataId, readInstallation, receiptPath, run, stopService, unitPath, validateLayout, withLock, type Installation, type Layout, type Run } from './installation.ts';
 
-export interface Options extends Layout { port: number; service: boolean; runtimeDir: string }
+export interface Options extends Layout { port: number; service: boolean; runtimeDir: string; workspace?: string }
 const ROOT = resolve(import.meta.dir, '..');
 export function parseOptions(args: string[], home = realpathSync(process.env.HOME ?? '')): Options {
   const values: Record<string, string> = {};
@@ -15,7 +15,7 @@ export function parseOptions(args: string[], home = realpathSync(process.env.HOM
     const flag = args[i]!;
     if (flag === '--no-service') service = false;
     else if (flag === '--service') service = true;
-    else if (['--prefix', '--bin-dir', '--data-dir', '--port', '--runtime-dir'].includes(flag) && args[i + 1] && !args[i + 1]!.startsWith('--')) values[flag] = args[++i]!;
+    else if (['--prefix', '--bin-dir', '--data-dir', '--port', '--runtime-dir', '--workspace'].includes(flag) && args[i + 1] && !args[i + 1]!.startsWith('--')) values[flag] = args[++i]!;
     else throw new Error(`Unknown or incomplete option: ${flag}`);
   }
   const prefix = resolve(values['--prefix'] ?? join(home, '.local/share/goodvibes-jev'));
@@ -23,8 +23,11 @@ export function parseOptions(args: string[], home = realpathSync(process.env.HOM
   const options = { home, prefix, binDir: resolve(values['--bin-dir'] ?? old?.binDir ?? join(home, '.local/bin')),
     dataDir: resolve(values['--data-dir'] ?? old?.dataDir ?? join(home, '.local/share/goodvibes-jev-data')),
     port: Number(values['--port'] ?? old?.port ?? 3421), service: service ?? old?.service ?? true,
+    workspace: realpathSync(resolve(values['--workspace'] ?? old?.workspace ?? ROOT)),
     runtimeDir: resolve(values['--runtime-dir'] ?? dirname(process.execPath)) };
   validateLayout(options);
+  if (!statSync(options.workspace).isDirectory()) throw new Error('--workspace must name a project directory.');
+  if (options.workspace === home || options.workspace === '/' || contained(options.dataDir, options.workspace) || contained(options.prefix, options.workspace)) throw new Error('--workspace must name a project directory outside installation data.');
   if (!Number.isInteger(options.port) || options.port < 1024 || options.port > 65535) throw new Error('--port must be an integer between 1024 and 65535.');
   if (old && (old.home !== home || old.binDir !== options.binDir || old.dataDir !== options.dataDir)) throw new Error('Keep existing command/data paths when updating, or uninstall first.');
   return options;
@@ -161,7 +164,7 @@ export async function install(options: Options, hooks: InstallHooks = {}): Promi
       let unit = '';
       if (options.service) {
         unit = hooks.renderUnit ? await hooks.renderUnit(options) : (await import(pathToFileURL(join(ROOT, 'packages/engine/sdk/src/platform/daemon/service-manager.ts')).href)).renderSystemdUnit({
-          name: 'goodvibes-jev', description: 'GoodVibes Jev daemon and WebUI', workingDirectory: options.dataDir,
+          name: 'goodvibes-jev', description: 'GoodVibes Jev daemon and WebUI', workingDirectory: options.workspace ?? ROOT,
           command: join(options.prefix, 'commands/goodvibes-daemon'), args: ['serve', '--hostname', '127.0.0.1', '--port', String(options.port)], env: {}, restartOnFailure: true });
       }
       if (old?.service) { stopService(old, execute); stopped = true; }
@@ -203,6 +206,7 @@ export async function install(options: Options, hooks: InstallHooks = {}): Promi
         execute('systemctl', ['--user', 'enable', SERVICE]);
         execute('systemctl', ['--user', 'restart', SERVICE]);
         await (hooks.ready ?? ready)(options, readFileSync(join(release, 'webui/index.html'), 'utf8'), execute);
+        if (!hooks.stage) execute(join(release, 'runtime/bun'), [join(ROOT, 'products/tui/scripts/pair-installed-host.ts'), options.prefix, options.dataDir, String(options.port), options.workspace ?? ROOT], { cwd: options.dataDir });
       } else if (old?.service) {
         execute('systemctl', ['--user', 'disable', SERVICE]);
         rmSync(unitPath(options)); execute('systemctl', ['--user', 'daemon-reload']);
@@ -217,6 +221,7 @@ export async function install(options: Options, hooks: InstallHooks = {}): Promi
         catch { console.warn(`Update succeeded; an unused previous release remains at ${join(options.prefix, 'releases', old.release)}.`); }
       }
       console.log(`Installed GoodVibes Jev (${commit.slice(0, 12)}). Commands: ${options.binDir}`);
+      if (options.service) console.log(`Workspace: ${options.workspace ?? ROOT}`);
       console.log(options.service ? `WebUI: http://127.0.0.1:${options.port}\nService: systemctl --user status ${SERVICE}` : `Start the daemon: ${join(options.binDir, 'goodvibes-daemon')} serve`);
       console.log(`Credentials: ${environment}\nUninstall: ${join(options.binDir, 'goodvibes-uninstall')} (add --purge to remove data)`);
       if (!(process.env.PATH ?? '').split(':').includes(options.binDir)) console.log(`Add commands to your shell PATH: export PATH=${quote(options.binDir)}:"$PATH"`);

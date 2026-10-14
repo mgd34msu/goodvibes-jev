@@ -11,6 +11,8 @@ import {
 } from '../../workflow/work-ledger/native-intake-wire.js';
 import { GatewayVerbError } from './gateway-verb-error.js';
 import { readInvocationParams } from './invocation-params.js';
+import { logger } from '../../utils/logger.js';
+import { summarizeError } from '../../utils/error-display.js';
 const SCOPES = [WORK_LEDGER_READ_SCOPE, WORK_LEDGER_WRITE_SCOPE] as const;
 function authorize(invocation: GatewayMethodInvocation) {
   const context = invocation.context;
@@ -61,7 +63,8 @@ export function registerNativeConversationIntakeGatewayMethods(catalog: GatewayM
             ? 'Native intake outcome is unknown. Look up the original input before choosing recovery.'
             : `Native conversation intake ${error.code}`, `NATIVE_INTAKE_${error.code.replaceAll('-', '_').toUpperCase()}`, status);
         }
-        throw new GatewayVerbError('Native conversation intake is unavailable; retain the original input identity', 'NATIVE_INTAKE_UNAVAILABLE', 503);
+        logger.error('Native conversation intake failed', { operation, error: summarizeError(error) });
+        throw new GatewayVerbError(`Native conversation intake failed: ${summarizeError(error)}; retain the original input identity`, 'NATIVE_INTAKE_UNAVAILABLE', 503);
       }
     }, { replace: true });
   }

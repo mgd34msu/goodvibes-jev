@@ -79,6 +79,19 @@ test.each(['converse', 'answer'] as const)('%s is routed before extraction but s
   expect(fake.requests).toHaveLength(2); expect(result.decisionIds).toHaveLength(2);
 });
 
+test('split conversation and answer probabilities still authorize only their shared ordinary-turn operation', async () => {
+  using log = new SqliteDecisionLog(':memory:');
+  const fake = fakePort((name, question) => name === 'route'
+    ? { type: 'choice', choice: 'answer', confidence: 0.1, probabilities: { converse: 0.45, answer: 0.53, contract: 0.02 } }
+    : choiceAnswer(question, 'act', 0.99));
+  const read = input(withDecisionLog(fake.port, log), log);
+  const routeEvidence = await readNativeIntakeRoute(read);
+  expect(routeEvidence.reading.outcome).not.toBe('act');
+  expect(routeEvidence.ordinaryTurnReading).toMatchObject({ verdict: 'yes', outcome: 'act', probability: 0.98 });
+  const result = await decideNativeIntake({ ...read, routeEvidence, allowAct: true, continuations: [], conditions: [] });
+  expect(result).toMatchObject({ route: 'turn', autonomous: { decision: { outcome: 'act' } } });
+});
+
 test.each(['uncertain-route', 'empty-work', 'bad-fidelity', 'incomplete', 'host-block'] as const)('%s removes act and selects only a registered repair', async kind => {
   using log = new SqliteDecisionLog(':memory:');
   const fake = answers({ routeConfidence: kind === 'uncertain-route' ? 0.6 : 0.99, fidelity: kind === 'bad-fidelity' ? 'contradicts' : 'supports', missing: kind === 'incomplete' ? 0.25 : 0.01, final: 'revise_0' });

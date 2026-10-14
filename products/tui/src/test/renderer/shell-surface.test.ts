@@ -28,6 +28,11 @@ function footer(overrides: Partial<ShellFooterBuildOptions> = {}): ReturnType<ty
 const text = (result: ReturnType<typeof buildShellFooter>): string => result.lines.map(lineToString).join('\n');
 
 describe('shell surface: the composer', () => {
+  test('keeps a failed submission readable across narrow footer rows', () => {
+    const message = 'Prompt preparation failed: daemon connection refused. Inspect /work intake-status before retrying.';
+    const rendered = text(footer({ width: 50, submissionStatus: message })).replace(/\s+/g, ' ');
+    expect(rendered).toContain(message);
+  });
   test('at rest the footer is the 5-row input area (caps, padding, text) plus the status line', () => {
     const result = footer();
     expect(result.height).toBe(6);

@@ -1,5 +1,8 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   actionOf,
   defineBattery,
@@ -49,6 +52,31 @@ let clock = Date.parse('2026-09-26T00:00:00Z');
 const tick = () => new Date((clock += 60_000));
 
 describe('withDecisionLog + SqliteDecisionLog', () => {
+  test('retains a judgment while another process briefly holds the shared log writer', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'jev-log-contention-'));
+    const path = join(directory, 'decisions.sqlite');
+    let child: ReturnType<typeof Bun.spawn> | undefined;
+    try {
+      using log = new SqliteDecisionLog(path);
+      child = Bun.spawn([process.execPath, '-e', `
+        import { Database } from 'bun:sqlite';
+        const db = new Database(process.argv[1]);
+        db.exec('BEGIN IMMEDIATE');
+        console.log('locked');
+        setTimeout(() => { db.exec('COMMIT'); db.close(); }, 75);
+      `, path], { stdout: 'pipe', stderr: 'pipe' });
+      const reader = (child.stdout as ReadableStream<Uint8Array>).getReader();
+      expect(new TextDecoder().decode((await reader.read()).value)).toContain('locked');
+      reader.releaseLock();
+      const result = await battery.run(withDecisionLog(answering(0.93), log, tick), 'Hello');
+      expect(log.get(result.result.decisionId!)?.status).toBe('answered');
+      expect(await child.exited).toBe(0);
+    } finally {
+      child?.kill();
+      if (child) await child.exited;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
   test('records an answered battery call with context, answers, readings and action', async () => {
     using log = new SqliteDecisionLog(':memory:');
     const port = withDecisionLog(answering(0.93), log, tick);

@@ -8,6 +8,7 @@ import {
 } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client';
 import type { NativeConversationInput } from './native-conversation-input.ts';
 import type { NativeIntakeJournalBinding, NativeConversationIntakeJournal } from './native-conversation-intake-journal.ts';
+import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 
 export interface NativeConversationIntakeBinding {
   readonly client: OperatorNativeConversationIntakeClient;
@@ -174,11 +175,11 @@ export class NativeConversationIntakeControls implements NativeConversationIntak
       }
       const turnPermit = turnReady ? binding.client.bindTurn(result) : undefined;
       return { status: 'recorded', message: describeResult(result, turnReady, Boolean(stored?.dispatch)), request: request(), result, ...(execution ? { execution } : {}), ...(turnReady ? { turnReady: true, turnPermit } : {}) };
-    } catch {
+    } catch (error) {
       if (!current()) return;
       return { status: command ? 'unknown' : 'unavailable', request: request(), message: phase.startsWith('journal-')
         ? 'The durable intake journal could not be confirmed. No further request or ordinary turn was sent. The visible original input and dispatch claim are preserved.'
-        : 'Native intake outcome is unknown or unavailable. Inspect /work intake-status before retrying the same input. No legacy turn or work execution was started.' };
+        : `Prompt preparation failed (${phase}): ${summarizeError(error)}. Inspect /work intake-status before retrying.` };
     } finally { clearInterval(timer); dispose(); if (epoch === this.epoch) this.active = undefined; }
   }
 }

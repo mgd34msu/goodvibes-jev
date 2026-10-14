@@ -14,6 +14,7 @@ export interface Installation extends Layout {
   release: string;
   sourceCommit: string;
   port: number;
+  workspace?: string;
   service: boolean;
   unit: string;
   wrappers: Record<string, string>;

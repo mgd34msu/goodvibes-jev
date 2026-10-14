@@ -91,6 +91,9 @@ export const rowsOf = <T>(db: Database, sql: string, params: Params = {}): T[] =
 export function openLog(path: string): Database {
   const Ctor = bunDatabase();
   const db = new Ctor(path, { create: true, strict: true });
+  // The daemon and TUI share the project log. Brief concurrent writes must
+  // wait for one another instead of discarding an otherwise valid judgment.
+  db.exec('PRAGMA busy_timeout = 1000;');
   db.exec('PRAGMA journal_mode = WAL;');
   if (rowsOf(db, 'SELECT 1 FROM sqlite_master').length === 0) {
     db.exec(SCHEMA);

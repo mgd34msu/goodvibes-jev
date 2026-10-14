@@ -6,7 +6,8 @@ Run it as your normal user, without `sudo`.
 
 You need Git, curl, tar, unzip and sha256sum. The installer supplies private Bun
 and Node runtimes when needed, installs workspace dependencies, builds the suite,
-verifies the Jev connection, and enables a systemd user service. A working systemd user session is required
+verifies the Jev connection, pairs the TUI to the local daemon, registers its project workspace,
+and enables a systemd user service. A working systemd user session is required
 unless you choose `--no-service`. Allow several minutes for the first build.
 
 ```bash
@@ -63,6 +64,7 @@ may require administrator authorization for that command.
 ./install.sh --help
 ./install.sh --no-service             # Install without creating a service
 ./install.sh --service                # Enable the service on a later run
+./install.sh --workspace ~/Projects/my-project  # Set the daemon's project workspace
 ./install.sh --port 43121             # Choose another local port
 ```
 
@@ -70,6 +72,11 @@ Programs live under `~/.local/share/goodvibes-jev`. Data, settings and credentia
 live separately under `~/.local/share/goodvibes-jev-data`, which is the suite's
 `GOODVIBES_HOME`; its application state is in the `.goodvibes` subdirectory.
 An existing `~/.goodvibes` tree is left alone.
+
+The daemon uses this checkout as its project workspace by default. Choose another
+project with `--workspace`; updates remember that choice. Installation registers
+the workspace and saves a private local TUI pairing credential so chat is ready
+to connect. Uninstalling, including `--purge`, leaves the project workspace intact.
 
 Use `--prefix DIR`, `--bin-dir DIR` and `--data-dir DIR` to choose different,
 non-overlapping directories below your home. These paths must not traverse
