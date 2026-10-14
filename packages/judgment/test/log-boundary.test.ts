@@ -47,7 +47,7 @@ describe('recording port trust boundary', () => {
     } as const;
     const answer = await withDecisionLog(borrowed({ ...result(), answers: {
       choice: { type: 'choice', choice: 'a', confidence: 0.9, probabilities: { a: 0.9, b: 0.1, rawBody: SECRET }, rawBody: SECRET },
-      score: { type: 'score', score: 1, confidence: 0.8, probabilities: { 0: 0.2, 1: 0.8 }, legend: { 0: SECRET, 1: SECRET } },
+      score: { type: 'score', score: 0.8, confidence: 0.8, probabilities: { 0: 0.2, 1: 0.8 }, legend: { 0: SECRET, 1: SECRET } },
     } }), log).ask({ state: 'x', questions });
     expect(answer.answers.choice.probabilities).toEqual({ a: 0.9, b: 0.1 });
     expect(answer.answers.score.legend).toEqual({ 0: 'low', 1: 'high' });
@@ -95,6 +95,21 @@ describe('recording port trust boundary', () => {
     const answer = await withDecisionLog(borrowed({ ...result(), answers: { q: choice } }), log).ask({ state: 'fixture', questions });
     expect(answer.answers.q).toEqual(choice);
     expect(log.get(answer.decisionId!)).toMatchObject({ status: 'answered', answers: { q: choice } });
+  });
+
+  test.each([
+    { '0': 0, '1': 0, '2': 0 },
+    { '0': 1, '1': 1, '2': 1 },
+    { '0': 1, '1': 0, '2': 0 },
+  ])('refuses malformed score evidence before recording an answered judgment', async (probabilities) => {
+    using log = new SqliteDecisionLog(':memory:');
+    const questions = { q: { type: 'score', instructions: 'Rate', criteria: ['low', 'medium', 'high'] } } as const;
+    const raw = { ...result(), answers: { q: { type: 'score', score: 2, confidence: 0.99, probabilities, privateText: SECRET } } };
+    const error = exposedError(await withDecisionLog(borrowed(raw), log).ask({ state: 'fixture', questions }).catch((e: unknown) => e));
+    expect(error.kind).toBe('invalid-response');
+    expect(log.query({ status: 'answered' })).toHaveLength(0);
+    expect(log.query({ status: 'failed' })).toHaveLength(1);
+    expect(JSON.stringify(log.query())).not.toContain(SECRET);
   });
 
   test.each([

@@ -28,7 +28,7 @@ function fixture(provider: TriageTaggerOptions['provider'] = 'slack', options: {
   let credentialReads = 0;
   const meanings = fakePort((_name, question) => options.malformed ? { type: 'choice', probabilities: { invented: 1 } } : choiceAnswer(question, options.role ?? 'normal', options.confidence ?? .99));
   const gate = gateReadingsPort(), admission = fakePort((_name, question) => choiceAnswer(question, options.refuse ? 'reject' : 'act', .99));
-  const inner: JudgmentPort = { model: 'jev-1.13.0', async ask(request) {
+  const inner: JudgmentPort = { model: meanings.port.model, async ask(request) {
     request.beforeAttempt?.(); requests.push(request.state);
     if ('meaning' in request.questions) {
       await options.beforeMeaning?.(); if (!options.ignoreMeaningGuard) request.beforeAttempt?.();
@@ -58,7 +58,7 @@ function fixture(provider: TriageTaggerOptions['provider'] = 'slack', options: {
 
 test('registered custom-tag decision declares negation, opaque and ambiguous calibration fixtures', () => {
   expect(triageTagMeaning.name).toBe('engine.intake.triage-tag-meaning');
-  expect(triageTagMeaning.version).toBe(1); expect(triageTagMeaning.model).toBe('jev-1.13.0');
+  expect(triageTagMeaning.version).toBe(1); expect(triageTagMeaning.model).toBe('jev-latest');
   expect(triageTagMeaning.fixtures.map(f => f.expect.meaning)).toEqual(['spam', 'priority', 'normal', 'normal', 'unknown', 'unknown']);
   expect(Object.isFrozen(triageTagMeaning.items.meaning.question)).toBe(true);
 });

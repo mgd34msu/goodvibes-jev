@@ -21,7 +21,7 @@ export interface JudgmentSettings {
   endpoint: string;
   /** `env` reads TYPESAFE_API_KEY from the process environment; `secret` reads it from the secret store. */
   keySource: JudgmentKeySource;
-  /** Versioned model the batteries are tuned on; empty uses TYPESAFE_DEFAULT_MODEL, then the pinned model. */
+  /** Judgment model or alias; empty uses TYPESAFE_DEFAULT_MODEL, then jev-latest. */
   model: string;
   /** Timeout per judgment attempt in milliseconds. */
   timeoutMs: number;

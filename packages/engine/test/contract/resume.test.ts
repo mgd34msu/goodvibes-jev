@@ -237,7 +237,8 @@ describe('units resume at their step', () => {
       u1.status = 'awaiting-owner';
       u1.lastOutput = 'Wrote the parser.';
       u1.answer = 'Wrote the parser.';
-      for (const criterion of u1.criteria) criterion.status = 'unshown';
+      // Keep the actual met criteria from the preceding check. Owner approval
+      // cannot manufacture evidence for unshown work.
       contract.statusBeforeOwner = 'running';
       contract.status = 'awaiting-owner';
       contract.escalations.push({ id: `${contract.id}.e1`, at: Date.now(), scope: 'unit', targetId: 'u1', reason: 'unsettled', question: 'Confirm the parser?', unmetCriterionIds: [] });

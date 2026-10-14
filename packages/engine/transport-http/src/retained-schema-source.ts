@@ -76,13 +76,13 @@ export function retainJsonSchemaSource<T>(source: T): { readonly snapshot: T; re
   assertCurrent();
   // Browsers have no portable proxy predicate. Native cloning rejects proxies;
   // descriptors above reject plain accessors before cloning can invoke them.
-  // Qualify every node, including non-enumerable descendants that cloning a
-  // root alone would omit. No HTTP or model reading has started at this point.
-  for (const node of nodes) {
-    assertCurrent();
-    try { clone(node.source); }
-    catch { throw new ContractError('Contract schema source cannot contain proxies or non-native data.'); }
-    assertCurrent();
-  }
+  // Include every retained node as a root, so non-enumerable descendants are
+  // qualified too. One clone preserves its native visited set across aliases
+  // and cycles instead of repeatedly cloning overlapping subgraphs. No await or
+  // user callback occurs inside the native clone; fence the complete graph on
+  // either side, rather than rescanning it once per node.
+  try { clone(nodes.map(node => node.source)); }
+  catch { throw new ContractError('Contract schema source cannot contain proxies or non-native data.'); }
+  assertCurrent();
   return Object.freeze({ snapshot, assertCurrent });
 }

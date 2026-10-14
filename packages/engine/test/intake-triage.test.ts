@@ -18,13 +18,14 @@ const memory = (): TriageStore & { rows: Map<string, TriageStoredRecord>; calls:
 };
 
 describe('typed inbox triage', () => {
-  test('one pinned registered-shaped request handles an entire batch', async () => {
+  test('one latest-model registered-shaped request handles an entire batch', async () => {
     const fake = fakePort(name => noulAnswer(name === 'item1__spam' ? .99 : name === 'item2__urgency' ? .99 : .01));
     const rows = await scoreInboxTriage([item('a'), item('b'), item('c')], fake.port);
     expect(rows.map(row => row.status === 'settled' ? row.label : row.status)).toEqual(['normal','spam','priority']);
     expect(fake.requests).toHaveLength(1);
     expect(Object.keys(fake.requests[0]!.questions)).toHaveLength(6);
-    expect(fake.requests[0]!.model).toBe(TRIAGE_MODEL);
+    expect(fake.requests[0]!.model).toBe('jev-latest');
+    expect(rows[0]?.actualModel).toBe('jev-1.13.0');
     expect(fake.requests[0]!.context?.battery).toBe(inboxTriage.name);
     expect(Object.isFrozen(rows[0])).toBe(true);
     expect(checkTriageReceipt(rows[0])).toEqual(rows[0]!);

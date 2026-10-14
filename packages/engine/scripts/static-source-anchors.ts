@@ -130,7 +130,7 @@ export function deferredBatteryPolicyStatements(source: string): readonly string
     if (ts.isIdentifier(node)) {
       const propertyName = (ts.isPropertyAssignment(node.parent) && node.parent.name === node)
         || (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node);
-      if (!propertyName && !['defineBattery', 'internalState', 'yesNo', 'PINNED_MODEL', 'INTERNAL_IDENTIFIER_INSTRUCTIONS', 'STAKES_BANDS'].includes(node.text)) return false;
+      if (!propertyName && !['defineBattery', 'internalState', 'yesNo', 'DEFAULT_MODEL', 'INTERNAL_IDENTIFIER_INSTRUCTIONS', 'STAKES_BANDS'].includes(node.text)) return false;
     }
     return node.getChildren(file).every(pureInternalDefinition);
   };

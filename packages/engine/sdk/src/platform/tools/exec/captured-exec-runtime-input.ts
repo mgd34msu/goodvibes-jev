@@ -129,10 +129,14 @@ export async function admitCapturedExecNodeRuntime(
   };
   let bytes = 0;
   const visit = async (source: string, path: string, root: string): Promise<void> => {
-    if ((await lstat(source)).isSymbolicLink()) throw new Error('Node runtime package symlinks are unsupported');
+    const aliasStat = await lstat(source);
     const canonical = await realpath(source);
-    if (!within(root, canonical)) throw new Error('Node runtime path escapes declared package');
+    if (!within(root, canonical)) throw new Error('Node runtime paths and symlinks may not escape the declared package');
     const stat = await lstat(canonical, { bigint: true });
+    // npm ships .bin aliases to its bundled files. Capture their authorized
+    // bytes under the alias path; directory links remain unsupported. Both the
+    // alias and canonical identity are rechecked before execution.
+    if (aliasStat.isSymbolicLink() && !stat.isFile()) throw new Error('Node runtime directory symlinks are unsupported');
     const read = { source, canonical, alias: join(TARGET, path), identity: identity(stat) };
     await checkRead(read);
     reads.push(read);

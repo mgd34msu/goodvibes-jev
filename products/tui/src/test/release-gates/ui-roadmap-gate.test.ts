@@ -1,5 +1,5 @@
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { describe, expect, test } from 'bun:test';
 import { SurfaceModalHost } from '../../input/surface-modal-host.ts';
 import { DEFAULT_CONFIG } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -14,7 +14,8 @@ import { makeTestShellViews } from '../helpers/shell-views.ts';
 describe('UI roadmap gate', () => {
 
   test('supports line-accurate conversation navigation by transcript event family', async () => {
-    const previous = installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+    const previous = installJudgmentPort(fakePort((name, question) => choiceAnswer(question,
+      name === 'activity' ? 'security' : name === 'severity' ? 'info' : 'approval_request', 0.99)).port);
     try {
     const conversation = new ConversationManager(() => 100);
     conversation.addUserMessage('review the file');

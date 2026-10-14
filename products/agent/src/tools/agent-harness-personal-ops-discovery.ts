@@ -470,7 +470,7 @@ export function workflowModelRoute(
 
 export function workflowInspectRoutes(methodIds: readonly string[], connectors: readonly PersonalOpsConnectorSignal[], fallbackQuery: string): readonly string[] {
   const connectorRoutes = connectors.map((signal) => signal.modelRoute);
-  const methodRoutes = methodIds.slice(0, 6).map((methodId) => `host action:"method" methodId:"${methodId}"`);
+  const methodRoutes = methodIds.map((methodId) => `host action:"method" methodId:"${methodId}"`);
   const routes = [...connectorRoutes, ...methodRoutes];
   return routes.length > 0 ? routes : [`personal_ops action:"lane" laneId:"${fallbackQuery}"`];
 }
@@ -621,7 +621,7 @@ export function taskWorkflows(methodIds: readonly string[]): readonly PersonalOp
       inspectRoutes: [
         'workspace action:"action" actionId:"tasks-list"',
         'workspace action:"action" actionId:"task-show"',
-        ...methodIds.slice(0, 6).map((methodId) => `host action:"method" methodId:"${methodId}"`),
+        ...methodIds.map((methodId) => `host action:"method" methodId:"${methodId}"`),
       ],
       prerequisites: hostTaskStatus === 'ready'
         ? [`${methodIds.length} task/work-plan daemon method(s) are discoverable.`]

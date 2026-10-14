@@ -63,7 +63,7 @@ test.each(['source', 'caller', 'cancel'] as const)('%s retirement during native 
 test('retained final restrictions observe the original fields without caller recursion', async () => {
   const owner = researchScreeningFixture(), input = fields(), guards: Array<() => void> = [];
   const result = await runPersonalOpsStyleDraft(input, { sourceOwner: owner.owner,
-    assertCurrent: () => guards.forEach(guard => guard()), retainCurrent: guard => guards.push(guard) });
+    assertCurrent: () => guards.forEach(guard => guard()), retainCurrent: guard => { guards.push(guard); } });
   expect(result.status).toBe('drafted'); expect(guards.length).toBeGreaterThan(0);
   guards.forEach(guard => guard()); input.inbound.bodyPreview = 'Changed original body.';
   expect(() => guards.forEach(guard => guard())).toThrow();

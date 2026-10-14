@@ -57,11 +57,7 @@ describe('Agent support bundle retained canonical redaction', () => {
     f.config.setDynamic('judgment.fallbacks', references);
     const original = f.config.getRaw(); const logs: string[] = []; const cancel = new AbortController();
     expect(f.config.get('relay.label')).toContain(privateCard);
-    const started = performance.now(), cpu = process.cpuUsage(); let guards = 0;
-    const measureTimer = setInterval(() => {
-      const used = process.cpuUsage(cpu);
-      process.stderr.write(JSON.stringify({ bundleMeasurement: 'native-config-owner', elapsedMs: Math.round(performance.now() - started), cpuMs: Math.round((used.user + used.system) / 1000), wireCalls: backend.calls.length, guardCalls: guards, questions: backend.questionCounts() }) + '\n');
-    }, 10_000);
+    let guards = 0;
     const log = spyOn(console, 'log').mockImplementation((...values) => { logs.push(values.map(String).join(' ')); });
     const warn = spyOn(console, 'warn').mockImplementation((...values) => { logs.push(values.map(String).join(' ')); });
     try {
@@ -75,6 +71,7 @@ describe('Agent support bundle retained canonical redaction', () => {
       const result = outcome.result;
       expect(result.exitCode).toBe(0);
       expect(backend.calls.length).toBeGreaterThan(0);
+      expect(guards).toBeGreaterThan(0);
       expect(backend.questionCounts().family ?? 0).toBe(0);
       expect(backend.questionCounts().route ?? 0).toBe(0);
       const credentialKeys = backend.calls.filter(call => Object.hasOwn(bundleRecord(call.questions), 'credential'))
@@ -103,8 +100,6 @@ describe('Agent support bundle retained canonical redaction', () => {
       }
       expect(() => judgmentPort('after-standalone-bundle')).toThrow('No judgment port is installed');
     } finally {
-      if (measureTimer) clearInterval(measureTimer);
-      { const used = process.cpuUsage(cpu); process.stderr.write(JSON.stringify({ bundleMeasurement: 'native-config-owner', elapsedMs: Math.round(performance.now() - started), cpuMs: Math.round((used.user + used.system) / 1000), wireCalls: backend.calls.length, guardCalls: guards, questions: backend.questionCounts() }) + '\n'); }
       log.mockRestore(); warn.mockRestore(); backend.close();
     }
   }, 60_000);

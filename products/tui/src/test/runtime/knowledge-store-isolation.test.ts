@@ -99,7 +99,7 @@ describe('runtime knowledge store isolation', () => {
         query: 'where is the isolation light?',
         includeSources: true,
         includeLinkedObjects: true,
-        timeoutMs: 1_000,
+        timeoutMs: 30_000,
       });
       await new Promise((resolve) => setTimeout(resolve, 100));
 

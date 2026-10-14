@@ -1,3 +1,4 @@
+import { ImapTimeoutError } from '../imap-session.js';
 /**
  * The IDLE loop: RFC 2177 push, and the five things about it that are easy to
  * get wrong.
@@ -171,7 +172,7 @@ function isRefusal(error: unknown): boolean {
 }
 
 function isTimeout(error: unknown): boolean {
-  return /timed out|read timeout/i.test(messageOf(error));
+  return error instanceof ImapTimeoutError;
 }
 
 /**

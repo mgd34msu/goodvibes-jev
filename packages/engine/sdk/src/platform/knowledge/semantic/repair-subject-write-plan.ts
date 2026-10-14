@@ -1,3 +1,4 @@
+import { knowledgeClockIso } from '../store-record-representation.js';
 import type { KnowledgeStore } from '../store.js';
 import { captureOwnedJson, retainOwnedJson } from '../../gate/judgment-input.js';
 import { hasGeneratedFactRecordReferences, retainGeneratedFactRecordReferences } from '../generated-fact-record-references.js';
@@ -154,7 +155,7 @@ export async function writeSupportedRepairSubjectLinks(input: {
   const edges = plans.flatMap(({ fact, primarySourceId, supportMetadata, factScoring, scoring }) => subjects.map((object) => ({
     fromKind: 'node' as const, fromId: fact.id, toKind: 'node' as const, toId: object.id,
     relation: 'describes', weight: scoring.subjectSupport,
-    metadata: semanticMetadata(spaceId, { linkedBy: 'semantic-gap-repair', repairedAt: Date.now(),
+    metadata: semanticMetadata(spaceId, { linkedBy: 'semantic-gap-repair', repairedAt: knowledgeClockIso(Date.now()),
       sourceId: primarySourceId, generatedFactSupport: supportMetadata, factScoring }),
   })));
   // One final original-authority check precedes all node/edge publication. There

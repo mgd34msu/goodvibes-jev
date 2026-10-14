@@ -14,7 +14,8 @@
  * insistence that each reason the capture could not have happened gets its own
  * test so none of them come back quietly.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
 import type { OccasionsGatewayInvoke } from '../../agent/occasions-gateway.ts';
@@ -66,15 +67,34 @@ function stubTool(name: string): Tool & { calls: unknown[] } {
   return tool as unknown as Tool & { calls: unknown[] };
 }
 
+
+// Authored semantic answers; the live battery owns language qualification.
+const requestedSourceMessages = new Set([
+  'read /home/x/Projects/goodvibes-sdk/packages/sdk/src/a.ts', 'show me the goodvibes sdk source',
+  'go fix the daemon', 'look at the tui repo', 'read src/main.ts in goodvibes-agent',
+  'show me how the sdk does this', 'fix the goodvibes tui source',
+  String.raw`C:\project\node_modules\@goodvibes-jev\engine\sdk\index.js`,
+  String.raw`C:\project\node_modules\@goodvibes-jev\engine\src\index.ts`,
+]);
+let originalPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  originalPort = installJudgmentPort(fakePort((name, question, request) => {
+    if (name !== 'platform_requested' || question.type !== 'noul') throw new Error('Unauthored platform reading');
+    const state = request as { source: { goal: string } };
+    return noulAnswer(requestedSourceMessages.has(state.source.goal) ? 0.9999 : 0.0001);
+  }).port);
+});
+afterEach(() => { installJudgmentPort(originalPort); });
+
 // ── 1. The capture tools a conversational turn actually has ─────────────────
 
 describe('a conversational turn can reach the capture tools', () => {
-  test('the capture floor names the profile tool, from the SDK contract', () => {
+  test('the capture floor names the profile tool, from the SDK contract', async () => {
     expect(CONVERSATIONAL_TURN_TOOLS).toContain('profile');
     expect(AGENT_CONVERSATIONAL_CAPTURE_TOOLS).toContain('profile');
   });
 
-  test('it composes with the SDK list rather than replacing it', () => {
+  test('it composes with the SDK list rather than replacing it', async () => {
     // Every tool the SDK contract names is still required here. The Agent adds
     // `occasions`, its half of the capture surface, and takes nothing away.
     for (const name of CONVERSATIONAL_TURN_TOOLS) {
@@ -83,7 +103,7 @@ describe('a conversational turn can reach the capture tools', () => {
     expect(AGENT_CONVERSATIONAL_CAPTURE_TOOLS).toContain('occasions');
   });
 
-  test('a registry with this build\'s capture tools registered is missing nothing', () => {
+  test('a registry with this build\'s capture tools registered is missing nothing', async () => {
     const registry = new ToolRegistry();
     registry.register(stubTool('read'));
     registry.register(stubTool('find'));
@@ -101,7 +121,7 @@ describe('a conversational turn can reach the capture tools', () => {
     expect(missingConversationalCaptureTools(names)).toEqual([]);
   });
 
-  test('a registry without the capture tool reports it rather than pretending', () => {
+  test('a registry without the capture tool reports it rather than pretending', async () => {
     // The original defect in one assertion: the instruction says record, and
     // nothing registered can. That has to be visible, not silent.
     expect(missingConversationalCaptureTools(['read', 'find', 'fetch', 'occasions']))
@@ -109,7 +129,7 @@ describe('a conversational turn can reach the capture tools', () => {
     expect(missingConversationalCaptureTools([])).toContain('profile');
   });
 
-  test('the turn writes with the owner\'s own authority, because he is sitting at it', () => {
+  test('the turn writes with the owner\'s own authority, because he is sitting at it', async () => {
     const authority = resolveAgentTurnCaptureAuthority();
     expect(authority.canCapture).toBe(true);
     expect(authority.authority).toBe('owner-direct');
@@ -120,12 +140,12 @@ describe('a conversational turn can reach the capture tools', () => {
 // ── 2. What the turn is told ────────────────────────────────────────────────
 
 describe('the capture contract the operator policy carries', () => {
-  test('recording what he states is part of answering, not an offer', () => {
+  test('recording what he states is part of answering, not an offer', async () => {
     expect(AGENT_CONVERSATIONAL_CAPTURE_POLICY.toLowerCase()).toContain('part of answering');
     expect(AGENT_CONVERSATIONAL_CAPTURE_POLICY.toLowerCase()).toContain('not something to offer');
   });
 
-  test('capture-on-use: what the turn FINDS while answering is recorded in that answer', () => {
+  test('capture-on-use: what the turn FINDS while answering is recorded in that answer', async () => {
     // The itinerary case. It did not arrive in his message; it came back from a
     // tool call the turn made, and "he did not say it to me" was treated as
     // "there is nothing to record".
@@ -135,7 +155,7 @@ describe('the capture contract the operator policy carries', () => {
     expect(lower).toContain('do not report the finding and store nothing');
   });
 
-  test('a found fact carries the surface it came from, never the owner\'s own authority', () => {
+  test('a found fact carries the surface it came from, never the owner\'s own authority', async () => {
     // The untrusted-source bar is not negotiable, and a model that wants the
     // capture to succeed is exactly the thing that would reach for
     // `owner-direct` to get past a refusal. The rule names the authority so it
@@ -148,7 +168,7 @@ describe('the capture contract the operator policy carries', () => {
     expect(lower).toContain('attempt the capture with the true surface anyway');
   });
 
-  test('a refused found fact routes to the two-step, so one word from him finishes it', () => {
+  test('a refused found fact routes to the two-step, so one word from him finishes it', async () => {
     // The untrusted-source bar stays exactly where the owner put it
     // (owner-profile-rulings.md, 2026-07-27: "Untrusted content can never
     // write or propose ... never build a parallel notion of trust"). The
@@ -164,7 +184,7 @@ describe('the capture contract the operator policy carries', () => {
     expect(lower).toContain('the sender and the subject');
   });
 
-  test('inference and use: the meaning is captured, then it shapes the answer', () => {
+  test('inference and use: the meaning is captured, then it shapes the answer', async () => {
     const lower = AGENT_CONVERSATIONAL_CAPTURE_POLICY.toLowerCase();
     expect(lower).toContain('recording is the floor');
     expect(lower).toContain('he is away for that span');
@@ -175,25 +195,25 @@ describe('the capture contract the operator policy carries', () => {
     expect(lower).toContain('waits for his yes');
   });
 
-  test('it says concretely what was stored, and never just "noted"', () => {
+  test('it says concretely what was stored, and never just "noted"', async () => {
     const lower = AGENT_CONVERSATIONAL_CAPTURE_POLICY.toLowerCase();
     expect(lower).toContain('say concretely what you stored');
     expect(lower).toContain('never "noted"');
   });
 
-  test('a capture that did not complete is said plainly, never swallowed', () => {
+  test('a capture that did not complete is said plainly, never swallowed', async () => {
     const lower = AGENT_CONVERSATIONAL_CAPTURE_POLICY.toLowerCase();
     expect(lower).toContain('if a capture does not complete');
     expect(lower).toContain('nothing unresolved drops silently');
     expect(lower).toContain('never retry it with a different authority');
   });
 
-  test('the policy that rides every turn actually carries all of it', () => {
+  test('the policy that rides every turn actually carries all of it', async () => {
     // The block is only worth anything if it is in the text the turn is given.
     expect(GOODVIBES_AGENT_OPERATOR_POLICY).toContain(AGENT_CONVERSATIONAL_CAPTURE_POLICY);
   });
 
-  test('a trip is recorded straight away; a date still waits for the kind he chooses', () => {
+  test('a trip is recorded straight away; a date still waits for the kind he chooses', async () => {
     // Plans have no `kind`, so proposing one and waiting is pure delay. Dates
     // do, and that two-step is his ruling, it stays.
     expect(GOODVIBES_AGENT_OPERATOR_POLICY).toContain('recorded straight away, not proposed');
@@ -201,7 +221,7 @@ describe('the capture contract the operator policy carries', () => {
     expect(GOODVIBES_AGENT_OPERATOR_POLICY).toContain('Never choose the kind for him');
   });
 
-  test('the platform boundary is stated in the policy too, not only in the guard', () => {
+  test('the platform boundary is stated in the policy too, not only in the guard', async () => {
     expect(GOODVIBES_AGENT_OPERATOR_POLICY).toContain('is not a tool for finishing his request');
     expect(GOODVIBES_AGENT_OPERATOR_POLICY.toLowerCase()).toContain('wait for his answer');
   });
@@ -210,7 +230,7 @@ describe('the capture contract the operator policy carries', () => {
 // ── 3. The conversational-session boundary ──────────────────────────────────
 
 describe('platform source path detection', () => {
-  test('the platform repositories are recognised', () => {
+  test('the platform repositories are recognised', async () => {
     expect(isGoodVibesPlatformSourcePath('/home/x/Projects/goodvibes-sdk/packages/sdk/src/a.ts')).toBe(true);
     expect(isGoodVibesPlatformSourcePath('/home/x/Projects/goodvibes-agent/src/main.ts')).toBe(true);
     expect(isGoodVibesPlatformSourcePath('/home/x/Projects/goodvibes-daemon/src/b.ts')).toBe(true);
@@ -220,7 +240,7 @@ describe('platform source path detection', () => {
     expect(isGoodVibesPlatformSourcePath('node_modules/@goodvibes-jev/engine/sdk/dist/index.js')).toBe(true);
   });
 
-  test('canonical installed workspace packages are platform source, without matching lookalikes', () => {
+  test('canonical installed workspace packages are platform source, without matching lookalikes', async () => {
     for (const name of ['engine', 'judgment', 'daemon', 'agent', 'tui', 'webui']) {
       expect(isGoodVibesPlatformSourcePath(`node_modules/@goodvibes-jev/${name}/src/index.ts`)).toBe(true);
     }
@@ -233,7 +253,7 @@ describe('platform source path detection', () => {
     ]) expect(isGoodVibesPlatformSourcePath(path)).toBe(false);
   });
 
-  test('the owner\'s own state directory is not platform source', () => {
+  test('the owner\'s own state directory is not platform source', async () => {
     // `.goodvibes` is read constantly for entirely ordinary reasons. The
     // leading dot is the whole difference and it has to keep working.
     expect(isGoodVibesPlatformSourcePath('/home/x/.goodvibes/agent/sessions/user-a.jsonl')).toBe(false);
@@ -243,32 +263,32 @@ describe('platform source path detection', () => {
 });
 
 describe('did he ask about the platform source this turn', () => {
-  test('the messages from the live session did not', () => {
-    expect(ownerAskedAboutPlatformSource('can you see your email?')).toBe(false);
-    expect(ownerAskedAboutPlatformSource('I SAID TO LOGIN TO A FUCKING EMAIL ACCOUNT')).toBe(false);
-    expect(ownerAskedAboutPlatformSource('fuck it. check your fucking email')).toBe(false);
-    expect(ownerAskedAboutPlatformSource('')).toBe(false);
-    expect(ownerAskedAboutPlatformSource(null)).toBe(false);
+  test('the messages from the live session did not', async () => {
+    expect(await ownerAskedAboutPlatformSource('can you see your email?')).toBe(false);
+    expect(await ownerAskedAboutPlatformSource('I SAID TO LOGIN TO A FUCKING EMAIL ACCOUNT')).toBe(false);
+    expect(await ownerAskedAboutPlatformSource('fuck it. check your fucking email')).toBe(false);
+    expect(await ownerAskedAboutPlatformSource('')).toBe(false);
+    expect(await ownerAskedAboutPlatformSource(null)).toBe(false);
   });
 
-  test('naming the path, the source, or the repair all count as asking', () => {
-    expect(ownerAskedAboutPlatformSource('read /home/x/Projects/goodvibes-sdk/packages/sdk/src/a.ts')).toBe(true);
-    expect(ownerAskedAboutPlatformSource('show me the goodvibes sdk source')).toBe(true);
-    expect(ownerAskedAboutPlatformSource('go fix the daemon')).toBe(true);
-    expect(ownerAskedAboutPlatformSource('look at the tui repo')).toBe(true);
+  test('naming the path, the source, or the repair all count as asking', async () => {
+    expect(await ownerAskedAboutPlatformSource('read /home/x/Projects/goodvibes-sdk/packages/sdk/src/a.ts')).toBe(true);
+    expect(await ownerAskedAboutPlatformSource('show me the goodvibes sdk source')).toBe(true);
+    expect(await ownerAskedAboutPlatformSource('go fix the daemon')).toBe(true);
+    expect(await ownerAskedAboutPlatformSource('look at the tui repo')).toBe(true);
     // Pointing you at it counts, not only asking for a repair. Refusing these
     // would be the opposite mistake to the one being corrected.
-    expect(ownerAskedAboutPlatformSource('read src/main.ts in goodvibes-agent')).toBe(true);
-    expect(ownerAskedAboutPlatformSource('show me how the sdk does this')).toBe(true);
+    expect(await ownerAskedAboutPlatformSource('read src/main.ts in goodvibes-agent')).toBe(true);
+    expect(await ownerAskedAboutPlatformSource('show me how the sdk does this')).toBe(true);
   });
 
-  test('naming the platform without pointing at its innards is not asking', () => {
+  test('naming the platform without pointing at its innards is not asking', async () => {
     // He talks about the product constantly. Mentioning it is not permission to
     // go editing it.
-    expect(ownerAskedAboutPlatformSource('is the daemon running?')).toBe(false);
-    expect(ownerAskedAboutPlatformSource('restart goodvibes')).toBe(false);
+    expect(await ownerAskedAboutPlatformSource('is the daemon running?')).toBe(false);
+    expect(await ownerAskedAboutPlatformSource('restart goodvibes')).toBe(false);
     // And an ordinary request with no platform word in it at all.
-    expect(ownerAskedAboutPlatformSource('show me my calendar')).toBe(false);
+    expect(await ownerAskedAboutPlatformSource('show me my calendar')).toBe(false);
   });
 });
 
@@ -313,11 +333,11 @@ describe('the boundary guard on a real tool', () => {
 
   test('an explicitly named Windows path does not substitute for read admission', async () => {
     const path = 'C:\\project\\node_modules\\@goodvibes-jev\\engine\\src\\index.ts';
-    expect(ownerAskedAboutPlatformSource(path)).toBe(true);
+    expect(await ownerAskedAboutPlatformSource(path)).toBe(true);
     const { registry, read } = guardedRegistry(path);
     expect((await registry.execute('windows-requested', 'read', { files: [{ path }] })).success).toBe(false);
     expect(read.calls).toHaveLength(0);
-    expect(ownerAskedAboutPlatformSource('C:\\Documents\\engine\\notes.txt')).toBe(false);
+    expect(await ownerAskedAboutPlatformSource('C:\\Documents\\engine\\notes.txt')).toBe(false);
   });
 
   test('the refusal tells it to propose in one line and get back to the real request', async () => {
@@ -362,16 +382,16 @@ describe('the boundary guard on a real tool', () => {
     expect(read.calls).toHaveLength(0);
   });
 
-  test('the check itself is path-then-permission, in that order', () => {
-    expect(validatePlatformBoundaryForAgentPolicy({
+  test('the check itself is path-then-permission, in that order', async () => {
+    expect(await validatePlatformBoundaryForAgentPolicy({
       paths: ['/home/x/Documents/notes.md'],
       lastUserMessage: 'anything at all',
     })).toBeNull();
-    expect(validatePlatformBoundaryForAgentPolicy({
+    expect(await validatePlatformBoundaryForAgentPolicy({
       paths: ['/home/x/Projects/goodvibes-tui/src/a.ts'],
       lastUserMessage: 'check my email',
     })).toBe(AGENT_PLATFORM_BOUNDARY_DENIAL);
-    expect(validatePlatformBoundaryForAgentPolicy({
+    expect(await validatePlatformBoundaryForAgentPolicy({
       paths: ['/home/x/Projects/goodvibes-tui/src/a.ts'],
       lastUserMessage: 'fix the goodvibes tui source',
     })).toBeNull();
@@ -476,7 +496,7 @@ describe('a found itinerary is recorded as a plan', () => {
     expect(result.output).toContain('Do not try again with different values');
   });
 
-  test('the details the itinerary carried are the reason it exists', () => {
+  test('the details the itinerary carried are the reason it exists', async () => {
     // Pinned as data rather than prose: the policy tells the turn not to
     // summarise these away, and this is the list it must not summarise.
     expect(ITINERARY_DETAILS.some((detail) => detail.includes('confirmation'))).toBe(true);

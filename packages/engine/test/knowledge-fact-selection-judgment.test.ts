@@ -57,3 +57,10 @@ describe('knowledge fact selection readings', () => {
     expect(renderFactForPrompt(entry)).toContain('Included accessories have a two-year warranty.');
   });
 });
+
+test('fact selection considers evidence beyond the first fifty records', async () => {
+  const candidates = Array.from({ length: 55 }, (_, index) => fact(`fact-${index}`, 'Authored fixture fact.'));
+  const fake = readings(Object.fromEntries(candidates.map((candidate, index) => [candidate.id, index === 54 ? 0.99 : 0.01])));
+  expect(await filterFactsForQuery('The requested evidence', candidates)).toEqual([candidates[54]!]);
+  expect(fake.requests).toHaveLength(55);
+});

@@ -248,7 +248,7 @@ export class KnowledgeSemanticService {
             foregroundTaskIds,
           );
           if (answerHasUsableEvidence(answer)) {
-            return withAnswerRefinement(answer, answerRefinementFromRepair(foregroundRepair, 'repaired', {
+            return withAnswerRefinement(answer, answerRefinementFromRepair(this.completedRepairEvidence(foregroundRepair, repairSpaceId, originalGapIds, answer), 'repaired', {
               waitedMs: Date.now() - foregroundStartedAt,
               answerCacheInvalidated: true,
             }));
@@ -271,7 +271,7 @@ export class KnowledgeSemanticService {
               foregroundTaskIds,
             );
             if (answerHasUsableEvidence(answer)) {
-              return withAnswerRefinement(answer, answerRefinementFromRepair(foregroundRepair, 'repaired', {
+              return withAnswerRefinement(answer, answerRefinementFromRepair(this.completedRepairEvidence(foregroundRepair, repairSpaceId, originalGapIds, answer), 'repaired', {
                 waitedMs: Date.now() - foregroundStartedAt,
                 answerCacheInvalidated: true,
               }));
@@ -494,10 +494,34 @@ export class KnowledgeSemanticService {
     return spaceIds;
   }
 
+  /** Report a coalesced/background repair from its actual native records.
+   * The refreshed answer has already verified its facts; these fields describe
+   * that work and never authorize another repair or publication. */
+  private completedRepairEvidence(result: KnowledgeSemanticSelfImproveResult, spaceId: string,
+    gapIds: readonly string[], answer: KnowledgeSemanticAnswerResult): KnowledgeSemanticSelfImproveResult {
+    const wanted = new Set(gapIds);
+    const tasks = this.store.listRefinementTasks(Number.MAX_SAFE_INTEGER, { spaceId })
+      .filter(task => task.gapId !== undefined && wanted.has(task.gapId));
+    const verifiedSources = new Set(answer.answer.sources.map(source => source.id));
+    const recordedSources = uniqueStrings([
+      ...tasks.flatMap(task => task.acceptedSourceIds ?? []),
+      ...gapIds.flatMap(id => {
+        const gap = this.store.getNode(id);
+        return gap && getKnowledgeSpaceId(gap) === spaceId ? readStringArray(gap.metadata.acceptedSourceIds) : [];
+      }),
+    ]).filter(id => verifiedSources.has(id));
+    const acceptedSourceIds = uniqueStrings([...(result.acceptedSourceIds ?? []), ...recordedSources]);
+    const accepted = new Set(acceptedSourceIds);
+    const promoted = new Set(answer.answer.facts.filter(fact => fact.metadata.extractor === 'repair-promotion'
+      && [fact.sourceId, ...readStringArray(fact.metadata.sourceIds)].some(id => id !== undefined && accepted.has(id))).map(fact => fact.id));
+    return { ...result, taskIds: uniqueStrings([...result.taskIds, ...tasks.map(task => task.id)]), acceptedSourceIds,
+      promotedFactCount: Math.max(result.promotedFactCount ?? 0, promoted.size) };
+  }
+
   private taskIdsForGaps(spaceId: string, gapIds: readonly string[]): readonly string[] {
     const wanted = new Set(gapIds);
     if (wanted.size === 0) return [];
-    return this.store.listRefinementTasks(100, { spaceId })
+    return this.store.listRefinementTasks(Number.MAX_SAFE_INTEGER, { spaceId })
       .filter((task) => task.gapId && wanted.has(task.gapId))
       .map((task) => task.id);
   }

@@ -1,3 +1,4 @@
+import { completeJudgmentView } from './complete-view.js';
 /**
  * `engine.tools.page-summary`: which paragraph of a fetched page best says
  * what the page is about? Read by Jev in place of the fetch tool's `summary`
@@ -18,12 +19,11 @@ import { defineSelector, STAKES_BANDS, type Candidate } from '@goodvibes-jev/jud
 /** Most characters of one paragraph a candidate carries. */
 export const MAX_JUDGED_PARAGRAPH_CHARS = 600;
 
-const clip = (text: string): string =>
-  text.length <= MAX_JUDGED_PARAGRAPH_CHARS ? text : `${text.slice(0, MAX_JUDGED_PARAGRAPH_CHARS)} [${text.length - MAX_JUDGED_PARAGRAPH_CHARS} more characters]`;
+
 
 /** One paragraph as a candidate. */
 export function paragraphCandidate(id: string, text: string): Candidate {
-  return { id, content: clip(text) };
+  return completeJudgmentView({ id, content: text });
 }
 
 const page = (title: string, paragraphs: readonly string[]) => ({

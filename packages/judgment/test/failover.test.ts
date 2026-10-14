@@ -1,14 +1,14 @@
-import { describe, expect, test } from 'bun:test';
 import { getEventListeners } from 'node:events';
-import { choice, createSystemOnePort, JudgmentError, noul, PINNED_MODEL, SqliteDecisionLog, withDecisionLog, type JudgmentConfig } from '../src/index.ts';
+import { describe, expect, test } from 'bun:test';
+import { createSystemOnePort, JudgmentError, choice, noul, DEFAULT_MODEL, SqliteDecisionLog, withDecisionLog, type JudgmentConfig } from '../src/index.ts';
 
 const request = { state: 'synthetic state', questions: { yes: noul('Synthetic question') } };
 const primary = { kind: 'hosted' as const, baseURL: 'https://primary.test', apiKey: 'primary-test-key' };
 const secondary = { kind: 'local' as const, baseURL: 'http://127.0.0.1:9999', apiKey: 'secondary-test-key' };
-const good = (id = 'ok', model = PINNED_MODEL) => Response.json({ model, answers: { yes: { type: 'noul', noul: 0.9 } }, usage: { input_tokens: 1, output_tokens: 1 } }, { headers: { 'x-typesafe-request-id': id } });
+const good = (id = 'ok', model = DEFAULT_MODEL) => Response.json({ model, answers: { yes: { type: 'noul', noul: 0.9 } }, usage: { input_tokens: 1, output_tokens: 1 } }, { headers: { 'x-typesafe-request-id': id } });
 const bad = (status = 503, id = 'failed', headers = {}) => Response.json({ error: `must not log ${primary.apiKey}` }, { status, headers: { 'x-typesafe-request-id': id, ...headers } });
 function config(fetch: NonNullable<JudgmentConfig['fetch']>, overrides: Partial<JudgmentConfig> = {}): JudgmentConfig {
-  return { endpoint: primary, model: PINNED_MODEL, timeoutMs: 500, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fallbacks: [{ endpoint: secondary, model: PINNED_MODEL }], fetch, ...overrides };
+  return { endpoint: primary, model: DEFAULT_MODEL, timeoutMs: 500, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fallbacks: [{ endpoint: secondary, model: DEFAULT_MODEL }], fetch, ...overrides };
 }
 const failure = async (promise: Promise<unknown>): Promise<JudgmentError> => {
   try { await promise; throw new Error('expected rejection'); }
@@ -91,7 +91,7 @@ describe('configured System One failover and primary-only retry', () => {
       .toEqual([[1, 0, 'unavailable', status, 'failed-1'], [2, 1, 'unavailable', status, 'failed-2']]);
     expect(error.lineage?.omittedAttempts).toBeUndefined();
     expect(urls).toEqual([`${primary.baseURL}/v1/systemone`, `${secondary.baseURL}/v1/systemone`]);
-    expect(bodies).toEqual([request, request].map((input) => ({ ...input, model: PINNED_MODEL })));
+    expect(bodies).toEqual([request, request].map((input) => ({ ...input, model: DEFAULT_MODEL })));
     expect(retries).toEqual([0]);
     expect(effects).toBe(0);
     expect(log.query()).toHaveLength(1);
@@ -211,7 +211,7 @@ describe('configured System One failover and primary-only retry', () => {
     const port = createSystemOnePort(config(async (url) => {
       expect(String(url)).toStartWith(primary.baseURL);
       calls++;
-      return Response.json({ model: PINNED_MODEL, answers, usage: { input_tokens: 1, output_tokens: 1 } });
+      return Response.json({ model: DEFAULT_MODEL, answers, usage: { input_tokens: 1, output_tokens: 1 } });
     }));
     using log = new SqliteDecisionLog(':memory:');
     const result = await withDecisionLog(port, log).ask({ state: request.state, questions: { disposition: choice('Synthetic disposition', criteria) }, onRetry: () => { retries++; } });
@@ -319,25 +319,34 @@ describe('configured System One failover and primary-only retry', () => {
     expect(port.health?.().map((endpoint) => endpoint.attempts)).toEqual([1, 0]);
   });
 
-  test('model drift fails closed and aliases cannot enable failover', async () => {
-    let calls = 0;
-    const port = createSystemOnePort(config(async () => { calls += 1; return good('drift', 'jev-9.0.0'); }));
-    expect((await failure(port.ask(request))).kind).toBe('invalid-response');
-    expect((await failure(port.ask({ ...request, model: 'jev-latest' }))).kind).toBe('invalid-request');
-    expect(calls).toBe(1);
-    expect(() => createSystemOnePort(config(async () => good(), { model: 'jev-latest' }))).toThrow('pinned');
-    const legacy = createSystemOnePort(config(async () => good(), { model: 'jev-latest', fallbacks: [] }));
-    expect((await legacy.ask(request)).model).toBe(PINNED_MODEL);
+  test('latest aliases work through failover and retain the resolved version', async () => {
+    const bodies: { model: string }[] = [];
+    const port = createSystemOnePort(config(async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return bodies.length === 1 ? bad() : good('latest', 'jev-9.0.0');
+    }));
+    const result = await port.ask(request);
+    expect(bodies.map(body => body.model)).toEqual(['jev-latest', 'jev-latest']);
+    expect(result.requestedModel).toBe('jev-latest');
+    expect(result.model).toBe('jev-9.0.0');
+    expect(result.lineage?.attempts.map(a => a.endpointIndex)).toEqual([0, 1]);
+  });
+
+  test('an explicit version mismatch fails closed; aliases do not admit unrelated models', async () => {
+    const port = createSystemOnePort(config(async () => good('drift', 'jev-9.0.0')));
+    expect((await failure(port.ask({ ...request, model: 'jev-1.0.0' }))).kind).toBe('invalid-response');
+    const unrelated = createSystemOnePort(config(async () => good('unrelated', 'other-model')));
+    expect((await failure(unrelated.ask(request))).kind).toBe('invalid-response');
   });
 
   test('all targets and retry policy validate before transmission', () => {
     const fetch = async () => good();
     for (const baseURL of ['https://u:p@primary.test', 'https://primary.test/?api_key=secret', 'ftp://primary.test', 'https://primary.test/#secret', 'https://primary.test/?', 'https://primary.test/#', 'https://primary.test/ ']) {
-      expect(() => createSystemOnePort(config(fetch, { fallbacks: [{ endpoint: { ...secondary, baseURL }, model: PINNED_MODEL }] }))).toThrow(JudgmentError);
+      expect(() => createSystemOnePort(config(fetch, { fallbacks: [{ endpoint: { ...secondary, baseURL }, model: DEFAULT_MODEL }] }))).toThrow(JudgmentError);
     }
     expect(() => createSystemOnePort(config(fetch, { retry: { maxRetries: 11 } as JudgmentConfig['retry'] }))).toThrow(JudgmentError);
     expect(() => createSystemOnePort(config(fetch, { retry: { httpStatuses: new Set([401]) } as JudgmentConfig['retry'] }))).toThrow(JudgmentError);
-    expect(() => createSystemOnePort(config(fetch, { fallbacks: [{ endpoint: { ...secondary, apiKey: '' }, model: PINNED_MODEL }] }))).toThrow(JudgmentError);
+    expect(() => createSystemOnePort(config(fetch, { fallbacks: [{ endpoint: { ...secondary, apiKey: '' }, model: DEFAULT_MODEL }] }))).toThrow(JudgmentError);
   });
 
   test('request ids that echo credentials are omitted from error and lineage', async () => {
@@ -349,7 +358,7 @@ describe('configured System One failover and primary-only retry', () => {
 
   test('successful response extensions cannot copy credentials into answers or the log', async () => {
     const port = createSystemOnePort(config(async () => Response.json({
-      model: PINNED_MODEL,
+      model: DEFAULT_MODEL,
       answers: { yes: { type: 'noul', noul: 0.9, debug: primary.apiKey }, unexpected: { secret: secondary.apiKey } },
       usage: { input_tokens: 1, output_tokens: 1, debug: primary.apiKey },
     })));
@@ -361,14 +370,14 @@ describe('configured System One failover and primary-only retry', () => {
   });
 
   test('failure attribution keeps the starting model when live configuration changes', async () => {
-    let model = PINNED_MODEL;
+    let model: string = DEFAULT_MODEL;
     using log = new SqliteDecisionLog(':memory:');
     const port = withDecisionLog({ get model() { return model; }, ask: async () => {
       model = 'jev-9.0.0';
       throw new JudgmentError('unavailable', 'synthetic failure');
     } }, log);
     await failure(port.ask(request));
-    expect(log.query()[0]?.requestedModel).toBe(PINNED_MODEL);
+    expect(log.query()[0]?.requestedModel).toBe(DEFAULT_MODEL);
   });
 
   test('concurrent calls have separate request and attempt lineage', async () => {
@@ -416,12 +425,12 @@ describe('configured System One failover and primary-only retry', () => {
     const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(req) {
       seen.push(new URL(req.url).pathname, req.headers.get('authorization') ?? '');
       const body = await req.json() as { model: string; state: string };
-      expect(body.model).toBe(PINNED_MODEL);
+      expect(body.model).toBe(DEFAULT_MODEL);
       expect(body.state).toBe(request.state);
       return good('local-wire');
     } });
     try {
-      const port = createSystemOnePort({ endpoint: { ...secondary, baseURL: `http://127.0.0.1:${server.port}` }, model: PINNED_MODEL, timeoutMs: 500, retry: {} });
+      const port = createSystemOnePort({ endpoint: { ...secondary, baseURL: `http://127.0.0.1:${server.port}` }, model: DEFAULT_MODEL, timeoutMs: 500, retry: {} });
       expect((await port.ask(request)).requestId).toBe('local-wire');
       expect(seen).toEqual(['/v1/systemone', `Bearer ${secondary.apiKey}`]);
     } finally { server.stop(true); }

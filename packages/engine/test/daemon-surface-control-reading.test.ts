@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { createSystemOnePort, PINNED_MODEL, SqliteDecisionLog, withDecisionLog, type JudgmentPort, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
+import { createSystemOnePort, DEFAULT_MODEL, SqliteDecisionLog, withDecisionLog, type JudgmentPort, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
 import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { DaemonSurfaceActionHelper } from '../sdk/src/platform/daemon/surface-actions.ts';
@@ -158,12 +158,12 @@ describe('the real daemon surface control caller', () => {
     let wires = 0; let retries = 0;
     installJudgmentPort(withDecisionLog(createSystemOnePort({
       endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-key' },
-      model: PINNED_MODEL, timeoutMs: 100, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
+      model: DEFAULT_MODEL, timeoutMs: 100, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
       fetch: async (_url, init) => {
         wires++; expect(h.effects).toEqual([]);
         if (wires <= 2) return Response.json({}, { status: 503 });
         const body = JSON.parse(String(init?.body)) as { questions: Questions };
-        return Response.json({ model: PINNED_MODEL, answers: Object.fromEntries(Object.entries(body.questions).map(([name, question]) =>
+        return Response.json({ model: DEFAULT_MODEL, answers: Object.fromEntries(Object.entries(body.questions).map(([name, question]) =>
           [name, choiceAnswer(question, name === 'action' ? 'cancel' : 'target_0', 0.99)])), usage: { input_tokens: 1, output_tokens: 1 } });
       },
     }), log));
@@ -175,7 +175,7 @@ describe('the real daemon surface control caller', () => {
     const h = harness(); const text = 'Stop run-1'; await h.authorize(text); const abort = new AbortController(); let wires = 0;
     installJudgmentPort(withDecisionLog(createSystemOnePort({
       endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-key' },
-      model: PINNED_MODEL, timeoutMs: 100, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
+      model: DEFAULT_MODEL, timeoutMs: 100, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
       fetch: async () => { wires++; return Response.json({}, { status: 503 }); },
     }), log));
     await expect(h.context.parseSurfaceControlCommand(text, { signal: abort.signal,

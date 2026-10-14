@@ -50,7 +50,7 @@ export interface JudgmentRequest<Q extends Questions> {
   readonly state: EntryType;
   /** Nonempty questions keyed by the names that identify their answers. */
   readonly questions: Q;
-  /** Model override; omitted uses the port's pinned model. */
+  /** Model override; omitted follows the configured port model (jev-latest by default). */
   readonly model?: string;
   /** Cancels the call and any pending retries. */
   readonly signal?: AbortSignal;

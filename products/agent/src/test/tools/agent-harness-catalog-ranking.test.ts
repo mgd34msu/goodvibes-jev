@@ -15,7 +15,8 @@ import { createAgentHarnessTool, registerAgentHarnessTool } from '../../tools/ag
 import { createAgentHostTool, registerAgentHostTool } from '../../tools/agent-host-tool.ts';
 import { createAgentWorkspaceTool, registerAgentWorkspaceTool } from '../../tools/agent-workspace-tool.ts';
 import { searchHarnessModelTools } from '../../tools/agent-harness-model-tool-catalog.ts';
-import { prepareHarnessCatalog, rankHarnessCatalog } from '../../tools/agent-harness-catalog-ranking.ts';
+import { captureCatalogSnapshotGuard, prepareHarnessCatalog, rankHarnessCatalog } from '../../tools/agent-harness-catalog-ranking.ts';
+import { AGENT_WORKSPACE_CATEGORIES } from '../../tools/agent-harness-workspace-actions.ts';
 import { contractMethodsForAutonomy, contractMethodsForLane } from '../../tools/agent-harness-personal-ops-discovery.ts';
 import { captureModelReadingInput, captureModelReadingSnapshotGuard } from '../../tools/agent-harness-model-reading-source.ts';
 import { ordinaryResearchOwner, cleanupResearchScreeningFixtures, researchScreeningFixture, exactSensitiveSpans } from '../helpers/research-screening.ts';
@@ -376,6 +377,24 @@ for (const changed of ['cancel', 'session', 'source-owner'] as const) test(`full
   wait.release(); await expect(pending).rejects.toThrow(); expect(fake.requests).toHaveLength(0);
 });
 
+test.each(['source', 'owner', 'cancel'] as const)('workspace action publication still holds a pending %s change before its readset joins the caller', async changed => {
+  const f = fixture(), ordinary = readings({}), wait = suspended(), controller = new AbortController();
+  const category = AGENT_WORKSPACE_CATEGORIES[0], session = f.context.session!.runtime, sessionId = session.sessionId;
+  if (!category) throw new Error('Missing native workspace fixture');
+  installJudgmentPort({ model: ordinary.port.model, async ask(request) {
+    if (request.context?.site === 'agent.workspace.actions') { wait.start(); await wait.gate; }
+    return ordinary.port.ask(request);
+  } });
+  const pending = f.harness.execute({ mode: 'workspace_actions', categoryId: category.id, query: 'Inspect the authored workspace action' }, { signal: controller.signal });
+  try {
+    await wait.started;
+    if (changed === 'source') session.sessionId = 'Changed native workspace session';
+    if (changed === 'owner') bindAgentResearchSourceOwner(f.registry, researchScreeningFixture().owner);
+    if (changed === 'cancel') controller.abort();
+    wait.release(); await expect(pending).rejects.toThrow(); expect(f.executed).toEqual([]);
+  } finally { wait.release(); session.sessionId = sessionId; }
+});
+
 test('malformed hosted judgment never becomes a lexical selection or command effect', async () => {
   const f = fixture();
   installJudgmentPort({ model: 'fixture', ask: async () => ({ answers: {} }) as never });
@@ -632,6 +651,17 @@ test('prepared complete private tail is screened anew and cannot reach the canon
   expect(JSON.stringify(screening.calls)).toContain(privateTail); expect(fake.requests).toHaveLength(0);
 });
 
+test('catalog evidence preserves public redaction tokens while original queries remain action input', async () => {
+  const entry = { id: 'masked-receipt', description: 'Complete receipt password=[REDACTED]', evidence: { password: '[REDACTED]' } };
+  const describeEntry = (value: typeof entry) => value, screening = researchScreeningFixture();
+  const fake = preparedReadings('Find the completed receipt', entry); installJudgmentPort(fake.port);
+  const result = await rankHarnessCatalog([entry], 'Find the completed receipt', describeEntry, 'agent.test.masked-evidence', { sourceOwner: screening.owner });
+  expect(result.matches[0]?.entry).toEqual(entry); expect(fake.requests).toHaveLength(1);
+  const count = screening.calls.length;
+  await expect(rankHarnessCatalog([entry], 'password=[REDACTED]', describeEntry, 'agent.test.masked-query', { sourceOwner: screening.owner })).rejects.toThrow();
+  expect(screening.calls).toHaveLength(count); expect(fake.requests).toHaveLength(1);
+});
+
 test('prepared metadata grants no exemption from the complete original query floor', async () => {
   const entry = { id: 'prepared-native', description: 'Complete native method' }, describeEntry = (value: typeof entry) => value;
   const prepared = prepareHarnessCatalog([entry], describeEntry), screening = researchScreeningFixture(), fake = preparedReadings('Ordinary query', entry);
@@ -852,4 +882,26 @@ test('foreign contract root replacement during actual privacy retires its comple
     expect(fake.requests).toHaveLength(0);
     expect(operatorContracts.getOperatorContract()).toBe(replacement);
   } finally { getter.mockRestore(); }
+});
+
+
+test.each(['visible', 'hidden'] as const)('frozen catalog roots retain mutable %s descendants after an earlier successful comparison', visibility => {
+  const child = { detail: 'original complete evidence' };
+  const source = Object.create(null) as { child: typeof child };
+  Object.defineProperty(source, 'child', { value: child, enumerable: visibility === 'visible' });
+  Object.freeze(source);
+  const current = captureCatalogSnapshotGuard(source);
+  current(source);
+  child.detail = 'changed complete evidence';
+  expect(() => current(source)).toThrow();
+});
+
+test('an immutable catalog comparison cannot be forged by replacing WeakSet membership', () => {
+  const source = Object.freeze({ detail: 'original complete evidence' });
+  const changed = Object.freeze({ detail: 'changed complete evidence' });
+  const current = captureCatalogSnapshotGuard(source);
+  current(source);
+  const membership = spyOn(WeakSet.prototype, 'has').mockReturnValue(true);
+  try { expect(() => current(changed)).toThrow(); current(source); }
+  finally { membership.mockRestore(); }
 });

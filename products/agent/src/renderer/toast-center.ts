@@ -110,7 +110,7 @@ export function bridgeNotificationFeedToToasts(feed: NotificationFeed, toasts: T
     for (const key of seen.keys()) if (!retained.has(key)) seen.delete(key);
     for (const entry of entries) {
       const previous = seen.get(entry.key);
-      const tone = entry.toast === 'never' ? null : entry.toast === 'always' ? toneForNotice(entry.level) : toneForLevel(entry.level);
+      const tone = entry.severityPending || entry.toast === 'never' ? null : entry.toast === 'always' ? toneForNotice(entry.level) : toneForLevel(entry.level);
       if (previous && previous.count === entry.collapsedCount && (previous.toasted || !tone)) continue;
       seen.set(entry.key, { count: entry.collapsedCount, toasted: Boolean(tone) });
       if (!tone) continue;

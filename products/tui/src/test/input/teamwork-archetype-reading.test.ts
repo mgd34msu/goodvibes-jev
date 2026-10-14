@@ -27,7 +27,7 @@ function fixture() {
   const file = join(directory, 'operator.md');
   const text = '---\nname: operator\ndescription: Assess the current implementation and report defects.\ntools: [read, write, analyze]\n---\nRead the entire implementation.\n';
   writeFileSync(file, text);
-  const entries = [...recordedBuiltinArchetypes, { name: 'operator', description: 'Assess the current implementation and report defects.', tools: ['read', 'write', 'analyze'], family: 'review' as const }];
+  const entries = [...recordedBuiltinArchetypes, { name: 'operator', description: 'Assess the current implementation and report defects.', tools: ['read', 'write', 'analyze'], family: 'review' as const, sourceDocument: text }];
   const flags = createFeatureFlagManager(); flags.loadFromConfig({ flags: { 'unified-runtime-task': 'enabled' } });
   const store = createRuntimeStore(), bus = new RuntimeEventBus();
   const manager = createTaskManager(store, bus, 'teamwork-session', flags);
@@ -47,6 +47,17 @@ function fixture() {
 }
 const create = ['create-archetype', 'operator', 'Review', 'the', 'implementation'];
 
+test('native Markdown evidence retains instructions beyond the lazy preview', async () => {
+  const f = fixture();
+  const text = f.text + 'Reference context.\n'.repeat(100) + 'Assess the complete implementation and report defects; do not modify it.\n';
+  writeFileSync(f.file, text);
+  const port = recordedFamilyPort(f.entries.map(entry => entry.name === 'operator' ? { ...entry, sourceDocument: text } : entry));
+  installJudgmentPort(port.port);
+  await f.registry.execute('teamwork', [...create], f.ctx);
+  expect(f.opsApi.tasks.list()).toHaveLength(1);
+  expect(port.requests[0]?.state).toMatchObject({ archetypes: expect.arrayContaining([expect.objectContaining({ name: 'operator', sourceDocument: text })]) });
+});
+
 const samples: AgentArchetype[] = [
   { name: 'review-tools', description: 'Build and edit a source formatter.', tools: ['read', 'write', 'edit'], isCustom: false, origin: 'builtin' },
   { name: 'quality', description: 'Assess changes and write a report.', tools: ['read', 'write'], isCustom: false, origin: 'builtin' },
@@ -62,7 +73,7 @@ test('complete native evidence chooses all five families in one indexed fan-out'
   const result = await readArchetypeFamilies(samples);
   expect(result.readings).toEqual(families.map(family => ({ kind: 'settled', family })));
   expect(port.requests).toHaveLength(1);
-  expect(port.requests[0]?.state).toEqual({ archetypes: samples.map(({ name, description, tools }) => ({ name, description, tools })) });
+  expect<unknown>(port.requests[0]?.state).toEqual({ archetypes: samples });
   expect(Object.keys(port.requests[0]?.questions ?? {})).toEqual(samples.map((_, index) => `archetype${index}__family`));
   result.assertCurrent();
 });

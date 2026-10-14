@@ -8,7 +8,7 @@
  *
  * | Reading at act | unsettled | stalled, fix-rounds-exhausted | plan-unresolved | writing-unclear | attempts-undecided |
  * |---|---|---|---|---|---|
- * | approve | unshown readings accepted as met; the unit passes | refused: approval cannot pass unmet criteria | the plan as shown is accepted | files may change; planning starts | the proposed attempt is taken |
+ * | approve | refused unless every judged criterion already reads met | refused: approval cannot pass unmet criteria | the plan as shown is accepted | files may change; planning starts | the proposed attempt is taken |
  * | amend | the planner rewrites the target's criteria as instructed; the target is checked again | same | the planner re-plans with the instruction | whether files may change is read from the reply; planning starts | the attempt the reply asks for is read (`contract.owner-pick`) and taken |
  * | reject | the contract is cancelled, "stopped by the owner", failure kind owner-rejected | same | same | same | same |
  *
@@ -24,7 +24,7 @@ import { readForbidsWriting, REQUEST_SHAPE_SITE, saysNoAtAct, saysYesAtAct } fro
 import { acceptAttempt } from './best-of-n.js';
 import { emptyJudgmentUsage, meteredPort, type DecidedCheck } from './check.js';
 import { amendTarget } from './amendment.js';
-import { headAndTail } from './evidence.js';
+import { assertJudgmentInput, JudgmentInputError } from '../gate/judgment-input.js';
 import { latestSeverity, QUALITY_EVIDENCE_SENTENCES } from './nudge.js';
 import { lastFencedBlock } from './plan-schema.js';
 import { acceptEscalatedPlan, planContract, withOwnerWritingDecision } from './planner.js';
@@ -48,8 +48,6 @@ import { addJudgmentUsage } from './usage.js';
 export const OWNER_REPLY_SITE = 'contract.owner-reply';
 /** The decision site the attempt an owner asks for is logged under. */
 export const OWNER_PICK_SITE = 'contract.owner-pick';
-/** Characters of each attempt's answer the owner-pick reading sees. */
-const PICK_ANSWER_CAP_CHARS = 1_000;
 
 // ── The question (built in code, reviewable here) ─────────────────────────────
 
@@ -68,7 +66,7 @@ export const REASON_SENTENCES: Readonly<Record<EscalationReason, string>> = {
 const APPROVAL_CLAUSES: Readonly<Record<EscalationReason, string>> = {
   'plan-unresolved': 'accepting the plan as it stands',
   'writing-unclear': 'changing files',
-  unsettled: 'accepting the criteria not shown as met',
+  unsettled: '(approval cannot establish missing evidence: say what to change instead)',
   stalled: '(approval cannot pass unmet criteria: say what to change instead)',
   'fix-rounds-exhausted': '(approval cannot pass unmet criteria: say what to change instead)',
   'owner-decision-needed': '(approval cannot pass unmet criteria: say what to change instead)',
@@ -329,17 +327,14 @@ export function createEscalations(context: StepContext, rejudge: Rejudge): Escal
     const unit = run.unit(escalation.targetId);
     if (unit === undefined) return { action: 'refused' };
     const judged = unit.criteria.filter((criterion) => criterion.disposition === 'judged');
-    // Approval settles readings that did not settle; it never passes one that reads unmet.
-    if (judged.some((criterion) => criterion.status === 'unmet')) return { action: 'refused', next: askAgain(run, escalation, APPROVAL_REFUSED_LINE) };
-    for (const criterion of judged) {
-      if (criterion.status === 'met') continue;
-      const last = criterion.readings.at(-1);
-      criterion.readings.push({ checkId: escalation.id, at: run.env.now(), probabilityUnmet: last?.probabilityUnmet ?? 0.5, verdict: 'met', outcome: 'confirm', decisionId });
-      criterion.status = 'met';
+    // A reply grants authority to continue; it is not evidence that a criterion holds.
+    // Existing met readings remain valid. Unsettled criteria require new evidence
+    // or an explicit amendment of what is required before this unit can pass.
+    if (judged.some((criterion) => criterion.status !== 'met')) {
+      return { action: 'refused', next: askAgain(run, escalation, APPROVAL_REFUSED_LINE) };
     }
     resume(run);
-    // The unit has not passed before, so its answer is the output its last completion check read.
-    context.checks().passUnit(run, unit, unit.answer ?? unit.lastOutput ?? '', 'passed: the owner confirmed the criteria that were not shown');
+    context.checks().passUnit(run, unit, unit.answer ?? unit.lastOutput ?? '', 'passed: all judged criteria have supporting readings');
     return { action: 'approved' };
   }
 
@@ -419,8 +414,11 @@ export function createEscalations(context: StepContext, rejudge: Rejudge): Escal
     if (unit === undefined || selection === undefined) return { id: undefined, decisionId: undefined };
     const candidates = selection.candidateIds.map((id, index) => ({
       id,
-      content: { position: index + 1, answer: headAndTail(unit.attemptUnits?.find((attempt) => attempt.id === id)?.answer ?? '(no answer recorded)', PICK_ANSWER_CAP_CHARS) },
+      content: { position: index + 1, answer: unit.attemptUnits?.find((attempt) => attempt.id === id)?.answer ?? '(no answer recorded)' },
     }));
+    const evidence = { reply: text, question: escalation.question, candidates };
+    assertJudgmentInput(evidence);
+    if (JSON.stringify(evidence).length > 160_000) throw new JudgmentInputError('unsupported-input');
     const usage = emptyJudgmentUsage();
     try {
       const read = await ownerPick.select(meteredPort(judgmentPort(OWNER_PICK_SITE), usage), { reply: text, question: escalation.question }, candidates, { site: OWNER_PICK_SITE, signal: run.abort.signal });

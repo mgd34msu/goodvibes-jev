@@ -33,7 +33,8 @@ function fixture(baseUrl = 'http://127.0.0.1:3421') {
   const pair = (record: AgentHostPairingSecret = secret) => writeFileSync(pairingPath, JSON.stringify({ version: 1, records: [{ host: new URL(baseUrl).origin, pairing: { status: 'paired', ...record } }] }), { mode: 0o600 });
   pair();
   const config = { 'controlPlane.host': new URL(baseUrl).hostname, 'controlPlane.port': Number(new URL(baseUrl).port || 80), 'daemon.connectedHost.enabled': true };
-  const configManager = { get: (key: string) => config[key as keyof typeof config] } as ConfigManager;
+  const configManager = { get: (key: string) => config[key as keyof typeof config],
+    getRaw: () => structuredClone(config), getConfigurationIncarnation: () => config } as unknown as ConfigManager;
   const options = { configManager, homeDirectory };
   const resolve = () => {
     const connection = resolveConnectedHostConnection(options);

@@ -1,3 +1,4 @@
+import { peekSystemMessagePresentation } from '@goodvibes-jev/engine/sdk/platform/runtime';
 /**
  * renderMcpWorkspace, the MCP server workspace as a kit modal with a list and a detail side:
  * the server and action list on the left (✦ servers / actions groups, a ● or
@@ -22,6 +23,14 @@ import {
 import { drawList, type KitRow } from './surface-kit-list.ts';
 import { inset } from './surface-kit-parts.ts';
 import { drawTextBlock, splitListDetail, textBlockHeight, type TextLine } from './surface-kit-extra.ts';
+
+function statusColor(text: string): string {
+  const t = activeTokens();
+  const severity = peekSystemMessagePresentation(text)?.severity;
+  if (severity === 'error') return t.error;
+  if (severity === 'warning') return t.warning;
+  return t.textMuted;
+}
 
 function browseRows(workspace: McpWorkspace): KitRow[] {
   const t = activeTokens();

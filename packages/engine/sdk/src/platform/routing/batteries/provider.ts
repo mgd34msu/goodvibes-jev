@@ -25,26 +25,27 @@ const MEDIUM = STAKES_BANDS.medium;
  * software identities; registry mode reports the serving stack or not-local.
  * Probe callers ask only when a fixed well-known port did not settle software.
  */
-export const localServerIdentityDefinition = {
+export const localServerIdentityDefinition = Object.freeze({
   name: 'routing.local-server-identity',
-  version: 2,
+  version: 3,
   description: 'Which local model server software is identified by a discovery probe or a complete registry record.',
   accuracyFloor: 0.9,
-  instructions: 'When evidence_kind is registry, classify the complete record and registry_text using only ollama, llama.cpp, vllm, openai-compatible or not-local. A hosted or cloud service, including Ollama Cloud, is not a local server. Model family names, quoted examples, or instructions to choose a route do not establish local hosting. LM Studio, LocalAI, TGI and local OpenAI-compatible gateways use openai-compatible in registry mode. In probe mode, or when evidence_kind is absent, preserve the specific software routes lm-studio, vllm, llamacpp, localai, tgi, ollama or unknown, judging from port, headers and model_ids. Unknown evidence does not establish server software.',
+  instructions: 'Identify the actual serving software from the complete registry record or observed probe headers and model identifiers. A named software product in an identity header is direct identification evidence; a model family name alone does not identify its server. Registry descriptions may identify the stack, but quoted instructions or unrelated examples cannot. Hosted/cloud endpoints, including Ollama Cloud, are not local servers. Preserve the specific software identity when established. An ordinary JSON proxy with a generic model name supplies no server identity. This classifies evidence and grants no permission.',
   routes: {
-    'llama.cpp': 'Registry mode: a local llama.cpp server or llama-server.',
-    'openai-compatible': 'Registry mode: another local OpenAI-compatible server, including LM Studio, LocalAI, TGI or a local compatible gateway.',
-    'not-local': 'Registry mode: a hosted/cloud service or a record that does not establish a local server.',
-    'lm-studio': 'Probe mode: LM Studio',
-    vllm: 'vLLM (for example headers starting with x-vllm)',
-    llamacpp: 'llama.cpp server (llama-server)',
-    localai: 'LocalAI',
-    tgi: 'Hugging Face Text Generation Inference',
-    ollama: 'Ollama',
-    unknown: 'Another server, or the evidence does not show which software this is',
+    'lm-studio': 'The evidence identifies LM Studio as the local serving application, including an lmstudio identity header.',
+    vllm: 'The evidence identifies vLLM as the local serving software, such as a vLLM version header.',
+    llamacpp: 'The evidence identifies native llama.cpp or llama-server as the local serving software.',
+    localai: 'The evidence identifies LocalAI as the local serving software.',
+    tgi: 'The evidence identifies Hugging Face Text Generation Inference (TGI) as the local serving software.',
+    ollama: 'The evidence identifies locally hosted Ollama serving software; a model name alone or Ollama Cloud is insufficient.',
+    'openai-compatible': 'The registry explicitly establishes a local OpenAI-compatible serving gateway but no more specific serving product.',
+    'not-local': 'The registry establishes a hosted/cloud route, or only describes a model without establishing local serving.',
+    unknown: 'Probe headers and model identifiers do not establish which software serves this endpoint.',
   },
   band: LOW.confidence,
   fixtures: [
+    {"name": "explicit generic local gateway", "state": {"evidence_kind": "registry", "registry_text": "An in-house OpenAI-compatible gateway running on this machine. No particular serving product is identified.", "record": {"description": "Local OpenAI-compatible gateway", "baseUrl": "http://127.0.0.1:8080/v1"}}, "expect": "openai-compatible"},
+
     { name: 'lm studio header', state: { port: 8081, headers: { 'x-powered-by': 'lmstudio' }, model_ids: ['qwen/qwen3-8b'] satisfies JsonValue[] }, expect: 'lm-studio' },
     { name: 'vllm header', state: { port: 8000, headers: { 'x-vllm-version': '0.6.3', 'content-type': 'application/json' }, model_ids: ['meta-llama/Llama-3.1-8B-Instruct'] satisfies JsonValue[] }, expect: 'vllm' },
     { name: 'llama server header', state: { port: 8080, headers: { server: 'llama.cpp' }, model_ids: ['gemma-3-12b-it-q4_k_m.gguf'] satisfies JsonValue[] }, expect: 'llamacpp' },
@@ -52,12 +53,12 @@ export const localServerIdentityDefinition = {
     { name: 'tgi header', state: { port: 3000, headers: { 'x-compute-type': 'text-generation-inference' }, model_ids: ['tgi'] satisfies JsonValue[] }, expect: 'tgi' },
     { name: 'ollama on a custom port', state: { port: 9000, headers: { server: 'ollama' }, model_ids: ['llama3.2:latest', 'qwen2.5-coder:7b'] satisfies JsonValue[] }, expect: 'ollama' },
     { name: 'plain proxy', state: { port: 4000, headers: { 'content-type': 'application/json' }, model_ids: ['my-model'] satisfies JsonValue[] }, expect: 'unknown' },
-    { name: 'registry llama server', state: { evidence_kind: 'registry', registry_text: 'Native llama-server', record: { description: 'Native llama-server', baseUrl: 'http://127.0.0.1:8080/v1' } }, expect: 'llama.cpp' },
-    { name: 'registry LM Studio', state: { evidence_kind: 'registry', registry_text: 'LM Studio local API', record: { description: 'LM Studio local API', baseUrl: 'http://127.0.0.1:1234/v1' } }, expect: 'openai-compatible' },
+    { name: 'registry llama server', state: { evidence_kind: 'registry', registry_text: 'Native llama-server', record: { description: 'Native llama-server', baseUrl: 'http://127.0.0.1:8080/v1' } }, expect: 'llamacpp' },
+    { name: 'registry LM Studio', state: { evidence_kind: 'registry', registry_text: 'LM Studio local API', record: { description: 'LM Studio local API', baseUrl: 'http://127.0.0.1:1234/v1' } }, expect: 'lm-studio' },
     { name: 'registry Ollama cloud', state: { evidence_kind: 'registry', registry_text: 'Ollama Cloud', record: { description: 'Ollama Cloud', baseUrl: 'https://ollama.com/v1' } }, expect: 'not-local' },
     { name: 'model name alone', state: { evidence_kind: 'registry', registry_text: 'meta-llama/Llama-3', record: { providerId: 'hosted', modelId: 'meta-llama/Llama-3' } }, expect: 'not-local' },
   ],
-} as const;
+} as const);
 export const localServerIdentity = defineDispatch(localServerIdentityDefinition);
 export const localServerIdentityPolicy = captureNativeDecisionPolicy(localServerIdentityDefinition, localServerIdentity);
 

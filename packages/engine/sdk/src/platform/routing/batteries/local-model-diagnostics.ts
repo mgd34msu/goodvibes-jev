@@ -1,7 +1,7 @@
 import { captureNativeDecisionPolicy } from '../../tools/batteries/decision-policy.js';
 import { defineBattery, oneOf, STAKES_BANDS, yesNo, type JsonValue } from '@goodvibes-jev/judgment/decisions';
 
-const localServingStatusDefinition = {
+const localServingStatusDefinition = Object.freeze({
   name: 'agent.local-model.serving-status', version: 1,
   description: 'What a host-published local model server diagnostic says about current serving readiness.',
   accuracyFloor: 0.9,
@@ -19,11 +19,11 @@ const localServingStatusDefinition = {
     { name: 'quoted historic success', state: { value: 'Previous launch was healthy; current server is offline', record: { status: 'Previous launch was healthy; current server is offline' } }, expect: { status: 'blocked' } },
     { name: 'no status', state: { value: '', record: { serverVersion: '1.0' } }, expect: { status: 'unknown' } },
   ],
-} as const;
+} as const);
 export const localServingStatus = defineBattery(localServingStatusDefinition);
 export const localServingStatusPolicy = captureNativeDecisionPolicy(localServingStatusDefinition, localServingStatus);
 
-const localResourcePressureDefinition = {
+const localResourcePressureDefinition = Object.freeze({
   name: 'agent.local-model.resource-pressure', version: 1,
   description: 'The resource pressure reported by publisher wording in a complete local serving diagnostic.',
   accuracyFloor: 0.9,
@@ -40,11 +40,11 @@ const localResourcePressureDefinition = {
     { name: 'no claim', state: { value: 'checking resources', record: { pressure: 'checking resources' } }, expect: { pressure: 'unknown' } },
     { name: 'past is not current', state: { value: 'Yesterday memory was healthy. Current pressure has not been measured.', record: { pressure: 'Yesterday memory was healthy. Current pressure has not been measured.' } }, expect: { pressure: 'unknown' } },
   ],
-} as const;
+} as const);
 export const localResourcePressure = defineBattery(localResourcePressureDefinition);
 export const localResourcePressurePolicy = captureNativeDecisionPolicy(localResourcePressureDefinition, localResourcePressure);
 
-const localServingSchemaStatusDefinition = {
+const localServingSchemaStatusDefinition = Object.freeze({
   name: 'agent.local-model.schema-status', version: 1,
   description: 'Whether publisher certification wording establishes the declared local serving diagnostics schema.',
   accuracyFloor: 0.9,
@@ -54,6 +54,6 @@ const localServingSchemaStatusDefinition = {
     { name: 'unvalidated', state: { value: 'not validated', record: { schemaStatus: 'not validated' } }, expect: { certified: 'no' } },
     { name: 'other receipt', state: { value: 'A previous startup receipt was verified; this diagnostic has no schema certification', record: { schemaStatus: 'A previous startup receipt was verified; this diagnostic has no schema certification' } }, expect: { certified: 'no' } },
   ],
-} as const;
+} as const);
 export const localServingSchemaStatus = defineBattery(localServingSchemaStatusDefinition);
 export const localServingSchemaStatusPolicy = captureNativeDecisionPolicy(localServingSchemaStatusDefinition, localServingSchemaStatus);

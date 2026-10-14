@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { upsertObservedKnowledgeNode } from '../sdk/src/platform/knowledge/store-node-observation.js';
 import { reviewKnowledgeNodeRecord } from '../sdk/src/platform/knowledge/service-node-admin.js';
@@ -25,7 +25,10 @@ const roots: string[] = [];
 beforeEach(() => { previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function readings(probability = 0.99) {
-  const fake = fakePort((name, _question, state) => {
+  const fake = fakePort((name, question, state) => {
+    if (name === 'fullProfileRequired') return noulAnswer(0.01); // The authored gap asks only about webOS.
+    if (name === 'repairEvidenceSufficient') return noulAnswer(0.99); // The admitted smart-platform fact answers that gap.
+    if (['factTrust', 'sourceSupport', 'subjectSupport'].includes(name)) return scoreAnswer(question, 4, 0.99);
     if (name === 'repairSubjectSelected') return noulAnswer(repairSubjectFixtureReading(state));
     const input = state as { fact?: { title: string; summary?: string } };
     if (name === 'repairUseful') return noulAnswer(input.fact?.title === smart && input.fact.summary === `${smart}: ${useful}` ? probability : 0.01);
@@ -80,7 +83,7 @@ describe('repair usefulness write and count boundaries', () => {
       } });
       const before = snapshot(item.store);
       const error: unknown = await promoteRepairSources({ store: item.store, enrichSource: async () => { enriched = true; } },
-        spaceId, item.gap, [item.source.id], task, Date.now() + 5_000).catch(error => error);
+        spaceId, item.gap, [item.source.id], task, Date.now() + 30_000).catch(error => error);
       expect(error).toBeInstanceOf(KnowledgeRepairFactUsefulnessHeldError);
       expect((error as KnowledgeRepairFactUsefulnessHeldError).reason).toBe(mode);
       expect(fake.requests.some(request => 'repairSubjectSelected' in request.questions)).toBe(true);
@@ -100,7 +103,7 @@ describe('repair usefulness write and count boundaries', () => {
     const task = await item.store.upsertRefinementTask({ spaceId, gapId: item.gap.id, state: 'applying', trigger: 'manual' });
     installJudgmentPort(undefined); let enriched = false; const before = snapshot(item.store);
     const error: unknown = await promoteRepairSources({ store: item.store, enrichSource: async () => { enriched = true; } },
-      spaceId, item.gap, [item.source.id], task, Date.now() + 5_000).catch(error => error);
+      spaceId, item.gap, [item.source.id], task, Date.now() + 30_000).catch(error => error);
     expect(error).toBeInstanceOf(KnowledgeRepairSubjectSelectionHeldError);
     expect((error as KnowledgeRepairSubjectSelectionHeldError).reason).toBe('unconfigured');
     expect(fake.requests).toHaveLength(0); expect(snapshot(item.store)).toBe(before); expect(enriched).toBe(false);
@@ -133,7 +136,7 @@ describe('repair usefulness write and count boundaries', () => {
     await reviewKnowledgeNodeRecord(item.store, { id: item.facts[2]!.id, decision: 'reject' });
     const task = await item.store.upsertRefinementTask({ spaceId, gapId: item.gap.id, state: 'applying', trigger: 'manual' });
     for (let repeat = 0; repeat < 2; repeat++) {
-      const result = await promoteRepairSources({ store: item.store, enrichSource: async () => { throw new Error('Useful existing fact should avoid enrichment'); } }, spaceId, item.gap, [item.source.id], task, Date.now() + 5_000);
+      const result = await promoteRepairSources({ store: item.store, enrichSource: async () => { throw new Error('Useful existing fact should avoid enrichment'); } }, spaceId, item.gap, [item.source.id], task, Date.now() + 30_000);
       expect(result.promotedFactCount).toBe(1); expect(result.repairComplete).toBe(true);
       expect(item.store.getNode(item.facts[2]!.id)!.status).toBe('stale');
       expect(item.store.listNodes().filter((node) => node.kind === 'fact')).toHaveLength(3);

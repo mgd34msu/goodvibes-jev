@@ -17,6 +17,7 @@ import { createNativeWorkLedgerHost, registerNativeWorkLedgerCommand } from '../
 import { renderConfigModal } from '../../renderer/config-modal.ts';
 import { frameFromLayer } from '../helpers/surface-frame.ts';
 import type { NativeConversationIntakeState } from '../../runtime/native-conversation-intake.ts';
+import { ScheduleReadingLifetime } from '../../input/commands/schedule-reading-lifetime.ts';
 
 const [mode, home, baseUrl, projectId] = process.argv.slice(2);
 assert.ok(mode && home && baseUrl && projectId);
@@ -38,8 +39,13 @@ const modal = new ConfigModal(); const opened: string[] = []; const output: stri
 const dispatched: { text: string; requestId: string; inputId: string }[] = [];
 const registry = new CommandRegistry(); registerPlanningRuntimeCommands(registry);
 registerNativeWorkLedgerCommand(registry, host.selectProject, host.discoverProject, host.submission);
+const runtime = { sessionId: 'compiled-planning-history' };
+const planningReading = new ScheduleReadingLifetime(() => runtime.sessionId, () => true);
 const context = {
-  workspace: { projectPlanningService: service, projectPlanningProjectId: projectId },
+  session: { runtime }, platform: { configManager }, provider: {}, planningReading,
+  workspace: { projectPlanningService: service, projectPlanningProjectId: projectId,
+    shellPaths: { homeDirectory: home, workingDirectory: home } },
+  renderRequest() {},
   nativeConversationIntake: host.intake,
   print: (line: string) => output.push(line),
   openModal(name: string) { opened.push(name); assert.ok(name === history.name || name === native.name); modal.open(name === history.name ? history : native); },
@@ -66,6 +72,7 @@ async function command(prompt: string) {
 const text = (surface: typeof history) => surface.buildView().tabs.flatMap(tab => [...(tab.header ?? []), ...tab.rows.map(row => row.label)]).join('\n');
 const key = (logicalName: string) => handleConfigModalToken({ configModal: modal, requestRender() {}, handleEscape: () => modal.close() }, { ...enter, logicalName });
 async function inspectHistory() {
+  const readsBefore = judgment.requests.length;
   await command('/project-plan history'); await waitFor(() => text(history).includes('Preserve synthetic history'));
   assert.deepEqual(history.actions?.map(action => action.id), ['refresh']);
   assert.equal(history.buildView().tabs.flatMap(tab => tab.rows).every(row => row.selectable === false), true);
@@ -78,7 +85,7 @@ async function inspectHistory() {
   key('r'); await waitFor(() => text(history).includes('Preserve synthetic history'));
   key('escape'); assert.equal(modal.active, false);
   assert.deepEqual(readFileSync(dbPath), historicalBytes);
-  assert.equal(JSON.stringify(store.listSources(1000)), saved); assert.deepEqual(judgment.requests, []);
+  assert.equal(JSON.stringify(store.listSources(1000)), saved); assert.equal(judgment.requests.length, readsBefore);
 }
 async function inspectNative() {
   await command('/project-plan'); await waitFor(() => text(native).includes('Legacy done item'));
@@ -104,10 +111,10 @@ try {
     await command('/work intake-retry');
     await command('/work intake-resume');
   } else throw new Error(`Unknown proof mode: ${mode}`);
-  assert.deepEqual(judgment.requests, []);
+  assert.equal(judgment.requests.length, mode === 'submit' ? 1 : 0);
   assert.equal(JSON.stringify(store.listSources(1000)), saved);
   assert.deepEqual(readFileSync(dbPath), historicalBytes);
   console.log(JSON.stringify({ mode, opened, output, dispatched, historicalUnchanged: true, judgmentReads: judgment.requests.length }));
 } finally {
-  modal.close(); host.intake.close(); host.submission.close(); await store.close(); installJudgmentPort(previous);
+  planningReading.dispose(); modal.close(); host.intake.close(); host.submission.close(); await store.close(); installJudgmentPort(previous);
 }

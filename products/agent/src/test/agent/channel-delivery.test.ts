@@ -1,5 +1,6 @@
 import { useSecurityReadings } from '../helpers/security-readings.ts';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, setSystemTime, test } from 'bun:test';
+import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import type { ChannelDeliveryRequest } from '@goodvibes-jev/engine/sdk/platform/channels';
 import {
   buildAgentChannelDeliveryPreview,
@@ -10,6 +11,17 @@ import {
 useSecurityReadings();
 
 describe('Agent channel delivery', () => {
+  test('same-instant delivery IDs stay distinct and admissible at a card-shaped native clock', () => {
+    setSystemTime(new Date(1_791_684_509_006));
+    try {
+      const first = buildAgentChannelDeliveryPreview({ message: 'Review approvals', channel: 'slack:ops:Ops' });
+      const second = buildAgentChannelDeliveryPreview({ message: 'Review approvals', channel: 'slack:ops:Ops' });
+      expect(first.request.runId).not.toBe(second.request.runId);
+      expect(snapshotJudgmentInput(first.request)).toEqual(first.request);
+      expect(snapshotJudgmentInput(second.request)).toEqual(second.request);
+    } finally { setSystemTime(); }
+  });
+
   test('builds explicit surface delivery requests', () => {
     const preview = buildAgentChannelDeliveryPreview({
       title: 'Approvals',

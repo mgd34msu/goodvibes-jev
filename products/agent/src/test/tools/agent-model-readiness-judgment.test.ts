@@ -14,6 +14,7 @@ import { CommandRegistry, type CommandContext } from '../../input/command-regist
 import { createAgentModelsTool, registerAgentModelsTool, isModelsReadinessCall } from '../../tools/agent-models-tool.ts';
 import { createHarnessCatalogInputProjector } from '../../tools/agent-harness-catalog-ingress.ts';
 import { localModelCookbook, localModelRecipes } from '../../tools/agent-harness-local-model-cookbook.ts';
+import { withLocalModelRegistry, localModelServerHealthMap } from '../../tools/agent-harness-local-model-endpoints.ts';
 import { localRecipeReadinessScore } from '../../tools/agent-harness-model-readiness.ts';
 import { captureModelReadingInput, captureModelReadingSnapshotGuard, modelReadingOptions, withModelReadingContext, withModelReadingSource } from '../../tools/agent-harness-model-reading-source.ts';
 import type { LocalModelBenchmarkEvidence } from '../../tools/agent-harness-model-routing-types.ts';
@@ -64,6 +65,9 @@ function fixture(owner: ProtectedSourceOwner = ordinaryResearchOwner(), registry
 
 function readings(options: { route?: number; confidence?: number; transfer?: number; fits?: Record<string, number>; memory?: number } = {}) {
   return fakePort((name, question, state) => {
+    // The authored provider explicitly publishes cloud hosting despite its
+    // misleading ollama-local identifier.
+    if (question.type === 'choice' && Object.hasOwn(question.criteria, 'llamacpp')) return choiceAnswer(question, 'not-local', 0.999);
     // Explicit catalog result keeps this readiness control independent of search semantics.
     if (name === 'match') return noulAnswer(record(record(state).candidate).name === `model:${routeId}` ? 0.99 : 0.01);
     if (question.type === 'score') {
@@ -153,7 +157,7 @@ describe('real models readiness consumers', () => {
     const route = body(await f.tool.execute(routeArgs));
     expect(route.readinessScore).toBeNull();
     expect(dimension(route.readiness, 'latency')).toMatchObject({ score: null, outcome: 'deferred' });
-    expect(record(fake.requests[0]!.state).measuredLatency).toBeNull();
+    expect(record(fake.requests.find(request => request.context?.site === 'agent.models.route-readiness')!.state).measuredLatency).toBeNull();
     expect(f.effects).toEqual([]);
   });
 
@@ -171,7 +175,7 @@ describe('real models readiness consumers', () => {
     expect(route.contextWindow).toBeNull(); expect(dimension(route.readiness, 'context-window').score).toBeNull();
   });
 
-  test('unknown and misleading vision example names each remain unknown even when a reader guesses yes', async () => {
+  test('unknown and misleading vision example names remain deferred without capability evidence', async () => {
     const recipe = { ...localModelRecipes()[0]!, modelExamples: ['opaque-family', 'vision-vl-multimodal-text-only'] };
     const fake = readings(); installJudgmentPort(fake.port);
     const fit = { score: 100, level: 'strong', outcome: 'ready', confidence: 0.99, decisionId: null, provenance: null, memoryTier: 'large', reasons: [] } as const;
@@ -180,8 +184,37 @@ describe('real models readiness consumers', () => {
     expect(result.exampleVision?.every(example => record(example).value === null && record(example).outcome === 'deferred')).toBe(true);
     expect(result.score).toBeNull();
     const examples = fake.requests.filter(request => request.context?.site === 'agent.models.example-vision');
-    expect(examples.map(request => record(record(request.state).exampleModel).id)).toEqual(recipe.modelExamples);
-    expect(examples.every(request => Object.keys(request.questions).join(',') === 'exampleVision')).toBe(true);
+    expect(examples).toHaveLength(0);
+    expect(result.exampleVision?.every(example => record(example).provenance === null)).toBe(true);
+  });
+
+  test('local cookbook shares one protected registry interpretation across detection and endpoint views', async () => {
+    const f = fixture(); const fake = readings(); installJudgmentPort(fake.port);
+    const result = await f.tool.execute({ action: 'local', includeParameters: true });
+    expect(result.success).toBe(true);
+    const identities = fake.requests.filter(request => request.context?.site === 'agent.local-model.registry-identity');
+    expect(identities).toHaveLength(3);
+    expect(f.effects).toEqual([]);
+  });
+
+  test('local cookbook refuses a registry change after its shared interpretation', async () => {
+    const f = fixture(); const fake = readings(); let changed = false;
+    installJudgmentPort({ ...fake.port, ask: async request => {
+      const result = await fake.port.ask(request);
+      if (Object.hasOwn(request.questions, 'fit')) { f.providers[0]!.hosting = 'changed after registry interpretation'; changed = true; }
+      return result;
+    } });
+    await expect(f.tool.execute({ action: 'local', includeParameters: true })).rejects.toThrow();
+    expect(changed).toBe(true); expect(f.effects).toEqual([]);
+  });
+
+  test('a shared registry interpretation cannot outlive its protected source scope', async () => {
+    const f = fixture(); const fake = readings(); installJudgmentPort(fake.port);
+    const options = { sourceOwner: ordinaryResearchOwner() };
+    const captured = await withLocalModelRegistry(f.context, options, async reading => reading);
+    const count = fake.requests.length;
+    await expect(localModelServerHealthMap(f.context, true, options, captured)).rejects.toThrow(ToolInputProjectionError);
+    expect(fake.requests).toHaveLength(count); expect(f.effects).toEqual([]);
   });
 
   test('synchronous startup cookbook acquires no judgment port and publishes no settled winner or invented fit', () => {
@@ -254,10 +287,10 @@ describe('advisory readiness preserves independent facts and lifetimes', () => {
     expect(result.readinessScore).toBeNull();
   });
 
-  test.each(['cancel', 'session', 'owner', 'provider-api', 'provider-api-method', 'provider-registry', 'provider-registry-method', 'provider-adapter', 'config', 'config-manager', 'config-value', 'artifact-store', 'artifact-content', 'read-model', 'read-model-content', 'model-content', 'port', 'port-ask', 'port-model', 'port-recorder', 'battery'] as const)('an awaited route read fences %s replacement before returning a result', async changed => {
+  test.each(['cancel', 'session', 'owner', 'provider-api', 'provider-api-method', 'provider-registry', 'provider-registry-method', 'provider-adapter', 'config', 'config-manager', 'config-value', 'artifact-store', 'artifact-content', 'read-model', 'read-model-content', 'model-content', 'port', 'port-aba', 'port-ask', 'port-model', 'port-recorder', 'battery'] as const)('an awaited route read fences %s replacement before returning a result', async changed => {
     const f = fixture(); const wait = suspended(); const controller = new AbortController(); const fake = readings();
     const borrowed: JudgmentPort = { ...fake.port, ask: async request => {
-      expect(request.signal).toBe(controller.signal); wait.start(); await wait.gate; return fake.port.ask(request);
+      expect(request.signal).toBeInstanceOf(AbortSignal); expect(request.signal?.aborted).toBe(false); wait.start(); await wait.gate; return fake.port.ask(request);
     } };
     installJudgmentPort(borrowed);
     let delivered = 0;
@@ -279,18 +312,19 @@ describe('advisory readiness preserves independent facts and lifetimes', () => {
     if (changed === 'config-manager') record(context.platform).configManager = { ...record(record(context.platform).configManager) };
     if (changed === 'config-value') f.config['helper.enabled'] = true;
     if (changed === 'artifact-store') record(context.platform).artifactStore = { list: () => f.artifacts };
-    if (changed === 'artifact-content') f.artifacts.push({ id: 'late-artifact', kind: 'synthetic', createdAt: recordedAt });
+    if (changed === 'artifact-content') f.artifacts.push({ id: 'late-artifact', kind: 'synthetic', createdAt: recordedAt, metadata: {} });
     if (changed === 'read-model') record(record(context.platform).readModels).providerHealth = { ...f.health };
     if (changed === 'read-model-content') f.health.routes[0]!.avgLatencyMs = 1;
     if (changed === 'model-content') record(f.models[0]!.capabilities).multimodal = false;
     if (changed === 'port') installJudgmentPort(readings().port);
+    if (changed === 'port-aba') { installJudgmentPort(readings().port); installJudgmentPort(borrowed); }
     if (changed === 'port-ask') borrowed.ask = async request => fake.port.ask(request);
     if (changed === 'port-model') record(borrowed).model = 'swapped-model';
     if (changed === 'port-recorder') record(borrowed).recorder = {};
     if (changed === 'battery') {
-      const get = routingRegistry.get;
+      const get = routingRegistry.get, getField = Object.getOwnPropertyDescriptor(routingRegistry, 'get');
       routingRegistry.get = name => name === routeReadiness.name ? { ...routeReadiness } : get.call(routingRegistry, name);
-      restores.push(() => { routingRegistry.get = get; });
+      restores.push(() => { if (getField) Object.defineProperty(routingRegistry, 'get', getField); else Reflect.deleteProperty(routingRegistry, 'get'); });
     }
     wait.release(); await expect(pending).rejects.toThrow();
     expect(delivered).toBe(0); expect(fake.requests).toHaveLength(1); expect(f.effects).toEqual([]);
@@ -320,7 +354,8 @@ describe('advisory readiness preserves independent facts and lifetimes', () => {
       const answer = await fake.port.ask(request); answered++; controller.abort(); return answer;
     } });
     const pending = f.tool.execute(routeArgs, { signal: controller.signal }).then(result => { delivered++; return result; });
-    await expect(pending).rejects.toThrow(); expect(answered).toBe(1); expect(delivered).toBe(0); expect(f.effects).toEqual([]);
+    const failure = await pending.then(() => null, error => error);
+    expect(failure).toBeInstanceOf(Error); expect(answered, String(failure)).toBe(1); expect(delivered).toBe(0); expect(f.effects).toEqual([]);
   });
 
   test('models adapter retains the exact options capability across argument translation', async () => {
@@ -393,7 +428,7 @@ describe('complete original model-readiness source protection', () => {
     if (field === 'model') f.models[0]!.metadata = { hidden: sensitive };
     if (field === 'provider') f.providers[0]!.documentation = 'x'.repeat(700) + sensitive;
     if (field === 'health') f.health.routes[0]!.lastErrorMessage = 'x'.repeat(700) + sensitive;
-    if (field === 'artifact') f.artifacts.push({ id: 'synthetic-artifact', metadata: { privateNote: sensitive } });
+    if (field === 'artifact') f.artifacts.push({ id: 'synthetic-artifact', createdAt: 1700000000000, metadata: { privateNote: sensitive } });
     if (field === 'config') f.config['helper.globalModel'] = { privateNote: sensitive };
     if (field === 'beyond-display-limit') {
       f.models.push(...Array.from({ length: 12 }, (_, index) => ({ ...f.models[0], registryKey: `other:${index}`, modelId: `other-${index}` })));
@@ -413,10 +448,11 @@ describe('complete original model-readiness source protection', () => {
     if (field === 'model') f.models[0]!.metadata = credentials;
     if (field === 'provider') f.providers[0]!.metadata = credentials;
     if (field === 'health') f.health.routes[0]!.metadata = credentials;
-    if (field === 'artifact') f.artifacts.push({ id: 'credential-artifact', metadata: credentials });
+    if (field === 'artifact') f.artifacts.push({ id: 'credential-artifact', createdAt: 1700000000000, metadata: credentials });
     if (field === 'config') f.config['helper.globalModel'] = credentials;
     let consumed = 0;
-    await expect(withModelReadingContext(f.context, invocation, modelReadingOptions(f.context, f.registry), async () => { consumed++; })).rejects.toThrow();
+    await expect(Promise.resolve().then(() => withModelReadingContext(f.context, invocation,
+      modelReadingOptions(f.context, f.registry), async () => { consumed++; }))).rejects.toThrow();
     expect(screening.calls).toHaveLength(0); expect(fake.requests).toHaveLength(0); expect(consumed).toBe(0);
     await expect(f.tool.execute(invocation)).rejects.toThrow();
     expect(JSON.stringify(screening.calls)).not.toContain(secret); expect(fake.requests).toHaveLength(0);
@@ -485,24 +521,24 @@ describe('complete original model-readiness source protection', () => {
   });
 });
 
-test('a PAN-shaped numeric artifact timestamp fails closed without source transport, a score, or a raw-value error leak', async () => {
-  // Deliberately Luhn-shaped numeric epoch. The global input gate must remain
-  // strict even when the field happens to be a timestamp rather than a card.
+test('native artifact clocks retain their instant while numeric lookalikes remain private source data', async () => {
   const timestamp = 1700000000004;
+  expect(() => captureModelReadingInput({ createdAt: timestamp })).toThrow();
   const screening = researchScreeningFixture(); const f = fixture(screening.owner); const fake = readings(); installJudgmentPort(fake.port);
-  f.artifacts.push({ id: 'synthetic-timestamp', createdAt: timestamp });
+  f.artifacts.push({ id: 'synthetic-timestamp', createdAt: timestamp, metadata: {} });
   let consumed = 0;
-  let failure: unknown;
-  try { await withModelReadingContext(f.context, routeArgs, modelReadingOptions(f.context, f.registry), async () => { consumed++; }); }
-  catch (error) { failure = error; }
-  expect(failure).toBeInstanceOf(Error);
-  expect(String(failure)).not.toContain(String(timestamp));
-  expect(consumed).toBe(0); expect(screening.calls).toHaveLength(0); expect(fake.requests).toHaveLength(0);
+  await withModelReadingContext(f.context, routeArgs, modelReadingOptions(f.context, f.registry), async () => { consumed++; });
+  expect(consumed).toBe(1); expect(fake.requests).toHaveLength(0);
+  expect(JSON.stringify(screening.calls)).toContain(new Date(timestamp).toISOString());
+  expect(JSON.stringify(screening.calls)).not.toContain(String(timestamp));
+  expect(body(await f.tool.execute(routeArgs)).readiness).toMatchObject({ outcome: 'ready' });
+  const calls = fake.requests.length;
+  f.artifacts[0]!.metadata = { opaque: { capturedAt: timestamp } };
   await expect(f.tool.execute(routeArgs)).rejects.toThrow();
-  expect(JSON.stringify(screening.calls)).not.toContain(String(timestamp)); expect(fake.requests).toHaveLength(0); expect(f.effects).toEqual([]);
+  expect(JSON.stringify(screening.calls)).not.toContain(String(timestamp)); expect(fake.requests).toHaveLength(calls); expect(f.effects).toEqual([]);
 });
 
-test.each(['fit', 'exampleVision'] as const)('real local view cancels during %s before any result or queued recipe judgments', async phase => {
+test.each(['fit', 'latency'] as const)('real local view cancels during %s before any result or queued recipe judgments', async phase => {
   const f = fixture(); const fake = readings(); const controller = new AbortController(); const wait = suspended();
   let dispatched = 0, delivered = 0;
   installJudgmentPort({ ...fake.port, ask: async request => {
@@ -539,13 +575,16 @@ test.each(['completed', 'failed', 'missing-status', 'other-route', 'other-provid
     purpose: 'agent-model-compare', benchmarkKind: 'local-model-route', candidateLatencyEvidence: [evidence],
   } });
   const fake = readings(); installJudgmentPort(fake.port);
+  if (kind === 'missing-timestamp') {
+    await expect(f.tool.execute(routeArgs)).rejects.toThrow(); expect(fake.requests).toHaveLength(0); expect(f.effects).toEqual([]); return;
+  }
   const route = body(await f.tool.execute(routeArgs));
   if (kind === 'completed') {
     expect(route.readiness).toMatchObject({ score: 100, outcome: 'ready' });
-    expect(record(fake.requests[0]!.state).measuredLatency).toMatchObject({ registryKey: routeId, providerId: 'ollama-local', latencyMs: 20, status: 'completed' });
+    expect(record(fake.requests.find(request => request.context?.site === 'agent.models.route-readiness')!.state).measuredLatency).toMatchObject({ registryKey: routeId, providerId: 'ollama-local', latencyMs: 20, status: 'completed' });
   } else {
     expect(route.readinessScore).toBeNull(); expect(dimension(route.readiness, 'latency').score).toBeNull();
-    expect(record(fake.requests[0]!.state).measuredLatency).toBeNull();
+    expect(record(fake.requests.find(request => request.context?.site === 'agent.models.route-readiness')!.state).measuredLatency).toBeNull();
   }
   expect(f.effects).toEqual([]);
 });
@@ -556,7 +595,7 @@ test.each(['direct', 'nested', 'snapshot'] as const)('native %s Map provider hea
   const fake = readings(); installJudgmentPort(fake.port);
   const result = body(await f.tool.execute(routeArgs));
   expect(result.readiness).toMatchObject({ score: 100, outcome: 'ready' });
-  expect(record(fake.requests[0]!.state).measuredLatency).toMatchObject({ routeId, milliseconds: 18_000, source: 'provider-health' });
+  expect(record(fake.requests.find(request => request.context?.site === 'agent.models.route-readiness')!.state).measuredLatency).toMatchObject({ routeId, milliseconds: 18_000, source: 'provider-health' });
   expect(f.effects).toEqual([]);
 });
 
@@ -614,11 +653,12 @@ test.each(['invocation', 'model', 'provider', 'artifact'] as const)('non-enumera
   const secret = 'synthetic-hidden-credential';
   const screening = researchScreeningFixture(); const f = fixture(screening.owner); const fake = readings(); installJudgmentPort(fake.port);
   const invocation: Json = { ...routeArgs };
-  const artifact: Json = { id: 'hidden-artifact', metadata: {} };
+  const artifact: Json = { id: 'hidden-artifact', createdAt: 1_700_000_000_000, metadata: {} };
   if (field === 'artifact') f.artifacts.push(artifact);
   const target = field === 'invocation' ? invocation : field === 'model' ? f.models[0]! : field === 'provider' ? f.providers[0]! : artifact;
   Object.defineProperty(target, 'undisplayed', { value: { nested: { authorization: `Bearer ${secret}` } }, enumerable: false });
-  await expect(withModelReadingContext(f.context, invocation, modelReadingOptions(f.context, f.registry), async () => {})).rejects.toThrow();
+  await expect(Promise.resolve().then(() => withModelReadingContext(f.context, invocation,
+    modelReadingOptions(f.context, f.registry), async () => {}))).rejects.toThrow();
   expect(screening.calls).toHaveLength(0); expect(fake.requests).toHaveLength(0);
   await expect(f.tool.execute(invocation)).rejects.toThrow();
   expect(JSON.stringify(screening.calls)).not.toContain(secret); expect(fake.requests).toHaveLength(0); expect(f.effects).toEqual([]);
@@ -628,7 +668,7 @@ test.each(['invocation', 'model', 'provider', 'artifact'] as const)('non-enumera
   const sensitive = 'synthetic-hidden-private-note';
   const screening = researchScreeningFixture({ spans: exactSensitiveSpans([sensitive]) }); const f = fixture(screening.owner); const fake = readings(); installJudgmentPort(fake.port);
   const invocation: Json = { ...routeArgs };
-  const artifact: Json = { id: 'hidden-artifact', metadata: {} };
+  const artifact: Json = { id: 'hidden-artifact', createdAt: 1_700_000_000_000, metadata: {} };
   if (field === 'artifact') f.artifacts.push(artifact);
   const target = field === 'invocation' ? invocation : field === 'model' ? f.models[0]! : field === 'provider' ? f.providers[0]! : artifact;
   Object.defineProperty(target, 'undisplayed', { value: { nested: sensitive }, enumerable: false });
@@ -639,7 +679,7 @@ test.each(['invocation', 'model', 'provider', 'artifact'] as const)('non-enumera
 test.each(['invocation', 'model', 'provider', 'artifact'] as const)('late non-enumerable %s source mutation cannot publish a readiness result', async field => {
   const f = fixture(); const fake = readings(); const wait = suspended();
   const invocation: Json = { ...routeArgs };
-  const artifact: Json = { id: 'hidden-artifact', metadata: {} };
+  const artifact: Json = { id: 'hidden-artifact', createdAt: 1_700_000_000_000, metadata: {} };
   if (field === 'artifact') f.artifacts.push(artifact);
   const target = field === 'invocation' ? invocation : field === 'model' ? f.models[0]! : field === 'provider' ? f.providers[0]! : artifact;
   Object.defineProperty(target, 'undisplayed', { value: 'original', enumerable: false, writable: true });
@@ -806,7 +846,7 @@ test.each(['openai-compatible', 'ollama'] as const)('real %s provider adapter pu
   record(f.providerRegistry).listProviders = () => [provider];
   const result = body(await f.tool.execute(routeArgs));
   expect(result.readiness).toMatchObject({ score: 100, outcome: 'ready' });
-  expect(record(record(fake.requests[0]!.state).provider).baseURL).toBe(options.baseURL);
+  expect(record(record(fake.requests.find(request => request.context?.site === 'agent.models.route-readiness')!.state).provider).baseURL).toBe(options.baseURL);
   expect(JSON.stringify(screening.calls)).not.toContain(secret); expect(JSON.stringify(fake.requests)).not.toContain(secret);
   expect(JSON.stringify(result)).not.toContain(secret); expect(providerCalls).toBe(0); expect(inheritedModelsReads).toBe(0); expect(f.effects).toEqual([]);
 });
@@ -824,9 +864,9 @@ for (const phase of ['reading-source', 'final-projector'] as const) test.each(['
   if (changed === 'ask') port.ask = async request => fake.port.ask(request);
   if (changed === 'recorder') record(port).recorder = {};
   if (changed === 'battery') {
-    const get = routingRegistry.get;
+    const get = routingRegistry.get, getField = Object.getOwnPropertyDescriptor(routingRegistry, 'get');
     routingRegistry.get = name => name === routeReadiness.name ? { ...routeReadiness } : get.call(routingRegistry, name);
-    restores.push(() => { routingRegistry.get = get; });
+    restores.push(() => { if (getField) Object.defineProperty(routingRegistry, 'get', getField); else Reflect.deleteProperty(routingRegistry, 'get'); });
   }
   paused.wait.release(); await expect(pending).rejects.toThrow();
   expect(delivered).toBe(0); expect(paused.counts.selected).toBe(1); expect(f.effects).toEqual([]);
@@ -874,7 +914,7 @@ test.each(['settled', 'rejected'] as const)('a later call may reuse original arg
   }
   const current = readings({ route: 4 }); installJudgmentPort(current.port);
   expect(body(await f.tool.execute(args)).readinessScore).toBe(100);
-  expect(current.requests).toHaveLength(1); expect(f.effects).toEqual([]);
+  expect(current.requests.filter(request => request.context?.site === 'agent.models.route-readiness')).toHaveLength(1); expect(f.effects).toEqual([]);
 });
 
 test('multi-model source above 40k screens every complete entry before exact-route judgment', async () => {
@@ -889,7 +929,8 @@ test('multi-model source above 40k screens every complete entry before exact-rou
     return fake.port.ask(request);
   } });
   const result = body(await f.tool.execute(routeArgs));
-  expect(result.readiness).toMatchObject({ score: 100, outcome: 'ready' }); expect(fake.requests).toHaveLength(1);
+  expect(result.readiness).toMatchObject({ score: 100, outcome: 'ready' });
+  expect(fake.requests.filter(request => request.context?.site === 'agent.models.route-readiness')).toHaveLength(1);
   expect(proposals(screening.calls).length).toBeGreaterThan(2); expect(f.effects).toEqual([]);
 });
 
@@ -915,7 +956,8 @@ test.each(['ordinary', 'credential'] as const)('original model array extraMetada
   const screening = researchScreeningFixture(); const f = fixture(screening.owner); const fake = readings(); installJudgmentPort(fake.port);
   const marker = kind === 'credential' ? 'Bearer synthetic-array-credential' : 'ordinary-array-semantic-note';
   record(f.models).extraMetadata = kind === 'credential' ? { authorization: marker } : { note: marker };
-  await expect(withModelReadingContext(f.context, routeArgs, modelReadingOptions(f.context, f.registry), async () => {})).rejects.toThrow();
+  await expect(Promise.resolve().then(() => withModelReadingContext(f.context, routeArgs,
+    modelReadingOptions(f.context, f.registry), async () => {}))).rejects.toThrow();
   expect(screening.calls).toHaveLength(0); expect(fake.requests).toHaveLength(0);
   await expect(f.tool.execute(routeArgs)).rejects.toThrow();
   expect(JSON.stringify(screening.calls)).not.toContain(marker); expect(fake.requests).toHaveLength(0); expect(f.effects).toEqual([]);
@@ -933,7 +975,8 @@ test.each(['enumerable', 'hidden'] as const)('late %s model array extraMetadata 
 test('a small sparse models array is refused rather than silently converted into null entries', async () => {
   const screening = researchScreeningFixture(); const f = fixture(screening.owner); const fake = readings(); installJudgmentPort(fake.port);
   f.models.length = 2;
-  await expect(withModelReadingContext(f.context, routeArgs, modelReadingOptions(f.context, f.registry), async () => {})).rejects.toThrow();
+  await expect(Promise.resolve().then(() => withModelReadingContext(f.context, routeArgs,
+    modelReadingOptions(f.context, f.registry), async () => {}))).rejects.toThrow();
   expect(screening.calls).toHaveLength(0); expect(fake.requests).toHaveLength(0);
 });
 
@@ -1108,6 +1151,18 @@ test('a frozen source parent cannot cache a mutable descendant', () => {
   current(source); current(source);
   child.complete = 'changed';
   expect(() => current(source)).toThrow(ToolInputProjectionError);
+});
+
+test.each(['enumerable', 'writable', 'configurable', 'prototype', 'accessor'] as const)('exact policy capture rejects a changed %s without executing accessors', kind => {
+  const policy = { nested: { condition: 'Complete authored policy' } };
+  const current = captureModelReadingSnapshotGuard(policy, true);
+  current(policy);
+  let reads = 0;
+  if (kind === 'prototype') Object.setPrototypeOf(policy.nested, null);
+  else if (kind === 'accessor') Object.defineProperty(policy.nested, 'condition', { get() { reads++; return 'Complete authored policy'; } });
+  else Object.defineProperty(policy.nested, 'condition', { [kind]: false });
+  expect(() => current(policy)).toThrow(ToolInputProjectionError);
+  expect(reads).toBe(0);
 });
 
 test.each(['unchanged', 'incarnation', 'method', 'accessor'] as const)('raw readiness guards supported config incarnation against %s without reading config secrets', async kind => {

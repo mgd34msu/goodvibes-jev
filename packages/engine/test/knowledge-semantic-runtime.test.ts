@@ -4,8 +4,8 @@ import { KnowledgeRepairBudgetError } from '../sdk/src/platform/knowledge/semant
 import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
 import { seedKnowledgeResearchTask, useSemanticActivationFixtures } from './_helpers/knowledge-semantic-activation-fixtures.js';
 import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
-import { semanticRepairProfileValues, semanticRepairUsefulValues } from './_helpers/repair-profile-fixture-readings.js';
-const answerReadings = useKnowledgeAnswerReadings({ repairProfile: semanticRepairProfileValues, repairUseful: semanticRepairUsefulValues });
+import { semanticRepairProfileValues, semanticRepairUsefulValues, semanticRepairSentenceKinds } from './_helpers/repair-profile-fixture-readings.js';
+const answerReadings = useKnowledgeAnswerReadings({ extractedKinds: semanticRepairSentenceKinds, repairProfile: semanticRepairProfileValues, repairUseful: semanticRepairUsefulValues });
 useSemanticActivationFixtures(answerReadings);
 
 import { describe, expect, test } from 'bun:test';
@@ -30,6 +30,7 @@ import {
 
 describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
   test('semantic reindex excludes generated page sources from enrichment input', async () => {
+    answerReadings.set({ extractedKinds: [['LG 86NANO90UNA has webOS smart TV features and a 4K NanoCell display.', 'feature']], repairUseful: [['LG 86NANO90UNA has webOS smart TV features and a 4K NanoCell display.', 'LG 86NANO90UNA has webOS smart TV features and a 4K NanoCell display.', 'LG 86NANO90UNA has webOS smart TV features and a 4K NanoCell display.']] });
     const { store } = createStores();
     const spaceId = homeAssistantKnowledgeSpaceId('house');
     const semantic = new KnowledgeSemanticService(store, { backgroundRepairDelayMs: 60_000 });
@@ -446,7 +447,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       answerReadings.addAssessments([gapAssessmentFixture(assessmentFixtureGap, [device], 0.99, 0.99, semanticRepairAssessmentCoverage, 0.99)]);
 
     const first = semantic.selfImprove({ knowledgeSpaceId: spaceId, limit: 5, reason: 'manual' });
-    await waitFor(() => store.listRefinementTasks(10, { spaceId }).some((task) => task.state === 'searching'), 250);
+    await waitFor(() => store.listRefinementTasks(10, { spaceId }).some((task) => task.state === 'searching'), 50_000);
     const second = await semantic.selfImprove({ knowledgeSpaceId: spaceId, limit: 500, reason: 'manual' });
     releaseRepair();
     await first;

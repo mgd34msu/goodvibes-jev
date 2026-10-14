@@ -23,18 +23,17 @@
  */
 import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 
-/** Most characters of the pending line and of the recent output one request carries. */
-export const MAX_JUDGED_PROMPT_LINE_CHARS = 500;
-export const MAX_JUDGED_RECENT_OUTPUT_CHARS = 1_500;
-
-const tail = (text: string, max: number): string => (text.length <= max ? text : `[${text.length - max} earlier characters]${text.slice(-max)}`);
+/** Complete-evidence budgets; oversized input holds instead of dropping context. */
+export const MAX_JUDGED_PROMPT_LINE_CHARS = 160_000;
+export const MAX_JUDGED_RECENT_OUTPUT_CHARS = 160_000;
 
 /** What `awaiting_input` sees: the command, the unterminated last line, and the output before it. */
 export function pendingPromptView(command: string, line: string, recentOutput: string): { command: string; lastLine: string; recentOutput: string } {
+  if (command.length + line.length + recentOutput.length > MAX_JUDGED_RECENT_OUTPUT_CHARS) throw new RangeError('Terminal prompt evidence exceeds the judgment input budget.');
   return {
     command,
-    lastLine: tail(line, MAX_JUDGED_PROMPT_LINE_CHARS),
-    recentOutput: tail(recentOutput, MAX_JUDGED_RECENT_OUTPUT_CHARS),
+    lastLine: line,
+    recentOutput,
   };
 }
 

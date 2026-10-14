@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import {
-  calibrate, createSystemOnePort, formatReport, PINNED_MODEL, SqliteDecisionLog, truthOf, withDecisionLog,
+  calibrate, createSystemOnePort, formatReport, DEFAULT_MODEL, SqliteDecisionLog, truthOf, withDecisionLog,
   type JudgmentPort,
 } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -70,7 +70,7 @@ test('definite yes and no retain original fixture truth, model, floor and automa
   expect(decision.checks.map(check => [check.expected, check.got, check.correct])).toEqual([
     ['false', 'false', true], ['true', 'true', true], ['true', 'true', true],
   ]);
-  expect(decision).toMatchObject({ version: 1, model: PINNED_MODEL, accuracyFloor: 0.95,
+  expect(decision).toMatchObject({ version: 2, model: DEFAULT_MODEL, accuracyFloor: 0.95,
     accuracy: 1, passed: true, outcomes: { act: 3, confirm: 0, escalate: 0 }, automaticAccuracy: 1 });
   expect(nativeIntakeCoverage.fixtureCount).toBe(3);
   expect(authored.requests.every(request => request.context?.site === 'calibration')).toBe(true);
@@ -112,7 +112,7 @@ test('calibration truth records retain the unresolved result and untouched nativ
   expect(entries).toHaveLength(3);
   const complete = entries.find(entry => entry.context.fixture === 'complete exact request');
   if (!complete) throw new Error('Missing recorded complete fixture');
-  expect(complete).toMatchObject({ requestedModel: PINNED_MODEL, model: PINNED_MODEL,
+  expect(complete).toMatchObject({ requestedModel: DEFAULT_MODEL, model: 'jev-1.13.0',
     answers: { part_0: { type: 'noul', noul: 0.55 } } });
   const completeCheck = decision.checks[0];
   if (!completeCheck) throw new Error('Missing complete calibration fixture check');
@@ -124,10 +124,10 @@ test.each(['missing', 'malformed'] as const)('canonical %s answer fails calibrat
   let requests = 0;
   const port = createSystemOnePort({
     endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-fixture' },
-    model: PINNED_MODEL, timeoutMs: 1_000, retry: {},
+    model: DEFAULT_MODEL, timeoutMs: 1_000, retry: {},
     fetch: async () => {
       requests++;
-      return Response.json({ model: PINNED_MODEL,
+      return Response.json({ model: DEFAULT_MODEL,
         answers: kind === 'missing' ? {} : { part_0: { type: 'noul', noul: null } },
         usage: { input_tokens: 1, output_tokens: 1 } });
     },

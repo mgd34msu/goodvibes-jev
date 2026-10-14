@@ -1,0 +1,15 @@
+{
+  "extends": "../../products/agent/tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": [
+        "../../products/agent/src/*"
+      ]
+    }
+  },
+  "include": [
+    "test/agent-research-screening-composition.test.ts",
+    "sdk/src/platform/types/*.d.ts"
+  ],
+  "exclude": []
+}

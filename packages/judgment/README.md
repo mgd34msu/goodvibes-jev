@@ -38,6 +38,14 @@ grant/revocation work. No live-provider proof is established by these interfaces
 
 ## A port and a battery
 
+Answer validation checks probabilities before a result becomes a reading or a
+successful log record. Choice requires unit probability mass and a maximum-
+probability offered option; Score requires unit mass and a headline equal to the
+probability-weighted rubric level within the API’s hundredth rounding intervals.
+Fractional scores are valid. Standalone
+yes/no, Choice and Score readers apply validation to injected answers as well.
+Confidence remains separate from the selected option or score.
+
 ```ts
 import { createSystemOnePort, judgmentConfigFromEnv } from '@goodvibes-jev/judgment';
 import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment/decisions';
@@ -58,7 +66,7 @@ const battery = defineBattery({
 const run = await battery.run(port, 'Question: ...\nReply: ...', { site: 'example.reply' });
 ```
 
-Each check is read for what it actually decides: a check whose answer is its own definition (arithmetic, dates, counting, id equality, a grammar a program produced, a value the owner configured) stays code, and a check that answers a question of meaning is asked of the model, whatever its category, security checks included. Every battery keeps its questions and thresholds in one place, and `bun run calibrate --registry <module>` runs its fixtures live against the pinned model and fails when a battery falls below its floor.
+Each check is read for what it actually decides: a check whose answer is its own definition (arithmetic, dates, counting, id equality, a grammar a program produced, a value the owner configured) stays code, and a check that answers a question of meaning is asked of the model, whatever its category, security checks included. Every battery keeps its questions and thresholds in one place, and `bun run calibrate --registry <module>` runs its fixtures live against the configured model (by default `jev-latest`) and fails when a battery falls below its floor.
 
 The decision log keeps every call with what the decision concluded (a `readings` note), what code did with it (an `action` note) and, once known, what was right (a `truth` note). Calibration records each fixture's expectations as truth on that fixture's call; an owner correction or an observed outcome is attached the same way. The engine's observe subsystem reads accuracy against confidence, threshold sweeps, drift and historical questions stuck in `confirm` or `escalate` from the log alone. Those log values do not prescribe human approval in the autonomous contract.
 
@@ -164,6 +172,13 @@ version fails closed because the thresholds
 have not been calibrated for it. Moving aliases retain their previous behavior
 only in single-endpoint mode. Configuring a different version does not establish
 calibration: run the relevant batteries against that version before selecting it.
+The default model is `jev-latest`, TypeSafe's most recent stable release. Batteries
+inherit the configured model instead of pinning a release. A fallback is eligible
+only when its configured model or alias equals the request's model. Official Jev
+aliases may resolve to a versioned Jev response on any target; an explicitly
+requested version must match exactly. Decision evidence records both the
+requested alias and the resolved response model. Calibration runs against the
+same alias and records the versions observed during the run.
 
 Results and failures contain `lineage`: one logical request ID and ordered wire
 attempts with endpoint index/kind, model, latency, HTTP status, outcome and safe
@@ -183,8 +198,8 @@ request override or captured port default, while `model` remains the responding
 provider's separately validated model identifier. Invalid answers fail with
 `JudgmentError.kind === 'invalid-response'` rather than becoming usable readings.
 
-Choice probabilities must sum to one (allowing only floating-point addition
-roundoff), and the selected option must have the highest probability; ties are
+Choice probabilities must admit a unit-mass distribution within their wire
+rounding intervals, and the selected option must have the highest probability; ties are
 valid. The same validation applies to standalone `readChoice`. This follows the
 [TypeSafe Choice response contract](https://docs.typesafe.ai/primitives/choice).
 [Confidence is a separate statistic](https://docs.typesafe.ai/confidence), so it

@@ -85,7 +85,12 @@ describe('selected-host live readiness', () => {
         if (change === 'disabled') options.configManager.set('daemon.connectedHost.enabled', false);
         return Response.json(paired);
       } });
-      try { options = fixture(server.port!); expect((await readConnectedHostReadiness(options)).status).toBe('changed'); } finally { server.stop(true); }
+      try {
+        options = fixture(server.port!);
+        if (change === 'host' || change === 'port' || change === 'disabled') {
+          await expect(readConnectedHostReadiness(options)).rejects.toThrow('configuration owner changed');
+        } else expect((await readConnectedHostReadiness(options)).status).toBe('changed');
+      } finally { server.stop(true); }
     });
   }
 

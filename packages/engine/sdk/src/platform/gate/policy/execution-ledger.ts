@@ -1,3 +1,4 @@
+import { readExecutionPurpose } from '../batteries/execution-purpose.js';
 /**
  * The execution ledger: one record per tool call the runtime handles, built
  * from the `tools` event domain, for the execution surfaces to list and
@@ -53,6 +54,8 @@ export interface AgentExecutionRecord {
   readonly turnId: string;
   readonly tool: string;
   readonly routeKind: AgentExecutionRouteKind;
+  /** Settled purpose of the complete invocation; absent when pending/unavailable. */
+  readonly verification?: boolean | undefined;
   /** Why the route kind could not be read, when the reading failed. */
   readonly routeKindError?: string | undefined;
   /** Why the argument roles could not be read; every argument value is redacted then. */
@@ -81,6 +84,7 @@ interface MutableAgentExecutionRecord {
   turnId: string;
   tool: string;
   routeKind: AgentExecutionRouteKind;
+  verification?: boolean | undefined;
   routeKindError?: string | undefined;
   argsReadingError?: string | undefined;
   status: AgentExecutionStatus;
@@ -426,6 +430,12 @@ export class AgentExecutionLedger {
       record.commandPreview = command && command !== '[redacted]' && command.trim() ? truncateText(command, 180) : undefined;
       record.targetPreview = targetPreview(args, roles.roles);
       this.notify();
+      if (!roles.error) {
+        try {
+          const verification = await readExecutionPurpose(record.tool, safeArgs, controller.signal);
+          if (active()) { record.verification = verification; this.notify(); }
+        } catch { /* Unknown purpose stays unclassified; lifecycle history remains visible. */ }
+      }
     };
     const done = Promise.race([enrich(), cancelled]).then(() => {
       if (this.pending.get(record.id)?.done === done) this.pending.delete(record.id);

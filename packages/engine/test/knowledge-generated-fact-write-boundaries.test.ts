@@ -244,7 +244,7 @@ describe('generated fact support persistence boundaries', () => {
   test('reviewed superseded content cannot be marked stale after other new writes', async () => {
     const { store, source } = await fixture(); readings();
     const old = await store.upsertNode({ id: 'reviewed-old-entity', kind: 'knowledge_entity', slug: 'reviewed-old', title: 'Operator entity',
-      sourceId: source.id, metadata: { knowledgeSpaceId: spaceId, semanticKind: 'entity' } });
+      sourceId: source.id, metadata: { knowledgeSpaceId: spaceId, semanticKind: 'entity', extractor: 'llm' } });
     await store.upsertNode({ ...old, status: 'active' }, createKnowledgeNodeOperatorMutation(old, { action: 'accept' }));
     const before = snapshot(store);
     await expect(enrichKnowledgeSource({ store, llm: llm(extractionResult()) }, source, { force: true })).rejects.toBeInstanceOf(KnowledgeNodeMutationHeldError);

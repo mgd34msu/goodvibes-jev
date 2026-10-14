@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
-import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { ArtifactStore } from '../sdk/src/platform/artifacts/index.js';
 import { refreshDevicePagesForHomeGraphAsk } from '../sdk/src/platform/knowledge/home-graph/ask-page-refresh.js';
 import {
@@ -50,6 +50,8 @@ type ReadingState = {
 
 function readings(probability: (state: ReadingState) => number = () => 0.97) {
   const fake = fakePort((name, question, state) => {
+    name = name.split('__').at(-1)!;
+    if (['factTrust', 'sourceSupport', 'subjectSupport'].includes(name)) return scoreAnswer(question, 4, 0.99);
     const profile = repairProfileFixtureReading(name, state, homeGraphRepairProfileValues);
     if (profile !== undefined) return noulAnswer(profile);
     if (name === 'repairUseful') return noulAnswer(repairUsefulFixtureReading(state, homeGraphRepairProfileValues,
@@ -90,6 +92,8 @@ function pauseReading(predicate: (state: ReadingState) => boolean = () => true) 
  * The race under test installs its own quality reader after this seed phase. */
 async function ingestAliasFixtureNote(service: HomeGraphService, input: Parameters<HomeGraphService['ingestNote']>[0]) {
   const seed = fakePort((name, question) => {
+    name = name.split('__').at(-1)!;
+    if (['factTrust', 'sourceSupport', 'subjectSupport'].includes(name)) return scoreAnswer(question, 4, 0.99);
     if (name === 'relation') return choiceAnswer(question, 'source_for', 0.99);
     if (['manual', 'integrationDocumentation', 'selected'].includes(name)) return noulAnswer(0.01);
     throw new Error(`Unexpected alias seed question: ${name}`);
@@ -517,7 +521,7 @@ describe('Home Graph page quality persistence boundaries', () => {
     const result = await refreshAsk(context, [responseOnlyForeign, collision], [], [context.device, foreignDevice]);
     expect(result).toEqual({ requested: true, refreshed: 1 });
     expect(fake.requests).toHaveLength(1);
-    expect(Object.keys(fake.requests[0]!.questions)).toEqual(['batteryApplicable']);
+    expect(Object.keys(fake.requests[0]!.questions)).toEqual(['batteryApplicable__batteryApplicable']);
     expect(JSON.stringify(fake.requests)).not.toContain('FOREIGN');
     expect(context.store.getSource(foreign.id)).toEqual(foreign);
     expect(context.store.getSource(responseOnlyForeign.id)).toBeNull();
@@ -771,7 +775,7 @@ describe('Home Graph page quality persistence boundaries', () => {
     const priorArtifacts = context.artifactStore.list();
     const fact = context.store.listNodes().find((node) => node.kind === 'fact')!;
     expect(fact).toBeDefined();
-    const racingStore = Object.create(context.store) as KnowledgeStore;
+    const racingStore = context.store;
     let concurrent: KnowledgeNodeRecord | undefined;
     const publish = racingStore.applyPreparedIngest.bind(racingStore);
     racingStore.applyPreparedIngest = (input, prepareGraph, options) => publish(input, async stage => {
@@ -798,7 +802,7 @@ describe('Home Graph page quality persistence boundaries', () => {
     const facts = context.store.listNodes().filter((node) => node.kind === 'fact');
     expect(facts.length).toBeGreaterThan(1);
     const controller = new AbortController();
-    const racingStore = Object.create(context.store) as KnowledgeStore;
+    const racingStore = context.store;
     let touched: KnowledgeNodeRecord | undefined;
     let concurrent: KnowledgeNodeRecord | undefined;
     const publish = racingStore.applyPreparedIngest.bind(racingStore);

@@ -117,6 +117,9 @@ async function linkSources(input: AutoLinkSourcesInput): Promise<readonly HomeGr
         || (extraction && (extraction.sourceId !== source.id || getKnowledgeSpaceId(extraction) !== input.spaceId))) throw new Held('stale');
       return { source, extraction, projected: projectSource(input.store, source, extraction, admissions) };
     });
+  // Snapshot and generated-page sources are deliberately ineligible. With no
+  // source to link there is no semantic operation or candidate transmission.
+  if (sourcePlans.length === 0) return [];
   const nodes = input.state.nodes.filter(candidate);
   // All candidates remain in the reading, including generic titles and close
   // siblings. Exact device/entity identities are evidence, never a bypass.
@@ -142,14 +145,16 @@ async function linkSources(input: AutoLinkSourcesInput): Promise<readonly HomeGr
   const check = () => { assertCurrent(); reader.assertCurrent();
     for (const plan of plans) if (input.extractionBySourceId.get(plan.source.id) !== plan.extraction) throw new Held('stale');
   };
-  const selected: { source: KnowledgeSourceRecord; node: KnowledgeNodeRecord; relation: string }[] = [];
+  const selected: { source: KnowledgeSourceRecord; node: KnowledgeNodeRecord; relation: string; provenance: NonNullable<ReturnType<typeof reader.provenance>> }[] = [];
   for (const plan of plans) {
     const selection = await reader.read(plan.reading, { signal: input.signal, assertCurrent: check });
     check();
     if (selection) {
       const index = candidates.findIndex((candidate) => candidate.reference === selection.reference);
       if (index < 0) throw new Held('malformed');
-      selected.push({ source: plan.source, node: nodes[index]!, relation: selection.relation });
+      const provenance = reader.provenance(selection);
+      if (!provenance) throw new Held('malformed');
+      selected.push({ source: plan.source, node: nodes[index]!, relation: selection.relation, provenance });
     }
   }
   // A held later source can never leave earlier links behind. The commit guard
@@ -161,7 +166,7 @@ async function linkSources(input: AutoLinkSourcesInput): Promise<readonly HomeGr
       fromKind: 'source', fromId: selection.source.id, toKind: 'node', toId: selection.node.id,
       relation: selection.relation, weight: 1,
       metadata: buildHomeGraphMetadata(input.spaceId, input.installationId, { linkStatus: 'active',
-        linkMethod: 'homegraph-auto-link', autoLinkedAt: Date.now(), autoLinkReasons: ['settled-document-subject'] }),
+        linkMethod: 'homegraph-auto-link', ...selection.provenance, autoLinkedAt: Date.now(), autoLinkReasons: ['settled-document-subject'] }),
     }, check));
     context.acknowledge(edge);
     linked.push({ edge, node: selection.node, relation: selection.relation, score: 0, reasons: ['settled-document-subject'] });

@@ -1,3 +1,5 @@
+import { assertJudgmentInput } from '../gate/judgment-input.js';
+import { requireActingReading, JudgmentHeldError } from '../types/judgment-held.js';
 /**
  * The route planner: given a piece of work, picks the model that does it from
  * the whole catalog, cross-checked with the accounts that are configured and
@@ -22,7 +24,7 @@ import type { ResolvedModelPricing } from '../providers/model-pricing.js';
 import type { ProviderStatus } from '../runtime/store/domains/provider-health.js';
 import { modelChoice } from './batteries/model.js';
 import { modelFactsState, type ModelFacts, type ModelTierStore } from './model-tiers.js';
-import { CHOICE_SHORTLIST, FALLBACK_ROUTES, TIER_READ_ROUNDS, TIER_READ_SHORTLIST } from './policy.js';
+import { FALLBACK_ROUTES } from './policy.js';
 import { readRequest, type RequestReading, type RoutingRequest } from './request-reading.js';
 import { tierSearchOrder, type RouteTier } from './tiers.js';
 
@@ -180,12 +182,9 @@ interface TierPool {
 async function poolFor(deps: RoutePlannerDeps, candidates: readonly ModelFacts[], tier: RouteTier, request: RoutePlanRequest): Promise<TierPool> {
   const sorted = [...candidates].sort(shortlistOrder(tier));
   const inTier = (facts: ModelFacts): boolean => deps.tiers.known(facts)?.tier === tier;
-  for (let round = 0; round < TIER_READ_ROUNDS; round++) {
-    if (sorted.filter(inTier).length >= CHOICE_SHORTLIST) break;
-    const unread = sorted.filter((facts) => deps.tiers.known(facts) === undefined).slice(0, TIER_READ_SHORTLIST);
-    if (unread.length === 0) break;
-    await deps.tiers.readMany(unread, { site: 'routing.route-planner.model-tier', ...(request.signal ? { signal: request.signal } : {}), ...(request.beforeAttempt ? { beforeAttempt: request.beforeAttempt } : {}), ...(request.onRetry ? { onRetry: request.onRetry } : {}) });
-  }
+  const unread = sorted.filter((facts) => deps.tiers.known(facts) === undefined);
+  if (unread.length) await deps.tiers.readMany(unread, { site: 'routing.route-planner.model-tier', ...(request.signal ? { signal: request.signal } : {}), ...(request.beforeAttempt ? { beforeAttempt: request.beforeAttempt } : {}), ...(request.onRetry ? { onRetry: request.onRetry } : {}) });
+  if (sorted.some((facts) => deps.tiers.known(facts)?.tier === undefined)) throw new JudgmentHeldError();
   return { tier, members: sorted.filter(inTier) };
 }
 
@@ -196,7 +195,7 @@ function describe(reading: RequestReading, pool: TierPool, pick: Selection, chos
     `intent ${r.intent.choice}, domain ${r.domain.choice}, language ${r.language.choice}, difficulty ${r.difficulty.score.toFixed(1)}/3, risk ${r.risk.score.toFixed(1)}/3`,
   ];
   if (pool.tier !== reading.tier) parts.push(`no fitting ${reading.tier} model is configured, so the ${pool.tier} tier was used`);
-  parts.push(`chose ${chosen} from ${Math.min(pool.members.length, CHOICE_SHORTLIST)} ${pool.tier} candidates of ${eligible} eligible models (pick ${pick.pick.confidence.toFixed(2)}, ${pick.outcome})`);
+  parts.push(`chose ${chosen} from ${pool.members.length} ${pool.tier} candidates of ${eligible} eligible models (pick ${pick.pick.confidence.toFixed(2)}, ${pick.outcome})`);
   return parts.join('; ');
 }
 
@@ -217,26 +216,34 @@ export function createRoutePlanner(deps: RoutePlannerDeps): RoutePlanner {
       for (const tier of tierSearchOrder(reading.tier)) {
         const pool = await poolFor(deps, facts, tier, request);
         if (pool.members.length === 0) continue;
-        const shortlist = pool.members.slice(0, CHOICE_SHORTLIST);
+        const shortlist = pool.members;
         const candidates: Candidate[] = shortlist.map((member) => ({ id: member.registryKey, content: { ...modelFactsState(member), tier } }));
-        const pick = await modelChoice.select(judgmentPort('routing.route-planner.choice'), choiceContext(request, reading), candidates, {
-          site: 'routing.route-planner.choice',
-          ...signalOption,
-        });
-        // The pick stands when its own fit question reads yes, whatever the
-        // pick's confidence: several same-tier models often fit equally, which
-        // spreads the choice's probability without making any of them wrong,
-        // and the Jev guidance for choosing the best option is to take the most
-        // probable one rather than to threshold it. The reason records the
-        // pick's confidence and outcome for review.
-        if (pick.chosen === undefined || pick.chosen === NONE) {
-          pick.recordAction(`none-fit:${tier}`);
-          continue;
+        assertJudgmentInput({ context: choiceContext(request, reading), candidates });
+        const port = judgmentPort('routing.route-planner.choice'), modelVersion = port.model;
+        const current = () => { request.signal?.throwIfAborted(); request.beforeAttempt?.(); if (judgmentPort('routing.route-planner.choice') !== port || port.model !== modelVersion) throw new JudgmentHeldError(); };
+        let poolCandidates = candidates;
+        let pick: Selection | undefined;
+        const fits: Record<string, import('@goodvibes-jev/judgment').YesNoReading> = {};
+        while (poolCandidates.length) {
+          const winners: Candidate[] = [];
+          for (let offset = 0; offset < poolCandidates.length; offset += 64) {
+            const group = poolCandidates.slice(offset, offset + 64);
+            current();
+            const selection = await modelChoice.select(port, choiceContext(request, reading), group, { ...signalOption, site: 'routing.route-planner.choice', beforeAttempt: current });
+            current(); requireActingReading(selection);
+            Object.assign(fits, selection.fits); pick = selection;
+            if (selection.chosen) winners.push(group.find((candidate) => candidate.id === selection.chosen)!);
+            selection.recordAction('Compare every eligible model in bounded groups; advance settled fitting winners.');
+          }
+          if (poolCandidates.length <= 64) break;
+          poolCandidates = winners;
         }
-        const model = byKey.get(pick.chosen)!;
+        if (!pick?.chosen || pick.chosen === NONE) continue;
+        pick = { ...pick, fits };
+        const model = byKey.get(pick.chosen!)!;
         const fallbackModels = shortlist
           .map((member) => member.registryKey)
-          .filter((key) => key !== pick.chosen && pick.fits[key]?.verdict === 'yes')
+          .filter((key) => key !== pick.chosen && pick.fits[key]?.verdict === 'yes' && pick.fits[key]?.outcome === 'act')
           .sort((a, b) => pick.fits[b]!.probability - pick.fits[a]!.probability)
           .slice(0, FALLBACK_ROUTES);
         pick.recordAction(`route:${pick.chosen}`);

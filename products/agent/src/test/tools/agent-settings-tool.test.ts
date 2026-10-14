@@ -60,26 +60,20 @@ describe('settings adapter', () => {
     expect(set.success).toBe(false); expect(reset.success).toBe(false); expect(calls).toEqual([]);
   });
 
-  test('previews import by default and applies only when confirmed', async () => {
+  test('explicit import preview stays read-only and apply requires recorded admission', async () => {
     const calls: Record<string, unknown>[] = [];
     const tool = makeTool(calls);
 
-    await tool.execute({ action: 'import' });
-    await tool.execute({
+    expect((await tool.execute({ action: 'preview_import' })).success).toBe(true);
+    expect((await tool.execute({ action: 'import' })).success).toBe(false);
+    const applied = await tool.execute({
       action: 'import',
       confirm: true,
       explicitUserRequest: 'Import my existing GoodVibes settings into Agent.',
     });
 
-    expect(calls).toEqual([
-      { tool: 'import_goodvibes_settings', action: 'preview' },
-      {
-        tool: 'import_goodvibes_settings',
-        action: 'apply',
-        confirm: true,
-        explicitUserRequest: 'Import my existing GoodVibes settings into Agent.',
-      },
-    ]);
+    expect(applied.success).toBe(false);
+    expect(calls).toEqual([{ tool: 'import_goodvibes_settings', action: 'preview' }]);
   });
 
   test('registers the direct settings adapter', () => {

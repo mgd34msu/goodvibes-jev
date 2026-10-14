@@ -1,3 +1,7 @@
+import { beforeEach, afterEach } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
 /**
  * Channel reply defects observed live against a real daemon.
  *
@@ -501,3 +505,15 @@ describe('progress notifications carry a status line, never the answer', () => {
     expect(progressBodies.some((b) => b.includes('FINAL ANSWER TEXT'))).toBe(false);
   });
 });
+
+let previousStatusPort: JudgmentPort | undefined;
+const placeholders = new Set(['Turn 1 · Thinking…', 'Turn 2 · Thinking…', 'Turn 12 · Thinking...', 'Working…', 'Starting']);
+beforeEach(() => {
+  const readings = fakePort((_name, _question, state) => {
+    const content = (state as { content: string }).content;
+    if (!placeholders.has(content)) throw new Error('No scripted status classification for this delivery fixture.');
+    return noulAnswer(0);
+  });
+  previousStatusPort = installJudgmentPort({ model: readings.port.model, ask: request => request.context?.battery === 'engine.channels.status-content' ? readings.port.ask(request) : previousStatusPort!.ask(request) });
+});
+afterEach(() => installJudgmentPort(previousStatusPort));

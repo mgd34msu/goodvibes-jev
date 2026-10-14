@@ -29,7 +29,7 @@ function fakeTool(name: string, calls: Record<string, unknown>[], output?: unkno
   };
 }
 
-function makeTool(calls: Record<string, unknown>[] = [], commandContext: CommandContext = { workspace: {}, platform: {} } as CommandContext): Tool {
+function makeTool(calls: Record<string, unknown>[] = [], commandContext: CommandContext = { workspace: {}, platform: {} } as CommandContext, sourceUrl = 'https://example.test/report?topic=agents'): Tool {
   return createAgentResearchTool({
     sourceOwner: ordinaryResearchOwner(),
     commandRegistry: {} as CommandRegistry,
@@ -48,7 +48,7 @@ function makeTool(calls: Record<string, unknown>[] = [], commandContext: Command
       results: [
         {
           rank: 1,
-          url: 'https://example.test/report?api_key=secret',
+          url: sourceUrl,
           title: 'Browser Agent Report',
           snippet: 'A source about browser agents.',
           domain: 'example.test',
@@ -195,6 +195,7 @@ describe('research adapter', () => {
     const tool = makeTool(calls);
 
     const result = await tool.execute({ action: 'search', query: 'browser agents', maxResults: 2, evidenceTopN: 1 });
+    expect(result).toMatchObject({ success: true });
     const packet = JSON.parse(result.output as string) as {
       readonly status: string;
       readonly sourceCandidateCount: number;
@@ -212,11 +213,20 @@ describe('research adapter', () => {
     expect(packet.status).toBe('source-candidates-ready');
     expect(packet.sourceCandidateCount).toBe(1);
     expect(packet.sourceCandidates[0]?.title).toBe('Browser Agent Report');
-    expect(packet.sourceCandidates[0]?.url).toBe('https://example.test/report?api_key=%3Credacted%3E');
+    expect(packet.sourceCandidates[0]?.url).toBe('https://example.test/report?topic=agents');
     expect(packet.sourceCandidates[0]?.captureArgs.action).toBe('add_source');
     expect(packet.sourceCandidates[0]?.captureArgs.confirm).toBeUndefined();
     expect(packet.sourceCandidates[0]?.captureArgs.explicitUserRequest).toBeUndefined();
     expect(packet.sourceCandidates[0]?.captureRoute).toContain('research action:"add_source"');
+  });
+
+  test('public search refuses literal credentials before returning source capture routes', async () => {
+    const calls: Record<string, unknown>[] = [];
+    const tool = makeTool(calls, { workspace: {}, platform: {} } as CommandContext, 'https://example.test/report?api_key=synthetic-private-key');
+    const result = await tool.execute({ action: 'search', query: 'browser agents' });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result)).not.toContain('synthetic-private-key');
+    expect(calls.map(call => call.tool)).toEqual(['web_search']);
   });
 
   test('uses a visible run id as the public search question and returns run follow-up routes', async () => {
@@ -353,7 +363,7 @@ describe('research adapter', () => {
       });
       expect(packet.sources[0]?.inspectRoute).toContain(`sourceId:"${packet.sources[0]?.sourceId}"`);
       expect(packet.sources[0]?.reviewRoute).toContain('action:"review_source"');
-      expect(packet.sources[0]?.reportLine).toContain('https://example.test/report?api_key=%3Credacted%3E');
+      expect(packet.sources[0]?.reportLine).toContain('https://example.test/report?topic=agents');
       expect(packet.nextRoutes.run).toContain(`runId:"${packet.run.id}"`);
       expect(packet.nextRoutes.sources).toContain('includeReportLines:true');
       expect(packet.nextRoutes.bundle).toContain('includeReportLines:true');
@@ -367,7 +377,7 @@ describe('research adapter', () => {
       expect(savedRun?.phase).toBe('reading');
       expect(savedRun?.checkpoints.at(-1)?.sourceIds).toEqual(packet.run.sourceIds);
       expect(savedSources).toHaveLength(1);
-      expect(savedSources[0]?.url).toBe('https://example.test/report?api_key=%3Credacted%3E');
+      expect(savedSources[0]?.url).toBe('https://example.test/report?topic=agents');
       expect(savedSources[0]?.provenance).toBe('agent-research-runner');
       expect(savedSources[0]?.tags).toEqual(['research', 'web-search', 'runner']);
       expect(calls.some((call) => call.tool === 'agent_research_report')).toBe(false);

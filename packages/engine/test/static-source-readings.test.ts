@@ -322,7 +322,7 @@ test('mismatched model, site, state or question evidence cannot clear a source i
   const readings = await preparedStaticReadings([captured]);
   const receipt: unknown = readings.readings[staticInputKey(captured)];
   if (typeof receipt !== 'object' || receipt === null || !('presence' in receipt) || typeof receipt.presence !== 'object' || receipt.presence === null) throw new Error('Missing fixture presence');
-  for (const [key, value] of [['observedModel', 'other-model'], ['requestedModel', 'jev-latest'], ['site', 'another-site'], ['stateHash', 'other-state'], ['questionsHash', 'other-question'], ['version', 99], ['captureDecisionSourceHash', 'unproved-policy']]) {
+  for (const [key, value] of [['observedModel', 'other-model'], ['requestedModel', 'other-model'], ['site', 'another-site'], ['stateHash', 'other-state'], ['questionsHash', 'other-question'], ['version', 99], ['captureDecisionSourceHash', 'unproved-policy']]) {
     expect(staticInputStanding(captured, { ...readings, readings: { [staticInputKey(captured)]: { ...receipt, presence: { ...receipt.presence, [String(key)]: value } } } }).kind).toBe('held');
   }
 });

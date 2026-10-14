@@ -3,7 +3,7 @@
   "contracts": [
     {
       "kind": "diagnostic-field-kind",
-      "model": "jev-1.13.0",
+      "model": "jev-latest",
       "questions": {
         "kind": {
           "type": "choice",
@@ -1024,12 +1024,138 @@
               }
             }
           }
+        },
+        {
+          "state": {
+            "field": "runId"
+          },
+          "answers": {
+            "kind": {
+              "type": "choice",
+              "choice": "other",
+              "confidence": 0.4,
+              "probabilities": {
+                "secret": 0.1,
+                "owner_profile": 0.2,
+                "content": 0.3,
+                "other": 0.4
+              }
+            }
+          }
+        },
+        {
+          "state": {
+            "field": "trigger"
+          },
+          "answers": {
+            "kind": {
+              "type": "choice",
+              "choice": "other",
+              "confidence": 0.4,
+              "probabilities": {
+                "secret": 0.1,
+                "owner_profile": 0.2,
+                "content": 0.3,
+                "other": 0.4
+              }
+            }
+          }
+        },
+        {
+          "state": {
+            "field": "scanned"
+          },
+          "answers": {
+            "kind": {
+              "type": "choice",
+              "choice": "other",
+              "confidence": 0.4,
+              "probabilities": {
+                "secret": 0.1,
+                "owner_profile": 0.2,
+                "content": 0.3,
+                "other": 0.4
+              }
+            }
+          }
+        },
+        {
+          "state": {
+            "field": "merged"
+          },
+          "answers": {
+            "kind": {
+              "type": "choice",
+              "choice": "other",
+              "confidence": 0.4,
+              "probabilities": {
+                "secret": 0.1,
+                "owner_profile": 0.2,
+                "content": 0.3,
+                "other": 0.4
+              }
+            }
+          }
+        },
+        {
+          "state": {
+            "field": "decayed"
+          },
+          "answers": {
+            "kind": {
+              "type": "choice",
+              "choice": "other",
+              "confidence": 0.4,
+              "probabilities": {
+                "secret": 0.1,
+                "owner_profile": 0.2,
+                "content": 0.3,
+                "other": 0.4
+              }
+            }
+          }
+        },
+        {
+          "state": {
+            "field": "archived"
+          },
+          "answers": {
+            "kind": {
+              "type": "choice",
+              "choice": "other",
+              "confidence": 0.4,
+              "probabilities": {
+                "secret": 0.1,
+                "owner_profile": 0.2,
+                "content": 0.3,
+                "other": 0.4
+              }
+            }
+          }
+        },
+        {
+          "state": {
+            "field": "proposed"
+          },
+          "answers": {
+            "kind": {
+              "type": "choice",
+              "choice": "other",
+              "confidence": 0.4,
+              "probabilities": {
+                "secret": 0.1,
+                "owner_profile": 0.2,
+                "content": 0.3,
+                "other": 0.4
+              }
+            }
+          }
         }
       ]
     },
     {
       "kind": "diagnostic-residual",
-      "model": "jev-1.13.0",
+      "model": "jev-latest",
       "questions": {
         "credentialRemains": {
           "type": "noul",
@@ -3129,7 +3255,7 @@
     },
     {
       "kind": "diagnostic-credential",
-      "model": "jev-1.13.0",
+      "model": "jev-latest",
       "questions": {
         "lineHasCredential": {
           "type": "noul",
@@ -4311,7 +4437,7 @@
     },
     {
       "kind": "diagnostic-severity",
-      "model": "jev-1.13.0",
+      "model": "jev-latest",
       "questions": {
         "severity": {
           "type": "choice",
@@ -4345,5 +4471,6 @@
         }
       ]
     }
-  ]
+  ],
+  "description": " Seven exact consolidation diagnostic field names observed in the source TUI headless replay remain uncertain; these synthetic answers do not authorize releasing unknown field values."
 }

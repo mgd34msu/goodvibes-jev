@@ -231,7 +231,7 @@ test('retirement of the private source owner prevents publication of a favorable
 test('original malformed responses and a changed observed model are refused before attachments', async () => {
   const fake = fakePort(() => noulAnswer(0.01)); const records: string[] = [];
   const port: JudgmentPort = { model: fake.port.model, async ask(request) {
-    return { ...await fake.port.ask(request), model: 'jev-latest', decisionId: 'synthetic-smoke' };
+    return { ...await fake.port.ask(request), model: 'other-model', decisionId: 'synthetic-smoke' };
   }, recorder: { recordReadings() { records.push('readings'); }, recordAction() { records.push('action'); } } };
   installJudgmentPort(port); const privacy = protectedDiagnosticOwner();
   expect((await runPostBuildSmoke({ ...smokeFixture('ordinary diagnostic'), diagnosticSourceOwner: privacy.owner })).ok).toBe(false);

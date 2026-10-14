@@ -1,3 +1,4 @@
+import { matchesJudgmentModel } from '@goodvibes-jev/judgment';
 import { judgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { JudgmentInputError } from '../../gate/judgment-input.js';
 import type { KnowledgeIssueRecord } from '../types.js';
@@ -129,7 +130,7 @@ export async function runHomeGraphIssueTriage(input: HomeGraphSpaceInput & {
       const projected = projectTriageInput(`issue-${selected.length + 1}`, issue, node, rule.promptGuidance);
       const fingerprint = triageCacheFingerprint(projected, issue, node, { model, minConfidence, category: rule.defaultCategory });
       const cached = readRecord(issue.metadata.triage);
-      if (!options.force && cached.origin === 'automatic-judgment' && cached.model === model
+      if (!options.force && cached.origin === 'automatic-judgment' && typeof cached.model === 'string' && matchesJudgmentModel(model, cached.model)
         && cached.requestedModel === model && cached.fingerprint === fingerprint) { skipped++; continue; }
       if (selected.length < limit) selected.push({ issue: structuredClone(issue), input: projected, fingerprint });
     }

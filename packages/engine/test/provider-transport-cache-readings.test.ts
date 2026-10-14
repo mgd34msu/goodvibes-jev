@@ -111,12 +111,12 @@ describe('Copilot transport', () => {
     expect(requests[0]!.state).toEqual({ model_id: 'claude-sonnet-5' });
   });
 
-  test('a no, or a reading too weak to act on, keeps the OpenAI-compatible path', async () => {
+  test('a settled no uses the OpenAI path; an uncertain reading sends no chat', async () => {
     const provider = copilotProvider([]);
     installJudgmentPort(yesNoPort('claude', 0.02).port);
     expect(await chatPath(provider, 'gpt-4.1')).toBe('/v1/chat/completions');
     installJudgmentPort(yesNoPort('claude', 0.6).port);
-    expect(await chatPath(provider, 'claude-maybe')).toBe('/v1/chat/completions');
+    expect(await chatPath(provider, 'claude-maybe')).toBe('');
   });
 
   test('with no judgment port the chat throws the port error, not a provider error', async () => {
@@ -162,14 +162,23 @@ describe('Gemini cache minimum', () => {
     expect(requests).toHaveLength(1);
   });
 
-  test('a no, or a weak reading, leaves the prompt cacheable; the same text is read once', async () => {
-    const { port, requests } = yesNoPort('belowMinimum', 0.55);
+  test('a settled no leaves the prompt cacheable; the same text is read once', async () => {
+    const { port, requests } = yesNoPort('belowMinimum', 0.05);
     installJudgmentPort(port);
     const cache = failCacheCreation(400, '{"error":{"code":400,"message":"ttl must be at least the minimum of 60s."}}');
     const provider = gemini();
     await provider.ensureCachedContent(LONG_PROMPT, undefined, 'gemini-2.5-pro');
     await provider.ensureCachedContent(LONG_PROMPT, undefined, 'gemini-2.5-pro');
     expect(cache.posts()).toBe(2);
+    expect(requests).toHaveLength(1);
+  });
+
+  test('an uncertain cache reading holds instead of storing a cacheability decision', async () => {
+    const { port, requests } = yesNoPort('belowMinimum', 0.55);
+    installJudgmentPort(port);
+    failCacheCreation(400, BELOW_MINIMUM);
+    await expect(gemini().ensureCachedContent(LONG_PROMPT, undefined, 'gemini-2.5-pro'))
+      .rejects.toMatchObject({ name: 'JudgmentHeldError', outcome: 'held' });
     expect(requests).toHaveLength(1);
   });
 

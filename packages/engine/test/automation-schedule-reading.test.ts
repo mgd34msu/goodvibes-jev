@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { readNaturalLanguageSchedule } from '@goodvibes-jev/engine/sdk/platform/automation';
 
 const now = Date.parse('2026-07-10T23:50:00Z');
 function fixture(parts: Record<string, string>, weak?: string) {
-  return fakePort((name, question) => choiceAnswer(question, parts[name] ?? (name === 'format' ? 'natural' : 'unknown'), name === weak ? 0.7 : 0.99));
+  return fakePort((name, question) => question.type === 'noul' ? noulAnswer(name === weak ? 0.5 : parts[name] === 'yes' ? 0.99 : 0.01) : choiceAnswer(question, parts[name] ?? (name === 'format' ? 'natural' : 'unknown'), name === weak ? 0.7 : 0.99));
 }
 async function read(phrase: string, parts: Record<string, string>, timezone = 'UTC', clock = now) {
   const f = fixture(parts);
@@ -25,7 +25,7 @@ describe('engine-owned natural-language schedule reading', () => {
   ])('%s uses qualified parts, not an English phrase matcher', async (phrase, shape, hour, minute, weekday, expression) => {
     const { result, requests } = await read(phrase, { shape, hour, minute, weekday }, 'America/New_York');
     expect(result).toMatchObject({ kind: 'ready', schedule: { kind: 'cron', expression, timezone: 'America/New_York' } });
-    expect(requests).toHaveLength(shape === 'hourly' ? 2 : 3);
+    expect(requests).toHaveLength(shape === 'hourly' ? 3 : 4);
     expect(requests[0]!.state).toBe(phrase);
     if (shape !== 'hourly') expect(requests[2]!.state).toMatchObject({ phrase, timezone: 'America/New_York' });
   });
@@ -60,7 +60,7 @@ describe('engine-owned natural-language schedule reading', () => {
   test('an interval never requests unused calendar parts', async () => {
     const { result, requests } = await read('every 30 minutes', { shape: 'interval', quantity: 'stated', unit: 'minute' });
     expect(result.kind).toBe('ready');
-    expect(requests.map(request => Object.keys(request.questions))).toEqual([['format'], ['shape'], ['quantity', 'unit']]);
+    expect(requests.map(request => Object.keys(request.questions))).toEqual([['format'], ['shape'], ['quantity', 'unit'], ['complete', 'timing', 'conditions']]);
   });
 
   test('a retired owner cannot start the shape or parts request', async () => {
@@ -96,14 +96,14 @@ describe('engine-owned natural-language schedule reading', () => {
     const phrase = `At ${literal} remind me to check the deploy.`;
     const { result, requests } = await read(phrase, { format: 'timestamp', timestamp: 'stated' });
     expect(result).toMatchObject({ kind: 'ready', schedule: { kind: 'at', at: Date.parse(literal) } });
-    expect(requests.map(request => Object.keys(request.questions))).toEqual([['format'], ['timestamp']]);
+    expect(requests.map(request => Object.keys(request.questions))).toEqual([['format'], ['timestamp'], ['complete', 'timing', 'conditions']]);
     expect(requests[1]!.state).toMatchObject({ timestampLiterals: { stated: literal } });
     expect(JSON.stringify(requests.map(request => request.questions))).not.toContain(literal);
   });
   test.each(['0 9 * * 1-5', '*/15 9-17 * * 1-5'])('a literal cron uses the actual cron validator: %s', async expression => {
     const { result, requests } = await read(`Run the audit with cron ${expression}.`, { format: 'cron', cron: 'stated' }, 'America/New_York');
     expect(result).toMatchObject({ kind: 'ready', schedule: { kind: 'cron', expression, timezone: 'America/New_York' } });
-    expect(requests.map(request => Object.keys(request.questions))).toEqual([['format'], ['cron']]);
+    expect(requests.map(request => Object.keys(request.questions))).toEqual([['format'], ['cron'], ['complete', 'timing', 'conditions']]);
   });
   test('Jev selects the requested timestamp after a quoted example', async () => {
     const phrase = 'The example says "at 2026-11-11T09:00:00Z". Remind me at 2026-11-12T14:30:00Z.';
@@ -164,10 +164,10 @@ test('schedule reading is discoverable for live calibration without implying a l
   const { registry } = await import('../sdk/src/platform/automation/judgment-registry.ts');
   const decision = registry.list()[0]!;
   expect(decision.name).toBe('automation.schedule');
-  expect(decision.fixtureCount).toBe(26);
+  expect(decision.fixtureCount).toBeGreaterThanOrEqual(35);
   const f = fixture({ shape: 'unknown', complete: 'unknown' });
   const checks = await decision.checkFixtures(f.port);
-  expect(checks).toHaveLength(26);
+  expect(checks).toHaveLength(decision.fixtureCount);
   expect(checks.some(check => !check.correct)).toBe(true);
   expect(checks.every(check => Number.isFinite(check.signal))).toBe(true);
   expect(f.requests.every(request => request.context?.battery === 'automation.schedule')).toBe(true);

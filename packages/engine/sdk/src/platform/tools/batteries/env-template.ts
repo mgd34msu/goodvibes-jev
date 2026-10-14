@@ -1,3 +1,4 @@
+import { completeJudgmentView } from './complete-view.js';
 /**
  * `engine.tools.env-template`: analyze mode `env_audit` compares the env
  * files it finds against the one that lists every variable the project
@@ -22,9 +23,7 @@ export const MAX_JUDGED_ENV_KEYS = 80;
 
 /** One found env file as a candidate: its name and its variables, each marked blank or set. */
 export function envTemplateCandidate(name: string, variables: ReadonlyArray<{ readonly key: string; readonly blank: boolean }>): Candidate {
-  const shown = variables.slice(0, MAX_JUDGED_ENV_KEYS).map(({ key, blank }) => `${key}=${blank ? '(blank)' : '(set)'}`);
-  const more = variables.length > MAX_JUDGED_ENV_KEYS ? [`(${variables.length - MAX_JUDGED_ENV_KEYS} more variables)`] : [];
-  return { id: name, content: { file: name, variables: [...shown, ...more] } };
+  return completeJudgmentView({ id: name, content: { file: name, variables: variables.map(({ key, blank }) => `${key}=${blank ? '(blank)' : '(set)'}`) } });
 }
 
 /** What the selection sees about the project: every env file name found. */

@@ -1,8 +1,8 @@
 import { readPersonalOpsResultField } from './agent-harness-personal-ops-readings.ts';
 import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { redactSensitiveDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
-import { protectPersonalOpsData } from './agent-harness-personal-ops-source.ts';
-import { randomUUID } from 'node:crypto';
+import { protectPersonalOpsData, protectPersonalOpsResult } from './agent-harness-personal-ops-source.ts';
+import { agentRecordNonce } from '../utils/record-nonce.ts';
 import { lstatSync } from 'node:fs';
 import { captureAgentExportPath } from './agent-artifact-effect.ts';
 import type { Ranked } from '@goodvibes-jev/judgment';
@@ -214,7 +214,7 @@ export function stringifyForPreview(value: unknown): string {
 }
 
 export async function boundedPersonalOpsResult(value: unknown, includeParameters: boolean, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
-  const protectedValue = await protectPersonalOpsData(value, options);
+  const protectedValue = await protectPersonalOpsResult(value, options);
   const text = stringifyForPreview(protectedValue);
   const max = includeParameters ? 6000 : 1600;
   return {
@@ -293,7 +293,7 @@ export async function personalOpsReadReviewRecords(
   includeParameters: boolean,
   options: CatalogRankingOptions = {},
 ): Promise<readonly Record<string, unknown>[]> {
-  const protectedResult = await protectPersonalOpsData(result, options);
+  const protectedResult = await protectPersonalOpsResult(result, options);
   const items = await candidateResultItems(protectedResult, options);
   const objectCards: Record<string, unknown>[] = [];
   for (const [index, item] of items.entries()) {
@@ -408,7 +408,7 @@ export async function savePersonalOpsReviewArtifact(options: {
   // Filenames become catalog labels: an epoch suffix can accidentally pass the
   // payment-card guard. Encode only the generated UUID, preserving its entropy;
   // user titles and existing filenames still face the unchanged source boundary.
-  const nonce = randomUUID().replace(/-/g, '').replace(/[0-9a-f]/g, (digit) => String.fromCharCode(97 + parseInt(digit, 16)));
+  const nonce = agentRecordNonce();
   const protectedPayload = await redactStructuredDataAsync(payload, reading);
   const protectedMetadata = await redactStructuredDataAsync({
     purpose: 'personal-ops-review-cards', laneId: options.lane.id, sourceRecordId: options.sourceRecord.id,

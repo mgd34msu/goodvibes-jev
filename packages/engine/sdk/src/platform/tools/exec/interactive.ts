@@ -44,7 +44,8 @@ import { spawnSync } from 'node:child_process';
 import { logger } from '../../utils/logger.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { sleep } from '../../utils/concurrency.js';
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { captureJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { prepareJudgmentResult } from '../../gate/judgment-result.js';
 import { execPrompt, pendingPromptView } from '../batteries/exec-prompt.js';
 import type { ExecCommandInput, ExecCommandResult } from './schema.js';
 
@@ -142,21 +143,24 @@ export function pendingPromptLine(transcript: string): string | null {
 
 /**
  * The pending prompt of a quiet transcript, or null. Jev reads whether the
- * unterminated last line is a question waiting for an answer; any yes
- * surfaces it, since surfacing it is itself asking the owner.
+ * unterminated last line is a question waiting for an answer. Only an acting
+ * yes surfaces it; the complete output remains available to the reading.
  */
 export async function readPendingPrompt(command: string, transcript: string, signal?: AbortSignal): Promise<string | null> {
   snapshotJudgmentInput({ command, transcript });
   const line = pendingPromptLine(transcript);
   if (line === null) return null;
-  const recentOutput = transcript.slice(0, transcript.lastIndexOf('\n') + 1).slice(-RECENT_OUTPUT_CONTEXT_CHARS);
-  const run = await executePolicyCheck(() => execPrompt.run(judgmentPort(AWAITING_INPUT_SITE), pendingPromptView(command, line, recentOutput), {
+  const recentOutput = transcript.slice(0, transcript.lastIndexOf('\n') + 1);
+  const owner = captureJudgmentPort(AWAITING_INPUT_SITE, { signal, prepareResultCapture: prepareJudgmentResult });
+  const run = await executePolicyCheck(() => execPrompt.run(owner.port, pendingPromptView(command, line, recentOutput), {
     site: AWAITING_INPUT_SITE,
+    signal: owner.signal, beforeAttempt: owner.assertCurrent,
     only: ['awaiting_input'],
   }), signal);
-  signal?.throwIfAborted();
-  const awaiting = run.readings.awaiting_input.verdict === 'yes';
-  run.recordAction(awaiting ? 'surfaced pending prompt' : 'not a prompt');
+  owner.assertCurrent();
+  const awaiting = run.readings.awaiting_input.outcome === 'act' && run.readings.awaiting_input.verdict === 'yes';
+  if (run.readings.awaiting_input.outcome === 'act') run.recordAction(awaiting ? 'surfaced pending prompt' : 'not a prompt');
+  owner.assertCurrent();
   return awaiting ? line : null;
 }
 
@@ -165,11 +169,14 @@ export async function readPendingPrompt(command: string, transcript: string, sig
  * Jev. Only a yes that acts sends the command down the PTY path.
  */
 export async function readWillPrompt(command: string, signal?: AbortSignal): Promise<boolean> {
-  const run = await executePolicyCheck(() => execPrompt.run(judgmentPort(WILL_PROMPT_SITE), { command }, { site: WILL_PROMPT_SITE, only: ['will_prompt'] }), signal);
-  signal?.throwIfAborted();
+  snapshotJudgmentInput({ command });
+  const owner = captureJudgmentPort(WILL_PROMPT_SITE, { signal, prepareResultCapture: prepareJudgmentResult });
+  const run = await executePolicyCheck(() => execPrompt.run(owner.port, { command }, { site: WILL_PROMPT_SITE, only: ['will_prompt'], signal: owner.signal, beforeAttempt: owner.assertCurrent }), signal);
+  owner.assertCurrent();
   const reading = run.readings.will_prompt;
   const willPrompt = reading.verdict === 'yes' && reading.outcome === 'act';
-  run.recordAction(willPrompt ? 'ran under a PTY' : 'ran on pipes');
+  run.recordAction(willPrompt ? 'PTY prompt prediction settled yes' : 'No acting prompt prediction; use the native pipe default');
+  owner.assertCurrent();
   return willPrompt;
 }
 
@@ -217,7 +224,6 @@ export interface ExecInteractionRuntime {
 
 const DEFAULT_QUIET_WINDOW_MS = 1200;
 const QUIET_POLL_INTERVAL_MS = 150;
-const RECENT_OUTPUT_CONTEXT_CHARS = 2000;
 
 /**
  * Whether this command should take the PTY path: explicit `interactive: true`,
@@ -364,7 +370,7 @@ export async function runInteractiveCommand(input: InteractiveRunInput): Promise
       answer = await executePolicyCheck(() => interaction.requestPromptAnswer!({
         command: cmdStr,
         prompt,
-        recentOutput: transcript.slice(-RECENT_OUTPUT_CONTEXT_CHARS),
+        recentOutput: transcript,
         ...(cwd !== undefined ? { workingDirectory: cwd } : {}),
       }, { signal: policySignal, assertCurrent }), policySignal);
       await executePolicyCheck(() => input.beforeOutput?.(), policySignal);

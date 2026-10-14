@@ -63,11 +63,12 @@ describe('resolver', () => {
     expect(requests).toHaveLength(0);
   });
 
-  test('an escalated reading leaves the model unmatched', async () => {
-    const { port } = identityPort(() => 'anthropic/claude-sonnet-4', 0.3);
+  test.each([0.3, 0.65])('an unsettled reading at %s is not cached as a match or a rejection', async (confidence) => {
+    const { port } = identityPort(() => 'anthropic/claude-sonnet-4', confidence);
     installJudgmentPort(port);
     const resolver = new ModelIdentityResolver({ universe: 'test', candidates: () => candidates });
-    expect(await resolver.resolve({ id: 'claude-sonnet-4-latest' }, 'test')).toBeNull();
+    await expect(resolver.resolve({ id: 'claude-sonnet-4-latest' }, 'test')).rejects.toMatchObject({ name: 'JudgmentHeldError' });
+    expect(resolver.known({ id: 'claude-sonnet-4-latest' })).toBeUndefined();
   });
 
   test('readings persist across resolvers sharing a path', async () => {

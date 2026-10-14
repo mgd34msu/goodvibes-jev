@@ -1,3 +1,4 @@
+import { matchesJudgmentModel } from '@goodvibes-jev/judgment';
 import { captureJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { captureOwnedJson, prepareJudgmentResult } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { modelReasonTheme, MODEL_REASON_THEME_LABELS, routingRegistry, type ModelReasonTheme } from '@goodvibes-jev/engine/sdk/platform/routing';
@@ -76,7 +77,7 @@ export async function readComparisonReasonThemes(judgment: LoadedComparisonJudgm
       if (!wireState || typeof wireState !== 'object' || Array.isArray(wireState)) throw new ToolInputProjectionError('held');
       const run = await modelReasonTheme.run(port.port, wireState, { site: modelReasonTheme.name, signal: port.signal });
       port.assertCurrent();
-      if (run.result.model !== modelReasonTheme.model || run.result.requestedModel !== modelReasonTheme.model) throw new ToolInputProjectionError('held');
+      if (!matchesJudgmentModel(port.port.model, run.result.model) || run.result.requestedModel !== port.port.model) throw new ToolInputProjectionError('held');
       const names = Object.keys(MODEL_REASON_THEME_LABELS) as ModelReasonTheme[];
       const settled = names.every(name => run.readings[name].outcome === 'act');
       const themes = settled ? names.filter(name => run.readings[name].verdict === 'yes') : [];

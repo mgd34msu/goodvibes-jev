@@ -139,7 +139,7 @@ export async function missingDevicePassportFields(
   device: KnowledgeNodeRecord,
   sources: readonly KnowledgeSourceRecord[],
   facts: readonly KnowledgeNodeRecord[] = [],
-  options: { readonly entities?: readonly KnowledgeNodeRecord[] | undefined; readonly signal?: AbortSignal | undefined; readonly timeoutMs?: number | undefined } = {},
+  options: { readonly entities?: readonly KnowledgeNodeRecord[] | undefined; readonly signal?: AbortSignal | undefined; readonly timeoutMs?: number | undefined; readonly assertCurrent?: (() => void) | undefined; readonly retainCurrent?: ((check: () => void) => void) | undefined } = {},
 ): Promise<string[]> {
   const manufacturer = typeof device.metadata.manufacturer === 'string';
   const model = typeof device.metadata.model === 'string';
@@ -154,6 +154,8 @@ export async function missingDevicePassportFields(
   if (!questions.length) return [manufacturer ? '' : 'manufacturer', model ? '' : 'model', battery ? 'battery type' : '', sources.length ? '' : 'manual/source'].filter(Boolean);
   const input = projectHomeGraphQualityInput('device-1', device, options.entities ?? [], facts, questions);
   const [reading] = await readHomeGraphQuality([input], options);
+  reading!.assertCurrent();
+  options.retainCurrent?.(reading!.assertCurrent);
   return [
     manufacturer || reading!.answers.manufacturerPresent ? '' : 'manufacturer',
     model || reading!.answers.modelPresent ? '' : 'model',

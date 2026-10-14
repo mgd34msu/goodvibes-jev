@@ -75,10 +75,22 @@ describe('knowledge answer source ranking', () => {
     expect(await rankAnswerSources(evidence(generated, real), [], 'Procedure')).toEqual([real]);
     expect(fake.requests).toHaveLength(1);
   });
-  test('the explicit 50-source request budget caps work without ranking by a guessed score', async () => {
+  test('all sources are judged, including candidates beyond the former 50-source window', async () => {
     const sources = Array.from({ length: 55 }, (_, index) => source(`source-${String.fromCharCode(65 + index)}`));
     const fake = readings(Object.fromEntries(sources.map((item) => [item.title!, 0.9])));
-    expect(await rankAnswerSources(evidence(...sources), [], 'Procedure')).toHaveLength(50);
-    expect(fake.requests).toHaveLength(50);
+    expect(await rankAnswerSources(evidence(...sources), [], 'Procedure')).toHaveLength(55);
+    expect(fake.requests).toHaveLength(55);
   });
+});
+
+test('an unsettled candidate prevents a partial ranking even when another source matches', async () => {
+  readings({ settled: 0.99, uncertain: 0.5 });
+  await expect(rankAnswerSources(evidence(source('settled'), source('uncertain')), [], 'Procedure')).rejects.toBeInstanceOf(KnowledgeSourceRankingHeldError);
+});
+test('protected evidence beyond the former source window blocks the entire batch', async () => {
+  const candidates = Array.from({ length: 51 }, (_, index) => source(`source-${index}`));
+  candidates.push(source('protected', 'Authorization: Bearer synthetic-protected-value'));
+  const fake = readings({});
+  await expect(rankAnswerSources(evidence(...candidates), [], 'Procedure')).rejects.toThrow();
+  expect(fake.requests).toHaveLength(0);
 });

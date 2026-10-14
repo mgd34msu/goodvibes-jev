@@ -8,6 +8,18 @@ export interface AgentHarnessAutonomyQueueArgs {
   readonly limit?: unknown;
 }
 
+export interface OperatorContractMethod {
+  readonly invokable?: boolean;
+  readonly id: string;
+  readonly title?: string;
+  readonly description?: string;
+  readonly category?: string;
+  readonly http?: {
+    readonly method?: string;
+    readonly path?: string;
+  };
+}
+
 export interface AutonomyQueueItem {
   readonly id: string;
   readonly label: string;

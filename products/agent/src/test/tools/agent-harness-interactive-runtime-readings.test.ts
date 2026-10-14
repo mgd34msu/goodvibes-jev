@@ -118,6 +118,13 @@ describe('actual published interactive-runtime readings', () => {
     expect(legacy.capabilitySummary.certifiedRecordCount).toBe(0);
   });
 
+  test('raw private publisher text holds before any runtime classification', async () => {
+    const { context } = runtimeContext([{ ...record(), description: 'password=unprotected-runtime-fixture' }]);
+    const fake = runtimeReadings(); installJudgmentPort(fake.port);
+    await expect(acquireInteractiveRuntimeSnapshot(context, { sourceOwner: ordinaryResearchOwner() })).rejects.toThrow();
+    expect(fake.requests).toHaveLength(0);
+  });
+
   test('a published record holds without an approved owner or installed reader', async () => {
     const { context } = runtimeContext([record()]);
     await expect(acquireInteractiveRuntimeSnapshot(context)).rejects.toBeInstanceOf(ToolInputProjectionError);

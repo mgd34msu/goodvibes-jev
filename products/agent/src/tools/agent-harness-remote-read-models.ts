@@ -578,9 +578,9 @@ function workspaceSources(context: CommandContext): readonly SourceCandidate[] {
 
 interface NativeWorkspaceDisplayCapture {
   readonly record: RemoteWorkspaceEvidenceRecord;
-  readonly snapshot: unknown;
+  readonly assertRecord: (current: unknown) => void;
   readonly source: Record<string, unknown>;
-  readonly sourceSnapshot: unknown;
+  readonly assertSource: (current: unknown) => void;
   readonly path: string;
 }
 
@@ -595,6 +595,14 @@ function acquireRemoteEntries(context: CommandContext) {
 
 type RemoteEntries = ReturnType<typeof acquireRemoteEntries>;
 
+/** These normalization results contain only newly allocated DTOs and scalar
+ * producer values. Freeze the private settled display, never its raw sources. */
+function freezeNativeDisplay(value: unknown): void {
+  if (value === null || typeof value !== 'object') return;
+  for (const child of Object.values(value)) freezeNativeDisplay(child);
+  Object.freeze(value);
+}
+
 function normalizeRemoteEntries(entries: RemoteEntries, captures?: NativeWorkspaceDisplayCapture[],
   meanings?: RemotePublisherMeanings): RemoteReadModelSnapshot {
   const { outcomeEntries, workspaceEntries } = entries;
@@ -602,15 +610,18 @@ function normalizeRemoteEntries(entries: RemoteEntries, captures?: NativeWorkspa
     .filter((entry): entry is RemoteCaptureOutcomeRecord => entry !== null));
   const workspaces = workspaceEntries.map((entry, index) => {
     const native = normalizeWorkspaceOwned(entry, index, meanings?.workspaces[index]);
-    if (captures && native?.path) captures.push({ record: native.record, snapshot: capturePersonalOpsData(native.record),
-      source: entry.record, sourceSnapshot: capturePersonalOpsData(entry.record), path: native.path.value });
+    if (captures && native) freezeNativeDisplay(native.record);
+    if (captures && native?.path) captures.push({ record: native.record, assertRecord: capturePersonalOpsSnapshot(native.record).assertCurrent,
+      source: entry.record, assertSource: capturePersonalOpsSnapshot(entry.record).assertCurrent, path: native.path.value });
     return native?.record ?? null;
   });
-  return {
+  const snapshot = {
     outcomes,
     workspaces: dedupeById(workspaces.filter((entry): entry is RemoteWorkspaceEvidenceRecord => entry !== null)),
     sourceCounts: { ...sourceCounts(outcomeEntries), ...sourceCounts(workspaceEntries) },
   };
+  if (captures) freezeNativeDisplay(snapshot);
+  return snapshot;
 }
 
 function readRemoteSnapshot(context: CommandContext): RemoteReadModelSnapshot {
@@ -623,9 +634,9 @@ export function remoteReadModelSnapshot(context: CommandContext): RemoteReadMode
 
 const nativeWorkspaceDisplays = new WeakMap<object, {
   readonly snapshot: RemoteReadModelSnapshot;
-  readonly snapshotData: unknown;
+  readonly assertSnapshot: (current: unknown) => void;
   readonly captures: readonly NativeWorkspaceDisplayCapture[];
-  binding?: { readonly records: readonly RemoteWorkspaceEvidenceRecord[]; readonly snapshot: unknown };
+  binding?: { readonly records: readonly RemoteWorkspaceEvidenceRecord[]; readonly assertRecords: (current: unknown) => void };
 }>();
 
 interface NativePublisherCapture {
@@ -640,6 +651,8 @@ const nativePublisherCaptures = new WeakMap<object, NativePublisherCapture>();
 export interface NativeRemotePublisherProjection {
   readonly projectPath: (value: string) => { readonly displayText: string; readonly validationText: string };
   readonly projectText: (value: string) => { readonly displayText: string; readonly validationText: string };
+  /** A native producer may project its complete private copy in one call. */
+  readonly projectRecordText?: (value: unknown) => NativeWorkspacePathProjection;
   /** Canonical privacy projection into complete ordered fields, including literal display-marker parts. */
   readonly protectFields: (value: unknown, options: CatalogRankingOptions) => Promise<unknown>;
 }
@@ -650,12 +663,12 @@ export function captureNativeRemoteReadModelSnapshot(context: CommandContext): {
   const entries = acquireRemoteEntries(context), captured = capturePersonalOpsSnapshot(entries);
   const snapshot = normalizeRemoteEntries(entries), token = Object.freeze({});
   nativePublisherCaptures.set(token, { context, entries, assertEntries: captured.assertCurrent, state: { kind: 'captured' } });
-  nativeWorkspaceDisplays.set(token, { snapshot, snapshotData: capturePersonalOpsData(snapshot), captures: [] });
+  nativeWorkspaceDisplays.set(token, { snapshot, assertSnapshot: capturePersonalOpsSnapshot(snapshot).assertCurrent, captures: [] });
   return { snapshot, token };
 }
 
-function assertPublisherEntryCurrent(owner: NativePublisherCapture, assertCurrent: () => void): void {
-  assertCurrent(); owner.assertEntries(owner.entries); assertCurrent();
+function assertPublisherEntryCurrent(owner: NativePublisherCapture, assertCurrent: () => void, assertMethods = assertCurrent): void {
+  assertMethods(); owner.assertEntries(owner.entries);
   owner.assertEntries(acquireRemoteEntries(owner.context)); assertCurrent();
 }
 
@@ -664,30 +677,35 @@ function assertPublisherEntryCurrent(owner: NativePublisherCapture, assertCurren
  * fallback can publish a certified schema or classify an operation. */
 export async function settleNativeRemotePublisherSemantics(token: object, options: CatalogRankingOptions & {
   readonly assertCurrent: () => void; readonly assertSourceCurrent: () => void;
+  readonly assertSourceMethods?: () => void;
 },
   projection: NativeRemotePublisherProjection): Promise<RemoteReadModelSnapshot> {
   const owner = nativePublisherCaptures.get(token), display = nativeWorkspaceDisplays.get(token);
   if (!owner || owner.state.kind !== 'captured' || !display || display.binding) throw new ToolInputProjectionError('held');
   owner.state = { kind: 'settling' };
   try {
-    const assertOptions = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'assertSourceCurrent', 'retainCurrent']);
-    const assertProjection = captureCatalogMethods(projection, ['projectPath', 'projectText', 'protectFields']);
-    const { signal, sourceOwner, assertCurrent: callerCurrent, assertSourceCurrent: backendCurrent, retainCurrent } = options;
-    const { projectPath, projectText, protectFields } = projection;
-    const retained = new Map<string | (() => void), () => void>();
-    const retain = (guard: () => void, key?: string) => {
-      if (!retained.has(key ?? guard)) retained.set(key ?? guard, guard);
-      retainCurrent?.call(options, guard, key);
-    };
+    const assertOptions = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'assertSourceCurrent', 'assertSourceMethods', 'retainCurrent']);
+    const assertProjection = captureCatalogMethods(projection, ['projectPath', 'projectText', 'projectRecordText', 'protectFields']);
+    const { signal, sourceOwner, assertCurrent: callerCurrent, assertSourceCurrent: backendCurrent, assertSourceMethods: backendMethods, retainCurrent } = options;
+    const { projectPath, projectText, projectRecordText, protectFields } = projection;
+    // The publisher owns its complete readset until settlement, when the
+    // enclosing source guard is retained by the parent. Keep every distinct
+    // restriction, including later projections with the same descriptive key.
+    const retained = new Set<() => void>();
+    const retain = (guard: () => void, _key?: string) => { retained.add(guard); };
     const assertSourceCurrent = () => {
       assertOptions(); assertProjection(); signal?.throwIfAborted();
-      if (options.signal !== signal || options.sourceOwner !== sourceOwner || options.assertCurrent !== callerCurrent || options.assertSourceCurrent !== backendCurrent || options.retainCurrent !== retainCurrent
-        || projection.projectPath !== projectPath || projection.projectText !== projectText || projection.protectFields !== protectFields
+      if (options.signal !== signal || options.sourceOwner !== sourceOwner || options.assertCurrent !== callerCurrent || options.assertSourceCurrent !== backendCurrent || options.assertSourceMethods !== backendMethods || options.retainCurrent !== retainCurrent
+        || projection.projectPath !== projectPath || projection.projectText !== projectText || projection.projectRecordText !== projectRecordText || projection.protectFields !== protectFields
         || owner.state.kind === 'retired') throw new ToolInputProjectionError('held');
+      const checkBackend = (guard: () => void) => {
+        signal?.throwIfAborted(); const result: unknown = guard.call(options);
+        if (result !== undefined) { void Promise.resolve(result).catch(() => {}); throw new ToolInputProjectionError('held'); }
+      };
       assertPublisherEntryCurrent(owner, () => {
         signal?.throwIfAborted(); const result: unknown = backendCurrent.call(options);
         if (result !== undefined) { void Promise.resolve(result).catch(() => {}); throw new ToolInputProjectionError('held'); }
-      });
+      }, () => checkBackend(backendMethods ?? backendCurrent));
       for (const guard of retained.values()) guard();
       signal?.throwIfAborted(); assertOptions(); assertProjection();
       // Arbitrary backend/retained callbacks may write a record. Close that
@@ -721,13 +739,19 @@ export async function settleNativeRemotePublisherSemantics(token: object, option
     };
     const projectSource = (entry: CollectedRecord, recordKind: 'remote outcome' | 'remote workspace'): unknown => {
       assertCurrent();
-      const header = projectData(capturePersonalOpsData({ recordKind, sourcePath: entry.path, source: entry.kind,
+      const complete = (value: unknown): NativeWorkspacePathProjection => {
+        const captured = capturePersonalOpsData(value);
+        if (!projectRecordText) return projectData(captured);
+        assertCurrent(); const projected = projectRecordText(captured); assertCurrent();
+        return projected;
+      };
+      const header = complete({ recordKind, sourcePath: entry.path, source: entry.kind,
         selectedStatusText: firstAcross(certificationRecords(entry.record), ['schemaStatus', 'receiptSchemaStatus', 'certificationStatus']),
         ...(recordKind === 'remote outcome' ? { selectedOutcomeText: outcomeText(entry.record) } : {}),
-      }));
+      });
       const record = recordKind === 'remote workspace'
         ? projectNativeRemoteWorkspacePathSource(captureNativeRemoteWorkspacePathSource(entry.record, 'snapshot'), projectPath, projectText, assertCurrent)
-        : projectData(capturePersonalOpsData(entry.record));
+        : complete(entry.record);
       const paired = { display: { header: header.display, record: record.display }, validation: { header: header.validation, record: record.validation } };
       snapshotJudgmentInput(paired.validation); assertCurrent();
       return paired.display;
@@ -758,7 +782,7 @@ export async function settleNativeRemotePublisherSemantics(token: object, option
     const captures: NativeWorkspaceDisplayCapture[] = [];
     const snapshot = normalizeRemoteEntries(owner.entries, captures, meanings);
     assertCurrent();
-    nativeWorkspaceDisplays.set(token, { snapshot, snapshotData: capturePersonalOpsData(snapshot), captures });
+    nativeWorkspaceDisplays.set(token, { snapshot, assertSnapshot: capturePersonalOpsSnapshot(snapshot).assertCurrent, captures });
     owner.state = { kind: 'settled', meanings, assertCurrent: assertSourceCurrent };
     // Retain source restrictions only. The one-use caller guard may itself
     // visit the publication guard map, so retaining it would recurse.
@@ -770,15 +794,14 @@ export async function settleNativeRemotePublisherSemantics(token: object, option
 /** Fresh native records must remain complete and exact before previously
  * settled readings are reused. This synchronous guard never reruns a reading. */
 export function currentNativeRemoteReadModelSnapshot(context: CommandContext, token: object): RemoteReadModelSnapshot {
-  const owner = nativePublisherCaptures.get(token);
-  if (!owner || owner.context !== context || owner.state.kind !== 'settled') throw new ToolInputProjectionError('held');
-  const { assertCurrent, meanings } = owner.state;
-  assertCurrent();
-  const entries = acquireRemoteEntries(context);
-  owner.assertEntries(entries); assertCurrent();
-  // Recheck these exact references after the last arbitrary callback.
-  owner.assertEntries(entries);
-  return normalizeRemoteEntries(entries, undefined, meanings);
+  const owner = nativePublisherCaptures.get(token), display = nativeWorkspaceDisplays.get(token);
+  if (!owner || !display || owner.context !== context || owner.state.kind !== 'settled') throw new ToolInputProjectionError('held');
+  // This restriction already reacquires and compares every original publisher
+  // entry, including its backend and settled reading identities. Normalization
+  // is deterministic over those unchanged entries and meanings.
+  owner.state.assertCurrent();
+  assertNativeWorkspaceDisplayCapture(display);
+  return display.snapshot;
 }
 
 /** Called only at the operation's native snapshot-to-DTO copy boundary. */
@@ -786,7 +809,7 @@ export function bindNativeRemoteWorkspaceDisplays(token: object, records: readon
   const owner = nativeWorkspaceDisplays.get(token);
   if (!owner || owner.binding || nativePublisherCaptures.get(token)?.state.kind !== 'settled') throw new ToolInputProjectionError('held');
   assertPersonalOpsDataCurrent(records, owner.snapshot.workspaces);
-  owner.binding = { records, snapshot: capturePersonalOpsData(records) };
+  owner.binding = { records, assertRecords: capturePersonalOpsSnapshot(records).assertCurrent };
 }
 
 export function assertNativeRemoteWorkspaceDisplaysCurrent(token: object): void {
@@ -795,11 +818,20 @@ export function assertNativeRemoteWorkspaceDisplaysCurrent(token: object): void 
   const publisher = nativePublisherCaptures.get(token);
   if (publisher?.state.kind !== 'settled') throw new ToolInputProjectionError('held');
   publisher.state.assertCurrent();
-  assertPersonalOpsDataCurrent(owner.snapshot, owner.snapshotData);
-  assertPersonalOpsDataCurrent(binding.records, binding.snapshot);
+  assertNativeWorkspaceDisplayCapture(owner);
+}
+
+/** Pure comparison after the complete publisher restriction has run. */
+function assertNativeWorkspaceDisplayCapture(owner: NonNullable<ReturnType<typeof nativeWorkspaceDisplays.get>>): void {
+  owner.assertSnapshot(owner.snapshot);
+  const binding = owner.binding;
+  if (!binding) return;
+  // Reuse each complete private comparison plan; do not allocate a fresh
+  // normalized copy at every redaction and publication boundary.
+  binding.assertRecords(binding.records);
   for (const capture of owner.captures) {
-    assertPersonalOpsDataCurrent(capture.source, capture.sourceSnapshot);
-    assertPersonalOpsDataCurrent(capture.record, capture.snapshot);
+    capture.assertSource(capture.source);
+    capture.assertRecord(capture.record);
   }
 }
 
@@ -855,14 +887,15 @@ interface NativeWorkspacePathProjection {
 const nativeWorkspacePathSources = new WeakMap<object, {
   readonly source: unknown;
   readonly snapshot: unknown;
+  readonly assertSource: (current: unknown) => void;
   readonly layout: 'snapshot' | 'map-entries';
 }>();
 
 /** Local native observation only. The opaque association never enters the
  * public snapshot and cannot be reconstructed from a path, id or display. */
 export function captureNativeRemoteWorkspacePathSource(source: unknown, layout: 'snapshot' | 'map-entries'): object {
-  const token = Object.freeze({});
-  nativeWorkspacePathSources.set(token, { source, snapshot: capturePersonalOpsData(source), layout });
+  const token = Object.freeze({}), captured = capturePersonalOpsSnapshot(source);
+  nativeWorkspacePathSources.set(token, { source, snapshot: captured.captured, assertSource: captured.assertCurrent, layout });
   return token;
 }
 
@@ -877,10 +910,10 @@ export function projectNativeRemoteWorkspacePathSource(
 ): NativeWorkspacePathProjection {
   const owned = nativeWorkspacePathSources.get(token);
   if (!owned) throw new ToolInputProjectionError('held');
-  const nativeRecords: { readonly record: RemoteWorkspaceEvidenceRecord; readonly snapshot: unknown }[] = [];
+  const nativeRecords: { readonly record: RemoteWorkspaceEvidenceRecord; readonly assertRecord: (current: unknown) => void }[] = [];
   const assertOwned = () => {
-    assertCurrent(); assertPersonalOpsDataCurrent(owned.source, owned.snapshot);
-    for (const native of nativeRecords) assertPersonalOpsDataCurrent(native.record, native.snapshot);
+    assertCurrent(); owned.assertSource(owned.source);
+    for (const native of nativeRecords) native.assertRecord(native.record);
     assertCurrent();
   };
   assertOwned();
@@ -909,7 +942,7 @@ export function projectNativeRemoteWorkspacePathSource(
       continue;
     }
     if (!native) throw new ToolInputProjectionError('held');
-    nativeRecords.push({ record: native.record, snapshot: capturePersonalOpsData(native.record) });
+    nativeRecords.push({ record: native.record, assertRecord: capturePersonalOpsSnapshot(native.record).assertCurrent });
     const fields = selected.get(path.owner) ?? new Map<string, { readonly value: string; readonly record: RemoteWorkspaceEvidenceRecord }>();
     fields.set(path.key, { value: path.value, record: native.record }); selected.set(path.owner, fields);
   }

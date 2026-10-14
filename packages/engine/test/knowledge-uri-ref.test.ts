@@ -83,13 +83,13 @@ describe('Knowledge concrete ref identity', () => {
   });
   test('each repeated ref occurrence is decided separately and content multiplicity survives stable sorting', async () => {
     const uri = 'https://docs.example.test/page?z=last&ref=document-one&ref=affiliate-alice&ref=document-one&a=first';
-    const fake = fakePort((_name, _question, state) => noulAnswer(state.target && typeof state.target === 'object'
+    const fake = fakePort((_name, _question, state) => noulAnswer(state && typeof state === 'object' && !Array.isArray(state) && state.target && typeof state.target === 'object'
       && !Array.isArray(state.target) && state.target.position === 2 ? 0.99 : 0.01));
     installJudgmentPort(fake.port);
     expect(await createKnowledgeUriCanonicalizer().canonicalize(uri))
       .toBe('https://docs.example.test/page?a=first&ref=document-one&ref=document-one&z=last');
     expect(fake.requests).toHaveLength(3);
-    expect(fake.requests.map(request => request.state.target)).toEqual([
+    expect(fake.requests.map(request => { const state = request.state; return state && typeof state === 'object' && !Array.isArray(state) ? state.target : undefined; })).toEqual([
       { position: 1, key: 'ref', value: 'document-one' }, { position: 2, key: 'ref', value: 'affiliate-alice' }, { position: 3, key: 'ref', value: 'document-one' },
     ]);
   });
@@ -233,7 +233,9 @@ describe('native Knowledge ref consumers', () => {
     const uris = createKnowledgeIngestUriCanonicalizer(context);
     uris.reserveSource('retained-source'); uris.attachArtifact(artifact.id);
     const token = await prepareKnowledgeExtraction(context, 'retained-source', artifact.id, uris);
-    const replacement = spyOn(context.artifactStore, 'getRecord').mockReturnValue({ ...artifact, sourceUri: contentTwo });
+    const originalRecord = context.artifactStore.getRecord(artifact.id);
+    if (!originalRecord) throw new Error('Missing fixture artifact record');
+    const replacement = spyOn(context.artifactStore, 'getRecord').mockReturnValue({ ...originalRecord, sourceUri: contentTwo });
     try {
       expect(() => assertKnowledgeIngestUriOperation(context, uris, token.sourceId, token.artifactId, token)).toThrow(Held);
       await expect(finalizeKnowledgeIngestedSource(context, { sourceId: token.sourceId, artifactId: token.artifactId, preparedExtraction: token, connectorId: 'manual', sourceType: 'document', tags: [], metadata: {} }, uris)).rejects.toBeInstanceOf(Held);
@@ -265,7 +267,9 @@ describe('native Knowledge ref consumers', () => {
     const intercept = spyOn(context.store, 'applyPreparedIngest').mockImplementation((input, prepareGraph, options, onCommitted) =>
       nativeApply(input, async stage => {
         const graph = await prepareGraph(stage); reachedStorage = true;
-        const changed = spyOn(context.artifactStore, 'getRecord').mockReturnValue({ ...artifact, sourceUri: contentTwo });
+        const originalRecord = context.artifactStore.getRecord(artifact.id);
+        if (!originalRecord) throw new Error('Missing fixture artifact record');
+        const changed = spyOn(context.artifactStore, 'getRecord').mockReturnValue({ ...originalRecord, sourceUri: contentTwo });
         restoreRecord = () => changed.mockRestore(); return graph;
       }, options, onCommitted));
     try {

@@ -1,7 +1,8 @@
 import { APITimeoutError, type Questions } from '@typesafe-ai/sdk';
 import { checkAnswers, projectAnswers } from './answers.ts';
 import { clientFor, toJudgmentError } from './client.ts';
-import { isPinnedJudgmentModel, validateJudgmentConfig, type JudgmentConfig } from './config.ts';
+import { validateJudgmentConfig, type JudgmentConfig } from './config.ts';
+import { matchesJudgmentModel } from './endpoint-validation.ts';
 import { JudgmentError } from './errors.ts';
 import { validateContextBudget, validateQuestions } from './limits.ts';
 import { withRequestId } from './request-id.ts';
@@ -15,7 +16,6 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
   const clients = targets.map(({ endpoint, model }) => clientFor({ ...config, endpoint, model }, true));
   const policy = retryPolicy(config.retry);
   const timeoutMs = config.timeoutMs;
-  const strictModel = targets.length > 1;
   const defaultModel = config.model;
   const health: JudgmentEndpointHealth[] = targets.map(({ endpoint, model }, endpointIndex) => ({ endpointIndex, endpointKind: endpoint.kind, model, attempts: 0, consecutiveFailures: 0 }));
   const keys = targets.map((target) => target.endpoint.apiKey);
@@ -57,8 +57,7 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
         const { state, questions } = input;
         validateQuestions(questions);
         validateContextBudget(state, questions);
-        if (strictModel && !isPinnedJudgmentModel(requestedModel)) throw new JudgmentError('invalid-request', 'judgment failover requires a pinned requested model, not an alias');
-        // Configured failover visits compatible targets once; a primary-only port keeps retrying.
+        // Exhaust a configured failover chain once; a primary-only outage retries until cancellation.
         const eligible = targets.map((target, endpointIndex) => ({ target, endpointIndex }))
           .filter(({ target, endpointIndex }) => endpointIndex === 0 || target.model === requestedModel);
         let retry = 0;
@@ -113,7 +112,7 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
               }
               try { checkAnswers(questions, result.answers, requestId); }
               catch { throw new JudgmentError('invalid-response', 'System One returned answers that do not match the requested questions'); }
-              if (strictModel && result.model !== requestedModel) throw new JudgmentError('invalid-response', 'System One returned a different model version; calibration compatibility is not established');
+              if (!matchesJudgmentModel(requestedModel, result.model)) throw new JudgmentError('invalid-response', 'System One returned a model that does not match the requested model or Jev alias');
               const attempt: JudgmentAttempt = {
                 attempt: attemptCount, endpointIndex, endpointKind: target.endpoint.kind, requestedModel,
                 latencyMs: performance.now() - attemptStarted, outcome: 'answered', ...(requestId ? { requestId } : {}),
@@ -141,7 +140,7 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
               controller.signal.removeEventListener('abort', abortAttempt);
             }
             checkCancellation();
-            if (strictModel && endpointIndex === eligible.at(-1)?.endpointIndex) {
+            if (targets.length > 1 && endpointIndex === eligible.at(-1)?.endpointIndex) {
               const last = toJudgmentError(failure);
               throw new JudgmentError('unavailable', 'all compatible configured judgment endpoints are unavailable', {
                 ...(last.status === undefined ? {} : { status: last.status }), ...(requestId ? { requestId } : {}),

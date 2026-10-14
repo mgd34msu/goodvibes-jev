@@ -179,7 +179,7 @@ test('actual intrinsic rediscovery carries retry clocks when a subject change fo
 test('actual stale supersession preserves repair clocks and owns its new colliding supersededAt', async () => {
   clock = spyOn(Date, 'now').mockReturnValue(collision);
   const extra = { nested: ['retained original'] };
-  const { store, gap, root } = await fixture({ semanticKind: 'gap', sourceId: 'superseded-source', extra });
+  const { store, gap, root } = await fixture({ semanticKind: 'gap', extractor: 'deterministic', sourceId: 'superseded-source', extra });
   await store.upsertSource({ id: 'superseded-source', connectorId: 'clock-test', sourceType: 'document', title: 'Old display documentation',
     status: 'indexed', metadata: { knowledgeSpaceId: 'repair-clock' } });
   const repaired = await markGapRepairAttempt(store, gap, 'repair-clock', { status: 'repaired' });

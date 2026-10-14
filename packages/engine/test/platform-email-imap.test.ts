@@ -1,3 +1,9 @@
+import { useFailureReadings } from './_helpers/failure-readings.ts';
+useFailureReadings([
+  ['Too many connections for this account, try again later', { category: 'service' }],
+  ['Invalid username or password', { category: 'authentication' }],
+  ['Mailbox does not exist', { category: 'not_found' }],
+]);
 /**
  * IMAP client protocol tests using an in-process fake server.
  * No real network connections are made. TLS is bypassed by injecting

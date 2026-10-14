@@ -16,7 +16,7 @@
  * and 2.5-series take `thinking_budget`, and Google's docs are explicit that a
  * request specifying both is rejected.
  */
-import { describe, expect, test, afterEach, afterAll, beforeAll } from 'bun:test';
+import { describe, expect, test, afterEach, beforeEach } from 'bun:test';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { mkdirSync } from 'node:fs';
@@ -83,13 +83,13 @@ const FAMILY_READINGS: Readonly<Record<string, string>> = {
 };
 
 let previousPort: ReturnType<typeof installJudgmentPort>;
-beforeAll(async () => {
+beforeEach(async () => {
   forgetProviderReadings();
   previousPort = installJudgmentPort(fakePort((_name: string, question: Question, state: EntryType) =>
     choiceAnswer(question, FAMILY_READINGS[(state as { model_id: string }).model_id] ?? 'none', 0.95)).port);
   for (const modelId of Object.keys(FAMILY_READINGS)) await readReasoningFamily(modelId, 'test');
 });
-afterAll(() => {
+afterEach(() => {
   installJudgmentPort(previousPort);
   forgetProviderReadings();
 });

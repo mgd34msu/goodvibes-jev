@@ -30,6 +30,11 @@ export const interactiveRuntimeRouteRole = defineBattery({
   description: 'The actual invocation role of one published runtime key in its complete record.',
   items: { role: oneOf(`${evidence} Classify only the specified published key and its value in context. Descriptive prose, a command that produced this record, labels, identifiers and unrelated links are none. An offered credential mediation route is credential, even when its key looks like inspection. Do not infer safety or confirmation from a route name.`, INTERACTIVE_RUNTIME_ROUTE_ROLES, STAKES_BANDS.high.confidence) },
   fixtures: [
+    {"name": "inspect route", "state": {"key": "probe", "value": {"route": "session action:status", "description": "Inspect the current session status without changes."}}, "expect": {"role": "inspect"}},
+    {"name": "resize route", "state": {"key": "dimensions", "value": {"route": "session action:resize", "description": "Change terminal rows and columns."}}, "expect": {"role": "resize"}},
+    {"name": "close route", "state": {"key": "finish", "value": {"route": "session action:close", "description": "Stop and close the active session."}}, "expect": {"role": "close"}},
+    {"name": "execute route", "state": {"key": "start", "value": {"route": "session action:execute", "description": "Execute the supplied command in a new process."}}, "expect": {"role": "execute"}},
+
     { name: 'arbitrary input key', state: { key: 'deliver', value: { route: 'session action:input', description: 'Send bytes to the running terminal.' }, record: { routes: { deliver: { route: 'session action:input', description: 'Send bytes to the running terminal.' } } } }, expect: { role: 'write' } },
     { name: 'credential despite inspect name', state: { key: 'inspect', value: { route: 'privilege action:prompt', description: 'Ask the host to mediate the administrator credential.' } }, expect: { role: 'credential' } },
     { name: 'historical command', state: { key: 'command', value: 'echo ready', record: { description: 'Command previously run; no command invocation route is offered.' } }, expect: { role: 'none' } },
@@ -65,6 +70,9 @@ export const interactiveRuntimeStatus = defineBattery({
     attention: 'Requires review, repair or attention, including stale publication.', unknown: 'No current state can be established.',
   }, STAKES_BANDS.high.confidence) },
   fixtures: [
+    {"name": "currently available", "state": {"record": {"status": "The session is ready and accepting commands now."}}, "expect": {"status": "ready"}},
+    {"name": "completed with failure", "state": {"record": {"outcome": "The command finished with an error and exit code 1."}}, "expect": {"status": "failed"}},
+
     { name: 'active', state: { record: { state: 'The command is still executing.' } }, expect: { status: 'running' } },
     { name: 'previous ready now blocked', state: { record: { status: 'Was healthy yesterday; now access is denied.' } }, expect: { status: 'blocked' } },
     { name: 'successful finish', state: { record: { outcome: 'Finished successfully and exited.' } }, expect: { status: 'completed' } },

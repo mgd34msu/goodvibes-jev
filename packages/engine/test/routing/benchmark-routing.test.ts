@@ -73,11 +73,13 @@ test('the first cold route sorts by the read benchmark identity, and the warm ro
   installJudgmentPort(judgment);
   const candidates = [...Array.from({ length: CHOICE_SHORTLIST + 1 }, (_, index) => model(`cheap-${String.fromCharCode(97 + index)}`)), model(alias)];
   expect(routeBenchmarkFor(benchmarks)(model(alias))).toBeNull();
-  // Control: the old cold composition cannot even offer the stronger model
-  // in its first shortlist; the free models occupy every choice slot.
+  // Every eligible model remains available. Without benchmark preparation,
+  // the authored comparison selects a free model.
   const cold = createRoutePlanner({ catalog: catalog(candidates), tiers: new ModelTierStore(), benchmarkFor: routeBenchmarkFor(benchmarks) });
   expect((await cold.planRoute({ brief: 'Implement a parser.', purpose: 'planner' })).model).not.toBe(`configured:${alias}`);
-  expect(JSON.stringify(requests.at(-1)!.state)).not.toContain(alias);
+  expect(JSON.stringify(requests.at(-1)!.state)).toContain(alias);
+  const coldRequest = requests.at(-1)!;
+  expect(Object.keys(coldRequest.questions.pick!.type === 'choice' ? coldRequest.questions.pick!.criteria : {})).toContain(`configured:${alias}`);
   const planner = createBenchmarkRoutePlanner({
     catalog: catalog(candidates), tiers: new ModelTierStore(),
   }, benchmarks);
@@ -125,10 +127,16 @@ test('a no-match or escalated identity stays unscored, with no lexical guess', a
     const benchmarks = store();
     const fake = fakePort((name, question) => name === 'pick' ? choiceAnswer(question, confidence === 0.95 ? 'none' : canonical, confidence) : noulAnswer(0.95));
     installJudgmentPort(fake.port);
-    await prepareRouteBenchmarks(benchmarks, [model(alias)]);
+    if (confidence === 0.95) {
+      await prepareRouteBenchmarks(benchmarks, [model(alias)]);
+      await prepareRouteBenchmarks(benchmarks, [model(alias)]);
+      expect(fake.requests).toHaveLength(1);
+    } else {
+      await expect(prepareRouteBenchmarks(benchmarks, [model(alias)])).rejects.toThrow('has not settled');
+      await expect(prepareRouteBenchmarks(benchmarks, [model(alias)])).rejects.toThrow('has not settled');
+      expect(fake.requests).toHaveLength(2);
+    }
     expect(routeBenchmarkFor(benchmarks)(model(alias))).toBeNull();
-    await prepareRouteBenchmarks(benchmarks, [model(alias)]);
-    expect(fake.requests).toHaveLength(1);
   }
 });
 

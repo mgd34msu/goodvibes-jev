@@ -19,6 +19,7 @@
 
 import { lstatSync, readFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { matchesJudgmentModel } from '@goodvibes-jev/judgment';
 import { captureJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { snapshotJudgmentInput, prepareJudgmentResult } from '@goodvibes-jev/engine/sdk/platform/gate';
 import type { ProtectedSourceOwner } from '@goodvibes-jev/engine/sdk/platform/security';
@@ -356,7 +357,7 @@ export async function runPostBuildSmoke(options: RunSmokeOptions): Promise<Smoke
         const prepared = prepareJudgmentResult(questions);
         return { ...prepared, capture(original) {
           const admitted = prepared.capture(original);
-          if (admitted.model !== smokeLoadFailure.model || admitted.requestedModel !== smokeLoadFailure.model) throw new Error('Smoke judgment model did not match the pinned contract.');
+          if (admitted.requestedModel !== smokeLoadFailure.model || !matchesJudgmentModel(smokeLoadFailure.model!, admitted.model)) throw new Error('Smoke judgment model did not match the requested alias.');
           return admitted;
         } };
       } });

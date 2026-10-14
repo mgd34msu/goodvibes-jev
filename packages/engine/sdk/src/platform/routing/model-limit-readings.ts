@@ -14,6 +14,8 @@ import {
   type ContextWindowFamily,
 } from './batteries/model-limits.js';
 import { ReadingMemo } from './provider-readings.js';
+import { assertJudgmentInput } from '../gate/judgment-input.js';
+import { requireActingReading } from '../types/judgment-held.js';
 
 const windowKey = (provider: string, modelId: string): string => `${provider}\u0000${modelId}`;
 const windowFamilies = new Map<string, ContextWindowFamily | null>();
@@ -24,14 +26,16 @@ export function knownContextWindowFamily(provider: string, modelId: string): Con
   return windowFamilies.get(windowKey(provider, modelId));
 }
 
-/** Reads which documented context-window row a model belongs to; null when none, or when the reading is too weak to act on. */
+/** Reads which documented context-window row a model belongs to; null only for a settled none; uncertainty remains held. */
 export function readContextWindowFamily(provider: string, modelId: string, site: string): Promise<ContextWindowFamily | null> {
+  assertJudgmentInput({ provider, modelId });
   const key = windowKey(provider, modelId);
   const known = windowFamilies.get(key);
   if (known !== undefined) return Promise.resolve(known);
   return windowFamilyMemo.get(key, async () => {
     const dispatched = await contextWindowFamily.route(judgmentPort(site), { provider, model_id: modelId }, { site });
-    const family = dispatched.reading.outcome === 'act' && dispatched.route !== 'none' ? dispatched.route : null;
+    requireActingReading(dispatched.reading);
+    const family = dispatched.route !== 'none' ? dispatched.route : null;
     dispatched.recordAction(`window:${family ?? 'none'}`);
     windowFamilies.set(key, family);
     return family;
@@ -46,13 +50,15 @@ export function knownAnthropicOutputCapRow(modelId: string): AnthropicOutputCapR
   return outputCapRows.get(modelId);
 }
 
-/** Reads which documented output-cap row an Anthropic model id belongs to; null when none, or when the reading is too weak to act on. */
+/** Reads which documented output-cap row an Anthropic model id belongs to; null only for a settled none; uncertainty remains held. */
 export function readAnthropicOutputCapRow(modelId: string, site: string): Promise<AnthropicOutputCapRow | null> {
+  assertJudgmentInput({ modelId });
   const known = outputCapRows.get(modelId);
   if (known !== undefined) return Promise.resolve(known);
   return outputCapMemo.get(modelId, async () => {
     const dispatched = await anthropicOutputCap.route(judgmentPort(site), { model_id: modelId }, { site });
-    const row = dispatched.reading.outcome === 'act' && dispatched.route !== 'none' ? dispatched.route : null;
+    requireActingReading(dispatched.reading);
+    const row = dispatched.route !== 'none' ? dispatched.route : null;
     dispatched.recordAction(`cap:${row ?? 'none'}`);
     outputCapRows.set(modelId, row);
     return row;
@@ -64,15 +70,14 @@ const CHAT_MODEL_CONCURRENCY = 8;
 const chatModelMemo = new ReadingMemo<boolean>(4096);
 
 /**
- * Whether a listed model stays listed as a chat model. Only a no strong
- * enough to act on drops it: a model whose reading does not settle stays
- * listed, which leaves it pickable rather than hiding it.
+ * Whether a model is a chat model. Only settled readings enter the memo;
+ * uncertainty holds discovery rather than advertising an unverified capability.
  */
 function readKeepsChatModel(provider: string, modelId: string, site: string): Promise<boolean> {
   return chatModelMemo.get(windowKey(provider, modelId), async () => {
     const run = await chatModel.run(judgmentPort(site), { provider, model_id: modelId }, { site });
-    const reading = run.readings.chat;
-    const keep = !(reading.verdict === 'no' && reading.outcome === 'act');
+    const reading = requireActingReading(run.readings.chat);
+    const keep = reading.verdict === 'yes';
     run.recordAction(keep ? 'keep-listed' : 'drop-non-chat');
     return keep;
   });
@@ -80,6 +85,7 @@ function readKeepsChatModel(provider: string, modelId: string, site: string): Pr
 
 /** The listed model ids that read as chat models, in listing order; each id is its own request. */
 export async function readChatModelIds(provider: string, modelIds: readonly string[], site: string): Promise<string[]> {
+  assertJudgmentInput({ provider, modelIds });
   const keep = await mapLimit(modelIds, CHAT_MODEL_CONCURRENCY, (modelId) => readKeepsChatModel(provider, modelId, site));
   return modelIds.filter((_, index) => keep[index]);
 }

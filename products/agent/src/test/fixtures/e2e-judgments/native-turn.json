@@ -3,7 +3,7 @@
     "input": {
       "input": {
         "source": {
-          "text": "  Hello from the original conversational source \u2603.  ",
+          "text": "  Hello from the original conversational source ☃.  ",
           "sourceIssues": [],
           "requirements": null
         },
@@ -56,7 +56,7 @@
       }
     },
     "originalSource": {
-      "text": "  Hello from the original conversational source \u2603.  ",
+      "text": "  Hello from the original conversational source ☃.  ",
       "sourceRevision": "ca307a4bf5747378f287fe017a65affa1d3aed5db1843979672fa7410eb468e6",
       "sourceIssues": []
     },
@@ -82,5 +82,5 @@
       }
     }
   },
-  "model": "jev-1.13.0"
+  "model": "jev-latest"
 }

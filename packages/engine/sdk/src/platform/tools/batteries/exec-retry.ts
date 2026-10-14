@@ -1,3 +1,4 @@
+import { completeJudgmentView } from './complete-view.js';
 /**
  * `engine.tools.exec-retry`: when a shell command the caller asked to retry
  * fails, which kind of failure is it? The options are the exec tool's
@@ -44,23 +45,23 @@ export type ExecFailureCategory = keyof typeof EXEC_FAILURE_OPTIONS;
 export const MAX_JUDGED_STDERR_CHARS = 2_000;
 export const MAX_JUDGED_STDOUT_CHARS = 800;
 
-const tail = (text: string, max: number): string => (text.length <= max ? text : `[${text.length - max} earlier characters]${text.slice(-max)}`);
 
-/** What the reading sees of a failed run: the command, its exit code, and the ends of its output. */
+
+/** What the reading sees of a failed run: the command, its exit code, and its complete output. */
 export function execFailureView(command: string, exitCode: number | null, stdout: string, stderr: string): { command: string; exitCode: number | null; stderr: string; stdout: string } {
-  return { command, exitCode, stderr: tail(stderr, MAX_JUDGED_STDERR_CHARS), stdout: tail(stdout, MAX_JUDGED_STDOUT_CHARS) };
+  return completeJudgmentView({ command, exitCode, stderr, stdout });
 }
 
 const failed = (command: string, exitCode: number | null, stderr: string, stdout = '') => execFailureView(command, exitCode, stdout, stderr);
 
 export const execRetry = defineBattery({
   name: 'engine.tools.exec-retry',
-  version: 1,
+  version: 2,
   description: 'Which kind of failure a failed shell command hit: network, lock, busy, out of memory, or a lasting failure a rerun would repeat.',
   accuracyFloor: 0.85,
   items: {
     category: oneOf(
-      '`command` is a shell command that just failed with exit code `exitCode`; `stderr` and `stdout` are the ends of what it printed. Which kind of failure is this?',
+      '`command` is a shell command that just failed with exit code `exitCode`; `stderr` and `stdout` are the complete output it printed. Which kind of failure is this?',
       EXEC_FAILURE_OPTIONS,
       STAKES_BANDS.low.confidence,
     ),

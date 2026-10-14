@@ -9,14 +9,15 @@
  *
  * Band: low stakes. The class files a fresh, unreviewed record for retrieval
  * and review; a wrong class is corrected in review and never changes what
- * the flat memory file holds. A reading that acts or confirms files the
- * record under its class; a reading that escalates files it as `fact`, the
- * class that claims nothing beyond the statement being recorded.
+ * the flat memory file holds. Only a reading that acts can select a class;
+ * an unsettled reading holds before the memory is written.
  */
 import { defineBattery, oneOf, STAKES_BANDS } from '@goodvibes-jev/judgment';
 import type { MemoryClass } from '../../state/memory-store.js';
+import { assertJudgmentInput } from '../../gate/judgment-input.js';
+import { ToolInputProjectionError } from '../input-projection.js';
 
-/** Most characters of the memory value the reading carries. */
+/** Maximum complete memory value admitted to the reading; never a clipping limit. */
 export const MAX_JUDGED_MEMORY_CHARS = 1_500;
 
 export const MEMORY_CLASS_OPTIONS = {
@@ -33,7 +34,10 @@ export const MEMORY_CLASS_OPTIONS = {
 
 /** What the reading sees: the memory key and the value being written. */
 export function memoryClassView(key: string, value: string): { key: string; value: string } {
-  return { key, value: value.length <= MAX_JUDGED_MEMORY_CHARS ? value : `${value.slice(0, MAX_JUDGED_MEMORY_CHARS)}...` };
+  const state = { key, value };
+  assertJudgmentInput(state);
+  if (value.length > MAX_JUDGED_MEMORY_CHARS) throw new ToolInputProjectionError('capacity');
+  return state;
 }
 
 export const memoryClass = defineBattery({

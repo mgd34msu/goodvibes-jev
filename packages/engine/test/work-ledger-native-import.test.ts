@@ -3,7 +3,7 @@ import { afterEach, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createSystemOnePort, PINNED_MODEL, SqliteDecisionLog, withDecisionLog, type JudgmentPort, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
+import { createSystemOnePort, DEFAULT_MODEL, SqliteDecisionLog, withDecisionLog, type JudgmentPort, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
 import { createNativeLegacyImportHost, legacyImportSemanticManifest, NATIVE_IMPORT_SITE } from '../sdk/src/platform/workflow/work-ledger/native-import.js';
 import { WorkLedgerAccessError } from '../sdk/src/platform/workflow/work-ledger/types.js';
@@ -140,11 +140,11 @@ test('final native transaction rechecks recorded lineage after storage waits', a
 test('shared transport retries remain one logical recorded decision and recover without an owner reply', async () => {
   let attempts = 0;
   const owner = await fixture();
-  const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-fixture' }, model: PINNED_MODEL, timeoutMs: 1_000,
+  const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-fixture' }, model: DEFAULT_MODEL, timeoutMs: 1_000,
     retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fetch: async (_url, init) => {
       if (++attempts === 1) return new Response('', { status: 503 });
       const request = JSON.parse(String(init?.body)) as JudgmentRequest<Questions>;
-      return Response.json({ model: PINNED_MODEL, answers: { disposition: choiceAnswer(request.questions.disposition!, 'act', 0.99) }, usage: { input_tokens: 1, output_tokens: 1 } });
+      return Response.json({ model: DEFAULT_MODEL, answers: { disposition: choiceAnswer(request.questions.disposition!, 'act', 0.99) }, usage: { input_tokens: 1, output_tokens: 1 } });
     } });
   const host = createNativeLegacyImportHost({ ...owner.deps, port: withDecisionLog(transport, owner.log) });
   try { expect(await host.run(owner.command, owner.authority, { isAuthorized: () => true })).toMatchObject({ kind: 'accepted' });

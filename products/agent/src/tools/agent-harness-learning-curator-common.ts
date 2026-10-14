@@ -56,3 +56,16 @@ export function candidateBase(
     deleteRoute: `${localRegistryRoute(domain, 'delete', item.id)}`,
   };
 }
+
+/** Exact producer identity, independent of display names and semantic similarity. */
+export function learningPromotionReference(candidateId: string): string {
+  return `learning-curator-auto-promote:${encodeURIComponent(candidateId)}`;
+}
+export function recordedPromotionReferences(record: unknown): readonly string[] {
+  if (!record || typeof record !== 'object' || !('provenance' in record)) return [];
+  const provenance = record.provenance;
+  if (typeof provenance === 'string') return [provenance];
+  if (!Array.isArray(provenance)) return [];
+  return provenance.flatMap(link => link && typeof link === 'object' && 'kind' in link && link.kind === 'event'
+    && 'ref' in link && typeof link.ref === 'string' ? [link.ref] : []);
+}

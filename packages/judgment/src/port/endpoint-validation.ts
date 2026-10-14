@@ -7,5 +7,10 @@ export function validEndpointURL(value: string): boolean {
   } catch { return false; }
 }
 
-/** Failover pins the known System One version format; moving aliases cannot preserve calibration. */
+/** Recognize a resolved Jev version without selecting or pinning that version. */
 export const isPinnedJudgmentModel = (model: string): boolean => /^jev-\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/.test(model);
+
+/** Aliases resolve at the endpoint; explicit model requests must still match exactly. */
+export function matchesJudgmentModel(requested: string, actual: string): boolean {
+  return actual === requested || ((requested === 'jev-latest' || requested === 'jev-preview') && isPinnedJudgmentModel(actual));
+}

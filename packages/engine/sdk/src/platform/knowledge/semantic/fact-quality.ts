@@ -55,27 +55,7 @@ export function semanticPageFactText(fact: KnowledgeNodeRecord): string {
 }
 
 function semanticFactTextFromParts(parts: readonly (string | undefined)[]): string {
-  const uniqueParts: string[] = [];
-  for (const part of parts.filter(Boolean) as string[]) {
-    const normalized = normalizeComparableFactPart(part);
-    if (!normalized) continue;
-    if (uniqueParts.some((existing) => {
-      const existingNormalized = normalizeComparableFactPart(existing);
-      return existingNormalized === normalized
-        || normalized.startsWith(`${existingNormalized} `)
-        || existingNormalized.startsWith(`${normalized} `);
-    })) continue;
-    uniqueParts.push(part);
-  }
-  return uniqueParts.join(' ').toLowerCase();
-}
-
-function normalizeComparableFactPart(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-    .replace(/^(?:the|this|these|a|an)\s+/, '');
+  return [...new Set(parts.filter((part): part is string => typeof part === 'string' && part.length > 0))].join('\n');
 }
 
 const FEATURE_KINDS = new Set(['feature', 'capability', 'specification', 'compatibility', 'configuration']);
@@ -258,4 +238,11 @@ export function createKnowledgeFactQualityReader(store: KnowledgeStore, options:
       } });
   }
   return Object.freeze({ prepare, assertCurrent });
+}
+
+/** Complete semantic fact evidence; display limits never limit a reading. */
+export function projectKnowledgeFact(fact: KnowledgeNodeRecord) {
+  return { title: fact.title, summary: fact.summary, kind: readString(fact.metadata.factKind) ?? fact.kind,
+    value: fact.metadata.value, evidence: fact.metadata.evidence, subject: fact.metadata.subject,
+    labels: fact.metadata.labels, aliases: fact.aliases };
 }

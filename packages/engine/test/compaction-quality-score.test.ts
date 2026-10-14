@@ -54,19 +54,11 @@ describe('compaction views', () => {
     expect(views.source).toContain('tool result (read): lines.pop();');
   });
 
-  test('long messages are clipped to fit, and the oldest are left out when clipping is not enough', () => {
-    const long = Array.from({ length: 4 }, (_, i): ProviderMessage => ({ role: 'user', content: `${i}`.repeat(5_000) }));
-    const clipped = compactionViews(long, [SUMMARY], 4_000);
-    expect(clipped.source.length).toBeLessThan(4_000);
-    expect(clipped.source).toContain('more characters]');
-    expect(clipped.written).toBe(`user: ${SUMMARY.content as string}`);
-
-    const many = Array.from({ length: 200 }, (_, i): ProviderMessage => ({ role: 'user', content: `message ${i} `.repeat(40) }));
-    const trimmed = compactionViews(many, [SUMMARY], 10_000);
-    expect(trimmed.source.length).toBeLessThan(10_000);
-    expect(trimmed.source.startsWith('[messages #1 to #')).toBe(true);
-    expect(trimmed.source).toContain('left out here for length]');
-    expect(trimmed.source).toContain('#200 user: message 199');
+  test('oversized semantic views are refused without hiding late qualifications', () => {
+    const long: ProviderMessage[] = [{ role: 'user', content: 'context '.repeat(1000) + 'Do not deploy.' }];
+    expect(() => compactionViews(long, [SUMMARY], 4000)).toThrow();
+    const complete = compactionViews(long, [SUMMARY], 60_000);
+    expect(complete.source).toContain('Do not deploy.');
   });
 });
 

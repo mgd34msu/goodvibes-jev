@@ -1,3 +1,4 @@
+import { readConsoleStatus } from './console-reading.js';
 /**
  * Drives the Google Auth Platform console
  * (console.cloud.google.com/auth/audience and .../auth/clients) for the three
@@ -92,7 +93,7 @@ function signInNeeded(url: string): ConsoleNeedsHuman {
   };
 }
 
-const PROJECT_NOT_SELECTED_TEXT = /select a project|no project selected|create a project to continue|select an existing project/i;
+
 
 function projectNotSelectedNeeded(): ConsoleNeedsHuman {
   return {
@@ -101,13 +102,6 @@ function projectNotSelectedNeeded(): ConsoleNeedsHuman {
     problem: 'The Google Auth Platform console is asking for a Cloud project to be selected before it will show anything.',
     fix: 'Open the Google Cloud console, select or create the project this integration uses, then re-run this step.',
   };
-}
-
-/** Order matters: checked before the plain "testing" pattern to avoid a false match on incidental copy. */
-function detectPublishingStatus(text: string): PublishingStatus {
-  if (/in production/i.test(text)) return 'in-production';
-  if (/\btesting\b/i.test(text)) return 'testing';
-  return 'unknown';
 }
 
 export interface ReadPublishingStatusOptions extends JudgmentReadingOptions {
@@ -139,11 +133,13 @@ export async function readPublishingStatus(
   }
 
   const text = await browser.readText();
-  if (PROJECT_NOT_SELECTED_TEXT.test(text)) {
+  const reading = await readConsoleStatus(text, options);
+  if (await browser.currentUrl() !== url || await browser.readText() !== text) throw new Error('Console page changed during its publishing status reading.');
+  if (reading.projectMissing) {
     return projectNotSelectedNeeded();
   }
 
-  const status = detectPublishingStatus(text);
+  const status = reading.status;
   if (status === 'unknown') {
     return {
       kind: 'failed',

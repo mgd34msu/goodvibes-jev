@@ -66,7 +66,7 @@ describe('ToolFormatTelemetry recorder', () => {
     t.observeToolResults(
       'anthropic:claude',
       [{ id: 'c3', name: 'edit' }],
-      [{ callId: 'c3', success: false, error: 'No match found again' }],
+      [{ callId: 'c3', success: false, error: 'No match found for another value' }],
     );
     const snap = t.snapshot();
     expect(snap.byModel['anthropic:claude']).toEqual({

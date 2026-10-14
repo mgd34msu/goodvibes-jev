@@ -327,7 +327,7 @@ function gate() {
   let raw: Promise<Awaited<ReturnType<JudgmentPort['ask']>>> | undefined;
   installed = { ...base, ask(request) {
     if (request.context?.battery !== browserCredentialPage.name) return base.ask(request);
-    began(); raw = pending.then(() => base.ask(request)); return raw;
+    began(); const result = pending.then(() => base.ask(request)); raw = result; return result;
   } };
   installJudgmentPort(installed);
   return { started, release, drain: async () => { release(); await raw?.catch(() => {}); } };
@@ -682,11 +682,11 @@ describe('host request cancellation ownership', () => {
     const page = remotePage(client, 'native-page', ORDINARY_URL), controller = new AbortController();
     const invoke = (selector: string, signal?: AbortSignal) => {
       const locator = page.locator(selector);
-      return method === 'fill' ? locator.fill('ordinary', { signal })
-        : method === 'press' ? locator.press('Space', { signal })
-        : method === 'selectOption' ? locator.selectOption(['ordinary'], { signal })
-        : method === 'pressSequentially' ? locator.pressSequentially('ordinary', { signal })
-        : locator.click({ signal });
+      return method === 'fill' ? locator.fill('ordinary', { ...(signal ? { signal } : {}) })
+        : method === 'press' ? locator.press('Space', { ...(signal ? { signal } : {}) })
+        : method === 'selectOption' ? locator.selectOption(['ordinary'], { ...(signal ? { signal } : {}) })
+        : method === 'pressSequentially' ? locator.pressSequentially('ordinary', { ...(signal ? { signal } : {}) })
+        : locator.click({ ...(signal ? { signal } : {}) });
     };
     const result = invoke('#first', controller.signal), handled = result.catch(error => error);
     const sibling = invoke('#second'), siblingHandled = sibling.catch(error => error);
@@ -881,7 +881,7 @@ for (const retirement of ['caller', 'reader'] as const)
       arm: (sessionId, pageId) => guard.arm(sessionId, pageId, [{ kind: 'number', value: '4242424242424242' }]),
     });
     await engine.snapshot({});
-    const result = engine.fillSecretBatch({}, { fills: [{ ref: 'e1', value: '4242424242424242' }, { ref: 'e2', value: '4242424242424242' }] }, { signal: controller.signal });
+    const result = engine.fillSecretBatch({}, { fills: [{ ref: 'e1', value: '4242424242424242' }, { ref: 'e2', value: '4242424242424242' }] }, { signal: controller.signal, assertCurrent: () => controller.signal.throwIfAborted() });
     const handled = result.catch(error => error);
     try {
       await pending.started; expect(pending.signals).toHaveLength(1);

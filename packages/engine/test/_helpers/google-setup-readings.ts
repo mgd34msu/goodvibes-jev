@@ -23,6 +23,18 @@ const labels: Readonly<Record<string, readonly string[]>> = {
 };
 export function googleSetupFixturePort() {
   return fakePort((name, question, state) => {
+    if (name === 'projectMissing' || name === 'status') {
+      const text = (state as { text: string }).text;
+      const pages: Record<string, readonly [boolean, string]> = {
+        'Publishing status: Testing': [false, 'testing'],
+        'Publishing status: In production': [false, 'in-production'],
+        'Select a project to continue.': [true, 'unknown'],
+        'Nothing relevant here.': [false, 'unknown'],
+      };
+      const reading = pages[text];
+      if (!reading) throw new Error('Unscripted console status fixture');
+      return name === 'projectMissing' ? noulAnswer(reading[0] ? 0.99 : 0.01) : choiceAnswer(question, reading[1], 0.99);
+    }
     const input = state as unknown as { url?: string; elements?: { name: string }[]; context?: { purpose?: string }; candidates?: { id: string; content: { name: string } }[] };
     if (name === 'signIn') return noulAnswer(input.url === 'https://accounts.google.com/signin/v2/identifier'
       || input.elements?.some(e => e.name === 'Enter your password') ? 0.99 : 0.01);

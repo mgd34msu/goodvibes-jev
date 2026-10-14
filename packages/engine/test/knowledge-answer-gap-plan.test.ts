@@ -1,3 +1,5 @@
+import { prepareKnowledgeRecordAdmission } from '../sdk/src/platform/knowledge/store-record-snapshot.js';
+import { markGapRepairAttempt, SELF_IMPROVEMENT_RETRY_DELAY_MS } from '../sdk/src/platform/knowledge/semantic/self-improvement-gap-state.js';
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -541,4 +543,18 @@ describe('prepared answer-gap universe and write guards', () => {
       await unchanged(item.store, before);
     });
   }
+});
+
+
+test('reobserving a retryable gap preserves its canonical native retry timestamp', async () => {
+  const item = await fixture(); readings();
+  const retryAt = 4_111_111_111_111;
+  const clock = spyOn(Date, 'now').mockReturnValue(retryAt - SELF_IMPROVEMENT_RETRY_DELAY_MS);
+  try { await markGapRepairAttempt(item.store, item.existing, spaceId, { status: 'deferred' }); }
+  finally { clock.mockRestore(); }
+  const retried = await (await prepare(item).read()).persist(reason);
+  expect(retried?.metadata.nextRepairAttemptAt).toBe(retryAt);
+  expect(item.store.getRecordSnapshot('node', item.existing.id).raw?.metadata)
+    .toContain(`"nextRepairAttemptAt":"${new Date(retryAt).toISOString()}"`);
+  prepareKnowledgeRecordAdmission(item.store, 'node', retried!).assertCurrent();
 });

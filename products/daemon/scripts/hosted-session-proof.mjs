@@ -115,7 +115,7 @@ export async function runHostedSessionProof({ binary, boundary, env, root }) {
       output = ''; errors = ''; childPid = undefined; exited = false;
       host = spawn('bwrap', [...boundary.slice(0, -1), '--as-pid-1', '--json-status-fd', '3', '--', binary, 'serve', '--hostname', '127.0.0.1', '--port', String(port)], {
         env: { ...env, HOME: home, GOODVIBES_HOME: tree, GOODVIBES_DAEMON_HOME: daemon, GOODVIBES_WORKING_DIR: work, GOODVIBES_DAEMON_TOKEN: token,
-          TYPESAFE_BASE_URL: `http://127.0.0.1:${judgmentPort}`, TYPESAFE_API_KEY: 'synthetic-system-one-key', TYPESAFE_DEFAULT_MODEL: 'jev-1.13.0' },
+          TYPESAFE_BASE_URL: `http://127.0.0.1:${judgmentPort}`, TYPESAFE_API_KEY: 'synthetic-system-one-key', TYPESAFE_DEFAULT_MODEL: 'jev-latest' },
         stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
       });
       let statusBuffer = '';
@@ -241,7 +241,7 @@ export async function runHostedSessionProof({ binary, boundary, env, root }) {
     const deltas = turnEvents().filter(event => event.type === 'STREAM_DELTA' && event.turnId === complete.turnId);
     assert(deltas.length >= 2); assert.equal(deltas.map(event => event.content).join(''), marker);
     assert(judgmentRequests.length > 0, 'production SystemOne configuration must reach the synthetic peer');
-    assert(judgmentRequests.every(request => request.path === '/v1/systemone' && request.authorization === 'Bearer synthetic-system-one-key' && request.body.model === 'jev-1.13.0'));
+    assert(judgmentRequests.every(request => request.path === '/v1/systemone' && request.authorization === 'Bearer synthetic-system-one-key' && request.body.model === 'jev-latest'));
     async function send(text) {
       const response = await request(`/api/sessions/${sessionId}/follow-up`, { body: text });
       assert.equal(response.status, 202, JSON.stringify(response));
@@ -278,7 +278,7 @@ export async function runHostedSessionProof({ binary, boundary, env, root }) {
     assert.equal(modelRequests.length, 5, 'one model request per original steer, success, cancel, failure, and shutdown turn');
     await Promise.all(readers);
     assert.ifError(peerError); assert.ifError(streamError);
-    assert(judgmentRequests.every(request => request.path === '/v1/systemone' && request.authorization === 'Bearer synthetic-system-one-key' && request.body.model === 'jev-1.13.0'));
+    assert(judgmentRequests.every(request => request.path === '/v1/systemone' && request.authorization === 'Bearer synthetic-system-one-key' && request.body.model === 'jev-latest'));
     const identities = new Map();
     const questionGroups = new Map();
     for (const request of judgmentRequests) {

@@ -337,6 +337,7 @@ function previewCandidate(candidate: LearningCandidate): Record<string, unknown>
   return {
     status: 'preview',
     candidateId: candidate.id,
+    judgmentDecisionIds: candidate.judgmentDecisionIds,
     label: candidate.label,
     domain: candidate.domain,
     survivorId: plan.survivorId,
@@ -397,6 +398,7 @@ function applyMerge(
     status: 'applied',
     phase: 'merge',
     candidateId: candidate.id,
+    judgmentDecisionIds: candidate.judgmentDecisionIds,
     survivorId: plan.survivorId,
     receipt: receiptSummary(receipt),
     afterSurvivor,
@@ -433,6 +435,7 @@ function applyStale(
     status: 'applied',
     phase: 'stale',
     candidateId: candidate.id,
+    judgmentDecisionIds: candidate.judgmentDecisionIds,
     survivorId: plan.survivorId,
     duplicateIds: plan.duplicateIds,
     receipt: receiptSummary(receipt),
@@ -473,6 +476,7 @@ function applyDelete(
     createdAt: new Date().toISOString(),
     domain,
     candidateId: candidate.id,
+    judgmentDecisionIds: candidate.judgmentDecisionIds,
     phase: 'delete',
     explicitUserRequest,
     survivorId: plan.survivorId,
@@ -485,6 +489,7 @@ function applyDelete(
     status: 'applied',
     phase: 'delete',
     candidateId: candidate.id,
+    judgmentDecisionIds: candidate.judgmentDecisionIds,
     survivorId: plan.survivorId,
     deletedDuplicateIds: plan.duplicateIds,
     receipt: receiptSummary(receipt, { shellPaths, memoryRegistry }),
@@ -538,6 +543,7 @@ async function applyRecreate(
       createdAt: new Date().toISOString(),
       domain: deleteReceipt.domain,
       candidateId: deleteReceipt.candidateId,
+      judgmentDecisionIds: deleteReceipt.judgmentDecisionIds,
       phase: 'recreate',
       explicitUserRequest,
       survivorId: deleteReceipt.survivorId,
@@ -619,6 +625,7 @@ async function applyRecreate(
     createdAt: new Date().toISOString(),
     domain: deleteReceipt.domain,
     candidateId: deleteReceipt.candidateId,
+      judgmentDecisionIds: deleteReceipt.judgmentDecisionIds,
     phase: 'recreate',
     explicitUserRequest,
     survivorId: deleteReceipt.survivorId,
@@ -821,10 +828,10 @@ export function createAgentLearningConsolidationTool(shellPaths: ShellPathServic
         }
         const candidateGuards = new Map<string | (() => void), () => void>();
         const candidate = await resolveCandidate(shellPaths, memoryRegistry, args, {
-          signal, sourceOwner, assertCurrent: assertAuthorityCurrent,
+          signal, sourceOwner, assertCurrent: () => { assertAuthorityCurrent(); assertReceiptsCurrent(); },
           retainCurrent(guard, key) { if (!candidateGuards.has(key ?? guard)) candidateGuards.set(key ?? guard, guard); },
         });
-        assertAuthorityCurrent();
+        assertAuthorityCurrent(); assertReceiptsCurrent();
         // Check the complete retained source immediately before the phase.
         // The authorized phase itself changes that collection, so publication
         // continues to check authority rather than the pre-write revision.

@@ -1,6 +1,5 @@
 import {
-  JudgmentError,
-  checkAnswers,
+  JudgmentError, matchesJudgmentModel, checkAnswers,
   type JudgmentErrorKind, type JudgmentLineage, type JudgmentPort,
   type JudgmentResult, type Questions,
 } from '@goodvibes-jev/judgment';
@@ -75,9 +74,8 @@ export function validateWebuiAnswers<Q extends Questions>(questions: Q, raw: unk
       exactKeys(distribution, options);
       const probabilities = Object.fromEntries(options.map((option) => [option, probability(distribution[option])]));
       const confidence = probability(answer['confidence']);
-      const captured = { type: 'choice' as const, choice: selected, confidence, probabilities };
-      checkAnswers({ [name]: question }, { [name]: captured });
-      return [name, captured];
+      checkAnswers({ [name]: question }, { [name]: { type: 'choice', choice: selected, confidence, probabilities } });
+      return [name, { type: 'choice', choice: selected, confidence, probabilities }];
     });
     return Object.fromEntries(entries) as JudgmentResult<Q>['answers'];
   } catch { return INVALID(); }
@@ -114,7 +112,8 @@ function safeLineage(raw: unknown, model: string): JudgmentLineage | undefined {
 export interface WebuiAnswerBoundaryOptions {
   /**
    * Server-owned calibration-compatible response model IDs, keyed by requested
-   * model/alias. Omitted entries permit only the exact requested model.
+   * model/alias. Official Jev aliases resolve to versioned Jev models by default;
+   * other omitted entries permit only the exact requested model.
    * These declarations must never come from the browser request.
    */
   readonly returnedModels?: Readonly<Record<string, readonly string[]>>;
@@ -137,7 +136,7 @@ export function withWebuiAnswerBoundary(inner: JudgmentPort, options: WebuiAnswe
         const answers = validateWebuiAnswers(request.questions, raw['answers']);
         const actualModel = raw['model'];
         if (raw['requestedModel'] !== model || typeof actualModel !== 'string'
-          || !(returnedModels.get(model)?.has(actualModel) ?? actualModel === model)) return INVALID();
+          || !(returnedModels.get(model)?.has(actualModel) ?? matchesJudgmentModel(model, actualModel))) return INVALID();
         const usage = record(raw['usage']);
         const inputTokens = nonnegative(usage['inputTokens']);
         const outputTokens = nonnegative(usage['outputTokens']);

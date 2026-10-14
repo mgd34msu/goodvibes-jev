@@ -45,7 +45,7 @@ describe('recorded turn intent and project priming', () => {
     const conversation = new ConversationManager();
     await prime(conversation, 'Replace billing safely.');
     expect(systemMessages(conversation).filter((message) => message.includes('[Project mode]'))).toHaveLength(1);
-    expect(readings.requests).toHaveLength(1);
+    expect(readings.requests.filter(request => request.context?.battery === 'engine.core.turn-shape')).toHaveLength(1);
   });
 
   test('old trigger words cannot override a contrary reading', async () => {

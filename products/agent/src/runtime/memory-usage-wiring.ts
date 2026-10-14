@@ -28,7 +28,7 @@ export function extractInjectedMemoryIds(receipt: PromptContextReceiptDraft): st
 }
 
 export class MemoryUsageTracker {
-  private readonly injectedByTurn = new Map<string, readonly string[]>();
+  private readonly injectedByTurn = new Map<string, { readonly records: readonly MemoryReferenceInput[]; readonly controller: AbortController; started: boolean }>();
 
   public constructor(
     private readonly store: MemoryUsageStatsStore,
@@ -37,29 +37,47 @@ export class MemoryUsageTracker {
 
   /** At prompt composition: count the injection and remember it for this turn. */
   public onComposed(turnId: string | null, receipt: PromptContextReceiptDraft): void {
+    if (turnId) this.onTurnAborted(turnId);
     const ids = extractInjectedMemoryIds(receipt);
     if (ids.length === 0) return;
     this.store.recordInjected(ids);
-    if (turnId) this.injectedByTurn.set(turnId, ids);
+    if (turnId) {
+      const records = ids.flatMap(id => {
+        const record = this.memoryRegistry.get(id);
+        return record ? [{ id: record.id, summary: record.summary, detail: record.detail }] : [];
+      });
+      this.injectedByTurn.set(turnId, { records, controller: new AbortController(), started: false });
+    }
   }
 
   /** At turn completion: detect which injected memories the output plausibly used. */
   public async onTurnCompleted(turnId: string, response: string): Promise<void> {
-    const ids = this.injectedByTurn.get(turnId);
-    this.injectedByTurn.delete(turnId);
-    if (!ids || ids.length === 0) return;
-    const records: MemoryReferenceInput[] = [];
-    for (const id of ids) {
-      const record = this.memoryRegistry.get(id);
-      if (record) records.push({ id: record.id, summary: record.summary, detail: record.detail });
+    const turn = this.injectedByTurn.get(turnId);
+    if (!turn || turn.started) return;
+    turn.started = true;
+    const assertCurrent = () => {
+      turn.controller.signal.throwIfAborted();
+      if (this.injectedByTurn.get(turnId) !== turn) throw new Error('Memory usage turn is no longer current.');
+      for (const original of turn.records) {
+        const current = this.memoryRegistry.get(original.id);
+        if (!current || current.summary !== original.summary || current.detail !== original.detail) throw new Error('Injected memory changed before usage could be credited.');
+      }
+    };
+    try {
+      const result = await detectReferencedMemoryIds(response, turn.records, { signal: turn.controller.signal, assertCurrent });
+      result.assertCurrent();
+      if (result.referenced.length > 0) this.store.recordReferenced(result.referenced);
+    } catch (error) {
+      if (!turn.controller.signal.aborted) throw error;
+    } finally {
+      if (this.injectedByTurn.get(turnId) === turn) this.injectedByTurn.delete(turnId);
+      turn.controller.abort();
     }
-    if (records.length === 0) return;
-    const result = await detectReferencedMemoryIds(response, records);
-    if (result.referenced.length > 0) this.store.recordReferenced(result.referenced);
   }
 
   /** At turn error/cancel: forget the injection without crediting a reference. */
   public onTurnAborted(turnId: string): void {
+    this.injectedByTurn.get(turnId)?.controller.abort();
     this.injectedByTurn.delete(turnId);
   }
 

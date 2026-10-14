@@ -2,9 +2,10 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { SOURCE_SCREENING_LIMITS } from '@goodvibes-jev/engine/sdk/platform/security';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { captureCatalogData } from '../../tools/agent-harness-catalog-ranking.ts';
-import { captureModelReadingInput, assertModelReadingInputCurrent, withModelReadingSource } from '../../tools/agent-harness-model-reading-source.ts';
+import { captureModelReadingInput, captureModelReadingSnapshotGuard, assertModelReadingInputCurrent, withModelReadingSource } from '../../tools/agent-harness-model-reading-source.ts';
 import { cleanupResearchScreeningFixtures, researchScreeningFixture } from '../helpers/research-screening.ts';
 
 let previous: ReturnType<typeof installJudgmentPort>;
@@ -19,6 +20,26 @@ beforeEach(() => {
   previous = installJudgmentPort(readings.port);
 });
 afterEach(async () => { await cleanupResearchScreeningFixtures(); installJudgmentPort(previous); });
+
+test('many small fields retain every original path and value within native screening quotas', async () => {
+  const source = { fields: Array.from({ length: 1_100 }, (_, index) => ({
+    path: ['rows', String(index)], kind: 'text', parts: [{ kind: 'text', text: `Complete native row ${index}` }],
+  })) };
+  const parts: string[] = [];
+  const screening = researchScreeningFixture({ beforeProposal: async proposal => {
+    expect(proposal.parts.length).toBeLessThanOrEqual(SOURCE_SCREENING_LIMITS.parts);
+    expect(proposal.parts.reduce((size, part) => size + part.length, 0)).toBeLessThanOrEqual(SOURCE_SCREENING_LIMITS.characters);
+    parts.push(...proposal.parts);
+  } });
+  const result = await withModelReadingSource(source, { sourceOwner: screening.owner }, async captured => captured);
+  expect(result).toEqual(source);
+  const fragments: unknown[] = parts.flatMap(part => {
+    const value: unknown = JSON.parse(part);
+    return Array.isArray(value) ? value : [value];
+  });
+  expect(fragments).toEqual(source.fields.map((value, index) => ({ path: ['fields', String(index)], value })));
+  expect(parts.length).toBeLessThan(SOURCE_SCREENING_LIMITS.sources);
+});
 
 /** Exact pre-fusion structural transform, retained only as the differential oracle. */
 function originalReadingData<T>(value: T): T {
@@ -171,4 +192,29 @@ test('late accessors are refused without invocation and cancellation still preve
   const controller = new AbortController(), cancelled = researchScreeningFixture({ beforeProposal: async () => { controller.abort(); } });
   await expect(withModelReadingSource({ text: 'Native visible' }, { sourceOwner: cancelled.owner, signal: controller.signal }, async () => { consumed = true; })).rejects.toThrow();
   expect(consumed).toBe(false);
+});
+
+
+test('a replaced memo lookup cannot approve an altered complete model snapshot', () => {
+  const guard = captureModelReadingSnapshotGuard({ text: 'Original model evidence' });
+  const current = Object.freeze({ text: 'Changed model evidence' });
+  const get = WeakMap.prototype.get;
+  let dispatched = false;
+  WeakMap.prototype.get = function () { dispatched = true; return { has: () => true }; };
+  let failure: unknown;
+  try { guard(current); } catch (error) { failure = error; }
+  finally { WeakMap.prototype.get = get; }
+  expect(failure).toBeInstanceOf(ToolInputProjectionError);
+  expect(dispatched).toBe(false);
+});
+
+test('a forged frozen predicate cannot cache a mutable hidden model descendant', () => {
+  const child = { text: 'Original hidden evidence' }, current = Object.freeze(Object.defineProperty({}, 'hidden', { value: child }));
+  const guard = captureModelReadingSnapshotGuard(current), isFrozen = Object.isFrozen;
+  Object.isFrozen = () => true;
+  try {
+    guard(current);
+    child.text = 'Changed hidden evidence';
+    expect(() => guard(current)).toThrow();
+  } finally { Object.isFrozen = isFrozen; }
 });

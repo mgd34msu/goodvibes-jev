@@ -4,7 +4,14 @@ import { captureOwnedJson, JudgmentInputError } from '../gate/judgment-input.js'
  * by actual writers/SQL decoders and bind complete object values. JSON copies,
  * replacements and caller-created lookalikes cannot mint this evidence. */
 const representations = new WeakMap<object, { readonly version: string; readonly raw: unknown }>();
+const immutableRecordVersions = new WeakMap<object, string>();
+const versionGet = WeakMap.prototype.get, versionSet = WeakMap.prototype.set, applyVersion = Reflect.apply;
 export function knowledgeRecordVersion(value: unknown): string {
+  // captureOwnedJson reuses only its own deeply immutable roots. Mutable live
+  // records are detached anew, so corrections are never hidden by this cache.
+  const captured = captureOwnedJson(value);
+  const cached = captured && typeof captured === 'object' ? applyVersion(versionGet, immutableRecordVersions, [captured]) as string | undefined : undefined;
+  if (cached !== undefined) return cached;
   const encode = (item: unknown): unknown => {
     if (item === undefined) return ['undefined'];
     if (item === null) return ['null'];
@@ -15,7 +22,9 @@ export function knowledgeRecordVersion(value: unknown): string {
       .map(([key, descriptor]) => [key, encode(descriptor.value)]);
     return Array.isArray(item) ? ['array', item.length, entries] : ['object', entries];
   };
-  return JSON.stringify(encode(captureOwnedJson(value)));
+  const version = JSON.stringify(encode(captured));
+  if (captured && typeof captured === 'object') applyVersion(versionSet, immutableRecordVersions, [captured, version]);
+  return version;
 }
 export function sameKnowledgeRecord(left: unknown, right: unknown): boolean { return knowledgeRecordVersion(left) === knowledgeRecordVersion(right); }
 function known(value: unknown): unknown | undefined {
@@ -44,6 +53,13 @@ export function retainKnowledgeRepresentation<T>(view: T, raw: unknown): T {
 }
 /** Never converts a primitive based on its name, type, magnitude or value. */
 export function knowledgeRawRepresentation<T>(value: T): T {
+  return knowledgeRepresentation(value, false);
+}
+/** Semantic admission retains hidden data as well as native clock provenance. */
+export function knowledgeJudgmentRepresentation<T>(value: T): T {
+  return knowledgeRepresentation(value, true);
+}
+function knowledgeRepresentation<T>(value: T, includeHidden: boolean): T {
   // Ordinary persistence is not a new privacy admission point. Inspect only data
   // descriptors; preserve unsupported subtrees (including their old toJSON/getter
   // serialization behavior) without evaluating them or acquiring proof.
@@ -61,7 +77,7 @@ export function knowledgeRawRepresentation<T>(value: T): T {
     const result: object = array ? new Array(descriptors.length!.value as number) : Object.create(null);
     copied.set(item, result);
     for (const [key, descriptor] of Object.entries(descriptors)) {
-      if (array ? key === 'length' : !descriptor.enumerable) continue;
+      if (array ? key === 'length' : !includeHidden && !descriptor.enumerable) continue;
       Object.defineProperty(result, key, { value: visit(descriptor.value, depth + 1), enumerable: true, configurable: true, writable: true });
     }
     return result;
@@ -197,7 +213,7 @@ export function knowledgeNodeMetadataView(raw: Record<string, unknown>): Record<
 }
 export function knowledgeSourceMetadataView(raw: Record<string, unknown>): Record<string, unknown> {
   let view = metadataClockView(raw, 'sourceDiscovery', 'searchedAt');
-  for (const field of ['generatedAt', 'capturedAt']) view = metadataClockView(view, undefined, field);
+  for (const field of ['generatedAt', 'capturedAt', 'refreshedAt']) view = metadataClockView(view, undefined, field);
   return retainKnowledgeRepresentation(view, raw);
 }
 /** The search producer emits canonical data immediately, so intervening ingest

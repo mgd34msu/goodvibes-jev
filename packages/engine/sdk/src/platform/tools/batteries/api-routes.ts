@@ -1,3 +1,4 @@
+import { completeJudgmentView } from './complete-view.js';
 /**
  * `engine.tools.api-routes`: the readings behind inspect modes `api`,
  * `api_spec`, `api_validate` and `api_sync` (tools/inspect/project-routes.ts)
@@ -35,19 +36,19 @@ export const servesQuestion = (method: HandlerMethod): ServesQuestion => `serves
 
 /** What the route_registration reading sees: the framework asked about, the file's import lines, the candidate line and the lines around it. */
 export function routeLineView(framework: string, file: string, lines: readonly string[], index: number): { framework: string; file: string; imports: string[]; line: string; before: string[]; after: string[] } {
-  return {
+  return completeJudgmentView({
     framework,
     file,
     imports: lines.filter((line) => /^\s*import\b|\brequire\s*\(/.test(line)),
     line: lines[index] ?? '',
-    before: lines.slice(Math.max(0, index - ROUTE_CONTEXT_LINES), index),
-    after: lines.slice(index + 1, index + 1 + ROUTE_CONTEXT_LINES),
-  };
+    before: lines.slice(0, index),
+    after: lines.slice(index + 1),
+  });
 }
 
 /** What the method readings see: the handler file, up to MAX_HANDLER_CHARS. */
 export function handlerView(file: string, content: string): { file: string; code: string } {
-  return { file, code: content.length <= MAX_HANDLER_CHARS ? content : content.slice(0, MAX_HANDLER_CHARS) };
+  return completeJudgmentView({ file, code: content });
 }
 
 const LOW = STAKES_BANDS.low.yesNo;

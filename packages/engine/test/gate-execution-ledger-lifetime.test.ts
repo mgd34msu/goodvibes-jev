@@ -64,7 +64,8 @@ describe('shared execution ledger delivery and privacy', () => {
     const record = subject.getSnapshot().records[0]!;
     expect(record.routeKind).toBe('network');
     expect(record.targetPreview).toBe('initial-safe-target'); expect(record.commandPreview).toBeUndefined();
-    expect(requests.at(-1)?.context?.battery).toBe('engine.gate.side-effect');
+    expect(requests.at(-1)?.context?.battery).toBe('engine.gate.execution-purpose');
+    expect(requests.some(request => request.context?.battery === 'engine.gate.side-effect')).toBe(true);
   });
 
   test('redacts credential keys beyond all preview limits before route classification', async () => {

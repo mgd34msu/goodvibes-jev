@@ -1,3 +1,4 @@
+import { knowledgeRawRepresentation } from '../store-record-representation.js';
 import { createHash } from 'node:crypto';
 import type {
   KnowledgeExtractionRecord,
@@ -272,7 +273,7 @@ export function applySourceMetadata(
     ...(source.crawlError ? { crawlError: source.crawlError } : {}),
     ...(source.sessionId ? { sessionId: source.sessionId } : {}),
     metadata: {
-      ...source.metadata,
+      ...knowledgeRawRepresentation(source.metadata),
       ...metadata,
     },
   };

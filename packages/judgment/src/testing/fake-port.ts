@@ -1,3 +1,4 @@
+import { DEFAULT_MODEL } from '../port/config.ts';
 import type { EntryType, JudgmentPort, JudgmentRequest, Question, Questions } from '../index.ts';
 
 export type Answerer = (name: string, question: Question, state: EntryType) => unknown;
@@ -6,7 +7,7 @@ export type Answerer = (name: string, question: Question, state: EntryType) => u
 export function fakePort(answer: Answerer) {
   const requests: JudgmentRequest<Questions>[] = [];
   const port: JudgmentPort = {
-    model: 'jev-1.13.0',
+    model: DEFAULT_MODEL,
     async ask(request) {
       requests.push(request as JudgmentRequest<Questions>);
       const answers = Object.fromEntries(
@@ -14,7 +15,7 @@ export function fakePort(answer: Answerer) {
       );
       return {
         answers: answers as never,
-        requestedModel: request.model ?? 'jev-1.13.0',
+        requestedModel: request.model ?? DEFAULT_MODEL,
         model: 'jev-1.13.0',
         usage: { inputTokens: 1, outputTokens: 1 },
         latencyMs: 1,
@@ -32,7 +33,7 @@ export function choiceAnswer(question: Question, chosen: string, confidence = 0.
   // Synthetic confidence is independent of probability. Preserve prior valid
   // distributions, but keep the selected option maximal for weak-confidence
   // fixtures too; those must exercise uncertainty, not malformed responses.
-  const probability = Math.max(confidence, 1 - confidence);
+  const probability = Object.keys(question.criteria).length === 1 ? 1 : Math.max(confidence, 1 - confidence);
   const probabilities = Object.fromEntries(Object.keys(question.criteria).map((option) => [option, option === chosen ? probability : 0]));
   const rest = Object.keys(question.criteria).filter((option) => option !== chosen);
   if (rest.length > 0) probabilities[rest[0]!] = 1 - probability;
@@ -41,6 +42,9 @@ export function choiceAnswer(question: Question, chosen: string, confidence = 0.
 
 export function scoreAnswer(question: Question, value: number, confidence = 0.9) {
   if (question.type !== 'score') throw new Error('not a score');
-  const probabilities = Object.fromEntries(question.criteria.map((_, level) => [String(level), level === Math.round(value) ? 1 : 0]));
+  if (!Number.isFinite(value) || value < 0 || value > question.criteria.length - 1) throw new RangeError('score outside the rubric');
+  const lower = Math.floor(value), upper = Math.ceil(value);
+  const probabilities = Object.fromEntries(question.criteria.map((_, level) => [String(level),
+    lower === upper ? Number(level === lower) : level === lower ? upper - value : level === upper ? value - lower : 0]));
   return { type: 'score', score: value, confidence, legend: {}, probabilities };
 }

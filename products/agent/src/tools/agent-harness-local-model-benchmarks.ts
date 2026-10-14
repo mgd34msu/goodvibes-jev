@@ -10,7 +10,7 @@ import { previewHarnessText } from './agent-harness-text.ts';
 import { localStackFor } from './agent-harness-local-model-endpoints.ts';
 import type { LocalModelBenchmarkEvidence, LocalModelBenchmarkPlan, LocalModelBenchmarkRouteLatency, LocalModelBenchmarkWinner, LocalModelRecipe, ArtifactListLike } from './agent-harness-model-routing-types.ts';
 import { captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
-import { assertModelReadingInputCurrent, captureModelArtifactClockSource, captureModelArtifactClockSources, captureModelReadingInput, modelReadingServicePath, withModelReadingSource, type ModelReadingOptions } from './agent-harness-model-reading-source.ts';
+import { assertModelReadingInputCurrent, captureModelArtifactClockSource, captureModelArtifactClockSources, captureModelReadingInput, captureModelReadingSnapshotGuard, modelReadingServicePath, withModelReadingSource, type ModelReadingOptions } from './agent-harness-model-reading-source.ts';
 import { readRecord, readString } from './agent-harness-model-routing-utils.ts';
 import { personalOpsEntry } from './agent-harness-personal-ops-source.ts';
 
@@ -358,7 +358,8 @@ export async function readLocalModelBenchmarkSnapshot(context: BenchmarkArtifact
   const originalArtifacts = list?.call(store, 100) ?? [];
   const artifactSources = captureModelArtifactClockSources(originalArtifacts);
   captureModelReadingInput(artifactSources.reading);
-  const allArtifacts = artifactSources.native, serialized = JSON.stringify(allArtifacts);
+  const allArtifacts = artifactSources.native;
+  const assertArtifacts = captureModelReadingSnapshotGuard(allArtifacts);
   const loaded = new Map<string, CompleteBenchmarkArtifact>();
   const contentGuards: (() => void)[] = [];
   const assertNativeBindings = () => {
@@ -366,11 +367,11 @@ export async function readLocalModelBenchmarkSnapshot(context: BenchmarkArtifact
     assertOptions(); signal?.throwIfAborted(); assertStoreSlots();
     if (modelReadingServicePath(context, ['platform', 'artifactStore']) !== nativeStore
       || options.signal !== signal || options.assertCurrent !== originalAssert) throw new ToolInputProjectionError('held');
-    assertModelReadingInputCurrent(originalArtifacts, serialized);
+    assertArtifacts(originalArtifacts);
   };
   const assertNativeCurrent = () => {
     assertNativeBindings();
-    if (list) assertModelReadingInputCurrent(list.call(store, 100), serialized);
+    if (list) assertArtifacts(list.call(store, 100));
     for (const guard of contentGuards) guard();
     assertNativeBindings();
   };

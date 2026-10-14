@@ -1,11 +1,16 @@
 import { TranscriptReadingLifetime } from '@goodvibes-jev/engine/sdk/platform/core';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { ConversationManager } from '../../core/conversation';
 
 let prior: ReturnType<typeof installJudgmentPort>;
-beforeEach(() => { prior = installJudgmentPort(fakePort(() => noulAnswer(0.99)).port); });
+beforeEach(() => { prior = installJudgmentPort(fakePort((name, question, state) => {
+  const content = (state as { content: string }).content;
+  const choice = name === 'activity' ? 'security' : name === 'severity' ? 'info'
+    : content === '[Remote] Attached to runner pool alpha' ? 'remote_status' : 'approval_request';
+  return choiceAnswer(question, choice, 0.99);
+}).port); });
 afterEach(() => installJudgmentPort(prior));
 
 describe('transcript event index', () => {

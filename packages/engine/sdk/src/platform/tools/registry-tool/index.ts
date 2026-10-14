@@ -1,6 +1,8 @@
 import { join, resolve, isAbsolute } from 'node:path';
 import { logger } from '../../utils/logger.js';
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { captureJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { retainStrictJudgmentJson, prepareJudgmentResult } from '../../gate/judgment-result.js';
+import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
 import { registryCandidateView, registryRank } from '../batteries/registry-rank.js';
 import {
   collectMarkdownReferences,
@@ -38,6 +40,9 @@ interface RegistryMatch {
   sections?: string[] | undefined;
 }
 
+/** Complete source is for judgments; output previews remain concise. */
+const registryEvidence = new WeakMap<RegistryMatch, string>();
+
 export interface RegistryToolRoots {
   readonly workingDirectory: string;
   readonly homeDirectory?: string | undefined;
@@ -70,7 +75,7 @@ async function scanDirectoryAll(
       const { metadata: frontmatter, body } = parseMarkdownFrontmatter(content);
       const name = typeof frontmatter['name'] === 'string' ? frontmatter['name'] : entry.replace(/\.md$/, '');
       const description = typeof frontmatter['description'] === 'string' ? frontmatter['description'] : '';
-      results.push({
+      const match: RegistryMatch = {
         name,
         type: itemType,
         description,
@@ -78,7 +83,9 @@ async function scanDirectoryAll(
         preview: extractMarkdownPreview(body),
         dependencies: normalizeFrontmatterList(frontmatter['depends_on']),
         includes: collectMarkdownReferences(body),
-      });
+      };
+      registryEvidence.set(match, content);
+      results.push(match);
       continue;
     }
 
@@ -95,7 +102,7 @@ async function scanDirectoryAll(
       const { metadata: frontmatter, body } = parseMarkdownFrontmatter(content);
       const name = typeof frontmatter['name'] === 'string' ? frontmatter['name'] : entry;
       const description = typeof frontmatter['description'] === 'string' ? frontmatter['description'] : '';
-      results.push({
+      const match: RegistryMatch = {
         name,
         type: itemType,
         description,
@@ -103,7 +110,9 @@ async function scanDirectoryAll(
         preview: extractMarkdownPreview(body),
         dependencies: normalizeFrontmatterList(frontmatter['depends_on']),
         includes: collectMarkdownReferences(body),
-      });
+      };
+      registryEvidence.set(match, content);
+      results.push(match);
     }
   }
   return results;
@@ -136,8 +145,11 @@ async function rankAgainst(
 ): Promise<{ matching: RegistryMatch[]; rest: RegistryMatch[] }> {
   if (items.length === 0) return { matching: [], rest: [] };
   const byId = new Map(items.map((item) => [`${item.type}:${item.name}`, item]));
-  const candidates = Array.from(byId, ([id, item]) => ({ id, content: registryCandidateView(item) }));
-  const port = judgmentPort(REGISTRY_RANK_SITE);
+  const candidates = Array.from(byId, ([id, item]) => ({ id, content: registryCandidateView({ ...item, preview: registryEvidence.get(item) ?? item.preview }) }));
+  const original = retainStrictJudgmentJson({ query, candidates });
+  assertJudgmentInput(original.snapshot);
+  const owner = captureJudgmentPort(REGISTRY_RANK_SITE, { signal: source.signal, assertCurrent: original.assertCurrent, prepareResultCapture: prepareJudgmentResult });
+  const port = owner.port;
   // Captured candidates are dispatched one at a time so a revocation during one
   // judgment cannot leave another queued candidate carrying stale authorization.
   let priorJudgment = Promise.resolve();
@@ -160,22 +172,22 @@ async function rankAgainst(
       } finally { release(); }
     },
   };
-  const { ranked } = await registryRank.rerank(guardedPort, query, candidates, { site: REGISTRY_RANK_SITE });
-  const matching = ranked.filter((entry) => entry.reading.verdict !== 'no').map((entry) => byId.get(entry.id)!);
+  const { ranked } = await registryRank.rerank(guardedPort, original.snapshot.query, original.snapshot.candidates, { site: REGISTRY_RANK_SITE, signal: owner.signal });
+  await source.assertCurrent(); owner.assertCurrent();
+  const matching = ranked.filter((entry) => entry.reading.outcome !== 'act' || entry.reading.verdict !== 'no').map((entry) => byId.get(entry.id)!);
   const rest = ranked
-    .filter((entry) => entry.reading.verdict === 'no')
+    .filter((entry) => entry.reading.outcome === 'act' && entry.reading.verdict === 'no')
     .map((entry) => byId.get(entry.id)!)
     .sort((a, b) => a.name.localeCompare(b.name));
   return { matching, rest };
 }
 
 function listTools(toolRegistry: ToolRegistry): RegistryMatch[] {
-  return toolRegistry.list().map((t) => ({
-    name: t.definition.name,
-    type: 'tool' as const,
-    description: t.definition.description,
-    path: '',
-  }));
+  return toolRegistry.list().map(t => {
+    const match: RegistryMatch = { name: t.definition.name, type: 'tool', description: t.definition.description, path: '' };
+    registryEvidence.set(match, JSON.stringify(t.definition));
+    return match;
+  });
 }
 
 function getSkillDirs(roots: RegistryToolRoots): string[] {
@@ -259,6 +271,7 @@ export function createRegistryTool(toolRegistry: ToolRegistry, roots: RegistryTo
       return result;
     } catch (err) {
       if (captured) return { success: false, error: 'Captured registry input held: missing, changed, cancelled or restricted original-owner authority. Output withheld.' };
+      if (err instanceof JudgmentInputError) return { success: false, error: err.message };
       const message = summarizeError(err);
       logger.error('registry tool: unexpected error', { error: message });
       return { success: false, error: `Unexpected error: ${message}` };

@@ -163,6 +163,12 @@ describe('pendingPromptLine', () => {
 });
 
 describe('readPendingPrompt', () => {
+  test('keeps the complete earlier output, including context before the former tail limit', async () => {
+    const earlier = 'The following is quoted documentation, not an active prompt.\n' + 'Example text.\n'.repeat(400);
+    await readPendingPrompt('fixture', earlier + 'Continue? [y/n]:');
+    const request = readings.requests.at(-1)!;
+    expect((request.state as { recentOutput: string }).recentOutput).toBe(earlier);
+  });
   test('a line Jev reads as awaiting input is the pending prompt', async () => {
     expect(await readPendingPrompt('sudo true', 'some output\nPassword: ')).toBe('Password:');
     expect(await readPendingPrompt('rm -i x', 'Overwrite? [y/N]')).toBe('Overwrite? [y/N]');

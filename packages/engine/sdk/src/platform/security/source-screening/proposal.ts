@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { types as nodeTypes } from 'node:util';
-import { JudgmentInputError, snapshotJudgmentInput } from '../../gate/judgment-input.js';
+import { JudgmentInputError, snapshotJudgmentEvidence } from '../../gate/judgment-input.js';
 import { captureSourceSpans } from '../source-spans.js';
 import { containsIssuerCredential } from '../../utils/redaction.js';
 import { SOURCE_SCREENING_LIMITS as LIMITS } from './types.js';
@@ -38,7 +38,7 @@ export function captureScreeningSource(value: readonly string[], credentialLiter
   if (values.some(part => typeof part !== 'string')) return fail();
   if (values.some(part => typeof part === 'string' && credentialLiterals.some(secret => part.includes(secret))))
     throw new JudgmentInputError('credential-material');
-  const snapshot = snapshotJudgmentInput(values);
+  const snapshot = snapshotJudgmentEvidence(values);
   if (!Array.isArray(snapshot) || snapshot.length < 1 || snapshot.length > LIMITS.parts
     || snapshot.some(part => typeof part !== 'string')
     || snapshot.reduce((sum, part) => sum + part.length, 0) > LIMITS.characters) return fail();

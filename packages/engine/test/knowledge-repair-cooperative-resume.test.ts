@@ -1,3 +1,4 @@
+import { repairScoringFixtureReading } from './_helpers/repair-scoring-fixture-readings.js';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -59,6 +60,12 @@ function storedRepairReadings(sourceTexts: readonly string[]) {
   };
   const fake = fakePort((name, _question, state) => {
     const input = record(state);
+    if (['Does AC-7 support webOS?', 'What TV platform, wireless connections and input ports does AC-7 support?'].includes(String(input.query))) {
+      if (name === 'fullProfileRequired') return noulAnswer(0.01);
+      if (name === 'repairEvidenceSufficient') return noulAnswer(0.99);
+    }
+    const scored = repairScoringFixtureReading(name, _question, state, repairClaims);
+    if (scored !== undefined) return scored;
     if (name === 'repairSubjectSelected') return noulAnswer(repairSubjectFixtureReading(state, [['AC-7', 0.99]]));
     if (name === 'repairUseful') return noulAnswer(repairUsefulFixtureReading(state, repairClaims));
     if (name === 'serve' && supportedClaim(input.candidate)) {
@@ -114,7 +121,7 @@ async function usefulFixture(combined = false) {
       metadata: { knowledgeSpaceId: spaceId, semanticKind: 'fact', factKind: 'feature', evidence: statement, value: statement,
         sourceIds: [source.id], subjectIds: [subject.id], linkedObjectIds: [subject.id], subject: subject.title } }));
   }
-  const input = { id: 'gap', kind: 'knowledge_gap' as const, slug: 'gap', title: combined ? 'AC-7 full features' : 'Does AC-7 support webOS?',
+  const input = { id: 'gap', kind: 'knowledge_gap' as const, slug: 'gap', title: combined ? 'What TV platform, wireless connections and input ports does AC-7 support?' : 'Does AC-7 support webOS?',
     status: 'active' as const, metadata: { knowledgeSpaceId: spaceId, linkedObjectIds: [subject.id] } };
   const gap = await upsertObservedKnowledgeNode(store, input, 'research-task', input, () => input);
   const task = await store.upsertRefinementTask({ spaceId, gapId: gap.id, state: 'applying', trigger: 'manual' });

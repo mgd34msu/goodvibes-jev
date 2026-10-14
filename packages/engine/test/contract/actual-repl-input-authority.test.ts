@@ -218,7 +218,10 @@ for (const scenario of ['allowed', 'allowed-node-runtime', 'revoke-after-eval', 
       const started = runner.start({ ask: 'Add a CSV parser module', sessionId: 'repl-fixture', origin: 'cli', projectRoot: root, isolation: 'worktree' });
       id = started.contract.id;
       try {
-        await waitFor(() => ['passed', 'failed', 'cancelled', 'awaiting-owner'].includes(runner.get(id!)!.status), 'actual captured REPL contract settlement', 60_000);
+        // The allowed Node case stages and revalidates the real Node/npm/npx
+        // runtime tree. Full-suite load must not expire this integration before
+        // its existing capture, replay and revocation assertions can run.
+        await waitFor(() => ['passed', 'failed', 'cancelled', 'awaiting-owner'].includes(runner.get(id!)!.status), 'actual captured REPL contract settlement', 120_000);
       } catch (error) {
         throw new Error(JSON.stringify({ error: String(error), status: runner.get(id)?.status, memberCalls, executed, agents: runtime.agentManager.list().map((agent) => ({ role: agent.contractRole, status: agent.status, progress: agent.progress, error: agent.error })), toolMessages: requests.at(-1)?.messages.filter((message) => message.role === 'tool') }));
       }
@@ -309,5 +312,5 @@ for (const scenario of ['allowed', 'allowed-node-runtime', 'revoke-after-eval', 
       store.dispose(); runtime.dispose(); installJudgmentPort(previous);
       rmSync(root, { recursive: true, force: true });
     }
-  }, 90_000);
+  }, 150_000);
 }

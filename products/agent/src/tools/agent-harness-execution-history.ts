@@ -89,7 +89,7 @@ function recordSearchText(record: AgentExecutionRecord): string {
 }
 
 function isRecoverableRoute(record: AgentExecutionRecord): boolean {
-  return record.routeKind === 'write';
+  return record.routeKind === 'write' && record.routeKindError === undefined;
 }
 
 function supervisionRoutes(context: CommandContext, record: AgentExecutionRecord): readonly Record<string, unknown>[] {

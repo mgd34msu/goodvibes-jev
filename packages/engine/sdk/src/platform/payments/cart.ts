@@ -155,7 +155,8 @@ export interface RecurringCheck {
  * anything but a confident no refuses.
  */
 export async function detectRecurringCharge(orderSummaryText: string): Promise<RecurringCheck> {
-  const run = await recurringCharge.run(judgmentPort(RECURRING_CHARGE_SITE), orderSummaryView(orderSummaryText), { site: RECURRING_CHARGE_SITE });
+  const state = orderSummaryView(orderSummaryText);
+  const run = await recurringCharge.run(judgmentPort(RECURRING_CHARGE_SITE), state, { site: RECURRING_CHARGE_SITE });
   const reading = run.readings.recurring;
   const oneOff = reading.verdict === 'no' && reading.outcome === 'act';
   run.recordAction(oneOff ? 'one-off charge' : 'refused as recurring');

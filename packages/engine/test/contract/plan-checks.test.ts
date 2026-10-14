@@ -115,7 +115,7 @@ describe('criterion-trace: fidelity is not supported at act', () => {
   });
 });
 
-describe('plan-coverage: each part of the request clears only on no at act or confirm', () => {
+describe('plan-coverage: each part of the request clears only on no at act', () => {
   const answering = (key: string, p: number) => ({ name }: { name: string }) => (name === key ? noulAnswer(p) : undefined);
 
   test('unquoted words that lean yes are a problem naming them', async () => {
@@ -144,9 +144,9 @@ describe('plan-coverage: each part of the request clears only on no at act or co
     expect(verdict.problems[0]!.message).toContain('restate it in the user\'s words');
   });
 
-  test('no at confirm clears its part', async () => {
+  test('no at confirm does not clear its part', async () => {
     const verdict = await check(answering('falls_short_2', 0.25));
-    expect(verdict.problems).toEqual([]);
+    expect(problemCodes(verdict, 'uncovered-requirement')).toEqual(['c2']);
   });
 
   test('no at act clears it', async () => {
@@ -184,14 +184,14 @@ describe('quoteLayout', () => {
 });
 
 describe('criterion-shape', () => {
-  test('checkable no at act or confirm is a problem; uncertain is not', async () => {
+  test('checkability requires a settled acting yes', async () => {
     const verdict = await check(({ name, state }) => {
       if (name !== 'checkable') return undefined;
       if (criterionOf(state).includes('CSV')) return noulAnswer(0.1);
       if (criterionOf(state).includes('JSON')) return noulAnswer(0.35);
       return noulAnswer(0.5);
     });
-    expect(problemCodes(verdict, 'not-checkable')).toEqual(['c1', 'c2']);
+    expect(problemCodes(verdict, 'not-checkable')).toEqual(['c1', 'c2', 'c3']);
   });
 
   test('topology-only at act is excluded when the plan does not honour a parallel request, and never a checkable problem', async () => {
@@ -262,10 +262,10 @@ describe('unit-shape', () => {
     expect(verdict.problems[0]!.message).toContain('criteria of the unit it would check');
   });
 
-  test('a verification role below act is not acted on', async () => {
+  test('a role below act cannot authorize the proposed unit', async () => {
     const verdict = await check(({ name, question, state }) =>
       name === 'role' && unitTitleOf(state) === 'CSV parser' ? choiceAnswer(question, 'review', 0.65) : undefined);
-    expect(verdict.problems).toEqual([]);
+    expect(problemCodes(verdict, 'role-mismatch')).toEqual(['u1']);
   });
 
   test('a role that disagrees with the plan is a mismatch; integration reads as implement', async () => {
@@ -291,10 +291,10 @@ describe('unit-shape', () => {
     expect(verdict.problems[1]!.message).toContain('not clear');
   });
 
-  test('narrows: a requirement read leaning no clears at any outcome, since the deliverable check judges it again', async () => {
+  test('narrows: a weak no cannot clear scope before execution', async () => {
     const readings: Record<string, number> = { 'CSV parser': 0.3, 'JSON formatter': 0.45, 'Wire convert': 0.2 };
     const verdict = await check(({ name, state }) => (name.startsWith('narrows_') ? noulAnswer(readings[unitTitleOf(state)!]!) : undefined));
-    expect(verdict.problems).toEqual([]);
+    expect(problemCodes(verdict, 'narrows')).toEqual(['u1', 'u2']);
   });
 
   test('narrows: one question per contract criterion the unit serves, and only the ones leaning yes are named', async () => {
@@ -335,4 +335,35 @@ test('every problem from every check is returned together', async () => {
 
 test('there is no read without an installed port', async () => {
   await expect(runPlanChecks(asPlan(validPlan()), ASK, shapeOf())).rejects.toBeInstanceOf(JudgmentPortMissingError);
+});
+
+
+test('plan checks admit the complete plan before dispatch', async () => {
+  const fake = install();
+  const plan = validPlan();
+  plan.goal = 'ordinary work '.repeat(300) + ['OPENAI_API', 'KEY=synthetic-secret'].join('_');
+  await expect(runPlanChecks(asPlan(plan), ASK, shapeOf())).rejects.toThrow();
+  expect(fake.requests).toHaveLength(0);
+});
+
+test('a plan changed while readings are pending cannot pass', async () => {
+  const fake = install();
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  installJudgmentPort({ ...fake.port, async ask(request) {
+    entered.resolve(); await release.promise; return fake.port.ask(request);
+  } });
+  const plan = validPlan();
+  const pending = runPlanChecks(asPlan(plan), ASK, shapeOf());
+  await entered.promise;
+  plan.criteria[0]!.text = 'Changed after the decision started';
+  release.resolve();
+  await expect(pending).rejects.toThrow();
+});
+
+test('a replacement Jev installation cannot authorize pending plan checks', async () => {
+  const fake = install();
+  installJudgmentPort({ ...fake.port, async ask(request) {
+    installJudgmentPort(fake.port); return fake.port.ask(request);
+  } });
+  await expect(runPlanChecks(asPlan(validPlan()), ASK, shapeOf())).rejects.toThrow();
 });

@@ -3,7 +3,7 @@ import { expect, spyOn, test } from 'bun:test';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  createSystemOnePort, PINNED_MODEL, SqliteDecisionLog, withDecisionLog,
+  createSystemOnePort, DEFAULT_MODEL, SqliteDecisionLog, withDecisionLog,
   type JudgmentPort, type JudgmentRequest, type Questions,
 } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
@@ -185,7 +185,7 @@ for (const scenario of ['act', 'reject', 'defer', 'revise', 'unrecorded', 'cance
       if (scenario === 'unrecorded') installJudgmentPort(rawPort);
       if (scenario === 'cancel-retry') {
         const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-fixture' },
-          model: PINNED_MODEL, timeoutMs: 1000, retry: { backoffInitialMs: 2, backoffMaxMs: 2, backoffJitter: 0 },
+          model: DEFAULT_MODEL, timeoutMs: 1000, retry: { backoffInitialMs: 2, backoffMaxMs: 2, backoffJitter: 0 },
           fetch: async (_url, init) => {
             const wire = JSON.parse(String(init?.body)) as JudgmentRequest<Questions>;
             if ('disposition' in wire.questions) {
@@ -193,7 +193,7 @@ for (const scenario of ['act', 'reject', 'defer', 'revise', 'unrecorded', 'cance
               return Response.json({}, { status: 503 });
             }
             const response = await gate.port.ask(wire);
-            return Response.json({ model: PINNED_MODEL, answers: response.answers, usage: { input_tokens: 1, output_tokens: 1 } });
+            return Response.json({ model: DEFAULT_MODEL, answers: response.answers, usage: { input_tokens: 1, output_tokens: 1 } });
           },
         });
         installJudgmentPort(withDecisionLog(transport, log));

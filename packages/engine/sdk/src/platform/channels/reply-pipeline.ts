@@ -1,3 +1,4 @@
+import { prepareChannelStatusContent } from './status-reading.js';
 import type { RuntimeEventBus, RuntimeEventEnvelope, AnyRuntimeEvent } from '../runtime/events/index.js';
 import type { ContractEvent } from '../../events/contract.js';
 import type {
@@ -314,6 +315,7 @@ export class ChannelReplyPipeline {
     // what it SAID is the final's to deliver.
     const freshEvents = selectUndeliveredEvents(state, state.events.filter((event) => event.phase !== 'final'));
     if (freshEvents.length === 0 && explicit.trim().length === 0) return null;
+    await prepareChannelStatusContent([explicit, ...freshEvents.filter(event => event.kind === 'status' && event.audience === 'owner').map(event => event.text ?? '')]).catch(() => { /* Unsettled notices remain visible. */ });
     const text = buildRenderedText(explicit, freshEvents, policy, 'progress');
     if (!text) return null;
     // Identical content is never republished, forced or not. `force` exists to
@@ -382,6 +384,7 @@ export class ChannelReplyPipeline {
     // (agents/conversational-reply-recovery.ts).
     const candidateEvents = finalEvents.length > 0 ? finalEvents : state.events;
     const renderEvents = selectUndeliveredEvents(state, candidateEvents);
+    await prepareChannelStatusContent(renderEvents.filter(event => event.kind === 'status' && event.audience === 'owner').map(event => event.text ?? '')).catch(() => { /* Unsettled notices remain visible. */ });
     const text = buildRenderedText(explicitText, renderEvents, policy, 'final');
     // Nothing to say, so say nothing, but close the run out.
     //

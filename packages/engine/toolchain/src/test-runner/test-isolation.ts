@@ -11,7 +11,7 @@ const INHERITED = new Set([
   'SHELL', 'TERM', 'COLORTERM', 'LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE', 'TZ',
   'CI', 'GITHUB_ACTIONS', 'NO_COLOR', 'FORCE_COLOR', 'TMPDIR', 'TMP', 'TEMP',
   RUNNER_ENV_FLAG,
-  'GOODVIBES_SDK_DEV_ROUNDTRIP_TEST',
+  'GOODVIBES_SDK_DEV_ROUNDTRIP_TEST', 'GOODVIBES_UPDATE_GOLDENS',
 ]);
 
 /** Isolate persisted user state while allowing tests to declare fixture env explicitly. */

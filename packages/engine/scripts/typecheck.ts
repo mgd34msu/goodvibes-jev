@@ -27,6 +27,14 @@ interface Project {
 }
 
 const PROJECTS: readonly Project[] = [
+  // This cross-product fixture imports Agent and engine implementations. Check
+  // the complete composition under Agent's module aliases, separately from the
+  // engine-only composite project. It remains in the engine test runner.
+  {
+    label: 'cross-product integration test typecheck',
+    command: 'bunx',
+    args: ['tsc', '--project', 'packages/engine/tsconfig.integration-tests.json', '--pretty', 'false'],
+  },
   // The composite solution. tsconfig.json references every package AND
   // tsconfig.tests.json, so this is the run that covers test/ and scripts/,
   // it did not before, because the root is `files: []` and the tests project

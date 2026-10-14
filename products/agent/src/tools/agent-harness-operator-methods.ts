@@ -330,7 +330,7 @@ export async function describeHarnessOperatorMethod(args: AgentHarnessOperatorMe
   const found = await rankHarnessCatalog(methods, lookup.input, (entry) => ({ id: entry.id, description: methodSearchText(entry), evidence: entry }), 'agent.harness.operator-methods', { ...options, requirePreservedSource: true });
   options.signal?.throwIfAborted(); options.assertCurrent?.();
   const searched = found.matches;
-  if (searched.length === 1 && searched[0]!.judgment.reading.verdict === 'yes') {
+  if (searched.length === 1 && searched[0]!.judgment.reading.verdict === 'yes' && searched[0]!.judgment.reading.outcome === 'act') {
     return { status: 'found', method: { ...describeMethod(searched[0]!.entry, {
       includeParameters: true, lookup: { ...lookup, resolvedBy: 'search' },
     }), judgment: searched[0]!.judgment } };

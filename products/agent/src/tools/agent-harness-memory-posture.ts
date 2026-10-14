@@ -173,11 +173,11 @@ function readMemoryUsageSummary(context: CommandContext): MemoryUsageSummary | n
 
 function buildUsageSection(summary: MemoryUsageSummary | null): Record<string, unknown> {
   if (!summary) {
-    return { status: 'unavailable', signal: 'heuristic-overlap', note: 'No usage instrumentation available in this runtime.' };
+    return { status: 'unavailable', signal: 'jev-reading', note: 'No usage instrumentation available in this runtime.' };
   }
   return {
     status: summary.everInjected > 0 ? 'tracked' : 'empty',
-    signal: 'heuristic-overlap',
+    signal: 'jev-reading',
     signalNote: summary.signalNote,
     totalTracked: summary.totalTracked,
     everInjected: summary.everInjected,

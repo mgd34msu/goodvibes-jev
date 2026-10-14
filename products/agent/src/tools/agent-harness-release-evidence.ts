@@ -1,5 +1,5 @@
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
-import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureCatalogData, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import { withNativeCatalog, rankResearchRecords } from './agent-harness-research-catalog-source.ts';
 import { selectHarnessCatalog } from './agent-harness-catalog-selection.ts';
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -66,7 +66,7 @@ type ReleaseEvidenceArtifactLoadResult =
     readonly status: 'available';
     readonly artifact: ReleaseEvidenceArtifact;
     readonly absolutePath: string;
-    readonly source: string;
+    readonly source?: string;
     readonly parsed?: unknown;
     readonly sizeBytes: number;
   }
@@ -164,7 +164,9 @@ function loadArtifact(artifact: ReleaseEvidenceArtifact): ReleaseEvidenceArtifac
         status: 'available',
         artifact,
         absolutePath,
-        source,
+        // withNativeCatalog retains and screens the complete original file.
+        // Keep its parsed values here instead of duplicating a large JSON file
+        // as an indivisible string in the semantic catalog.
         parsed: JSON.parse(source) as unknown,
         sizeBytes,
       };
@@ -266,9 +268,10 @@ function summarizeLoadedArtifact(
     return { ...base, reason: loaded.reason };
   }
 
+  if (loaded.artifact.kind !== 'json' && typeof loaded.source !== 'string') throw new ToolInputProjectionError('held');
   const summary = loaded.artifact.kind === 'json'
     ? summarizeJsonArtifact(loaded.artifact.id, loaded.parsed)
-    : summarizeMarkdownArtifact(loaded.artifact.id, loaded.source);
+    : summarizeMarkdownArtifact(loaded.artifact.id, loaded.source!);
   return {
     ...base,
     sizeBytes: loaded.sizeBytes,
@@ -301,14 +304,19 @@ function evidenceBundleStatus(loaded: readonly ReleaseEvidenceArtifactLoadResult
   };
 }
 
+function releaseArtifactReader(): () => readonly ReleaseEvidenceArtifactLoadResult[] {
+  let original: readonly ReleaseEvidenceArtifactLoadResult[] | undefined;
+  return () => original ??= captureCatalogData(RELEASE_EVIDENCE_ARTIFACTS.map(loadArtifact));
+}
+
 export async function releaseEvidenceBundleStatus(options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
   return withNativeCatalog({}, options, RELEASE_EVIDENCE_ARTIFACTS.map(artifact => join(packageRoot(), artifact.path)),
-    () => RELEASE_EVIDENCE_ARTIFACTS.map(loadArtifact), async (_args, loaded) => evidenceBundleStatus(loaded));
+    releaseArtifactReader(), async (_args, loaded) => evidenceBundleStatus(loaded));
 }
 
 export async function releaseEvidenceSummary(rawArgs: ReleaseEvidenceArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
   return withNativeCatalog(rawArgs, options, RELEASE_EVIDENCE_ARTIFACTS.map(artifact => join(packageRoot(), artifact.path)),
-    () => RELEASE_EVIDENCE_ARTIFACTS.map(loadArtifact), async (args, allLoaded, options) => {
+    releaseArtifactReader(), async (args, allLoaded, options) => {
   const query = readString(args.query || args.target);
   const selected = await rankResearchRecords(allLoaded, query, loaded => ({ id: loaded.artifact.id, description: loaded.artifact.description, evidence: loaded }), options, 'agent.release.evidence');
   const limit = readLimit(args.limit, 100);
@@ -340,7 +348,7 @@ function capturedArtifact(loaded: readonly ReleaseEvidenceArtifactLoadResult[], 
 
 export async function describeHarnessReleaseEvidenceArtifact(rawArgs: ReleaseEvidenceArgs, options: CatalogRankingOptions = {}): Promise<ReleaseEvidenceArtifactResolution> {
   return withNativeCatalog(rawArgs, options, RELEASE_EVIDENCE_ARTIFACTS.map(artifact => join(packageRoot(), artifact.path)),
-    () => RELEASE_EVIDENCE_ARTIFACTS.map(loadArtifact), async (args, allLoaded, options) => {
+    releaseArtifactReader(), async (args, allLoaded, options) => {
   const lookup = evidenceLookupFromArgs(args);
   if (!lookup) {
     return {

@@ -67,13 +67,13 @@ export async function verifyKnowledgeAnswer(input: AnswerVerificationInput,
   if (options.signal?.aborted) throw new Held('aborted');
   const snapshot = snapshotInput(input);
   if (!snapshot.evidence.some((row) => row.text.trim())) return freezeSupport({ confidence: 0, quality: { status: 'no-evidence', decisionIds: [] } });
-  const timeoutMs = options.timeoutMs ?? 15_000;
-  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > ANSWER_VERIFICATION_LIMITS.timeoutMs) throw new Held('budget');
+  const timeoutMs = options.timeoutMs;
+  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > ANSWER_VERIFICATION_LIMITS.timeoutMs)) throw new Held('budget');
   const controller = new AbortController();
   let reason: 'aborted' | 'budget' | undefined;
   const abort = () => { reason ??= 'aborted'; controller.abort(); };
   options.signal?.addEventListener('abort', abort, { once: true });
-  const timer = setTimeout(() => { reason ??= 'budget'; controller.abort(); }, timeoutMs);
+  const timer = timeoutMs === undefined ? undefined : setTimeout(() => { reason ??= 'budget'; controller.abort(); }, timeoutMs);
   let stopRace = () => {};
   const cancelled = new Promise<never>((_resolve, reject) => {
     const stop = () => reject(new Held(reason ?? 'aborted'));

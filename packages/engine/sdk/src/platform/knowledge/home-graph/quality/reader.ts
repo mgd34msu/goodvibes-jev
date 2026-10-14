@@ -1,5 +1,6 @@
-import { judgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
-import { toJson, type JudgmentPort, type JsonValue, type YesNoReading } from '@goodvibes-jev/judgment';
+import { retainStrictJudgmentJson, prepareJudgmentResult } from '../../../gate/judgment-result.js';
+import { captureJudgmentPort, JudgmentAuthorityRetiredError, JudgmentPortMissingError, type JudgmentPortCapture } from '@goodvibes-jev/engine/errors';
+import { fanOut, toJson, type JudgmentPort, type JsonValue, type YesNoReading } from '@goodvibes-jev/judgment';
 import { assertJudgmentInput, JudgmentInputError } from '../../../gate/judgment-input.js';
 import { freezeSupport } from '../../semantic/verification/projection.js';
 import { homeGraphQualityBatteries } from './batteries.js';
@@ -65,13 +66,16 @@ function validatedPort(port: JudgmentPort): JudgmentPort {
 }
 /** Complete protected-input preflight precedes every request; no partial reading pass is returned. */
 export async function readHomeGraphQuality(inputs: readonly HomeGraphQualityInput[], options: {
-  readonly signal?: AbortSignal | undefined; readonly timeoutMs?: number | undefined;
+  readonly signal?: AbortSignal | undefined; readonly timeoutMs?: number | undefined; readonly assertCurrent?: (() => void) | undefined;
 } = {}): Promise<readonly HomeGraphQualityReading[]> {
   if (options.signal?.aborted) throw new Held('aborted');
+  const original = retainStrictJudgmentJson(inputs, () => new JudgmentInputError('unsupported-input'));
   const snapshots = checkedInputs(inputs);
+  const callerSignal = options.signal, callerCurrent = options.assertCurrent;
+  let owner: JudgmentPortCapture | undefined;
   if (!snapshots.length) return [];
-  const timeoutMs = options.timeoutMs ?? LIMITS.defaultTimeoutMs;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs) throw new Held('budget');
+  const timeoutMs = options.timeoutMs;
+  if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs)) throw new Held('budget');
   const controller = new AbortController();
   let held: Held | undefined;
   let rejectStopped: (error: Held) => void = () => {};
@@ -79,12 +83,21 @@ export async function readHomeGraphQuality(inputs: readonly HomeGraphQualityInpu
   const stop = (error: Held) => { held ??= error; controller.abort(); rejectStopped(held); };
   const abort = () => stop(new Held('aborted'));
   options.signal?.addEventListener('abort', abort, { once: true });
-  const timer = setTimeout(() => stop(new Held('budget')), timeoutMs);
-  const check = () => { if (held) throw held; if (options.signal?.aborted) throw new Held('aborted'); };
+  const timer = timeoutMs === undefined ? undefined : setTimeout(() => stop(new Held('budget')), timeoutMs);
+  const checkSource = () => {
+    if (held) throw held; if (callerSignal?.aborted) throw new Held('aborted');
+    try { original.assertCurrent(); } catch { throw new Held('stale'); }
+    // Preserve the caller's typed stale-fact signal so its bounded recovery
+    // can re-read changed evidence; never turn it into a generic page failure.
+    callerCurrent?.();
+  };
+  const check = () => { checkSource(); try { owner?.assertCurrent(); } catch { throw new Held('stale'); } };
   const run = async () => {
     check();
     // Fully structural passes need no semantic port.
-    const port = snapshots.some((input) => input.questions.length) ? validatedPort(judgmentPort('engine.knowledge.homegraph-quality')) : undefined;
+    if (snapshots.some(input => input.questions.length)) owner = captureJudgmentPort('engine.knowledge.homegraph-quality', { signal: controller.signal, assertCurrent: checkSource,
+      prepareResultCapture: questions => prepareJudgmentResult(questions, reason => new Held(reason)) });
+    const port = owner ? validatedPort(owner.port) : undefined;
     const readings: HomeGraphQualityReading[] = []; let next = 0;
     await Promise.all(Array.from({ length: Math.min(LIMITS.concurrency, snapshots.length) }, async () => {
       while (next < snapshots.length) {
@@ -95,31 +108,33 @@ export async function readHomeGraphQuality(inputs: readonly HomeGraphQualityInpu
         const provenance: Partial<Record<typeof questions[number], NonNullable<HomeGraphQualityReading['provenance'][typeof questions[number]]>>> = {};
         const decisionIds: string[] = [], batteries: { name: string; version: number }[] = [];
         let model: string | undefined, requestedModel: string | undefined;
-        for (const question of questions) {
+        if (questions.length) {
           check();
           try {
-            const battery = homeGraphQualityBatteries[question];
-            const read = await battery.run(port!, state, { signal: controller.signal, site: 'engine.knowledge.homegraph-quality' });
+            const parts = Object.fromEntries(questions.map(question => [question, homeGraphQualityBatteries[question]]));
+            const read = await fanOut(port!, state, parts, { signal: controller.signal, site: 'engine.knowledge.homegraph-quality', beforeAttempt: check });
             check();
-            const reading = Object.values(read.readings)[0] as YesNoReading;
-            if (reading.outcome !== 'act' || reading.verdict === 'uncertain') throw new Held('unsettled');
-            if (model !== undefined && model !== read.result.model) throw new Held('stale');
             model = read.result.model; requestedModel = read.result.requestedModel;
-            answers[question] = reading.verdict === 'yes';
-            provenance[question] = { battery: battery.name, version: battery.version, probability: reading.probability,
-              decisionId: read.result.decisionId, model: read.result.model, requestedModel: read.result.requestedModel };
+            for (const question of questions) {
+              const battery = homeGraphQualityBatteries[question];
+              const reading = Object.values(read.readings[question]!)[0] as YesNoReading;
+              if (reading.outcome !== 'act' || reading.verdict === 'uncertain') throw new Held('unsettled');
+              answers[question] = reading.verdict === 'yes';
+              provenance[question] = { battery: battery.name, version: battery.version, probability: reading.probability,
+                decisionId: read.result.decisionId, model, requestedModel };
+              batteries.push({ name: battery.name, version: battery.version });
+            }
             if (read.result.decisionId) decisionIds.push(read.result.decisionId);
-            batteries.push({ name: battery.name, version: battery.version });
-            read.recordAction('settled derived-quality reading; no write or operator authority granted');
-          } catch (error) { const failure = error instanceof Held ? error : new Held('unavailable'); stop(failure); throw failure; }
+            read.recordAction('settled derived-quality readings; no write or operator authority granted');
+          } catch (error) { checkSource(); const failure = error instanceof Held ? error : new Held('unavailable'); stop(failure); throw failure; }
         }
-        readings[index] = { reference: input.reference, answers, provenance, decisionIds, batteries, model, requestedModel };
+        readings[index] = { assertCurrent: check, reference: input.reference, answers, provenance, decisionIds, batteries, model, requestedModel };
       }
     }));
     check(); return freezeSupport(readings);
   };
   try { return await Promise.race([run(), stopped]); }
   catch (error) { controller.abort(); throw error instanceof Held || error instanceof JudgmentInputError ? error
-    : new Held(error instanceof JudgmentPortMissingError ? 'unconfigured' : 'unavailable'); }
+    : new Held(error instanceof JudgmentPortMissingError ? 'unconfigured' : error instanceof JudgmentAuthorityRetiredError ? 'stale' : 'unavailable'); }
   finally { clearTimeout(timer); options.signal?.removeEventListener('abort', abort); }
 }

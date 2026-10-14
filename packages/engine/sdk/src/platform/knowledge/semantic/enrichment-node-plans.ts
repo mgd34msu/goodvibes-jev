@@ -3,7 +3,7 @@ import type { prepareEnrichmentFactDrafts } from './enrichment-fact-drafts.js';
 import type { KnowledgeSemanticExtraction, KnowledgeSemanticGapInput } from './types.js';
 import { readString, semanticHash, semanticMetadata, semanticSlug } from './utils.js';
 
-type EnrichmentFactPlan = ReturnType<typeof prepareEnrichmentFactDrafts>[number] & {
+type EnrichmentFactPlan = Awaited<ReturnType<typeof prepareEnrichmentFactDrafts>>[number] & {
   readonly primarySourceId: string; readonly supportMetadata: unknown;
 };
 export function enrichmentFactNodeInput(plan: EnrichmentFactPlan, spaceId: string,

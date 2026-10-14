@@ -84,21 +84,22 @@ describe('local model serving diagnostic shared redaction', () => {
     expect(JSON.stringify(result)).not.toContain('servingDiagnostics');
   });
 
-  test('explicit inspection awaits the public redactor for all diagnostic prose before returning', async () => {
+  test('explicit inspection withholds credential-bearing diagnostics before interpretation or publication', async () => {
     const f = fixture(), readings = localDiagnosticReadings(); installJudgmentPort(readings.port);
     const original = JSON.stringify(f.snapshot);
     const assertCurrent = () => { if (JSON.stringify(f.snapshot) !== original) throw new Error('Fixture diagnostic source changed.'); };
     const result = await readLocalModelCookbook(f.context, true, { assertCurrent, sourceOwner: readings.sourceOwner });
     const serialized = JSON.stringify(result);
     expect(f.reads()).toBeGreaterThan(0);
-    expect(serialized).toContain('[REDACTED]');
-    expect(serialized).toContain('published-read-model');
+    expect(result).toMatchObject({ localServerHealth: { daemonDiagnostics: {
+      status: 'read-model-error', sourcePaths: [], recordCount: 0, matchedEndpointCount: 0,
+    } } });
     expect(serialized).not.toContain('private-fixture');
     expect(JSON.stringify(readings.requests)).not.toContain('private-fixture');
     expect(JSON.stringify(f.snapshot)).toBe(original);
   });
 
-  test.each(['cancel', 'source replacement', 'port retirement'] as const)('%s during redaction prevents a diagnostic outcome', async mode => {
+  test.each(['cancel', 'source replacement', 'port retirement'] as const)('%s during protected inspection prevents a diagnostic outcome', async mode => {
     const f = fixture(), readings = localDiagnosticReadings();
     const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
     const ask = readings.port.ask.bind(readings.port);

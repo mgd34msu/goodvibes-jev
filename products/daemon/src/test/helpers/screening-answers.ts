@@ -13,7 +13,7 @@ const tasks = {
 export function screeningAnswers(body: unknown, authored: { readonly complete: number; readonly precise: number }) {
   const request = object(body), state = object(request.state), questions = object(request.questions);
   equal(Object.keys(state).sort(), ['excerpts', 'parts', 'spans', 'subjects']);
-  if (request.model !== 'jev-1.13.0' || !Array.isArray(state.parts) || !state.parts.every(part => typeof part === 'string')
+  if ((request.model !== 'jev-latest' && request.model !== 'jev-1.13.0') || !Array.isArray(state.parts) || !state.parts.every(part => typeof part === 'string')
     || !Array.isArray(state.spans) || !Array.isArray(state.excerpts)) throw new Error('Unexpected synthetic screening state');
   const originalParts: readonly string[] = state.parts;
   if (state.excerpts.length !== originalParts.length) throw new Error('Incomplete synthetic screening context');

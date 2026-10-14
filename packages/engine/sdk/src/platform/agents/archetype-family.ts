@@ -1,3 +1,4 @@
+import { toJson, type EntryType } from '@goodvibes-jev/judgment';
 import { lstatSync, readFileSync, readdirSync, realpathSync, statSync, type BigIntStats } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { captureJudgmentPort, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
@@ -63,7 +64,15 @@ export function captureArchetypeListing(directory: string) {
   // Screen full file bodies and names before the native parser can log a failure.
   assertJudgmentInput({ directory: path, files: source.files.map(file => ({ name: file.name, text: file.text })) });
   const prototype = ArchetypeLoader.prototype, list = prototype.listArchetypes;
-  const archetypes = list.call(new ArchetypeLoader(path));
+  const archetypes: AgentArchetype[] = list.call(new ArchetypeLoader(path)).map(archetype => {
+    if (!archetype.isCustom) return archetype;
+    const document = source.files.find(file => join(path, file.name) === archetype.sourcePath);
+    if (typeof document?.text !== 'string') throw new ArchetypeReadingHeldError();
+    // listArchetypes deliberately leaves Markdown bodies lazy. Retain the full
+    // owned source as evidence without changing the executable system prompt or
+    // resolving additional file references through an unowned loader callback.
+    return { ...archetype, sourceDocument: document.text };
+  });
   const original = retainStrictJudgmentJson(archetypes);
   assertJudgmentInput(original.snapshot);
   const assertCurrent = () => {
@@ -94,7 +103,7 @@ export async function readArchetypeFamilies(archetypes: readonly AgentArchetype[
   };
   current();
   if (original.snapshot.length === 0) return Object.freeze({ readings: [], assertCurrent: current });
-  const state = { archetypes: original.snapshot.map(entry => ({ name: entry.name, description: entry.description, tools: entry.tools })) };
+  const state = toJson({ archetypes: original.snapshot }) as EntryType; // Include the complete system prompt; names and tools alone cannot establish a role.
   const authority = captureJudgmentPort('agents.archetype-family', { ...(signal === undefined ? {} : { signal }), assertCurrent: current, prepareResultCapture: prepareJudgmentResult });
   const result = await fanOut(authority.port, state, parts, {
     signal: authority.signal, beforeAttempt: authority.assertCurrent, site: 'agents.archetype-family', label: 'engine.agents.archetype-family',

@@ -234,8 +234,8 @@ export function deliveryState(message: unknown): 'sent' | 'failed' | 'local' | '
   // must never fall through to the 'sent' default and masquerade as normal.
   if (state === 'cancelled') return 'cancelled';
   if (state === 'queued') return 'queued';
-  if (state.includes('fail') || state.includes('error')) return 'failed';
-  if (state.includes('local') || state.includes('pending')) return 'local';
+  if (state === 'failed' || state === 'error') return 'failed';
+  if (state === 'local' || state === 'pending') return 'local';
   if (messageTone(message) === 'user') return 'sent';
   return '';
 }

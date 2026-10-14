@@ -6,6 +6,7 @@
  * point) and returns the ones read as a match, in catalog order. A blank
  * filter lists everything without asking.
  */
+import { JudgmentHeldError } from '../sdk/src/platform/types/judgment-held.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Question } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -50,9 +51,9 @@ describe('hook contract search', () => {
     expect(found.map((contract) => contract.pattern)).toEqual(['Pre:mcp:call', 'Fail:mcp:call']);
   });
 
-  test('an unsure reading is not a match', async () => {
+  test('an unsure reading holds the search instead of claiming no matches', async () => {
     installJudgmentPort(contractPort({ 'Pre:tool:*': 0.5 }).port);
-    expect(await api().contracts('tool stuff')).toEqual([]);
+    await expect(api().contracts('tool stuff')).rejects.toBeInstanceOf(JudgmentHeldError);
   });
 
   test('a filtered search with no judgment port installed throws', async () => {

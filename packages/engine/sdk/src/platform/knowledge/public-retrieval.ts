@@ -379,7 +379,10 @@ export async function readPublicKnowledgeSelection(store: KnowledgeStore, input:
       check();
       return { accepted: result, assertCurrent,
         relatedLabels(kind: 'source' | 'node', id: string) { assertCurrent(); return related.get(`${kind}:${id}`) ?? Object.freeze([]); } };
-    }, undefined, externalSignal);
+    // One bounded deadline covers the complete admitted corpus, including
+    // privacy projection and every relevance batch. The per-batch default
+    // cannot serve as a shorter deadline for an arbitrarily larger corpus.
+    }, 60_000, externalSignal);
   } catch (error) {
     if (error instanceof JudgmentInputError || error instanceof Held) throw error;
     if (error instanceof KnowledgeScopeSelectionHeldError) throw new Held(error.reason === 'uncertain' ? 'unsettled' : error.reason);

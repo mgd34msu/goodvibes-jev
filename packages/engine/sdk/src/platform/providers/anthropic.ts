@@ -1,3 +1,4 @@
+import { JudgmentHeldError } from '../types/judgment-held.js';
 import { revalidateProviderAttempt } from './attempt-guard.js';
 import type {
   LLMProvider,
@@ -516,7 +517,12 @@ export class AnthropicProvider implements LLMProvider {
   /** Reads the model's output-cap row before a request is built, unless the provider has reported its cap. */
   private async prepareMaxOutput(model: string): Promise<void> {
     if (this._liveMaxOutput.has(model)) return;
-    await readAnthropicOutputCapRow(model, OUTPUT_CAP_SITE);
+    try { await readAnthropicOutputCapRow(model, OUTPUT_CAP_SITE); }
+    catch (error) {
+      // clampMaxTokens uses the smallest documented cap while unresolved;
+      // uncertainty is never cached as a settled absence of a model family.
+      if (!(error instanceof JudgmentHeldError)) throw error;
+    }
   }
 
   private async createChatBatch(input: ProviderBatchCreateInput): Promise<ProviderBatchCreateResult> {

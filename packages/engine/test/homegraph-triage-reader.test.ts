@@ -31,7 +31,7 @@ describe('registered Home Graph triage readings', () => {
     const [plan] = await prepareHomeGraphTriageReadings([input()]);
     expect(fake.requests).toHaveLength(2); expect(plan!.facts).toEqual({ batteryPowered: false, batteryType: 'none' });
     expect(plan!.decisionIds).toEqual(['decision-1', 'decision-2']); expect(plan!.origin).toBe('automatic-judgment');
-    expect(plan!.probability).toBe(0.97); expect(plan!.model).toBe(fake.port.model);
+    expect(plan!.probability).toBe(0.97); expect(plan!.model).toBe('jev-1.13.0'); expect(plan!.requestedModel).toBe('jev-latest');
     expect(Object.isFrozen(plan!.facts)).toBe(true); expect(Object.isFrozen(plan!.batteries)).toBe(true);
   });
   test('manual fact is separate, custom reject creates no arbitrary facts, and review never asks fact questions', async () => {

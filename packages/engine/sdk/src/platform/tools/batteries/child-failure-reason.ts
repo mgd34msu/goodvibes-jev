@@ -1,3 +1,4 @@
+import { completeJudgmentView } from './complete-view.js';
 /**
  * `engine.tools.child-failure-reason`: why a child agent died, read from the
  * free-text error on its record, as one of the failure envelope's reason
@@ -37,7 +38,7 @@ export const MAX_JUDGED_CHILD_ERROR_CHARS = 2_000;
 
 /** What the reading sees: the child's own error message. */
 export function childFailureView(error: string): { error: string } {
-  return { error: error.slice(0, MAX_JUDGED_CHILD_ERROR_CHARS) };
+  return completeJudgmentView({ error });
 }
 
 const said = (error: string) => childFailureView(error);

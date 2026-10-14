@@ -1,5 +1,5 @@
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { CommandRegistry } from '../../input/command-registry.ts';
 import { registerBuiltinCommands } from '../../input/commands.ts';
@@ -12,7 +12,8 @@ let probability = 0.99;
 let pause: (() => Promise<void>) | undefined;
 beforeEach(() => {
   probability = 0.99; pause = undefined;
-  const fake = fakePort(() => noulAnswer(probability));
+  const fake = fakePort((name, question) => question.type === 'noul' ? noulAnswer(probability)
+    : choiceAnswer(question, name === 'activity' ? 'security' : name === 'severity' ? 'info' : 'approval_request', probability));
   previous = installJudgmentPort({ model: fake.port.model, async ask(request) { request.beforeAttempt?.(); await pause?.(); request.beforeAttempt?.(); return fake.port.ask(request); } });
 });
 afterEach(() => installJudgmentPort(previous));

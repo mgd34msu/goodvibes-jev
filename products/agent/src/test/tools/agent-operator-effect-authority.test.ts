@@ -237,8 +237,9 @@ test.each(['cancel', 'revoke', 'config-aba', 'token-aba', 'getter', 'method'] as
     const f = scene(kind), controller = new AbortController(); let changed = false, getterReads = 0;
     const method = getOperatorContract().operator.methods.find(entry => entry.id === 'services.start');
     const http = method?.http;
+    const httpDescriptor = method && Object.getOwnPropertyDescriptor(method, 'http');
     const descriptor = getOperatorActions()['automation.jobs.run'];
-    const path = descriptor.pathTemplate;
+    const pathDescriptor = Object.getOwnPropertyDescriptor(descriptor, 'pathTemplate');
     const getDescriptor = Object.getOwnPropertyDescriptor(f.config, 'get');
     f.beforeBody(() => f.fixture.beforeAuthorityRead(() => {
       if (changed) return; changed = true;
@@ -254,9 +255,13 @@ test.each(['cancel', 'revoke', 'config-aba', 'token-aba', 'getter', 'method'] as
       let result: Awaited<ReturnType<typeof f.fixture.run>> | undefined;
       try { result = await f.fixture.run(f.args, controller.signal); } catch { /* The registry may retire the invocation before entering its body. */ }
       expect(result?.success ?? false).toBe(false); expect(f.requests).toHaveLength(0); expect(getterReads).toBe(0);
+      expect(changed).toBe(true);
     } finally {
       if (change === 'getter') { if (getDescriptor) Object.defineProperty(f.config, 'get', getDescriptor); else delete Object(f.config).get; }
-      if (change === 'method') { if (method) Object.defineProperty(method, 'http', { configurable: true, enumerable: true, writable: true, value: http }); Object.defineProperty(descriptor, 'pathTemplate', { configurable: true, enumerable: true, writable: true, value: path }); }
+      if (change === 'method') {
+        if (method && httpDescriptor) Object.defineProperty(method, 'http', httpDescriptor);
+        if (pathDescriptor) Object.defineProperty(descriptor, 'pathTemplate', pathDescriptor);
+      }
     }
   }
 });

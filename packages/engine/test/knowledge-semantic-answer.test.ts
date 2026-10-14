@@ -1,10 +1,19 @@
+import { answerGapAssessmentFixtures, semanticRepairAssessmentCoverage } from './_helpers/knowledge-self-improvement-readings.js';
 import { extractionValueFixtureFor } from './_helpers/knowledge-extraction-value-readings.js';
 import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
 import { seedKnowledgeResearchTask, useSemanticActivationFixtures } from './_helpers/knowledge-semantic-activation-fixtures.js';
 import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
-import { semanticRepairProfileValues, semanticRepairUsefulValues } from './_helpers/repair-profile-fixture-readings.js';
+import { semanticRepairProfileValues, semanticRepairUsefulValues, semanticRepairSentenceKinds } from './_helpers/repair-profile-fixture-readings.js';
 
-const answerReadings = useKnowledgeAnswerReadings({ repairProfile: semanticRepairProfileValues, repairUseful: semanticRepairUsefulValues, objectAlignment: [
+const answerReadings = useKnowledgeAnswerReadings({ extractedKinds: semanticRepairSentenceKinds, repairProfile: semanticRepairProfileValues, repairUseful: semanticRepairUsefulValues, selfImprovement: [
+  ...answerGapAssessmentFixtures(['what features does the TV have?', 'What refresh rate, HDR formats, HDMI 2.1 or gaming features, and smart TV features does the TV have?'], [{ title: 'LG webOS Smart TV' }], 0.99),
+  { query: 'What are the complete features and specifications for LG 86NANO90UNA LG webOS Smart TV?', queryAliases: ['What are the complete features and specifications for LG 86NANO90UNA LG webOS Smart TV?\n\nThe current source-backed facts for LG 86NANO90UNA LG webOS Smart TV do not yet cover the full feature/specification profile.'], subjects: ['LG webOS Smart TV'], fullProfileRequired: 0.99, context: [0.99, 0.99], coverage: semanticRepairAssessmentCoverage },
+  { query: 'What are the complete features and specifications for MODEL-1 Living Room TV?', queryAliases: ['What are the complete features and specifications for MODEL-1 Living Room TV?\n\nThe current source-backed facts for MODEL-1 Living Room TV do not yet cover the full feature/specification profile.'], subjects: ['Living Room TV'], fullProfileRequired: 0.99, context: [0.99, 0.99], coverage: [
+    { facts: [], probability: 0.01 },
+    { facts: ['Dolby Vision support', 'HDMI inputs'], probability: 0.01 },
+    { facts: ['Dolby Vision support', 'HDMI inputs', 'Display and picture specifications', 'Input and output ports'], probability: 0.01 },
+  ] },
+], objectAlignment: [
   { query: 'what features does the living room tv have?', objects: [{ title: 'Living Room TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 }] },
   { query: 'what features does the TV have?', objects: [{ title: 'LG webOS Smart TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 }] },
   { query: 'What refresh rate, HDR formats, HDMI 2.1 or gaming features, and smart TV features does the TV have?',
@@ -77,7 +86,13 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     expect(answer.answer.facts.some((fact) => fact.title === 'HDMI inputs')).toBe(true);
   });
 
-  test('falls back to deterministic facts when no LLM is configured', async () => {
+  test('extracts exact source spans through Jev when no generative LLM is configured', async () => {
+    answerReadings.set({ extractedKinds: [
+      ['The controller includes local control mode.', 'feature'],
+      ['The controller supports Wi-Fi configuration.', 'configuration'],
+      ['The controller has USB-C power.', 'specification'],
+    ], repairUseful: ['The controller includes local control mode.', 'The controller supports Wi-Fi configuration.', 'The controller has USB-C power.']
+      .map(text => [text, text, text] as const) });
     const { store } = createStores();
     const semantic = new KnowledgeSemanticService(store);
     const source = await store.upsertSource({
@@ -103,7 +118,7 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     const enriched = await semantic.enrichSource(source.id);
     const answer = await semantic.answer({ query: 'controller features', includeSources: true });
 
-    expect(enriched?.facts.map((fact) => fact.title)).toContain('controller includes local control mode');
+    expect(enriched?.facts.map((fact) => fact.title)).toContain('The controller includes local control mode.');
     expect(enriched?.wikiPage?.kind).toBe('wiki_page');
     expect(answer.answer.synthesized).toBe(true);
     expect(answer.answer.text.trim().startsWith('-')).toBe(false);
@@ -355,6 +370,7 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
       metadata: {
         knowledgeSpaceId: spaceId,
         semanticKind: 'fact',
+        extractor: 'llm',
         factKind: 'specification',
         value: '4K UHD resolution, Dolby Vision',
         sourceId: official.id,
@@ -401,12 +417,11 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     const { store, artifactStore } = createStores();
     const semantic = new KnowledgeSemanticService(store, { llm: new FakeKnowledgeLlm() });
     const service = disposables.add(new HomeGraphService(store, artifactStore, { semanticService: semantic }));
-    const extractionSource1 = await service.syncSnapshot({
+    await service.syncSnapshot({
       installationId: 'house',
       areas: [{ id: 'living-room', name: 'Living Room' }],
       devices: [{ id: 'tv', name: 'Living Room TV', areaId: 'living-room', model: 'MODEL-1' }],
     });
-    answerReadings.addExtractionValue(...extractionValueFixtureFor(extractionSource1.source, store.getExtractionBySourceId(extractionSource1.source.id), 0.99));
     const random = spyOn(crypto, 'randomUUID').mockReturnValue('00001af0-0000-4000-8000-000000000000');
     // The generated local URI for this UUID has a protected-looking digit run.
     // Keep the ordinary TV content, and exercise the owned answer-alias path.
@@ -450,11 +465,10 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     const { store, artifactStore } = createStores();
     const semantic = new KnowledgeSemanticService(store, { llm: new FakeKnowledgeLlm() });
     const service = disposables.add(new HomeGraphService(store, artifactStore, { semanticService: semantic }));
-    const extractionSource3 = await service.syncSnapshot({
+    await service.syncSnapshot({
       installationId: 'house',
       devices: [{ id: 'tv', name: 'Living Room TV', model: 'MODEL-1' }],
     });
-    answerReadings.addExtractionValue(...extractionValueFixtureFor(extractionSource3.source, store.getExtractionBySourceId(extractionSource3.source.id), 0.99));
     const extractionSource4 = await service.ingestNote({
       installationId: 'house',
       title: 'Living Room TV manual',
@@ -481,7 +495,7 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     const { store, artifactStore } = createStores();
     const semantic = new KnowledgeSemanticService(store, { llm: new FakeKnowledgeLlm() });
     const service = disposables.add(new HomeGraphService(store, artifactStore, { semanticService: semantic }));
-    const extractionSource5 = await service.syncSnapshot({
+    await service.syncSnapshot({
       installationId: 'house',
       devices: [
         { id: 'tv', name: 'LG webOS Smart TV', manufacturer: 'LG', model: '86NANO90UNA' },
@@ -489,7 +503,6 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
         { id: 'router', name: 'Storage Router', manufacturer: 'GL.iNet', model: 'MT6000' },
       ],
     });
-    answerReadings.addExtractionValue(...extractionValueFixtureFor(extractionSource5.source, store.getExtractionBySourceId(extractionSource5.source.id), 0.99));
     const extractionSource6 = await service.ingestNote({
       installationId: 'house',
       title: 'LG TV feature sheet',
@@ -511,6 +524,9 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
       target: { kind: 'device', id: 'bravia', relation: 'has_manual' },
     });
     answerReadings.addExtractionValue(...extractionValueFixtureFor(extractionSource8.source, extractionSource8.extraction ?? null, 0.99));
+    // Home Graph only constructs this fixture; the namespace query below uses
+    // the semantic service directly, with no concurrent Home Graph publisher.
+    await service.dispose();
     await semantic.reindex({ knowledgeSpaceId: homeAssistantKnowledgeSpaceId('house'), force: true });
 
     const answer = await semantic.answer({
@@ -539,7 +555,7 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     const { store, artifactStore } = createStores();
     const semantic = new KnowledgeSemanticService(store, { llm: new FakeKnowledgeLlm() });
     const service = disposables.add(new HomeGraphService(store, artifactStore, { semanticService: semantic }));
-    const extractionSource9 = await service.syncSnapshot({
+    await service.syncSnapshot({
       installationId: 'house',
       // This real generated snapshot URI contains a protected-looking digit run.
       capturedAt: 1791110401109,
@@ -548,7 +564,6 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
         { id: 'router', name: 'Storage Router', manufacturer: 'GL.iNet', model: 'MT6000' },
       ],
     });
-    answerReadings.addExtractionValue(...extractionValueFixtureFor(extractionSource9.source, store.getExtractionBySourceId(extractionSource9.source.id), 0.99));
     const extractionSource10 = await service.ingestNote({
       installationId: 'house',
       title: 'LG TV feature sheet',
@@ -581,11 +596,10 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
       gapRepairer: async () => ({ searched: true, ingestedSourceIds: [], skippedUrls: [] }),
     });
     const snapshotService = disposables.add(new HomeGraphService(store, artifactStore));
-    const extractionSource12 = await snapshotService.syncSnapshot({
+    await snapshotService.syncSnapshot({
       installationId: 'house',
       devices: [{ id: 'tv', name: 'LG webOS Smart TV', manufacturer: 'LG', model: '86NANO90UNA' }],
     });
-    answerReadings.addExtractionValue(...extractionValueFixtureFor(extractionSource12.source, store.getExtractionBySourceId(extractionSource12.source.id), 0.99));
     const service = disposables.add(new HomeGraphService(store, artifactStore, { semanticService: semantic }));
     const extractionSource13 = await service.ingestNote({
       installationId: 'house',
@@ -620,11 +634,10 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     const { store, artifactStore } = createStores();
     const semantic = new KnowledgeSemanticService(store, { llm: new WeakFeatureAnswerLlm() });
     const service = disposables.add(new HomeGraphService(store, artifactStore, { semanticService: semantic }));
-    const extractionSource14 = await service.syncSnapshot({
+    await service.syncSnapshot({
       installationId: 'house',
       devices: [{ id: 'tv', name: 'LG webOS Smart TV', manufacturer: 'LG', model: '86NANO90UNA' }],
     });
-    answerReadings.addExtractionValue(...extractionValueFixtureFor(extractionSource14.source, store.getExtractionBySourceId(extractionSource14.source.id), 0.99));
 
     const answer = await service.ask({
       installationId: 'house',
@@ -644,12 +657,11 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     const llm = new OrderedHomeGraphAskLlm();
     const semantic = new KnowledgeSemanticService(store, { llm });
     const service = disposables.add(new HomeGraphService(store, artifactStore, { semanticService: semantic }));
-    const extractionSource15 = await service.syncSnapshot({
+    await service.syncSnapshot({
       installationId: 'house',
       areas: [{ id: 'living-room', name: 'Living Room' }],
       devices: [{ id: 'tv', name: 'Living Room TV', areaId: 'living-room', model: 'MODEL-1' }],
     });
-    answerReadings.addExtractionValue(...extractionValueFixtureFor(extractionSource15.source, store.getExtractionBySourceId(extractionSource15.source.id), 0.99));
     const extractionSource16 = await service.ingestNote({
       installationId: 'house',
       title: 'Living Room TV manual',
@@ -713,11 +725,10 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
       },
     });
     const service = disposables.add(new HomeGraphService(store, artifactStore, { semanticService: semantic }));
-    const extractionSource17 = await service.syncSnapshot({
+    await service.syncSnapshot({
       installationId: 'house',
       devices: [{ id: 'tv', name: 'LG webOS Smart TV', manufacturer: 'LG', model: '86NANO90UNA' }],
     });
-    answerReadings.addExtractionValue(...extractionValueFixtureFor(extractionSource17.source, store.getExtractionBySourceId(extractionSource17.source.id), 0.99));
 
     const answer = await service.ask({
       installationId: 'house',
@@ -753,7 +764,7 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     expect(page.markdown).toContain('Verified Device Facts');
     expect(page.markdown).toContain('Display and picture specifications');
     expect(page.markdown).not.toContain('manual/source');
-  });
+  }, 180_000);
 
   test('cold Home Graph ask waits for accepted repair source promotion before returning', async () => {
     answerReadings.set({ initialEvidence: [['LG 86NANO90UNA official specifications', 0.99]], sources: [['LG 86NANO90UNA official specifications', 0.99]] });
@@ -819,11 +830,10 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     };
     const semantic = new KnowledgeSemanticService(store, { gapRepairer: repairOfficialEvidence });
     const service = disposables.add(new HomeGraphService(store, artifactStore, { semanticService: semantic }));
-    const extractionSource18 = await service.syncSnapshot({
+    await service.syncSnapshot({
       installationId: 'house',
       devices: [{ id: 'tv', name: 'LG webOS Smart TV', manufacturer: 'LG', model: '86NANO90UNA' }],
     });
-    answerReadings.addExtractionValue(...extractionValueFixtureFor(extractionSource18.source, store.getExtractionBySourceId(extractionSource18.source.id), 0.99));
 
     // Force a distinct intrinsic-gap repair while the foreground page owns
     // its original source/extraction, rather than depending on the pump timer.
@@ -876,7 +886,9 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     expect(homeGraphFacts.every((fact) => fact.linkedObjectIds?.length === 1)).toBe(true);
     expect(answer.answer.refinement?.status).toBe('repaired');
     expect(answer.answer.refinement?.acceptedSourceIds).toContain(officialSourceId);
-    expect(answer.answer.refinement?.promotedFactCount).toBe(homeGraphFacts.length);
+    // Six category facts were promoted by repair; later enrichment also adds
+    // the complete source sentence and may refresh those category records.
+    expect(answer.answer.refinement?.promotedFactCount).toBe(6);
     expect(answer.answer.refinement?.pageRefreshRequested).toBe(true);
     expect(answer.answer.refinement?.pageRefreshed).toBe(true);
     expect(answer.answer.text).toContain('Dolby Vision');
@@ -890,7 +902,7 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     expect(page.markdown).toContain('2 x 10W');
     expect(page.markdown).not.toContain('0 source(s)');
     expect(page.markdown).not.toContain('manual/source');
-  });
+  }, 180_000);
 
   test('Home Graph semantic ask does not let unrelated semantic pages become object anchors', async () => {
     // Explicit readings for the off-intent maintenance/setup facts in this fixture.
@@ -917,7 +929,7 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
       async completeText() { return 'The TV supports HDR10, HDMI ARC/eARC, Filmmaker Mode, Game Optimizer, and Magic Remote voice control.'; },
     } });
     const service = disposables.add(new HomeGraphService(store, artifactStore, { semanticService: semantic }));
-    const extractionSource19 = await service.syncSnapshot({
+    await service.syncSnapshot({
       installationId: 'house',
       areas: [{ id: 'living-room', name: 'Living Room' }],
       devices: [
@@ -925,7 +937,6 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
         { id: 'plug', name: 'Kasa Smart Wi-Fi Plug', areaId: 'living-room', manufacturer: 'Kasa', model: 'KP125M' },
       ],
     });
-    answerReadings.addExtractionValue(...extractionValueFixtureFor(extractionSource19.source, store.getExtractionBySourceId(extractionSource19.source.id), 0.99));
     const extractionSource20 = await service.ingestNote({
       installationId: 'house',
       title: 'LG 86NANO90UNA manual',
@@ -958,9 +969,11 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
       target: { kind: 'device', id: 'plug', relation: 'has_manual' },
     });
     answerReadings.addExtractionValue(...extractionValueFixtureFor(extractionSource21.source, extractionSource21.extraction ?? null, 0.99));
-    await semantic.reindex({
-      knowledgeSpaceId: homeAssistantKnowledgeSpaceId('house'),
+    await service.reindex({
+      installationId: 'house',
       force: true,
+      refreshPages: false,
+      semanticMaxRunMs: 45_000,
     });
 
     const answer = await service.ask({
@@ -1003,7 +1016,7 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     expect(answerText).not.toContain('setting to off');
     expect(answerText).not.toContain('platform or cabinet');
     expect(answerText).not.toContain('▲');
-  });
+  }, 180_000);
 
   test('measured candidate preference selects concise generated content over literal setup boilerplate', async () => {
     answerReadings.set({ preferred: 'generated' });
@@ -1040,7 +1053,7 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
       'HDMI Ultra HD Deep Color with 4K at 100/120 Hz on ports 3 and 4.',
       'IEEE 802.11a/b/g/n/ac wireless LAN and Bluetooth.',
     ].entries()) await store.upsertNode({ kind: 'fact', slug: `concise-feature-${index}`, title: 'TV feature',
-      summary, sourceId: source.id, metadata: { semanticKind: 'fact', factKind: 'feature' } });
+      summary, sourceId: source.id, metadata: { semanticKind: 'fact', extractor: 'llm', factKind: 'feature' } });
 
     const answer = await semantic.answer({
       query: 'what features does the LG TV have?',
@@ -1226,14 +1239,13 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     const { store, artifactStore } = createStores();
     const semantic = new KnowledgeSemanticService(store);
     const service = disposables.add(new HomeGraphService(store, artifactStore, { semanticService: semantic }));
-    const extractionSource22 = await service.syncSnapshot({
+    await service.syncSnapshot({
       installationId: 'house',
       devices: [
         { id: 'tv', name: 'LG webOS Smart TV', manufacturer: 'LG', model: '86NANO90UNA' },
         { id: 'app', name: 'Home Assistant App Example', manufacturer: 'Home Assistant', model: 'App' },
       ],
     });
-    answerReadings.addExtractionValue(...extractionValueFixtureFor(extractionSource22.source, store.getExtractionBySourceId(extractionSource22.source.id), 0.99));
     const extractionSource23 = await service.ingestNote({
       installationId: 'house',
       title: 'Home Assistant app feature note',

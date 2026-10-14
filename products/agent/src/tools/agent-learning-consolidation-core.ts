@@ -32,6 +32,7 @@ export interface AgentLearningConsolidationToolArgs {
 }
 
 export interface LearningConsolidationReceipt {
+  readonly judgmentDecisionIds?: readonly string[] | undefined;
   readonly id: string;
   readonly createdAt: string;
   readonly domain: AgentLearningConsolidationDomain;
@@ -147,6 +148,7 @@ function parseReceipt(value: unknown): LearningConsolidationReceipt | null {
     duplicateIds,
     ...(beforeSurvivor ? { beforeSurvivor } : {}),
     beforeDuplicates,
+    ...(Array.isArray(record.judgmentDecisionIds) ? { judgmentDecisionIds: record.judgmentDecisionIds.filter((id): id is string => typeof id === 'string') } : {}),
   };
 }
 
@@ -291,8 +293,9 @@ export function markDuplicateStale(
   domain: AgentLearningConsolidationDomain,
   duplicateId: string,
   survivorId: string,
+  judgmentDecisionIds: readonly string[] = [],
 ): Record<string, unknown> {
-  const reason = `Duplicate of ${survivorId}; staged by learning curator consolidation.`;
+  const reason = `Duplicate of ${survivorId}; staged by learning curator consolidation. Jev decisions=${judgmentDecisionIds.join(',')}`;
   if (domain === 'memory') {
     const record = memoryRegistry.review(duplicateId, { state: 'stale', staleReason: reason, reviewedBy: 'agent' });
     if (!record) throw new Error(`Unknown Agent-local memory ${duplicateId}`);

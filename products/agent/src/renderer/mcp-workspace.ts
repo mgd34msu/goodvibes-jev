@@ -1,3 +1,4 @@
+import { peekSystemMessagePresentation } from '@goodvibes-jev/engine/sdk/platform/runtime';
 /**
  * renderMcpWorkspace, the MCP server workspace as a kit modal with two panes:
  * the server and action list on the left (✦ servers / actions groups, a ● or
@@ -92,8 +93,9 @@ export function renderMcpWorkspacePackageText(): string {
 
 function statusColor(text: string): string {
   const t = activeTokens();
-  if (text.includes('failed')) return t.error;
-  if (text.includes('attention') || text.includes('quarantine')) return t.warning;
+  const severity = peekSystemMessagePresentation(text)?.severity;
+  if (severity === 'error') return t.error;
+  if (severity === 'warning') return t.warning;
   return t.textMuted;
 }
 

@@ -1,3 +1,4 @@
+import { JudgmentHeldError } from '../types/judgment-held.js';
 /**
  * Context window for a model nobody has sized.
  *
@@ -62,6 +63,13 @@ export function knownFallbackContextWindow(provider: string, modelId: string): n
 
 /** Reads the model's context-window family when it has not been read, then returns its window. */
 export async function readFallbackContextWindow(provider: string, modelId: string, site: string): Promise<number> {
-  const family = await readContextWindowFamily(provider, modelId, site);
-  return family ? FAMILY_CONTEXT_WINDOWS[family] : FALLBACK_CONTEXT_WINDOW;
+  try {
+    const family = await readContextWindowFamily(provider, modelId, site);
+    return family ? FAMILY_CONTEXT_WINDOWS[family] : FALLBACK_CONTEXT_WINDOW;
+  } catch (error) {
+    // A conservative bound is valid while identity is unresolved. Do not store
+    // that bound as a semantic conclusion that the model has no known family.
+    if (error instanceof JudgmentHeldError) return FALLBACK_CONTEXT_WINDOW;
+    throw error;
+  }
 }

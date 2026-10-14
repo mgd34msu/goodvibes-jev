@@ -58,7 +58,7 @@ export async function handleGitHubAutomationWebhook(
     });
   }
 
-  const spawnResult = context.trySpawnAgent({ mode: 'spawn', task: prompt }, 'handleGitHubAutomationWebhook');
+  const spawnResult = await context.trySpawnAgent({ mode: 'spawn', task: prompt }, 'handleGitHubAutomationWebhook');
   if (spawnResult instanceof Response) return spawnResult;
   logger.info('handleGitHubAutomationWebhook: spawned agent', {
     type: event.type,

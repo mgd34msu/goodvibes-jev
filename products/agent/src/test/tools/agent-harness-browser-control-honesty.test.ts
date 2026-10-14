@@ -348,7 +348,8 @@ describe('browser capability honesty', () => {
     const registry = createToolRegistryDouble(), context = createContext(registry, []), controller = new AbortController();
     const reason = new Error('fixture caller cancelled');
     try {
-      const pending = runLocalModelServerSmoke(context, { target: baseUrl }, { signal: controller.signal });
+      installJudgmentPort(catalogReadings({ [localEndpointId(baseUrl)]: 0.99 }).port);
+      const pending = runLocalModelServerSmoke(context, { target: baseUrl }, { signal: controller.signal, sourceOwner: ordinaryResearchOwner() });
       await entered.promise; controller.abort(reason);
       await expect(pending).rejects.toBe(reason);
     } finally {

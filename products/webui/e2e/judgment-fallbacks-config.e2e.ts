@@ -9,12 +9,12 @@ test('fallback-reference arrays save and reload without exposing inline credenti
   const daemon = await installTerminalThemeDaemon(page);
   const { host } = daemon;
   const original = [
-    { endpoint: 'https://first.example.test/v1', model: 'jev-1.13.0', keySource: 'env', keyName: 'FIRST_JEV_KEY' },
-    { endpoint: 'https://second.example.test', model: 'jev-1.13.0', keySource: 'secret', keyName: 'judgment/second-key' },
+    { endpoint: 'https://first.example.test/v1', model: 'jev-latest', keySource: 'env', keyName: 'FIRST_JEV_KEY' },
+    { endpoint: 'https://second.example.test', model: 'jev-latest', keySource: 'secret', keyName: 'judgment/second-key' },
   ] satisfies JudgmentFallbackSettings[];
   const replacement = [
-    { endpoint: 'https://backup.example.test/v1', model: 'jev-1.13.0', keySource: 'secret', keyName: 'judgment/backup-key' },
-    { endpoint: 'https://last.example.test', model: 'jev-1.13.0', keySource: 'env', keyName: 'LAST_JEV_KEY' },
+    { endpoint: 'https://backup.example.test/v1', model: 'jev-latest', keySource: 'secret', keyName: 'judgment/backup-key' },
+    { endpoint: 'https://last.example.test', model: 'jev-latest', keySource: 'env', keyName: 'LAST_JEV_KEY' },
   ] satisfies JudgmentFallbackSettings[];
   try {
     host.manager.set('judgment.fallbacks', original);

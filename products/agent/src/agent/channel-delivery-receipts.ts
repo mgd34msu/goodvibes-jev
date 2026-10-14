@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
+import { agentRecordNonce } from '../utils/record-nonce.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import type { ShellPathService } from '@/runtime/index.ts';
 import { writeStoreJson } from '@/utils/store-file.ts';
@@ -251,7 +252,7 @@ export function recordAgentChannelDeliveryReceipt(
   const title = previewMessage(input.result.title || 'GoodVibes Agent message');
   const receipt: AgentChannelDeliveryReceipt = {
     version: RECEIPT_VERSION,
-    id: `channel-delivery-${new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14)}-${randomUUID().slice(0, 8)}`,
+    id: `channel-delivery-${agentRecordNonce()}`,
     createdAt: new Date().toISOString(),
     source: input.source,
     status: 'sent',

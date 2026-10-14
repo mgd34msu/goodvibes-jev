@@ -1,3 +1,4 @@
+import { completeJudgmentView } from './complete-view.js';
 /**
  * `engine.tools.semantic-diff`: two narrow facts about a git diff, from which
  * analyze mode `semantic_diff` composes its risk tier in code
@@ -22,12 +23,12 @@
  */
 import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 
-/** Most characters of the diff one request carries; longer diffs are cut at a file or hunk boundary by the caller. */
+/** Most characters of the diff one request carries; retained for API compatibility; complete evidence has a shared whole-input budget. */
 export const MAX_JUDGED_DIFF_CHARS = 12_000;
 
 /** What the reading sees: the refs, the changed files, and the (bounded) unified diff. */
 export function semanticDiffView(range: string, changedFiles: readonly string[], diff: string): { range: string; changedFiles: string[]; diff: string } {
-  return { range, changedFiles: [...changedFiles], diff };
+  return completeJudgmentView({ range, changedFiles: [...changedFiles], diff });
 }
 
 const view = (files: readonly string[], diff: readonly string[]) => semanticDiffView('HEAD~1..HEAD', files, diff.join('\n'));

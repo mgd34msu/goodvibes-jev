@@ -57,7 +57,7 @@ The runtime asks the canonical `engine.checkin.worth-interrupting` yes/no batter
 
 ### Note content and evidence
 
-The foundation does not generate prose ([judgment capabilities](../audit/judgment-capabilities.md)). As with the existing knowledge-answer architecture, a separate ordinary provider drafts content only after the typed yes. The canonical `engine.checkin.note-fidelity` pattern verifies the exact draft against the same captured briefing. Supported high-band fidelity is required; unsupported, contradicted, uncertain, missing or unavailable verification never sends. No chat response is parsed to decide contact. Both recorded decision IDs and typed readings are retained in the check-in receipt; the generation mechanism is not presented as native Jev generation.
+The foundation does not generate prose ([judgment package](../../packages/judgment/README.md)). As with the existing knowledge-answer architecture, a separate ordinary provider drafts content only after the typed yes. The canonical `engine.checkin.note-fidelity` pattern verifies the exact draft against the same captured briefing. Supported high-band fidelity is required; unsupported, contradicted, uncertain, missing or unavailable verification never sends. No chat response is parsed to decide contact. Both recorded decision IDs and typed readings are retained in the check-in receipt; the generation mechanism is not presented as native Jev generation.
 
 ### Lifetime and delivery
 

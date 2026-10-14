@@ -221,12 +221,12 @@ describe('owner replies (6.3)', () => {
       test('approve does what approval means for this reason, and never passes an unmet criterion', async () => {
         const s = await setup('approve');
         const outcome = await s.reply(TEXTS.approve);
-        if (reason === 'stalled' || reason === 'fix-rounds-exhausted') {
+        if (reason === 'stalled' || reason === 'fix-rounds-exhausted' || reason === 'unsettled') {
           expect(outcome.action).toBe('refused');
           const contract = contractOf(s.h, s.contractId);
           expect(contract.status).toBe('awaiting-owner');
           expect(contract.units[0]!.status).toBe('awaiting-owner');
-          expect(contract.units[0]!.criteria[0]!.status).toBe('unmet');
+          expect(contract.units[0]!.criteria[0]!.status).toBe(reason === 'unsettled' ? 'unshown' : 'unmet');
           expect(contract.escalations.at(-1)!.question.endsWith(`\n${APPROVAL_REFUSED_LINE}`)).toBe(true);
           return;
         }
@@ -234,14 +234,6 @@ describe('owner replies (6.3)', () => {
         await settle(s);
         const done = contractOf(s.h, s.contractId);
         expect(done.status).toBe('passed');
-        if (reason === 'unsettled') {
-          // The unshown criterion was accepted as met by the owner's confirmation, recorded as such.
-          const reading = done.units[0]!.criteria[0]!.readings.at(-1)!;
-          expect(reading).toMatchObject({ checkId: done.escalations[0]!.id, verdict: 'met', outcome: 'confirm' });
-          // The unit passes with the output its last check read, not an empty answer.
-          expect(done.units[0]!.answer).toBe(done.units[0]!.lastOutput);
-          expect(done.units[0]!.answer).toContain('parsed again');
-        }
         if (reason === 'writing-unclear') expect(done.shape?.forbids_writing).toMatchObject({ verdict: 'no', outcome: 'act' });
         if (reason === 'attempts-undecided') expect(done.units[0]!.attemptSelection?.pickedId).toBe('u1#a0');
       }, 25_000);

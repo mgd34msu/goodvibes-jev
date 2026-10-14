@@ -152,7 +152,7 @@ export async function handleGenericWebhookSurface(req: Request, context: Generic
     });
   }
 
-  const spawnResult = context.trySpawnAgent(
+  const spawnResult = await context.trySpawnAgent(
     { mode: 'spawn', task: submission.task! },
     'handleGenericWebhookSurface',
     submission.session.id,

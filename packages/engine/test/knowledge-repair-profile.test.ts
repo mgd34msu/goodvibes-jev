@@ -112,15 +112,15 @@ describe('repair profile facts', () => {
     installJudgmentPort({ ...fake.port, async ask(request) { installJudgmentPort(fake.port); return fake.port.ask(request); } });
     await held(deriveRepairProfileFacts(item), 'stale');
   });
-  test('custom-port answers are validated and consumed as the same probability snapshot', async () => {
+  test('custom-port accessor answers are refused without invoking getters', async () => {
     let getterReads = 0;
     const fake = fakePort(() => {
       let reads = 0;
       return { type: 'noul', get noul() { getterReads++; return reads++ === 0 ? 0.99 : NaN; } };
     });
     installJudgmentPort(fake.port);
-    expect(await deriveRepairProfileFacts(input('LG 86NANO90UNA resolution: 4K.'))).toHaveLength(7);
-    expect(getterReads).toBe(fake.requests.length);
+    await held(deriveRepairProfileFacts(input('LG 86NANO90UNA resolution: 4K.')), 'malformed');
+    expect(getterReads).toBe(0);
   });
   test('abort and timeout bound a port that ignores cancellation', async () => {
     const controller = new AbortController(); const entered = Promise.withResolvers<void>();

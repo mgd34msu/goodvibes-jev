@@ -114,7 +114,7 @@ for (const route of routes) describe(`${route} aliases before source publication
       edit ??= ctx.store.upsertSource({ ...before.sources[0]!, title: 'Concurrent edit before finalization' });
     });
     try {
-      await expect(ingest(true)).rejects.toBeInstanceOf(KnowledgeExtractionJudgmentHoldError);
+      await expect(ingest(true)).rejects.toMatchObject({ name: 'KnowledgeUriCanonicalizationHeldError', reason: 'stale' });
       await edit;
       expect(ctx.store.listSources()[0]!.title).toBe('Concurrent edit before finalization');
       expect(snapshot(ctx.store).extractions).toEqual(before.extractions);
@@ -243,7 +243,7 @@ for (const route of routes) describe(`${route} aliases before source publication
           return answer.ask(request);
         } };
         installJudgmentPort(port);
-        await expect(ingest(true, controller.signal)).rejects.toBeInstanceOf(change === 'artifact' ? KnowledgeExtractionJudgmentHoldError : KnowledgeEntityAliasHoldError);
+        await expect(ingest(true, controller.signal)).rejects.toBeInstanceOf(KnowledgeEntityAliasHoldError);
         expect(changed).toBe(true);
         expect(snapshot(ctx.store)).toEqual(expected);
         expect(await reopen()).toEqual(expected);

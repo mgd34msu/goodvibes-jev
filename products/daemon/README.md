@@ -48,7 +48,7 @@ registry of 1–200 bot-readable one-to-one DM IDs. The token must prove the exp
 bot identity and every channel before history reads; account or registry replacement
 revokes the source even if the setting is restored. Group DMs are unsupported.
 The host supplies the live `ProtectedSourceOwnerOptions` capability for both the
-local proposal service and `jev-1.13.0`, including established ephemeral retention.
+local proposal service and `jev-latest`, including established ephemeral retention.
 The standalone launcher has no managed local screening runner; settings or endpoint
 addresses cannot establish its retention policy. [Inbox contract](../../docs/contracts/daemon-inbox-and-triage.md#discord-account-and-intended-channels)
 describes the owned read and revocation boundaries.

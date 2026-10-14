@@ -1,7 +1,7 @@
 import { captureCatalogMethods, captureCatalogSnapshot, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import { captureCatalogReadRequest, captureHarnessCatalogSelectionSource, selectHarnessCatalog, selectHarnessCatalogGroup } from './agent-harness-catalog-selection.ts';
 import { captureStatefulCatalogRequest } from './agent-harness-stateful-catalog-source.ts';
-import { withModelReadingSource } from './agent-harness-model-reading-source.ts';
+import { captureModelReadingSnapshotGuard, withModelReadingSource } from './agent-harness-model-reading-source.ts';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext } from '../input/command-registry.ts';
 import { createAgentWorkspaceEditor } from '../input/agent-workspace-activation.ts';
@@ -84,14 +84,17 @@ function originalWorkspaceEntry(entries: ReturnType<typeof allWorkspaceActions>,
 }
 
 function captureWorkspaceCategories(): () => void {
-  const source = captureCatalogSnapshot(AGENT_WORKSPACE_CATEGORIES);
+  captureCatalogSnapshot(AGENT_WORKSPACE_CATEGORIES);
+  // Frozen native declarations can reuse a complete descriptor proof. Mutable
+  // declarations still receive the full comparison at every publication fence.
+  const assertSource = captureModelReadingSnapshotGuard(AGENT_WORKSPACE_CATEGORIES, true);
   const bindings = [captureCatalogMethods(AGENT_WORKSPACE_CATEGORIES,
     ['length', ...AGENT_WORKSPACE_CATEGORIES.map((_category, index) => String(index))])];
   for (const category of AGENT_WORKSPACE_CATEGORIES) {
     bindings.push(captureCatalogMethods(category, ['actions']));
     bindings.push(captureCatalogMethods(category.actions, ['length', ...category.actions.map((_action, index) => String(index))]));
   }
-  return () => { for (const guard of bindings) guard(); source.assertCurrent(AGENT_WORKSPACE_CATEGORIES); for (const guard of bindings) guard(); };
+  return () => { for (const guard of bindings) guard(); assertSource(AGENT_WORKSPACE_CATEGORIES); for (const guard of bindings) guard(); };
 }
 
 export function describeWorkspaceCategory(category: AgentWorkspaceCategory): Record<string, unknown> {

@@ -1,3 +1,4 @@
+import { editWindow } from '../tools/batteries/edit-window.js';
 import { BatteryRegistry } from '@goodvibes-jev/judgment';
 import { riskFamily } from './batteries/risk-family.js';
 import { sandboxAdvisory } from './batteries/sandbox-advisory.js';
@@ -41,6 +42,7 @@ import { registryCatalogGroupFit } from '../tools/batteries/registry-catalog-gro
 import { researchSchemaStatus } from '../tools/batteries/research-schema-status.js';
 
 registry.register(editTarget);
+registry.register(editWindow);
 registry.register(contentRank);
 registry.register(registryRank);
 registry.register(registrySelect);
@@ -152,3 +154,8 @@ import { repairFactScoring } from '../knowledge/semantic/repair-fact-scoring/bat
 registry.register(repairFactScoring);
 import { repairProfileRequirement } from '../knowledge/semantic/repair-profile-requirement/battery.js';
 registry.register(repairProfileRequirement);
+import { executionPurpose } from './batteries/execution-purpose.js';
+registry.register(executionPurpose);
+
+import { learningProposalQuality } from '../knowledge/learning-proposal.js';
+registry.register(learningProposalQuality);

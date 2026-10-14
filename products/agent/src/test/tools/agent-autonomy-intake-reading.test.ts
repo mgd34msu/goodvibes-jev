@@ -56,7 +56,7 @@ describe('canonical autonomous intake reading', () => {
     expect(f.requests[0]?.state).toEqual({ request });
     expect(Object.keys(result.judgment.readings).sort()).toEqual(Object.keys(autonomyIntake.items).sort());
     expect(result.judgment.result.decisionId).toBeDefined();
-    expect(result.judgment.result.requestedModel).toBe('jev-1.13.0');
+    expect(result.judgment.result.requestedModel).toBe('jev-latest');
     const entries = log.query({ battery: 'routing.autonomy-intake' });
     expect(entries).toHaveLength(1);
     expect(entries[0]?.status).toBe('answered');
@@ -110,8 +110,8 @@ describe('canonical autonomous intake reading', () => {
     expect(result.status).toBe('ready');
     if (result.status !== 'ready') throw new Error('Expected settled intake.');
     expect(result.schedule).toMatchObject({ kind: 'every', value: '2h', missing: [] });
-    expect(result.judgment.scheduleObservations).toHaveLength(3);
-    expect(log.query({ battery: 'automation.schedule' })).toHaveLength(3);
+    expect(result.judgment.scheduleObservations).toHaveLength(4);
+    expect(log.query({ battery: 'automation.schedule' })).toHaveLength(4);
   });
 
   const literalCases: readonly { readonly request: string; readonly cadence: string; readonly schedule: Readonly<Record<string, string>>; readonly value: string; readonly intents: Partial<typeof defaults> }[] = [
@@ -125,10 +125,10 @@ describe('canonical autonomous intake reading', () => {
     expect(result.status).toBe('ready');
     if (result.status !== 'ready') throw new Error('Expected settled literal cadence.');
     expect(result.schedule).toMatchObject({ kind: cadence, value, missing: [] });
-    expect(result.judgment.scheduleObservations).toHaveLength(2);
+    expect(result.judgment.scheduleObservations).toHaveLength(3);
     expect(result.judgment.scheduleObservations[0]?.state).toBe(request);
     expect(result.judgment.scheduleObservations[1]?.state).toMatchObject({ phrase: request, shape: schedule.format });
-    expect(log.query({ battery: 'automation.schedule' })).toHaveLength(2);
+    expect(log.query({ battery: 'automation.schedule' })).toHaveLength(3);
   });
 
   test('holds an exact supplied cadence when its canonical parts reading does not settle', async () => {
@@ -186,7 +186,7 @@ describe('canonical autonomous intake reading', () => {
   test('a retained publication restriction rejects a later port replacement', async () => {
     const f = fixture(); installJudgmentPort(f.port);
     const guards: (() => void)[] = [];
-    const result = await readAutonomyIntake('A synthetic ongoing-work request.', { ...f.options, retainCurrent: guard => guards.push(guard) });
+    const result = await readAutonomyIntake('A synthetic ongoing-work request.', { ...f.options, retainCurrent: guard => { guards.push(guard); } });
     expect(result.status).toBe('ready'); expect(guards).toHaveLength(1);
     guards[0]?.(); installJudgmentPort(fixture().port);
     expect(() => guards[0]?.()).toThrow();

@@ -21,7 +21,7 @@ export async function selectConnectorTool(
     description: `${tool.description ?? tool.name}. Capability: ${tool.capability}. Effect: ${tool.effect}. Connector: ${signal.status}.`,
   }), 'agent.personal-ops.connector', options);
   // An uncertain match is not an operation selection. Readiness does not invent relevance.
-  const selected = ranked.matches.find(({ judgment }) => judgment.reading.verdict === 'yes');
+  const selected = ranked.matches.find(({ judgment }) => judgment.reading.outcome === 'act' && judgment.reading.verdict === 'yes');
   return selected ? { ...selected.entry, judgment: selected.judgment } : undefined;
 }
 
@@ -154,7 +154,7 @@ export async function buildPersonalOpsIntakeCandidates(
 ): Promise<{ readonly candidates: readonly PersonalOpsIntakeCandidate[]; readonly judgments: readonly Ranked[] }> {
   const ranking = await rankHarnessCatalog(INTAKE_ROUTES, request, (route) => route, 'agent.personal-ops.intake', options);
   const selected = new Set(ranking.matches.map(({ entry }) => entry.id));
-  const confirmed = new Set(ranking.matches.filter(({ judgment }) => judgment.reading.verdict === 'yes').map(({ entry }) => entry.id));
+  const confirmed = new Set(ranking.matches.filter(({ judgment }) => judgment.reading.outcome === 'act' && judgment.reading.verdict === 'yes').map(({ entry }) => entry.id));
   const inboxLane = laneById(lanes, 'inbox');
   const calendarLane = laneById(lanes, 'calendar');
   const taskLane = laneById(lanes, 'tasks');
@@ -343,7 +343,7 @@ export async function buildPersonalOpsIntakeCandidates(
   const ordered = ranking.matches.flatMap(({ entry, judgment }) => {
     const candidate = byId.get(entry.id);
     return candidate ? [{ ...candidate,
-      confidence: judgment.reading.verdict === 'yes' ? 'high' as const : 'low' as const,
+      confidence: judgment.reading.outcome === 'act' && judgment.reading.verdict === 'yes' ? 'high' as const : 'low' as const,
       why: `Canonical engine.tools.registry-rank reading: ${judgment.reading.verdict}.`,
       judgment,
     }] : [];

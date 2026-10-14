@@ -1,3 +1,4 @@
+import { assertJudgmentInput } from '../gate/judgment-input.js';
 import {
   categoryForStatus,
   GoodVibesSdkError,
@@ -237,7 +238,9 @@ export function failureEvidence(err: Error): FailureEvidence {
 
 /** Reads what an error's wording says about the failure (one Jev request per distinct wording). */
 export function readErrorFailure(err: Error, site: string): Promise<FailureConclusions> {
-  return readFailure(failureEvidence(err), site);
+  const evidence = failureEvidence(err);
+  assertJudgmentInput(evidence);
+  return readFailure(evidence, site);
 }
 
 /**

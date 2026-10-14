@@ -144,7 +144,7 @@ describe('AgentExecutionLedger', () => {
     ledger.subscribe(() => { notified += 1; });
     received(bus, 'c1', 'read');
     await settle(ledger);
-    expect(notified).toBe(2);
+    expect(notified).toBe(3);
 
     ledger.dispose();
     received(bus, 'c2', 'read');

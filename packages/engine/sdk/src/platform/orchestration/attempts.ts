@@ -38,7 +38,7 @@ import { OwnedWork } from '../utils/owned-work.js';
 
 /** Thrown for an honest caller error against the best-of-N surface (unknown group, not-ready, bad winner). */
 export class AttemptError extends Error {
-  constructor(message: string) {
+  constructor(message: string, readonly reason: 'precondition' | 'judge-unavailable' = 'precondition') {
     super(message);
     this.name = 'AttemptError';
   }
@@ -333,7 +333,7 @@ export function createAttemptsCoordinator(deps: AttemptsCoordinatorDeps): Attemp
 
   async function proposeWinner(groupId: string): Promise<AttemptJudgment> {
     if (!deps.judge) {
-      throw new AttemptError('no judge is configured on this engine; pick a best-of-N winner explicitly (fleet.attempts.pick)');
+      throw new AttemptError('no judge is configured on this engine; pick a best-of-N winner explicitly (fleet.attempts.pick)', 'judge-unavailable');
     }
     const { entry, siblings } = resolveReadyGroup(groupId);
     if (!allTerminal(siblings)) throw new AttemptError(`best-of-N group ${groupId} is not ready: some attempts are unresolved`);

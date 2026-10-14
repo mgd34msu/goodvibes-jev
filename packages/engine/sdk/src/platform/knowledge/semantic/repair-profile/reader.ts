@@ -1,6 +1,7 @@
-import { judgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
+import { retainStrictJudgmentJson, prepareJudgmentResult } from '../../../gate/judgment-result.js';
+import { captureJudgmentPort, JudgmentAuthorityRetiredError, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { toJson, type JsonValue, type JudgmentPort } from '@goodvibes-jev/judgment';
-import { assertJudgmentInput } from '../../../gate/judgment-input.js';
+import { assertJudgmentInput, JudgmentInputError } from '../../../gate/judgment-input.js';
 import { freezeSupport } from '../verification/projection.js';
 import { repairProfileCategory, repairProfileValue, repairProfileSupport } from './battery.js';
 import { REPAIR_PROFILE_CATEGORIES as CATEGORIES, REPAIR_PROFILE_LIMITS as LIMITS, KnowledgeRepairProfileHeldError as Held,
@@ -54,7 +55,7 @@ function checkedPort(port: JudgmentPort): JudgmentPort {
   return { ...port, model: port.model, async ask(request) {
     const result = { ...await port.ask(request) };
     if (!result?.answers || typeof result.model !== 'string' || !result.model.trim()
-      || typeof result.requestedModel !== 'string' || !result.requestedModel.trim()
+      || result.requestedModel !== port.model
       || (result.decisionId !== undefined && (typeof result.decisionId !== 'string' || !result.decisionId.trim()))) throw new Held('malformed');
     const answers = Object.fromEntries(Object.keys(request.questions).map((name) => {
       const answer: unknown = result.answers[name];
@@ -69,29 +70,40 @@ function checkedPort(port: JudgmentPort): JudgmentPort {
 }
 /** Read-only, complete-pass barrier. Selection negatives omit options; support negatives hold selected output. */
 export async function prepareRepairProfileSelections(inputs: readonly RepairProfileReadingInput[], options: {
-  readonly signal?: AbortSignal | undefined; readonly timeoutMs?: number | undefined;
+  readonly signal?: AbortSignal | undefined; readonly timeoutMs?: number | undefined; readonly assertCurrent?: (() => void) | undefined;
 } = {}): Promise<readonly (readonly RepairProfileSelection[])[]> {
   if (options.signal?.aborted) throw new Held('aborted');
-  const snapshots = snapshotInputs(inputs);
+  const original = retainStrictJudgmentJson(inputs, () => new JudgmentInputError('unsupported-input'));
+  const snapshots = snapshotInputs(original.snapshot);
+  const callerCurrent = options.assertCurrent;
   if (!snapshots.length) return [];
-  const timeoutMs = options.timeoutMs ?? LIMITS.defaultTimeoutMs;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs) throw new Held('budget');
+  const timeoutMs = options.timeoutMs;
+  if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs)) throw new Held('budget');
   const controller = new AbortController();
-  let stoppedError: Held | undefined, rejectStopped: (error: Held) => void = () => {};
+  let stoppedError: Error | undefined, rejectStopped: (error: Error) => void = () => {};
   const stopped = new Promise<never>((_resolve, reject) => { rejectStopped = reject; });
-  const stop = (error: Held) => { stoppedError ??= error; controller.abort(); rejectStopped(stoppedError); };
+  const stop = (error: Error) => { stoppedError ??= error; controller.abort(); rejectStopped(stoppedError); };
   const abort = () => stop(new Held('aborted'));
   options.signal?.addEventListener('abort', abort, { once: true });
-  const timer = setTimeout(() => stop(new Held('budget')), timeoutMs);
-  const check = () => { if (stoppedError) throw stoppedError; if (options.signal?.aborted) throw new Held('aborted'); };
+  const timer = timeoutMs === undefined ? undefined : setTimeout(() => stop(new Held('budget')), timeoutMs);
+  const check = () => {
+    if (stoppedError) throw stoppedError;
+    if (options.signal?.aborted) throw new Held('aborted');
+    try { original.assertCurrent(); } catch { throw new Held('stale'); }
+    const checked: unknown = callerCurrent?.();
+    if (checked !== undefined) { void Promise.resolve(checked).catch(() => {}); throw new Held('stale'); }
+    if (options.assertCurrent !== callerCurrent) throw new Held('stale');
+  };
   let requests = 0, bytes = 0;
   const run = async () => {
-    check(); const configured = judgmentPort('engine.knowledge.repair-profile'), configuredModel = configured.model;
-    const port = checkedPort(configured);
+    check();
+    const owner = captureJudgmentPort('engine.knowledge.repair-profile', { signal: controller.signal, assertCurrent: check,
+      prepareResultCapture: questions => prepareJudgmentResult(questions, reason => new Held(reason)) });
+    const port = checkedPort(owner.port);
     let model: string | undefined, requestedModel: string | undefined;
     const current = () => {
       check();
-      if (judgmentPort('engine.knowledge.repair-profile') !== configured || configured.model !== configuredModel) throw new Held('stale');
+      owner.assertCurrent();
     };
     async function read(kind: 'category' | 'value' | 'support', state: object): Promise<boolean> {
       current();
@@ -100,7 +112,7 @@ export async function prepareRepairProfileSelections(inputs: readonly RepairProf
       if (!json || typeof json !== 'object' || Array.isArray(json)) throw new Held('malformed');
       requests++; bytes += new TextEncoder().encode(JSON.stringify({ state: json, questions: battery.items })).byteLength + 1_024;
       if (requests > LIMITS.requests || bytes > LIMITS.bytes) throw new Held('budget');
-      const result = await battery.run(port, freezeSupport(json) as Record<string, JsonValue>, { signal: controller.signal, site: battery.name });
+      const result = await battery.run(port, freezeSupport(json) as Record<string, JsonValue>, { signal: controller.signal, site: battery.name, beforeAttempt: current });
       current();
       if ((model !== undefined && result.result.model !== model) || (requestedModel !== undefined && result.result.requestedModel !== requestedModel)) throw new Held('stale');
       model = result.result.model; requestedModel = result.result.requestedModel;
@@ -118,7 +130,7 @@ export async function prepareRepairProfileSelections(inputs: readonly RepairProf
         while (next < jobs.length) {
           current(); const index = next++;
           try { results[index] = await jobs[index]!(); }
-          catch (error) { const failure = error instanceof Held ? error : new Held('unavailable'); stop(failure); throw failure; }
+          catch (error) { const failure = error instanceof Held || error instanceof JudgmentInputError ? error : new Held(error instanceof JudgmentAuthorityRetiredError ? 'stale' : 'unavailable'); stop(failure); throw failure; }
         }
       }));
       return results;
@@ -139,6 +151,6 @@ export async function prepareRepairProfileSelections(inputs: readonly RepairProf
     })));
   };
   try { return await Promise.race([run(), stopped]); }
-  catch (error) { controller.abort(); throw error instanceof Held ? error : new Held(error instanceof JudgmentPortMissingError ? 'unconfigured' : 'unavailable'); }
+  catch (error) { controller.abort(); throw error instanceof Held || error instanceof JudgmentInputError ? error : new Held(error instanceof JudgmentPortMissingError ? 'unconfigured' : error instanceof JudgmentAuthorityRetiredError ? 'stale' : 'unavailable'); }
   finally { clearTimeout(timer); options.signal?.removeEventListener('abort', abort); }
 }

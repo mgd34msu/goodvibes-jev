@@ -43,7 +43,10 @@ export {
   compactionFailurePlaybook,
 } from './playbooks/index.js';
 
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { captureJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { retainStrictJudgmentJson, prepareJudgmentResult } from '../../gate/judgment-result.js';
+import { snapshotJudgmentInput } from '../../gate/judgment-input.js';
+import { requireActingReading } from '../../types/judgment-held.js';
 import type { Playbook, PlaybookRegistry, PlaybookRegistryEntry } from './types.js';
 import { playbookCandidate, playbookSearch } from './batteries/playbook-search.js';
 import {
@@ -122,12 +125,19 @@ export const PLAYBOOK_SEARCH_SITE = 'runtime.ops.playbook-search';
  * @returns Matching playbooks, best match first.
  */
 export async function findPlaybooksBySymptom(query: string, options: { signal?: AbortSignal } = {}): Promise<Playbook[]> {
-  const { ranked } = await playbookSearch.rerank(
-    judgmentPort(PLAYBOOK_SEARCH_SITE),
-    query,
-    ALL_PLAYBOOKS.map(playbookCandidate),
-    { site: PLAYBOOK_SEARCH_SITE, ...(options.signal ? { signal: options.signal } : {}) },
-  );
+  const candidates = ALL_PLAYBOOKS.map(playbookCandidate);
+  const original = retainStrictJudgmentJson({ query, candidates });
+  snapshotJudgmentInput(original.snapshot);
+  const version = JSON.stringify(original.snapshot.candidates);
+  const current = () => {
+    original.assertCurrent(); options.signal?.throwIfAborted();
+    if (JSON.stringify(snapshotJudgmentInput(ALL_PLAYBOOKS.map(playbookCandidate))) !== version) throw new Error('Playbook catalog changed during search.');
+  };
+  const owner = captureJudgmentPort(PLAYBOOK_SEARCH_SITE, { signal: options.signal, assertCurrent: current, prepareResultCapture: prepareJudgmentResult });
+  const { ranked } = await playbookSearch.rerank(owner.port, original.snapshot.query, original.snapshot.candidates,
+    { site: PLAYBOOK_SEARCH_SITE, signal: owner.signal, beforeAttempt: owner.assertCurrent });
+  owner.assertCurrent();
+  for (const entry of ranked) requireActingReading(entry.reading);
   const byId = new Map(ALL_PLAYBOOKS.map((p) => [p.id, p]));
   return ranked.filter((r) => r.reading.verdict === 'yes').map((r) => byId.get(r.id)!);
 }

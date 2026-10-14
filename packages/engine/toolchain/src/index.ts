@@ -25,3 +25,5 @@ export * from './lib/per-job-green.js';
 export * from './lib/changelog-gate.js';
 export * from './lib/sha256sums.js';
 export * from './lib/train-status.js';
+
+export { nativeAddonFailure } from './batteries/native-addon-failure.js';

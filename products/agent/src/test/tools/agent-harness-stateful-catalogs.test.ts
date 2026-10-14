@@ -505,12 +505,13 @@ describe('actual stateful catalog callers', () => {
     expect(result.surface).toBe('help-overlay'); expect(f.opened).toEqual(['help-overlay']);
   });
 
-  test('UI none and uncertain fit produce zero opener effects', async () => {
+  test.each(['none', 'uncertain'] as const)('UI %s fit produces zero opener effects', async disposition => {
     const f = fixture(), query = 'Defer opening the settings panel';
-    const none = catalogPort(query, null, () => .001); installJudgmentPort(none.port);
-    expect(await openHarnessUiSurface(f.context, { query }, f.options)).toMatchObject({ status: 'unknown_ui_surface' });
-    const uncertain = catalogPort(query, 'settings', id => id === 'settings' ? .5 : .001); installJudgmentPort(uncertain.port);
-    await expect(openHarnessUiSurface(f.context, { query }, f.options)).rejects.toBeInstanceOf(ToolInputProjectionError); expect(f.opened).toEqual([]);
+    const fake = catalogPort(query, disposition === 'none' ? null : 'settings', id => disposition === 'uncertain' && id === 'settings' ? .5 : .001);
+    installJudgmentPort(fake.port);
+    if (disposition === 'none') expect(await openHarnessUiSurface(f.context, { query }, f.options)).toMatchObject({ status: 'unknown_ui_surface' });
+    else await expect(openHarnessUiSurface(f.context, { query }, f.options)).rejects.toBeInstanceOf(ToolInputProjectionError);
+    expect(f.opened).toEqual([]);
   });
 
   test('deferred UI choice cannot invoke a replaced native opener', async () => {

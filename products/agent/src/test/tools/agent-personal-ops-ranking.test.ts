@@ -159,7 +159,8 @@ describe('PersonalOps canonical catalog readings', () => {
     const pending = caller().execute({ action: 'intake', query: 'notes' }, { signal: controller.signal });
     await started; controller.abort(new Error('cancelled late')); release();
     await expect(pending).rejects.toThrow('cancelled late');
-    expect(signals.every((signal) => signal === controller.signal)).toBe(true);
+    expect(signals.length).toBeGreaterThan(0);
+    expect(signals.every((signal) => signal?.aborted && signal.reason === controller.signal.reason)).toBe(true);
   });
 
   test('each candidate returns the canonical decision receipt', async () => {
@@ -204,7 +205,7 @@ describe('PersonalOps canonical catalog readings', () => {
     expect(JSON.stringify(fixture.calls)).toContain('x'.repeat(700) + sensitive);
     expect(JSON.stringify(fake.requests)).not.toContain(sensitive);
     expect(JSON.stringify(fake.requests)).toContain('[redacted]');
-    expect((fake.requests[0]!.state as unknown as { candidate: { description: string } }).candidate.description.length).toBe(600);
+    expect((fake.requests[0]!.state as unknown as { candidate: { description: string } }).candidate.description).toBe('ordinary [redacted] ' + 'x'.repeat(700) + '[redacted]');
   });
 
   test('missing local owner and uncertain local screening never contact the catalog reader', async () => {
@@ -267,10 +268,10 @@ describe('PersonalOps canonical catalog readings', () => {
     await registry.releaseProjected(clear);
   });
 
-  test('ordinary status and briefing remain available through registered dispatch without a screening owner', async () => {
+  test('status and briefing require the current screening owner through registered dispatch', async () => {
     const registry = new ToolRegistry(); registerAgentPersonalOpsTool(registry, {} as CommandRegistry, context);
     for (const action of ['status', 'overview', 'briefing', 'daily']) {
-      expect((await registry.execute(`ordinary-${action}`, 'personal_ops', { action })).success).toBe(true);
+      await expect(registry.execute(`ordinary-${action}`, 'personal_ops', { action })).rejects.toThrow('Tool input projection held');
     }
   });
 
@@ -302,7 +303,7 @@ describe('PersonalOps canonical catalog readings', () => {
     await expect(pending).rejects.toThrow();
   });
 
-  test('exact connector read retains confirmation and forwards the same cancellation signal to MCP', async () => {
+  test('exact connector identity and confirmation cannot bypass a missing screening owner', async () => {
     const calls: { name: string; signal?: AbortSignal }[] = [];
     const api = {
       listServerSecurity: () => [{ name: 'gmail', connected: true, trustMode: 'trusted', role: 'read', schemaFreshness: 'fresh', allowedHosts: [] }],
@@ -314,13 +315,10 @@ describe('PersonalOps canonical catalog readings', () => {
     const source = { ...context, clients: { mcpApi: api }, session: { runtime } } as unknown as CommandContext;
     const controller = new AbortController();
     const args = { laneId: 'inbox', recordId: 'mcp:gmail:search_messages', fields: {}, explicitUserRequest: 'Read my inbox' };
-    expect(await runPersonalOpsRead(source, args, { signal: controller.signal })).toMatchObject({ status: 'needs_confirmation' });
+    for (const confirm of [false, true]) {
+      await expect(runPersonalOpsRead(source, { ...args, confirm }, { signal: controller.signal })).rejects.toThrow('Tool input projection unavailable');
+    }
     expect(calls).toEqual([]);
-    expect(await runPersonalOpsRead(source, { ...args, confirm: true }, { signal: controller.signal })).toMatchObject({ status: 'executed' });
-    expect(calls).toEqual([{ name: 'mcp:gmail:search_messages', signal: controller.signal }]);
-    api.getToolSchema = async () => { runtime.sessionId = 'changed'; return { inputSchema: { type: 'object', properties: {}, required: [] } }; };
-    expect(await runPersonalOpsRead(source, { ...args, confirm: true }, { signal: controller.signal })).toMatchObject({ status: 'deferred', reason: 'personal_ops_source_changed' });
-    expect(calls).toHaveLength(1);
   });
 
   test('PAN-shaped private receipt metadata is captured as data but never sent to either screening or ranking', async () => {

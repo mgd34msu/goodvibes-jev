@@ -13,7 +13,7 @@ import { consumeGoogleElement, findElement } from '../sdk/src/platform/google/br
 let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => { previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); });
-function readings() { return fakePort((name, question) => name === 'pick' ? choiceAnswer(question, 'control_0', 0.99) : noulAnswer(0.99)); }
+function readings() { return fakePort((name, question) => name === 'pick' ? choiceAnswer(question, 'control_0', 0.99) : noulAnswer(name === 'credentialPage' ? 0.01 : 0.99)); }
 function gate() {
   let release!: () => void, began!: () => void;
   const waiting = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { began = resolve; });
@@ -30,7 +30,11 @@ function fixture() {
     click: async () => { effects.push('click'); }, fill: async () => { effects.push('fill'); },
     press: async () => { effects.push('press'); }, pressSequentially: async () => { effects.push('type'); },
   };
-  const frame = { parentFrame: () => null, evaluate: async (_fn: unknown, argument: unknown) => typeof argument === 'number' ? rows : '' };
+  const frame = { parentFrame: () => null, evaluate: async (_fn: unknown, argument: unknown) =>
+    argument && typeof argument === 'object' && 'identityOnly' in argument && argument.identityOnly === true
+      ? { url: 'https://console.cloud.google.com/auth/clients', title: 'Synthetic', elements: [{ ...row, documentUrl: 'https://console.cloud.google.com/auth/clients', control: { type: '', autocomplete: '', name: '', id: '', placeholder: '', ariaLabel: '', label: '' } }] }
+      : typeof argument === 'number' ? rows : '' };
+
   const page = { url: () => 'https://console.cloud.google.com/auth/clients', title: async () => 'Synthetic',
     frames: () => [frame], mainFrame: () => frame, locator: () => locator,
     goto: async () => null, waitForLoadState: async () => {}, evaluate: async () => '',

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { createSystemOnePort, JudgmentError, PINNED_MODEL, SqliteDecisionLog, withDecisionLog, type JudgmentPort, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
+import { createSystemOnePort, JudgmentError, DEFAULT_MODEL, SqliteDecisionLog, withDecisionLog, type JudgmentPort, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import {
   decideNativeIntake, NATIVE_INTAKE_COVERAGE_SITE, NATIVE_INTAKE_DECISION_SITE, NATIVE_INTAKE_ROUTE_SITE,
@@ -192,12 +192,12 @@ test('registered external condition produces a bound defer without acting or wai
 test.each(['recover', 'revoke', 'abort'] as const)('shared transport retry retains native lifetime: %s', async behavior => {
   using log = new SqliteDecisionLog(':memory:'); const controller = new AbortController();
   let attempts = 0, progress = 0, current = true;
-  const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-fixture' }, model: PINNED_MODEL,
+  const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-fixture' }, model: DEFAULT_MODEL,
     retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, timeoutMs: 1_000,
     fetch: async (_url, init) => {
       if (++attempts === 1) return new Response('', { status: 503 });
       const wire = JSON.parse(String(init?.body)) as JudgmentRequest<Questions>;
-      return Response.json({ model: PINNED_MODEL, answers: { route: choiceAnswer(wire.questions.route!, 'answer', 0.99) }, usage: { input_tokens: 1, output_tokens: 1 } });
+      return Response.json({ model: DEFAULT_MODEL, answers: { route: choiceAnswer(wire.questions.route!, 'answer', 0.99) }, usage: { input_tokens: 1, output_tokens: 1 } });
     },
   });
   const read = { ...input(withDecisionLog(transport, log), log), signal: controller.signal,

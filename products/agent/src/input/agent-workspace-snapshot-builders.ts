@@ -159,10 +159,11 @@ export function buildAgentWorkspaceResearchRunSnapshot(context: CommandContext) 
 
 export function buildAgentWorkspaceArtifactListSnapshot(context: CommandContext) {
   try {
-    const list = context.platform?.artifactStore?.list;
+    const store = context.platform?.artifactStore;
+    const list = store?.list;
     return {
       available: Boolean(list),
-      items: [...(list?.(100) ?? [])],
+      items: [...(list?.call(store, 100) ?? [])],
     };
   } catch {
     return { available: false, items: [] };

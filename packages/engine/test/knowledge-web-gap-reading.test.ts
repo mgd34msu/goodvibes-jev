@@ -31,7 +31,7 @@ afterEach(() => { installJudgmentPort(previous); });
 const request = (): KnowledgeSemanticGapRepairRequest => ({ spaceId: 'default', query: '厨房の温度計の電池を交換するには？', gaps: [], linkedObjects: [], sources: [], facts: [] });
 const source = (url = 'https://reference.example/one', snippet = 'Hold the recessed switch for ten seconds.'): WebSearchResult => ({ url, rank: 1, title: 'Reference', snippet, type: 'organic', providerId: 'fixture', metadata: {} });
 const response = (results = [source(), source('https://independent.example/two')]): WebSearchResponse => ({ providerId: 'fixture', providerLabel: 'Fixture', query: 'query', verbosity: 'snippets', metadata: {}, results });
-function readings(input: { relevant?: number; authority?: 'secondary' | 'official-vendor' | 'vendor'; query?: 'none'; confidence?: number; before?: (name: string) => void } = {}) {
+function readings(input: { relevant?: number; authority?: 'secondary' | 'official-vendor' | 'vendor'; query?: 'none'; sufficient?: number; confidence?: number; before?: (name: string) => void } = {}) {
   const fake = fakePort((name, question, state) => {
     input.before?.(name);
     if (name === 'pick') {
@@ -39,6 +39,7 @@ function readings(input: { relevant?: number; authority?: 'secondary' | 'officia
       return choiceAnswer(question, input.query ?? candidates[0]!.id, input.confidence ?? 0.99);
     }
     if (name.startsWith('fits_')) return noulAnswer(0.99);
+    if (name === 'sufficient') return noulAnswer(input.sufficient ?? 0.99);
     if (name === 'relevant') return noulAnswer(input.relevant ?? 0.99);
     if (name === 'authority') return choiceAnswer(question, input.authority ?? 'secondary', 0.99);
     if (name === 'alias' || name === 'serve' || name === 'readable') return noulAnswer(0.99);
@@ -57,7 +58,7 @@ const originalSource = (id = 'original'): KnowledgeSourceRecord => ({ id, connec
 
 describe('actual web gap repair canonical decisions', () => {
   test('registered selection and relevance replace semantic shortcuts', () => {
-    expect(registry.list().map(item => item.name)).toEqual(['engine.knowledge.web-gap-query', 'engine.knowledge.web-gap-source-relevance']);
+    expect(registry.list().map(item => item.name)).toEqual(['engine.knowledge.web-gap-coverage', 'engine.knowledge.web-gap-query', 'engine.knowledge.web-gap-source-relevance']);
     expect(webGapQuery.version).toBe(1); expect(webGapRelevance.fixtures.length).toBeGreaterThanOrEqual(5);
     expect(isKnowledgeSourceQualityFailure(new Held('uncertain'))).toBe(true);
   });
@@ -85,17 +86,17 @@ describe('actual web gap repair canonical decisions', () => {
     expect(result?.evidenceSufficient).toBe(false); expect(f.ingested).toHaveLength(0);
     expect(result?.sourceAssessments?.[0]?.rejectionReason).toBe('query-mismatch');
   });
-  test('only a settled authority reading permits the one-primary-source policy', async () => {
+  test('independent evidence coverage decides whether one source suffices', async () => {
     for (const authority of ['secondary', 'official-vendor'] as const) {
-      readings({ authority }); const f = fixture(response([source('https://acme.example.attacker.test/official')]));
+      readings({ authority, sufficient: authority === 'official-vendor' ? 0.01 : 0.99 }); const f = fixture(response([source('https://acme.example.attacker.test/official')]));
       const result = await f.repair(request());
-      expect(result?.evidenceSufficient).toBe(authority === 'official-vendor');
-      expect(f.ingested.length).toBe(authority === 'official-vendor' ? 1 : 0);
+      expect(result?.evidenceSufficient).toBe(authority === 'secondary');
+      expect(f.ingested.length).toBe(authority === 'secondary' ? 1 : 0);
     }
   });
-  test('domain diversity uses actual URL hosts, not provider claimed labels', async () => {
+  test('explicit domain diversity uses actual URL hosts, not provider claimed labels', async () => {
     readings(); const f = fixture(response([{ ...source('https://same.example/one'), domain: 'first.example' }, { ...source('https://same.example/two'), domain: 'second.example' }]));
-    expect((await f.repair(request()))?.evidenceSufficient).toBe(false); expect(f.ingested).toHaveLength(0);
+    expect((await createWebKnowledgeGapRepairer({ ...f.options, minDistinctDomains: 2 })(request()))?.evidenceSufficient).toBe(false); expect(f.ingested).toHaveLength(0);
   });
   test('explicit confidence and ingestion limits remain caller policy', async () => {
     readings(); const f = fixture(); const repair = createWebKnowledgeGapRepairer({ ...f.options, minConfidence: 100, maxIngest: 0 });
@@ -453,4 +454,20 @@ test('HomeGraph owned refresh does not mint generated-reference proof for an ord
     expect(projectKnowledgeSourceReferences(result.source, extraction, proof)?.sourceId).toBe('source-reference');
     expect(projectKnowledgeSourceReferences(result.source, extraction, proof)?.extractionId).toBeUndefined();
   } finally { fetch.mockRestore(); service.dispose(); }
+});
+
+
+test('an official publisher still needs an independent sufficient-reference reading', async () => {
+  readings({ authority: 'official-vendor', sufficient: 0.01 });
+  const f = fixture();
+  const result = await f.repair(request());
+  expect(result?.evidenceSufficient).toBe(false);
+  expect(f.ingested).toEqual([]);
+});
+
+test('uncertain discovery sufficiency holds instead of counting two domains as evidence', async () => {
+  readings({ sufficient: 0.5 });
+  const f = fixture();
+  await held(f.repair(request()), 'uncertain');
+  expect(f.ingested).toEqual([]);
 });

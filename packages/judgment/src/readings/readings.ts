@@ -1,5 +1,5 @@
 import type { ChoiceCriteria, ChoiceResponse, NoulResponse, ScoreCriteria, ScoreResponse } from '../port/types.ts';
-import { captureChoiceAnswer } from '../port/answers.ts';
+import { captureChoiceAnswer, captureNoulAnswer, captureScoreAnswer } from '../port/answers.ts';
 import {
   assertBand,
   outcomeForConfidence,
@@ -68,7 +68,8 @@ function confident(confidence: number, band: ConfidenceBand): Pick<ScoreReading,
 /** Reads a noul through a yes/no band. */
 export function readYesNo(answer: NoulResponse, band: YesNoBand): YesNoReading {
   assertBand(band);
-  return { kind: 'yes-no', probability: answer.noul, ...concludeYesNo(answer.noul, band) };
+  const probability = captureNoulAnswer(answer);
+  return { kind: 'yes-no', probability, ...concludeYesNo(probability, band) };
 }
 
 /** Reads a choice through its band, using the chosen option's stricter band when it has one. */
@@ -89,15 +90,14 @@ export function readChoice<T extends ChoiceCriteria>(
 
 /** Reads a score through a confidence band. */
 export function readScore<T extends ScoreCriteria>(answer: ScoreResponse<T>, band: ConfidenceBand): ScoreReading {
-  const probabilities: Readonly<Record<string, number>> = answer.probabilities;
-  const top = Object.keys(probabilities).length - 1;
-  const levels = Array.from({ length: top + 1 }, (_, level) => probabilities[String(level)] ?? 0);
+  const captured = captureScoreAnswer(answer);
+  const top = captured.probabilities.length - 1;
   return {
     kind: 'score',
-    score: answer.score,
-    level: Math.min(top, Math.max(0, Math.round(answer.score))),
-    normalized: top > 0 ? answer.score / top : 0,
-    probabilities: levels,
-    ...confident(answer.confidence, band),
+    score: captured.score,
+    level: Math.round(captured.score),
+    normalized: captured.score / top,
+    probabilities: captured.probabilities,
+    ...confident(captured.confidence, band),
   };
 }

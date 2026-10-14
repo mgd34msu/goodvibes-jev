@@ -33,13 +33,23 @@ function fixture() {
   const context = { extensions: { toolRegistry: registry }, clients: {}, workspace: {}, platform: { config: {} }, ops: { agentManager: manager, executionLedger: ledger }, session: { runtime: { sessionId: 'owned-record-selector' } } } as unknown as CommandContext;
   return { context, registry, records, agents, manager, ledger };
 }
+const RECORD_INTERPRETATION_BATTERIES = new Set(['agent.runtime.kind', 'agent.runtime.status', 'agent.runtime.schema-status', 'agent.runtime.route-role',
+  'agent.remote-publisher.schema-status', 'agent.remote-publisher.outcome-kind']);
 const PRIVACY_BATTERIES = new Set(['engine.redaction.field-kind', 'engine.redaction.credential', 'engine.export.credential',
   'engine.redaction.residual-credential', 'engine.redaction.profile-distinctive']);
-/** Explicit privacy contract readings for synthetic local records. No semantic matching answer. */
-function privacyOnlyReadings() {
+/** Explicit privacy and publisher interpretations for synthetic local records. No catalog matching answer. */
+function recordSupportReadings() {
   const declaredSecrets = new Set(['token', 'password', 'credential', 'apiKey', 'api_key', 'accessToken', 'access_token',
     'refreshToken', 'refresh_token', 'clientSecret', 'client_secret', 'privateKey', 'private_key', 'unlockPassphrase']);
   return fakePort((name, question, state) => {
+    // These synthetic native records declare process-output/completed but no
+    // schema certification or capture/export operation. Author those readings
+    // separately from the catalog match under test.
+    if (question.type === 'noul' && (name === 'certified' || name === 'certified_schema')) return noulAnswer(0.001);
+    if (question.type === 'choice' && name === 'kind' && Object.hasOwn(question.criteria, 'pty-session')) return choiceAnswer(question, 'process-output', 0.999);
+    if (question.type === 'choice' && name === 'status' && Object.hasOwn(question.criteria, 'completed')) return choiceAnswer(question, 'completed', 0.999);
+    if (question.type === 'choice' && name === 'role' && Object.hasOwn(question.criteria, 'none')) return choiceAnswer(question, 'none', 0.999);
+    if (question.type === 'choice' && name === 'outcome_kind') return choiceAnswer(question, 'other', 0.999);
     if (name === 'kind' && question.type === 'choice' && Object.hasOwn(question.criteria, 'other')
       && state && typeof state === 'object' && !Array.isArray(state) && typeof state.field === 'string') {
       return choiceAnswer(question, declaredSecrets.has(state.field) ? 'secret' : 'other', 0.999);
@@ -62,9 +72,9 @@ function readings(fits: Readonly<Record<string, number>>, verification: Readonly
     if (name === 'match' && state.candidate && typeof state.candidate === 'object' && !Array.isArray(state.candidate) && typeof state.candidate.name === 'string') return noulAnswer(fits[state.candidate.name] ?? 0.001);
     throw new Error(`Unexpected fixture reading: ${name}`);
   });
-  const privacy = privacyOnlyReadings();
+  const privacy = recordSupportReadings();
   const port: JudgmentPort = { ...canonical.port, ask(request) {
-    return PRIVACY_BATTERIES.has(request.context?.battery ?? '') ? privacy.port.ask(request) : canonical.port.ask(request);
+    return (PRIVACY_BATTERIES.has(request.context?.battery ?? '') || RECORD_INTERPRETATION_BATTERIES.has(request.context?.battery ?? '')) ? privacy.port.ask(request) : canonical.port.ask(request);
   } };
   return { ...canonical, port, privacyRequests: privacy.requests };
 }
@@ -155,7 +165,7 @@ describe('owned canonical route and record selectors', () => {
       dispatch.syncRuntimeTask(original);
       const model = createStoreBackedUiReadModel(store, () => ({ records: [...store.getState().tasks.tasks.values()].map(task => ({ ...nativeRecord(task.title), nativeTask: task })) }));
       seam.mount(f, model); installJudgmentPort(fake.port); const guards: Array<() => void> = [];
-      await seam.run(f, { ...options(), retainCurrent: (guard: () => void) => guards.push(guard) });
+      await seam.run(f, { ...options(), retainCurrent: (guard: () => void) => { guards.push(guard); } });
       dispatch.dispatchAgentEvent({ type: 'AGENT_SPAWNING', agentId: 'unrelated-native-domain', task: 'Unrelated domain' });
       expect(() => guards.forEach(guard => guard())).not.toThrow();
       dispatch.syncRuntimeTask({ ...original, title: 'Changed native original' }); dispatch.syncRuntimeTask(original);
@@ -168,8 +178,8 @@ describe('owned canonical route and record selectors', () => {
     const readModel = createStaticUiReadModel(source);
     Object.assign(f.context.platform, { readModels: { remote: createStaticUiReadModel({ acp: {} }), remoteRuntime: { captureOutcomes: readModel } } });
     const guards: Array<() => void> = [];
-    installJudgmentPort(privacyOnlyReadings().port);
-    expect((await agentOrchestrationSummary(f.context, f.registry, {}, { ...options(), retainCurrent: guard => guards.push(guard) })).total).toBeGreaterThan(0);
+    installJudgmentPort(recordSupportReadings().port);
+    expect((await agentOrchestrationSummary(f.context, f.registry, {}, { ...options(), retainCurrent: guard => { guards.push(guard); } })).total).toBeGreaterThan(0);
     guards.forEach(guard => guard()); const record = source.records[0]; if (!record) throw new Error('Missing actual source record'); record.summary = 'Changed actual hidden native snapshot';
     expect(() => guards.forEach(guard => guard())).toThrow(ToolInputProjectionError);
   });
@@ -214,7 +224,7 @@ describe('owned canonical route and record selectors', () => {
       const f = fixture(), fake = readings({ [entry.chosen]: 0.999 }), guards: Array<() => void> = [];
       installJudgmentPort(fake.port);
       const assertCurrent = () => { for (const guard of guards) guard(); };
-      const retained = { ...options(), assertCurrent, retainCurrent: (guard: () => void) => guards.push(guard) };
+      const retained = { ...options(), assertCurrent, retainCurrent: (guard: () => void) => { guards.push(guard); } };
       expect((await entry.summary(f, { query: 'mail' }, retained))[entry.field]).toMatchObject([{ [entry.id]: entry.chosen }]);
       expect(() => assertCurrent()).not.toThrow();
       f.context.session.runtime.sessionId = 'changed-original-session';
@@ -259,8 +269,9 @@ describe('owned canonical route and record selectors', () => {
     });
     test(`${entry.kind} preserves exact IDs and literal lists when semantic matching is unavailable`, async () => {
       const f = fixture();
-      await expect(entry.summary(f, { query: 'mail' }, options())).rejects.toBeInstanceOf(JudgmentPortMissingError);
-      if (entry.kind === 'orchestration') installJudgmentPort(privacyOnlyReadings().port);
+      await expect(entry.summary(f, { query: 'mail' }, options())).rejects.toBeInstanceOf(
+        entry.kind === 'orchestration' ? ToolInputProjectionError : JudgmentPortMissingError);
+      if (entry.kind === 'orchestration') installJudgmentPort(recordSupportReadings().port);
       const literalOptions = entry.kind === 'orchestration' ? options() : {};
       expect((await entry.summary(f, {}, literalOptions)).total).toBeGreaterThan(0);
       expect((await entry.detail(f, { [entry.id]: entry.chosen }, literalOptions)).status).toBe('found');
@@ -285,7 +296,7 @@ describe('owned canonical route and record selectors', () => {
   test('Document Ops retains a pure source restriction inside its actual caller readset', async () => {
     const f = fixture(), guards: Array<() => void> = [];
     const assertCurrent = () => { for (const guard of guards) guard(); };
-    expect((await describeDocumentOpsLane(f.context, { laneId: 'model_compare' }, { assertCurrent, retainCurrent: guard => guards.push(guard) })).status).toBe('found');
+    expect((await describeDocumentOpsLane(f.context, { laneId: 'model_compare' }, { assertCurrent, retainCurrent: guard => { guards.push(guard); } })).status).toBe('found');
     expect(() => assertCurrent()).not.toThrow();
     Object.assign(f.context.platform, { config: { changedSource: true } });
     expect(() => assertCurrent()).toThrow(ToolInputProjectionError);
@@ -382,7 +393,8 @@ describe('owned canonical route and record selectors', () => {
 
   test('orchestration posture retains its tool readiness read set through publication', async () => {
     const f = fixture(), guards: (() => void)[] = [];
-    expect((await agentOrchestrationSummary(f.context, f.registry, {}, { retainCurrent: guard => { guards.push(guard); } })).returned).toBe(2);
+    installJudgmentPort(recordSupportReadings().port);
+    expect((await agentOrchestrationSummary(f.context, f.registry, {}, { ...options(), retainCurrent: guard => { guards.push(guard); } })).returned).toBe(2);
     f.registry.unregister('agent');
     expect(() => { for (const guard of guards) guard(); }).toThrow(ToolInputProjectionError);
   });
@@ -460,6 +472,53 @@ describe('owned canonical route and record selectors', () => {
     expect(fake.requests).toHaveLength(before);
   });
 
+  test('artifact expiry clock authority belongs to its store acquisition and cannot move with a record', async () => {
+    const f = fixture(), expiresAt = 1791684509006;
+    const receipt = { id: 'opaque-receipt', kind: 'data', mimeType: 'application/json', sizeBytes: 2,
+      sha256: 'synthetic-native-content-hash', createdAt: 1000, expiresAt,
+      acquisitionMode: 'inline-data', fetchMode: 'not-applicable', metadata: {
+        purpose: 'connected-host-remote-runner-closeout-receipt', runnerId: 'opaque-worker', summary: 'Complete native receipt',
+      } };
+    Object.assign(f.context.platform, { artifactStore: { list: () => [receipt] } });
+    const fake = readings({ 'opaque-worker': 0.999 }); installJudgmentPort(fake.port);
+    expect(await describeAgentOrchestrationAgent(f.context, { query: 'mail' }, options())).toMatchObject({ status: 'found' });
+    expect(JSON.stringify(fake.requests)).toContain(new Date(expiresAt).toISOString());
+    expect(JSON.stringify(fake.requests)).not.toContain(String(expiresAt));
+    const before = fake.requests.length;
+    Object.assign(f.context.platform, { artifactStore: undefined });
+    Object.assign(f.context.ops, { remoteRuntime: { listContracts: () => [], listPools: () => [], listArtifacts: () => [receipt] } });
+    await expect(describeAgentOrchestrationAgent(f.context, { query: 'mail' }, options())).rejects.toThrow();
+    expect(fake.requests).toHaveLength(before);
+  });
+
+  test('fractional producer clocks cannot silently lose precision before readings', async () => {
+    const f = fixture(), fake = readings({ 'opaque-worker': 0.999 }); installJudgmentPort(fake.port);
+    Object.assign(f.agents[1]!, { startedAt: 1791684509006.5 });
+    await expect(describeAgentOrchestrationAgent(f.context, { query: 'mail' }, options())).rejects.toThrow();
+    expect(fake.requests).toHaveLength(0);
+  });
+
+  test('orchestration reads every acquired receipt before limiting public artifact cards', async () => {
+    const f = fixture();
+    const receipts = Array.from({ length: 21 }, (_, index) => ({
+      id: `native-receipt-${index}`, kind: 'data', mimeType: 'application/json', sizeBytes: 2,
+      sha256: 'synthetic-native-content-hash', createdAt: index + 1,
+      metadata: { purpose: 'connected-host-remote-runner-closeout-receipt', runnerId: 'opaque-worker',
+        summary: index === 0 ? 'Complete oldest receipt outside the former shortlist' : `Complete native receipt ${index}` },
+    }));
+    Object.defineProperty(receipts[0]!, 'hiddenEvidence', { value: 'Complete hidden native receipt evidence', enumerable: false });
+    Object.assign(f.context.platform, { artifactStore: { list: () => receipts } });
+    const fake = readings({ 'opaque-worker': 0.999 }); installJudgmentPort(fake.port);
+    expect(await describeAgentOrchestrationAgent(f.context, { query: 'mail' }, options())).toMatchObject({ status: 'found' });
+    const ranked = fake.requests.filter(request => request.context?.battery === 'engine.tools.registry-rank');
+    expect(JSON.stringify(ranked)).toContain('Complete oldest receipt outside the former shortlist');
+    expect(JSON.stringify(ranked)).toContain('Complete hidden native receipt evidence');
+    const before = fake.requests.length;
+    Object.defineProperty(receipts[0]!, 'hidden', { value: '4111111111111111', enumerable: false });
+    await expect(describeAgentOrchestrationAgent(f.context, { query: 'mail' }, options())).rejects.toThrow();
+    expect(fake.requests).toHaveLength(before);
+  });
+
   test('a changed verification definition cannot log or consume an old response', async () => {
     const f = fixture(), fake = readings({}, { 'opaque-proof': 0.999 });
     const question = executionVerification.items.verification.question;
@@ -487,13 +546,13 @@ describe('orchestration literal output preserves complete original refusal parit
   }
   for (const branch of branches) {
     test(`${branch} refuses nonempty output without its trusted source owner`, async () => {
-      const f = fixture(), privacy = privacyOnlyReadings(); installJudgmentPort(privacy.port);
+      const f = fixture(), privacy = recordSupportReadings(); installJudgmentPort(privacy.port);
       await expect(run(branch, f, {})).rejects.toBeInstanceOf(ToolInputProjectionError);
       expect(privacy.requests).toHaveLength(0);
     });
 
     test(`${branch} privately redacts permitted generic credentials without semantic matching`, async () => {
-      const f = fixture(), privacy = privacyOnlyReadings(), secret = 'ORCHESTRATION_LITERAL_PRIVATE';
+      const f = fixture(), privacy = recordSupportReadings(), secret = 'ORCHESTRATION_LITERAL_PRIVATE';
       const selected = branch === 'no-query' ? f.agents[0] : f.agents.find(agent => agent.id === 'opaque-worker');
       if (!selected) throw new Error('Original selected agent missing');
       selected.task = `Ordinary task token=${secret}; still visible`;
@@ -510,7 +569,7 @@ describe('orchestration literal output preserves complete original refusal parit
     for (const placement of ['native-workspace-component', 'selected-agent-tail', 'unselected-agent-tail', 'native-remote-tail'] as const) {
       for (const kind of ['card', 'issuer'] as const) {
         test(`${branch} refuses complete ${kind} material in ${placement} before any wire`, async () => {
-          const f = fixture(), privacy = privacyOnlyReadings(), screening = researchScreeningFixture();
+          const f = fixture(), privacy = recordSupportReadings(), screening = researchScreeningFixture();
           const material = kind === 'card' ? '4111' + '1111'.repeat(3) : 'ghp_' + 'A'.repeat(36);
           const selectedId = branch === 'no-query' ? 'lexical-mail' : 'opaque-worker';
           const selected = f.agents.find(agent => agent.id === selectedId), other = f.agents.find(agent => agent.id !== selectedId);
@@ -534,7 +593,7 @@ describe('orchestration literal output preserves complete original refusal parit
 
   for (const kind of ['card', 'issuer'] as const) {
     test(`empty no-query agent output still refuses full original workspace ${kind} before any wire`, async () => {
-      const f = fixture(), privacy = privacyOnlyReadings(), screening = researchScreeningFixture();
+      const f = fixture(), privacy = recordSupportReadings(), screening = researchScreeningFixture();
       f.agents.length = 0;
       const material = kind === 'card' ? '4111' + '1111'.repeat(3) : 'ghp_' + 'A'.repeat(36);
       const original = { workspaceId: 'empty-native-workspace', runnerId: 'absent-native-agent', status: 'ready', worktreePath: `/tmp/token=${material}/owned-worktree` };

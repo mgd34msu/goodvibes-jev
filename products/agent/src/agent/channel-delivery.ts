@@ -10,6 +10,7 @@ import {
   screenOutboundForCardMaterial,
 } from './payments-channel-guard.ts';
 import { isRoutineScheduleDeliverySurfaceKind } from './schedule-delivery-targets.ts';
+import { agentRecordNonce } from '../utils/record-nonce.ts';
 
 type AgentChannelDeliveryRouter = Pick<ChannelDeliveryRouter, 'deliver' | 'listStrategies'>;
 type AgentChannelDeliverySurfaceKind = ChannelDeliverySurfaceKind | 'telephony';
@@ -128,7 +129,7 @@ export function buildAgentChannelDeliveryPreview(input: AgentChannelDeliveryInpu
       body: message,
       title,
       jobId: 'agent-channel-send',
-      runId: `agent-channel-send-${Date.now()}`,
+      runId: `agent-channel-send-${agentRecordNonce()}`,
       status: 'completed',
       includeLinks: true,
       metadata: {

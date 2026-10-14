@@ -626,17 +626,16 @@ async function buildDeviceCapabilityMap(context: CommandContext, browserPosture:
 }
 
 export async function pairingPostureCatalogStatus(context: CommandContext, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
-  const caller = captureAsyncHarnessInput({}, options);
   const native = captureCatalogNativeFacts(context, 'pairing');
-  caller.options.retainCurrent(native.assertCurrent, 'agent.pairing.native-source');
+  const caller = captureAsyncHarnessInput({}, options, true, [native.assertCurrent]);
+  const childOptions = { ...caller.options, assertCurrent: caller.assertCallerCurrent };
   const advertisement = capturePairingAdvertisement(requirePlatform(context).configManager, native.assertCurrent);
-  caller.options.retainCurrent(advertisement.assertCurrent, 'agent.pairing.native-advertisement');
-  caller.retainSourceCurrent();
-  const browserPosture = await browserControlPosture(context, context.extensions?.toolRegistry, caller.options);
+  childOptions.retainCurrent(advertisement.assertCurrent, 'agent.pairing.native-advertisement');
+  const browserPosture = await browserControlPosture(context, context.extensions?.toolRegistry, childOptions);
   caller.assertCurrent();
-  const deviceMap = await buildDeviceCapabilityMap(context, browserPosture, caller.options, advertisement.address);
+  const deviceMap = await buildDeviceCapabilityMap(context, browserPosture, childOptions, advertisement.address);
   caller.assertCurrent();
-  return withModelReadingSource({ nativeProviders: native.providerEvidence, deviceMap, advertisementSource: advertisement.source, state: pairingState(context, advertisement.address) }, caller.options, async (captured, current) => {
+  const result = await withModelReadingSource({ nativeProviders: native.providerEvidence, deviceMap, advertisementSource: advertisement.source, state: pairingState(context, advertisement.address) }, childOptions, async (captured, current) => {
     const state = captured.state;
     const result = {
       modes: ['pairing_posture', 'pairing_route'],
@@ -648,23 +647,24 @@ export async function pairingPostureCatalogStatus(context: CommandContext, optio
     current.assertCurrent?.();
     return result;
   });
+  caller.retainSourceCurrent('agent.pairing.sources');
+  return result;
 }
 
 export async function pairingPostureSummary(context: CommandContext, rawArgs: AgentHarnessPairingArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
-  const caller = captureAsyncHarnessInput(rawArgs, options), args = caller.args;
   const native = captureCatalogNativeFacts(context, 'pairing');
-  caller.options.retainCurrent(native.assertCurrent, 'agent.pairing.native-source');
+  const caller = captureAsyncHarnessInput(rawArgs, options, true, [native.assertCurrent]), args = caller.args;
+  const childOptions = { ...caller.options, assertCurrent: caller.assertCallerCurrent };
   const advertisement = capturePairingAdvertisement(requirePlatform(context).configManager, native.assertCurrent);
-  caller.options.retainCurrent(advertisement.assertCurrent, 'agent.pairing.native-advertisement');
-  caller.retainSourceCurrent();
-  const browserPosture = await browserControlPosture(context, context.extensions?.toolRegistry, caller.options);
+  childOptions.retainCurrent(advertisement.assertCurrent, 'agent.pairing.native-advertisement');
+  const browserPosture = await browserControlPosture(context, context.extensions?.toolRegistry, childOptions);
   caller.assertCurrent();
   const query = readString(args.query);
   const includeParameters = args.includeParameters === true;
   const routes = pairingRoutes();
-  const deviceMap = await buildDeviceCapabilityMap(context, browserPosture, caller.options, advertisement.address);
+  const deviceMap = await buildDeviceCapabilityMap(context, browserPosture, childOptions, advertisement.address);
   caller.assertCurrent();
-  return withModelReadingSource({ nativeProviders: native.providerEvidence, routes, deviceMap, args, advertisementSource: advertisement.source, state: pairingState(context, advertisement.address) }, caller.options, async (captured, current) => {
+  const result = await withModelReadingSource({ nativeProviders: native.providerEvidence, routes, deviceMap, args, advertisementSource: advertisement.source, state: pairingState(context, advertisement.address) }, childOptions, async (captured, current) => {
     const sourceOptions = current;
     const limit = readLimit(args.limit, 100);
     const matchingRoutes = await browserDeviceCatalogMatches(routes, query, route => ({
@@ -701,15 +701,16 @@ export async function pairingPostureSummary(context: CommandContext, rawArgs: Ag
     current.assertCurrent?.();
     return result;
   });
+  caller.retainSourceCurrent('agent.pairing.sources');
+  return result;
 }
 
 export async function describeHarnessPairingRoute(context: CommandContext, rawArgs: AgentHarnessPairingArgs,
   options: CatalogRankingOptions = {}): Promise<PairingResolution> {
-  const caller = captureAsyncHarnessInput(rawArgs, options);
   const native = captureCatalogNativeFacts(context, 'pairing');
-  caller.options.retainCurrent(native.assertCurrent, 'agent.pairing.native-source');
-  caller.retainSourceCurrent();
-  return withModelReadingSource({ args: caller.args, nativeProviders: native.providerEvidence }, caller.options, async ({ args }, current): Promise<PairingResolution> => {
+  const caller = captureAsyncHarnessInput(rawArgs, options, true, [native.assertCurrent]);
+  const childOptions = { ...caller.options, assertCurrent: caller.assertCallerCurrent };
+  const result = await withModelReadingSource({ args: caller.args, nativeProviders: native.providerEvidence }, childOptions, async ({ args }, current): Promise<PairingResolution> => {
     const lookup = lookupFromArgs(args);
     if (!lookup) return { status: 'missing_lookup', usage: 'pairing_route requires pairingRouteId, target, or query. Use mode:"pairing_posture" to inspect pairing route ids.' };
     const routes = pairingRoutes();
@@ -717,7 +718,7 @@ export async function describeHarnessPairingRoute(context: CommandContext, rawAr
       let deviceCapabilityMap: DeviceCapabilityMap | undefined;
       if (route.id === 'device-capability-map') {
         const advertisement = capturePairingAdvertisement(requirePlatform(context).configManager, native.assertCurrent);
-        caller.options.retainCurrent(advertisement.assertCurrent, 'agent.pairing.native-advertisement');
+        childOptions.retainCurrent(advertisement.assertCurrent, 'agent.pairing.native-advertisement');
         const browserPosture = await browserControlPosture(context, context.extensions?.toolRegistry, current);
         current.assertCurrent?.();
         const acquiredMap = await buildDeviceCapabilityMap(context, browserPosture, current, advertisement.address);
@@ -744,4 +745,6 @@ export async function describeHarnessPairingRoute(context: CommandContext, rawAr
     if (searched.length > 1) return { status: 'ambiguous', input: lookup.input, candidates: searched.slice(0, 8).map(describeCandidate) };
     return { status: 'missing_lookup', usage: `Unknown pairing route ${lookup.input}. Use mode:"pairing_posture" to inspect pairing route ids.` };
   });
+  caller.retainSourceCurrent('agent.pairing.sources');
+  return result;
 }

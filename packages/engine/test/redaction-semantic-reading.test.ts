@@ -10,6 +10,7 @@ import { exportToHTML, exportToJSON, exportToMarkdownExtended } from '../sdk/src
 import type { ExportMessage } from '../sdk/src/platform/export/markdown.js';
 import { fieldKind } from '../sdk/src/platform/utils/batteries/field-kind.js';
 import { captureStructuredCredentialReferenceConfigValue } from '../sdk/src/platform/config/structured-credential-config.js';
+import { redactionCredential } from '../sdk/src/platform/utils/batteries/redaction.js';
 
 let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => { previous = installJudgmentPort(undefined); });
@@ -267,6 +268,34 @@ describe('canonical redaction source admission', () => {
     pending.release();
     expect(await result).toBe('[REDACTED]');
     expect(JSON.stringify(pending.normal.requests)).not.toContain('late-hidden-private-value');
+  });
+
+  test('repeated complete text shares readings only inside its current structured operation', async () => {
+    const port = publicReadings(), text = 'Ordinary public description of the current work';
+    const credentialCount = () => port.requests.filter(request => request.context?.battery === 'engine.redaction.credential').length;
+    expect(await redactSensitiveDataAsync(text)).toBe(text);
+    const single = credentialCount();
+    expect(single).toBeGreaterThan(0);
+    expect(await redactStructuredDataAsync([text, text, text])).toEqual([text, text, text]);
+    expect(credentialCount()).toBe(single * 2);
+    expect(await redactStructuredDataAsync([text, text, text])).toEqual([text, text, text]);
+    expect(credentialCount()).toBe(single * 3);
+  });
+
+  test('a changed text contract withholds already read and repeated structured text', async () => {
+    const question = redactionCredential.items.lineHasCredential.question;
+    const descriptor = Object.getOwnPropertyDescriptor(question, 'instructions');
+    if (!descriptor) throw new Error('Expected text reading instructions');
+    const normal = publicReadings();
+    installJudgmentPort({ ...normal.port, async ask(request) {
+      const answer = await normal.port.ask(request);
+      if (JSON.stringify(request.state).includes('A second public description'))
+        Object.defineProperty(question, 'instructions', { ...descriptor, value: 'Changed text reading contract' });
+      return answer;
+    } });
+    try {
+      expect(await redactStructuredDataAsync(['A first public description', 'A second public description', 'A first public description'])).toBe('[REDACTED]');
+    } finally { Object.defineProperty(question, 'instructions', descriptor); }
   });
 
   test('equal uncertain fields stay masked and are read anew for another complete source', async () => {

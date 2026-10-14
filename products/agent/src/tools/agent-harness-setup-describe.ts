@@ -227,7 +227,7 @@ export function primarySetupRepairDecision(item: SetupPlanItem): SetupRepairDeci
 }
 
 export async function setupRepairPlanCandidates(plan: readonly SetupPlanItem[], input: string, options: CatalogRankingOptions = {}, source?: unknown): Promise<readonly SetupPlanItem[]> {
-  return rankStatefulCatalog(plan, input, item => ({ id: item.id, description: item.label, evidence: { item, source } }), 'agent.setup.repair-rank', options);
+  return rankStatefulCatalog(plan, input, item => ({ id: item.id, description: item.label }), 'agent.setup.repair-rank', options, { source });
 }
 
 export function defaultSetupRepairItem(plan: readonly SetupPlanItem[], wizard: AgentSetupWizard): SetupPlanItem | null {

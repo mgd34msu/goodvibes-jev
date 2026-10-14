@@ -24,3 +24,8 @@ export * from './worktree.js';
 
 export * from './archetype-family.js';
 export * from './planning-goal.js';
+
+
+export { readRequestedPlatformWork } from './platform-work-reading.js';
+
+export { readConnectorCapabilities } from './connector-reading.js';

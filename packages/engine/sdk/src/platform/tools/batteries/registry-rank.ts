@@ -1,3 +1,4 @@
+import { completeJudgmentView } from './complete-view.js';
 /**
  * `engine.tools.registry-rank`: orders the skills, agents and tools the
  * registry tool knows against a search query (mode search) or a task
@@ -20,7 +21,7 @@ import { defineRerank, STAKES_BANDS } from '@goodvibes-jev/judgment';
 /** Most characters of a candidate's description or preview the reading carries. */
 export const MAX_JUDGED_REGISTRY_CHARS = 600;
 
-const clip = (text: string): string => (text.length <= MAX_JUDGED_REGISTRY_CHARS ? text : `${text.slice(0, MAX_JUDGED_REGISTRY_CHARS)}...`);
+
 
 /** What the rerank sees of a skill, agent or tool: its kind, name, description and, when it has one, a preview of its body. */
 export function registryCandidateView(item: {
@@ -29,12 +30,12 @@ export function registryCandidateView(item: {
   readonly description: string;
   readonly preview?: string | undefined;
 }): { [field: string]: string } {
-  return {
+  return completeJudgmentView({
     type: item.type,
     name: item.name,
-    description: clip(item.description),
-    ...(item.preview ? { preview: clip(item.preview) } : {}),
-  };
+    description: item.description,
+    ...(item.preview ? { preview: item.preview } : {}),
+  });
 }
 
 const candidate = (type: 'skill' | 'agent' | 'tool', name: string, description: string) => ({

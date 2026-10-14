@@ -1,5 +1,5 @@
 /** Admit the actual shipped executable without choosing another binary from PATH or environment. */
-import { resolveInstalledDaemonUpdateArtifact, type ResolveInstalledDaemonUpdateArtifactOptions } from '../daemon/lifecycle.js';
+import { resolveInstalledDaemonUpdateArtifact, type ResolveInstalledDaemonUpdateArtifactOptions } from '../config/native-installation.js';
 
 export interface ShippedServiceExecutable {
   readonly binaryPath: string;

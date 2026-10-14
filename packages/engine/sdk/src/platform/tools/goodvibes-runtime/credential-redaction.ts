@@ -20,7 +20,9 @@
  *     text in config/schema.ts, the same on every install).
  * A failed reading throws, and the tool reports it as its error.
  */
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { captureJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { captureOwnedJson, snapshotJudgmentInput } from '../../gate/judgment-input.js';
+import { prepareJudgmentResult } from '../../gate/judgment-result.js';
 import { isValidConfigKey } from '../../config/schema.js';
 import { configKeyDescription, holdsCredential } from '../../config/credential-key-reading.js';
 import { isSecretBearingConfigKey } from '../../config/secret-bearing-config-keys.js';
@@ -41,10 +43,14 @@ export async function isCredentialConfigKey(key: string): Promise<boolean> {
 /** Whether a stored value is shown as it is: only a no that acts clears it. */
 async function valueMayShow(key: string, value: string): Promise<boolean> {
   const state = credentialValueState(key, configKeyDescription(key), value);
-  const run = await credentialValue.run(judgmentPort(VALUE_SITE), state, { site: VALUE_SITE });
+  const owner = captureJudgmentPort(VALUE_SITE, { prepareResultCapture: prepareJudgmentResult });
+  const run = await credentialValue.run(owner.port, state, { site: VALUE_SITE,
+    signal: owner.signal, beforeAttempt: owner.assertCurrent });
+  owner.assertCurrent();
   const { verdict, outcome } = run.readings.credential_material;
   const shown = verdict === 'no' && outcome === 'act';
   run.recordAction(shown ? 'shown' : 'redacted');
+  owner.assertCurrent();
   return shown;
 }
 
@@ -69,7 +75,12 @@ export async function redactConfigValue(key: string, value: unknown, schemaDefau
     try { return captureStructuredCredentialReferenceConfigValue(key, value); }
     catch { return redacted(value); }
   }
+  // Known private material is masked locally before asking even about its key.
+  // Detach objects before an awaited reading can yield to their owner.
+  try { value = snapshotJudgmentInput(value); snapshotJudgmentInput(key); }
+  catch { return redacted(value); }
   if (await isCredentialConfigKey(key)) return redacted(value);
+  if (value && typeof value === 'object') return redactObjectByPath(key, value);
   if (typeof value !== 'string' || value.trim() === '' || value.trim().startsWith(SECRET_REFERENCE_SCHEME)) return value;
   if (schemaDefault !== undefined && value === schemaDefault) return value;
   return (await valueMayShow(key, value)) ? value : redacted(value);
@@ -79,6 +90,7 @@ export async function redactConfigValue(key: string, value: unknown, schemaDefau
 export async function redactObjectByPath(prefix: string, value: unknown): Promise<unknown> {
   if (isStructuredCredentialReferenceConfigKey(prefix)) return redactConfigValue(prefix, value);
   if (!value || typeof value !== 'object') return value;
+  try { value = captureOwnedJson(value); } catch { return redacted(value); }
   if (Array.isArray(value)) return Promise.all(value.map((entry, index) => redactObjectByPath(`${prefix}.${index}`, entry)));
   const entries = await Promise.all(
     Object.entries(value as Record<string, unknown>).map(async ([key, entry]) => [key, await redactConfigValue(`${prefix}.${key}`, entry)] as const),

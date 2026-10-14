@@ -3,3 +3,6 @@ import { smokeLoadFailure } from './batteries/smoke-load-failure.js';
 
 export const registry = new BatteryRegistry();
 registry.register(smokeLoadFailure);
+
+import { nativeAddonFailure } from './batteries/native-addon-failure.js';
+registry.register(nativeAddonFailure);

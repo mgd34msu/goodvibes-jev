@@ -100,9 +100,9 @@ export function poolState(workstream: Workstream, probe: FleetCapacityProbe | nu
  * (the caller resets the item and re-ticks); false = hard-fail (the orphan
  * pass then surfaces dependents). Cancellations never retry.
  */
-export function shouldAutoRetry(item: WorkItem, reason: string, maxItemRetries: number): boolean {
+export function shouldAutoRetry(item: WorkItem, cancelled: boolean, maxItemRetries: number): boolean {
   if (maxItemRetries <= 0) return false;
-  if (reason.startsWith('cancelled')) return false;
+  if (cancelled) return false;
   return (item.retryCount ?? 0) < maxItemRetries;
 }
 

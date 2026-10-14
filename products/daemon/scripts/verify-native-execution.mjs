@@ -181,7 +181,7 @@ try {
     void (async () => {
       assert.equal(request.url, '/v1/systemone'); assert.equal(request.method, 'POST');
       let text = ''; for await (const chunk of request) { text += chunk; assert(text.length < 1_048_576); }
-      const body = JSON.parse(text); assert.equal(body.model, 'jev-1.13.0'); assert(requests.length < 5_000, 'Unexpected native boot judgment loop'); requests.push(body);
+      const body = JSON.parse(text); assert.equal(body.model, 'jev-latest'); assert(requests.length < 5_000, 'Unexpected native boot judgment loop'); requests.push(body);
       requestShapes[nativeRequestShape(body)]++;
       const answers = syntheticSystemOneAnswers(body.questions);
       for (const [name, question] of Object.entries(body.questions)) {
@@ -192,7 +192,7 @@ try {
     })().catch(error => { judgmentError = error; response.writeHead(500); response.end('Synthetic native reading failed'); });
   });
   await new Promise((yes, no) => { judgment.once('error', no); judgment.listen(0, '127.0.0.1', yes); });
-  const judgmentEnv = { TYPESAFE_BASE_URL: `http://127.0.0.1:${judgment.address().port}`, TYPESAFE_API_KEY: 'synthetic-native-reading-key', TYPESAFE_DEFAULT_MODEL: 'jev-1.13.0' };
+  const judgmentEnv = { TYPESAFE_BASE_URL: `http://127.0.0.1:${judgment.address().port}`, TYPESAFE_API_KEY: 'synthetic-native-reading-key', TYPESAFE_DEFAULT_MODEL: 'jev-latest' };
   const readingPort = createSystemOnePort(judgmentConfigFromEnv(judgmentEnv));
   mkdirSync(daemon); writeJson(join(daemon, 'settings.json'), { cluster: { enabled: false }, relay: { enabled: false } });
   const lease = createServer(); await new Promise((yes, no) => { lease.once('error', no); lease.listen(0, '127.0.0.1', yes); });

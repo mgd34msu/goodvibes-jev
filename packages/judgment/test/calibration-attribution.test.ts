@@ -360,7 +360,7 @@ describe('calibration truth belongs to the returned calls of this run', () => {
       return [check()];
     });
     const report = await calibrate(port, [run], { endpoint, log, signal: controller.signal });
-    expect(report.decisions[0]).toMatchObject({ model: 'jev-1.13.0', passed: true, truthRecorded: 1 });
+    expect(report.decisions[0]).toMatchObject({ model: 'jev-latest', resolvedModels: ['jev-1.13.0'], passed: true, truthRecorded: 1 });
     expect(port.calls).toBe(1);
     expect(port.healthCalls).toBe(1);
     expect(actionOf(log.get(id)!)).toBe('fixture action');

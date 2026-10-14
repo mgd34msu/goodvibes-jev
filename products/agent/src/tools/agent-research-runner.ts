@@ -1,3 +1,4 @@
+import type { ProtectedSourceOwner, ResearchReferenceOperation } from '@goodvibes-jev/engine/sdk/platform/security';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { captureOwnedJson } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { isDeepStrictEqual } from 'node:util';
@@ -75,21 +76,41 @@ function hostname(value: string): string {
   }
 }
 
-function sanitizeUrlForRoute(value: string): string {
-  try {
-    const url = new URL(value);
-    for (const key of [...url.searchParams.keys()]) {
-      if (/token|secret|password|authorization|credential|api[-_]?key/i.test(key)) url.searchParams.set(key, '<redacted>');
-    }
-    return url.toString();
-  } catch {
-    return value.replace(/([?&\s](?:token|secret|password|authorization|credential|api[-_]?key)=)[^\s&]+/gi, '$1<redacted>');
+/** Preserve complete public URLs; the local protected-source owner reads parameter roles. */
+async function prepareSearchReferences(results: readonly Record<string, unknown>[], owner: ProtectedSourceOwner | undefined, operation: ResearchReferenceOperation): Promise<Record<string, unknown>[]> {
+  operation.signal?.throwIfAborted(); operation.assertCurrent?.();
+  const snapshots = captureOwnedJson(results) as Record<string, unknown>[];
+  if (!owner) {
+    // A missing private screening service cannot authorize opaque URL parameters.
+    return snapshots.map(result => {
+      const url = new URL(readString(result.url));
+      if (!['https:', 'http:'].includes(url.protocol) || url.search || url.hash || url.username || url.password) throw new Error('Research URL screening requires the configured protected-source owner.');
+      return result;
+    });
   }
+  const handles: ReturnType<ProtectedSourceOwner['captureResearchReference']>[] = [];
+  try {
+    // Capture the entire batch before any private screening request.
+    for (const result of snapshots) handles.push(owner.captureResearchReference(readString(result.url)));
+    const receipts: Parameters<ProtectedSourceOwner['projectResearchReference']>[0][] = [];
+    for (const handle of handles) {
+      const read = await owner.screenResearchReference(handle, operation);
+      operation.signal?.throwIfAborted(); operation.assertCurrent?.();
+      if (read.status !== 'settled') throw new Error('Research URL screening did not settle.');
+      receipts.push(read.receipt);
+    }
+    // Recheck every receipt together after all asynchronous screening finishes.
+    return receipts.flatMap((receipt, index) => {
+      operation.signal?.throwIfAborted(); operation.assertCurrent?.();
+      const projection = owner.projectResearchReference(receipt);
+      return projection.status === 'omitted' ? [] : [{ ...snapshots[index]!, url: projection.url }];
+    });
+  } finally { await Promise.all(handles.map(handle => owner.release(handle))); }
 }
 
 function candidateFromSearchResult(question: string, result: Record<string, unknown>, index: number): Record<string, unknown> {
   const rawUrl = readString(result.url);
-  const url = sanitizeUrlForRoute(rawUrl);
+  const url = rawUrl;
   const title = previewText(result.title, 120) || hostname(rawUrl) || `Search result ${index + 1}`;
   const publisher = previewText(result.domain, 80) || hostname(rawUrl);
   const evidenceRecords = readRecordArray(result.evidence);
@@ -153,6 +174,8 @@ export async function runPublicSearch(
   shellPaths: CommandContext['workspace']['shellPaths'] | undefined,
   dispatch: Dispatch,
   assertCurrent: () => void,
+  sourceOwner?: ProtectedSourceOwner,
+  signal?: AbortSignal,
 ): Promise<ToolResult> {
   const run = resolveSearchRun(args, shellPaths);
   const query = readString(args.query) || readString(args.question) || run?.question || readString(args.target);
@@ -172,8 +195,7 @@ export async function runPublicSearch(
   if (!webResult.success) return { success: false, error: readString(webResult.error) || 'web_search failed.' };
   const payload = parseSearchPayload(webResult.output);
   const results = readRecordArray(payload?.results);
-  const sourceCandidates = results
-    .filter((result) => readString(result.url))
+  const sourceCandidates = (await prepareSearchReferences(results.filter(result => readString(result.url)), sourceOwner, { signal, assertCurrent: assertRun }))
     .map((result, index) => candidateFromSearchResult(query, result, index));
   return {
     success: true,
@@ -260,6 +282,8 @@ export async function runAdmittedResearchRunner(
   dispatch: Dispatch,
   assertCurrent: () => void,
   assertWrite: () => void,
+  sourceOwner?: ProtectedSourceOwner,
+  signal?: AbortSignal,
 ): Promise<ToolResult> {
   try {
     assertCurrent();
@@ -322,8 +346,7 @@ export async function runAdmittedResearchRunner(
 
     const payload = parseSearchPayload(webResult.output);
     const results = readRecordArray(payload?.results);
-    const candidates = results
-      .filter((result) => readString(result.url))
+    const candidates = (await prepareSearchReferences(results.filter(result => readString(result.url)), sourceOwner, { signal, assertCurrent: assertRun }))
       .map((result, index) => candidateFromSearchResult(run.question, result, index));
     const saved = candidates
       .map((candidate) => { assertRun(); assertWrite(); return sourceFromCandidate(sourceRegistry, run.question, candidate); })

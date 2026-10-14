@@ -1,3 +1,4 @@
+import { semanticRepairSentenceKinds } from './repair-profile-fixture-readings.js';
 import { beforeEach } from 'bun:test';
 import type { KnowledgeStore } from '../../sdk/src/platform/knowledge/store.js';
 import type { KnowledgeNodeUpsertInput } from '../../sdk/src/platform/knowledge/types.js';
@@ -7,7 +8,10 @@ import type { useKnowledgeAnswerReadings } from './knowledge-answer-readings.js'
 /** Explicit plumbing for the authored synthetic manuals/provider outputs in the four semantic suites. */
 export function useSemanticActivationFixtures(readings: ReturnType<typeof useKnowledgeAnswerReadings>): void {
   beforeEach(() => readings.setActivation([
-    ['Device', 0.99], ['Device knowledge page', 0.99], ['Living Room TV knowledge page', 0.99],
+    ...semanticRepairSentenceKinds.map(([text]) => [text, 0.99] as const),
+    ['LG 86NANO90UNA has webOS smart TV features and a 4K NanoCell display.', 0.99],
+    ['The LG 86NANO90UNA supports HDMI eARC, HDR10, Dolby Vision, and webOS smart TV features.', 0.99],
+    ['The controller includes local control mode.', 0.99], ['The controller supports Wi-Fi configuration.', 0.99], ['The controller has USB-C power.', 0.99], ['Device', 0.99], ['Device knowledge page', 0.99], ['Living Room TV knowledge page', 0.99],
     ['Dolby Vision support', 0.99], ['HDMI inputs', 0.99], ['HDMI support', 0.99], ['NanoCell 4K feature set', 0.99],
     ['Display and picture specifications', 0.99], ['Input and output ports', 0.99], ['Smart TV platform and integrations', 0.99],
     ['Network and wireless capabilities', 0.99], ['Gaming and HDMI features', 0.99], ['Audio capabilities', 0.99],

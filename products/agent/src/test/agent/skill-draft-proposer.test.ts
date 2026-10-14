@@ -225,7 +225,7 @@ describe('proposeSkillDrafts: empty guards', () => {
 // ---------------------------------------------------------------------------
 
 describe('proposeSkillDrafts: payload shape', () => {
-  test('emitted payload has enabled:true (autonomous), source:agent, provenance:auto-proposed-skill-draft', () => {
+  test('emitted payload has enabled:true (autonomous), source:agent, candidate-specific provenance', () => {
     const candidates = [
       makeCandidate({
         id: 'c-1',
@@ -237,7 +237,7 @@ describe('proposeSkillDrafts: payload shape', () => {
     const payload = result[0]!;
     expect(payload.enabled).toBe(true);
     expect(payload.source).toBe('agent');
-    expect(payload.provenance).toBe('auto-proposed-skill-draft');
+    expect(payload.provenance).toBe('learning-curator-auto-promote:c-1');
   });
 
   test('name is derived from description as a kebab slug', () => {
@@ -280,4 +280,13 @@ describe('proposeSkillDrafts: determinism', () => {
     const r2 = proposeSkillDrafts(input);
     expect(r1).toEqual(r2);
   });
+});
+
+
+test('a renamed source cannot produce another skill after its candidate ID was recorded', () => {
+  const candidates = [makeCandidate({ id: 'already-used', proposalFields: { description: 'A different display name' } }),
+    makeCandidate({ id: 'fresh-source', proposalFields: { description: 'Independent new guidance' } })];
+  const result = proposeSkillDrafts(makeInput({ candidates, previouslyProposedCandidateIds: new Set(['already-used']) }));
+  expect(result.map(draft => draft.candidateId)).toEqual(['fresh-source']);
+  expect(result[0]?.provenance).toBe('learning-curator-auto-promote:fresh-source');
 });

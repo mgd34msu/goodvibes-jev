@@ -5,7 +5,6 @@ import type { VoiceService } from '../service.js';
 import type { VoiceAudioChunk, VoiceSynthesisStreamResult } from '../types.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { captureFailureSnapshot, captureJudgmentFailureInput } from '../../gate/failure-input-snapshot.js';
-import { JudgmentInputError } from '../../gate/judgment-input.js';
 import { TtsTextChunker } from './text-chunker.js';
 import type { AudioSink } from './audio-sink.js';
 
@@ -516,10 +515,9 @@ export class SpokenTurnController {
         const structured = structuredTransience(captured);
         // Canonical structure can decide locally. Wording (including provider
         // 429 billing) must pass complete-source privacy admission BEFORE the
-        // canonical reader's bounded projection. Never interpret just a prefix.
+        // canonical reader's complete evidence view. Never interpret just a prefix.
         const needsWording = !structured || (structured.basis === 'status' && httpStatusOf(captured) === 429);
         const admitted = needsWording ? captureJudgmentFailureInput(captured, this.rejectFailureObject) : captured;
-        if (needsWording) assertCompleteFailureWording(admitted);
         if (attempt >= SYNTHESIS_RETRY_DELAYS_MS.length) throw admitted;
         const transience = await readFailureTransience(admitted, 'voice.spoken-turn.synthesis', {
           fromProvider: true, reading,
@@ -597,27 +595,6 @@ export class SpokenTurnController {
     this.playbackChain = Promise.resolve();
     this.notice(`[TTS] Live playback stopped: ${summarizeError(error)}`);
   }
-}
-
-/**
- * Admission only, never classification. The canonical failure reader preserves
- * 2,000 message characters. Refuse a larger complete message rather than let a
- * late correction disappear. Inputs here are already owned, screened snapshots.
- */
-function assertCompleteFailureWording(error: unknown): void {
-  const messageOf = (value: unknown): string | undefined => {
-    if (!value || typeof value !== 'object') return undefined;
-    const message: unknown = (value as { readonly message?: unknown }).message;
-    return typeof message === 'string' && message.length > 0 ? message : undefined;
-  };
-  let wording: string;
-  if (error instanceof Error) {
-    const cause = error.cause instanceof Error ? error.cause.message : messageOf(error.cause);
-    wording = cause !== undefined && cause !== error.message ? `${error.message}\nCaused by: ${cause}` : error.message;
-  } else {
-    wording = typeof error === 'string' ? error : messageOf(error) ?? JSON.stringify(error) ?? String(error);
-  }
-  if (wording.length > 2_000) throw new JudgmentInputError('unsupported-input');
 }
 
 /** Split point at or under `limit`, preferring the last word boundary. */

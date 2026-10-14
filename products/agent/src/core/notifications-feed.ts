@@ -18,6 +18,8 @@
 import type { Notification, RoutingDecision } from '@/runtime/index.ts';
 
 export interface NotificationFeedEntry {
+  /** Raw notice is visible while semantic severity remains unclassified. */
+  readonly severityPending?: boolean;
   readonly key: string;
   readonly domain: string;
   readonly level: Notification['level'];
@@ -57,6 +59,7 @@ function mergeDetail(previous: string | undefined, incoming: string | undefined)
 
 /** A conversation system notice to keep in the history (see recordNotice). */
 export interface NoticeInput {
+  readonly severityPending?: boolean;
   readonly domain: string;
   readonly level: Notification['level'];
   readonly title: string;
@@ -176,6 +179,7 @@ export class NotificationFeed {
       body: input.body,
       timestamp: input.timestamp,
       reasonCode: 'system_notice',
+      ...(input.severityPending ? { severityPending: true } : {}),
       collapsedCount: 1,
       subject: AGENT_DOMAINS.has(input.domain) ? 'agents' : undefined,
       toast: input.restored ? 'never' : 'always',
@@ -253,6 +257,13 @@ export class NotificationFeed {
       }
     }
     this.entries.set(key, entry);
+    this.emitChange();
+  }
+
+  /** A delayed reading may only decorate the exact notice still in this feed. */
+  settleNoticeSeverity(entry: NotificationFeedEntry, level: Notification['level']): void {
+    if (this.entries.get(entry.key) !== entry || !entry.severityPending) return;
+    this.entries.set(entry.key, { ...entry, level, severityPending: false });
     this.emitChange();
   }
 

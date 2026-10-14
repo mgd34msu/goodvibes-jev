@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { ChannelDeliveryRequest } from '@goodvibes-jev/engine/sdk/platform/channels';
 import { createShellPathService } from '@/runtime/index.ts';
 import { readAgentChannelDeliveryReceipts } from '../../agent/channel-delivery-receipts.ts';
+import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { registerChannelsRuntimeCommands } from '../../input/commands/channels-runtime.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
@@ -375,6 +376,11 @@ describe('/channels command', () => {
     expect(printed.join('\n')).toContain('Agent channel delivery sent');
     expect(printed.join('\n')).toContain('delivery-response-1');
     expect(printed.join('\n')).toContain('receipt channel-delivery-');
+    const paths = context.workspace.shellPaths;
+    if (!paths) throw new Error('Missing authored channel receipt paths');
+    const receipts = readAgentChannelDeliveryReceipts(paths).receipts;
+    expect(receipts[0]?.id).toMatch(/^channel-delivery-[a-p]{32}$/);
+    expect(snapshotJudgmentInput(receipts[0]?.id)).toBe(receipts[0]?.id);
 
     printed.length = 0;
     await runChannels(['deliveries'], context);

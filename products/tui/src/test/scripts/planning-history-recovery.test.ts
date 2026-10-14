@@ -76,7 +76,7 @@ test('compiled TUI history → native ledger → process restart recovers the ex
     };
     const first = await launch('submit');
     expect(first.opened).toEqual(['planning-modal', 'native-work-ledger-modal', 'planning-modal', 'native-work-ledger-modal']);
-    expect(first.dispatched).toEqual([]); expect(first.historicalUnchanged).toBe(true); expect(first.judgmentReads).toBe(0);
+    expect(first.dispatched).toEqual([]); expect(first.historicalUnchanged).toBe(true); expect(first.judgmentReads).toBe(1);
     expect(captures).toHaveLength(1); expect(captures[0]?.text).toBe(source); expect(readFileSync(dbPath)).toEqual(historicalBytes);
     const originalCommand = JSON.parse(readFileSync(journalPath, 'utf8')).records[0].command;
     const second = await launch('recover');

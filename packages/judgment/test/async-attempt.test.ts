@@ -1,15 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import { getEventListeners } from 'node:events';
 import { APIError } from '@typesafe-ai/sdk';
-import { createSystemOnePort, defineBattery, fanOut, JudgmentError, noul, PINNED_MODEL, STAKES_BANDS, yesNo, type JudgmentConfig } from '../src/index.ts';
+import { createSystemOnePort, defineBattery, fanOut, JudgmentError, noul, DEFAULT_MODEL, STAKES_BANDS, yesNo, type JudgmentConfig } from '../src/index.ts';
 import { askAs } from '../src/batteries/asking.ts';
 
 const request = { state: 'synthetic', questions: { yes: noul('Synthetic question') } };
-const good = () => Response.json({ model: PINNED_MODEL, answers: { yes: { type: 'noul', noul: 0.9 } }, usage: { input_tokens: 1, output_tokens: 1 } });
+const good = () => Response.json({ model: DEFAULT_MODEL, answers: { yes: { type: 'noul', noul: 0.9 } }, usage: { input_tokens: 1, output_tokens: 1 } });
 const unavailable = () => Response.json({}, { status: 503 });
 const config = (fetch: NonNullable<JudgmentConfig['fetch']>): JudgmentConfig => ({
   endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-key' },
-  model: PINNED_MODEL, timeoutMs: 50, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fetch,
+  model: DEFAULT_MODEL, timeoutMs: 50, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fetch,
 });
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -25,7 +25,7 @@ describe('asynchronous judgment attempt admission', () => {
     const port = createSystemOnePort(config(async (_url, init) => {
       steps.push('fetch');
       const body = JSON.parse(String(init?.body));
-      expect(body).toEqual({ state: request.state, questions: request.questions, model: PINNED_MODEL });
+      expect(body).toEqual({ state: request.state, questions: request.questions, model: DEFAULT_MODEL });
       return good();
     }));
     const result = await askAs(port, { name: 'synthetic-battery', version: 1, description: 'Synthetic async admission', accuracyFloor: 0.9 }, 'battery', request.state, request.questions, {
@@ -46,7 +46,7 @@ describe('asynchronous judgment attempt admission', () => {
     const port = createSystemOnePort(config(async (_url, init) => {
       calls++;
       const body = JSON.parse(String(init?.body));
-      return Response.json({ model: PINNED_MODEL,
+      return Response.json({ model: DEFAULT_MODEL,
         answers: Object.fromEntries(Object.keys(body.questions).map((name) => [name, { type: 'noul', noul: 0.9 }])),
         usage: { input_tokens: 1, output_tokens: 1 },
       });
@@ -75,7 +75,7 @@ describe('asynchronous judgment attempt admission', () => {
   test.each(['ordinary', 'unavailable judgment', 'upstream HTTP'] as const)('a rejected %s admission never retries or reaches a fallback', async (kind) => {
     let calls = 0; let gates = 0; let retries = 0;
     const port = createSystemOnePort({ ...config(async () => { calls++; return good(); }),
-      fallbacks: [{ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:2', apiKey: 'fallback-key' }, model: PINNED_MODEL }],
+      fallbacks: [{ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:2', apiKey: 'fallback-key' }, model: DEFAULT_MODEL }],
     });
     const error = kind === 'ordinary' ? new Error('synthetic private detail')
       : kind === 'unavailable judgment' ? new JudgmentError('unavailable', 'synthetic private detail')
@@ -140,8 +140,8 @@ describe('asynchronous judgment attempt admission', () => {
       steps.push(`fetch ${gates}`); urls.push(String(url));
       return urls.length < 3 ? unavailable() : good();
     }), fallbacks: [
-      { endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:2', apiKey: 'fallback-key' }, model: PINNED_MODEL },
-      { endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:3', apiKey: 'last-key' }, model: PINNED_MODEL },
+      { endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:2', apiKey: 'fallback-key' }, model: DEFAULT_MODEL },
+      { endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:3', apiKey: 'last-fallback-key' }, model: DEFAULT_MODEL },
     ] });
     const result = await port.ask({ ...request,
       beforeAsyncAttempt: async () => { const gate = ++gates; steps.push(`begin ${gate}`); await tick(); steps.push(`end ${gate}`); },
@@ -168,7 +168,7 @@ describe('asynchronous judgment attempt admission', () => {
     let calls = 0; let gates = 0;
     const controller = new AbortController(); const retryEntered = deferred<void>(); const release = deferred<void>();
     const port = createSystemOnePort({ ...config(async () => { calls++; return unavailable(); }),
-      fallbacks: [{ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:2', apiKey: 'fallback-key' }, model: PINNED_MODEL }],
+      fallbacks: [{ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:2', apiKey: 'fallback-key' }, model: DEFAULT_MODEL }],
     });
     const pending = port.ask({ ...request, signal: controller.signal, beforeAsyncAttempt: async () => {
       if (++gates === 2) { retryEntered.resolve(); await release.promise; }

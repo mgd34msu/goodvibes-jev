@@ -1,3 +1,4 @@
+import { knowledgeClockIso } from '../../store-record-representation.js';
 import { createSupportReferenceLabels } from './structural-references.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JsonValue, JudgmentPort } from '@goodvibes-jev/judgment';
@@ -64,7 +65,7 @@ function receipt(request: RequestPlan, probability: number, decisionId?: string)
     spaceId: input.spaceId, claimId: input.claimId, claimHash: input.claimHash,
     field: request.field, fieldHash: request.fieldHash, stateHash: supportHash(request.state),
     sourceId: input.sourceId, sourceHash: input.sourceHash, extractionId: input.extractionId,
-    extractionHash: input.extractionHash, extractionUpdatedAt: input.extractionUpdatedAt,
+    extractionHash: input.extractionHash, extractionUpdatedAt: knowledgeClockIso(input.extractionUpdatedAt),
     ...(request.subjectId === undefined ? {} : { subjectId: request.subjectId, subjectHash: request.subjectHash }),
     evidenceReference: { extractionId: input.extractionId, evidenceHash: input.evidenceHash },
     verdict: 'yes' as const, outcome: 'act' as const, probability,

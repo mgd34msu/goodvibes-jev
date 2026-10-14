@@ -13,6 +13,7 @@ export function researchScreeningFixture(options: {
   complete?: number;
   assertCurrent?: () => void;
   recordCalls?: boolean;
+  timeoutMs?: number;
 } = {}) {
   const calls: { path: string; body: Record<string, unknown> }[] = [];
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
@@ -35,7 +36,10 @@ export function researchScreeningFixture(options: {
   const owner = createProtectedSourceOwner({
     authority: { ownerId: 'synthetic-agent-research', revision: '1', retention: 'ephemeral-no-log', signal: lifetime.signal, assertCurrent: options.assertCurrent ?? (() => {}) },
     proposal: { endpoint: `http://127.0.0.1:${server.port}`, model: 'synthetic-span-fixture' },
-    judgment: { endpoint: `http://127.0.0.1:${server.port}`, model: 'jev-1.13.0' }, timeoutMs: 2_000,
+    judgment: { endpoint: `http://127.0.0.1:${server.port}`, model: 'jev-1.13.0' },
+    // Use the real owner's default budget; an artificially shorter local HTTP
+    // timer can expire while another complete catalog runs on this event loop.
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
   });
   cleanups.push(async () => { await owner.close(); await server.stop(true); });
   return { owner, calls, lifetime };

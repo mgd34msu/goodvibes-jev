@@ -2,13 +2,19 @@ import { afterEach, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadSqlJsEngine, SQLiteObservationRetiredError, SQLiteStore, type SqlDatabase } from '../sdk/src/platform/state/sqlite-store.js';
+import type { SqlDatabase, SQLiteStore as SQLiteStoreType } from '../sdk/src/platform/state/sqlite-store.js';
+
+// These adversarial cases own the native engine's birth. A different suite may
+// legitimately retire the process-shared optimized path and retain the complete
+// fallback before this fixture starts; that is a different path to exercise.
+const nativeSuiteModule = '../sdk/src/platform/state/sqlite-store.js?native-frame-equality-suite';
+const { loadSqlJsEngine, SQLiteObservationRetiredError, SQLiteStore }: typeof import('../sdk/src/platform/state/sqlite-store.js') = await import(nativeSuiteModule);
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { createSemanticWriteGuard } from '../sdk/src/platform/knowledge/semantic/primary-source-plan.js';
 import { KnowledgeSourceQualityHeldError } from '../sdk/src/platform/knowledge/source-quality.js';
 
 type NativeDatabase = InstanceType<Awaited<ReturnType<typeof loadSqlJsEngine>>['Database']>;
-const roots: string[] = [], databases: SQLiteStore[] = [], knowledgeStores: KnowledgeStore[] = [];
+const roots: string[] = [], databases: SQLiteStoreType[] = [], knowledgeStores: KnowledgeStore[] = [];
 const observers: Array<{ mockRestore(): void }> = [];
 afterEach(async () => {
   for (const observing of observers.splice(0).reverse()) observing.mockRestore();
@@ -686,7 +692,7 @@ async function nativePrefixFixture() {
   return { ...await fixture(true, false, native), heldError: native.SQLiteObservationRetiredError };
 }
 
-function requireNativePrefixFrame(sqlite: SQLiteStore): void {
+function requireNativePrefixFrame(sqlite: SQLiteStoreType): void {
   const own = Object.getOwnPropertyDescriptor;
   const frame: unknown = own(sqlite, 'persistedReadFrame')?.value;
   if (!frame || typeof frame !== 'object') throw new Error('No actual prefix read frame');
@@ -1422,7 +1428,7 @@ test('the original expected-side inherited descriptor read retains its mutation-
     sqlite.assertPersistedReadFrame(() => {
       expect(read()).toEqual([['original', 'Complete original source']]);
       requireNativePrefixFrame(sqlite);
-      define(receiver, 'globalThis', { configurable: self.configurable, enumerable: self.enumerable, writable: true, value: observing });
+      define(receiver, 'globalThis', { configurable: self.configurable ?? false, enumerable: self.enumerable ?? false, writable: true, value: observing });
       define(descriptorParent, 'get', { configurable: true, get(this: object) {
         inheritedCalls++;
         if (!armed && own(this, 'value')?.value === first.descriptor.value) {
@@ -1481,4 +1487,13 @@ test('a call-through stringifier rejection remains the original native read fail
   finally { define(JSON, 'stringify', descriptor); }
   expect(caught).toBe(refused); expect(invoked).toBe(1); expect(consumed).toBe(false);
   expect(readFileSync(filename)).toEqual(before);
+});
+
+
+test('the adversarial fixture exercises a genuine native scalar frame after other suites', async () => {
+  const { sqlite, read } = await fixture(true);
+  sqlite.assertPersistedReadFrame(() => {
+    expect(read()).toEqual([['original', 'Complete original source']]);
+    requireNativePrefixFrame(sqlite);
+  });
 });

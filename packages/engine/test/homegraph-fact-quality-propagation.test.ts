@@ -24,6 +24,7 @@ afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice
 
 function readings(probability = 0.99) {
   const fake = fakePort((name, question) => {
+    name = name.split('__').at(-1)!;
     if (name === 'authority') return choiceAnswer(question, 'official-vendor', 0.99);
     if (name === 'repairUseful') return noulAnswer(probability);
     if (['wanted', 'selected', 'profileSupported', 'batteryApplicable', 'manufacturerPresent', 'modelPresent', 'batteryTypePresent'].includes(name)) return noulAnswer(0.01);
@@ -173,6 +174,7 @@ test('prepared page rendering preserves qualifiers, numeric values, units and op
     { title: 'Polarity configuration', value: { voltage: '-5 V', adapter: 'X' }, summary: 'The output is -5 V only with adapter X.' },
   ];
   const fake = fakePort((name) => {
+    name = name.split('__').at(-1)!;
     if (['repairUseful', 'serve', 'supported', 'attached'].includes(name)) return noulAnswer(0.99);
     throw new Error(`Unexpected exact rendering question ${name}`);
   }); installJudgmentPort(fake.port);

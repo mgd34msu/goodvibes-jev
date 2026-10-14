@@ -17,7 +17,7 @@
  * check; a wrong no lets a stale sentence into a doc, with no runtime effect.
  * The gate passes only a settled no.
  */
-import { defineBattery, PINNED_MODEL, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
+import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 
 /** A type alias rather than an interface, so it is assignable to the port's JSON state type. */
 export type StaleServerKindState = {
@@ -31,10 +31,9 @@ const at = (path: string, text: string): StaleServerKindState => ({ path, curren
 
 export const staleServerKind = defineBattery({
   name: 'errors.stale-server-kind',
-  version: 1,
+  version: 2,
   description: "Whether a doc or test window presents 'server' as an SDK error kind callers should use today.",
   accuracyFloor: 0.9,
-  model: PINNED_MODEL,
   items: {
     stale: yesNo(
       "`currentKinds` lists every error kind the SDK has today; 'server' is not one of them. Does `text` present 'server' as an error kind that callers of the SDK should use, match on or expect today, for example a kind table or list that includes it, a code sample that sets or switches on `kind` 'server' as a live value, or advice to handle or use the 'server' kind? Text that says 'server' was an old kind that was removed or replaced, text that checks it is absent, and text that uses the word server for a remote server, a server process or a server-side component rather than as an error kind are not.",

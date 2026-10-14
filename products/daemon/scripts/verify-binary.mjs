@@ -173,7 +173,7 @@ try {
     void (async () => {
       assert.equal(request.url, '/v1/systemone');
       let text = ''; for await (const chunk of request) { text += chunk; assert(text.length < 1_048_576); }
-      const body = JSON.parse(text); assert.equal(body.model, 'jev-1.13.0');
+      const body = JSON.parse(text); assert.equal(body.model, 'jev-latest');
       // Production startup classifies its model catalog before memory reranking.
       // Match the existing hosted proof's finite synthetic transport budget.
       assert(smokeJudgmentRequests.length < 5_000, 'Unexpected boot SystemOne request loop'); smokeJudgmentRequests.push(body);
@@ -186,7 +186,7 @@ try {
     })().catch(error => { smokeJudgmentError = error; response.writeHead(500); response.end('Synthetic boot reading failed'); });
   });
   await new Promise((yes, no) => { smokeJudgment.once('error', no); smokeJudgment.listen(0, '127.0.0.1', yes); });
-  const smokeJudgmentEnv = { TYPESAFE_BASE_URL: `http://127.0.0.1:${smokeJudgment.address().port}`, TYPESAFE_API_KEY: 'synthetic-boot-reading-key', TYPESAFE_DEFAULT_MODEL: 'jev-1.13.0' };
+  const smokeJudgmentEnv = { TYPESAFE_BASE_URL: `http://127.0.0.1:${smokeJudgment.address().port}`, TYPESAFE_API_KEY: 'synthetic-boot-reading-key', TYPESAFE_DEFAULT_MODEL: 'jev-latest' };
   const smokePort = createSystemOnePort(judgmentConfigFromEnv(smokeJudgmentEnv));
   const serveRoot = join(root, 'serving'); const serveHome = join(serveRoot, 'home');
   const serveTree = join(serveRoot, 'tree'); const serveDaemon = join(serveRoot, 'daemon');

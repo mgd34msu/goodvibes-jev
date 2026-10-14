@@ -1,4 +1,5 @@
 import { assertProvisionCurrent, ownProvisionLifetime, type BrowserProvisionLifetime } from './browser-failure-reading.js';
+import { readBrowserLaunchCause } from './launch-reading.js';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
@@ -118,20 +119,21 @@ interface DriverApi {
   };
 }
 
-function describeLaunchFailure(message: string, profileDirectory: string): BrowserSessionError {
-  if (/ProcessSingleton|SingletonLock|profile appears to be in use|Failed to create a ProcessSingleton/i.test(message)) {
+async function describeLaunchFailure(message: string, profileDirectory: string, options: BrowserProvisionLifetime): Promise<BrowserSessionError> {
+  const cause = await readBrowserLaunchCause(message, options).catch(() => { assertProvisionCurrent(options); return 'unknown' as const; });
+  if (cause === 'profile_in_use') {
     return new BrowserSessionError(
       `The browser profile at ${profileDirectory} is already open in another browser window.`,
       'Attach to the running browser with action:"attach", or launch with a different profileName.',
     );
   }
-  if (/Missing X server|no display|cannot open display/i.test(message)) {
+  if (cause === 'display_unavailable') {
     return new BrowserSessionError(
       'This machine has no graphical display, so a visible browser window cannot be opened.',
       'Call action:"launch" with headless:true, which needs no display.',
     );
   }
-  if (/error while loading shared libraries|cannot open shared object file/i.test(message)) {
+  if (cause === 'missing_library') {
     return new BrowserSessionError(
       `The browser could not start because a system library is missing: ${message.split('\n')[0]}`,
       'Install the browser system dependencies (Debian/Ubuntu: apt-get install libnss3 libatk-bridge2.0-0 libgtk-3-0 libasound2; Arch: pacman -S nss atk at-spi2-atk gtk3 alsa-lib).',
@@ -356,7 +358,7 @@ export class BrowserSessionManager {
         viewport: options.viewport ?? { width: 1280, height: 900 },
       });
     } catch (error) {
-      throw describeLaunchFailure(error instanceof Error ? error.message : String(error), profileDirectory);
+      throw await describeLaunchFailure(error instanceof Error ? error.message : String(error), profileDirectory, options);
     }
     try { assertProvisionCurrent(options); } catch (error) { await context.close(); throw error; }
     return this.register({

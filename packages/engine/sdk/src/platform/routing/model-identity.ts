@@ -18,6 +18,8 @@ import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { modelIdentity } from './batteries/model.js';
+import { requireActingReading } from '../types/judgment-held.js';
+import { assertJudgmentInput } from '../gate/judgment-input.js';
 
 export interface IdentityCandidate {
   /** What the caller looks the match up by: a catalog id, a table key, a `provider:model` key. */
@@ -99,7 +101,7 @@ function indexCandidates(candidates: readonly IdentityCandidate[]): IndexedCandi
 }
 
 interface IdentityFile {
-  readonly version: 1;
+  readonly version: 2;
   readonly entries: Record<string, string | null>;
 }
 
@@ -165,7 +167,9 @@ export class ModelIdentityResolver {
 
   /** Reads which candidate is the same model as the query, or null when none is. */
   resolve(query: IdentityQuery, site: string, signal?: AbortSignal): Promise<string | null> {
+    assertJudgmentInput(query);
     const shortlist = identityShortlist(query, this.#currentIndex());
+    assertJudgmentInput(shortlist);
     if (shortlist.length === 0) return Promise.resolve(null);
     const key = this.#keyFor(query, shortlist);
     const known = this.#memo.get(key);
@@ -182,22 +186,22 @@ export class ModelIdentityResolver {
         })),
         { site, ...(signal ? { signal } : {}) },
       );
-      // An escalated reading is not strong enough to price or group by: the model stays unmatched.
-      const chosen = selection.outcome === 'escalate' || selection.chosen === NONE ? null : selection.chosen ?? null;
+      requireActingReading(selection);
+      const chosen = selection.chosen === NONE ? null : selection.chosen ?? null;
       selection.recordAction(chosen === null ? `${this.#universe}:none` : `${this.#universe}:match`);
       this.#memo.set(key, chosen);
       this.#save();
       return chosen;
     })();
     this.#inFlight.set(key, reading);
-    void reading.finally(() => this.#inFlight.delete(key)).catch(() => undefined);
+    void reading.finally(() => { if (this.#inFlight.get(key) === reading) this.#inFlight.delete(key); }).catch(() => undefined);
     return reading;
   }
 
   #load(path: string): void {
     try {
       const parsed = JSON.parse(readFileSync(path, 'utf-8')) as Partial<IdentityFile>;
-      if (parsed.version !== 1 || typeof parsed.entries !== 'object' || parsed.entries === null) return;
+      if (parsed.version !== 2 || typeof parsed.entries !== 'object' || parsed.entries === null) return;
       for (const [key, value] of Object.entries(parsed.entries)) this.#memo.set(key, value);
     } catch (error) {
       const message = summarizeError(error);
@@ -209,7 +213,7 @@ export class ModelIdentityResolver {
     if (!this.#path) return;
     try {
       mkdirSync(dirname(this.#path), { recursive: true });
-      const file: IdentityFile = { version: 1, entries: Object.fromEntries(this.#memo) };
+      const file: IdentityFile = { version: 2, entries: Object.fromEntries(this.#memo) };
       const tmp = `${this.#path}.tmp`;
       writeFileSync(tmp, JSON.stringify(file), 'utf-8');
       renameSync(tmp, this.#path);

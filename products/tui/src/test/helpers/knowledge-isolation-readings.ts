@@ -14,6 +14,10 @@ interface FixtureInput {
     sourceType?: string; excerpts?: unknown[]; facts?: unknown[];
   };
   candidates?: Array<{ kind?: string; title?: string }>;
+  subjects?: Array<{ kind?: string; title?: string; identity?: object; content?: { knowledgeSpaceId?: string; homeAssistant?: { objectId?: string } } }>;
+  facts?: unknown[];
+  evidence?: unknown[];
+  objectProfiles?: Array<{ id?: string }>;
 }
 
 export function knowledgeIsolationAnswer(name: string, state: unknown) {
@@ -34,11 +38,25 @@ export function knowledgeIsolationAnswer(name: string, state: unknown) {
     }
   }
   const input = state as FixtureInput;
+  if ((name === 'gapApplicable' || name === 'repairContextConcrete')
+    && input.query === 'where is the isolation light?\n\nMatching sources have no extracted evidence available for verification.'
+    && input.facts?.length === 0 && input.evidence?.length === 0
+    && input.subjects?.length === 2
+    && input.subjects.every(subject => subject.title === 'Isolation Light' && isDeepStrictEqual(subject.identity, {})
+      && subject.content?.knowledgeSpaceId === 'homeassistant:isolation')
+    && isDeepStrictEqual(input.subjects.map(subject => [subject.kind, subject.content?.homeAssistant?.objectId]),
+      [['ha_entity', 'light.isolation_light'], ['ha_device', 'device-light']])
+    && isDeepStrictEqual(input.objectProfiles?.map(profile => profile.id), ['homegraph-device', 'homegraph-entity'])) {
+    // A location question applies to these exact objects; the snapshot has no
+    // extracted location evidence or concrete product identity for web repair.
+    return noulAnswer(name === 'gapApplicable' ? 0.99 : 0.01);
+  }
   if (name === 'readable' && input.sample === 'Home Assistant entity, device, area, automation, script, scene, label, and integration snapshot.') return noulAnswer(0.99);
   const deviceReadings: Readonly<Record<string, number>> = {
     batteryApplicable: 0.01, manualApplicable: 0.01, manufacturerPresent: 0.01, modelPresent: 0.01, batteryTypePresent: 0.01,
   };
-  if (Object.hasOwn(deviceReadings, name) && input.subject?.kind === 'ha_device' && input.subject.title === 'Isolation Light' && input.subject.homeAssistant?.objectId === 'device-light') return noulAnswer(deviceReadings[name]!);
+  const deviceField = Object.keys(deviceReadings).find(field => name === field || name === `${field}__${field}`);
+  if (deviceField && input.subject?.kind === 'ha_device' && input.subject.title === 'Isolation Light' && input.subject.homeAssistant?.objectId === 'device-light') return noulAnswer(deviceReadings[deviceField]!);
   const relevance: Readonly<Record<string, number>> = {
     'source::Isolation Home': 0.95,
     'node:ha_entity:Isolation Light': 0.99,

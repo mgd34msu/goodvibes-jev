@@ -1,4 +1,7 @@
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { captureJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { retainOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { prepareJudgmentResult } from '../gate/judgment-result.js';
+import { requireActingReading } from '../types/judgment-held.js';
 import { hookContractCandidate, hookContractSearch } from './batteries/contract-search.js';
 import type { HookPointContract } from './contracts.js';
 import type { HookChain, HookDefinition, HookType } from './types.js';
@@ -83,12 +86,22 @@ export function createHookApi(options: CreateHookApiOptions): HookApi {
       const contracts = options.listContracts();
       const query = filter?.trim() ?? '';
       if (query.length === 0) return contracts;
+      const original = retainOwnedJson(contracts);
+      snapshotJudgmentInput({ query, contracts: original.snapshot });
+      const identity = JSON.stringify(original.snapshot);
+      const current = () => {
+        original.assertCurrent();
+        if (JSON.stringify(snapshotJudgmentInput(options.listContracts())) !== identity) throw new Error('Hook contract catalog changed during search.');
+      };
+      const owner = captureJudgmentPort(HOOK_CONTRACT_SEARCH_SITE, { assertCurrent: current, prepareResultCapture: prepareJudgmentResult });
       const { ranked } = await hookContractSearch.rerank(
-        judgmentPort(HOOK_CONTRACT_SEARCH_SITE),
+        owner.port,
         query,
         contracts.map(hookContractCandidate),
-        { site: HOOK_CONTRACT_SEARCH_SITE },
+        { site: HOOK_CONTRACT_SEARCH_SITE, signal: owner.signal, beforeAttempt: owner.assertCurrent },
       );
+      owner.assertCurrent();
+      for (const entry of ranked) requireActingReading(entry.reading);
       const matched = new Set(ranked.filter((entry) => entry.reading.verdict === 'yes').map((entry) => entry.id));
       return contracts.filter((contract) => matched.has(contract.pattern));
     },

@@ -22,10 +22,15 @@ import {
 
 /** A playbook as the search reads it: what it addresses and the symptoms it lists. */
 export function playbookCandidate(playbook: Playbook): Candidate {
-  return {
-    id: playbook.id,
-    content: { name: playbook.name, description: playbook.description, symptoms: playbook.symptoms },
+  const field = <K extends 'id' | 'name' | 'description' | 'symptoms'>(name: K): Playbook[K] => {
+    const descriptor = Object.getOwnPropertyDescriptor(playbook, name);
+    if (!descriptor || !('value' in descriptor)) throw new TypeError('Playbook search requires native data fields.');
+    const value: unknown = descriptor.value;
+    if (name === 'symptoms' ? !Array.isArray(value) : typeof value !== 'string') throw new TypeError('Playbook search field has an invalid shape.');
+    return value as Playbook[K];
   };
+  return { id: field('id') as string,
+    content: { name: field('name'), description: field('description'), symptoms: field('symptoms') } };
 }
 
 const CANDIDATES: readonly Candidate[] = [

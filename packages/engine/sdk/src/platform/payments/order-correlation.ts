@@ -1,3 +1,4 @@
+import { requireActingReading } from '../types/judgment-held.js';
 /**
  * order-correlation.ts, recognising the store's confirmation when it arrives.
  *
@@ -255,6 +256,7 @@ async function pickIdentifier(
     for (let start = 0; start < pool.length; start += MAX_CANDIDATES_PER_PICK) groups.push(pool.slice(start, start + MAX_CANDIDATES_PER_PICK));
     const picks = await Promise.all(groups.map(async (group) => {
       const selection = await selector.select(port, context, group, { site: CONFIRMATION_FACTS_SITE });
+      requireActingReading(selection);
       const chosen = selection.outcome === 'act' && selection.chosen !== undefined
         ? group.find((candidate) => candidate.id === selection.chosen)
         : undefined;
@@ -282,7 +284,7 @@ const utcDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 export async function extractConfirmationFacts(mail: Pick<InboundMailFacts, 'subject' | 'body' | 'receivedAtMs'>): Promise<ConfirmationFacts> {
   const { subject, body } = await redactedMail({ ...mail, senderAddress: '' });
   const candidates = identifierCandidates(body);
-  const context = { subject, source: 'a shop\'s mail about an order' };
+  const context = { subject, body, source: 'a shop\'s mail about an order' };
   const [order, tracking, date] = await Promise.all([
     pickIdentifier(orderNumber, candidates, context),
     pickIdentifier(trackingReference, candidates, context),
@@ -290,6 +292,7 @@ export async function extractConfirmationFacts(mail: Pick<InboundMailFacts, 'sub
   ]);
   const clean = (value: string | null, max: number): string | null => {
     if (value === null) return null;
+    if (value.length > max) throw new Error('Confirmation identifier exceeds the supported length.');
     const neutralised = sanitizeNoticeField(value, max);
     return neutralised.length === 0 ? null : neutralised;
   };

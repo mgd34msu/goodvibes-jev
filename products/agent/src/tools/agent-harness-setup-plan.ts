@@ -21,7 +21,9 @@ export async function buildSetupPlan(
   servicePosture: CliServicePosture | null,
   options: CatalogRankingOptions = {},
 ): Promise<readonly SetupPlanItem[]> {
-  const caller = captureAsyncHarnessInput({ snapshot, capabilities, servicePosture }, options);
+  // This read-only plan joins independent observations. Keep each restriction
+  // local while reading, then hand the complete pure guard to the parent once.
+  const caller = captureAsyncHarnessInput({ snapshot, capabilities, servicePosture }, options, true);
   const browserControl = await browserControlPosture(context, context.extensions?.toolRegistry, caller.options);
   caller.assertCurrent();
   const providerAccess = capabilityById(capabilities, 'provider-access');
@@ -259,5 +261,6 @@ export async function buildSetupPlan(
   ];
 
   caller.assertCurrent();
+  caller.retainSourceCurrent('agent.setup.plan.sources');
   return plan.sort((left, right) => left.priority - right.priority);
 }

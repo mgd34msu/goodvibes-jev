@@ -81,14 +81,32 @@ const ownJsonDescriptor = Object.getOwnPropertyDescriptor;
 const jsonPrototype = Object.getPrototypeOf;
 const sameJsonSlot = Object.is;
 
+// Only snapshots created by this traversal receive the reuse proof. A frozen
+// caller object can still contain mutable descendants and never inherits it.
+const capturedJsonRoots = new WeakSet<object>();
+const capturedRootHas = WeakSet.prototype.has, capturedRootAdd = WeakSet.prototype.add;
+const applyCapturedRoot = Reflect.apply;
+function rememberCapturedRoot(snapshot: unknown): unknown {
+  if (snapshot && typeof snapshot === 'object') applyCapturedRoot(capturedRootAdd, capturedJsonRoots, [snapshot]);
+  return snapshot;
+}
 export function captureOwnedJson(value: unknown, rejectObject?: (value: object) => boolean): unknown {
-  return captureOwnedJsonInternal(value, rejectObject);
+  // A caller-supplied rejection predicate must always inspect the actual input.
+  // Nested snapshots still traverse normally, preserving aggregate size limits.
+  if (rejectObject === undefined && value && typeof value === 'object'
+    && applyCapturedRoot(capturedRootHas, capturedJsonRoots, [value])) return value;
+  return rememberCapturedRoot(captureOwnedJsonInternal(value, rejectObject));
 }
 
 /** Retain original data slots while the canonical traversal detaches its snapshot. */
 export function retainOwnedJson(value: unknown, rejectObject?: (value: object) => boolean): RetainedOwnedJson {
   const objects: RetainedJsonObject[] = [];
-  const snapshot = captureOwnedJsonInternal(value, rejectObject, objects);
+  // Our own snapshots have immutable data slots throughout the tree. Still run
+  // caller restrictions and aggregate admission, but there are no mutable slots
+  // to rewalk at every asynchronous reading boundary.
+  const immutable = value !== null && typeof value === 'object'
+    && applyCapturedRoot(capturedRootHas, capturedJsonRoots, [value]);
+  const snapshot = rememberCapturedRoot(captureOwnedJsonInternal(value, rejectObject, immutable ? undefined : objects));
   const assertCurrent = () => {
     try {
       for (const record of objects) {
@@ -111,7 +129,7 @@ export function retainOwnedJson(value: unknown, rejectObject?: (value: object) =
 }
 
 function captureOwnedJsonInternal(value: unknown, rejectObject?: (value: object) => boolean,
-  retained?: RetainedJsonObject[]): unknown {
+  retained?: RetainedJsonObject[], includeHidden = false): unknown {
   let nodes = 0;
   let chars = 0;
   let slots = 0;
@@ -152,7 +170,7 @@ function captureOwnedJsonInternal(value: unknown, rejectObject?: (value: object)
     ancestors.add(entry);
     try {
       for (const [key, descriptor] of Object.entries(descriptors)) {
-        if (array ? key === 'length' : !descriptor.enumerable) continue;
+        if (array ? key === 'length' : !includeHidden && !descriptor.enumerable) continue;
         const index = Number(key);
         if (array && Number.isInteger(index) && index >= 0 && index < 0xffff_ffff && String(index) === key && index >= length) return unsupported();
         // DefineProperty preserves __proto__ as data instead of changing the clone's prototype.
@@ -205,10 +223,23 @@ function reference(value: unknown): boolean {
   return isSecretReferenceValue(value) && typeof value === 'string' && /^goodvibes:\/\/secrets\/[^\s?#]+$/.test(value.trim());
 }
 
+// Exact public replacement tokens contain no credential. They are meaningful
+// only in observational evidence; action input still treats them as values.
+function evidenceCredentialMarker(value: unknown, evidence: boolean): boolean {
+  return evidence && typeof value === 'string' && [
+    '[REDACTED]', '<redacted>', '[REDACTED_TOKEN]', '[REDACTED_API_KEY]',
+    '[REDACTED_GITHUB_TOKEN]', '[REDACTED_GITLAB_TOKEN]', '[REDACTED_SLACK_TOKEN]',
+    '[REDACTED_AWS_KEY]', '[REDACTED_PROFILE]', '[REDACTED_TEXT]',
+  ].includes(value);
+}
+function safeReference(value: unknown, problem: JudgmentInputProblem | undefined, evidence: boolean): boolean {
+  return reference(value) || (problem === 'credential-material' && evidenceCredentialMarker(value, evidence));
+}
+
 /** A literal assignment/header value can be quoted; references carry no secret. */
-function literalValue(text: string): boolean {
+function literalValue(text: string, problem: JudgmentInputProblem, evidence: boolean): boolean {
   const value = text.trim().replace(/^["']|["']$/g, '');
-  return value.length > 0 && !reference(value);
+  return value.length > 0 && !safeReference(value, problem, evidence);
 }
 
 /**
@@ -216,11 +247,11 @@ function literalValue(text: string): boolean {
  * HTTP authentication headers. Refusing the entire call avoids pretending a
  * redacted shell program has the same effects as the original program.
  */
-function inlineProblem(text: string, cardOnly = false): JudgmentInputProblem | undefined {
+function inlineProblem(text: string, cardOnly = false, evidence = false): JudgmentInputProblem | undefined {
   if (findCardNumberShapes(text, 1).length > 0) return 'card-material';
   if (!cardOnly && /-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/.test(text)) return 'credential-material';
-  const assignments = /(?:^|[\s{[,;&?"'])--?([A-Za-z_][A-Za-z0-9_.-]*)\s*(?:=|\s)\s*(?=([^\s,;}]+))/g;
-  const fields = /(?:^|[\s{[,;&?"'])([A-Za-z_][A-Za-z0-9_.-]*)["']?\s*[:=]\s*(?=([^\s,;}]+))/g;
+  const assignments = /(?:^|[\s{[,;&?="'])--?([A-Za-z_][A-Za-z0-9_.-]*)\s*(?:=|\s)\s*(?=([^\s,;}]+))/g;
+  const fields = /(?:^|[\s{[,;&?="'])([A-Za-z_][A-Za-z0-9_.-]*)["']?\s*[:=]\s*(?=([^\s,;}]+))/g;
   for (const pattern of [assignments, fields]) {
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(text)) !== null) {
@@ -229,7 +260,7 @@ function inlineProblem(text: string, cardOnly = false): JudgmentInputProblem | u
       // retaining the exact declaration grammar and advancing on every match.
       pattern.lastIndex = match.index + 1;
       const problem = protectedKey(match[1]!);
-      if (problem && (!cardOnly || problem === 'card-material') && literalValue(match[2]!)) return problem;
+      if (problem && (!cardOnly || problem === 'card-material') && literalValue(match[2]!, problem, evidence)) return problem;
     }
   }
   // Start once per contiguous scheme-character run, rather than restarting a
@@ -254,7 +285,7 @@ function inlineProblem(text: string, cardOnly = false): JudgmentInputProblem | u
  * are inspected even in nested tool/params wrappers and JSON-encoded bodies.
  * Empty credential fields and goodvibes secret references carry no raw value.
  */
-function snapshotProblem(value: unknown, toolName: string, cardOnly = false): JudgmentInputProblem | undefined {
+function snapshotProblem(value: unknown, toolName: string, cardOnly = false, evidence = false): JudgmentInputProblem | undefined {
   let nodes = 0;
   let chars = 0;
   const ancestors = new Set<object>();
@@ -266,10 +297,10 @@ function snapshotProblem(value: unknown, toolName: string, cardOnly = false): Ju
       const trimmed = entry.trim();
       if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
         let decoded: unknown;
-        try { decoded = JSON.parse(entry); } catch { return inlineProblem(entry, cardOnly); }
+        try { decoded = JSON.parse(entry); } catch { return inlineProblem(entry, cardOnly, evidence); }
         return visit(decoded, suffixes, parentKey, operation, depth + 1);
       }
-      return inlineProblem(entry, cardOnly);
+      return inlineProblem(entry, cardOnly, evidence);
     }
     if (entry === null || entry === undefined || typeof entry === 'boolean') return undefined;
     if (typeof entry === 'number') {
@@ -307,9 +338,10 @@ function snapshotProblem(value: unknown, toolName: string, cardOnly = false): Ju
       const namedKey = fields['key'] ?? fields['configKey'] ?? fields['secretKey'] ?? fields['name'];
       if (cardOnly && present(fields['value']) && !reference(fields['value']) && !fieldDeclaration(fields['value'])
         && typeof namedKey === 'string' && protectedKey(namedKey) === 'card-material') return 'card-material';
-      if (!cardOnly && present(fields['value']) && !reference(fields['value']) && !fieldDeclaration(fields['value']) && (op === CREDENTIAL_SET || (typeof namedKey === 'string' && protectedKey(namedKey) !== undefined))) return 'credential-material';
+      const namedProblem = op === CREDENTIAL_SET ? 'credential-material' : typeof namedKey === 'string' ? protectedKey(namedKey) : undefined;
+      if (!cardOnly && present(fields['value']) && !safeReference(fields['value'], namedProblem, evidence) && !fieldDeclaration(fields['value']) && namedProblem) return 'credential-material';
       for (const [key, child] of Object.entries(fields)) {
-        const keyProblem = inlineProblem(key, cardOnly);
+        const keyProblem = inlineProblem(key, cardOnly, evidence);
         if (keyProblem) return keyProblem;
         const fullSuffixes = [...suffixes.map(suffix => `${suffix}.${key}`), key];
         const cardField = (parentKey === 'cardMaterial' && (CARD_FIELD_NAMES as readonly string[]).includes(key)) || (parentKey === 'card' && (key === 'number' || key === 'expiry'));
@@ -320,7 +352,7 @@ function snapshotProblem(value: unknown, toolName: string, cardOnly = false): Ju
             if (declared !== undefined) break;
           }
         }
-        if (declared && (!cardOnly || declared === 'card-material') && present(child) && !reference(child) && !fieldDeclaration(child)) return declared;
+        if (declared && (!cardOnly || declared === 'card-material') && present(child) && !safeReference(child, declared, evidence) && !fieldDeclaration(child)) return declared;
         const problem = visit(child, fullSuffixes, key, op, depth + 1);
         if (problem) return problem;
       }
@@ -345,6 +377,17 @@ export function judgmentInputCardProblem(value: unknown, toolName = ''): 'card-m
 export function snapshotJudgmentInput(value: unknown, toolName = ''): unknown {
   const snapshot = captureOwnedJson(value);
   const problem = snapshotProblem(snapshot, toolName);
+  if (problem) throw new JudgmentInputError(problem);
+  return snapshot;
+}
+
+/** Complete observational evidence, including exact public credential redaction
+ * tokens. This never admits an action: snapshotJudgmentInput remains the raw
+ * invocation boundary. Card data, attached secrets and malformed input retain
+ * the same refusal rules. No fields, suffixes or source bytes are omitted. */
+export function snapshotJudgmentEvidence(value: unknown): unknown {
+  const snapshot = rememberCapturedRoot(captureOwnedJsonInternal(value, undefined, undefined, true));
+  const problem = snapshotProblem(snapshot, '', false, true);
   if (problem) throw new JudgmentInputError(problem);
   return snapshot;
 }

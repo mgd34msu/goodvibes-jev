@@ -27,7 +27,7 @@ const STUDIO = group('g-a4e6b1d03f8c2977', 'Studio Macs', 4, '2.0.21', '1s ago')
 
 export const clusterJoinGroup = defineSelector({
   name: 'terminal-shell.cluster-join-group',
-  version: 2,
+  version: 3,
   description: 'Which discovered cluster group a person\'s typed answer names, or none.',
   accuracyFloor: 0.85,
   instructions: 'A person was shown the goodvibes cluster groups advertising on their network and asked "which group? (name or id)". `context.answer` is their complete reply. Which candidate does that reply uniquely refer to? Compare all offered groups using their full content: id, displayName, machines, version and seen. Ordinary capitalization, articles, spacing, separators and minor spelling mistakes can still refer to the same group. A description can identify it by listed attributes. Select none when the intended group is absent, the reply contradicts the offered description, or more than one group fits equally well. Do not choose the nearest offered name merely because some candidate must win, or break a name tie using attributes the person did not mention.',

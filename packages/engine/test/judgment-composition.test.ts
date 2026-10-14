@@ -11,7 +11,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { forgetFailureReadings, installJudgmentPort, judgmentPort, JudgmentPortMissingError, readFailure } from '@goodvibes-jev/engine/errors';
-import { PINNED_MODEL, readingsOf, SqliteDecisionLog } from '@goodvibes-jev/judgment';
+import { DEFAULT_MODEL, readingsOf, SqliteDecisionLog } from '@goodvibes-jev/judgment';
 import { ConfigManager } from '../sdk/src/platform/config/manager.ts';
 import { bootDaemon, type BootedDaemon } from '../sdk/src/platform/daemon/boot.ts';
 import { createDisposalScope } from '../sdk/src/platform/runtime/disposal.ts';
@@ -98,12 +98,12 @@ describe('the daemon composition installs the judgment port', () => {
 
     // The booted daemon asks its own readings too (credential keys, watched
     // config files); the failure reading is the one request carrying its
-    // questions. Every request goes out with the key and the pinned model.
+    // questions. Every request goes out with the key and the latest-model alias.
     const failureCalls = fake.calls.filter((call) => 'billing' in call.body.questions);
     expect(failureCalls).toHaveLength(1);
     for (const call of fake.calls) {
       expect(call.authorization).toBe(`Bearer ${KEY}`);
-      expect(call.body.model).toBe(PINNED_MODEL);
+      expect(call.body.model).toBe(DEFAULT_MODEL);
     }
 
     const path = decisionLogPath(join(work, '.goodvibes', 'goodvibes'));
@@ -127,10 +127,10 @@ describe('the settings the port is built from', () => {
     env,
   });
 
-  test('empty settings defer to the TypeSafe environment variables, then the hosted endpoint and pinned model', async () => {
+  test('empty settings defer to the TypeSafe environment variables, then the hosted endpoint and latest-model alias', async () => {
     const hosted = await judgmentConfigFromSettings(source({}, { TYPESAFE_API_KEY: KEY }));
     expect(hosted.endpoint).toEqual({ kind: 'hosted', baseURL: 'https://api.typesafe.ai', apiKey: KEY });
-    expect(hosted.model).toBe(PINNED_MODEL);
+    expect(hosted.model).toBe(DEFAULT_MODEL);
     const fromEnv = await judgmentConfigFromSettings(source({}, { TYPESAFE_API_KEY: KEY, TYPESAFE_BASE_URL: 'http://127.0.0.1:9000', TYPESAFE_DEFAULT_MODEL: 'jev-env' }));
     expect(fromEnv.endpoint.kind).toBe('local');
     expect(fromEnv.model).toBe('jev-env');

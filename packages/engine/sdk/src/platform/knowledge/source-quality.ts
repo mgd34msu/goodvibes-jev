@@ -1,3 +1,4 @@
+import { HomeGraphQualityHeldError } from './home-graph/quality/types.js';
 import { KnowledgeUriCanonicalizationHeldError } from './uri-canonicalization/types.js';
 import { KnowledgeExtractionValueHeldError } from './semantic/extraction-value/types.js';
 import { KnowledgeRepairFactScoringHeldError } from './semantic/repair-fact-scoring/types.js';
@@ -42,7 +43,7 @@ export class KnowledgeSourceQualityHeldError extends Error {
 
 /** These failures must not be swallowed before downstream knowledge writes. */
 export function isKnowledgeSourceQualityFailure(error: unknown): error is Error {
-  return error instanceof KnowledgeUriCanonicalizationHeldError || error instanceof KnowledgeExtractionValueHeldError || error instanceof KnowledgeRepairFactScoringHeldError || error instanceof KnowledgeSelfImprovementAssessmentHeldError || error instanceof KnowledgeScopeSelectionHeldError || error instanceof KnowledgeWebGapRepairHeldError || error instanceof KnowledgeRepairSubjectSelectionHeldError || error instanceof KnowledgeRepairSourceAuthorityHeldError || error instanceof KnowledgeRepairFactUsefulnessHeldError || error instanceof KnowledgeRepairProfileHeldError || error instanceof KnowledgeNodeMutationHeldError || error instanceof KnowledgeNodeActivationHeldError || error instanceof KnowledgeGeneratedFactSupportHeldError || error instanceof KnowledgeSourceQualityHeldError || error instanceof JudgmentError || error instanceof JudgmentPortMissingError || error instanceof JudgmentInputError;
+  return error instanceof HomeGraphQualityHeldError || error instanceof KnowledgeUriCanonicalizationHeldError || error instanceof KnowledgeExtractionValueHeldError || error instanceof KnowledgeRepairFactScoringHeldError || error instanceof KnowledgeSelfImprovementAssessmentHeldError || error instanceof KnowledgeScopeSelectionHeldError || error instanceof KnowledgeWebGapRepairHeldError || error instanceof KnowledgeRepairSubjectSelectionHeldError || error instanceof KnowledgeRepairSourceAuthorityHeldError || error instanceof KnowledgeRepairFactUsefulnessHeldError || error instanceof KnowledgeRepairProfileHeldError || error instanceof KnowledgeNodeMutationHeldError || error instanceof KnowledgeNodeActivationHeldError || error instanceof KnowledgeGeneratedFactSupportHeldError || error instanceof KnowledgeSourceQualityHeldError || error instanceof JudgmentError || error instanceof JudgmentPortMissingError || error instanceof JudgmentInputError;
 }
 export interface KnowledgePageSourceCandidate {
   readonly source: KnowledgeSourceRecord;
@@ -54,6 +55,10 @@ export interface KnowledgePageSourceCandidate {
 export function createKnowledgePageSourceReader(policy: KnowledgePageSourceQualityPolicy = {}) {
   const cache = new Map<string, Promise<KnowledgePageSourceReading>>();
   const sourceVersions = new Map<string, string>();
+  let binding: { port: ReturnType<typeof judgmentPort>; model: string } | undefined;
+  const assertPortCurrent = () => {
+    if (binding && (judgmentPort('engine.knowledge.page-source-quality') !== binding.port || binding.port.model !== binding.model)) throw new KnowledgeSourceQualityHeldError('stale');
+  };
   const throwIfAborted = () => { if (policy.signal?.aborted) throw new KnowledgeSourceQualityHeldError('aborted'); };
   const purpose = policy.purpose ?? 'A grounded factual reference page about the subject described by the source';
   function excluded(source: KnowledgeSourceRecord, status: KnowledgeSourceRecord['status'], existing?: KnowledgeSourceRecord) {
@@ -72,10 +77,14 @@ export function createKnowledgePageSourceReader(policy: KnowledgePageSourceQuali
     const state = stateFor(source, existing, status);
     assertJudgmentInput(state);
     const key = JSON.stringify(state);
+    if (key.length > 160_000) throw new JudgmentInputError('unsupported-input');
+    const port = judgmentPort('engine.knowledge.page-source-quality');
+    binding ??= { port, model: port.model };
+    assertPortCurrent();
     let pending = cache.get(key);
     if (!pending) {
       pending = (async () => {
-        const run = await pageSourceQuality.run(judgmentPort('engine.knowledge.page-source-quality'), state, { site: 'engine.knowledge.page-source-quality', ...(policy.signal ? { signal: policy.signal } : {}) });
+        const run = await pageSourceQuality.run(port, state, { beforeAttempt: () => { throwIfAborted(); assertPortCurrent(); }, site: 'engine.knowledge.page-source-quality', ...(policy.signal ? { signal: policy.signal } : {}) });
         throwIfAborted();
         const { useful, authority } = run.readings;
         if (useful.outcome !== 'act' || authority.outcome !== 'act') {
@@ -91,14 +100,22 @@ export function createKnowledgePageSourceReader(policy: KnowledgePageSourceQuali
       cache.set(key, pending);
     }
     const result = await pending;
-    throwIfAborted();
+    throwIfAborted(); assertPortCurrent();
     return { ...result, source };
   }
   async function readCandidates(candidates: readonly KnowledgePageSourceCandidate[]): Promise<KnowledgePageSourceReading[]> {
     throwIfAborted();
-    if (candidates.length > 50) throw new JudgmentInputError('unsupported-input');
-    assertJudgmentInput(candidates.filter(({ source, existing, status }) => !excluded(source, status ?? source.status, existing)).map(({ source, existing, status }) => stateFor(source, existing, status ?? source.status)));
-    return mapLimit(candidates, 4, ({ source, existing, status }) => read(source, existing, status ?? source.status));
+    for (const { source, existing, status } of candidates) if (!excluded(source, status ?? source.status, existing)) assertJudgmentInput(stateFor(source, existing, status ?? source.status));
+    // Preserve object-bound source authority. Snapshot semantic fields, never clone the source identity.
+    const version = JSON.stringify(candidates);
+    const snapshots = [...candidates];
+    if (snapshots.some(({ source, existing, status }) => JSON.stringify(stateFor(source, existing, status ?? source.status)).length > 160_000)) throw new JudgmentInputError('unsupported-input');
+    const results = await mapLimit(snapshots, 4, ({ source, existing, status }) => {
+      if (JSON.stringify(candidates) !== version) throw new KnowledgeSourceQualityHeldError('stale');
+      return read(source, existing, status ?? source.status);
+    });
+    if (JSON.stringify(candidates) !== version) throw new KnowledgeSourceQualityHeldError('stale');
+    return results;
   }
   async function rank(sources: readonly KnowledgeSourceRecord[]): Promise<KnowledgePageSourceReading[]> {
     const byId = new Map<string, KnowledgeSourceRecord>();
@@ -108,13 +125,13 @@ export function createKnowledgePageSourceReader(policy: KnowledgePageSourceQuali
       byId.set(source.id, source);
     }
     const unique = [...byId.values()];
-    const shortlist = unique.filter((source) => !excluded(source, source.status)).slice(0, 50);
+    const eligible = unique.filter((source) => !excluded(source, source.status));
     // Refuse the entire selected batch before any concurrent request starts.
-    const readings = await readCandidates(shortlist.map((source) => ({ source })));
+    const readings = await readCandidates(eligible.map((source) => ({ source })));
     return readings.filter((item) => item.useful).sort((a, b) => b.probability! - a.probability! || a.source.id.localeCompare(b.source.id));
   }
   function assertCurrent(current: (id: string) => KnowledgeSourceRecord | null | undefined): void {
-    throwIfAborted();
+    throwIfAborted(); assertPortCurrent();
     for (const [id, version] of sourceVersions) if (JSON.stringify(current(id)) !== version) throw new KnowledgeSourceQualityHeldError('stale');
   }
   return { read, rank, readCandidates, assertCurrent };

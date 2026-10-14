@@ -1,4 +1,4 @@
-import { defineSelector, PINNED_MODEL, STAKES_BANDS } from '@goodvibes-jev/judgment';
+import { defineSelector, DEFAULT_MODEL, STAKES_BANDS } from '@goodvibes-jev/judgment';
 import { DEFERRED_WORK_INSTRUCTIONS, INTERNAL_IDENTIFIER_INSTRUCTIONS, STATIC_ANCHOR_FIT_INSTRUCTIONS, STATIC_ANCHOR_INSTRUCTIONS } from './static-source.ts';
 
 const fixture = (name: string, rule: string, source: string, text: string, expect: 'candidate' | 'none') => ({
@@ -17,7 +17,7 @@ export const STATIC_WEAK_ANCHOR_FIT_INSTRUCTIONS = `${STATIC_ANCHOR_FIT_INSTRUCT
 
 /** A new exact identity and fit measurement, retaining an unsettled presence answer. */
 export const staticWeakAnchor = defineSelector({
-  name: 'engine.gates.static-weak-anchor', version: 2, model: PINNED_MODEL, accuracyFloor: 0.95,
+  name: 'engine.gates.static-weak-anchor', version: 2, model: DEFAULT_MODEL, accuracyFloor: 0.95,
   description: 'Read one exact offered source text and fit after unsettled presence, distinguishing extraction coordinates from authored provenance.',
   instructions: STATIC_WEAK_ANCHOR_INSTRUCTIONS, fitInstructions: STATIC_WEAK_ANCHOR_FIT_INSTRUCTIONS,
   band: STAKES_BANDS.high.confidence, fitBand: STAKES_BANDS.high.yesNo,

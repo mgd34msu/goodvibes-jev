@@ -79,7 +79,7 @@ function makeHost(messages: ProviderMessage[]) {
 function bigConversation(n = 60): ProviderMessage[] {
   return Array.from({ length: n }, (_, i) => ({
     role: i % 2 === 0 ? 'user' as const : 'assistant' as const,
-    content: `message ${i} ` + 'lorem ipsum dolor sit amet consectetur '.repeat(80),
+    content: `message ${i} ` + 'lorem ipsum dolor sit amet consectetur '.repeat(12),
   }));
 }
 
@@ -157,7 +157,7 @@ describe('distillConversation', () => {
 describe('compactConversation with the distiller strategy', () => {
   // Every result keeps the conversation's substance and agrees with it, so
   // availability and token reduction decide which strategy applies.
-  useCompactionQuality({ substance: 3, relation: 'supports' });
+  useCompactionQuality({ substance: 3, relation: 'supports', selectedPositions: [1] });
 
   test('good distillation applies, and the receipt NAMES the distiller strategy', async () => {
     const messages = bigConversation();
@@ -187,13 +187,13 @@ describe('compactConversation with the distiller strategy', () => {
   });
 
   test('a distillation with no token reduction falls back to structured (scored by the same scorer)', async () => {
-    const messages = bigConversation();
+    const messages = bigConversation(24);
     const { host } = makeHost(messages);
     const ctx = distillerContext(messages);
     // The distiller call (first) returns a brief far larger than the input →
     // no token reduction → score-gate fallback. Structured extraction (later
     // calls) returns a concise summary so structured itself compresses.
-    const hugeBrief = '## Task State\n' + 'x '.repeat(200_000);
+    const hugeBrief = '## Task State\n' + 'x '.repeat(12_000);
     const registry = makeSequencedRegistry(hugeBrief, 'kept the essentials: files changed, decisions made, next steps');
     const receipt = await compactConversation(host, registry, 'test/model', 'auto', undefined, ctx);
     expect(receipt).toBeDefined();

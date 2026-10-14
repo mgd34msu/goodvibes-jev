@@ -31,14 +31,8 @@
  * high stakes on the no side; a false gap costs a repair, so the yes side is
  * medium.
  *
- * What code does with each part's reading (composed in plan-checks.ts): a
- * reading that leans yes is a problem at any outcome. A reading that leans no
- * but does not reach the no band (above 0.3 under the high band, so
- * uncertain) is also a problem, sent to the planner with the words it
- * concerns: restating the criterion in the user's words settles it, where the
- * old whole-request problem gave the planner nothing to change. A no at act
- * or confirm clears its part; the plan's action records the parts that
- * cleared at confirm.
+ * Consumers clear each part only on an act/no. Every other reading returns
+ * a repair problem with the complete original words and their scope.
  */
 import {
   askAs,

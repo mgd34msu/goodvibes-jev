@@ -1,3 +1,4 @@
+import { readRequestedPlatformWork } from '@goodvibes-jev/engine/sdk/platform/agents';
 /**
  * agent-platform-boundary-policy.ts, a conversational turn does not repair the
  * platform it is running on.
@@ -67,30 +68,6 @@ const PATH_BEARING_TOOLS: readonly { readonly name: string; readonly listKey: st
 ];
 
 /**
- * Words that mean he is talking about source rather than about the product.
- * "Is the daemon running" is not a request to read the daemon's source; "look
- * at the daemon source" is.
- */
-const SOURCE_WORDS = /\b(?:source|sources|sourcecode|repo|repos|repository|repositories|codebase|codebases|file|files|module|package)\b/i;
-
-/**
- * Words that mean he is pointing your attention AT the platform: asking for
- * work on it, or asking you to go and look at it.
- *
- * "Fix the daemon" and "look at the tui" are both requests even though neither
- * names a file, and refusing either would be the opposite mistake. The looking
- * verbs are deliberately included even though they are common words, they only
- * count alongside a platform name, and "show me my calendar" carries none. The
- * bias throughout is toward allowing: the operator policy states the rule in
- * words, and this guard exists to catch the case where he said nothing about
- * the platform at all.
- */
-const PLATFORM_ATTENTION_WORDS = /\b(?:fix|fixes|fixing|debug|debugging|patch|patching|repair|repairing|refactor|diagnose|investigate|rewrite|modify|edit|editing|implement|review|read|open|show|look|inspect|examine|check|grep|search)\b/i;
-
-/** Names that mean the GoodVibes platform itself rather than something he owns. */
-const PLATFORM_NAME_WORDS = /\b(?:goodvibes|good vibes|pellux|sdk|daemon|tui|webui|web ui|platform)\b/i;
-
-/**
  * The refusal, written as the instruction the model should follow instead.
  *
  * It is a redirect, not a wall: the one-sentence proposal IS the sanctioned
@@ -130,16 +107,9 @@ export function isGoodVibesPlatformSourcePath(path: string): boolean {
  * Three ways they can: he named a path in it, he named the platform together
  * with a source word, or he asked for platform work outright.
  */
-export function ownerAskedAboutPlatformSource(lastUserMessage: string | null | undefined): boolean {
-  const message = typeof lastUserMessage === 'string' ? lastUserMessage.trim() : '';
-  if (message.length === 0) return false;
-  // A path he typed himself. Split on whitespace and quotes so a path inside a
-  // sentence is still seen as a path.
-  for (const token of message.split(/[\s"'`,;()[\]{}<>]+/)) {
-    if ((token.includes('/') || token.includes('\\')) && isGoodVibesPlatformSourcePath(token)) return true;
-  }
-  if (!PLATFORM_NAME_WORDS.test(message)) return false;
-  return SOURCE_WORDS.test(message) || PLATFORM_ATTENTION_WORDS.test(message);
+export async function ownerAskedAboutPlatformSource(lastUserMessage: string | null | undefined, signal?: AbortSignal): Promise<boolean> {
+  if (!lastUserMessage?.trim()) return false;
+  return readRequestedPlatformWork(lastUserMessage, signal);
 }
 
 export interface PlatformBoundaryCheckInput {
@@ -155,12 +125,13 @@ export interface PlatformBoundaryCheckInput {
  * Null whenever no path is platform source, and null whenever he asked, in
  * that order, because the cheap check is the one that answers most calls.
  */
-export function validatePlatformBoundaryForAgentPolicy(
+export async function validatePlatformBoundaryForAgentPolicy(
   input: PlatformBoundaryCheckInput,
-): string | null {
+  signal?: AbortSignal,
+): Promise<string | null> {
   const touchesPlatform = input.paths.some((path) => isGoodVibesPlatformSourcePath(path));
   if (!touchesPlatform) return null;
-  if (ownerAskedAboutPlatformSource(input.lastUserMessage)) return null;
+  if (await ownerAskedAboutPlatformSource(input.lastUserMessage, signal)) return null;
   return AGENT_PLATFORM_BOUNDARY_DENIAL;
 }
 
@@ -201,10 +172,12 @@ export function wrapToolForPlatformBoundary(
       catch { return { success: false, error: AGENT_READ_ADMISSION_DENIAL_MESSAGE }; }
       return originalExecute(args, options);
     }
-    const denial = validatePlatformBoundaryForAgentPolicy({
+    const message = getLastUserMessage(), version = JSON.stringify(args);
+    const denial = await validatePlatformBoundaryForAgentPolicy({
       paths: readPathsFromToolArgs(args, listKey),
-      lastUserMessage: getLastUserMessage(),
-    });
+      lastUserMessage: message,
+    }, options?.signal);
+    if (getLastUserMessage() !== message || JSON.stringify(args) !== version) return { success: false, error: AGENT_PLATFORM_BOUNDARY_DENIAL };
     if (denial) return { success: false, error: denial };
     return originalExecute(args, options);
   };

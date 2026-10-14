@@ -16,6 +16,9 @@ export function prepareSemanticSupersession(
 ) {
   const readSuperseded = () => store.listNodesInSpace(spaceId).filter((node) => (
     semanticNodeReferencesSource(node, sourceId) && typeof node.metadata.semanticKind === 'string'
+    // An enrichment pass only replaces records owned by enrichment. A repair
+    // promotion or an independently created research task has its own lifetime.
+    && (node.metadata.extractor === 'llm' || node.metadata.extractor === 'deterministic')
     && node.status !== 'stale' && !activeIds.has(node.id)
   ));
   const nodes = guard.watch('supersession-nodes', readSuperseded);

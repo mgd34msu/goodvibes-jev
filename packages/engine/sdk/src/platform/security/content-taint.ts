@@ -162,10 +162,10 @@ export function findExactContainment(
  * confident no to the derivation question or a confident yes to the
  * boilerplate question; the reading's outcome is recorded with what was done.
  */
-async function readsAsDerived(field: string, text: string, source: TaintSource, reply: boolean, signal?: AbortSignal, port?: JudgmentPort): Promise<boolean> {
+async function readsAsDerived(view: ReturnType<typeof derivationView>, reply: boolean, signal?: AbortSignal, port?: JudgmentPort): Promise<boolean> {
   assertTaintActive(signal);
   const derivationItem = reply ? 'reply_derives' : 'derives';
-  const run = await contentDerivation.run(taintPort(signal, port), derivationView(field, text, source), {
+  const run = await contentDerivation.run(taintPort(signal, port), view, {
     site: CONTENT_DERIVATION_SITE,
     only: [derivationItem, 'boilerplate_only'],
     ...(signal === undefined ? {} : { signal }),
@@ -213,8 +213,11 @@ export async function findContentTaint(
     }
   }
 
-  const derived = await mapLimit(pairs, DERIVATION_CONCURRENCY, (pair) =>
-    readsAsDerived(pair.field, pair.text, pair.source, replyFields.has(pair.field), options.signal, options.port));
+  // Preflight the whole pass before any reading: a late oversized source must
+  // not leave earlier pairs classified against incomplete evidence.
+  const views = pairs.map(pair => derivationView(pair.field, pair.text, pair.source));
+  const derived = await mapLimit(pairs, DERIVATION_CONCURRENCY, (pair, index) =>
+    readsAsDerived(views[index]!, replyFields.has(pair.field), options.signal, options.port));
   assertTaintActive(options.signal);
 
   const findings: TaintFinding[] = [...exact];

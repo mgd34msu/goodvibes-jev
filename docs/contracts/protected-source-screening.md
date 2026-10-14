@@ -16,7 +16,7 @@ composition root supplies all of the following together:
   services. The host must establish the services' behavior; a string option or
   loopback address is not evidence that a service does not retain or forward data.
 - An immutable literal-loopback proposal endpoint and model, and an immutable
-  literal-loopback System One endpoint pinned to `jev-1.13.0`. Only literal
+  literal-loopback System One endpoint using `jev-latest` by default. Only literal
   `127.0.0.1` or `[::1]` with an explicit port is accepted, without userinfo,
   query, fragment, DNS hostname, or configurable path. The only permitted paths
   are `/v1/chat/completions` and `/v1/systemone`, respectively.
@@ -130,7 +130,7 @@ The owner uses WHATWG `URLSearchParams` only to derive at most 100 distinct
 decoded query-parameter names. It preflights every decoded name before any
 request. Each semantic request is exactly `{ parameter: name }` under the
 registered, versioned `engine.security.research-reference-parameter-role`
-battery, pinned to `jev-1.13.0`. It contains no URL, hostname, path, fragment,
+battery, inheriting the owner's model (`jev-latest` by default). It contains no URL, hostname, path, fragment,
 parameter value, surrounding source text or value-derived digest. This route
 never calls the proposal model. It reuses the existing owner-created System One
 port, retry ownership, fixed-origin direct client, authority checks and cleanup.

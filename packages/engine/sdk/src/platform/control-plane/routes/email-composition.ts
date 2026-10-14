@@ -1,3 +1,5 @@
+import { EmailConfigurationError } from '../../email/email-service.js';
+import { readErrorFailure } from '../../types/errors.js';
 /**
  * routes/email-composition.ts, the daemon's own mailbox.
  *
@@ -95,15 +97,16 @@ export interface EmailCompositionDeps {
  * Not-configured and refused-credentials are the operator's to fix, so they
  * are 400/401 with the service's own wording rather than a bare 500.
  */
-function translate(error: unknown): never {
+async function translate(error: unknown): Promise<never> {
   const message = error instanceof Error ? error.message : String(error);
-  if (/not enabled/i.test(message)) {
+  if (error instanceof EmailConfigurationError && error.kind === 'disabled') {
     throw new GatewayVerbError(message, 'EMAIL_NOT_ENABLED', 400);
   }
-  if (/config is invalid|is not configured/i.test(message)) {
+  if (error instanceof EmailConfigurationError && error.kind === 'invalid') {
     throw new GatewayVerbError(message, 'EMAIL_NOT_CONFIGURED', 400);
   }
-  if (/AUTHENTICATIONFAILED|authentication failed|invalid credentials|535|LOGIN failed/i.test(message)) {
+  const failure = await readErrorFailure(error instanceof Error ? error : new Error(message), 'email.gateway.failure').catch(() => null);
+  if (failure?.readings.category.outcome === 'act' && failure.category === 'authentication') {
     throw new GatewayVerbError(
       `${message} The stored mail password was refused; store a current one and retry.`,
       'EMAIL_CREDENTIALS_REJECTED',

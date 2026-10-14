@@ -6,6 +6,9 @@ import type { EditItem, OccurrenceSpec, EditResult, EditResultStatus } from './t
 import { summarizeError } from '../../utils/error-display.js';
 import { assertSafeRegexInput, compileSafeRegExp, createSafeRegex, safeRegExpExec } from '../../utils/safe-regex.js';
 import { judgmentPort, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { editWindow } from '../batteries/edit-window.js';
+import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
+import { requireActingReading, JudgmentHeldError } from '../../types/judgment-held.js';
 import { editTarget, editTargetView } from '../batteries/edit-target.js';
 
 type AstGrepModule = typeof import('@ast-grep/napi');
@@ -41,65 +44,6 @@ const MAX_FUZZY_FILE_LINES = 5000;
 /** The decision site the edit-target reading is logged under. */
 export const EDIT_TARGET_SITE = 'tools.edit-fuzzy-line';
 
-/**
- * The shortlist for a fuzzy line match (arithmetic, no acceptance): slides a
- * window of the find text's line count over the file and returns the window
- * with the largest share of lines equal to the find text's lines after
- * whitespace normalization. Null when the file is too large or no window
- * shares a single line with the find text. Whether the window is edited is
- * the `engine.tools.edit-target` reading's call (see computeSingleEdit).
- */
-export function findFuzzyLineMatch(
-  content: string,
-  findStr: string,
-): { start: number; end: number; similarity: number; candidateLines: string[] } | null {
-  const findLines = findStr.split('\n');
-  const contentLines = content.split('\n');
-
-  if (findLines.length === 0 || contentLines.length === 0) return null;
-  if (contentLines.length > MAX_FUZZY_FILE_LINES) return null;
-
-  const lineOffsets: number[] = [];
-  let offset = 0;
-  for (const line of contentLines) {
-    lineOffsets.push(offset);
-    offset += line.length + 1;
-  }
-
-  const normalizedFind = findLines.map(normalizeWhitespace);
-  const normalizedContent = contentLines.map(normalizeWhitespace);
-  const windowSize = findLines.length;
-
-  let bestSimilarity = -1;
-  let bestStart = 0;
-  let bestEnd = 0;
-  let bestCandidateLines: string[] = [];
-
-  const limit = contentLines.length - windowSize + 1;
-  for (let i = 0; i < limit; i++) {
-    let matchingLines = 0;
-    for (let j = 0; j < windowSize; j++) {
-      if (normalizedContent[i + j] === normalizedFind[j]) {
-        matchingLines++;
-      }
-    }
-    const similarity = matchingLines / windowSize;
-    if (similarity > bestSimilarity) {
-      bestSimilarity = similarity;
-      bestStart = lineOffsets[i]!;
-      // The window ends where its last line's text ends, so the newline after it is kept.
-      const lastLineIdx = i + windowSize - 1;
-      bestEnd = lineOffsets[lastLineIdx]! + contentLines[lastLineIdx]!.length;
-      bestCandidateLines = contentLines.slice(i, i + windowSize);
-      if (similarity === 1.0) break;
-    }
-  }
-
-  if (bestSimilarity <= 0) return null;
-  return { start: bestStart, end: bestEnd, similarity: bestSimilarity, candidateLines: bestCandidateLines };
-}
-
-/** @deprecated Synchronous compatibility; production regex edits use findAllPositionsAsync. */
 export function findAllPositions(
   content: string,
   find: string,
@@ -597,10 +541,11 @@ export async function computeAstPatternEdit(
   return { newContent, occurrencesReplaced: selected.length };
 }
 
+/** Decode only this edit module’s emitted diagnostic prefixes; foreign prose stays failed. */
 export function classifyEditFailure(message: string): EditResultStatus {
-  if (message.includes('not found') || message.includes('No match')) return 'not_found';
-  if (message.includes('Ambiguous') || message.includes('ambiguous')) return 'ambiguous';
-  if (message.includes('OCC conflict') || message.includes('modified externally')) return 'conflict';
+  if (message.startsWith('File not found or unreadable:') || message.startsWith('Find string not found') || message.startsWith('No match found for ')) return 'not_found';
+  if (message.startsWith('Ambiguous') || message.startsWith('ambiguous')) return 'ambiguous';
+  if (message.startsWith('OCC conflict:')) return 'conflict';
   return 'failed';
 }
 
@@ -627,24 +572,45 @@ export function buildFailedEditResult(item: EditItem, error: string, status: Edi
   };
 }
 
-/**
- * Whether the fuzzy line window may be edited: the edit-target reading must
- * say yes with enough confidence to act. A yes that would only confirm is
- * refused and shown back as a "Did you mean this?" hint, so the caller
- * confirms by resending the corrected find text.
- */
-async function acceptsEditTarget(
-  findStr: string,
-  windowLines: readonly string[],
-): Promise<{ accepted: boolean; probability: number }> {
-  await assertCapturedToolAccessCurrent();
-  const run = await editTarget.run(judgmentPort(EDIT_TARGET_SITE), editTargetView(findStr, windowLines), {
-    site: EDIT_TARGET_SITE,
+/** All structurally possible windows participate; similarity never hides a target. */
+async function selectEditWindow(file: string, find: string) {
+  const context = { find, file };
+  assertJudgmentInput(context);
+  if (JSON.stringify(context).length > 160_000) throw new JudgmentInputError('unsupported-input');
+  const lines = file.split('\n'), size = find.split('\n').length;
+  if (lines.length > MAX_FUZZY_FILE_LINES) throw new JudgmentInputError('unsupported-input');
+  let offset = 0;
+  const windows = lines.flatMap((line, i) => {
+    const start = offset; offset += line.length + 1;
+    if (i + size > lines.length) return [];
+    const candidateLines = lines.slice(i, i + size), text = candidateLines.join('\n');
+    return [{ id: `line-${i + 1}`, content: { startLine: i + 1, text }, start, end: start + text.length, candidateLines }];
   });
-  const reading = run.readings.same_target;
-  const accepted = reading.verdict === 'yes' && reading.outcome === 'act';
-  run.recordAction(accepted ? 'applied fuzzy line match' : 'refused fuzzy line match');
-  return { accepted, probability: reading.probability };
+  const batches = Array.from({ length: Math.ceil(windows.length / 64) }, (_, i) => windows.slice(i * 64, (i + 1) * 64));
+  for (const candidates of batches) if (JSON.stringify({ context, candidates }).length > 160_000) throw new JudgmentInputError('unsupported-input');
+  const port = judgmentPort(EDIT_TARGET_SITE), model = port.model;
+  const current = () => { if (judgmentPort(EDIT_TARGET_SITE) !== port || port.model !== model) throw new JudgmentHeldError(); };
+  const matches: typeof windows = [];
+  for (const candidates of batches) {
+    await assertCapturedToolAccessCurrent(); current();
+    const selection = await editWindow.select(port, context, candidates, { site: EDIT_TARGET_SITE, beforeAttempt: current, beforeAsyncAttempt: assertCapturedToolAccessCurrent });
+    current(); await assertCapturedToolAccessCurrent();
+    requireActingReading(selection);
+    for (const candidate of candidates) {
+      const fit = requireActingReading(selection.fits[candidate.id]!);
+      if (fit.verdict === 'yes') matches.push(candidate);
+    }
+    selection.recordAction('Evaluate every possible edit location; only one unambiguous target may proceed.');
+  }
+  if (matches.length !== 1) return null;
+  const match = matches[0]!;
+  // A separate same-target reading independently verifies the selected bytes.
+  const run = await editTarget.run(port, editTargetView(find, match.candidateLines), { site: EDIT_TARGET_SITE,
+    beforeAttempt: current, beforeAsyncAttempt: assertCapturedToolAccessCurrent });
+  current(); await assertCapturedToolAccessCurrent();
+  const target = requireActingReading(run.readings.same_target);
+  run.recordAction(target.verdict === 'yes' ? 'Apply the unique verified edit target.' : 'Hold the proposed edit target.');
+  return target.verdict === 'yes' ? { ...match, probability: target.probability } : null;
 }
 
 export async function computeSingleEdit(
@@ -690,32 +656,13 @@ export async function computeSingleEdit(
       positions = wsPositions;
       usedFallback = 'whitespace';
     } else {
-      const fuzzyMatch = findFuzzyLineMatch(fileContent, findStr);
-      const target = fuzzyMatch === null ? null : await acceptsEditTarget(findStr, fuzzyMatch.candidateLines);
-      if (fuzzyMatch !== null && target?.accepted) {
+      const fuzzyMatch = await selectEditWindow(fileContent, findStr);
+      if (fuzzyMatch) {
         positions = [{ start: fuzzyMatch.start, end: fuzzyMatch.end }];
         usedFallback = 'fuzzy-lines';
-        logger.warn('[edit] Fuzzy line match used', {
-          similarity: fuzzyMatch.similarity,
-          probability: target.probability,
-          file: item.path,
-          findPreview: findStr.split('\n').slice(0, 2).join('\n'),
-        });
-      } else if (fuzzyMatch !== null) {
-        const candidatePreview = fuzzyMatch.candidateLines.slice(0, 3).join('\n');
-        const startLine = lineNumberAt(fileContent, fuzzyMatch.start);
-        return {
-          error:
-            `Find string not found in file (the closest lines, from line ${startLine}, were not read as the same edit target).\n` +
-            `Closest candidate (first 3 lines):\n${candidatePreview}\n` +
-            `Tip: correct the find string to match the file content exactly.`,
-          hint: `Did you mean this? (from line ${startLine}):\n${candidatePreview}`,
-        };
+        logger.warn('[edit] Fuzzy line match used', { probability: fuzzyMatch.probability, file: item.path });
       } else {
-        return {
-          error: 'Find string not found in file',
-          hint: 'The find string was not found. Check spelling, whitespace, and that the file has been read recently.',
-        };
+        return { error: 'Find string not found unambiguously in file', hint: 'Read the file and provide the exact replacement target.' };
       }
     }
   }

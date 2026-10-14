@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { createSystemOnePort, JudgmentError, noul, PINNED_MODEL, SqliteDecisionLog, withDecisionLog, type JsonValue, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
+import { createSystemOnePort, JudgmentError, noul, DEFAULT_MODEL, SqliteDecisionLog, withDecisionLog, type JsonValue, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { decideAutonomous, type AutonomousDecisionInput } from '../sdk/src/platform/gate/autonomous-decision.js';
 import { decideAutonomousTool } from '../sdk/src/platform/permissions/autonomous.js';
@@ -117,12 +117,12 @@ test.each(['disposition', 'refusal'] as const)('%s forwards retry progress, canc
     using log = new SqliteDecisionLog(':memory:');
     const controller = new AbortController();
     let attempts = 0, progress = 0, current = true, authorityChecks = 0;
-    const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-fixture' }, model: PINNED_MODEL, timeoutMs: 1_000,
+    const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-fixture' }, model: DEFAULT_MODEL, timeoutMs: 1_000,
       retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fetch: async (_url, init) => {
         if (++attempts === 1) return new Response('', { status: 503 });
         const wire = JSON.parse(String(init?.body)) as JudgmentRequest<Questions>;
         const answers = kind === 'disposition' ? { disposition: choiceAnswer(wire.questions.disposition!, 'act', 0.99) } : { refuse: noulAnswer(0.99) };
-        return Response.json({ model: PINNED_MODEL, answers, usage: { input_tokens: 1, output_tokens: 1 } });
+        return Response.json({ model: DEFAULT_MODEL, answers, usage: { input_tokens: 1, output_tokens: 1 } });
       } });
     const candidate = { ...input(withDecisionLog(transport, log)), allowAct: kind === 'disposition', continuations: [], signal: controller.signal,
       assertCurrent: () => { authorityChecks++; if (!current) throw new JudgmentError('rejected', 'authority changed'); },

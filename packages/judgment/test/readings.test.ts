@@ -10,12 +10,15 @@ import {
   type ScoreResponse,
   type YesNoBand,
 } from '../src/index.ts';
-import { choiceAnswer } from '../src/testing/index.ts';
+import { choiceAnswer, scoreAnswer } from '../src/testing/index.ts';
 
 const BAND: YesNoBand = { yes: { actAt: 0.8, confirmAt: 0.6 }, no: { actAt: 0.8, confirmAt: 0.6 } };
 const noul = (p: number) => ({ type: 'noul', noul: p }) as const;
 
 describe('readYesNo', () => {
+  test.each([NaN, Infinity, -Infinity, -0.1, 1.1])('rejects invalid probability %s instead of acting', (value) => {
+    expect(() => readYesNo(noul(value), BAND)).toThrow(JudgmentError);
+  });
   test.each([
     [1, 'yes', 'act'],
     [0.8, 'yes', 'act'],
@@ -121,6 +124,31 @@ describe('readScore', () => {
     expect(reading).toMatchObject({ kind: 'score', score: 1.43, level: 1, confidence: 0.35, outcome: 'escalate' });
     expect(reading.normalized).toBeCloseTo(0.715);
     expect(reading.probabilities).toEqual([0, 0.57, 0.43]);
+  });
+
+  test.each([
+    [1, 0.99, [0, 0, 0]],
+    [1, 0.99, [1, 1, 1]],
+    [2, 0.99, [1, 0, 0]],
+    [NaN, 0.99, [0, 1, 0]],
+    [1, Infinity, [0, 1, 0]],
+    [1, 0.99, [0, NaN, 0]],
+    [0, 0.99, [1]],
+  ] as const)('refuses malformed score %s / %s / %s', (value, confidence, probabilities) => {
+    expect(() => readScore(answer(value, confidence, [...probabilities]), { actAt: 0.7, confirmAt: 0.4 })).toThrow(JudgmentError);
+  });
+
+  test('rejects missing/noncontiguous levels instead of inventing zero probabilities', () => {
+    const raw = { ...answer(1, 0.9, [0, 1]), probabilities: { '0': 0, '2': 1 } };
+    expect(() => readScore(raw as ScoreResponse, { actAt: 0.7, confirmAt: 0.4 })).toThrow(JudgmentError);
+  });
+
+  test('fractional synthetic scores preserve the distribution mean and independent confidence', () => {
+    const raw = scoreAnswer({ type: 'score', instructions: 'Rate', criteria: ['low', 'medium', 'high'] }, 1.43, 0.35);
+    expect(readScore(raw as ScoreResponse, { actAt: 0.7, confirmAt: 0.4 }))
+      .toMatchObject({ score: 1.43, confidence: 0.35, outcome: 'escalate' });
+    expect(raw.probabilities['1']).toBeCloseTo(0.57);
+    expect(raw.probabilities['2']).toBeCloseTo(0.43);
   });
 
   test.each([

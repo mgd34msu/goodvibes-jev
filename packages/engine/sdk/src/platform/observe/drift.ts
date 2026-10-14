@@ -95,7 +95,7 @@ function changesFrom(previous: WindowStats, current: WindowStats): string[] {
  * window with no readings is left out. A window is compared with the previous
  * window that had enough readings, and flagged when its outcome mix or mean
  * signal moved past the drift thresholds or a model answered that had not
- * before (bands are tuned on a pinned model).
+ * before (the latest alias can resolve to a new version after calibration).
  */
 export function readingDrift(readings: readonly LoggedReading[], options: DriftOptions = {}): BatteryDrift[] {
   const byBattery = new Map<string, LoggedReading[]>();

@@ -228,7 +228,7 @@ describe('Agent setup wizard checkpoints', () => {
     expect(wizard._diagnostic.receiptGaps.map((gap) => gap.stepId)).toEqual(['install-smoke', 'browser-pwa']);
   });
 
-  test('does not infer generic first-run setup smoke as browser/PWA receipt', () => {
+  test('does not infer receipt ownership from purpose labels or prose', () => {
     const receipts = buildSetupWizardDurableReceiptsFromReadModel({
       receipts: {
         smoke: {
@@ -248,10 +248,7 @@ describe('Agent setup wizard checkpoints', () => {
       },
     }, 'test.setup.receipts');
 
-    expect(receipts.map((receipt) => [receipt.receiptId, receipt.stepId])).toEqual([
-      ['first-run-smoke', 'install-smoke'],
-      ['browser-ready', 'browser-pwa'],
-    ]);
+    expect(receipts).toEqual([]);
   });
 
   test('accepts a ready durable install-smoke receipt for setup closeout', () => {

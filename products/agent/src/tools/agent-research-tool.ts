@@ -1,5 +1,5 @@
 import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
-import { prepareProtectedResearchReport, agentResearchReportSourceOwner, createAgentResearchReportProjector, inheritPreparedResearchReport, type PreparedResearchReport } from '../agent/protected-research-report.ts';
+import { prepareProtectedResearchReport, agentResearchReportSourceOwner, agentResearchSourceOwner, createAgentResearchReportProjector, inheritPreparedResearchReport, type PreparedResearchReport } from '../agent/protected-research-report.ts';
 import type { ProtectedSourceOwner } from '@goodvibes-jev/engine/sdk/platform/security';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { assertCurrentToolInvocation, assertCurrentToolExecution, assertCurrentToolEffect, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -373,6 +373,7 @@ function reportArgs(args: AgentResearchToolArgs): Record<string, unknown> {
 }
 
 export function createAgentResearchTool(deps: AgentResearchToolDeps): Tool {
+  const searchSourceOwner = deps.sourceOwner ?? agentResearchSourceOwner(deps.toolRegistry);
   const sourceOwner = deps.sourceOwner ?? agentResearchReportSourceOwner(deps.toolRegistry);
   const shellPaths = deps.commandContext.workspace?.shellPaths;
   const registered = (name: string) => deps.toolRegistry.list().find(tool => tool.definition.name === name);
@@ -492,7 +493,7 @@ export function createAgentResearchTool(deps: AgentResearchToolDeps): Tool {
       if (action === 'runner') {
         if (args.preview === true) return dispatch(harnessTool, runnerArgs(args));
         if (!assertCurrentToolInvocation(rawArgs as Record<string, unknown>, options)) return error('Research runner writes require current recorded effect admission. Use preview:true to inspect readiness.');
-        return runAdmittedResearchRunner(webSearchTool, args, shellPaths, dispatch, assertCurrent, () => { assertCurrent(); if (!assertCurrentToolEffect(rawArgs as Record<string, unknown>, options, 'write')) throw new Error('Research runner writes require current recorded effect admission.'); });
+        return runAdmittedResearchRunner(webSearchTool, args, shellPaths, dispatch, assertCurrent, () => { assertCurrent(); if (!assertCurrentToolEffect(rawArgs as Record<string, unknown>, options, 'write')) throw new Error('Research runner writes require current recorded effect admission.'); }, searchSourceOwner, options?.signal);
       }
       if (action === 'runs') return dispatch(harnessTool, runsArgs(args));
       if (action === 'run') return dispatch(harnessTool, runArgs(args));
@@ -500,7 +501,7 @@ export function createAgentResearchTool(deps: AgentResearchToolDeps): Tool {
       if (action === 'source') return dispatch(harnessTool, sourceArgs(args));
       if (action === 'bundle') return dispatch(sourcesTool, bundleArgs(args));
       if (action === 'search' && !assertCurrentToolEffect(rawArgs as Record<string, unknown>, options, 'send')) return error('Research search requires current recorded send admission.');
-      if (action === 'search') return runPublicSearch(webSearchTool, args, shellPaths, dispatch, assertCurrent);
+      if (action === 'search') return runPublicSearch(webSearchTool, args, shellPaths, dispatch, assertCurrent, searchSourceOwner, options?.signal);
       if (action === 'reports') return dispatch(artifactTool, reportsArgs(args));
       if (action === 'report_artifact') return dispatch(artifactTool, reportArtifactArgs(args));
       if (action === 'create_run') return dispatch(runsTool, createRunArgs(args));

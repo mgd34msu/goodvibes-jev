@@ -299,8 +299,8 @@ function extractV1Models(body: unknown): string[] | null {
 /**
  * Which server software answered: the well-known default ports decide on
  * their own (a fixed table); any other port is read from the probe's headers
- * and model ids by routing.local-server-identity, 'unknown' when the reading
- * is not strong enough to act on.
+ * and model ids by routing.local-server-identity. 'unknown' must be a settled
+ * choice; an unsettled identity holds discovery.
  */
 async function identifyServer(
   port: number,

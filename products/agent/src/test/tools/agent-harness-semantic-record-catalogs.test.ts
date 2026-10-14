@@ -8,7 +8,7 @@ import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/e
 import { PolicyRuntimeState } from '@goodvibes-jev/engine/sdk/platform/runtime/security';
 import type { MemoryRecord } from '@goodvibes-jev/engine/sdk/platform/state';
 import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
-import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
 import { createAgentHarnessTool } from '../../tools/agent-harness-tool.ts';
 import { CommandRegistry } from '../../input/command-registry.ts';
@@ -36,7 +36,7 @@ class CatalogProcessFixture extends ProcessManager {
 }
 
 function memory(id: string, summary: string): MemoryRecord {
-  return { id, scope: 'project', cls: 'fact', summary, detail: 'A synthetic record used for catalog admission.', tags: [], provenance: [], reviewState: 'fresh', confidence: 92, createdAt: Date.now(), updatedAt: Date.now() };
+  return { id, scope: 'project', cls: 'fact', summary, detail: 'A synthetic record used for catalog admission.', tags: [], provenance: [], reviewState: 'fresh', confidence: 92, createdAt: 1, updatedAt: 1 };
 }
 
 function fixture() {
@@ -52,6 +52,13 @@ function readings(fits: Readonly<Record<string, number>>) {
       return choiceAnswer(question, 'other', 0.999);
     }
     if (['lineHasCredential', 'spanIsCredential', 'credentialRemains', 'identifying'].includes(name)) return noulAnswer(0.001);
+    // Script the six independent curator measurements so this suite can test
+    // catalog ranking separately from live grading calibration.
+    if (question.type === 'score' && ['usefulness', 'freshness', 'source_quality', 'risk', 'priority', 'confidence'].includes(name)) {
+      return scoreAnswer(question, name === 'risk' || name === 'confidence' ? 1 : 2, 0.999);
+    }
+    if (name === 'link' && question.type === 'score') return scoreAnswer(question, 0, 0.999); // These two authored records are distinct.
+    if (name === 'same_record' && question.type === 'noul') return noulAnswer(0.001);
     if (name !== 'match') throw new Error(`Unexpected catalog reading ${name}`);
     const candidate = (state as unknown as { candidate: { name: string } }).candidate;
     return noulAnswer(fits[candidate.name] ?? 0.01);
@@ -465,7 +472,7 @@ describe('canonical semantic record catalogs', () => {
     test(`${entry.kind} refuses unavailable canonical readings and preserves exact-ID selection grammar`, async () => {
       const f = fixture();
       await expect(entry.summary(f.context, { query: 'mail' }, options())).rejects.toBeInstanceOf(JudgmentPortMissingError);
-      if (entry.kind === 'autonomy') {
+      if (entry.kind === 'autonomy' || entry.kind === 'learning') {
         await expect(entry.summary(f.context, {})).rejects.toBeInstanceOf(ToolInputProjectionError);
         await expect(entry.detail(f.context, { [entry.id]: entry.chosen })).rejects.toBeInstanceOf(ToolInputProjectionError);
         const privacy = readings({});

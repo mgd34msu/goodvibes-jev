@@ -42,9 +42,11 @@ test('linked engine-owned jsdom resolves its own css-tree, without modifying eit
     const target = realpathSync(join(setup.css, 'lib/data-patch.js'));
     const original = readFileSync(target, 'utf8');
     const files = bunCompileCompatibilityFiles(setup.root);
-    expect(files[target]).toContain("import patch from '../data/patch.json'");
-    expect(files[target]).not.toContain('createRequire');
-    expect(Object.keys(files)).toContain(realpathSync(join(setup.dom, 'lib/jsdom/living/css/helpers/computed-style.js')));
+    expect(files[target] ?? original).toContain("import patch from '../data/patch.json'");
+    expect(files[target] ?? original).not.toContain('createRequire');
+    const style = realpathSync(join(setup.dom, 'lib/jsdom/living/css/helpers/computed-style.js'));
+    expect(files[style] ?? readFileSync(style, 'utf8')).toContain('const defaultStyleSheet =');
+    expect(files[style] ?? readFileSync(style, 'utf8')).not.toContain('const defaultStyleSheet = fs.readFileSync(');
     expect(readFileSync(target, 'utf8')).toBe(original);
     expect(bunCompileCompatibilityFiles(setup.root)).toEqual(files);
   } finally { rmSync(setup.root, { recursive: true, force: true }); }

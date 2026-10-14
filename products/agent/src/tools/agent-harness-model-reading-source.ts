@@ -10,7 +10,7 @@ import { captureAgentExportPath } from './agent-artifact-effect.ts';
 import { connectedHostOperatorTokenPath, readConnectedHostOperatorToken } from '../runtime/connected-host-auth.ts';
 import { captureCatalogSnapshot } from './agent-harness-catalog-ranking.ts';
 import { captureNativeReadModelObservation } from './agent-harness-autonomy-live-records.ts';
-import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { snapshotJudgmentEvidence, snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { SOURCE_SCREENING_LIMITS, type ProtectedSource, type ProtectedSourceOwner, type SourceScreeningReceipt } from '@goodvibes-jev/engine/sdk/platform/security';
 import { assertProjectionCurrent, ToolInputProjectionError, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
@@ -159,7 +159,7 @@ export function assertModelReadingInputCurrent(value: unknown, serialized: strin
  * fields as generated epoch clocks. Preserve the complete raw descriptor locally
  * and expose the same instant as ISO before privacy screening. Metadata, bodies
  * and every other field retain their original meaning and screening. */
-export function captureModelArtifactClockSource<T extends ArtifactDescriptor>(value: T) {
+export function captureModelArtifactClockSource<T extends Pick<ArtifactDescriptor, 'createdAt' | 'expiresAt'>>(value: T) {
   const native = captureModelReadingData(value);
   const instant = (clock: number): string => {
     if (!Number.isSafeInteger(clock) || Math.abs(clock) > 8_640_000_000_000_000) throw new ToolInputProjectionError('invalid');
@@ -178,56 +178,75 @@ export function captureModelArtifactClockSources(value: readonly ArtifactDescrip
 
 /** Compare every original slot with its captured data without rebuilding JSON.
  * The snapshot has already passed complete structural and privacy capture. */
-export function captureModelReadingSnapshotGuard(captured: unknown): (value: unknown) => void {
+const snapshotWeakMap = WeakMap;
+const snapshotSet = Set;
+const snapshotWeakGet = WeakMap.prototype.get;
+const snapshotWeakSet = WeakMap.prototype.set;
+const snapshotSetHas = Set.prototype.has;
+const snapshotSetAdd = Set.prototype.add;
+const snapshotSetDelete = Set.prototype.delete;
+const snapshotApply = Reflect.apply;
+const snapshotOwnKeys = Reflect.ownKeys;
+const snapshotDescriptors = Object.getOwnPropertyDescriptors;
+const snapshotIsFrozen = Object.isFrozen;
+const snapshotIsArray = Array.isArray;
+const snapshotIsProxy = nodeTypes.isProxy;
+
+export function captureModelReadingSnapshotGuard(captured: unknown, exactDescriptors = false): (value: unknown) => void {
   type Snapshot = { readonly kind: 'value'; readonly value: unknown }
-    | { readonly kind: 'object'; readonly array: boolean; readonly slots: readonly { readonly key: string; readonly snapshot: Snapshot }[] };
+    | { readonly kind: 'object'; readonly array: boolean; readonly prototype: unknown;
+      readonly slots: readonly { readonly key: string; readonly snapshot: Snapshot; readonly descriptor: PropertyDescriptor }[] };
   const changed = (): never => { throw new ToolInputProjectionError('held'); };
   let capturedNodes = 0;
   const capture = (value: unknown, depth: number): Snapshot => {
     if (++capturedNodes > 20_000 || depth > 64) changed();
     if (value === null || typeof value !== 'object') return { kind: 'value', value };
-    if (nodeTypes.isProxy(value)) changed();
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    const slots = Reflect.ownKeys(descriptors).map(key => {
+    if (snapshotIsProxy(value)) changed();
+    const descriptors = snapshotDescriptors(value);
+    const slots = snapshotOwnKeys(descriptors).map(key => {
       if (typeof key !== 'string') return changed();
       const descriptor = descriptors[key];
       if (!descriptor || !('value' in descriptor)) return changed();
-      return { key, snapshot: capture(descriptor.value, depth + 1) };
+      return { key, snapshot: capture(descriptor.value, depth + 1), descriptor };
     });
-    return { kind: 'object', array: Array.isArray(value), slots };
+    return { kind: 'object', array: snapshotIsArray(value), prototype: scalarBindingPrototype(value), slots };
   };
   const original = capture(captured, 0);
-  const immutableMatches = new WeakMap<object, Set<Snapshot>>();
+  const immutableMatches = new snapshotWeakMap<object, Set<Snapshot>>();
   return value => {
     let nodes = 0;
-    const ancestors = new Set<object>();
+    const ancestors = new snapshotSet<object>();
     const compare = (current: unknown, snapshot: Snapshot, depth: number): boolean => {
       if (++nodes > 20_000 || depth > 64) changed();
       if (snapshot.kind === 'value') {
-        if (!Object.is(current, snapshot.value)) changed();
+        if (!scalarBindingIs(current, snapshot.value)) changed();
         return true;
       }
       if (current === null || typeof current !== 'object') return changed();
       // A complete match of a recursively frozen native tree remains exact:
       // neither its slots nor any descendant's prototype can subsequently change.
-      if (immutableMatches.get(current)?.has(snapshot)) return true;
-      if (nodeTypes.isProxy(current) || ancestors.has(current)) return changed();
-      if (Array.isArray(current) !== snapshot.array) changed();
-      const prototype: unknown = Object.getPrototypeOf(current);
+      const matched = snapshotApply(snapshotWeakGet, immutableMatches, [current]) as Set<Snapshot> | undefined;
+      if (matched && snapshotApply(snapshotSetHas, matched, [snapshot])) return true;
+      if (snapshotIsProxy(current) || snapshotApply(snapshotSetHas, ancestors, [current])) return changed();
+      if (snapshotIsArray(current) !== snapshot.array) changed();
+      const prototype: unknown = scalarBindingPrototype(current);
       if (snapshot.array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) changed();
-      if (Reflect.ownKeys(current).length !== snapshot.slots.length) changed();
-      ancestors.add(current);
-      let immutable = Object.isFrozen(current);
+      if (exactDescriptors && prototype !== snapshot.prototype) changed();
+      if (snapshotOwnKeys(current).length !== snapshot.slots.length) changed();
+      snapshotApply(snapshotSetAdd, ancestors, [current]);
+      let immutable = snapshotIsFrozen(current);
       try {
         for (const slot of snapshot.slots) {
-          const descriptor = Object.getOwnPropertyDescriptor(current, slot.key);
+          const descriptor = scalarBindingDescriptor(current, slot.key);
           if (!descriptor || !('value' in descriptor)) return changed();
+          if (exactDescriptors && (descriptor.enumerable !== slot.descriptor.enumerable
+            || descriptor.configurable !== slot.descriptor.configurable || descriptor.writable !== slot.descriptor.writable)) changed();
           immutable = compare(descriptor.value, slot.snapshot, depth + 1) && immutable;
         }
-      } finally { ancestors.delete(current); }
+      } finally { snapshotApply(snapshotSetDelete, ancestors, [current]); }
       if (immutable) {
-        const matches = immutableMatches.get(current) ?? new Set<Snapshot>();
-        matches.add(snapshot); immutableMatches.set(current, matches);
+        const matches = matched ?? new snapshotSet<Snapshot>();
+        snapshotApply(snapshotSetAdd, matches, [snapshot]); snapshotApply(snapshotWeakSet, immutableMatches, [current, matches]);
       }
       return immutable;
     };
@@ -249,16 +268,38 @@ function screeningBatches(captured: unknown, serialized: string): readonly (read
     for (const [key, child] of entries) visit(child, [...keys, key]);
   };
   visit(captured, []);
-  const batches: string[][] = [];
-  let size = 0, total = 0;
+  // A large structured value can produce thousands of small path/value
+  // fragments. Pack adjacent complete fragments into JSON arrays before
+  // applying the native part quota; otherwise small fields exhaust source
+  // handles even though their complete text fits the character budget.
+  const packed: string[] = [];
+  // Verification embeds the text in both the original parts and excerpts.
+  // Account for JSON escaping while packing, so dense structured text does
+  // not exceed Jev's request budget despite fitting the raw character limit.
+  const encodedSize = (part: string) => JSON.stringify(part).length;
+  let group: string[] = [], groupSize = 4;
+  const flush = () => {
+    if (group.length) packed.push(group.length === 1 ? group[0]! : `[${group.join(',')}]`);
+    group = []; groupSize = 4;
+  };
   for (const part of parts) {
+    const size = encodedSize(part) - 2;
+    if (groupSize + (group.length ? 1 : 0) + size > SOURCE_SCREENING_LIMITS.characters) flush();
+    if (size + 4 > SOURCE_SCREENING_LIMITS.characters) { packed.push(part); continue; }
+    groupSize += (group.length ? 1 : 0) + size; group.push(part);
+  }
+  flush();
+  const batches: string[][] = [];
+  let size = 0, encoded = 0, total = 0;
+  for (const part of packed) {
     total += part.length;
     if (total > 1_000_000) throw new ToolInputProjectionError('held');
     let batch = batches.at(-1);
-    if (!batch || batch.length >= SOURCE_SCREENING_LIMITS.parts || size + part.length > SOURCE_SCREENING_LIMITS.characters) {
-      batch = []; batches.push(batch); size = 0;
+    if (!batch || batch.length >= SOURCE_SCREENING_LIMITS.parts || size + part.length > SOURCE_SCREENING_LIMITS.characters
+      || encoded + encodedSize(part) > SOURCE_SCREENING_LIMITS.characters) {
+      batch = []; batches.push(batch); size = 0; encoded = 0;
     }
-    batch.push(part); size += part.length;
+    batch.push(part); size += part.length; encoded += encodedSize(part);
   }
   if (batches.length > SOURCE_SCREENING_LIMITS.sources) throw new ToolInputProjectionError('held');
   return batches;
@@ -286,7 +327,7 @@ export async function withModelReadingSource<T, R>(source: T, options: ModelRead
   };
   if (originalRetain !== undefined && (typeof originalRetain !== 'function' || nodeTypes.isProxy(originalRetain))) throw new ToolInputProjectionError('held');
   checkSignal(); assertSynchronous(originalAssert); checkSignal();
-  const captured = captureModelReadingInput(source);
+  const captured = snapshotJudgmentEvidence(captureModelReadingData(source)) as T;
   const assertSourceSnapshot = captureModelReadingSnapshotGuard(captured);
   const serialized = JSON.stringify(captured);
   if (typeof serialized !== 'string') throw new ToolInputProjectionError('held');
@@ -546,7 +587,9 @@ function providerReadingFacts(provider: unknown, initial = true): unknown {
     if (typeof result !== 'boolean') throw new ToolInputProjectionError('held');
     facts.isConfigured = result;
   } else if (configured !== undefined) facts.isConfigured = configured;
-  return initial ? captureModelReadingInput(facts) : captureModelReadingData(facts);
+  // Follow-up facts are consumed immediately by the complete descriptor-only
+  // snapshot guard. Cloning the same provider metadata first adds no evidence.
+  return initial ? captureModelReadingInput(facts) : facts;
 }
 function providerFactsList(value: unknown, expected?: { readonly identities: readonly unknown[]; readonly configuredMethods: readonly unknown[] }): { readonly identities: readonly unknown[]; readonly facts: readonly unknown[]; readonly configuredMethods: readonly unknown[] } {
   if (!Array.isArray(value) || nodeTypes.isProxy(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new ToolInputProjectionError('invalid');
@@ -596,8 +639,8 @@ export async function withModelReadingContext<T>(context: CommandContext, invoca
   for (const method of ['listModels', 'getFavorites', 'getCurrentModel', 'listProviderIds']) slot(api, method);
   const artifactList = slot(store, 'list'), artifactReadContent = slot(store, 'readContent');
   const readContent = store?.readContent;
-  const tracked: { readonly raw: unknown; readonly serialized: string | undefined }[] = [];
-  const capture = <V>(raw: V): V => { const copy = captureModelReadingInput(raw); tracked.push({ raw, serialized: JSON.stringify(copy) }); return copy; };
+  const tracked: { readonly raw: unknown; readonly assertCurrent: (value: unknown) => void }[] = [];
+  const capture = <V>(raw: V): V => { const copy = captureModelReadingInput(raw); tracked.push({ raw, assertCurrent: captureModelReadingSnapshotGuard(copy) }); return copy; };
   const models = api ? capture(await api.listModels({ selectableOnly: true })) : [];
   assertCurrent();
   const favorites = api ? capture(await api.getFavorites()) : null;
@@ -612,7 +655,7 @@ export async function withModelReadingContext<T>(context: CommandContext, invoca
   const originalArtifacts = store?.list?.(100) ?? [];
   const artifactSources = captureModelArtifactClockSources(originalArtifacts);
   const nativeArtifacts = artifactSources.native;
-  tracked.push({ raw: originalArtifacts, serialized: JSON.stringify(nativeArtifacts) });
+  tracked.push({ raw: originalArtifacts, assertCurrent: captureModelReadingSnapshotGuard(nativeArtifacts) });
   const artifacts = captureModelReadingInput(artifactSources.reading);
   const windowSubjects = [...models, ...(currentModel ? [currentModel] : [])];
   const contextWindows = windowSubjects.map(model => ({ registryKey: modelRegistryKey(model), value: contextWindowFor(sourceContext, model) }));
@@ -621,26 +664,32 @@ export async function withModelReadingContext<T>(context: CommandContext, invoca
   const readConfig = (key: string): unknown => typeof configGet === 'function' ? configGet.call(manager, key) : undefined;
   const config = Object.fromEntries(CONFIG_KEYS.map(key => [key, capture(readConfig(key))]));
   const runtime = captureModelReadingInput(runtimeFacts());
+  const assertRuntime = captureModelReadingSnapshotGuard(runtime);
+  const assertRegistryModels = captureModelReadingSnapshotGuard(registryModels);
+  const assertProviders = captureModelReadingSnapshotGuard(providers);
+  const assertArtifacts = captureModelReadingSnapshotGuard(nativeArtifacts);
+  const configGuards = CONFIG_KEYS.map(key => ({ key, assertCurrent: captureModelReadingSnapshotGuard(config[key]) }));
+  const readModelGuards = readModels.map(entry => ({ ...entry, assertCurrent: captureModelReadingSnapshotGuard(entry.data) }));
   const source = { invocation: originalInvocation, models, favorites, currentModel, providerIds, registryModels, providers, artifacts, contextWindows, readModels, config, runtime, producerSource: native.evidence() };
   const stateGuard = () => {
     assertCurrent();
     if (path(context, ['platform', 'artifactStore']) !== store
       || slot(store, 'list') !== artifactList || slot(store, 'readContent') !== artifactReadContent) throw new ToolInputProjectionError('held');
     for (const [index, model] of windowSubjects.entries()) if (contextWindowFor(sourceContext, model) !== contextWindows[index]?.value) throw new ToolInputProjectionError('held');
-    for (const entry of tracked) assertModelReadingInputCurrent(entry.raw, entry.serialized);
-    assertModelReadingInputCurrent(runtimeFacts(), JSON.stringify(runtime));
-    if (typeof registryModelsMethod === 'function') assertModelReadingInputCurrent(registryModelsMethod.call(registry), JSON.stringify(registryModels));
+    for (const entry of tracked) entry.assertCurrent(entry.raw);
+    assertRuntime(runtimeFacts());
+    if (typeof registryModelsMethod === 'function') assertRegistryModels(registryModelsMethod.call(registry));
     if (typeof providersMethod === 'function') {
       // Compare trusted method identities before invoking any replacement.
       for (const [index, provider] of providerSnapshot.identities.entries())
         if (slot(provider, 'isConfigured') !== providerSnapshot.configuredMethods[index]) throw new ToolInputProjectionError('held');
       const current = providerFactsList(providersMethod.call(registry), providerSnapshot);
-      if (current.identities.length !== providerSnapshot.identities.length || current.identities.some((provider, index) => provider !== providerSnapshot.identities[index])
-        || JSON.stringify(current.facts) !== JSON.stringify(providers)) throw new ToolInputProjectionError('held');
+      if (current.identities.length !== providerSnapshot.identities.length || current.identities.some((provider, index) => provider !== providerSnapshot.identities[index])) throw new ToolInputProjectionError('held');
+      assertProviders(current.facts);
     }
-    if (store?.list) assertModelReadingInputCurrent(store.list(100), JSON.stringify(nativeArtifacts));
-    for (const key of CONFIG_KEYS) assertModelReadingInputCurrent(readConfig(key), JSON.stringify(config[key]));
-    for (const entry of readModels) if (JSON.stringify(snapshotReadModel(path(context, entry.keys), false)) !== JSON.stringify(entry.data)) throw new ToolInputProjectionError('held');
+    if (store?.list) assertArtifacts(store.list(100));
+    for (const entry of configGuards) entry.assertCurrent(readConfig(entry.key));
+    for (const entry of readModelGuards) entry.assertCurrent(snapshotReadModel(path(context, entry.keys), false));
   };
   return withModelReadingSource(source, { ...options, assertCurrent: stateGuard }, async (captured, scoped) => {
     const projected: Record<string, unknown> = { session: { runtime: captured.runtime },

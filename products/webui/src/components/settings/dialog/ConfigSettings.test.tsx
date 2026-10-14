@@ -489,7 +489,7 @@ describe('settings config groups: declared fallback-reference arrays', () => {
     const ui = render();
     try {
       const field = await openFallbackField(ui.el);
-      for (const invalid of [{}, [{ ...reference, model: 'jev-latest' }], [{ ...reference, apiKey: 'synthetic-private-value' }]]) {
+      for (const invalid of [{}, [{ ...reference, model: '' }], [{ ...reference, apiKey: 'synthetic-private-value' }]]) {
         replaceDraft(field, invalid);
         save(field);
         expect(field.querySelector('[role="alert"]')?.textContent).toBe('Value must be a valid fallback-reference array.');

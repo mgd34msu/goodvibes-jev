@@ -18,3 +18,7 @@ registry.register(knowledgeScopeSelection);
 import { selfImprovementGapContext, selfImprovementEvidenceCoverage } from './semantic/self-improvement-assessment/battery.js';
 registry.register(selfImprovementGapContext);
 registry.register(selfImprovementEvidenceCoverage);
+
+import { extractedSentenceKind, repairSourceRelevance } from './semantic/repair-decisions.js';
+registry.register(extractedSentenceKind);
+registry.register(repairSourceRelevance);

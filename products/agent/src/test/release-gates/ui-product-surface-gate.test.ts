@@ -1,6 +1,8 @@
+import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
+afterAll(cleanupResearchScreeningFixtures);
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
-import { describe, expect, test } from 'bun:test';
+import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import { afterAll, describe, expect, test } from 'bun:test';
 import {
   MAX_SETTING_LIMIT,
   countHarnessSettings,
@@ -14,13 +16,14 @@ import type { CommandContext } from '../../input/command-registry.ts';
 import { getOverlayWidthClass } from '@goodvibes-jev/engine/terminal-shell';
 import { wireShellUiOpeners } from '../../shell/ui-openers.ts';
 import { createTestManagers } from '../helpers/test-managers.ts';
+import { getTestIntelligenceShellPaths } from '../helpers/runtime-services.ts';
 import { listHarnessKeybindings } from '../../tools/agent-harness-keybinding-metadata.ts';
 import {
   listHarnessUiSurfaces,
   totalHarnessUiSurfaces,
 } from '../../tools/agent-harness-ui-surface-metadata.ts';
 
-function modelCatalogContext(): CommandContext {
+function modelCatalogContext(managers: ReturnType<typeof createTestManagers>): CommandContext {
   const noop = () => {};
   return {
     renderRequest: noop,
@@ -54,10 +57,10 @@ function modelCatalogContext(): CommandContext {
     openSecurityWorkspace: noop,
     openKnowledgeWorkspace: noop,
     openSubscriptionWorkspace: noop,
-    workspace: {},
-    platform: {},
+    workspace: { shellPaths: getTestIntelligenceShellPaths() },
+    platform: { configManager: managers.configManager },
     session: {},
-    provider: {},
+    provider: { providerRegistry: managers.providerRegistry },
     ops: {},
     extensions: {},
   } as unknown as CommandContext;
@@ -93,7 +96,7 @@ function expectNonempty(value: unknown): asserts value is string {
 
 describe('UI product surface gate', () => {
   test('supports line-accurate conversation navigation by transcript event family', async () => {
-    const previous = installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+    const previous = installJudgmentPort(fakePort((name, question) => choiceAnswer(question, name === 'activity' ? 'security' : name === 'severity' ? 'info' : 'approval_request', .99)).port);
     try {
     const conversation = new ConversationManager(() => 100);
     conversation.addUserMessage('review the file');
@@ -166,10 +169,10 @@ describe('UI product surface gate', () => {
   });
 
   test('model-facing catalogs cover current user-facing settings, surfaces, and keybindings', async () => {
-    const context = modelCatalogContext();
     const managers = createTestManagers();
+    const context = modelCatalogContext(managers);
 
-    const surfaces = await listHarnessUiSurfaces(context, { includeParameters: true, limit: 500 }) as readonly {
+    const surfaces = await listHarnessUiSurfaces(context, { includeParameters: true, limit: 500 }, { sourceOwner: ordinaryResearchOwner() }) as readonly {
       readonly id?: string;
       readonly summary?: string;
       readonly modelRoute?: string;
@@ -189,7 +192,7 @@ describe('UI product surface gate', () => {
       expectNonempty(surface.policy?.boundary);
     }
 
-    const keybindings = await listHarnessKeybindings(context, { limit: 500 }) as {
+    const keybindings = await listHarnessKeybindings(context, { limit: 500 }, { sourceOwner: ordinaryResearchOwner() }) as {
       readonly keybindings: readonly {
         readonly action?: string;
         readonly description?: string;

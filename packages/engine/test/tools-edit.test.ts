@@ -9,7 +9,7 @@ import { join } from 'path';
 import { createEditTool } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { EditToolOptions } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { FileStateCache } from '@goodvibes-jev/engine/sdk/platform/state';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 
 // ---------------------------------------------------------------------------
@@ -51,14 +51,17 @@ describe('edit tool', () => {
   let tmpDir: string;
   let fileCache: FileStateCache;
   let tool: ReturnType<typeof createEditTool>;
+  let priorJudgment: ReturnType<typeof installJudgmentPort>;
 
   beforeEach(() => {
+    priorJudgment = installJudgmentPort(fakePort((_name, question) => question.type === 'choice' ? choiceAnswer(question, 'none', 1) : noulAnswer(0)).port);
     tmpDir = makeTmpDir();
     fileCache = new FileStateCache();
     tool = createEditTool(fileCache, { cwd: PROJECT_ROOT });
   });
 
   afterEach(() => {
+    installJudgmentPort(priorJudgment);
     if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -310,6 +313,11 @@ describe('edit tool', () => {
       beforeEach(() => {
         sameTarget = new Map();
         const fake = fakePort((name, question, state) => {
+          if (name === 'pick') return choiceAnswer(question, 'line-1', 1);
+          if (name.startsWith('fits_')) {
+            const candidates = (state as { candidates: { id: string }[] }).candidates;
+            return noulAnswer(candidates[Number(name.slice(5))]?.id === 'line-1' ? 1 : 0);
+          }
           if (name !== 'same_target' || question.type !== 'noul' || typeof state !== 'object' || state === null || !('find' in state) || typeof state.find !== 'string')
             throw new Error('Unscripted edit-target reading');
           return noulAnswer(sameTarget.get(state.find) ?? 0.03);
@@ -345,9 +353,7 @@ describe('edit tool', () => {
         expect(result.success).toBe(false);
         expect(readFileSync(file, 'utf-8')).toBe(content);
         const text = JSON.stringify(result);
-        expect(text).toMatch(/not read as the same edit target/);
-        expect(text).toMatch(/Did you mean this\? \(from line 1\)/);
-        expect(text).toContain('const z = 3;');
+        expect(text).toMatch(/not found unambiguously/);
         expect(targetRequests()).toHaveLength(1);
       });
 
@@ -359,10 +365,11 @@ describe('edit tool', () => {
         const result = await tool.execute({ edits: [{ path: relPath(file), find, replace: 'replaced' }] });
         expect(result.success).toBe(false);
         expect(readFileSync(file, 'utf-8')).toBe(content);
-        expect(JSON.stringify(result)).toMatch(/not read as the same edit target/);
+        expect(result.error).toBeString();
+        expect(targetRequests()).toHaveLength(1);
       });
 
-      test('the best window is the one sent for judgment, however low its line share', async () => {
+      test('the selected window is independently verified, however low its line share', async () => {
         // 1 of 4 lines matches: no fixed cutoff decides, the reading does.
         const file = writeFile(tmpDir, 'fuzz_low_share.ts', 'function a() {\n  one();\n  two();\n}\n');
         const find = 'function a() {\n  uno();\n  dos();\n};';
@@ -373,14 +380,14 @@ describe('edit tool', () => {
         expect(targetRequests()).toHaveLength(1);
       });
 
-      test('no window shares a line with the find text: plain not found, nothing is judged', async () => {
+      test('no equal lines still receives a semantic reading before returning not found', async () => {
         const file = writeFile(tmpDir, 'fuzz_low.ts', 'alpha beta\ngamma delta\nepsilon zeta\n');
         const result = await tool.execute({
           edits: [{ path: relPath(file), find: 'XXXX YYYY\nZZZZ WWWW\nAAAA BBBB', replace: 'replaced' }],
         });
         expect(result.success).toBe(false);
         expect(JSON.stringify(result)).toMatch(/not found/);
-        expect(targetRequests()).toHaveLength(0);
+        expect(targetRequests()).toHaveLength(1);
       });
     });
   });

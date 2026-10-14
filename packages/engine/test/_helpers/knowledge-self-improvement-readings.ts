@@ -1,3 +1,4 @@
+import { semanticRepairProfileValues } from './repair-profile-fixture-readings.js';
 import { isDeepStrictEqual } from 'node:util';
 import type { Question } from '@goodvibes-jev/judgment';
 import { captureStrictJudgmentJson } from '../../sdk/src/platform/gate/judgment-result.js';
@@ -8,6 +9,7 @@ import { selfImprovementGapContext, selfImprovementEvidenceCoverage } from '../.
 
 export interface SelfImprovementFixtureValues {
   readonly query: string;
+  readonly queryAliases?: readonly string[];
   readonly subjects: readonly string[];
   readonly fullProfileRequired?: number;
   readonly context?: readonly [applicable: number, concrete: number];
@@ -22,9 +24,10 @@ export function gapAssessmentFixture(gap: Pick<KnowledgeNodeRecord, 'title' | 's
 export function intrinsicAssessmentFixture(subject: KnowledgeNodeRecord,
   coverage: NonNullable<SelfImprovementFixtureValues['coverage']>): SelfImprovementFixtureValues {
   return { query: `What are the complete features and specifications for ${subjectTitle(subject)}?`,
-    subjects: [subject.title], context: [0.99, 0.99], fullProfileRequired: 0.99, coverage };
+    queryAliases: [`What are the complete features and specifications for ${subjectTitle(subject)}?\n\nThe current source-backed facts for ${subjectTitle(subject)} do not yet cover the full feature/specification profile.`],
+    subjects: [subject.title], context: [0.99, 0.99], fullProfileRequired: 0.99, coverage: [...coverage, ...semanticRepairAssessmentCoverage] };
 }
-/** Finite authored outcomes keyed by the exact question, query and ordered subject/fact vectors. */
+/** Finite authored outcomes keyed by the exact question, query and ordered subjects and exact fact multisets. */
 export function selfImprovementFixtureReading(name: string, question: Question, state: unknown,
   values: readonly SelfImprovementFixtureValues[] = []): number | undefined {
   const sameQuestion = (expected: Question) => isDeepStrictEqual(captureStrictJudgmentJson(question), captureStrictJudgmentJson(expected));
@@ -42,7 +45,7 @@ export function selfImprovementFixtureReading(name: string, question: Question, 
   const same = (expected: readonly string[], actual: readonly unknown[]) => expected.length === actual.length
     && expected.every((title, index) => title === actual[index]);
   for (const fixture of values) {
-    if (fixture.query !== input.query || !same(fixture.subjects, titles)) continue;
+    if ((fixture.query !== input.query && !fixture.queryAliases?.includes(input.query)) || !same(fixture.subjects, titles)) continue;
     if (requirementQuestion && name === 'fullProfileRequired' && fixture.fullProfileRequired !== undefined) return fixture.fullProfileRequired;
     if (contextQuestion && input.facts!.length === 0 && fixture.context) {
       if (name === 'gapApplicable') return fixture.context[0];
@@ -50,7 +53,7 @@ export function selfImprovementFixtureReading(name: string, question: Question, 
     }
     if (coverageQuestion && name === 'repairEvidenceSufficient') {
       const factTitles = input.facts!.map(fact => fact.title);
-      const authored = fixture.coverage?.find(sample => same(sample.facts, factTitles));
+      const authored = fixture.coverage?.find(sample => same([...sample.facts].sort(), [...factTitles].sort()));
       if (authored) return authored.probability;
     }
   }
@@ -59,7 +62,17 @@ export function selfImprovementFixtureReading(name: string, question: Question, 
 
 /** Authored complete profile outcomes for the existing four-span semantic repair fixture. */
 export const semanticRepairAssessmentCoverage: NonNullable<SelfImprovementFixtureValues['coverage']> = [
+  // Exact authored complete specification fixtures, with and without their
+  // independently classified whole-source sentence. Ordering is irrelevant.
+  ...[...new Set(semanticRepairProfileValues.map(([, text]) => text))].flatMap(text => {
+    const categories = semanticRepairProfileValues.filter(([, span]) => span === text).map(([title]) => title);
+    return categories.length >= 4 ? [{ facts: categories, probability: 0.99 }, { facts: [...categories, text], probability: 0.99 }] : [];
+  }),
   { facts: [], probability: 0.01 },
+  { facts: ['The LG TV supports HDR10, HDMI eARC, Filmmaker Mode, Game Optimizer, and Magic Remote voice control.'], probability: 0.01 },
+  { facts: ['The LG TV supports HDR10, HDMI eARC, Filmmaker Mode, Game Optimizer, and Magic Remote voice control.', 'This remote uses infrared light and must be pointed toward the remote control sensor on the TV.', 'In that case, change the TV HDMI Ultra HD Deep Color setting to off.'], probability: 0.01 },
+  { facts: ['Display and picture specifications', 'Input and output ports', 'Smart TV platform and integrations', 'Gaming and HDMI features', 'NanoCell 4K feature set'], probability: 0.99 },
+  { facts: ['Gaming and HDMI features', 'Smart TV platform and integrations', 'Input and output ports', 'Display and picture specifications'], probability: 0.99 },
   { facts: ['Display and picture specifications', 'Input and output ports', 'Smart TV platform and integrations', 'Network and wireless capabilities'], probability: 0.99 },
   { facts: ['Network and wireless capabilities', 'Smart TV platform and integrations', 'Input and output ports', 'Display and picture specifications'], probability: 0.99 },
 ];

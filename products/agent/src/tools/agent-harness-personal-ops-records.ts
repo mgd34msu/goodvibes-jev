@@ -1,4 +1,5 @@
 import { readPersonalOpsReceiptStatus } from './agent-harness-personal-ops-readings.ts';
+import { captureModelArtifactClockSource } from './agent-harness-model-reading-source.ts';
 import { captureCatalogMethods, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import { assertPersonalOpsDataCurrent, capturePersonalOpsData, protectPersonalOpsData } from './agent-harness-personal-ops-source.ts';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -329,7 +330,9 @@ function metadataCreatedAtIso(artifact: ArtifactDescriptor): string {
   return artifactCreatedAtIso(artifact);
 }
 
-async function personalOpsArtifacts(context: CommandContext, options: CatalogRankingOptions): Promise<readonly ArtifactDescriptor[]> {
+interface PersonalOpsArtifactSource { readonly artifact: ArtifactDescriptor; readonly reading: unknown; readonly assertCurrent: () => void }
+
+async function personalOpsArtifacts(context: CommandContext, options: CatalogRankingOptions): Promise<readonly PersonalOpsArtifactSource[]> {
   options.signal?.throwIfAborted(); options.assertCurrent?.();
   const contextCurrent = captureCatalogMethods(context, ['platform']);
   const platform = context.platform;
@@ -358,29 +361,32 @@ async function personalOpsArtifacts(context: CommandContext, options: CatalogRan
       if (safe[key] !== artifact[key]) throw new ToolInputProjectionError('held');
     const metadata = readRecord(safe.metadata);
     for (const key of ['purpose', 'laneId']) if (metadata[key] !== artifact.metadata[key]) throw new ToolInputProjectionError('held');
-    return { id: artifact.id, kind: artifact.kind, mimeType: artifact.mimeType, sizeBytes: artifact.sizeBytes,
+    const descriptor = { id: artifact.id, kind: artifact.kind, mimeType: artifact.mimeType, sizeBytes: artifact.sizeBytes,
       sha256: artifact.sha256, createdAt: artifact.createdAt, expiresAt: artifact.expiresAt,
       acquisitionMode: artifact.acquisitionMode, fetchMode: artifact.fetchMode, metadata,
       filename: typeof safe.filename === 'string' ? safe.filename : undefined,
       sourceUri: typeof safe.sourceUri === 'string' ? safe.sourceUri : undefined,
     };
+    return { artifact: descriptor, reading: captureModelArtifactClockSource({ ...safe, createdAt: artifact.createdAt, expiresAt: artifact.expiresAt }).reading, assertCurrent };
   });
   options.retainCurrent?.(assertSource, 'personal-ops-artifacts');
+  assertCurrent();
   return result;
 }
 
 export async function savedReviewArtifacts(context: CommandContext, laneId: 'inbox' | 'calendar', options: CatalogRankingOptions = {}): Promise<readonly ArtifactDescriptor[]> {
   return (await personalOpsArtifacts(context, options))
+    .map(source => source.artifact)
     .filter(artifact => artifactMetadataString(artifact, 'purpose') === 'personal-ops-review-cards')
     .filter(artifact => artifactMetadataString(artifact, 'laneId') === laneId)
     .sort((left, right) => right.createdAt - left.createdAt).slice(0, 5);
 }
 
-async function savedProviderEffectReceiptArtifacts(context: CommandContext, laneId: PersonalOpsEffectReceiptLaneId, options: CatalogRankingOptions): Promise<readonly ArtifactDescriptor[]> {
+async function savedProviderEffectReceiptArtifacts(context: CommandContext, laneId: PersonalOpsEffectReceiptLaneId, options: CatalogRankingOptions): Promise<readonly PersonalOpsArtifactSource[]> {
   return (await personalOpsArtifacts(context, options))
-    .filter(artifact => PERSONAL_OPS_EFFECT_RECEIPT_PURPOSES.has(artifactMetadataString(artifact, 'purpose')))
-    .filter(artifact => artifactMetadataString(artifact, 'laneId') === laneId)
-    .sort((left, right) => right.createdAt - left.createdAt).slice(0, 10);
+    .filter(({ artifact }) => PERSONAL_OPS_EFFECT_RECEIPT_PURPOSES.has(artifactMetadataString(artifact, 'purpose')))
+    .filter(({ artifact }) => artifactMetadataString(artifact, 'laneId') === laneId)
+    .sort((left, right) => right.artifact.createdAt - left.artifact.createdAt).slice(0, 10);
 }
 
 function providerEffectSubjectId(artifact: ArtifactDescriptor): string {
@@ -414,12 +420,13 @@ export async function savedProviderEffectReceiptRecords(
   laneId: PersonalOpsEffectReceiptLaneId,
   options: CatalogRankingOptions = {},
 ): Promise<readonly PersonalOpsLiveRecord[]> {
-  return Promise.all((await savedProviderEffectReceiptArtifacts(context, laneId, options)).map(async (artifact) => {
+  const sources = await savedProviderEffectReceiptArtifacts(context, laneId, options);
+  const result: readonly PersonalOpsLiveRecord[] = await Promise.all(sources.map(async ({ artifact, reading, assertCurrent }) => {
     const laneLabel = effectReceiptLaneLabel(laneId);
     const lowerLaneLabel = laneLabel.toLowerCase();
     const providerId = artifactMetadataString(artifact, 'providerId') || artifactMetadataString(artifact, 'provider') || 'provider';
     const operation = artifactMetadataString(artifact, 'operation') || artifactMetadataString(artifact, 'action') || `${laneId}-effect`;
-    const status = await readPersonalOpsReceiptStatus(artifact, options);
+    const status = await readPersonalOpsReceiptStatus(reading, { ...options, assertCurrent });
     const sourceTool = artifactMetadataString(artifact, 'sourceTool') || artifactMetadataString(artifact, 'qualifiedName');
     const subjectId = providerEffectSubjectId(artifact);
     const receiptId = artifactMetadataString(artifact, 'receiptId') || artifact.id;
@@ -487,6 +494,8 @@ export async function savedProviderEffectReceiptRecords(
       ],
     };
   }));
+  for (const source of sources) source.assertCurrent();
+  return result;
 }
 
 export function matchingReadTool(

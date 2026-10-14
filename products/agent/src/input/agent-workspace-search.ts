@@ -94,9 +94,6 @@ function scoreActionSearchResult(
   score += scoreField(category.summary, terms, exactQuery, 12, 3);
   score += scoreField(category.detail, terms, exactQuery, 8, 2);
 
-  if (category.id === 'setup' && !terms.includes('setup')) score -= 14;
-  if (action.id.startsWith('setup-') && !terms.includes('setup')) score -= 18;
-  if (action.kind === 'workspace' && !terms.includes('open')) score -= 4;
   return score;
 }
 

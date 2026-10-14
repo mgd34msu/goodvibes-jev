@@ -23,12 +23,9 @@ import {
   calibrate,
   checkReading,
   createSystemOnePort,
-  defineBattery,
   formatReport,
   judgmentConfigFromEnv,
-  STAKES_BANDS,
   withDecisionLog,
-  yesNo,
   type NamedDecision,
 } from '@goodvibes-jev/judgment';
 import { failureReading } from '../errors/src/failure-reading.ts';
@@ -37,6 +34,7 @@ import { EvalRunner } from '../sdk/src/platform/runtime/eval/index.ts';
 import { decisionLogPath, openStateDecisionLog } from '../sdk/src/platform/state/decision-log.ts';
 import { ENGINE_ROOT, loadEngineRegistries } from './judgment-registries.ts';
 import { prepareObserveProofWorkspace, retainProofOutput } from './proof-temp.ts';
+import { unregisteredProbe } from './fixtures/observe-unregistered.ts';
 
 const { values } = parseArgs({
   args: process.argv.slice(2),
@@ -89,15 +87,7 @@ console.log(`[observe-proof] decision log ${logPath}`);
   console.log(`\n[observe-proof] owner review: the reading said ${run.readings.category.choice}, the owner says ${ownerSays}`);
 
   // A call through a decision no registry registers, which the report must name.
-  const unregistered = defineBattery({
-    name: 'proof.unregistered-probe',
-    version: 1,
-    description: 'A decision defined outside every registry, to show the report naming calls made outside a registered battery.',
-    accuracyFloor: 0.5,
-    items: { question: yesNo('Does this message ask for help?', STAKES_BANDS.low.yesNo) },
-    fixtures: [{ name: 'asks', state: 'Can you help me reset my password?', expect: { question: 'yes' } }],
-  });
-  await unregistered.run(port, 'Can you help me reset my password?', { site: 'proof.adhoc' });
+  await unregisteredProbe.run(port, 'Can you help me reset my password?', { site: 'proof.adhoc' });
 }
 
 console.log('\n[observe-proof] running the observe report CLI against the log\n');

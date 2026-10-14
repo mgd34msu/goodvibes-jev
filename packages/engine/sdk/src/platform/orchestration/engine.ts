@@ -379,9 +379,9 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     }
   }
 
-  function failItem(workstream: Workstream, item: WorkItem, reason: string): void {
+  function failItem(workstream: Workstream, item: WorkItem, reason: string, cancelled = false): void {
     // Bounded auto-retry; past the bound the failure is HARD. Cancels never retry.
-    if (shouldAutoRetry(item, reason, maxItemRetries)) {
+    if (shouldAutoRetry(item, cancelled, maxItemRetries)) {
       item.retryCount = (item.retryCount ?? 0) + 1;
       const first = firstPhase(workstream);
       if (first) {
@@ -513,7 +513,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     if (outcome.agentStatus === 'cancelled') {
       // A deliberate requeue already reset this item, never clobber it.
       if (requeuedInFlight.delete(item.id)) return;
-      failItem(workstream, item, 'cancelled by operator');
+      failItem(workstream, item, 'cancelled by operator', true);
       return;
     }
 
@@ -672,7 +672,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     if (item.state === 'passed' || item.state === 'failed') return false;
     cancellation.abort(itemId);
     if (item.agentId) deps.agentManager.cancel(item.agentId, 'kill');
-    failItem(workstream, item, 'cancelled by operator');
+    failItem(workstream, item, 'cancelled by operator', true);
     emit({ type: 'item-cancelled', workstreamId: workstream.id, itemId, reason: 'cancelled by operator' });
     return true;
   }

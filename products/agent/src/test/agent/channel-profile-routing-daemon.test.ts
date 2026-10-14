@@ -36,6 +36,7 @@ import {
   CHANNEL_ROUTING_ASSIGN_METHOD,
 } from '../../agent/channel-profile-routing.ts';
 import { readChannelRoutingSyncReceipts } from '../../agent/channel-routing-sync-receipts.ts';
+import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import type { DaemonInvokeResult, DaemonOperatorInvoke } from '../../agent/daemon-operator-client.ts';
 
 let root: string;
@@ -331,6 +332,8 @@ describe('records written before the daemon held this table', () => {
 
     const receipts = readChannelRoutingSyncReceipts(shellPaths).receipts;
     expect(receipts).toHaveLength(1);
+    expect(receipts[0]?.id).toMatch(/^crs-[a-p]{32}$/);
+    expect(snapshotJudgmentInput(receipts[0])).toEqual(receipts[0]);
     expect(receipts[0]).toMatchObject({
       routeId: 'cpr-legacy-1',
       surfaceKind: 'slack',

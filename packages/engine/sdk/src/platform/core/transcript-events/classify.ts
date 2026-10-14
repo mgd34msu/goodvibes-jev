@@ -1,6 +1,7 @@
+import { prepareJudgmentResult } from '../../gate/judgment-result.js';
+import { systemMessagePresentation } from '../../runtime/system-message-presentation.js';
 import { captureJudgmentPort, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { assertJudgmentInput } from '../../gate/judgment-input.js';
-import { pendingApproval } from '../../runtime/batteries/pending-approval.js';
 import { captureTranscriptSnapshot } from './snapshot.js';
 import type { ToolCall } from '../../types/tools.js';
 import type { TranscriptEvent } from './types.js';
@@ -9,19 +10,6 @@ import type { ConversationMessageSnapshot } from '../conversation.js';
 function summarizeText(text: string, max = 96): string {
   const normalized = text.replace(/\s+/g, ' ').trim();
   return normalized.length <= max ? normalized : `${normalized.slice(0, max - 3)}...`;
-}
-
-function classifySystemKind(text: string): TranscriptEvent['kind'] | 'read-approval' {
-  if (text.includes('[Remote]') || text.includes('[Teleport]') || text.includes('[Bridge]')) return 'remote_status';
-  if (text.includes('[Contract]')) return 'contract_state';
-  if (text.includes('[Policy]') || text.includes('[Security]')) return 'policy_warning';
-  if (text.includes('[Health]') || text.includes('[Local]') || text.includes('[Scan]') || text.includes('[Forensics]')) return 'diagnostic_notice';
-  if (text.includes('[Session]') || text.includes('[Recovery]') || text.includes('[Resume]')) return 'session_restore';
-  if (text.includes('[Approval]')) {
-    return 'read-approval';
-  }
-  if (text.includes('[Task]') || text.includes('[Tasks]') || text.includes('[Agent]')) return 'task_transition';
-  return 'system_notice';
 }
 
 function toolCallEvents(messageIndex: number, toolCalls: readonly ToolCall[]): TranscriptEvent[] {
@@ -42,7 +30,7 @@ export class TranscriptSourceChangedError extends Error {
 }
 /** Unsettled meaning is not a resolved approval and does not publish an index. */
 export class TranscriptReadingUnsettledError extends Error {
-  constructor() { super('Transcript approval reading is unsettled.'); this.name = 'TranscriptReadingUnsettledError'; }
+  constructor() { super('Transcript presentation reading is unsettled.'); this.name = 'TranscriptReadingUnsettledError'; }
 }
 /** Carries the original reading authority across every asynchronous publication boundary. */
 export class TranscriptReadingLifetime {
@@ -65,12 +53,11 @@ export async function classifyTranscriptMessages(messages: readonly Conversation
     if (JSON.stringify(captureTranscriptSnapshot(messages)) !== source) throw new TranscriptSourceChangedError();
   };
   assertCurrent();
-  // Only explicit approval protocol messages need semantic classification. Inspect
-  // every complete selected text before transmitting any of them; no slicing or
-  // unrelated private transcript/tool contents go to the judgment provider.
-  const approvals = captured.filter(message => message.role === 'system' && classifySystemKind(message.content) === 'read-approval');
-  for (const message of approvals) assertJudgmentInput(message.content);
-  const authority = approvals.length ? captureJudgmentPort('core.transcript-events.approval', { ...options, assertCurrent }) : undefined;
+  // Preflight every complete system notice before transmitting any of them.
+  // User, assistant and tool contents remain outside this presentation reading.
+  const notices = captured.filter(message => message.role === 'system');
+  for (const message of notices) assertJudgmentInput({ content: message.content });
+  const authority = notices.length ? captureJudgmentPort(systemMessagePresentation.name, { ...options, assertCurrent, prepareResultCapture: prepareJudgmentResult }) : undefined;
   lifetime.retain(assertCurrent);
   if (authority) lifetime.retain(authority.assertCurrent);
   const events: TranscriptEvent[] = [];
@@ -118,18 +105,16 @@ export async function classifyTranscriptMessages(messages: readonly Conversation
         });
         break;
       case 'system': {
-        const structuralKind = classifySystemKind(message.content);
-        let kind: TranscriptEvent['kind'];
-        if (structuralKind === 'read-approval') {
-          if (!authority) throw new Error('Transcript approval authority is unavailable');
-          const result = await pendingApproval.run(authority.port, message.content, { site: 'core.transcript-events.approval', signal: authority.signal, beforeAttempt: authority.assertCurrent });
-          authority.assertCurrent();
-          const reading = result.readings.pending;
-          if (reading.outcome !== 'act' || (reading.verdict !== 'yes' && reading.verdict !== 'no')) throw new TranscriptReadingUnsettledError();
-          kind = reading.verdict === 'yes' ? 'approval_request' : 'approval_resolution';
-          result.recordAction(kind);
-          authority.assertCurrent();
-        } else kind = structuralKind;
+        if (!authority) throw new TranscriptReadingUnsettledError();
+        const result = await systemMessagePresentation.run(authority.port, { content: message.content }, {
+          site: 'core.transcript-events.presentation', signal: authority.signal, beforeAttempt: authority.assertCurrent,
+        });
+        authority.assertCurrent();
+        const reading = result.readings.event;
+        if (reading.outcome !== 'act') throw new TranscriptReadingUnsettledError();
+        const kind: TranscriptEvent['kind'] = reading.choice;
+        result.recordAction(`transcript presentation:${kind}`);
+        authority.assertCurrent();
         events.push({
           id: `msg-${messageIndex}-system`,
           kind,

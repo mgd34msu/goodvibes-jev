@@ -7,7 +7,7 @@ import type { OperatorMethodOutput } from '@goodvibes-jev/engine/contracts/gener
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import {
-  createSystemOnePort, PINNED_MODEL, SqliteDecisionLog, withDecisionLog, type EntryType, type Questions,
+  createSystemOnePort, DEFAULT_MODEL, SqliteDecisionLog, withDecisionLog, type EntryType, type Questions,
 } from '@goodvibes-jev/judgment';
 import type { EngineerReport } from '../../sdk/src/platform/agents/completion-report.js';
 import {
@@ -240,7 +240,7 @@ test('real shared transport retry waiting survives native GET/LIST inspection', 
   const scripted = runnerPort();
   let failedRequests = 0;
   const real = createSystemOnePort({
-    endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-key' }, model: PINNED_MODEL,
+    endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-key' }, model: DEFAULT_MODEL,
     timeoutMs: 1_000,
     // Hold the actual backoff state steady for both HTTP reads; cancellation aborts this delay.
     retry: { backoffInitialMs: 60_000, backoffMaxMs: 60_000, backoffJitter: 0 },
@@ -251,7 +251,7 @@ test('real shared transport retry waiting survives native GET/LIST inspection', 
         return Response.json({}, { status: 503 });
       }
       const result = await scripted.port.ask(request);
-      return Response.json({ model: PINNED_MODEL, answers: result.answers, usage: { input_tokens: 1, output_tokens: 1 } });
+      return Response.json({ model: DEFAULT_MODEL, answers: result.answers, usage: { input_tokens: 1, output_tokens: 1 } });
     },
   });
   installJudgmentPort(withDecisionLog(real, log));
@@ -270,7 +270,7 @@ test('real shared transport retry waiting survives native GET/LIST inspection', 
     expect(waiting.requests).toHaveLength(1);
     const retry = waiting.requests[0]!;
     expect(retry.logicalRequestId.length).toBeGreaterThan(0);
-    expect(retry.attempt).toMatchObject({ attempt: 1, endpointIndex: 0, endpointKind: 'local', requestedModel: PINNED_MODEL, status: 503 });
+    expect(retry.attempt).toMatchObject({ attempt: 1, endpointIndex: 0, endpointKind: 'local', requestedModel: DEFAULT_MODEL, status: 503 });
     expect(retry.nextDelayMs).toBe(60_000);
     expect(retry.elapsedMs).toBeGreaterThanOrEqual(0);
     rejectsInspection({ ...record, nativeWaiting: { ...waiting, schemaVersion: 2 } });

@@ -24,7 +24,7 @@ function root(): string {
 test('child env isolates persisted state and inherited credentials while retaining explicit fixture values', () => {
   const directory = root();
   const env = isolatedTestEnvironment({
-    PATH: '/bin', CI: 'true', GOODVIBES_TEST_TIMEOUT_MS: '123', [RUNNER_ENV_FLAG]: '1', GOODVIBES_SDK_PRIVATE_CONFIG: '/real/private',
+    PATH: '/bin', CI: 'true', GOODVIBES_TEST_TIMEOUT_MS: '123', GOODVIBES_UPDATE_GOLDENS: '1', [RUNNER_ENV_FLAG]: '1', GOODVIBES_SDK_PRIVATE_CONFIG: '/real/private',
     GOODVIBES_SDK_DEV_ROUNDTRIP_TEST: '1',
     OPENAI_API_KEY: 'private-key', ABACUS_API_KEY: 'private-key', TYPESAFE_API_KEY: 'private-key',
     HTTP_PROXY: 'https://private-proxy', NODE_OPTIONS: '--require=private', GIT_CEILING_DIRECTORIES: '/inherited-git-ceiling',
@@ -32,6 +32,7 @@ test('child env isolates persisted state and inherited credentials while retaini
   }, directory, { TYPESAFE_API_KEY: 'declared-fixture', FIXTURE_MARKER: 'keep' });
   expect(env.PATH).toBe('/bin');
   expect(env.GOODVIBES_TEST_TIMEOUT_MS).toBe('123');
+  expect(env.GOODVIBES_UPDATE_GOLDENS).toBe('1');
   expect(env[RUNNER_ENV_FLAG]).toBe('1');
   expect(env.GOODVIBES_SDK_DEV_ROUNDTRIP_TEST).toBe('1');
   expect(env.GOODVIBES_SDK_PRIVATE_CONFIG).toBeUndefined();

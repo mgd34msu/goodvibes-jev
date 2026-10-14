@@ -1,4 +1,4 @@
-import { checkAnswers, fanOut, type JudgmentPort } from '@goodvibes-jev/judgment';
+import { checkAnswers, matchesJudgmentModel, fanOut, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { inboxTriage, TRIAGE_MODEL } from './battery.js';
 import { captureTriageData, captureTriageInputs, settleTriage, triageBinding, type CapturedTriageInput } from './evidence.js';
 import type { TriageInput, TriageReceipt } from './types.js';
@@ -27,14 +27,14 @@ export async function scoreCapturedTriage(items: readonly CapturedTriageInput[],
       model: TRIAGE_MODEL,
       async ask(request) {
         const questions = captureTriageData(request.questions) as typeof request.questions;
-        const pinned = Object.freeze({ ...request, questions, model: TRIAGE_MODEL,
+        const capturedRequest = Object.freeze({ ...request, questions, model: TRIAGE_MODEL,
           context: Object.freeze({ ...request.context, batteryVersion: inboxTriage.version }) });
-        const raw = await port.ask(pinned);
+        const raw = await port.ask(capturedRequest);
         if (signal?.aborted) throw new Error('Triage judgment cancelled.');
         const captured = captureTriageData(raw);
         if (!captured || typeof captured !== 'object' || Array.isArray(captured)) throw new Error('Malformed triage judgment.');
         const result = captured as Record<string, unknown>;
-        if (result['model'] !== TRIAGE_MODEL || result['requestedModel'] !== TRIAGE_MODEL) throw new Error('Triage model mismatch.');
+        if (typeof result['model'] !== 'string' || !matchesJudgmentModel(TRIAGE_MODEL, result['model']) || result['requestedModel'] !== TRIAGE_MODEL) throw new Error('Triage model mismatch.');
         checkAnswers(questions, result['answers'] as Record<string, { type: 'noul'; noul: number }>);
         return captured as typeof raw;
       },
@@ -43,7 +43,7 @@ export async function scoreCapturedTriage(items: readonly CapturedTriageInput[],
     if (signal?.aborted) return unavailable();
     return Object.freeze(bindings.map((binding, i) => {
       const readings = run.readings[`item${i}`]!;
-      return settleTriage(binding, readings.spam, readings.urgency);
+      return settleTriage({ ...binding, actualModel: run.result.model }, readings.spam, readings.urgency);
     }));
   } catch { return unavailable(); }
 }

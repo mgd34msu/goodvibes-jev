@@ -1,3 +1,4 @@
+import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
 /**
  * `engine.provider.retry-wait`: which number in a provider's error message,
  * if any, states how long to wait before retrying, and in which unit it is
@@ -77,7 +78,7 @@ const UNIT_ANSWERS = Object.keys(UNIT_OPTIONS);
 const MS_PER_UNIT: Readonly<Record<RetryWaitUnit, number>> = { ms: 1, s: 1_000, min: 60_000 };
 
 /** Long provider bodies say what they mean in their opening; the same clip the failure reading uses. */
-export const MAX_RETRY_WAIT_MESSAGE_CHARS = 2_000;
+export const MAX_RETRY_WAIT_MESSAGE_CHARS = 160_000;
 
 /** Characters of text shown on each side of a number. */
 const ADJACENT_CHARS = 32;
@@ -338,7 +339,7 @@ export const retryWait = defineRetryWait({
 
 /** Readings of the same wording, so the cooldown and display paths of one failure ask once. */
 const MEMO_LIMIT = 256;
-const memo = new Map<string, Promise<number | undefined>>();
+let memos = new WeakMap<JudgmentPort, Map<string, Promise<number | undefined>>>();
 
 /**
  * The wait before retrying that a provider's message states, in
@@ -346,16 +347,24 @@ const memo = new Map<string, Promise<number | undefined>>();
  * the reading finds no wait, or when the reading is too weak to act on; the
  * action taken is recorded on the decision. `site` names the decision site.
  */
-export function readRetryWaitMs(evidence: RetryWaitEvidence, site: string): Promise<number | undefined> {
-  const clipped: RetryWaitEvidence = { message: evidence.message.slice(0, MAX_RETRY_WAIT_MESSAGE_CHARS), status: evidence.status };
-  const spans = numberSpans(clipped.message);
+export async function readRetryWaitMs(evidence: RetryWaitEvidence, site: string): Promise<number | undefined> {
+  assertJudgmentInput(evidence);
+  if (evidence.message.length > MAX_RETRY_WAIT_MESSAGE_CHARS) return Promise.reject(new JudgmentInputError('unsupported-input'));
+  const captured: RetryWaitEvidence = { message: evidence.message, status: evidence.status };
+  const spans = numberSpans(captured.message);
   if (spans.length === 0) return Promise.resolve(undefined);
-  const key = JSON.stringify(clipped);
+  const port = judgmentPort(site), model = port.model;
+  let memo = memos.get(port);
+  if (!memo) { memo = new Map(); memos.set(port, memo); }
+  const key = JSON.stringify([model, captured]);
   const known = memo.get(key);
   if (known !== undefined) return known;
+  let settled = false;
   const reading = (async () => {
-    const run = await retryWait.read(judgmentPort(site), clipped, spans, { site });
-    if (run.outcome === 'act' && run.waitMs !== undefined) {
+    const run = await retryWait.read(port, captured, spans, { site, beforeAttempt: () => { if (judgmentPort(site) !== port || port.model !== model) throw new Error('Retry-wait judgment configuration changed.'); } });
+    if (judgmentPort(site) !== port || port.model !== model) throw new Error('Retry-wait judgment configuration changed.');
+    settled = run.outcome === 'act';
+    if (settled && run.waitMs !== undefined) {
       run.recordAction(`took a retry wait of ${run.waitMs}ms from the message (${run.span!.text} ${run.unit.choice})`);
       return run.waitMs;
     }
@@ -366,11 +375,11 @@ export function readRetryWaitMs(evidence: RetryWaitEvidence, site: string): Prom
   })();
   if (memo.size >= MEMO_LIMIT) memo.delete(memo.keys().next().value!);
   memo.set(key, reading);
-  reading.catch(() => memo.delete(key));
+  void reading.then(value => { if (!settled && memo.get(key) === reading) memo.delete(key); }, () => { if (memo.get(key) === reading) memo.delete(key); });
   return reading;
 }
 
 /** Forgets remembered readings; for tests that swap the judgment port. */
 export function forgetRetryWaitReadings(): void {
-  memo.clear();
+  memos = new WeakMap();
 }

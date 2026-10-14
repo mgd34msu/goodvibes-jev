@@ -1,3 +1,4 @@
+import { readErrorFailure } from '@goodvibes-jev/engine/sdk/platform/types';
 import { existsSync, readFileSync, renameSync } from 'node:fs';
 import { writeStoreFile } from '@/utils/store-file.ts';
 import { createBrowserGoodVibesSdk } from '@goodvibes-jev/engine/sdk/browser';
@@ -666,11 +667,16 @@ async function classifyScheduleListError(
   connection: AgentConnectedHostConnection,
 ): Promise<RoutineScheduleCorrelationFailure> {
   const message = summarizeError(error);
-  const lower = message.toLowerCase();
-  if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('auth')) {
+  const rawStatus = error && typeof error === 'object' ? (error as { status?: unknown; statusCode?: unknown }).status ?? (error as { statusCode?: unknown }).statusCode : undefined;
+  const status = typeof rawStatus === 'number' ? rawStatus : undefined;
+  const known = status === 401 || status === 403 ? 'authentication' : status === 404 ? 'not_found' : undefined;
+  const reading = known ? undefined : await readErrorFailure(error instanceof Error ? error : new Error(message), 'agent.connected-host.failure');
+  if (reading && reading.readings.category.outcome !== 'act') throw new Error('Connected host failure classification remains unsettled.');
+  const category = known ?? reading?.category;
+  if (category === 'authentication' || category === 'authorization') {
     return { ok: false, kind: 'auth_required', error: message, route: ROUTINE_SCHEDULE_ROUTE, baseUrl: connection.baseUrl };
   }
-  if (lower.includes('404') || lower.includes('not found')) {
+  if (category === 'not_found') {
     const connectedHost = await fetchConnectedHostStatus(connection);
     if (connectedHost.ok) {
       return {
@@ -683,7 +689,7 @@ async function classifyScheduleListError(
     }
     return { ok: false, kind: 'connected_host_route_unavailable', error: message, route: ROUTINE_SCHEDULE_ROUTE, baseUrl: connection.baseUrl };
   }
-  if (lower.includes('fetch') || lower.includes('connect') || lower.includes('econnrefused')) {
+  if (category === 'network' || category === 'timeout') {
     return { ok: false, kind: 'connected_host_unavailable', error: message, route: ROUTINE_SCHEDULE_ROUTE, baseUrl: connection.baseUrl };
   }
   return { ok: false, kind: 'connected_host_error', error: message, route: ROUTINE_SCHEDULE_ROUTE, baseUrl: connection.baseUrl };

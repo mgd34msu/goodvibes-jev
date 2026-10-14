@@ -18,17 +18,17 @@
  * watches; a wrong yes costs one manual purchase. Code refuses on anything
  * but a confident no (cart.ts).
  */
-import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
+import { defineBattery, JudgmentError, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
+import { assertJudgmentInput } from '../../gate/judgment-input.js';
 
-/** Most characters of an order summary one request carries; longer text is clipped with a note. */
+/** Maximum complete order summary. Terms after a cutoff cannot be ignored. */
 export const MAX_SUMMARY_CHARS = 20_000;
 
-/** What the reading sees: the order summary, clipped to the request budget. */
+/** What the reading sees: the complete order summary, or an explicit budget failure. */
 export function orderSummaryView(orderSummaryText: string): { order_summary: string } {
-  const clipped = orderSummaryText.length <= MAX_SUMMARY_CHARS
-    ? orderSummaryText
-    : `${orderSummaryText.slice(0, MAX_SUMMARY_CHARS)}\n[${orderSummaryText.length - MAX_SUMMARY_CHARS} more characters]`;
-  return { order_summary: clipped };
+  assertJudgmentInput({ order_summary: orderSummaryText });
+  if (orderSummaryText.length > MAX_SUMMARY_CHARS) throw new JudgmentError('invalid-request', 'The complete order summary exceeds the judgment budget');
+  return { order_summary: orderSummaryText };
 }
 
 export const recurringCharge = defineBattery({

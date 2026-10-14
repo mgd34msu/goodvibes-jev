@@ -27,9 +27,9 @@ describe('Home Graph registered applicability and completeness', () => {
     for (const word of ['backup', 'same name', 'missing', 'keyword', 'accessory']) expect(names).toContain(word);
   });
   test('independent applicability readings override names and entity-domain guesses', async () => {
-    const fake = fakePort((name) => noulAnswer(name === 'batteryApplicable' ? 0.99 : 0.01)); installJudgmentPort(fake.port);
+    const fake = fakePort((name) => noulAnswer(name === 'batteryApplicable__batteryApplicable' ? 0.99 : 0.01)); installJudgmentPort(fake.port);
     const [reading] = await readHomeGraphQuality([input()]);
-    expect(reading!.answers).toEqual({ batteryApplicable: true, manualApplicable: false }); expect(fake.requests).toHaveLength(2);
+    expect(reading!.answers).toEqual({ batteryApplicable: true, manualApplicable: false }); expect(fake.requests).toHaveLength(1);
     expect(reading!.batteries).toHaveLength(2); expect(Object.isFrozen(reading!.answers)).toBe(true);
   });
   test('preflights complete late device/fact text and accessors before any request', async () => {
@@ -59,7 +59,7 @@ describe('Home Graph registered applicability and completeness', () => {
       try { state.subject.title = 'Altered'; } catch { /* Frozen writes must not change the next question. */ }
       checked++; return fake.port.ask(request);
     } });
-    await readHomeGraphQuality([projected]); expect(checked).toBe(2);
+    await readHomeGraphQuality([projected]); expect(checked).toBe(1);
   });
   test('literal flags keep every existing spelling; unknown declarations hold', () => {
     for (const value of [true, 'true', 'YES', ' 1 ']) expect(readHomeGraphDeclaredBoolean(value)).toBe(true);
@@ -68,10 +68,10 @@ describe('Home Graph registered applicability and completeness', () => {
     for (const value of ['maybe', '', 1, 0, {}]) expect(() => readHomeGraphDeclaredBoolean(value)).toThrow(HomeGraphQualityHeldError);
   });
   test('passport fact existence is semantic and independent, with direct fields/source counts preserved', async () => {
-    const fake = fakePort((name) => noulAnswer(({ batteryApplicable: 0.99, manufacturerPresent: 0.99, modelPresent: 0.01, batteryTypePresent: 0.01 } as Record<string, number>)[name] ?? 0.01)); installJudgmentPort(fake.port);
+    const fake = fakePort((name) => noulAnswer(({ batteryApplicable: 0.99, manufacturerPresent: 0.99, modelPresent: 0.01, batteryTypePresent: 0.01 } as Record<string, number>)[name.split('__').at(-1)!] ?? 0.01)); installJudgmentPort(fake.port);
     const fact = { ...node(), title: 'Built by Luma; model unknown; battery 52 percent.' };
     expect(await missingDevicePassportFields(node(), [], [fact])).toEqual(['model', 'battery type', 'manual/source']);
-    expect(fake.requests).toHaveLength(4);
+    expect(fake.requests).toHaveLength(1);
     const direct = good(); expect(await missingDevicePassportFields(node({ manufacturer: '', model: 'P2', batteryType: 'CR2032' }), [], [fact])).toEqual(['manual/source']); expect(direct.requests).toHaveLength(0);
   });
   test('zero facts are verified structural absence, not a guessed textual match', async () => {
@@ -82,7 +82,7 @@ describe('Home Graph registered applicability and completeness', () => {
     for (const probability of [0.5, 0.8]) { good(probability); await held(readHomeGraphQuality([input()]), 'unsettled'); }
     good(99); await held(readHomeGraphQuality([input()]), 'malformed');
     const fake = good(); installJudgmentPort({ ...fake.port, ask: async () => { throw new Error('offline'); } }); await held(readHomeGraphQuality([input()]), 'unavailable');
-    installJudgmentPort(fakePort((name) => noulAnswer(name === 'manualApplicable' ? 0.5 : 0.99)).port); await held(readHomeGraphQuality([input()]), 'unsettled');
+    installJudgmentPort(fakePort((name) => noulAnswer(name === 'manualApplicable__manualApplicable' ? 0.5 : 0.99)).port); await held(readHomeGraphQuality([input()]), 'unsettled');
     installJudgmentPort({ ...fake.port, async ask(request) { return { ...await fake.port.ask(request), model: '' } as JudgmentResult<typeof request.questions>; } }); await held(readHomeGraphQuality([input()]), 'malformed');
   });
   test('malformed and over-budget sets cannot issue a partial or silently truncated pass', async () => {

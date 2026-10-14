@@ -1,3 +1,7 @@
+import { captureJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { mapLimit } from '@goodvibes-jev/judgment';
+import { extractedSentenceKind, readKnowledgeBattery } from './repair-decisions.js';
+import { repairProfileValueCandidates } from './repair-profile/reader.js';
 import { prepareKnowledgeExtractionValueReading } from './extraction-value/reader.js';
 import { guardKnowledgeEdgeInput } from '../store-edge-writes.js';
 import { captureKnowledgeSourceReferences, knowledgeSourceJudgmentUris, projectKnowledgeSourceReferences } from '../source-structural-references.js';
@@ -201,7 +205,7 @@ async function extractSemanticsWithLlm(
         format: extraction?.format,
         title: extraction?.title,
         summary: extraction?.summary,
-        sections: extraction?.sections.slice(0, 80),
+        sections: extraction?.sections,
       },
       instructions: {
         outputShape: {
@@ -257,35 +261,39 @@ async function deterministicSemanticExtraction(
   shouldStop?: () => boolean,
   generationGuard?: ReturnType<typeof createSemanticWriteGuard>,
 ): Promise<KnowledgeSemanticExtraction> {
-  const factText = cleanDeterministicSourceText(deterministicFactSourceText(extraction) || text);
-  const sentences = splitSentences(factText);
+  const factText = repairProfileSourceText(extraction) || text;
   const selection = await linkedObjectsForSource(store, source, new Set(), signal, shouldStop);
   generationGuard?.watch('deterministic-subject-selection', () => { selection.assertCurrent(); return true; });
-  const profileFacts = (await deriveRepairProfileFacts({
-    query: 'complete features specifications capabilities', source, extraction,
-    text: repairProfileSourceText(extraction) || text,
-    subjects: selection.nodes.map(repairProfileSubject),
+  const subjects = selection.nodes.map(repairProfileSubject);
+  const candidates = repairProfileValueCandidates(factText);
+  const states = candidates.map(candidate => ({ candidate: candidate.text, text: factText, subjects }));
+  assertJudgmentInput(states);
+  const current = () => { assertSemanticWriteAllowed(signal, shouldStop); selection.assertCurrent(); generationGuard?.assertCurrent(); };
+  const profileOwner = captureJudgmentPort('engine.knowledge.enrichment-profile', { signal, assertCurrent: current });
+  const profileFacts = await deriveRepairProfileFacts({
+    query: 'complete features specifications capabilities', source, extraction, text: factText, subjects,
     structuralReferences: captureKnowledgeSourceReferences(store, source, extraction),
-  }, { signal })).map((fact) => ({
-    kind: fact.kind, title: fact.title, value: fact.value, summary: fact.summary,
-    evidence: fact.evidence, confidence: 72, labels: fact.labels,
-  }));
-  const facts = [
-    ...profileFacts,
-    ...sentences
-    .map((sentence) => classifySentenceFact(sentence))
-    .filter((fact): fact is KnowledgeSemanticFactInput => Boolean(fact)),
-  ].slice(0, 80);
-  const entities = uniqueStrings([
-    source.title,
-    extraction?.title,
-    ...source.tags,
-  ]).slice(0, 12).map((title) => ({
-    title,
-    kind: title === source.title ? source.sourceType : 'topic',
-    summary: `Entity inferred from ${source.title ?? source.id}.`,
-    confidence: 45,
-  }));
+  }, { signal: profileOwner.signal, assertCurrent: profileOwner.assertCurrent });
+  profileOwner.assertCurrent();
+  // Retain the settled profile's port identity without recursing through the
+  // generation guard used by the in-flight reader.
+  const retainedProfileOwner = captureJudgmentPort('engine.knowledge.enrichment-profile', { signal });
+  profileOwner.assertCurrent();
+  generationGuard?.watch('enrichment-profile-owner', () => { retainedProfileOwner.assertCurrent(); return true; });
+  const readings = await mapLimit(states, 4, state => readKnowledgeBattery(extractedSentenceKind, state, signal, { assertCurrent: current }));
+  current();
+  for (const [index, reading] of readings.entries()) {
+    reading.assertDecisionCurrent();
+    generationGuard?.watch(`sentence-reading:${source.id}:${index}`, () => { reading.assertDecisionCurrent(); return true; });
+  }
+  const sentenceFacts: KnowledgeSemanticFactInput[] = candidates.flatMap((candidate, index) => {
+    const reading = readings[index]!.readings.kind;
+    return reading.choice === 'none' ? [] : [{ kind: reading.choice, title: candidate.text,
+      summary: candidate.text, evidence: candidate.text, confidence: reading.confidence * 100, labels: [] }];
+  });
+  const facts: KnowledgeSemanticFactInput[] = [...profileFacts, ...sentenceFacts];
+  // Source names and tags identify source records; they do not establish entities.
+  const entities: KnowledgeSemanticEntityInput[] = [];
   return {
     summary: extraction?.summary ?? source.summary ?? clampText(factText || text, 360),
     entities,
@@ -299,61 +307,6 @@ async function deterministicSemanticExtraction(
       markdown: renderDeterministicWikiPage(source, facts),
     },
     extractor: 'deterministic',
-  };
-}
-
-function deterministicFactSourceText(extraction: KnowledgeExtractionRecord | null): string {
-  const structure = readRecord(extraction?.structure);
-  const nestedStructure = readRecord(structure.structure);
-  const metadata = readRecord(extraction?.metadata);
-  const nestedMetadata = readRecord(structure.metadata);
-  return uniqueStrings([
-    extraction?.title,
-    extraction?.summary,
-    extraction?.excerpt,
-    readString(structure.searchText),
-    readString(structure.text),
-    readString(structure.content),
-    readString(nestedStructure.searchText),
-    readString(nestedStructure.text),
-    readString(nestedStructure.content),
-    readString(metadata.searchText),
-    readString(metadata.text),
-    readString(nestedMetadata.searchText),
-    readString(nestedMetadata.text),
-  ]).join('\n\n');
-}
-
-function cleanDeterministicSourceText(text: string): string {
-  return normalizeWhitespace(text
-    .replace(/https?:\/\/\S+/gi, ' ')
-    .replace(/\bsemantic-gap-repair\b/gi, ' ')
-    .replace(/\bhomegraph:\/\/\S+/gi, ' ')
-    .replace(/\b(?:manual|file|artifact):\/\/\S+/gi, ' ')
-    .replace(/\b[a-z0-9-]+\.(?:com|net|org|io|dev|tv|ca|co\.uk)(?:\/\S*)?/gi, ' '));
-}
-
-function classifySentenceFact(sentence: string): KnowledgeSemanticFactInput | null {
-  const text = normalizeWhitespace(sentence);
-  if (text.length < 28) return null;
-  const lower = text.toLowerCase();
-  const kind = (() => {
-    if (/\b(warning|caution|do not|never|risk|hazard|important)\b/.test(lower)) return 'warning';
-    if (/\b(reset|press|hold|select|open|install|pair|configure|enable|disable|connect|setup|set up)\b/.test(lower)) return 'procedure';
-    if (/\b(clean|replace|battery|filter|firmware|update|service|maintenance|warranty)\b/.test(lower)) return 'maintenance';
-    if (/\b(compatible|works with|requires|supports?|supported|connects? to|integrates? with)\b/.test(lower)) return 'compatibility';
-    if (/\b(feature|features|capabilit|function|mode|built-in|includes?|provides?|allows?|can )\b/.test(lower)) return 'feature';
-    if (/\b(specification|specifications|model|serial|version|hdmi|usb|port|ports|resolution|volt|watt|hz|inch|mm|gb|mb|ip[0-9])\b/.test(lower)) return 'specification';
-    return null;
-  })();
-  if (!kind) return null;
-  return {
-    kind,
-    title: titleFromSentence(text),
-    summary: text,
-    evidence: text,
-    confidence: 55,
-    labels: inferLabels(text),
   };
 }
 
@@ -376,6 +329,12 @@ async function persistSemanticExtraction(
   const guard = createSemanticWriteGuard(store, options.signal, options.shouldStop);
   guard.watch(`source:${source.id}`, () => store.getSource(source.id), source);
   guard.watch(`extraction:${source.id}`, () => store.getExtractionBySourceId(source.id), extraction);
+  // Subject and usefulness readings now precede support planning. Bind the
+  // graph they will consult before the first asynchronous judgment.
+  guard.watch('enrichment-nodes', () => store.listNodesInSpace(spaceId));
+  guard.watch('enrichment-sources', () => store.listSourcesInSpace(spaceId));
+  guard.watch('enrichment-edges', () => store.listEdges());
+  guard.watch('enrichment-extractions', () => store.listExtractions());
   const planner = createSemanticPrimarySourcePlanner(store, guard, options.signal);
   const support = createGeneratedFactWritePlanner(store, guard, { signal: options.signal });
   const entities: KnowledgeNodeRecord[] = [];
@@ -383,7 +342,7 @@ async function persistSemanticExtraction(
   const gaps: KnowledgeNodeRecord[] = [];
 
   const nodeSlug = createSemanticNodeSlugPlanner(store);
-  const entityPlans = semantic.entities.slice(0, 60).map((entity) => ({
+  const entityPlans = semantic.entities.map((entity) => ({
       id: `sem-entity-${semanticHash(spaceId, source.id, entity.title)}`,
       kind: 'knowledge_entity' as const,
       slug: semanticSlug(`${spaceId}-${entity.title}`),
@@ -417,7 +376,7 @@ async function persistSemanticExtraction(
   });
   const qualityReader = createRepairFactUsefulnessReader({ signal: options.signal });
   const featureKinds = new Set(['feature', 'capability', 'specification', 'compatibility', 'configuration']);
-  const proposedFacts = semantic.facts.slice(0, 160);
+  const proposedFacts = semantic.facts;
   const subjects = sourceLinkedObjects.map(repairProfileSubject);
   const projected = projectRepairProfileInput({ query: 'Extract useful concrete facts about the supplied subjects from this complete source.',
     source, extraction, subjects, text: repairProfileSourceText(extraction),
@@ -448,13 +407,13 @@ async function persistSemanticExtraction(
   const { wikiPage: suppliedWikiPage, ...extractedWithoutPage } = semantic;
   semantic = { ...extractedWithoutPage, facts: persistedFacts,
     ...(persistedFacts.length === proposedFacts.length && suppliedWikiPage ? { wikiPage: suppliedWikiPage } : {}) };
-  const factDrafts = prepareEnrichmentFactDrafts({ store, source, extraction, spaceId, guard, primary: planner, support,
+  const factDrafts = await prepareEnrichmentFactDrafts({ signal: options.signal, assertCurrent: assertQualityCurrent, store, source, extraction, spaceId, guard, primary: planner, support,
     allFacts: semantic.facts, persistedFacts,
     sourceSubjects: sourceLinkedObjects, proposedEntities,
   });
   const activeIds = new Set([
     ...entityIds, ...factDrafts.map((fact) => fact.factId),
-    ...semantic.gaps.slice(0, 32).map((gap) => `sem-gap-${semanticHash(spaceId, source.id, gap.question)}`),
+    ...semantic.gaps.map((gap) => `sem-gap-${semanticHash(spaceId, source.id, gap.question)}`),
     ...((semantic.wikiPage?.markdown ?? renderDeterministicWikiPage(source, semantic.facts)).trim()
       ? [`sem-page-${semanticHash(spaceId, source.id)}`] : []),
   ]);
@@ -476,7 +435,7 @@ async function persistSemanticExtraction(
   }
   const applySupersession = await resolveSupersession();
   guard.assertCurrent(); assertQualityCurrent();
-  const gapPlans = semantic.gaps.slice(0, 32).map((gap) => ({ gap, nodeInput: prepareObservedKnowledgeNodeInput(store, nodeSlug(enrichmentGapNodeInput(gap, source,
+  const gapPlans = semantic.gaps.map((gap) => ({ gap, nodeInput: prepareObservedKnowledgeNodeInput(store, nodeSlug(enrichmentGapNodeInput(gap, source,
     extraction, semantic, spaceId, options.textHash, store.getNode(`sem-gap-${semanticHash(spaceId, source.id, gap.question)}`))), 'research-task', { source, extraction },
       () => ({ source: store.getSource(source.id), extraction: store.getExtractionBySourceId(source.id) })),
   }));
@@ -507,7 +466,7 @@ async function persistSemanticExtraction(
     await linkFactToEntities(store, node, entities.filter((entity) => plan.entitySubjectIds.has(entity.id)), spaceId, semantic.extractor, supportMetadata, assertQualityCurrent);
   }
 
-  for (const relation of semantic.relations.slice(0, 80)) {
+  for (const relation of semantic.relations) {
     assertSemanticWriteAllowed(options.signal, options.shouldStop);
     assertQualityCurrent();
     await linkRelation(store, entities, facts, relation, spaceId, semantic.extractor, assertQualityCurrent);
@@ -615,7 +574,7 @@ async function linkFactToSourceLinkedObjects(
   supportMetadata: unknown,
   assertCurrent: () => void = () => {},
 ): Promise<void> {
-  for (const object of linkedObjects.slice(0, 8)) {
+  for (const object of linkedObjects) {
     await store.upsertEdge(guardKnowledgeEdgeInput({
       fromKind: 'node',
       fromId: fact.id,
@@ -791,28 +750,10 @@ function isGap(value: KnowledgeSemanticGapInput | null): value is KnowledgeSeman
   return Boolean(value);
 }
 
-function titleFromSentence(sentence: string): string {
-  const withoutLead = sentence.replace(/^(the|this|these|it)\s+/i, '');
-  return clampText(withoutLead, 96).replace(/[.:;,\s]+$/g, '');
-}
-
-function inferLabels(text: string): readonly string[] {
-  const lower = text.toLowerCase();
-  return uniqueStrings([
-    /\bhdmi\b/.test(lower) ? 'hdmi' : undefined,
-    /\busb\b/.test(lower) ? 'usb' : undefined,
-    /\bbattery\b/.test(lower) ? 'battery' : undefined,
-    /\bfirmware\b/.test(lower) ? 'firmware' : undefined,
-    /\bwarranty\b/.test(lower) ? 'warranty' : undefined,
-    /\bvoice\b/.test(lower) ? 'voice' : undefined,
-    /\bnetwork|wi-?fi|ethernet|bluetooth\b/.test(lower) ? 'network' : undefined,
-  ]);
-}
-
 function findSemanticNode(nodes: readonly KnowledgeNodeRecord[], label: string): KnowledgeNodeRecord | undefined {
   const lower = label.toLowerCase();
-  return nodes.find((node) => node.title.toLowerCase() === lower)
-    ?? nodes.find((node) => node.title.toLowerCase().includes(lower) || lower.includes(node.title.toLowerCase()));
+  const matches = nodes.filter((node) => node.title.toLowerCase() === lower);
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function emptyResult(source: KnowledgeSourceRecord, skipped: boolean, reason: string): PersistedSemanticExtraction {

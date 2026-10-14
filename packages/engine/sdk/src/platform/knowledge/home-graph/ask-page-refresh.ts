@@ -1,3 +1,4 @@
+import { knowledgeRawRepresentation } from '../store-record-representation.js';
 import { createAskPageRecovery } from './ask-page-recovery.js';
 import { snapshotNodeInput } from '../activation/projection.js';
 import { KnowledgeGeneratedFactSupportHeldError } from '../semantic/verification/types.js';
@@ -290,8 +291,8 @@ async function upsertAnswerPageSource(input: {
     crawlError: source.crawlError ?? existing?.crawlError,
     sessionId: source.sessionId ?? existing?.sessionId,
     metadata: buildHomeGraphMetadata(input.spaceId, input.installationId, {
-      ...(existing?.metadata ?? {}),
-      ...source.metadata,
+      ...knowledgeRawRepresentation(existing?.metadata ?? {}),
+      ...knowledgeRawRepresentation(source.metadata),
     }),
   };
   const receipt = await input.store.applyPreparedIngest({ sources: [sourceInput], extractions: [], nodes: [], edges: [], issues: [] },

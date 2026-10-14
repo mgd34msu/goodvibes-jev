@@ -1,3 +1,4 @@
+import { readErrorFailure } from '../../types/errors.js';
 /**
  * routes/attribution-ingest.ts, the runtime-bus → cost-attribution ingest.
  *
@@ -66,16 +67,13 @@ export function bindCostAttributionIngest(
           ...(event.rateLimit.retryAfterMs !== undefined ? { retryAfterMs: event.rateLimit.retryAfterMs } : {}),
         });
       }
-    } else if (event.type === 'STREAM_RETRY' && isRateLimitReason(event.reason)) {
+    } else if (event.type === 'STREAM_RETRY') {
       // A rate-limit retry carries the provider's requested backoff, the real
       // cooldown window the fan-out assessment reasons over.
-      quotaWindow.record({ provider: event.provider, at: Date.now(), retryAfterMs: event.delayMs });
+      const at = Date.now();
+      void readErrorFailure(new Error(event.reason), 'cost-attribution.retry').then(reading => {
+        if (reading.rateLimited) quotaWindow.record({ provider: event.provider, at, retryAfterMs: event.delayMs });
+      }).catch(() => { /* Unsettled diagnostics do not establish a quota cooldown. */ });
     }
   });
-}
-
-/** Whether a STREAM_RETRY reason names a rate-limit/quota condition. */
-function isRateLimitReason(reason: string): boolean {
-  const lower = reason.toLowerCase();
-  return lower.includes('rate') || lower.includes('quota') || lower.includes('429') || lower.includes('limit') || lower.includes('overloaded');
 }

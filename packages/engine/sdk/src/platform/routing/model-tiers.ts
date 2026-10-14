@@ -1,3 +1,4 @@
+import { assertJudgmentInput } from '../gate/judgment-input.js';
 /**
  * Model capability tiers from published facts: the routing.model-tier
  * readings composed in code, remembered per model (and on disk when a path is
@@ -47,7 +48,7 @@ export function modelFactsState(facts: ModelFacts): { model: Record<string, Json
 
 /** A reading that code may act on without asking anyone. */
 const holds = (reading: YesNoReading): boolean => reading.verdict === 'yes' && reading.outcome === 'act';
-const clearlyNot = (reading: YesNoReading): boolean => reading.verdict === 'no';
+const clearlyNot = (reading: YesNoReading): boolean => reading.verdict === 'no' && reading.outcome === 'act';
 
 /**
  * The tier the two readings support: a frontier flagship is premium, a small
@@ -93,6 +94,17 @@ function fingerprint(facts: ModelFacts): string {
 export class ModelTierStore {
   readonly #path: string | undefined;
   readonly #entries = new Map<string, StoredTier>();
+  #ownerPort: import('@goodvibes-jev/judgment').JudgmentPort | undefined;
+  #ownerModel: string | undefined;
+  #currentPort() {
+    const port = judgmentPort('routing.model-tier');
+    if (port !== this.#ownerPort || port.model !== this.#ownerModel) {
+      // A persisted alias cannot prove which model release produced its answers.
+      this.#entries.clear(); this.#inFlight.clear(); this.#ownerPort = port; this.#ownerModel = port.model;
+    }
+    return port;
+  }
+
   readonly #inFlight = new Map<string, Promise<TierRecord>>();
 
   constructor(options: { readonly path?: string | undefined } = {}) {
@@ -102,6 +114,7 @@ export class ModelTierStore {
 
   /** The remembered reading for these exact facts, or undefined when they have not been read. */
   known(facts: ModelFacts): TierRecord | undefined {
+    try { this.#currentPort(); } catch { return undefined; }
     const entry = this.#entries.get(facts.registryKey);
     return entry && entry.fingerprint === fingerprint(facts) ? entry : undefined;
   }
@@ -111,38 +124,45 @@ export class ModelTierStore {
    * built from a different view of the same model (catalog definitions).
    */
   lastReading(registryKey: string): TierRecord | undefined {
+    try { this.#currentPort(); } catch { return undefined; }
     return this.#entries.get(registryKey);
   }
 
   /** Reads one model's tier (once per set of facts). */
   read(facts: ModelFacts, options: import('@goodvibes-jev/judgment').CallOptions = {}): Promise<TierRecord> {
+    options.signal?.throwIfAborted();
+    assertJudgmentInput(modelFactsState(facts));
+    facts = structuredClone(facts);
+    const port = this.#currentPort(), model = port.model;
+    const current = () => { options.signal?.throwIfAborted(); options.beforeAttempt?.(); if (this.#currentPort() !== port || port.model !== model) throw new Error('Model tier judgment configuration changed.'); };
     const known = this.known(facts);
     if (known) return Promise.resolve(known);
     const key = `${facts.registryKey}\u0000${fingerprint(facts)}`;
-    const pending = options.beforeAttempt === undefined && options.beforeAsyncAttempt === undefined ? this.#inFlight.get(key) : undefined;
+    const pending = options.signal === undefined && options.beforeAttempt === undefined && options.beforeAsyncAttempt === undefined ? this.#inFlight.get(key) : undefined;
     if (pending) return pending;
     const site = options.site ?? 'routing.model-tier';
     const reading = (async (): Promise<TierRecord> => {
-      const run = await modelTier.run(judgmentPort(site), modelFactsState(facts), {
+      const run = await modelTier.run(port, modelFactsState(facts), {
         site,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
-    ...(options.beforeAttempt === undefined ? {} : { beforeAttempt: options.beforeAttempt }),
+    beforeAttempt: current,
     ...(options.beforeAsyncAttempt === undefined ? {} : { beforeAsyncAttempt: options.beforeAsyncAttempt }),
     ...(options.onRetry === undefined ? {} : { onRetry: options.onRetry }),
       });
+      current();
       const record: TierRecord = {
         tier: modelTierFrom(run.readings),
         frontier: run.readings.frontier.probability,
         small: run.readings.small.probability,
       };
       run.recordAction(`tier:${record.tier ?? 'unsettled'}`);
-      this.#entries.set(facts.registryKey, { ...record, fingerprint: fingerprint(facts) });
+      if (record.tier !== undefined) this.#entries.set(facts.registryKey, { ...record, fingerprint: fingerprint(facts) });
       this.#save();
       return record;
     })();
-    if (options.beforeAttempt === undefined && options.beforeAsyncAttempt === undefined) {
+    if (options.signal === undefined && options.beforeAttempt === undefined && options.beforeAsyncAttempt === undefined) {
       this.#inFlight.set(key, reading);
-      void reading.finally(() => this.#inFlight.delete(key)).catch(() => undefined);
+      void reading.finally(() => { if (this.#inFlight.get(key) === reading) this.#inFlight.delete(key); }).catch(() => undefined);
     }
     return reading;
   }
@@ -152,7 +172,8 @@ export class ModelTierStore {
     models: readonly ModelFacts[],
     options: import('@goodvibes-jev/judgment').CallOptions = {},
   ): Promise<ReadonlyMap<string, TierRecord>> {
-    const records = await mapLimit(models, TIER_READ_CONCURRENCY, (facts) => this.read(facts, options));
+    assertJudgmentInput(models.map(modelFactsState));
+    const records = await mapLimit(structuredClone(models), TIER_READ_CONCURRENCY, (facts) => this.read(facts, options));
     return new Map(models.map((facts, index) => [facts.registryKey, records[index]!]));
   }
 

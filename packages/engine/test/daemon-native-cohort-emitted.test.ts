@@ -17,7 +17,7 @@ nativeTest('ordinary Node qualifies the actual emitted native installation and m
     const fixturePath = join(root, 'inert-native-cohort.json');
     writeFileSync(fixturePath, JSON.stringify({ old: pack(old), next: pack(next) }));
     const home = join(root, 'isolated-runtime-home'); mkdirSync(home); writeFileSync(join(home, 'sentinel'), 'runtime home unchanged');
-    const result = spawnSync('node', ['--test', join(import.meta.dir, '_helpers/daemon-native-cohort-emitted.mjs')], {
+    const result = spawnSync('node', ['--test', '--test-reporter=tap', join(import.meta.dir, '_helpers/daemon-native-cohort-emitted.mjs')], {
       encoding: 'utf8', timeout: 30_000, env: { ...process.env, HOME: home, GOODVIBES_HOME: join(home, '.goodvibes'), JEV_NATIVE_EMITTED_FIXTURE: fixturePath },
     });
     if (result.status === 0) process.stdout.write(result.stdout);

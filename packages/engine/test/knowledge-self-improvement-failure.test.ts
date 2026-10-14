@@ -213,7 +213,7 @@ describe('actual semantic service failure path', () => {
     });
     let model = 'synthetic-first';
     install({ ...fake.port, get model() { return model; }, async ask(request) {
-      if ('gapApplicable' in request.questions) return fake.port.ask(request);
+      if ('gapApplicable' in request.questions) return fake.port.ask({ ...request, model });
       if (action === 'cancel') controller.abort();
       if (action === 'delete') await store.deleteNode(gap.id);
       if (action === 'close') {
@@ -225,7 +225,7 @@ describe('actual semantic service failure path', () => {
         const task = store.listRefinementTasks(10, { spaceId })[0]!;
         await store.upsertRefinementTask({ ...task, state: 'searching', attemptCount: task.attemptCount + 1 });
       }
-      return fake.port.ask(request);
+      return fake.port.ask({ ...request, model });
     } });
     const result = await service.selfImprove({ knowledgeSpaceId: spaceId, gapIds: [gap.id], force: true, signal: controller.signal });
     expect(result.blockedGaps).toBe(0); expect(result.nextRepairAttemptAt).toBeUndefined();
@@ -267,7 +267,7 @@ describe('failure disposition commit boundaries', () => {
     return assessment === undefined ? choiceAnswer(question, 'other', 0.99) : noulAnswer(assessment);
   });
     let model = 'synthetic-first';
-    install(change === 'unchanged-none' || change === 'install' ? undefined : { ...fake.port, get model() { return model; } });
+    install(change === 'unchanged-none' || change === 'install' ? undefined : { ...fake.port, get model() { return model; }, ask: request => fake.port.ask({ ...request, model }) });
     const { store, service, gap, spaceId } = await serviceFixture(new KnowledgeRepairBudgetError());
     if (change === 'unchanged-none' || change === 'install') {
       const before = JSON.stringify(store.getNode(gap.id));
@@ -281,7 +281,7 @@ describe('failure disposition commit boundaries', () => {
       await originalInit();
       if (committing && !paused) {
         paused = true;
-        if (change === 'install' || change === 'replace') install(fake.port);
+        if (change === 'replace') install(fake.port);
         if (change === 'model') model = 'synthetic-second';
       }
     };

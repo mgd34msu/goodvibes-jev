@@ -148,9 +148,19 @@ async function generateHomeGraphPagesWithinBudget(
     : undefined;
 
   const state = readHomeGraphServingState(context.store, context.spaceId);
+  const rankRemaining = async (nodes: KnowledgeNodeRecord[], deferred: 'deferredDevicePassports' | 'deferredRoomPages') => {
+    if (!nodes.length) return [];
+    const expired = () => context.signal?.aborted || deadlineReached(deadlineAt);
+    if (expired()) { summary[deferred] += nodes.length; return []; }
+    try { return await prioritizeNodesForGeneratedPages(context, nodes); }
+    catch (error) {
+      if (!expired()) throw error;
+      summary[deferred] += nodes.length; return [];
+    }
+  };
   if (effectiveOptions.devicePassports !== false) {
-    const allDevices = await prioritizeNodesForGeneratedPages(context,
-      state.nodes.filter((node) => node.kind === 'ha_device' && node.status === 'active'),
+    const allDevices = await rankRemaining(
+      state.nodes.filter((node) => node.kind === 'ha_device' && node.status === 'active'), 'deferredDevicePassports',
     );
     const devices = limitRecords(allDevices, effectiveOptions.maxDevicePassports);
     summary.deferredDevicePassports += Math.max(0, allDevices.length - devices.length);
@@ -174,7 +184,8 @@ async function generateHomeGraphPagesWithinBudget(
         if (page.artifactCreated) summary.artifacts += 1;
         if (page.source) summary.sources += 1;
       } catch (error) {
-        summary.errors.push({
+        if (context.signal?.aborted || deadlineReached(deadlineAt)) summary.deferredDevicePassports += 1;
+        else summary.errors.push({
           kind: 'device-passport',
           targetId: deviceId,
           error: error instanceof Error ? error.message : String(error),
@@ -185,8 +196,8 @@ async function generateHomeGraphPagesWithinBudget(
   }
 
   if (effectiveOptions.roomPages !== false) {
-    const allRooms = await prioritizeNodesForGeneratedPages(context,
-      state.nodes.filter((node) => (node.kind === 'ha_area' || node.kind === 'ha_room') && node.status === 'active'),
+    const allRooms = await rankRemaining(
+      state.nodes.filter((node) => (node.kind === 'ha_area' || node.kind === 'ha_room') && node.status === 'active'), 'deferredRoomPages',
     );
     const rooms = limitRecords(allRooms, effectiveOptions.maxRoomPages);
     summary.deferredRoomPages += Math.max(0, allRooms.length - rooms.length);
@@ -211,7 +222,8 @@ async function generateHomeGraphPagesWithinBudget(
         if (page.artifactCreated) summary.artifacts += 1;
         if (page.source) summary.sources += 1;
       } catch (error) {
-        summary.errors.push({
+        if (context.signal?.aborted || deadlineReached(deadlineAt)) summary.deferredRoomPages += 1;
+        else summary.errors.push({
           kind: 'room-page',
           targetId: areaId,
           error: error instanceof Error ? error.message : String(error),
@@ -360,7 +372,8 @@ async function refreshHomeGraphDevicePassportNow(
   const scopedNodeIds = new Set([device.id, ...entities.map((node) => node.id)]);
   const issues = filterDevicePassportIssues(issuesForScope(state.issues, state.edges, scopedNodeIds, sources), sources);
   for (const issue of issues) writeGuard.watch(`page-issue:${issue.id}`, () => store.getIssue(issue.id), issue);
-  const missingFields = await missingDevicePassportFields(device, sources, semanticFacts, { entities, signal: context.signal });
+  const qualityGuards: Array<() => void> = [];
+  const missingFields = await missingDevicePassportFields(device, sources, semanticFacts, { entities, signal: context.signal, assertCurrent: assertPageCurrent, retainCurrent: check => qualityGuards.push(check) });
   const markdown = renderDevicePassportPage({ spaceId, device, entities, sources, issues, missingFields, semanticFacts, factPlan });
   const pageContentHash = knowledgeContentHash(markdown, 16);
   const passportId = homeGraphNodeId(spaceId, 'ha_device_passport', input.deviceId);
@@ -368,6 +381,7 @@ async function refreshHomeGraphDevicePassportNow(
   const existingPassportMetadata = readRecord(existingPassport?.metadata);
   const previousRefreshedAt = knowledgeRawRepresentation(existingPassportMetadata).refreshedAt;
   const assertPublicationCurrent = () => {
+    for (const check of qualityGuards) check();
     throwIfAborted(context.signal);
     assertCallerCurrent?.();
     assertPageInputsCurrent();
@@ -686,7 +700,7 @@ function createGeneratedPagesSummary(): {
 async function prioritizeNodesForGeneratedPages(context: HomeGraphPageContext, nodes: readonly KnowledgeNodeRecord[]): Promise<readonly KnowledgeNodeRecord[]> {
   const versions = new Map(nodes.map(node => [node.id, JSON.stringify(node)]));
   return rankHomeGraphPageCandidates({
-    candidates: nodes, content: prioritySubject,
+    candidates: nodes, content: prioritySubject, store: context.store,
     purpose: 'Prioritize useful household subjects for reference page generation',
     signal: context.signal,
     assertCurrent: () => {

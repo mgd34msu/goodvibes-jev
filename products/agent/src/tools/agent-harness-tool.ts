@@ -189,8 +189,12 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
       }
       if (dispatchMode === 'run_background_process') return output(await runBackgroundProcessAction(deps.commandContext, args, processClassificationOptions(deps.commandContext, deps.toolRegistry, signal, () => { assertCurrentToolExecution(rawArgs, options); }), rawArgs, options));
       if (dispatchMode === 'model_routing' || dispatchMode === 'model_route') {
-        const reading = modelReadingOptions(deps.commandContext, deps.toolRegistry, signal, assertCatalogExecution, retainHarnessCatalogCurrent(rawArgs));
-        return withModelReadingContext(deps.commandContext, rawArgs, reading, async (context, scoped) => {
+        // Independent read-only observations keep their own source checks;
+        // join the complete set before exposing the combined catalog.
+        const guards = new Set<() => void>();
+        const retain = retainHarnessCatalogCurrent(rawArgs);
+        const reading = modelReadingOptions(deps.commandContext, deps.toolRegistry, signal, assertCatalogExecution, guard => { guard(); guards.add(guard); });
+        const result = await withModelReadingContext(deps.commandContext, rawArgs, reading, async (context, scoped) => {
           if (dispatchMode === 'model_routing') {
             const result = await modelRoutingSummary(context, args, scoped); scoped.assertCurrent?.(); return output(result);
           }
@@ -199,11 +203,46 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (resolved.status === 'ambiguous') return error(`Ambiguous model route ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         });
+        for (const guard of guards) { guard(); retain(guard); }
+        assertCatalogExecution();
+        return result;
       }
 
-      const retainCatalogCurrent = retainHarnessCatalogCurrent(rawArgs);
+      const retainPublicationCurrent = retainHarnessCatalogCurrent(rawArgs);
+      // These read-only routes join independent catalogs. Each retains its
+      // own native restrictions while reading; join them at the publication
+      // boundary instead of rereading every earlier catalog for every later
+      // branch's model request.
+      const publicationGuards = dispatchMode === 'summary'
+        || dispatchMode === 'workspace_actions'
+        || dispatchMode === 'ui_surfaces'
+        || dispatchMode === 'ui_surface'
+        || dispatchMode === 'personal_ops_queue'
+        || dispatchMode === 'setup_item'
+        || dispatchMode === 'learning_curator'
+        || dispatchMode === 'learning_candidate'
+        || dispatchMode === 'research_briefing'
+        || dispatchMode === 'research_workflow'
+        || dispatchMode === 'research_runs'
+        || dispatchMode === 'research_run'
+        || dispatchMode === 'release_evidence'
+        || dispatchMode === 'release_evidence_artifact'
+        || dispatchMode === 'release_readiness'
+        || dispatchMode === 'release_readiness_item'
+        || dispatchMode === 'pairing_posture'
+        || dispatchMode === 'pairing_route'
+        || dispatchMode === 'media_posture'
+        ? new Set<() => void>() : undefined;
+      const retainCatalogCurrent = publicationGuards
+        ? (guard: () => void) => { publicationGuards.add(guard); }
+        : retainPublicationCurrent;
       const catalogOptions = catalogReadingOptions(deps.commandContext, deps.toolRegistry, signal, assertCatalogExecution, retainCatalogCurrent);
       const effectCatalogOptions = { ...catalogOptions, retainCurrent: undefined };
+      const publishCatalog = <T>(result: T): T => {
+        for (const guard of publicationGuards ?? []) { guard(); retainPublicationCurrent(guard); }
+        assertCatalogExecution();
+        return result;
+      };
       const assertLearningCatalogCurrent = effectCatalogOptions.assertCurrent;
       const learningEffectOptions = Object.freeze({ ...effectCatalogOptions, assertCurrent: () => {
         assertLearningCatalogCurrent();
@@ -227,7 +266,12 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         if (setting?.status === 'ambiguous') return error(`Ambiguous setting ${setting.input}. Candidates: ${JSON.stringify(setting.candidates)}`);
         return error(`Unknown setting ${readString(args.key || args.target || args.query) || '<missing>'}. Use mode:"settings" to inspect available settings.`);
       }
-      if (dispatchMode === 'personal_ops_queue') return output(await personalOpsQueueSummary(deps.commandContext, args, catalogOptions));
+      if (dispatchMode === 'personal_ops_queue') {
+        const queue = await personalOpsQueueSummary(deps.commandContext, args, catalogOptions);
+        for (const guard of publicationGuards ?? []) { guard(); retainPublicationCurrent(guard); }
+        assertCatalogExecution();
+        return output(queue);
+      }
       if (dispatchMode === 'personal_ops_intake') return output(await personalOpsIntakeSummary(deps.commandContext, args, catalogOptions));
       if (dispatchMode === 'personal_ops_lane') {
         const resolved = await describePersonalOpsLane(deps.commandContext, args, catalogOptions);
@@ -318,16 +362,22 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           const delegationPosture = delegationPostureCatalogStatus(deps.commandContext);
           const securityPosture = securityPostureCatalogStatus(deps.commandContext);
           const supportBundles = supportBundleCatalogStatus();
-          const mediaPosture = mediaPostureCatalogStatus(deps.commandContext);
+          const mediaPosture = await mediaPostureCatalogStatus(deps.commandContext, catalogOptions);
           const sessions = sessionCatalogStatus(deps.commandContext);
-          const releaseEvidence = await releaseEvidenceBundleStatus(catalogOptions);
-          const releaseReadiness = await releaseReadinessInventoryStatus(catalogOptions);
+          const releaseEvidence = await releaseEvidenceBundleStatus(catalogOptions).catch(() => ({
+            status: 'unavailable', error: 'Release evidence could not be read.',
+          }));
+          const releaseReadiness = await releaseReadinessInventoryStatus(catalogOptions).catch(() => ({
+            status: 'unavailable', error: 'Release readiness could not be read.',
+          }));
           const operatorMethods = operatorMethodCatalogStatus();
           const servicePosture = servicePostureCatalogStatus();
           const remote = remoteCatalogStatus(deps.commandContext);
           const connectedHost = connectedHostSummary(deps.commandContext, deps.toolRegistry, {
             includeParameters: args.includeParameters === true,
           });
+          for (const guard of publicationGuards ?? []) retainPublicationCurrent(guard);
+          assertCatalogExecution();
           return output({
             assistant: buildAssistantCockpitFromSummaries({
               setupPosture,
@@ -406,11 +456,11 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         }
         if (dispatchMode === 'ui_surfaces') {
           const surfaces = await listHarnessUiSurfaces(deps.commandContext, args, catalogOptions);
-          return output(catalogEnvelope('surfaces', surfaces, totalHarnessUiSurfaces(), catalogFilters(args, CQ.ui_surfaces.filters), CQ.ui_surfaces.discovery));
+          return publishCatalog(output(catalogEnvelope('surfaces', surfaces, totalHarnessUiSurfaces(), catalogFilters(args, CQ.ui_surfaces.filters), CQ.ui_surfaces.discovery)));
         }
         if (dispatchMode === 'ui_surface') {
           const surface = await describeHarnessUiSurface(deps.commandContext, args, catalogOptions);
-          return surface ? output(surface) : error(`Unknown UI surface ${readString(args.surfaceId || args.query || args.target) || '<missing>'}.`);
+          return publishCatalog(surface ? output(surface) : error(`Unknown UI surface ${readString(args.surfaceId || args.query || args.target) || '<missing>'}.`));
         }
         if (dispatchMode === 'open_ui_surface') {
           const confirmationError = requireConfirmedAction(rawArgs, options, 'UI surface routing');
@@ -457,16 +507,16 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (resolved.status === 'ambiguous') return error(`Ambiguous notification target ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'provider_accounts') return output(await providerAccountSummary(deps.commandContext, args));
+        if (dispatchMode === 'provider_accounts') return output(await providerAccountSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'provider_account') {
-          const resolved = await describeHarnessProviderAccount(deps.commandContext, args);
+          const resolved = await describeHarnessProviderAccount(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.account);
           if (resolved.status === 'ambiguous') return error(`Ambiguous provider account ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'mcp_servers') return output(await mcpServerSummary(deps.commandContext, args));
+        if (dispatchMode === 'mcp_servers') return output(await mcpServerSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'mcp_server') {
-          const resolved = await describeHarnessMcpServer(deps.commandContext, args);
+          const resolved = await describeHarnessMcpServer(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.server);
           if (resolved.status === 'ambiguous') return error(`Ambiguous MCP server ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
@@ -474,6 +524,8 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         if (dispatchMode === 'setup_posture') return output(await setupPostureSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'setup_item') {
           const resolved = await describeHarnessSetupItem(deps.commandContext, args, catalogOptions);
+          for (const guard of publicationGuards ?? []) { guard(); retainPublicationCurrent(guard); }
+          assertCatalogExecution();
           if (resolved.status === 'found') return output(resolved.item);
           if (resolved.status === 'ambiguous') return error(`Ambiguous setup item ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
@@ -578,7 +630,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (resolved.status === 'ambiguous') return error(`Ambiguous autonomy queue item ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'learning_curator') return output(await learningCuratorSummary(deps.commandContext, args, catalogOptions));
+        if (dispatchMode === 'learning_curator') return publishCatalog(output(await learningCuratorSummary(deps.commandContext, args, catalogOptions)));
         if (dispatchMode === 'learning_auto_promote') {
           const confirmationError = requireConfirmedAction(rawArgs, options, 'Learning promotion'); if (confirmationError) return error(confirmationError);
           const shellPaths = deps.commandContext.workspace?.shellPaths;
@@ -599,18 +651,18 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         }
         if (dispatchMode === 'learning_candidate') {
           const resolved = await describeLearningCandidate(deps.commandContext, args, catalogOptions);
-          if (resolved.status === 'found') return output(resolved.candidate);
-          if (resolved.status === 'ambiguous') return error(`Ambiguous learning candidate ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
-          return error(resolved.usage);
+          if (resolved.status === 'found') return publishCatalog(output(resolved.candidate));
+          if (resolved.status === 'ambiguous') return publishCatalog(error(`Ambiguous learning candidate ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`));
+          return publishCatalog(error(resolved.usage));
         }
-        if (dispatchMode === 'research_briefing') return output(await researchBriefingSummary(deps.commandContext, args, catalogOptions));
-        if (dispatchMode === 'research_workflow') return output(await researchWorkflowSummary(deps.commandContext, args, catalogOptions));
-        if (dispatchMode === 'research_runs') return output(await researchRunsSummary(deps.commandContext, args, catalogOptions));
+        if (dispatchMode === 'research_briefing') return publishCatalog(output(await researchBriefingSummary(deps.commandContext, args, catalogOptions)));
+        if (dispatchMode === 'research_workflow') return publishCatalog(output(await researchWorkflowSummary(deps.commandContext, args, catalogOptions)));
+        if (dispatchMode === 'research_runs') return publishCatalog(output(await researchRunsSummary(deps.commandContext, args, catalogOptions)));
         if (dispatchMode === 'research_run') {
           const resolved = await describeResearchRun(deps.commandContext, args, catalogOptions);
-          if (resolved.status === 'found') return output(resolved.run);
-          if (resolved.status === 'ambiguous') return error(`Ambiguous research run ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
-          return error(resolved.usage);
+          if (resolved.status === 'found') return publishCatalog(output(resolved.run));
+          if (resolved.status === 'ambiguous') return publishCatalog(error(`Ambiguous research run ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`));
+          return publishCatalog(error(resolved.usage));
         }
         if (dispatchMode === 'research_queue') return output(await researchQueueSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'research_source') {
@@ -626,12 +678,12 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (resolved.status === 'ambiguous') return error(`Ambiguous Document Ops lane ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'pairing_posture') return output(await pairingPostureSummary(deps.commandContext, args, catalogOptions));
+        if (dispatchMode === 'pairing_posture') return publishCatalog(output(await pairingPostureSummary(deps.commandContext, args, catalogOptions)));
         if (dispatchMode === 'pairing_route') {
           const resolved = await describeHarnessPairingRoute(deps.commandContext, args, catalogOptions);
-          if (resolved.status === 'found') return output(resolved.route);
-          if (resolved.status === 'ambiguous') return error(`Ambiguous pairing route ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
-          return error(resolved.usage);
+          if (resolved.status === 'found') return publishCatalog(output(resolved.route));
+          if (resolved.status === 'ambiguous') return publishCatalog(error(`Ambiguous pairing route ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`));
+          return publishCatalog(error(resolved.usage));
         }
         if (dispatchMode === 'delegation_posture') return output(await delegationPostureSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'delegation_route') {
@@ -653,9 +705,9 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (resolved.status === 'found') return output(resolved.bundle);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'media_posture') return output(await mediaPostureSummary(deps.commandContext, args));
+        if (dispatchMode === 'media_posture') return publishCatalog(output(await mediaPostureSummary(deps.commandContext, args, catalogOptions)));
         if (dispatchMode === 'media_provider') {
-          const resolved = await describeHarnessMediaProvider(deps.commandContext, args);
+          const resolved = await describeHarnessMediaProvider(deps.commandContext, args, catalogOptions);
           if (resolved.status === 'found') return output(resolved.provider);
           if (resolved.status === 'ambiguous') return error(`Ambiguous media provider ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
@@ -684,6 +736,8 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         }
         if (dispatchMode === 'workspace_actions') {
           const actions = await listWorkspaceActions(deps.commandContext, args, catalogOptions);
+          for (const guard of publicationGuards ?? []) { guard(); retainPublicationCurrent(guard); }
+          assertCatalogExecution();
           return output(catalogEnvelope('actions', actions, allWorkspaceActions().length, catalogFilters(args, CQ.workspace_actions.filters), CQ.workspace_actions.discovery));
         }
         if (dispatchMode === 'workspace_action') {
@@ -706,22 +760,22 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           };
           return protectAgentHarnessResearchTool(workspaceActionTool, deps.toolRegistry).execute(rawArgs, options);
         }
-        if (dispatchMode === 'release_evidence') return output(await releaseEvidenceSummary(args, catalogOptions));
+        if (dispatchMode === 'release_evidence') return publishCatalog(output(await releaseEvidenceSummary(args, catalogOptions)));
         if (dispatchMode === 'release_evidence_artifact') {
           const resolved = await describeHarnessReleaseEvidenceArtifact(args, catalogOptions);
-          if (resolved.status === 'found') return output(resolved);
-          if (resolved.status === 'ambiguous') return error(`Ambiguous release evidence artifact ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
-          if (resolved.status === 'missing_lookup') return error(resolved.usage ?? 'release_evidence_artifact requires artifactId, target, or query.');
-          return error(`Unknown release evidence artifact ${readString(args.artifactId || args.target || args.query) || '<missing>'}. Use mode:"release_evidence" to inspect available artifacts.`);
+          if (resolved.status === 'found') return publishCatalog(output(resolved));
+          if (resolved.status === 'ambiguous') return publishCatalog(error(`Ambiguous release evidence artifact ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`));
+          if (resolved.status === 'missing_lookup') return publishCatalog(error(resolved.usage ?? 'release_evidence_artifact requires artifactId, target, or query.'));
+          return publishCatalog(error(`Unknown release evidence artifact ${readString(args.artifactId || args.target || args.query) || '<missing>'}. Use mode:"release_evidence" to inspect available artifacts.`));
         }
-        if (dispatchMode === 'release_readiness') return output(await releaseReadinessSummary(args, catalogOptions));
+        if (dispatchMode === 'release_readiness') return publishCatalog(output(await releaseReadinessSummary(args, catalogOptions)));
         if (dispatchMode === 'release_readiness_item') {
           const resolved = await describeHarnessReleaseReadinessItem(args, catalogOptions);
-          if (resolved.status === 'found') return output(resolved);
-          if (resolved.status === 'ambiguous') return error(`Ambiguous release readiness item ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
-          if (resolved.status === 'unavailable') return output(resolved);
-          if (resolved.status === 'missing_lookup') return error(resolved.usage ?? 'release_readiness_item requires itemId, target, or query.');
-          return error(`Unknown release readiness item ${readString(args.itemId || args.target || args.query) || '<missing>'}. Use mode:"release_readiness" to inspect available items.`);
+          if (resolved.status === 'found') return publishCatalog(output(resolved));
+          if (resolved.status === 'ambiguous') return publishCatalog(error(`Ambiguous release readiness item ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`));
+          if (resolved.status === 'unavailable') return publishCatalog(output(resolved));
+          if (resolved.status === 'missing_lookup') return publishCatalog(error(resolved.usage ?? 'release_readiness_item requires itemId, target, or query.'));
+          return publishCatalog(error(`Unknown release readiness item ${readString(args.itemId || args.target || args.query) || '<missing>'}. Use mode:"release_readiness" to inspect available items.`));
         }
         if (dispatchMode === 'service_posture') return output(await servicePostureSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'service_endpoint') {

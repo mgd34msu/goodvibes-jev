@@ -34,7 +34,7 @@ describe('canonical notice severity ingestion', () => {
     const feed = new NotificationFeed();
     const pending = publishNotice(feed, '[Plan] Could not parse the plan\nExecution stopped.', { now: () => 5 });
     await reader.entered;
-    expect(feed.list()).toHaveLength(0);
+    expect(feed.list()).toMatchObject([{ title: '[Plan] Could not parse the plan', level: undefined, severityPending: true }]);
     expect(reader.actions).toEqual([]);
     reader.release();
     await pending;
@@ -104,7 +104,7 @@ describe('canonical notice severity ingestion', () => {
     installJudgmentPort(fakePort((_name, question) => choiceAnswer(question, 'info', 0.99)).port);
     await expect(Promise.resolve(pending)).rejects.toThrow('The judgment reading owner is no longer current.');
     reader.release();
-    expect(feed.list()).toHaveLength(0);
+    expect(feed.list()).toMatchObject([{ title: 'A reading from the old source', level: undefined, severityPending: true }]);
     expect(reader.actions).toEqual([]);
   });
 
@@ -113,7 +113,7 @@ describe('canonical notice severity ingestion', () => {
       installJudgmentPort(fakePort((_name, question) => choiceAnswer(question, confidence === 0.99 ? 'unknown' : 'critical', confidence)).port);
       const feed = new NotificationFeed();
       await publishNotice(feed, 'arbitrary prose');
-      expect(feed.list()).toHaveLength(0);
+      expect(feed.list()).toMatchObject([{ title: 'arbitrary prose', level: undefined, severityPending: true }]);
     });
   }
 
@@ -125,7 +125,7 @@ describe('canonical notice severity ingestion', () => {
     conversation.addSystemMessage('Something failed');
     await conversation.whenNoticesSettled();
     expect(conversation.getMessageSnapshot()).toMatchObject([{ content: 'Something failed' }]);
-    expect(feed.list()).toHaveLength(0);
+    expect(feed.list()).toMatchObject([{ title: 'Something failed', level: undefined, severityPending: true }]);
   });
 
   test('complete private input is screened before model access or retention, including a late credential', async () => {

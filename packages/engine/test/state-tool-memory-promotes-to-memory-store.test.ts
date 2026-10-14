@@ -157,7 +157,7 @@ describe('state tool: mode=memory set mirrors into the retrievable memory store'
     expect(forKey[0]!.summary).toContain('spacious layout');
   });
 
-  test('a memory-class reading that escalates files the record as a fact', async () => {
+  test.each([0.4, 0.57])('an unsettled memory-class reading (%s) holds both writes', async (confidence) => {
     const unsure = toolReadingsPort([]).port;
     installJudgmentPort(statePort({
       model: unsure.model,
@@ -165,15 +165,30 @@ describe('state tool: mode=memory set mirrors into the retrievable memory store'
         const answered = await unsure.ask(request);
         const [name] = Object.keys(request.questions);
         const probabilities = { decision: 0.3, constraint: 0.3, fact: 0.4 };
-        return { ...answered, answers: { [name!]: { type: 'choice', choice: 'fact', confidence: 0.4, probabilities } } as never };
+        return { ...answered, answers: { [name!]: { type: 'choice', choice: 'fact', confidence, probabilities } } as never };
       },
     }));
-    const { tool, memoryRegistry } = await makeHarness({ withRegistry: true });
+    const { tool, memoryRegistry, memoryDir } = await makeHarness({ withRegistry: true });
 
-    await tool.execute({ mode: 'memory', memoryAction: 'set', memoryKey: 'build_notes', memoryValue: 'Maybe the build is slow on CI sometimes.' });
+    const result = await tool.execute({ mode: 'memory', memoryAction: 'set', memoryKey: 'build_notes', memoryValue: 'Maybe the build is slow on CI sometimes.' });
 
-    const rec = memoryRegistry.getAll().find((r) => r.tags.includes('state-memory:build_notes'));
-    expect(rec?.cls).toBe('fact');
+    expect(result.success).toBe(false);
+    expect(existsSync(join(memoryDir, 'build_notes.json'))).toBe(false);
+    expect(memoryRegistry.getAll()).toHaveLength(0);
+  });
+
+  test.each([
+    'A long note. '.repeat(150) + 'Never deploy without review.',
+    'A long note. '.repeat(150) + ' apiKey=private-example',
+  ])('complete oversized/protected memory is held before port access or writes', async (memoryValue) => {
+    let calls = 0;
+    installJudgmentPort(statePort({ model: 'jev-1.13.0', ask: async () => { calls++; throw new Error('must not call'); } }));
+    const { tool, memoryRegistry, memoryDir } = await makeHarness({ withRegistry: true });
+    const result = await tool.execute({ mode: 'memory', memoryAction: 'set', memoryKey: 'long_note', memoryValue });
+    expect(result.success).toBe(false);
+    expect(calls).toBe(0);
+    expect(existsSync(join(memoryDir, 'long_note.json'))).toBe(false);
+    expect(memoryRegistry.getAll()).toHaveLength(0);
   });
 
   test('when Jev cannot read the class, the set fails before anything is written', async () => {

@@ -225,16 +225,18 @@ export async function researchRunsCatalogStatus(context: CommandContext, options
 
 export async function researchRunsSummary(context: CommandContext, rawArgs: AgentHarnessResearchRunArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
   return withResearchCatalog(context, rawArgs, options, () => null, async (rawArgs, _data, options) => {
-    const caller = captureAsyncHarnessInput(rawArgs, options), args = caller.args;
-    const browser = await browserControlPosture(context, context.extensions?.toolRegistry, caller.options);
+    const caller = captureAsyncHarnessInput(rawArgs, options, true), args = caller.args;
+    const childOptions = { ...caller.options, assertCurrent: caller.assertCallerCurrent };
+    const browser = await browserControlPosture(context, context.extensions?.toolRegistry, childOptions);
     caller.assertCurrent();
-    const liveResearch = await researchLiveReadModelSnapshot(context, caller.options);
+    const liveResearch = await researchLiveReadModelSnapshot(context, childOptions);
     caller.assertCurrent();
     const includeParameters = args.includeParameters === true;
     const query = readString(args.query);
     const limit = readLimit(args.limit, 100);
     const items = runItems(context);
     const filtered = await rankResearchRecords(items, query, item => ({ id: item.run.id, description: item.run.title, evidence: item }), caller.options, 'agent.research.runs');
+    caller.retainSourceCurrent('agent.research.runs.sources');
     return {
       summary: {
         runs: items.length,

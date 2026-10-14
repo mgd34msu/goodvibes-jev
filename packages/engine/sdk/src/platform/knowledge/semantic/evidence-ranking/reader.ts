@@ -76,15 +76,15 @@ export async function prepareAnswerEvidenceRelevance(input: AnswerEvidenceReleva
   const snapshot = snapshotAnswerEvidenceRelevanceInput(input);
   const inputHash = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
   if (!snapshot.query.trim() || !snapshot.candidates.length) return freezeSupport({ inputHash, accepted: [], rejected: [] });
-  const timeoutMs = options.timeoutMs ?? LIMITS.defaultTimeoutMs;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs) throw new Held('budget');
+  const timeoutMs = options.timeoutMs;
+  if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs)) throw new Held('budget');
   const controller = new AbortController();
   let stoppedError: Held | undefined, rejectStopped: (error: Held) => void = () => {};
   const stopped = new Promise<never>((_resolve, reject) => { rejectStopped = reject; });
   const stop = (error: Held) => { stoppedError ??= error; controller.abort(); rejectStopped(stoppedError); };
   const abort = () => stop(new Held('aborted'));
   options.signal?.addEventListener('abort', abort, { once: true });
-  const timer = setTimeout(() => stop(new Held('budget')), timeoutMs);
+  const timer = timeoutMs === undefined ? undefined : setTimeout(() => stop(new Held('budget')), timeoutMs);
   const check = () => { if (stoppedError) throw stoppedError; if (options.signal?.aborted) throw new Held('aborted'); options.assertCurrent?.(); };
   const run = async () => {
     check(); const configuredPort = judgmentPort('engine.knowledge.answer-evidence-relevance');

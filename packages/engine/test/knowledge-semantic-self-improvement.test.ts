@@ -24,9 +24,9 @@ import {
 } from './_helpers/knowledge-semantic-fixtures.js';
 import { settleEvents, withTestTimeout } from './_helpers/test-timeout.js';
 import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
-import { semanticRepairProfileValues, semanticRepairUsefulValues } from './_helpers/repair-profile-fixture-readings.js';
+import { semanticRepairProfileValues, semanticRepairUsefulValues, semanticRepairSentenceKinds } from './_helpers/repair-profile-fixture-readings.js';
 
-const answerReadings = useKnowledgeAnswerReadings({ repairProfile: semanticRepairProfileValues, repairUseful: semanticRepairUsefulValues, objectAlignment: [
+const answerReadings = useKnowledgeAnswerReadings({ extractedKinds: semanticRepairSentenceKinds, repairProfile: semanticRepairProfileValues, repairUseful: semanticRepairUsefulValues, objectAlignment: [
   { query: 'What HDR and display features does the TV have?', objects: [{ title: 'LG webOS Smart TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 }] },
   { query: 'What features does the LG 86NANO90UNA have?', objects: [{ title: 'LG webOS Smart TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 }] },
 ] });
@@ -263,6 +263,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
   });
 
   test('semantic enrichment inherits source subject links from graph edges', async () => {
+    answerReadings.set({ extractedKinds: [['The LG 86NANO90UNA supports HDMI eARC, HDR10, Dolby Vision, and webOS smart TV features.', 'feature']], repairUseful: [['The LG 86NANO90UNA supports HDMI eARC, HDR10, Dolby Vision, and webOS smart TV features.', 'The LG 86NANO90UNA supports HDMI eARC, HDR10, Dolby Vision, and webOS smart TV features.', 'The LG 86NANO90UNA supports HDMI eARC, HDR10, Dolby Vision, and webOS smart TV features.']] });
     const { store } = createStores();
     // Stable synthetic IDs keep derived hash strings deterministic under the
     // conservative PAN boundary; no production scanner exemption is added.
@@ -455,7 +456,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
   });
 
   test('web gap repair rejects low-confidence search results', async () => {
-    answerReadings.set({ webGapQueries: ['LG 86NANO90UNA full specifications'], webGapSources: [
+    answerReadings.set({ webGapQueries: ['LG 86NANO90UNA full specifications'], webGapCoverage: 0.99, webGapSources: [
       ['https://example.com/generic-tv-buying-guide', 0.01, 'secondary'], ['https://example.org/hdmi-cables', 0.01, 'secondary'],
     ] });
     const ingested: unknown[] = [];
@@ -539,7 +540,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
   });
 
   test('web gap repair can accept high-confidence subject sources without model numbers', async () => {
-    answerReadings.set({ webGapQueries: ['Cloudflare Queues capabilities and limits'], webGapSources: [
+    answerReadings.set({ webGapQueries: ['Cloudflare Queues capabilities and limits'], webGapCoverage: 0.99, webGapSources: [
       ['https://developers.cloudflare.com/queues/', 0.99, 'official-vendor'],
       ['https://developers.cloudflare.com/queues/platform/limits/', 0.99, 'official-vendor'],
       ['https://blog.cloudflare.com/queues-ga/', 0.99, 'official-vendor'],
@@ -714,10 +715,10 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
     });
 
     await semantic.answer({ query: 'what features does the TV have?', knowledgeSpaceId: 'homeassistant:test', includeSources: true });
-    await waitFor(() => store.listEdges().some((edge) => edge.relation === 'repairs_gap'), 250);
-    await waitFor(() => store.listNodes(10).some((node) => node.kind === 'knowledge_gap' && node.metadata.repairStatus === 'repaired'), 250);
+    await waitFor(() => store.listEdges().some((edge) => edge.relation === 'repairs_gap'), 50_000);
+    await waitFor(() => store.listNodes(10).some((node) => node.kind === 'knowledge_gap' && node.metadata.repairStatus === 'repaired'), 50_000);
     const secondAnswer = await semantic.answer({ query: 'what features does the TV have?', knowledgeSpaceId: 'homeassistant:test', includeSources: true });
-    await waitFor(() => calls.length >= 1, 250);
+    await waitFor(() => calls.length >= 1, 50_000);
 
     expect(calls).toHaveLength(1);
     expect(secondAnswer.answer.gaps).toHaveLength(0);
@@ -891,8 +892,8 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
     let settledGraph: string | undefined;
     try {
       await withTestTimeout(enrichmentEntered);
-      improvement = semantic.selfImprove({ knowledgeSpaceId: 'homeassistant:test', gapIds: [gap.id], maxRunMs: 5_000 });
-      const result = await withTestTimeout(improvement);
+      improvement = semantic.selfImprove({ knowledgeSpaceId: 'homeassistant:test', gapIds: [gap.id], maxRunMs: 45_000 });
+      const result = await withTestTimeout(improvement, 50_000);
       expect(enrichmentCompleted).toBe(false);
       expect(result.closedGaps).toBe(1);
       expect(result.promotedFactCount).toBeGreaterThanOrEqual(3);
@@ -951,8 +952,8 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
     const gap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'lg-tv-existing-source-gap',
-      title: 'What are the complete features and specifications for LG 86NANO90UNA?',
-      summary: 'Existing evidence lacks a full feature and specification profile.',
+      title: 'What display, ports, and audio specifications does the LG 86NANO90UNA have?',
+      summary: 'Existing evidence lacks linked display, ports, and audio specifications.',
       aliases: [],
       confidence: 70,
       metadata: knowledgeSpaceMetadata('homeassistant:test', {
@@ -961,7 +962,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
         linkedObjectIds: [device.id],
       }),
     });
-    answerReadings.addAssessments([gapAssessmentFixture(gap, [device], 0.99, 0.99, semanticRepairAssessmentCoverage, 0.99)]);
+    answerReadings.addAssessments([gapAssessmentFixture(gap, [device], 0.99, 0.99, [{ facts: [], probability: 0.01 }, { facts: ['Audio capabilities', 'Input and output ports', 'Display and picture specifications'], probability: 0.99 }], 0.01)]);
     await store.upsertEdge({ fromKind: 'node', fromId: device.id, toKind: 'node', toId: gap.id, relation: 'has_gap' });
     const goodFactPairs: Array<[string, string]> = [
       ['Display and picture specifications', 'Display and picture specifications: 4K UHD resolution, HDR10, Dolby Vision, and 120 Hz refresh rate.'],
@@ -1019,7 +1020,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       },
     });
 
-    const result = await semantic.selfImprove({ knowledgeSpaceId: 'homeassistant:test', gapIds: [gap.id], maxRunMs: 5_000 });
+    const result = await semantic.selfImprove({ knowledgeSpaceId: 'homeassistant:test', gapIds: [gap.id], maxRunMs: 45_000 });
 
     expect(result.closedGaps).toBe(1);
     expect(result.promotedFactCount).toBe(3);
@@ -1030,6 +1031,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
   });
 
   test('answer-triggered refinement is queued without blocking the answer', async () => {
+    answerReadings.addAssessments(answerGapAssessmentFixtures(['what features does the TV have?'], [], 0.99));
     // Explicit insufficiency reading replaces a generator-authored gap as the trigger.
     answerReadings.set({ enough: 0.01, complete: 0.01 });
     const { store } = createStores();

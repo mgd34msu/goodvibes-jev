@@ -431,7 +431,7 @@ export async function securityPostureSummary(context: CommandContext, args: Agen
   const services = context.platform.serviceRegistry;
   const query = readString(args.query);
   const findings = buildSecurityFindings(context, securitySnapshot, policySnapshot);
-  const ranked = query ? await rankStatefulCatalog(findings, query, finding => ({ id: finding.findingId, description: finding.title, evidence: { finding, securitySnapshot, policySnapshot, args: request.input } }), 'agent.security.findings', request.options) : findings;
+  const ranked = query ? await rankStatefulCatalog(findings, query, finding => ({ id: finding.findingId, description: finding.title }), 'agent.security.findings', request.options, { securitySnapshot, policySnapshot, args: request.input }) : findings;
   request.assertCurrent();
   const filtered = ranked.slice(0, readLimit(args.limit, 100));
   let secretRefCount: number | null = null;

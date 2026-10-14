@@ -137,7 +137,7 @@ describe("maskSecretValue", () => {
 describe("displayConfigValue", () => {
   test("declared fallback arrays expose only strict detached references", () => {
     const references = [
-      { endpoint: "https://fallback.example.test/v1", model: "jev-1.13.0", keySource: "env", keyName: "FALLBACK_API_KEY" },
+      { endpoint: "https://fallback.example.test/v1", model: "jev-latest", keySource: "env", keyName: "FALLBACK_API_KEY" },
       { endpoint: "https://second.example.test", model: "jev-1.13.0", keySource: "secret", keyName: "judgment/fallback-key" },
     ];
     expect(isSecretConfigKey("judgment.fallbacks")).toBe(false);
@@ -153,7 +153,7 @@ describe("displayConfigValue", () => {
       [{ ...reference, apiKey: "synthetic-private-value" }],
       [{ ...reference, keyName: "synthetic-private-value" }],
       [{ ...reference, endpoint: "https://user:synthetic-private-value@fallback.example.test" }],
-      [{ ...reference, model: "jev-latest" }],
+      [{ ...reference, model: "" }],
     ]) {
       expect(displayConfigValue("judgment.fallbacks", value)).toBe("••••");
       expect(displayConfigValue("judgment.fallbacks", value, true)).toBe("••••");

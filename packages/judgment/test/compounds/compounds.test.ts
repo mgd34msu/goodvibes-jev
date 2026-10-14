@@ -251,13 +251,13 @@ describe('composite score', () => {
     expect(got.composites.manager).toBeCloseTo(0.25 * 0.75 + 0.75 * 0.5);
   });
 
-  test('refuses a profile with no positive weight', () => {
+  test.each([0, -1, NaN, Infinity])('refuses an invalid profile weight %s', (weight) => {
     expect(() =>
       defineCompositeScore({
         ...header,
         name: 'test.bad',
         dimensions: { a: { instructions: 'A?', levels: ['x', 'y'], band: STAKES_BANDS.low.confidence } },
-        profiles: { p: { a: 0 } },
+        profiles: { p: { a: weight } },
         fixtures: [{ name: 'f', state: 's', expect: { a: 1 } }],
       }),
     ).toThrow(RangeError);

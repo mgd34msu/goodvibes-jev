@@ -220,11 +220,12 @@ export async function runSkillDraftProposer(
   assertCurrent();
   const existingSkillNames = new Set(registry.list().map(skill => skill.name.trim().toLowerCase()));
   const previouslyProposedNames = new Set(ledger.entries.map(entry => entry.name.trim().toLowerCase()));
+  const previouslyProposedCandidateIds = new Set(ledger.entries.map(entry => entry.candidateId));
   assertCurrent();
   const eligibleCount = collection.candidates.filter(candidate =>
     (candidate.status === 'proposal-ready' || candidate.status === 'ready-to-promote')
       && candidate.proposalTarget === 'skill').length;
-  const drafts = proposeSkillDrafts({ candidates: collection.candidates, existingSkillNames, previouslyProposedNames });
+  const drafts = proposeSkillDrafts({ candidates: collection.candidates, existingSkillNames, previouslyProposedNames, previouslyProposedCandidateIds });
   const newEntries: SkillDraftLedgerEntry[] = [];
   const skillIds: string[] = [];
   for (const draft of drafts) {

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort, JudgmentRequest, JudgmentResult, Questions } from '@goodvibes-jev/judgment/decisions';
-import { createSystemOnePort, PINNED_MODEL } from '@goodvibes-jev/judgment';
+import { createSystemOnePort, DEFAULT_MODEL } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { createAgentWorkspaceProviderCommandEditor } from '../../input/agent-workspace-provider-command-editors.ts';
 import { AgentWorkspace } from '../../input/agent-workspace.ts';
@@ -114,7 +114,7 @@ describe('workspace editor message reading', () => {
     let calls = 0;
     const port = createSystemOnePort({
       endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:9999', apiKey: 'fixture-only' },
-      model: PINNED_MODEL, timeoutMs: 5_000,
+      model: DEFAULT_MODEL, timeoutMs: 5_000,
       retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
       fetch: async () => {
         calls++;
@@ -131,7 +131,7 @@ describe('workspace editor message reading', () => {
     expect(ws.editorMessageState.status).toBe('pending');
     for (let i = 0; i < 5; i++) renderAgentWorkspace(ws, 120, 42);
     expect(calls).toBe(2);
-    recovered.resolve(Response.json({ model: PINNED_MODEL, answers: { blocking: noulAnswer(0.01) }, usage: { input_tokens: 1, output_tokens: 1 } }));
+    recovered.resolve(Response.json({ model: DEFAULT_MODEL, answers: { blocking: noulAnswer(0.01) }, usage: { input_tokens: 1, output_tokens: 1 } }));
     await rendered.promise;
     expect(ws.editorMessageState.status).toBe('read');
     expect(messageColor(ws, 'Saved; nothing required.')).toBe(WORKSPACE_PALETTE.info);

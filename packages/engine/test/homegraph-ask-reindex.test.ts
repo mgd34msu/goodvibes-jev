@@ -582,6 +582,7 @@ describe('Home Graph ask, source repair, and reindex', () => {
 
   test('repairs already-uploaded stale stale PDF manual extractions during ask', async () => {
     readings.set({
+      extractionRepairs: [['what features does the LG TV have?', 'LG 86NANO90UNA manual', 0.99]],
       initialEvidenceDefault: 0.01,
       initialEvidenceCandidates: [['source', 'LG 86NANO90UNA manual', 0.99]],
       // The synthetic one-line PDF clips at its page boundary; select its exact extracted span.

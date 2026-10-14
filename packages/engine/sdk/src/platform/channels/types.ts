@@ -588,6 +588,7 @@ export interface ChannelRenderEvent {
   readonly title?: string | undefined;
   readonly provider?: string | undefined;
   readonly model?: string | undefined;
+  readonly toolOutcome?: 'succeeded' | 'failed' | undefined;
   readonly toolName?: string | undefined;
   readonly callId?: string | undefined;
   readonly summary?: string | undefined;

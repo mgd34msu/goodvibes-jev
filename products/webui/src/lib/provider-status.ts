@@ -183,6 +183,7 @@ export function providerHeaderLabel(status: ProviderStatus): string {
 /** One credential's status metadata from the daemon's shared store, never bytes. */
 export interface CredentialStatusEntry {
   readonly key: string;
+  readonly providerIds?: readonly string[];
   readonly configured: boolean;
   readonly usable: boolean;
   readonly source?: string;
@@ -222,6 +223,7 @@ export function deriveCredentialAvailability(outcome: { ok: true; value: unknown
     if (!rec || !key) continue;
     credentials.push({
       key,
+      providerIds: Array.isArray(rec.providerIds) ? rec.providerIds.filter((id): id is string => typeof id === 'string') : [],
       configured: rec.configured === true,
       usable: rec.usable === true,
       source: firstString(rec, ['source']) || undefined,

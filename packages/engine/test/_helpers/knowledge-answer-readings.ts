@@ -1,3 +1,7 @@
+import { webGapCoverage } from '../../sdk/src/platform/knowledge/semantic/web-gap-repair/battery.js';
+import { extractedSentenceKind } from '../../sdk/src/platform/knowledge/semantic/repair-decisions.js';
+import { repairSourceRelevance } from '../../sdk/src/platform/knowledge/semantic/repair-decisions.js';
+import { homeGraphQualityBatteries } from '../../sdk/src/platform/knowledge/home-graph/quality/batteries.js';
 import { extractionValueFixtureReading, type ExtractionValueFixtures } from './knowledge-extraction-value-readings.js';
 import { selfImprovementFixtureReading, type SelfImprovementFixtureValues } from './knowledge-self-improvement-readings.js';
 import { repairScoringFixtureReading } from './repair-scoring-fixture-readings.js';
@@ -14,6 +18,8 @@ import { repairProfileFixtureReading, repairUsefulFixtureReading, type RepairPro
 export interface AnswerFixtureReadings {
   /** Exact authored complete native extraction inputs. Unlisted requests fail. */
   extractionValue?: ExtractionValueFixtures;
+  extractedKinds?: ReadonlyArray<readonly [string, string]>;
+  webGapCoverage?: number;
   /** Exact authored offered query strings, in preference order. Unlisted queries select none. */
   scope?: ReadonlyArray<readonly ['source' | 'node' | 'issue', string, number]>;
   scopeByView?: ReadonlyArray<readonly ['source' | 'node' | 'issue', string, 'ordinary' | 'explicit' | 'all', number]>;
@@ -24,6 +30,7 @@ export interface AnswerFixtureReadings {
   webGapSources?: ReadonlyArray<readonly [string, number, 'official-vendor' | 'vendor' | 'secondary']>;
   /** Explicit source title, exact node title/kind and relation. Unlisted documents select none. */
   autoLinks?: ReadonlyArray<readonly [string, string, string, 'has_receipt' | 'has_warranty' | 'has_manual' | 'source_for']>;
+  extractionRepairs?: ReadonlyArray<readonly [string, string, number]>;
   repairSubjects?: ReadonlyArray<readonly [string, number]>;
   gapSubject?: number;
   /** Exact authored new/previous question pairs; equality only covers literal repeated fixture requests. */
@@ -59,7 +66,7 @@ export interface AnswerFixtureReadings {
   quality?: ReadonlyArray<readonly [string, number]>;
   authorities?: ReadonlyArray<readonly [string, 'official-vendor' | 'vendor' | 'secondary' | 'unverified']>;
 }
-export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings, 'repairProfile' | 'repairUseful' | 'objectAlignment' | 'selfImprovement'> = {}) {
+export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings, 'repairProfile' | 'repairUseful' | 'objectAlignment' | 'selfImprovement' | 'extractedKinds'> = {}) {
   let previous: JudgmentPort | undefined;
   let table: AnswerFixtureReadings = {};
   let activation: AnswerFixtureReadings['activation'] = [];
@@ -70,6 +77,12 @@ export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings,
     return fakePort((name, question, state) => {
       const extraction = extractionValueFixtureReading(name, question, state, [...(table.extractionValue ?? []), ...extractionValue]);
       if (extraction !== undefined) return noulAnswer(extraction);
+      if (name === 'kind' && JSON.stringify(question) === JSON.stringify(extractedSentenceKind.items.kind.question)) {
+        const candidate = (state as { candidate: string }).candidate;
+        const kind = candidate === 'Features' ? 'none' : (table.extractedKinds ?? defaults.extractedKinds)?.find(([span]) => span === candidate)?.[1];
+        if (!kind) throw new Error(`Unscripted extracted source span: ${JSON.stringify(candidate)}`);
+        return choiceAnswer(question, kind, 0.99);
+      }
       const assessment = selfImprovementFixtureReading(name, question, state, [...(table.selfImprovement ?? defaults.selfImprovement ?? []), ...assessments]);
       if (assessment !== undefined) return noulAnswer(assessment);
       if (name === 'included') {
@@ -82,6 +95,10 @@ export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings,
       if (question.type === 'noul' && question.instructions === homeGraphPagePriorityInstructions) {
         const title = (state as { candidate?: { title?: string } }).candidate?.title;
         return noulAnswer(table.pagePriority?.find(([candidate]) => candidate === title)?.[1] ?? table.pagePriorityDefault ?? 0.99);
+      }
+      if (name === 'sufficient' && JSON.stringify(question) === JSON.stringify(webGapCoverage.items.sufficient.question)) {
+        if (table.webGapCoverage === undefined) throw new Error('Unscripted web gap coverage');
+        return noulAnswer(table.webGapCoverage);
       }
       const web = state as { context?: { purpose?: string }; candidates?: { id: string; content: string }[]; source?: { url?: string } };
       if (web.context?.purpose === 'knowledge-gap-repair') {
@@ -97,16 +114,20 @@ export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings,
       }
       // Item names are shared by other batteries, including repair-profile selected.
       // Match the canonical questions so their exact authored fixtures remain independent.
-      if (question === homeGraphDocumentKind.items.manual.question
-        || question === homeGraphDocumentKind.items.integrationDocumentation.question
-        || question === homeGraphDocumentKind.items.relation.question
-        || question === homeGraphDocumentSubject.items.selected.question) {
+      if (JSON.stringify(question) === JSON.stringify(homeGraphDocumentKind.items.manual.question)
+        || JSON.stringify(question) === JSON.stringify(homeGraphDocumentKind.items.integrationDocumentation.question)
+        || JSON.stringify(question) === JSON.stringify(homeGraphDocumentKind.items.relation.question)
+        || JSON.stringify(question) === JSON.stringify(homeGraphDocumentSubject.items.selected.question)) {
         const input = state as { source?: { title?: string }; candidate?: { subject?: { title?: string; kind?: string } } };
         const link = table.autoLinks?.find(([source]) => source === input.source?.title);
         if (name === 'manual') return noulAnswer(link?.[3] === 'has_manual' ? 0.99 : 0.01);
         if (name === 'integrationDocumentation') return noulAnswer(0.01);
         if (name === 'relation') return choiceAnswer(question, link?.[3] ?? 'source_for', 0.99);
         return noulAnswer(link && input.candidate?.subject?.title === link[1] && input.candidate.subject.kind === link[2] ? 0.99 : 0.01);
+      }
+      if (JSON.stringify(question) === JSON.stringify(repairSourceRelevance.items.relevant.question)) {
+        const input = state as { request: string; source: { title: string } };
+        return noulAnswer(table.extractionRepairs?.find(([query, title]) => query === input.request && title === input.source.title)?.[2] ?? 0.01);
       }
       if (name === 'repairSubjectSelected') return noulAnswer(repairSubjectFixtureReading(state, table.repairSubjects));
       if (name === 'gapSubject') return noulAnswer(table.gapSubject ?? 0.01);
@@ -134,11 +155,12 @@ export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings,
         if (probability === undefined) throw new Error(`Unscripted activation fixture: ${title ?? '<missing title>'}`);
         return noulAnswer(probability);
       }
-      if (['batteryApplicable', 'manualApplicable', 'manufacturerPresent', 'modelPresent', 'batteryTypePresent'].includes(name)) {
+      const qualityName = Object.entries(homeGraphQualityBatteries).find(([, battery]) => Object.values(battery.items).some(item => JSON.stringify(item.question) === JSON.stringify(question)))?.[0];
+      if (qualityName) {
         const subject = (state as { subject?: { title?: string } }).subject;
         const scripted = table.homeGraph?.find(([title]) => title === subject?.title)?.[1];
         const defaults: Record<string, number> = { batteryApplicable: 0.01, manualApplicable: 0.99, manufacturerPresent: 0.01, modelPresent: 0.01, batteryTypePresent: 0.01 };
-        return noulAnswer((scripted as Record<string, number> | undefined)?.[name] ?? defaults[name]!);
+        return noulAnswer((scripted as Record<string, number> | undefined)?.[qualityName] ?? defaults[qualityName]!);
       }
       if (name === 'fidelity') {
         const text = JSON.stringify((state as { candidate?: unknown }).candidate);

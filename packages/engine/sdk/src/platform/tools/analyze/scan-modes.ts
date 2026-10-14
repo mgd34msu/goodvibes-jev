@@ -557,7 +557,7 @@ export async function runEnvAudit(_input: AnalyzeInput, projectRoot: string): Pr
     found.map(({ name, variables }) => envTemplateCandidate(name, variables)),
     { site: ENV_TEMPLATE_SITE },
   );
-  const reference = selection.outcome === 'escalate' ? undefined : found.find((f) => f.name === selection.chosen);
+  const reference = selection.outcome !== 'act' ? undefined : found.find((f) => f.name === selection.chosen);
   selection.recordAction(reference ? `compared against ${reference.name}` : 'compared nothing');
   const files = found.map((f) => ({ name: f.name, key_count: f.keys.length }));
   if (!reference) {
@@ -566,7 +566,8 @@ export async function runEnvAudit(_input: AnalyzeInput, projectRoot: string): Pr
       reference: null,
       missing: [],
       extra: [],
-      message: 'No env file reads as a template of the expected variables; nothing to compare against',
+      uncertain: selection.outcome !== 'act',
+      message: selection.outcome === 'act' ? 'No env file reads as a template of the expected variables; nothing to compare against' : 'The env template reading is unsettled; no comparison was made',
     };
   }
 
@@ -620,7 +621,8 @@ async function resolvedImports(
  * Which importer of `source` is its test, read by `engine.tools.test-of-source`
  * over groups of at most TEST_CANDIDATES_PER_READING importers; with more
  * groups than one, each group's pick goes on to a selection among the picks.
- * A pick counts when it acts or confirms.
+ * Every group must settle before any winner advances; an unresolved group
+ * holds the complete selection instead of silently dropping its candidates.
  */
 async function pickTestOf(
   source: string,
@@ -637,8 +639,9 @@ async function pickTestOf(
         site: TEST_OF_SOURCE_SITE,
       });
     });
+    if (picks.some(pick => pick.outcome !== 'act')) return { test: null, uncertain: true };
     const counted = picks.map((pick) =>
-      pick.chosen !== undefined && pick.outcome !== 'escalate' ? pick.chosen : undefined,
+      pick.chosen !== undefined && pick.outcome === 'act' ? pick.chosen : undefined,
     );
     picks.forEach((pick, index) =>
       pick.recordAction(counted[index] !== undefined ? `picked ${counted[index]}` : 'picked none'),

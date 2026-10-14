@@ -122,7 +122,7 @@ export async function createDiscordInboxOwner(
   const resolveRouteId = context.resolveRouteId;
   const scopeId = digest(JSON.stringify('kind' in options.screening
     ? ['discord-inbox-hosted', 1, account.userId, channels.channelIds, channels.revision,
-      'abacus-route-llm+typesafe-jev-1.13.0', 'provider-managed-zero-retention-unverified']
+      'abacus-route-llm+typesafe-jev-latest', 'provider-managed-zero-retention-unverified']
     : ['discord-inbox', 1, account.userId, channels.channelIds, channels.revision,
       options.screening.authority.ownerId, options.screening.authority.revision]));
   const lifetime = new AbortController();

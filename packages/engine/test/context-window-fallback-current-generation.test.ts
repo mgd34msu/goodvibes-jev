@@ -70,9 +70,14 @@ describe('context window of an unsized model', () => {
   });
 
   test('a reading too weak to act on gets the conservative window, not the family it leans to', async () => {
-    withPort(familyPort(() => 'gemini', 0.5).port);
+    const weak = familyPort(() => 'gemini', 0.5);
+    withPort(weak.port);
     expect(await readFallbackContextWindow('google', 'gemini-x', 'test')).toBe(FALLBACK_CONTEXT_WINDOW);
     expect(knownFallbackContextWindow('google', 'gemini-x')).toBe(FALLBACK_CONTEXT_WINDOW);
+    const settled = familyPort(() => 'gemini');
+    withPort(settled.port);
+    expect(await readFallbackContextWindow('google', 'gemini-x', 'test')).not.toBe(FALLBACK_CONTEXT_WINDOW);
+    expect(settled.requests).toHaveLength(1);
   });
 
   test('before the model has been read, the synchronous lookup gives the conservative window without asking', () => {

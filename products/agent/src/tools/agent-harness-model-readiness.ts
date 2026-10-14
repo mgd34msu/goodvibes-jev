@@ -1,12 +1,13 @@
-import { types as nodeTypes } from 'node:util';
+import { captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
 import { arch, cpus, freemem, platform, totalmem } from 'node:os';
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { routingRegistry, routeReadiness, localRecipeFit, routeReadinessFrom, localRecipeFitFrom, modelReadinessFlagFrom } from '@goodvibes-jev/engine/sdk/platform/routing';
+import { captureJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { prepareJudgmentResult } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { routingRegistry, routeReadiness, localRecipeFit, routeReadinessFrom, localRecipeFitFrom } from '@goodvibes-jev/engine/sdk/platform/routing';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext } from '../input/command-registry.ts';
 import { readProviderHealthSignal } from './agent-harness-model-provider-health.ts';
 import { listProviderRegistryProviders } from './agent-harness-model-catalog.ts';
-import { captureModelReadingInput, assertModelReadingInputCurrent, modelReadingServicePath, withModelReadingSource, type ModelReadingOptions } from './agent-harness-model-reading-source.ts';
+import { captureModelReadingInput, captureModelReadingSnapshotGuard, modelReadingServicePath, withModelReadingSource, type ModelReadingOptions } from './agent-harness-model-reading-source.ts';
 import type { LocalModelBenchmarkEvidence, LocalModelDetection, LocalModelHardwareProfile, LocalModelRecipe, LocalModelRecipeFit, ModelCandidate, ModelReadinessDimension, ModelReadinessScore, ModelRouteReadinessScore } from './agent-harness-model-routing-types.ts';
 import { readRecord } from './agent-harness-model-routing-utils.ts';
 
@@ -45,65 +46,42 @@ export function deferredRecipeFit(): LocalModelRecipeFit {
     provenance: null, reasons: ['Recipe-fit enrichment has not run.'] };
 }
 
-/** The registry object alone is not the definition: policy/run mutation also expires a read. */
+const batteryDefinitions = new WeakMap<object, () => void>();
+const getBatteryDefinition = batteryDefinitions.get.bind(batteryDefinitions);
+const setBatteryDefinition = batteryDefinitions.set.bind(batteryDefinitions);
+
+/** Retain the exact native definition once; every reuse still validates it. */
 function batteryDefinitionGuard(battery: typeof routeReadiness | typeof localRecipeFit): () => void {
-  const state = () => {
-    const fields = Object.getOwnPropertyDescriptors(battery);
-    const values: Record<string, unknown> = {};
-    for (const key of ['name', 'version', 'items', 'composite']) {
-      const field = fields[key];
-      if (!field || !('value' in field)) throw new ToolInputProjectionError('held');
-      values[key] = field.value;
-    }
-    const run = fields.run;
-    if (!run || !('value' in run) || typeof run.value !== 'function') throw new ToolInputProjectionError('held');
-    return { run: run.value as unknown, values };
+  const existing = getBatteryDefinition(battery);
+  if (existing) { existing(); return existing; }
+  const assertRegistry = captureCatalogMethods(routingRegistry, ['get']);
+  const get = routingRegistry.get;
+  const assertSlots = captureCatalogMethods(battery, ['name', 'version', 'items', 'composite', 'run']);
+  assertSlots();
+  const values = { name: battery.name, version: battery.version, items: battery.items, composite: battery.composite };
+  captureModelReadingInput(values);
+  const assertValues = captureModelReadingSnapshotGuard(values, true);
+  const assertCurrent = () => {
+    assertRegistry(); assertSlots(); assertValues(values);
+    if (Reflect.apply(get, routingRegistry, [values.name]) !== battery) throw new ToolInputProjectionError('held');
+    assertRegistry(); assertSlots(); assertValues(values);
   };
-  const original = state(), policy = JSON.stringify(captureModelReadingInput(state().values));
-  return () => { const current = state(); if (current.run !== original.run) throw new ToolInputProjectionError('held'); assertModelReadingInputCurrent(current.values, policy); };
+  assertCurrent(); setBatteryDefinition(battery, assertCurrent);
+  return assertCurrent;
 }
 
-/** The installed recording port legitimately has a model getter. Capture that
- * trusted accessor once, then compare every slot descriptor before reading it
- * again. A later accessor/proxy replacement is never invoked. */
-function captureBackend(port: ReturnType<typeof judgmentPort>) {
-  const slots = (subject: object, keys: readonly string[], modelGetter = false) => {
-    const chain: object[] = [];
-    let owner: object | null = subject;
-    while (owner) {
-      if (nodeTypes.isProxy(owner) || chain.length >= 64) throw new ToolInputProjectionError('held');
-      chain.push(owner); owner = Object.getPrototypeOf(owner) as object | null;
-    }
-    return { chain, fields: keys.map(key => {
-      for (const owner of chain) {
-        const descriptor = Object.getOwnPropertyDescriptor(owner, key);
-        if (descriptor) {
-          if (!('value' in descriptor) && (!modelGetter || key !== 'model' || typeof descriptor.get !== 'function' || descriptor.set)) throw new ToolInputProjectionError('held');
-          return { owner, descriptor };
-        }
-      }
-      return undefined;
-    }) };
-  };
-  const captured = slots(port, ['model', 'ask', 'recorder'], true);
-  const model = port.model, ask = port.ask, recorder = port.recorder;
-  const capturedRecorder = recorder ? slots(recorder, ['recordReadings', 'recordAction']) : undefined;
-  const assertSlots = (beforeSlots: ReturnType<typeof slots>, current: ReturnType<typeof slots>) => {
-    if (current.chain.length !== beforeSlots.chain.length || current.chain.some((entry, index) => entry !== beforeSlots.chain[index])) throw new ToolInputProjectionError('held');
-    for (const [index, before] of beforeSlots.fields.entries()) {
-      const after = current.fields[index];
-      if (before?.owner !== after?.owner || before?.descriptor.value !== after?.descriptor.value
-        || before?.descriptor.get !== after?.descriptor.get || before?.descriptor.set !== after?.descriptor.set
-        || before?.descriptor.enumerable !== after?.descriptor.enumerable || before?.descriptor.configurable !== after?.descriptor.configurable
-        || before?.descriptor.writable !== after?.descriptor.writable) throw new ToolInputProjectionError('held');
-    }
-  };
-  const assertCurrent = () => {
-    assertSlots(captured, slots(port, ['model', 'ask', 'recorder'], true));
-    if (recorder && capturedRecorder) assertSlots(capturedRecorder, slots(recorder, ['recordReadings', 'recordAction']));
-    if (port.model !== model || port.ask !== ask || port.recorder !== recorder) throw new ToolInputProjectionError('held');
-  };
-  return { model, ask, recorder, assertCurrent };
+function readinessAuthority(battery: typeof routeReadiness | typeof localRecipeFit, scoped: ModelReadingOptions) {
+  const assertDefinition = batteryDefinitionGuard(battery);
+  scoped.retainCurrent?.(assertDefinition, battery.name);
+  return captureJudgmentPort(battery.name, {
+    signal: scoped.signal, prepareResultCapture: prepareJudgmentResult,
+    assertCurrent: () => { scoped.assertCurrent?.(); assertDefinition(); },
+  });
+}
+function retainReadinessAuthority(authority: ReturnType<typeof captureJudgmentPort>, scoped: ModelReadingOptions) {
+  const restriction = authority.consumeObservation();
+  scoped.retainCurrent?.(restriction.assertCurrent);
+  restriction.assertCurrent();
 }
 
 /** Acquire neither a battery nor a port until full-source screening settles. */
@@ -113,55 +91,16 @@ async function readRoute(source: unknown, options: ModelReadingOptions) {
     const decision = routingRegistry.get('agent.models.route-readiness');
     if (!decision || typeof modelReadingServicePath(decision, ['run']) !== 'function') return routeReadinessFrom(null);
     const battery = decision as typeof routeReadiness;
-    const assertDefinition = batteryDefinitionGuard(battery);
-    const port = judgmentPort('agent.models.route-readiness');
-    const backend = captureBackend(port), { model, recorder } = backend;
-    const assertBackend = () => {
-      assertDefinition(); backend.assertCurrent();
-      if (routingRegistry.get(battery.name) !== decision || judgmentPort('agent.models.route-readiness') !== port) throw new ToolInputProjectionError('held');
-    };
-    scoped.retainCurrent?.(assertBackend, 'agent.models.route-readiness');
-    const assertCurrent = () => { scoped.signal?.throwIfAborted(); scoped.assertCurrent?.(); assertBackend(); };
-    const guarded: typeof port = { model, ...(recorder ? { recorder: {
-      recordReadings: (...args: Parameters<typeof recorder.recordReadings>) => { assertCurrent(); recorder.recordReadings(...args); assertCurrent(); },
-      recordAction: (...args: Parameters<typeof recorder.recordAction>) => { assertCurrent(); recorder.recordAction(...args); assertCurrent(); },
-    } } : {}), ask: async request => {
-      assertCurrent(); const result = await port.ask({ ...request,
-        beforeAttempt: () => { request.beforeAttempt?.(); assertCurrent(); },
-        assertLogCurrent: () => { request.assertLogCurrent?.(); assertCurrent(); } });
-      assertCurrent(); return result;
-    } };
-    const run = await battery.run(guarded, state as unknown as Parameters<typeof battery.run>[1], { site: 'agent.models.route-readiness', ...(scoped.signal ? { signal: scoped.signal } : {}),
-      only: ['latency', 'contextWindow', 'toolSupport', 'vision', 'cost', 'privacy', 'cloudTransfer'] });
-    assertCurrent();
-    const result = routeReadinessFrom(run);
-    assertCurrent(); return result;
-  });
-}
-async function readExampleVision(example: string, facts: unknown, options: ModelReadingOptions) {
-  return withModelReadingSource({ exampleModel: { id: example, facts }, rubric: RUBRIC }, options, async (state, scoped) => {
-    const decision = routingRegistry.get('agent.models.route-readiness');
-    if (!decision || typeof modelReadingServicePath(decision, ['run']) !== 'function') return modelReadinessFlagFrom(null, 'exampleVision');
-    const battery = decision as typeof routeReadiness;
-    const assertDefinition = batteryDefinitionGuard(battery);
-    const port = judgmentPort('agent.models.example-vision');
-    const backend = captureBackend(port), { model, recorder } = backend;
-    const assertBackend = () => {
-      assertDefinition(); backend.assertCurrent();
-      if (routingRegistry.get(battery.name) !== decision || judgmentPort('agent.models.example-vision') !== port) throw new ToolInputProjectionError('held');
-    };
-    scoped.retainCurrent?.(assertBackend, 'agent.models.example-vision');
-    const assertCurrent = () => { scoped.signal?.throwIfAborted(); scoped.assertCurrent?.(); assertBackend(); };
-    const guarded: typeof port = { model, ...(recorder ? { recorder: {
-      recordReadings: (...args: Parameters<typeof recorder.recordReadings>) => { assertCurrent(); recorder.recordReadings(...args); assertCurrent(); },
-      recordAction: (...args: Parameters<typeof recorder.recordAction>) => { assertCurrent(); recorder.recordAction(...args); assertCurrent(); },
-    } } : {}), ask: async request => {
-      assertCurrent(); const result = await port.ask({ ...request,
-        beforeAttempt: () => { request.beforeAttempt?.(); assertCurrent(); }, assertLogCurrent: () => { request.assertLogCurrent?.(); assertCurrent(); } });
-      assertCurrent(); return result;
-    } };
-    assertCurrent(); const run = await battery.run(guarded, state as unknown as Parameters<typeof battery.run>[1], { site: 'agent.models.example-vision', only: ['exampleVision'], ...(scoped.signal ? { signal: scoped.signal } : {}) });
-    assertCurrent(); return modelReadinessFlagFrom(run, 'exampleVision');
+    const authority = readinessAuthority(battery, scoped);
+    try {
+      const run = await battery.run(authority.port, state as unknown as Parameters<typeof battery.run>[1], {
+        site: battery.name, signal: authority.signal, beforeAttempt: authority.assertCurrent,
+        only: ['latency', 'contextWindow', 'toolSupport', 'vision', 'cost', 'privacy', 'cloudTransfer'],
+      });
+      authority.assertCurrent();
+      const result = routeReadinessFrom(run);
+      authority.assertCurrent(); return result;
+    } finally { retainReadinessAuthority(authority, scoped); }
   });
 }
 
@@ -222,12 +161,12 @@ export async function modelReadinessScore(context: CommandContext, model: ModelC
 export async function localRecipeReadinessScore(recipe: LocalModelRecipe, fit: LocalModelRecipeFit, detected: boolean,
   evidence: LocalModelBenchmarkEvidence, options: ModelReadingOptions = {}): Promise<ModelReadinessScore> {
   if (!options.sourceOwner) return deferredModelReadiness();
-  const exampleVision = [];
-  for (const example of recipe.modelExamples) {
-    // An example name alone is explicitly uncertain, regardless of familiar words.
-    const result = await readExampleVision(example, { advertisedCapabilities: null, recipeRequirements: recipe.hardware }, options);
-    exampleVision.push({ example, ...result, value: null, probability: null, confidence: null, outcome: 'deferred', reason: 'No advertised capability or documentation is supplied for this example.' });
-  }
+  // These are names only: no capability evidence exists to send to a reader.
+  // Keep the missing evidence explicit in the compound readiness input.
+  const exampleVision = recipe.modelExamples.map(example => ({
+    example, value: null, probability: null, confidence: null, decisionId: null, provenance: null, outcome: 'deferred',
+    reason: 'No advertised capability or documentation is supplied for this example.',
+  }));
   const reading = await readRoute({ subject: recipe, rubric: RUBRIC, detected, benchmarkEvidence: evidence,
     localFit: fit.outcome === 'ready' ? fit : null, exampleVision, provider: null,
     capabilities: null, contextWindow: null, measuredLatency: null, cost: null }, options);
@@ -249,25 +188,13 @@ export async function scoreLocalModelRecipe(recipe: LocalModelRecipe, hardware: 
     const decision = routingRegistry.get('agent.models.local-recipe-fit');
     if (!decision || typeof modelReadingServicePath(decision, ['run']) !== 'function') return { ...deferredRecipeFit(), outcome: 'unavailable' };
     const battery = decision as typeof localRecipeFit;
-    const assertDefinition = batteryDefinitionGuard(battery);
-    const port = judgmentPort('agent.models.local-recipe-fit');
-    const backend = captureBackend(port), { model, recorder } = backend;
-    const assertBackend = () => {
-      assertDefinition(); backend.assertCurrent();
-      if (routingRegistry.get(battery.name) !== decision || judgmentPort('agent.models.local-recipe-fit') !== port) throw new ToolInputProjectionError('held');
-    };
-    scoped.retainCurrent?.(assertBackend, 'agent.models.local-recipe-fit');
-    const assertCurrent = () => { scoped.signal?.throwIfAborted(); scoped.assertCurrent?.(); assertBackend(); };
-    const guarded: typeof port = { model, ...(recorder ? { recorder: {
-      recordReadings: (...args: Parameters<typeof recorder.recordReadings>) => { assertCurrent(); recorder.recordReadings(...args); assertCurrent(); },
-      recordAction: (...args: Parameters<typeof recorder.recordAction>) => { assertCurrent(); recorder.recordAction(...args); assertCurrent(); },
-    } } : {}), ask: async request => {
-      assertCurrent(); const result = await port.ask({ ...request,
-        beforeAttempt: () => { request.beforeAttempt?.(); assertCurrent(); }, assertLogCurrent: () => { request.assertLogCurrent?.(); assertCurrent(); } });
-      assertCurrent(); return result;
-    } };
-    assertCurrent(); const run = await battery.run(guarded, state as unknown as Parameters<typeof battery.run>[1], { site: 'agent.models.local-recipe-fit', ...(scoped.signal ? { signal: scoped.signal } : {}) });
-    assertCurrent(); const reading = localRecipeFitFrom(run);
-    return { ...reading, reasons: reading.outcome === 'ready' ? ['Settled hardware and recipe-requirements reading.'] : ['Hardware fit is unsettled.'] };
+    const authority = readinessAuthority(battery, scoped);
+    try {
+      const run = await battery.run(authority.port, state as unknown as Parameters<typeof battery.run>[1], {
+        site: battery.name, signal: authority.signal, beforeAttempt: authority.assertCurrent,
+      });
+      authority.assertCurrent(); const reading = localRecipeFitFrom(run);
+      return { ...reading, reasons: reading.outcome === 'ready' ? ['Settled hardware and recipe-requirements reading.'] : ['Hardware fit is unsettled.'] };
+    } finally { retainReadinessAuthority(authority, scoped); }
   });
 }

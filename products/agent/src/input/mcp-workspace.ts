@@ -1,3 +1,4 @@
+import { prepareSystemMessagePresentation } from '@goodvibes-jev/engine/sdk/platform/runtime';
 import type { InputToken } from '@goodvibes-jev/engine/sdk/platform/core';
 import type {
   McpConfigScope,
@@ -224,7 +225,17 @@ export class McpWorkspace {
   public formIndex = 0;
   public form: McpWorkspaceForm = serverConfigToForm();
   public editingServerName: string | null = null;
-  public status = 'Ready. Inspect MCP servers and tools. Config writes/reloads require explicit workspace confirmation.';
+  private statusReading: AbortController | undefined;
+  private statusValue = 'Ready. Inspect MCP servers and tools. Config writes/reloads require explicit workspace confirmation.';
+  public get status(): string { return this.statusValue; }
+  public set status(value: string) {
+    this.statusValue = value;
+    this.statusReading?.abort();
+    const controller = new AbortController(); this.statusReading = controller;
+    void prepareSystemMessagePresentation(value, controller.signal).then(() => {
+      if (!controller.signal.aborted && this.statusValue === value) this.context?.renderRequest();
+    }).catch(() => {});
+  }
   public tools: readonly RegisteredTool[] = [];
   public loadingTools = false;
   public lastError: string | null = null;
@@ -258,6 +269,7 @@ export class McpWorkspace {
   }
 
   close(): void {
+    this.statusReading?.abort();
     this.active = false;
     this.mode = 'browse';
   }

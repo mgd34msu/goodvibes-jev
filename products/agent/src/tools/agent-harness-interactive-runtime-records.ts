@@ -378,13 +378,11 @@ export async function acquireInteractiveRuntimeSnapshot(context: CommandContext,
     for (const guard of retained) guard();
     assertSourceCurrent();
   };
-  const retainCurrent = (guard: () => void, key?: string): void => {
+  const retainCurrent = (guard: () => void): void => {
     optionSlots(); checkSignal();
     retained.push(guard);
-    dispatchRetainCurrent(guard, key);
   };
   assertCurrent();
-  dispatchRetainCurrent(assertSourceCurrent, 'agent.runtime.sources');
   let records: AgentHarnessInteractiveRuntimeRecord[] = [];
   if (native.sources.length) {
     const readingOptions = options.sourceOwner ? options : modelReadingOptions(context, context.extensions?.toolRegistry, options.signal, options.assertCurrent, retainCurrent);
@@ -406,6 +404,14 @@ export async function acquireInteractiveRuntimeSnapshot(context: CommandContext,
     return delta || left.kind.localeCompare(right.kind) || left.id.localeCompare(right.id);
   });
   const data = captureCatalogData({ records, capabilitySummary: summarizeInteractiveRuntimeRecords(records), parityStatus: interactiveRuntimeParityForRecords(records) });
+  // Keep nested restrictions local during acquisition. Publish one complete
+  // pure guard so later readers do not recursively replay this whole scope.
+  dispatchRetainCurrent(() => {
+    assertSourceCurrent();
+    for (const guard of retained) guard();
+    assertSourceCurrent();
+  }, 'agent.runtime.sources');
+  assertCurrent();
   return { ...data, assertCurrent };
 }
 

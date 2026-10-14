@@ -1,3 +1,4 @@
+import { seedProviderMetadataCacheFixture } from '../helpers/provider-metadata-cache-fixture.ts';
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -12,11 +13,14 @@ import { registerAgentTools } from '../../runtime/bootstrap-agent-tools.ts';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import { taskRoutePort } from '../helpers/task-route-readings.ts';
+import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
+import { researchScreeningFixture, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
 
-test('actual Agent service composition and bootstrap register both consumers against its installed judgment binding', async () => {
+test.each(['route', 'agent_harness'] as const)('actual Agent bootstrap registers %s against its installed judgment binding', async name => {
   const root = makeProjectTempDir('agent-route-bootstrap');
   execFileSync('git', ['init', '-q'], { cwd: root });
   const configManager = new ConfigManager({ surfaceRoot: 'agent', workingDir: root, homeDir: root, configDir: join(root, '.goodvibes', 'agent') });
+  seedProviderMetadataCacheFixture({ configManager, homeDirectory: root, workingDirectory: root });
   const services = createRuntimeServices({ configManager, runtimeBus: new RuntimeEventBus(), runtimeStore: createRuntimeStore(), workingDir: root, homeDirectory: root, modelDiscovery: 'skip' });
   try {
     // Production composition already installed this settings-driven port. Replace
@@ -35,7 +39,9 @@ test('actual Agent service composition and bootstrap register both consumers aga
       extensions: {}, ops: {},
     } as unknown as CommandContext;
     registerAgentTools({ toolRegistry, commandRegistry: new CommandRegistry(), commandContext, configManager, services, getSessionId: () => 'fixture-session' });
-    for (const name of ['route', 'agent_harness']) {
+    // Registered dispatch fences the complete bootstrapped registry during I/O.
+    bindAgentResearchSourceOwner(toolRegistry, researchScreeningFixture({ timeoutMs: 10_000 }).owner);
+    {
       const tool = toolRegistry.list().find(tool => tool.definition.name === name);
       expect(tool).toBeDefined();
       const result = await tool!.execute({ action: 'plan', mode: 'route_decision', query });
@@ -57,7 +63,7 @@ test('actual Agent service composition and bootstrap register both consumers aga
       catalogFits: { document_ops: 0.5 },
     } });
     services.judgment.port.ask = withDecisionLog(uncertain.port, services.judgment.decisionLog).ask;
-    for (const name of ['route', 'agent_harness']) {
+    {
       const result = await toolRegistry.execute(`uncertain-${name}`, name, { action: 'plan', mode: 'route_decision', query });
       expect(result.success).toBe(true);
       if (!result.success) throw new Error(result.error);
@@ -67,16 +73,17 @@ test('actual Agent service composition and bootstrap register both consumers aga
       expect(plan.harnessModeMatches).toBeUndefined();
       const ranked = plan.judgment.harness.find((entry: { id: string }) => entry.id === 'document_ops');
       const entry = services.judgment.decisionLog.get(ranked.decisionId)!;
-      expect(readingsOf(entry)).toMatchObject({ candidate: 'document_ops', match: { verdict: 'uncertain', probability: 0.5 } });
+      expect(readingsOf(entry)).toMatchObject({ candidate: expect.stringMatching(/^\d+$/), match: { verdict: 'uncertain', probability: 0.5 } });
       expect(actionOf(services.judgment.decisionLog.get(plan.judgment.selection.decisionId)!)).toBe('uncertain: no route published');
     }
     expect(dispatched).toBe(0);
     expect(judgmentPort('routing.task-route.plan')).toBe(services.judgment.port);
-    expect(fake.requests.filter(request => (request.state as { context?: { kind?: string } }).context?.kind === 'model provider')).toHaveLength(2);
-    expect(fake.requests.filter(request => (request.state as { context?: { kind?: string } }).context?.kind === 'messaging channel or notification target')).toHaveLength(2);
+    expect(fake.requests.filter(request => (request.state as { context?: { kind?: string } }).context?.kind === 'model provider')).toHaveLength(1);
+    expect(fake.requests.filter(request => (request.state as { context?: { kind?: string } }).context?.kind === 'messaging channel or notification target')).toHaveLength(1);
   } finally {
     services.dispose();
+    await cleanupResearchScreeningFixtures();
     await Promise.resolve();
     await Promise.resolve();
   }
-}, 15_000);
+});

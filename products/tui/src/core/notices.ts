@@ -1,10 +1,11 @@
 /** System notices retain their full text in saved conversation history.
  * Declared runtime occurrences publish immediately and deduplicate with the bus.
- * Unstructured notices publish after a current semantic severity reading.
+ * Unstructured notices appear neutrally while their semantic severity is read.
  * Restored notices enter history without another toast.
  */
 
 import { readNoticeSeverity } from '@goodvibes-jev/engine/terminal-shell';
+import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { JudgmentAuthorityRetiredError, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { runtimeEventOfNotice, type RuntimeEventProvenance } from '@goodvibes-jev/engine/sdk/platform/runtime/bootstrap';
 import type { NotificationFeed } from '../views/notifications-feed.ts';
@@ -44,6 +45,8 @@ export interface NoticeOptions extends Pick<JudgmentReadingOptions, 'signal' | '
 /** Keep one system notice in the history; the feed's toast bridge toasts it unless restored. */
 export function publishNotice(feed: NotificationFeed, text: string, options: NoticeOptions = {}): void | Promise<void> {
   if (text.trim().length === 0) return;
+  try { snapshotJudgmentInput({ text }); }
+  catch (error) { return Promise.reject(error); }
   const restored = options.restored === true;
   const assertCallerCurrent = options.assertCurrent;
   const callerSignal = options.signal;
@@ -72,13 +75,22 @@ export function publishNotice(feed: NotificationFeed, text: string, options: Not
     feed.recordNotice({ domain: parts.domain, level: event.level, title: event.title, body: event.detail, timestamp, restored, eventKey: event.key });
     return;
   }
+  const pending = feed.recordNotice({ ...parts, timestamp, restored, severityPending: true });
+  const revokePending = () => {
+    if (feed.list().includes(pending)) feed.dismiss(pending.key);
+  };
+  signal.addEventListener('abort', revokePending, { once: true });
+  if (signal.aborted) revokePending();
   return (async () => {
-    const reading = await readNoticeSeverity(text, { signal, assertCurrent: current });
-    reading.assertCurrent();
-    if (reading.severity === undefined) return;
-    reading.recordPublication();
-    current();
-    reading.assertCurrent();
-    feed.recordNotice({ ...parts, level: reading.severity, timestamp, restored });
+    try {
+      current();
+      const reading = await readNoticeSeverity(text, { signal, assertCurrent: current });
+      reading.assertCurrent();
+      if (reading.severity === undefined) return;
+      reading.recordPublication();
+      current();
+      reading.assertCurrent();
+      feed.settleNoticeSeverity(pending, reading.severity);
+    } finally { signal.removeEventListener('abort', revokePending); }
   })();
 }

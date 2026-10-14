@@ -111,7 +111,7 @@ for (const kind of ['route', 'harness'] as const) describe(`${kind} engine task-
     expect(ranked.reading.outcome).not.toBe('act');
     const entry = log.get(ranked.decisionId)!;
     expect(entry.status).toBe('answered');
-    expect(readingsOf(entry)).toMatchObject({ candidate: ranked.id, match: ranked.reading });
+    expect(readingsOf(entry)).toMatchObject({ candidate: expect.stringMatching(/^\d+$/), match: ranked.reading });
     expect(actionOf(log.get(body.judgment.selection.decisionId)!)).toBe('uncertain: no route published');
     expect(body.nextAction).not.toMatch(/human|approval|confirm|escalat/i);
   });
@@ -199,7 +199,7 @@ for (const kind of ['route', 'harness'] as const) describe(`${kind} engine task-
     else expect(await tool.execute({ ...args })).toMatchObject({ success: false });
     installJudgmentPort({ model: 'fixture', ask: async () => { throw new Error('fixture reading unavailable'); } });
     if (kind === 'route') await expect(tool.execute({ ...args })).rejects.toThrow('fixture reading unavailable');
-    else expect(await tool.execute({ ...args })).toMatchObject({ success: false, error: expect.stringContaining('fixture reading unavailable') });
+    else expect(await tool.execute({ ...args })).toMatchObject({ success: false, error: '[REDACTED]' });
   });
 
   test('catalog ranking failure is not swallowed as empty matches', async () => {
@@ -209,7 +209,7 @@ for (const kind of ['route', 'harness'] as const) describe(`${kind} engine task-
       return fake.port.ask(request);
     } });
     if (kind === 'route') await expect(caller(kind).execute({ ...args })).rejects.toThrow('fixture catalog unavailable');
-    else expect(await caller(kind).execute({ ...args })).toMatchObject({ success: false, error: expect.stringContaining('fixture catalog unavailable') });
+    else expect(await caller(kind).execute({ ...args })).toMatchObject({ success: false, error: '[REDACTED]' });
   });
 
   test('uses live channel registry IDs and rejects a reader inventing an absent named ID', async () => {
@@ -270,13 +270,12 @@ for (const kind of ['route', 'harness'] as const) describe(`${kind} engine task-
       // This is the real ranker's exact query/complete-candidate framing, not
       // the preceding invocation or named-target screening source.
       if (source.parts[0] !== args.query || source.parts.length < 2) return;
-      let workspaceSource = false;
-      for (const part of source.parts.slice(1)) {
-        const candidate: unknown = JSON.parse(part);
-        if (!Array.isArray(candidate) || candidate.length !== 3 || typeof candidate[0] !== 'string'
-          || typeof candidate[1] !== 'string') throw new Error('Original complete catalog candidate is missing');
-        if (native.some(({ action }) => action.id === candidate[0])) workspaceSource = true;
-      }
+      const candidates: unknown[] = source.parts.slice(1).map(part => JSON.parse(part));
+      // The planner also screens named-ID arrays with this same query prefix.
+      // Wait only on the distinct, complete rank-candidate tuple contract.
+      if (!candidates.every((candidate): candidate is [string, string, unknown] => Array.isArray(candidate)
+        && candidate.length === 3 && typeof candidate[0] === 'string' && typeof candidate[1] === 'string')) return;
+      const workspaceSource = candidates.some(candidate => native.some(({ action }) => action.id === candidate[0]));
       capturedBatches.push([...source.parts]); if (workspaceSource) started(); await gate;
     } });
     const pending = caller(kind, channels, context, screening.owner).execute({ ...args });

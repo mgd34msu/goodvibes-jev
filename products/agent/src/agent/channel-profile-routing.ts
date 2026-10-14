@@ -21,7 +21,7 @@
  * ShellPathService.
  */
 
-import { randomUUID } from 'node:crypto';
+import { agentRecordNonce } from '../utils/record-nonce.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import type { ShellPathService } from '@/runtime/index.ts';
 import { writeStoreJson } from '@/utils/store-file.ts';
@@ -319,7 +319,7 @@ export async function assignChannelToProfile(
 
   const draft: ChannelProfileRoute = {
     version: ROUTE_VERSION,
-    id: existing?.id ?? `cpr-${randomUUID().replaceAll('-', '_')}`,
+    id: existing?.id ?? `cpr-${agentRecordNonce()}`,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     surfaceKind,
@@ -418,7 +418,7 @@ export async function syncChannelProfileRoutes(
     else refused += 1;
     receipts.push({
       version: 1,
-      id: `crs-${now.replace(/[^0-9]/g, '').slice(0, 14)}-${randomUUID().slice(0, 8)}`,
+      id: `crs-${agentRecordNonce()}`,
       createdAt: now,
       routeId: route.id,
       surfaceKind: route.surfaceKind,

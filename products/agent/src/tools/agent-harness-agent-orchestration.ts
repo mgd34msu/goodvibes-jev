@@ -1,16 +1,16 @@
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { captureCatalogData, captureCatalogMethods, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureCatalogData, captureCatalogMethods, captureCatalogSnapshotGuard, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import type { ArtifactDescriptor } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import { capturePersonalOpsData, capturePersonalOpsSnapshot, assertPersonalOpsDataCurrent, protectPersonalOpsData } from './agent-harness-personal-ops-source.ts';
-import { judgmentInputCardProblem, snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { captureOwnedJson, judgmentInputCardProblem, snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { captureRedactionSource, containsIssuerCredential } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { modelReadingServicePath, withModelReadingSource } from './agent-harness-model-reading-source.ts';
 import { captureNativeReadModelObservation } from './agent-harness-autonomy-live-records.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import type { WorkPlanItem } from '@goodvibes-jev/engine/sdk/platform/workflow';
 import { AGENT_TEMPLATES, AGENT_TOOL_MODES, agentOrchestrationDecisionCards } from './agent-harness-agent-orchestration-policy.ts';
-import { remoteReadModelSnapshot, captureNativeRemoteReadModelSnapshot, settleNativeRemotePublisherSemantics, currentNativeRemoteReadModelSnapshot, bindNativeRemoteWorkspaceDisplays, assertNativeRemoteWorkspaceDisplaysCurrent, projectNativeRemoteWorkspaceDisplayReferences, captureNativeRemoteWorkspacePathSource, projectNativeRemoteWorkspacePathSource, type RemoteCaptureOutcomeRecord, type RemoteWorkspaceEvidenceRecord } from './agent-harness-remote-read-models.ts';
+import { remoteReadModelSnapshot, captureNativeRemoteReadModelSnapshot, settleNativeRemotePublisherSemantics, currentNativeRemoteReadModelSnapshot, bindNativeRemoteWorkspaceDisplays, projectNativeRemoteWorkspaceDisplayReferences, captureNativeRemoteWorkspacePathSource, projectNativeRemoteWorkspacePathSource, type RemoteCaptureOutcomeRecord, type RemoteWorkspaceEvidenceRecord } from './agent-harness-remote-read-models.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 import { projectSetupSmokeEvidenceFull } from './agent-harness-setup-smoke.ts';
 
@@ -144,12 +144,15 @@ function remoteReceiptArtifacts(context: CommandContext): readonly Record<string
       .filter((artifact) => isRemoteArtifactReceipt(artifact as unknown as Record<string, unknown>))
       .filter((artifact) => remoteRunnerId(artifact as unknown as Record<string, unknown>))
       .sort((left, right) => artifactCreatedAt(right) - artifactCreatedAt(left))
-      .slice(0, 20)
       .map((artifact) => artifact as unknown as Record<string, unknown>);
   } catch {
     throw new ToolInputProjectionError('unavailable');
   }
 }
+
+// Bind clock columns to the particular native array acquisition, not an id,
+// field name, or record object that another source could later reuse.
+const artifactReceiptClocks = new WeakMap<readonly Record<string, unknown>[], ReadonlySet<Record<string, unknown>>>();
 
 function remoteArtifacts(context: CommandContext): readonly Record<string, unknown>[] {
   const runtimeArtifacts = remoteRuntimeArtifacts(context);
@@ -158,7 +161,9 @@ function remoteArtifacts(context: CommandContext): readonly Record<string, unkno
     const id = readString(artifact.id);
     return !id || !seen.has(id);
   });
-  return [...runtimeArtifacts, ...receiptArtifacts];
+  const artifacts = [...runtimeArtifacts, ...receiptArtifacts];
+  artifactReceiptClocks.set(artifacts, new Set(receiptArtifacts));
+  return artifacts;
 }
 
 const orchestrationWorkspaceDisplays = new WeakMap<object, object>();
@@ -168,13 +173,14 @@ type OrchestrationRemoteSource =
   | { readonly kind: 'current'; readonly token: object };
 
 function remoteRuntimeSnapshot(context: CommandContext, source?: OrchestrationRemoteSource): RemoteRuntimeSnapshot {
+  const pools = remotePools(context), contracts = remoteContracts(context), artifacts = remoteArtifacts(context);
   const readModels = source?.kind === 'native' ? source.snapshot
     : source?.kind === 'current' ? currentNativeRemoteReadModelSnapshot(context, source.token)
     : remoteReadModelSnapshot(context);
   const result: RemoteRuntimeSnapshot = {
-    pools: remotePools(context),
-    contracts: remoteContracts(context),
-    artifacts: remoteArtifacts(context),
+    pools,
+    contracts,
+    artifacts,
     outcomes: readModels.outcomes,
     workspaces: readModels.workspaces,
     sourceCounts: readModels.sourceCounts,
@@ -353,6 +359,8 @@ function artifactsByRunnerId(artifacts: readonly Record<string, unknown>[]): Map
     entries.push(artifact);
     grouped.set(id, entries);
   }
+  const receipts = artifactReceiptClocks.get(artifacts);
+  for (const entries of grouped.values()) artifactReceiptClocks.set(entries, new Set(entries.filter(entry => receipts?.has(entry))));
   return grouped;
 }
 
@@ -699,16 +707,33 @@ export function agentOrchestrationCatalogStatus(context: CommandContext, toolReg
   };
 }
 
+function orchestrationSourceData(context: CommandContext, originalSources: readonly unknown[], toolRegistry?: ToolRegistry, remoteSource?: OrchestrationRemoteSource) {
+  const records = exportAgents(context), workItems = workPlanItems(context), sessionId = context.session.runtime.sessionId;
+  const tools = toolRegistry ? { tools: toolRegistry.getToolDefinitions() } : {};
+  // The current native token closes every producer callback, including these
+  // fact reads, before checking publisher records and bound workspace displays.
+  const remote = remoteRuntimeSnapshot(context, remoteSource);
+  return { originalSources, records, remote, workItems, sessionId, ...tools };
+}
+
 function orchestrationSources(context: CommandContext, originalSources: readonly unknown[], toolRegistry?: ToolRegistry, remoteSource?: OrchestrationRemoteSource) {
-  const records = exportAgents(context), remote = remoteRuntimeSnapshot(context, remoteSource);
-  const sources = captureCatalogData({ originalSources, records, remote, workItems: workPlanItems(context), sessionId: context.session.runtime.sessionId,
-    ...(toolRegistry ? { tools: toolRegistry.getToolDefinitions() } : {}) });
-  const token = orchestrationWorkspaceDisplays.get(remote);
+  const data = orchestrationSourceData(context, originalSources, toolRegistry, remoteSource);
+  const sources = captureCatalogData(data);
+  const receipts = artifactReceiptClocks.get(data.remote.artifacts);
+  artifactReceiptClocks.set(sources.remote.artifacts, new Set(sources.remote.artifacts.filter((_record, index) => {
+    const original = data.remote.artifacts[index];
+    return original !== undefined && receipts?.has(original);
+  })));
+  const token = orchestrationWorkspaceDisplays.get(data.remote);
   if (token) { bindNativeRemoteWorkspaceDisplays(token, sources.remote.workspaces); orchestrationWorkspaceDisplays.set(sources, token); }
   return sources;
 }
 
 function captureOrchestrationBackend(context: CommandContext, toolRegistry?: ToolRegistry) {
+  const methodGuards: (() => void)[] = [];
+  const retainMethods: typeof captureCatalogMethods = (subject, keys) => {
+    const guard = captureCatalogMethods(subject, keys); methodGuards.push(guard); return guard;
+  };
   // Canonical evidence uses complete acquired DTOs; public remote cards remain bounded.
   const originalSources: unknown[] = [];
   const nativeWorkspaceSources: { readonly index: number; readonly token: object }[] = [];
@@ -716,16 +741,16 @@ function captureOrchestrationBackend(context: CommandContext, toolRegistry?: Too
     const index = originalSources.length; originalSources.push(entry);
     if (workspaceSource) nativeWorkspaceSources.push({ index, token: captureNativeRemoteWorkspacePathSource(source, layout) });
   };
-  const guards = [captureCatalogMethods(context, ['ops', 'platform', 'workspace', 'session', 'clients']),
-    captureCatalogMethods(context.ops, ['agentManager', 'remoteRuntime']), captureCatalogMethods(context.platform, ['artifactStore', 'readModels']),
-    captureCatalogMethods(context.workspace, ['workPlanStore']), captureCatalogMethods(context.session, ['runtime']),
-    captureCatalogMethods(context.session.runtime, ['sessionId'])];
-  if (context.ops.agentManager) guards.push(captureCatalogMethods(context.ops.agentManager, ['exportState']));
-  if (context.ops.remoteRuntime) guards.push(captureCatalogMethods(context.ops.remoteRuntime, ['listContracts', 'listPools', 'listArtifacts']));
-  if (context.platform.artifactStore) guards.push(captureCatalogMethods(context.platform.artifactStore, ['list']));
-  if (context.workspace.workPlanStore) guards.push(captureCatalogMethods(context.workspace.workPlanStore, ['listItems']));
+  const guards = [retainMethods(context, ['ops', 'platform', 'workspace', 'session', 'clients']),
+    retainMethods(context.ops, ['agentManager', 'remoteRuntime']), retainMethods(context.platform, ['artifactStore', 'readModels']),
+    retainMethods(context.workspace, ['workPlanStore']), retainMethods(context.session, ['runtime']),
+    retainMethods(context.session.runtime, ['sessionId'])];
+  if (context.ops.agentManager) guards.push(retainMethods(context.ops.agentManager, ['exportState']));
+  if (context.ops.remoteRuntime) guards.push(retainMethods(context.ops.remoteRuntime, ['listContracts', 'listPools', 'listArtifacts']));
+  if (context.platform.artifactStore) guards.push(retainMethods(context.platform.artifactStore, ['list']));
+  if (context.workspace.workPlanStore) guards.push(retainMethods(context.workspace.workPlanStore, ['listItems']));
   const retainPublished = (subject: object, key: string, children?: readonly string[], workspaceSource = false, workspaceChildren: readonly string[] = []) => {
-    guards.push(captureCatalogMethods(subject, [key]));
+    guards.push(retainMethods(subject, [key]));
     const source = modelReadingServicePath(subject, [key]);
     if (children) {
       if (source !== undefined && source !== null) {
@@ -735,7 +760,7 @@ function captureOrchestrationBackend(context: CommandContext, toolRegistry?: Too
       return;
     }
     if (source instanceof Map) {
-      const methods = captureCatalogMethods(source, ['entries']);
+      const methods = retainMethods(source, ['entries']);
       const acquire = () => {
         methods();
         if (Object.getPrototypeOf(source) !== Map.prototype || Object.getOwnPropertyNames(source).length
@@ -751,7 +776,7 @@ function captureOrchestrationBackend(context: CommandContext, toolRegistry?: Too
     }
     if (source && typeof source === 'object' && !Array.isArray(source)) {
       const names = ['getSnapshot', 'snapshot', 'toJSON', 'listCaptureOutcomes', 'listOutcomes', 'listCaptures', 'listExports', 'listCloseouts', 'listArtifacts', 'listWorkspaceEvidence', 'listWorkspaceIsolation', 'listWorkspaces', 'listWorktrees', 'list'];
-      const methods = captureCatalogMethods(source, [...names, 'subscribe']); guards.push(methods);
+      const methods = retainMethods(source, [...names, 'subscribe']); guards.push(methods);
       let materialized = false;
       for (const name of names) {
         const read = modelReadingServicePath(source, [name]);
@@ -790,22 +815,26 @@ function captureOrchestrationBackend(context: CommandContext, toolRegistry?: Too
   }
   if (context.ops.remoteRuntime) retainPublished(context.ops.remoteRuntime, 'readModels', ['captureOutcomes', 'workspaces'], false, ['workspaces']);
   if (context.clients) {
-    guards.push(captureCatalogMethods(context.clients, ['operator']));
+    guards.push(retainMethods(context.clients, ['operator']));
     const operator = context.clients.operator;
     if (operator) {
-      guards.push(captureCatalogMethods(operator, ['remoteRuntime']));
+      guards.push(retainMethods(operator, ['remoteRuntime']));
       const remote: unknown = Reflect.get(operator, 'remoteRuntime');
       if (remote && typeof remote === 'object') { retainPublished(remote, 'captureOutcomes'); retainPublished(remote, 'workspaces', undefined, true); }
     }
   }
-  if (toolRegistry) guards.push(captureCatalogMethods(toolRegistry, ['getToolDefinitions']));
-  return { originalSources: captureCatalogData(originalSources), nativeWorkspaceSources, assertCurrent: () => { for (const guard of guards) guard(); } };
+  if (toolRegistry) guards.push(retainMethods(toolRegistry, ['getToolDefinitions']));
+  return { originalSources: captureCatalogData(originalSources), nativeWorkspaceSources, assertMethods: () => { for (const guard of methodGuards) guard(); }, assertCurrent: () => { for (const guard of guards) guard(); } };
 }
 
-function retainOrchestrationSources(context: CommandContext, sources: ReturnType<typeof orchestrationSources>, options: CatalogRankingOptions, assertBackend: () => void, toolRegistry?: ToolRegistry) {
+function retainOrchestrationSources(context: CommandContext, sources: ReturnType<typeof orchestrationSources>, options: CatalogRankingOptions, backend: ReturnType<typeof captureOrchestrationBackend>, toolRegistry?: ToolRegistry) {
   const assertOptions = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'retainCurrent']);
   const signal = options.signal, sourceOwner = options.sourceOwner, callerCurrent = options.assertCurrent, retainCurrent = options.retainCurrent;
-  const revision = JSON.stringify(sources);
+  // orchestrationSources owns and recursively freezes this complete private
+  // capture. It is reused by identity in each observation; its mutable native
+  // originals remain covered by backend and publisher guards below.
+  const { originalSources, ...sourceFacts } = sources;
+  const assertSnapshot = captureCatalogSnapshotGuard(sourceFacts);
   const nativeDisplayToken = orchestrationWorkspaceDisplays.get(sources);
   const assertOptionsCurrent = () => {
     assertOptions();
@@ -814,14 +843,62 @@ function retainOrchestrationSources(context: CommandContext, sources: ReturnType
   };
   const assertSourceCurrent = () => {
     assertOptionsCurrent();
-    assertBackend(); if (nativeDisplayToken) assertNativeRemoteWorkspaceDisplaysCurrent(nativeDisplayToken);
-    if (JSON.stringify(orchestrationSources(context, sources.originalSources, toolRegistry, nativeDisplayToken ? { kind: 'current', token: nativeDisplayToken } : undefined)) !== revision) throw new ToolInputProjectionError('stale');
-    if (nativeDisplayToken) assertNativeRemoteWorkspaceDisplaysCurrent(nativeDisplayToken);
-    assertBackend(); assertOptionsCurrent();
+    // The native token rechecks complete original and fresh publisher data
+    // before reading it. Fence method identity here before earlier fact reads.
+    if (nativeDisplayToken) backend.assertMethods(); else backend.assertCurrent();
+    // The current-token read is last and checks complete publisher and bound
+    // display state after all native method reads.
+    const { originalSources: currentOriginals, ...currentFacts } = orchestrationSourceData(context, originalSources, toolRegistry,
+      nativeDisplayToken ? { kind: 'current', token: nativeDisplayToken } : undefined);
+    if (currentOriginals !== originalSources) throw new ToolInputProjectionError('held');
+    assertSnapshot(currentFacts);
+    if (!nativeDisplayToken) backend.assertCurrent();
+    assertOptionsCurrent();
   };
-  retainCurrent?.call(options, assertSourceCurrent, 'agent.harness.agent-orchestration.sources');
   const assertCurrent = () => { assertOptionsCurrent(); callerCurrent?.call(options); assertOptionsCurrent(); assertSourceCurrent(); };
-  assertCurrent(); return assertCurrent;
+  assertCurrent();
+  return { assertCurrent, publish<T>(result: T): T {
+    // Until publication each reader is fenced by this exact source lifetime.
+    // Transfer the complete restriction to the parent only when it can own a
+    // result; feeding it back into the caller mid-operation repeats the proof.
+    assertCurrent();
+    retainCurrent?.call(options, assertSourceCurrent, 'agent.harness.agent-orchestration.sources');
+    assertCurrent(); return result;
+  } };
+}
+
+function producerClock(value: unknown): unknown {
+  if (typeof value !== 'number') return value;
+  const date = new Date(value);
+  if (!Number.isSafeInteger(value) || !Number.isFinite(date.getTime())) throw new ToolInputProjectionError('invalid');
+  return date.toISOString();
+}
+
+function projectOrchestrationArtifactClocks(artifacts: readonly Record<string, unknown>[]) {
+  const receipts = artifactReceiptClocks.get(artifacts);
+  return artifacts.map(original => {
+    const receipt = receipts?.has(original) === true;
+    const record = readObject(capturePersonalOpsData(original));
+    return { ...record, createdAt: producerClock(record.createdAt),
+      ...(receipt && Object.hasOwn(record, 'expiresAt') ? { expiresAt: producerClock(record.expiresAt) } : {}),
+      ...(!receipt && record.task && typeof record.task === 'object' ? { task: { ...readObject(record.task),
+        startedAt: producerClock(readObject(record.task).startedAt), completedAt: producerClock(readObject(record.task).completedAt) } } : {}) };
+  });
+}
+
+/** Only these native producer clock columns have structural time authority. */
+function projectOrchestrationPublisherClocks(facts: ReturnType<typeof orchestrationPublisherFacts>) {
+  // Make every own data field visible before clock projection uses spreads.
+  const complete = capturePersonalOpsData(facts) as typeof facts;
+  return { ...complete,
+    records: complete.records?.map(record => ({ ...record, startedAt: producerClock(record.startedAt), completedAt: producerClock(record.completedAt) })) ?? null,
+    remote: { ...complete.remote,
+      contracts: complete.remote.contracts.map(record => ({ ...record, createdAt: producerClock(record.createdAt) })),
+      artifacts: projectOrchestrationArtifactClocks(facts.remote.artifacts),
+    },
+    workItems: complete.workItems.map(record => ({ ...record, createdAt: producerClock(record.createdAt),
+      updatedAt: producerClock(record.updatedAt), completedAt: producerClock(record.completedAt) })),
+  };
 }
 
 function orchestrationPublisherFacts(context: CommandContext, toolRegistry?: ToolRegistry) {
@@ -846,17 +923,20 @@ async function captureOrchestrationPublisher(context: CommandContext, backend: R
     factsSnapshot.assertCurrent(facts); factsSnapshot.assertCurrent(orchestrationPublisherFacts(context, toolRegistry));
     backend.assertCurrent(); assertOptions(); signal?.throwIfAborted();
   };
-  const assertCurrent = () => {
-    assertSourceCurrent();
+  const assertCallerCurrent = () => {
     const result: unknown = callerCurrent?.call(options);
     if (result !== undefined) { void Promise.resolve(result).catch(() => {}); throw new ToolInputProjectionError('held'); }
+  };
+  const assertCurrent = () => {
+    assertSourceCurrent();
+    assertCallerCurrent();
     assertSourceCurrent();
   };
   assertCurrent();
   // Full original-source and Agent/native-fact admission precedes every remote
   // publisher reading. The actual native path owners select workspace paths.
   const originalProjection = projectOrchestrationOriginalSources(backend.originalSources, backend, assertCurrent);
-  const preflight = capturePersonalOpsData([{ evidence: { originalSources: backend.originalSources, ...facts } }]);
+  const preflight = capturePersonalOpsData([{ evidence: { originalSources: backend.originalSources, ...projectOrchestrationPublisherClocks(facts) } }]);
   const problem = judgmentInputCardProblem(preflight);
   if (problem) throw new ToolInputProjectionError(problem === 'card-material' ? 'held' : 'invalid');
   assertOrchestrationIssuerSafe(preflight);
@@ -864,15 +944,24 @@ async function captureOrchestrationPublisher(context: CommandContext, backend: R
   assertCurrent();
   const owned = captureNativeRemoteReadModelSnapshot(context);
   assertCurrent();
-  const snapshot = await settleNativeRemotePublisherSemantics(owned.token, { ...options, assertCurrent, assertSourceCurrent }, {
+  // Settlement already fences the caller with this exact source restriction.
+  // Pass the caller separately so it does not repeat the full publisher read
+  // inside the restriction that is already surrounding it.
+  // The native token retains the publisher's entire readset. The orchestration
+  // lifetime consumes that token at every boundary and transfers its enclosing
+  // guard to the parent at publication, so no parallel parent copy is needed.
+  const snapshot = await settleNativeRemotePublisherSemantics(owned.token, { ...options, retainCurrent: undefined, assertCurrent: assertCallerCurrent, assertSourceCurrent, assertSourceMethods: backend.assertMethods }, {
     projectPath: projectOwnedWorkspacePath,
     projectText: projectOrchestrationText,
+    projectRecordText: projectOrchestrationRecordText,
     protectFields: async (value, current) => {
       const redactionSource = captureRedactionSource();
       const assertRedactionCurrent = () => { current.signal?.throwIfAborted(); current.assertCurrent?.(); redactionSource.assertCurrent(); };
       assertRedactionCurrent();
       current.retainCurrent?.(redactionSource.assertCurrent, 'agent.remote-publisher.redaction');
-      const protectedValue = await protectPersonalOpsData(value, { ...current, assertCurrent: assertRedactionCurrent });
+      // The complete projection is private native data. Own it once; the
+      // publisher restrictions still recheck the original mutable sources.
+      const protectedValue = await protectPersonalOpsData(captureOwnedJson(value), { ...current, assertCurrent: assertRedactionCurrent });
       assertRedactionCurrent(); return orchestrationProtectedFields(protectedValue);
     },
   });
@@ -964,6 +1053,27 @@ function projectOrchestrationText(value: string): { readonly displayText: string
   const parsed = projectSetupSmokeEvidenceFull(value);
   assertNoUnownedPathMaterial(parsed.validationText);
   return parsed;
+}
+
+/** Traverse the complete detached native record without invoking publisher or
+ * caller callbacks per leaf. The caller fences this single synchronous read. */
+function projectOrchestrationRecordText(value: unknown): { readonly display: unknown; readonly validation: unknown } {
+  if (typeof value === 'string') {
+    const text = projectOrchestrationText(value);
+    return { display: text.displayText, validation: text.validationText };
+  }
+  if (Array.isArray(value)) {
+    const entries = value.map(projectOrchestrationRecordText);
+    return { display: entries.map(entry => entry.display), validation: entries.map(entry => entry.validation) };
+  }
+  if (value === null || typeof value !== 'object') return { display: value, validation: value };
+  const display: Record<string, unknown> = Object.create(null), validation: Record<string, unknown> = Object.create(null);
+  for (const [key, child] of Object.entries(value)) {
+    const projected = projectOrchestrationRecordText(child);
+    Object.defineProperty(display, key, { value: projected.display, enumerable: true });
+    Object.defineProperty(validation, key, { value: projected.validation, enumerable: true });
+  }
+  return { display, validation };
 }
 
 function projectOrchestrationOriginalSources(
@@ -1142,9 +1252,36 @@ function orchestrationDisplayRecord(value: unknown): Record<string, unknown> {
   return record;
 }
 
+/** Project only the native timestamps authored by agentDescriptor above.
+ * Keep their exact values private until the complete display has been screened. */
+function orchestrationOutputClocks(value: unknown) {
+  const clocks = new Map<string, number>();
+  const clockPath = (path: OrchestrationOutputPath) => AGENT_OUTPUT_ROOTS.some(root =>
+    path.length === root.length + 1 && root.every((part, index) => part === null ? typeof path[index] === 'number' : part === path[index])
+    && (path.at(-1) === 'startedAt' || path.at(-1) === 'completedAt'));
+  const visit = (entry: unknown, path: OrchestrationOutputPath, restore: boolean): unknown => {
+    const key = JSON.stringify(path);
+    if (restore && clocks.has(key)) {
+      const original = clocks.get(key)!;
+      if (entry !== producerClock(original)) throw new ToolInputProjectionError('held');
+      return original;
+    }
+    if (!restore && typeof entry === 'number' && clockPath(path)) {
+      clocks.set(key, entry); return producerClock(entry);
+    }
+    if (Array.isArray(entry)) return entry.map((child, index) => visit(child, [...path, index], restore));
+    if (entry === null || typeof entry !== 'object') return entry;
+    return Object.fromEntries(Object.entries(entry).map(([field, child]) => [field, visit(child, [...path, field], restore)]));
+  };
+  return { projected: visit(value, [], false), restore(display: unknown) {
+    return clocks.size === 0 ? display : visit(display, [], true);
+  } };
+}
+
 async function protectOrchestrationOutput(value: Record<string, unknown>, options: CatalogRankingOptions, nativeDisplayToken?: object): Promise<Record<string, unknown>> {
   options.signal?.throwIfAborted(); options.assertCurrent?.();
-  const original = capturePersonalOpsData(value), problem = judgmentInputCardProblem(original);
+  const clocks = orchestrationOutputClocks(capturePersonalOpsData(value));
+  const original = clocks.projected, problem = judgmentInputCardProblem(original);
   if (problem) throw new ToolInputProjectionError(problem === 'card-material' ? 'held' : 'invalid');
   assertOrchestrationIssuerSafe(original);
   const nativeDisplays = nativeDisplayToken ? projectNativeRemoteWorkspaceDisplayReferences(nativeDisplayToken, value, projectOwnedWorkspacePath,
@@ -1154,7 +1291,7 @@ async function protectOrchestrationOutput(value: Record<string, unknown>, option
   const redactionSource = captureRedactionSource();
   const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); redactionSource.assertCurrent(); };
   assertCurrent(); options.retainCurrent?.(redactionSource.assertCurrent, 'agent.harness.agent-orchestration.output-redaction'); assertCurrent();
-  const display = orchestrationDisplayRecord(capturePersonalOpsData(await protectPersonalOpsData(projected, { ...options, assertCurrent })));
+  const display = orchestrationDisplayRecord(capturePersonalOpsData(await protectPersonalOpsData(captureOwnedJson(projected), { ...options, assertCurrent })));
   assertCurrent(); assertOrchestrationOutputFacts(original, display); assertCurrent();
   const displaySnapshot = capturePersonalOpsSnapshot(display);
   const assertDisplay = () => displaySnapshot.assertCurrent(display);
@@ -1164,15 +1301,42 @@ async function protectOrchestrationOutput(value: Record<string, unknown>, option
   // Screen every returned field, including supplemental plan evidence, while
   // retaining its exact native association with the separately held display.
   const result = await withModelReadingSource({ fields: orchestrationProtectedFields(display) }, { ...options, assertCurrent: assertPublication }, async () => display);
-  assertPublication(); return result;
+  assertPublication();
+  const restored = orchestrationDisplayRecord(clocks.restore(result));
+  const restoredSnapshot = capturePersonalOpsSnapshot(restored);
+  const assertRestoredSource = () => { assertDisplay(); restoredSnapshot.assertCurrent(restored); redactionSource.assertCurrent(); };
+  const assertRestored = () => { assertPublication(); assertRestoredSource(); };
+  // The parent's readset invokes this restriction. Retaining its caller guard
+  // would make that same readset recursively invoke itself.
+  options.retainCurrent?.(assertRestoredSource, 'agent.harness.agent-orchestration.native-output');
+  assertRestored(); return restored;
+}
+
+function projectOrchestrationEntries(entries: ReturnType<typeof orchestrationEntries>) {
+  return entries.map(entry => ({ description: agentSearchText(entry.record), evidence: {
+    ...entry,
+    record: { ...readObject(capturePersonalOpsData(entry.record)), startedAt: producerClock(entry.record.startedAt), completedAt: producerClock(entry.record.completedAt) },
+    full: { ...entry.full, startedAt: producerClock(entry.full.startedAt), completedAt: producerClock(entry.full.completedAt) },
+    underlying: { ...entry.underlying,
+      contract: entry.underlying.contract ? { ...readObject(capturePersonalOpsData(entry.underlying.contract)), createdAt: producerClock(entry.underlying.contract.createdAt) } : undefined,
+      artifacts: projectOrchestrationArtifactClocks(entry.underlying.artifacts),
+      workItems: entry.underlying.workItems.map(item => ({ ...readObject(capturePersonalOpsData(item)), createdAt: producerClock(item.createdAt), updatedAt: producerClock(item.updatedAt), completedAt: producerClock(item.completedAt) })),
+    },
+  } }));
 }
 
 /** Complete retained originals use the same refusal floor before every output branch. */
 function assertOrchestrationOriginalFloor(entries: ReturnType<typeof orchestrationEntries>, backend: ReturnType<typeof captureOrchestrationBackend>, query = ''): void {
-  const originals = { originalSources: backend.originalSources, entries, descriptions: entries.map(entry => agentSearchText(entry.record)) };
+  const originals = { originalSources: backend.originalSources, entries: projectOrchestrationEntries(entries), descriptions: entries.map(entry => agentSearchText(entry.record)) };
   const rawProblem = judgmentInputCardProblem(originals);
   if (rawProblem) throw new ToolInputProjectionError(rawProblem === 'card-material' ? 'held' : 'invalid');
   assertOrchestrationIssuerSafe({ query, ...originals });
+}
+
+function admitOrchestrationQuery(query: string): void {
+  // Caller text cannot borrow a native path's projection authority, including
+  // when publisher settlement would otherwise read unrelated source evidence.
+  snapshotJudgmentInput(query); assertNoUnownedPathMaterial(query);
 }
 
 async function matchingAgents(entries: ReturnType<typeof orchestrationEntries>, query: string, options: CatalogRankingOptions, backend: ReturnType<typeof captureOrchestrationBackend>, nativeDisplayToken?: object) {
@@ -1182,30 +1346,14 @@ async function matchingAgents(entries: ReturnType<typeof orchestrationEntries>, 
     if (!options.sourceOwner) throw new ToolInputProjectionError('held');
     return { matches: entries.map(entry => ({ entry, judgment: undefined })), judgments: [], assertProtectedCurrent: undefined };
   }
-  const producerClock = (value: unknown) => {
-    if (typeof value !== 'number') return value;
-    const date = new Date(value);
-    if (!Number.isFinite(value) || !Number.isFinite(date.getTime())) throw new ToolInputProjectionError('invalid');
-    return date.toISOString();
-  };
+
   // Raw input cannot borrow a native display projection. Refuse it before
   // acquiring a redaction reader, including caller-supplied marker text.
-  snapshotJudgmentInput(query); assertNoUnownedPathMaterial(query);
+  admitOrchestrationQuery(query);
   if (!options.sourceOwner) throw new ToolInputProjectionError('held');
   assertOrchestrationOriginalFloor(entries, backend, query);
   const nativeSources = projectOrchestrationOriginalSources(entries[0]?.originalSources ?? backend.originalSources, backend, () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); });
-  const nativeEvidence = entries.map(entry => ({ description: agentSearchText(entry.record), evidence: {
-    ...entry,
-    record: { ...entry.record, startedAt: producerClock(entry.record.startedAt), completedAt: producerClock(entry.record.completedAt) },
-    full: { ...entry.full, startedAt: producerClock(entry.full.startedAt), completedAt: producerClock(entry.full.completedAt) },
-    underlying: { ...entry.underlying,
-      contract: entry.underlying.contract ? { ...entry.underlying.contract, createdAt: producerClock(entry.underlying.contract.createdAt) } : undefined,
-      artifacts: entry.underlying.artifacts.map(artifact => ({ ...artifact, createdAt: producerClock(artifact.createdAt), ...(artifact.task && typeof artifact.task === 'object' ? {
-        task: { ...readObject(artifact.task), startedAt: producerClock(readObject(artifact.task).startedAt), completedAt: producerClock(readObject(artifact.task).completedAt) },
-      } : {}) })),
-      workItems: entry.underlying.workItems.map(item => ({ ...item, createdAt: producerClock(item.createdAt), updatedAt: producerClock(item.updatedAt), completedAt: producerClock(item.completedAt) })),
-    },
-  } }));
+  const nativeEvidence = projectOrchestrationEntries(entries);
   const cardProblem = judgmentInputCardProblem(nativeEvidence);
   if (cardProblem) throw new ToolInputProjectionError(cardProblem === 'card-material' ? 'held' : 'invalid');
   const nativeDisplays = nativeDisplayToken ? projectNativeRemoteWorkspaceDisplayReferences(nativeDisplayToken, nativeEvidence, projectOwnedWorkspacePath,
@@ -1217,7 +1365,24 @@ async function matchingAgents(entries: ReturnType<typeof orchestrationEntries>, 
   assertCurrent();
   options.retainCurrent?.(redactionSource.assertCurrent, 'agent.harness.agent-orchestration.redaction');
   assertCurrent();
-  const protectedEvidence = await protectPersonalOpsData(safeEvidence, { ...options, assertCurrent });
+  if (!Array.isArray(safeEvidence)) throw new ToolInputProjectionError('held');
+  const sharedOriginals = safeEvidence.length ? readObject(readObject(safeEvidence[0]).evidence).originalSources : [];
+  const separateEvidence = safeEvidence.map(value => {
+    const entry = readObject(value), evidence = readObject(entry.evidence);
+    // These are projections of the same private native capture. Verify their
+    // complete equality before protecting the shared evidence once.
+    assertPersonalOpsDataCurrent(evidence.originalSources, sharedOriginals);
+    const { originalSources: _originals, ...facts } = evidence;
+    return { ...entry, evidence: facts };
+  });
+  const protectedSource = readObject(await protectPersonalOpsData(captureOwnedJson({ originalSources: sharedOriginals, entries: separateEvidence }), { ...options, assertCurrent }));
+  if (!Object.hasOwn(protectedSource, 'originalSources') || !Array.isArray(protectedSource.entries)) throw new ToolInputProjectionError('held');
+  // Every ranking candidate still receives the entire protected original
+  // evidence. Only the repeated privacy work is shared within this operation.
+  const protectedEvidence = protectedSource.entries.map(value => {
+    const entry = readObject(value);
+    return { ...entry, evidence: { ...readObject(entry.evidence), originalSources: protectedSource.originalSources } };
+  });
   assertCurrent();
   if (!Array.isArray(protectedEvidence) || protectedEvidence.length !== entries.length) throw new ToolInputProjectionError('held');
   assertOrchestrationIssuerSafe(protectedEvidence);
@@ -1225,8 +1390,8 @@ async function matchingAgents(entries: ReturnType<typeof orchestrationEntries>, 
   assertCurrent();
   // Association remains exact native order and identity. Complete protected
   // descriptions and source records are retained as ordered field evidence.
-  return rankHarnessCatalog(entries.map((entry, index) => ({ index, entry, fields: fields[index] })), query,
-    candidate => ({ id: agentId(candidate.entry.record), description: 'Visible Agent orchestration record', evidence: { fields: candidate.fields } }),
+  return rankHarnessCatalog(entries.map((entry, index) => ({ index, id: agentId(entry.record), fields: fields[index] })), query,
+    candidate => ({ id: candidate.id, description: 'Visible Agent orchestration record', evidence: { fields: candidate.fields } }),
     'agent.harness.agent-orchestration', { ...options, assertCurrent, requirePreservedSource: true })
     .then(result => {
       assertCurrent();
@@ -1244,23 +1409,24 @@ async function matchingAgents(entries: ReturnType<typeof orchestrationEntries>, 
 
 export async function agentOrchestrationSummary(context: CommandContext, toolRegistry: ToolRegistry, args: AgentHarnessAgentOrchestrationArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
   options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const query = readString(args.query);
+  if (query) admitOrchestrationQuery(query);
   const backend = captureOrchestrationBackend(context, toolRegistry);
   const remoteSource = await captureOrchestrationPublisher(context, backend, options, toolRegistry);
   const sources = orchestrationSources(context, backend.originalSources, toolRegistry, remoteSource);
-  const assertCurrent = retainOrchestrationSources(context, sources, options, backend.assertCurrent, toolRegistry);
+  const { assertCurrent, publish } = retainOrchestrationSources(context, sources, options, backend, toolRegistry);
   const records = sources.records;
   const toolRegistered = agentToolRegistered(toolRegistry);
   if (!records) {
-    return {
+    return publish({
       status: 'unavailable',
       reason: 'Visible Agent orchestration requires an Agent manager in the runtime.',
       modes: ['agent_orchestration', 'agent_orchestration_agent'],
       toolRegistered,
       policy: 'Read-only orchestration posture. Actual spawn/message/wait/cancel remains on the first-class agent tool.',
-    };
+    });
   }
   const counts = statusCounts(records);
-  const query = readString(args.query);
   const includeParameters = args.includeParameters === true;
   const selected = await matchingAgents(orchestrationEntries(sources), query, { ...options, assertCurrent }, backend, orchestrationWorkspaceDisplays.get(sources));
   const assertQueryCurrent = selected.assertProtectedCurrent ?? assertCurrent;
@@ -1300,7 +1466,7 @@ export async function agentOrchestrationSummary(context: CommandContext, toolReg
     policy: 'Read-only orchestration posture. Agent work must be visible, statused, cancellable, and tied to the user request; hidden fanout is blocked.',
   };
   const protectedResult = await protectOrchestrationOutput(result, { ...options, assertCurrent: assertQueryCurrent }, orchestrationWorkspaceDisplays.get(sources));
-  assertQueryCurrent(); return protectedResult;
+  assertQueryCurrent(); return publish(protectedResult);
 }
 
 export async function describeAgentOrchestrationAgent(context: CommandContext, args: AgentHarnessAgentOrchestrationArgs, options: CatalogRankingOptions = {}): Promise<AgentOrchestrationResolution> {
@@ -1313,15 +1479,16 @@ export async function describeAgentOrchestrationAgent(context: CommandContext, a
       usage: 'agent_orchestration_agent requires agentId, target, or query. Use mode:"agent_orchestration" to inspect visible agents.',
     };
   }
+  if (lookup.source !== 'agentId') admitOrchestrationQuery(lookup.input);
   const remoteSource = await captureOrchestrationPublisher(context, backend, options);
   const sources = orchestrationSources(context, backend.originalSources, undefined, remoteSource);
-  const assertCurrent = retainOrchestrationSources(context, sources, options, backend.assertCurrent);
+  const { assertCurrent, publish } = retainOrchestrationSources(context, sources, options, backend);
   const records = sources.records;
   if (!records) {
-    return {
+    return publish({
       status: 'missing_lookup',
       usage: 'Visible Agent orchestration requires an Agent manager in the runtime.',
-    };
+    });
   }
   const entries = orchestrationEntries(sources);
   const exact = entries.find(({ record }) => agentId(record) === lookup.input);
@@ -1332,7 +1499,7 @@ export async function describeAgentOrchestrationAgent(context: CommandContext, a
       { ...options, assertCurrent }, orchestrationWorkspaceDisplays.get(sources));
     assertCurrent();
     if (result.status !== 'found') throw new ToolInputProjectionError('held');
-    return { status: 'found', agent: orchestrationDisplayRecord(result.agent) };
+    return publish({ status: 'found', agent: orchestrationDisplayRecord(result.agent) });
   }
   const selected = lookup.source === 'agentId' ? { matches: [], judgments: [], assertProtectedCurrent: undefined }
     : await matchingAgents(entries, lookup.input, { ...options, assertCurrent }, backend, orchestrationWorkspaceDisplays.get(sources));
@@ -1343,16 +1510,16 @@ export async function describeAgentOrchestrationAgent(context: CommandContext, a
     const result = await protectOrchestrationOutput({ status: 'found', agent: { ...(args.includeParameters !== false ? matches[0]!.entry.full : matches[0]!.entry.summary), judgment: matches[0]!.judgment } }, { ...options, assertCurrent: assertQueryCurrent }, orchestrationWorkspaceDisplays.get(sources));
     assertQueryCurrent();
     if (result.status !== 'found') throw new ToolInputProjectionError('held');
-    return { status: 'found', agent: orchestrationDisplayRecord(result.agent) };
+    return publish({ status: 'found', agent: orchestrationDisplayRecord(result.agent) });
   }
   if (matches.length > 0) {
     const result = await protectOrchestrationOutput({ status: 'ambiguous', input: lookup.input, candidates: matches.slice(0, 8).map(({ entry, judgment }) => ({ ...entry.summary, judgment })) }, { ...options, assertCurrent: assertQueryCurrent }, orchestrationWorkspaceDisplays.get(sources));
     assertQueryCurrent();
     if (result.status !== 'ambiguous' || result.input !== lookup.input || !Array.isArray(result.candidates)) throw new ToolInputProjectionError('held');
-    return { status: 'ambiguous', input: lookup.input, candidates: result.candidates.map(orchestrationDisplayRecord) };
+    return publish({ status: 'ambiguous', input: lookup.input, candidates: result.candidates.map(orchestrationDisplayRecord) });
   }
-  return {
+  return publish({
     status: 'missing_lookup',
     usage: `Unknown visible agent ${lookup.input}. Use mode:"agent_orchestration" to inspect visible agents.`,
-  };
+  });
 }

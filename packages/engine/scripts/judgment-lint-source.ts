@@ -35,9 +35,9 @@ function constInitializer(declaration: ts.Declaration): ts.Expression | undefine
 }
 
 /** A single-file checker supplies lexical bindings, without imports or disk IO. */
-function sourceContext(text: string): { file: ts.SourceFile; checker: ts.TypeChecker } {
-  const filename = '/judgment-lint-input.ts';
-  const file = ts.createSourceFile(filename, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+function sourceContext(text: string, tsx: boolean): { file: ts.SourceFile; checker: ts.TypeChecker } {
+  const filename = tsx ? '/judgment-lint-input.tsx' : '/judgment-lint-input.ts';
+  const file = ts.createSourceFile(filename, text, ts.ScriptTarget.Latest, true, tsx ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const host: ts.CompilerHost = {
     getSourceFile: (name) => name === filename ? file : undefined,
     getDefaultLibFileName: () => '', writeFile: () => {}, getCurrentDirectory: () => '/',
@@ -52,7 +52,7 @@ function sourceContext(text: string): { file: ts.SourceFile; checker: ts.TypeChe
 
 /** Registered-use findings for one source file. */
 export function sourceFindings(path: string, text: string, registered: ReadonlySet<string>): LintFinding[] {
-  const { file, checker } = sourceContext(text);
+  const { file, checker } = sourceContext(text, (/\.[jt]sx$/).test(path));
   const findings: LintFinding[] = [];
   const at = (node: ts.Node): string => `${path}:${file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1}`;
   const report = (node: ts.Node, message: string): void => { findings.push({ rule: 'registered-use', where: at(node), message }); };
@@ -85,6 +85,20 @@ export function sourceFindings(path: string, text: string, registered: ReadonlyS
     const symbol = symbolOf(identifier);
     return symbol?.valueDeclaration;
   };
+
+  function calleeName(expression: ts.Expression): string | undefined {
+    expression = unwrap(expression);
+    if (ts.isIdentifier(expression)) {
+      const declaration = symbolOf(expression)?.declarations?.[0];
+      if (declaration && ts.isImportSpecifier(declaration)) return (declaration.propertyName ?? declaration.name).text;
+      return expression.text;
+    }
+    if (ts.isPropertyAccessExpression(expression) && ts.isIdentifier(expression.expression)) {
+      const declaration = symbolOf(expression.expression)?.declarations?.[0];
+      if (declaration && ts.isNamespaceImport(declaration)) return expression.name.text;
+    }
+    return undefined;
+  }
 
   // Only private, directly called functions have a closed set of invocations.
   // Exporting, aliasing, passing or returning one makes its parameter unknown.
@@ -136,6 +150,10 @@ export function sourceFindings(path: string, text: string, registered: ReadonlyS
     if (declaration === undefined || !ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name)) return undefined;
     const initializer = constInitializer(declaration);
     if (initializer === undefined) return undefined;
+    // Freezing a plain data header before it escapes makes its own name
+    // immutable. Nested policy data is checked by the runtime owner, not this
+    // registration lint. A shadowed Object or accessor is never this proof.
+    if (frozenArgument(initializer) !== undefined) return initializer;
     const statement = declaration.parent.parent;
     if (ts.isVariableStatement(statement) && statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) return undefined;
     const symbol = symbolOf(declaration.name);
@@ -148,11 +166,19 @@ export function sourceFindings(path: string, text: string, registered: ReadonlyS
         || ts.isNonNullExpression(use.parent)) use = use.parent;
       const parent = use.parent;
       if (ts.isSpreadAssignment(parent) && parent.expression === use) continue;
-      if (ts.isCallExpression(parent) && ts.isIdentifier(parent.expression)
-        && parent.expression.text === 'askAs' && parent.arguments[1] === use) continue;
+      if (ts.isCallExpression(parent) && calleeName(parent.expression) === 'askAs' && parent.arguments[1] === use) continue;
       return undefined;
     }
     return initializer;
+  }
+
+  function frozenArgument(expression: ts.Expression): ts.Expression | undefined {
+    expression = unwrap(expression);
+    if (!ts.isCallExpression(expression) || expression.arguments.length !== 1) return undefined;
+    const callee = unwrap(expression.expression);
+    return ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression)
+      && callee.expression.text === 'Object' && callee.name.text === 'freeze'
+      && symbolOf(callee.expression) === undefined ? expression.arguments[0] : undefined;
   }
 
   function namesOf(expression: ts.Expression, seen: ReadonlySet<ts.Node> = new Set()): string[] | undefined {
@@ -184,6 +210,8 @@ export function sourceFindings(path: string, text: string, registered: ReadonlyS
     expression = unwrap(expression);
     if (seen.has(expression)) return undefined;
     const next = new Set(seen).add(expression);
+    const frozen = frozenArgument(expression);
+    if (frozen !== undefined) return propertiesOf(frozen, next);
     if (ts.isIdentifier(expression)) {
       const initializer = privateHeaderInitializer(expression);
       return initializer === undefined ? undefined : propertiesOf(initializer, next);
@@ -215,6 +243,8 @@ export function sourceFindings(path: string, text: string, registered: ReadonlyS
     expression = unwrap(expression);
     if (seen.has(expression)) return new Set();
     const next = new Set(seen).add(expression);
+    const frozen = frozenArgument(expression);
+    if (frozen !== undefined) return declaredKeys(frozen, next);
     if (ts.isIdentifier(expression)) {
       const declaration = declarationOf(expression);
       const initializer = declaration === undefined ? undefined : constInitializer(declaration);
@@ -249,8 +279,8 @@ export function sourceFindings(path: string, text: string, registered: ReadonlyS
       for (const property of parent.properties) {
         if (!ts.isSpreadAssignment(property)) continue;
         const expression = unwrap(property.expression);
-        if (!ts.isCallExpression(expression) || !ts.isIdentifier(expression.expression)
-          || expression.expression.text !== 'decisionHeader' || expression.arguments[0] === undefined) continue;
+        if (!ts.isCallExpression(expression) || calleeName(expression.expression) !== 'decisionHeader'
+          || expression.arguments[0] === undefined) continue;
         const spec = propertiesOf(expression.arguments[0]);
         const names = decisionNames(expression.arguments[0]);
         if (spec?.has('fixtures') && spec.get('name') === askedName && names !== undefined
@@ -279,15 +309,16 @@ export function sourceFindings(path: string, text: string, registered: ReadonlyS
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
       const [first] = node.arguments;
-      const callee = node.expression;
-      if (ts.isIdentifier(callee) && (DEFINER.test(callee.text) || callee.text === 'decisionHeader') && first !== undefined) {
-        checkDecision(node, first, callee.text);
+      const callee = unwrap(node.expression);
+      const name = calleeName(callee);
+      if (name !== undefined && (DEFINER.test(name) || name === 'decisionHeader') && first !== undefined) {
+        checkDecision(node, first, name);
       }
       if (ts.isPropertyAccessExpression(callee) && callee.name.text === 'ask' && first !== undefined
         && ts.isObjectLiteralExpression(first) && first.properties.some((property) => named(property) === 'questions')) {
         report(node, 'asks Jev with a request built inline, outside a registered decision');
       }
-      if (ts.isIdentifier(callee) && callee.text === 'askAs' && !insideDefiner(node) && !insideCustomDecision(node)) {
+      if (name === 'askAs' && !insideDefiner(node) && !insideCustomDecision(node)) {
         report(node, 'calls askAs outside a decision definer (a `function define*`), so the call is attributed to no registered decision');
       }
     }

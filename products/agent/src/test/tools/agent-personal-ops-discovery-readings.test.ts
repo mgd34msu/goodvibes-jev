@@ -96,7 +96,7 @@ describe('PersonalOps canonical discovery and complete source ownership', () => 
     const guards: Array<() => void> = [];
     const fake = fakePort((name, question) => name === 'lane' ? choiceAnswer(question, 'neither', 0.99) : (() => { throw new Error(name); })());
     installJudgmentPort(fake.port);
-    expect(await readPersonalOpsTool(contract(), { ...options(), retainCurrent: guard => guards.push(guard) })).toBeNull();
+    expect(await readPersonalOpsTool(contract(), { ...options(), retainCurrent: guard => { guards.push(guard); } })).toBeNull();
     for (const guard of guards) guard();
     installJudgmentPort(fakePort(() => noulAnswer(0.01)).port);
     expect(() => guards.forEach(guard => guard())).toThrow();

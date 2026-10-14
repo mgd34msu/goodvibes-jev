@@ -1,3 +1,5 @@
+import { useConversationReadings } from './_helpers/conversation-readings.js';
+useConversationReadings();
 /**
  * The conversation-first gate at the shared spawn boundary, end to end.
  *
@@ -228,7 +230,7 @@ describe('conversation gate at the surface spawn boundary', () => {
   test('a gate configuration changed during the reading cannot publish or start work', async () => {
     const harness = buildHarness();
     beforeIntentAnswer = () => harness.setConfig('conversationGate.mode', 'off');
-    await expect(harness.send('fix the login bug')).rejects.toThrow('Conversation gate source is no longer current');
+    await expect(harness.send('fix the login bug')).rejects.toThrow(/(?:Conversation gate source|judgment reading owner) is no longer current/);
     expect(harness.spawns).toHaveLength(0);
     expect(harness.proposals.listPending()).toHaveLength(0);
     expect(harness.notices).toHaveLength(0);

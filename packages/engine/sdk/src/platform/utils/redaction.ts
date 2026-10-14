@@ -3,9 +3,9 @@ import { FieldKindReader } from './field-kind-reading.js';
 import { fieldKind, type FieldKind } from './batteries/field-kind.js';
 import { assertRedactionCurrent, ProfileDistinctiveReader, readCredentialProjection, readResidualProjection, type ProfileRedactionRole } from './redaction-reading.js';
 import { captureJudgmentPort, type JudgmentPortCapture, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
-import { assertJudgmentInput, captureOwnedJson, retainOwnedJson, judgmentInputProblem, snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { assertJudgmentInput, captureOwnedJson, retainOwnedJson, judgmentInputProblem, snapshotJudgmentEvidence, snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { captureStructuredCredentialReferenceConfigValue } from '../config/structured-credential-config.js';
-import type { RedactionPart } from './batteries/redaction.js';
+import { redactionCredential, exportCredential, residualCredential, profileDistinctive, type RedactionPart } from './batteries/redaction.js';
 
 const fieldKinds = new FieldKindReader();
 const profileRoles = new ProfileDistinctiveReader();
@@ -549,7 +549,7 @@ export function redactSensitiveDataAsync(text: string, options: RedactionOptions
 }
 
 async function redactTextSource(text: string, options: RedactionOptions,
-  operationFields?: OperationFieldReadings): Promise<string> {
+  operationFields?: OperationFieldReadings, retainCurrent?: (assertCurrent: () => void) => void): Promise<string> {
   if (text.length === 0) return text;
   const signal = options.signal, ownerCurrent = options.assertCurrent, purpose = options.purpose ?? 'redaction';
   let source: ReturnType<typeof captureRedactionSource>;
@@ -623,7 +623,13 @@ async function redactTextSource(text: string, options: RedactionOptions,
             lineHasCredential ||= reading?.line === true;
             // A role reading cannot release literal authentication/card syntax
             // nested inside an otherwise ordinary opaque value.
-            if (reading?.span === false && judgmentInputProblem(span.value) === undefined) replacement = span.value;
+            if (reading?.span === false) {
+              // Observational egress may already contain our public redaction
+              // tokens. Actual nested credentials and cards still withhold the
+              // complete span; this never changes action-input admission.
+              try { snapshotJudgmentEvidence(span.value); replacement = span.value; }
+              catch { /* Preserve the withheld replacement. */ }
+            }
           }
           hasProtectedSpan ||= replacement !== span.value;
           assertCurrent();
@@ -641,6 +647,7 @@ async function redactTextSource(text: string, options: RedactionOptions,
     }
     assertCurrent(); kinds.assertCurrent();
     const result = output.join('\n');
+    retainCurrent?.(() => { assertCurrent(); kinds.assertCurrent(); });
     if (purpose === 'redaction' && operationFields === undefined) {
       if (settledText.size >= 128) {
         const oldest = settledText.keys().next();
@@ -689,7 +696,29 @@ export async function redactStructuredDataAsync(value: unknown, options: Redacti
     | { readonly kind: 'reference'; readonly value: ReturnType<typeof captureStructuredCredentialReferenceConfigValue> };
   const nativeReferences = new Map<string, { readonly path: readonly string[]; readonly capture: ReferenceCapture }>();
   let readingOwner: JudgmentPortCapture | undefined;
+  let assertTextContracts: () => void;
   try {
+    // Repeated text may share a result only while every defining contract is
+    // still the one captured for this operation, including profile roles.
+    const contracts = [redactionCredential, exportCredential, residualCredential, profileDistinctive].map(battery => {
+      const keys = ['name', 'version', 'model', 'items', 'run'] as const;
+      const prototype = Object.getPrototypeOf(battery);
+      const descriptors = keys.map(key => Object.getOwnPropertyDescriptor(battery, key));
+      if (descriptors.some(descriptor => descriptor && !('value' in descriptor))) throw new Error('Redaction contract is unavailable');
+      const data = retainOwnedJson({ name: battery.name, version: battery.version, model: battery.model, items: battery.items });
+      return () => {
+        if (Object.getPrototypeOf(battery) !== prototype) throw new Error('Redaction contract is no longer current');
+        for (const [index, key] of keys.entries()) {
+          const original = descriptors[index], current = Object.getOwnPropertyDescriptor(battery, key);
+          if (original === undefined ? current !== undefined : current === undefined || !('value' in current)
+            || !Object.is(current.value, original.value) || current.writable !== original.writable
+            || current.enumerable !== original.enumerable || current.configurable !== original.configurable)
+            throw new Error('Redaction contract is no longer current');
+        }
+        data.assertCurrent();
+      };
+    });
+    assertTextContracts = () => { for (const assertContract of contracts) assertContract(); };
     source = captureRedactionSource(); retainedValue = retainOwnedJson(value); snapshot = retainedValue.snapshot;
     // Only native config and the support bundle's root config envelope carry
     // this declaration. An arbitrary extension suffix grants no exemption.
@@ -714,6 +743,7 @@ export async function redactStructuredDataAsync(value: unknown, options: Redacti
   const assertCurrent = () => { if (readingOwner) readingOwner.assertCurrent(); else assertSource(); };
   const reading = { ...options, assertCurrent };
   const fields = operationFieldReadings(reading);
+  const texts = new Map<string, { readonly value: string; readonly assertCurrent: () => void }>();
   function protectKey(key: string): string {
     let protectedKey = applyPatterns(key, [...ISSUER_CREDENTIAL_PATTERNS, ...currentIdentityPatterns()]);
     for (const secret of secretLiterals) protectedKey = protectedKey.replaceAll(secret, '[REDACTED]');
@@ -747,7 +777,21 @@ export async function redactStructuredDataAsync(value: unknown, options: Redacti
     if (typeof entry === 'string') {
       // A fixed credential-reference sentinel, never a raw secret value.
       if (entry === '<redacted>') return entry;
-      return redactTextSource(entry, reading, fields);
+      assertTextContracts();
+      const cached = texts.get(entry);
+      if (cached) { cached.assertCurrent(); return cached.value; }
+      let current: (() => void) | undefined;
+      const result = await redactTextSource(entry, reading, fields, guard => { current = guard; });
+      assertTextContracts();
+      if (current) {
+        current();
+        if (texts.size >= 256) {
+          const oldest = texts.keys().next();
+          if (!oldest.done) texts.delete(oldest.value);
+        }
+        texts.set(entry, { value: result, assertCurrent: current });
+      }
+      return result;
     }
     if (Array.isArray(entry)) {
       const output: unknown[] = [];
@@ -761,10 +805,19 @@ export async function redactStructuredDataAsync(value: unknown, options: Redacti
         const batch = entries.slice(offset, offset + 4);
         // Drain the bounded group even when one source is retired while awaiting.
         const readings = await Promise.allSettled(batch.map(async ([key]): Promise<FieldReading> => {
-          const safeKey = protectKey(key);
+          let safeKey = protectKey(key);
           const childPath = [...path, key];
           if (nativeReferences.has(JSON.stringify(childPath))) return { kind: 'reference', safeKey,
             value: safeKey === key ? protectReference(childPath) : '[REDACTED]' };
+          // Property names are source text too. An assignment-shaped name must
+          // pass the same withheld-span readings before it can become a field
+          // role question or an output key. Reuse only this operation's owned
+          // complete-text reading, including its source/contract restrictions.
+          if (safeKey === key && outgoingSpans(key).length > 0) {
+            const protectedKey = await visit(key);
+            if (typeof protectedKey !== 'string') throw new Error('Protected field name is unavailable');
+            safeKey = protectedKey;
+          }
           return { kind: 'semantic', safeKey, fieldKind: safeKey === key ? await fields.read(key) : undefined };
         }));
         assertCurrent();
@@ -774,7 +827,7 @@ export async function redactStructuredDataAsync(value: unknown, options: Redacti
           const reading = result.value, { safeKey } = reading;
           const child: unknown = descriptor.value;
           let outputKey = safeKey, suffix = 1;
-          while (Object.hasOwn(output, outputKey)) outputKey = `${safeKey}_${suffix++}`;
+          while (Object.hasOwn(output, outputKey)) outputKey = `${safeKey} [${suffix++}]`;
           Object.defineProperty(output, outputKey, { value: reading.kind === 'reference' ? reading.value
             : child === '<redacted>' ? child : reading.fieldKind === undefined ? '[REDACTED]'
               : reading.fieldKind === 'secret' ? protectedFieldValue(child)
@@ -792,14 +845,16 @@ export async function redactStructuredDataAsync(value: unknown, options: Redacti
       else if (entry !== null && typeof entry === 'object') for (const [key, child] of Object.entries(entry)) {
         const childPath = [...path, key];
         if (nativeReferences.has(JSON.stringify(childPath))) continue;
-        if (protectKey(key) === key) names.push(key);
+        // Candidate values embedded in a name stay local until visit protects
+        // them. They must never enter the initial field-name admission.
+        if (protectKey(key) === key && outgoingSpans(key).length === 0) names.push(key);
         collect(child, childPath);
       }
     }
     collect(snapshot); assertJudgmentInput({ fields: names }); assertCurrent();
     try { readingOwner = captureJudgmentPort('engine.redaction.field-kind', { ...options, assertCurrent: assertSource }); }
     catch { /* Unavailable field readings withhold each value while preserving structure. */ }
-    const result = await visit(snapshot); assertCurrent(); fields.assertCurrent(); return result;
+    const result = await visit(snapshot); assertCurrent(); fields.assertCurrent(); assertTextContracts(); return result;
   }
   catch { return '[REDACTED]'; }
   finally { fields.dispose(); }
@@ -832,20 +887,23 @@ function redactStructuredDataInternal(
     }
     const output: Record<string, unknown> = {};
     for (const [entryKey, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
-      const safeKey = applyPatterns(entryKey, [...ISSUER_CREDENTIAL_PATTERNS, ...currentIdentityPatterns()]);
+      let safeKey = applyPatterns(entryKey, [...ISSUER_CREDENTIAL_PATTERNS, ...currentIdentityPatterns()]);
+      if (safeKey === entryKey && outgoingSpans(entryKey).length > 0) safeKey = redactSensitiveData(entryKey);
+      let outputKey = safeKey, suffix = 1;
+      while (Object.hasOwn(output, outputKey)) outputKey = `${safeKey} [${suffix++}]`;
       const kind = safeKey === entryKey ? readProtectedFieldKind(entryKey) : undefined;
       if (kind === undefined || kind === 'secret' || !('value' in descriptor)) {
-        Object.defineProperty(output, safeKey, { value: '[REDACTED]', enumerable: true });
+        Object.defineProperty(output, outputKey, { value: '[REDACTED]', enumerable: true });
         continue;
       }
       // A profile-shaped key is redacted whatever it holds, including an object:
       // a structured postal address is exactly the shape whose parts would
       // otherwise each be walked and each pass the string checks individually.
       if (kind === 'owner_profile') {
-        Object.defineProperty(output, safeKey, { value: '[REDACTED_PROFILE]', enumerable: true });
+        Object.defineProperty(output, outputKey, { value: '[REDACTED_PROFILE]', enumerable: true });
         continue;
       }
-      Object.defineProperty(output, safeKey, { value: redactStructuredDataInternal(descriptor.value, entryKey, seen), enumerable: true });
+      Object.defineProperty(output, outputKey, { value: redactStructuredDataInternal(descriptor.value, entryKey, seen), enumerable: true });
     }
     seen.delete(value);
     return output;

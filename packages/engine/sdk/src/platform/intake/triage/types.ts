@@ -16,7 +16,10 @@ export interface TriageBinding {
   readonly inputHash: string;
   readonly battery: string;
   readonly batteryVersion: number;
+  /** Requested model or alias. */
   readonly model: string;
+  /** Resolved response model, present when the request was answered. */
+  readonly actualModel?: string;
 }
 export interface TriageEvidence extends TriageBinding {
   readonly status: 'settled';

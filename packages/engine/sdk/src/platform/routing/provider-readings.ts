@@ -1,3 +1,4 @@
+import { retainStrictJudgmentJson, prepareJudgmentResult } from '../gate/judgment-result.js';
 /**
  * The provider protocol readings as the adapters call them. Each reads the
  * wording or label Jev judges (batteries/provider.ts) and remembers what it
@@ -5,10 +6,11 @@
  * Status codes, well-known ports and documented wire values stay with the
  * callers as code.
  */
+import { requireActingReading } from '../types/judgment-held.js';
 import type { YesNoReading } from '@goodvibes-jev/judgment';
 import { captureJudgmentPort, JudgmentAuthorityRetiredError, judgmentPort, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { captureNormalizationSource } from '../utils/error-display.js';
-import { JudgmentInputError } from '../gate/judgment-input.js';
+import { assertJudgmentInput, JudgmentInputError } from '../gate/judgment-input.js';
 import {
   alternateApi,
   contentPartKind,
@@ -19,7 +21,7 @@ import {
   type ReasoningFamily,
 } from './batteries/provider.js';
 
-const holds = (reading: YesNoReading): boolean => reading.verdict === 'yes' && reading.outcome === 'act';
+const holds = (reading: YesNoReading): boolean => requireActingReading(reading).verdict === 'yes';
 
 /** A bounded memo of settled readings; a failed reading is forgotten and asked again. */
 export class ReadingMemo<V> {
@@ -36,7 +38,7 @@ export class ReadingMemo<V> {
     if (this.#values.size >= this.#limit) this.#values.delete(this.#values.keys().next().value!);
     const pending = read();
     this.#values.set(key, pending);
-    pending.catch(() => this.#values.delete(key));
+    pending.catch(() => { if (this.#values.get(key) === pending) this.#values.delete(key); });
     return pending;
   }
 
@@ -52,24 +54,27 @@ export interface ServerProbeEvidence {
   readonly modelIds: readonly string[];
 }
 
-/** How many model ids the server identity reading sees. */
-const PROBE_MODEL_IDS = 20;
-
 export type LocalServerSoftware = 'lm-studio' | 'vllm' | 'llamacpp' | 'localai' | 'tgi' | 'ollama' | 'unknown';
 
 /** Which server software answered a probe; 'unknown' unless the reading is strong enough to act on. */
 export async function readLocalServerIdentity(evidence: ServerProbeEvidence, site: string,
   options: JudgmentReadingOptions = {}): Promise<LocalServerSoftware> {
-  const owner = captureJudgmentPort(site, options);
+  const original = retainStrictJudgmentJson(evidence);
+  assertJudgmentInput(original.snapshot);
+  const owner = captureJudgmentPort(site, { ...options, prepareResultCapture: prepareJudgmentResult,
+    assertCurrent: () => { original.assertCurrent(); options.assertCurrent?.(); } });
   owner.assertCurrent();
-  const dispatched = await localServerIdentity.route(owner.port, {
+  const state = {
     evidence_kind: 'probe',
-    port: evidence.port,
-    headers: { ...evidence.headers },
-    model_ids: evidence.modelIds.slice(0, PROBE_MODEL_IDS),
-  }, { site, signal: owner.signal, beforeAttempt: owner.assertCurrent });
+    port: original.snapshot.port,
+    headers: { ...original.snapshot.headers },
+    model_ids: [...original.snapshot.modelIds],
+  };
+  assertJudgmentInput(state);
+  const dispatched = await localServerIdentity.route(owner.port, state, { site, signal: owner.signal, beforeAttempt: owner.assertCurrent });
   owner.assertCurrent();
-  const route = dispatched.reading.outcome === 'act' ? dispatched.route : 'unknown';
+  requireActingReading(dispatched.reading);
+  const route = dispatched.route;
   const software: LocalServerSoftware = route === 'lm-studio' || route === 'vllm' || route === 'llamacpp'
     || route === 'localai' || route === 'tgi' || route === 'ollama' ? route : 'unknown';
   dispatched.recordAction(`server:${software}`);
@@ -77,8 +82,6 @@ export async function readLocalServerIdentity(evidence: ServerProbeEvidence, sit
   return software;
 }
 
-/** Long error bodies say what they mean in their opening. */
-const MAX_ERROR_CHARS = 1_500;
 let alternateApiMemos = new WeakMap<object, ReadingMemo<boolean>>();
 
 /**
@@ -94,9 +97,10 @@ export async function readsAsAlternateApi(error: { readonly status?: number | un
     throw new JudgmentInputError('unsupported-input');
   const sourceCurrent = captureNormalizationSource(error, options);
   sourceCurrent();
-  const owner = captureJudgmentPort(site, { ...options, assertCurrent: sourceCurrent });
+  const owner = captureJudgmentPort(site, { ...options, assertCurrent: sourceCurrent, prepareResultCapture: prepareJudgmentResult });
   owner.assertCurrent();
-  const state = { ...(error.status === undefined ? {} : { status: error.status }), error: error.message.slice(0, MAX_ERROR_CHARS) };
+  const state = { ...(error.status === undefined ? {} : { status: error.status }), error: error.message };
+  assertJudgmentInput(state);
   owner.assertCurrent();
   let memo = alternateApiMemos.get(owner.identity);
   if (!memo) { memo = new ReadingMemo<boolean>(256); alternateApiMemos.set(owner.identity, memo); }
@@ -122,80 +126,96 @@ export async function readsAsAlternateApi(error: { readonly status?: number | un
   } finally { owner.signal.removeEventListener('abort', abort); }
 }
 
-const reasoningRejectionMemo = new ReadingMemo<boolean>(256);
+interface ProtocolCache {
+  readonly reasoningRejection: ReadingMemo<boolean>;
+  readonly partMemo: ReadingMemo<boolean>;
+  readonly partKinds: Map<string, boolean>;
+  readonly stopMemo: ReadingMemo<ReadStopReason>;
+  readonly familyMemo: ReadingMemo<ReasoningFamily | null>;
+  readonly families: Map<string, ReasoningFamily | null>;
+}
+let protocolCaches = new WeakMap<object, ProtocolCache>();
+function configured(site: string) {
+  const owner = captureJudgmentPort(site, { prepareResultCapture: prepareJudgmentResult });
+  owner.assertCurrent();
+  let cache = protocolCaches.get(owner.identity);
+  if (!cache) {
+    cache = { reasoningRejection: new ReadingMemo(256), partMemo: new ReadingMemo(128), partKinds: new Map(),
+      stopMemo: new ReadingMemo(64), familyMemo: new ReadingMemo(512), families: new Map() };
+    protocolCaches.set(owner.identity, cache);
+  }
+  return { owner, cache, call: { site, signal: owner.signal, beforeAttempt: owner.assertCurrent } };
+}
+function rememberSettled<T>(cache: Map<string, T>, key: string, value: T, limit: number) {
+  if (cache.size >= limit) cache.delete(cache.keys().next().value!);
+  cache.set(key, value);
+}
 
-/** Whether a provider rejection names the request's reasoning setting as the cause. */
-export function readsAsReasoningRejection(providerText: string, site: string): Promise<boolean> {
-  const state = { error: providerText.slice(0, MAX_ERROR_CHARS) };
-  return reasoningRejectionMemo.get(state.error, async () => {
-    const run = await reasoningRejection.run(judgmentPort(site), state, { site });
+/** A rejection about a reasoning setting must be settled in either direction. */
+export async function readsAsReasoningRejection(providerText: string, site: string): Promise<boolean> {
+  const state = { error: providerText };
+  assertJudgmentInput(state);
+  const { owner, cache, call } = configured(site);
+  const result = await cache.reasoningRejection.get(providerText, async () => {
+    const run = await reasoningRejection.run(owner.port, state, call);
+    owner.assertCurrent();
     const reasoning = holds(run.readings.reasoning);
     run.recordAction(reasoning ? 'name-reasoning-setting' : 'leave-message');
-    return reasoning;
+    owner.assertCurrent(); return reasoning;
   });
+  owner.assertCurrent(); return result;
 }
 
-const partKinds = new Map<string, boolean>();
-const partKindMemo = new ReadingMemo<boolean>(128);
-
-/** The remembered reading for a content-part type label, or undefined when it has not been read. */
+/** Peeks only at settled evidence from the current installation/model. */
 export function knownContentPartIsReasoning(label: string): boolean | undefined {
-  return partKinds.get(label);
+  try { return configured('routing.content-part-kind.peek').cache.partKinds.get(label); } catch { return undefined; }
 }
-
-/** Reads whether content parts with this unfamiliar type label carry reasoning. */
-export function readContentPartIsReasoning(label: string, site: string): Promise<boolean> {
-  return partKindMemo.get(label, async () => {
-    const run = await contentPartKind.run(judgmentPort(site), { type: label }, { site });
+export async function readContentPartIsReasoning(label: string, site: string): Promise<boolean> {
+  assertJudgmentInput({ type: label });
+  const { owner, cache, call } = configured(site);
+  const result = await cache.partMemo.get(label, async () => {
+    const run = await contentPartKind.run(owner.port, { type: label }, call);
+    owner.assertCurrent();
     const reasoning = holds(run.readings.reasoning);
     run.recordAction(reasoning ? 'reasoning' : 'content');
-    partKinds.set(label, reasoning);
+    owner.assertCurrent(); rememberSettled(cache.partKinds, label, reasoning, 128);
     return reasoning;
   });
+  owner.assertCurrent(); return result;
 }
 
 export type ReadStopReason = 'completed' | 'tool_call' | 'max_tokens';
-const stopReasonMemo = new ReadingMemo<ReadStopReason>(64);
-
-/** What an unfamiliar raw stop reason reports; 'completed' when the reading is too weak to say otherwise. */
-export function readStopReason(rawReason: string, site: string): Promise<ReadStopReason> {
-  return stopReasonMemo.get(rawReason, async () => {
-    const run = await stopReason.run(judgmentPort(site), { raw_reason: rawReason }, { site });
-    const reading = run.readings.stop;
-    const stop = reading.outcome === 'escalate' ? 'completed' : reading.choice;
-    run.recordAction(`stop:${stop}`);
-    return stop;
+/** Uncertain stop reasons never report completion. */
+export async function readStopReason(rawReason: string, site: string): Promise<ReadStopReason> {
+  assertJudgmentInput({ raw_reason: rawReason });
+  const { owner, cache, call } = configured(site);
+  const result = await cache.stopMemo.get(rawReason, async () => {
+    const run = await stopReason.run(owner.port, { raw_reason: rawReason }, call);
+    owner.assertCurrent();
+    const stop = requireActingReading(run.readings.stop).choice;
+    run.recordAction(`stop:${stop}`); owner.assertCurrent(); return stop;
   });
+  owner.assertCurrent(); return result;
 }
 
-const families = new Map<string, ReasoningFamily | null>();
-const familyMemo = new ReadingMemo<ReasoningFamily | null>(512);
-
-/** The remembered reasoning family of a model id: a family, null for none, undefined when not read. */
 export function knownReasoningFamily(modelId: string): ReasoningFamily | null | undefined {
-  return families.get(modelId);
+  try { return configured('routing.reasoning-family.peek').cache.families.get(modelId); } catch { return undefined; }
 }
-
-/** Reads which documented reasoning-control family a model id belongs to; null when none, or when the reading is too weak to act on. */
-export function readReasoningFamily(modelId: string, site: string): Promise<ReasoningFamily | null> {
-  const known = families.get(modelId);
-  if (known !== undefined) return Promise.resolve(known);
-  return familyMemo.get(modelId, async () => {
-    const dispatched = await reasoningFamily.route(judgmentPort(site), { model_id: modelId }, { site });
-    const family = dispatched.reading.outcome === 'act' && dispatched.route !== 'none' ? dispatched.route : null;
+/** Null means a settled none, never an unavailable or uncertain reading. */
+export async function readReasoningFamily(modelId: string, site: string): Promise<ReasoningFamily | null> {
+  assertJudgmentInput({ model_id: modelId });
+  const { owner, cache, call } = configured(site);
+  const result = await cache.familyMemo.get(modelId, async () => {
+    const dispatched = await reasoningFamily.route(owner.port, { model_id: modelId }, call);
+    owner.assertCurrent(); requireActingReading(dispatched.reading);
+    const family = dispatched.route !== 'none' ? dispatched.route : null;
     dispatched.recordAction(`family:${family ?? 'none'}`);
-    families.set(modelId, family);
-    return family;
+    owner.assertCurrent(); rememberSettled(cache.families, modelId, family, 512); return family;
   });
+  owner.assertCurrent(); return result;
 }
 
-/** Forgets every remembered protocol reading; for tests that swap the judgment port. */
 export function forgetProviderReadings(): void {
   alternateApiMemos = new WeakMap();
-  reasoningRejectionMemo.clear();
-  partKinds.clear();
-  partKindMemo.clear();
-  stopReasonMemo.clear();
-  families.clear();
-  familyMemo.clear();
+  protocolCaches = new WeakMap();
 }

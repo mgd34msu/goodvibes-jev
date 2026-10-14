@@ -6,3 +6,5 @@ export * as shell from './shell.js';
 export * as state from './state.js';
 export * as transport from './transport.js';
 export * as ui from './ui.js';
+
+export { prepareSystemMessagePresentation, peekSystemMessagePresentation, type SystemMessagePresentation } from './system-message-presentation.js';

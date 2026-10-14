@@ -16,7 +16,7 @@
 import type { FixtureCheck, JudgmentPort, NamedDecision, Question } from '@goodvibes-jev/judgment';
 
 export interface LintFinding {
-  readonly rule: 'fixture-coverage' | 'registered-use';
+  readonly rule: 'fixture-coverage' | 'registered-use' | 'model-policy';
   /** The decision name or the source location. */
   readonly where: string;
   readonly message: string;
@@ -87,11 +87,18 @@ export async function coverageFindings(decisions: readonly NamedDecision[]): Pro
   const findings: LintFinding[] = [];
   const open: string[] = [];
   for (const decision of decisions) {
+    if (decision.model !== undefined && decision.model !== 'jev-latest') {
+      findings.push({ rule: 'model-policy', where: decision.name, message: 'production decisions must inherit the configured model or use jev-latest; version pins are not allowed' });
+    }
     let checks: readonly FixtureCheck[];
     try {
       checks = await decision.checkFixtures(enumeratingPort);
     } catch (error) {
       findings.push({ rule: 'fixture-coverage', where: decision.name, message: `its fixtures could not be listed: ${error instanceof Error ? error.message : String(error)}` });
+      continue;
+    }
+    if (checks.length === 0) {
+      findings.push({ rule: 'fixture-coverage', where: decision.name, message: 'its fixtures produced no labelled checks' });
       continue;
     }
     for (const coverage of questionCoverage(checks)) {

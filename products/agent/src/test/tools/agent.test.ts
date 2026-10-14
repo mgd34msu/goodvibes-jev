@@ -1059,7 +1059,10 @@ describe('spawn mode', () => {
         .toContain('behavior.autoApprove');
       f.choose('act');
       const allowed = await f.run(args);
-      expect(allowed.success).toBe(true); expect(allowed.autonomousDecision?.outcome).toBe('act');
+      // Changing auto-approval retires the admission after the recorded write.
+      expect(allowed.success).toBe(false); expect(allowed.autonomousDecision?.outcome).toBe('act');
+      expect(allowed.error).toBe('Settings invocation retired after its recorded effects; no remaining work was dispatched.');
+      expect(JSON.parse(allowed.output ?? '{}').status).toBe('committed');
       expect(f.config.get('behavior.autoApprove')).toBe(!before); expect(f.prompts()).toBe(0);
     } finally { f.close(); }
   });

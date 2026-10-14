@@ -77,7 +77,7 @@ test('canonical gate skips generated target and retains authored src/dist, indep
   const candidates = fake.requests.flatMap(request => (request.state as { directories: Directory[] }).directories);
   expect(candidates.map(value => value.relativePath).sort()).toEqual(['src', 'src/dist', 'target']);
   expect(fake.requests[0]!.context?.battery).toBe('engine.walk.skip-directory');
-  expect(fake.requests[0]!.context?.batteryVersion).toBe(2);
+  expect(fake.requests[0]!.context?.batteryVersion).toBe(3);
   expect(fake.requests[0]!.context?.site).toBe('utils.walk-directory');
   expect(Object.keys(fake.requests[0]!.questions)).toHaveLength(2);
 });

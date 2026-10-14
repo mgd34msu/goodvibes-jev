@@ -1,3 +1,4 @@
+import { prepareSystemMessagePresentation } from '@goodvibes-jev/engine/sdk/platform/runtime/shell';
 /**
  * ActivityFeed, the single ambient record of what the assistant has been doing.
  *
@@ -35,15 +36,8 @@ export interface ActivityEntry {
 const MAX_ENTRIES = 500;
 
 /** Map a bracket-tagged system message (e.g. "[Model] …") to an ActivityKind. */
-export function classifyActivityKind(text: string): ActivityKind {
-  const tag = /^\[([^\]]+)\]/.exec(text)?.[1]?.toLowerCase() ?? '';
-  if (/(schedule|automation|routine|reminder|watcher)/.test(tag)) return 'schedule';
-  if (/(channel|delivery|notify|ntfy|message)/.test(tag)) return 'delivery';
-  if (/(agent|delegat|task)/.test(tag)) return 'agent';
-  if (/(permission|security|trust|secret)/.test(tag)) return 'security';
-  if (/(tool|mcp)/.test(tag)) return 'tool';
-  if (/(model|provider|session|memory|recovery|compaction|config|setting)/.test(tag)) return 'status';
-  return 'system';
+export async function classifyActivityKind(text: string): Promise<ActivityKind | undefined> {
+  return (await prepareSystemMessagePresentation(text)).activity;
 }
 
 export class ActivityFeed {
@@ -53,12 +47,17 @@ export class ActivityFeed {
   push(text: string, priority: ActivityPriority = 'low', kind?: ActivityKind): void {
     const trimmed = text.replace(/\s+/g, ' ').trim();
     if (!trimmed) return;
-    this.entries.push({
+    const entry: ActivityEntry = {
       at: Date.now(),
-      kind: kind ?? classifyActivityKind(trimmed),
+      kind: kind ?? 'system',
       priority,
       text: trimmed,
-    });
+    };
+    this.entries.push(entry);
+    if (kind === undefined) void classifyActivityKind(text).then((resolved) => {
+      const index = this.entries.indexOf(entry);
+      if (resolved && index >= 0) { this.entries[index] = { ...entry, kind: resolved }; this.notify(); }
+    }).catch(() => { /* Keep the complete activity visible while categorization is unavailable. */ });
     if (this.entries.length > MAX_ENTRIES) {
       this.entries.splice(0, this.entries.length - MAX_ENTRIES);
     }

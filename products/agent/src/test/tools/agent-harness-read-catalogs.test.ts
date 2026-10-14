@@ -43,6 +43,13 @@ function selectionRequest(value: unknown) {
   });
   return { query: context.query, candidates };
 }
+function expectOnlyProviderDiagnostics(requests: ReturnType<typeof fakePort>['requests']) {
+  // Native account/configuration inspection may emit redaction diagnostics.
+  // None of those measurements is an account selection or catalog ranking.
+  const diagnosticBatteries = new Set(['engine.redaction.field-kind', 'engine.redaction.residual-credential']);
+  expect(requests.filter(request => !diagnosticBatteries.has(request.context?.battery ?? ''))).toEqual([]);
+}
+
 function selectReadings(query: string, chosen: string | null, fits: ReadonlyMap<string, number>, beforeAnswer?: () => void) {
   return fakePort((name, question, raw) => {
     const source = selectionRequest(raw);
@@ -405,7 +412,7 @@ describe('complete native read catalogs', () => {
     const managers = createTestManagers(), context = { provider: { providerRegistry: managers.providerRegistry }, platform: managers };
     const fake = fakePort(() => { throw new Error('Native provider ID entered selection'); }); installJudgmentPort(fake.port);
     const result = await describeHarnessProviderAccount(context, { providerId: 'openai' }, options());
-    expect(result.status).toBe('found'); expect(fake.requests).toHaveLength(0);
+    expect(result.status).toBe('found'); expectOnlyProviderDiagnostics(fake.requests);
   });
 
   test('provider list and phrase detail read complete native usage and route meaning', async () => {
@@ -434,7 +441,7 @@ describe('complete native read catalogs', () => {
     const screening = researchScreeningFixture({ async beforeProposal() { if (!changed) { changed = true; managers.configManager.set('tools.llmEnabled', false); } } });
     const fake = fakePort(() => { throw new Error('Changed provider source reached catalog reading'); }); installJudgmentPort(fake.port);
     await expect(providerAccountSummary(context, { query: 'account authentication status' }, { sourceOwner: screening.owner })).rejects.toBeInstanceOf(ToolInputProjectionError);
-    expect(changed).toBe(true); expect(fake.requests).toHaveLength(0);
+    expect(changed).toBe(true); expectOnlyProviderDiagnostics(fake.requests);
   });
 
   test('a first caller restriction cannot adopt in-place native provider model changes', async () => {
@@ -448,7 +455,7 @@ describe('complete native read catalogs', () => {
       await expect(providerAccountSummary(context, { query: 'account authentication status' }, {
         ...options(), assertCurrent() { if (!changed) { changed = true; model.description = 'Replacement model account meaning.'; } },
       })).rejects.toBeInstanceOf(ToolInputProjectionError);
-      expect(changed).toBe(true); expect(fake.requests).toHaveLength(0);
+      expect(changed).toBe(true); expectOnlyProviderDiagnostics(fake.requests);
     } finally { model.description = description; }
   });
 
@@ -466,7 +473,7 @@ describe('complete native read catalogs', () => {
         const stage = path + '.first-callback'; writeFileSync(stage, original); renameSync(stage, path);
       },
     })).rejects.toBeInstanceOf(SecurityReadSourceRetiredError);
-    expect(changed).toBe(true); expect(readFileSync(path, 'utf8')).toBe(original); expect(fake.requests).toHaveLength(0);
+    expect(changed).toBe(true); expect(readFileSync(path, 'utf8')).toBe(original); expectOnlyProviderDiagnostics(fake.requests);
   });
 
   test('a first caller restriction cannot adopt replaced native subscription file ownership', async () => {
@@ -482,7 +489,7 @@ describe('complete native read catalogs', () => {
         const stage = path + '.first-callback'; writeFileSync(stage, original); renameSync(stage, path);
       },
     })).rejects.toBeInstanceOf(SecurityReadSourceRetiredError);
-    expect(changed).toBe(true); expect(readFileSync(path, 'utf8')).toBe(original); expect(fake.requests).toHaveLength(0);
+    expect(changed).toBe(true); expect(readFileSync(path, 'utf8')).toBe(original); expectOnlyProviderDiagnostics(fake.requests);
   });
 
   test('a first caller restriction cannot replace the original provider environment presence baseline', async () => {
@@ -494,7 +501,7 @@ describe('complete native read catalogs', () => {
       await expect(providerAccountSummary(context, { query: 'account authentication status' }, {
         ...options(), assertCurrent() { if (!changed) { changed = true; process.env.OPENAI_API_KEY = 'private-runtime-fixture-value'; } },
       })).rejects.toBeInstanceOf(ToolInputProjectionError);
-      expect(changed).toBe(true); expect(fake.requests).toHaveLength(0);
+      expect(changed).toBe(true); expectOnlyProviderDiagnostics(fake.requests);
     } finally { if (original === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = original; }
   });
 
@@ -509,7 +516,7 @@ describe('complete native read catalogs', () => {
       await expect(providerAccountSummary(context, { query: 'account authentication status' }, {
         ...options(), assertCurrent() { if (!changed) { changed = true; Date.now = () => original() + 2 * 24 * 60 * 60 * 1000; } },
       })).rejects.toBeInstanceOf(ToolInputProjectionError);
-      expect(changed).toBe(true); expect(fake.requests).toHaveLength(0);
+      expect(changed).toBe(true); expectOnlyProviderDiagnostics(fake.requests);
     } finally { Object.defineProperty(Date, 'now', descriptor); }
   });
 
@@ -522,7 +529,7 @@ describe('complete native read catalogs', () => {
     } });
     const fake = fakePort(() => { throw new Error('Changed native credential reached catalog reading'); }); installJudgmentPort(fake.port);
     await expect(providerAccountSummary(context, { query: 'account authentication status' }, { sourceOwner: screening.owner })).rejects.toBeInstanceOf(SecurityReadSourceRetiredError);
-    expect(changed).toBe(true); expect(fake.requests).toHaveLength(0);
+    expect(changed).toBe(true); expectOnlyProviderDiagnostics(fake.requests);
   });
 
   test('connected capability selection includes the complete allowed and blocked native cohort', async () => {

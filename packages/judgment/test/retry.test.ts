@@ -1,15 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import { getEventListeners } from 'node:events';
 import { APIError } from '@typesafe-ai/sdk';
-import { createSystemOnePort, JudgmentError, noul, PINNED_MODEL, SqliteDecisionLog, withDecisionLog, type JudgmentConfig, type JudgmentPort } from '../src/index.ts';
+import { createSystemOnePort, JudgmentError, noul, DEFAULT_MODEL, SqliteDecisionLog, withDecisionLog, type JudgmentConfig, type JudgmentPort } from '../src/index.ts';
 import { delay, retryDelay, retryPolicy } from '../src/port/retry.ts';
 
 const request = { state: 'synthetic', questions: { yes: noul('Synthetic question') } };
-const good = (id = 'ok') => Response.json({ model: PINNED_MODEL, answers: { yes: { type: 'noul', noul: 0.9 } }, usage: { input_tokens: 1, output_tokens: 1 } }, { headers: { 'x-typesafe-request-id': id } });
+const good = (id = 'ok') => Response.json({ model: DEFAULT_MODEL, answers: { yes: { type: 'noul', noul: 0.9 } }, usage: { input_tokens: 1, output_tokens: 1 } }, { headers: { 'x-typesafe-request-id': id } });
 const bad = () => Response.json({}, { status: 503 });
 const config = (fetch: NonNullable<JudgmentConfig['fetch']>): JudgmentConfig => ({
   endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-key' },
-  model: PINNED_MODEL, timeoutMs: 15, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fetch,
+  model: DEFAULT_MODEL, timeoutMs: 15, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fetch,
 });
 
 const apiError = (headers: Record<string, string>) => APIError.fromResponse(429, {}, new Headers(headers));
@@ -135,7 +135,7 @@ describe('shared attempt ownership', () => {
       transmitted = JSON.parse(String(init?.body));
       return good();
     }));
-    let defaultModel = PINNED_MODEL;
+    let defaultModel: string = DEFAULT_MODEL;
     const settings: JudgmentPort = { get model() { return defaultModel; }, async ask(request) {
       begin(); await wait; return transport.ask(request);
     } };
@@ -146,10 +146,10 @@ describe('shared attempt ownership', () => {
     caller.state.revision = 'changed'; caller.questions.yes.instructions = 'changed question'; defaultModel = 'jev-9.0.0';
     release();
     await pending;
-    expect(transmitted).toMatchObject({ state: { revision: 'admitted' }, questions: { yes: { instructions: 'admitted question' } }, model: PINNED_MODEL });
+    expect(transmitted).toMatchObject({ state: { revision: 'admitted' }, questions: { yes: { instructions: 'admitted question' } }, model: DEFAULT_MODEL });
     expect(log.query()).toHaveLength(1);
     expect(log.query()[0]?.questions).toEqual({ yes: { type: 'noul', instructions: 'admitted question' } });
-    expect(log.query()[0]?.requestedModel).toBe(PINNED_MODEL);
+    expect(log.query()[0]?.requestedModel).toBe(DEFAULT_MODEL);
   });
 
   test.each(['answered', 'aborted'] as const)('settled %s calls release caller and SDK abort listeners', async (outcome) => {

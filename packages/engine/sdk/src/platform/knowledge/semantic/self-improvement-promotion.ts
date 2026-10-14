@@ -389,7 +389,7 @@ function promotedRepairFactInput(input: {
   readonly source: KnowledgeSourceRecord;
   readonly extraction: KnowledgeExtractionRecord | null;
   readonly subjects: readonly KnowledgeNodeRecord[];
-  readonly authority: 'official-vendor' | 'vendor' | 'secondary';
+  readonly authority: import('../source-quality.js').KnowledgeSourceAuthority;
   readonly title: string;
   readonly summary: string;
   readonly evidence: string;
@@ -424,7 +424,7 @@ export interface SourceLinkedRepairProfileFactInput {
   readonly source: KnowledgeSourceRecord;
   readonly extraction: KnowledgeExtractionRecord | null;
   readonly subjects: readonly KnowledgeNodeRecord[];
-  readonly authority: 'official-vendor' | 'vendor' | 'secondary';
+  readonly authority: import('../source-quality.js').KnowledgeSourceAuthority;
   readonly title: string;
   readonly summary: string;
   readonly evidence: string;

@@ -1,3 +1,4 @@
+import { completeJudgmentView } from '../batteries/complete-view.js';
 import { assertCapturedToolAccessCurrent } from '../shared/captured-input-tools.js';
 /**
  * The frontend analyzers whose findings are read by Jev
@@ -14,7 +15,6 @@ import { mapWithConcurrency } from '../../utils/concurrency.js';
 import {
   frontendFinding,
   frontendLineView,
-  MAX_JUDGED_HOOK_LINES,
   stackingView,
 } from '../batteries/frontend-finding.js';
 import type {
@@ -136,7 +136,7 @@ export async function inspectAccessibility(
 function hookCall(lines: readonly string[], index: number, start: number): string {
   let depth = 0;
   const parts: string[] = [];
-  for (let j = index; j < Math.min(lines.length, index + MAX_JUDGED_HOOK_LINES); j++) {
+  for (let j = index; j < lines.length; j++) {
     const text = j === index ? lines[j]!.slice(start) : lines[j]!;
     parts.push(j === index ? lines[j]! : text);
     for (const ch of text) {
@@ -154,8 +154,8 @@ export async function inspectHooks(content: string, file: string): Promise<Hooks
     const m = hookRe.exec(line);
     return m ? [{ index, kind: m[1] as HookDep['hookKind'], code: hookCall(lines, index, m.index) }] : [];
   });
-  const readings = await mapWithConcurrency(calls, READ_CONCURRENCY, ({ code }) =>
-    read('omits_dependency', { file, code }),
+  const readings = await mapWithConcurrency(calls, READ_CONCURRENCY, ({ code, index }) =>
+    read('omits_dependency', completeJudgmentView({ file, code, completeFile: content, targetLine: index + 1 })),
   );
   const hooks: HookDep[] = calls.map(({ index, kind, code }, i) => {
     // The dependency array is the last array literal before the call closes (syntax).

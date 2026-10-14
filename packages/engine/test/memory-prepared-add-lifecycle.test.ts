@@ -66,14 +66,14 @@ test('native API preparation fixes the canonical complete row before exact SQL p
   expect(() => plan.assertPublication({})).toThrow('not owned');
   const transition = exactTransition(f.api, plan);
   const record = await plan.commit(transition);
-  expect(record).toEqual(plan.record);
+  expect<unknown>(record).toEqual(plan.record);
   expect(record).not.toBe(plan.record);
   expect(record.tags).not.toBe(plan.record.tags);
   expect(transition.publications()).toBe(1);
   expect(f.notifications()).toBe(initialNotifications + 1);
   const reopened = new MemoryStore(f.path, { embeddingRegistry: f.embeddings, enableVectorIndex: false });
   cleanups.push(() => reopened.close()); await reopened.init();
-  expect(reopened.get(record.id)).toEqual(plan.record);
+  expect<unknown>(reopened.get(record.id)).toEqual(plan.record);
   await expect(plan.commit(transition)).rejects.toThrow('not available');
 });
 
@@ -168,7 +168,7 @@ test('cancellation after real SQL retains the committed row but stops save and n
   const plan = prepareMemoryApiAdd(f.api, { cls: 'fact', summary: 'native row already inserted' });
   let publications = 0;
   await expect(plan.commit({ signal: controller.signal, onPublished() { publications++; } })).rejects.toBe(stopped);
-  expect(f.api.getAll()).toEqual([plan.record]);
+  expect<unknown>(f.api.getAll()).toEqual([plan.record]);
   expect(publications).toBe(0);
   expect(f.notifications()).toBe(0);
 });
@@ -199,7 +199,7 @@ test('listener retirement after exact durable publication cannot return a succes
   expect(transition.publications()).toBe(1);
   const reopened = new MemoryStore(f.path, { embeddingRegistry: f.embeddings, enableVectorIndex: false });
   cleanups.push(() => reopened.close()); await reopened.init();
-  expect(reopened.get(plan.record.id)).toEqual(plan.record);
+  expect<unknown>(reopened.get(plan.record.id)).toEqual(plan.record);
 });
 
 test('initial native method substitution and input accessors cannot issue a plan', async () => {
@@ -228,7 +228,7 @@ test('a borrowed publication callback changed at the real SQL boundary is never 
   cleanups.push(() => write.mockRestore());
   const plan = prepareMemoryApiAdd(f.api, { cls: 'fact', summary: 'real insertion before callback retirement' });
   await expect(plan.commit(options)).rejects.toThrow('binding changed');
-  expect(f.api.getAll()).toEqual([plan.record]);
+  expect<unknown>(f.api.getAll()).toEqual([plan.record]);
   expect(publications).toBe(0);
   expect(f.notifications()).toBe(0);
 });
@@ -286,7 +286,7 @@ test('an original caller cannot install a row getter during actual native public
   expect(replaced).toBe(true);
   expect(getters).toBe(0);
   expect(publications).toBe(0);
-  expect(f.api.getAll()).toEqual([plan.record]);
+  expect<unknown>(f.api.getAll()).toEqual([plan.record]);
   expect(f.notifications()).toBe(0);
 });
 
@@ -310,7 +310,7 @@ test('a substituted issuer lookup cannot adopt a copied API while the genuine ow
     expect(f.api.getAll()).toHaveLength(0);
     const plan = prepareMemoryApiAdd(f.api, { cls: 'fact', summary: 'genuine owner under substituted lookup' });
     const transition = exactTransition(f.api, plan);
-    expect(await plan.commit(transition)).toEqual(plan.record);
+    expect<unknown>(await plan.commit(transition)).toEqual(plan.record);
     expect(transition.publications()).toBe(1);
     expect(f.notifications()).toBe(1);
   } finally { Object.defineProperty(WeakMap.prototype, 'get', descriptor); }

@@ -40,11 +40,11 @@ export interface NoticeParts {
 
 const TAG_RE = /^\s*\[([^\]\n]+)\]/;
 
-export function noticeParts(text: string): NoticeParts {
+export function noticeParts(text: string, severity?: 'error' | 'warning' | 'info'): NoticeParts {
   const trimmed = text.replace(/^\s*\n+/, '').replace(/\s+$/, '');
   const tag = TAG_RE.exec(trimmed)?.[1];
   const domain = tag ? tag.trim().toLowerCase().replace(/\s+/g, '-') : 'system';
-  const kind = classifySystemMessage(trimmed);
+  const kind = severity;
   const level: Notification['level'] = kind === 'error' ? 'critical' : kind === 'warning' ? 'warning' : 'info';
   const newline = trimmed.indexOf('\n');
   const title = newline < 0 ? trimmed : trimmed.slice(0, newline);
@@ -60,7 +60,7 @@ export interface NoticeOptions {
 }
 
 /** Keep one system notice in the history; the feed's toast bridge toasts it unless restored. */
-export function publishNotice(feed: NotificationFeed, text: string, options: NoticeOptions = {}): void {
+export async function publishNotice(feed: NotificationFeed, text: string, options: NoticeOptions = {}): Promise<void> {
   if (text.trim().length === 0) return;
   const parts = noticeParts(text);
   const restored = options.restored === true;
@@ -69,7 +69,13 @@ export function publishNotice(feed: NotificationFeed, text: string, options: Not
     feed.recordNotice({ domain: parts.domain, level: event.level, title: event.title, body: event.detail, timestamp: (options.now ?? Date.now)(), restored, eventKey: runtimeEventKey(event.type, options.runtimeEvent) });
     return;
   }
-  feed.recordNotice({ ...parts, timestamp: (options.now ?? Date.now)(), restored });
+  const pending = feed.recordNotice({ ...parts, timestamp: (options.now ?? Date.now)(), restored, severityPending: true });
+  // History remains visible while the independent semantic decoration is pending.
+  // An unsettled reading never invents an info/warning/error classification.
+  try {
+    const severity = await classifySystemMessage(text);
+    if (severity) feed.settleNoticeSeverity(pending, noticeParts(text, severity).level);
+  } catch { /* The original notice stays visible and unclassified. */ }
 }
 
 /**
@@ -77,5 +83,5 @@ export function publishNotice(feed: NotificationFeed, text: string, options: Not
  * notice of the main conversation goes to the shared notification feed.
  */
 export function publishToSharedFeed(content: string, options: { readonly restored: boolean; readonly runtimeEvent?: RuntimeEventProvenance | undefined }): void {
-  publishNotice(getSharedNotificationFeed(), content, options);
+  void publishNotice(getSharedNotificationFeed(), content, options);
 }

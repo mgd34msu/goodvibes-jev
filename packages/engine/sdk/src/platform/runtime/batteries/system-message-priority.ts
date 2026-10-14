@@ -8,6 +8,8 @@
  */
 import { defineBattery, oneOf, STAKES_BANDS, type ChoiceReading } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { requireActingReading } from '../../types/judgment-held.js';
+import { assertJudgmentInput } from '../../gate/judgment-input.js';
 
 const PRIORITY_OPTIONS = {
   high: 'It changes what the session is running on or holding, or reports that something broke: an error, failure, crash or unhandled exception; a failed recovery or restore; the model or provider switched, fallen back or not found; the session saved, loaded or restored; the conversation context compacted',
@@ -65,11 +67,12 @@ export const systemMessagePriority = defineBattery({
 
 /**
  * The priority a system message reads as. 'high' only when the reading is
- * strong enough to act on; a weak reading leaves the message at the routine
- * level. `site` names the decision site for the decision log.
+ * strong enough to act on; an unsettled reading cannot suppress the message
+ * as routine. `site` names the decision site for the decision log.
  */
 export async function readSystemMessagePriority(message: string, site: string): Promise<SystemMessagePriorityOption> {
+  assertJudgmentInput(message);
   const run = await systemMessagePriority.run(judgmentPort(site), message, { site });
   const reading: ChoiceReading<SystemMessagePriorityOption> = run.readings.priority;
-  return reading.outcome === 'act' ? reading.choice : 'low';
+  return requireActingReading(reading).choice;
 }

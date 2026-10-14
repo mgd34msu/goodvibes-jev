@@ -787,9 +787,9 @@ describe('SpokenTurnController complete failure admission', () => {
   });
 
   test.each([
-    new Error(`${'Rate limit. '.repeat(200)} Correction: credentials are permanently invalid.`),
-    Object.assign(new Error(`${'Rate limit. '.repeat(200)} Correction: the account cannot pay.`), { status: 429 }),
-    new Error('Rate limit.', { cause: new Error(`${'ordinary '.repeat(250)} Permanently invalid.`) }),
+    new Error(`${'Rate limit. '.repeat(15000)} Correction: credentials are permanently invalid.`),
+    Object.assign(new Error(`${'Rate limit. '.repeat(15000)} Correction: the account cannot pay.`), { status: 429 }),
+    new Error('Rate limit.', { cause: new Error(`${'ordinary '.repeat(20000)} Permanently invalid.`) }),
   ])('refuses over-limit evidence instead of reading a misleading prefix %#', async (error) => {
     const fake = failurePort(); installJudgmentPort(fake.port);
     const clock = retryClock();

@@ -292,14 +292,15 @@ export class HomeGraphService {
   async reindex(input: HomeGraphReindexInput = {}): Promise<HomeGraphReindexResult> {
     await this.store.init();
     if (this.activeReindex) return coalescedHomeGraphReindexResult(this.store, input);
-    const run = runHomeGraphReindex({
+    const { spaceId, installationId } = resolveReadableHomeGraphSpace(this.store, input);
+    const run = this.runForegroundOperation(spaceId, installationId, () => runHomeGraphReindex({
       store: this.store,
       artifactStore: this.artifactStore,
       semanticService: this.options.semanticService,
       extract: (source, artifact, spaceId, installationId) => this.extractArtifact(source, artifact, spaceId, installationId),
       autoLinkExistingSources: (spaceId, installationId, sourceIds) => this.autoLinkExistingSources(spaceId, installationId, sourceIds),
       refreshQualityIssues: (spaceId, installationId) => this.refreshQualityIssues(spaceId, installationId),
-    }, input);
+    }, input));
     this.activeReindex = run;
     try {
       return await run;
@@ -386,13 +387,15 @@ export class HomeGraphService {
   async generatePacket(input: HomeGraphProjectionInput): Promise<HomeGraphProjectionResult> {
     await this.store.init();
     const { spaceId, installationId } = resolveHomeGraphSpace(input);
-    await this.enrichSpaceSources(spaceId);
-    return generateHomeGraphPacket({
-      store: this.store,
-      artifactStore: this.artifactStore,
-      spaceId,
-      installationId,
-      input,
+    return this.runForegroundOperation(spaceId, installationId, async () => {
+      await this.enrichSpaceSources(spaceId);
+      return generateHomeGraphPacket({
+        store: this.store,
+        artifactStore: this.artifactStore,
+        spaceId,
+        installationId,
+        input,
+      });
     });
   }
 
@@ -444,6 +447,7 @@ export class HomeGraphService {
     };
     return listHomeGraphPages({
       artifactStore: this.artifactStore,
+      store: this.store,
       assertCurrent,
       spaceId,
       sources: state.sources,

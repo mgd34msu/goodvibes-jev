@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip, gunzipSync, gzipSync } from 'node:zlib';
-import { canonicalJson, choice, hashState, JudgmentError, LIMITS, noul, PINNED_MODEL, readChoice, readYesNo, STAKES_BANDS, toJson, validateContextBudget, type DecisionLog, type EntryType, type JudgmentPort, type Questions } from '@goodvibes-jev/judgment';
+import { canonicalJson, choice, hashState, matchesJudgmentModel, JudgmentError, LIMITS, noul, DEFAULT_MODEL, readChoice, readYesNo, STAKES_BANDS, toJson, validateContextBudget, type DecisionLog, type EntryType, type JudgmentPort, type Questions } from '@goodvibes-jev/judgment';
 import { DEFERRED_WORK_INSTRUCTIONS, deferredWork, INTERNAL_IDENTIFIER_INSTRUCTIONS, internalIdentifier, STATIC_ANCHOR_FIT_INSTRUCTIONS, STATIC_ANCHOR_INSTRUCTIONS, staticOffendingAnchor } from './batteries/static-source.ts';
 import { deferredBatteryPolicyStatements, internalSourceAnchors, markdownSourceContext, structuredSourceContext } from './static-source-anchors.ts';
 import { STATIC_WEAK_ANCHOR_FIT_INSTRUCTIONS, STATIC_WEAK_ANCHOR_INSTRUCTIONS, staticWeakAnchor } from './batteries/static-weak-anchor.ts';
@@ -596,7 +596,7 @@ function selectionAnswer(value: unknown, input: StaticSourceInput) {
 
 function currentEvidence(value: unknown, input: StaticSourceInput, selection: boolean, weakSelection = false): StaticCallEvidence | null {
   if (!object(value) || !nonempty(value.id) || !nonempty(value.at) || !Number.isFinite(Date.parse(value.at))
-    || value.requestedModel !== PINNED_MODEL || value.observedModel !== PINNED_MODEL
+    || value.requestedModel !== DEFAULT_MODEL || typeof value.observedModel !== 'string' || !matchesJudgmentModel(DEFAULT_MODEL, value.observedModel)
     || !(value.requestId === null || nonempty(value.requestId)) || !object(value.answers)
     || (value.captureDecisionSourceHash !== undefined && !nonempty(value.captureDecisionSourceHash))) return null;
   const decision = selection ? (weakSelection ? staticWeakAnchor : staticOffendingAnchor) : batteryFor(input.kind);
@@ -606,8 +606,8 @@ function currentEvidence(value: unknown, input: StaticSourceInput, selection: bo
     || value.stateHash !== hashState(state) || value.questionsHash !== sha256(canonicalJson(toJson(questions)))) return null;
   if (selection && selectionAnswer(value.answers, input) === null) return null;
   return { id: value.id, at: value.at, battery: decision.name, version: decision.version, site: `${STATIC_SITE}.${input.kind}`,
-    stateHash: hashState(state), questionsHash: sha256(canonicalJson(toJson(questions))), requestedModel: PINNED_MODEL,
-    observedModel: PINNED_MODEL, requestId: value.requestId, answers: value.answers,
+    stateHash: hashState(state), questionsHash: sha256(canonicalJson(toJson(questions))), requestedModel: DEFAULT_MODEL,
+    observedModel: value.observedModel as string, requestId: value.requestId, answers: value.answers,
     ...(typeof value.captureDecisionSourceHash === 'string' ? { captureDecisionSourceHash: value.captureDecisionSourceHash } : {}) };
 }
 

@@ -1,6 +1,6 @@
 import { types as nodeTypes } from 'node:util';
 import { judgmentPort, captureJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { gateJudgmentRegistry, prepareJudgmentResult, snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { gateJudgmentRegistry, prepareJudgmentResult, snapshotJudgmentEvidence, snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { SOURCE_SCREENING_LIMITS, type ProtectedSourceOwner, type ProtectedSource, type SourceScreeningReceipt, type SourceScreeningHold } from '@goodvibes-jev/engine/sdk/platform/security';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Ranked, Rerank } from '@goodvibes-jev/judgment';
@@ -11,6 +11,8 @@ const ownDescriptors = Object.getOwnPropertyDescriptors;
 const prototypeOf = Object.getPrototypeOf;
 const ownKeys = Reflect.ownKeys;
 const isProxy = nodeTypes.isProxy;
+const NativeWeakSet = WeakSet, nativeWeakSetHas = WeakSet.prototype.has, nativeWeakSetAdd = WeakSet.prototype.add;
+const nativeApply = Reflect.apply, nativeIsFrozen = Object.isFrozen;
 
 export interface CatalogRankingOptions {
   readonly signal?: AbortSignal | undefined;
@@ -24,6 +26,18 @@ export interface CatalogRankingOptions {
 
 /** Capture private DTO metadata without interpreting fields that will never be sent. */
 export function captureCatalogData<T>(value: T, budget = { nodes: 0, characters: 0, slots: 0 }): T {
+  return visitCatalogData(value, budget, true);
+}
+
+/** Validate the same complete DTO grammar without allocating another frozen graph. */
+export function inspectCatalogData(value: unknown): WeakMap<object, Record<string, PropertyDescriptor>> {
+  const descriptors = new WeakMap<object, Record<string, PropertyDescriptor>>();
+  visitCatalogData(value, { nodes: 0, characters: 0, slots: 0 }, false, descriptors);
+  return descriptors;
+}
+
+function visitCatalogData<T>(value: T, budget: { nodes: number; characters: number; slots: number }, copy: boolean,
+  observations?: WeakMap<object, Record<string, PropertyDescriptor>>): T {
   const ancestors = new Set<object>();
   const copies = new WeakMap<object, object>();
   const invalid = (): never => { throw new ToolInputProjectionError('invalid'); };
@@ -38,22 +52,25 @@ export function captureCatalogData<T>(value: T, budget = { nodes: 0, characters:
     const prototype: unknown = Object.getPrototypeOf(entry);
     if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return invalid();
     const descriptors = Object.getOwnPropertyDescriptors(entry);
+    observations?.set(entry, descriptors);
     if (Object.getOwnPropertySymbols(entry).length > 0 || Object.hasOwn(descriptors, 'toJSON')
       || (array && Object.hasOwn(descriptors, 'constructor'))
       || Object.values(descriptors).some((descriptor) => !('value' in descriptor) || typeof descriptor.value === 'function')) return invalid();
     const length: unknown = array ? descriptors.length?.value : 0;
     if (typeof length !== 'number' || !Number.isInteger(length) || length < 0 || length > 20_000) return invalid();
     if (array && (budget.slots += length) > 100_000) return invalid();
-    const result: object = array ? new Array(length) : Object.create(null) as object;
+    const result: object = copy ? (array ? new Array(length) : Object.create(null) as object) : entry;
     ancestors.add(entry);
     try {
       for (const [key, descriptor] of Object.entries(descriptors)) {
         if (array && key === 'length') continue;
         budget.characters += key.length;
         if (budget.characters > 1_000_000) return invalid();
-        Object.defineProperty(result, key, { value: capture(descriptor.value, depth + 1), enumerable: descriptor.enumerable });
+        const child = capture(descriptor.value, depth + 1);
+        if (copy) Object.defineProperty(result, key, { value: child, enumerable: descriptor.enumerable });
       }
-      Object.freeze(result); copies.set(entry, result); return result;
+      if (copy) Object.freeze(result);
+      copies.set(entry, result); return result;
     } finally { ancestors.delete(entry); }
   };
   return capture(value, 0) as T;
@@ -126,7 +143,12 @@ function compileCatalogSnapshotGuard(captured: unknown): (current: unknown) => v
         return result;
       };
       const original = snapshot(value);
+      const immutableMatches = new NativeWeakSet<object>();
       return current => {
+        // Only a whole graph already compared with this exact snapshot can be
+        // reused. Frozen parents with mutable descendants never enter the cache.
+        if (current !== null && typeof current === 'object' && nativeApply(nativeWeakSetHas, immutableMatches, [current])) return;
+        let immutable = true;
         const budget = { nodes: 0, characters: 0, slots: 0 };
         const ancestors = new Set<object>();
         class Observation {
@@ -185,6 +207,7 @@ function compileCatalogSnapshotGuard(captured: unknown): (current: unknown) => v
             return;
           }
           if (isProxy(entry) || ancestors.has(entry) || !expected.#object) return changed();
+          if (!nativeIsFrozen(entry)) immutable = false;
           const existing = copies.get(entry);
           if (existing !== undefined) {
             if (typeof existing !== 'number') return changed();
@@ -194,11 +217,12 @@ function compileCatalogSnapshotGuard(captured: unknown): (current: unknown) => v
           }
           const array = Array.isArray(entry), prototype: unknown = prototypeOf(entry);
           if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) changed();
-          const descriptors = ownDescriptors(entry), keys = ownKeys(descriptors);
-          if (keys.some(key => typeof key !== 'string') || Object.hasOwn(descriptors, 'toJSON')
-            || array && Object.hasOwn(descriptors, 'constructor')
-            || Object.values(descriptors).some(descriptor => !('value' in descriptor) || typeof descriptor.value === 'function')) changed();
-          const length: unknown = array ? descriptors.length?.value : 0;
+          // Inspect each own descriptor once. No getters or proxy traps can
+          // run here, and unsupported descriptors still retire the complete
+          // comparison before it can certify equality.
+          const keys = ownKeys(entry);
+          if (ownDescriptor(entry, 'toJSON') || array && ownDescriptor(entry, 'constructor')) changed();
+          const length: unknown = array ? ownDescriptor(entry, 'length')?.value : 0;
           if (typeof length !== 'number' || !Number.isInteger(length) || length < 0 || length > 20_000) return changed();
           if (array && (budget.slots += length) > 100_000) changed();
           if (array !== expected.#array || length !== expected.#length || keys.length !== expected.#count + (array ? 1 : 0)) changed();
@@ -210,8 +234,8 @@ function compileCatalogSnapshotGuard(captured: unknown): (current: unknown) => v
               if (array && key === 'length') continue;
               budget.characters += key.length;
               if (budget.characters > 1_000_000) changed();
-              const descriptor = descriptors[key], slot = expected.#slots[key];
-              if (!descriptor || !slot || descriptor.enumerable !== slot.enumerable) return changed();
+              const descriptor = ownDescriptor(entry, key), slot = expected.#slots[key];
+              if (!descriptor || !('value' in descriptor) || !slot || descriptor.enumerable !== slot.enumerable) return changed();
               if (!array && descriptor.enumerable && key !== expected.#enumerableKeys[enumerableIndex++]) changed();
               compare(descriptor.value, slot.value, depth + 1);
             }
@@ -221,6 +245,7 @@ function compileCatalogSnapshotGuard(captured: unknown): (current: unknown) => v
           } finally { ancestors.delete(entry); }
         };
         compare(current, original, 0);
+        if (immutable && current !== null && typeof current === 'object') nativeApply(nativeWeakSetAdd, immutableMatches, [current]);
       };
     }
   }
@@ -346,7 +371,7 @@ function captureCatalogEntries<T>(entries: readonly T[], descriptors: ReturnType
   return capturedEntries;
 }
 function captureCatalogDescription({ id, description, evidence }: CatalogDescription): CatalogDescription {
-  const captured = snapshotJudgmentInput({ id, description, ...(evidence === undefined ? {} : { evidence }) });
+  const captured = snapshotJudgmentEvidence({ id, description, ...(evidence === undefined ? {} : { evidence }) });
   if (!captured || typeof captured !== 'object' || Array.isArray(captured) || !('id' in captured) || typeof captured.id !== 'string'
     || !('description' in captured) || typeof captured.description !== 'string') throw new ToolInputProjectionError('held');
   return Object.freeze({ id: captured.id, description: captured.description, ...('evidence' in captured ? { evidence: captured.evidence } : {}) });

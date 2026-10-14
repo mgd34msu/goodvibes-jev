@@ -28,7 +28,7 @@ interface ReleaseReadinessLookup {
 }
 
 type ReleaseReadinessLoadResult =
-  | { readonly status: 'available'; readonly root: Record<string, unknown>; readonly source: string }
+  | { readonly status: 'available'; readonly root: Record<string, unknown> }
   | { readonly status: 'unavailable'; readonly reason: string };
 
 export type ReleaseReadinessItemResolution =
@@ -75,7 +75,8 @@ function loadReleaseReadiness(): ReleaseReadinessLoadResult {
     const source = readFileSync(RELEASE_READINESS_PATH, 'utf-8');
     const parsed = JSON.parse(source) as unknown;
     if (!isRecord(parsed)) return { status: 'unavailable', reason: `${RELEASE_READINESS_RELATIVE_PATH} must contain a JSON object.` };
-    return { status: 'available', root: parsed, source };
+    // withNativeCatalog retains and screens the complete physical file.
+    return { status: 'available', root: parsed };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { status: 'unavailable', reason: `${RELEASE_READINESS_RELATIVE_PATH} could not be read: ${message}` };

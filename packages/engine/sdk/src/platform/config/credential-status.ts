@@ -32,6 +32,10 @@ import type {
 import { BUILTIN_PROVIDER_ENV_KEYS } from './provider-credential-catalog.js';
 import type { SecretsManager } from './secrets.js';
 
+function declaredProviders(key: string): readonly string[] {
+  return Object.entries(BUILTIN_PROVIDER_ENV_KEYS).filter(([, names]) => names.includes(key)).map(([id]) => id);
+}
+
 /**
  * Every environment variable name this SDK itself treats as a credential.
  *
@@ -88,6 +92,7 @@ export function createCredentialStatusProvider(
       for (const record of visible) {
         records.push({
           key: record.key,
+          providerIds: declaredProviders(record.key),
           configured: true,
           usable: await resolveUsable(secrets, record.key),
           source: record.source,
@@ -112,6 +117,7 @@ export function createCredentialStatusProvider(
       }
       return {
         key: match.key,
+        providerIds: declaredProviders(match.key),
         configured: true,
         usable: await resolveUsable(secrets, key),
         source: match.source,

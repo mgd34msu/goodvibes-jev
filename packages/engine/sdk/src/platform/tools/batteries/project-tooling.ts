@@ -1,3 +1,4 @@
+import { completeJudgmentView } from './complete-view.js';
 /**
  * `engine.tools.project-tooling`: what inspect mode `project`
  * (tools/inspect/project.ts detectProject) reports when the files alone do
@@ -79,7 +80,7 @@ export const ENTRY_POINT_HEAD_LINES = 40;
 export type EntryPointView = { file: string; head: string; scripts: { [name: string]: string } };
 
 export function entryPointView(file: string, content: string, scripts: Record<string, string>): EntryPointView {
-  return { file, head: content.split('\n').slice(0, ENTRY_POINT_HEAD_LINES).join('\n'), scripts };
+  return completeJudgmentView({ file, head: content, scripts });
 }
 
 const SERVER_SCRIPTS = { dev: 'tsx watch server.ts', start: 'node dist/server.js', build: 'tsc -p .' };

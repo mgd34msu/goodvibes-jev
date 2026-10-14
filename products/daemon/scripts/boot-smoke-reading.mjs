@@ -1,28 +1,45 @@
 import assert from 'node:assert/strict';
-import { defineBattery, PINNED_MODEL, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
-
-/** Interpretation is a Jev reading, never sqlite/error word co-occurrence. */
-export const nativeAddonFailure = defineBattery({
-  name: 'daemon.boot-smoke.native-addon-failure', version: 1, model: PINNED_MODEL,
-  description: 'Whether actual compiled boot evidence reports failure of the native sqlite-vec addon.',
-  accuracyFloor: 0.9,
-  items: { native_addon_failure: yesNo('Does this compiled daemon evidence report an actual sqlite-vec native-addon load, initialization, indexing or query failure? A successful check mentioning errors, an unrelated failure, or quoted hypothetical failure text is not an actual addon failure. Read the evidence in context.', STAKES_BANDS.low.yesNo) },
-  fixtures: [
-    { name: 'loaded without errors', state: { stderr: 'sqlite-vec initialized; no errors' }, expect: { native_addon_failure: 'no' } },
-    { name: 'explicit load failure', state: { stderr: 'Cannot load sqlite-vec extension: invalid ELF header' }, expect: { native_addon_failure: 'yes' } },
-    { name: 'unrelated provider failure', state: { stderr: 'sqlite-vec initialized. Model provider request failed.' }, expect: { native_addon_failure: 'no' } },
-    { name: 'index failure', state: { response: 'sqlite-vec insert failed: no such module vec0' }, expect: { native_addon_failure: 'yes' } },
-  ],
-});
+import { matchesJudgmentModel } from '@goodvibes-jev/judgment';
+import { nativeAddonFailure } from '@goodvibes-jev/engine/toolchain';
+import { retainStrictJudgmentJson, snapshotJudgmentInput, prepareJudgmentResult } from '@goodvibes-jev/engine/sdk/platform/gate';
+export { nativeAddonFailure };
 
 export async function readNativeAddonEvidence(port, evidence, signal) {
-  // Refuse oversized evidence instead of truncating away a possible failure.
-  assert(Buffer.byteLength(JSON.stringify(evidence), 'utf8') <= 48_000, 'Compiled boot evidence exceeds judgment budget');
-  const run = await nativeAddonFailure.run(port, evidence, { site: 'daemon.boot-smoke.native-addon-failure', signal });
+  const retained = retainStrictJudgmentJson(evidence);
+  const snapshot = snapshotJudgmentInput(retained.snapshot);
+  assert(Buffer.byteLength(JSON.stringify(snapshot), 'utf8') <= 48_000, 'Compiled boot evidence exceeds judgment budget');
+  const model = port.model, ask = port.ask, recorder = port.recorder;
+  const current = () => {
+    retained.assertCurrent(); signal?.throwIfAborted();
+    assert(port.model === model && port.ask === ask && port.recorder === recorder, 'Native diagnostic judgment owner changed');
+  };
+  current();
+  const capturedPort = {
+    model, recorder,
+    async ask(request) {
+      current();
+      const prepared = prepareJudgmentResult(request.questions);
+      let cancel;
+      const aborted = new Promise((_, reject) => { cancel = () => reject(signal.reason ?? new Error('Native diagnostic reading cancelled')); });
+      signal?.addEventListener('abort', cancel, { once: true });
+      try {
+        current();
+        const original = await Promise.race([Promise.resolve().then(() => { current(); return ask.call(port, { ...request, questions: prepared.questions, signal }); }), aborted]);
+        current(); prepared.assertCurrent();
+        const result = prepared.capture(original);
+        assert(result.requestedModel === model && matchesJudgmentModel(model, result.model), 'Native diagnostic judgment model mismatch');
+        return result;
+      } finally { signal?.removeEventListener('abort', cancel); }
+    },
+  };
+  const run = await nativeAddonFailure.run(capturedPort, snapshot, { site: nativeAddonFailure.name, signal });
+  current();
   const reading = run.readings.native_addon_failure;
-  run.recordAction(reading.verdict === 'no' ? 'accept-native-evidence' : 'refuse-native-evidence');
-  assert.equal(reading.verdict, 'no', 'Native addon diagnostics report a failure or remain uncertain');
-  return { verdict: reading.verdict, probability: reading.probability, model: PINNED_MODEL };
+  const accepted = reading.outcome === 'act' && reading.verdict === 'no';
+  run.recordAction(accepted ? 'accept-native-evidence' : 'refuse-native-evidence');
+  current();
+  assert(accepted, 'Native addon diagnostics report a failure or remain uncertain');
+  return { verdict: reading.verdict, probability: reading.probability, requestedModel: run.result.requestedModel, model: run.result.model };
 }
 
 /** Shared assertion body used by the compiled consumer and source HTTP test. */

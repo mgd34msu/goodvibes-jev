@@ -7,7 +7,7 @@ import { repairUsefulFixtureReading, type RepairProfileFixtureValues, type Repai
 export function repairScoringFixtureReading(name: string, question: Question, state: unknown,
   profiles: RepairProfileFixtureValues = [], claims: RepairUsefulFixtureValues = []) {
   if (name !== 'factTrust' && name !== 'sourceSupport' && name !== 'subjectSupport') return undefined;
-  if (question !== repairFactScoring.items[name].question) return undefined;
+  if (JSON.stringify(question) !== JSON.stringify(repairFactScoring.items[name].question)) return undefined;
   if (repairUsefulFixtureReading(state, profiles, claims) !== 0.99) throw new Error('Unscripted exact repair scoring fixture.');
   return scoreAnswer(question, 4, 0.99);
 }

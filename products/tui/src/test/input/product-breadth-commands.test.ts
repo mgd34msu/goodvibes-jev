@@ -2300,13 +2300,15 @@ describe('product breadth commands', () => {
     expect(missingDirectory.requests[0]?.questions).toEqual({ kind: fieldKind.items.kind.question });
     expect(builtin.requests).toHaveLength(1);
     expect(builtin.requests[0]?.context).toEqual({ battery: 'engine.agents.archetype-family', pattern: 'fan-out', site: 'agents.archetype-family' });
-    expect(builtin.requests[0]?.state).toEqual({ archetypes: recordedBuiltinArchetypes.map(({ name, description, tools }) => ({ name, description, tools: [...tools] })) });
+    expect(builtin.requests[0]?.state).toEqual({ archetypes: recordedBuiltinArchetypes.map(({ name, description, tools }) => ({ name, description, tools: [...tools], isCustom: false, origin: 'builtin' })) });
     expect(Object.keys(builtin.requests[0]?.questions ?? {})).toEqual(recordedBuiltinArchetypes.map((_, index) => `archetype${index}__family`));
     expect(listing.requests).toHaveLength(4);
     for (const request of listing.requests) {
       expect(Object.keys(request.questions)).toHaveLength(9);
       expect(request.context).toEqual({ battery: 'engine.agents.archetype-family', pattern: 'fan-out', site: 'agents.archetype-family' });
-      expect(request.state).toEqual({ archetypes: [...recordedBuiltinArchetypes, doc].map(({ name, description, tools }) => ({ name, description, tools: [...tools] })) });
+      expect(request.state).toMatchObject({ archetypes: [...recordedBuiltinArchetypes, doc].map(({ name, description, tools }) => ({ name, description, tools: [...tools] })) });
+      expect(request.state).toMatchObject({ archetypes: expect.arrayContaining([expect.objectContaining({ name: doc.name,
+        sourceDocument: expect.stringContaining('You write precise operator-facing docs.') })]) });
       expect(Object.keys(request.questions)).toEqual([...recordedBuiltinArchetypes, doc].map((_, index) => `archetype${index}__family`));
     }
     const stored = opsApi.tasks.list();

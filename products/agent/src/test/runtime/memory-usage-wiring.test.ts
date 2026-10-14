@@ -1,5 +1,6 @@
 import { useMemoryReadings } from '../helpers/memory-readings.ts';
 import { describe, it, expect, afterEach } from 'bun:test';
+import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
 import { rmSync } from 'node:fs';
 import { MemoryEmbeddingProviderRegistry, MemoryRegistry, MemoryStore } from '@goodvibes-jev/engine/sdk/platform/state';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -67,6 +68,33 @@ describe('MemoryUsageTracker', () => {
     tracker.onComposed('turn-2', draftWithMemory([record.id]));
     tracker.onTurnAborted('turn-2');
     await tracker.onTurnCompleted('turn-2', 'kubernetes rollout kubernetes rollout');
+    expect(tracker.lookup(record.id)?.referencedCount).toBe(0);
+  });
+
+  it('does not credit a reference when cancellation arrives during the reading', async () => {
+    const { registry, paths } = await makeRegistry();
+    const record = await registry.add({ scope: 'project', cls: 'fact', summary: 'Distinctive kubernetes rollout note', review: { state: 'reviewed', confidence: 80 } });
+    const tracker = createMemoryUsageTracker(paths, registry);
+    tracker.onComposed('in-flight', draftWithMemory([record.id]));
+    const source = judgmentPort('usage-test');
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    installJudgmentPort({ ...source, async ask(request) { entered.resolve(); await release.promise; return source.ask(request); } });
+    const pending = tracker.onTurnCompleted('in-flight', 'kubernetes rollout kubernetes rollout');
+    try {
+      await entered.promise;
+      tracker.onTurnAborted('in-flight');
+      await pending;
+      expect(tracker.lookup(record.id)?.referencedCount).toBe(0);
+    } finally { release.resolve(); }
+  });
+
+  it('uses the memory composed into the prompt and refuses a changed record', async () => {
+    const { registry, paths } = await makeRegistry();
+    const record = await registry.add({ scope: 'project', cls: 'fact', summary: 'Original rollout procedure', review: { state: 'reviewed', confidence: 80 } });
+    const tracker = createMemoryUsageTracker(paths, registry);
+    tracker.onComposed('changed', draftWithMemory([record.id]));
+    await registry.update(record.id, { summary: 'Replacement procedure' });
+    await expect(tracker.onTurnCompleted('changed', 'Replacement procedure')).rejects.toThrow('Injected memory changed');
     expect(tracker.lookup(record.id)?.referencedCount).toBe(0);
   });
 

@@ -1,3 +1,4 @@
+import { knowledgeClockIso } from '../store-record-representation.js';
 import type { KnowledgeScopeSelectionOptions } from '../scope-selection.js';
 import { KnowledgeScopeSelectionHeldError } from '../scope-selection.js';
 import { createKnowledgeFactQualityReader } from './fact-quality.js';
@@ -194,10 +195,10 @@ export async function linkRepairSources(
   const edges = sources.flatMap(source => [
     { fromKind: 'source' as const, fromId: source.id, toKind: 'node' as const, toId: gap.id,
       relation: REPAIRS_GAP_RELATION, weight: 0.8,
-      metadata: semanticMetadata(spaceId, { query, repairedAt: Date.now() }) },
+      metadata: semanticMetadata(spaceId, { query, repairedAt: knowledgeClockIso(Date.now()) }) },
     ...selection.nodes.map(node => ({ fromKind: 'source' as const, fromId: source.id,
       toKind: 'node' as const, toId: node.id, relation: 'source_for', weight: 0.78,
-      metadata: semanticMetadata(spaceId, { query, linkedBy: 'semantic-gap-repair', repairedAt: Date.now() }) })),
+      metadata: semanticMetadata(spaceId, { query, linkedBy: 'semantic-gap-repair', repairedAt: knowledgeClockIso(Date.now()) }) })),
   ]);
   assertCurrent();
   await store.applyPreparedIngest({ sources: [], extractions: [], nodes: [], edges: [], issues: [] }, async () => ({

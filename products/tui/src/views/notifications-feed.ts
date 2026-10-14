@@ -27,9 +27,11 @@ import type { Notification, RoutingDecision } from '@/runtime/index.ts';
 import { JudgmentAuthorityRetiredError } from '@goodvibes-jev/engine/errors';
 
 export interface NotificationFeedEntry {
+  /** Raw notice is visible while semantic severity remains unclassified. */
+  readonly severityPending?: boolean;
   readonly key: string;
   readonly domain: string;
-  readonly level: Notification['level'];
+  readonly level: Notification['level'] | undefined;
   readonly title: string;
   readonly body: string | undefined;
   /** Unix ms of the most recent notification folded into this entry. */
@@ -65,9 +67,8 @@ function mergeDetail(previous: string | undefined, incoming: string | undefined)
 }
 
 /** A conversation system notice to keep in the history (see recordNotice). */
-export interface NoticeInput {
+export type NoticeInput = {
   readonly domain: string;
-  readonly level: Notification['level'];
   readonly title: string;
   readonly body?: string | undefined;
   readonly timestamp: number;
@@ -75,7 +76,8 @@ export interface NoticeInput {
   readonly restored?: boolean;
   /** The runtime event this notice restates (the SDK's runtimeEventOfNotice key), if any. */
   readonly eventKey?: string | undefined;
-}
+} & ({ readonly severityPending: true; readonly level?: undefined }
+  | { readonly severityPending?: false; readonly level: Notification['level'] });
 
 /** Domains whose notifications are about something the Agents modal shows. */
 const AGENT_DOMAINS: ReadonlySet<string> = new Set(['agents', 'tasks', 'workflows', 'automation', 'wrfc', 'orchestration', 'plan']);
@@ -204,7 +206,7 @@ export class NotificationFeed {
     const entry: NotificationFeedEntry = {
       key,
       domain: notification.domain,
-      level: previous && LEVEL_RANK[previous.level] > LEVEL_RANK[notification.level] ? previous.level : notification.level,
+      level: previous && previous.level !== undefined && LEVEL_RANK[previous.level] > LEVEL_RANK[notification.level] ? previous.level : notification.level,
       title,
       body,
       timestamp: notification.timestamp,
@@ -223,7 +225,7 @@ export class NotificationFeed {
    * restored from a saved session, which also counts as already seen.
    */
   recordNotice(input: NoticeInput): NotificationFeedEntry {
-    if (input.eventKey) {
+    if (input.eventKey && input.level !== undefined) {
       const folded = this.foldEvent(input.eventKey, { level: input.level, body: input.body, fromNotice: true, restored: input.restored === true });
       if (folded) return folded;
     }
@@ -236,6 +238,7 @@ export class NotificationFeed {
       body: input.body,
       timestamp: input.timestamp,
       reasonCode: 'system_notice',
+      ...(input.severityPending ? { severityPending: true } : {}),
       collapsedCount: 1,
       subject: AGENT_DOMAINS.has(input.domain) ? 'agents' : undefined,
       toast: input.restored ? 'never' : 'always',
@@ -280,7 +283,7 @@ export class NotificationFeed {
     }
     const merged: NotificationFeedEntry = {
       ...existing,
-      level: LEVEL_RANK[arrival.level] > LEVEL_RANK[existing.level] ? arrival.level : existing.level,
+      level: (existing.level === undefined || LEVEL_RANK[arrival.level] > LEVEL_RANK[existing.level]) ? arrival.level : existing.level,
       body: key.startsWith('group:') ? this.groupBody(key, this.groupTitles.get(key))
         : arrival.fromNotice ? (noticeBody ?? existing.body) : (existing.body ?? arrival.body),
       restored: rowRestored,
@@ -317,6 +320,13 @@ export class NotificationFeed {
       }
     }
     this.entries.set(key, entry);
+    this.emitChange();
+  }
+
+  /** A delayed reading may only decorate the exact notice still in this feed. */
+  settleNoticeSeverity(entry: NotificationFeedEntry, level: Notification['level']): void {
+    if (this.entries.get(entry.key) !== entry || !entry.severityPending) return;
+    this.entries.set(entry.key, { ...entry, level, severityPending: false });
     this.emitChange();
   }
 

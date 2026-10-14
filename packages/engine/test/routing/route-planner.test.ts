@@ -6,6 +6,7 @@ import { composeTier, readRequest, type RequestReading } from '../../sdk/src/pla
 import { createRoutePlanner, eligibleModels, NoRouteError, shortlistOrder, type RoutePlannerCatalog } from '../../sdk/src/platform/routing/route-planner.js';
 import { ModelTierStore, modelTierFrom, type ModelFacts } from '../../sdk/src/platform/routing/model-tiers.js';
 import { tierSearchOrder } from '../../sdk/src/platform/routing/tiers.js';
+import { JudgmentHeldError } from '../../sdk/src/platform/types/judgment-held.js';
 import type { ModelDefinition } from '../../sdk/src/platform/providers/registry-types.js';
 import type { ResolvedModelPricing } from '../../sdk/src/platform/providers/model-pricing.js';
 
@@ -33,10 +34,11 @@ describe('tier composition', () => {
     expect(composeTier(readings(), 'unit').tier).toBe('economy');
   });
 
-  test('an unsure tier reading gives way to the difficulty level', () => {
-    const composed = composeTier(readings({ tier: choice('economy', 0.4, 'escalate'), difficulty: score(3) }), 'unit');
-    expect(composed.tier).toBe('premium');
-    expect(composed.because).toContain('difficulty');
+  test.each(['tier', 'intent', 'difficulty', 'risk', 'domain', 'language'] as const)('an unsettled %s holds routing', (key) => {
+    for (const outcome of ['confirm', 'escalate'] as const) {
+      const input = readings();
+      expect(() => composeTier({ ...input, [key]: { ...input[key], outcome } }, 'unit')).toThrow(JudgmentHeldError);
+    }
   });
 
   test('severe risk and the planner purpose raise the floor', () => {
@@ -44,8 +46,8 @@ describe('tier composition', () => {
     expect(composeTier(readings(), 'planner').tier).toBe('standard');
   });
 
-  test('a non-English request with an unsure tier reading is not sent below standard', () => {
-    expect(composeTier(readings({ tier: choice('economy', 0.7, 'confirm'), language: choice('german', 0.99, 'act') }), 'unit').tier).toBe('standard');
+  test('a non-English request also requires a settled tier', () => {
+    expect(() => composeTier(readings({ tier: choice('economy', 0.7, 'confirm'), language: choice('german', 0.99, 'act') }), 'unit')).toThrow(JudgmentHeldError);
     expect(composeTier(readings({ language: choice('german', 0.99, 'act') }), 'unit').tier).toBe('economy');
   });
 
@@ -160,14 +162,14 @@ describe('route planner', () => {
     expect(requests.length - before).toBe(2);
   });
 
-  test('request and model-choice readings preserve complete ordered native source separately from bounded briefs', async () => {
+  test('request and model-choice readings preserve complete ordered native source and request briefs', async () => {
     const { port, requests } = routingPort({ tier: 'premium', frontier: isFlagship, pick: 'alpha:flagship-1' });
     installJudgmentPort(port);
     const planner = createRoutePlanner({ catalog: catalogOf(models, ['alpha', 'beta']), tiers: new ModelTierStore() });
     const originalSource = { goal: 'Original goal '.repeat(700), criteria: ['  First requirement\n', 'Second requirement '.repeat(700), '  First requirement\n'] };
     await planner.planRoute({ purpose: 'unit', brief: 'Derived summary '.repeat(800), originalSource });
     const input = requests[0]!.state as { work: string; originalSource: typeof originalSource };
-    expect(input.work).toHaveLength(6000); expect(input.originalSource).toEqual(originalSource);
+    expect(input.work).toBe('Derived summary '.repeat(800)); expect(input.originalSource).toEqual(originalSource);
     const choiceState = requests.at(-1)!.state as { context: { originalSource: typeof originalSource } };
     expect(choiceState.context.originalSource).toEqual(originalSource);
   });

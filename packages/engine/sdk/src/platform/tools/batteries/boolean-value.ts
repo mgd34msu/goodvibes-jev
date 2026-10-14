@@ -19,10 +19,9 @@ import { captureNativeDecisionPolicy } from './decision-policy.js';
  */
 import { defineBattery, oneOf, STAKES_BANDS } from '@goodvibes-jev/judgment';
 
-/** Most characters of the value or the description the reading carries. */
+/** Complete admitted strings are retained; the caller owns request budgets. */
 export const MAX_JUDGED_BOOLEAN_CHARS = 300;
 
-const clip = (text: string): string => (text.length <= MAX_JUDGED_BOOLEAN_CHARS ? text : `${text.slice(0, MAX_JUDGED_BOOLEAN_CHARS)}...`);
 
 export const BOOLEAN_VALUE_OPTIONS = {
   true: 'The value says yes, on, enabled or true for this parameter.',
@@ -34,10 +33,10 @@ export type BooleanValue = keyof typeof BOOLEAN_VALUE_OPTIONS;
 
 /** What the reading sees: the tool, the parameter, its description when the schema has one, and the string value sent. */
 export function booleanValueView(tool: string, parameter: string, description: string | undefined, value: string): { tool: string; parameter: string; description?: string; value: string } {
-  return { tool, parameter, ...(description ? { description: clip(description) } : {}), value: clip(value) };
+  return { tool, parameter, ...(description ? { description } : {}), value };
 }
 
-const booleanValueDefinition = {
+const booleanValueDefinition = Object.freeze({
   name: 'engine.tools.boolean-value',
   version: 1,
   description: 'Which boolean, if any, a string value sent for a boolean tool parameter means.',
@@ -61,6 +60,6 @@ const booleanValueDefinition = {
     { name: 'a sentence', state: booleanValueView('write', 'overwrite', 'Replace the file if it exists.', 'the config file for the build'), expect: { boolean_value: 'neither' } },
     { name: 'maybe', state: booleanValueView('exec', 'background', 'Run the command in the background.', 'maybe'), expect: { boolean_value: 'neither' } },
   ],
-} as const;
+} as const);
 export const booleanValue = defineBattery(booleanValueDefinition);
 export const booleanValuePolicy = captureNativeDecisionPolicy(booleanValueDefinition, booleanValue);

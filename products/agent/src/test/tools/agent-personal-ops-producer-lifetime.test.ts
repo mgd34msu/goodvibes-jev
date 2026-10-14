@@ -3,12 +3,13 @@ import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import type { CommandContext } from '../../input/command-registry.ts';
-import { savedReviewArtifacts } from '../../tools/agent-harness-personal-ops-records.ts';
-import { capturePersonalOpsData, capturePersonalOpsSnapshot, assertPersonalOpsDataCurrent, protectPersonalOpsData } from '../../tools/agent-harness-personal-ops-source.ts';
+import { savedProviderEffectReceiptRecords, savedReviewArtifacts } from '../../tools/agent-harness-personal-ops-records.ts';
+import { capturePersonalOpsData, capturePersonalOpsSnapshot, assertPersonalOpsDataCurrent, protectPersonalOpsData, protectPersonalOpsResult } from '../../tools/agent-harness-personal-ops-source.ts';
 import * as catalogCapture from '../../tools/agent-harness-catalog-ranking.ts';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureOwnedJson } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { mcpSchemaReader, mcpToolRecords, mcpToolSchemas } from '../../tools/agent-harness-personal-ops-discovery.ts';
-import { readPersonalOpsTool } from '../../tools/agent-harness-personal-ops-readings.ts';
+import { readPersonalOpsReceiptStatus, readPersonalOpsTool } from '../../tools/agent-harness-personal-ops-readings.ts';
 import { watcherReadModelLiveRecords, watcherReadModelNativeFacts } from '../../tools/agent-harness-autonomy-watcher-read-models.ts';
 import { cleanupResearchScreeningFixtures, ordinaryResearchOwner } from '../helpers/research-screening.ts';
 
@@ -23,10 +24,12 @@ function object(value: unknown): Record<string, unknown> {
 }
 function privacyFixture() {
   return fakePort((name, question, state) => {
+    if (name === 'status' && question.type === 'choice' && Object.hasOwn(question.criteria, 'succeeded'))
+      return choiceAnswer(question, 'succeeded', 0.999);
     if (name === 'kind' && question.type === 'choice' && Object.hasOwn(question.criteria, 'owner_profile')) {
       const field = object(state).field;
       if (typeof field !== 'string') throw new Error('Missing field');
-      return choiceAnswer(question, field === 'accessToken' || field === 'password' ? 'secret' : 'other', 0.999);
+      return choiceAnswer(question, field === 'accessToken' || field === 'password' || field === 'token' ? 'secret' : 'other', 0.999);
     }
     if (['lineHasCredential', 'spanIsCredential', 'credentialRemains', 'identifying'].includes(name)) return noulAnswer(0.001);
     throw new Error(`Unexpected producer privacy question ${name}`);
@@ -34,11 +37,65 @@ function privacyFixture() {
 }
 
 describe('Personal Ops actual producer privacy and lifetimes', () => {
+  test('provider result projection protects private names while preserving complete original ownership', async () => {
+    const fake = privacyFixture(); installJudgmentPort(fake.port);
+    const source = { stable: true, 'token=synthetic-private-result-key': 'Associated provider data' }, guards: Array<() => void> = [];
+    const result = await protectPersonalOpsResult(source, { retainCurrent: guard => { guards.push(guard); } });
+    expect(result).toEqual({ stable: true, 'token=[REDACTED]': '[REDACTED]' });
+    expect(JSON.stringify(fake.requests)).not.toContain('synthetic-private-result-key');
+    for (const guard of guards) guard(); source.stable = false;
+    expect(() => guards.forEach(guard => guard())).toThrow();
+  });
+  test('a private producer key still cannot be rewritten into a native contract fact', async () => {
+    const fake = privacyFixture(); installJudgmentPort(fake.port);
+    await expect(protectPersonalOpsData({ 'token=synthetic-private-native-key': 'Native field' })).rejects.toThrow();
+    expect(JSON.stringify(fake.requests)).not.toContain('synthetic-private-native-key');
+  });
+  const nativeReceipt = () => ({ id: 'receipt-1', kind: 'data', mimeType: 'application/json', sizeBytes: 7,
+    sha256: 'synthetic-sha', createdAt: 1791684509006, expiresAt: 1791684509006,
+    acquisitionMode: 'inline-data', fetchMode: 'not-applicable',
+    metadata: { purpose: 'personal-ops-provider-effect-receipt', laneId: 'inbox', status: 'succeeded', publicationGuarantee: 'Committed receipt. password=[REDACTED]' } });
+  test('native receipt clocks reach Jev as ISO with complete protected evidence and original ownership', async () => {
+    const fake = privacyFixture(); installJudgmentPort(fake.port);
+    const artifact = Object.defineProperty(nativeReceipt(), 'hiddenEvidence', { value: 'Complete retained receipt tail', writable: true });
+    const guards: Array<() => void> = [];
+    const result = await savedProviderEffectReceiptRecords(context({ artifactStore: { list: () => [artifact] } }), 'inbox', { sourceOwner: ordinaryResearchOwner(), retainCurrent: guard => { guards.push(guard); } });
+    expect(result[0]?.status).toBe('succeeded');
+    const requests = JSON.stringify(fake.requests);
+    expect(requests).toContain(new Date(artifact.createdAt).toISOString());
+    expect(requests).toContain('Complete retained receipt tail');
+    expect(requests).not.toContain('1791684509006');
+    for (const guard of guards) guard();
+    Object.defineProperty(artifact, 'hiddenEvidence', { value: 'Changed retained receipt tail' });
+    expect(() => guards.forEach(guard => guard())).toThrow();
+  });
+  test('native clock projection cannot admit fractional clocks, nested cards or generic receipt clocks', async () => {
+    const fake = privacyFixture(); installJudgmentPort(fake.port);
+    await expect(readPersonalOpsReceiptStatus({ createdAt: 1791684509006, status: 'succeeded' }, { sourceOwner: ordinaryResearchOwner() })).rejects.toThrow();
+    expect(fake.requests).toHaveLength(0);
+    const fractional = { ...nativeReceipt(), createdAt: 1791684509006.5 };
+    await expect(savedProviderEffectReceiptRecords(context({ artifactStore: { list: () => [fractional] } }), 'inbox')).rejects.toThrow();
+    const nested = { ...nativeReceipt(), metadata: { ...nativeReceipt().metadata, createdAt: '4111111111111111' } };
+    await expect(savedProviderEffectReceiptRecords(context({ artifactStore: { list: () => [nested] } }), 'inbox')).rejects.toThrow();
+    expect(JSON.stringify(fake.requests)).not.toContain('4111111111111111');
+  });
+  test('receipt source changes during its status reply prevent publication without a caller readset', async () => {
+    const artifact = nativeReceipt(), ordinary = privacyFixture();
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    const port: JudgmentPort = { model: ordinary.port.model, async ask(request) {
+      if (Object.values(request.questions).some(question => question.type === 'choice' && Object.hasOwn(question.criteria, 'succeeded'))) { entered.resolve(); await release.promise; }
+      return ordinary.port.ask(request);
+    } };
+    installJudgmentPort(port);
+    const work = savedProviderEffectReceiptRecords(context({ artifactStore: { list: () => [artifact] } }), 'inbox', { sourceOwner: ordinaryResearchOwner() });
+    await entered.promise; artifact.metadata.status = 'failed'; release.resolve();
+    await expect(work).rejects.toThrow();
+  });
   test('complete DTO protection preserves native flags and clocks and owns original source after return', async () => {
     const fake = privacyFixture(); installJudgmentPort(fake.port);
     const original = { accessToken: 'synthetic-private-credential', enabled: true, createdAt: 4001, detail: 'Complete synthetic record tail' };
     const guards: Array<() => void> = [];
-    const result = await protectPersonalOpsData(original, { retainCurrent: guard => guards.push(guard) });
+    const result = await protectPersonalOpsData(original, { retainCurrent: guard => { guards.push(guard); } });
     expect(result).toEqual({ accessToken: '[REDACTED]', enabled: true, createdAt: 4001, detail: 'Complete synthetic record tail' });
     expect(JSON.stringify(fake.requests)).not.toContain('synthetic-private-credential');
     expect(JSON.stringify(fake.requests)).toContain('Complete synthetic record tail');
@@ -49,7 +106,7 @@ describe('Personal Ops actual producer privacy and lifetimes', () => {
     const fake = privacyFixture(); installJudgmentPort(fake.port);
     const original = Object.defineProperty({ enabled: true }, 'accessToken', { value: 'synthetic-hidden-private', enumerable: false, writable: true });
     const guards: Array<() => void> = [];
-    expect(await protectPersonalOpsData(original, { retainCurrent: guard => guards.push(guard) })).toEqual({ enabled: true, accessToken: '[REDACTED]' });
+    expect(await protectPersonalOpsData(original, { retainCurrent: guard => { guards.push(guard); } })).toEqual({ enabled: true, accessToken: '[REDACTED]' });
     expect(JSON.stringify(fake.requests)).not.toContain('synthetic-hidden-private');
     Object.defineProperty(original, 'accessToken', { value: 'changed-hidden-private' });
     expect(() => guards.forEach(guard => guard())).toThrow();
@@ -74,7 +131,7 @@ describe('Personal Ops actual producer privacy and lifetimes', () => {
     const fake = privacyFixture(); installJudgmentPort(fake.port);
     const record = { runId: 'run-1', status: 'running', updatedAt: 4001, outputChunks: ['Synthetic watcher output password=synthetic-private'], cancelRoute: 'watchers cancel run-1' };
     const producer = { getSnapshot: () => ({ records: [record] }) }, guards: Array<() => void> = [];
-    const result = await watcherReadModelLiveRecords(context({ readModels: { watchers: { runHistory: producer } } }), { retainCurrent: guard => guards.push(guard), sourceOwner: ordinaryResearchOwner() });
+    const result = await watcherReadModelLiveRecords(context({ readModels: { watchers: { runHistory: producer } } }), { retainCurrent: guard => { guards.push(guard); }, sourceOwner: ordinaryResearchOwner() });
     expect(result[0]?.status).toBe('running'); expect(result[0]?.cancelRoute).toBe('watchers cancel run-1');
     expect(JSON.stringify(result)).not.toContain('synthetic-private'); expect(JSON.stringify(fake.requests)).not.toContain('synthetic-private');
     for (const guard of guards) guard(); producer.getSnapshot = () => ({ records: [record] });
@@ -95,7 +152,7 @@ describe('Personal Ops actual producer privacy and lifetimes', () => {
     const raw = { inputSchema: { type: 'object', description: 'Original complete schema' } }, reads: string[] = [], guards: Array<() => void> = [];
     const api = { getToolSchema: async (name: string) => { reads.push(name); return raw; } };
     const tools = Array.from({ length: 61 }, (_, index) => ({ serverName: 'synthetic', toolName: `opaque-${index}`, description: 'No name shortlist' }));
-    const schemas = await mcpToolSchemas(context({}, { mcpApi: api }), tools, { retainCurrent: guard => guards.push(guard) });
+    const schemas = await mcpToolSchemas(context({}, { mcpApi: api }), tools, { retainCurrent: guard => { guards.push(guard); } });
     expect(schemas.size).toBe(61); expect(reads).toHaveLength(61); for (const guard of guards) guard();
     raw.inputSchema.description = 'Changed original schema'; expect(() => guards.forEach(guard => guard())).toThrow();
   });
@@ -158,6 +215,30 @@ for (const pair of normalizedPairs) test(`paired Personal Ops equality preserves
   expect<unknown>(paired.captured).toEqual(generic);
 });
 
+test('only completely immutable data can reuse its own Personal Ops observation', () => {
+  const source = Object.freeze({ rows: [{ text: 'Original native row' }] });
+  const mutable = capturePersonalOpsSnapshot(source);
+  const owned = captureOwnedJson(source), immutable = capturePersonalOpsSnapshot(owned);
+  expect(() => immutable.assertCurrent(owned)).not.toThrow();
+  source.rows[0]!.text = 'Changed native row';
+  expect(personalOpsOutcome(() => mutable.assertCurrent(source))).toBe('held');
+  expect(personalOpsOutcome(() => immutable.assertCurrent(source))).toBe('held');
+  expect(() => immutable.assertCurrent(owned)).not.toThrow();
+  const frozen = Object.freeze({ rows: Object.freeze([Object.freeze({ text: 'Original native row' })]) });
+  const frozenSnapshot = capturePersonalOpsSnapshot(frozen);
+  expect(() => frozenSnapshot.assertCurrent(frozen)).not.toThrow();
+  const different = Object.freeze({ rows: Object.freeze([Object.freeze({ text: 'Changed native row' })]) });
+  expect(personalOpsOutcome(() => frozenSnapshot.assertCurrent(different))).toBe('held');
+  expect(personalOpsOutcome(() => frozenSnapshot.assertCurrent(source))).toBe('held');
+  const nested: { left: Readonly<{ text: string }>; right: Readonly<{ text: string }> } = {
+    left: Object.freeze({ text: 'Left native row' }), right: Object.freeze({ text: 'Right native row' }),
+  };
+  const nestedSnapshot = capturePersonalOpsSnapshot(nested);
+  expect(() => nestedSnapshot.assertCurrent(nested)).not.toThrow();
+  [nested.left, nested.right] = [nested.right, nested.left];
+  expect(personalOpsOutcome(() => nestedSnapshot.assertCurrent(nested))).toBe('held');
+});
+
 test('paired capture owns only its fresh baseline and leaves the arbitrary-baseline API unchanged', () => {
   const source = { rows: [{ text: 'Original native row' }] }, paired = capturePersonalOpsSnapshot(source);
   expect(Object.isFrozen(source)).toBe(false); expect(Object.isFrozen(source.rows)).toBe(false); expect(Object.isFrozen(source.rows[0])).toBe(false);
@@ -201,6 +282,8 @@ for (const kind of ['accessor', 'proxy', 'symbol', 'cycle', 'prototype', 'serial
 
 const normalizationTampering: readonly { readonly name: string; readonly subject: object; readonly key: PropertyKey }[] = [
   { name: 'reflector', subject: Object, key: 'getOwnPropertyDescriptors' },
+  { name: 'immutability proof', subject: Object, key: 'isFrozen' },
+  { name: 'native key reflection', subject: Reflect, key: 'ownKeys' },
   { name: 'species', subject: Array, key: Symbol.species },
   { name: 'iterator next', subject: Object.getPrototypeOf([][Symbol.iterator]()), key: 'next' },
   { name: 'array type hook', subject: Array.prototype, key: Symbol.toStringTag },
@@ -239,19 +322,22 @@ test('unconsumed static and inherited additions remain supported without executi
   expect(initial).toBe('accepted'); expect(retained).toBe('accepted'); expect(generic).toBe('accepted'); expect(touched).toBe(0);
 });
 
-test('operation retirement between the complete raw capture and logical normalization holds', () => {
-  const source = { rows: ['Complete native row'] }, paired = capturePersonalOpsSnapshot(source);
-  const capture = catalogCapture.captureCatalogData, descriptor = Object.getOwnPropertyDescriptor(Array.prototype, 'map'), define = Object.defineProperty;
+test('operation retirement between fallback raw capture and logical normalization holds', () => {
+  const source = hiddenPersonalOps('Complete native tail'), paired = capturePersonalOpsSnapshot(source);
+  // Equal hidden data with changed enumerability still needs normalization,
+  // crossing both phases even when exact native observations can be reused.
+  const current = hiddenPersonalOps('Complete native tail', true);
+  const capture = catalogCapture.inspectCatalogData, descriptor = Object.getOwnPropertyDescriptor(Array.prototype, 'map'), define = Object.defineProperty;
   if (!descriptor) throw new Error('Missing actual native map descriptor');
   let rawCaptures = 0, replacedCalls = 0;
-  function captureAndRetire<T>(value: T, budget?: Parameters<typeof capture>[1]): T {
-    const captured = capture(value, budget); rawCaptures++;
+  function captureAndRetire(value: unknown): ReturnType<typeof capture> {
+    const observation = capture(value); rawCaptures++;
     define(Array.prototype, 'map', { value() { replacedCalls++; return []; }, configurable: true, writable: true });
-    return captured;
+    return observation;
   }
-  const spy = spyOn(catalogCapture, 'captureCatalogData').mockImplementation(captureAndRetire);
+  const spy = spyOn(catalogCapture, 'inspectCatalogData').mockImplementation(captureAndRetire);
   let outcome: string | undefined;
-  try { outcome = personalOpsOutcome(() => paired.assertCurrent(source)); }
+  try { outcome = personalOpsOutcome(() => paired.assertCurrent(current)); }
   finally { define(Array.prototype, 'map', descriptor); spy.mockRestore(); }
   expect(outcome).toBe('held'); expect(rawCaptures).toBe(1); expect(replacedCalls).toBe(0);
 });
@@ -277,6 +363,11 @@ test('expanded array aliases retain the original absence of a phase-two index-ke
   const paired = capturePersonalOpsSnapshot(source), generic = capturePersonalOpsData(source);
   expect(personalOpsOutcome(() => assertPersonalOpsDataCurrent(source, generic))).toBe('accepted');
   expect(personalOpsOutcome(() => paired.assertCurrent(source))).toBe('accepted');
+  // Equal frozen copies spend more of the unique raw-capture key budget than
+  // the original aliases. Immutable descendant reuse must not hide that cost.
+  const expanded = source.map(row => Object.freeze([...row]));
+  expect(personalOpsOutcome(() => assertPersonalOpsDataCurrent(expanded, generic))).toBe('invalid');
+  expect(personalOpsOutcome(() => paired.assertCurrent(expanded))).toBe('invalid');
 });
 
 test('a completed raw alias retains its original depth accounting during expanded comparison', () => {

@@ -1,6 +1,6 @@
 import { captureMemoryOperation, assertMemoryOperationCurrent, awaitMemoryOperation, type MemoryOperationOptions } from './memory-operation.js';
 import { assertMemoryPreparedAddOptionsBinding, captureMemoryPreparedAddOptions, prepareMemoryStoreAdd, retainMemoryAddBinding } from './memory-store.js';
-import type { MemoryPreparedAdd, MemoryPreparedAddCommitOptions, MemoryAddPublication, MemoryAddOptions, MemoryBundle, MemoryDoctorReport, MemoryLink, MemoryRecord, MemoryReviewPatch, MemoryScope, MemorySearchFilter, MemorySemanticSearchResult, MemoryStore } from './memory-store.js';
+import type { MemoryClass, MemoryPreparedAdd, MemoryPreparedAddCommitOptions, MemoryAddPublication, MemoryAddOptions, MemoryBundle, MemoryDoctorReport, MemoryLink, MemoryRecord, MemoryReviewPatch, MemoryScope, MemorySearchFilter, MemorySemanticSearchResult, MemoryStore } from './memory-store.js';
 import type { MemoryVectorStats } from './memory-vector-store.js';
 import type { MemoryImportResult } from './memory-store.js';
 import { runHonestMemorySearch, type HonestMemorySearchOptions, type HonestMemorySearchResult } from './memory-recall-contract.js';
@@ -131,7 +131,7 @@ export class MemoryRegistry {
     return this.store.linksFor(id, options);
   }
 
-  update(id: string, patch: { scope?: MemoryScope; summary?: string; detail?: string; tags?: string[]; validFrom?: number | null; validUntil?: number | null }, options?: MemoryOperationOptions): MemoryRecord | null {
+  update(id: string, patch: { cls?: MemoryClass; scope?: MemoryScope; summary?: string; detail?: string; tags?: string[]; validFrom?: number | null; validUntil?: number | null }, options?: MemoryOperationOptions): MemoryRecord | null {
     const operation = captureMemoryOperation(options);
     const record = this.store.update(id, patch, operation);
     if (record) this.notify(operation);

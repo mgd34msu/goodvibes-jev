@@ -19,12 +19,7 @@ import { listHookPointContracts, type HookPointContract } from '../contracts.js'
 export function hookContractCandidate(contract: HookPointContract): Candidate {
   return {
     id: contract.pattern,
-    content: {
-      pattern: contract.pattern,
-      description: contract.description,
-      authority: contract.authority,
-      executionMode: contract.executionMode,
-    },
+    content: { ...contract },
   };
 }
 
@@ -32,7 +27,7 @@ const CANDIDATES: readonly Candidate[] = listHookPointContracts().map(hookContra
 
 export const hookContractSearch = defineRerank({
   name: 'engine.hooks.contract-search',
-  version: 1,
+  version: 2,
   description: 'Which hook points match what an operator types to filter the hook contract listing.',
   accuracyFloor: 0.9,
   instructions: 'Is `candidate` a hook point the operator is looking for with `query`?',

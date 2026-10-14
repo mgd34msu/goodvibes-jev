@@ -841,6 +841,7 @@ export class MemoryStore {
    * clears it (so the projection round-trip can both set and remove a window).
    */
   update(id: string, patch: {
+    cls?: MemoryClass;
     scope?: MemoryScope;
     summary?: string;
     detail?: string;
@@ -859,6 +860,7 @@ export class MemoryStore {
     }
 
     const now = Date.now();
+    const newClass = patch.cls ?? existing.cls;
     const newScope   = patch.scope   ?? existing.scope;
     const newSummary = patch.summary ?? existing.summary;
     const newDetail  = patch.detail  !== undefined ? patch.detail : existing.detail;
@@ -868,13 +870,13 @@ export class MemoryStore {
 
     this.runMutation(
       `UPDATE memory_records
-         SET scope = ?, summary = ?, detail = ?, tags = ?, valid_from = ?, valid_until = ?, updated_at = ?
+         SET cls = ?, scope = ?, summary = ?, detail = ?, tags = ?, valid_from = ?, valid_until = ?, updated_at = ?
          WHERE id = ?`,
-      [newScope, newSummary, newDetail ?? null, JSON.stringify(newTags), newValidFrom ?? null, newValidUntil ?? null, now, id],
+      [newClass, newScope, newSummary, newDetail ?? null, JSON.stringify(newTags), newValidFrom ?? null, newValidUntil ?? null, now, id],
       operation,
     );
 
-    const updated = { ...existing, scope: newScope, summary: newSummary, detail: newDetail, tags: newTags, validFrom: newValidFrom, validUntil: newValidUntil, updatedAt: now };
+    const updated = { ...existing, cls: newClass, scope: newScope, summary: newSummary, detail: newDetail, tags: newTags, validFrom: newValidFrom, validUntil: newValidUntil, updatedAt: now };
     this.vectorIndex?.upsert(updated, operation);
     this.persist(operation);
     assertMemoryOperationCurrent(operation);

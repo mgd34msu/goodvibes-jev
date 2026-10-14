@@ -47,6 +47,17 @@ describe('Home Graph page priority', () => {
     });
   });
 
+  test('hidden private tails remain part of complete page admission', async () => {
+    const port = fakePort(() => noulAnswer(0.99));
+    const candidate = Object.defineProperty({ title: 'Vela' }, 'hidden', {
+      value: { card: '4111111111111111' }, enumerable: false,
+    });
+    await withPort(port.port, async () => {
+      await expect(rank([candidate])).rejects.toMatchObject({ problem: 'card-material' });
+      expect(port.requests).toHaveLength(0);
+    });
+  });
+
   test('candidate mutation and model replacement cannot publish an earlier ranking', async () => {
     const candidates = [{ title: 'Vela', description: 'Original description' }];
     const changed = fakePort(() => { candidates[0]!.description = 'Changed description'; return noulAnswer(0.99); });

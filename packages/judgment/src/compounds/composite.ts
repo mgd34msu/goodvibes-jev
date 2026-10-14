@@ -41,9 +41,9 @@ export function defineCompositeScore<const D extends string, const P extends str
   const dimensionNames = Object.keys(spec.dimensions) as D[];
   const totalWeight = (weights: Readonly<Record<D, number>>): number => dimensionNames.reduce((sum, dimension) => sum + weights[dimension], 0);
   for (const [profile, weights] of Object.entries(spec.profiles) as [P, Readonly<Record<D, number>>][]) {
-    const negative = dimensionNames.find((dimension) => !(weights[dimension] >= 0));
-    if (negative !== undefined) throw new RangeError(`composite ${spec.name}: profile ${profile} needs a weight of 0 or more for ${negative}`);
-    if (!(totalWeight(weights) > 0)) throw new RangeError(`composite ${spec.name}: profile ${profile} has no positive weight`);
+    const negative = dimensionNames.find((dimension) => (!Number.isFinite(weights[dimension]) || weights[dimension] < 0));
+    if (negative !== undefined) throw new RangeError(`composite ${spec.name}: profile ${profile} needs a finite weight of 0 or more for ${negative}`);
+    if (!Number.isFinite(totalWeight(weights)) || !(totalWeight(weights) > 0)) throw new RangeError(`composite ${spec.name}: profile ${profile} needs a finite positive total weight`);
   }
   const items = Object.fromEntries(
     dimensionNames.map((dimension) => {

@@ -219,9 +219,17 @@ test('complete response descriptor capture does not execute an accessor', async 
   expect(accessorCalls).toBe(0);
 });
 
-test('an uncalibrated observed model cannot classify preference themes', async () => {
+test('latest alias accepts a newer Jev response and preserves its resolved identity', async () => {
   const f = fixture(), fake = fakePort(() => noulAnswer(0.999));
   const borrowed: JudgmentPort = { ...fake.port, async ask(request) { return { ...await fake.port.ask(request), model: 'jev-9.99.0' }; } };
+  installJudgmentPort(borrowed);
+  expect(await readComparisonReasonThemes(f.judgment, f.store, f.report, { sourceOwner: ordinaryResearchOwner() }))
+    .toMatchObject({ status: 'settled', provenance: { model: 'jev-9.99.0' } });
+});
+
+test('a non-Jev response cannot classify preference themes', async () => {
+  const f = fixture(), fake = fakePort(() => noulAnswer(0.999));
+  const borrowed: JudgmentPort = { ...fake.port, async ask(request) { return { ...await fake.port.ask(request), model: 'unrelated-model' }; } };
   installJudgmentPort(borrowed);
   expect(await readComparisonReasonThemes(f.judgment, f.store, f.report, { sourceOwner: ordinaryResearchOwner() })).toEqual({ status: 'held' });
 });

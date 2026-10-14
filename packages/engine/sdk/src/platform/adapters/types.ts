@@ -68,7 +68,7 @@ export type TrySpawnAgentFn = (
   input: TrySpawnAgentInput,
   logLabel: string,
   sessionId?: string,
-) => TrySpawnAgentResult;
+) => TrySpawnAgentResult | Promise<TrySpawnAgentResult>;
 
 export interface SurfaceAdapterContext {
   /** Explicit daemon-owned selected lane; absence preserves existing Telegram behavior. */

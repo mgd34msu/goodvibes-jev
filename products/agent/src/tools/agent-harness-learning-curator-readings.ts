@@ -1,3 +1,4 @@
+import { learningProposalQuality } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import { captureJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { gateJudgmentRegistry, prepareJudgmentResult } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { learningCuratorScore, learningDuplicateAlignment, learningProposalTarget, learningSurvivorSelection, learningSurvivorEquivalence, memoryClass, ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -11,7 +12,7 @@ const assertBandFields = captureCatalogMethods(STAKES_BANDS, Object.keys(STAKES_
 const assertBandsData = captureCatalogSnapshotGuard(STAKES_BANDS);
 const assertBands = () => { assertBandFields(); assertBandsData(STAKES_BANDS); assertBandFields(); };
 const assertRegistry = captureCatalogMethods(gateJudgmentRegistry, ['get']);
-const definitionMethods = new Set(['run', 'align', 'select', 'count', 'checkFixtures']);
+const definitionMethods = new Set(['run', 'align', 'select', 'count', 'score', 'checkFixtures']);
 function canonicalDefinitionData(decision: NamedDecision): unknown {
   // Descriptor reads cover hidden closed specifications and never invoke accessors.
   captureCatalogMethods(decision, []);
@@ -30,27 +31,27 @@ function canonicalDefinitionData(decision: NamedDecision): unknown {
   return captureCatalogData(data);
 }
 const definitionGuards = new WeakMap<NamedDecision, () => void>();
-for (const decision of [learningCuratorScore, learningProposalTarget, learningDuplicateAlignment, learningSurvivorSelection, learningSurvivorEquivalence, memoryClass]) {
+for (const decision of [learningProposalQuality, learningCuratorScore, learningProposalTarget, learningDuplicateAlignment, learningSurvivorSelection, learningSurvivorEquivalence, memoryClass]) {
   const assertMethods = captureCatalogMethods(decision, Object.keys(Object.getOwnPropertyDescriptors(decision)));
   const assertData = captureCatalogSnapshotGuard(canonicalDefinitionData(decision));
   // Preserve the original published definition, never a weakened later baseline.
-  definitionGuards.set(decision, () => { assertMethods(); assertData(canonicalDefinitionData(decision)); assertMethods(); });
+  const site = decision.name;
+  definitionGuards.set(decision, () => {
+    assertRegistry(); assertBands(); assertMethods(); assertData(canonicalDefinitionData(decision)); assertMethods();
+    if (gateJudgmentRegistry.get(site) !== decision) throw new ToolInputProjectionError('held');
+    assertRegistry(); assertMethods();
+  });
 }
 
 export interface LearningGrade { readonly scores: LearningScores; readonly priority: number; readonly confidence: number }
 
-async function reading<T>(source: unknown, options: CatalogRankingOptions, decision: NamedDecision, method: 'run' | 'align' | 'select' | 'count',
+async function reading<T>(source: unknown, options: CatalogRankingOptions, decision: NamedDecision, method: 'run' | 'align' | 'select' | 'count' | 'score',
   consume: (authority: ReturnType<typeof captureJudgmentPort>, captured: unknown) => Promise<T>): Promise<T> {
   return withModelReadingSource(source, options, async (captured, current) => {
-    const assertDefinition = definitionGuards.get(decision);
-    if (!assertDefinition) throw new ToolInputProjectionError('held');
+    const assertCanonical = definitionGuards.get(decision);
+    if (!assertCanonical) throw new ToolInputProjectionError('held');
     captureCatalogMethods(decision, [method])();
     const site = decision.name;
-    const assertCanonical = () => {
-      assertRegistry(); assertBands(); assertDefinition();
-      if (gateJudgmentRegistry.get(site) !== decision) throw new ToolInputProjectionError('held');
-      assertRegistry();
-    };
     assertCanonical(); current.retainCurrent?.(assertCanonical, `agent.learning.definition:${site}`);
     const assertCurrent = () => { current.assertCurrent?.(); assertCanonical(); };
     const authority = captureJudgmentPort(site, { signal: current.signal, assertCurrent, prepareResultCapture: prepareJudgmentResult });
@@ -62,15 +63,28 @@ async function reading<T>(source: unknown, options: CatalogRankingOptions, decis
   });
 }
 
-export function readLearningGrade(source: unknown, options: CatalogRankingOptions): Promise<LearningGrade> {
-  return reading(source, options, learningCuratorScore, 'run', async (authority, captured) => {
+export async function readLearningGrade(source: unknown, options: CatalogRankingOptions): Promise<LearningGrade> {
+  const grade = await reading(source, options, learningCuratorScore, 'run', async (authority, captured) => {
     const run = await learningCuratorScore.run(authority.port, personalOpsEntry(captured), { site: learningCuratorScore.name, signal: authority.signal, beforeAttempt: authority.assertCurrent });
     authority.assertCurrent();
     if (Object.values(run.readings).some(value => value.outcome !== 'act')) throw new ToolInputProjectionError('held');
     const { usefulness, freshness, source_quality, risk, priority, confidence } = run.readings;
     run.recordAction('read-only learning candidate graded from complete evidence');
-    return { scores: { usefulness: usefulness.level * 25, freshness: freshness.level * 25, sourceQuality: source_quality.level * 25, risk: risk.level * 25 }, priority: priority.level * 25, confidence: confidence.level * 25 };
+    return { proposal: Boolean(captured && typeof captured === 'object' && 'proposedUse' in captured && ['proposal-ready', 'ready-to-promote'].includes(String(captured.proposedUse))), scores: { usefulness: usefulness.level * 25, freshness: freshness.level * 25, sourceQuality: source_quality.level * 25, risk: risk.level * 25 }, priority: priority.level * 25, confidence: confidence.level * 25 };
   });
+  if (!grade.proposal) return { scores: grade.scores, priority: grade.priority, confidence: grade.confidence };
+  const quality = await reading(source, options, learningProposalQuality, 'score', async (authority, captured) => {
+    const result = await learningProposalQuality.score(authority.port, personalOpsEntry(captured), {
+      site: learningProposalQuality.name, signal: authority.signal, beforeAttempt: authority.assertCurrent,
+    });
+    authority.assertCurrent();
+    if (Object.values(result.dimensions).some(value => value.outcome !== 'act')) throw new ToolInputProjectionError('held');
+    result.recordAction('Order durable proposals using separately read usefulness, support and safety; no write authority.');
+    return result;
+  });
+  return { scores: { ...grade.scores, usefulness: quality.dimensions.usefulness.normalized * 100,
+    sourceQuality: quality.dimensions.sourceQuality.normalized * 100, risk: (1 - quality.dimensions.safety.normalized) * 100 },
+    priority: quality.composites.priority * 100, confidence: grade.confidence };
 }
 
 export function readLearningProposalTarget(source: unknown, options: CatalogRankingOptions): Promise<LearningProposalTarget | null> {

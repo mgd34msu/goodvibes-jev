@@ -66,9 +66,9 @@ export async function prepareHomeGraphTriageReadings(inputs: readonly TriageRead
   if (options.signal?.aborted) throw new Held('aborted');
   const snapshots = checkedInput(inputs);
   if (!snapshots.length) return Object.freeze([]);
-  const timeoutMs = options.timeoutMs ?? LIMITS.defaultTimeoutMs;
+  const timeoutMs = options.timeoutMs;
   const minimum = options.minConfidence ?? 85;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs || !Number.isFinite(minimum)) throw new Held('budget');
+  if ((timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs)) || !Number.isFinite(minimum)) throw new Held('budget');
   const minProbability = Math.max(85, Math.min(100, Math.max(0, minimum))) / 100;
   const controller = new AbortController();
   let held: Held | undefined;
@@ -77,7 +77,7 @@ export async function prepareHomeGraphTriageReadings(inputs: readonly TriageRead
   const stop = (error: Held) => { held ??= error; controller.abort(); rejectStopped(held); };
   const abort = () => stop(new Held('aborted'));
   options.signal?.addEventListener('abort', abort, { once: true });
-  const timer = setTimeout(() => stop(new Held('budget')), timeoutMs);
+  const timer = timeoutMs === undefined ? undefined : setTimeout(() => stop(new Held('budget')), timeoutMs);
   const check = () => { if (held) throw held; if (options.signal?.aborted) throw new Held('aborted'); };
   const run = async () => {
     check(); const port = validatedPort(judgmentPort('engine.knowledge.homegraph-triage'));

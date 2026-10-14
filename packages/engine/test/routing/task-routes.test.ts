@@ -104,6 +104,22 @@ async function plan(query: string, script: Script, extra: { includeParameters?: 
 }
 
 describe('judgment port', () => {
+  test('route and slot readings retain instructions after the former 4000-character cutoff', async () => {
+    const query = 'Background context. '.repeat(250) + 'Do not schedule anything. Only inspect the existing reminders.';
+    const fake = scriptedPort({ pick: 'none' });
+    installJudgmentPort(fake.port);
+    await planTaskRoute({ query });
+    expect(fake.requests.length).toBeGreaterThan(1);
+    for (const request of fake.requests) expect(JSON.stringify(request.state)).toContain(query);
+  });
+
+  test('protected material after the former cutoff holds before any route or slot request', async () => {
+    const fake = scriptedPort({ pick: 'none' });
+    installJudgmentPort(fake.port);
+    const query = 'Background context. '.repeat(250) + ' apiKey=private-example';
+    await expect(planTaskRoute({ query })).rejects.toThrow('Refused before judgment');
+    expect(fake.requests).toHaveLength(0);
+  });
   test('planning with no port installed is an error, never a keyword guess', async () => {
     await expect(planTaskRoute({ query: 'check daemon health' })).rejects.toThrow(JudgmentPortMissingError);
     const tool = createTaskRouteTool();

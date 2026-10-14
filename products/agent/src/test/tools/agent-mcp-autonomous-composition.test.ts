@@ -70,7 +70,7 @@ for (const outcome of ['act', 'reject', 'abort', 'missing-workspace-owner']) tes
       arguments: { mode: 'call', qualifiedName: 'mcp:synthetic:write', input: { text: 'requested' } } }])
       .then(results => results[0], (error: unknown) => ({ success: false, error }));
     expect(result?.success).toBe(outcome === 'act'); expect(registryDispositions).toBe(outcome === 'missing-workspace-owner' ? 0 : 1);
-    if (outcome === 'missing-workspace-owner') expect(String(result?.error)).toContain('no workspace trust owner');
+    if (outcome === 'missing-workspace-owner') expect(String(result?.error)).toBe('MCP call failed at the connected server boundary.');
     if (outcome === 'abort') expect(controller.signal.aborted).toBe(true);
     expect(writes).toBe(outcome === 'act' ? 1 : 0); expect(humans).toBe(0);
   } finally { await client.disconnect(); installJudgmentPort(prior); resetAgentMcpCallRouteForTests(); }

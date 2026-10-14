@@ -86,7 +86,7 @@ describe('CredentialStatusPanel: available (credentials.get resolves)', () => {
     _credentialsGet = () =>
       Promise.resolve({
         available: true,
-        credentials: [{ key: 'ANTHROPIC_API_KEY', configured: true, usable: true, source: 'env', secure: true }],
+        credentials: [{ key: 'ANTHROPIC_API_KEY', providerIds: ['anthropic'], configured: true, usable: true, source: 'env', secure: true }],
       });
     const { el, unmount } = render();
     await waitFor(() => (el.textContent ?? '').includes('ANTHROPIC_API_KEY'));
@@ -99,7 +99,7 @@ describe('CredentialStatusPanel: available (credentials.get resolves)', () => {
       Promise.resolve({
         available: true,
         credentials: [
-          { key: 'ANTHROPIC_API_KEY', configured: true, usable: true, source: 'env' },
+          { key: 'ANTHROPIC_API_KEY', providerIds: ['anthropic'], configured: true, usable: true, source: 'env' },
           { key: 'OPENAI_API_KEY', configured: true, usable: true, source: 'env' },
         ],
       });

@@ -1,7 +1,7 @@
 export { checkAnswers } from './answers.ts';
 export {
   HOSTED_BASE_URL,
-  PINNED_MODEL,
+  DEFAULT_MODEL,
   endpointKind,
   judgmentConfigFromEnv,
   type JudgmentConfig,
@@ -17,3 +17,5 @@ export { createSystemOnePort } from './transport.ts';
 export * from './types.ts';
 
 export type { JudgmentRetryPolicy } from './retry.ts';
+
+export { matchesJudgmentModel } from './endpoint-validation.ts';

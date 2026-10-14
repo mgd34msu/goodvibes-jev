@@ -26,6 +26,8 @@ export interface StyleProfile {
   readonly isDefault: boolean;
 }
 
+export const DEFAULT_STYLE_PROFILE: StyleProfile = Object.freeze({ greeting: 'Hi', signOff: 'Thanks', medianSentenceCount: 3, tone: 'neutral', isDefault: true });
+
 /** Greeting tokens in priority order (most → least common in business email). */
 const GREETING_TOKENS: readonly string[] = [
   'Hi', 'Hello', 'Hey', 'Dear', 'Greetings', 'Good morning', 'Good afternoon',

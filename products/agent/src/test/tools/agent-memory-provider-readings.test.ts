@@ -122,6 +122,17 @@ describe('external memory provider semantics and source lifetime', () => {
     expect(ingress.assertCurrent).toThrow();
   });
 
+  test('external memory native artifact clocks are ISO in every semantic reading and retain their instant', async () => {
+    const record = { ...artifact(), createdAt: 1791684509006, expiresAt: 1791684509006 };
+    const fake = scripted({ member: true });
+    const evidence = await externalMemoryReceiptEvidence({ platform: { artifactStore: { list: () => [record] } } }, options());
+    expect(evidence[0]?.createdAt).toBe(new Date(record.createdAt).toISOString());
+    const requests = JSON.stringify(fake.requests);
+    expect(requests).toContain(new Date(record.createdAt).toISOString());
+    expect(requests).not.toContain('1791684509006');
+    expect(fake.receipt.requests).toHaveLength(1);
+  });
+
   test('only a missing boolean key can fall through to an affirmative native alias', async () => {
     const absent = context(); Reflect.deleteProperty(absent.record, 'configured');
     Object.defineProperty(absent.record, 'isConfigured', { value: true, enumerable: true });

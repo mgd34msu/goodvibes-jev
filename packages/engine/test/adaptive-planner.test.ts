@@ -68,11 +68,9 @@ describe('AdaptivePlanner.proposeWorkstream', () => {
     expect(result.issues).toEqual([]);
   });
 
-  test('gate.decompose=true but no raw yet -> honest single-item fallback (not a guess)', async () => {
+  test('required decomposition without a plan remains held', async () => {
     const planner = new AdaptivePlanner();
-    const result = await planner.proposeWorkstream(inputs({ riskScore: 0.2, isMultiStep: true, taskDescription: 'Multi-step task' }));
-    expect(result.gate.decompose).toBe(true);
-    expect(result.proposal.source).toBe('single-item-fallback');
+    await expect(planner.proposeWorkstream(inputs({ riskScore: 0.2, isMultiStep: true, taskDescription: 'Multi-step task' }))).rejects.toThrow('operation remains unexecuted');
   });
 
   test('raw + gate.decompose=true -> multi-phase planner-agent proposal', async () => {
@@ -109,10 +107,10 @@ describe('AdaptivePlanner.proposeWorkstream', () => {
   test('history still appended for every proposeWorkstream call (free audit trail)', async () => {
     const planner = new AdaptivePlanner();
     expect(planner.getLatest()).toBeNull();
-    const result = await planner.proposeWorkstream(inputs({ riskScore: 0.2, isMultiStep: true }));
+    await expect(planner.proposeWorkstream(inputs({ riskScore: 0.2, isMultiStep: true }))).rejects.toThrow('operation remains unexecuted');
     const latest = planner.getLatest();
     expect(latest).not.toBeNull();
-    expect(latest!.selected).toBe(result.gate.strategy);
+    expect(latest!.selected).toBe('cohort');
   });
 });
 

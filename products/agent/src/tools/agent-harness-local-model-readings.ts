@@ -3,7 +3,7 @@ import { gateJudgmentRegistry, prepareJudgmentResult } from '@goodvibes-jev/engi
 import { localServerIdentity, localServerIdentityPolicy, localServingStatus, localServingStatusPolicy, localResourcePressure, localResourcePressurePolicy, localServingSchemaStatus, localServingSchemaStatusPolicy, routingRegistry } from '@goodvibes-jev/engine/sdk/platform/routing';
 import { assertProjectionCurrent, booleanValue, booleanValuePolicy, ToolInputProjectionError, type NativeDecisionPolicy } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
-import { captureModelReadingInput, assertModelReadingInputCurrent, withModelReadingSource, type ModelReadingOptions } from './agent-harness-model-reading-source.ts';
+import { captureModelReadingInput, captureModelReadingSnapshotGuard, withModelReadingSource, type ModelReadingOptions } from './agent-harness-model-reading-source.ts';
 import { personalOpsEntry } from './agent-harness-personal-ops-source.ts';
 import type { LocalModelServerServingDiagnostics } from './agent-harness-model-routing-types.ts';
 
@@ -24,11 +24,19 @@ function localReadingOptions(options: ModelReadingOptions): ModelReadingOptions 
   return { ...options, assertCurrent };
 }
 
-function localDecisionReadingOptions(options: ModelReadingOptions, decision: object & { readonly name: string },
-  registry: { get(name: string): unknown }, policy: NativeDecisionPolicy): ModelReadingOptions {
+// Canonical policy restrictions contain no invocation or provider callback.
+// Reuse their identity so nested readsets retain each unchanged policy once.
+const policyReadsets = new WeakMap<object, readonly { readonly registry: object; readonly policy: NativeDecisionPolicy; readonly assertCurrent: () => void }[]>();
+const getPolicyReadsets = policyReadsets.get.bind(policyReadsets);
+const setPolicyReadsets = policyReadsets.set.bind(policyReadsets);
+
+function captureLocalDecisionPolicy(decision: object & { readonly name: string },
+  registry: { get(name: string): unknown }, policy: NativeDecisionPolicy): () => void {
+  const retainedPolicies = getPolicyReadsets(decision) ?? [];
+  const existing = retainedPolicies.find(entry => entry.registry === registry && entry.policy === policy);
+  if (existing) { existing.assertCurrent(); return existing.assertCurrent; }
   policy.assertCurrent();
   const definition = policy.definition;
-  const reading = localReadingOptions(options);
   const assertRegistry = captureCatalogMethods(registry, ['get']);
   const get = registry.get;
   const decisionKeys = Object.getOwnPropertyNames(decision);
@@ -40,22 +48,26 @@ function localDecisionReadingOptions(options: ModelReadingOptions, decision: obj
   const published = Object.fromEntries(Object.entries(Object.getOwnPropertyDescriptors(decision))
     .filter(([, descriptor]) => typeof descriptor.value !== 'function').map(([key, descriptor]) => [key, descriptor.value]));
   const nativePolicy = { definition, published };
-  const captured = captureModelReadingInput(nativePolicy), serialized = JSON.stringify(captured);
-  const retained: Array<() => void> = [], seen = new Set<object>();
-  const retainNativePolicy = (value: unknown): void => {
-    if (value === null || typeof value !== 'object' || seen.has(value)) return;
-    seen.add(value);
-    retained.push(captureCatalogMethods(value, Object.getOwnPropertyNames(value)));
-    for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) retainNativePolicy(descriptor.value);
-  };
-  retainNativePolicy(nativePolicy);
+  captureModelReadingInput(nativePolicy);
+  // This JSON-only policy needs exact data, descriptor, and prototype checks;
+  // it does not need a separate inherited-method binding for every data field.
+  const assertPolicyData = captureModelReadingSnapshotGuard(nativePolicy, true);
   const assertPolicy = () => {
-    policy.assertCurrent(); assertRegistry(); assertDecision(); for (const guard of retained) guard();
-    assertModelReadingInputCurrent(nativePolicy, serialized);
+    policy.assertCurrent(); assertRegistry(); assertDecision();
+    assertPolicyData(nativePolicy);
     if (Reflect.apply(get, registry, [decision.name]) !== decision) throw new ToolInputProjectionError('held');
-    policy.assertCurrent(); assertRegistry(); assertDecision(); for (const guard of retained) guard();
+    policy.assertCurrent(); assertRegistry(); assertDecision(); assertPolicyData(nativePolicy);
   };
-  assertPolicy(); reading.retainCurrent?.(assertPolicy);
+  assertPolicy();
+  setPolicyReadsets(decision, [...retainedPolicies, { registry, policy, assertCurrent: assertPolicy }]);
+  return assertPolicy;
+}
+
+function localDecisionReadingOptions(options: ModelReadingOptions, decision: object & { readonly name: string },
+  registry: { get(name: string): unknown }, policy: NativeDecisionPolicy): ModelReadingOptions {
+  const reading = localReadingOptions(options);
+  const assertPolicy = captureLocalDecisionPolicy(decision, registry, policy);
+  reading.retainCurrent?.(assertPolicy, `local-model.policy:${decision.name}`);
   return { ...reading, assertCurrent() { assertProjectionCurrent(reading.assertCurrent); assertPolicy(); } };
 }
 
@@ -75,7 +87,9 @@ export async function readLocalModelStack(value: string, evidence: unknown, opti
       authority.assertCurrent(); run.recordAction('read-only local registry server identity');
       if (run.reading.outcome !== 'act') return null;
       switch (run.route) {
-        case 'ollama': case 'llama.cpp': case 'vllm': case 'openai-compatible': return run.route;
+        case 'ollama': case 'vllm': case 'openai-compatible': return run.route;
+        case 'llamacpp': return 'llama.cpp';
+        case 'lm-studio': case 'localai': case 'tgi': return 'openai-compatible';
         default: return null;
       }
     } finally { retain(authority, current, site); }

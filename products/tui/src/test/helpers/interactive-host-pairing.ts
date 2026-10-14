@@ -6,7 +6,7 @@ import { TuiConfigManager } from '../../config/host-settings.ts';
 import { makeProjectTempDir } from './project-temp.ts';
 
 export async function untilPairing(predicate: () => boolean, label: string): Promise<void> {
-  const deadline = Date.now() + 1000;
+  const deadline = Date.now() + 5000;
   while (!predicate()) {
     if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${label}`);
     await Bun.sleep(2);

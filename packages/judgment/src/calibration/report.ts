@@ -13,7 +13,10 @@ export interface ConfidenceBin {
 export interface DecisionReport {
   readonly name: string;
   readonly version: number;
+  /** Requested model or alias. */
   readonly model: string;
+  /** Actual response models observed during this calibration. */
+  readonly resolvedModels?: readonly string[];
   readonly accuracyFloor: number;
   readonly checks: readonly FixtureCheck[];
   readonly accuracy: number;
@@ -110,7 +113,7 @@ export function formatReport(report: CalibrationReport): string {
   for (const decision of report.decisions) {
     const status = decision.error !== undefined ? 'ERROR' : decision.passed ? 'PASS ' : 'FAIL ';
     lines.push(
-      `${status} ${decision.name} v${decision.version} (${decision.model})  accuracy ${pct(decision.accuracy)} floor ${pct(decision.accuracyFloor)}  checks ${decision.checks.length}  act/confirm/escalate ${decision.outcomes.act}/${decision.outcomes.confirm}/${decision.outcomes.escalate}  automatic accuracy ${pct(decision.automaticAccuracy)}`,
+      `${status} ${decision.name} v${decision.version} (${decision.model}${decision.resolvedModels?.length ? ` → ${decision.resolvedModels.join(", ")}` : ""})  accuracy ${pct(decision.accuracy)} floor ${pct(decision.accuracyFloor)}  checks ${decision.checks.length}  act/confirm/escalate ${decision.outcomes.act}/${decision.outcomes.confirm}/${decision.outcomes.escalate}  automatic accuracy ${pct(decision.automaticAccuracy)}`,
     );
     if (decision.error !== undefined) lines.push(`      ${decision.error}`);
     for (const check of decision.checks) {

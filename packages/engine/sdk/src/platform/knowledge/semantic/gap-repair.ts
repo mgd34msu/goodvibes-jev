@@ -137,8 +137,12 @@ async function repair(request: KnowledgeSemanticGapRepairRequest, options: WebGa
         .sort((a, b) => authorityOrder.indexOf(a.authority) - authorityOrder.indexOf(b.authority) || b.confidence - a.confidence || a.rank - b.rank)
         .filter(candidate => { const host = domain(candidate.url)!; if (domains.has(host)) return false; domains.add(host); return true; }).slice(0, sourceLimit);
     };
-    const enough = (selected: readonly Candidate[]) => selected.some(candidate => candidate.authority === 'official-vendor')
-      || new Set(selected.map(candidate => domain(candidate.url))).size >= Math.max(2, options.minDistinctDomains ?? 2);
+    const enough = async (selected: readonly Candidate[]) => {
+      check();
+      if (!selected.length || (options.minDistinctDomains !== undefined
+        && new Set(selected.map(candidate => domain(candidate.url))).size < options.minDistinctDomains)) return false;
+      const sufficient = await reader.coverage(context, selected); check(); return sufficient;
+    };
     let next: string | undefined = first;
     while (next && queries.length < searchLimit) {
       check(); const query = candidates.find(candidate => candidate.id === next)?.content;
@@ -158,12 +162,12 @@ async function repair(request: KnowledgeSemanticGapRepairRequest, options: WebGa
         if (!key || !domain(source.url) || canonical.has(key)) continue;
         canonical.add(key); await assess(source, query);
       }
-      if (enough(select())) break;
+      if (await enough(select())) break;
       const remaining = candidates.filter(candidate => !queries.includes(candidate.content));
       next = remaining.length ? await reader.query(context, remaining) : undefined;
     }
     const selected = select();
-    if (!enough(selected)) { skipped.push(...all.filter(candidate => !candidate.existingSourceId).map(candidate => candidate.url)); return result(selected.filter(candidate => candidate.existingSourceId), false, 'Insufficient distinct source-backed evidence was found for gap repair.'); }
+    if (!await enough(selected)) { skipped.push(...all.filter(candidate => !candidate.existingSourceId).map(candidate => candidate.url)); return result(selected.filter(candidate => candidate.existingSourceId), false, 'Selected references did not establish a sufficient basis for gap-repair extraction.'); }
     const existingCount = selected.filter(candidate => candidate.existingSourceId).length;
     for (const candidate of selected.filter(candidate => !candidate.existingSourceId).slice(0, Math.max(0, Math.min(sourceLimit - existingCount, options.maxIngest ?? sourceLimit)))) {
       check();

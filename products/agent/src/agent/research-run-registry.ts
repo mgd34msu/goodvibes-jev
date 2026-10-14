@@ -161,7 +161,10 @@ function boundedProgress(value: unknown, fallback = 0): number {
 }
 
 function checkpointId(at: string, count: number): string {
-  return `cp-${at.replace(/[^0-9]/g, '').slice(0, 14)}-${count + 1}`;
+  // Native identifiers must not turn clock digits into apparent card material
+  // when the complete checkpoint enters protected semantic evidence.
+  const instant = at.replace(/[^0-9]/g, '').slice(0, 14).replace(/[0-9]/g, digit => String.fromCharCode(97 + Number(digit)));
+  return `cp-${instant}-${(count + 1).toString(36)}`;
 }
 
 function assertRunContentSafe(fields: readonly string[]): void {

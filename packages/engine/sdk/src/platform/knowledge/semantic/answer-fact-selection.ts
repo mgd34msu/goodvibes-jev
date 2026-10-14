@@ -1,6 +1,6 @@
 import { assertAnswerVerificationActive } from './answer-verification/budget.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { assertJudgmentInput } from '../../gate/judgment-input.js';
+import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
 import { answerFactRerank, answerQueryIntent } from './ranking/fact-rerank.js';
 import type { KnowledgeNodeRecord } from '../types.js';
 import { readString } from './utils.js';
@@ -13,7 +13,7 @@ export class KnowledgeFactSelectionHeldError extends Error {
 export async function filterFactsForQuery(query: string, facts: readonly KnowledgeNodeRecord[], signal?: AbortSignal): Promise<KnowledgeNodeRecord[]> {
   assertAnswerVerificationActive(signal);
   const byId = new Map(facts.filter((fact) => fact.status === 'active').map((fact) => [fact.id, fact]));
-  const shortlist = [...byId.values()].slice(0, 50);
+  const shortlist = [...byId.values()];
   if (shortlist.length === 0) return [];
   const candidates = shortlist.map((fact) => ({ id: fact.id, content: {
     title: fact.title, summary: fact.summary ?? '', value: readString(fact.metadata.value) ?? '',
@@ -21,20 +21,30 @@ export async function filterFactsForQuery(query: string, facts: readonly Knowled
     trust: 'untrusted reference material',
   } }));
   assertJudgmentInput({ query, candidates: candidates.map((candidate) => candidate.content) });
+  if (candidates.some(candidate => JSON.stringify({ query, candidate: candidate.content }).length > 160_000)) throw new JudgmentInputError('unsupported-input');
   const port = judgmentPort('engine.knowledge.answer-fact-rank');
-  const { ranked } = await answerFactRerank.rerank(port, query, candidates, { site: 'engine.knowledge.answer-fact-rank', ...(signal ? { signal } : {}) });
-  assertAnswerVerificationActive(signal);
+  const model = port.model, version = JSON.stringify({ facts });
+  const current = () => {
+    assertAnswerVerificationActive(signal);
+    if (judgmentPort('engine.knowledge.answer-fact-rank') !== port || port.model !== model || JSON.stringify({ facts }) !== version) throw new KnowledgeFactSelectionHeldError();
+  };
+  const { ranked } = await answerFactRerank.rerank(port, query, candidates, { site: 'engine.knowledge.answer-fact-rank', beforeAttempt: current, ...(signal ? { signal } : {}) });
+  current();
   for (const item of ranked) if (item.decisionId !== undefined) port.recorder?.recordAction(item.decisionId, item.reading.verdict === 'yes' && item.reading.outcome === 'act' ? 'selected: query-supporting fact' : `not selected: ${item.reading.verdict} (${item.reading.outcome})`);
   const accepted = ranked.filter((item) => item.reading.verdict === 'yes' && item.reading.outcome === 'act');
-  if (accepted.length === 0 && ranked.some((item) => item.reading.outcome !== 'act')) throw new KnowledgeFactSelectionHeldError();
+  if (ranked.some((item) => item.reading.outcome !== 'act')) throw new KnowledgeFactSelectionHeldError();
   return accepted.sort((a, b) => b.probability - a.probability || a.id.localeCompare(b.id)).map((item) => byId.get(item.id)!);
 }
 
 export async function hasFeatureIntentForQuery(query: string, signal?: AbortSignal): Promise<boolean> {
   assertAnswerVerificationActive(signal);
   assertJudgmentInput({ query });
-  const run = await answerQueryIntent.run(judgmentPort('engine.knowledge.answer-query-intent'), { query }, { site: 'engine.knowledge.answer-query-intent', ...(signal ? { signal } : {}) });
+  if (query.length > 160_000) throw new JudgmentInputError('unsupported-input');
+  const port = judgmentPort('engine.knowledge.answer-query-intent'), model = port.model;
+  const current = () => { assertAnswerVerificationActive(signal); if (judgmentPort('engine.knowledge.answer-query-intent') !== port || port.model !== model) throw new KnowledgeFactSelectionHeldError(); };
+  const run = await answerQueryIntent.run(port, { query }, { beforeAttempt: current, site: 'engine.knowledge.answer-query-intent', ...(signal ? { signal } : {}) });
   assertAnswerVerificationActive(signal);
+  current();
   if (run.readings.features.outcome !== 'act') { run.recordAction('held: unsettled query intent'); throw new KnowledgeFactSelectionHeldError(); }
   run.recordAction(`query feature intent: ${run.readings.features.verdict}`);
   return run.readings.features.verdict === 'yes';

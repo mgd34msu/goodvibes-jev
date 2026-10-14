@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual, types as nodeTypes } from 'node:util';
-import { readYesNo, type YesNoReading } from '@goodvibes-jev/judgment';
+import { readYesNo, isPinnedJudgmentModel, matchesJudgmentModel, type YesNoReading } from '@goodvibes-jev/judgment';
 import { JudgmentInputError, snapshotJudgmentInput } from '../../gate/judgment-input.js';
 import { inboxTriage, TRIAGE_MODEL } from './battery.js';
 import type { TriageBinding, TriageEvidence, TriageInput, TriageLabel, TriageReceipt } from './types.js';
@@ -85,8 +85,15 @@ export function checkTriageReceipt(value: unknown): TriageReceipt {
   const row = safe as Record<string, unknown>;
   if (typeof row['id'] !== 'string' || !row['id'].trim() || row['id'].length > 500
     || typeof row['inputHash'] !== 'string' || !/^[a-f0-9]{64}$/.test(row['inputHash'])
-    || row['battery'] !== inboxTriage.name || row['batteryVersion'] !== inboxTriage.version || row['model'] !== TRIAGE_MODEL) return invalid();
-  const binding: TriageBinding = { id: row['id'], inputHash: row['inputHash'], battery: inboxTriage.name, batteryVersion: inboxTriage.version, model: TRIAGE_MODEL };
+    || row['battery'] !== inboxTriage.name || row['batteryVersion'] !== inboxTriage.version || (row['model'] !== TRIAGE_MODEL && (typeof row['model'] !== 'string' || !isPinnedJudgmentModel(row['model'])))) return invalid();
+  const model = row['model'] as string;
+  const actualModel = row['actualModel'];
+  if (actualModel !== undefined && (typeof actualModel !== 'string' || !matchesJudgmentModel(model, actualModel))) return invalid();
+  // Older version-named receipts remain historical evidence. New alias-based
+  // answers must retain the resolved model; an unavailable call has no answer.
+  if (model === TRIAGE_MODEL && row['status'] !== 'unavailable' && actualModel === undefined) return invalid();
+  const binding: TriageBinding = { id: row['id'], inputHash: row['inputHash'], battery: inboxTriage.name, batteryVersion: inboxTriage.version,
+    model, ...(actualModel === undefined ? {} : { actualModel: actualModel as string }) };
   if (row['status'] === 'held' || row['status'] === 'unavailable') {
     const expected = Object.freeze({ ...binding, status: row['status'] });
     if (!isDeepStrictEqual(safe, expected)) return invalid();

@@ -1,3 +1,4 @@
+import { peekSystemMessagePresentation } from '@goodvibes-jev/engine/sdk/platform/runtime';
 import { UIFactory } from '../renderer/ui-factory.ts';
 import { renderMarkdownTracked } from '../renderer/markdown.ts';
 import { renderSystemMessage } from '../renderer/system-message.ts';
@@ -37,7 +38,7 @@ export {
  * /error/i over-matches false positives like "No errors found" or "terror".
  */
 export function isNavigableSystemContent(content: string): boolean {
-  return /^\s*(\[(error|critical)\]|error[:!])/i.test(content);
+  return peekSystemMessagePresentation(content)?.severity === 'error';
 }
 
 /**

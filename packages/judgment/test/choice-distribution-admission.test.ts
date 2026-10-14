@@ -71,7 +71,11 @@ test('255 options do not widen the approximation allowance', () => {
   }
 });
 
-test('ties remain valid at the approximation boundary without changing the selected option', () => {
-  const raw = answer({ a: 0.495, b: 0.495 }, 0.42, 'b');
+test('ties remain valid without changing the selected option', () => {
+  const raw = answer({ a: 0.5, b: 0.5 }, 0.42, 'b');
   expect(readChoice(raw, { actAt: 0.8, confirmAt: 0.5 })).toMatchObject({ choice: 'b', probabilities: raw.probabilities, confidence: raw.confidence });
+});
+
+test('higher precision ties cannot claim hundredth rounding for missing probability mass', () => {
+  expect(() => readChoice(answer({ a: 0.495, b: 0.495 }, 0.42, 'b'), { actAt: 0.8, confirmAt: 0.5 })).toThrow(JudgmentError);
 });

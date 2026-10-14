@@ -6,7 +6,7 @@ import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/too
 import { AgentResearchRunRegistry, researchRunStorePath, type AgentResearchRunRecord } from '../agent/research-run-registry.ts';
 import { summarizeResearchRunItem } from '../input/agent-workspace-local-library-snapshot.ts';
 import { captureCatalogData, captureCatalogMethods, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
-import { modelReadingServicePath } from './agent-harness-model-reading-source.ts';
+import { captureModelArtifactClockSource, modelReadingServicePath } from './agent-harness-model-reading-source.ts';
 import { capturePersonalOpsData, assertPersonalOpsDataCurrent, protectPersonalOpsData } from './agent-harness-personal-ops-source.ts';
 import { readPersonalOpsReceiptStatus } from './agent-harness-personal-ops-readings.ts';
 import { captureAgentExportPath } from './agent-artifact-effect.ts';
@@ -246,7 +246,7 @@ export async function captureAutonomyLiveRecords(context: CommandContext, option
   assertCurrent();
   const statuses = new Map<string, string>();
   for (const artifact of watcherReceiptArtifacts(data.artifacts)) {
-    statuses.set(artifact.id, await readPersonalOpsReceiptStatus(artifact, current)); assertCurrent();
+    statuses.set(artifact.id, await readPersonalOpsReceiptStatus(captureModelArtifactClockSource(artifact).reading, current)); assertCurrent();
   }
   const result = {
     tasks: taskLiveRecords(data.tasks),

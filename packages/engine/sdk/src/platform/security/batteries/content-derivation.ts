@@ -23,16 +23,11 @@
  * leaves the machine (an injected recipient, a lifted instruction, a copied
  * account number); a wrong finding costs one owner approval.
  */
-import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
+import { defineBattery, JudgmentError, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
+import { assertJudgmentInput } from '../../gate/judgment-input.js';
 
-/** Most characters of a field or a source one request carries; longer text is clipped with a note. */
+/** Maximum complete field/source per reading. A prefix cannot clear the whole action. */
 export const MAX_DERIVATION_CHARS = 20_000;
-
-function clip(text: string): string {
-  return text.length <= MAX_DERIVATION_CHARS
-    ? text
-    : `${text.slice(0, MAX_DERIVATION_CHARS)}\n[${text.length - MAX_DERIVATION_CHARS} more characters]`;
-}
 
 /** What one reading sees: the outgoing field and the untrusted source it is compared with. */
 export function derivationView(
@@ -40,7 +35,12 @@ export function derivationView(
   text: string,
   source: { readonly surface: string; readonly origin: string; readonly text: string },
 ): { field: string; text: string; source: { surface: string; origin: string; text: string } } {
-  return { field, text: clip(text), source: { surface: source.surface, origin: source.origin, text: clip(source.text) } };
+  const view = { field, text, source: { surface: source.surface, origin: source.origin, text: source.text } };
+  assertJudgmentInput(view);
+  if (text.length > MAX_DERIVATION_CHARS || source.text.length > MAX_DERIVATION_CHARS) {
+    throw new JudgmentError('invalid-request', 'The complete content derivation input exceeds the judgment budget');
+  }
+  return view;
 }
 
 const FIELD_AND_SOURCE =

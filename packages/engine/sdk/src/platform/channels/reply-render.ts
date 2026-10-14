@@ -1,3 +1,4 @@
+import { peekChannelStatusContent } from './status-reading.js';
 /**
  * Rendering for channel replies: runtime event -> render event -> message body.
  *
@@ -194,7 +195,7 @@ export function eventLine(event: ChannelRenderEvent, reasoningVisibility: Channe
       return event.toolName ? `Tool started: ${event.toolName}` : event.text ?? null;
     case 'tool_result':
       return event.toolName
-        ? `${event.text?.startsWith('Failed') ? 'Tool failed' : 'Tool finished'}: ${event.toolName}${event.summary ? ` (${event.summary})` : ''}`
+        ? `${event.toolOutcome === 'failed' ? 'Tool failed' : 'Tool finished'}: ${event.toolName}${event.summary ? ` (${event.summary})` : ''}`
         : event.text ?? null;
     case 'plan':
       return event.text ? `Plan: ${event.text}` : null;
@@ -249,7 +250,7 @@ const TURN_COUNTER_PREFIX = /^turn\s+\d+\s*(?:[·:•\-–—]\s*)?/i;
  * nothing. `Turn 1 · Thinking…` is both halves of that at once, and it was the
  * single most-delivered notification body on the owner's phone.
  */
-const CONTENTLESS_STATUS = /^(?:thinking|working|processing|starting|started|running|in progress|please wait|waiting|busy)\b[\s.…!]*$/i;
+
 
 /**
  * Reduce whatever the caller passed as progress to ONE bounded line a person
@@ -267,7 +268,7 @@ const CONTENTLESS_STATUS = /^(?:thinking|working|processing|starting|started|run
 export function channelStatusLine(rawText: string, maxChars = MAX_PROGRESS_STATUS_CHARS): string | null {
   const collapsed = rawText.replace(/\s+/g, ' ').trim().replace(TURN_COUNTER_PREFIX, '').trim();
   if (!collapsed) return null;
-  if (CONTENTLESS_STATUS.test(collapsed)) return null;
+  if (peekChannelStatusContent(rawText) === false) return null;
   return trimText(collapsed, maxChars);
 }
 
@@ -412,12 +413,14 @@ export function normalizeChannelRenderEventFromRuntime(
       return [renderEvent('tool_result', 'progress', envelope, {
         toolName: payload.tool,
         text: 'Succeeded',
+        toolOutcome: 'succeeded',
         summary: `${payload.durationMs}ms`,
       })];
     case 'TOOL_FAILED':
       return [renderEvent('tool_result', 'progress', envelope, {
         toolName: payload.tool,
         text: 'Failed',
+        toolOutcome: 'failed',
         summary: payload.error,
       })];
     case 'PLAN_STRATEGY_SELECTED':

@@ -53,6 +53,8 @@ afterAll(cleanupResearchScreeningFixtures);
 function readings(fits: Readonly<Record<string, number>> = {}) {
   return fakePort((name, question, state) => {
     if (name === 'match') return noulAnswer(fits[String(record(record(state).candidate).name)] ?? 0.01);
+    // These synthetic registry providers publish no serving-software identity.
+    if (question.type === 'choice' && Object.hasOwn(question.criteria, 'llamacpp')) return choiceAnswer(question, 'unknown', 0.999);
     if (question.type === 'score') return scoreAnswer(question, name === 'memoryAdequacy' ? 2 : 4, 0.99);
     if (question.type === 'choice') return choiceAnswer(question, name === 'disposition' ? 'act' : name === 'kind' ? 'read' : name === 'hazard' ? 'none' : 'generic', 0.999);
     return noulAnswer(name === 'cloudTransfer' ? 0.99 : 0.001);
@@ -143,9 +145,10 @@ function suspended() {
   return { start, release, started, gate };
 }
 function replaceBattery() {
+  const getField = Object.getOwnPropertyDescriptor(gateJudgmentRegistry, 'get');
   const get = gateJudgmentRegistry.get, original = get.call(gateJudgmentRegistry, battery);
   gateJudgmentRegistry.get = name => name === battery ? { ...original } as typeof original : get.call(gateJudgmentRegistry, name);
-  restores.push(() => { gateJudgmentRegistry.get = get; });
+  restores.push(() => { if (getField) Object.defineProperty(gateJudgmentRegistry, 'get', getField); else Reflect.deleteProperty(gateJudgmentRegistry, 'get'); });
 }
 function pauseSourceRelease(original: ProtectedSourceOwner, selected: (source: string) => boolean) {
   const wait = suspended(), sources = new WeakMap<object, string>(), counts = { selected: 0 };
@@ -218,6 +221,11 @@ for (const surface of surfaces) describe(`${surface.registered ? 'registered' : 
     expect(rows(output.models).map(model => model.modelRouteId)).toEqual([winner]);
     expect(rows(output.routes).map(route => route.modelRouteId)).toEqual(['custom-providers']);
     expect([...rows(output.models), ...rows(output.routes)].every(candidate => record(record(candidate.judgment).reading).verdict === 'uncertain')).toBe(true);
+    expect(f.effects).toEqual([]);
+  });
+
+  test('summary excludes every canonical negative without lexical fallback', async () => {
+    const f = fixture(); if (surface.registered) f.register(surface.name);
     installJudgmentPort(readings().port);
     const none = body(await f.invoke(surface, summaryArgs(surface)));
     expect(none.returned).toEqual({ routes: 0, models: 0 }); expect(none.routes).toEqual([]); expect(none.models).toEqual([]);
@@ -235,16 +243,20 @@ for (const surface of surfaces) describe(`${surface.registered ? 'registered' : 
     expect(ranks(fake)).toHaveLength(routeIds.length + f.models.length + 1); expect(f.effects).toEqual([]);
   });
 
-  test('exact and case-insensitive route, model, and endpoint identities and no-query summary acquire zero rank reads', async () => {
+  test.each([
+    ['main', 'main'], ['MAIN', 'main'], [winner, winner], [winner.toUpperCase(), winner], ['opaque', winner],
+    [endpoint, endpoint], [endpoint.toUpperCase(), endpoint], [localBaseUrl, endpoint], [`${localBaseUrl}/models`, endpoint],
+  ])('exact or case-insensitive identity %s acquires no rank reading', async (lookup, identity) => {
     const f = fixture(); if (surface.registered) f.register(surface.name);
     const fake = readings(); installJudgmentPort(fake.port);
-    for (const [lookup, identity] of [
-      ['main', 'main'], ['MAIN', 'main'], [winner, winner], [winner.toUpperCase(), winner], ['opaque', winner],
-      [endpoint, endpoint], [endpoint.toUpperCase(), endpoint], [localBaseUrl, endpoint], [`${localBaseUrl}/models`, endpoint],
-    ]) {
-      const result = await f.invoke(surface, detailArgs(surface, { modelRouteId: lookup }));
-      expect(result.success).toBe(true); expect(body(result).modelRouteId).toBe(identity); expect(body(result).judgment).toBeUndefined();
-    }
+    const result = await f.invoke(surface, detailArgs(surface, { modelRouteId: lookup }));
+    expect(result.success).toBe(true); expect(body(result).modelRouteId).toBe(identity); expect(body(result).judgment).toBeUndefined();
+    expect(ranks(fake)).toHaveLength(0); expect(f.effects).toEqual([]);
+  });
+
+  test('no-query summary acquires no rank reading', async () => {
+    const f = fixture(); if (surface.registered) f.register(surface.name);
+    const fake = readings(); installJudgmentPort(fake.port);
     const output = body(await f.invoke(surface, summaryArgs(surface, { query: undefined, limit: 1 })));
     expect(rows(output.routes)[0]!.modelRouteId).toBe('main'); expect(rows(output.models)[0]!.modelRouteId).toBe(distractor);
     expect(ranks(fake)).toHaveLength(0); expect(f.effects).toEqual([]);
@@ -270,7 +282,7 @@ describe('model catalog protected source and caller boundaries', () => {
     if (field === 'long-provider') f.providers[0]!.documentation = 'x'.repeat(900) + sensitive;
     if (field === 'config') f.config['helper.globalModel'] = { privateNote: sensitive };
     if (field === 'health') record(f.health.routes[0]).lastErrorMessage = sensitive;
-    if (field === 'artifact') f.artifacts.push({ id: 'hidden-artifact', metadata: { privateNote: sensitive } });
+    if (field === 'artifact') f.artifacts.push({ id: 'hidden-artifact', createdAt: 1_700_000_000_000, metadata: { privateNote: sensitive } });
     const fake = readings({ [`model:${winner}`]: 0.99 }); installJudgmentPort(fake.port);
     await expect(f.tools.models.execute({ action: 'status', query, limit: 1, includeParameters: false })).rejects.toThrow();
     expect(JSON.stringify(screening.calls)).toContain(sensitive); expect(fake.requests).toHaveLength(0); expect(f.effects).toEqual([]);
@@ -623,7 +635,7 @@ test.each(['recordReadings', 'recordAction'] as const)('revocation inside the fi
   await expect(f.tools.models.execute(args).then(result => { delivered++; return result; })).rejects.toThrow();
   expect(counts[boundary]).toBe(1); expect(staleWrites).toBe(0); expect(delivered).toBe(0);
   if (boundary === 'recordReadings') expect(counts.recordAction).toBe(0);
-  else expect(counts.recordReadings).toBe(routeIds.length + f.models.length + 1);
+  else expect(counts.recordReadings).toBe(1);
   expect(f.effects).toEqual([]);
 });
 

@@ -145,22 +145,8 @@ function inferStepIdFromMetadata(metadata: Readonly<Record<string, unknown>>, fi
   const explicit = firstMetadataString(metadata, ['setupStepId', 'setupItemId', 'stepId', 'wizardStepId']);
   if (explicit) return normalizeStepId(explicit);
 
-  const evidence = [
-    metadataString(metadata, 'receiptKind'),
-    metadataString(metadata, 'methodId'),
-    metadataString(metadata, 'purpose'),
-    metadataString(metadata, 'source'),
-    metadataString(metadata, 'label'),
-    metadataString(metadata, 'summary'),
-    filename,
-  ].join(' ').toLowerCase();
-
-  if (/\b(browser-pwa|browser|pwa|web-cockpit)\b/.test(evidence)) return 'browser-pwa';
-  if (/\b(install-smoke|setup-smoke|smoke|first-assistant-turn)\b/.test(evidence)) return 'install-smoke';
-  if (/\b(connected-host-auth|operator-token|auth|token|authenticated)\b/.test(evidence)) return 'connected-host-auth';
-  if (/\b(services?\.status|connected-host-readiness|connected-host-status|service-status|runtime|host-status)\b/.test(evidence)) {
-    return 'connected-host-readiness';
-  }
+  // Receipt ownership is protocol metadata. A filename or prose cannot
+  // certify which setup operation produced an artifact.
   return '';
 }
 

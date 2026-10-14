@@ -46,7 +46,7 @@ function deferred() {
 test('registered canonical battery owns the membership decision and original synthetic fixtures', () => {
   expect(() => localBenchmarkPromptPolicy.assertCurrent()).not.toThrow();
   expect(routingRegistry.get(localBenchmarkPrompt.name)).toBe(localBenchmarkPrompt);
-  expect(localBenchmarkPrompt.model).toBe('jev-1.13.0');
+  expect(localBenchmarkPrompt.model).toBeUndefined();
   expect(Object.keys(localBenchmarkPrompt.items)).toEqual(['member']);
   expect(localBenchmarkPrompt.fixtures.some(fixture => fixture.expect.member === 'yes')).toBe(true);
   expect(localBenchmarkPrompt.fixtures.some(fixture => fixture.expect.member === 'no')).toBe(true);

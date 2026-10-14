@@ -12,6 +12,8 @@ export const occasionInterest = defineSelector({
   band: STAKES_BANDS.high.confidence, fitBand: STAKES_BANDS.high.yesNo,
   fixtures: [
     { name: 'contrary to keywords', context: { person: 'Jo' }, candidates: [{ id: 'line_0', content: { text: 'Jo no longer enjoys chess.' } }, { id: 'line_1', content: { text: 'Jo spends each Saturday at the pottery wheel.' } }], expect: 'line_1' },
+    { name: 'negated historical interest', context: { person: 'Jo' }, candidates: [{ id: 'line_0', content: { text: 'Jo used to collect stamps but stopped and no longer wants any.' } }], expect: 'none' },
+    { name: 'another person interest', context: { person: 'Jo' }, candidates: [{ id: 'line_0', content: { text: 'Jo’s friend Lee enjoys pottery; Jo has never shared that interest.' } }], expect: 'none' },
     { name: 'none', context: { person: 'Jo' }, candidates: [{ id: 'line_0', content: { text: 'Jo lives in Leeds.' } }], expect: 'none' },
   ],
 });

@@ -20,6 +20,7 @@ import { KnowledgeGeneratedFactSupportHeldError } from '../sdk/src/platform/know
 import { supportHash } from '../sdk/src/platform/knowledge/semantic/verification/projection.js';
 
 import { createKnowledgePageSourceReader } from '../sdk/src/platform/knowledge/source-quality.js';
+import { rankHomeGraphPageCandidates } from '../sdk/src/platform/knowledge/home-graph/page-priority.js';
 import { sourceRankingContent } from '../sdk/src/platform/knowledge/semantic/answer-source-ranking.js';
 import { enrichKnowledgeSource } from '../sdk/src/platform/knowledge/semantic/enrichment.js';
 import { sourceSemanticHash } from '../sdk/src/platform/knowledge/semantic/utils.js';
@@ -54,6 +55,47 @@ function candidate(source: GeneratedFactSupportInput['source'], extraction: Gene
 }
 
 describe('fresh generated source and extraction references', () => {
+  test('page ranking admits exact native source references and rejects copied, reopened and private tails', async () => {
+    readings(); const { store, source, dbPath } = await fixture();
+    const node = await store.upsertNode({ kind: 'ha_device', slug: 'page-reference', title: 'AC-7 ports',
+      summary: 'AC-7 has four HDMI ports.', sourceId: source.id, metadata: { knowledgeSpaceId: spaceId } });
+    const rank = (owner: KnowledgeStore, values: readonly unknown[]) => rankHomeGraphPageCandidates({
+      store: owner, candidates: values, purpose: 'Order useful home references', content: () => ({ title: 'AC-7 ports' }),
+    });
+    const fake = readings();
+    expect(await rank(store, [source, node])).toEqual([source, node]);
+    expect(JSON.stringify(fake.requests)).not.toContain(source.id);
+    const reopened = new KnowledgeStore({ dbPath }); await reopened.init();
+    for (const [owner, values] of [
+      [store, [structuredClone(source)]], [store, [structuredClone(node)]],
+      [reopened, [reopened.getSource(source.id)!]], [reopened, [reopened.getNode(node.id)!]],
+      [store, [{ ...node, id: 'forged-node' }]],
+    ] as const) {
+      const before = fake.requests.length;
+      await expect(rank(owner, values)).rejects.toMatchObject({ name: 'JudgmentInputError', problem: 'card-material' });
+      expect(fake.requests).toHaveLength(before);
+    }
+    const before = fake.requests.length;
+    const copied = { ...node, metadata: { ...node.metadata, privateTail: '4111111111111111' } };
+    await expect(rank(store, [copied])).rejects.toMatchObject({ name: 'JudgmentInputError', problem: 'card-material' });
+    expect(fake.requests).toHaveLength(before);
+  });
+  test('a hidden source mutation retires its producer-minted reference proof', async () => {
+    const fake = readings(); const { source } = await fixture();
+    const before = fake.requests.length;
+    Object.defineProperty(source, 'hiddenEvidence', { value: 'Changed hidden source evidence', enumerable: false, configurable: true });
+    expect(() => knowledgeSourceJudgmentUris(source)).toThrow(KnowledgeGeneratedFactSupportHeldError);
+    expect(fake.requests).toHaveLength(before);
+  });
+
+  test('page ranking retires native reference authority when its source changes during reading', async () => {
+    readings(); const { store, source } = await fixture();
+    const fake = fakePort(() => { Reflect.set(source, 'summary', 'Changed native source'); return noulAnswer(0.99); });
+    installJudgmentPort(fake.port);
+    await expect(rankHomeGraphPageCandidates({ store, candidates: [source], content: () => ({ title: 'AC-7' }),
+      purpose: 'Order useful home references' })).rejects.toThrow();
+  });
+
   test('snapshot sync registers only its freshly minted structural URI and preserves ordinary content preflight', async () => {
     const fake = readings(); const { store, service, dbPath } = await fixture();
     const result = await service.syncSnapshot({ installationId: 'house', capturedAt: 1791110401109,

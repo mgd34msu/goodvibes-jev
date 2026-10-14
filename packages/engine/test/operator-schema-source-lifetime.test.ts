@@ -68,6 +68,20 @@ describe('native recursive response schema source lifetime', () => {
     expect(retained.assertCurrent).toThrow(ContractError);
   });
 
+  test('large shared graphs retain hidden nodes and still detect mutation', () => {
+    const shared = { type: 'string' };
+    const source = { rows: Array.from({ length: 6_000 }, (_, index) => ({ index, shared })) };
+    const hidden = { value: 'original' };
+    Object.defineProperty(source.rows[5_999]!, 'hidden', { value: hidden });
+    const retained = retainJsonSchemaSource(source);
+    expect(retained.snapshot.rows).toHaveLength(6_000);
+    expect(retained.snapshot.rows[0]!.shared).toBe(retained.snapshot.rows[5_999]!.shared);
+    expect(retained.snapshot.rows[0]!.shared).not.toBe(shared);
+    retained.assertCurrent();
+    hidden.value = 'changed';
+    expect(retained.assertCurrent).toThrow(ContractError);
+  });
+
   test.each(['root proxy', 'hidden descendant proxy', 'accessor', 'symbol', 'foreign prototype'])('%s refuses before HTTP or model reading', async kind => {
     let getters = 0, readings = 0;
     const source: Record<string, unknown> = { type: 'object' };

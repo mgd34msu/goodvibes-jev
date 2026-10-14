@@ -3,7 +3,7 @@ import { previewHarnessText } from './agent-harness-text.ts';
 import { memoryExternalProviderLiveCertification, memoryExternalProviderReceiptCertification } from './agent-harness-memory-provider-certification.ts';
 import type { MemoryExternalProviderCertification } from './agent-harness-memory-provider-certification.ts';
 import { captureCatalogMethods, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
-import { modelReadingServicePath } from './agent-harness-model-reading-source.ts';
+import { captureModelArtifactClockSource, modelReadingServicePath } from './agent-harness-model-reading-source.ts';
 import { capturePersonalOpsSnapshot, protectPersonalOpsData } from './agent-harness-personal-ops-source.ts';
 import { readPersonalOpsBoolean, readPersonalOpsReceiptStatus } from './agent-harness-personal-ops-readings.ts';
 import { assertMemoryCurrent, retainMemoryReadingOptions, readMemoryCredentialState, readMemoryLiveStatus, readMemoryPublicText, readMemoryReceiptMember, readMemoryRouteRole, selectMemoryProvider } from './agent-harness-memory-provider-readings.ts';
@@ -673,7 +673,12 @@ function readReceiptCreatedAt(artifact: Readonly<Record<string, unknown>>, metad
 async function describeExternalMemoryReceiptArtifact(value: unknown, options: CatalogRankingOptions): Promise<MemoryExternalProviderReceiptEvidence | null> {
   const original = readRecord(value), nativeArtifactId = readString(original.id);
   if (!nativeArtifactId) throw new ToolInputProjectionError('held');
-  const artifact = readRecord(await protectExternalMemoryData(value, options)), metadata = readRecord(artifact.metadata);
+  if (typeof original.createdAt !== 'number' || (original.expiresAt !== undefined && typeof original.expiresAt !== 'number'))
+    throw new ToolInputProjectionError('invalid');
+  // This source was acquired from ArtifactStore.list with a retained complete
+  // descriptor guard. Only its declared native clocks receive ISO projection.
+  const clockSource = captureModelArtifactClockSource({ ...original, createdAt: original.createdAt, expiresAt: original.expiresAt });
+  const artifact = readRecord(await protectExternalMemoryData(clockSource.reading, options)), metadata = readRecord(artifact.metadata);
   if (readString(artifact.id) !== nativeArtifactId) throw new ToolInputProjectionError('held');
   if (!await isExternalMemoryReceiptArtifact(artifact, options)) return null;
   const nativeProviderId = readExternalMemoryReceiptProviderId(readRecord(original.metadata));
@@ -687,7 +692,7 @@ async function describeExternalMemoryReceiptArtifact(value: unknown, options: Ca
   assertMemoryCurrent(options);
   return {
     providerId, artifactId: nativeArtifactId, filename: readString(artifact.filename) || null, operation, status,
-    createdAt: readReceiptCreatedAt(artifact, metadata), sourceCount: readNumber(metadata.sourceCount ?? metadata.recordCount ?? metadata.itemCount),
+    createdAt: readReceiptCreatedAt(original, metadata), sourceCount: readNumber(metadata.sourceCount ?? metadata.recordCount ?? metadata.itemCount),
     redaction: readString(metadata.redaction) || readString(metadata.redactionPolicy) || null,
     failureReason: readString(metadata.failureReason) || readString(metadata.error) || null, nextRoute,
     inspectRoute: `agent_artifacts show artifactId:${JSON.stringify(nativeArtifactId)} includeContent:false`,

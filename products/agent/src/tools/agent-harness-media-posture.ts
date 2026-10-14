@@ -408,44 +408,44 @@ function providersFrom(readiness: ReturnType<typeof buildReadiness>, runtimeStat
 }
 
 export async function mediaPostureCatalogStatus(context: CommandContext, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
-  const caller = captureAsyncHarnessInput({}, options);
   const native = captureCatalogNativeFacts(context, 'media');
-  caller.options.retainCurrent(native.assertCurrent, 'agent.media.native-source');
-  caller.retainSourceCurrent();
+  const caller = captureAsyncHarnessInput({}, options, true, [native.assertCurrent]);
+  const childOptions = { ...caller.options, assertCurrent: caller.assertCallerCurrent };
   const readiness = buildReadiness(context);
-  const source = captureAsyncHarnessInput({ ...readiness, nativeProviderEvidence: native.providerEvidence }, caller.options);
-  source.retainSourceCurrent();
-  return withModelReadingSource(source.args, source.options, async (captured, current) => {
-    const voiceWorkflows = await buildVoiceInteractionWorkflows(context, captured, current);
+  const source = captureAsyncHarnessInput(readiness, childOptions, true);
+  const voiceWorkflows = await buildVoiceInteractionWorkflows(context, readiness, childOptions);
+  source.assertCurrent(); caller.assertCurrent();
+  source.retainSourceCurrent('agent.media.readiness');
+  const result = await withModelReadingSource({ ...readiness, voiceWorkflows, nativeProviderEvidence: native.providerEvidence }, childOptions, async (captured, current) => {
     current.assertCurrent?.();
     return {
       modes: ['media_posture', 'media_provider'], voiceProviders: captured.voiceProviders.length,
       mediaProviders: captured.mediaProviders.length, readyVoiceProviders: captured.readyVoiceProviderCount,
-      readyMediaProviders: captured.readyMediaProviderCount, voiceWorkflowSummary: voiceWorkflowSummary(voiceWorkflows), readOnly: true,
+      readyMediaProviders: captured.readyMediaProviderCount, voiceWorkflowSummary: voiceWorkflowSummary(captured.voiceWorkflows), readOnly: true,
     };
   });
+  caller.retainSourceCurrent('agent.media.sources');
+  return result;
 }
 
 export async function mediaPostureSummary(context: CommandContext, rawArgs: AgentHarnessMediaArgs,
   options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
-  const caller = captureAsyncHarnessInput(rawArgs, options);
   const native = captureCatalogNativeFacts(context, 'media');
-  caller.options.retainCurrent(native.assertCurrent, 'agent.media.native-source');
-  caller.retainSourceCurrent();
-  return withModelReadingSource(caller.args, caller.options, async (args, inputOptions) => {
-    const readinessInput = buildReadiness(context);
-    const readinessSource = captureAsyncHarnessInput(readinessInput, inputOptions);
-    readinessSource.retainSourceCurrent();
-    const runtimeInput = await readRuntimeStatuses(context, readinessSource.options);
-    readinessSource.assertCurrent();
-    inputOptions.assertCurrent?.();
-    const source = captureAsyncHarnessInput({ readiness: readinessInput, runtimeStatuses: runtimeInput, nativeProviderEvidence: native.providerEvidence }, inputOptions);
-    source.retainSourceCurrent();
-    return withModelReadingSource(source.args, source.options, async ({ readiness, runtimeStatuses }, current) => {
+  const caller = captureAsyncHarnessInput(rawArgs, options, true, [native.assertCurrent]);
+  const childOptions = { ...caller.options, assertCurrent: caller.assertCallerCurrent };
+  const args = caller.args;
+  const readinessInput = buildReadiness(context);
+  const readinessSource = captureAsyncHarnessInput(readinessInput, childOptions, true);
+  const runtimeInput = await readRuntimeStatuses(context, childOptions);
+  readinessSource.assertCurrent(); caller.assertCurrent();
+  const voiceWorkflowsInput = await buildVoiceInteractionWorkflows(context, readinessInput, childOptions);
+  readinessSource.assertCurrent(); caller.assertCurrent();
+  readinessSource.retainSourceCurrent('agent.media.readiness');
+  const result = await withModelReadingSource({ args, readiness: readinessInput, runtimeStatuses: runtimeInput,
+    voiceWorkflows: voiceWorkflowsInput, nativeProviderEvidence: native.providerEvidence }, childOptions,
+    async ({ readiness, runtimeStatuses, voiceWorkflows }, current) => {
       const providers = providersFrom(readiness, runtimeStatuses);
       const query = readString(args.query), limit = readLimit(args.limit, 100);
-      const voiceWorkflows = await buildVoiceInteractionWorkflows(context, readiness, current);
-      current.assertCurrent?.();
       const matchingProviders = await browserDeviceCatalogMatches(providers, query, entry => ({
         id: `${entry.provider.domain}:${entry.provider.id}`, description: providerCatalogDescription(entry.provider), evidence: entry,
       }), current, 'agent.media.providers.query');
@@ -494,17 +494,17 @@ export async function mediaPostureSummary(context: CommandContext, rawArgs: Agen
       };
       current.assertCurrent?.();
       return result;
-    });
   });
+  caller.retainSourceCurrent('agent.media.sources');
+  return result;
 }
 
 export async function describeHarnessMediaProvider(context: CommandContext, rawArgs: AgentHarnessMediaArgs,
   options: CatalogRankingOptions = {}): Promise<MediaProviderResolution> {
-  const caller = captureAsyncHarnessInput(rawArgs, options);
   const native = captureCatalogNativeFacts(context, 'media');
-  caller.options.retainCurrent(native.assertCurrent, 'agent.media.native-source');
-  caller.retainSourceCurrent();
-  return withModelReadingSource(caller.args, caller.options, async (args, inputOptions): Promise<MediaProviderResolution> => {
+  const caller = captureAsyncHarnessInput(rawArgs, options, true, [native.assertCurrent]);
+  const childOptions = { ...caller.options, assertCurrent: caller.assertCallerCurrent };
+  const result = await withModelReadingSource(caller.args, childOptions, async (args, inputOptions): Promise<MediaProviderResolution> => {
     const mediaProviderId = readString(args.mediaProviderId), target = readString(args.target), query = readString(args.query);
     const input = mediaProviderId || target || query;
     if (!input) return { status: 'missing_lookup', usage: 'media_provider requires mediaProviderId, target, or query. Use mode:"media_posture" to inspect provider ids.' };
@@ -537,4 +537,6 @@ export async function describeHarnessMediaProvider(context: CommandContext, rawA
       }) } : { status: 'missing_lookup', usage: `Unknown media provider ${input}. Use mode:"media_posture" to inspect provider ids.` };
     });
   });
+  caller.retainSourceCurrent('agent.media.sources');
+  return result;
 }

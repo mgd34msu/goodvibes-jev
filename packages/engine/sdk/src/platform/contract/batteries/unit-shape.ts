@@ -20,7 +20,7 @@ import { nativeContractSourceData } from '../native-source.js';
  * each plan went through two repairs the planner could not act on. Asked one
  * requirement at a time, with the other units' criteria in view, the same
  * units read 38 of their 42 requirements no at act (calibration,
- * 2026-09-29); the rest lean no below act and clear. The fixtures below
+ * 2026-09-29); the remaining readings require revision before execution. The fixtures below
  * include those units as the planner wrote them.
  *
  * Bands: the role is read at medium stakes. `narrows` is read at medium
@@ -29,11 +29,9 @@ import { nativeContractSourceData } from '../native-source.js';
  * scope it serves cannot pass the contract, and a narrowing read wrongly as
  * none costs a fix round, not a wrong acceptance.
  *
- * What code does with the readings (composed in plan-checks.ts): a `narrows`
- * reading that leans yes is a problem at any outcome. One that leans no
- * clears its requirement at any outcome; below act the unit's action records
- * the requirement as cleared below act, and the deliverable check judges it
- * again. The role acts only at act.
+ * Consumers require a settled role and an act/no for every scope check.
+ * Weak or uncertain readings return repair problems before execution; a later
+ * deliverable check does not authorize proceeding on an unsettled plan.
  */
 import {
   askAs,

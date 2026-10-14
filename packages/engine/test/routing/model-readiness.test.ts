@@ -57,7 +57,7 @@ describe('route-readiness composition', () => {
     expect(result.level).toBe('good');
     expect(result.confidence).toBe(0.9);
     expect(result.decisionId).toBe('route-decision');
-    expect(result.provenance).toEqual({ battery: routeReadiness.name, version: routeReadiness.version, decisionId: 'route-decision', requestId: 'route-request', requestedModel: 'jev-1.13.0', model: 'jev-1.13.0' });
+    expect(result.provenance).toEqual({ battery: routeReadiness.name, version: routeReadiness.version, decisionId: 'route-decision', requestId: 'route-request', requestedModel: 'jev-latest', model: 'jev-1.13.0' });
     expect(result.cloudTransfer.value).toBe(false);
     expect(result.dimensions.every((dimension) => dimension.outcome === 'ready')).toBe(true);
   });

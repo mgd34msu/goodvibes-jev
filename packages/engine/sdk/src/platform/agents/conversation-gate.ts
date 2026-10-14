@@ -1,3 +1,4 @@
+import { readConversationIntent, readProposalReply } from './conversation-reading.js';
 /**
  * Conversation-first spawn gate configuration and display helpers.
  * Semantic decisions live in daemon/batteries/conversation-gate.ts.
@@ -14,7 +15,7 @@
  * this module, the gate is installed on the channel-surface adapter context
  * (see daemon/surface-actions.ts), which the TUI does not go through.
  *
- * This file is pure: no I/O, no clock beyond what callers inject. The pending
+ * Meaning is read through the shared Jev port; policy remains deterministic. The pending
  * proposal state lives in work-proposal-store.ts; the per-surface confirmation
  * routing lives in daemon/work-proposal-reply.ts.
  */
@@ -188,10 +189,33 @@ export function isGatedSurface(config: ConversationGateConfig, surfaceKind: stri
   return config.gatedSurfaces.includes(surfaceKind);
 }
 
-/** A display-only summary. This never classifies or authorizes work. */
+// ---------------------------------------------------------------------------
+// Intent classification
+// ---------------------------------------------------------------------------
+
+export type InboundIntent =
+  | { readonly kind: 'conversation'; readonly reason: string }
+  | { readonly kind: 'work'; readonly reason: string; readonly summary: string };
+
+/** A display summary; the classifier and stored task retain the full request. */
 export function summarizeWorkRequest(text: string, maxLength = 90): string {
   const collapsed = text.replace(/\s+/g, ' ').trim();
   return collapsed.length <= maxLength ? collapsed : `${collapsed.slice(0, maxLength - 1).trimEnd()}…`;
+}
+export async function classifyInboundIntent(rawText: string | undefined, signal?: AbortSignal): Promise<InboundIntent> {
+  const text = rawText ?? '';
+  if (!text.trim()) return { kind: 'conversation', reason: 'empty-message' };
+  const kind = await readConversationIntent(text, signal);
+  return kind === 'work' ? { kind, reason: 'settled-jev-reading', summary: summarizeWorkRequest(text) }
+    : { kind, reason: 'settled-jev-reading' };
+}
+export type WorkProposalReply =
+  | { readonly decision: 'affirmative'; readonly note?: string | undefined }
+  | { readonly decision: 'negative'; readonly note?: string | undefined };
+export async function parseWorkProposalReply(rawText: string | undefined, proposal = '', signal?: AbortSignal): Promise<WorkProposalReply | null> {
+  if (!rawText?.trim()) return null;
+  const decision = await readProposalReply(rawText, proposal, signal);
+  return decision === 'unrelated' ? null : { decision, note: rawText };
 }
 
 // ---------------------------------------------------------------------------

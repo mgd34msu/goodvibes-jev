@@ -1,7 +1,9 @@
 import { isDeepStrictEqual, types as nodeTypes } from 'node:util';
 import { redactStructuredDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { captureCatalogData, captureCatalogMethods, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureOwnedJson } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { inspectCatalogData, captureCatalogData, captureCatalogMethods, captureCatalogSnapshotGuard, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureModelReadingSnapshotGuard } from './agent-harness-model-reading-source.ts';
 import type { EntryType, JsonValue } from '@goodvibes-jev/judgment/decisions';
 
 /** Hidden producer data is still semantic source; serialization cannot omit it. */
@@ -38,6 +40,7 @@ const normalizationPrototype = Object.getPrototypeOf;
 const normalizationIsArray = Array.isArray;
 const normalizationIs = Object.is;
 const normalizationFreeze = Object.freeze;
+const normalizationIsFrozen = Object.isFrozen;
 const normalizationKeys = Object.keys;
 const normalizationNumber = Number;
 const normalizationString = String;
@@ -48,9 +51,10 @@ const normalizationObjectPrototype = Object.prototype;
 // additions remain supported. Retain inherited lookup paths as well as own
 // descriptors, so an added shadowing accessor is refused without calling it.
 const normalizationRoots: readonly { readonly subject: object; readonly keys: readonly PropertyKey[] }[] = [
-  { subject: globalThis, keys: ['Object', 'Array', 'Number', 'String', 'Map', 'Set', 'WeakMap'] },
+  { subject: globalThis, keys: ['Object', 'Array', 'Number', 'String', 'Map', 'Set', 'WeakMap', 'Reflect'] },
+  { subject: Reflect, keys: ['ownKeys'] },
   { subject: Object, keys: ['getOwnPropertyDescriptor', 'getOwnPropertyDescriptors', 'getOwnPropertySymbols', 'getPrototypeOf',
-    'hasOwn', 'values', 'entries', 'create', 'defineProperty', 'freeze', 'keys', 'is'] },
+    'hasOwn', 'values', 'entries', 'create', 'defineProperty', 'freeze', 'isFrozen', 'keys', 'is'] },
   { subject: Array, keys: ['isArray', Symbol.species] },
   { subject: Array.prototype, keys: ['map', 'some', Symbol.iterator, 'constructor', Symbol.toStringTag] },
   { subject: normalizationPrototype([][Symbol.iterator]()), keys: ['next'] },
@@ -139,7 +143,30 @@ export function capturePersonalOpsSnapshot(value: unknown): {
   assertNormalizationOperations('invalid');
   const captured = capturePersonalOpsData(value);
   assertNormalizationOperations('invalid');
+  // Either the SDK's own capture or a completely frozen, already admitted DTO
+  // can prove stable data identity. A frozen parent with mutable descendants
+  // still requires a complete comparison at every boundary.
+  let immutable = false;
+  try { immutable = captureOwnedJson(value) === value; } catch { /* The personal-ops grammar remains authoritative. */ }
+  if (!immutable) {
+    const seen = new Set<object>();
+    const deeplyFrozen = (entry: unknown): boolean => {
+      if (entry === null || typeof entry !== 'object') return true;
+      if (seen.has(entry)) return true;
+      if (nodeTypes.isProxy(entry) || !normalizationIsFrozen(entry)) return false;
+      seen.add(entry);
+      const descriptors = normalizationDescriptors(entry), keys = normalizationKeys(descriptors);
+      for (let index = 0; index < keys.length; index++) {
+        const key = keys[index], descriptor = key === undefined ? undefined : descriptors[key];
+        if (!descriptor || !('value' in descriptor) || !deeplyFrozen(descriptor.value)) return false;
+      }
+      return true;
+    };
+    immutable = deeplyFrozen(value);
+  }
+  let expandedCatalogCharacters = 0;
   const compile = (entry: unknown): PersonalOpsComparison => {
+    if (typeof entry === 'string') expandedCatalogCharacters += entry.length;
     if (entry === null || typeof entry !== 'object') return normalizationFreeze({ kind: 'value', value: entry });
     const descriptors = normalizationDescriptors(entry), array = normalizationIsArray(entry);
     const slots = new Map<string, PersonalOpsComparison>();
@@ -147,6 +174,7 @@ export function capturePersonalOpsSnapshot(value: unknown): {
     for (let index = 0; index < keys.length; index++) {
       const key = keys[index];
       if (key === undefined || array && key === 'length') continue;
+      expandedCatalogCharacters += key.length;
       const descriptor = descriptors[key];
       if (!descriptor || !('value' in descriptor)) throw new ToolInputProjectionError('invalid');
       slots.set(key, compile(descriptor.value));
@@ -159,11 +187,31 @@ export function capturePersonalOpsSnapshot(value: unknown): {
     return normalizationFreeze({ kind: 'object', array, length, slots });
   };
   const original = compile(captured);
+  // A complete immutable descendant can also be reused at its exact captured
+  // position. Only enable this proof when the fully expanded key/text cost is
+  // within the catalog budget, so changing aliases cannot evade that budget.
+  // Expanded depth and array-length slots may exceed the native guard's stricter
+  // limits; the original comparison paths remain authoritative in those cases.
+  let assertNative: ((current: unknown) => void) | undefined;
+  if (expandedCatalogCharacters <= 1_000_000) {
+    try { assertNative = captureModelReadingSnapshotGuard(value, true); } catch { /* Keep the complete original grammar. */ }
+  }
+  // Exact catalog equality proves the same fully expanded normalized value,
+  // whose stricter Personal Ops budgets were admitted above. This complete
+  // single-pass guard avoids normalizing unchanged observations twice. Its
+  // stricter descriptor/order comparison may refuse equivalent values; those
+  // still take the original normalization path, including invalid-tail checks.
+  const assertExact = captureCatalogSnapshotGuard(value);
   const assertCurrent = (current: unknown): void => {
     assertNormalizationOperations('held');
+    if (immutable && current === value) return;
+    if (assertNative) {
+      try { assertNative(current); return; } catch { /* Descriptor differences may still normalize equally. */ }
+    }
+    try { assertExact(current); return; } catch { /* Preserve normalized equality and complete invalid precedence below. */ }
     // Keep the complete first pass and its invalid precedence, alias grammar,
     // depth, node, character and array-slot limits exactly as before.
-    const fresh = captureCatalogData(current);
+    const observation = inspectCatalogData(current);
     assertNormalizationOperations('held');
     let nodes = 0, characters = 0, equal = true;
     const invalid = (): never => { throw new ToolInputProjectionError('invalid'); };
@@ -174,7 +222,9 @@ export function capturePersonalOpsSnapshot(value: unknown): {
         if (!expected || expected.kind !== 'value' || !normalizationIs(entry, expected.value)) equal = false;
         return;
       }
-      const descriptors = normalizationDescriptors(entry), keys = normalizationKeys(descriptors), array = normalizationIsArray(entry);
+      const descriptors = observation.get(entry);
+      if (!descriptors) return invalid();
+      const keys = normalizationKeys(descriptors), array = normalizationIsArray(entry);
       const expectedObject = expected?.kind === 'object' ? expected : undefined;
       if (!expectedObject || expectedObject.array !== array) equal = false;
       if (array) {
@@ -209,8 +259,9 @@ export function capturePersonalOpsSnapshot(value: unknown): {
     };
     // Never stop on an unequal early field: all expanded aliases and malformed
     // tails must finish admission before a mismatch can become held.
-    compare(fresh, original);
-    assertNormalizationOperations('held');
+    // This pass reads only the validated descriptor cache with native methods;
+    // it invokes no source callback or accessor after the operation fence above.
+    compare(current, original);
     if (!equal) throw new ToolInputProjectionError('held');
   };
   return normalizationFreeze({ captured, assertCurrent });
@@ -242,6 +293,17 @@ export function personalOpsEntry(value: unknown): EntryType {
 
 /** Native producer facts remain local until the complete DTO is protected. */
 export async function protectPersonalOpsData(value: unknown, options: CatalogRankingOptions = {}): Promise<unknown> {
+  return protectPersonalOpsSource(value, options, true);
+}
+
+/** Arbitrary provider results are observational data. Redacted names/values may
+ * change their representation; complete original ownership still survives every
+ * reading and publication. Native contracts continue through protectPersonalOpsData. */
+export async function protectPersonalOpsResult(value: unknown, options: CatalogRankingOptions = {}): Promise<unknown> {
+  return protectPersonalOpsSource(value, options, false);
+}
+
+async function protectPersonalOpsSource(value: unknown, options: CatalogRankingOptions, nativeFacts: boolean): Promise<unknown> {
   const source = capturePersonalOpsSnapshot(value), captured = source.captured;
   const optionsCurrent = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'retainCurrent']);
   const signal = options.signal, callerCurrent = options.assertCurrent, retainCurrent = options.retainCurrent;
@@ -258,7 +320,10 @@ export async function protectPersonalOpsData(value: unknown, options: CatalogRan
     assertSource();
   };
   assertCurrent();
-  const result = await redactStructuredDataAsync(captured, { signal: options.signal, assertCurrent });
+  // This detached tree is native-owned and fully immutable. Keep the original
+  // producer guard above, but avoid retaining its private copy as mutable data
+  // at every redaction boundary.
+  const result = await redactStructuredDataAsync(captureOwnedJson(captured), { signal: options.signal, assertCurrent });
   const preserveFacts = (original: unknown, protectedValue: unknown): void => {
     if (typeof original === 'boolean' || typeof original === 'number' || original === null) {
       if (original !== protectedValue) throw new ToolInputProjectionError('held');
@@ -274,6 +339,6 @@ export async function protectPersonalOpsData(value: unknown, options: CatalogRan
       preserveFacts(child, descriptor.value);
     }
   };
-  preserveFacts(captured, result);
+  if (nativeFacts) preserveFacts(captured, result);
   assertCurrent(); retainCurrent?.(assertSource); assertCurrent(); return result;
 }

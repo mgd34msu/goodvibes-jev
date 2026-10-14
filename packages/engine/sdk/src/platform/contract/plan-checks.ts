@@ -10,8 +10,10 @@ import { hasDerivedAcceptanceChecks } from './owned-source.js';
  */
 import { nativeContractPort, type NativeContractServices } from './native-decisions.js';
 import type { Contract } from './types.js';
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { leansYes, type JudgmentPort, type YesNoReading } from '@goodvibes-jev/judgment';
+import { captureJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { assertJudgmentInput } from '../gate/judgment-input.js';
+import { prepareJudgmentResult, retainStrictJudgmentJson } from '../gate/judgment-result.js';
+import { type JudgmentPort, type YesNoReading } from '@goodvibes-jev/judgment';
 import type { PlanCheck } from '../../events/contract.js';
 import { criterionShape } from './batteries/criterion-shape.js';
 import { criterionTrace, traceClaim } from './batteries/criterion-trace.js';
@@ -154,21 +156,14 @@ function coverageProblem(part: CoveragePart): PlanProblem {
   };
 }
 
-/**
- * Coverage clears a part of the request only on a no at act or confirm: a
- * reading that leans yes, or an uncertain one, is a problem naming the words
- * (`contract.plan-coverage` gives the reasons). The action lists the parts
- * that cleared at confirm.
- */
+/** A coverage reading clears a requirement only with a settled act/no. */
 async function checkCoverage(port: JudgmentPort, plan: ContractPlan, ask: string, options: PlanCheckOptions): Promise<CheckOutput> {
   const output = emptyOutput();
   const run = await planCoverage.read(port, { request: ask, criteria: plan.criteria }, callOptions(PLAN_CHECK_SITES['plan-coverage'], options));
   record(output, run.decisionId, run.usage);
-  const open = run.parts.filter((part) => part.reading.verdict !== 'no');
-  const confirmed = run.parts.filter((part) => part.reading.verdict === 'no' && part.reading.outcome === 'confirm');
+  const open = run.parts.filter((part) => part.reading.verdict !== 'no' || part.reading.outcome !== 'act');
   output.problems.push(...open.map(coverageProblem));
-  const cleared = confirmed.length === 0 ? '' : `; cleared at confirm: ${confirmed.map((part) => `"${part.words}"`).join(', ')}`;
-  run.recordAction(open.length > 0 ? `repair: uncovered requirement (${open.length} of ${run.parts.length} parts)${cleared}` : `covered${cleared}`);
+  run.recordAction(open.length > 0 ? `repair: uncovered requirement (${open.length} of ${run.parts.length} parts)` : `covered`);
   return output;
 }
 
@@ -217,13 +212,13 @@ async function readCriterionShapes(
       run.recordAction(ruling.disposition);
       continue;
     }
-    const notCheckable = checkable.verdict === 'no' && checkable.outcome !== 'escalate';
+    const notCheckable = checkable.verdict !== 'yes' || checkable.outcome !== 'act';
     run.recordAction(notCheckable ? 'repair: not checkable' : 'judged');
     if (notCheckable) {
       output.problems.push({
         code: 'not-checkable',
         targetId: criterion.id,
-        message: `Criterion ${criterion.id} ("${criterion.text}") cannot be confirmed or refuted from the finished work; restate it as something its files, output or a command can show.`,
+        message: `Criterion ${criterion.id} ("${criterion.text}") has not been established as checkable from the finished work; restate it as something its files, output or a command can show.`,
       });
     }
   }
@@ -274,20 +269,16 @@ async function checkUnits(port: JudgmentPort, plan: ContractPlan, options: PlanC
         targetId: unit.id,
         message: `Unit ${unit.id} ("${unit.title}") only ${role.choice === 'review' ? 'reviews' : role.choice === 'test' ? 'tests' : 'verifies'} other units' work. Every unit's work is checked as it goes, so remove it and put what it would check into the criteria of the unit it would check (for example "the tests for X pass").`,
       });
-    } else if (role.outcome === 'act' && !roleAgrees(unit.role, role.choice)) {
+    } else if (role.outcome !== 'act' || !roleAgrees(unit.role, role.choice)) {
       found.push({
         code: 'role-mismatch',
         targetId: unit.id,
-        message: `Unit ${unit.id} ("${unit.title}") has role "${unit.role}", but its brief reads as ${role.choice} work; make the role and the brief agree.`,
+        message: `Unit ${unit.id} ("${unit.title}") has role "${unit.role}", but the reading did not establish agreement with its brief; clarify the role and brief.`,
       });
     }
-    // A narrows reading that leans yes is a problem; one that leans no clears its requirement at any outcome,
-    // since the deliverable check judges every contract criterion again (`contract.unit-shape` gives the reasons).
-    const leaning = narrows.filter((entry) => leansYes(entry.reading.probability));
-    if (leaning.length > 0) found.push(narrowsProblem(unit, leaning));
-    const belowAct = narrows.filter((entry) => !leansYes(entry.reading.probability) && entry.reading.outcome !== 'act');
-    const cleared = belowAct.length === 0 ? '' : `; scope cleared below act for ${belowAct.map((entry) => entry.id).join(', ')}, judged again at the deliverable check`;
-    run.recordAction(`${found.length === 0 ? 'unit accepted' : `repair: ${found.map((entry) => entry.code).join(', ')}`}${cleared}`);
+    const unresolved = narrows.filter((entry) => entry.reading.verdict !== 'no' || entry.reading.outcome !== 'act');
+    if (unresolved.length > 0) found.push(narrowsProblem(unit, unresolved));
+    run.recordAction(found.length === 0 ? 'unit accepted' : `repair: ${found.map((entry) => entry.code).join(', ')}`);
     output.problems.push(...found);
   }
   return output;
@@ -309,9 +300,17 @@ function totalUsage(outputs: readonly CheckOutput[]): PlanCheckUsage {
 }
 
 /** The port every plan check reads through. */
-function planCheckPort(options: PlanCheckOptions): JudgmentPort {
-  const port = judgmentPort('contract.plan-checks');
-  return options.native === undefined ? port : nativeContractPort(options.native.contract, options.native.services, port, options.signal);
+function planCheckOwner(options: PlanCheckOptions, evidence: object) {
+  const original = retainStrictJudgmentJson({ ...evidence, originalSource: options.originalSource });
+  assertJudgmentInput(original.snapshot);
+  const native = options.native, signal = options.signal, nativeSource = options.nativeSource, originalSource = options.originalSource;
+  const owner = captureJudgmentPort('contract.plan-checks', { signal, prepareResultCapture: prepareJudgmentResult,
+    assertCurrent() {
+      original.assertCurrent();
+      if (options.native !== native || options.signal !== signal || options.nativeSource !== nativeSource || options.originalSource !== originalSource) throw new Error('Plan check ownership changed');
+    } });
+  return { assertCurrent: owner.assertCurrent,
+    port: native === undefined ? owner.port : nativeContractPort(native.contract, native.services, owner.port, owner.signal) };
 }
 
 /**
@@ -319,7 +318,8 @@ function planCheckPort(options: PlanCheckOptions): JudgmentPort {
  * and dispositions. Call it only on a plan whose code checks passed.
  */
 export async function runPlanChecks(plan: ContractPlan, ask: string, shape: RequestShape, options: PlanCheckOptions = {}): Promise<PlanVerdict> {
-  const port = planCheckPort(options);
+  const owner = planCheckOwner(options, { plan, ask, shape });
+  const port = owner.port;
   const derived = hasDerivedAcceptanceChecks(options.originalSource);
   const checkRootMeaning = options.nativeSource === undefined && (options.originalSource === undefined || derived);
   const [trace, coverage, shapes, units] = await Promise.all([
@@ -328,6 +328,7 @@ export async function runPlanChecks(plan: ContractPlan, ask: string, shape: Requ
     readCriterionShapes(port, plan, ask, shape, options),
     checkUnits(port, plan, options),
   ]);
+  owner.assertCurrent();
   if (derived && !plan.criteria.some(criterion => !shapes.dispositions.has(criterion.id))) {
     shapes.problems.push({ code: 'no-criteria', message: 'A goal-only source requires nonempty judged planner-derived acceptance checks; structural or absent checks cannot complete its goal.' });
   }
@@ -355,7 +356,9 @@ export async function runUnitShapeChecks(
   plan: ContractPlan,
   options: PlanCheckOptions = {},
 ): Promise<{ readonly problems: readonly PlanProblem[]; readonly decisionIds: readonly string[]; readonly usage: PlanCheckUsage }> {
-  const units = await checkUnits(planCheckPort(options), plan, options);
+  const owner = planCheckOwner(options, { plan });
+  const units = await checkUnits(owner.port, plan, options);
+  owner.assertCurrent();
   return { problems: units.problems, decisionIds: units.decisionIds, usage: totalUsage([units]) };
 }
 
@@ -370,6 +373,8 @@ export async function readCriterionDispositions(
   shape: RequestShape,
   options: PlanCheckOptions = {},
 ): Promise<{ readonly dispositions: ReadonlyMap<string, CriterionDispositionRuling>; readonly decisionIds: readonly string[]; readonly usage: PlanCheckUsage }> {
-  const shapes = await readCriterionShapes(planCheckPort(options), plan, ask, shape, options);
+  const owner = planCheckOwner(options, { plan, ask, shape });
+  const shapes = await readCriterionShapes(owner.port, plan, ask, shape, options);
+  owner.assertCurrent();
   return { dispositions: shapes.dispositions, decisionIds: shapes.decisionIds, usage: totalUsage([shapes]) };
 }

@@ -12,7 +12,7 @@
  */
 import type { ContractEvent } from '../../events/contract.js';
 import type { ExecutionPlanManager } from '../core/execution-plan.js';
-import type { ProjectPlanningService } from '../knowledge/project-planning/service.js';
+import { WorkPlanTaskExistsError, type ProjectPlanningService } from '../knowledge/project-planning/service.js';
 import type { ProjectWorkPlanTaskStatus } from '../knowledge/project-planning/types.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
@@ -149,7 +149,7 @@ export function createContractPlanSync(deps: ContractPlanSyncDeps): ContractPlan
           known.add(taskId);
           return;
         } catch (error) {
-          if (!(error instanceof Error) || !error.message.includes('already exists')) throw error;
+          if (!(error instanceof WorkPlanTaskExistsError)) throw error;
           known.add(taskId);
         }
       }

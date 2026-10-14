@@ -1,3 +1,9 @@
+import { useFailureReadings } from './_helpers/failure-readings.ts';
+useFailureReadings([
+  ['Too many connections for this account, try again later', { category: 'service' }],
+  ['Invalid username or password', { category: 'authentication' }],
+  ['Mailbox does not exist', { category: 'not_found' }],
+]);
 /**
  * The inbound-mail watcher against a scripted fake IMAP server.
  *

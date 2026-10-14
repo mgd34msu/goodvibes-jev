@@ -465,7 +465,7 @@ export async function describeHarnessModelRoute(context: CommandContext, args: A
   if (insensitiveEndpoint) return { status: 'found', route: describeLocalServerEndpointRoute(insensitiveEndpoint, { ...lookup, resolvedBy: 'case-insensitive-local-endpoint-id' }) };
   const searched = await rankModelCatalog<ModelCatalogCandidate>([...routes, ...models, ...endpoints], lookup.input, reading);
   reading.assertCurrent?.();
-  if (searched.matches.length === 1 && searched.matches[0]!.judgment.reading.verdict === 'yes') {
+  if (searched.matches.length === 1 && searched.matches[0]!.judgment.reading.verdict === 'yes' && searched.matches[0]!.judgment.reading.outcome === 'act') {
     const { entry, judgment } = searched.matches[0]!;
     const resolved = { ...lookup, resolvedBy: entry.kind === 'local-server-endpoint' ? 'local-endpoint-search' : 'search' };
     const route = entry.kind === 'route' ? await describeRoute(entry, { context, includeParameters: true, reading, lookup: resolved })

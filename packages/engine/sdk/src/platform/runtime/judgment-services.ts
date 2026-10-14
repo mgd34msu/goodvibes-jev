@@ -3,10 +3,9 @@ import { createJudgmentSourceLifetime } from './judgment-source-lifetime.js';
 import {
   createSystemOnePort,
   endpointKind,
-  isPinnedJudgmentModel,
   JudgmentError,
   judgmentConfigFromEnv,
-  PINNED_MODEL,
+  DEFAULT_MODEL,
   withDecisionLog,
   type JudgmentConfig,
   type JudgmentPort,
@@ -44,9 +43,9 @@ export interface JudgmentSettingsSource {
 
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
-/** The model a request names when it names none: judgment.model, then TYPESAFE_DEFAULT_MODEL, then the pinned version. */
+/** The model a request names when it names none: judgment.model, then TYPESAFE_DEFAULT_MODEL, then jev-latest. */
 function settingsModel(source: JudgmentSettingsSource): string {
-  return text(source.config.get('judgment.model')) || text(source.env['TYPESAFE_DEFAULT_MODEL']) || PINNED_MODEL;
+  return text(source.config.get('judgment.model')) || text(source.env['TYPESAFE_DEFAULT_MODEL']) || DEFAULT_MODEL;
 }
 
 async function settingsKey(secrets: JudgmentSettingsSource['secrets'], keySource: JudgmentKeySource, envKey: string | undefined): Promise<string | undefined> {
@@ -77,9 +76,6 @@ export async function judgmentConfigFromSettings(source: JudgmentSettingsSource)
   let targets: ReturnType<typeof captureJudgmentFallbackSettings>;
   try { targets = captureJudgmentFallbackSettings(source.config.get('judgment.fallbacks')); }
   catch { throw new JudgmentError('invalid-request', 'Invalid judgment fallback settings'); }
-  if (targets.length > 0 && !isPinnedJudgmentModel(model)) {
-    throw new JudgmentError('invalid-request', 'judgment failover requires a pinned primary model');
-  }
   const environmentKeys = targets.map(target => target.keySource === 'env' ? source.env[target.keyName] : undefined);
   env.TYPESAFE_API_KEY = await settingsKey(source.secrets, keySource, env.TYPESAFE_API_KEY);
   const fallbacks: NonNullable<JudgmentConfig['fallbacks']>[number][] = [];

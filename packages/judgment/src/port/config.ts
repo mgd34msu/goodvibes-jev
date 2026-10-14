@@ -1,18 +1,14 @@
 import type { Fetch } from '@typesafe-ai/sdk';
 import { JudgmentError } from './errors.ts';
 import { retryPolicy, type JudgmentRetryPolicy } from './retry.ts';
-import { isPinnedJudgmentModel, validEndpointURL } from './endpoint-validation.ts';
+import { validEndpointURL } from './endpoint-validation.ts';
 export { isPinnedJudgmentModel, validEndpointURL } from './endpoint-validation.ts';
 
 /** The hosted System One endpoint. */
 export const HOSTED_BASE_URL = 'https://api.typesafe.ai';
 
-/**
- * The model every battery is tuned against. Thresholds are calibrated on a
- * specific version, so the port pins it instead of following an alias that
- * can move under us (docs.typesafe.ai/models).
- */
-export const PINNED_MODEL = 'jev-1.13.0';
+/** Follow TypeSafe's most recent stable Jev release. Responses retain the resolved version. */
+export const DEFAULT_MODEL = 'jev-latest';
 
 /**
  * Where judgments are answered. `hosted` is TypeSafe's Jev endpoint; `local`
@@ -28,13 +24,13 @@ export interface JudgmentEndpoint {
 /** An explicitly configured compatible System One target, in failover order. */
 export interface JudgmentFallback {
   readonly endpoint: JudgmentEndpoint;
-  /** Exact calibrated version, never an alias. Only matching requests may use it. */
+  /** Requested model or alias. Only matching requests may use this target. */
   readonly model: string;
 }
 
 export interface JudgmentConfig {
   readonly endpoint: JudgmentEndpoint;
-  /** The versioned model id to ask; defaults to {@link PINNED_MODEL}. */
+  /** The model id or alias to ask; defaults to {@link DEFAULT_MODEL}. */
   readonly model: string;
   /** Timeout per attempt in milliseconds. */
   readonly timeoutMs: number;
@@ -71,7 +67,7 @@ export function judgmentConfigFromEnv(
   if (!validEndpointURL(baseURL)) throw new JudgmentError('invalid-request', 'invalid System One endpoint URL; credentials, query and fragment are not allowed');
   return {
     endpoint: { kind: endpointKind(baseURL), baseURL, apiKey },
-    model: overrides.model ?? (env['TYPESAFE_DEFAULT_MODEL']?.trim() || PINNED_MODEL),
+    model: overrides.model ?? (env['TYPESAFE_DEFAULT_MODEL']?.trim() || DEFAULT_MODEL),
     timeoutMs: overrides.timeoutMs ?? 10_000,
     retry: overrides.retry ?? {},
     ...(overrides.fallbacks === undefined ? {} : { fallbacks: overrides.fallbacks }),
@@ -88,9 +84,6 @@ export function validateJudgmentConfig(config: JudgmentConfig): void {
       || !validEndpointURL(target.endpoint.baseURL) || typeof target.endpoint.apiKey !== 'string' || !target.endpoint.apiKey.trim()
       || typeof target.model !== 'string' || !target.model.trim()) {
       throw new JudgmentError('invalid-request', 'invalid judgment target; use an http(s) URL without credentials, query or fragment, a model and a resolved key');
-    }
-    if (targets.length > 1 && !isPinnedJudgmentModel(target.model)) {
-      throw new JudgmentError('invalid-request', 'judgment failover requires pinned jev model versions; aliases are not calibration-compatible');
     }
   }
   if (!Number.isInteger(config.timeoutMs) || config.timeoutMs < 1 || config.timeoutMs > 120_000

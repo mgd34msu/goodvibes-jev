@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { canonicalJson, choice, defineSelector, noul, PINNED_MODEL, SqliteDecisionLog, STAKES_BANDS, toJson, withDecisionLog } from '@goodvibes-jev/judgment';
+import { canonicalJson, choice, defineSelector, noul, DEFAULT_MODEL, SqliteDecisionLog, STAKES_BANDS, toJson, withDecisionLog } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { captureStaticInputs, parseStaticSourceReadings, readStaticInput, revalidateStaticInput, sha256, STATIC_SITE, staticDecisionSourceHash, staticDecisionSourceManifest, staticInputCaptureComplete, staticInputKey, staticInputStanding, staticSelectionCandidates, staticSelectionContext, type StaticSourceReadings } from '../scripts/static-source-readings.ts';
 import { STATIC_WEAK_ANCHOR_FIT_INSTRUCTIONS, STATIC_WEAK_ANCHOR_INSTRUCTIONS, staticWeakAnchor } from '../scripts/batteries/static-weak-anchor.ts';
@@ -188,7 +188,7 @@ test('weak selector plan, source, policy and full answer identity must remain ex
     expect(staticInputCaptureComplete(captured, mutated)).toBe(false);
   }
   expect(parseStaticSourceReadings({ ...readings, readingPlanVersion: 99 })).toBeNull();
-  for (const [field, value] of [['observedModel', 'other'], ['requestedModel', 'jev-latest'], ['questionsHash', 'changed'], ['site', 'wrong'], ['stateHash', 'changed'], ['version', 1]]) {
+  for (const [field, value] of [['observedModel', 'other'], ['requestedModel', 'other-model'], ['questionsHash', 'changed'], ['site', 'wrong'], ['stateHash', 'changed'], ['version', 1]]) {
     expect(staticInputStanding(captured, { ...readings, readings: { [staticInputKey(captured)]: { ...receipt, selection: { ...selector, [String(field)]: value } } } }).kind).toBe('held');
   }
   for (const manifest of [staticDecisionSourceManifest().filter(([path]) => path !== 'batteries/static-weak-anchor.ts'),
@@ -227,7 +227,7 @@ test('v1 weak answers remain raw history while only new v2 questions are measure
   const captured = input();
   const authored = await selected(0.5, 'none', 0.8, 0.5);
   using log = new SqliteDecisionLog(':memory:');
-  const legacy = defineSelector({ name: staticWeakAnchor.name, version: 1, model: PINNED_MODEL, accuracyFloor: 0.95,
+  const legacy = defineSelector({ name: staticWeakAnchor.name, version: 1, model: DEFAULT_MODEL, accuracyFloor: 0.95,
     description: 'Authored synthetic historical v1 fixture', instructions: STATIC_ANCHOR_INSTRUCTIONS,
     fitInstructions: STATIC_ANCHOR_FIT_INSTRUCTIONS, band: STAKES_BANDS.high.confidence, fitBand: STAKES_BANDS.high.yesNo,
     fixtures: [{ name: 'authored historical example', context: staticSelectionContext(captured), candidates: staticSelectionCandidates(captured), expect: 'none' }] });

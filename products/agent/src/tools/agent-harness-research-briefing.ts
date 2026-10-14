@@ -1,4 +1,5 @@
-import { captureCatalogPath, withResearchCatalog, rankResearchRecords } from './agent-harness-research-catalog-source.ts';
+import { captureModelArtifactClockSource } from './agent-harness-model-reading-source.ts';
+import { captureCatalogPath, withCapturedResearchCatalog, rankResearchRecords } from './agent-harness-research-catalog-source.ts';
 import { captureCatalogMethods, captureCatalogSnapshot } from './agent-harness-catalog-ranking.ts';
 import { ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import { observeImportFile, assertImportFileCurrent } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -85,7 +86,9 @@ function isMutableRun(status: AgentResearchRunStatus): boolean {
 
 
 
-async function reportArtifacts(artifacts: readonly ArtifactDescriptor[], query: string, options: CatalogRankingOptions): Promise<readonly ArtifactDescriptor[]> {
+type ResearchArtifact = ReturnType<typeof captureModelArtifactClockSource<ArtifactDescriptor>>['reading'];
+
+async function reportArtifacts(artifacts: readonly ResearchArtifact[], query: string, options: CatalogRankingOptions): Promise<readonly ResearchArtifact[]> {
   const reports = artifacts.filter(artifact => {
     const metadata = artifact.metadata ?? {};
     return [metadata.purpose, metadata.source, metadata.sourceKind].some(value => value === 'agent-research-report');
@@ -119,7 +122,16 @@ function captureArtifacts(context: CommandContext) {
   const read = () => {
     assertCurrent();
     const artifacts = list ? list.call(store, 100) : [];
-    assertCurrent(); return { artifacts, records: metadata.map(file => file.snapshot.captured), metadata: metadata.map(file => ({ contents: file.observation.raw })) };
+    assertCurrent();
+    const records = metadata.map(file => captureModelArtifactClockSource(file.snapshot.captured).reading);
+    return { artifacts: artifacts.map(artifact => captureModelArtifactClockSource(artifact).reading), records,
+      metadata: metadata.map((file, index) => ({
+        // Only the exact bytes emitted by this retained ArtifactStore can use
+        // its declared clock representation. Other file evidence stays raw.
+        contents: file.observation.raw === `${JSON.stringify(file.snapshot.captured, null, 2)}\n`
+          ? `${JSON.stringify(records[index], null, 2)}\n` : file.observation.raw,
+      })) };
+
   };
   assertCurrent(); return { read, assertCurrent };
 }
@@ -243,7 +255,7 @@ function sourceItem(source: AgentResearchSourceRecord, includeParameters: boolea
   };
 }
 
-function reportItem(artifact: ArtifactDescriptor, includeParameters: boolean): ResearchBriefingItem {
+function reportItem(artifact: ResearchArtifact, includeParameters: boolean): ResearchBriefingItem {
   const routes = {
     inspect: `research action:"report_artifact" artifactId:${routeString(artifact.id)}`,
     export: `agent_artifacts mode:"export" artifactId:${routeString(artifact.id)} destinationPath:"exports/${artifact.filename ?? `${artifact.id}.md`}" confirm:true explicitUserRequest:"..."`,
@@ -341,7 +353,7 @@ function browserItem(context: CommandContext, includeParameters: boolean, browse
 export async function researchBriefingCatalogStatus(context: CommandContext, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
   const caller = captureAsyncHarnessInput({}, options), native = captureArtifacts(context);
   caller.options.retainCurrent?.(native.assertCurrent);
-  return withResearchCatalog(context, {}, { ...caller.options, assertCurrent: () => { caller.assertCurrent(); native.assertCurrent(); } }, native.read, async (_args, data, options) => {
+  return withCapturedResearchCatalog(context, caller, native.read, async (_args, data, options) => {
     const artifacts = data.artifacts;
     const shellPaths = context.workspace?.shellPaths;
     const runs = shellPaths ? AgentResearchRunRegistry.fromShellPaths(shellPaths).snapshot() : null;
@@ -364,9 +376,8 @@ export async function researchBriefingCatalogStatus(context: CommandContext, opt
 
 export async function researchBriefingSummary(context: CommandContext, rawArgs: AgentHarnessResearchBriefingArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
   const originalCaller = captureAsyncHarnessInput(rawArgs, options), native = captureArtifacts(context);
-  const assertCurrent = (): void => { originalCaller.assertCurrent(); native.assertCurrent(); };
   originalCaller.options.retainCurrent?.(native.assertCurrent);
-  return withResearchCatalog(context, originalCaller.args, { ...originalCaller.options, assertCurrent }, native.read, async (rawArgs, data, options) => {
+  return withCapturedResearchCatalog(context, originalCaller, native.read, async (rawArgs, data, options) => {
     const artifacts = data.artifacts;
     const caller = captureAsyncHarnessInput(rawArgs, options), args = caller.args;
     const browser = await browserControlPosture(context, context.extensions?.toolRegistry, caller.options);

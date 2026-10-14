@@ -25,7 +25,7 @@ import {
   type UpdateFileIo,
 } from '../sdk/src/platform/runtime/self-update.js';
 
-import { createSystemOnePort, PINNED_MODEL, SqliteDecisionLog, withDecisionLog, type Questions } from '@goodvibes-jev/judgment';
+import { createSystemOnePort, DEFAULT_MODEL, SqliteDecisionLog, withDecisionLog, type Questions } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { redactSensitiveDataAsync } from '../sdk/src/platform/utils/redaction.ts';
 import { installJudgmentPort, forgetFailureReadings } from '@goodvibes-jev/engine/errors';
@@ -651,14 +651,14 @@ describe('update failure reading lifecycle', () => {
     const fake = failureReadingsPort([['repository access revoked', { category: 'authorization' }]]).port;
     const h = makeHarness({ idle: () => true, fetchOverride: async () => { reads++; return persistentFetch('ignored'); } });
     await installUpdaterPort(createSystemOnePort({
-      endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-key' }, model: PINNED_MODEL,
+      endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-key' }, model: DEFAULT_MODEL,
       timeoutMs: 100, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
       fetch: async (_url, init) => {
         calls++; expect(h.alerts).toEqual([]); expect(h.updater.failedCheckCount).toBe(1);
         if (calls <= 2) return Response.json({}, { status: 503 });
         const body = JSON.parse(String(init?.body)) as { state: string; questions: Questions };
         const result = await fake.ask(body);
-        return Response.json({ model: PINNED_MODEL, answers: result.answers, usage: { input_tokens: 1, output_tokens: 1 } });
+        return Response.json({ model: DEFAULT_MODEL, answers: result.answers, usage: { input_tokens: 1, output_tokens: 1 } });
       },
     }));
     try { await h.updater.tick(); expect(calls).toBe(3); expect(reads).toBe(1); expect(h.alerts).toHaveLength(1); }

@@ -759,6 +759,7 @@ async function runMemory(
     try {
       // The mirror is planned first: a new record's class is read before anything is written.
       const plan = await planMemoryMirror(memoryRegistry, safeKey, value);
+      plan?.assertCurrent();
       mkdirSync(memoryDir, { recursive: true });
       const filePath = join(memoryDir, `${safeKey}.json`);
       // Write as-is; allow caller to pass JSON string or plain text

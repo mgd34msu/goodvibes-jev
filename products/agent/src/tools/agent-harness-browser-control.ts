@@ -334,10 +334,9 @@ export async function captureBrowserControlPosture(context: CommandContext, tool
     if (result !== undefined) throw new ToolInputProjectionError('held');
   };
   const retained = new Set<() => void>();
-  const retainCurrent = (guard: () => void, key?: string): void => {
+  const retainCurrent = (guard: () => void): void => {
     optionSlots(); checkSignal();
     retained.add(guard);
-    dispatchRetainCurrent(guard, key);
   };
   assertBorrowedCurrent();
   const snapshot = await acquireInteractiveRuntimeSnapshot(context, { ...options, retainCurrent });

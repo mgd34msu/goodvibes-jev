@@ -15,7 +15,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import {
   createSystemOnePort,
   judgmentConfigFromEnv,
-  PINNED_MODEL,
+  DEFAULT_MODEL,
   type Battery,
   type BatteryItems,
   type JudgmentPort,
@@ -31,6 +31,9 @@ export interface StoredAnswer {
 
 /** The answers read about one state, by question name, and an optional label naming what was read. */
 export interface StoredEntry {
+  /** The alias requested and actual response version for this historical reading. */
+  readonly requestedModel?: string;
+  readonly model?: string;
   readonly subject?: string;
   readonly answers: Readonly<Record<string, StoredAnswer>>;
 }
@@ -61,9 +64,9 @@ export function decisionId(battery: Battery<BatteryItems>): string {
   return `${battery.name}@${battery.version}`;
 }
 
-/** The model a battery's readings come from: its pinned model, else the judgment package's pinned default. */
+/** The requested model or alias for the battery's readings; defaults to jev-latest. */
 export function readingModel(battery: Battery<BatteryItems>): string {
-  return battery.model ?? PINNED_MODEL;
+  return battery.model ?? DEFAULT_MODEL;
 }
 
 export function loadStoredReadings(path: string): StoredReadings | null {

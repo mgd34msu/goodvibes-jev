@@ -374,7 +374,7 @@ test('unresolved object applicability remains an uncertain native hold without a
   const data: SelfImprovementAssessmentInput = {
     query: 'What are its full capabilities?', subjects: [], facts: [], evidence: [], objectProfiles: [],
   };
-  expect(data).toEqual(unresolved.state);
+  expect<unknown>(data).toEqual(unresolved.state);
   expect(unresolved.expect).not.toHaveProperty('gapApplicable');
   expect(unresolved.expect).toHaveProperty('repairContextConcrete', 'no');
   const fake = fakePort((name, question, state) => {

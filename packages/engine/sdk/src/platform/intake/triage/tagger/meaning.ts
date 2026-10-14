@@ -1,3 +1,4 @@
+import { matchesJudgmentModel } from '@goodvibes-jev/judgment';
 /** Custom label meaning is a versioned recorded reading, never substring dispatch. */
 import { checkAnswers, defineBattery, oneOf, STAKES_BANDS, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { awaitPermission } from '../../../permissions/cancellation.js';
@@ -66,7 +67,7 @@ export async function readCustomTagMeaning(tag: string, port: JudgmentPort | und
       }), guard.signal);
       current(guard);
       const captured = captureTriageData(raw) as typeof raw;
-      if (!captured || captured.model !== TRIAGE_MODEL || captured.requestedModel !== TRIAGE_MODEL) throw new Error('Triage tag meaning model mismatch');
+      if (!captured || !matchesJudgmentModel(TRIAGE_MODEL, captured.model) || captured.requestedModel !== TRIAGE_MODEL) throw new Error('Triage tag meaning model mismatch');
       checkAnswers(request.questions, captured.answers);
       return captured;
     },

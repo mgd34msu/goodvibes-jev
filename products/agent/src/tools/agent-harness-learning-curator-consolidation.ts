@@ -1,5 +1,4 @@
 import type { AgentWorkspaceLocalLibraryItem } from '../input/agent-workspace-types.ts';
-import { previewHarnessText } from './agent-harness-text.ts';
 import type { LearningCandidateDraft, LearningConsolidationDiff, LearningConsolidationFields, LearningConsolidationPlan, LocalLearningCandidateDomain } from './agent-harness-learning-curator-types.ts';
 import { localRegistryRoute, routeList, routeValue } from './agent-harness-learning-curator-common.ts';
 import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
@@ -22,11 +21,6 @@ function uniqueText(values: readonly string[]): readonly string[] {
   return result;
 }
 
-function uniqueSorted(values: readonly string[]): readonly string[] {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))]
-    .sort((left, right) => left.localeCompare(right));
-}
-
 function mergeableDescription(domain: LocalLearningCandidateDomain, item: AgentWorkspaceLocalLibraryItem): string {
   if (domain === 'memory') {
     const fallback = item.scope && item.cls ? `${item.scope}/${item.cls}` : '';
@@ -35,46 +29,14 @@ function mergeableDescription(domain: LocalLearningCandidateDomain, item: AgentW
   return item.description;
 }
 
-function mergedDescription(
-  domain: LocalLearningCandidateDomain,
-  survivor: AgentWorkspaceLocalLibraryItem,
-  duplicates: readonly AgentWorkspaceLocalLibraryItem[],
-): string {
-  const descriptions = uniqueText([survivor, ...duplicates].map((item) => mergeableDescription(domain, item)));
-  if (descriptions.length === 0) return '';
-  return previewHarnessText(descriptions.join('\n\n'), 900);
-}
-
-function mergedTags(items: readonly AgentWorkspaceLocalLibraryItem[]): readonly string[] {
-  return uniqueSorted(items.flatMap((item) => item.tags));
-}
-
-function mergedTriggers(items: readonly AgentWorkspaceLocalLibraryItem[]): readonly string[] {
-  return uniqueSorted(items.flatMap((item) => item.triggers));
-}
-
 function updateFieldsForConsolidation(
-  domain: LocalLearningCandidateDomain,
-  survivor: AgentWorkspaceLocalLibraryItem,
-  duplicates: readonly AgentWorkspaceLocalLibraryItem[],
+  _domain: LocalLearningCandidateDomain,
+  _survivor: AgentWorkspaceLocalLibraryItem,
+  _duplicates: readonly AgentWorkspaceLocalLibraryItem[],
 ): LearningConsolidationFields | undefined {
-  const all = [survivor, ...duplicates];
-  const tags = mergedTags(all);
-  const triggers = mergedTriggers(all);
-  const description = mergedDescription(domain, survivor, duplicates);
-  if (domain === 'memory') {
-    const fields: LearningConsolidationFields = {
-      ...(description ? { detail: description } : {}),
-      ...(tags.length > 0 ? { tags } : {}),
-    };
-    return Object.keys(fields).length > 0 ? fields : undefined;
-  }
-  const fields: LearningConsolidationFields = {
-    ...(description ? { description } : {}),
-    ...(tags.length > 0 ? { tags } : {}),
-    ...(triggers.length > 0 ? { triggers } : {}),
-  };
-  return Object.keys(fields).length > 0 ? fields : undefined;
+  // Same-entity evidence cannot authorize synthesized descriptions or new triggers.
+  // Retain the exact selected record and reversible stale markers on duplicates.
+  return undefined;
 }
 
 function rollbackFieldsForConsolidation(
@@ -120,12 +82,11 @@ function consolidationDiffs(
   survivor: AgentWorkspaceLocalLibraryItem,
   duplicates: readonly AgentWorkspaceLocalLibraryItem[],
 ): readonly LearningConsolidationDiff[] {
-  const all = [survivor, ...duplicates];
-  const tags = mergedTags(all).join(', ');
-  const triggers = mergedTriggers(all).join(', ');
+  const tags = survivor.tags.join(', ');
+  const triggers = survivor.triggers.join(', ');
   return [
     consolidationDiff('name', survivor.name, duplicates.map((item) => item.name), survivor.name),
-    consolidationDiff('description', mergeableDescription(domain, survivor), duplicates.map((item) => mergeableDescription(domain, item)), mergedDescription(domain, survivor, duplicates)),
+    consolidationDiff('description', mergeableDescription(domain, survivor), duplicates.map((item) => mergeableDescription(domain, item)), mergeableDescription(domain, survivor)),
     consolidationDiff('tags', survivor.tags.join(', '), duplicates.map((item) => item.tags.join(', ')), tags),
     domain === 'memory' ? null : consolidationDiff('triggers', survivor.triggers.join(', '), duplicates.map((item) => item.triggers.join(', ')), triggers),
   ].filter((diff): diff is LearningConsolidationDiff => diff !== null);
@@ -178,7 +139,7 @@ function consolidationProposalFields(plan: LearningConsolidationPlan): Readonly<
     survivorId: plan.survivorId,
     duplicateIds: plan.duplicateIds.join(','),
     visibleDiff: plan.diffs.length > 0
-      ? plan.diffs.map((diff) => `${diff.field}: keep [${diff.survivor}], merge [${diff.merged}]`).join('\n')
+      ? plan.diffs.map((diff) => `${diff.field}: retain [${diff.survivor}]; duplicates [${diff.duplicates.join("; ")}]`).join('\n')
       : 'Visible metadata matches; inspect record bodies before marking duplicates stale.',
     staleFirst: plan.staleRoutes.join('\n'),
     rollback: plan.rollbackRoutes.join('\n'),
@@ -223,7 +184,7 @@ function consolidationCandidate(
     recordId: survivor.id,
     status: 'needs-consolidation',
     reason: `${items.length} Agent-local ${domain} records have settled same-entity pair readings.`,
-    next: 'Inspect every record, update the survivor with merged visible fields, mark duplicates stale first, then delete only after explicit review.',
+    next: 'Keep the selected record unchanged and mark settled duplicates stale, retaining their complete originals.',
     reviewState: survivor.reviewState,
     ...(survivor.enabled === undefined ? {} : { enabled: survivor.enabled }),
     ...(survivor.active === undefined ? {} : { active: survivor.active }),

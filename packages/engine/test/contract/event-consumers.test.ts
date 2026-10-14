@@ -1,3 +1,5 @@
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 /**
  * The consumers of the `contracts` event domain (design 8.2) that the
  * channel, replay and store tests do not already cover: the Slack and Discord
@@ -276,8 +278,12 @@ describe('surfaces that classify or subscribe', () => {
 
   test('[Contract] messages are the contract kind, and the transcript shows them as contract state', async () => {
     expect(classifySystemMessageKind(`[Contract] ${CTR} started: Add a parser`)).toBe('contract');
-    const [event] = await classifyTranscriptMessages([{ role: 'system', content: `[Contract] ${CTR} PASSED` } as never]);
-    expect(event?.kind).toBe('contract_state');
+    const previous = installJudgmentPort(fakePort((name, question) => choiceAnswer(question,
+      name === 'activity' ? 'status' : name === 'severity' ? 'info' : 'contract_state', 1)).port);
+    try {
+      const [event] = await classifyTranscriptMessages([{ role: 'system', content: `[Contract] ${CTR} PASSED` } as never]);
+      expect(event?.kind).toBe('contract_state');
+    } finally { installJudgmentPort(previous); }
   });
 
   test('the telemetry domain list subscribes to contracts', () => {

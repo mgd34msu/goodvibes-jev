@@ -1,3 +1,6 @@
+import { gapAssessmentFixture } from './_helpers/knowledge-self-improvement-readings.js';
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+useKnowledgeAnswerReadings({ selfImprovement: [gapAssessmentFixture({ title: 'What ports does this device provide?' }, [], 0.99, 0.99)] });
 import { upsertObservedKnowledgeNode } from '../sdk/src/platform/knowledge/store-node-observation.js';
 /** Temporary SQLite stores and explicit promises only: no provider or user state. */
 import { afterEach, describe, expect, test } from 'bun:test';

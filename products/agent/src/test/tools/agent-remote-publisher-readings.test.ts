@@ -103,7 +103,7 @@ describe('Remote publisher meanings use canonical complete-source readings', () 
   test('a retired canonical backend stays held after protected receipt cleanup', async () => {
     const guards: Array<() => void> = [];
     const fake = fakePort(() => noulAnswer(0.01)); installJudgmentPort(fake.port);
-    expect(await readRemotePublisherSchemaStatus(source('certified', 'capture'), { ...options(), retainCurrent: guard => guards.push(guard) })).toBe('legacy');
+    expect(await readRemotePublisherSchemaStatus(source('certified', 'capture'), { ...options(), retainCurrent: guard => { guards.push(guard); } })).toBe('legacy');
     for (const guard of guards) guard();
     installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
     expect(() => { for (const guard of guards) guard(); }).toThrow();

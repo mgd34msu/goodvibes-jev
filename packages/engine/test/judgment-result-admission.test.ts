@@ -14,6 +14,13 @@ function response() {
 }
 
 describe('complete original judgment response admission', () => {
+  test('credential-named Choice options are schema coordinates and preserve their complete descriptions', () => {
+    const schema = { authorization: choice('Classify the failure.', { authorization: 'Permission was refused.', other: 'A different failure.' }) };
+    const result = { ...response(), answers: { authorization: { type: 'choice' as const, choice: 'authorization', confidence: .99, probabilities: { authorization: .99, other: .01 } } } };
+    expect(prepareJudgmentResult(schema).capture(result)).toEqual(result);
+    expect(() => prepareJudgmentResult({ pick: choice('Classify.', { authorization: 'password=synthetic-fixture', other: 'Other.' }) })).toThrow(JudgmentInputError);
+    expect(() => prepareJudgmentResult(schema).capture({ ...result, authorization: 'synthetic-fixture' })).toThrow(JudgmentInputError);
+  });
   test('retains exact protocol probabilities without rounding or treating their digits as text', () => {
     const original = response();
     const prepared = prepareJudgmentResult(questions());
@@ -343,4 +350,16 @@ describe('complete owned response admission before native recording', () => {
     await expect(captured.port.ask(input)).rejects.toThrow();
     expect(getterCalls).toBe(0); expect(fake.requests).toHaveLength(0); expect(log.query()).toHaveLength(0);
   });
+});
+
+test('exact bounded latency metadata does not become card material', () => {
+  const latencyMs = 0.4111111111111111;
+  expect(judgmentInputProblem(latencyMs)).toBe('card-material');
+  const original = { ...response(), latencyMs, lineage: { logicalRequestId: 'synthetic', attempts: [
+    { attempt: 1, endpointIndex: 0, endpointKind: 'local' as const, requestedModel: 'jev-latest', latencyMs, outcome: 'answered' as const },
+  ] } };
+  expect(prepareJudgmentResult(questions()).capture(original)).toEqual(original);
+  expect(() => prepareJudgmentResult(questions()).capture({ ...original, latencyMs: 4111111111111111 })).toThrow(JudgmentResultAdmissionError);
+  const privateResult = { ...original, privateMetadata: { latencyMs } };
+  expect(() => prepareJudgmentResult(questions()).capture(privateResult)).toThrow(JudgmentInputError);
 });

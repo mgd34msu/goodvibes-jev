@@ -17,7 +17,7 @@ import {
 import { instrumentedFetch } from '../../utils/fetch-with-timeout.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { YesNoReading } from '@goodvibes-jev/judgment';
-import { MAX_JUDGED_DIFF_CHARS, semanticDiff, semanticDiffView } from '../batteries/semantic-diff.js';
+import { semanticDiff, semanticDiffView } from '../batteries/semantic-diff.js';
 import { exportBreak, exportBreakView } from '../batteries/export-break.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 
@@ -35,14 +35,14 @@ type SemanticDiffRisk = SemanticDiffSummary['risk'];
  * The risk tier, composed from the two facts Jev read about the diff
  * (tools/batteries/semantic-diff.ts): breaking a caller is high, changing
  * what existing code does is medium, neither is low. A fact the reading is
- * not confident is absent (verdict uncertain) counts toward the higher tier,
+ * not confident is absent (including a tentative no) counts toward the higher tier,
  * so doubt shows as risk rather than hiding it.
  */
 export function semanticDiffRisk(readings: {
   readonly breaks_callers: YesNoReading;
   readonly changes_behavior: YesNoReading;
 }): SemanticDiffRisk {
-  const present = (reading: YesNoReading): boolean => reading.verdict !== 'no';
+  const present = (reading: YesNoReading): boolean => reading.outcome !== 'act' || reading.verdict !== 'no';
   if (present(readings.breaks_callers)) return 'high';
   if (present(readings.changes_behavior)) return 'medium';
   return 'low';
@@ -57,9 +57,9 @@ export function exportBreakVerdict(readings: {
   readonly inputs_break: YesNoReading;
   readonly output_breaks: YesNoReading;
 }): 'breaking' | 'safe' | 'uncertain' {
-  const facts = [readings.inputs_break.verdict, readings.output_breaks.verdict];
-  if (facts.includes('yes')) return 'breaking';
-  return facts.every((verdict) => verdict === 'no') ? 'safe' : 'uncertain';
+  const facts = [readings.inputs_break, readings.output_breaks];
+  if (facts.some(reading => reading.outcome === 'act' && reading.verdict === 'yes')) return 'breaking';
+  return facts.every(reading => reading.outcome === 'act' && reading.verdict === 'no') ? 'safe' : 'uncertain';
 }
 
 /** Summary prose built from the readings when the helper model wrote none. */
@@ -70,7 +70,7 @@ function summaryFromReadings(changedFiles: readonly string[], risk: SemanticDiff
   const effect = risk === 'high'
     ? 'Callers of the changed code may have to change too.'
     : risk === 'medium'
-      ? 'Existing code behaves differently after this change.'
+      ? 'The change may alter existing behavior.'
       : 'The change neither breaks callers nor changes existing behavior.';
   return `${files} ${effect}`;
 }
@@ -287,11 +287,11 @@ export async function runSemanticDiff(
 
   const changedFiles = parseDiffStats(statOutput).map((file) => file.file);
   const range = `${before}..${after}`;
-  const judgedDiff = truncateDiffAtBoundary(fullDiff, MAX_JUDGED_DIFF_CHARS);
+
   await assertCapturedToolAccessCurrent();
   const run = await semanticDiff.run(
     judgmentPort(SEMANTIC_DIFF_SITE),
-    semanticDiffView(range, changedFiles, judgedDiff),
+    semanticDiffView(range, changedFiles, fullDiff),
     { site: SEMANTIC_DIFF_SITE },
   );
   const risk = semanticDiffRisk(run.readings);

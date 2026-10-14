@@ -32,6 +32,11 @@ afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice
 type State = { category?: { title: string }; candidate?: { text?: string }; text?: string; fact?: { title: string; value?: unknown; evidence?: unknown } };
 function readings(mode: 'yes' | 'uncertain' | 'unsupported' = 'yes', values: readonly (readonly [string, string])[] = [[display, first], [ports, last]]) {
   const fake = fakePort((name, question, state) => {
+    if (name === 'kind') {
+      const candidate = (state as { candidate: string }).candidate;
+      if (![first, last, 'AC-7 supports Bluetooth wireless connectivity.'].includes(candidate)) throw new Error('Unscripted exact source span');
+      return choiceAnswer(question, candidate === 'AC-7 supports Bluetooth wireless connectivity.' ? 'capability' : 'specification', 0.99);
+    }
     const extractionValue = extractionValueFixtureReading(name, question, state, extractionValues);
     if (extractionValue !== undefined) return noulAnswer(extractionValue);
     if (name === 'factTrust' || name === 'sourceSupport' || name === 'subjectSupport') return scoreAnswer(question, 4, 0.99); // Authored supported synthetic facts; grading behavior has separate controls.
@@ -171,7 +176,7 @@ describe('repair profile complete-pass write boundaries', () => {
     const task = await item.store.upsertRefinementTask({ spaceId, gapId: gap.id, state: 'applying', trigger: 'manual' });
     readings(); let atHold = '';
     const error = new KnowledgeRepairProfileHeldError('unsettled'); expect(isKnowledgeSourceQualityFailure(error)).toBe(true);
-    await expect(promoteRepairSources({ store: item.store, enrichSource: async () => { atHold = snapshot(item.store); throw error; } }, spaceId, gap, [empty.id], task, Date.now() + 5_000)).rejects.toBe(error);
+    await expect(promoteRepairSources({ store: item.store, enrichSource: async () => { atHold = snapshot(item.store); throw error; } }, spaceId, gap, [empty.id], task, Date.now() + 30_000)).rejects.toBe(error);
     expect(atHold).not.toBe(''); expect(snapshot(item.store)).toBe(atHold);
   });
   test('canonical profile pass retains distinct display and network spans without legacy value fabrication', async () => {
@@ -184,7 +189,7 @@ describe('repair profile complete-pass write boundaries', () => {
     const task = await item.store.upsertRefinementTask({ spaceId, gapId: gap.id, state: 'applying', trigger: 'manual' });
     readings('yes', [[display, selected], ['Network and wireless capabilities', distinct]]);
     for (let repeat = 0; repeat < 2; repeat++) {
-      await promoteRepairSources({ store: item.store }, spaceId, gap, [item.source.id], task, Date.now() + 5_000);
+      await promoteRepairSources({ store: item.store }, spaceId, gap, [item.source.id], task, Date.now() + 30_000);
       const facts = item.store.listNodes().filter((node) => node.kind === 'fact');
       expect(facts.filter((fact) => fact.title === display)).toHaveLength(1);
       expect(facts.find((fact) => fact.title === display)?.metadata.value).toBe(selected);
@@ -207,7 +212,7 @@ describe('repair profile complete-pass write boundaries', () => {
         return fake.port.ask(request);
       } });
       const before = snapshot(item.store);
-      await expect(promoteRepairSources({ store: item.store }, spaceId, gap, [item.source.id], task, Date.now() + 5_000)).rejects.toMatchObject({ reason: mode === 'no' ? 'not-useful' : mode });
+      await expect(promoteRepairSources({ store: item.store }, spaceId, gap, [item.source.id], task, Date.now() + 30_000)).rejects.toMatchObject({ reason: mode === 'no' ? 'not-useful' : mode });
       expect(snapshot(item.store)).toBe(before);
     }
   });

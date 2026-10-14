@@ -5,6 +5,7 @@
  * symptom with the `engine.ops.playbook-search` rerank: one request per
  * playbook, only playbooks read as a match are returned, best first.
  */
+import { JudgmentHeldError } from '../sdk/src/platform/types/judgment-held.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Question } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -42,12 +43,28 @@ describe('findPlaybooksBySymptom', () => {
     expect(await findPlaybooksBySymptom('how do I change the colour theme?')).toEqual([]);
   });
 
-  test('an unsure reading is not a match', async () => {
-    installJudgmentPort(playbookPort({ 'Stuck Turn': 0.5 }).port);
-    expect(await findPlaybooksBySymptom('things feel slow')).toEqual([]);
+  test('an unsure reading holds the search instead of claiming no matches', async () => {
+    installJudgmentPort(playbookPort({ [getPlaybookRegistry().get('stuck-turn')!.playbook.name]: 0.5 }).port);
+    await expect(findPlaybooksBySymptom('things feel slow')).rejects.toBeInstanceOf(JudgmentHeldError);
   });
 
   test('searching with no judgment port installed throws', async () => {
     await expect(findPlaybooksBySymptom('spinner frozen')).rejects.toBeInstanceOf(JudgmentPortMissingError);
   });
+});
+
+
+test('protected query tails refuse the whole playbook search before dispatch', async () => {
+  const fixture = playbookPort({}); installJudgmentPort(fixture.port);
+  await expect(findPlaybooksBySymptom('slow response '.repeat(200) + ' password=synthetic-private-value')).rejects.toThrow();
+  expect(fixture.requests).toHaveLength(0);
+});
+
+test('retiring the Jev installation prevents a pending playbook search from returning matches', async () => {
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const fixture = playbookPort({ [getPlaybookRegistry().get('stuck-turn')!.playbook.name]: 0.99 });
+  installJudgmentPort({ model: fixture.port.model, async ask(request) { entered.resolve(); await release.promise; return fixture.port.ask(request); } });
+  const pending = findPlaybooksBySymptom('stuck turn');
+  await entered.promise; installJudgmentPort(playbookPort({}).port); release.resolve();
+  await expect(pending).rejects.toThrow();
 });

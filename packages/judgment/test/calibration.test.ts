@@ -69,7 +69,7 @@ describe('calibrate', () => {
     expect(requests).toHaveLength(6);
     expect(requests.every((r) => r.context?.site === 'calibration')).toBe(true);
     const [u, d, b] = report.decisions;
-    expect(u).toMatchObject({ name: 'test.urgency', model: 'jev-1.13.0', accuracy: 0.75, passed: true });
+    expect(u).toMatchObject({ name: 'test.urgency', model: 'jev-latest', resolvedModels: ['jev-1.13.0'], accuracy: 0.75, passed: true });
     expect(u!.outcomes).toEqual({ act: 3, confirm: 1, escalate: 0 });
     expect(u!.automaticAccuracy).toBe(1);
     expect(d).toMatchObject({ name: 'test.routing', accuracy: 1, passed: true });

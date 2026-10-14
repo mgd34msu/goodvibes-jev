@@ -116,7 +116,7 @@ test.each(['negative', 'over-one', 'non-finite', 'non-maximal', 'unknown-choice'
     if (kind === 'non-maximal') { reading.probabilities.typescript = 0.5; reading.probabilities.python = 0.5000000001; }
     if (kind === 'unknown-choice') { reading.choice = 'invented'; Object.assign(raw, { value: { language: 'invented' } }); }
     if (kind === 'extra-option') reading.probabilities.invented = 0;
-    if (kind === 'outside-total') reading.probabilities.typescript = 0.98;
+    if (kind === 'outside-total') reading.probabilities.typescript = 0.8;
     if (kind === 'invalid-confidence') reading.confidence = 1.001;
     expect(readCodeLanguageResponse(request, raw)).toBeUndefined();
   });

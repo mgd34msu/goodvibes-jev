@@ -1,4 +1,4 @@
-import { isPinnedJudgmentModel, validEndpointURL } from '@goodvibes-jev/judgment/decisions';
+import { validEndpointURL } from '@goodvibes-jev/judgment/decisions';
 import type { JudgmentFallbackSettings } from './schema-types-judgment.js';
 
 const FIELDS = ['endpoint', 'model', 'keySource', 'keyName'];
@@ -14,7 +14,7 @@ function isFallback(value: unknown): value is JudgmentFallbackSettings {
     return !descriptor?.enumerable || !('value' in descriptor);
   })) return false;
   if (!('endpoint' in value) || typeof value.endpoint !== 'string' || !validEndpointURL(value.endpoint)
-    || !('model' in value) || typeof value.model !== 'string' || !isPinnedJudgmentModel(value.model)
+    || !('model' in value) || typeof value.model !== 'string' || !value.model.trim() || value.model.length > 200 || /\s/.test(value.model)
     || !('keySource' in value) || (value.keySource !== 'env' && value.keySource !== 'secret')
     || !('keyName' in value) || typeof value.keyName !== 'string') return false;
   return value.keySource === 'env'

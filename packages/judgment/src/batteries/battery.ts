@@ -108,7 +108,7 @@ export interface BatteryDefinition<Items extends BatteryItems> {
   readonly fixtures: readonly Fixture<Items>[];
   /** Share of fixture expectations calibration must meet, in (0, 1]. */
   readonly accuracyFloor: number;
-  /** Versioned model the bands were tuned on; omitted uses the port's pinned model. */
+  /** Optional model override; omitted follows the configured port model (jev-latest by default). */
   readonly model?: string;
 }
 

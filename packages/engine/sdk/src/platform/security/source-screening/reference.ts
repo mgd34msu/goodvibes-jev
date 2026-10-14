@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { defineBattery, type JudgmentPort, type JudgmentRetryProgress } from '@goodvibes-jev/judgment';
+import { matchesJudgmentModel, defineBattery, type JudgmentPort, type JudgmentRetryProgress } from '@goodvibes-jev/judgment';
 import { captureScreeningSource } from './proposal.js';
 import { SOURCE_SCREENING_LIMITS as LIMITS } from './types.js';
 
@@ -7,7 +7,7 @@ const band = { yes: { actAt: 0.98, confirmAt: 0.9 }, no: { actAt: 0.98, confirmA
 
 /** This reading has no URL, host, path, fragment, parameter value or source text. */
 export const researchReferenceParameterRole = defineBattery({
-  name: 'engine.security.research-reference-parameter-role', version: 2, model: 'jev-1.13.0', accuracyFloor: 0.98,
+  name: 'engine.security.research-reference-parameter-role', version: 2, accuracyFloor: 0.98,
   description: 'Read a research URL query parameter name for its credential-bearing role, without receiving its value or URL.',
   items: {
     credential: { kind: 'yes-no' as const, question: { type: 'noul' as const, instructions: [
@@ -87,8 +87,8 @@ export function createResearchReferenceReader(credentialLiterals: readonly strin
         ...(options.onRetry ? { onRetry: options.onRetry } : {}), site: 'source-screening.research-reference-parameter',
       });
       current(options);
-      if (run.result.model !== researchReferenceParameterRole.model || run.result.requestedModel !== researchReferenceParameterRole.model) {
-        throw new Error('Local reference judgment did not use the required model');
+      if (run.result.requestedModel !== options.port.model || !matchesJudgmentModel(options.port.model, run.result.model)) {
+        throw new Error('Reference judgment did not use the requested model');
       }
       const reading = run.readings.credential;
       const result: Role = reading.outcome !== 'act' ? 'unsettled'

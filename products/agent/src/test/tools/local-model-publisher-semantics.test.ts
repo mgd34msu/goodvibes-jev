@@ -41,7 +41,7 @@ function readings(overrides: {
     const confidence = overrides.confidence ?? 0.999;
     if (name === 'route') {
       const input = record(state);
-      return choiceAnswer(question, input.evidence_kind === 'probe' ? 'llamacpp' : overrides.stack ?? 'llama.cpp', confidence);
+      return choiceAnswer(question, input.evidence_kind === 'probe' ? 'llamacpp' : overrides.stack === 'llama.cpp' ? 'llamacpp' : overrides.stack ?? 'llamacpp', confidence);
     }
     if (name === 'status') return choiceAnswer(question, overrides.status ?? 'blocked', confidence);
     if (name === 'pressure') return choiceAnswer(question, overrides.pressure ?? 'low', confidence);
@@ -340,12 +340,13 @@ describe('Local model publisher wording and native discovery', () => {
     expect(snapshot.get('native-diagnostic')).toBe(f.diagnostic);
   });
 
-  test('registry dispatch excludes hosted Ollama and does not reinterpret a foreign probe route', async () => {
+  test('registry dispatch excludes hosted Ollama and maps the canonical llama.cpp choice', async () => {
     const port = readings({ stack: 'not-local' }); installJudgmentPort(port.port);
     const options = { sourceOwner: ordinaryResearchOwner() };
     expect(await localStackFor('Ollama Cloud', options, { baseURL: 'https://cloud.example/v1', description: 'Hosted Ollama Cloud' })).toBeNull();
-    const foreign = readings({ stack: 'llamacpp' }); installJudgmentPort(foreign.port);
-    expect(await localStackFor('Local llama-server', options, { baseURL: 'http://127.0.0.1:8080/v1' })).toBeNull();
+    const local = readings({ stack: 'llamacpp' }); installJudgmentPort(local.port);
+    expect(await localStackFor('Local llama-server', options, { baseURL: 'http://127.0.0.1:8080/v1' })).toBe('llama.cpp');
+    expect(local.requests).toHaveLength(1);
   });
 
   test('explicit registry detection uses full native original evidence and settled stack results', async () => {
@@ -406,7 +407,9 @@ describe('Local model publisher wording and native discovery', () => {
     const tails: Array<ReturnType<JudgmentPort['ask']>> = [];
     const port: JudgmentPort = { model: base.port.model, ask(request) {
       const tail = (async () => {
-        if (!waiting) { waiting = true; entered.resolve(); await release.promise; }
+        if (!waiting && request.context?.battery === 'agent.local-model.serving-status') {
+          waiting = true; entered.resolve(); await release.promise;
+        }
         return base.port.ask(request);
       })();
       tails.push(tail); return tail;
@@ -475,6 +478,12 @@ describe('Local model publisher wording and native discovery', () => {
     const f = policyCase(kind), port = readings(); installJudgmentPort(port.port);
     const original = Object.getOwnPropertyDescriptor(f.bandOwner, f.bandKey);
     if (!original) throw new Error('Expected native band slot.');
+    if (!original.configurable && 'writable' in original && !original.writable) {
+      expect(Reflect.defineProperty(f.bandOwner, f.bandKey, { value: JSON.parse(JSON.stringify(f.band)) })).toBe(false);
+      expect(Object.getOwnPropertyDescriptor(f.bandOwner, f.bandKey)?.value).toBe(f.band);
+      expect(port.requests).toHaveLength(0);
+      return;
+    }
     Object.defineProperty(f.bandOwner, f.bandKey, { ...original, value: JSON.parse(JSON.stringify(f.band)) });
     try { await expect(f.invoke()).rejects.toThrow(); expect(port.requests).toHaveLength(0); }
     finally { Object.defineProperty(f.bandOwner, f.bandKey, original); }
@@ -494,7 +503,8 @@ describe('Local model publisher wording and native discovery', () => {
       tails.push(tail); return tail;
     } };
     installJudgmentPort(port);
-    const pending = fixtureCase.invoke().then(() => undefined, (error: unknown) => error);
+    let delivered: unknown;
+    const pending = fixtureCase.invoke().then(value => { delivered = value; return undefined; }, (error: unknown) => error);
     const timer = setTimeout(() => entered.reject(new Error('Policy control did not enter its canonical question.')), 2_000);
     const owner = mode === 'band' ? fixtureCase.band : mode === 'equal band replacement' ? fixtureCase.bandOwner
       : mode === 'callable' ? fixtureCase.decision : fixtureCase.registry;
@@ -508,6 +518,14 @@ describe('Local model publisher wording and native discovery', () => {
         : mode === 'equal band replacement' ? JSON.parse(JSON.stringify(fixtureCase.band))
           : mode === 'registry method' ? function(this: unknown, name: string) { return Reflect.apply(nativeGet, this, [name]); }
             : () => { throw new Error('Retired canonical callable must never be invoked.'); };
+      if (original && !original.configurable && 'writable' in original && !original.writable) {
+        expect(Reflect.defineProperty(owner, key, { value })).toBe(false);
+        expect(Object.getOwnPropertyDescriptor(owner, key)?.value).toBe(original.value);
+        release.resolve();
+        expect(await pending).toBeUndefined();
+        expect(kind).toBe('identity'); expect(delivered).toBeNull();
+        return;
+      }
       Object.defineProperty(owner, key, { value, configurable: true, writable: true, enumerable: original?.enumerable ?? true });
       release.resolve();
       expect(await pending).toBeInstanceOf(Error);

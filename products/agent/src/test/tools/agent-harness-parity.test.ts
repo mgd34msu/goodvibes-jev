@@ -24,6 +24,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { ProcessManager, ToolInputProjectionError, ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { VoiceProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/voice';
 import { FileUndoManager } from '@goodvibes-jev/engine/sdk/platform/state';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { ConfigManager } from '../../config/index.ts';
@@ -150,7 +151,7 @@ function makeParityFixture(options: { sourceOwner?: boolean } = {}) {
         }),
       },
       subscriptionManager: { list: () => [], listPending: () => [], get: () => null, getPending: () => null },
-      voiceProviderRegistry: { list: () => [] },
+      voiceProviderRegistry: new VoiceProviderRegistry(),
       voiceService: { listVoices: async () => [] },
       readModels: {
         security: {
@@ -166,6 +167,7 @@ function makeParityFixture(options: { sourceOwner?: boolean } = {}) {
       mcpApi: {
         listServerSecurity: () => [],
         listAllTools: async () => [],
+        captureToolCatalog: () => ({ listAllTools: async () => [], assertCurrent() {} }),
       },
     },
     session: {
@@ -291,39 +293,31 @@ async function expectEffectHeld(pending: Promise<unknown>): Promise<void> {
 }
 
 describe('agent_harness parity', () => {
-  test('every mode in AGENT_HARNESS_MODES is handled by dispatch: never hits unhandled fallback', async () => {
+  for (const mode of AGENT_HARNESS_MODES) test(`dispatch handles ${mode} without an unhandled fallback`, async () => {
     const fixture = makeParityFixture();
     try {
-      const unhandledPattern = /^Unhandled agent_harness mode: /;
-      const failures: string[] = [];
-
-      for (const mode of AGENT_HARNESS_MODES) {
-        if (UNADMITTED_HELD_MODES.has(mode)) {
-          await expectEffectHeld(fixture.tool.execute(parityArgs(mode)));
-          continue;
-        }
-        const priorLaneRequests = unavailableLaneRequests.length;
-        let result: Awaited<ReturnType<typeof fixture.tool.execute>>;
-        try { result = await fixture.tool.execute(parityArgs(mode)); }
-        catch (error) {
-          if (!SEMANTIC_CATALOG_MODES.has(mode) || error !== laneUnavailable) throw error;
-          expect(unavailableLaneRequests.length).toBeGreaterThan(priorLaneRequests);
-          continue;
-        }
-        if (mode === 'model_routing') expect(result.success, result.error).toBe(true);
-        // A mode may legitimately return success:false (e.g. validation error) but
-        // must NOT return the literal unhandled-mode error string.
-        if (!result.success && unhandledPattern.test(result.error ?? '')) {
-          failures.push(`mode '${mode}' hit unhandled dispatch: ${result.error}`);
-        }
+      if (UNADMITTED_HELD_MODES.has(mode)) {
+        await expectEffectHeld(fixture.tool.execute(parityArgs(mode)));
+        expect(fixture.spawn).not.toHaveBeenCalled();
+        return;
       }
-
-      expect(failures).toEqual([]);
-      expect(readings.requests.length).toBeGreaterThan(0);
+      const priorLaneRequests = unavailableLaneRequests.length;
+      let result: Awaited<ReturnType<typeof fixture.tool.execute>>;
+      try { result = await fixture.tool.execute(parityArgs(mode)); }
+      catch (error) {
+        if (!SEMANTIC_CATALOG_MODES.has(mode) || error !== laneUnavailable) throw error;
+        expect(unavailableLaneRequests.length).toBeGreaterThan(priorLaneRequests);
+        expect(fixture.spawn).not.toHaveBeenCalled();
+        return;
+      }
+      if (mode === 'model_routing') {
+        expect(result.success, result.error).toBe(true);
+        expect(readings.requests.length).toBeGreaterThan(0);
+      }
+      // Validation failures are permitted; missing dispatch implementations are not.
+      expect(result.error ?? '').not.toMatch(/Unhandled agent_harness mode:/);
       expect(fixture.spawn).not.toHaveBeenCalled();
-    } finally {
-      fixture.cleanup();
-    }
+    } finally { fixture.cleanup(); }
   });
 
   test('every effect-kind descriptor refuses execution without recorded admission', async () => {

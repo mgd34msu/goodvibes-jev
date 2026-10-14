@@ -1,4 +1,4 @@
-import { createSystemOnePort, type JudgmentRetryProgress } from '@goodvibes-jev/judgment';
+import { createSystemOnePort, DEFAULT_MODEL, type JudgmentRetryProgress } from '@goodvibes-jev/judgment';
 import { types as nodeTypes } from 'node:util';
 import { JudgmentInputError } from '../../gate/judgment-input.js';
 import { captureScreeningSource, isMalformedScreeningProposal, proposeScreeningSpans, type ScreeningSource, type ScreeningSpan } from './proposal.js';
@@ -96,9 +96,9 @@ export function createProtectedSourceOwner(options: ProtectedSourceOwnerOptions)
   const credentialLiterals = credentials ? Object.freeze([credentials.abacusApiKey, credentials.typesafeApiKey]) : [];
   const proposal = Object.freeze(isHosted ? { endpoint: 'https://routellm.abacus.ai', model: 'route-llm' }
     : { endpoint: captureLoopbackEndpoint(options.proposal.endpoint), model: options.proposal.model });
-  const judgment = Object.freeze(isHosted ? { endpoint: 'https://api.typesafe.ai', model: 'jev-1.13.0' }
-    : { endpoint: captureLoopbackEndpoint(options.judgment.endpoint), model: options.judgment.model });
-  if (!reference(proposal.model) || judgment.model !== 'jev-1.13.0') return invalid();
+  const judgment = Object.freeze(isHosted ? { endpoint: 'https://api.typesafe.ai', model: 'jev-latest' }
+    : { endpoint: captureLoopbackEndpoint(options.judgment.endpoint), model: options.judgment.model ?? DEFAULT_MODEL });
+  if (!reference(proposal.model) || !reference(judgment.model)) return invalid();
   const timeoutMs = options.timeoutMs ?? 10_000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000
     || (options.onRetry !== undefined && typeof options.onRetry !== 'function')) return invalid();

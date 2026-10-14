@@ -345,10 +345,9 @@ export async function certifiedDeviceLiveRecords(
   const original = snapshotSources.get(snapshot);
   if (!original) throw new ToolInputProjectionError('invalid');
   original.assertSourceCurrent();
-  const caller = captureAsyncHarnessInput({ snapshot, originalRecords: original.records, capabilityId, terms }, options);
-  caller.retainSourceCurrent();
+  const caller = captureAsyncHarnessInput({ snapshot, originalRecords: original.records, capabilityId, terms }, options, true);
   caller.options.retainCurrent(original.assertSourceCurrent, 'agent.device.snapshot-source');
-  return withModelReadingSource(caller.args, caller.options, async (captured, current) => {
+  const published = await withModelReadingSource(caller.args, caller.options, async (captured, current) => {
     original.assertSourceCurrent();
     const matched: DeviceLiveCapabilityRecord[] = [];
     for (const record of captured.snapshot.capabilities) {
@@ -364,6 +363,8 @@ export async function certifiedDeviceLiveRecords(
     current.assertCurrent?.(); original.assertSourceCurrent();
     return matched;
   });
+  caller.retainSourceCurrent('agent.device.sources');
+  return published;
 }
 
 export async function deviceLiveReadModelSnapshot(context: CommandContext,
@@ -371,10 +372,9 @@ export async function deviceLiveReadModelSnapshot(context: CommandContext,
   options.signal?.throwIfAborted(); options.assertCurrent?.();
   const native = captureCatalogProducerSources(context, ["context.platform.readModels.device.capabilities", "context.platform.readModels.device.sensors", "context.platform.readModels.companion.capabilities", "context.platform.readModels.voice.workflows", "context.platform.readModels.deviceCapabilities", "context.platform.readModels.companionCapabilities", "context.ops.device.capabilities", "context.clients.operator.device.capabilities", "context.clients.operatorSdk.device.capabilities"], ["getSnapshot", "snapshot", "toJSON", "listCapabilities", "listDeviceCapabilities", "listSensors", "listVoiceWorkflows", "list"]);
   const entries = sources(native).flatMap((candidate) => collectFromSource(candidate.source, candidate.path, candidate.kind));
-  const caller = captureAsyncHarnessInput({ entries, producerSource: native.evidence() }, options);
+  const caller = captureAsyncHarnessInput({ entries, producerSource: native.evidence() }, options, true);
   caller.options.retainCurrent(native.assertCurrent, 'agent.device.native-source');
-  caller.retainSourceCurrent();
-  return withModelReadingSource(caller.args, caller.options, async (captured, current) => {
+  const published = await withModelReadingSource(caller.args, caller.options, async (captured, current) => {
     const seen = new Set<string>();
     const capabilities: DeviceLiveCapabilityRecord[] = [];
     const originalRecords: OriginalDeviceLiveRecord[] = [];
@@ -391,4 +391,6 @@ export async function deviceLiveReadModelSnapshot(context: CommandContext,
     current.assertCurrent?.();
     return result;
   });
+  caller.retainSourceCurrent('agent.device.sources');
+  return published;
 }

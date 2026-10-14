@@ -45,7 +45,8 @@ export interface GeneratedFactSupportReceipt {
   readonly sourceHash: string;
   readonly extractionId: string;
   readonly extractionHash: string;
-  readonly extractionUpdatedAt: number;
+  /** Native writers emit canonical ISO; numeric receipts remain readable for historical data. */
+  readonly extractionUpdatedAt: string | number;
   readonly subjectId?: string | undefined;
   readonly subjectHash?: string | undefined;
   /** Whole, exact extraction projection; no invented or model-generated citation. */

@@ -1,3 +1,6 @@
+import { assertJudgmentInput } from '../../gate/judgment-input.js';
+import { createRepairSubjectSelectionReader } from './repair-subject-selection/reader.js';
+import { repairProfileSubject } from './repair-profile.js';
 import { getKnowledgeSpaceId, isHomeAssistantKnowledgeSpace, normalizeKnowledgeSpaceId } from '../spaces.js';
 import { KnowledgeGeneratedFactSupportHeldError } from './verification/types.js';
 import type { KnowledgeStore } from '../store.js';
@@ -5,9 +8,11 @@ import type { KnowledgeExtractionRecord, KnowledgeNodeRecord, KnowledgeSourceRec
 import type { KnowledgeSemanticFactInput } from './types.js';
 import type { SemanticPrimarySourcePlanner, SemanticWriteGuard } from './primary-source-plan.js';
 import { exactKnowledgeIds, type GeneratedFactWritePlanner } from './fact-support-write-plan.js';
-import { readString, readStringArray, semanticFactId, uniqueStrings } from './utils.js';
+import { readString, readStringArray, semanticFactId } from './utils.js';
 
-export function prepareEnrichmentFactDrafts(input: {
+export async function prepareEnrichmentFactDrafts(input: {
+  readonly signal?: AbortSignal | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
   readonly store: KnowledgeStore;
   readonly spaceId: string;
   readonly source: KnowledgeSourceRecord;
@@ -28,12 +33,25 @@ export function prepareEnrichmentFactDrafts(input: {
   for (const [index, fact] of input.allFacts.entries()) support.add(spaceId, {
     ...factClaim(`wiki-fact-${index}`, fact),
   }, [source.id], [], originalExtractions);
-  return input.persistedFacts.map((fact) => {
-    const hints = uniqueStrings(fact.targetHints ?? []);
-    const factLinkedObjects = hints.length === 0 ? input.sourceSubjects
-      : input.sourceSubjects.filter((subject) => hints.some((hint) => entityMatchesHint(subject, hint)));
-    const entitySubjects = (hints.length === 0 ? input.proposedEntities.slice(0, 1)
-      : input.proposedEntities.filter((subject) => hints.some((hint) => entityMatchesHint(subject, hint)))).slice(0, 6);
+  const nodes = [...new Map([...input.sourceSubjects, ...input.proposedEntities].map(node => [node.id, node])).values()];
+  const candidates = nodes.map((node, index) => ({ ...repairProfileSubject(node), kind: node.kind,
+    aliases: node.aliases, identity: repairProfileSubject(node).identity ?? {}, reference: `subject-${index + 1}` }));
+  const states = input.persistedFacts.map(fact => candidates.map(candidate => ({
+    reference: candidate.reference, candidate: candidate.reference, candidates, objectProfiles: [],
+    query: JSON.stringify({ title: fact.title, summary: fact.summary, value: fact.value,
+      evidence: fact.evidence, labels: fact.labels, targetHints: fact.targetHints }),
+  })));
+  assertJudgmentInput(states);
+  const current = () => { input.assertCurrent?.(); };
+  const reader = createRepairSubjectSelectionReader({ signal: input.signal, assertCurrent: current });
+  const drafts = [];
+  for (const [index, fact] of input.persistedFacts.entries()) {
+    guard.assertCurrent();
+    const readings = await reader.read(states[index]!);
+    guard.assertCurrent(); reader.assertCurrent();
+    const selectedIds = new Set(readings.filter(reading => reading.selected).map(reading => nodes[candidates.findIndex(candidate => candidate.reference === reading.reference)]!.id));
+    const factLinkedObjects = input.sourceSubjects.filter(subject => selectedIds.has(subject.id));
+    const entitySubjects = input.proposedEntities.filter(subject => selectedIds.has(subject.id));
     const sourceLinkedObjectIds = factLinkedObjects.map((node) => node.id);
     const sourceTargetHints = factLinkedObjects.map((node) => ({ id: node.id, kind: node.kind, title: node.title }));
     const targetHints = fact.targetHints?.length ? fact.targetHints : sourceTargetHints;
@@ -45,7 +63,7 @@ export function prepareEnrichmentFactDrafts(input: {
       readString(existingFact?.metadata.sourceId), existingFact?.sourceId, source.id,
     ]);
     virtualSources.set(factId, sourceIds);
-    const subjects = [...new Map([...factLinkedObjects.slice(0, 8), ...entitySubjects].map((subject) => [subject.id, subject])).values()];
+    const subjects = [...new Map([...factLinkedObjects, ...entitySubjects].map((subject) => [subject.id, subject])).values()];
     const supportKey = support.add(spaceId, { ...factClaim(factId, fact),
       subject: factLinkedObjects[0]?.title, targetHints,
     }, sourceIds, subjects, originalExtractions, proposedIds, { claimId: factId, subjectIds: new Set(entitySubjects.map((subject) => subject.id)) });
@@ -53,30 +71,16 @@ export function prepareEnrichmentFactDrafts(input: {
       value: fact.value, evidence: fact.evidence, subjects: factLinkedObjects.map(({ id, title, kind }) => ({ id, title, kind })),
       targetHints: fact.targetHints,
     }, sourceIds);
-    return { fact, factId, existingFact, factLinkedObjects, sourceLinkedObjectIds, targetHints, sourceIds,
-      supportKey, resolve, entitySubjectIds: new Set(entitySubjects.map((subject) => subject.id)) };
-  });
+    drafts.push({ fact, factId, existingFact, factLinkedObjects, sourceLinkedObjectIds, targetHints, sourceIds,
+      supportKey, resolve, entitySubjectIds: new Set(entitySubjects.map((subject) => subject.id)) });
+  }
+  guard.watch('enrichment-fact-subject-readings', () => { reader.assertCurrent(); return true; });
+  return drafts;
 }
 function factClaim(id: string, fact: KnowledgeSemanticFactInput) {
   return { id, kind: fact.kind, title: fact.title, summary: fact.summary ?? fact.value ?? fact.evidence,
     value: fact.value, evidence: fact.evidence, labels: fact.labels, aliases: fact.labels };
 }
-/** Candidate generation only; support readings decide every resulting attachment. */
-function entityMatchesHint(entity: KnowledgeNodeRecord, hint: string): boolean {
-  const lower = hint.toLowerCase();
-  const candidates = uniqueStrings([entity.title, entity.summary, ...entity.aliases,
-    readString(entity.metadata.manufacturer), readString(entity.metadata.model),
-    readString(entity.metadata.modelId), readString(entity.metadata.model_id),
-  ]).map((entry) => entry.toLowerCase());
-  const compactHint = lower.replace(/[\s_-]+/g, '');
-  return candidates.some((candidate) => {
-    const compactCandidate = candidate.replace(/[\s_-]+/g, '');
-    return candidate.includes(lower) || lower.includes(candidate)
-      || (compactCandidate.length >= 4 && compactHint.includes(compactCandidate))
-      || (compactHint.length >= 4 && compactCandidate.includes(compactHint));
-  });
-}
-
 /** A namespace alias filters concrete spaces; it never relabels source content. */
 export function resolveEnrichmentSpaceId(source: KnowledgeSourceRecord, requested?: string): string {
   const actual = getKnowledgeSpaceId(source);

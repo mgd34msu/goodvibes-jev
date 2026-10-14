@@ -244,7 +244,7 @@ test('owned expected catalog nodes cannot be replaced with a memo-supplied appro
   expect(current.left.value).toBe('Original left');
 });
 
-test('current catalog descriptor callbacks still run before changed complete data is compared', () => {
+test('replaced descriptor enumeration cannot dispatch or hide changed complete catalog data', () => {
   const assertCurrent = captureCatalogSnapshotGuard({ first: 'Original first', tail: 'Original tail' });
   const current = { first: 'Original first', tail: 'Original tail' };
   const values = Object.values;
@@ -259,10 +259,13 @@ test('current catalog descriptor callbacks still run before changed complete dat
     }
     return Reflect.apply(values, Object, [value]);
   };
-  try { expect(() => assertCurrent(current)).toThrow(); }
-  finally { Object.values = values; }
-  expect(changed).toBe(true);
-  expect(current.tail).toBe('Original tail');
+  try {
+    expect(() => assertCurrent(current)).not.toThrow();
+    expect(changed).toBe(false);
+    current.tail = 'Changed complete tail';
+    expect(() => assertCurrent(current)).toThrow();
+  } finally { Object.values = values; }
+  expect(changed).toBe(false);
 });
 
 test('owned catalog comparison keeps both alias patterns and rechecks a hidden shared tail', () => {

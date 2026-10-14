@@ -12,7 +12,7 @@ import { createSettingsJudgmentPort, judgmentConfigFromSettings, type JudgmentSe
 
 const roots: string[] = [];
 afterEach(() => { for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true }); });
-const fallback = (endpoint = 'https://fallback.example.test') => ({ endpoint, model: 'jev-1.13.0', keySource: 'env' as const, keyName: 'FALLBACK_KEY' });
+const fallback = (endpoint = 'https://fallback.example.test') => ({ endpoint, model: 'jev-latest', keySource: 'env' as const, keyName: 'FALLBACK_KEY' });
 const request = { state: { fixture: 'owned persisted failover' }, questions: { allowed: noul('Is this allowed?') } };
 function source(settings: Record<string, unknown> = {}, env: Record<string, string | undefined> = {}): JudgmentSettingsSource {
   return { config: { get: key => settings[key] }, secrets: { get: async () => null }, env: { TYPESAFE_API_KEY: 'synthetic-primary', FALLBACK_KEY: 'synthetic-fallback', ...env } };
@@ -83,7 +83,7 @@ test('malformed persisted chains refuse reload and retain the complete last-good
   expect(f.config.getRaw()).toEqual(before);
 });
 
-for (const value of [null, 'SYNTHETIC_DO_NOT_LOG', {}, [null], [{ ...fallback(), model: 'jev-latest' }],
+for (const value of [null, 'SYNTHETIC_DO_NOT_LOG', {}, [null], [{ ...fallback(), model: 'invalid model' }],
   [{ ...fallback(), endpoint: 'https://user:password@example.test' }], [{ ...fallback(), keySource: 'file' }],
   [{ ...fallback(), apiKey: 'SYNTHETIC_DO_NOT_LOG' }], Array.from({ length: 9 }, () => fallback())]) {
   test(`strict fallback admission rejects malformed shape ${JSON.stringify(value).length} without credential text`, async () => {
@@ -109,7 +109,7 @@ test('fallback destination, model and environment credential are captured before
   const pending = judgmentConfigFromSettings({ config: { get: name => settings[name] }, env, secrets: { get: () => key.promise } });
   targets[0]!.endpoint = 'https://new.example.test'; env.FALLBACK_KEY = 'synthetic-new-fallback';
   key.resolve('synthetic-primary-secret');
-  expect((await pending).fallbacks).toEqual([{ endpoint: { kind: 'hosted', baseURL: 'https://fallback.example.test', apiKey: 'synthetic-old-fallback' }, model: 'jev-1.13.0' }]);
+  expect((await pending).fallbacks).toEqual([{ endpoint: { kind: 'hosted', baseURL: 'https://fallback.example.test', apiKey: 'synthetic-old-fallback' }, model: 'jev-latest' }]);
 });
 
 test('missing and rejected named credentials fail without silently substituting the primary key', async () => {
@@ -145,8 +145,8 @@ test('the configured port visits ordered compatible fallbacks and records their 
     const settings = { 'judgment.endpoint': primary.url, 'judgment.fallbacks': [fallback(first.url), fallback(second.url)] };
     const result = await createSettingsJudgmentPort(source(settings)).ask({ ...request, signal: controller.signal });
     expect(result.lineage?.attempts.map(attempt => [attempt.endpointIndex, attempt.outcome])).toEqual([[0, 'unavailable'], [1, 'unavailable'], [2, 'answered']]);
-    expect(primary.calls).toEqual([{ authorization: 'Bearer synthetic-primary', model: 'jev-1.13.0' }]);
-    expect(first.calls).toEqual([{ authorization: 'Bearer synthetic-fallback', model: 'jev-1.13.0' }]);
+    expect(primary.calls).toEqual([{ authorization: 'Bearer synthetic-primary', model: 'jev-latest' }]);
+    expect(first.calls).toEqual([{ authorization: 'Bearer synthetic-fallback', model: 'jev-latest' }]);
     expect(second.calls).toEqual(first.calls);
     expect(JSON.stringify(result)).not.toContain('synthetic-');
   } finally { controller.abort(); primary.stop(); first.stop(); second.stop(); }
@@ -182,8 +182,8 @@ test('an all-target outage exhausts once without advertising a retry after the f
     expect(retries).toEqual([0]);
     expect(controller.signal.aborted).toBe(false);
     expect(primary.calls).toHaveLength(1); expect(next.calls).toHaveLength(1);
-    expect(primary.calls).toEqual([{ authorization: 'Bearer synthetic-primary', model: 'jev-1.13.0' }]);
-    expect(next.calls).toEqual([{ authorization: 'Bearer synthetic-fallback', model: 'jev-1.13.0' }]);
+    expect(primary.calls).toEqual([{ authorization: 'Bearer synthetic-primary', model: 'jev-latest' }]);
+    expect(next.calls).toEqual([{ authorization: 'Bearer synthetic-fallback', model: 'jev-latest' }]);
     expect(log.query()).toHaveLength(1);
     expect(log.query()).toMatchObject([{ status: 'failed', error: { kind: 'unavailable' }, lineage: { attempts } }]);
     expect(log.query()[0]?.lineage?.attempts).toHaveLength(2);

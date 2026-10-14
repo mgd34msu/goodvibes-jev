@@ -337,7 +337,7 @@ test('an exact native receipt clock remains lossless while an unrecognized numer
   expect(item.extraction.updatedAt).toBe(nativeClock);
   const original = item.store.getRecordSnapshot('node', item.fact.id);
   if (!original.raw || typeof original.raw.metadata !== 'string') throw new Error('Missing complete native receipt row');
-  expect(original.raw.metadata).toContain(`"extractionUpdatedAt":${nativeClock}`);
+  expect(original.raw.metadata).toContain(`"extractionUpdatedAt":"${new Date(nativeClock).toISOString()}"`);
   const projection = projectGeneratedFactRecordAdmission(item.store, item.fact, original.raw);
   if (!projection || typeof projection.raw.metadata !== 'string') throw new Error('Missing actual native producer projection');
   expect(projection.raw.metadata).toContain(`"extractionUpdatedAt":"${new Date(nativeClock).toISOString()}"`);

@@ -13,6 +13,8 @@ export type FannedReadings<P extends Parts> = {
 };
 
 export interface FannedOut<P extends Parts> {
+  /** Shared request provenance, including requested alias and resolved model. */
+  readonly result: JudgmentResult<Questions>;
   readonly readings: FannedReadings<P>;
   readonly decisionId: string | undefined;
   recordAction(action: string): void;
@@ -80,5 +82,5 @@ export async function fanOut<const P extends Parts>(
   });
   const readings = readParts(parts, result.answers);
   recordReadings(port, result, readings);
-  return { readings: readings as unknown as FannedReadings<P>, decisionId: result.decisionId, recordAction: (action) => recordAction(port, result.decisionId, action) };
+  return { result, readings: readings as unknown as FannedReadings<P>, decisionId: result.decisionId, recordAction: (action) => recordAction(port, result.decisionId, action) };
 }

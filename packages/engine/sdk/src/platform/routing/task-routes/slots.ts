@@ -207,7 +207,7 @@ const variant = (reading: YesNoReading): boolean => reading.verdict === 'yes';
 
 /** The named id a selection settled on, or null when none was chosen or the reading escalated. */
 export const namedIdFrom = (selection: Selection): string | null =>
-  selection.chosen !== undefined && selection.outcome !== 'escalate' ? selection.chosen : null;
+  selection.chosen !== undefined && selection.outcome === 'act' ? selection.chosen : null;
 
 /** The slots, composed from the battery's readings and the named-id selections (a kind with no listing has none). */
 export function composeSlots(readings: SlotReadings, named: Readonly<Partial<Record<NamedIdKind, Selection>>>): TaskRouteSlots {

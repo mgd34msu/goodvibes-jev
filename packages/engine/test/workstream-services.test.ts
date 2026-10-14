@@ -140,7 +140,7 @@ describe('createWorkstreamServices: drafts and contract launch', () => {
   // Every draft reads the task's risk (routing.request-risk) for the planner:
   // these tests read it as minor, which leaves the decomposition gate open.
   beforeEach(() => {
-    previousPort = installJudgmentPort(fakePort((name, question) => name === 'strategy' ? choiceAnswer(question, 'cohort', 0.97) : scoreAnswer(question, 1)).port);
+    previousPort = installJudgmentPort(fakePort((name, question) => name === 'strategy' ? choiceAnswer(question, 'single', 0.97) : scoreAnswer(question, 1)).port);
   });
 
   afterEach(() => {
@@ -295,6 +295,7 @@ describe('createWorkstreamServices: drafts and contract launch', () => {
   });
 
   test('agent decomposition: create spawns a planner agent (fleet pickup) and tags provenance', async () => {
+    installJudgmentPort(fakePort((name, question) => name === 'strategy' ? choiceAnswer(question, 'cohort', 0.97) : scoreAnswer(question, 1)).port);
     const projectRoot = makeScratchProjectRoot();
     const { runner } = recordingRunner();
     const { orchestrationEngine, workstreamCommands, spawnedTemplates } = makeServices(projectRoot, runner, { decomposition: 'agent' });
@@ -324,6 +325,7 @@ describe('createWorkstreamServices: drafts and contract launch', () => {
   });
 
   test('launch of a multi-item draft starts the contract from a drafted plan built from the draft items', async () => {
+    installJudgmentPort(fakePort((name, question) => name === 'strategy' ? choiceAnswer(question, 'cohort', 0.97) : scoreAnswer(question, 1)).port);
     const projectRoot = makeScratchProjectRoot();
     const { runner, starts, planStarts } = recordingRunner();
     const { orchestrationEngine, workstreamCommands } = makeServices(projectRoot, runner, { decomposition: 'agent' });

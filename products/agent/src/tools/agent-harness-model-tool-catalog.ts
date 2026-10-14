@@ -192,7 +192,7 @@ export async function describeHarnessModelTool(toolRegistry: ToolRegistry, args:
   else if (lookup.source !== 'toolName') {
     const searched = await matchingModelTools(toolRegistry, lookup.input, options);
     options.signal?.throwIfAborted(); options.assertCurrent?.();
-    if (searched.matches.length === 1 && searched.matches[0]!.judgment?.reading.verdict === 'yes') {
+    if (searched.matches.length === 1 && searched.matches[0]!.judgment?.reading.verdict === 'yes' && searched.matches[0]!.judgment?.reading.outcome === 'act') {
       const match = searched.matches[0]!;
       found = { tool: match.entry, resolvedBy: 'search', judgment: match.judgment };
     } else if (searched.matches.length > 0) {

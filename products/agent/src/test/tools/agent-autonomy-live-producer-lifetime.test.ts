@@ -57,7 +57,7 @@ describe('Autonomy complete native live-source boundary', () => {
     const f = fixture(), fake = privacyFixture(); installJudgmentPort(fake.port);
     const tail = 'synthetic-complete-tail', guards: Array<() => void> = [];
     f.dispatch.syncRuntimeTask({ ...task('one'), result: `${'x'.repeat(1500)} ${tail}` });
-    const result = await captureAutonomyLiveRecords(f.context, { sourceOwner: ordinaryResearchOwner(), retainCurrent: guard => guards.push(guard) });
+    const result = await captureAutonomyLiveRecords(f.context, { sourceOwner: ordinaryResearchOwner(), retainCurrent: guard => { guards.push(guard); } });
     expect(JSON.stringify(fake.requests)).toContain(tail);
     expect(result.tasks[0]?.output?.preview?.length).toBeLessThanOrEqual(240);
     expect(result.tasks[0]?.status).toBe('queued');
@@ -90,7 +90,7 @@ describe('Autonomy complete native live-source boundary', () => {
     const f = fixture(), fake = privacyFixture(); installJudgmentPort(fake.port);
     for (let index = 0; index < 21; index++) f.dispatch.syncRuntimeTask(task(`task-${index}`, 5000 - index));
     const guards: Array<() => void> = [];
-    const result = await captureAutonomyLiveRecords(f.context, { sourceOwner: ordinaryResearchOwner(), retainCurrent: guard => guards.push(guard) });
+    const result = await captureAutonomyLiveRecords(f.context, { sourceOwner: ordinaryResearchOwner(), retainCurrent: guard => { guards.push(guard); } });
     expect(result.tasks).toHaveLength(20); guards.forEach(guard => guard());
     const original = f.store.getState().tasks.tasks.get('task-20'); if (!original) throw new Error('Missing actual tail row');
     f.dispatch.syncRuntimeTask({ ...original, title: 'Changed native row' }); f.dispatch.syncRuntimeTask(original);
@@ -99,7 +99,7 @@ describe('Autonomy complete native live-source boundary', () => {
   test('unrelated native domain updates do not retire the retained task observation', async () => {
     const f = fixture(), fake = privacyFixture(), guards: Array<() => void> = []; installJudgmentPort(fake.port);
     f.dispatch.syncRuntimeTask(task('one'));
-    const result = await captureAutonomyLiveRecords(f.context, { sourceOwner: ordinaryResearchOwner(), retainCurrent: guard => guards.push(guard) });
+    const result = await captureAutonomyLiveRecords(f.context, { sourceOwner: ordinaryResearchOwner(), retainCurrent: guard => { guards.push(guard); } });
     f.dispatch.dispatchAgentEvent({ type: 'AGENT_SPAWNING', agentId: 'unrelated-worker', task: 'Unrelated native domain' });
     expect(result.tasks[0]?.status).toBe('queued');
     expect(() => guards.forEach(guard => guard())).not.toThrow();
@@ -144,7 +144,7 @@ describe('Autonomy complete native live-source boundary', () => {
   });
   test('retained producer method guards reject a replacement accessor without executing it', async () => {
     const f = fixture(), fake = privacyFixture(), guards: Array<() => void> = []; installJudgmentPort(fake.port); f.dispatch.syncRuntimeTask(task('one'));
-    await captureAutonomyLiveRecords(f.context, { sourceOwner: ordinaryResearchOwner(), retainCurrent: guard => guards.push(guard) });
+    await captureAutonomyLiveRecords(f.context, { sourceOwner: ordinaryResearchOwner(), retainCurrent: guard => { guards.push(guard); } });
     let reads = 0; Object.defineProperty(f.tasks, 'getSnapshot', { get() { reads++; throw new Error('Replacement accessor'); } });
     expect(() => guards.forEach(guard => guard())).toThrow(ToolInputProjectionError); expect(reads).toBe(0);
   });
@@ -157,7 +157,7 @@ describe('Autonomy complete native live-source boundary', () => {
       const registry = new AgentResearchRunRegistry(path);
       for (let index = 0; index < 9; index++) registry.create({ title: `Synthetic research ${index}`, question: `Complete question ${index}`, goal: 'Synthetic native goal', note: `Complete native note ${index}` });
       const fake = privacyFixture(), guards: Array<() => void> = []; installJudgmentPort(fake.port);
-      const result = await captureAutonomyLiveRecords(context, { sourceOwner: ordinaryResearchOwner(), retainCurrent: guard => guards.push(guard) });
+      const result = await captureAutonomyLiveRecords(context, { sourceOwner: ordinaryResearchOwner(), retainCurrent: guard => { guards.push(guard); } });
       expect(result.researchRuns).toHaveLength(8); expect(JSON.stringify(fake.requests)).toContain('Complete question 0');
       guards.forEach(guard => guard()); const original = readFileSync(path, 'utf8');
       writeFileSync(path, original.replace('Complete question 0', 'Changed question')); writeFileSync(path, original);

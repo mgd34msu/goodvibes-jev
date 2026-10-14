@@ -1,3 +1,4 @@
+import { usePresentationReadings } from '../helpers/presentation-readings.ts';
 import { describe, test, expect, beforeEach } from 'bun:test';
 import { ConversationManager } from '../../core/conversation';
 import { appendConversationMessages, isNavigableSystemContent, type ConversationRenderContext } from '../../core/conversation-rendering.ts';
@@ -209,6 +210,12 @@ describe('code block collapse', () => {
 });
 
 describe('ConversationManager.getErrorLines: notices leave the transcript', () => {
+  usePresentationReadings([
+    ['Error: command not found', 'error'], ['error: lowercase error', 'error'], ['ERROR! uppercase variant', 'error'],
+    ['[Error] Connection refused', 'error'], ['[Critical] Multiple errors detected (4 in 10s) ...', 'error'],
+    ['No errors found in codebase', 'info'], ['Scanning... recovered from terror', 'info'],
+    ['Error: first failure', 'error'], ['[Critical] second failure', 'error'],
+  ]);
   // System notices are toasts and notification-history entries (core/notices.ts,
   // ui-live-run-5 item 9), so the main transcript draws no row for them and
   // error navigation has nothing of theirs to land on. The content rule itself
@@ -236,7 +243,7 @@ describe('ConversationManager.getErrorLines: notices leave the transcript', () =
     expect(cm.getErrorLines()).toHaveLength(0);
   });
 
-  test('the content rule: error:/error!/[error]/[critical] lead-ins are navigable, case-insensitive; substrings are not', () => {
+  test('settled error presentation is navigable; benign reports are not', () => {
     expect(isNavigableSystemContent('Error: command not found')).toBe(true);
     expect(isNavigableSystemContent('error: lowercase error')).toBe(true);
     expect(isNavigableSystemContent('ERROR! uppercase variant')).toBe(true);

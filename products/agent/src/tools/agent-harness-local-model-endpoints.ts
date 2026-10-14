@@ -1,9 +1,10 @@
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { types as nodeTypes } from 'node:util';
 import { redactText } from '@goodvibes-jev/engine/terminal-shell';
 import { captureJudgmentPort, type JudgmentPortCapture } from '@goodvibes-jev/engine/errors';
 import { assertProjectionCurrent } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
-import { captureModelReadModelData, captureModelProviderReadingFacts, MODEL_PROVIDER_READING_FACT_FIELDS, captureModelReadingInput, assertModelReadingInputCurrent, modelReadingServicePath, withModelReadingSource, type ModelReadingOptions } from './agent-harness-model-reading-source.ts';
+import { captureModelReadModelData, captureModelProviderReadingFacts, MODEL_PROVIDER_READING_FACT_FIELDS, captureModelReadingInput, captureModelReadingSnapshotGuard, assertModelReadingInputCurrent, modelReadingServicePath, withModelReadingSource, type ModelReadingOptions } from './agent-harness-model-reading-source.ts';
 import { protectPersonalOpsData } from './agent-harness-personal-ops-source.ts';
 import { readLocalServingBoolean, readLocalServingStatus, readLocalResourcePressure, readLocalServingSchemaStatus } from './agent-harness-local-model-readings.ts';
 import type { CommandContext } from '../input/command-registry.ts';
@@ -413,6 +414,7 @@ async function localServingDiagnosticsIndex(context: CommandContext, options: Mo
   const retained: Array<() => void> = [];
   let owner: JudgmentPortCapture | undefined;
   let portCurrent: (() => void) | undefined;
+  let activeReading = false;
   const sourceCurrent = () => {
     optionsCurrent(); signal?.throwIfAborted();
     if (options.signal !== signal || options.assertCurrent !== callerCurrent) throw new Error('Local serving diagnostic owner changed.');
@@ -423,7 +425,13 @@ async function localServingDiagnosticsIndex(context: CommandContext, options: Mo
     sourceCurrent();
   };
   options.retainCurrent?.(sourceCurrent, 'agent.local-serving-diagnostics.owner');
-  const assertCurrent = () => { assertSource(); for (const guard of retained) guard(); portCurrent?.(); };
+  const assertLocalCurrent = () => { assertSource(); for (const guard of retained) guard(); };
+  const assertCurrent = () => {
+    // The active port already invokes the complete local restriction. Once it
+    // is consumed, its pure observation guard is joined with that restriction.
+    if (!activeReading) assertLocalCurrent();
+    portCurrent?.();
+  };
   assertCurrent();
   const records: LocalModelServingDiagnosticRecord[] = [];
   const sourcePaths = new Set<string>();
@@ -443,10 +451,13 @@ async function localServingDiagnosticsIndex(context: CommandContext, options: Mo
   assertCurrent();
   for (const { entry, observation } of observations) {
     try {
-      owner ??= captureJudgmentPort('agent.local-serving-diagnostics', { ...options, assertCurrent: assertSource });
-      portCurrent = owner.assertCurrent;
-      const reading = { ...options, signal: owner.signal, assertCurrent: () => { owner?.assertCurrent(); assertCurrent(); } };
+      owner ??= captureJudgmentPort('agent.local-serving-diagnostics', { ...options, assertCurrent: assertLocalCurrent });
+      portCurrent = owner.assertCurrent; activeReading = true;
+      const reading = { ...options, signal: owner.signal, assertCurrent };
       const protectedSnapshot = await protectPersonalOpsData(observation.data, reading);
+      // Schema, status and identity readings require the complete original
+      // diagnostic. A redacted display cannot stand in for its native facts.
+      captureModelReadingSnapshotGuard(observation.data)(protectedSnapshot);
       const sourceRecords = await withModelReadingSource(protectedSnapshot, reading, async (snapshot, scoped) => {
         const normalized: LocalModelServingDiagnosticRecord[] = [];
         for (const value of diagnosticEntriesFromSnapshot(snapshot)) {
@@ -474,7 +485,7 @@ async function localServingDiagnosticsIndex(context: CommandContext, options: Mo
     ? []
     : ['No daemon-published local serving diagnostics read model is available to Agent yet.'];
   if (owner) {
-    const restriction = owner.consumeObservation(); portCurrent = restriction.assertCurrent;
+    const restriction = owner.consumeObservation(); portCurrent = restriction.assertCurrent; activeReading = false;
     options.retainCurrent?.(restriction.assertCurrent, 'agent.local-serving-diagnostics.port');
   }
   assertCurrent();
@@ -670,25 +681,36 @@ export function captureLocalModelRegistry(context: CommandContext): {
     for (const guard of providerGuards) guard();
     return { ...native, providers: facts };
   };
-  const data = captureModelReadingInput(metadataSnapshot(original)), serialized = JSON.stringify(data);
+  const data = captureModelReadingInput(metadataSnapshot(original));
+  const assertMetadata = captureModelReadingSnapshotGuard(data);
   const assertCurrent = () => {
     for (const guard of originalArrays) guard();
     if (modelReadingServicePath(context, ['provider', 'providerRegistry']) !== registry
       || modelReadingServicePath(context, ['clients', 'providerApi']) !== api) throw new Error('Local model registry owner changed.');
     registryMethods(); apiMethods();
-    assertModelReadingInputCurrent(metadataSnapshot(original, false), serialized);
+    assertMetadata(metadataSnapshot(original, false));
     const fresh = snapshot();
     if (fresh.providers.length !== providers.length || fresh.models.length !== models.length
       || fresh.providers.some((provider, index) => provider !== providers[index]) || fresh.models.some((model, index) => model !== models[index])) throw new Error('Local model registration changed.');
-    assertModelReadingInputCurrent(metadataSnapshot(fresh, false), serialized);
+    assertMetadata(metadataSnapshot(fresh, false));
     registryMethods(); apiMethods();
   };
   assertCurrent(); return { data, assertCurrent };
 }
 
-async function readLocalRegistry(context: CommandContext, options: ModelReadingOptions): Promise<{
-  readonly detection: LocalModelDetection; readonly endpoints: readonly MutableLocalModelServerEndpoint[];
-}> {
+interface LocalModelRegistryReading {
+  readonly detection: LocalModelDetection;
+}
+const localRegistryReadings = new WeakMap<LocalModelRegistryReading, {
+  readonly context: CommandContext; readonly options: ModelReadingOptions; readonly assertCurrent: () => void;
+  readonly endpoints: readonly MutableLocalModelServerEndpoint[];
+}>();
+const getRegistryReading = localRegistryReadings.get.bind(localRegistryReadings);
+const setRegistryReading = localRegistryReadings.set.bind(localRegistryReadings);
+const deleteRegistryReading = localRegistryReadings.delete.bind(localRegistryReadings);
+
+/** A single protected registry interpretation can feed detection and endpoint views. */
+export async function withLocalModelRegistry<T>(context: CommandContext, options: ModelReadingOptions, consume: (reading: LocalModelRegistryReading) => Promise<T>): Promise<T> {
   const optionsCurrent = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'retainCurrent']);
   const signal = options.signal, callerCurrent = options.assertCurrent;
   const assertOptions = () => { optionsCurrent(); signal?.throwIfAborted(); };
@@ -733,16 +755,28 @@ async function readLocalRegistry(context: CommandContext, options: ModelReadingO
       addLocalServerEndpoint(endpoints, { baseUrl: hint.value, stack: hint.stack, source: 'environment', sourceDetail: `env:${hint.key}`, notes: [hint.note] });
     }
     scoped.assertCurrent?.();
-    return { detection: { providerIds: [...providerIds].sort(), modelRoutes: [...modelRoutes].sort(), stacks: [...stacks].sort() },
-      endpoints: [...endpoints.values()].sort((left, right) => left.baseUrl.localeCompare(right.baseUrl)) };
+    const captured = captureModelReadingInput({ detection: {
+      providerIds: [...providerIds].sort(), modelRoutes: [...modelRoutes].sort(), stacks: [...stacks].sort(),
+    } });
+    // Retain the original screening receipt for the entire composition. The
+    // private endpoint accumulators cannot be reused after this scope exits.
+    setRegistryReading(captured, { context, options, assertCurrent: () => { scoped.assertCurrent?.(); },
+      endpoints: [...endpoints.values()].sort((left, right) => left.baseUrl.localeCompare(right.baseUrl)) });
+    try { return await consume(captured); }
+    finally { deleteRegistryReading(captured); }
   });
 }
 
 export async function readLocalModelDetection(context: CommandContext, options: ModelReadingOptions): Promise<LocalModelDetection> {
-  return (await readLocalRegistry(context, options)).detection;
+  return withLocalModelRegistry(context, options, async reading => reading.detection);
 }
 export async function readLocalServerEndpointCandidates(context: CommandContext, options: ModelReadingOptions): Promise<readonly MutableLocalModelServerEndpoint[]> {
-  return (await readLocalRegistry(context, options)).endpoints;
+  return withLocalModelRegistry(context, options, async result => {
+    const binding = getRegistryReading(result)!;
+    binding.assertCurrent();
+    return binding.endpoints.map(endpoint => ({ ...endpoint, sources: new Set(endpoint.sources),
+      sourceDetails: new Set(endpoint.sourceDetails), modelRoutes: new Set(endpoint.modelRoutes), notes: new Set(endpoint.notes) }));
+  });
 }
 
 export function addLocalServerEndpoint(
@@ -909,10 +943,18 @@ export async function localModelServerHealthMap(
   context: CommandContext,
   includeParameters: boolean,
   options: ModelReadingOptions = {},
+  registryReading?: LocalModelRegistryReading,
 ): Promise<LocalModelServerHealthMap> {
   const reading = localModelInspectionOptions(context, options);
+  if (!registryReading) return withLocalModelRegistry(context, reading,
+    registry => localModelServerHealthMap(context, includeParameters, reading, registry));
+  const binding = getRegistryReading(registryReading);
+  if (!binding || binding.context !== context || binding.options.sourceOwner !== reading.sourceOwner
+    || binding.options.signal !== reading.signal) throw new ToolInputProjectionError('held');
+  binding.assertCurrent();
   const servingDiagnostics = await localServingDiagnosticsIndex(context, reading);
-  const rawEndpoints = await readLocalServerEndpointCandidates(context, reading);
+  binding.assertCurrent();
+  const rawEndpoints = binding.endpoints;
   const matchedEndpointCount = rawEndpoints
     .filter((endpoint) => Boolean(servingDiagnosticForEndpoint(servingDiagnostics.records, endpoint)))
     .length;
@@ -923,7 +965,7 @@ export async function localModelServerHealthMap(
   ));
   const facts = localModelEndpointFacts(endpoints, includeParameters);
   const hasMatchedDiagnostics = matchedEndpointCount > 0;
-  servingDiagnostics.assertCurrent();
+  servingDiagnostics.assertCurrent(); binding.assertCurrent();
   return {
     ...facts,
     daemonDiagnostics: {

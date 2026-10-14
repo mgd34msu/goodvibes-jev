@@ -238,17 +238,20 @@ export interface FailureConclusions {
   readonly decisionId?: string | undefined;
 }
 
-/** Long provider bodies say what they mean in their opening; the rest is request echo. */
-const MAX_MESSAGE_CHARS = 2_000;
+/** Refuse oversized evidence; never classify a prefix as though it were the complete error. */
+const MAX_MESSAGE_CHARS = 160_000;
 
 /** The state Jev reads: one labelled line per piece of evidence. */
 export function failureState(evidence: FailureEvidence): string {
+  if (typeof evidence.message !== 'string' || evidence.message.length > MAX_MESSAGE_CHARS) throw new TypeError('Failure evidence exceeds the judgment input budget.');
   const lines: string[] = [];
   if (evidence.status !== undefined) lines.push(`HTTP status: ${evidence.status}`);
   if (evidence.code !== undefined && evidence.code.length > 0) lines.push(`Error code: ${evidence.code}`);
   if (evidence.errorName !== undefined && evidence.errorName !== 'Error') lines.push(`Error type: ${evidence.errorName}`);
-  lines.push(`Message: ${evidence.message.slice(0, MAX_MESSAGE_CHARS)}`);
-  return lines.join('\n');
+  lines.push(`Message: ${evidence.message}`);
+  const state = lines.join('\n');
+  if (state.length > MAX_MESSAGE_CHARS) throw new TypeError('Failure evidence exceeds the judgment input budget.');
+  return state;
 }
 
 /** A yes/no conclusion code may act on without asking anyone: a yes strong enough to act. */
@@ -261,7 +264,8 @@ let memos = new WeakMap<object, Map<string, Promise<FailureConclusions>>>();
 function remember(memo: Map<string, Promise<FailureConclusions>>, state: string, reading: Promise<FailureConclusions>): Promise<FailureConclusions> {
   if (memo.size >= MEMO_LIMIT) memo.delete(memo.keys().next().value!);
   memo.set(state, reading);
-  void reading.catch(() => { if (memo.get(state) === reading) memo.delete(state); });
+  const discard = () => { if (memo.get(state) === reading) memo.delete(state); };
+  void reading.then(result => { if (Object.values(result.readings).some(value => value.outcome !== 'act')) discard(); }, discard);
   return reading;
 }
 
@@ -272,6 +276,14 @@ function remember(memo: Map<string, Promise<FailureConclusions>>, state: string,
  */
 export async function readFailure(evidence: FailureEvidence, site: string, options?: FailureReadOptions): Promise<FailureConclusions> {
   const source = options === undefined ? captureJudgmentPort(site) : undefined;
+  const port = options?.port ?? source!.port, model = port.model;
+  const current = () => {
+    source?.assertCurrent(); options?.signal?.throwIfAborted();
+    const checked: unknown = options?.beforeAttempt?.();
+    if (checked !== undefined) { void Promise.resolve(checked).catch(() => {}); throw new Error('Failure reading guard must be synchronous.'); }
+    if (port.model !== model) throw new Error('Failure judgment model changed.');
+  };
+  current();
   const state = failureState(evidence);
   source?.assertCurrent();
   let memo = source && memos.get(source.identity);
@@ -279,12 +291,12 @@ export async function readFailure(evidence: FailureEvidence, site: string, optio
   const known = memo?.get(state);
   if (known !== undefined) { const result = await known; source?.assertCurrent(); return result; }
   const reading = (async () => {
-    const run = await failureReading.run(options?.port ?? source!.port, state, { site,
-      ...(options?.signal === undefined ? {} : { signal: options.signal }),
-      ...(options?.beforeAttempt === undefined ? {} : { beforeAttempt: options.beforeAttempt }),
+    const run = await failureReading.run(port, state, { site,
+      ...((options?.signal ?? source?.signal) ? { signal: (options?.signal ?? source?.signal)! } : {}),
+      beforeAttempt: current,
       ...(options?.onRetry === undefined ? {} : { onRetry: options.onRetry }),
     });
-    source?.assertCurrent();
+    current();
     const r = run.readings;
     const category = r.category.outcome === 'act' ? r.category.choice : 'unknown';
     return {

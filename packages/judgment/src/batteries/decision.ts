@@ -77,7 +77,7 @@ export interface NamedDecision {
   readonly description: string;
   /** Share of fixture checks calibration must get right, in (0, 1]. */
   readonly accuracyFloor: number;
-  /** Versioned model the bands were tuned on; omitted uses the port's pinned model. */
+  /** Optional model override; omitted follows the configured port model (jev-latest by default). */
   readonly model?: string;
   readonly fixtureCount: number;
   /** Runs every fixture live and returns one check per expectation. */

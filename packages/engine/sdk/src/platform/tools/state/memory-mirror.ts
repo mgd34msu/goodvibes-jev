@@ -8,27 +8,35 @@ import type { MemoryClass, ProvenanceLink } from '../../state/memory-store.js';
 import { logger } from '../../utils/logger.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { memoryClass, memoryClassView } from '../batteries/memory-class.js';
+import { ToolInputProjectionError } from '../input-projection.js';
 
 const MEMORY_CLASS_SITE = 'tools.state.memory-class';
 
 /** The class a new mirrored memory record is filed under (see mirrorMemoryRecord). */
 async function readMemoryClass(key: string, value: string): Promise<MemoryClass> {
-  const run = await memoryClass.run(judgmentPort(MEMORY_CLASS_SITE), memoryClassView(key, value), { site: MEMORY_CLASS_SITE });
+  const state = memoryClassView(key, value);
+  const port = judgmentPort(MEMORY_CLASS_SITE), model = port.model;
+  const current = () => { if (judgmentPort(MEMORY_CLASS_SITE) !== port || port.model !== model) throw new ToolInputProjectionError('held'); };
+  const run = await memoryClass.run(port, state, { site: MEMORY_CLASS_SITE, beforeAttempt: current });
+  current();
   const reading = run.readings.memory_class;
-  const cls: MemoryClass = reading.outcome === 'escalate' ? 'fact' : reading.choice;
+  if (reading.outcome !== 'act') {
+    run.recordAction('memory write held: unsettled class');
+    throw new ToolInputProjectionError('held');
+  }
+  const cls: MemoryClass = reading.choice;
   run.recordAction(`filed as ${cls}`);
   return cls;
 }
 
 /** What mirroring one memory write does: update the key's existing record, or add a record of this class. */
-export type MemoryMirrorPlan = { readonly existingId: string; readonly tags: string[] } | { readonly cls: MemoryClass };
+export type MemoryMirrorPlan = { readonly cls: MemoryClass; readonly assertCurrent: () => void; readonly existingId?: string; readonly tags?: string[] };
 
 /**
  * Plan the mirror of a `mode=memory action=set` write before the flat file is written: find the
  * key's existing record, or read the class a new record is filed under with
- * `engine.tools.memory-class` (tools/batteries/memory-class.ts). A reading that acts or confirms
- * files it under that class, one that escalates files it as `fact`; an updated record keeps its
- * class. Undefined when there is no registry or it cannot be read (mirroring is best-effort). A
+ * `engine.tools.memory-class` (tools/batteries/memory-class.ts). Only an acted reading
+ * files it under that class; uncertainty holds before either write. Updates are reclassified from their complete replacement content. Undefined when there is no registry or it cannot be read (mirroring is best-effort). A
  * JudgmentError from the reading propagates, so the set fails before anything is written.
  */
 export async function planMemoryMirror(memoryRegistry: MemoryRegistry | undefined, safeKey: string, value: string): Promise<MemoryMirrorPlan | undefined> {
@@ -40,7 +48,14 @@ export async function planMemoryMirror(memoryRegistry: MemoryRegistry | undefine
     logger.warn('state tool: memory registry unreadable, write not mirrored (flat-file write unaffected)', { key: safeKey, error: summarizeError(err) });
     return undefined;
   }
-  return existing ? { existingId: existing.id, tags: existing.tags } : { cls: await readMemoryClass(safeKey, value) };
+  const expected = JSON.stringify(existing);
+  const cls = await readMemoryClass(safeKey, value);
+  const assertCurrent = () => {
+    const current = memoryRegistry.getAll().find((record) => record.tags.includes(`state-memory:${safeKey}`));
+    if (JSON.stringify(current) !== expected) throw new ToolInputProjectionError('held');
+  };
+  assertCurrent();
+  return { cls, assertCurrent, ...(existing ? { existingId: existing.id, tags: existing.tags } : {}) };
 }
 
 /**
@@ -73,8 +88,9 @@ export async function mirrorMemoryRecord(
     const provenance: ProvenanceLink[] = [
       { kind: 'file', ref: `.goodvibes/memory/${safeKey}.json`, label: `state tool memory (${safeKey})` },
     ];
-    if ('existingId' in plan) {
-      memoryRegistry.update(plan.existingId, { summary, detail: value, tags: plan.tags });
+    plan.assertCurrent();
+    if (plan.existingId) {
+      memoryRegistry.update(plan.existingId, { cls: plan.cls, summary, detail: value, ...(plan.tags ? { tags: plan.tags } : {}) });
     } else {
       await memoryRegistry.add({
         scope: 'project',

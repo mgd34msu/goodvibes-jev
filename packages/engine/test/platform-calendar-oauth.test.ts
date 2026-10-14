@@ -26,7 +26,7 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { createSystemOnePort, PINNED_MODEL, type EntryType, type Question, type JudgmentConfig } from '@goodvibes-jev/judgment';
+import { createSystemOnePort, DEFAULT_MODEL, type EntryType, type Question, type JudgmentConfig } from '@goodvibes-jev/judgment';
 import { missingPermission } from '../sdk/src/platform/calendar/batteries/missing-permission.ts';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { createSha256Hash } from '../sdk/src/platform/runtime/auth/crypto-adapter.ts';
@@ -1041,14 +1041,14 @@ describe('calendar permission provenance and complete evidence', () => {
 
 function transportConfig(fetchImpl: NonNullable<JudgmentConfig['fetch']>): JudgmentConfig {
   return { endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-judgment-key' },
-    model: PINNED_MODEL, timeoutMs: 1_000, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fetch: fetchImpl };
+    model: DEFAULT_MODEL, timeoutMs: 1_000, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fetch: fetchImpl };
 }
 function permissionWireResponse(body: string): Response {
   const { state, questions } = JSON.parse(body) as { state: EntryType; questions: Record<string, Question> };
   const token = (state as { tokens: { id: string; text: string }[] }).tokens.find((candidate) => candidate.text === 'Calendars.ReadWrite')!;
   const answers = Object.fromEntries(Object.entries(questions).map(([name, question]) => [name,
     name === 'pick' ? choiceAnswer(question, token.id, 0.98) : noulAnswer(name === `fits_${token.id}` ? 0.98 : 0.02)]));
-  return Response.json({ model: PINNED_MODEL, answers, usage: { input_tokens: 1, output_tokens: 1 } });
+  return Response.json({ model: DEFAULT_MODEL, answers, usage: { input_tokens: 1, output_tokens: 1 } });
 }
 
 describe('calendar connector uses the shared judgment retry and cancellation lifecycle', () => {

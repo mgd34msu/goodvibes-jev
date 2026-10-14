@@ -21,7 +21,7 @@
  * documentation: a wrong yes on `stale` prompts unnecessary rewording; a
  * wrong no can leave outdated wording unnoticed.
  */
-import { defineBattery, PINNED_MODEL, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
+import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 
 /** A type alias rather than an interface, so it is assignable to the port's JSON state type. */
 export type PackageReadmeState = {
@@ -53,11 +53,10 @@ const USEFUL_README = [
 
 export const packageReadme = defineBattery({
   name: 'engine.gates.package-readme',
-  version: 1,
+  version: 2,
   description: 'Whether a published package README documents the package, and whether it describes it in stale internal or umbrella terms.',
   accuracyFloor: 0.9,
   // Pinned: the stored readings and the band were read and tuned on this model.
-  model: PINNED_MODEL,
   items: {
     documents: yesNo(
       'Does the README `readme` document the package `name` (described as `description`): say what the package is and how to install it and use it?',

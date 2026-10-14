@@ -63,7 +63,7 @@ describe('runSemanticDiff', () => {
     expect(result.risk).toBe('medium');
     expect(result.risk_readings).toEqual({ breaks_callers: 'no', changes_behavior: 'yes' });
     expect(result.summary_source).toBe('readings');
-    expect(result.summary).toBe('Changed tax.ts. Existing code behaves differently after this change.');
+    expect(result.summary).toBe('Changed tax.ts. The change may alter existing behavior.');
     expect(result.changed_files).toEqual(['tax.ts']);
     // The helper model is asked for prose only, never for a risk rating.
     expect(prompts[0]).not.toContain('Risk level');
@@ -82,4 +82,11 @@ describe('runSemanticDiff', () => {
     expect(result.impact).toEqual(['checkout totals']);
     expect(result.summary_source).toBe('llm');
   });
+});
+
+
+test('a tentative negative cannot lower the reported semantic risk', () => {
+  const tentative = { ...no, outcome: 'confirm' as const };
+  expect(semanticDiffRisk({ breaks_callers: tentative, changes_behavior: no })).toBe('high');
+  expect(semanticDiffRisk({ breaks_callers: no, changes_behavior: tentative })).toBe('medium');
 });

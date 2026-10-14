@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, setSystemTime, test } from 'bun:test';
+import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { AgentResearchRunRegistry, researchRunReportLine, researchRunStorePath } from '../../agent/research-run-registry.ts';
@@ -17,6 +18,26 @@ function makeRegistry(): { readonly root: string; readonly registry: AgentResear
 }
 
 describe('AgentResearchRunRegistry', () => {
+  test('native checkpoint IDs remain admissible and distinct at a card-shaped clock instant', () => {
+    const fixture = makeRegistry();
+    setSystemTime(new Date('2026-10-13T15:00:01.000Z'));
+    try {
+      expect(() => snapshotJudgmentInput('cp-20261013150001-1')).toThrow();
+      const run = fixture.registry.create({ title: 'Clock regression', question: 'Review the published source.' });
+      fixture.registry.start(run.id);
+      fixture.registry.checkpoint(run.id, { phase: 'reading', note: 'Read the first source.' });
+      const next = fixture.registry.checkpoint(run.id, { phase: 'reading', note: 'Read the second source.' });
+      const ids = next.checkpoints.map(checkpoint => checkpoint.id);
+      expect(new Set(ids).size).toBe(2);
+      for (const checkpoint of next.checkpoints) {
+        expect(checkpoint.id).toMatch(/^cp-[a-j]{14}-[0-9a-z]+$/);
+        expect(snapshotJudgmentInput(checkpoint)).toEqual(checkpoint);
+        expect(checkpoint.at).toBe('2026-10-13T15:00:01.000Z');
+      }
+      expect(fixture.registry.get(run.id)?.checkpoints.map(checkpoint => checkpoint.id)).toEqual(ids);
+    } finally { setSystemTime(); fixture.cleanup(); }
+  });
+
   test('stores project-local checkpointable research runs', () => {
     const fixture = makeRegistry();
     try {

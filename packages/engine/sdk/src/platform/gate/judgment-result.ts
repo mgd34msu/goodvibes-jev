@@ -78,7 +78,16 @@ function sameJson(left: unknown, right: unknown): boolean {
  * data. Consumers receive the complete unrounded frozen original response.
  */
 export function prepareJudgmentResult(questions: Questions, failure: JudgmentResultAdmissionFailure = admissionError) {
-  const schema = admitJudgmentJson(questions, failure);
+  const schema = captureStrictJudgmentJson(questions, failure);
+  // Question and Choice option names are protocol identifiers, not populated
+  // credential fields. Screen their text and every instruction without giving
+  // a criterion named "authorization" the meaning of an HTTP header value.
+  assertJudgmentInput(Object.entries(schema).map(([questionName, question]) => ({
+    questionName,
+    definition: question.type === 'choice'
+      ? { ...question, criteria: Object.entries(question.criteria).map(([optionId, criterion]) => ({ optionId, criterion })) }
+      : question,
+  })));
   const assertCurrent = () => {
     if (!sameJson(captureStrictJudgmentJson(questions, failure), schema)) throw failure('stale');
   };
@@ -88,6 +97,24 @@ export function prepareJudgmentResult(questions: Questions, failure: JudgmentRes
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw failure('malformed');
     try { checkAnswers(schema, snapshot.answers); } catch { throw failure('malformed'); }
     const slots = new WeakMap<object, Set<string>>();
+    const distributions = new WeakSet<object>();
+    // Elapsed transport timings can have long fractional digit sequences that
+    // accidentally satisfy a card checksum. Only these declared, bounded
+    // numeric protocol fields are exempt; arbitrary metadata stays screened.
+    const timing = (record: object) => {
+      const descriptor = Object.getOwnPropertyDescriptor(record, 'latencyMs');
+      if (!descriptor || descriptor.value === undefined) return;
+      const value: unknown = descriptor.value;
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 86_400_000) throw failure('malformed');
+      slots.set(record, new Set(['latencyMs']));
+    };
+    timing(snapshot);
+    if (snapshot.lineage && Array.isArray(snapshot.lineage.attempts)) {
+      for (const attempt of snapshot.lineage.attempts) {
+        if (!attempt || typeof attempt !== 'object' || Array.isArray(attempt)) throw failure('malformed');
+        timing(attempt);
+      }
+    }
     for (const [name, question] of Object.entries(schema)) {
       const answer = snapshot.answers[name];
       if (!answer) throw failure('malformed');
@@ -98,11 +125,15 @@ export function prepareJudgmentResult(questions: Questions, failure: JudgmentRes
         if (!probabilities) throw failure('malformed');
         const keys = question.type === 'choice' ? Object.keys(question.criteria) : question.criteria.map((_, index) => String(index));
         slots.set(probabilities, new Set(keys));
+        distributions.add(probabilities);
       }
     }
     const screeningView = (entry: unknown): unknown => {
       if (!entry || typeof entry !== 'object') return entry;
       if (Array.isArray(entry)) return entry.map(screeningView);
+      if (entry === snapshot.answers) return Object.entries(entry).map(([questionName, answer]) => ({ questionName, answer: screeningView(answer) }));
+      if (distributions.has(entry)) return Object.entries(entry).map(([optionId, value]) => ({ optionId,
+        probability: slots.get(entry)?.has(optionId) ? true : screeningView(value) }));
       return Object.fromEntries(Object.entries(entry).map(([key, value]) => [key,
         slots.get(entry)?.has(key) ? true : screeningView(value)]));
     };

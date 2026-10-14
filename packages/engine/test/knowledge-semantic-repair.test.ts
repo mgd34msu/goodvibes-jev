@@ -38,7 +38,7 @@ useSemanticActivationFixtures(answerReadings);
 
 describe('semantic knowledge/wiki enrichment: web repair and subject links', () => {
   test('web gap repair ingests at least two distinct sources for answer gaps', async () => {
-    answerReadings.set({ webGapQueries: ['what features does the TV have?'], webGapSources: [
+    answerReadings.set({ webGapQueries: ['what features does the TV have?'], webGapCoverage: 0.99, webGapSources: [
       ['https://www.lg.com/us/tvs/lg-86nano90una-4k-uhd-tv', 0.99, 'official-vendor'],
       ['https://www.displayspecifications.com/en/model/example', 0.99, 'secondary'],
     ] });
@@ -147,7 +147,7 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
 
   test('web gap repair escalates targeted searches and caps accepted sources at five', async () => {
     answerReadings.set({ webGapQueries: ['What ports and Bluetooth support does the TV have?', 'What other input/output ports are present on the LG 86NANO90UNA?\nThe manual does not include a complete I/O specification list.'],
-      webGapSources: ['lg.com', 'manualsnet.com', 'zkelectronics.com', 'fullspecs.net', 'displayspecifications.com', 'tab-tv.com'].map((host, index) => [`https://${host}/lg-86nano90una-specs-${index}`, 0.99, 'secondary'] as const) });
+      webGapCoverage: 0.99, webGapSources: ['lg.com', 'manualsnet.com', 'zkelectronics.com', 'fullspecs.net', 'displayspecifications.com', 'tab-tv.com'].map((host, index) => [`https://${host}/lg-86nano90una-specs-${index}`, 0.99, 'secondary'] as const) });
     const queries: string[] = [];
     const ingested: Array<{ url: string; metadata?: Record<string, unknown> | undefined }> = [];
     const repairer = createWebKnowledgeGapRepairer({
@@ -239,7 +239,7 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
   });
 
   test('web gap repair reuses pending official sources as accepted evidence', async () => {
-    answerReadings.set({ webGapQueries: ['What Bluetooth and ports does the TV have?'], webGapSources: [['https://www.lg.com/us/tvs/lg-86nano90una-4k-uhd-tv', 0.99, 'official-vendor']] });
+    answerReadings.set({ webGapQueries: ['What Bluetooth and ports does the TV have?'], webGapCoverage: 0.99, webGapSources: [['https://www.lg.com/us/tvs/lg-86nano90una-4k-uhd-tv', 0.99, 'official-vendor']] });
     const ingested: unknown[] = [];
     const repairer = createWebKnowledgeGapRepairer({
       searchService: {

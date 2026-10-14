@@ -49,7 +49,6 @@ products/agent      the agent over the engine
 products/webui      the web UI over the daemon contract
 docs/contracts      runtime and integration contracts
 docs/design         designs for new subsystems (the contract runner)
-docs/audit          audits of what the judgment foundation covers
 ```
 
 A product holds its rendering, input capture, composition root and packaging. Platform behaviour lives in the engine.
@@ -73,7 +72,9 @@ upstream targets and implementation sequence are recorded in
 
 ## How each old module is handled
 
-Per-module source dispositions and migration decisions are recorded in [Linear](https://linear.app/the-artificery/issue/TA-14/port-daemon-tui-agent-and-webui-with-preserved-parity). The disposition vocabulary is:
+Per-module source dispositions and migration decisions are recorded in [Linear](https://linear.app/the-artificery/issue/TA-14/port-daemon-tui-agent-and-webui-with-preserved-parity).
+
+The disposition vocabulary is:
 
 | Disposition | Meaning |
 |---|---|
@@ -91,7 +92,7 @@ Published as `@goodvibes-jev/judgment`, it provides:
 - **The judgment port.** One interface every decision site calls, over the System One API, against the hosted Jev endpoint or a local System One model with the same wire protocol.
 - **Typed readings.** Yes/no, a choice over fixed options, and a score on a rubric. Existing stake-scaled bands retain the legacy `act`, `confirm` and `escalate` vocabulary for unmigrated callers and historical records; these are not autonomous consumer outcomes.
 - **Autonomous receipts.** The runtime-neutral `@goodvibes-jev/judgment/decisions` entry point supplies the shared `JevDecision` schema and structural/binding validation. It does not itself supply the semantic evaluator, live authorization or atomic execution claim.
-- **Batteries.** Named decisions that keep their questions, bands, fixtures and pinned model version in one reviewable definition.
+- **Batteries.** Named decisions that keep their questions, bands, fixtures and calibration policy in one reviewable definition.
 - **Patterns and compound patterns.** Dispatch, judging output against a goal, rerank, existence checks, reply reading, entity alignment, fidelity checks, policy checklists, candidate selection and date-parts extraction, plus compounds that combine them in code.
 - **The decision log.** SQLite, one entry per reading, queryable by battery, time range and outcome.
 - **Calibration.** Runs every battery's fixtures live and reports accuracy against confidence. It fails when a battery falls below its floor.
@@ -155,7 +156,8 @@ bun run --cwd packages/judgment proof           # live proof of every pattern an
 bun run --cwd packages/judgment calibrate       # live calibration of every battery
 bun run --cwd packages/engine routing:proof     # live routing proof against the model catalog
 bun run observe:report                          # decision-log analytics
-bun run judgment:lint                           # every registered decision has fixtures; no Jev call outside one
+bun run judgment:lint                           # registration/fixture checks across engine and product TS/TSX
+bun run judgment:audit --json                    # semantic review candidates; not a coverage certificate
 ```
 
 The root `prepare` script points git at `.githooks/`. The local pre-commit hook runs the source-only credential scope check for engine and product implementation/config changes. Run focused behavior tests during development and `bun run validate` for a complete local integration check. Required CI still runs the full build, types, API, product, browser and containment checks against the reviewed commit. A successful commit alone does not establish merge readiness.

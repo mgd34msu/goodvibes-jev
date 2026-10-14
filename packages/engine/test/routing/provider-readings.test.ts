@@ -270,16 +270,16 @@ describe('local server identity', () => {
     try {
       await entered.promise; controller.abort(); await expect(pending).rejects.toThrow('no longer current');
       expect(fixture.requests).toHaveLength(1);
-      expect(fixture.requests[0]?.state).toEqual({ port: 8000, headers: {}, model_ids: ['fixture-model'] });
+      expect(fixture.requests[0]?.state).toEqual({ evidence_kind: 'probe', port: 8000, headers: {}, model_ids: ['fixture-model'] });
       expect(records).toBe(0); expect(actions).toBe(0);
     } finally { release.resolve(); await Promise.allSettled([pending]); }
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(records).toBe(0); expect(actions).toBe(0);
   });
 
-  test('a weak reading is unknown', async () => {
+  test('a weak reading remains held', async () => {
     installJudgmentPort(fakePort((_name, question) => choiceAnswer(question, 'vllm', 0.3)).port);
-    expect(await readLocalServerIdentity({ port: 8000, headers: {}, modelIds: ['m'] }, 'test')).toBe('unknown');
+    await expect(readLocalServerIdentity({ port: 8000, headers: {}, modelIds: ['m'] }, 'test')).rejects.toThrow('not settled');
   });
 
   test('a scan reads the server behind a non-default port from its headers', async () => {
@@ -319,12 +319,12 @@ describe('stream content-part labels', () => {
 });
 
 describe('reasoning family', () => {
-  test('a reading below the act band leaves the model in no family, remembered', async () => {
+  test('a reading below the act band is held and never remembered', async () => {
     const { port, requests } = fakePort((_name: string, question: Question) => choiceAnswer(question, 'deepseek', 0.6));
     installJudgmentPort(port);
-    expect(await readReasoningFamily('mystery-reasoner', 'test')).toBeNull();
-    expect(knownReasoningFamily('mystery-reasoner')).toBeNull();
-    expect(await readReasoningFamily('mystery-reasoner', 'test')).toBeNull();
-    expect(requests).toHaveLength(1);
+    await expect(readReasoningFamily('mystery-reasoner', 'test')).rejects.toThrow('not settled');
+    expect(knownReasoningFamily('mystery-reasoner')).toBeUndefined();
+    await expect(readReasoningFamily('mystery-reasoner', 'test')).rejects.toThrow('not settled');
+    expect(requests).toHaveLength(2);
   });
 });

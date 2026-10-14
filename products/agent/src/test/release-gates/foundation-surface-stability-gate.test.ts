@@ -106,6 +106,16 @@ describe('foundation surface stability gate', () => {
         const candidate = (state as { candidate?: { text?: string } }).candidate;
         return noulAnswer([note, note.trimEnd(), 'This note proves the in-process knowledge API remains consumable.'].includes(candidate?.text ?? '') ? 0.99 : 0.01);
       }
+      if (name === 'extractionValue') {
+        expect(state).toEqual({
+          source: { title: 'Foundation Surface Note', summary: note.trimEnd(), description: note.trimEnd(),
+            uri: '', sourceType: 'document', status: 'indexed', trust: 'untrusted reference material',
+            claimedProvenance: { reason: '', domain: '' } },
+          text: 'Foundation Surface Note\n\n# Foundation Surface Note This note proves the in-process knowledge API remains consumable.\n\nfoundation-surface',
+          extraction: { format: 'markdown', title: 'Foundation Surface Note', summary: note.trimEnd(), excerpt: note.trimEnd(), sections: ['Foundation Surface Note'] },
+        });
+        return noulAnswer(0.01);
+      }
       if (name === 'wanted') {
         const extraction = state as { query: string; subjects: string[]; text: string; source: unknown; extraction: unknown; category: { title: string } };
         expect(extraction.query).toBe('complete features specifications capabilities');

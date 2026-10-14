@@ -2,7 +2,7 @@ import { admitRepairJson, prepareRepairJudgmentResult } from './admission.js';
 import { captureJudgmentPort, JudgmentAuthorityRetiredError, JudgmentPortMissingError, type JudgmentPortCapture } from '@goodvibes-jev/engine/errors';
 import { toJson, type Candidate, type JsonValue, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { JudgmentInputError } from '../../../gate/judgment-input.js';
-import { webGapQuery, webGapRelevance } from './battery.js';
+import { webGapQuery, webGapRelevance, webGapCoverage } from './battery.js';
 import { repairSourceAuthority } from '../repair-source-authority/battery.js';
 import { freezeSupport } from '../verification/projection.js';
 import { KnowledgeWebGapRepairHeldError as Held, WEB_GAP_REPAIR_LIMITS as LIMITS } from './types.js';
@@ -65,6 +65,15 @@ export function createWebGapReadings(options: { readonly signal: AbortSignal; re
       if (selection.outcome !== 'act') throw new Held('uncertain');
       selection.recordAction(selection.chosen ? 'selected complete original web query; caller retains effect authority' : 'no grounded offered web query');
       return selection.chosen;
+    }); },
+    coverage(context: object, candidates: readonly object[]) { return run(async () => {
+      const input = state({ context, candidates });
+      const result = await webGapCoverage.run(port(webGapCoverage.name), input, { signal: options.signal, site: webGapCoverage.name });
+      assertCurrent();
+      const reading = result.readings.sufficient;
+      if (reading.outcome !== 'act') throw new Held('uncertain');
+      result.recordAction('Discovery sufficiency only; fact verification and effect authority remain separate.');
+      return reading.verdict === 'yes';
     }); },
     source(context: object, source: object) { return run(async () => {
       const input = state({ context, source });

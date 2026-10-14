@@ -45,7 +45,33 @@ export const semanticRepairProfileValues = values([
   ['LG 86NANO90UNA specifications include an 86-inch 4K NanoCell display, Dolby Vision HDR, HDR10, 120 Hz refresh rate, webOS smart TV features, Wi-Fi, Bluetooth, HDMI eARC, FreeSync VRR, ATSC tuner support, and 2 x 10W speakers.', [display, ports, smart, network, gaming, audio, tuner]],
 ]);
 
+/** These authored product-specification paragraphs are also complete sentence candidates. */
+export const semanticRepairSentenceKinds = [
+  ...[...new Set(semanticRepairProfileValues.map(([, text]) => text))].map(text => [text, 'specification'] as const),
+  ['Features include energy monitoring, Matter support, scheduling, and away mode.', 'feature'] as const,
+  ['The LG TV supports HDR10, HDMI eARC, Filmmaker Mode, Game Optimizer, and Magic Remote voice control.', 'feature'] as const,
+  ['Ultra High Speed HDMI cables are optional extras and may be purchased separately.', 'note'] as const,
+  ['Fasten the stand screws to prevent the TV from overturning during setup.', 'procedure'] as const,
+  ['Recommended HDMI cable types (3 m (9.', 'none'] as const,
+  ['New features may be added to this TV in the future.', 'none'] as const,
+  ['Magic Remote Control buttons ▲ ▼ ◄ ► may vary depending upon model.', 'note'] as const,
+  ['The Magic Remote batteries may be low.', 'troubleshooting'] as const,
+  ['REFER TO QUALIFIED SERVICE PERSONNEL.', 'warning'] as const,
+  ['REFER TO QUALIFIED SERVICE…', 'none'] as const,
+  ['This remote uses infrared light and must be pointed toward the remote control sensor on the TV.', 'configuration'] as const,
+  ['Crutchfield SpeakerCompare gives you a sense of equal-power and equal-volume speaker differences.', 'none'] as const,
+  ['Shake the Magic Remote to make the pointer appear on the screen.', 'procedure'] as const,
+  ['However, if the device does not support it, it may not work properly.', 'none'] as const,
+  ['In that case, change the TV HDMI Ultra HD Deep Color setting to off.', 'configuration'] as const,
+  ['Refer all servicing to qualified personnel and contact customer service for repair.', 'maintenance'] as const,
+  ['Clean the TV with a dry cloth.', 'maintenance'] as const,
+];
+
 export const semanticRepairUsefulValues: RepairUsefulFixtureValues = [
+  ...[...new Set(semanticRepairProfileValues.map(([, text]) => text))].map(text => [text, text, text] as const),
+  ...['Features include energy monitoring, Matter support, scheduling, and away mode.',
+    'The LG TV supports HDR10, HDMI eARC, Filmmaker Mode, Game Optimizer, and Magic Remote voice control.']
+    .map(text => [text, text, text] as const),
   ['controller includes local control mode', 'The controller includes local control mode.', 'The controller includes local control mode.'],
   ['controller supports Wi-Fi configuration', 'The controller supports Wi-Fi configuration.', 'The controller supports Wi-Fi configuration.'],
   ['controller has USB-C power', 'The controller has USB-C power.', 'The controller has USB-C power.'],

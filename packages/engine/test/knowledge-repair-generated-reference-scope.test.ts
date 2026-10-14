@@ -92,11 +92,11 @@ describe('repair operation generated-reference scope', () => {
     await expect(relink(item)).rejects.toBeInstanceOf(JudgmentInputError);
     expect(snapshot(item.store)).toBe(before); expect(item.fake.requests).toHaveLength(calls);
   });
-  test('a protected semantic source field still holds a valid generated scope before requests or writes', async () => {
+  test('changing source evidence retires generated authority before requests or writes', async () => {
     const item = await fixture();
     await item.store.upsertExtraction({ ...item.extraction, excerpt: 'AC-7 has four HDMI ports. Synthetic payment number 4111111111111111' });
     const before = snapshot(item.store), calls = item.fake.requests.length;
-    await expect(relink(item)).rejects.toBeInstanceOf(JudgmentInputError);
+    await expect(relink(item)).rejects.toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError);
     expect(snapshot(item.store)).toBe(before); expect(item.fake.requests).toHaveLength(calls);
   });
   test('a held relink reports no completed repair while preserving an earlier independently settled promotion', async () => {

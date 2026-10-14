@@ -1,3 +1,6 @@
+export class EmailConfigurationError extends Error {
+  constructor(message: string, readonly kind: 'disabled' | 'invalid') { super(message); }
+}
 /**
  * Email service, config, secret resolution, and orchestration.
  *
@@ -770,20 +773,20 @@ export class EmailService {
 
   private getValidatedInboxConfig(): EmailConfig {
     const config = readEmailConfig(this.deps.getInboxConfig ?? this.deps.getConfig);
-    if (!config.enabled) throw new Error('Email inbox reading is not enabled.');
+    if (!config.enabled) throw new EmailConfigurationError('Email inbox reading is not enabled.', 'disabled');
     const errors = validateEmailInboxConfig(config);
-    if (errors.length > 0) throw new Error(`Email inbox config is invalid:\n${errors.map(error => `  - ${error}`).join('\n')}`);
+    if (errors.length > 0) throw new EmailConfigurationError(`Email inbox config is invalid:\n${errors.map(error => `  - ${error}`).join('\n')}`, 'invalid');
     return config;
   }
 
   private getValidatedConfig(): EmailConfig {
     const config = readEmailConfig(this.deps.getConfig);
     if (!config.enabled) {
-      throw new Error('Email is not enabled. Set email.enabled = true in config.');
+      throw new EmailConfigurationError('Email is not enabled. Set email.enabled = true in config.', 'disabled');
     }
     const errors = validateEmailConfig(config);
     if (errors.length > 0) {
-      throw new Error(`Email config is invalid:\n${errors.map((e) => `  - ${e}`).join('\n')}`);
+      throw new EmailConfigurationError(`Email config is invalid:\n${errors.map((e) => `  - ${e}`).join('\n')}`, 'invalid');
     }
     return config;
   }

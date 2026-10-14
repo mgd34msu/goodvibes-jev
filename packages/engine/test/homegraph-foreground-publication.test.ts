@@ -167,8 +167,8 @@ for (const operation of ['reset', 'dispose'] as const) {
   });
 }
 
-for (const pageKind of ['passport', 'room'] as const) {
-  test(`manual ${pageKind} publication drains its same-space background pump before creating an artifact`, async () => {
+for (const pageKind of ['passport', 'room', 'reindex'] as const) {
+  test(`manual ${pageKind} operation drains its same-space background pump`, async () => {
     const root = mkdtempSync(join(tmpdir(), 'goodvibes-homegraph-foreground-'));
     const store = new KnowledgeStore({ dbPath: join(root, 'knowledge.sqlite') });
     const artifactStore = new ArtifactStore({ rootDir: join(root, 'artifacts') });
@@ -212,14 +212,18 @@ for (const pageKind of ['passport', 'room'] as const) {
       await entered.promise;
       const page = pageKind === 'passport'
         ? await service.refreshDevicePassport({ installationId: 'foreground-house', deviceId: 'reference-device' })
-        : await service.generateRoomPage({ installationId: 'foreground-house', areaId: 'living-room' });
-      expect(generatedArtifacts).toBeGreaterThan(0);
+        : pageKind === 'room'
+          ? await service.generateRoomPage({ installationId: 'foreground-house', areaId: 'living-room' })
+          : await service.reindex({ installationId: 'foreground-house', force: true });
       expect(backgroundSignal?.aborted).toBe(true);
       expect(backgroundDrained).toBe(true);
-      const source = page.source;
-      if (!source) throw new Error('Successful foreground publication omitted its source.');
-      expect(store.getSourceSnapshot({ id: source.id }).source).toEqual(source);
-      expect(artifactStore.get(page.artifact.id)).toBeDefined();
+      if ('artifact' in page) {
+        expect(generatedArtifacts).toBeGreaterThan(0);
+        const source = page.source;
+        if (!source) throw new Error('Successful foreground publication omitted its source.');
+        expect(store.getSourceSnapshot({ id: source.id }).source).toEqual(source);
+        expect(artifactStore.get(page.artifact.id)).toBeDefined();
+      } else expect(page.scanned).toBe(0);
     } finally {
       await service.dispose();
       if (backgroundSignal) await finished.promise;

@@ -97,6 +97,11 @@ function fixture(screening: Parameters<typeof researchScreeningFixture>[0] = {})
       const answers = fakePort((name, question) => {
         if (question.type === 'noul') return noulAnswer(0.001);
         if (question.type === 'choice') {
+          if (name === 'disposition' && !Object.hasOwn(question.criteria, 'act')) {
+            // A native read-only floor removes execution from the offered choices.
+            expect(Object.keys(question.criteria).sort()).toEqual(['defer_0', 'reject']);
+            return choiceAnswer(question, 'reject', 0.999);
+          }
           const label = name === 'disposition' ? 'act' : name === 'kind' ? 'read'
             : name === 'family' || name === 'capability' ? 'generic' : name === 'hazard' ? 'none' : undefined;
           if (label !== undefined && Object.hasOwn(question.criteria, label)) return choiceAnswer(question, label, 0.999);

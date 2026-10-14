@@ -118,7 +118,7 @@ describe('the reading', () => {
     expect(first.category).toBe('network'); expect(second).not.toBe(first);
     expect(owned.requests).toHaveLength(2);
     for (const request of owned.requests) {
-      expect(request.signal).toBe(signal); expect(request.beforeAttempt).toBe(beforeAttempt); expect(request.onRetry).toBe(onRetry);
+      expect(request.signal).toBe(signal); expect(request.beforeAttempt).toBeFunction(); request.beforeAttempt?.(); expect(request.onRetry).toBe(onRetry);
     }
     expect(await readFailure(evidence, 'test.shared')).toBe(cached); expect(shared.requests).toHaveLength(1);
   });

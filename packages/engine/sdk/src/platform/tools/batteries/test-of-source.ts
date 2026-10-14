@@ -1,3 +1,4 @@
+import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
 /**
  * `engine.tools.test-of-source`: analyze mode `test_find` looks for the test
  * of a source file among the project files that import it (code resolves
@@ -26,7 +27,6 @@ export const TEST_CANDIDATE_HEAD_LINES = 12;
 /** Most characters of one carried line. */
 export const MAX_JUDGED_TEST_LINE_CHARS = 200;
 
-const clip = (line: string): string => (line.length <= MAX_JUDGED_TEST_LINE_CHARS ? line : `${line.slice(0, MAX_JUDGED_TEST_LINE_CHARS)}...`);
 
 /** What the selection sees about the source: its path relative to the project. */
 export function testOfSourceContext(source: string): JsonValue {
@@ -35,9 +35,11 @@ export function testOfSourceContext(source: string): JsonValue {
 
 /** One importer as a candidate: its path, the lines importing the source, and its opening lines. */
 export function testOfSourceCandidate(file: string, importLines: readonly string[], lines: readonly string[]): Candidate {
+  assertJudgmentInput({ file, importLines, lines });
+  if (JSON.stringify({ file, importLines, lines }).length > 160_000) throw new JudgmentInputError('unsupported-input');
   return {
     id: file,
-    content: { file, importsSource: importLines.map(clip), opening: lines.slice(0, TEST_CANDIDATE_HEAD_LINES).map(clip) },
+    content: { file, importsSource: [...importLines], opening: [...lines] },
   };
 }
 

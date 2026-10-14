@@ -6,6 +6,7 @@ export interface RecordedArchetype {
   readonly description: string;
   readonly tools: readonly string[];
   readonly family: ArchetypeFamily | 'unknown';
+  readonly sourceDocument?: string;
 }
 export const recordedBuiltinArchetypes: readonly RecordedArchetype[] = [
   { name: 'orchestrator', description: 'Contract owner: represents a contract and carries its answer', tools: ['read', 'find', 'analyze', 'inspect', 'registry'], family: 'general' },
@@ -26,10 +27,14 @@ export function recordedFamilyPort(entries: readonly RecordedArchetype[], confid
     if (!match || question.type !== 'choice' || !object(state) || !Array.isArray(state.archetypes)) throw new Error('Unexpected archetype fixture request.');
     const entry: unknown = state.archetypes[Number(match[1])];
     if (!object(entry) || typeof entry.name !== 'string' || typeof entry.description !== 'string' || !Array.isArray(entry.tools)
-      || Object.keys(entry).sort().join(',') !== 'description,name,tools') throw new Error('Unexpected archetype fixture evidence.');
+      || typeof entry.isCustom !== 'boolean' || !['builtin', 'local-markdown'].includes(String(entry.origin))
+      || Object.keys(entry).some(key => !['name', 'description', 'tools', 'isCustom', 'origin', 'model', 'provider',
+        'systemPrompt', 'sourcePath', 'validationIssues', 'preview', 'includes', 'sections', 'sourceDocument'].includes(key))
+      || (entry.isCustom && typeof entry.sourceDocument !== 'string')) throw new Error('Unexpected archetype fixture evidence.');
     const expected = entries.find(candidate => candidate.name === entry.name);
     if (!expected || entry.description !== expected.description || JSON.stringify(entry.tools) !== JSON.stringify(expected.tools)
-      || state.archetypes.length !== entries.length) throw new Error('Unrecorded archetype fixture evidence.');
+      || state.archetypes.length !== entries.length
+      || (expected.sourceDocument !== undefined && entry.sourceDocument !== expected.sourceDocument)) throw new Error('Unrecorded archetype fixture evidence.');
     return choiceAnswer(question, expected.family, confidence);
   });
 }

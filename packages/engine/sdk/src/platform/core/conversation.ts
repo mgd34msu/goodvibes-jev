@@ -1,3 +1,4 @@
+import { prepareSystemMessagePresentation } from '../runtime/system-message-presentation.js';
 import type { RuntimeEventProvenance } from '../../events/occurrence.js';
 import type { ProviderMessage, ContentPart } from '../providers/interface.js';
 import type { ToolCall, ToolResult } from '../types/tools.js';
@@ -134,6 +135,7 @@ function isRedeliveredAssistantMessage(
 }
 
 export class ConversationManager {
+  private presentationLifetime = new AbortController();
   private messages: Message[] = [];
   private _title = '';
   private _titleSource: ConversationTitleSource = 'system';
@@ -316,6 +318,8 @@ export class ConversationManager {
   }
 
   public addSystemMessage(content: string, runtimeEvent?: RuntimeEventProvenance): void {
+    // The original remains visible immediately; only settled Jev fields decorate it.
+    void prepareSystemMessagePresentation(content, this.presentationLifetime.signal).catch(() => {});
     this.messages.push({ role: 'system', content,
       ...(runtimeEvent ? { runtimeEvent: { type: runtimeEvent.type, occurrenceId: runtimeEvent.occurrenceId } } : {}),
     });
@@ -434,6 +438,8 @@ export class ConversationManager {
   }
 
   public resetAll(): void {
+    this.presentationLifetime.abort();
+    this.presentationLifetime = new AbortController();
     this.messages = [];
     this._title = '';
     this._titleSource = 'system';
@@ -470,6 +476,7 @@ export class ConversationManager {
     if (!stored) return false;
     this.branches.set(this.currentBranch, cloneMessages(this.messages));
     this.messages = cloneMessages(stored);
+    for (const message of this.messages) if (message.role === 'system') void prepareSystemMessagePresentation(message.content, this.presentationLifetime.signal).catch(() => {});
     this.currentBranch = name;
     this.streamingMessageIndex = -1;
     this._messagesRevision++;
@@ -510,6 +517,7 @@ export class ConversationManager {
     titleSource?: ConversationTitleSource | undefined;
   }): void {
     this.messages = cloneMessages(data.messages ?? []);
+    for (const message of this.messages) if (message.role === 'system') void prepareSystemMessagePresentation(message.content, this.presentationLifetime.signal).catch(() => {});
     this._title = typeof data.title === 'string' ? data.title : '';
     this._titleSource = data.titleSource === 'user' || data.titleSource === 'system'
       ? data.titleSource

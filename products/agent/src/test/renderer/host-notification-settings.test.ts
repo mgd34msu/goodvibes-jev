@@ -58,8 +58,8 @@ test('an open host row observes external revocation and releases subscriptions o
   const handles = spyOn(config, 'getHostBooleanSetting').mockImplementation(key => {
     const handle = getHandle(key);
     return Object.freeze({ ...handle, subscribe: (callback: (value: boolean, previous: boolean) => void) => {
-      const stop = handle.subscribe(callback); activeListeners++;
-      return () => { activeListeners--; stop(); };
+      const stop = handle.subscribe(callback); if (key === KEY) activeListeners++;
+      return () => { if (key === KEY) activeListeners--; stop(); };
     } });
   });
   const open=()=> {

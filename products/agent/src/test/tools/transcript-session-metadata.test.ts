@@ -41,18 +41,34 @@ for (const changed of ['abort', 'session-manager']) test(`actual harness session
   let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
   let resume!: () => void; const paused = new Promise<void>(resolve => { resume = resolve; });
   const fake = fakePort(() => noulAnswer(0.99));
-  installJudgmentPort({ model: fake.port.model, async ask(request) { entered(); await paused; return fake.port.ask(request); } });
+  const tails: Array<ReturnType<typeof fake.port.ask>> = [];
+  installJudgmentPort({ model: fake.port.model, ask(request) {
+    const tail = (async () => { entered(); await paused; return fake.port.ask(request); })();
+    tails.push(tail); return tail;
+  } });
   const conversation = new ConversationManager(() => 100); conversation.addSystemMessage('[Approval] Waiting');
   const ctx = { platform: fixturePlatform(), session: { conversationManager: conversation, runtime: { sessionId: 'session' }, sessionManager: { list: () => [], search: () => [] } }, workspace: {} } as unknown as CommandContext;
   const tool = createAgentHarnessTool({ commandContext: ctx } as Parameters<typeof createAgentHarnessTool>[0]);
   const controller = new AbortController();
-  const result = tool.execute({ mode: 'sessions' }, { signal: controller.signal });
-  await started;
-  if (changed === 'abort') controller.abort(new Error('private cancellation reason'));
-  else { Object.defineProperty(ctx.session, 'sessionManager', { value: { list: () => [], search: () => [] } }); resume(); }
-  // Cancellation must settle even though the provider has not cooperated.
-  const answer = await result;
-  expect(answer.success).toBe(false); expect(JSON.stringify(answer)).not.toContain('private cancellation reason');
-  expect(JSON.stringify(answer)).not.toContain('"status":"available"');
-  resume();
+  let delivered = 0;
+  const outcome = tool.execute({ mode: 'sessions' }, { signal: controller.signal }).then(
+    value => { delivered++; return { status: 'resolved' as const, value }; },
+    (error: unknown) => ({ status: 'rejected' as const, error }));
+  try {
+    await started;
+    if (changed === 'abort') controller.abort(new Error('private cancellation reason'));
+    else { Object.defineProperty(ctx.session, 'sessionManager', { value: { list: () => [], search: () => [] } }); resume(); }
+    // Cancellation must settle even though the provider has not cooperated.
+    const answer = await outcome;
+    if (changed === 'abort') {
+      expect(answer.status).toBe('rejected');
+      if (answer.status !== 'rejected') throw new Error('Cancelled session read published a result.');
+      expect(answer.error).toBe(controller.signal.reason); expect(delivered).toBe(0);
+    } else {
+      expect(answer.status).toBe('resolved');
+      if (answer.status !== 'resolved') throw answer.error;
+      expect(answer.value.success).toBe(false);
+      expect(JSON.stringify(answer.value)).not.toContain('"status":"available"');
+    }
+  } finally { resume(); controller.abort(); await outcome; await Promise.allSettled(tails); }
 });

@@ -202,6 +202,7 @@ export {
 
 export {
   classifyTone,
+  DEFAULT_STYLE_PROFILE,
   composeDraftReply,
   countSentences,
   extractSenderName,

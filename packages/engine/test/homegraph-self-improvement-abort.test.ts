@@ -133,7 +133,7 @@ describe('Home Graph sync self-improvement cancellation', () => {
     });
     const passportId = homeGraphNodeId(spaceId, 'ha_device_passport', deviceId);
     const controller = new AbortController();
-    const abortingStore = Object.create(store) as KnowledgeStore;
+    const abortingStore = store;
     const publish = abortingStore.applyPreparedIngest.bind(abortingStore);
     abortingStore.applyPreparedIngest = (input, prepareGraph, options) => publish(input, async stage => {
       const graph = await prepareGraph(stage);
@@ -220,7 +220,7 @@ describe('Home Graph sync self-improvement cancellation', () => {
       metadata: {},
     });
     const controller = new AbortController();
-    const abortingStore = Object.create(store) as KnowledgeStore;
+    const abortingStore = store;
     const publish = abortingStore.applyPreparedIngest.bind(abortingStore);
     abortingStore.applyPreparedIngest = (input, prepareGraph, options) => publish(input, async stage => {
       const graph = await prepareGraph(stage);

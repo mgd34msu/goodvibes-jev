@@ -95,7 +95,7 @@ function validateHierarchySpec(spec: HierarchySpec): DecisionIdentity {
   const header = decisionHeader(spec);
   const positiveBeam = Number.isInteger(spec.beamWidth) && spec.beamWidth >= 1;
   if (!positiveBeam) throw new RangeError(`hierarchy ${spec.name}: beamWidth must be a positive integer`);
-  if (!(spec.confirmAt <= spec.actAt)) throw new RangeError(`hierarchy ${spec.name}: confirmAt must not exceed actAt`);
+  if (!(0 <= spec.confirmAt && spec.confirmAt <= spec.actAt && spec.actAt <= 1)) throw new RangeError(`hierarchy ${spec.name}: thresholds must satisfy 0 <= confirmAt <= actAt <= 1`);
   assertTree(spec.name, spec.tree);
   if (Object.keys(spec.tree).length === 0) throw new RangeError(`hierarchy ${spec.name}: the tree is empty`);
   const leaves = new Set(leafPaths(spec.tree).map((path) => path.join(' > ')));

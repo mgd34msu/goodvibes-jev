@@ -1,3 +1,5 @@
+import { validateContextBudget } from '@goodvibes-jev/judgment';
+import { assertJudgmentInput, JudgmentInputError } from '../../../gate/judgment-input.js';
 /**
  * `engine.compaction.collapse-keep`: which collapsed messages carry something
  * the continuation still depends on? The collapse strategy's handoff promises
@@ -47,7 +49,7 @@ const KEEP_CRITERIA = {
 } as const;
 
 /** Most characters of one message a request carries; longer messages are clipped with a note. */
-export const MAX_JUDGED_MESSAGE_CHARS = 6_000;
+export const MAX_JUDGED_MESSAGE_CHARS = 160_000;
 
 /** Pair requests in flight at once when a conversation needs more than one. */
 const REQUEST_CONCURRENCY = 4;
@@ -71,8 +73,11 @@ export interface CollapseKeep extends NamedDecision {
   select(port: JudgmentPort, entries: readonly KeepEntry[], options?: CallOptions): Promise<Map<number, YesNoReading>>;
 }
 
-const clipText = (text: string): string =>
-  text.length <= MAX_JUDGED_MESSAGE_CHARS ? text : `${text.slice(0, MAX_JUDGED_MESSAGE_CHARS)} [${text.length - MAX_JUDGED_MESSAGE_CHARS} more characters]`;
+function clipText(text: string): string {
+  assertJudgmentInput(text);
+  if (text.length > MAX_JUDGED_MESSAGE_CHARS) throw new JudgmentInputError('unsupported-input');
+  return text;
+}
 
 const lineFor = (entry: KeepEntry): string => `#${entry.number} ${clipText(entry.text)}`;
 const keyFor = (entry: KeepEntry): string => `keep_${entry.number}`;
@@ -149,7 +154,9 @@ export function defineCollapseKeep(spec: {
     ...header,
     async select(port, entries, options = {}) {
       if (entries.length === 0) return new Map();
-      const runs = packKeepRequests(entries);
+      assertJudgmentInput(entries);
+      const runs = packKeepRequests(structuredClone(entries));
+      for (const run of runs) validateContextBudget({ conversation: run.map(lineFor).join(SEPARATOR) }, Object.fromEntries(run.map(entry => [keyFor(entry), questionFor(entry)])));
       const read = await mapLimit(runs, REQUEST_CONCURRENCY, (run) => askRun(port, run, options));
       return new Map(read.flat());
     },

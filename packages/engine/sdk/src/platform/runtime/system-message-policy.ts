@@ -18,7 +18,7 @@ export type SystemMessageTarget = 'conversation' | 'panel' | 'both';
 
 /**
  * Whether the operator needs to see a system message now. Read by Jev
- * (engine.runtime.system-message-priority); a weak reading is 'low'.
+ * (engine.runtime.system-message-priority); an unsettled reading stays held.
  */
 export function classifySystemMessagePriority(message: string): Promise<SystemMessagePriorityLevel> {
   return readSystemMessagePriority(message, 'runtime.system-message-policy.priority');
@@ -76,3 +76,5 @@ export function resolveSystemMessageDelivery(
     ? { toPanel: true, toConversation: false }
     : { toPanel: false, toConversation: true };
 }
+
+export { prepareSystemMessagePresentation, peekSystemMessagePresentation, type SystemMessagePresentation, type SystemMessageSeverity } from './system-message-presentation.js';

@@ -1,7 +1,7 @@
 import type { CommandContext } from '../input/command-registry.ts';
 import { estimateModelBytes, fitAssessment, fitVerdictLabel, readHardwareProfileSync, REPRESENTATIVE_7B_PARAMS } from '../core/hardware-profile.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
-import { readLocalModelDetection, localModelDetection, localModelServerFacts, localModelServerHealthMap } from './agent-harness-local-model-endpoints.ts';
+import { withLocalModelRegistry, localModelDetection, localModelServerFacts, localModelServerHealthMap } from './agent-harness-local-model-endpoints.ts';
 import { deferredModelReadiness, deferredRecipeFit, localHardwareProfile, localRecipeReadinessScore, localRecipeStackId, scoreLocalModelRecipe } from './agent-harness-model-readiness.ts';
 import { localModelBenchmarkHistory, localModelBenchmarkHistoryFrom, localModelBenchmarkPlan, readLocalModelBenchmarkSnapshot, type LocalModelBenchmarkSnapshot, type LocalModelBenchmarkHistory } from './agent-harness-local-model-benchmarks.ts';
 import type { LocalModelDetection, LocalModelHardwareProfile, LocalModelRecipe, LocalModelRecipeFit, LocalModelSetupPlan, LocalModelBenchmarkEvidence, LocalModelServerHealthMap, ModelReadinessScore } from './agent-harness-model-routing-types.ts';
@@ -272,27 +272,29 @@ export async function readLocalModelCookbook(context: CommandContext, includePar
     options.signal?.throwIfAborted(); options.assertCurrent?.();
     return result;
   }
-  const detection = await readLocalModelDetection(context, options);
-  options.signal?.throwIfAborted(); options.assertCurrent?.();
-  const snapshot = benchmarkSnapshot ?? await readLocalModelBenchmarkSnapshot(context, options);
-  options.signal?.throwIfAborted(); options.assertCurrent?.();
-  const history = localModelBenchmarkHistoryFrom(snapshot, true);
-  const displayHistory = localModelBenchmarkHistoryFrom(snapshot, includeParameters);
-  const recipes = localModelRecipes(), hardware = localHardwareProfile(), evidence = history.evidence;
-  return withModelReadingSource({ recipes, hardware, detection, evidence, displayHistory }, options, async (facts, scoped) => {
-    const enriched: Record<string, unknown>[] = [];
-    for (const recipe of facts.recipes) {
-      const fit = await scoreLocalModelRecipe(recipe, facts.hardware, facts.detection, scoped);
-      scoped.assertCurrent?.();
-      const readiness = await localRecipeReadinessScore(recipe, fit, facts.detection.stacks.includes(localRecipeStackId(recipe)), facts.evidence, scoped);
-      scoped.assertCurrent?.();
-      enriched.push(describeLocalModelRecipe(recipe, facts.detection, facts.hardware, facts.evidence, includeParameters, fit, readiness));
-    }
-    // Explicit null handling: missing scores stay at the end and never become zero.
-    enriched.sort((a, b) => typeof a.fitScore !== 'number' ? typeof b.fitScore !== 'number' ? 0 : 1
-      : typeof b.fitScore !== 'number' ? -1 : b.fitScore - a.fitScore);
-    const health = await localModelServerHealthMap(context, includeParameters, scoped);
-    const result = cookbookSnapshot(context, includeParameters, enriched, facts.hardware, health, facts.detection, facts.displayHistory);
-    scoped.assertCurrent?.(); return result;
+  return withLocalModelRegistry(context, options, async registry => {
+    const detection = registry.detection;
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    const snapshot = benchmarkSnapshot ?? await readLocalModelBenchmarkSnapshot(context, options);
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    const history = localModelBenchmarkHistoryFrom(snapshot, true);
+    const displayHistory = localModelBenchmarkHistoryFrom(snapshot, includeParameters);
+    const recipes = localModelRecipes(), hardware = localHardwareProfile(), evidence = history.evidence;
+    return withModelReadingSource({ recipes, hardware, detection, evidence, displayHistory }, options, async (facts, scoped) => {
+      const enriched: Record<string, unknown>[] = [];
+      for (const recipe of facts.recipes) {
+        const fit = await scoreLocalModelRecipe(recipe, facts.hardware, facts.detection, scoped);
+        scoped.assertCurrent?.();
+        const readiness = await localRecipeReadinessScore(recipe, fit, facts.detection.stacks.includes(localRecipeStackId(recipe)), facts.evidence, scoped);
+        scoped.assertCurrent?.();
+        enriched.push(describeLocalModelRecipe(recipe, facts.detection, facts.hardware, facts.evidence, includeParameters, fit, readiness));
+      }
+      // Explicit null handling: missing scores stay at the end and never become zero.
+      enriched.sort((a, b) => typeof a.fitScore !== 'number' ? typeof b.fitScore !== 'number' ? 0 : 1
+        : typeof b.fitScore !== 'number' ? -1 : b.fitScore - a.fitScore);
+      const health = await localModelServerHealthMap(context, includeParameters, scoped, registry);
+      const result = cookbookSnapshot(context, includeParameters, enriched, facts.hardware, health, facts.detection, facts.displayHistory);
+      scoped.assertCurrent?.(); return result;
+    });
   });
 }

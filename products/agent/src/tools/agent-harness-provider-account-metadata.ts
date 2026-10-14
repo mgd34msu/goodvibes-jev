@@ -6,6 +6,11 @@ import { captureServiceReadSource, captureSubscriptionReadSource, listBuiltinSub
 import type { CommandContext } from '../input/command-registry.ts';
 import type { ProviderAccountRecord, ProviderAccountSnapshot } from '../runtime/provider-account-snapshot.ts';
 import { buildProviderAccountSnapshot } from '../runtime/provider-account-snapshot.ts';
+const nativeDateRoot = globalThis;
+const nativeOwnDescriptor = Object.getOwnPropertyDescriptor;
+const initialDateDescriptor = nativeOwnDescriptor(nativeDateRoot, 'Date');
+const nativeDate: DateConstructor | undefined = initialDateDescriptor && 'value' in initialDateDescriptor ? initialDateDescriptor.value : undefined;
+
 type ProviderCatalogContext = {
   readonly provider: Pick<CommandContext['provider'], 'providerRegistry'>;
   readonly platform: Pick<CommandContext['platform'], 'configManager' | 'serviceRegistry' | 'subscriptionManager'>;
@@ -62,7 +67,18 @@ async function loadSnapshot(context: ProviderCatalogContext, request?: ReturnTyp
   const list = subscriptions.list, listPending = subscriptions.listPending, get = subscriptions.get, getPending = subscriptions.getPending;
   const configuration = manager.getAutonomousPermissionSnapshot, incarnation = configuration.call(manager).incarnation;
   const environment = process.env, assertProcess = captureCatalogMethods(process, ['env']);
-  const clock = Date, assertGlobalClock = captureCatalogMethods(globalThis, ['Date']);
+  // The runtime global object can have a native proxy in its prototype chain.
+  // Retain its own Date slot directly; never inspect that proxy or accept a
+  // replacement constructor/accessor supplied by a caller.
+  const originalDate = nativeOwnDescriptor(nativeDateRoot, 'Date');
+  if (!nativeDate || !originalDate || !('value' in originalDate) || originalDate.value !== nativeDate) throw new ToolInputProjectionError('held');
+  const clock = nativeDate;
+  const assertGlobalClock = () => {
+    const current = nativeOwnDescriptor(nativeDateRoot, 'Date');
+    if (!current || !('value' in current) || current.value !== nativeDate
+      || current.enumerable !== originalDate.enumerable || current.configurable !== originalDate.configurable
+      || current.writable !== originalDate.writable) throw new ToolInputProjectionError('held');
+  };
   const assertClock = captureCatalogMethods(clock, ['now']), now = clock.now;
   const expirationPhase = (expiresAt: number | undefined) => {
     assertGlobalClock(); assertClock();

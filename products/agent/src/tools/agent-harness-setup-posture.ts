@@ -1,6 +1,6 @@
 import { captureSetupReadSource } from './agent-harness-setup-read-source.ts';
 import { selectHarnessCatalog } from './agent-harness-catalog-selection.ts';
-import { captureStatefulCatalogRequest, rankStatefulCatalog } from './agent-harness-stateful-catalog-source.ts';
+import { rankStatefulCatalog } from './agent-harness-stateful-catalog-source.ts';
 import { readAgentHostPairing } from '../runtime/connected-host-pairing-store.ts';
 import { resolveConnectedHostBaseUrl } from '../config/connected-host-dial.ts';
 import { join } from 'node:path';
@@ -27,8 +27,15 @@ import { setupHandoffsForItem } from './agent-harness-setup-handoffs.ts';
 import { collectServicePosture, collectSnapshot, lookupFromArgs, quoteRouteValue, readLimit, readString, safeFileMode, safeIso, summarizeLocalBehavior } from './agent-harness-setup-posture-utils.ts';
 
 function captureSetupCaller<T>(context: CommandContext, args: T, options: CatalogRankingOptions) {
-  const request = captureStatefulCatalogRequest(context, args, options, [], () => [captureSetupReadSource(context)]);
-  return captureAsyncHarnessInput(args, request.options);
+  const assertNative = captureSetupReadSource(context);
+  const caller = captureAsyncHarnessInput(args, options, true, [assertNative]);
+  return { ...caller,
+    // Browser/runtime and auth reads acquire their own complete native owners.
+    // Preserve caller restrictions there; join their guards with the setup
+    // observation before publishing the completed plan.
+    childOptions: { ...caller.options, assertCurrent: caller.assertCallerCurrent },
+    publish<R>(result: R): R { caller.retainSourceCurrent('agent.setup.sources'); return result; },
+  };
 }
 
 export async function setupPostureCatalogStatus(context: CommandContext, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
@@ -37,12 +44,12 @@ export async function setupPostureCatalogStatus(context: CommandContext, options
   caller.assertCurrent();
   const servicePosture = await collectServicePosture(context, { signal: caller.options.signal, assertCurrent: caller.assertCurrent });
   caller.assertCurrent();
-  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture, caller.options);
+  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture, caller.childOptions);
   caller.assertCurrent();
   const setupSmokeEvidence = latestSetupSmokeEvidence(context);
   const setupSmokeHistory = setupSmokeEvidenceHistory(context);
   const setupWizard = buildSetupWizard(plan, context);
-  return {
+  return caller.publish({
     modes: ['setup_posture', 'setup_item', 'setup_repair', 'setup_checkpoint', 'mark_setup_checkpoint', 'clear_setup_checkpoint', 'provision_connected_host_token', 'run_setup_smoke'],
     capabilities: deriveStep1Capabilities(snapshot).length,
     planItems: plan.length,
@@ -56,7 +63,7 @@ export async function setupPostureCatalogStatus(context: CommandContext, options
     setupSmokeEvidence,
     setupSmokeHistory,
     readOnly: true,
-  };
+  });
 }
 
 export async function setupRepairSummary(context: CommandContext, rawArgs: AgentHarnessSetupArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
@@ -65,13 +72,13 @@ export async function setupRepairSummary(context: CommandContext, rawArgs: Agent
   caller.assertCurrent();
   const servicePosture = await collectServicePosture(context, { signal: caller.options.signal, assertCurrent: caller.assertCurrent });
   caller.assertCurrent();
-  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture, caller.options);
+  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture, caller.childOptions);
   caller.assertCurrent();
   const setupWizard = buildSetupWizard(plan, context);
   const includeParameters = args.includeParameters === true;
   const target = await setupRepairTarget(plan, setupWizard, args, caller.options);
   caller.assertCurrent();
-  if ('error' in target) return target.error;
+  if ('error' in target) return caller.publish(target.error);
 
   const item = target.item;
   const decision = primarySetupRepairDecision(item);
@@ -81,7 +88,7 @@ export async function setupRepairSummary(context: CommandContext, rawArgs: Agent
     .slice(0, includeParameters ? 8 : 3)
     .map((handoff) => describeHandoffCard(handoff, includeParameters));
   const confirmedCandidates = confirmedRepairCandidates(item);
-  return {
+  return caller.publish({
     mode: 'setup_repair',
     capturedAt: new Date(snapshot.capturedAt).toISOString(),
     setupItemId: item.id,
@@ -119,7 +126,7 @@ export async function setupRepairSummary(context: CommandContext, rawArgs: Agent
       confirmation: 'Any returned confirmed-effect route still requires confirm:true and explicitUserRequest tied to the user request.',
       hostOwnership: 'GoodVibes Agent does not take ambient ownership of the GoodVibes host lifecycle. At boot it starts an installed-but-stopped host once through the platform service manager and reports it; beyond that, disconnected hosts use user-run bootstrap guidance, and reachable hosts use daemon receipts before lifecycle mutation.',
     },
-  };
+  });
 }
 
 export async function setupPostureSummary(context: CommandContext, rawArgs: AgentHarnessSetupArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
@@ -131,18 +138,19 @@ export async function setupPostureSummary(context: CommandContext, rawArgs: Agen
   const query = readString(args.query);
   const includeParameters = args.includeParameters === true;
   const all = deriveStep1Capabilities(snapshot);
-  const plan = await buildSetupPlan(context, snapshot, all, servicePosture, caller.options);
+  const plan = await buildSetupPlan(context, snapshot, all, servicePosture, caller.childOptions);
   caller.assertCurrent();
   const setupSmokeEvidence = latestSetupSmokeEvidence(context);
   const setupSmokeHistory = setupSmokeEvidenceHistory(context);
   const setupWizard = buildSetupWizard(plan, context);
-  const ranked = query ? await rankStatefulCatalog(all, query, item => ({ id: item.id, description: item.label, evidence: { item, snapshot, servicePosture, setupWizard, capabilities: all, plan, args } }), 'agent.setup.capabilities', caller.options) : all;
+  const rankingContext = { snapshot, servicePosture, setupWizard, capabilities: all, plan, args };
+  const ranked = query ? await rankStatefulCatalog(all, query, item => ({ id: item.id, description: item.label }), 'agent.setup.capabilities', caller.options, rankingContext) : all;
   caller.assertCurrent();
-  const rankedPlan = query ? await rankStatefulCatalog(plan, query, item => ({ id: item.id, description: item.label, evidence: { item, snapshot, servicePosture, setupWizard, capabilities: all, plan, args } }), 'agent.setup.plan', caller.options) : plan;
+  const rankedPlan = query ? await rankStatefulCatalog(plan, query, item => ({ id: item.id, description: item.label }), 'agent.setup.plan', caller.options, rankingContext) : plan;
   caller.assertCurrent();
   const filtered = ranked.slice(0, readLimit(args.limit, 100));
   const filteredPlan = rankedPlan.slice(0, readLimit(args.limit, 100));
-  return {
+  return caller.publish({
     capturedAt: new Date(snapshot.capturedAt).toISOString(),
     setupMarker: {
       scope: snapshot.acknowledgements.scope,
@@ -194,7 +202,7 @@ export async function setupPostureSummary(context: CommandContext, rawArgs: Agen
     returned: filtered.length,
     total: all.length,
     policy: 'Read-only setup/onboarding posture. Apply, import, auth, profile, channel, and setting mutations remain confirmation-gated through visible workspace, settings, slash-command, or first-class tool flows.',
-  };
+  });
 }
 
 export async function setupCheckpointSummary(context: CommandContext, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
@@ -203,10 +211,10 @@ export async function setupCheckpointSummary(context: CommandContext, options: C
   caller.assertCurrent();
   const servicePosture = await collectServicePosture(context, { signal: caller.options.signal, assertCurrent: caller.assertCurrent });
   caller.assertCurrent();
-  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture, caller.options);
+  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture, caller.childOptions);
   caller.assertCurrent();
   const setupWizard = buildSetupWizard(plan, context);
-  return {
+  return caller.publish({
     mode: 'setup_checkpoint',
     checkpoint: setupWizard._diagnostic.checkpoint,
     currentStep: setupWizard.currentStepId
@@ -225,7 +233,7 @@ export async function setupCheckpointSummary(context: CommandContext, options: C
       clear: DEFAULT_AGENT_SETUP_WIZARD_CLEAR_CHECKPOINT_ROUTE,
     },
     policy: 'Read-only checkpoint inspection. Saving or clearing the setup wizard checkpoint requires a confirmed route with explicit user request.',
-  };
+  });
 }
 
 export async function markSetupCheckpoint(context: CommandContext, args: Record<string, unknown>, options?: Parameters<Tool['execute']>[1]): Promise<Record<string, unknown>> {
@@ -548,39 +556,43 @@ export async function runSetupInstallSmoke(context: CommandContext, args: AgentH
 
 export async function describeHarnessSetupItem(context: CommandContext, rawArgs: AgentHarnessSetupArgs, options: CatalogRankingOptions = {}): Promise<SetupResolution> {
   const caller = captureSetupCaller(context, rawArgs, options), args = caller.args;
+  const publish = (result: SetupResolution): SetupResolution => {
+    caller.retainSourceCurrent('agent.setup.item.sources');
+    return result;
+  };
   const lookup = lookupFromArgs(args);
   if (!lookup) {
-    return {
+    return publish({
       status: 'missing_lookup',
       usage: 'setup_item requires setupItemId, target, or query. Use mode:"setup_posture" to inspect setup item ids.',
-    };
+    });
   }
   const snapshot = await collectSnapshot(context, caller.options);
   caller.assertCurrent();
   const servicePosture = await collectServicePosture(context, { signal: caller.options.signal, assertCurrent: caller.assertCurrent });
   caller.assertCurrent();
   const items = deriveStep1Capabilities(snapshot);
-  const plan = await buildSetupPlan(context, snapshot, items, servicePosture, caller.options);
+  const plan = await buildSetupPlan(context, snapshot, items, servicePosture, caller.childOptions);
   caller.assertCurrent();
   const normalized = lookup.input.toLowerCase();
   const exact = items.find((item) => item.id === lookup.input);
-  if (exact) return { status: 'found', item: describeItem(exact, snapshot, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'id' } }) };
+  if (exact) return publish({ status: 'found', item: describeItem(exact, snapshot, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'id' } }) });
   const exactPlan = plan.find((item) => item.id === lookup.input);
-  if (exactPlan) return { status: 'found', item: { ...describePlanItem(exactPlan, true), lookup: { ...lookup, resolvedBy: 'plan-id' } } };
+  if (exactPlan) return publish({ status: 'found', item: { ...describePlanItem(exactPlan, true), lookup: { ...lookup, resolvedBy: 'plan-id' } } });
   const insensitive = items.find((item) => item.id.toLowerCase() === normalized);
-  if (insensitive) return { status: 'found', item: describeItem(insensitive, snapshot, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'case-insensitive-id' } }) };
+  if (insensitive) return publish({ status: 'found', item: describeItem(insensitive, snapshot, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'case-insensitive-id' } }) });
   const insensitivePlan = plan.find((item) => item.id.toLowerCase() === normalized);
-  if (insensitivePlan) return { status: 'found', item: { ...describePlanItem(insensitivePlan, true), lookup: { ...lookup, resolvedBy: 'case-insensitive-plan-id' } } };
+  if (insensitivePlan) return publish({ status: 'found', item: { ...describePlanItem(insensitivePlan, true), lookup: { ...lookup, resolvedBy: 'case-insensitive-plan-id' } } });
   const entries = [
     ...items.map(item => ({ kind: 'capability' as const, item })),
     ...plan.map(item => ({ kind: 'plan' as const, item })),
   ];
   const selected = await selectHarnessCatalog(entries, lookup.input, entry => ({ id: `${entry.kind}:${entry.item.id}`, description: entry.item.label, evidence: { entry, snapshot, servicePosture, items, plan, args } }), caller.options, 'agent.setup.item');
   caller.assertCurrent();
-  if (selected?.kind === 'capability') return { status: 'found', item: describeItem(selected.item, snapshot, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'search' } }) };
-  if (selected?.kind === 'plan') return { status: 'found', item: { ...describePlanItem(selected.item, true), lookup: { ...lookup, resolvedBy: 'plan-search' } } };
-  return {
+  if (selected?.kind === 'capability') return publish({ status: 'found', item: describeItem(selected.item, snapshot, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'search' } }) });
+  if (selected?.kind === 'plan') return publish({ status: 'found', item: { ...describePlanItem(selected.item, true), lookup: { ...lookup, resolvedBy: 'plan-search' } } });
+  return publish({
     status: 'missing_lookup',
     usage: `Unknown setup item ${lookup.input}. Use mode:"setup_posture" to inspect setup item ids.`,
-  };
+  });
 }

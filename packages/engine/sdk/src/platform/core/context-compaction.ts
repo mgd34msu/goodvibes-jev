@@ -567,7 +567,9 @@ async function runCompaction(
   }
 
   // Resolved problems
-  if (problemsText) {
+  // EMPTY is the extraction protocol's exact sentinel. Preserve every other
+  // response in full; wording inside a useful finding must never erase it.
+  if (problemsText && problemsText.trim() !== 'EMPTY') {
     sections.push({
       id: 'resolved-problems',
       header: '## Resolved Problems',

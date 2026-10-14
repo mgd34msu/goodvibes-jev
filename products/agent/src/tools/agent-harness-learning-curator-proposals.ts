@@ -7,7 +7,7 @@ import { readLearningGrade, readLearningProposalTarget, readLearningMemoryClass 
 import { captureCatalogData, captureCatalogMethods, captureCatalogSnapshotGuard, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { LearningCandidate, LearningCandidateDraft, LearningProposalTarget, SessionInfoLike, VibeCandidateKind, LocalLearningCandidateDomain } from './agent-harness-learning-curator-types.ts';
-import { candidateBase, isReviewed, localRegistryModelRoute, localRegistryRoute, missingRequirementCount, routeValue } from './agent-harness-learning-curator-common.ts';
+import { candidateBase, isReviewed, learningPromotionReference, recordedPromotionReferences, localRegistryModelRoute, localRegistryRoute, missingRequirementCount, routeValue } from './agent-harness-learning-curator-common.ts';
 import { consolidationCandidatesForDomain } from './agent-harness-learning-curator-consolidation.ts';
 function captureCandidate(): LearningCandidateDraft {
   return {
@@ -140,7 +140,7 @@ async function noteBehaviorProposalCandidate(record: LearningRecord, source: Lea
   };
 }
 
-function completedWorkDetail(item: WorkPlanItem, notes: string): string {
+function completedWorkDetail(item: Omit<WorkPlanItem, 'createdAt' | 'updatedAt' | 'completedAt'>, notes: string): string {
   return [
     `Completed work: ${item.title}`,
     item.owner ? `Owner: ${item.owner}` : '',
@@ -150,7 +150,7 @@ function completedWorkDetail(item: WorkPlanItem, notes: string): string {
   ].filter(Boolean).join('\n');
 }
 
-async function workPlanCompletionCandidate(item: WorkPlanItem, source: LearningCuratorSource): Promise<LearningCandidateDraft | null> {
+async function workPlanCompletionCandidate(item: Omit<WorkPlanItem, 'createdAt' | 'updatedAt' | 'completedAt'>, source: LearningCuratorSource): Promise<LearningCandidateDraft | null> {
   if (item.status !== 'done') return null;
   const target = await readLearningProposalTarget({ origin: 'work_plan', record: item }, source.options);
   source.assertCurrent();
@@ -272,7 +272,7 @@ function extractMessageText(message: unknown): string {
   return '';
 }
 
-function sessionDetail(session: SessionInfoLike, loadedText: string): string {
+function sessionDetail(session: Omit<SessionInfoLike, 'timestamp'>, loadedText: string): string {
   return [
     `Saved session: ${session.title || session.name}`,
     `Session id: ${session.name}`,
@@ -462,8 +462,10 @@ export async function buildLearningCandidates(context: LearningCuratorNativeCont
   }
   for (const candidate of vibeHealthCandidates(source)) drafts.push({ candidate, record: { health: source.source.vibe, files: source.source.vibeEvidence } });
   if (drafts.length === 0) drafts.push({ candidate: captureCandidate(), record: { source: source.source, noUrgentCandidates: true } });
+  const promotedReferences = new Set(Object.values(source.libraries).flatMap(records => records.flatMap(record => recordedPromotionReferences(record.record))));
   const candidates: LearningCandidate[] = [];
   for (const { candidate, record } of drafts) {
+    if (candidate.proposalTarget && promotedReferences.has(learningPromotionReference(candidate.id))) continue;
     const grade = await readLearningGrade({ capturedAt: source.source.capturedAt, proposedUse: candidate.status, candidate, record }, source.options); source.assertCurrent();
     candidates.push({ ...candidate, scores: grade.scores, priority: grade.priority,
       ...(candidate.proposalTarget === 'memory' && candidate.proposalFields ? { proposalFields: { ...candidate.proposalFields, confidence: String(grade.confidence) } } : {}),

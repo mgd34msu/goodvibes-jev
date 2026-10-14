@@ -117,7 +117,12 @@ test.each(['settings', 'authentication', 'rename', 'shutdown'] as const)('actual
   const pending = f.wire(f.palette(), { token: paired.token }).catch((error: unknown) => error);
   try {
     await entered.promise;
-    if (kind === 'settings') f.daemon.services.configManager.set('judgment.timeoutMs', 11_000);
+    if (kind === 'settings') {
+      const config = f.daemon.services.configManager;
+      const next = config.get('judgment.timeoutMs') === 11_000 ? 12_000 : 11_000;
+      config.set('judgment.timeoutMs', next);
+      expect(config.get('judgment.timeoutMs')).toBe(next);
+    }
     if (kind === 'authentication') expect(f.daemon.services.pairingTokens.revoke(paired.id)).toBe(true);
     if (kind === 'rename') {
       const changed = await f.daemon.fetch(`/api/companion/chat/sessions/${f.chat.sessionId}`, { method: 'PATCH', body: JSON.stringify({ title: 'Changed synthetic title' }) });

@@ -275,7 +275,7 @@ export interface FleetAttemptsController {
 /** Map an AttemptError to an honest wire status: a missing judge is 501, every other precondition miss is 409. */
 function attemptGatewayError(error: unknown): never {
   if (error instanceof AttemptError) {
-    if (error.message.includes('no judge')) {
+    if (error.reason === 'judge-unavailable') {
       throw new GatewayVerbError(error.message, 'UNSUPPORTED', 501);
     }
     throw new GatewayVerbError(error.message, 'FAILED_PRECONDITION', 409);

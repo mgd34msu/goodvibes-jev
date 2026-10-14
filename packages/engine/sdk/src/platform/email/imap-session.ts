@@ -1,3 +1,4 @@
+export class ImapTimeoutError extends Error {}
 /**
  * The IMAP wire session: one persistent reader per connection, tagged
  * commands, untagged dispatch, and literals.
@@ -535,7 +536,7 @@ export class ImapSession implements ImapConnection {
 
       attach(waiter);
       if (deadline !== null && deadline !== undefined) {
-        timer = setTimeout(() => { waiter.reject(new Error(timeoutMessage)); }, deadline);
+        timer = setTimeout(() => { waiter.reject(new ImapTimeoutError(timeoutMessage)); }, deadline);
       }
       if (signal !== undefined) signal.addEventListener('abort', onAbort, { once: true });
     });

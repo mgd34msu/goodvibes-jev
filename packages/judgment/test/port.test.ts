@@ -69,6 +69,31 @@ describe('createSystemOnePort', () => {
     expect(result.latencyMs).toBeGreaterThanOrEqual(0);
   });
 
+  test.each([
+    [3.74, [0, 0.01, 0.02, 0.18, 0.79]],
+    [2.76, [0, 0, 0.23, 0.77]],
+    [1, [0.33, 0.33, 0.33]],
+  ])('accepts a live-style independently rounded score %s and distribution %s', async (value, probabilities) => {
+    const questions = { rating: score('Rate the fixture', probabilities.map((_, i) => `Level ${i}`) as [string, string, ...string[]]) };
+    const answer = { type: 'score', score: value, confidence: 0.77, probabilities: Object.fromEntries(probabilities.map((p, i) => [String(i), p])) };
+    const { port } = portWith(() => json(200, { model: 'jev-1.13.0', answers: { rating: answer }, usage: { input_tokens: 1, output_tokens: 1 } }));
+    expect((await port.ask({ state: 'synthetic', questions })).answers.rating).toMatchObject(answer);
+  });
+
+  test('rounded wire precision cannot excuse a materially inconsistent score', async () => {
+    const { port } = portWith(() => json(200, { model: 'jev-1.13.0', answers: {
+      rating: { type: 'score', score: 2.6, confidence: 0.77, probabilities: { 0: 0, 1: 0, 2: 0.23, 3: 0.77 } },
+    }, usage: { input_tokens: 1, output_tokens: 1 } }));
+    await expect(port.ask({ state: 'synthetic', questions: { rating: score('Rate', ['Low', 'Medium', 'High', 'Highest']) } })).rejects.toMatchObject({ kind: 'invalid-response' });
+  });
+
+  test('rejects the observed high-confidence score outside every wire-rounding mean', async () => {
+    const { port } = portWith(() => json(200, { model: 'jev-1.13.0', answers: {
+      rating: { type: 'score', score: 0.12, confidence: 0.93, probabilities: { 0: 0.98, 1: 0, 2: 0, 3: 0, 4: 0.02 } },
+    }, usage: { input_tokens: 1, output_tokens: 1 } }));
+    await expect(port.ask({ state: 'synthetic', questions: { rating: score('Rate', ['Absent', 'Weak', 'Partial', 'Strong', 'Complete']) } })).rejects.toMatchObject({ kind: 'invalid-response' });
+  });
+
   test('a per-call model override is sent and reported', async () => {
     const { port, calls } = portWith(() =>
       json(200, { model: 'jev-9.0.0', answers: { urgent: GOOD_ANSWERS.urgent }, usage: { input_tokens: 1, output_tokens: 1 } }),
@@ -106,6 +131,10 @@ describe('createSystemOnePort', () => {
     ['choice is not a maximum', { ...GOOD_ANSWERS, team: { ...GOOD_ANSWERS.team, probabilities: { billing: 0.1, technical: 0.9 } } }],
     ['score above the top level', { ...GOOD_ANSWERS, mood: { ...GOOD_ANSWERS.mood, score: 2.5 } }],
     ['score missing a level', { ...GOOD_ANSWERS, mood: { ...GOOD_ANSWERS.mood, probabilities: { '0': 1 } } }],
+    ['score has zero mass', { ...GOOD_ANSWERS, mood: { ...GOOD_ANSWERS.mood, probabilities: { '0': 0, '1': 0, '2': 0 } } }],
+    ['score has excess mass', { ...GOOD_ANSWERS, mood: { ...GOOD_ANSWERS.mood, probabilities: { '0': 1, '1': 1, '2': 1 } } }],
+    ['score contradicts its distribution', { ...GOOD_ANSWERS, mood: { ...GOOD_ANSWERS.mood, score: 2 } }],
+    ['score distribution is an array', { ...GOOD_ANSWERS, mood: { ...GOOD_ANSWERS.mood, probabilities: [0, 0.8, 0.2] } }],
   ])('treats %s as an invalid response', async (_label, answers) => {
     const { port } = portWith(() => json(200, { model: 'jev-1.13.0', answers, usage: { input_tokens: 1, output_tokens: 1 } }));
     const error = await port.ask({ state: 'x', questions: QUESTIONS }).catch((e: unknown) => e);
@@ -159,10 +188,10 @@ describe('endpoint configuration', () => {
     expect(endpointKind('https://api.typesafe.ai')).toBe('hosted');
   });
 
-  test('config from env pins the model and defaults to the hosted endpoint', () => {
+  test('config from env follows the latest stable model and defaults to the hosted endpoint', () => {
     const config = judgmentConfigFromEnv({ TYPESAFE_API_KEY: ' key \n' });
     expect(config.endpoint).toEqual({ kind: 'hosted', baseURL: 'https://api.typesafe.ai', apiKey: 'key' });
-    expect(config.model).toBe('jev-1.13.0');
+    expect(config.model).toBe('jev-latest');
   });
 
   test('a loopback TYPESAFE_BASE_URL selects the local model on the same protocol', () => {

@@ -1,3 +1,6 @@
+import { judgmentPort, readFailure } from '@goodvibes-jev/engine/errors';
+import { assertJudgmentInput } from '../gate/judgment-input.js';
+import { requireActingReading } from '../types/judgment-held.js';
 /**
  * Opening a connection: what it turned out to be able to do, the ways it can
  * fail to become readable, and what the owner is told when it does.

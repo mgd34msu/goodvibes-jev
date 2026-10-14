@@ -1,4 +1,4 @@
-import { createSystemOnePort, PINNED_MODEL, SqliteDecisionLog, withDecisionLog, type EntryType, type Questions } from '@goodvibes-jev/judgment';
+import { createSystemOnePort, DEFAULT_MODEL, SqliteDecisionLog, withDecisionLog, type EntryType, type Questions } from '@goodvibes-jev/judgment';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -125,13 +125,13 @@ describe('native semantic callers', () => {
         if (mode === 'revoke') authorityRevision = '2';
       },
     }) });
-    const real = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-key' }, model: PINNED_MODEL,
+    const real = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-key' }, model: DEFAULT_MODEL,
       timeoutMs: 1000, retry: { backoffInitialMs: 2, backoffMaxMs: 2, backoffJitter: 0 },
       fetch: async (_url, init) => {
         const request = JSON.parse(String(init?.body)) as { state: EntryType; questions: Questions };
         if ('disposition' in request.questions && ++attempts < (mode === 'recover' ? 3 : 100)) return Response.json({}, { status: 503 });
         const result = await scripted.port.ask(request);
-        return Response.json({ model: PINNED_MODEL, answers: result.answers, usage: { input_tokens: 1, output_tokens: 1 } });
+        return Response.json({ model: DEFAULT_MODEL, answers: result.answers, usage: { input_tokens: 1, output_tokens: 1 } });
       },
     });
     installJudgmentPort(withDecisionLog(real, log));

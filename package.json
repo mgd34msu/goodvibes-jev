@@ -73,6 +73,7 @@
     "observe:proof": "bun packages/engine/scripts/observe-proof.ts",
     "judgment:lint": "bun packages/engine/scripts/judgment-lint.ts",
     "judgment:calibrate:project": "bun packages/engine/scripts/project-calibration.ts",
+    "judgment:audit": "bun packages/engine/scripts/judgment-audit.ts",
     "flags:graduation": "bun packages/engine/scripts/flags-graduation.ts",
     "internal-id:check": "bun packages/engine/scripts/check-internal-identifiers.ts",
     "static-source:read": "bun packages/engine/scripts/read-static-source.ts",

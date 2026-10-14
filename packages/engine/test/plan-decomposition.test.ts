@@ -183,13 +183,10 @@ describe('decomposeGoal: fallback honesty', () => {
   test('malformed after one repair → heuristic fallback with reason + event', async () => {
     const { runner, calls } = scriptedRunner([completed('garbage'), completed('still garbage')]);
     const outcomes: DecompositionOutcome[] = [];
-    const result = await decomposeGoal(REQUEST, new AdaptivePlanner(), DECOMPOSE_INPUTS, AGENT_CONFIG, runner, {
+    await expect(decomposeGoal(REQUEST, new AdaptivePlanner(), DECOMPOSE_INPUTS, AGENT_CONFIG, runner, {
       onOutcome: (o) => outcomes.push(o),
-    });
+    })).rejects.toThrow('operation remains unexecuted');
     expect(calls).toHaveLength(2); // exactly one repair attempt
-    expect(result.proposal.decomposedBy).toBe('heuristic');
-    expect(result.proposal.workItems).toHaveLength(1); // singleItemProposal
-    expect(result.proposal.fallbackReason).toContain('malformed');
     expect(outcomes[0]).toMatchObject({ kind: 'fallback' });
   });
 
@@ -197,29 +194,20 @@ describe('decomposeGoal: fallback honesty', () => {
     const { runner, calls } = scriptedRunner([
       { status: 'cancelled', output: '', elapsedMs: 60_000, detail: 'wall-timeout 60000ms' },
     ]);
-    const result = await decomposeGoal(REQUEST, new AdaptivePlanner(), DECOMPOSE_INPUTS, AGENT_CONFIG, runner);
+    await expect(decomposeGoal(REQUEST, new AdaptivePlanner(), DECOMPOSE_INPUTS, AGENT_CONFIG, runner)).rejects.toThrow('operation remains unexecuted');
     expect(calls).toHaveLength(1); // no repair on cancellation
-    expect(result.proposal.decomposedBy).toBe('heuristic');
-    expect(result.proposal.fallbackReason).toContain('cancelled');
-    expect(result.proposal.fallbackReason).toContain('wall-timeout');
-    expect(result.proposal.elapsedMs).toBe(60_000);
   });
 
   test('failed run (spawn/agent error) → fallback reason "agent error"', async () => {
     const { runner } = scriptedRunner([{ status: 'failed', output: '', elapsedMs: 5, detail: 'boom' }]);
-    const result = await decomposeGoal(REQUEST, new AdaptivePlanner(), DECOMPOSE_INPUTS, AGENT_CONFIG, runner);
-    expect(result.proposal.decomposedBy).toBe('heuristic');
-    expect(result.proposal.fallbackReason).toContain('agent error');
-    expect(result.proposal.fallbackReason).toContain('boom');
+    await expect(decomposeGoal(REQUEST, new AdaptivePlanner(), DECOMPOSE_INPUTS, AGENT_CONFIG, runner)).rejects.toThrow('operation remains unexecuted');
   });
 
   test('a runner that throws → fallback reason "spawn error"', async () => {
     const runner: DecompositionRunner = {
       async run() { throw new Error('kaboom'); },
     };
-    const result = await decomposeGoal(REQUEST, new AdaptivePlanner(), DECOMPOSE_INPUTS, AGENT_CONFIG, runner);
-    expect(result.proposal.decomposedBy).toBe('heuristic');
-    expect(result.proposal.fallbackReason).toContain('spawn error');
+    await expect(decomposeGoal(REQUEST, new AdaptivePlanner(), DECOMPOSE_INPUTS, AGENT_CONFIG, runner)).rejects.toThrow('operation remains unexecuted');
   });
 
   test('dependency cycle is rejected → repair still cyclic → fallback', async () => {
@@ -230,21 +218,18 @@ describe('decomposeGoal: fallback honesty', () => {
       ],
     });
     const { runner, calls } = scriptedRunner([completed(cyclic), completed(cyclic)]);
-    const result = await decomposeGoal(REQUEST, new AdaptivePlanner(), DECOMPOSE_INPUTS, AGENT_CONFIG, runner);
+    await expect(decomposeGoal(REQUEST, new AdaptivePlanner(), DECOMPOSE_INPUTS, AGENT_CONFIG, runner)).rejects.toThrow('operation remains unexecuted');
     expect(calls).toHaveLength(2);
-    expect(result.proposal.decomposedBy).toBe('heuristic');
-    expect(result.proposal.fallbackReason).toContain('dependency-cycle');
   });
 
   test('no runner available → heuristic fallback with runtime reason', async () => {
-    const result = await decomposeGoal(REQUEST, new AdaptivePlanner(), DECOMPOSE_INPUTS, AGENT_CONFIG, null);
-    expect(result.proposal.decomposedBy).toBe('heuristic');
-    expect(result.proposal.fallbackReason).toContain('no planning agent runtime');
+    await expect(decomposeGoal(REQUEST, new AdaptivePlanner(), DECOMPOSE_INPUTS, AGENT_CONFIG, null)).rejects.toThrow('operation remains unexecuted');
   });
 });
 
 describe('decomposeGoal: configured / gated heuristic (not a fallback)', () => {
-  test('config mode "heuristic" forces the heuristic path, no agent, no fallbackReason', async () => {
+  test('configured single-item mode still requires Jev to select a single task', async () => {
+    readings.set({ strategy: 'single' });
     const { runner, calls } = scriptedRunner([completed(VALID_JSON, USAGE)]);
     const outcomes: DecompositionOutcome[] = [];
     const result = await decomposeGoal(REQUEST, new AdaptivePlanner(), DECOMPOSE_INPUTS, { mode: 'heuristic', bounds: BOUNDS }, runner, {

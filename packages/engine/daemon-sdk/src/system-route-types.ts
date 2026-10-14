@@ -209,6 +209,8 @@ export interface WorkspaceSwapManagerLike {
  */
 export interface CredentialStatusRecord {
   readonly key: string;
+  /** Provider associations declared by the credential catalog; never inferred from the key. */
+  readonly providerIds?: readonly string[] | undefined;
   /** A value exists in the shared store (or, for a named probe, in env). */
   readonly configured: boolean;
   /** The value/reference resolved to non-empty plaintext in-process. */

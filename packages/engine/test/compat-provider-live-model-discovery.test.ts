@@ -217,13 +217,15 @@ describe('OpenAICompatProvider.refreshModels (gateway live discovery)', () => {
     );
   });
 
-  test('a reading that does not settle keeps the model listed', async () => {
+  test('a reading that does not settle retains the known catalog without admitting an unclassified model', async () => {
     installJudgmentPort(chatPort(() => 0.5).port);
     await withMockedFetch(
       () => new Response(JSON.stringify({ data: [{ id: 'unclear-model' }] }), { status: 200 }),
       async () => {
         const result = await makeProvider().refreshModels();
-        expect(result.models).toEqual(['unclear-model']);
+        expect(result.models).not.toContain('unclear-model');
+        expect(result.models.length).toBeGreaterThan(0);
+        expect(result.source).not.toBe('live');
       },
     );
   });

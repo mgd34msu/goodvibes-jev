@@ -2,7 +2,7 @@ import { RuntimeEventBus, type ToolEvent } from '../sdk/src/platform/runtime/eve
 import { decideAutonomousTool as publicSelector } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { decideAutonomousTool } from '../sdk/src/platform/permissions/autonomous.ts';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { withDecisionLog, SqliteDecisionLog, createSystemOnePort, PINNED_MODEL, hashState, type JudgmentPort, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
+import { withDecisionLog, SqliteDecisionLog, createSystemOnePort, DEFAULT_MODEL, hashState, type JudgmentPort, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
 import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { gateReadingsPort, forgetGateReadings } from './_helpers/gate-readings.ts';
@@ -144,7 +144,7 @@ function installTransportFixture(semanticResponse: (attempt: number) => Response
   const gate = gateReadingsPort();
   const transport = createSystemOnePort({
     endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-fixture' },
-    model: PINNED_MODEL, timeoutMs: 1000, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
+    model: DEFAULT_MODEL, timeoutMs: 1000, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
     fetch: async (_url, init) => {
       const wire = JSON.parse(String(init?.body)) as JudgmentRequest<Questions>;
       let response;
@@ -154,7 +154,7 @@ function installTransportFixture(semanticResponse: (attempt: number) => Response
         const question = wire.questions.disposition!;
         response = { disposition: choiceAnswer(question, 'act', 0.97) };
       } else response = (await gate.port.ask(wire)).answers;
-      return Response.json({ model: PINNED_MODEL, answers: response, usage: { input_tokens: 1, output_tokens: 1 } });
+      return Response.json({ model: DEFAULT_MODEL, answers: response, usage: { input_tokens: 1, output_tokens: 1 } });
     },
   });
   installJudgmentPort(withDecisionLog(transport, log));
@@ -322,7 +322,7 @@ test('authority revocation during semantic repair stops its transport before ano
   const { deps, registry, changeDirectory } = fixture(); registry.unregister('exec'); let body = 0; let fetches = 0;
   registry.register({ definition: { name: 'exec', description: 'boolean fixture', parameters: { type: 'object', properties: { enabled: { type: 'boolean' } }, required: ['enabled'] } },
     execute: async () => { body++; return { success: true }; } });
-  const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic' }, model: PINNED_MODEL, timeoutMs: 1000,
+  const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic' }, model: DEFAULT_MODEL, timeoutMs: 1000,
     retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fetch: async () => { fetches++; changeDirectory(); return new Response('', { status: 503 }); } });
   installJudgmentPort(withDecisionLog(transport, log));
   await expect(executeToolCalls(deps, 'turn-1', [{ id: 'repair-revocation', name: 'exec', arguments: { enabled: 'please enable' } }])).rejects.toMatchObject({ kind: 'rejected' });
@@ -580,7 +580,7 @@ test('registration replacement during repair backoff stops the next transmission
   const { deps, registry } = fixture(); registry.unregister('exec'); let fetches = 0; let bodies = 0;
   const definition = { name: 'exec', description: 'boolean fixture', parameters: { type: 'object', properties: { enabled: { type: 'boolean' } }, required: ['enabled'] } };
   registry.register({ definition, execute: async () => { bodies++; return { success: true }; } });
-  const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic' }, model: PINNED_MODEL, timeoutMs: 1000,
+  const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic' }, model: DEFAULT_MODEL, timeoutMs: 1000,
     retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fetch: async () => {
       fetches++; registry.unregister('exec'); registry.register({ definition, execute: async () => { bodies++; return { success: true }; } });
       return new Response('', { status: 503 });
@@ -605,7 +605,7 @@ test('repair attempt validates registration after every host authority callback'
   const execute = async () => { bodies++; return { success: true }; };
   registry.register({ definition, execute });
   replace = () => { registry.unregister('exec'); registry.register({ definition, execute }); };
-  const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic' }, model: PINNED_MODEL, timeoutMs: 1000,
+  const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic' }, model: DEFAULT_MODEL, timeoutMs: 1000,
     retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fetch: async () => { fetches++; return new Response('', { status: 503 }); } });
   installJudgmentPort(withDecisionLog(transport, log));
   await expect(executeToolCalls(deps, 'turn-1', [{ id: 'repair-callback-replaced', name: 'exec', arguments: { enabled: 'please enable' } }])).rejects.toBeDefined();

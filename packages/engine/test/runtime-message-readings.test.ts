@@ -134,9 +134,9 @@ describe('system message priority', () => {
     expect(await classifySystemMessagePriority('[Scan] Found llama-server at 192.168.1.20:8080 (3 models)')).toBe('low');
   });
 
-  test('a weak high reading stays at the routine level', async () => {
+  test('a weak high reading is held instead of being classified as routine', async () => {
     installJudgmentPort(priorityPort('high', 0.4).port);
-    expect(await classifySystemMessagePriority('[Session] Saved session abc123')).toBe('low');
+    await expect(classifySystemMessagePriority('[Session] Saved session abc123')).rejects.toMatchObject({ name: 'JudgmentHeldError', outcome: 'held' });
   });
 
   test('reading with no port installed throws', async () => {

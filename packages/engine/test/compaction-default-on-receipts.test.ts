@@ -73,7 +73,7 @@ function makeHost(messages: ProviderMessage[]) {
 
 // Every compaction below keeps all of the conversation's substance and the
 // written text agrees with it, so only compression decides the guard.
-useCompactionQuality({ substance: 3, relation: 'supports' });
+useCompactionQuality({ substance: 3, relation: 'supports', selectedPositions: [1] });
 
 // ── default-on ───────────────────────────────────────────────────────────────
 
@@ -111,7 +111,7 @@ describe('guarded compactConversation', () => {
   test('good compaction returns an applied receipt and replaces the messages', async () => {
     const big: ProviderMessage[] = Array.from({ length: 60 }, (_, i) => ({
       role: i % 2 === 0 ? 'user' as const : 'assistant' as const,
-      content: `message ${i} ` + 'lorem ipsum dolor sit amet '.repeat(80),
+      content: `message ${i} ` + 'lorem ipsum dolor sit amet '.repeat(12),
     }));
     const { host, getReplaced } = makeHost(big);
     const receipt = await compactConversation(host, stubRegistry, 'test/model', 'auto');

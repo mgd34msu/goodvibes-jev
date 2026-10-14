@@ -8,6 +8,8 @@ export interface HomeGraphQualityInput {
   readonly questions: readonly HomeGraphQualityQuestion[];
 }
 export interface HomeGraphQualityReading {
+  /** Retains the original source and installed Jev authority through publication. */
+  assertCurrent(): void;
   readonly reference: string;
   readonly answers: Readonly<Partial<Record<HomeGraphQualityQuestion, boolean>>>;
   readonly provenance: Readonly<Partial<Record<HomeGraphQualityQuestion, {

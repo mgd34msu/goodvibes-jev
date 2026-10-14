@@ -36,7 +36,7 @@ function observationPort(expected: readonly ReturnType<typeof expectedPlan>[], a
   return fakePort((name, question, state) => {
     const found = expected.find(candidate => JSON.stringify(candidate.state) === JSON.stringify(state));
     if (!found || !(name in found.questions)) throw new Error('Unexpected source screening construction question');
-    expect(state).toEqual(found.state); expect(question).toEqual(found.questions[name]);
+    expect<unknown>(state).toEqual(found.state); expect<unknown>(question).toEqual(found.questions[name]);
     return noulAnswer(authored[name] ?? 0.5);
   });
 }
@@ -49,8 +49,8 @@ async function observe(parts: readonly string[], proposed: readonly ScreeningSpa
   expect(requests).toHaveLength(1);
   const request = requests[0];
   if (!request) throw new Error('Missing source screening construction request');
-  expect(request.model).toBe('jev-1.13.0');
-  expect(request.questions).toEqual(planned.questions); expect(request.state).toEqual(planned.state);
+  expect(request.model ?? port.model).toBe('jev-latest');
+  expect<unknown>(request.questions).toEqual(planned.questions); expect<unknown>(request.state).toEqual(planned.state);
   return request;
 }
 
@@ -60,6 +60,11 @@ test('original fixtures retain their exact text, ranges and truth with identical
       name: 'ordinary prose preserved', parts: ['The build passed.'], spans: [],
       expect: { complete: 'yes', precise: 'yes' },
       excerpts: [{ part: 0, segments: [{ kind: 'unselected', start: 0, end: 17, text: 'The build passed.' }] }],
+    },
+    {
+      name: 'private contact selected precisely', parts: ['person@example.test'], spans: [{ part: 0, start: 0, end: 19 }],
+      expect: { complete: 'yes', precise: 'yes' },
+      excerpts: [{ part: 0, segments: [{ kind: 'selected', start: 0, end: 19, text: 'person@example.test' }] }],
     },
     {
       name: 'private contact omitted', parts: ['My private contact is person@example.test.'], spans: [],
@@ -78,24 +83,25 @@ test('original fixtures retain their exact text, ranges and truth with identical
     expect: (typeof sourceScreeningVerification.fixtures)[number]['expect'];
     excerpts: ExpectedState['excerpts'];
   }>;
-  expect(sourceScreeningVerification.fixtures).toEqual(cases.map(({ name, parts, spans, expect, excerpts }) => ({
+  expect<unknown>(sourceScreeningVerification.fixtures).toEqual(cases.map(({ name, parts, spans, expect, excerpts }) => ({
     name, state: { parts, spans, excerpts }, expect,
   })));
   const expectedStates = cases.map(({ parts, spans, excerpts }) => ({ parts, spans, excerpts }));
   const expectedRequests = expectedStates.map(expectedPlan);
   const { port, requests } = observationPort(expectedRequests);
   const checks = await sourceScreeningVerification.checkFixtures(port);
-  expect(checks).toHaveLength(6);
-  expect(requests.map(request => request.state)).toEqual(expectedRequests.map(candidate => candidate.state));
+  expect(checks).toHaveLength(8);
+  expect<unknown>(requests.map(request => request.state)).toEqual(expectedRequests.map(candidate => candidate.state));
   expect(checks.filter(check => check.question?.startsWith('native.'))).toEqual([
     expect.objectContaining({ fixture: 'ordinary prose preserved', aspect: 'precise', got: 'yes', mechanism: 'native-geometry', reason: 'no-selected-characters' }),
+    expect.objectContaining({ fixture: 'private contact selected precisely', aspect: 'complete', got: 'yes', mechanism: 'native-geometry', reason: 'no-unselected-characters' }),
     expect.objectContaining({ fixture: 'private contact omitted', aspect: 'precise', got: 'yes', mechanism: 'native-geometry', reason: 'no-selected-characters' }),
     expect.objectContaining({ fixture: 'unrelated prose over-redacted', aspect: 'complete', got: 'yes', mechanism: 'native-geometry', reason: 'no-unselected-characters' }),
   ]);
   for (const fixture of cases) {
     const expected = { parts: fixture.parts, spans: fixture.spans, excerpts: fixture.excerpts };
     const request = await observe(fixture.parts, fixture.spans, expected);
-    expect(request.state).toEqual(expectedPlan(expected).state);
+    expect<unknown>(request.state).toEqual(expectedPlan(expected).state);
   }
 });
 
@@ -119,8 +125,8 @@ test('ordered excerpts preserve multiple parts, adjacent ranges, repeated text a
   };
   await observe(parts, spans, expected);
   for (const { part, segments } of expected.excerpts) {
-    expect(segments.map(segment => segment.text).join('')).toBe(parts[part]);
-    for (const segment of segments) expect(segment.text).toBe(parts[part]?.slice(segment.start, segment.end));
+    expect<unknown>(segments.map(segment => segment.text).join('')).toBe(parts[part]);
+    for (const segment of segments) expect<unknown>(segment.text).toBe(parts[part]?.slice(segment.start, segment.end));
   }
 });
 
@@ -176,7 +182,7 @@ test('complete additive state keeps the original context budget and never clips 
 
 test('policy version separates coverage and precision while retaining model, floor and bands', () => {
   expect(sourceScreeningVerification.version).toBe(7);
-  expect(sourceScreeningVerification.model).toBe('jev-1.13.0');
+  expect(sourceScreeningVerification.model).toBeUndefined();
   expect(sourceScreeningVerification.accuracyFloor).toBe(0.98);
   const band = { yes: { actAt: 0.98, confirmAt: 0.9 }, no: { actAt: 0.98, confirmAt: 0.9 } };
   expect(sourceScreeningVerification.items.complete.band).toEqual(band);
@@ -332,11 +338,11 @@ test('original source ABA guard survives exact excerpt response and rejects rest
 test('a mismatched actual model cannot combine with native precision to admit source', async () => {
   const parts = ['The build passed.'], original = authoredPort(parts, [], { complete: 1 });
   const port: JudgmentPort = { ...original.port, async ask(request) {
-    return { ...await original.port.ask(request), model: 'jev-9.0.0' };
+    return { ...await original.port.ask(request), model: 'other-model' };
   } };
   await expect(verifyScreeningSpans(captureScreeningSource(parts), [], {
     port, signal: new AbortController().signal, assertCurrent() {},
-  })).rejects.toThrow('required model');
+  })).rejects.toThrow('configured model');
 });
 
 test('synthetic fixture projection rejects unknown questions and incomplete original context', async () => {

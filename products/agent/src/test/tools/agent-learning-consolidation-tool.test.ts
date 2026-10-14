@@ -17,7 +17,7 @@ import {
 } from '../../tools/agent-learning-consolidation-tool.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import { judgmentPort, installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
 import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
 
@@ -27,8 +27,12 @@ beforeEach(() => {
   log = new SqliteDecisionLog(':memory:');
   previousPort = installJudgmentPort(withDecisionLog(fakePort((name, question) => {
     if (name === 'match') return noulAnswer(0.99);
+    if (question.type === 'score' && ['usefulness', 'freshness', 'source_quality', 'risk', 'priority', 'confidence', 'link'].includes(name)) {
+      return scoreAnswer(question, name === 'risk' ? 0 : name === 'link' ? 2 : 4, 0.999);
+    }
+    if ((name === 'same_record' || name.startsWith('fits_')) && question.type === 'noul') return noulAnswer(0.999);
     if (question.type === 'choice') {
-      const label = name === 'disposition' ? 'act' : name === 'kind' ? 'read' : name === 'hazard' ? 'none' : 'generic';
+      const label = Object.hasOwn(question.criteria, '0') ? '0' : name === 'disposition' ? 'act' : name === 'kind' ? 'read' : name === 'hazard' ? 'none' : 'generic';
       return choiceAnswer(question, label, 0.999);
     }
     if (question.type === 'noul') return noulAnswer(0.001);
@@ -125,6 +129,7 @@ describe('agent_learning_consolidation tool', () => {
     try {
       const ids = seedDuplicateSkills(fixture.paths);
       const preview = await fixture.rawTool.execute({ mode: 'preview', query: 'release checklist' });
+      expect(preview).toMatchObject({ success: true });
       const value: unknown = JSON.parse(String(preview.output));
       if (!value || typeof value !== 'object' || !('candidateId' in value) || typeof value.candidateId !== 'string') throw new Error('Missing consolidation candidate.');
       const args = { mode: 'merge', candidateId: value.candidateId, confirm: true, explicitUserRequest: 'Caller assertion' };
@@ -177,7 +182,7 @@ describe('agent_learning_consolidation tool', () => {
     } finally { fixture.cleanup(); rmSync(outside, { recursive: true, force: true }); }
   });
 
-  test('previews and applies duplicate consolidation phases with receipts', async () => {
+  test('retains the selected survivor and applies reversible duplicate consolidation phases with receipts', async () => {
     const fixture = await makeFixture();
     try {
       const ids = seedDuplicateSkills(fixture.paths);
@@ -207,25 +212,11 @@ describe('agent_learning_consolidation tool', () => {
         mode: 'merge',
         candidateId: previewJson.candidateId,
       });
-      expect(merged.success).toBe(true);
-      const mergedJson = JSON.parse(merged.output ?? '{}') as {
-        readonly receipt: { readonly receiptId: string; readonly rollbackRoute: string };
-      };
-      expect(mergedJson.receipt.receiptId).toContain('lcon-merge');
-      expect(mergedJson.receipt.rollbackRoute).toContain('mode:"rollback"');
-      let survivor = AgentSkillRegistry.fromShellPaths(fixture.paths).get(ids.survivorId);
-      expect(survivor?.description).toContain('UX inventory');
-      expect(survivor?.tags).toContain('ux-inventory');
-      expect(survivor?.triggers).toContain('ux');
-
-      const rollbackMerge = await fixture.tool.execute({
-        mode: 'rollback',
-        receiptId: mergedJson.receipt.receiptId,
-        confirm: true,
-        explicitUserRequest: 'Undo the survivor merge.',
-      });
-      expect(rollbackMerge.success).toBe(true);
-      survivor = AgentSkillRegistry.fromShellPaths(fixture.paths).get(ids.survivorId);
+      expect(merged.success).toBe(false);
+      expect(merged.error).toContain('no survivor merge fields');
+      // Same-entity and survivor-selection readings do not authorize new
+      // synthesized guidance, tags, or executable triggers.
+      const survivor = AgentSkillRegistry.fromShellPaths(fixture.paths).get(ids.survivorId);
       expect(survivor?.description).toBe('Run package verification before release.');
       expect(survivor?.tags).toEqual(['release']);
       expect(survivor?.triggers).toEqual(['release']);

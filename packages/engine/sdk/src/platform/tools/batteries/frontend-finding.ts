@@ -1,3 +1,4 @@
+import { completeJudgmentView } from './complete-view.js';
 /**
  * `engine.tools.frontend-finding`: the readings behind the inspect tool's
  * frontend analyzers (tools/inspect/frontend.ts). Code finds the candidates
@@ -43,27 +44,27 @@ export type ZIndexUse = { line: number; text: string; before: string[]; after: s
 
 /** What the stacking reading sees: the file, one z-index value, and each line that sets it. */
 export function stackingView(file: string, lines: readonly string[], value: string, lineNumbers: readonly number[]): { file: string; value: string; uses: ZIndexUse[] } {
-  return {
+  return completeJudgmentView({
     file,
     value,
     uses: lineNumbers.map((line) => ({
       line,
       text: lines[line - 1] ?? '',
-      before: lines.slice(Math.max(0, line - 1 - FRONTEND_CONTEXT_LINES), line - 1),
-      after: lines.slice(line, line + FRONTEND_CONTEXT_LINES),
+      before: lines.slice(0, line - 1),
+      after: lines.slice(line),
     })),
-  };
+  });
 }
 
 /** What a line reading sees: the file, the candidate line, and the lines around it. */
 export function frontendLineView(file: string, lines: readonly string[], index: number, extra: Record<string, string> = {}): Record<string, string | string[]> {
-  return {
+  return completeJudgmentView({
     file,
     ...extra,
     line: lines[index] ?? '',
-    before: lines.slice(Math.max(0, index - FRONTEND_CONTEXT_LINES), index),
-    after: lines.slice(index + 1, index + 1 + FRONTEND_CONTEXT_LINES),
-  };
+    before: lines.slice(0, index),
+    after: lines.slice(index + 1),
+  });
 }
 
 const LOW = STAKES_BANDS.low.yesNo;
@@ -129,7 +130,7 @@ export const frontendFinding = defineBattery({
       LOW,
     ),
     omits_dependency: yesNo(
-      '`code` is a React useEffect, useMemo or useCallback call from `file`. Does its dependency array leave out a value from the component scope that the callback reads: a prop, state value, or variable or function declared in the component body? Values declared inside the callback, imports, module constants, globals, and state setter functions do not need to be listed.',
+      '`code` is a React useEffect, useMemo or useCallback call from `file`. When supplied, read `completeFile` and `targetLine` to resolve the target call and its bindings; context elsewhere is not another target. Does its dependency array leave out a value from the component scope that the callback reads: a prop, state value, or variable or function declared in the component body? Values declared inside the callback, imports, module constants, globals, and state setter functions do not need to be listed.',
       LOW,
     ),
     overflow_problem: yesNo(

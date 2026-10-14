@@ -6,7 +6,7 @@
  */
 import type { RouteTier } from './tiers.js';
 
-/** The tier each difficulty level asks for when the tier reading itself is too unsure to act on (levels 0 to 3). */
+/** @deprecated Historical mapping; the route planner now holds unsettled tier readings. */
 export const TIER_FOR_DIFFICULTY: readonly RouteTier[] = ['economy', 'standard', 'premium', 'premium'];
 
 /** The lowest tier each risk level allows (levels 0 to 3): costly mistakes are not handed to the smallest models. */
@@ -23,9 +23,8 @@ export const TIER_FLOOR_FOR_PURPOSE: Readonly<Record<string, RouteTier>> = {
 };
 
 /**
- * The lowest tier for a request not written in English. Jev reads English
- * best (docs.typesafe.ai, language support), so a non-English request whose
- * tier reading is not strong enough to act on is not sent below standard.
+ * @deprecated Historical uncertainty floor. All required routing readings
+ * must now settle before a tier can be composed, in every language.
  */
 export const TIER_FLOOR_FOR_UNSURE_NON_ENGLISH: RouteTier = 'standard';
 

@@ -40,7 +40,7 @@ for (const reader of readers) for (const scenario of ['approximate', 'missing ma
       if (!choice) throw new Error('Unexpected choice fixture');
       const other = Object.keys(question.criteria).find(key => key !== choice);
       const probabilities = Object.fromEntries(Object.keys(question.criteria).map(key => [key,
-        key === choice ? (scenario === 'nonmaximal' ? 0.1 : scenario === 'missing mass' ? 0.98 : 0.99)
+        key === choice ? (scenario === 'nonmaximal' ? 0.1 : scenario === 'missing mass' ? 0.9 : 0.99)
           : scenario === 'nonmaximal' && key === other ? 0.89 : 0]));
       return { type: 'choice', choice, confidence: 0.97, probabilities };
     });

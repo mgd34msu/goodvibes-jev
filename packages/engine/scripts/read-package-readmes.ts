@@ -47,7 +47,7 @@ for (const dir of packageDirs) {
   }
   const run = await packageReadme.run(port, state, { site: SITE, only: asked });
   const answers = Object.fromEntries(asked.map((question) => [question, storedAnswer(run.readings[question])]));
-  readings[hash] = { subject: `${dir}/README.md`, answers };
+  readings[hash] = { subject: `${dir}/README.md`, answers, requestedModel: run.result.requestedModel, model: run.result.model };
   read += 1;
 }
 

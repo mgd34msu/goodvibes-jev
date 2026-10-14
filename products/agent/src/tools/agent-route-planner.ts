@@ -39,8 +39,6 @@ const assertDeclarationMethods = captureCatalogMethods(Array.prototype, ['flatMa
 
 export type AgentRoutePlannerArgs = TaskRouteArgs;
 export type AgentRouteCandidate = TaskRouteCandidate;
-/** Legacy candidate builders remain accounted for, but neither live caller uses them. */
-export type RouteCandidateDraft = TaskRouteDraft & { readonly score: number };
 
 export interface AgentTaskRouteSources {
   readonly channelRegistry?: Parameters<typeof channelTargetNamedIds>[0];
@@ -100,7 +98,7 @@ export async function planAgentTaskRoute(
     assertCurrent();
     const memory = externalMemoryProviderCatalog(await externalMemoryLiveProviderRecords(context, readingOptions), await externalMemoryReceiptEvidence(context, readingOptions));
     readingOptions.assertCurrent?.();
-    const envelope = await listHarnessModes({ limit: 1000 });
+    const envelope = await listHarnessModes({ limit: 1000 }, readingOptions);
     readingOptions.assertCurrent?.();
     const modes: Record<string, unknown>[] = [];
     if (!Array.isArray(envelope.modes)) throw new ToolInputProjectionError('held');
@@ -109,10 +107,11 @@ export async function planAgentTaskRoute(
       modes.push(Object.fromEntries(Object.entries(mode)));
     }
     freezeRouteDeclarations(modes);
+    // The canonical planner's authority already fences readingOptions before
+    // and after its own source projection. Preserve that complete authority.
     const rankOptions = (current: JudgmentReadingOptions = {}): CatalogRankingOptions => ({ ...readingOptions,
-      ...(current.signal ? { signal: current.signal } : {}), assertCurrent: () => {
-        readingOptions.assertCurrent?.(); current.assertCurrent?.();
-      } });
+      ...(current.signal ? { signal: current.signal } : {}),
+      assertCurrent: current.assertCurrent ?? readingOptions.assertCurrent });
     const plan = await planTaskRoute(protectedArgs, {
       namedIds: {
         ...(providers ? { modelProvider: () => modelProviderNamedIds(providers) } : {}),

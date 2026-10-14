@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { createSystemOnePort, PINNED_MODEL, type JudgmentConfig, type JudgmentPort, type Questions } from '@goodvibes-jev/judgment';
-import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { createSystemOnePort, DEFAULT_MODEL, type JudgmentConfig, type JudgmentPort, type Questions } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { withPublicErrorText } from '../helpers/user-error-reading.ts';
 import type { CreateAutomationJobInput } from '@goodvibes-jev/engine/sdk/platform/automation';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
@@ -18,6 +18,7 @@ function deferred<T = void>() { let resolve!: (value: T) => void; let reject!: (
 function choices(parts: Record<string, string>) {
   const values: Record<string, string> = { format: 'natural', ...parts };
   return fakePort((name, question) => {
+    if (question.type === 'noul' && ['complete', 'timing', 'conditions'].includes(name)) return noulAnswer(0.01);
     const value = values[name];
     if (value === undefined) throw new Error(`Unexpected schedule question: ${name}`);
     return choiceAnswer(question, value, 0.99);
@@ -44,12 +45,13 @@ async function enteredRead(f: ReturnType<typeof context>, port: JudgmentPort) {
   return { pending, release };
 }
 function transport(fetch: NonNullable<JudgmentConfig['fetch']>) {
-  return createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic' }, model: PINNED_MODEL, timeoutMs: 1000,
+  return createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic' }, model: DEFAULT_MODEL, timeoutMs: 1000,
     retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fetch });
 }
 function wireAnswer(questions: Questions, parts = interval) {
   const values: Record<string, string> = { format: 'natural', ...parts };
-  return Response.json({ model: PINNED_MODEL, answers: Object.fromEntries(Object.entries(questions).map(([name, q]) => {
+  return Response.json({ model: DEFAULT_MODEL, answers: Object.fromEntries(Object.entries(questions).map(([name, q]) => {
+    if (q.type === 'noul' && ['complete', 'timing', 'conditions'].includes(name)) return [name, noulAnswer(0.01)];
     const value = values[name];
     if (value === undefined) throw new Error(`Unexpected schedule wire question: ${name}`);
     return [name, choiceAnswer(q, value, 0.99)];
@@ -63,7 +65,7 @@ describe('registered /schedule when owns Jev reading before createJob', () => {
     expect(f.jobs).toHaveLength(1);
     expect(f.jobs[0]!.schedule).toEqual({ kind: 'cron', expression: '0 9 * * *', timezone: 'Asia/Tokyo' });
     expect(f.printed.join('\n')).toContain('0 9 * * * [Asia/Tokyo]');
-    expect(jev.requests.map(request => Object.keys(request.questions))).toEqual([['format'], ['shape'], ['hour', 'minute']]);
+    expect(jev.requests.map(request => Object.keys(request.questions))).toEqual([['format'], ['shape'], ['hour', 'minute'], ['complete', 'timing', 'conditions']]);
     expect(jev.requests[0]?.state).toBe('at nine every morning');
     expect(jev.requests[2]?.state).toMatchObject({ phrase: 'at nine every morning', timezone: 'Asia/Tokyo' });
   });
@@ -84,7 +86,7 @@ describe('registered /schedule when owns Jev reading before createJob', () => {
     await f.registry.execute('sched', args(), f.ctx); expect(f.jobs).toEqual([]);
     pending.release.resolve(); await pending.pending;
     expect(f.jobs).toHaveLength(1);
-    expect(jev.requests.map(request => Object.keys(request.questions))).toEqual([['format'], ['shape'], ['quantity', 'unit']]);
+    expect(jev.requests.map(request => Object.keys(request.questions))).toEqual([['format'], ['shape'], ['quantity', 'unit'], ['complete', 'timing', 'conditions']]);
   });
   test.each(['cancel', 'session', 'shutdown', 'superseded'] as const)('%s after the read started creates zero old jobs', async cause => {
     const f = context(); const jev = choices(interval); const pending = await enteredRead(f, jev.port);
@@ -127,7 +129,7 @@ describe('registered /schedule when owns Jev reading before createJob', () => {
       return wireAnswer((JSON.parse(String(init?.body)) as { questions: Questions }).questions);
     }));
     await f.registry.execute('schedule', args(), f.ctx);
-    expect(calls).toBe(5); expect(f.jobs).toHaveLength(1); expect(f.printed.join('\n')).toContain('Waiting for Jev');
+    expect(calls).toBe(6); expect(f.jobs).toHaveLength(1); expect(f.printed.join('\n')).toContain('Waiting for Jev');
   });
   test('real shared retry is immediately cancelled before creation, even when fetch ignores its signal', async () => {
     const f = context(); const entered = deferred(); const held = deferred<Response>();

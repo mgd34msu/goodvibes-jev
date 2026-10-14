@@ -1,3 +1,4 @@
+import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
 /**
  * judged-views.ts
  *
@@ -24,7 +25,7 @@ import type { ProviderMessage } from '../../providers/interface.js';
  */
 export const VIEW_BUDGET_CHARS = 60_000;
 
-/** Characters each rendered entry costs beyond its body (position label, clip note). */
+/** Characters each rendered entry costs beyond its body (position label). */
 const ENTRY_OVERHEAD_CHARS = 40;
 
 /** The shortest body an entry is clipped to before the oldest source messages are left out instead. */
@@ -32,9 +33,9 @@ const MIN_ENTRY_CHARS = 160;
 
 /** The compaction as the judgment requests see it. */
 export interface CompactionViews {
-  /** The pre-compaction conversation, every message numbered (clipped to fit). */
+  /** The pre-compaction conversation, every message numbered (complete or refused). */
   readonly source: string;
-  /** The compacted conversation: written messages in full (clipped to fit), carried runs named by position. */
+  /** The compacted conversation: written messages in full (complete or refused), carried runs named by position. */
   readonly compacted: string;
   /** Only the text the compaction wrote, which is what it claims about the conversation; empty when it wrote nothing. */
   readonly written: string;
@@ -129,13 +130,16 @@ export function compactionViews(
   output: readonly ProviderMessage[],
   budget: number = VIEW_BUDGET_CHARS,
 ): CompactionViews {
+  assertJudgmentInput({ input, output });
   const carriedFrom = matchCarried(input, output);
 
   const sourceEntries: Entry[] = input.map((msg) => ({ body: renderMessage(msg), droppable: true, omitted: false }));
   const writtenEntries = output.map((msg, index) => (carriedFrom[index]! >= 0
     ? undefined
     : { body: renderMessage(msg), droppable: false, omitted: false }));
-  const cap = fit([...sourceEntries, ...writtenEntries.filter((entry): entry is Entry => entry !== undefined)], budget);
+  const entries = [...sourceEntries, ...writtenEntries.filter((entry): entry is Entry => entry !== undefined)];
+  if (!Number.isFinite(budget) || budget < 1 || costAt(entries, Infinity) > budget) throw new JudgmentInputError('unsupported-input');
+  const cap = Infinity; // Judgment evidence stays complete. Handoff formatting uses fit separately.
 
   const sourceLines: string[] = [];
   let omittedFrom = -1;

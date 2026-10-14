@@ -1,3 +1,4 @@
+import presentationRequests from '../fixtures/e2e-judgments/presentation.json';
 import nativeRoute from '../fixtures/e2e-judgments/native-route.json';
 import nativeTurn from '../fixtures/e2e-judgments/native-turn.json';
 import conversationRoute from '../fixtures/e2e-judgments/conversation-route.json';
@@ -43,7 +44,29 @@ function matchesCancelledTurnTiming(body: unknown): boolean {
 }
 
 /** Exact captured synthetic requests, never an approval/classification shortcut. */
-export function e2eJudgmentAnswers(body: unknown): { kind: 'tier' | 'identity' | 'route' | 'turn' | 'native-route' | 'native-turn' | 'cancelled-turn-timing' | 'cancelled-turn-pending'; answers: unknown } | undefined {
+export function e2eJudgmentAnswers(body: unknown, ownedRoot?: string): { kind: 'presentation' | 'tier' | 'identity' | 'route' | 'turn' | 'native-route' | 'native-turn' | 'cancelled-turn-timing' | 'cancelled-turn-pending'; answers: unknown } | undefined {
+  if (stable(body).includes('<owned-fixture-root>')) return undefined;
+  const presentationShape = (value: unknown, root?: string) => {
+    const discovery = stable(value).replace(/\/tmp\/[^\s"]+\/home\/\.goodvibes\/agent\/discovered-providers\.json/g, '<fixture-home>/discovered-providers.json');
+    const wire = root ? discovery.split(JSON.stringify(root).slice(1, -1)).join('<owned-fixture-root>') : discovery;
+    // Only the two recorded native status formats parameterize their generated
+    // UUIDs. Keep exact prose, complete questions and within-message equality.
+    const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+    return wire.replace(new RegExp(`"(?:requestId ${uuid} · inputId ${uuid}|Native session: hosted-${uuid})"`, 'g'), text => {
+      const ids = new Map<string, string>();
+      return text.replace(new RegExp(uuid, 'g'), id => {
+        if (!ids.has(id)) ids.set(id, `<native-uuid-${ids.size}>`);
+        return ids.get(id)!;
+      });
+    });
+  };
+  if (presentationRequests.some(request => presentationShape(request) === presentationShape(body, ownedRoot))) {
+    const answers = Object.fromEntries(Object.entries(presentationRequests[0]!.questions).map(([name, question]) => {
+      const chosen = name === 'activity' ? 'system' : name === 'severity' ? 'info' : 'system_notice';
+      return [name, { type: 'choice', choice: chosen, confidence: 1, probabilities: Object.fromEntries(Object.keys(question.criteria).map(key => [key, key === chosen ? 1 : 0])) }];
+    }));
+    return { kind: 'presentation', answers };
+  }
   const serialized = stable(body);
   if (matchesCancelledTurnTiming(body)) return { kind: 'cancelled-turn-timing', answers: { slow: { type: 'noul', noul: 0 } } };
   if (serialized === stable(cancelledTurnPending)) return { kind: 'cancelled-turn-pending', answers: { pending: { type: 'noul', noul: 0 } } };
@@ -118,9 +141,9 @@ export function startE2EJudgments(options: { readonly ownedRoot?: string } = {})
     const diagnostic = diagnosticAnswer(body, options.ownedRoot);
     if (diagnostic) {
       acceptedDiagnostics.push({ kind: diagnostic.kind, body });
-      return Response.json({ model: conversationRoute.model, answers: diagnostic.answers, usage: { input_tokens: 10, output_tokens: 3 } });
+      return Response.json({ model: 'jev-1.13.0', answers: diagnostic.answers, usage: { input_tokens: 10, output_tokens: 3 } });
     }
-    const reading = e2eJudgmentAnswers(body);
+    const reading = e2eJudgmentAnswers(body, options.ownedRoot);
     if (!reading) {
       rejected.push(body);
       if (expectedPrivacyRefusal(body, options.ownedRoot)) unavailablePrivacy.push(body);
@@ -131,8 +154,9 @@ export function startE2EJudgments(options: { readonly ownedRoot?: string } = {})
       unavailableDiagnostics.push(body);
       return Response.json({ error: { message: 'Recorded cancellation timing diagnostic is unavailable' } }, { status: 422 });
     }
-    accepted.push(reading.kind);
-    return Response.json({ model: conversationRoute.model, answers: reading.answers, usage: { input_tokens: 10, output_tokens: 3 } });
+    if (reading.kind === 'presentation') acceptedDiagnostics.push({ kind: 'diagnostic-presentation', body });
+    else accepted.push(reading.kind);
+    return Response.json({ model: 'jev-1.13.0', answers: reading.answers, usage: { input_tokens: 10, output_tokens: 3 } });
   } });
   return { baseURL: `http://127.0.0.1:${server.port}`, accepted, acceptedDiagnostics, allRequests, rejected, unexpected, unavailableDiagnostics, unavailablePrivacy,
     rejectRecordedCancellationTimings() { rejectCancellationTimings = true; },

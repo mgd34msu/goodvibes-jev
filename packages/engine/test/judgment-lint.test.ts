@@ -6,13 +6,21 @@ import { describe, expect, test } from 'bun:test';
 import { askAs, decisionHeader, defineBattery, defineDispatch, defineJudge, oneOf, rated, STAKES_BANDS, yesNo, type FixtureCheck } from '@goodvibes-jev/judgment';
 import { fakePort } from '@goodvibes-jev/judgment/testing';
 import { coverageFindings, questionCoverage, sourceFindings } from '../scripts/judgment-lint-rules.ts';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { judgmentSourceFiles } from '../scripts/judgment-sources.ts';
 import { registry as contractRegistry } from '../sdk/src/platform/contract/judgment-registry.ts';
 
 const header = { version: 1, description: 'test', accuracyFloor: 0.8 };
 
 describe('fixture coverage', () => {
+  test('a registered custom decision cannot claim coverage with no checks', async () => {
+    const empty = { ...header, name: 'test.lint.empty', fixtureCount: 1, checkFixtures: async () => [] };
+    expect((await coverageFindings([empty])).findings).toEqual([
+      { rule: 'fixture-coverage', where: empty.name, message: 'its fixtures produced no labelled checks' },
+    ]);
+  });
   test('a battery missing an answer for a yes/no, a choice option and a rubric level is reported per question', async () => {
     const battery = defineBattery({
       ...header,
@@ -79,6 +87,22 @@ describe('fixture coverage', () => {
 
 describe('registered use', () => {
   const registered = new Set(['engine.known']);
+
+  test('aliased and namespace imports cannot hide unregistered decisions or loose calls in TSX', () => {
+    const source = `
+      import { defineBattery as battery, askAs as ask } from '@goodvibes-jev/judgment';
+      import * as judgment from '@goodvibes-jev/judgment';
+      const view = <div>{'rendering'}</div>;
+      const a = battery({ name: 'product.unregistered', fixtures: [] });
+      const b = judgment.defineBattery({ name: 'product.another', fixtures: [] });
+      ask(port, header, 'battery', 'x', {});
+      judgment.askAs(port, header, 'battery', 'x', {});
+    `;
+    const findings = sourceFindings('products/webui/src/example.tsx', source, registered);
+    expect(findings).toHaveLength(4);
+    expect(findings.filter(finding => finding.message.includes('which no judgment registry registers'))).toHaveLength(2);
+    expect(findings.filter(finding => finding.message.includes('calls askAs outside'))).toHaveLength(2);
+  });
 
   test('a defined decision must be registered, by literal or same-file constant name', () => {
     const source = `
@@ -201,6 +225,15 @@ describe('registered use', () => {
     ]);
   });
 
+  test('registered custom decisions also accept aliases and namespace imports', () => {
+    const aliased = `import { askAs as ask, decisionHeader as header } from '@goodvibes-jev/judgment';\n`
+      + custom().replaceAll('askAs(', 'ask(').replaceAll('decisionHeader(', 'header(');
+    const namespaced = `import * as j from '@goodvibes-jev/judgment';\n`
+      + custom().replaceAll('askAs(', 'j.askAs(').replaceAll('decisionHeader(', 'j.decisionHeader(');
+    expect(sourceFindings('aliased.ts', aliased, registered)).toEqual([]);
+    expect(sourceFindings('namespaced.ts', namespaced, registered)).toEqual([]);
+  });
+
   test('custom decision attribution requires the matching header, fixtures and fixture checker', () => {
     for (const source of [
       custom('OTHER'),
@@ -226,6 +259,13 @@ describe('registered use', () => {
   ])('mutable or escaping const headers cannot authorize custom reads: %s', (write) => {
     const source = custom('HEADER', write);
     expect(sourceFindings('header-write.ts', source, registered).some((finding) => finding.message.includes('calls askAs outside'))).toBe(true);
+  });
+
+  test('a frozen plain header retains its registered name when passed to a policy owner', () => {
+    const source = custom('HEADER', 'captureNativeDecisionPolicy(HEADER, decision);')
+      .replace("const HEADER = { name: 'engine.known', version: 1 } as const;", "const HEADER = Object.freeze({ name: 'engine.known', version: 1 } as const);");
+    expect(sourceFindings('frozen-header.ts', source, registered)).toEqual([]);
+    expect(sourceFindings('shadowed-freeze.ts', 'const Object = externalObject; ' + source, registered)).not.toEqual([]);
   });
 
   test('an exported header binding is not a private immutable runtime identity', () => {
@@ -306,4 +346,41 @@ describe('registered use', () => {
       expect(sourceFindings(path, source, new Set())).not.toEqual([]);
     }
   });
+});
+
+describe('workspace judgment source discovery', () => {
+  test('covers products, TSX and engine scripts while excluding generated output and fixtures', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'judgment-source-scope-'));
+    const included = ['packages/engine/sdk/src/reader.ts', 'packages/engine/scripts/check.ts',
+      'products/daemon/src/start.ts', 'products/agent/src/read.ts', 'products/tui/src/view.ts', 'products/webui/src/view.tsx'];
+    const excluded = ['packages/engine/sdk/dist/reader.ts', 'packages/engine/test/reader.test.ts',
+      'packages/engine/scripts/fixtures/negative.ts', 'products/webui/src/view.test.tsx',
+      'products/webui/e2e/reader.ts', 'products/agent/src/test/reader.ts', 'products/tui/node_modules/example/index.ts'];
+    try {
+      for (const file of [...included, ...excluded]) {
+        const path = resolve(root, file); mkdirSync(resolve(path, '..'), { recursive: true }); writeFileSync(path, '');
+      }
+      expect(judgmentSourceFiles(root)).toEqual(included.sort());
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
+test('production registry decisions cannot pin a Jev version', async () => {
+  const inherited = defineBattery({ name: 'test.latest', version: 1, description: 'Production decisions follow the latest configured model.', accuracyFloor: 0.9,
+    items: { yes: yesNo('Is it yes?', STAKES_BANDS.medium.yesNo) },
+    fixtures: [{ name: 'yes', state: 'yes', expect: { yes: 'yes' } }, { name: 'no', state: 'no', expect: { yes: 'no' } }],
+  });
+  expect((await coverageFindings([inherited])).findings).toEqual([]);
+  expect((await coverageFindings([{ ...inherited, model: 'jev-1.13.0' }])).findings).toContainEqual({
+    rule: 'model-policy', where: 'test.latest', message: 'production decisions must inherit the configured model or use jev-latest; version pins are not allowed',
+  });
+});
+
+
+test('source discovery includes executable JavaScript boundaries and excludes their test fixtures', () => {
+  const sources = judgmentSourceFiles();
+  expect(sources).toContain('products/daemon/scripts/boot-smoke-reading.mjs');
+  expect(sources).toContain('products/tui/bin/launcher-support.js');
+  expect(sources).toContain('products/webui/public/sw.js');
+  expect(sources).not.toContain('products/daemon/scripts/boot-smoke-reading.test.mjs');
 });

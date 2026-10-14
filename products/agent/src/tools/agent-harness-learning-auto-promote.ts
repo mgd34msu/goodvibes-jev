@@ -1,3 +1,4 @@
+import { learningPromotionReference } from './agent-harness-learning-curator-common.ts';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { types as nodeTypes } from 'node:util';
 import { prepareMemoryApiAdd } from '@goodvibes-jev/engine/sdk/platform/knowledge';
@@ -13,7 +14,6 @@ import { captureCatalogMethods, type CatalogRankingOptions } from './agent-harne
 import { captureModelReadingSnapshotGuard, modelReadingServicePath } from './agent-harness-model-reading-source.ts';
 import type { LearningCandidateCollection, LearningCuratorNativeContext } from './agent-harness-learning-curator-source.ts';
 
-const AUTO_PROMOTE_PROVENANCE = 'learning-curator-auto-promote';
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -26,7 +26,7 @@ export interface AutoPromoteResult {
   readonly promoted: number;
   /** Candidates skipped due to errors, missing data, or secret-scan rejection. */
   readonly skipped: number;
-  /** Duplicate records consolidated (staled + deleted). */
+  /** Duplicate records marked stale with originals retained. */
   readonly consolidated: number;
   /** Per-domain breakdown. */
   readonly domains: Record<string, number>;
@@ -137,7 +137,7 @@ async function promoteMemory(
     scope: memoryScope((fields.scope ?? 'project').trim()),
     cls: memoryClass((fields.cls ?? 'fact').trim()), summary,
     detail, tags: splitList(fields.tags), review: { confidence },
-    provenance: [{ kind: 'event', ref: AUTO_PROMOTE_PROVENANCE }],
+    provenance: [{ kind: 'event', ref: learningPromotionReference(candidate.id) }],
   } satisfies Parameters<MemoryApi['add']>[0];
   let transition: ReturnType<LearningCandidateCollection['prepareTransition']> | undefined;
   try {
@@ -177,7 +177,7 @@ function promotePersona(paths: ShellPathService, candidate: LearningCandidate, c
   const input = {
     name, description: (fields.description ?? name).trim(),
     body, triggers: splitList(fields.triggers),
-    tags: splitList(fields.tags), source: 'agent', provenance: AUTO_PROMOTE_PROVENANCE,
+    tags: splitList(fields.tags), source: 'agent', provenance: learningPromotionReference(candidate.id),
   } satisfies Parameters<AgentPersonaRegistry['create']>[0];
   const record = writeLocalRecord(collection, { kind: 'create', domain: 'persona', input },
     effects => AgentPersonaRegistry.fromShellPaths(paths, effects).create(input), context, options, assertOwnership);
@@ -193,7 +193,7 @@ function promoteRoutine(paths: ShellPathService, candidate: LearningCandidate, c
     name, description: (fields.description ?? name).trim(),
     steps,
     triggers: splitList(fields.triggers), tags: splitList(fields.tags), enabled: true,
-    source: 'agent', provenance: AUTO_PROMOTE_PROVENANCE,
+    source: 'agent', provenance: learningPromotionReference(candidate.id),
   } satisfies Parameters<AgentRoutineRegistry['create']>[0];
   const record = writeLocalRecord(collection, { kind: 'create', domain: 'routine', input },
     effects => AgentRoutineRegistry.fromShellPaths(paths, effects).create(input), context, options, assertOwnership);
@@ -232,18 +232,13 @@ function consolidate(
       if (domain === 'skill') return AgentSkillRegistry.fromShellPaths(paths, effects).markStale(id, reason);
       return AgentRoutineRegistry.fromShellPaths(paths, effects).markStale(id, reason);
     }, context, options, assertOwnership);
-    writeLocalRecord(collection, { kind: 'delete', domain, id }, effects => {
-      if (domain === 'persona') return AgentPersonaRegistry.fromShellPaths(paths, effects).deletePersona(id);
-      if (domain === 'skill') return AgentSkillRegistry.fromShellPaths(paths, effects).deleteSkill(id);
-      return AgentRoutineRegistry.fromShellPaths(paths, effects).deleteRoutine(id);
-    }, context, options, assertOwnership);
     count++; lines.push(`consolidated duplicate ${domain}:${id} -> ${plan.survivorId}`);
   }
   return { count, lines };
 }
 
 /** Use the caller's recorded admission for all planned local promotions. */
-export async function runAutoPromoter(
+async function runAutoPromoterOnce(
   context: LearningCuratorNativeContext, skillRegistry: AgentSkillRegistry, memoryApi: MemoryApi,
   options: CatalogRankingOptions,
 ): Promise<AutoPromoteResult> {
@@ -336,7 +331,7 @@ export async function runAutoPromoter(
     assertCurrent();
     try {
       const result = consolidate(paths, candidate, collection, context, options, assertOwnership);
-      assertCurrent(); consolidated += result.count; promoted += result.count; bump(candidate.domain); log.push(...result.lines);
+      assertCurrent(); consolidated += result.count; bump(candidate.domain); log.push(...result.lines);
     } catch (error) {
       if (error instanceof PromotionRestrictionFailure) throw error.failure;
       if (error instanceof ToolInputProjectionError || signal?.aborted) throw error;
@@ -345,4 +340,41 @@ export async function runAutoPromoter(
   }
   assertCurrent();
   return issueResult({ eligible, promoted, skipped, consolidated, domains, log }, context, options, assertCurrent);
+}
+
+const activePromotions = new Map<string, Promise<AutoPromoteResult>>();
+/** Serialize native writes; each caller keeps its own source/permission lifetime. */
+export async function runAutoPromoter(context: LearningCuratorNativeContext, skills: AgentSkillRegistry,
+  memory: MemoryApi, options: CatalogRankingOptions): Promise<AutoPromoteResult> {
+  const assertContext = captureCatalogMethods(context, ['workspace']);
+  const workspace = modelReadingServicePath(context, ['workspace']);
+  const paths = modelReadingServicePath(context, ['workspace', 'shellPaths']);
+  const root = modelReadingServicePath(context, ['workspace', 'shellPaths', 'userGoodVibesRoot']);
+  if (typeof root !== 'string' || !root) return runAutoPromoterOnce(context, skills, memory, options);
+  const assertOptions = captureCatalogMethods(options, ['signal', 'assertCurrent']);
+  const signal = options.signal;
+  const current = () => {
+    assertContext(); assertOptions(); signal?.throwIfAborted();
+    if (modelReadingServicePath(context, ['workspace']) !== workspace
+      || modelReadingServicePath(context, ['workspace', 'shellPaths']) !== paths
+      || modelReadingServicePath(context, ['workspace', 'shellPaths', 'userGoodVibesRoot']) !== root) throw new ToolInputProjectionError('stale');
+  };
+  current();
+  const previous = activePromotions.get(root);
+  const pass = (async () => {
+    if (previous) await previous.catch(() => {});
+    current(); return runAutoPromoterOnce(context, skills, memory, options);
+  })();
+  activePromotions.set(root, pass);
+  const cleanup = () => { if (activePromotions.get(root) === pass) activePromotions.delete(root); };
+  void pass.then(cleanup, cleanup);
+  if (!signal) return pass;
+  let abort = () => {};
+  const stopped = new Promise<never>((_, reject) => {
+    abort = () => reject(new ToolInputProjectionError('stale'));
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
+  try { return await Promise.race([pass, stopped]); }
+  finally { signal.removeEventListener('abort', abort); }
 }

@@ -2,12 +2,12 @@ import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 
 export const browserDeviceEvidence = defineBattery({
   name: 'agent.browser-device.evidence',
-  version: 1,
+  version: 2,
   description: 'Read the mobile, PWA, or device capability supported by one complete published record.',
   accuracyFloor: 0.95,
   items: {
     supported: yesNo(
-      'Does the complete published record provide the requested capability? kind mobile-touch asks whether its category route supports mobile touch controls. kind pwa-runtime asks whether its category route or first-run receipt provides installable or offline PWA runtime behavior. kind device-capability asks whether the certified record provides requestedCapability in the sense explained by requestedTerms. Read the whole record, including limitations, negation, availability and permission scope. Mentioning mobile, touch, responsive, manifest, install, offline, service worker, or a device capability does not establish support. Caller terms explain the requested capability, not a substring rule. An unrelated capability is no. Incomplete or conflicting evidence is uncertain. This reading grants no permission and does not certify the publication schema.',
+      'Does the complete published record provide the requested capability? kind mobile-touch asks whether its category route supports mobile touch controls. kind pwa-runtime asks whether its category route or first-run receipt provides installable or offline PWA runtime behavior. kind device-capability asks whether the certified record provides requestedCapability in the sense explained by requestedTerms. A capability group such as camera-location-sensors is an umbrella: a record providing any one member (for example capturing device images) supports that group; it need not provide every member. Read the whole record, including limitations, negation, availability and permission scope. Mentioning mobile, touch, responsive, manifest, install, offline, service worker, or a device capability does not establish support. Caller terms explain the requested capability, not a substring rule. An unrelated capability is no. Incomplete or conflicting evidence is uncertain. This reading grants no permission and does not certify the publication schema.',
       STAKES_BANDS.medium.yesNo,
     ),
   },

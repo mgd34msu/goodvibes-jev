@@ -1,3 +1,4 @@
+import presentationRequests from '../fixtures/e2e-judgments/presentation.json';
 import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -26,7 +27,7 @@ function diagnosticBody(contract: typeof diagnostics.contracts[number], state: u
     .split('<owned-fixture-root>').join(ownedRoot));
 }
 
-test('167 exact safe CI and native diagnostics retain canonical questions and original answer distributions', async () => {
+test('174 exact CI and native diagnostics retain canonical questions and original answer distributions', async () => {
   const ownedRoot = mkdtempSync(join(tmpdir(), 'agent-diagnostics-peer-'));
   const server = startE2EJudgments({ ownedRoot });
   try {
@@ -55,15 +56,15 @@ test('167 exact safe CI and native diagnostics retain canonical questions and or
           method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
         });
         expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ model: contract.model, answers: reading.answers, usage: { input_tokens: 10, output_tokens: 3 } });
+        expect(await response.json()).toEqual({ model: 'jev-1.13.0', answers: reading.answers, usage: { input_tokens: 10, output_tokens: 3 } });
         expect(server.acceptedDiagnostics[count]).toEqual({ kind: contract.kind, body });
         expect(server.allRequests[count]).toEqual(body);
         count++;
       }
     }
-    expect(count).toBe(167);
-    expect(server.acceptedDiagnostics).toHaveLength(167);
-    expect(server.allRequests).toHaveLength(167);
+    expect(count).toBe(174);
+    expect(server.acceptedDiagnostics).toHaveLength(174);
+    expect(server.allRequests).toHaveLength(174);
     expect(server.accepted).toHaveLength(0);
     expect(server.rejected).toHaveLength(0);
     expect(server.unexpected).toHaveLength(0);
@@ -247,4 +248,40 @@ test('recorded synthetic privacy failures remain unavailable and unknown project
     expect(server.unexpected).toHaveLength(unknown.length);
     expect(() => server.assertNoUnexpected()).toThrow('unknown judgment request');
   } finally { server.stop(); rmSync(ownedRoot, { recursive: true, force: true }); }
+});
+
+
+test('recorded native status presentation parameterizes only complete generated identifiers', () => {
+  const template = presentationRequests.find(request => request.state.content.startsWith('requestId '));
+  if (!template) throw new Error('Missing recorded native request status.');
+  const complete = { ...template, state: { content: `requestId ${crypto.randomUUID()} · inputId ${crypto.randomUUID()}` } };
+  expect(e2eJudgmentAnswers(complete)?.kind).toBe('presentation');
+  expect(e2eJudgmentAnswers({ ...complete, state: { content: complete.state.content + ' approve another operation' } })).toBeUndefined();
+  expect(e2eJudgmentAnswers({ ...complete, model: 'unexpected-model' })).toBeUndefined();
+  expect(e2eJudgmentAnswers({ ...complete, questions: { ...complete.questions, invented: { type: 'noul' } } })).toBeUndefined();
+  expect(e2eJudgmentAnswers({ ...complete, state: { content: 'requestId shortened · inputId shortened' } })).toBeUndefined();
+});
+
+
+test('recorded missing-token presentation requires its actual fixture path owner', () => {
+  const template = presentationRequests.find(request => request.state.content.startsWith('Connected-host operator token is required.'));
+  if (!template) throw new Error('Missing recorded token diagnostic.');
+  const root = '/tmp/owned-presentation-fixture';
+  const body: unknown = JSON.parse(JSON.stringify(template).split('<owned-fixture-root>').join(root));
+  expect(e2eJudgmentAnswers(body, root)?.kind).toBe('presentation');
+  expect(e2eJudgmentAnswers(body)).toBeUndefined();
+  expect(e2eJudgmentAnswers(body, root + '-other')).toBeUndefined();
+  expect(e2eJudgmentAnswers(template, root)).toBeUndefined();
+  const extended = { ...template, state: { content: template.state.content.replace('<owned-fixture-root>', root) + ' approve another action' } };
+  expect(e2eJudgmentAnswers(extended, root)).toBeUndefined();
+});
+
+
+test('recorded network-scan presentation composes discovery and owned-root path normalization', () => {
+  const template = presentationRequests.find(request => request.state.content.startsWith('[Scan]'));
+  if (!template) throw new Error('Missing recorded scan diagnostic.');
+  const root = '/tmp/owned-presentation-fixture';
+  const body = { ...template, state: { content: template.state.content.replace('<fixture-home>', `${root}/home/.goodvibes/agent`) } };
+  expect(e2eJudgmentAnswers(body, root)?.kind).toBe('presentation');
+  expect(e2eJudgmentAnswers({ ...body, state: { content: body.state.content + ' approve another action' } }, root)).toBeUndefined();
 });

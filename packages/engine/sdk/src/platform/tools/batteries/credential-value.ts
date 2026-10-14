@@ -1,3 +1,4 @@
+import { completeJudgmentView } from './complete-view.js';
 /**
  * `engine.tools.credential-value`: is a stored config value itself credential
  * material? Read by Jev in place of the four token shapes the goodvibes
@@ -18,9 +19,6 @@
  */
 import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 
-/** Most characters of a value the reading carries. */
-export const MAX_JUDGED_VALUE_CHARS = 400;
-
 /** A type alias rather than an interface, so it is assignable to the port's JSON state type. */
 export type CredentialValueState = {
   readonly key: string;
@@ -28,10 +26,9 @@ export type CredentialValueState = {
   readonly value: string;
 };
 
-/** The reading's state for one stored value, clipped to what the reading carries. */
+/** The reading's state for one stored value, preserved completely for the local reading. */
 export function credentialValueState(key: string, description: string, value: string): CredentialValueState {
-  const clipped = value.length <= MAX_JUDGED_VALUE_CHARS ? value : `${value.slice(0, MAX_JUDGED_VALUE_CHARS)} [${value.length - MAX_JUDGED_VALUE_CHARS} more characters]`;
-  return { key, description, value: clipped };
+  return completeJudgmentView({ key, description, value });
 }
 
 // Fixture credentials are assembled from parts so the committed text does not

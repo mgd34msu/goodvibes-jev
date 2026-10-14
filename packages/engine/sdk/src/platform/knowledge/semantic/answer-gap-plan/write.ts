@@ -1,3 +1,4 @@
+import { knowledgeRawRepresentation, sameKnowledgeRecord } from '../../store-record-representation.js';
 import { hasKnowledgeNodeOperatorReview } from '../../store-node-authority.js';
 import { isTerminalRefinementState } from '../../store-lifecycle-authority.js';
 import { prepareObservedKnowledgeNodeInput } from '../../store-node-observation.js';
@@ -48,6 +49,9 @@ export async function persistPreparedAnswerGap(store: KnowledgeStore, input: Ans
   const plan = snapshotNodeInput(input);
   assertCurrent();
   const { existing, issue, target, spaceId, query, reason, sources, linkedObjects } = plan;
+  const storedExisting = existing ? store.getNode(existing.id) : undefined;
+  if (existing && (!storedExisting || !sameKnowledgeRecord(existing, storedExisting))) throw new Held('stale');
+  const originalMetadata = storedExisting ? knowledgeRawRepresentation(storedExisting.metadata) : {};
   // Re-observation must not invalidate the gap snapshot held by an active
   // repair. The caller can still coordinate and wait on that existing task.
   if (existing && (closedNode(existing) || hasKnowledgeNodeOperatorReview(existing) || plan.issues.some(reviewedIssue)
@@ -62,7 +66,7 @@ export async function persistPreparedAnswerGap(store: KnowledgeStore, input: Ans
     ...(existing ?? {}), id: target.nodeId, kind: 'knowledge_gap', slug: existing?.slug ?? `answer-gap-${target.fingerprint}`,
     title: existing?.title ?? query, summary: reason, confidence: existing?.confidence ?? 70,
     ...(existing?.sourceId ?? sources[0]?.id ? { sourceId: existing?.sourceId ?? sources[0]?.id } : {}),
-    metadata: semanticMetadata(spaceId, { ...existing?.metadata, semanticKind: 'gap', gapKind: 'answer', ...shared,
+    metadata: semanticMetadata(spaceId, { ...originalMetadata, semanticKind: 'gap', gapKind: 'answer', ...shared,
       repairStatus: readString(existing?.metadata.repairStatus) ?? 'open', visibility: 'refinement', displayRole: 'knowledge-gap',
       answerGapReading: plan.reading }),
   }, 'research-task', { query, reason, sources, linkedObjects }, () => { assertCurrent(); return { query, reason, sources, linkedObjects }; });

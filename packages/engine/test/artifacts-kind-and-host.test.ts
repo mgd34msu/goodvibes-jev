@@ -6,7 +6,7 @@
  * only when it reaches act. A public-only fetch refuses a loopback host.
  */
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
@@ -14,6 +14,7 @@ import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
 import type { Question } from '@goodvibes-jev/judgment';
 import { ArtifactStore } from '../sdk/src/platform/artifacts/store.ts';
 import { inferArtifactKind } from '../sdk/src/platform/artifacts/types.ts';
+import { JudgmentHeldError } from '../sdk/src/platform/types/judgment-held.ts';
 
 async function withKind<T>(chosen: string, confidence: number, body: (asked: () => number) => Promise<T>): Promise<T> {
   const fake = fakePort((_name: string, question: Question) => choiceAnswer(question, chosen, confidence));
@@ -42,9 +43,15 @@ describe('artifact kind', () => {
     });
   });
 
-  test('a reading that does not reach act records file', async () => {
-    await withKind('archive', 0.4, async () => {
-      expect(await inferArtifactKind('application/x-unknown', 'thing.xyz')).toBe('file');
+  test.each([0.4, 0.57])('an unsettled reading at %s holds creation and removes spooled bytes', async (confidence) => {
+    await withKind('archive', confidence, async () => {
+      await expect(inferArtifactKind('application/x-unknown', 'thing.xyz')).rejects.toBeInstanceOf(JudgmentHeldError);
+      const rootDir = mkdtempSync(join(tmpdir(), 'artifact-held-'));
+      try {
+        const store = new ArtifactStore({ rootDir });
+        await expect(store.create({ text: 'payload', filename: 'thing.xyz' })).rejects.toBeInstanceOf(JudgmentHeldError);
+        expect(readdirSync(rootDir)).toEqual([]);
+      } finally { rmSync(rootDir, { recursive: true, force: true }); }
     });
   });
 });

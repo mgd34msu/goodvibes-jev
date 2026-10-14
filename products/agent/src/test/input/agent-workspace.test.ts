@@ -534,7 +534,7 @@ describe('AgentWorkspace', () => {
     expect(workspace.actionSearchActive).toBe(true);
     workspace.selectedActionIndex = 4;
     expect(workspace.selectedActionSearchResult?.category.id).toBe('account-model');
-    expect(workspace.selectedActionSearchResult?.action.id).toBe('account-tts-llm-provider');
+    expect(workspace.selectedActionSearchResult?.action.id).toBe('provider-use');
 
     feedKey(workspace, 'escape');
 
@@ -2841,6 +2841,7 @@ describe('AgentWorkspace', () => {
         metadata: {
           purpose: 'connected-host-browser-pwa-receipt',
           methodId: 'browser.pwa.firstRun',
+          setupStepId: 'browser-pwa',
           receiptId: 'browser-ready',
           receiptStatus: 'published',
           recordedAt: '1970-01-01T00:00:05.000Z',
@@ -2918,6 +2919,7 @@ describe('AgentWorkspace', () => {
                   },
                   browser: {
                     methodId: 'browser.pwa.firstRun',
+                    setupStepId: 'browser-pwa',
                     receiptId: 'live-browser-ready',
                     state: 'published',
                     timestamp: '1970-01-01T00:00:05.000Z',

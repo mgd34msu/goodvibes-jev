@@ -2,7 +2,7 @@ import { hasAnswerExcerptSelection } from './answer-excerpts/provenance.js';
 import { knowledgeSourceJudgmentUris } from '../source-structural-references.js';
 import { assertAnswerVerificationActive } from './answer-verification/budget.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { assertJudgmentInput } from '../../gate/judgment-input.js';
+import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
 import { answerSourceRerank } from './ranking/source-rerank.js';
 import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../types.js';
 import { isGeneratedKnowledgeSource } from '../generated-projections.js';
@@ -31,8 +31,7 @@ export async function readAnswerSourceRanking(
   const sources = uniqueSources(evidence.flatMap((item) => item.source ? [item.source] : []))
     .filter((source) => source.status !== 'failed' && source.status !== 'stale');
   const realSources = sources.filter((source) => !isGeneratedKnowledgeSource(source));
-  // A request budget, not a quality threshold. Retrieval order chooses the window.
-  const shortlist = (realSources.length > 0 ? realSources : sources).slice(0, 50);
+  const shortlist = (realSources.length > 0 ? realSources : sources);
   if (shortlist.length === 0) return [];
   const candidates = shortlist.map((source) => ({
     id: source.id,
@@ -49,12 +48,18 @@ export async function readAnswerSourceRanking(
   }));
   // Preflight the complete selected batch before any concurrent request starts.
   assertJudgmentInput({ query, candidates: candidates.map((candidate) => candidate.content) });
+  if (candidates.some(candidate => JSON.stringify({ query, candidate: candidate.content }).length > 160_000)) throw new JudgmentInputError('unsupported-input');
   const port = judgmentPort('engine.knowledge.answer-source-rank');
-  const result = await answerSourceRerank.rerank(port, query, candidates, { site: 'engine.knowledge.answer-source-rank', ...(signal ? { signal } : {}) });
-  assertAnswerVerificationActive(signal);
+  const model = port.model, version = JSON.stringify({ facts, evidence });
+  const current = () => {
+    assertAnswerVerificationActive(signal);
+    if (judgmentPort('engine.knowledge.answer-source-rank') !== port || port.model !== model || JSON.stringify({ facts, evidence }) !== version) throw new KnowledgeSourceRankingHeldError();
+  };
+  const result = await answerSourceRerank.rerank(port, query, candidates, { site: 'engine.knowledge.answer-source-rank', beforeAttempt: current, ...(signal ? { signal } : {}) });
+  current();
   for (const item of result.ranked) if (item.decisionId !== undefined) port.recorder?.recordAction(item.decisionId, item.reading.verdict === 'yes' && item.reading.outcome === 'act' ? 'selected: query-supporting source' : `not selected: ${item.reading.verdict} (${item.reading.outcome})`);
   const accepted = result.ranked.filter((item) => item.reading.verdict === 'yes' && item.reading.outcome === 'act');
-  if (accepted.length === 0 && result.ranked.some((item) => item.reading.outcome !== 'act')) throw new KnowledgeSourceRankingHeldError();
+  if (result.ranked.some((item) => item.reading.outcome !== 'act')) throw new KnowledgeSourceRankingHeldError();
   const byId = new Map(shortlist.map((source) => [source.id, source]));
   return accepted.sort((a, b) => b.probability - a.probability || a.id.localeCompare(b.id)).map((item) => ({ source: byId.get(item.id)!, probability: item.probability }));
 }

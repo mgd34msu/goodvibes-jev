@@ -16,6 +16,8 @@ import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 export interface CompactionReadings {
   /** The retention level read (0 none to 3 all); default 3. */
   readonly substance?: number;
+  /** Authored source positions retained by section membership readings. */
+  readonly selectedPositions?: readonly number[];
   /** How the written text relates to the source; default 'supports'. */
   readonly relation?: 'supports' | 'contradicts' | 'says_nothing';
   /** The keep probability for message number `n` of a collapsed conversation; default 0.05 (not kept). */
@@ -24,7 +26,12 @@ export interface CompactionReadings {
 
 /** A port answering both compaction readings from `readings`, recording every request. */
 export function compactionQualityPort(readings: CompactionReadings = {}) {
-  return fakePort((name: string, question: Question) => {
+  return fakePort((name: string, question: Question, state) => {
+    if (readings.selectedPositions && (name === 'selected' || name.startsWith('selected_'))) {
+      const position = name === 'selected' ? (state as { candidateSourcePosition: number }).candidateSourcePosition
+        : (question.instructions as { candidateSourcePosition: number }).candidateSourcePosition;
+      return noulAnswer(readings.selectedPositions.includes(position) ? 0.99 : 0.01);
+    }
     if (name.startsWith('dependency_')) return noulAnswer(0.01);
     if (name.startsWith('selected_c2_')) return noulAnswer(0.01);
     if (name === 'selected' || name.startsWith('selected_')) return noulAnswer(0.99);

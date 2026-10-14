@@ -204,7 +204,7 @@ export async function resolveHarnessCommandDetail(commandRegistry: CommandRegist
   if (lookup.source === 'commandName' || lookup.source === 'command') return null;
   const found = await matchingCommands(commandRegistry, lookup.input, options);
   found.assertCurrent();
-  if (found.matches.length === 1 && found.matches[0]!.judgment?.reading.verdict === 'yes') {
+  if (found.matches.length === 1 && found.matches[0]!.judgment?.reading.verdict === 'yes' && found.matches[0]!.judgment?.reading.outcome === 'act') {
     const selected = commandRegistry.get(found.matches[0]!.entry.name);
     if (!selected) throw new ToolInputProjectionError('stale');
     return { status: 'found', command: selected, lookup: { ...lookup, resolvedBy: 'description' }, assertCurrent: found.assertCurrent };

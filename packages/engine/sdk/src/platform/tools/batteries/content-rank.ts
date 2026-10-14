@@ -1,3 +1,4 @@
+import { completeJudgmentView } from './complete-view.js';
 /**
  * `engine.tools.content-rank`: orders the files a find content search matched
  * when the caller asks for ranked results. Read by Jev in place of the
@@ -26,15 +27,7 @@ export const MAX_JUDGED_LINE_CHARS = 300;
 
 /** What the rerank sees of a matched file: its path and its matching lines, each prefixed with its line number. */
 export function contentMatchView(path: string, matches: readonly { line: number; text: string }[]): { path: string; matching_lines: string } {
-  return {
-    path,
-    matching_lines: matches
-      .map(({ line, text }) => {
-        const trimmed = text.trim();
-        return `${line}: ${trimmed.length <= MAX_JUDGED_LINE_CHARS ? trimmed : `${trimmed.slice(0, MAX_JUDGED_LINE_CHARS)}...`}`;
-      })
-      .join('\n'),
-  };
+  return completeJudgmentView({ path, matching_lines: matches.map(({ line, text }) => `${line}: ${text}`).join('\n') });
 }
 
 const file = (id: string, lines: readonly (readonly [number, string])[]) => ({

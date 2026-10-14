@@ -525,7 +525,10 @@ for (const mode of ['normal', 'revoke-map', 'resume', 'apply-dirty', 'until-dirt
         await waitFor(
           () => ['passed', 'failed', 'cancelled', 'awaiting-owner'].includes(runner.get(id!)!.status),
           'actual contract settlement',
-          30_000,
+          // This fixture runs real Git worktrees, subprocesses and the entire
+          // runtime. Allow a loaded full-suite worker to finish the integration;
+          // the contract's own authority and cancellation assertions stay exact.
+          90_000,
         );
         const result = runner.get(id)!;
         if (mode === 'revoke-map') {
@@ -644,5 +647,5 @@ for (const mode of ['normal', 'revoke-map', 'resume', 'apply-dirty', 'until-dirt
         rmSync(root, { recursive: true, force: true });
       }
     },
-    40_000,
+    120_000,
   );

@@ -1,3 +1,5 @@
+import { usePresentationReadings } from '../helpers/presentation-readings.ts';
+usePresentationReadings([["error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.", 'error']]);
 // ---------------------------------------------------------------------------
 // golden-frames-session-views.test.ts, an agent and a background process
 // opened full screen, and the session chips row on the main screen.

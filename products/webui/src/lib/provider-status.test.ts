@@ -182,7 +182,7 @@ describe('deriveCredentialAvailability (honest degrade)', () => {
     expect(out.available).toBe(true);
     if (out.available) {
       expect(out.credentials).toHaveLength(2);
-      expect(out.credentials[0]).toEqual({ key: 'SHARED_CHANNEL_TOKEN', configured: true, usable: true, source: 'store', secure: true });
+      expect(out.credentials[0]).toEqual({ key: 'SHARED_CHANNEL_TOKEN', configured: true, usable: true, source: 'store', secure: true, providerIds: [] });
       // The type carries no value field, statically true; pin it dynamically too.
       for (const c of out.credentials) expect('value' in c).toBe(false);
     }

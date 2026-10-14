@@ -15,6 +15,7 @@ import { classifyProviderSetup } from './provider-classification.ts';
 import { buildCliServicePosture } from './service-posture.ts';
 import { REDACTED_VALUE, isRedactedValue, prepareConfigRedaction, redactSerializedSecrets, retainCliConfig } from '@goodvibes-jev/engine/terminal-shell';
 import { captureJudgmentPort, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { captureOwnedJson } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../config/surface.ts';
 import { appendTemporalLabel } from './temporal-label.ts';
 
@@ -144,7 +145,7 @@ export async function handleBundleCommand(runtime: CliCommandRuntime, options: J
     });
     const configManager = runtime.configManager;
     const retainedConfig = retainCliConfig(configManager);
-    const rawConfig = retainedConfig.raw;
+    const rawConfig = captureOwnedJson(retainedConfig.raw);
     const workingDirectory = runtime.workingDirectory;
     const homeDirectory = runtime.homeDirectory;
     const signal = options.signal;

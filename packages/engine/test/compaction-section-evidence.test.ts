@@ -87,7 +87,7 @@ describe('dependency-qualified large compaction evidence', () => {
     const covered = requests.filter(request => request.context?.battery === 'engine.compaction.evidence-dependency').map(request => (request.state as unknown as State).conversation).join('\n');
     for (const message of messages) expect(covered).toContain(message.content as string);
   });
-  test('large-history actual caller applies messages and lineage after semantic quality qualification', async () => {
+  test('large-history caller preserves messages and lineage when complete quality evidence exceeds its budget', async () => {
     const ctx = context(distinctSources().map(content => ({ role: 'assistant', content })));
     ctx.messages.push({ role: 'user', content: 'Keep the API compatible.' }, { role: 'assistant', content: 'Compatibility retained; tests pass.' });
     const { port, requests } = fakePort((key, question) => {
@@ -100,9 +100,11 @@ describe('dependency-qualified large compaction evidence', () => {
     const host: ConversationCompactionHost = { getMessageCount: () => current.length, getMessagesForLLM: () => current,
       replaceMessagesForLLM: messages => { current = messages; replacements++; }, getSessionMemoryStore: () => null,
       getSessionLineageTracker: () => ({ addCompactionEntry: () => { lineage++; } }) };
-    const receipt = await compactConversation(host, provider, 'test/model', 'manual', 'test', ctx);
-    expect(receipt?.outcome).toBe('applied'); expect(replacements).toBe(1); expect(lineage).toBe(1);
-    expect(current).toHaveLength(1); expect(current[0]!.content).toContain('Keep the API compatible.');
+    const original = current;
+    await expect(compactConversation(host, provider, 'test/model', 'manual', 'test', ctx)).rejects.toMatchObject({ problem: 'unsupported-input' });
+    expect(replacements).toBe(0); expect(lineage).toBe(0); expect(current).toBe(original);
+    expect(current.at(-2)?.content).toBe('Keep the API compatible.');
+    expect(requests.some(request => request.context?.battery === 'engine.compaction.retention')).toBe(false);
     expect(requests.some(request => request.context?.battery === 'engine.compaction.evidence-dependency')).toBe(true);
   });
   test('final requests cannot acquire a different case unaudited alias', async () => {

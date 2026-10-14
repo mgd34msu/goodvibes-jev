@@ -17,9 +17,11 @@
  * answer without showing in it. Everywhere this signal is shown it is
  * labelled as a reading (see MEMORY_USAGE_SIGNAL_NOTE).
  */
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { captureJudgmentPort, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { mapLimit } from '@goodvibes-jev/judgment';
 import { memoryUsage } from './batteries/memory-usage.js';
+import { retainOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { prepareJudgmentResult } from '../gate/judgment-result.js';
 
 export type MemoryReferenceTier = 'referenced' | 'present';
 
@@ -33,6 +35,7 @@ export interface MemoryReferenceResult {
   readonly referenced: readonly string[];
   readonly present: readonly string[];
   readonly perId: ReadonlyMap<string, MemoryReferenceTier>;
+  readonly assertCurrent: () => void;
 }
 
 const SITE = 'state.memory-usage-detection';
@@ -40,27 +43,37 @@ const SITE = 'state.memory-usage-detection';
 /** Usage readings in flight at once for one response. */
 const USAGE_CONCURRENCY = 8;
 
-async function classify(record: MemoryReferenceInput, responseText: string): Promise<MemoryReferenceTier> {
-  const memory = { summary: record.summary, ...(record.detail ? { detail: record.detail } : {}) };
-  const run = await memoryUsage.run(judgmentPort(SITE), { memory, response: responseText }, { site: SITE });
-  const tier: MemoryReferenceTier = run.readings.used.verdict === 'yes' ? 'referenced' : 'present';
-  run.recordAction(tier);
-  return tier;
-}
-
 export async function detectReferencedMemoryIds(
   responseText: string,
   records: readonly MemoryReferenceInput[],
+  options: Pick<JudgmentReadingOptions, 'signal' | 'assertCurrent'> = {},
 ): Promise<MemoryReferenceResult> {
+  const original = retainOwnedJson({ responseText, records });
+  const input = snapshotJudgmentInput(original.snapshot) as { responseText: string; records: readonly MemoryReferenceInput[] };
+  const current = () => { original.assertCurrent(); options.signal?.throwIfAborted();
+    const checked: unknown = options.assertCurrent?.();
+    if (checked !== undefined) { void Promise.resolve(checked).catch(() => {}); throw new Error('Memory usage guard must be synchronous.'); }
+  };
+  current();
   const referenced: string[] = [];
   const present: string[] = [];
   const perId = new Map<string, MemoryReferenceTier>();
-  const tiers = await mapLimit(records, USAGE_CONCURRENCY, (record) => classify(record, responseText));
-  records.forEach((record, index) => {
-    const tier = tiers[index]!;
+  if (!input.records.length) return { referenced, present, perId, assertCurrent: current };
+  const owner = captureJudgmentPort(SITE, { ...options, assertCurrent: current, prepareResultCapture: prepareJudgmentResult });
+  const runs = await mapLimit(input.records, USAGE_CONCURRENCY, record => {
+    const memory = { summary: record.summary, ...(record.detail === undefined ? {} : { detail: record.detail }) };
+    return memoryUsage.run(owner.port, { memory, response: input.responseText }, { site: SITE, signal: owner.signal, beforeAttempt: owner.assertCurrent });
+  });
+  owner.assertCurrent();
+  input.records.forEach((record, index) => {
+    const run = runs[index]!;
+    const tier = run.readings.used.outcome === 'act' && run.readings.used.verdict === 'yes' ? 'referenced' : 'present';
+    // Presence is a native prompt fact. An unsettled reading never claims use.
+    if (run.readings.used.outcome === 'act') run.recordAction(tier);
     perId.set(record.id, tier);
     if (tier === 'referenced') referenced.push(record.id);
     else present.push(record.id);
   });
-  return { referenced, present, perId };
+  owner.assertCurrent();
+  return { referenced, present, perId, assertCurrent: owner.assertCurrent };
 }

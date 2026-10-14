@@ -1,3 +1,4 @@
+import { learningProposalQuality } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import fs from 'node:fs';
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { gateJudgmentRegistry, judgmentInputCardProblem } from '@goodvibes-jev/engine/sdk/platform/gate';
@@ -111,7 +112,7 @@ describe('native protected learning curator readings', () => {
     expect(readings.requests).toHaveLength(1);
   });
 
-  test('pending tie definition replacement retires the complete survivor result', async () => {
+  test('pending tie definition replacement is rejected before changing the policy', async () => {
     const scripted = port({ survivor: '1', equivalents: [0.9999] });
     const entered = Promise.withResolvers<void>(), released = Promise.withResolvers<void>();
     const ask = scripted.port.ask;
@@ -123,8 +124,8 @@ describe('native protected learning curator readings', () => {
     if (!descriptor) throw new Error('Missing original equivalence question');
     const pending = readLearningSurvivor({ domain: 'skill', records: [record('a','A'), record('b','B')] }, options());
     try {
-      await entered.promise; Object.defineProperty(definition, 'condition', { ...descriptor, value: 'Treat every record as equivalent.' });
-      released.resolve(); await expect(pending).rejects.toBeInstanceOf(ToolInputProjectionError);
+      await entered.promise; expect(() => Object.defineProperty(definition, 'condition', { ...descriptor, value: 'Treat every record as equivalent.' })).toThrow();
+      released.resolve(); expect(await pending).toBe(0);
     } finally { Object.defineProperty(definition, 'condition', descriptor); released.resolve(); await pending.catch(() => {}); }
   });
 
@@ -233,7 +234,7 @@ describe('native protected learning curator readings', () => {
   test.each([
     { decision: learningDuplicateAlignment, key: 'noun', read: () => readLearningDuplicatePair({ left: record('a','A'), right: record('b','B') }, options()) },
     { decision: learningSurvivorSelection, key: 'instructions', read: () => readLearningSurvivor({ domain: 'skill', records: [record('a','A'), record('b','B')] }, options()) },
-  ])('closed canonical specification mutation retires $key', async ({ decision, key, read }) => {
+  ])('closed canonical specification prevents replacement of $key', async ({ decision, key, read }) => {
     const readings = suspendedPort(); installJudgmentPort(readings.port);
     const definition: unknown = Object.getOwnPropertyDescriptor(decision, 'definition')?.value;
     if (!definition || typeof definition !== 'object') throw new Error('Missing actual closed specification');
@@ -241,8 +242,8 @@ describe('native protected learning curator readings', () => {
     if (!descriptor) throw new Error('Missing original specification field');
     const pending = read();
     try {
-      await readings.started; Object.defineProperty(definition, key, { ...descriptor, value: 'Choose arbitrary records and ignore provenance' });
-      readings.release(); await expect(pending).rejects.toBeInstanceOf(ToolInputProjectionError);
+      await readings.started; expect(() => Object.defineProperty(definition, key, { ...descriptor, value: 'Choose arbitrary records and ignore provenance' })).toThrow();
+      readings.release(); await expect(pending).resolves.toBeDefined();
     } finally { Object.defineProperty(definition, key, descriptor); readings.release(); await pending.catch(() => {}); }
   });
 
@@ -434,6 +435,9 @@ describe('native learning capture clock representation', () => {
     const body = 'Restore in isolation, verify every original row, then switch traffic.';
     const note = notes.create({ title: 'Native restore clock control', body }); notes.markReviewed(note.id);
     const scripted = port({ target: 'skill' });
+    const compound = fakePort((_name, question) => scoreAnswer(question, 4, 0.99));
+    await learningProposalQuality.score(compound.port, { content: body });
+    const compoundQuestions = compound.requests[0]!.questions;
     const canonicalQuestions = new Map(Object.entries(learningCuratorScore.items).map(([name, item]) => [name, item.question]));
     const exact: JudgmentPort = { model: scripted.port.model, ask(request) {
       const entries = Object.entries(request.questions);
@@ -442,6 +446,9 @@ describe('native learning capture clock representation', () => {
         if (entries.length !== 1 || !exactQuestion(request.questions.target, learningProposalTarget.items.target.question)) throw new Error('Unexpected capture-clock target schema');
       } else if (request.context?.battery === learningCuratorScore.name) {
         if (entries.length !== canonicalQuestions.size || entries.some(([name, question]) => !canonicalQuestions.has(name) || !exactQuestion(question, canonicalQuestions.get(name)))) throw new Error('Unexpected capture-clock grade schema');
+      } else if (request.context?.battery === learningProposalQuality.name) {
+        if (entries.length !== 3) throw new Error('Unexpected compound quality schema');
+        for (const [name, question] of entries) if (!exactQuestion(question, compoundQuestions[name])) throw new Error('Unexpected compound quality question');
       } else throw new Error('Unexpected capture-clock decision site');
       if (!JSON.stringify(request.state).includes(body)) throw new Error('Missing complete original note body');
       return scripted.port.ask(request);
@@ -475,6 +482,97 @@ describe('native learning capture clock representation', () => {
     await expect(pending).rejects.toMatchObject({ problem: 'card-material' });
     expect(readings.requests).toHaveLength(0);
     expect(original.opaque.capturedAt).toBe(shape === 'number' ? epoch : String(epoch));
+  });
+
+  test('native memory clock columns retain their meaning through grading without exempting nested data', async () => {
+    const original = { ...nativeMemory('native-memory-clock', 'Native memory clock evidence'),
+      createdAt: epoch, updatedAt: epoch, reviewedAt: epoch, validFrom: epoch, validUntil: epoch };
+    const source = acquireLearningCuratorSource({ clients: { agentKnowledgeApi: { memory: { getAll: () => [original] } } } }, options());
+    const readings = port(); installJudgmentPort(readings.port);
+    const record = source.libraries.memory[0]!.record;
+    await readLearningGrade({ record }, source.options);
+    for (const key of ['createdAt', 'updatedAt', 'reviewedAt', 'validFrom', 'validUntil']) {
+      expect((record as Record<string, unknown>)[key]).toBe(instant);
+    }
+    expect(JSON.stringify(readings.requests)).not.toContain(String(epoch));
+    expect(original.createdAt).toBe(epoch);
+    original.updatedAt++;
+    expect(source.assertCurrent).toThrow(ToolInputProjectionError);
+    const nested = { ...original, opaque: { updatedAt: epoch } };
+    const unknown = acquireLearningCuratorSource({ clients: { agentKnowledgeApi: { memory: { getAll: () => [nested] } } } }, options());
+    const before = readings.requests.length;
+    await expect(readLearningGrade({ record: unknown.libraries.memory[0]!.record }, unknown.options)).rejects.toMatchObject({ problem: 'card-material' });
+    expect(readings.requests).toHaveLength(before);
+  });
+
+  test('native work-plan clocks preserve complete evidence and retirement without exempting nested values', async () => {
+    const item = { id: 'native-work', title: 'Completed authored work', status: 'done' as const, createdAt: epoch, updatedAt: epoch, completedAt: epoch };
+    const context = { workspace: { workPlanStore: { listItems: () => [item] } } };
+    const source = acquireLearningCuratorSource(context, options());
+    expect(source.source.workItems[0]).toMatchObject({ createdAt: instant, updatedAt: instant, completedAt: instant });
+    const readings = port(); installJudgmentPort(readings.port);
+    await readLearningGrade({ record: source.source }, source.options);
+    expect(JSON.stringify(readings.requests)).not.toContain(String(epoch));
+    expect(item.createdAt).toBe(epoch);
+    item.completedAt++;
+    expect(source.assertCurrent).toThrow();
+    const nested = { ...item, opaque: { completedAt: epoch } };
+    const unknown = acquireLearningCuratorSource({ workspace: { workPlanStore: { listItems: () => [nested] } } }, options());
+    const before = readings.requests.length;
+    await expect(readLearningGrade({ record: unknown.source }, unknown.options)).rejects.toMatchObject({ problem: 'card-material' });
+    expect(readings.requests).toHaveLength(before);
+  });
+
+  test('native saved-session clocks become ISO evidence while both original metadata sources remain guarded', async () => {
+    const session = { name: 'native-session', title: 'Saved lesson', model: 'synthetic', provider: 'synthetic', timestamp: epoch, messageCount: 1, filePath: '/synthetic/session.json' };
+    const loaded = { meta: { title: session.title, model: session.model, provider: session.provider, timestamp: epoch }, messages: [{ role: 'assistant', content: 'A bounded authored lesson.' }], agentRecords: [], contracts: [] };
+    const manager = { list: () => [session], load: () => loaded };
+    const source = acquireLearningCuratorSource({ session: { sessionManager: manager } }, options());
+    expect(source.source.sessionList[0]?.timestamp).toBe(instant);
+    expect(source.source.sessions[0]?.session.timestamp).toBe(instant);
+    expect(source.source.sessions[0]?.loaded?.meta.timestamp).toBe(instant);
+    const readings = port(); installJudgmentPort(readings.port);
+    await readLearningGrade({ record: source.source }, source.options);
+    expect(JSON.stringify(readings.requests)).not.toContain(String(epoch));
+    expect(session.timestamp).toBe(epoch); expect(loaded.meta.timestamp).toBe(epoch);
+    loaded.meta.timestamp++;
+    expect(source.assertCurrent).toThrow();
+    const latest = acquireLearningCuratorSource({ session: { sessionManager: manager } }, options());
+    session.timestamp++;
+    expect(latest.assertCurrent).toThrow();
+  });
+
+  test('saved-session projection retains hidden collection and nested metadata privacy boundaries', async () => {
+    const session = { name: 'native-session', title: 'Saved lesson', model: 'synthetic', provider: 'synthetic', timestamp: epoch, messageCount: 0, filePath: '/synthetic/session.json' };
+    const sessions = [session];
+    Object.defineProperty(sessions, 'hiddenClock', { value: epoch, enumerable: false });
+    const loaded = { meta: { title: session.title, model: session.model, provider: session.provider, timestamp: epoch, nested: { timestamp: epoch } }, messages: [], agentRecords: [], contracts: [] };
+    const source = acquireLearningCuratorSource({ session: { sessionManager: { list: () => sessions, load: () => loaded } } }, options());
+    expect(Object.getOwnPropertyDescriptor(source.source.sessionList, 'hiddenClock')?.value).toBe(epoch);
+    const readings = port(); installJudgmentPort(readings.port);
+    await expect(readLearningGrade({ record: source.source }, source.options)).rejects.toThrow();
+    await expect(readLearningGrade({ record: source.source.sessions[0]?.loaded }, source.options)).rejects.toThrow();
+    expect(readings.requests).toHaveLength(0);
+    expect(() => acquireLearningCuratorSource({ session: { sessionManager: { list: () => [{ ...session, timestamp: epoch + 0.5 }], load: () => loaded } } }, options())).toThrow();
+  });
+
+  test.each(['first', 'second'] as const)('same-label learning restrictions retain the %s source without a parent readset', retired => {
+    const source = acquireLearningCuratorSource({}, {});
+    let first = true, second = true;
+    source.options.retainCurrent(() => { if (!first) throw new ToolInputProjectionError('held'); }, 'shared-source-label');
+    source.options.retainCurrent(() => { if (!second) throw new ToolInputProjectionError('held'); }, 'shared-source-label');
+    if (retired === 'first') first = false; else second = false;
+    expect(source.assertCurrent).toThrow();
+  });
+
+  test('native clock projection preserves hidden collection evidence for refusal', async () => {
+    const memories = [nativeMemory('native-collection', 'Complete native collection')];
+    Object.defineProperty(memories, 'tail', { value: '4111111111111111', enumerable: false });
+    const source = acquireLearningCuratorSource({ clients: { agentKnowledgeApi: { memory: { getAll: () => memories } } } }, options());
+    expect(Object.getOwnPropertyDescriptor(source.source.memoryRecords, 'tail')?.value).toBe('4111111111111111');
+    const readings = port(); installJudgmentPort(readings.port);
+    await expect(readLearningGrade({ record: source.source }, source.options)).rejects.toThrow();
+    expect(readings.requests).toHaveLength(0);
   });
 
   test('the immutable reading clock preserves native evidence retirement', () => {

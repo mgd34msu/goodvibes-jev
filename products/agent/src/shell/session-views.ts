@@ -99,7 +99,7 @@ function shortCommand(cmd: string): string {
 
 export class SessionViews implements SessionViewControls {
   readonly focus: SessionFocus;
-  readonly log = new ProcessOutputLog();
+  readonly log: ProcessOutputLog;
   private scrollBy = new Map<string, number>();
   /** The most each view could scroll at its last frame. */
   private maxScrollBy = new Map<string, number>();
@@ -114,6 +114,7 @@ export class SessionViews implements SessionViewControls {
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly deps: SessionViewsDeps) {
+    this.log = new ProcessOutputLog(() => { this.rowsCache = null; if (this.kind === 'process') deps.requestRender(); });
     const agentName = (r: AgentRecord): string => (r.contractRole === 'owner' || this.contractOf(r.id) ? 'Contract' : r.template || 'agent');
     const mark = (r: AgentRecord): SessionMark => {
       const contract = this.contractOf(r.id);
@@ -159,6 +160,7 @@ export class SessionViews implements SessionViewControls {
   dispose(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    void this.log.dispose();
   }
 
   private now(): number { return this.deps.now?.() ?? Date.now(); }
@@ -179,12 +181,15 @@ export class SessionViews implements SessionViewControls {
 
   /** Read new process output; true when anything arrived. */
   poll(): boolean {
-    const records = new Map<string, { stdout: readonly string[]; stderr: readonly string[]; done: boolean }>();
+    const records = new Map<string, { stdout: readonly string[]; stderr: readonly string[]; done: boolean; identity: string }>();
     for (const p of this.deps.processManager.list()) {
       const rec = this.deps.processManager.getStatus(p.id);
-      if (rec) records.set(p.id, rec);
+      if (rec) records.set(p.id, { stdout: rec.stdout, stderr: rec.stderr, done: rec.done, identity: `${rec.pid}:${rec.startTime}` });
     }
-    return this.log.poll(records, this.now());
+    return this.log.poll(records, this.now(), (id, captured, phase) => {
+      const current = this.deps.processManager.getStatus(id);
+      if (!current || current.stdout !== captured.stdout || current.stderr !== captured.stderr || (phase === 'generation' && current.done !== captured.done) || `${current.pid}:${current.startTime}` !== captured.identity) throw new Error('Process output source is no longer current');
+    });
   }
 
   // ── SessionViewControls ────────────────────────────────────────────────────
@@ -489,7 +494,7 @@ export class SessionViews implements SessionViewControls {
 
   private rows(id: string, width: number): ProcessRow[] {
     const lines = this.log.lines(id);
-    const key = `${id}|${width}|${lines.length}|${this.log.dropped(id)}`;
+    const key = `${id}|${width}|${lines.length}|${this.log.dropped(id)}|${this.log.revision(id)}`;
     if (!this.rowsCache || this.rowsCache.key !== key) this.rowsCache = { key, rows: processRows(lines, width) };
     return this.rowsCache.rows;
   }

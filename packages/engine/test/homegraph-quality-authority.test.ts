@@ -23,8 +23,8 @@ beforeEach(() => { previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function readings(battery = 0.99, manual = 0.99) {
   const fake = fakePort((name) => {
-    if (name === 'batteryApplicable') return noulAnswer(battery);
-    if (['manualApplicable', 'manufacturerPresent', 'modelPresent', 'batteryTypePresent'].includes(name)) return noulAnswer(manual);
+    if (name === 'batteryApplicable__batteryApplicable') return noulAnswer(battery);
+    if (['manualApplicable', 'manufacturerPresent', 'modelPresent', 'batteryTypePresent'].includes(name.split('__').at(-1)!)) return noulAnswer(manual);
     throw new Error(`Unexpected quality fixture question: ${name}`);
   });
   installJudgmentPort(fake.port); return fake;

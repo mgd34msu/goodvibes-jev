@@ -369,6 +369,17 @@ test('original runtime denial and escaping package path fail admission', async (
   symlinkSync(join(binding.owner, 'private.txt'), join(dirname(declaration.npmExecutable), 'escape.js'));
   await expect(admitCapturedExecNodeRuntime(binding, declaration)).rejects.toThrow('symlinks');
 });
+test('bundled npm file aliases are admitted but retargeting revokes the runtime', async () => {
+  const binding = await fixture();
+  const declaration = syntheticRuntime(binding);
+  const alias = join(dirname(declaration.npmExecutable), 'bundled-alias.js');
+  symlinkSync('npm-cli.js', alias);
+  const nodeRuntimeInput = await admitCapturedExecNodeRuntime(binding, declaration);
+  rmSync(alias); symlinkSync(join(binding.owner, 'private.txt'), alias);
+  const result = await run({ ...binding, nodeRuntimeInput }, 'echo forbidden');
+  expect(result.denied).toBe(true);
+  expect(result.stdout).toBe('');
+});
 test('cancellation settles a pending runtime permission callback', async () => {
   const controller = new AbortController();
   const binding = await fixture(() => new Promise<boolean>(() => {}));

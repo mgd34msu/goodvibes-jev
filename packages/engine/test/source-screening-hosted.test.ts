@@ -79,14 +79,14 @@ async function rejection(work: Promise<unknown>): Promise<Error> {
   throw new Error('Expected source-screening refusal');
 }
 
-test('explicit hosted grant uses fixed Abacus and pinned TypeSafe protocols with private origin-bound headers', async () => {
+test('explicit hosted grant uses fixed Abacus and latest TypeSafe protocol with private origin-bound headers', async () => {
   const text = 'Contact person@example.test, then keep the build notes. 🙂';
   const f = fixture({ respond: call => call.url === routes.proposal
     ? proposal(sourceFrom(call.body).revision, [{ part: 1, start: 8, end: 27 }]) : judgment(call.body) });
   expect(await project(f.owner, ['Direct message', text])).toEqual(['Direct message', 'Contact [redacted], then keep the build notes. 🙂']);
   expect(f.calls.map(call => call.url)).toEqual([routes.proposal, routes.judgment]);
   expect(f.calls[0]?.body.model).toBe('route-llm');
-  expect(f.calls[1]?.body.model).toBe('jev-1.13.0');
+  expect(f.calls[1]?.body.model).toBe('jev-latest');
   expect(f.calls[0]?.headers).toEqual([['authorization', `Bearer ${abacusApiKey}`], ['content-type', 'application/json']]);
   expect(f.calls[1]?.headers).toEqual([['authorization', `Bearer ${typesafeApiKey}`], ['content-type', 'application/json']]);
   expect(f.calls[1]?.body.state).toMatchObject({ parts: ['Direct message', text], spans: [{ part: 1, start: 8, end: 27 }] });
@@ -205,7 +205,7 @@ test.each([0, 0.5, 0.97])('hosted coverage probability %s stays held without a l
 });
 
 test('hosted model mismatch never grants calibrated source privacy authority', async () => {
-  const f = fixture({ respond: call => call.url === routes.proposal ? proposal(sourceFrom(call.body).revision) : judgment(call.body, 1, 1, 'jev-9.0.0') });
+  const f = fixture({ respond: call => call.url === routes.proposal ? proposal(sourceFrom(call.body).revision) : judgment(call.body, 1, 1, 'other-model') });
   expect(await f.owner.screen(f.owner.capture(['Ordinary source.']))).toEqual({ status: 'held', reason: 'route-unavailable' });
   expect(f.calls).toHaveLength(2);
 });

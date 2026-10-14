@@ -1,4 +1,7 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
@@ -366,3 +369,13 @@ describe('cdp endpoint candidates', () => {
     expect(cdpEndpointCandidates('http://192.168.1.5:9222')).toEqual(['http://192.168.1.5:9222']);
   });
 });
+
+let prior: JudgmentPort | undefined;
+beforeEach(() => {
+  const readings = fakePort((_name, question, state) => {
+    if ((state as { message: string }).message !== 'Failed to create a ProcessSingleton for your profile directory') throw new Error('Unscripted launch fixture');
+    return choiceAnswer(question, 'profile_in_use', 1);
+  });
+  prior = installJudgmentPort({ model: readings.port.model, ask: request => request.context?.battery === 'engine.browser.launch-cause' ? readings.port.ask(request) : prior!.ask(request) });
+});
+afterEach(() => installJudgmentPort(prior));

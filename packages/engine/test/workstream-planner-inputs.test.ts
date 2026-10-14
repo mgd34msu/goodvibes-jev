@@ -35,7 +35,7 @@ afterEach(() => {
 });
 
 /** A port that reads every task's risk at `level` (0 negligible .. 3 severe) and records the requests. */
-function riskPort(level: number, strategy = 'cohort') {
+function riskPort(level: number, strategy = 'single') {
   return fakePort((name: string, question: Question) => {
     if (name === 'strategy') return choiceAnswer(question, strategy, 0.97);
     if (name !== 'risk') throw new Error(`unexpected question ${name}`);
@@ -121,11 +121,11 @@ describe('workstream draft planner inputs', () => {
     orchestrationEngine.dispose();
   });
 
-  test('a low risk reading leaves the gate open', async () => {
+  test('a low risk reading preserves the recorded single strategy', async () => {
     installJudgmentPort(riskPort(0).port);
     const { workstreamCommands, orchestrationEngine } = makeServices({ decomposition: 'heuristic' });
     const draft = await workstreamCommands.proposeDraft('Reword the comments in the README examples.');
-    expect(draft.gate.decompose).toBe(true);
+    expect(draft.gate).toMatchObject({ decompose: false, strategy: 'single' });
     orchestrationEngine.dispose();
   });
 

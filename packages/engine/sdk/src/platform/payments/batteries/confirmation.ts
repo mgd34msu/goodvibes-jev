@@ -1,3 +1,4 @@
+import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
 /**
  * The confirmation-mail readings order-correlation.ts runs:
  *
@@ -30,13 +31,15 @@
  */
 import { defineBattery, defineDatePartsReader, defineSelector, NONE, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 
-/** Most characters of a mail body one request carries; longer text is clipped with a note. */
-export const MAX_MAIL_CHARS = 20_000;
+/** Most characters of a mail body one request carries; larger inputs are rejected without clipping. */
+export const MAX_MAIL_CHARS = 160_000;
 /** Characters of surrounding text shown with each identifier candidate. */
 const CANDIDATE_CONTEXT_CHARS = 60;
 
 export function clipMail(text: string): string {
-  return text.length <= MAX_MAIL_CHARS ? text : `${text.slice(0, MAX_MAIL_CHARS)}\n[${text.length - MAX_MAIL_CHARS} more characters]`;
+  assertJudgmentInput(text);
+  if (text.length > MAX_MAIL_CHARS) throw new JudgmentInputError('unsupported-input');
+  return text;
 }
 
 /** The mail and one purchase, as the order-mail reading sees them. */

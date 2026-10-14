@@ -1,5 +1,5 @@
 import { knowledgeDecisionStamp, knowledgeRawRepresentation } from './store-record-representation.js';
-import { captureKnowledgeSourceReferences } from './source-structural-references.js';
+import { captureKnowledgeSourceReferences, retainKnowledgeNodeActivationReferences } from './source-structural-references.js';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { nodeServingWithoutReview } from './activation/battery.js';
@@ -128,6 +128,7 @@ export async function prepareNodeActivationPass(store: KnowledgeStore, drafts: r
           extractionId: extraction?.id, extractionHash: supportHash(extraction) })),
         subjects: draft.subjects.map(({ id, node }) => ({ nodeId: id, nodeHash: supportHash(node) })) },
     } }, draft.record);
+    retainKnowledgeNodeActivationReferences(store, record, draft.evidence, draft.references);
     return { ...draft, record };
   });
   const token = Object.freeze({ count: resolved.length });

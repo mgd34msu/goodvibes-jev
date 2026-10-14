@@ -37,7 +37,7 @@ describe('Personal Ops complete native catalog batching', () => {
     });
     installJudgmentPort(fake.port);
     const retained: Array<() => void> = [];
-    expect(await contractMethodsForLane('inbox', { sourceOwner: ordinaryResearchOwner(), retainCurrent: guard => retained.push(guard) }))
+    expect(await contractMethodsForLane('inbox', { sourceOwner: ordinaryResearchOwner(), retainCurrent: guard => { retained.push(guard); } }))
       .toEqual(target.invokable === false ? { available: [], unavailable: [target.id] } : { available: [target.id], unavailable: [] });
     expect(seen.size).toBe(expected.size);
     expect([...seen.values()].every(count => count === 1)).toBe(true);

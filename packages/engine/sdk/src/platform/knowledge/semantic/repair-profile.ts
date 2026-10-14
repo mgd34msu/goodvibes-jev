@@ -26,6 +26,7 @@ export interface RepairProfileDerivationInput {
 export interface RepairProfileDerivationOptions {
   readonly signal?: AbortSignal | undefined;
   readonly timeoutMs?: number | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
 }
 /** Complete original extractor content, including table labels, qualifiers, and meaningful URLs. */
 export function repairProfileSourceText(extraction: KnowledgeExtractionRecord | null | undefined): string {

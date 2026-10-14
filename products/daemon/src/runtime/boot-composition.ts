@@ -23,13 +23,21 @@ async function withServiceReadDrain<T>(source: ServiceRegistry, action: (registr
     void settled.then(() => { pending.delete(settled); });
     return result;
   };
+  const methods = new Map<PropertyKey, { original: object; bound: (...args: unknown[]) => unknown }>();
   const registry: ServiceRegistry = new Proxy(source, {
-    get(target, key, receiver): unknown {
-      if (key === 'resolveSecret') return (...args: Parameters<ServiceRegistry['resolveSecret']>) =>
-        track(() => target.resolveSecret.apply(registry, args));
-      if (key === 'inspect') return (...args: Parameters<ServiceRegistry['inspect']>) =>
-        track(() => target.inspect.apply(registry, args));
-      return Reflect.get(target, key, receiver);
+    get(target, key): unknown {
+      const value: unknown = Reflect.get(target, key, target);
+      if (typeof value !== 'function') return value;
+      const known = methods.get(key);
+      if (known?.original === value) return known.bound;
+      // Registry methods retain their real receiver and private source owner.
+      // inspect itself drains its credential siblings; the boot adapter owns
+      // the returned operation without replacing its internal method bindings.
+      const bound = (...args: unknown[]) => key === 'resolveSecret' || key === 'inspect'
+        ? track(() => Reflect.apply(value, target, args) as Promise<unknown>)
+        : Reflect.apply(value, target, args);
+      methods.set(key, { original: value, bound });
+      return bound;
     },
   });
   try { return await action(registry); }

@@ -132,3 +132,27 @@ describe('registry recommend ranked by engine.tools.registry-rank', () => {
     expect(requests).toHaveLength(0);
   });
 });
+
+
+test('a tentative negative remains a discovery candidate', async () => {
+  relevance.set('tool:exec', 0.42);
+  const out = await run({ mode: 'search', query: 'possible command capability' });
+  expect(ids(out.results)).toContain('tool:exec');
+});
+
+test('protected registry queries refuse before any candidate is sent', async () => {
+  const fixture = fakePort(() => noulAnswer(0.99)); installJudgmentPort(fixture.port);
+  const registry = new ToolRegistry(); registry.register(fakeTool('exec', 'Run a shell command.'));
+  const result = await createRegistryTool(registry, { workingDirectory, homeDirectory }).execute({ mode: 'search', query: 'password=synthetic-private-value' });
+  expect(result.success).toBe(false); expect(fixture.requests).toHaveLength(0);
+});
+
+test('retiring the Jev installation holds a pending registry discovery', async () => {
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const fixture = fakePort(() => noulAnswer(0.99));
+  installJudgmentPort({ model: fixture.port.model, async ask(request) { entered.resolve(); await release.promise; return fixture.port.ask(request); } });
+  const registry = new ToolRegistry(); registry.register(fakeTool('exec', 'Run a shell command.'));
+  const pending = createRegistryTool(registry, { workingDirectory, homeDirectory }).execute({ mode: 'search', query: 'run command' });
+  await entered.promise; installJudgmentPort(fakePort(() => noulAnswer(0.01)).port); release.resolve();
+  expect((await pending).success).toBe(false);
+});

@@ -242,8 +242,9 @@ test('owner-log replay drains complete logs or reports bounded truncation and in
   expect(Date.now() - started).toBeLessThan(2000); blocked.destroy();
   const interrupted = new Writable({ write() { /* Cancellation must also end a pending sink callback. */ } });
   const listeners = process.listenerCount('SIGTERM');
-  const pending = replayTestOwnerLogs(files, Date.now() + 10000, interrupted);
-  setTimeout(() => process.emit('SIGTERM'), 20);
+  const interruption = new AbortController();
+  const pending = replayTestOwnerLogs(files, Date.now() + 10000, interrupted, interruption.signal);
+  setTimeout(() => interruption.abort(), 20);
   expect((await pending).outputTruncated).toBe(true); interrupted.destroy();
   expect(process.listenerCount('SIGTERM')).toBe(listeners);
   expect(readFileSync(logs[0]!, 'utf8')).toBe('first complete tail\n');

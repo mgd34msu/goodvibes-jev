@@ -190,7 +190,7 @@ test('native registry acquisition retains every original server and returns the 
       { qualifiedName: 'mcp:first:observe', serverName: 'first', toolName: 'observe', description: 'Native generation 1.' },
       { qualifiedName: 'mcp:second:observe', serverName: 'second', toolName: 'observe', description: 'Native generation 1.' },
     ]);
-    expect(retained.assertCurrent()).toBeUndefined(); expect(await registry.listAllTools()).toEqual(tools);
+    expect<unknown>(retained.assertCurrent()).toBeUndefined(); expect<unknown>(await registry.listAllTools()).toEqual(tools);
     expect(first.lists).toBe(1); expect(second.lists).toBe(1); expect(first.calls + second.calls).toBe(0);
     registry.setServerRole('second', 'docs'); expect(() => retained.assertCurrent()).toThrow();
   } finally { await registry.disconnectAll(); first.server.stop(true); second.server.stop(true); }

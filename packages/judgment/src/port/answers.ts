@@ -1,4 +1,5 @@
 import { JudgmentError } from './errors.ts';
+import { LIMITS } from './limits.ts';
 import type { JudgmentResult, Question, Questions } from './types.ts';
 
 /**
@@ -52,26 +53,79 @@ function headlineProblem(question: Question, answer: RawAnswer): string | undefi
   return undefined;
 }
 
-/** Choice is an argmax over an approximately unit distribution; confidence is separate. */
-function choiceDistributionProblem(question: Question, answer: RawAnswer): string | undefined {
-  if (question.type !== 'choice') return undefined;
+/**
+ * Hosted answers serialize probabilities and scores to hundredths. Check
+ * whether a unit-mass distribution within those rounding intervals could
+ * produce the reported score, instead of demanding unrounded equality.
+ * Higher-precision values keep their original precision. Never renormalize.
+ */
+function roundingRadius(value: number): number {
+  return Math.abs(value * 100 - Math.round(value * 100)) < 1e-12 ? 0.005 : Number.EPSILON * 4;
+}
+function distributionProblem(question: Question, answer: RawAnswer): string | undefined {
+  if (question.type === 'noul') return undefined;
   const values = distributionKeys(question).map((key) => answer.probabilities![key]!);
-  // https://api.typesafe.ai/openapi.json specifies an approximate total without
-  // a numeric bound. One percentage point is our fixed admission policy, not
-  // a provider guarantee or a calibration threshold. Never renormalize values.
   const roundoff = Number.EPSILON * Math.max(1, values.length) * 4;
-  if (Math.abs(values.reduce((sum, value) => sum + value, 0) - 1) > 0.01 + roundoff) return 'probabilities that do not sum approximately to 1';
-  const selected = answer.probabilities![answer.choice!]!;
-  if (values.some((value) => value > selected)) return 'a choice below the highest probability';
+  const lower = values.map(value => Math.max(0, value - roundingRadius(value)));
+  const upper = values.map(value => Math.min(1, value + roundingRadius(value)));
+  const minimumMass = lower.reduce((sum, value) => sum + value, 0);
+  const maximumMass = upper.reduce((sum, value) => sum + value, 0);
+  if (minimumMass > 1 + roundoff || maximumMass < 1 - roundoff) return 'probabilities that do not sum to 1 within wire precision';
+  if (question.type === 'choice') {
+    const selected = answer.probabilities![answer.choice!]!;
+    if (values.some((value) => value > selected)) return 'a choice below the highest probability';
+  } else {
+    // Fill the remaining mass at low/high levels to bound every possible mean.
+    const meanBound = (descending: boolean): number => {
+      let remaining = Math.max(0, 1 - minimumMass);
+      let mean = lower.reduce((sum, probability, level) => sum + level * probability, 0);
+      for (let i = 0; i < values.length; i++) {
+        const level = descending ? values.length - 1 - i : i;
+        const added = Math.min(remaining, upper[level]! - lower[level]!);
+        mean += level * added; remaining -= added;
+      }
+      return mean;
+    };
+    const tolerance = roundingRadius(answer.score!) + roundoff * Math.max(1, values.length - 1);
+    if (answer.score! < meanBound(false) - tolerance || answer.score! > meanBound(true) + tolerance) return 'a score inconsistent with its probability distribution';
+  }
   return undefined;
 }
 
 /** Why an answer cannot be trusted for its question, or undefined when it can. */
 function answerProblem(question: Question, answer: RawAnswer): string | undefined {
   if (answer.type !== question.type) return `type ${String(answer.type)}, expected ${question.type}`;
-  if (question.type === 'choice' && (!answer.probabilities || typeof answer.probabilities !== 'object' || Array.isArray(answer.probabilities))) return 'no probabilities object';
+  if (question.type !== 'noul' && (!answer.probabilities || typeof answer.probabilities !== 'object' || Array.isArray(answer.probabilities))) return 'no probabilities object';
   const invalid = probabilityFields(question, answer).find(({ value }) => !isNumberWithin(value, 0, 1));
-  return headlineProblem(question, answer) ?? (invalid === undefined ? choiceDistributionProblem(question, answer) : `no valid ${invalid.what}`);
+  return headlineProblem(question, answer) ?? (invalid === undefined ? distributionProblem(question, answer) : `no valid ${invalid.what}`);
+}
+
+/** Standalone readers must reject malformed injected answers too. */
+export function captureNoulAnswer(answer: RawAnswer): number {
+  try {
+    const { type, noul } = answer;
+    if (type !== 'noul' || !isNumberWithin(noul, 0, 1)) throw new Error('invalid noul');
+    return noul!;
+  } catch {
+    throw new JudgmentError('invalid-response', 'the yes/no answer is not a valid probability');
+  }
+}
+
+export function captureScoreAnswer(answer: RawAnswer): { readonly score: number; readonly confidence: number; readonly probabilities: readonly number[] } {
+  try {
+    const { type, score, confidence, probabilities: raw } = answer;
+    if (type !== 'score' || typeof score !== 'number' || typeof confidence !== 'number'
+      || !raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('invalid score');
+    const probabilities = Object.fromEntries(Object.entries(raw));
+    const count = Object.keys(probabilities).length;
+    if (count < LIMITS.minScoreLevels || count > LIMITS.maxScoreLevels) throw new Error('invalid levels');
+    const criteria = Array.from({ length: count }, () => 'Level');
+    const captured = { type, score, confidence, probabilities };
+    if (answerProblem({ type: 'score', instructions: 'Score reading', criteria: criteria as [string, string, ...string[]] }, captured) !== undefined) throw new Error('invalid score');
+    return { score: score!, confidence: confidence!, probabilities: criteria.map((_, level) => probabilities[String(level)]!) };
+  } catch {
+    throw new JudgmentError('invalid-response', 'the score answer did not match its probability distribution');
+  }
 }
 
 /** Snapshot and validate standalone readChoice inputs through the same wire rules. */

@@ -1,5 +1,7 @@
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { artifactKind } from './batteries/artifact-kind.js';
+import { requireActingReading } from '../types/judgment-held.js';
+import { assertJudgmentInput } from '../gate/judgment-input.js';
 
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
@@ -133,7 +135,7 @@ export const ARTIFACT_KIND_SITE = 'artifacts.kind';
  * The kind of an artifact. Image, audio and video are the media type's own
  * top-level registration, from the given type or the file name's registered
  * type: code. Anything else is the `engine.artifacts.kind` reading over the
- * media type and file name; a reading that does not reach act is `file`.
+ * media type and file name; an unsettled reading holds artifact creation.
  */
 export async function inferArtifactKind(mimeType: string, filename?: string): Promise<ArtifactKind> {
   const lower = mimeType.toLowerCase();
@@ -142,9 +144,10 @@ export async function inferArtifactKind(mimeType: string, filename?: string): Pr
     if (type.startsWith('audio/')) return 'audio';
     if (type.startsWith('video/')) return 'video';
   }
-  const run = await artifactKind.run(judgmentPort(ARTIFACT_KIND_SITE), { mimeType: lower, filename: filename ?? '' }, { site: ARTIFACT_KIND_SITE });
-  const reading = run.readings.kind;
-  const kind: ArtifactKind = reading.outcome === 'act' ? reading.choice : 'file';
+  const state = { mimeType: lower, filename: filename ?? '' };
+  assertJudgmentInput(state);
+  const run = await artifactKind.run(judgmentPort(ARTIFACT_KIND_SITE), state, { site: ARTIFACT_KIND_SITE });
+  const kind = requireActingReading(run.readings.kind).choice;
   run.recordAction(`recorded ${kind}`);
   return kind;
 }

@@ -105,6 +105,7 @@ describe('the node-hosted browser host', () => {
       const driver = join(root, 'node_modules/playwright-core');
       mkdirSync(driver, { recursive: true });
       writeFileSync(callsPath, '');
+      writeFileSync(join(driver, 'package.json'), JSON.stringify({ name: 'playwright-core', version: DRIVER_VERSION, main: 'index.js' }));
       writeFileSync(join(driver, 'index.js'), `
         const { appendFileSync } = require('node:fs');
         const record = (call) => appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(call) + '\\n');

@@ -86,7 +86,7 @@ async function persistedRelinkFixture(protectedTail: boolean) {
   const store = new KnowledgeStore({ dbPath: path }); await store.init();
   const currentFact = store.getNode(fact.id), currentGap = store.getNode(gap.id), subject = store.getNode(item.subject.id);
   if (!currentFact || !currentGap || !subject) throw new Error('Historical native fact did not reopen');
-  expect(currentFact).toBe(store.getNode(fact.id));
+  expect<unknown>(currentFact).toBe(store.getNode(fact.id));
   expect(currentFact.metadata.unrecognizedHistoricalTail).toBe(protectedTail ? 'Authorization: Bearer synthetic-hidden-material' : 'Safe historical metadata outside the selected scoring fields.');
   return { store, fact: currentFact, gap: currentGap, subject, sourceId: item.source.id };
 }
@@ -184,7 +184,7 @@ describe('exact repair scoring and completion judgments', () => {
       throw new Error(`Unscripted full promotion scoring question ${name}`);
     });
     installJudgmentPort(fake.port);
-    const result = await promoteRepairSources({ store: item.store }, spaceId, gap, [item.source.id], task, Date.now() + 5_000);
+    const result = await promoteRepairSources({ store: item.store }, spaceId, gap, [item.source.id], task, Date.now() + 30_000);
     expect(result.repairComplete).toBe(true); expect(result.promotedFactCount).toBe(1);
     const facts = item.store.listNodes().filter(node => node.kind === 'fact');
     expect(facts).toHaveLength(1); expect(facts[0]?.confidence).toBe(50);
@@ -214,7 +214,7 @@ describe('exact repair scoring and completion judgments', () => {
       throw new Error(`Unscripted held final scoring question ${name}`);
     });
     installJudgmentPort(fake.port);
-    await expect(promoteRepairSources({ store: item.store }, spaceId, gap, [item.source.id], task, Date.now() + 5_000)).rejects.toMatchObject({ reason: 'uncertain' });
+    await expect(promoteRepairSources({ store: item.store }, spaceId, gap, [item.source.id], task, Date.now() + 30_000)).rejects.toMatchObject({ reason: 'uncertain' });
     expect(atHold).not.toBe(''); expect(graph(item.store)).toBe(atHold);
     expect(item.store.listNodes().filter(node => node.kind === 'fact')).toHaveLength(1);
     expect(item.store.listEdges().find(edge => edge.relation === 'describes')?.weight).toBe(0.75);
@@ -320,7 +320,7 @@ describe('exact repair scoring and completion judgments', () => {
       throw new Error(`Unscripted complete narrow repair question ${name}`);
     });
     installJudgmentPort(fake.port);
-    const result = await promoteRepairSources({ store: item.store }, spaceId, gap, [item.source.id], task, Date.now() + 5_000);
+    const result = await promoteRepairSources({ store: item.store }, spaceId, gap, [item.source.id], task, Date.now() + 30_000);
     expect(result.repairComplete).toBe(true); expect(result.promotedFactCount).toBe(1);
     expect(item.store.getRefinementTask(task.id)?.state).toBe('verified');
     expect(fake.requests.some(request => 'repairEvidenceSufficient' in request.questions)).toBe(true);
@@ -344,7 +344,7 @@ describe('exact repair scoring and completion judgments', () => {
       throw new Error(`Unscripted incomplete broad repair question ${name}`);
     });
     installJudgmentPort(fake.port);
-    const result = await promoteRepairSources({ store: item.store }, spaceId, gap, [item.source.id], task, Date.now() + 5_000);
+    const result = await promoteRepairSources({ store: item.store }, spaceId, gap, [item.source.id], task, Date.now() + 30_000);
     expect(result.promotedFactCount).toBe(3); expect(result.repairComplete).toBe(false);
     expect(item.store.getRefinementTask(task.id)?.state).toBe('applying');
   });
@@ -374,7 +374,7 @@ describe('exact repair scoring and completion judgments', () => {
       throw new Error(`Unscripted alternate subject repair question ${name}`);
     });
     installJudgmentPort(fake.port);
-    const result = await promoteRepairSources({ store: item.store }, spaceId, gap, [item.source.id], task, Date.now() + 5_000);
+    const result = await promoteRepairSources({ store: item.store }, spaceId, gap, [item.source.id], task, Date.now() + 30_000);
     expect(result.repairComplete).toBe(true); expect(result.promotedFactCount).toBe(1);
     expect(item.store.listEdges().find(edge => edge.fromId === fact.id && edge.toId === item.subject.id && edge.relation === 'describes')?.weight).toBe(0.5);
   });

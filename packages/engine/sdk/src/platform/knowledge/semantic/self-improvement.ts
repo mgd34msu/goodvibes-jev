@@ -132,7 +132,10 @@ export async function runKnowledgeSemanticSelfImprovement(
   const plan = createSelfImproveRunPlan(candidates.gaps, input);
   const state = createSelfImproveRunState(plan);
 
-  for (const gap of plan.gaps) {
+  for (const plannedGap of plan.gaps) {
+    // A preceding repair can close or update another planned gap.
+    const gap = context.store.getNode(plannedGap.id);
+    if (!gap || gap.kind !== 'knowledge_gap' || gap.status !== 'active') { state.skippedGaps += 1; continue; }
     // Governor pause stop lands INSIDE a space-scoped run too: the per-gap
     // boundary is the run's natural yield point, same as signal abort.
     if (input.signal?.aborted || context.shouldStop?.()) {

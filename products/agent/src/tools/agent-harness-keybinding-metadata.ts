@@ -798,7 +798,7 @@ export async function setHarnessKeybinding(context: KeybindingContext, args: Har
   writeOverrideFile(configPath, overrides);
   manager.loadFromDisk();
   options.signal?.throwIfAborted(); options.assertCurrent?.();
-  const keybinding = await describeHarnessKeybinding(context, { actionId: resolved.action });
+  const keybinding = await describeHarnessKeybinding(context, { actionId: resolved.action }, options);
   options.signal?.throwIfAborted(); options.assertCurrent?.();
   for (const guard of modifierGuards) guard();
   return {
@@ -824,10 +824,12 @@ export async function resetHarnessKeybinding(context: KeybindingContext, args: H
   writeOverrideFile(configPath, overrides);
   manager.loadFromDisk();
   options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const keybinding = await describeHarnessKeybinding(context, { actionId: resolved.action }, options);
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
   return {
     status: 'reset',
     configPath,
-    keybinding: await describeHarnessKeybinding(context, { actionId: resolved.action }),
+    keybinding,
     lookup: resolved.lookup,
     ...(resolved.judgment ? { selectionJudgment: resolved.judgment } : {}),
   };

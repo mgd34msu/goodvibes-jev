@@ -121,7 +121,7 @@ export function projectGeneratedFactRecordAdmission(store: KnowledgeStore, recor
           Object.defineProperty(receipt, 'claimId', { value: 'generated-claim-reference', enumerable: true, configurable: true, writable: true });
           // This exact whole native receipt retained the original extraction
           // owner. Present its clock losslessly; never infer a role from a key.
-          Object.defineProperty(receipt, 'extractionUpdatedAt', { value: knowledgeClockIso(retained.value.extractionUpdatedAt),
+          Object.defineProperty(receipt, 'extractionUpdatedAt', { value: typeof retained.value.extractionUpdatedAt === 'number' ? knowledgeClockIso(retained.value.extractionUpdatedAt) : retained.value.extractionUpdatedAt,
             enumerable: true, configurable: true, writable: true });
           break;
         }

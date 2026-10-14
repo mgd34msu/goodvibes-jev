@@ -334,3 +334,5 @@ export type {
   MemoryConsolidationGatewayResolution,
   MemoryConsolidationFetchFailure,
 } from './consolidation-gateway.js';
+
+export { learningProposalQuality } from './learning-proposal.js';

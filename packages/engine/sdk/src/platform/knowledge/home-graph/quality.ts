@@ -54,7 +54,7 @@ export async function refreshHomeGraphQualityReport(
       : { reference, subject: { kind: 'ha_device', title: 'Declared device' }, entities: [], facts: [], questions: [] };
     return { node, battery, manual, input };
   });
-  const readings = await readHomeGraphQuality(selected.map(({ input }) => input), options);
+  const readings = await readHomeGraphQuality(selected.map(({ input }) => input), { ...options, assertCurrent: guard });
   guard();
   const issues: KnowledgeIssueUpsertInput[] = [];
   for (const [index, { node, battery, manual, input }] of selected.entries()) {
@@ -70,7 +70,7 @@ export async function refreshHomeGraphQualityReport(
   let written: readonly KnowledgeIssueRecord[];
   try { written = await store.replaceIssuesGuarded(issues.filter((issue) => !preserveLegacyQualityAuthority(previous.get(issue.id!))
       && !isSuppressedGeneratedIssue(previous.get(issue.id!) ?? null, issue)),
-    homeGraphQualityNamespace(spaceId), guard, legacy); }
+    homeGraphQualityNamespace(spaceId), () => { guard(); for (const reading of readings) reading.assertCurrent(); }, legacy); }
   catch (error) { if (error instanceof KnowledgeIssueReplacementHeldError) throw new HomeGraphQualityHeldError(error.reason); throw error; }
   return { issues: written, retainedLegacyIssues };
 }

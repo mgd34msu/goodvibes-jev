@@ -1,7 +1,7 @@
-import { defineBattery, PINNED_MODEL, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
+import { defineBattery, DEFAULT_MODEL, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 
 export const smokeLoadFailure = defineBattery({
-  name: 'toolchain.smoke.load-failure', version: 1, model: PINNED_MODEL,
+  name: 'toolchain.smoke.load-failure', version: 1, model: DEFAULT_MODEL,
   description: 'Whether complete privacy-screened compiled version-smoke output reports an actual module or native-addon load failure.',
   accuracyFloor: 0.9,
   items: {

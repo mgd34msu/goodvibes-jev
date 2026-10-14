@@ -1,3 +1,5 @@
+import { validateContextBudget } from '@goodvibes-jev/judgment';
+import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
 /**
  * `engine.tools.page-content`: which blocks of a fetched web page are part of
  * its main content? Read by Jev in place of the fetch tool's `readable` mode
@@ -50,7 +52,7 @@ const CONTENT_CRITERIA = {
 } as const;
 
 /** Most characters of one block a request carries; longer blocks are clipped with a note. */
-export const MAX_JUDGED_BLOCK_CHARS = 2_000;
+export const MAX_JUDGED_BLOCK_CHARS = 160_000;
 
 /** Requests in flight at once when a page needs more than one. */
 const REQUEST_CONCURRENCY = 4;
@@ -76,8 +78,11 @@ export interface PageContent extends NamedDecision {
   read(port: JudgmentPort, title: string, blocks: readonly ContentBlock[], options?: CallOptions): Promise<Map<number, YesNoReading>>;
 }
 
-const clipText = (text: string): string =>
-  text.length <= MAX_JUDGED_BLOCK_CHARS ? text : `${text.slice(0, MAX_JUDGED_BLOCK_CHARS)} [${text.length - MAX_JUDGED_BLOCK_CHARS} more characters]`;
+function clipText(text: string): string {
+  assertJudgmentInput(text);
+  if (text.length > MAX_JUDGED_BLOCK_CHARS) throw new JudgmentInputError('unsupported-input');
+  return text;
+}
 
 const lineFor = (block: ContentBlock): string => `#${block.number} [${block.path}]\n${clipText(block.text)}`;
 const keyFor = (block: ContentBlock): string => `main_${block.number}`;
@@ -153,7 +158,9 @@ export function definePageContent(spec: {
     ...header,
     async read(port, title, blocks, options = {}) {
       if (blocks.length === 0) return new Map();
-      const runs = packContentRequests(title, blocks);
+      assertJudgmentInput({ title, blocks });
+      const runs = packContentRequests(title, structuredClone(blocks));
+      for (const run of runs) validateContextBudget({ title, page: run.map(lineFor).join(SEPARATOR) }, Object.fromEntries(run.map(block => [keyFor(block), questionFor(block)])));
       const read = await mapLimit(runs, REQUEST_CONCURRENCY, (run) => askRun(port, title, run, options));
       return new Map(read.flat());
     },

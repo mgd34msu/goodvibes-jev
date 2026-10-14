@@ -25,7 +25,7 @@ function fixture(reasons: string, notes = '') {
 }
 
 export const modelReasonTheme = defineBattery({
-  name: 'agent.models.reason-theme', version: 1, model: 'jev-1.13.0', accuracyFloor: 0.95,
+  name: 'agent.models.reason-theme', version: 1, accuracyFloor: 0.95,
   description: 'Six independent affirmative preference themes from complete saved model comparison evidence; held readings never become lexical fallback classifications.',
   items: {
     actionable: yesNo('Does the author prefer the selected candidate for concrete, usable guidance or practical next actions?' + basis, band),

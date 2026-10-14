@@ -25,13 +25,14 @@ const recentCalls = (log: DecisionLog): readonly DecisionEntry[] =>
   log.query({ site: CALIBRATION_SITE, status: 'answered', limit: RECENT_CALLS });
 
 /** Capture only IDs returned by this execution, even when other calibrations share the log. */
-function fixturePort(port: JudgmentPort, returned: Set<string>): JudgmentPort {
+function fixturePort(port: JudgmentPort, returned: Set<string>, models: Set<string>): JudgmentPort {
   return {
     get model() { return port.model; },
     ...(port.recorder === undefined ? {} : { recorder: port.recorder }),
     ...(port.health === undefined ? {} : { health: () => port.health!() }),
     async ask(request) {
       const result = await port.ask(request);
+      models.add(result.model);
       if (result.decisionId !== undefined) returned.add(result.decisionId);
       return result;
     },
@@ -85,13 +86,15 @@ export async function calibrate(
     const model = decision.model ?? port.model;
     const before = new Set(log === undefined ? [] : recentCalls(log).map((entry) => entry.id));
     const returned = new Set<string>();
+    const models = new Set<string>();
     try {
-      const checks = await decision.checkFixtures(log === undefined ? port : fixturePort(port, returned), options.signal === undefined ? {} : { signal: options.signal });
-      const report = summarize(decision, model, checks);
+      const checks = await decision.checkFixtures(fixturePort(port, returned, models), options.signal === undefined ? {} : { signal: options.signal });
+      const report = { ...summarize(decision, model, checks), resolvedModels: [...models] };
       reports.push(log === undefined ? report : { ...report, truthRecorded: recordFixtureTruth(log, decision, checks, before, returned) });
     } catch (error) {
       reports.push({
         ...summarize(decision, model, []),
+        resolvedModels: [...models],
         error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
       });
     }

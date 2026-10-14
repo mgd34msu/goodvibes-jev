@@ -8,7 +8,7 @@ import type { SQLitePublicationIO } from '../sdk/src/platform/state/sqlite-store
 import { afterEach, expect, test } from 'bun:test';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { SqliteDecisionLog, withDecisionLog, createSystemOnePort, PINNED_MODEL, type JudgmentPort } from '@goodvibes-jev/judgment';
+import { SqliteDecisionLog, withDecisionLog, createSystemOnePort, DEFAULT_MODEL, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { createWorkLedger } from '../sdk/src/platform/workflow/work-ledger/service.js';
@@ -289,7 +289,7 @@ test('a persisted passed checkpoint cannot settle while another execution lease 
 
 test('terminal settlement uses shared retry ownership and cancellation interrupts retry-after without late publication', async () => {
   let retried!: () => void; const waiting = new Promise<void>(resolve => { retried = resolve; }); let calls = 0;
-  const retry = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-fixture' }, model: PINNED_MODEL, timeoutMs: 100,
+  const retry = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-fixture' }, model: DEFAULT_MODEL, timeoutMs: 100,
     retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fetch: async () => { calls++; return Response.json({}, { status: 503, headers: { 'retry-after': '3600' } }); } });
   let f!: Awaited<ReturnType<typeof fixture>>;
   f = await fixture({ decoratePort: port => ({ ...port, ask: request => request.context?.site === 'contract.check.unit-judge'
@@ -302,7 +302,7 @@ test('terminal settlement uses shared retry ownership and cancellation interrupt
 
 test('current paired authority is rechecked before a shared transport retry', async () => {
   let f!: Awaited<ReturnType<typeof fixture>>; let calls = 0;
-  const retry = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-fixture' }, model: PINNED_MODEL, timeoutMs: 100,
+  const retry = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-fixture' }, model: DEFAULT_MODEL, timeoutMs: 100,
     retry: { backoffInitialMs: 5, backoffMaxMs: 5, backoffJitter: 0 }, fetch: async () => { calls++; f.tokens.revoke(f.paired.id); return Response.json({}, { status: 503 }); } });
   f = await fixture({ decoratePort: port => ({ ...port, ask: request => request.context?.site === 'contract.check.unit-judge' ? withDecisionLog(retry, f.log).ask(request) : port.ask(request) }) });
   const started = await f.host.start(f.target, f.authority); await completed(f.harness, started.admission.contractId);

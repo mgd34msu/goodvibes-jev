@@ -1,3 +1,4 @@
+import { JudgmentHeldError } from '../types/judgment-held.js';
 /**
  * Agent-driven goal decomposition for the planner.
  *
@@ -9,19 +10,9 @@
  * the agent's structured output, and produces a `PlanProposal` tagged with
  * honest provenance.
  *
- * Failure honesty is the whole point: a spawn error, a timeout/cancellation,
- * or output that is still malformed after ONE repair attempt all fall back to
- * the existing heuristic `singleItemProposal` path, tagged
- * `decomposedBy: 'heuristic'` with a `fallbackReason`. The heuristic path is
- * reused verbatim, `singleItemProposal`/`assemblePlanProposal` are never
- * modified, so their existing byte-for-byte test expectations are preserved;
- * provenance is layered on afterward.
- *
- * The module NEVER performs surgery on agent output to force it to validate:
- * a proposal is accepted only when `assemblePlanProposal` reports ZERO issues
- * (no dangling dependency, no dependency cycle, no unresolved phase). Anything
- * short of that is one repair attempt and then an honest fallback, never a
- * silent edit that drops or rewrites the agent's work items.
+ * A failed, cancelled or malformed decomposition remains unexecuted when Jev
+ * requires decomposition. A single work item is valid only when the planner's
+ * settled reading selects that strategy; transport failure never changes it.
  */
 
 import { AdaptivePlanner } from './adaptive-planner.js';
@@ -482,6 +473,10 @@ export async function decomposeGoal(
   const gate = await planner.shouldDecompose(inputs);
 
   const heuristicResult = (outcome: DecompositionOutcome): DecomposeGoalResult => {
+    if (gate.decompose) {
+      deps.onOutcome?.(outcome);
+      throw new JudgmentHeldError();
+    }
     const base = singleItemProposal(request.goal);
     const fallbackReason = outcome.kind === 'fallback' ? outcome.reason : undefined;
     const usage = outcome.kind === 'fallback' ? outcome.usage : undefined;

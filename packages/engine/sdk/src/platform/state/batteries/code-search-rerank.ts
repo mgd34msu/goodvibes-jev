@@ -1,3 +1,4 @@
+import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
 /**
  * Canonical `engine.state.code-search` relevance owner. Lexical search and
  * passive vector-code injection both use these pair readings; recall remains
@@ -8,23 +9,22 @@
 import { defineRerank, STAKES_BANDS } from '@goodvibes-jev/judgment';
 import type { CodeChunk } from '../code-index-chunking.js';
 
-/** Most characters of a chunk's code one pair request carries; longer code is clipped with a note. */
-export const MAX_JUDGED_CODE_CHARS = 6_000;
+/** Most characters of a chunk's code one pair request carries; larger inputs are rejected without clipping. */
+export const MAX_JUDGED_CODE_CHARS = 160_000;
 
 /** What the rerank sees of a chunk: where it is, what it defines, and its code when the file could be read. */
 export function codeChunkView(
   chunk: Pick<CodeChunk, 'path' | 'symbol' | 'kind' | 'startLine' | 'endLine'>,
   code: string | undefined,
 ): { [field: string]: string } {
-  const clipped = code === undefined || code.length <= MAX_JUDGED_CODE_CHARS
-    ? code
-    : `${code.slice(0, MAX_JUDGED_CODE_CHARS)}\n[${code.length - MAX_JUDGED_CODE_CHARS} more characters]`;
+  assertJudgmentInput({ path: chunk.path, symbol: chunk.symbol, kind: chunk.kind, startLine: chunk.startLine, endLine: chunk.endLine, code });
+  if (code && code.length > MAX_JUDGED_CODE_CHARS) throw new JudgmentInputError('unsupported-input');
   return {
     path: chunk.path,
     ...(chunk.symbol ? { symbol: chunk.symbol } : {}),
     kind: chunk.kind,
     lines: `${chunk.startLine}-${chunk.endLine}`,
-    ...(clipped !== undefined ? { code: clipped } : {}),
+    ...(code !== undefined ? { code } : {}),
   };
 }
 

@@ -1,3 +1,4 @@
+import { learningPromotionReference } from '../tools/agent-harness-learning-curator-common.ts';
 import { assertNoSecretLikeText } from './persona-registry.ts';
 import type { LearningCandidate } from '../tools/agent-harness-learning-curator-types.ts';
 import type { AgentSkillCreateInput } from './skill-registry-types.ts';
@@ -20,12 +21,13 @@ export interface ProposeSkillDraftsInput {
   readonly existingSkillNames: ReadonlySet<string>;
   /** Lower-cased name set of skills proposed in earlier passes (dedup guard). */
   readonly previouslyProposedNames: ReadonlySet<string>;
+  readonly previouslyProposedCandidateIds?: ReadonlySet<string>;
 }
 
 /** Maximum draft proposals emitted per pass. */
 const MAX_PROPOSALS = 3;
 
-const PROVENANCE = 'auto-proposed-skill-draft';
+
 
 /** Convert an arbitrary string to a URL-safe kebab-case slug. */
 function slugify(value: string): string {
@@ -88,7 +90,7 @@ function buildProcedureBody(candidate: LearningCandidate): string {
   }
 
   sections.push(`## Notes`);
-  sections.push('This skill was auto-proposed from a learning candidate and created enabled. Refine steps or disable via the skill registry as needed.');
+  sections.push('This skill was auto-proposed from a learning candidate and created disabled. Review and refine steps before enabling via the skill registry as needed.');
 
   return sections.join('\n').trim();
 }
@@ -131,7 +133,7 @@ function buildTags(candidate: LearningCandidate): readonly string[] {
  *   (all comparisons use the kebab slug of the name, case-insensitive)
  * - Skip any candidate whose text fields contain secret-like content
  * - Skip any candidate whose derived name or description is empty
- * - All drafts are created with enabled: true (autonomous promotion; registry enforces reviewState 'fresh')
+ * - All drafts are created with enabled: false (draft only; registry enforces reviewState 'fresh')
  */
 export function proposeSkillDrafts(input: ProposeSkillDraftsInput): readonly SkillDraftPayload[] {
   const { candidates, existingSkillNames, previouslyProposedNames } = input;
@@ -153,6 +155,7 @@ export function proposeSkillDrafts(input: ProposeSkillDraftsInput): readonly Ski
 
   for (const candidate of eligible) {
     if (proposals.length >= MAX_PROPOSALS) break;
+    if (input.previouslyProposedCandidateIds?.has(candidate.id)) continue;
 
     const description = extractDescription(candidate);
     // Guard: skip candidates whose description is empty after extraction.
@@ -195,7 +198,7 @@ export function proposeSkillDrafts(input: ProposeSkillDraftsInput): readonly Ski
       tags: tags.length > 0 ? tags : undefined,
       enabled: true,
       source: 'agent',
-      provenance: PROVENANCE,
+      provenance: learningPromotionReference(candidate.id),
     });
   }
 

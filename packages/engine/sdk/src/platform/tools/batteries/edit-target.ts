@@ -1,3 +1,4 @@
+import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
 /**
  * `engine.tools.edit-target`: when an edit's find text is not in the file
  * exactly (nor after whitespace normalization), is the run of file lines that
@@ -18,13 +19,13 @@
  */
 import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 
-/** Most characters of the find text or the window one request carries; longer text is clipped with a note. */
-export const MAX_JUDGED_EDIT_CHARS = 4_000;
+/** Most characters of the find text or the window one request carries; larger inputs are rejected without clipping. */
+export const MAX_JUDGED_EDIT_CHARS = 160_000;
 
 function clip(text: string): string {
-  return text.length <= MAX_JUDGED_EDIT_CHARS
-    ? text
-    : `${text.slice(0, MAX_JUDGED_EDIT_CHARS)}\n[${text.length - MAX_JUDGED_EDIT_CHARS} more characters]`;
+  assertJudgmentInput(text);
+  if (text.length > MAX_JUDGED_EDIT_CHARS) throw new JudgmentInputError('unsupported-input');
+  return text;
 }
 
 /** What the reading sees: the requested find text and the candidate window of file lines. */
@@ -109,8 +110,8 @@ export const editTarget = defineBattery({
     {
       name: 'a different test case sharing its scaffolding',
       state: view(
-        ["  it('rejects an empty email', () => {", "    const result = validateSignup({ email: '', password: 'hunter22' });", '    expect(result.ok).toBe(false);', "    expect(result.field).toBe('email');", '  });'],
-        ["  it('rejects a short password', () => {", "    const result = validateSignup({ email: 'a@b.co', password: 'x' });", '    expect(result.ok).toBe(false);', "    expect(result.field).toBe('password');", '  });'],
+        ["  it('rejects an empty email', () => {", "    const result = validateSignup({ email: '', displayName: validName });", '    expect(result.ok).toBe(false);', "    expect(result.field).toBe('email');", '  });'],
+        ["  it('rejects a short displayName', () => {", "    const result = validateSignup({ email: 'a@b.co', displayName: shortName });", '    expect(result.ok).toBe(false);', "    expect(result.field).toBe('displayName');", '  });'],
       ),
       expect: { same_target: 'no' },
     },

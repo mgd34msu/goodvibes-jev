@@ -171,6 +171,29 @@ describe('complete asynchronous harness caller lifetime', () => {
     await Promise.resolve();
   });
 
+  test.each(['argument', 'native', 'cancel', 'registration'] as const)('publication retention keeps every original restriction after a %s change', changed => {
+    const retained: (() => void)[] = [], signal = new AbortController();
+    const args = { query: 'Inspect setup' }, native = { status: 'original publication' };
+    const captured = captureCatalogSnapshotGuard(native);
+    const caller = captureAsyncHarnessInput(args, { signal: signal.signal, retainCurrent: guard => {
+      retained.push(guard);
+      if (changed === 'registration') native.status = 'retired during publication';
+    } }, true);
+    caller.options.retainCurrent(() => captured(native), 'setup.native');
+    expect(retained).toHaveLength(0);
+    if (changed === 'registration') {
+      expect(() => caller.retainSourceCurrent('setup.plan')).toThrow();
+    } else {
+      caller.retainSourceCurrent('setup.plan');
+      if (changed === 'argument') args.query = 'Changed setup';
+      if (changed === 'native') native.status = 'retired publication';
+      if (changed === 'cancel') signal.abort();
+    }
+    expect(retained).toHaveLength(1);
+    expect(() => retained[0]!()).toThrow();
+    expect(() => caller.assertCurrent()).toThrow();
+  });
+
   test('retains a nested original source without re-entering its parent callback', async () => {
     let outerChecks = 0;
     const outer = captureAsyncHarnessInput({ query: 'device map' }, { assertCurrent: () => { outerChecks++; } });

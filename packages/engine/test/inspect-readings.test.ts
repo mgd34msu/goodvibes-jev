@@ -36,7 +36,7 @@ const readings = useToolReadings([
   ['"line":"<img src={photo} />"', { finding: true }],
   ['"line":"<div className=\\"overflow-y-auto\\">"', { finding: 'uncertain' }],
   ['"line":"<main className=\\"w-[1200px]\\">"', { finding: true }],
-  ['fetchResults(query)', { finding: true }],
+  ['"targetLine":1', { finding: true }],
   ['"module":"next/headers"', { finding: true }],
   ['"value":"z-50 / z-index: 50"', { finding: true }],
   ['"file":"server/app.js"', { entryPoint: true }],

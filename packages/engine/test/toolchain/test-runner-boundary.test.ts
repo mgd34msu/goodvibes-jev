@@ -1,3 +1,4 @@
+import { parseNpmPack } from '../../toolchain/src/lib/package-install-check.ts';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -7,7 +8,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runOwnedTestChild } from '@goodvibes-jev/engine/toolchain/test-runner';
 import { runOwnedTestChild as compatibilityOwner } from '../../scripts/owned-test-child.ts';
-import { normalizeManifest, readPackage } from '../../scripts/release-shared.ts';
+import { normalizeManifest, readPackage, parseNpmPackJson } from '../../scripts/release-shared.ts';
 import { capturePackManifest } from '../helpers/pack-manifest-output.ts';
 
 const ENGINE = resolve(import.meta.dir, '../..');
@@ -41,9 +42,8 @@ beforeAll(() => {
     env: { PATH: process.env.PATH, HOME: root, npm_config_cache: join(root, 'npm-cache') },
   });
   expect({ status: packed.status, error: packed.error?.message }, packed.stderr).toEqual({ status: 0, error: undefined });
-  const records = JSON.parse(packed.stdout) as { filename: string; files: { path: string }[] }[];
-  const record = records[0]!;
-  files = record.files.map((file) => file.path);
+  const record = parseNpmPackJson(packed.stdout);
+  files = parseNpmPack(packed.stdout).files;
   const scope = join(consumer, 'node_modules/@goodvibes-jev');
   mkdirSync(scope, { recursive: true });
   installed = join(scope, 'engine');

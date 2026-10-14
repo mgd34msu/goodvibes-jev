@@ -80,3 +80,9 @@ describe('runBreaking', () => {
     expect(asked).toEqual(['loadUser', 'search', 'sendWelcome']);
   });
 });
+
+
+test('tentative export readings cannot claim either compatibility or a proven break', () => {
+  expect(exportBreakVerdict({ inputs_break: { ...no, outcome: 'confirm' }, output_breaks: no })).toBe('uncertain');
+  expect(exportBreakVerdict({ inputs_break: { ...yes, outcome: 'confirm' }, output_breaks: no })).toBe('uncertain');
+});

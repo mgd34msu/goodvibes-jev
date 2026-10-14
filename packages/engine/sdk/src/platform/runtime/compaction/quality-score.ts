@@ -1,3 +1,5 @@
+import { prepareJudgmentResult } from '../../gate/judgment-result.js';
+import { requireActingReading, JudgmentHeldError } from '../../types/judgment-held.js';
 /**
  * quality-score.ts
  *
@@ -136,18 +138,22 @@ async function readRetention(
   }
 
   const views = compactionViews(input.messages, output.messages);
-  const supplied = options.port;
-  const capture = supplied ? undefined : captureJudgmentPort(COMPACTION_QUALITY_SITE, options);
-  const port = supplied ?? capture!.port;
-  const signal = options.signal ?? capture?.signal;
-  const current = () => { signal?.throwIfAborted(); options.assertCurrent?.(); capture?.assertCurrent(); };
-  const run = { site: COMPACTION_QUALITY_SITE, ...(signal ? { signal } : {}) };
+  const version = JSON.stringify({ input: input.messages, output: output.messages });
+  const owner = captureJudgmentPort(COMPACTION_QUALITY_SITE, { ...options, prepareResultCapture: prepareJudgmentResult, assertCurrent: () => {
+    options.assertCurrent?.();
+    if (JSON.stringify({ input: input.messages, output: output.messages }) !== version) throw new JudgmentHeldError();
+  } });
+  const port = owner.port, current = owner.assertCurrent;
+  const run = { beforeAttempt: current, site: COMPACTION_QUALITY_SITE, signal: owner.signal };
   const [retention, fidelity] = await Promise.all([
     compactionRetention.run(port, { source: views.source, compacted: views.compacted }, run),
     views.written.length > 0 ? compactionFidelity.check(port, views.written, views.source, undefined, run) : undefined,
   ]);
 
-  current();
+  current(); requireActingReading(retention.readings.substance);
+  if (fidelity) requireActingReading(fidelity);
+  retention.recordAction('Use settled retention in compaction quality.');
+  fidelity?.recordAction('Use settled fidelity in compaction quality.');
   const substance = Math.min(1, Math.max(0, retention.readings.substance.normalized));
   const contradictionProbability = fidelity?.reading?.probabilities.contradicts ?? 0;
   return {

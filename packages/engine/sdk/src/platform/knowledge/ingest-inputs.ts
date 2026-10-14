@@ -1,3 +1,5 @@
+import { knowledgeRawRepresentation } from './store-record-representation.js';
+import { knowledgeClockIso } from './store-record-representation.js';
 import { createKnowledgeIngestUriCanonicalizer } from './uri-canonicalization/ingest-owner.js';
 import { KnowledgeUriCanonicalizationHeldError } from './uri-canonicalization/reader.js';
 import { randomUUID } from 'node:crypto';
@@ -434,8 +436,8 @@ export async function refreshKnowledgeSources(context: KnowledgeIngestContext, s
       sourceType: source.sourceType,
       connectorId: source.connectorId,
       metadata: {
-        ...source.metadata,
-        refreshedAt: Date.now(),
+        ...knowledgeRawRepresentation(source.metadata),
+        refreshedAt: knowledgeClockIso(Date.now()),
       },
     });
     if (result.source.status === 'indexed') refreshed += 1;

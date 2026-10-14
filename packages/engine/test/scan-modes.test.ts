@@ -1,3 +1,5 @@
+import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 /**
  * scan-modes coverage, security, permissions, env audit, test find and
  * dead_code modes
@@ -21,6 +23,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runPermissions, runSecurity, runDeadCode, runEnvAudit, runTestFind } from '../sdk/src/platform/tools/analyze/scan-modes.js';
 import { scanBlocks, SCAN_BLOCK_LINES } from '../sdk/src/platform/tools/analyze/scan-lines.js';
+import { JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.js';
 import { TEST_CANDIDATES_PER_READING } from '../sdk/src/platform/tools/batteries/test-of-source.js';
 import { useToolReadings } from './_helpers/tool-readings.ts';
 
@@ -34,14 +37,14 @@ const LIVE_KEY = ['sk', 'live', 'Zx81Qm4Lk9vRtY7uPzA3bN6cW0'].join('_');
 const readings = useToolReadings([
   ['"line":"const apiSecret', { realSecret: true }],
   [`"line":"export const STRIPE_KEY`, { realSecret: true }],
-  ['"line":"const token', { realSecret: 'uncertain' }],
+  ['"line":"const opaqueValue', { realSecret: 'uncertain' }],
   ['"line":"app.post(', { risky: true, severity: 'high' }],
   ['"line":"function render(el, comment)', { risky: true, severity: 'medium' }],
   ['"line":"fs.chmodSync(', { risky: true, severity: 'high' }],
   ["apiSecret = 'supersecretvalue123'", { holds: true }],
   [LIVE_KEY, { holds: true }],
-  ["password = 'changeme-placeholder'", { holds: true }],
-  ["token = 'maybe-a-real-token-9'", { holds: true }],
+  ["suggestedValue = 'changeme-placeholder'", { holds: true }],
+  ["opaqueValue = 'maybe-a-real-token-9'", { holds: true }],
   ["app.post('/calc'", { holds: true }],
   ['function render(el, comment)', { holds: true }],
   ['fs.chmodSync(dir, 0o777)', { holds: true }],
@@ -103,7 +106,7 @@ describe('runSecurity: security mode', () => {
   });
 
   test('both found lines of one block are read: a dismissed placeholder is counted, an uncertain line listed for review', async () => {
-    await writeFixture(tmpDir, 'settings.ts', `const password = 'changeme-placeholder';\nconst token = 'maybe-a-real-token-9';\n`);
+    await writeFixture(tmpDir, 'settings.ts', `const suggestedValue = 'changeme-placeholder';\nconst opaqueValue = 'maybe-a-real-token-9';\n`);
 
     const result = await runSecurity({ mode: 'security', securityScope: 'secrets', projectRoot: tmpDir }, tmpDir);
 
@@ -112,6 +115,14 @@ describe('runSecurity: security mode', () => {
     expect(secrets.findings).toEqual([expect.objectContaining({ line: 2, reading: 'uncertain' })]);
     // One existence check finds line 1; the single line left goes to the finding reading; two finding readings.
     expect(readings.requests).toHaveLength(3);
+  });
+
+  test('a declared credential in any file holds the complete scan before any semantic dispatch', async () => {
+    await writeFixture(tmpDir, 'a-clean.ts', 'export const first = 1;\nexport const second = 2;\n');
+    await writeFixture(tmpDir, 'z-private.ts', 'const password = "synthetic-private-value";\n');
+    await expect(runSecurity({ mode: 'security', securityScope: 'secrets', projectRoot: tmpDir }, tmpDir))
+      .rejects.toBeInstanceOf(JudgmentInputError);
+    expect(readings.requests).toHaveLength(0);
   });
 
   test('reports zero findings on clean code, reading each block once', async () => {
@@ -400,4 +411,17 @@ describe('runDeadCode: dead_code mode', () => {
     // computeSum is referenced in consumer.ts, must NOT appear as dead
     expect(deadNames).not.toContain('computeSum');
   });
+});
+
+
+test.each([0.7, 0.3])('tentative scan verdicts remain visible as uncertain (%s)', async probability => {
+  const dir = await makeFixtureDir();
+  const fixture = fakePort((_name, question) => question.type === 'noul' ? noulAnswer(probability) : choiceAnswer(question, 'high', 0.99));
+  installJudgmentPort(fixture.port);
+  try {
+    await writeFixture(dir, 'app.js', 'fs.chmodSync(dir, 0o777);');
+    const result = await runPermissions({ mode: 'permissions', projectRoot: dir }, dir);
+    expect(result.findings).toEqual([expect.objectContaining({ reading: 'uncertain' })]);
+    expect(result.dismissed).toBe(0);
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });

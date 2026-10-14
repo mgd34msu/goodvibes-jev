@@ -9,12 +9,12 @@
  * rerank sees, and that a read with no port installed throws.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { EntryType } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
-import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
+import { installJudgmentPort, JudgmentPortMissingError, JudgmentAuthorityRetiredError } from '@goodvibes-jev/engine/errors';
 import { CodeIndexStore } from '../sdk/src/platform/state/code-index-store.js';
 import { MemoryEmbeddingProviderRegistry, embedMemoryText, type MemoryEmbeddingProvider } from '../sdk/src/platform/state/memory-embeddings.js';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
@@ -75,8 +75,8 @@ function pairPort(probability: (state: PairState) => number) {
 }
 
 describe('lexical code search', () => {
-  test('recall is the symbol/path match; the rerank orders it and drops what it reads as not matching', async () => {
-    const readings: Record<string, number> = { retryWithBackoff: 0.92, RETRY_LABEL: 0.5, backoffColor: 0.2 };
+  test.each([0.5, 0.42])('recall retains an unresolved candidate (%s) and drops only settled non-matches', async unresolved => {
+    const readings: Record<string, number> = { retryWithBackoff: 0.92, RETRY_LABEL: unresolved, backoffColor: 0.2 };
     const { port, requests } = pairPort((state) => readings[state.candidate.symbol ?? ''] ?? 0.1);
     installJudgmentPort(port);
 
@@ -85,7 +85,7 @@ describe('lexical code search', () => {
     // parseConfig shares no token with the query and is never recalled.
     const asked = requests.map((request) => (request.state as unknown as PairState).candidate.symbol).sort();
     expect(asked).toEqual(['RETRY_LABEL', 'backoffColor', 'retryWithBackoff']);
-    // backoffColor (0.2) reads as a no and is left out; 0.5 is uncertain and stays.
+    // A settled no is dropped; an uncertain or tentative negative remains recall evidence.
     expect(hits.map((hit) => hit.chunk.symbol)).toEqual(['retryWithBackoff', 'RETRY_LABEL']);
     expect(hits.every((hit) => hit.label === 'lexical')).toBe(true);
     expect(hits[0]!.similarity).toBe(0.92);
@@ -111,4 +111,30 @@ describe('lexical code search', () => {
   test('a read with no judgment port installed throws', async () => {
     await expect(store.search('retry backoff', { limit: 5 })).rejects.toBeInstanceOf(JudgmentPortMissingError);
   });
+});
+
+
+test('a private source tail outside the recalled chunk holds the entire lexical ranking', async () => {
+  const fixture = pairPort(() => 0.99); installJudgmentPort(fixture.port);
+  appendFileSync(join(root, 'retry.ts'), '\nconst password = "synthetic-private-value";\n');
+  await expect(store.search('retry backoff', { limit: 5 })).rejects.toThrow();
+  expect(fixture.requests).toHaveLength(0);
+});
+
+test('source mutation during a lexical reading cannot publish old ranking evidence', async () => {
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const fixture = pairPort(() => 0.99);
+  installJudgmentPort({ model: fixture.port.model, async ask(request) { entered.resolve(); await release.promise; return fixture.port.ask(request); } });
+  const pending = store.search('retryWithBackoff', { limit: 5 });
+  await entered.promise; appendFileSync(join(root, 'retry.ts'), '\n// revised source\n'); release.resolve();
+  await expect(pending).rejects.toBeInstanceOf(JudgmentAuthorityRetiredError);
+});
+
+test('retiring the Jev installation invalidates a pending lexical ranking', async () => {
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const fixture = pairPort(() => 0.99);
+  installJudgmentPort({ model: fixture.port.model, async ask(request) { entered.resolve(); await release.promise; return fixture.port.ask(request); } });
+  const pending = store.search('retryWithBackoff', { limit: 5 });
+  await entered.promise; installJudgmentPort(pairPort(() => 0.01).port); release.resolve();
+  await expect(pending).rejects.toThrow();
 });

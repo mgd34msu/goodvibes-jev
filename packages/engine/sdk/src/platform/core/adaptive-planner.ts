@@ -1,3 +1,4 @@
+import { JudgmentHeldError } from '../types/judgment-held.js';
 /**
  * Adaptive Execution Planner.
  *
@@ -335,8 +336,10 @@ export class AdaptivePlanner {
     const task = inputs.taskDescription ?? '';
     if (gate.decompose && raw) {
       const { proposal, issues } = assemblePlanProposal(task, gate.strategy, raw);
+      if (issues.length) throw new JudgmentHeldError();
       return { proposal, gate, issues };
     }
+    if (gate.decompose) throw new JudgmentHeldError();
     return { proposal: singleItemProposal(task), gate, issues: [] };
   }
 

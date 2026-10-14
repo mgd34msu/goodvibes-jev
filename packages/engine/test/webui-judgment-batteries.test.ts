@@ -31,7 +31,7 @@ function configured(answer: Parameters<typeof fakePort>[0]) {
 describe('fixed WebUI batteries', () => {
   test('IDs, versions and complete fixed question maps match the registrations', () => {
     expect([daemonRefusalBattery, statusToneBattery, commandRankBattery, mailReplySubjectBattery].map(({ name, version }) => [name, version])).toEqual([
-      ['webui.errors.daemon-refusal', 1], ['webui.status.badge-tone', 1], ['webui.palette.command-rank', 1], ['webui.mail.reply-subject', 1],
+      ['webui.errors.daemon-refusal', 1], ['webui.status.badge-tone', 2], ['webui.palette.command-rank', 1], ['webui.mail.reply-subject', 1],
     ]);
     expect(Object.keys(WEBUI_BATTERY_QUESTIONS[daemonRefusalBattery.name]!)).toEqual([...REFUSAL_ITEMS]);
     expect(Object.keys(WEBUI_BATTERY_QUESTIONS[statusToneBattery.name]!)).toEqual(['badge', 'library_dot']);
@@ -272,7 +272,7 @@ describe('source preflight and retention boundary', () => {
       { ...valid, probabilities: { ok: 0.5, warning: 0.5000000001, bad: 0, neutral: 0 } },
       { ...valid, probabilities: { ok: 1.1, warning: -0.1, bad: 0, neutral: 0 } },
       { ...valid, probabilities: { ok: Infinity, warning: 0, bad: 0, neutral: 0 } },
-      { ...valid, probabilities: { ok: 0.98, warning: 0, bad: 0, neutral: 0 } },
+      { ...valid, probabilities: { ok: 0.9, warning: 0, bad: 0, neutral: 0 } },
       { ...valid, probabilities: { ...valid.probabilities, neutral: 0.5 } }, { ...valid, probabilities: { ok: 0.9 } }, { ...valid, probabilities: { ...valid.probabilities, other: 0 } }]) {
       expect(() => validateWebuiAnswers(choices, { badge: answer })).toThrow('Invalid WebUI judgment response.');
     }

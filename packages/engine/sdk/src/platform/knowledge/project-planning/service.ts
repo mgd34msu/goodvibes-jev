@@ -1,3 +1,6 @@
+export class WorkPlanTaskExistsError extends Error {
+  constructor(taskId: string) { super(`Work plan task already exists: ${taskId}`); this.name = 'WorkPlanTaskExistsError'; }
+}
 import { JudgmentAuthorityRetiredError, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { captureOwnedJson, JudgmentInputError, snapshotJudgmentInput } from '../../gate/judgment-input.js';
 import { retainStrictJudgmentJson } from '../../gate/judgment-result.js';
@@ -587,7 +590,7 @@ export class ProjectPlanningService {
       fallbackOrder: nextWorkPlanOrder(existing.tasks),
     });
     if (existing.tasks.some((entry) => entry.taskId === task.taskId)) {
-      throw new Error(`Work plan task already exists: ${task.taskId}`);
+      throw new WorkPlanTaskExistsError(task.taskId);
     }
     const workPlan = await this.saveWorkPlanArtifact(space, {
       ...existing,

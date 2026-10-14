@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { createSystemOnePort, PINNED_MODEL, SqliteDecisionLog, withDecisionLog,
+import { createSystemOnePort, DEFAULT_MODEL, SqliteDecisionLog, withDecisionLog,
   type JudgmentPort, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { ArtifactStore } from '../sdk/src/platform/artifacts/index.js';
@@ -324,13 +324,13 @@ describe('Home Graph shared answer judgments (authored synthetic evidence)', () 
   test('owned synthetic transport retains shared retries and recorded decisions', async () => {
     const f = await fixture(); await source(f.store); await object(f.store); const fake = readings();
     using log = new SqliteDecisionLog(':memory:'); let attempts = 0;
-    const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-fixture-key' }, model: PINNED_MODEL, timeoutMs: 1_000,
+    const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-fixture-key' }, model: DEFAULT_MODEL, timeoutMs: 1_000,
       retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fetch: async (_url, init) => {
         if (++attempts <= 3) return new Response('', { status: 503 });
         // Owned in-process endpoint source; no genuine provider or credential.
         const request = JSON.parse(String(init?.body)) as JudgmentRequest<Questions>;
         const result = await fake.port.ask(request);
-        return Response.json({ model: PINNED_MODEL, answers: result.answers, usage: { input_tokens: 1, output_tokens: 1 } });
+        return Response.json({ model: DEFAULT_MODEL, answers: result.answers, usage: { input_tokens: 1, output_tokens: 1 } });
       } });
     installJudgmentPort(withDecisionLog(transport, log));
     const result = await ask(f);

@@ -27,7 +27,7 @@ interface SourceScreeningOperationOptions {
 export interface LocalProtectedSourceOwnerOptions extends SourceScreeningOperationOptions {
   readonly authority: LocalSourceScreeningAuthority;
   readonly proposal: { readonly endpoint: string; readonly model: string };
-  readonly judgment: { readonly endpoint: string; readonly model: 'jev-1.13.0' };
+  readonly judgment: { readonly endpoint: string; readonly model?: string };
 }
 export interface HostedProtectedSourceOwnerOptions extends SourceScreeningOperationOptions {
   readonly kind: 'hosted';

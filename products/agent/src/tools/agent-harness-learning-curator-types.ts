@@ -69,6 +69,7 @@ export interface LearningConsolidationPlan {
 }
 
 export interface LearningCandidate {
+  readonly judgmentDecisionIds?: readonly string[];
   readonly id: string;
   readonly label: string;
   readonly domain: LearningCandidateDomain;

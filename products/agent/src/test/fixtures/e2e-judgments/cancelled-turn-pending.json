@@ -6,5 +6,5 @@
       "instructions": "Does this system message report an approval that is still waiting for the operator, a tool call, command or other action that cannot proceed until the operator allows or denies it? A message saying an approval was already granted, allowed, denied or rejected, or one that only mentions approval settings, is not waiting."
     }
   },
-  "model": "jev-1.13.0"
+  "model": "jev-latest"
 }

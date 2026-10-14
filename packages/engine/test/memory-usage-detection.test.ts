@@ -35,6 +35,21 @@ describe('detectReferencedMemoryIds', () => {
     expect(result.referenced).toEqual([]);
   });
 
+  test('a tentative yes does not claim a reference', async () => {
+    readings.use({ usage: () => 0.57 });
+    const result = await detectReferencedMemoryIds('maybe used', [{ id: 'u', summary: 'something' }]);
+    expect(result.referenced).toEqual([]);
+    expect(result.present).toEqual(['u']);
+  });
+
+  test('all inputs are screened before any memory request', async () => {
+    await expect(detectReferencedMemoryIds('response', [
+      { id: 'clean', summary: 'Ordinary memory' },
+      { id: 'protected', summary: 'password=synthetic-fixture' },
+    ])).rejects.toThrow();
+    expect(readings.requests).toHaveLength(0);
+  });
+
   test('no records means no requests', async () => {
     const result = await detectReferencedMemoryIds('anything', []);
     expect(result.referenced).toEqual([]);

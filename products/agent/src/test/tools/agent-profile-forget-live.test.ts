@@ -45,7 +45,8 @@ import { RuntimeEventBus } from '@/runtime/index.ts';
 import { createRuntimeServices } from '../../runtime/services.ts';
 import { createRuntimeStore } from '../../runtime/store/index.ts';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../../config/surface.ts';
-import { createAgentProfileTool } from '../../tools/agent-profile-tool.ts';
+import { createAgentProfileTool, registerAgentProfileTool } from '../../tools/agent-profile-tool.ts';
+import { admitLocalState } from '../helpers/local-state-admission.ts';
 import { createProfileGatewayInvoke } from '../../agent/owner-profile-gateway.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 
@@ -115,13 +116,17 @@ async function liveProfile(): Promise<LiveProfile> {
     getConversationTitle: () => 'profile-live',
   });
 
-  const tool = createAgentProfileTool({
-    invoke: createProfileGatewayInvoke({
-      gatewayMethods: buildDaemonGatewayCatalog(services),
-      configManager,
-      homeDirectory: root,
-    }),
+  const invoke = createProfileGatewayInvoke({
+    gatewayMethods: buildDaemonGatewayCatalog(services), configManager, homeDirectory: root,
   });
+  const raw = createAgentProfileTool({ invoke });
+  const tool: Tool = { definition: raw.definition, async execute(args, options) {
+    if (!['set', 'append', 'forget', 'undo'].includes(String(args.action ?? args.mode))) return raw.execute(args, options);
+    const result = await admitLocalState(registry => registerAgentProfileTool(registry, { invoke }), 'profile', args,
+      { directory: workingDir, signal: options?.signal, beforeEffect: () => options?.assertCurrent?.(args) });
+    return { success: result.success, output: 'output' in result && typeof result.output === 'string' ? result.output
+      : 'error' in result && typeof result.error === 'string' ? result.error : '' };
+  } };
 
   // This wait is belt-and-braces now, and it returns on the first poll.
   //
@@ -178,7 +183,7 @@ describe('forget, against the real store', () => {
       authority: 'owner-direct',
     });
 
-    expect(result.success).toBe(true);
+    expect(result).toMatchObject({ success: true });
     const after = profile.read();
     expect(after).not.toContain('Allergic to shellfish');
     // Everything else survives byte-for-byte, including his other note.
@@ -205,7 +210,7 @@ describe('forget, against the real store', () => {
       authority: 'owner-direct',
     });
 
-    expect(result.success).toBe(true);
+    expect(result).toMatchObject({ success: true });
     const after = profile.read();
     expect(after).not.toContain('Allergic to shellfish');
     // The line he had just added is untouched, a positional delete would have
@@ -296,7 +301,7 @@ describe('forget, against the real store', () => {
       authority: 'owner-direct',
     });
 
-    expect(result.success).toBe(true);
+    expect(result).toMatchObject({ success: true });
     const after = profile.read();
     expect(after).not.toContain('Allergic to shellfish');
     expect(after).toContain('Prefers aisle seats');
@@ -312,7 +317,7 @@ describe('forget, against the real store', () => {
       authority: 'owner-direct',
     });
 
-    expect(result.success).toBe(true);
+    expect(result).toMatchObject({ success: true });
     expect(profile.read()).not.toContain('Allergic to shellfish');
   });
 
@@ -364,7 +369,7 @@ describe('forget, against the real store', () => {
       authority: 'owner-direct',
     });
 
-    expect(result.success).toBe(true);
+    expect(result).toMatchObject({ success: true });
     const after = profile.read();
     expect(after).not.toContain('America/Detroit');
     expect(after).not.toContain('<!-- was:');
@@ -386,7 +391,7 @@ describe('forget, against the real store', () => {
     }
   });
 
-  test('a write records his verbatim words, and the disclosure comes back to say so', async () => {
+  test('a write records native delegation instead of trusting model-authored utterance provenance', async () => {
     const profile = await liveProfile();
 
     const result = await profile.tool.execute({
@@ -397,13 +402,15 @@ describe('forget, against the real store', () => {
       authority: 'owner-direct',
     });
 
-    expect(result.success).toBe(true);
+    expect(result).toMatchObject({ success: true });
     expect(result.output).toContain('Say this in your reply:');
     const after = profile.read();
     expect(after).toContain('Runs a half marathon in October');
-    // Provenance round-trips through the file: surface, date, his own words.
+    // The real admission owns provenance; the tool argument cannot invent an utterance.
     expect(after).toContain('agent');
-    expect(after).toContain('"I am running a half marathon in October"');
+    expect(after).not.toContain('"I am running a half marathon in October"');
+    expect(after).toContain('autonomous');
+    expect(after).toContain('Verify isolated Agent local-state effects');
   });
 
   test('nothing outside the temp file is touched', async () => {

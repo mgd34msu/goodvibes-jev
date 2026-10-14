@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
-import { SqliteDecisionLog, withDecisionLog, createSystemOnePort, PINNED_MODEL, type JudgmentPort } from '@goodvibes-jev/judgment';
+import { SqliteDecisionLog, withDecisionLog, createSystemOnePort, DEFAULT_MODEL, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { createWorkLedger } from '../sdk/src/platform/workflow/work-ledger/service.js';
@@ -585,7 +585,7 @@ test('a different paired principal cannot preempt another owner attempt with a c
 test('durable cancellation is not blocked by real shared Jev retry-after backoff', async () => {
   let retries!: () => void; const backoff = new Promise<void>(resolve => { retries = resolve; }); let calls = 0;
   const realRetryPort = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'owned-synthetic-key' },
-    model: PINNED_MODEL, timeoutMs: 100, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
+    model: DEFAULT_MODEL, timeoutMs: 100, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
     fetch: async () => { calls++; return Response.json({}, { status: 503, headers: { 'retry-after': '3600' } }); } });
   let f!: Awaited<ReturnType<typeof fixture>>;
   f = await fixture({ decoratePort: port => ({ ...port, ask: request => withDecisionLog(realRetryPort, f.log).ask({ ...request,

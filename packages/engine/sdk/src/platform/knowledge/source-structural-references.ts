@@ -1,32 +1,24 @@
 import { createHash } from 'node:crypto';
 import type { KnowledgeStore } from './store.js';
-import type { KnowledgeExtractionRecord, KnowledgeSourceRecord } from './types.js';
+import type { KnowledgeExtractionRecord, KnowledgeNodeRecord, KnowledgeSourceRecord } from './types.js';
 import { KnowledgeGeneratedFactSupportHeldError } from './semantic/verification/types.js';
+import { captureOwnedJson } from '../gate/judgment-input.js';
+import { captureStrictJudgmentJson } from '../gate/judgment-result.js';
+import { knowledgeJudgmentRepresentation, knowledgeRecordVersion, sameKnowledgeRecord } from './store-record-representation.js';
 
 interface SourceIdentity { readonly id: string; readonly canonicalUri: string; readonly sourceUri?: string | undefined; }
 interface ExtractionIdentity { readonly id: string; readonly sourceId: string; }
 const sourceIdentities = new WeakMap<KnowledgeSourceRecord, SourceIdentity & { readonly store: KnowledgeStore; readonly hash: string }>();
 const answerAliases = new WeakMap<KnowledgeSourceRecord, { readonly original: KnowledgeSourceRecord; readonly hash: string }>();
 const extractionIdentities = new WeakMap<KnowledgeExtractionRecord, ExtractionIdentity & { readonly store: KnowledgeStore; readonly hash: string }>();
+const activationReferences = new WeakMap<KnowledgeNodeRecord, { readonly store: KnowledgeStore; readonly original: unknown;
+  readonly evidence: readonly { readonly source: KnowledgeSourceRecord | null; readonly extraction: KnowledgeExtractionRecord | null; readonly proof: object | undefined }[] }>();
 const projections = new WeakMap<object, { readonly store: KnowledgeStore; readonly source: SourceIdentity;
   readonly sourceRecord: KnowledgeSourceRecord; readonly sourceHash: string; readonly extractionRecord: KnowledgeExtractionRecord | null;
   readonly extractionHash: string; readonly extraction?: ExtractionIdentity | undefined }>();
 function fingerprint(value: unknown): string {
-  let count = 0; const ancestors = new Set<object>();
-  function check(item: unknown, depth: number): void {
-    if (++count > 20_000 || depth > 64) throw new KnowledgeGeneratedFactSupportHeldError('malformed');
-    if (item === null || item === undefined || typeof item === 'string' || typeof item === 'boolean' || (typeof item === 'number' && Number.isFinite(item))) return;
-    if (typeof item !== 'object' || ancestors.has(item) || Object.getOwnPropertySymbols(item).length) throw new KnowledgeGeneratedFactSupportHeldError('malformed');
-    const proto = Object.getPrototypeOf(item);
-    if (Array.isArray(item) ? proto !== Array.prototype : proto !== Object.prototype && proto !== null) throw new KnowledgeGeneratedFactSupportHeldError('malformed');
-    ancestors.add(item);
-    for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(item))) {
-      if (descriptor.get || descriptor.set) throw new KnowledgeGeneratedFactSupportHeldError('malformed');
-      if (descriptor.enumerable) check(descriptor.value, depth + 1);
-    }
-    ancestors.delete(item);
-  }
-  check(value, 0); return createHash('sha256').update(JSON.stringify(value ?? null)).digest('hex');
+  try { return createHash('sha256').update(knowledgeRecordVersion(captureStrictJudgmentJson(value))).digest('hex'); }
+  catch { throw new KnowledgeGeneratedFactSupportHeldError('malformed'); }
 }
 
 /** Only a producer that just generated these exact local references may register them. No prefix/metadata inference. */
@@ -45,6 +37,73 @@ function currentSourceIdentity(source: KnowledgeSourceRecord) {
   const identity = sourceIdentities.get(source);
   if (identity && (identity.store.getSource(source.id) !== source || fingerprint(source) !== identity.hash)) throw new KnowledgeGeneratedFactSupportHeldError('stale');
   return identity;
+}
+
+/** Issued by the native activation writer for its actual generated receipt. */
+export function retainKnowledgeNodeActivationReferences(store: KnowledgeStore, record: KnowledgeNodeRecord,
+  evidence: readonly { readonly source: KnowledgeSourceRecord | null; readonly extraction: KnowledgeExtractionRecord | null }[],
+  proofs: readonly (object | undefined)[]): void {
+  activationReferences.set(record, { store, original: captureOwnedJson(record),
+    evidence: evidence.map((entry, index) => ({ ...entry, proof: proofs[index] })) });
+}
+
+function pageActivationRepresentation(store: KnowledgeStore, node: KnowledgeNodeRecord, metadata: unknown): unknown {
+  const known = activationReferences.get(node);
+  if (!known) return metadata;
+  if (known.store !== store || store.getNode(node.id) !== node || !sameKnowledgeRecord(known.original, node)) throw new KnowledgeGeneratedFactSupportHeldError('stale');
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return metadata;
+  const activation: unknown = Object.getOwnPropertyDescriptor(metadata, 'nodeActivation')?.value;
+  if (!activation || typeof activation !== 'object' || Array.isArray(activation)) return metadata;
+  const projected: Record<string, unknown> = { ...activation, candidateHash: 'activation-candidate-reference', evidenceHash: 'activation-evidence-reference' };
+  const evidence: unknown = Object.getOwnPropertyDescriptor(activation, 'evidence')?.value;
+  if (Array.isArray(evidence)) projected.evidence = evidence.map((entry: unknown, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+    const native = known.evidence[index];
+    const references = native?.source ? projectKnowledgeSourceReferences(native.source, native.extraction, native.proof) : undefined;
+    return { ...entry, sourceHash: 'activation-source-content-reference', extractionHash: 'activation-extraction-content-reference',
+      ...(references ? { sourceId: references.sourceId, ...(references.extractionId ? { extractionId: references.extractionId } : {}) } : {}) };
+  });
+  const subjects: unknown = Object.getOwnPropertyDescriptor(activation, 'subjects')?.value;
+  if (Array.isArray(subjects)) projected.subjects = subjects.map((entry: unknown) => entry && typeof entry === 'object' && !Array.isArray(entry)
+    ? { ...entry, nodeHash: 'activation-subject-content-reference' } : entry);
+  return { ...metadata, nodeActivation: projected };
+}
+
+/** Page ranking may omit only references backed by the exact current native
+ * source and store. All other fields, including metadata, retain full preflight. */
+export function knowledgePageCandidateRepresentation(store: KnowledgeStore | undefined, candidate: unknown): unknown {
+  captureOwnedJson(candidate);
+  const raw = captureOwnedJson(knowledgeJudgmentRepresentation(candidate));
+  if (!store || !raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const slots = Object.getOwnPropertyDescriptors(raw);
+  const id: unknown = slots.id?.value;
+  if (typeof id !== 'string') return raw;
+  const replacements = new Map<string, unknown>();
+  const source = store.getSource(id);
+  if (source && source === candidate) {
+    const identity = currentSourceIdentity(source);
+    if (identity?.store !== store) return raw;
+    replacements.set('id', 'source-reference');
+    replacements.set('canonicalUri', undefined);
+    if (identity.sourceUri !== undefined) replacements.set('sourceUri', undefined);
+  } else {
+    const node = store.getNode(id);
+    if (!node || node !== candidate) return raw;
+    // Persisted native rows have plain JSON slots. A newly attached hidden
+    // subtree cannot inherit their stored representation or reference proof.
+    try { captureStrictJudgmentJson(node); } catch { throw new KnowledgeGeneratedFactSupportHeldError('malformed'); }
+    replacements.set('metadata', pageActivationRepresentation(store, node, slots.metadata?.value));
+    const sourceId: unknown = slots.sourceId?.value;
+    if (typeof sourceId === 'string') {
+      const origin = store.getSource(sourceId);
+      if (origin && currentSourceIdentity(origin)?.store === store) replacements.set('sourceId', 'source-reference');
+    }
+  }
+  const result: Record<string, unknown> = Object.create(null);
+  for (const [key, descriptor] of Object.entries(slots)) {
+    Object.defineProperty(result, key, { ...descriptor, value: replacements.has(key) ? replacements.get(key) : descriptor.value });
+  }
+  return captureOwnedJson(result);
 }
 /** Minimize only exact currently stored producer-minted URI fields. Copies retain ordinary preflight. */
 export function knowledgeSourceJudgmentUris(source: KnowledgeSourceRecord) {

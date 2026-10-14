@@ -1,5 +1,6 @@
 import { rankHomeGraphPageCandidates, HomeGraphPagePriorityHeldError } from './page-priority.js';
 import type { ArtifactStore } from '../../artifacts/index.js';
+import type { KnowledgeStore } from '../store.js';
 import {
   listGeneratedKnowledgePages,
   type GeneratedKnowledgePageGraph,
@@ -10,6 +11,7 @@ import type { HomeGraphPageGraphNode, HomeGraphPageListResult } from './types.js
 
 export async function listHomeGraphPages(input: {
   readonly artifactStore: ArtifactStore;
+  readonly store?: KnowledgeStore;
   readonly spaceId: string;
   readonly sources: readonly KnowledgeSourceRecord[];
   readonly nodes: readonly KnowledgeNodeRecord[];
@@ -38,7 +40,7 @@ export async function listHomeGraphPages(input: {
     resolvePageSubject,
     projectNode: pageGraphNode,
     rankGeneratedPages: (sources, graph) => rankHomeGraphPageCandidates({
-      candidates: sources, purpose: 'Order useful generated home references for the owner',
+      candidates: sources, store: input.store, purpose: 'Order useful generated home references for the owner',
       signal: input.signal, assertCurrent,
       content: source => {
         const target = graph.targetBySourceId.get(source.id);

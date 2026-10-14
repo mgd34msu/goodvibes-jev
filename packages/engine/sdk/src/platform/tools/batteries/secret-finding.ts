@@ -1,3 +1,4 @@
+import { completeJudgmentView } from './complete-view.js';
 /**
  * `engine.tools.secret-finding`: analyze mode `security` (scope secrets)
  * finds candidate lines with the `engine.tools.secret-line` existence check
@@ -19,16 +20,15 @@ export const SECRET_CONTEXT_LINES = 2;
 /** Most characters of one line the reading carries. */
 export const MAX_JUDGED_SCAN_LINE_CHARS = 300;
 
-const clip = (line: string): string => (line.length <= MAX_JUDGED_SCAN_LINE_CHARS ? line : `${line.slice(0, MAX_JUDGED_SCAN_LINE_CHARS)}...`);
 
 /** What a scan reading sees: the file, the candidate line, and the lines around it. */
-export function scanCandidateView(file: string, lines: readonly string[], index: number, context = SECRET_CONTEXT_LINES): { file: string; line: string; before: string[]; after: string[] } {
-  return {
+export function scanCandidateView(file: string, lines: readonly string[], index: number, _context = SECRET_CONTEXT_LINES): { file: string; line: string; before: string[]; after: string[] } {
+  return completeJudgmentView({
     file,
-    line: clip(lines[index] ?? ''),
-    before: lines.slice(Math.max(0, index - context), index).map(clip),
-    after: lines.slice(index + 1, index + 1 + context).map(clip),
-  };
+    line: lines[index] ?? '',
+    before: lines.slice(0, index),
+    after: lines.slice(index + 1),
+  });
 }
 
 const at = (file: string, line: string, before: string[] = [], after: string[] = []) => ({ file, line, before, after });

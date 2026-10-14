@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
-import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { ArtifactStore } from '../sdk/src/platform/artifacts/index.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { KnowledgeNodeActivationHeldError } from '../sdk/src/platform/knowledge/activation/types.js';
@@ -43,6 +43,7 @@ async function fixture(excerpt = initialText) {
     status: 'indexed', canonicalUri: 'https://example.test/ac-seven', metadata: metadata() });
   await store.upsertExtraction({ sourceId: source.id, extractorId: 'synthetic', format: 'text', excerpt, metadata: metadata() });
   installJudgmentPort(fakePort((name) => {
+    name = name.split('__').at(-1)!;
     if (name === 'serve') return noulAnswer(0.99);
     throw new Error(`Unscripted seed question: ${name}`);
   }).port);
@@ -69,6 +70,7 @@ function ask(item: Fixture, includeFact = true) {
 }
 function askReadings(serve: number) {
   const fake = fakePort((name, question) => {
+    name = name.split('__').at(-1)!;
     if (name === 'authority') return choiceAnswer(question, 'official-vendor', 0.99);
     if (name === 'useful' || name === 'repairUseful') return noulAnswer(0.99);
     if (name === 'serve') return noulAnswer(serve);
@@ -111,6 +113,7 @@ describe('required activation holds across knowledge refresh catches', () => {
   test.each([[0.01, 'no'], [0.5, 'uncertain']] as const)('Ask propagates actual profile activation %s/%s after only the accepted source link', async (probability, reason) => {
     const item = await fixture('AC-7 resolution: 4K.');
     const fake = fakePort((name, question, state) => {
+      if (['factTrust', 'sourceSupport', 'subjectSupport'].includes(name)) return scoreAnswer(question, 4, 0.99);
       const input = state as { category?: { title: string } };
       if (name === 'authority') return choiceAnswer(question, 'official-vendor', 0.99);
       if (name === 'wanted') return noulAnswer(input.category?.title === 'Display and picture specifications' ? 0.99 : 0.01);
@@ -176,7 +179,7 @@ describe('required activation holds across knowledge refresh catches', () => {
       } catch (error) {
         held = error; atHold = snapshot(item.store); requestsAtHold = fake.requests.length; throw error;
       } finally { phase = 'fallback'; }
-    } }, spaceId, gap, [item.source.id], task, Date.now() + 10_000);
+    } }, spaceId, gap, [item.source.id], task, Date.now() + 60_000);
     await expect(pending).rejects.toBeInstanceOf(KnowledgeNodeActivationHeldError);
     expect(held).toMatchObject({ reason: 'no' });
     expect(earlierLink).toBe(true);
@@ -196,7 +199,7 @@ describe('required activation holds across knowledge refresh catches', () => {
     repairReadings(() => phase);
     const result = await promoteRepairSources({ store: item.store, enrichSource: async () => {
       await captureRepairText(item); phase = 'fallback'; throw new Error('Synthetic extraction worker unavailable');
-    } }, spaceId, gap, [item.source.id], task, Date.now() + 10_000);
+    } }, spaceId, gap, [item.source.id], task, Date.now() + 60_000);
     expect(result).toEqual({ promotedFactCount: 2, repairComplete: false, promotedSourceIds: [item.source.id] });
     const reopened = await item.reload();
     const promoted = reopened.listNodes().find((node) => node.title === 'Display and picture specifications');
@@ -224,6 +227,9 @@ async function captureRepairText(item: Fixture) {
 }
 function repairReadings(phase: () => string) {
   const fake = fakePort((name, question, state) => {
+      if (['factTrust', 'sourceSupport', 'subjectSupport'].includes(name)) return scoreAnswer(question, 4, 0.99);
+    if (name === 'repairEvidenceSufficient') return noulAnswer(0.01); // The initial sample and one resolution fact do not complete the full profile.
+    if (name === 'fullProfileRequired') return noulAnswer(0.01); // This authored repair adds one explicit observation, not a complete profile.
     const extractionValue = extractionValueFixtureReading(name, question, state, extractionValues);
     if (extractionValue !== undefined) return noulAnswer(extractionValue);
     if (name === 'repairSubjectSelected') return noulAnswer(repairSubjectFixtureReading(state, [['AC-7', 0.99]]));
