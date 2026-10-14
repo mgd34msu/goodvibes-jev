@@ -170,11 +170,11 @@ describe('display payload', () => {
     expect(payloadRequests(requests)).toHaveLength(0);
   });
 
-  test('the synchronous path holds unqualified prose without asking the payload battery', () => {
+  test('the synchronous path preserves local diagnostics without asking the payload battery', () => {
     const { port, requests } = readingsPort({ payload: () => 'yes' });
     installJudgmentPort(port);
     const error = new Error('failed {"a":1} here');
-    expect(normalizeError(error).message).toBe('[REDACTED]');
+    expect(normalizeError(error).message).toBe('failed {"a":1} here');
     expect(error.message).toBe('failed {"a":1} here');
     expect(payloadRequests(requests)).toHaveLength(0);
   });
@@ -235,7 +235,7 @@ describe('connection failure', () => {
   test('the synchronous path keeps the error\'s own category and message', () => {
     const normalized = normalizeError(new Error('ECONNREFUSED 127.0.0.1:3000'));
     expect(normalized.category).toBe('unknown');
-    expect(normalized.summary).toBe('[REDACTED]');
+    expect(normalized.summary).toBe('ECONNREFUSED 127.0.0.1:3000');
   });
 });
 
@@ -304,8 +304,8 @@ describe('first-call protected error normalization', () => {
     expect(failure).toMatchObject({ billing: true });
     const normalized = await readNormalizedError(error,
       { site: 'test.protected-assignment', failure });
-    expect(normalized.message).toBe('[REDACTED]');
-    expect(normalized.summary).toBe('[REDACTED]');
+    expect(normalized.message).toBe(error.message);
+    expect(normalized.summary).toBe(error.message);
     expect(normalized.category).toBe('bad_request');
     expect(normalized.statusCode).toBe(400);
     expect(requests.map((request) => request.state)).toEqual([{ field: 'password' },
@@ -320,8 +320,8 @@ describe('first-call protected error normalization', () => {
     const pan = '4111111111111111';
     const error = Object.assign(new Error('socket trouble'), { code: pan, statusCode: 502 });
     const normalized = await readNormalizedError(error, { site: 'test.native-pan' });
-    expect(normalized.message).toBe('[REDACTED]');
-    expect(normalized.summary).toBe('[REDACTED]');
+    expect(normalized.message).toBe('socket trouble');
+    expect(normalized.summary).toBe('socket trouble');
     expect(normalized.category).toBe('service');
     expect(normalized.statusCode).toBe(502);
     expect(normalized.code).toBeUndefined();

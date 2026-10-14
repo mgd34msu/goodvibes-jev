@@ -48,19 +48,19 @@ function everythingIsPayload() {
 }
 
 describe('error-display redaction token preservation', () => {
-  test('summarizeError reuses qualified [REDACTED] inside a redacted home path', async () => {
+  test('summarizeError preserves the local home path regardless of previous export readings', async () => {
     installJudgmentPort(everythingIsPayload().port);
     const err = new Error("ENOENT: no such file or directory, open '/home/somebody/hooks.json'");
     await readNormalizedError(err, { site: 'test.redaction-tokens' });
     const summary = summarizeError(err);
-    expect(summary).toContain('/home/[REDACTED]/hooks.json');
+    expect(summary).toContain('/home/somebody/hooks.json');
     expect(summary).not.toContain('/home/ /');
   });
 
-  test('normalizeError message keeps [REDACTED] tokens', () => {
+  test('normalizeError preserves a local path without a judgment port', () => {
     const err = new Error("cannot stat '/home/somebody/.goodvibes/settings.json'");
     const result = normalizeError(err);
-    expect(result.message).toContain('[REDACTED]');
+    expect(result.message).toContain('/home/somebody/.goodvibes/settings.json');
     expect(result.message).not.toContain('/home/ /');
   });
 

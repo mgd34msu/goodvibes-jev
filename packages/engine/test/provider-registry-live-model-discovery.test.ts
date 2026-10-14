@@ -122,7 +122,7 @@ describe('ProviderRegistry.refreshLiveModelDiscovery: the picker-open re-check h
       },
     );
     expect(registry.unreachableAtStartup().has('anthropic')).toBe(true);
-    expect(registry.unreachableAtStartup().get('anthropic')).toBe('[REDACTED]');
+    expect(registry.unreachableAtStartup().get('anthropic')).toBe('Anthropic /v1/models returned 503');
   });
 
   test('a brand-new model from a mocked Anthropic /v1/models response becomes selectable', async () => {

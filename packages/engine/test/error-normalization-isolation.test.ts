@@ -14,7 +14,7 @@ describe('error normalization isolation', () => {
     const { normalizeError } = await import('../sdk/src/platform/utils/error-display.js');
     const result = normalizeError('raw string error');
     expect(result.name).toBe('Error');
-    expect(result.message).toBe('[REDACTED]');
+    expect(result.message).toBe('raw string error');
     expect(result.category).toBe('unknown');
     expect(result.recoverable).toBe(false);
   });

@@ -42,6 +42,9 @@ export interface LiveModelDiscoveryResult {
   readonly error?: string | undefined;
   /** Set when `source === 'dated-static'`: the date the packaged list was last verified. */
   readonly asOf?: string | undefined;
+  /** Listed models whose chat capability is still awaiting a settled Jev reading. */
+  readonly unclassifiedModels?: readonly string[] | undefined;
+  readonly skippedReason?: 'local-endpoint-unavailable' | undefined;
 }
 
 interface ModelListCacheFile {
@@ -49,6 +52,7 @@ interface ModelListCacheFile {
   fetchedAt: number;
   ttlMs: number;
   models: string[];
+  unclassifiedModels?: string[];
 }
 
 /** Cache file path for a provider's live-discovered model list. */
@@ -75,7 +79,7 @@ function loadModelListCache(cachePath: string): ModelListCacheFile | null {
   }
 }
 
-function saveModelListCache(models: readonly string[], cachePath: string): void {
+function saveModelListCache(models: readonly string[], cachePath: string, unclassifiedModels: readonly string[] = []): void {
   try {
     fs.mkdirSync(dirname(cachePath), { recursive: true });
     const tmpPath = `${cachePath}.tmp`;
@@ -84,6 +88,7 @@ function saveModelListCache(models: readonly string[], cachePath: string): void 
       fetchedAt: Date.now(),
       ttlMs: TTL_24H_MS,
       models: [...models],
+      ...(unclassifiedModels.length ? { unclassifiedModels: [...unclassifiedModels] } : {}),
     };
     fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), 'utf-8');
     fs.renameSync(tmpPath, cachePath);
@@ -108,19 +113,23 @@ export function diffModelIds(
 /** Human-readable one-line summary of a refresh, for surfaces that just want a status line. */
 export function formatModelDiscoveryReport(providerName: string, result: LiveModelDiscoveryResult): string {
   if (result.source === 'live') {
-    if (result.added.length === 0 && result.removed.length === 0) {
+    const pending = result.unclassifiedModels?.length ?? 0;
+    if (result.added.length === 0 && result.removed.length === 0 && pending === 0) {
       return `${providerName}: no changes (${result.models.length} models)`;
     }
     const parts: string[] = [];
     if (result.added.length > 0) parts.push(`${result.added.length} new`);
     if (result.removed.length > 0) parts.push(`${result.removed.length} retired`);
+    if (pending > 0) parts.push(`${pending} awaiting Jev classification`);
     return `${providerName}: ${parts.join(', ')}`;
   }
   if (result.error) {
     const fallback = result.source === 'cache' ? 'last known list' : `dated static list (as of ${result.asOf ?? 'unknown'})`;
     return `${providerName}: live model refresh failed (${result.error}), using ${fallback}`;
   }
-  return `${providerName}: using dated static list (as of ${result.asOf ?? 'unknown'})`;
+  if (result.unclassifiedModels?.length) return `${providerName}: ${result.unclassifiedModels.length} awaiting Jev classification, keeping the previous list`;
+  if (result.source === 'cache') return `${providerName}: using cached list (${result.models.length} models)`;
+  return `${providerName}: using bundled list (as of ${result.asOf ?? 'unknown'})`;
 }
 
 export interface LiveModelRefreshOptions {
@@ -139,7 +148,7 @@ export interface LiveModelRefreshOptions {
   /** Whether the provider has credentials configured. When false, live fetch is skipped entirely. */
   readonly isConfigured: boolean;
   /** Performs the live fetch. Should reject on any failure (network, auth, parse). */
-  readonly fetchLive: () => Promise<string[]>;
+  readonly fetchLive: () => Promise<string[] | { models: string[]; unclassifiedModels: string[] }>;
   /**
    * Bypass the TTL cache and always re-check live. Set this for an explicit
    * user-triggered refresh or a picker-open re-check; leave false for
@@ -147,6 +156,8 @@ export interface LiveModelRefreshOptions {
    * instead of hitting the network on every boot.
    */
   readonly force?: boolean | undefined;
+  /** Bulk discovery may skip an unused optional loopback server that is not running. */
+  readonly skipUnavailableLocal?: boolean | undefined;
 }
 
 /**
@@ -158,11 +169,12 @@ export async function runLiveModelRefresh(opts: LiveModelRefreshOptions): Promis
   const cache = opts.cachePath ? loadModelListCache(opts.cachePath) : null;
   const baseline = cache?.models ?? opts.datedStaticModels;
 
-  if (cache && !opts.force && !isTtlCacheStale(cache)) {
+  if (cache && !opts.force && !cache.unclassifiedModels?.length && !isTtlCacheStale(cache)) {
     return { models: cache.models, source: 'cache', added: [], removed: [] };
   }
 
   if (!opts.isConfigured) {
+    if (cache) return { models: cache.models, source: 'cache', added: [], removed: [] };
     const { added, removed } = diffModelIds(baseline, opts.datedStaticModels);
     return {
       models: opts.datedStaticModels,
@@ -174,14 +186,27 @@ export async function runLiveModelRefresh(opts: LiveModelRefreshOptions): Promis
   }
 
   try {
-    const fetched = await opts.fetchLive();
-    if (fetched.length === 0) {
+    const listing = await opts.fetchLive();
+    const fetched = Array.isArray(listing) ? listing : listing.models;
+    const unclassifiedModels = Array.isArray(listing) ? [] : listing.unclassifiedModels;
+    if (fetched.length === 0 && unclassifiedModels.length === 0) {
       throw new Error('live model list was empty');
     }
+    if (fetched.length === 0 && unclassifiedModels.length > 0) {
+      return { models: baseline, source: cache ? 'cache' : 'dated-static', added: [], removed: [], unclassifiedModels,
+        ...(!cache ? { asOf: opts.datedStaticAsOf } : {}) };
+    }
     const { added, removed } = diffModelIds(baseline, fetched);
-    if (opts.cachePath) saveModelListCache(fetched, opts.cachePath);
-    return { models: fetched, source: 'live', added, removed };
+    const pending = new Set(unclassifiedModels);
+    if (opts.cachePath) saveModelListCache(fetched, opts.cachePath, unclassifiedModels);
+    return { models: fetched, source: 'live', added, removed: removed.filter(id => !pending.has(id)),
+      ...(unclassifiedModels.length ? { unclassifiedModels } : {}) };
   } catch (err) {
+    const code = err instanceof Error && 'code' in err ? err.code : undefined;
+    if (opts.skipUnavailableLocal && !cache && (code === 'ConnectionRefused' || code === 'ECONNREFUSED')) {
+      return { models: opts.datedStaticModels, source: 'dated-static', added: [], removed: [],
+        asOf: opts.datedStaticAsOf, skippedReason: 'local-endpoint-unavailable' };
+    }
     const message = summarizeError(err);
     logger.warn('[provider-models] Live model discovery failed', { provider: opts.providerName, error: message });
     if (cache) {
@@ -231,9 +256,10 @@ function listedChatCapability(entry: ListedModelEntry): boolean | undefined {
  * (routing/model-limit-readings.ts). A reading that does not settle keeps the
  * model listed.
  */
-async function chatModelIds(providerName: string, entries: readonly { readonly id: string; readonly entry: ListedModelEntry }[]): Promise<string[]> {
+async function chatModelIds(providerName: string, entries: readonly { readonly id: string; readonly entry: ListedModelEntry }[],
+  onUnclassifiedModel?: (modelId: string) => void): Promise<string[]> {
   const unstated = entries.filter(({ entry }) => listedChatCapability(entry) === undefined).map(({ id }) => id);
-  const readAsChat = new Set(await readChatModelIds(providerName, unstated, CHAT_MODEL_SITE));
+  const readAsChat = new Set(await readChatModelIds(providerName, unstated, CHAT_MODEL_SITE, onUnclassifiedModel));
   return entries
     .filter(({ id, entry }) => listedChatCapability(entry) ?? readAsChat.has(id))
     .map(({ id }) => id);
@@ -250,7 +276,7 @@ export async function fetchModelIdsFromListing(
   providerName: string,
   url: string,
   headers: Record<string, string>,
-  options: { readonly filterNonChat?: boolean | undefined } = {},
+  options: { readonly filterNonChat?: boolean | undefined; readonly onUnclassifiedModel?: (modelId: string) => void } = {},
 ): Promise<string[]> {
   const res = await fetchWithTimeout(url, { headers }, LIVE_FETCH_TIMEOUT_MS, instrumentedFetch);
   if (!res.ok) {
@@ -269,7 +295,7 @@ export async function fetchModelIdsFromListing(
     const id = typeof entry.id === 'string' ? entry.id : typeof entry.model_id === 'string' ? entry.model_id : null;
     return id === null ? [] : [{ id, entry }];
   });
-  return options.filterNonChat ? chatModelIds(providerName, listed) : listed.map(({ id }) => id);
+  return options.filterNonChat ? chatModelIds(providerName, listed, options.onUnclassifiedModel) : listed.map(({ id }) => id);
 }
 
 /**

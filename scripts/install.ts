@@ -191,6 +191,11 @@ export async function install(options: Options, hooks: InstallHooks = {}): Promi
       execute(daemon, ['config', 'set', 'judgment.model', 'jev-latest'], { cwd: options.dataDir, capture: true });
       execute(daemon, ['config', 'set', 'controlPlane.port', String(options.port)], { cwd: options.dataDir, capture: true });
       execute(daemon, ['webui', 'enable', '--loopback', '--bundle-dir', join(options.prefix, 'current/webui')], { cwd: options.dataDir, capture: true });
+      if (!hooks.stage) {
+        console.log('Verifying the Jev connection...');
+        execute('sh', ['-c', 'set -a; . "$1"; set +a; exec "$2" "$3" "$4"', 'jev-setup', environment,
+          join(release, 'runtime/bun'), join(ROOT, 'scripts/check-judgment.ts'), options.dataDir], { cwd: options.dataDir });
+      }
       if (options.service) {
         atomicWrite(unitPath(options), unit, 0o644);
         serviceAttempted = true;

@@ -14,10 +14,10 @@ import {
   runLiveModelRefresh,
 } from '../sdk/src/platform/providers/live-model-discovery.js';
 
-function withTempDir<T>(fn: (dir: string) => T): T {
+async function withTempDir<T>(fn: (dir: string) => T | Promise<T>): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), 'goodvibes-live-model-discovery-'));
   try {
-    return fn(dir);
+    return await fn(dir);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -185,8 +185,8 @@ describe('runLiveModelRefresh: honest failure reporting', () => {
       });
       expect(result.source).toBe('cache');
       expect(result.models).toEqual(['model-a', 'model-b']);
-      expect(result.error).toBe('[REDACTED]');
-        expect(formatModelDiscoveryReport('test-provider', result)).toBe('test-provider: live model refresh failed ([REDACTED]), using last known list');
+      expect(result.error).toBe('connection reset');
+        expect(formatModelDiscoveryReport('test-provider', result)).toBe('test-provider: live model refresh failed (connection reset), using last known list');
     }));
 
   test('a live fetch failure with no prior cache falls back to the dated-static list and reports the real error', async () => {
@@ -199,7 +199,7 @@ describe('runLiveModelRefresh: honest failure reporting', () => {
     });
     expect(result.source).toBe('dated-static');
     expect(result.models).toEqual(['model-a', 'model-b']);
-    expect(result.error).toBe('[REDACTED]');
+    expect(result.error).toBe('401 unauthorized');
     expect(result.asOf).toBe('2026-07-12');
   });
 
@@ -221,5 +221,23 @@ describe('getProviderModelsCachePath', () => {
   test('builds a stable per-provider path under a provider-models subdirectory', () => {
     const path = getProviderModelsCachePath('/home/user/.goodvibes', 'anthropic');
     expect(path).toBe(join('/home/user/.goodvibes', 'provider-models', 'anthropic.json'));
+  });
+});
+
+test('partial classification publishes confirmed models and retries pending models without retiring them', async () => {
+  await withTempDir(async (dir) => {
+    const cachePath = join(dir, 'partial.json');
+    const result = await runLiveModelRefresh({ providerName: 'test-provider', cachePath,
+      datedStaticModels: ['pending-model', 'retired-model'], datedStaticAsOf: '2026-07-12', isConfigured: true,
+      fetchLive: async () => ({ models: ['confirmed-model'], unclassifiedModels: ['pending-model'] }) });
+    expect(result.models).toEqual(['confirmed-model']);
+    expect(result.removed).toEqual(['retired-model']);
+    expect(formatModelDiscoveryReport('test-provider', result)).toContain('1 awaiting Jev classification');
+    let calls = 0;
+    const retried = await runLiveModelRefresh({ providerName: 'test-provider', cachePath,
+      datedStaticModels: [], datedStaticAsOf: '2026-07-12', isConfigured: true,
+      fetchLive: async () => { calls++; return ['confirmed-model', 'pending-model']; } });
+    expect(calls).toBe(1);
+    expect(retried.models).toEqual(['confirmed-model', 'pending-model']);
   });
 });

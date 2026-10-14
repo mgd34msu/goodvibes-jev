@@ -20,7 +20,7 @@ import {
 } from './live-model-discovery.js';
 
 export type ProviderRefreshableModel = Pick<LLMProvider, 'name'> &
-  Partial<{ refreshModels: (force?: boolean) => Promise<LiveModelDiscoveryResult> }>;
+  Partial<{ refreshModels: (force?: boolean, options?: { skipUnavailableLocal?: boolean }) => Promise<LiveModelDiscoveryResult> }>;
 
 /**
  * Seed `providerNativeModels` for one provider from its current `.models`
@@ -84,7 +84,7 @@ export async function sweepLiveModelDiscovery(
   const reports: Array<{ providerId: string } & LiveModelDiscoveryResult> = [];
   for (const provider of targets) {
     if (typeof provider.refreshModels !== 'function') continue;
-    const result = await provider.refreshModels(options.force ?? false);
+    const result = await provider.refreshModels(options.force ?? false, { skipUnavailableLocal: providerId === undefined });
     nextProviderNativeModels = [
       ...nextProviderNativeModels.filter((model) => model.provider !== provider.name),
       ...result.models.map((id) => buildProviderNativeModelDefinition(provider.name, id)),

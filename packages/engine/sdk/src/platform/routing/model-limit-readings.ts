@@ -15,7 +15,7 @@ import {
 } from './batteries/model-limits.js';
 import { ReadingMemo } from './provider-readings.js';
 import { assertJudgmentInput } from '../gate/judgment-input.js';
-import { requireActingReading } from '../types/judgment-held.js';
+import { JudgmentHeldError, requireActingReading } from '../types/judgment-held.js';
 
 const windowKey = (provider: string, modelId: string): string => `${provider}\u0000${modelId}`;
 const windowFamilies = new Map<string, ContextWindowFamily | null>();
@@ -84,9 +84,18 @@ function readKeepsChatModel(provider: string, modelId: string, site: string): Pr
 }
 
 /** The listed model ids that read as chat models, in listing order; each id is its own request. */
-export async function readChatModelIds(provider: string, modelIds: readonly string[], site: string): Promise<string[]> {
+export async function readChatModelIds(provider: string, modelIds: readonly string[], site: string,
+  onUnclassified?: (modelId: string) => void): Promise<string[]> {
   assertJudgmentInput({ provider, modelIds });
-  const keep = await mapLimit(modelIds, CHAT_MODEL_CONCURRENCY, (modelId) => readKeepsChatModel(provider, modelId, site));
+  const keep = await mapLimit(modelIds, CHAT_MODEL_CONCURRENCY, async (modelId) => {
+    try { return await readKeepsChatModel(provider, modelId, site); }
+    catch (error) {
+      if (!(error instanceof JudgmentHeldError) || !onUnclassified) throw error;
+      // No capability is inferred and no unsettled answer enters the memo.
+      onUnclassified(modelId);
+      return false;
+    }
+  });
   return modelIds.filter((_, index) => keep[index]);
 }
 

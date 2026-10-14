@@ -210,8 +210,9 @@ interface ErrorStructure {
 }
 
 function structureOf(error: unknown, options: ErrorNormalizationOptions, protectedMessage?: string): ErrorStructure {
-  // Redact Bearer tokens and API keys before any further processing.
-  const rawMessage = protectedMessage ?? redactSensitiveData(extractErrorMessage(error));
+  // Local diagnostics must remain readable without a working judgment service.
+  // Callers transmitting evidence apply redaction at that boundary.
+  const rawMessage = protectedMessage ?? extractErrorMessage(error);
   const statusCode = error instanceof AppError
     ? error.statusCode
     : error && typeof error === 'object' && 'statusCode' in error && typeof (error as { statusCode?: unknown }).statusCode === 'number'
@@ -384,7 +385,7 @@ export async function readNormalizedError(
   const assertSource = () => { sourceCurrent(); redactionSource.assertCurrent(); sourceCurrent(); };
   assertSource();
   // Native fields settle categories even when a privacy reading is unavailable.
-  const native = structureOf(error, options, '[REDACTED]');
+  const native = structureOf(error, options);
   let owner: JudgmentPortCapture;
   try { owner = captureJudgmentPort(options.site, { ...options, assertCurrent: assertSource }); }
   catch (failure) {

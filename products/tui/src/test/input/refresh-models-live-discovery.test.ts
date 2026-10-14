@@ -62,4 +62,23 @@ describe('/refresh-models live model discovery', () => {
     expect(text).toContain('Token limits refreshed: 0 models updated.');
     expect(text).toContain('Some refreshes failed');
   });
+  test('reports per-provider failures and summarizes providers that were not refreshed', async () => {
+    const registry = new CommandRegistry();
+    registerLocalRuntimeCommands(registry);
+    const { ctx, printed } = makeCtx({
+      refreshCatalog: async () => ({ modelCount: 1, providerCount: 2 }),
+      refreshBenchmarks: async () => 0,
+      refreshModelLimits: async () => 0,
+      refreshLiveModelDiscovery: async () => [
+        { providerId: 'broken', models: ['old'], source: 'cache', added: [], removed: [], error: 'HTTP 401: credential rejected' },
+        { providerId: 'unconfigured', models: ['old'], source: 'dated-static', added: [], removed: [], asOf: '2026-07-12' },
+      ],
+    });
+    await registry.execute('refresh-models', [], ctx);
+    expect(printed.join('\n')).toContain('HTTP 401: credential rejected');
+    expect(printed.join('\n')).toContain('Some refreshes failed');
+    expect(printed.join('\n')).toContain('1 providers kept their cached or bundled lists');
+    expect(printed.join('\n')).not.toContain('unconfigured:');
+  });
+
 });

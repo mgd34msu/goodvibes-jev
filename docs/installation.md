@@ -6,13 +6,16 @@ Run it as your normal user, without `sudo`.
 
 You need Git, curl, tar, unzip and sha256sum. The installer supplies private Bun
 and Node runtimes when needed, installs workspace dependencies, builds the suite,
-and enables a systemd user service. A working systemd user session is required
+verifies the Jev connection, and enables a systemd user service. A working systemd user session is required
 unless you choose `--no-service`. Allow several minutes for the first build.
 
 ```bash
 git clone https://github.com/mgd34msu/goodvibes-jev.git
 cd goodvibes-jev
+read -rsp 'TypeSafe API key: ' TYPESAFE_API_KEY; echo
+export TYPESAFE_API_KEY
 ./install.sh
+unset TYPESAFE_API_KEY
 ```
 
 The checkout must have no uncommitted changes to tracked files. To update, pull
@@ -31,7 +34,8 @@ export TYPESAFE_API_KEY
 unset TYPESAFE_API_KEY
 ```
 
-On the first install, an exported key is saved in the private environment file
+Installation requires a working Jev connection and stops with a setup error if
+the key is missing or rejected. On the first install, an exported key is saved in the private environment file
 at `~/.local/share/goodvibes-jev-data/environment`. Existing environment files
 are preserved on updates. You can also edit that file afterward, then restart
 with `systemctl --user restart goodvibes-jev.service`. Provider accounts and

@@ -108,7 +108,7 @@ describe('OpenAICompatProvider.refreshModels (gateway live discovery)', () => {
         const result = await provider.refreshModels();
         expect(result.source).toBe('dated-static');
         expect(result.asOf).toBe('2026-07-12');
-        expect(result.error).toBe('[REDACTED]');
+        expect(result.error).toBe('groq model listing (https://api.groq.com/openai/v1/models) returned 502 Bad Gateway');
         expect(provider.models).toEqual(['qwen/qwen3-32b', 'llama-3.3-70b-versatile']);
         expect(provider.models.length).toBeGreaterThan(0);
       },
@@ -124,7 +124,7 @@ describe('OpenAICompatProvider.refreshModels (gateway live discovery)', () => {
         const provider = makeProvider();
         const result = await provider.refreshModels();
         expect(result.source).toBe('dated-static');
-        expect(result.error).toBe('[REDACTED]');
+        expect(result.error).toBe('connect ECONNREFUSED');
         expect(provider.models.length).toBeGreaterThan(0);
       },
     );
@@ -167,7 +167,7 @@ describe('OpenAICompatProvider.refreshModels (gateway live discovery)', () => {
           const provider = makeProvider({ modelsCachePath: cachePath });
           const result = await provider.refreshModels(true);
           expect(result.source).toBe('cache');
-          expect(result.error).toBe('[REDACTED]');
+          expect(result.error).toBe('groq model listing (https://api.groq.com/openai/v1/models) returned 503 Service Unavailable');
           expect(provider.models).toEqual(['live-model-a', 'live-model-b']);
         },
       );
@@ -288,7 +288,7 @@ describe('AnthropicCompatProvider.refreshModels (gateway live discovery)', () =>
         const result = await provider.refreshModels();
         expect(result.source).toBe('dated-static');
         expect(result.asOf).toBe('2026-07-12');
-        expect(result.error).toBe('[REDACTED]');
+        expect(result.error).toBe('minimax model listing (https://api.minimax.io/anthropic/models) returned 500 Internal Server Error');
         expect(provider.models).toEqual(['MiniMax-M2.7', 'MiniMax-M2.5']);
       },
     );

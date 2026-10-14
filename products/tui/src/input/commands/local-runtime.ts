@@ -393,13 +393,17 @@ export function registerLocalRuntimeCommands(registry: CommandRegistry): void {
         // Explicit user refresh → force past each provider's TTL cache and
         // report the delta ("3 new, 1 retired") or the honest fallback reason.
         const reports = await providerApi.refreshLiveModelDiscovery(undefined, { force: true });
-        discoveryOk = true;
+        discoveryOk = reports.every((report) => !report.error);
         if (reports.length === 0) {
           ctx.print('No providers perform live model discovery.');
         } else {
           for (const report of reports) {
-            ctx.print(`  ${formatModelDiscoveryReport(report.providerId, report)}`);
+            if (report.source === 'live' || report.error || report.unclassifiedModels?.length) ctx.print(`  ${formatModelDiscoveryReport(report.providerId, report)}`);
           }
+          const absent = reports.filter((report) => report.skippedReason === 'local-endpoint-unavailable');
+          if (absent.length > 0) ctx.print(`Local servers not running: ${absent.map((report) => report.providerId).join(', ')} (skipped).`);
+          const unchanged = reports.filter((report) => report.source !== 'live' && !report.error && !report.skippedReason && !report.unclassifiedModels?.length).length;
+          if (unchanged > 0) ctx.print(`${unchanged} providers kept their cached or bundled lists (no live refresh).`);
         }
       } catch (e) {
         ctx.print(`Live model discovery failed: ${summarizeError(e)}`);

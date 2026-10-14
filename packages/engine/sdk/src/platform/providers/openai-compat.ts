@@ -308,7 +308,7 @@ export class OpenAICompatProvider implements LLMProvider {
    * backend has no listing API (`modelListing: 'none'`, verified per
    * provider), this reports the dated-static source without a network call.
    */
-  async refreshModels(force = false): Promise<LiveModelDiscoveryResult> {
+  async refreshModels(force = false, options: { skipUnavailableLocal?: boolean } = {}): Promise<LiveModelDiscoveryResult> {
     const result = await runLiveModelRefresh({
       providerName: this.name,
       cachePath: this.modelsCachePath,
@@ -316,20 +316,26 @@ export class OpenAICompatProvider implements LLMProvider {
       datedStaticAsOf: this.modelsAsOf ?? 'unknown',
       isConfigured: this.modelListing !== 'none' && this.isConfigured(),
       fetchLive: () => this.fetchLiveModelIds(),
+      skipUnavailableLocal: options.skipUnavailableLocal === true && !this.configured && this.allowAnonymous
+        && ['127.0.0.1', '[::1]', 'localhost'].includes(new URL(this.baseURL).hostname),
       force,
     });
     this._models = [...result.models];
     return result;
   }
 
-  private async fetchLiveModelIds(): Promise<string[]> {
+  private async fetchLiveModelIds(): Promise<string[] | { models: string[]; unclassifiedModels: string[] }> {
     if (this.customFetchLiveModels) return this.customFetchLiveModels();
     const url = this.modelListingUrl ?? `${this.baseURL.replace(/\/$/, '')}/models`;
     const headers: Record<string, string> = { ...this.defaultHeaders };
     if (this.apiKey && this.apiKey !== OPENAI_CLIENT_LOCAL_PLACEHOLDER_API_KEY) {
       headers['Authorization'] = `Bearer ${this.apiKey}`;
     }
-    return fetchModelIdsFromListing(this.name, url, headers, { filterNonChat: true });
+    const unclassifiedModels: string[] = [];
+    const models = await fetchModelIdsFromListing(this.name, url, headers, {
+      filterNonChat: true, onUnclassifiedModel: id => { unclassifiedModels.push(id); },
+    });
+    return { models, unclassifiedModels };
   }
 
   async chat(params: ChatRequest): Promise<ChatResponse> {
