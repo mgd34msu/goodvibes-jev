@@ -54,14 +54,31 @@ function headlineProblem(question: Question, answer: RawAnswer): string | undefi
 }
 
 /**
- * Hosted answers serialize probabilities and scores to hundredths. Check
- * whether a unit-mass distribution within those rounding intervals could
- * produce the reported score, instead of demanding unrounded equality.
- * Higher-precision values keep their original precision. Never renormalize.
+ * Accept hundredth-precision fields without treating their displayed digits
+ * as the original probabilities. This is a compatibility tolerance, not a
+ * guarantee about the provider's rounding algorithm. Higher-precision fields
+ * keep their original precision. Validation never rewrites the answer.
  */
 function roundingRadius(value: number): number {
   return Math.abs(value * 100 - Math.round(value * 100)) < 1e-12 ? 0.005 : Number.EPSILON * 4;
 }
+
+/** Extreme means of a unit-mass distribution inside the supplied intervals. */
+function scoreMeanBounds(lower: readonly number[], upper: readonly number[]): readonly [number, number] {
+  const minimumMass = lower.reduce((sum, value) => sum + value, 0);
+  const bound = (descending: boolean): number => {
+    let remaining = Math.max(0, 1 - minimumMass);
+    let mean = lower.reduce((sum, probability, level) => sum + level * probability, 0);
+    for (let i = 0; i < lower.length; i++) {
+      const level = descending ? lower.length - 1 - i : i;
+      const added = Math.min(remaining, upper[level]! - lower[level]!);
+      mean += level * added; remaining -= added;
+    }
+    return mean;
+  };
+  return [bound(false), bound(true)];
+}
+
 function distributionProblem(question: Question, answer: RawAnswer): string | undefined {
   if (question.type === 'noul') return undefined;
   const values = distributionKeys(question).map((key) => answer.probabilities![key]!);
@@ -75,19 +92,30 @@ function distributionProblem(question: Question, answer: RawAnswer): string | un
     const selected = answer.probabilities![answer.choice!]!;
     if (values.some((value) => value > selected)) return 'a choice below the highest probability';
   } else {
-    // Fill the remaining mass at low/high levels to bound every possible mean.
-    const meanBound = (descending: boolean): number => {
-      let remaining = Math.max(0, 1 - minimumMass);
-      let mean = lower.reduce((sum, probability, level) => sum + level * probability, 0);
-      for (let i = 0; i < values.length; i++) {
-        const level = descending ? values.length - 1 - i : i;
-        const added = Math.min(remaining, upper[level]! - lower[level]!);
-        mean += level * added; remaining -= added;
+    let [minimumMean, maximumMean] = scoreMeanBounds(lower, upper);
+    // Rounding each entry and then restoring unit mass at one entry can move
+    // that entry by the other entries' combined rounding errors.
+    // For example, [.988, .003, .003, .003, .003] can serialize as [1,0,0,0,0]
+    // while its separately rounded mean is .03. Independent rounding bounds
+    // incorrectly reject it. Permit this bounded residual only for a unit-mass
+    // distribution of hundredths; it cannot repair invalid total mass or
+    // loosen the precision of an unrounded distribution. The residual's
+    // location is unknown: even adjusting the original largest entry can
+    // make a different entry the displayed maximum.
+    const radii = values.map(roundingRadius);
+    const mass = values.reduce((sum, value) => sum + value, 0);
+    if (radii.every(radius => radius === 0.005) && Math.abs(mass - 1) <= roundoff) {
+      const radius = (values.length - 1) * 0.005;
+      for (let pivot = 0; pivot < values.length; pivot++) {
+        const adjustedLower = lower.map((value, level) => level === pivot ? Math.max(0, values[pivot]! - radius) : value);
+        const adjustedUpper = upper.map((value, level) => level === pivot ? Math.min(1, values[pivot]! + radius) : value);
+        const [minimum, maximum] = scoreMeanBounds(adjustedLower, adjustedUpper);
+        minimumMean = Math.min(minimumMean, minimum);
+        maximumMean = Math.max(maximumMean, maximum);
       }
-      return mean;
-    };
+    }
     const tolerance = roundingRadius(answer.score!) + roundoff * Math.max(1, values.length - 1);
-    if (answer.score! < meanBound(false) - tolerance || answer.score! > meanBound(true) + tolerance) return 'a score inconsistent with its probability distribution';
+    if (answer.score! < minimumMean - tolerance || answer.score! > maximumMean + tolerance) return 'a score inconsistent with its probability distribution';
   }
   return undefined;
 }

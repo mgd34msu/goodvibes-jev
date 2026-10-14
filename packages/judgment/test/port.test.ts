@@ -87,9 +87,21 @@ describe('createSystemOnePort', () => {
     await expect(port.ask({ state: 'synthetic', questions: { rating: score('Rate', ['Low', 'Medium', 'High', 'Highest']) } })).rejects.toMatchObject({ kind: 'invalid-response' });
   });
 
-  test('rejects the observed high-confidence score outside every wire-rounding mean', async () => {
+  test.each([
+    [0.03, 1, [1, 0, 0, 0, 0]],
+    [0.12, 0.93, [0.98, 0, 0, 0, 0.02]],
+    [3.97, 1, [0, 0, 0, 0, 1]],
+  ])('preserves a score %s compatible with probabilities rounded to unit mass', async (value, confidence, probabilities) => {
+    const answer = { type: 'score', score: value, confidence, probabilities: Object.fromEntries(probabilities.map((p, i) => [String(i), p])) };
+    const { port, calls } = portWith(() => json(200, { model: 'jev-1.13.0', answers: { rating: answer }, usage: { input_tokens: 1, output_tokens: 1 } }));
+    const result = await port.ask({ state: 'synthetic', questions: { rating: score('Rate', ['Absent', 'Weak', 'Partial', 'Strong', 'Complete']) } });
+    expect(result.answers.rating).toMatchObject(answer);
+    expect(calls).toHaveLength(1);
+  });
+
+  test('a rounding residual cannot excuse a score outside the bounded mean', async () => {
     const { port } = portWith(() => json(200, { model: 'jev-1.13.0', answers: {
-      rating: { type: 'score', score: 0.12, confidence: 0.93, probabilities: { 0: 0.98, 1: 0, 2: 0, 3: 0, 4: 0.02 } },
+      rating: { type: 'score', score: 0.14, confidence: 0.93, probabilities: { 0: 0.98, 1: 0, 2: 0, 3: 0, 4: 0.02 } },
     }, usage: { input_tokens: 1, output_tokens: 1 } }));
     await expect(port.ask({ state: 'synthetic', questions: { rating: score('Rate', ['Absent', 'Weak', 'Partial', 'Strong', 'Complete']) } })).rejects.toMatchObject({ kind: 'invalid-response' });
   });

@@ -151,6 +151,54 @@ describe('readScore', () => {
     expect(raw.probabilities['2']).toBeCloseTo(0.43);
   });
 
+  test('unit-mass rounding can produce both previously rejected score responses', () => {
+    for (const [original, value, displayed] of [
+      [[0.988, 0.003, 0.003, 0.003, 0.003], 0.03, [1, 0, 0, 0, 0]],
+      [[0.9626, 0.0048, 0.0048, 0.0048, 0.023], 0.12, [0.98, 0, 0, 0, 0.02]],
+    ] as const) {
+      expect(original.reduce((sum, p) => sum + p, 0)).toBeCloseTo(1, 12);
+      const mean = Math.round(original.reduce((sum, p, level) => sum + p * level, 0) * 100) / 100;
+      const rounded = original.map(p => Math.round(p * 100) / 100);
+      rounded[0]! += 1 - rounded.reduce((sum, p) => sum + p, 0);
+      expect(mean).toBe(value);
+      rounded.forEach((p, level) => expect(p).toBeCloseTo(displayed[level]!, 12));
+      expect(readScore(answer(mean, 0.69, rounded), { actAt: 0.7, confirmAt: 0.4 }))
+        .toMatchObject({ score: value, level: 0, normalized: value / 4, confidence: 0.69, probabilities: rounded, outcome: 'confirm' });
+    }
+  });
+
+  test('unit-mass rounding works at every rubric length and peak position', () => {
+    for (let count = 2; count <= 10; count++) for (let peak = 0; peak < count; peak++) {
+      const original = Array.from({ length: count }, (_, level) => level === peak ? 1 - (count - 1) * 0.0048 : 0.0048);
+      const mean = Math.round(original.reduce((sum, p, level) => sum + p * level, 0) * 100) / 100;
+      const rounded = original.map(p => Math.round(p * 100) / 100);
+      rounded[peak]! += 1 - rounded.reduce((sum, p) => sum + p, 0);
+      expect(readScore(answer(mean, 0.69, rounded), { actAt: 0.7, confirmAt: 0.4 }).score).toBe(mean);
+    }
+  });
+
+  test('restoring unit mass may change which displayed level has the highest probability', () => {
+    const original = [0.1851, 0.0457, 0.1957, 0.067, 0.1569, 0.141, 0.2086];
+    const mean = Math.round(original.reduce((sum, p, level) => sum + p * level, 0) * 100) / 100;
+    const rounded = original.map(p => Math.round(p * 100) / 100);
+    rounded[6]! += 1 - rounded.reduce((sum, p) => sum + p, 0);
+    expect(original.indexOf(Math.max(...original))).toBe(6);
+    expect(rounded.indexOf(Math.max(...rounded))).toBe(2);
+    expect(readScore(answer(mean, 0.2, rounded), { actAt: 0.7, confirmAt: 0.4 }))
+      .toMatchObject({ score: 3.22, level: 3, probabilities: rounded, outcome: 'escalate' });
+  });
+
+  test.each([
+    [0.06, [1, 0, 0, 0, 0]],
+    [3.94, [0, 0, 0, 0, 1]],
+    [0.14, [0.98, 0, 0, 0, 0.02]],
+    [0.12, [0.980001, 0, 0, 0, 0.019999]],
+    [0.052, [0.99, 0, 0, 0, 0]],
+    [0.03, [0.9, 0, 0, 0, 0]],
+  ])('rounding tolerance still rejects inconsistent score %s / %s', (value, probabilities) => {
+    expect(() => readScore(answer(value, 1, probabilities), { actAt: 0.7, confirmAt: 0.4 })).toThrow(JudgmentError);
+  });
+
   test.each([
     [0.7, 'act'],
     [0.69, 'confirm'],
