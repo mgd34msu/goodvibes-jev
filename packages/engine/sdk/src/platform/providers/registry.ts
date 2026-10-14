@@ -104,7 +104,16 @@ export class ProviderRegistry {
     (name) => this.discoveredProviderNames.has(name),
     (name) => this.providers.get(name),
     CATALOG_PROVIDER_NAME_ALIASES,
-    () => this._invalidateModelRegistry(),
+    (providerId, modelId) => {
+      // One completed reading changes one window, not the entire registry.
+      // Rebuilding every model here made the next keystroke repeat catalog work.
+      if (this._cachedModelRegistry === null) return;
+      this._cachedModelRegistry = this._cachedModelRegistry.map((model) =>
+        model.provider === providerId && model.id === modelId
+          ? this.contextWindowOverrideStore().apply(this.catalogWindows.apply(model))
+          : model);
+      this._modelRegistryRevision++;
+    },
   );
 
   constructor(options: ProviderRegistryOptions) {

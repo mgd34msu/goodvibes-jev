@@ -45,6 +45,34 @@ describe('shortlist', () => {
 });
 
 describe('resolver', () => {
+  test('background lookups yield to input and bound requests while a catalog is being read', async () => {
+    const fake = identityPort(() => 'openai/gpt-4o');
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let active = 0;
+    let peak = 0;
+    installJudgmentPort({
+      model: fake.port.model,
+      async ask(request) {
+        active++;
+        peak = Math.max(peak, active);
+        try { await held; return await fake.port.ask(request); }
+        finally { active--; }
+      },
+    });
+    const resolver = new ModelIdentityResolver({ universe: 'test', candidates: () => candidates });
+    let settled = 0;
+    for (let i = 0; i < 20; i++) resolver.lookup({ id: `gpt-4o-${i}` }, 'test', () => { settled++; });
+    expect(active).toBe(0);
+    await Bun.sleep(0);
+    expect(active).toBeGreaterThan(0);
+    expect(active).toBeLessThanOrEqual(4);
+    release();
+    for (let i = 0; settled < 20 && i < 100; i++) await Bun.sleep(0);
+    expect(settled).toBe(20);
+    expect(peak).toBeLessThanOrEqual(4);
+  });
+
   test('lookup answers null while the reading is requested, then the read match; a later lookup asks nothing', async () => {
     const { port, requests } = identityPort(() => 'anthropic/claude-sonnet-4.5');
     installJudgmentPort(port);

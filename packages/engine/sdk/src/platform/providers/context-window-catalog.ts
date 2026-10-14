@@ -11,8 +11,6 @@
  */
 import { knownFallbackContextWindow } from './context-window-fallback.js';
 import { ModelIdentityResolver } from '../routing/model-identity.js';
-import { logger } from '../utils/logger.js';
-import { summarizeError } from '../utils/error-display.js';
 import type { CatalogModel } from './model-catalog.js';
 import type { ContextWindowOrigin, ModelDefinition } from './registry-types.js';
 
@@ -43,7 +41,7 @@ export interface CatalogContextWindowResolution {
 /** Build once per snapshot. Invalid figures do not become catalog evidence. */
 export function buildCatalogContextWindowIndex(
   models: readonly CatalogModel[],
-  onIdentityResolved?: () => void,
+  onIdentityResolved?: (providerId: string, modelId: string) => void,
 ): CatalogContextWindowIndex {
   const byProvider = new Map<string, Map<string, number>>();
   for (const model of models) {
@@ -66,24 +64,13 @@ export function buildCatalogContextWindowIndex(
   const candidates = models.filter((model) => byModelId.has(model.id))
     .map((model) => ({ key: model.id, id: model.id, name: model.name, provider: model.providerId }));
   const identities = new ModelIdentityResolver({ universe: 'context-window-catalog', candidates: () => candidates });
-  const pending = new Set<string>();
   return {
     byProvider,
     byModelId,
     resolveModelId(providerId, modelId) {
       if (byModelId.has(modelId)) return modelId;
-      const query = { id: modelId, provider: providerId };
-      const known = identities.known(query);
-      if (known !== undefined) return known;
-      const key = JSON.stringify([providerId, modelId]);
-      if (!pending.has(key)) {
-        pending.add(key);
-        void identities.resolve(query, 'providers.context-window-catalog.identity')
-          .then(() => { onIdentityResolved?.(); })
-          .catch((error: unknown) => logger.warn('[context-window-catalog] Identity reading failed', { providerId, modelId, error: summarizeError(error) }))
-          .finally(() => pending.delete(key));
-      }
-      return null;
+      return identities.lookup({ id: modelId, provider: providerId }, 'providers.context-window-catalog.identity',
+        () => onIdentityResolved?.(providerId, modelId));
     },
   };
 }
@@ -246,7 +233,7 @@ export class CatalogContextWindowResolver {
     /** The registered provider, read for a `baseURL` field when it has one. */
     private readonly getProvider: (providerName: string) => object | undefined,
     private readonly aliases: Readonly<Record<string, string>> = {},
-    private readonly onIdentityResolved?: (() => void) | undefined,
+    private readonly onIdentityResolved?: ((providerId: string, modelId: string) => void) | undefined,
   ) {}
 
   /** Record which custom providers sit at a local or private address. */

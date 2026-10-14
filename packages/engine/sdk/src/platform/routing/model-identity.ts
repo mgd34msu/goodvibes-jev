@@ -122,6 +122,12 @@ export class ModelIdentityResolver {
   readonly #inFlight = new Map<string, Promise<string | null>>();
   #indexedFrom: readonly IdentityCandidate[] | undefined;
   #index: readonly IndexedCandidate[] = [];
+  readonly #byToken = new Map<string, number[]>();
+  readonly #shortlists = new Map<string, readonly IdentityCandidate[]>();
+  readonly #background = new Set<string>();
+  readonly #queued: (() => Promise<void>)[] = [];
+  #active = 0;
+  #scheduled = false;
 
   constructor(options: ModelIdentityResolverOptions) {
     this.#universe = options.universe;
@@ -135,8 +141,34 @@ export class ModelIdentityResolver {
     if (candidates !== this.#indexedFrom) {
       this.#indexedFrom = candidates;
       this.#index = indexCandidates(candidates);
+      this.#byToken.clear();
+      this.#shortlists.clear();
+      for (const [position, entry] of this.#index.entries()) {
+        for (const token of entry.tokens) {
+          const positions = this.#byToken.get(token) ?? [];
+          positions.push(position);
+          this.#byToken.set(token, positions);
+        }
+      }
     }
     return this.#index;
+  }
+
+  #shortlist(query: IdentityQuery): readonly IdentityCandidate[] {
+    this.#currentIndex();
+    const key = JSON.stringify([query.provider, query.id, query.name, query.family, query.otherProviderThan]);
+    const cached = this.#shortlists.get(key);
+    if (cached) return cached;
+    // Retrieve only token neighbours, retaining source order for tied duplicate
+    // keys. Repeated render-time lookups reuse this work until the catalog changes.
+    const positions = new Set<number>();
+    for (const token of queryTokens(query)) {
+      for (const position of this.#byToken.get(token) ?? []) positions.add(position);
+    }
+    const neighbours = [...positions].sort((a, b) => a - b).map((position) => this.#index[position]!);
+    const shortlist = identityShortlist(query, neighbours);
+    this.#shortlists.set(key, shortlist);
+    return shortlist;
   }
 
   /** The memo key: the query and the exact shortlist it was asked over, so a changed list is asked again. */
@@ -146,7 +178,7 @@ export class ModelIdentityResolver {
 
   /** The remembered answer: a candidate key, null for "none of them", undefined when not read yet. */
   known(query: IdentityQuery): string | null | undefined {
-    const shortlist = identityShortlist(query, this.#currentIndex());
+    const shortlist = this.#shortlist(query);
     if (shortlist.length === 0) return null;
     return this.#memo.get(this.#keyFor(query, shortlist));
   }
@@ -156,19 +188,47 @@ export class ModelIdentityResolver {
    * the reading is requested for the next lookup. A failed reading is logged
    * and asked again on a later lookup.
    */
-  lookup(query: IdentityQuery, site: string): string | null {
+  lookup(query: IdentityQuery, site: string, onResolved?: () => void): string | null {
     const known = this.known(query);
     if (known !== undefined) return known;
-    void this.resolve(query, site).catch((error: unknown) => {
-      logger.warn('[routing] Model identity reading failed', { universe: this.#universe, model: query.id, error: summarizeError(error) });
-    });
+    const key = this.#keyFor(query, this.#shortlist(query));
+    if (!this.#background.has(key)) {
+      let owner: ReturnType<typeof judgmentPort>;
+      try { owner = judgmentPort(site); }
+      catch { return null; }
+      const snapshot = this.#indexedFrom;
+      this.#background.add(key);
+      this.#queued.push(async () => {
+        try {
+          if (judgmentPort(site) !== owner || this.#source() !== snapshot) return;
+          await this.resolve(query, site);
+          if (judgmentPort(site) === owner && this.#source() === snapshot) onResolved?.();
+        }
+        catch (error: unknown) {
+          logger.warn('[routing] Model identity reading failed', { universe: this.#universe, model: query.id, error: summarizeError(error) });
+        } finally { this.#background.delete(key); }
+      });
+      this.#scheduleBackground();
+    }
     return null;
+  }
+
+  #scheduleBackground(): void {
+    if (this.#scheduled || this.#active >= 4 || this.#queued.length === 0) return;
+    this.#scheduled = true;
+    setImmediate(() => {
+      this.#scheduled = false;
+      while (this.#active < 4 && this.#queued.length > 0) {
+        this.#active++;
+        void this.#queued.shift()!().finally(() => { this.#active--; this.#scheduleBackground(); });
+      }
+    });
   }
 
   /** Reads which candidate is the same model as the query, or null when none is. */
   resolve(query: IdentityQuery, site: string, signal?: AbortSignal): Promise<string | null> {
     assertJudgmentInput(query);
-    const shortlist = identityShortlist(query, this.#currentIndex());
+    const shortlist = this.#shortlist(query);
     assertJudgmentInput(shortlist);
     if (shortlist.length === 0) return Promise.resolve(null);
     const key = this.#keyFor(query, shortlist);

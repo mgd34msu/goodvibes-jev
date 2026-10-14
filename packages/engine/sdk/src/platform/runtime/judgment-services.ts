@@ -174,7 +174,26 @@ export interface JudgmentServicesInput extends JudgmentSettingsSource {
  */
 export function composeJudgment(input: JudgmentServicesInput): JudgmentServices {
   const decisionLog = openStateDecisionLog(input.stateRoot);
-  const recorded = withDecisionLog(createSettingsJudgmentPort(input), decisionLog);
+  const transport = createSettingsJudgmentPort(input);
+  // Publish one completed response per event-loop turn. Each response records
+  // its decision, readings and action synchronously; a burst of responses must
+  // not keep terminal input waiting behind all of those durable writes.
+  const completions: (() => void)[] = [];
+  const publish = (): void => {
+    completions.shift()?.();
+    if (completions.length > 0) setImmediate(publish);
+  };
+  const yieldCompletion = (): Promise<void> => new Promise(resolve => {
+    completions.push(resolve);
+    if (completions.length === 1) setImmediate(publish);
+  });
+  const recorded = withDecisionLog({
+    get model() { return transport.model; },
+    async ask(request) {
+      try { return await transport.ask(request); }
+      finally { await yieldCompletion(); }
+    },
+  }, decisionLog);
   const lifetime = new AbortController();
   const active = new Set<Promise<unknown>>();
   const port: JudgmentPort = {
