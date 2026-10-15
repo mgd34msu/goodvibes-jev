@@ -9,12 +9,15 @@ export async function mapWithConcurrency<T, R>(
   const concurrency = Math.max(1, Math.floor(limit));
   const results = new Array<R>(items.length);
   let nextIndex = 0;
+  let failed = false;
 
   async function runWorker(): Promise<void> {
     for (;;) {
+      if (failed) return;
       const index = nextIndex++;
       if (index >= items.length) return;
-      results[index] = await worker(items[index]!, index);
+      try { results[index] = await worker(items[index]!, index); }
+      catch (error) { failed = true; throw error; }
     }
   }
 
@@ -22,6 +25,8 @@ export async function mapWithConcurrency<T, R>(
     { length: Math.min(concurrency, items.length) },
     () => runWorker(),
   );
-  await Promise.all(workers);
+  const settled = await Promise.allSettled(workers);
+  const error = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+  if (error) throw error.reason;
   return results;
 }

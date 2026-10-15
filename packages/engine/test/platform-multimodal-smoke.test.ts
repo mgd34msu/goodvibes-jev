@@ -224,8 +224,8 @@ test('Office admission reads late XML text and refuses expansion bombs before a 
   const bytes = await archive.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
   await expect(readKnowledgeArtifactJudgmentSource(descriptor, bytes)).rejects.toThrow('Refused before judgment');
   const bomb = new JSZip(); bomb.file('xl/sharedStrings.xml', 'safe '.repeat(200_000));
-  await expect(readKnowledgeArtifactJudgmentSource(descriptor, await bomb.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }))).rejects.toThrow('bounded plain JSON');
-  await expect(readKnowledgeArtifactJudgmentSource(descriptor, Buffer.from('invalid archive'))).rejects.toThrow('bounded plain JSON');
+  await expect(readKnowledgeArtifactJudgmentSource(descriptor, await bomb.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }))).rejects.toThrow('plain JSON');
+  await expect(readKnowledgeArtifactJudgmentSource(descriptor, Buffer.from('invalid archive'))).rejects.toThrow('plain JSON');
   expect(fake.requests).toHaveLength(0);
 });
 

@@ -26,26 +26,26 @@ test('ordinary compressed PDF text is fully local before entity judgment admissi
 
 test('compressed late credentials, excessive expansion and malformed lengths hold without decoding models', async () => {
   await expect(readMultimodalPdf(pdf(`${'safe '.repeat(1_000)}password=late-credential`), () => {})).rejects.toThrow('Refused before judgment');
-  await expect(readMultimodalPdf(pdf('safe '.repeat(200_000)), () => {})).rejects.toThrow('bounded plain JSON');
+  await expect(readMultimodalPdf(pdf('safe '.repeat(200_000)), () => {})).rejects.toThrow('plain JSON');
   const broken = Buffer.from(pdf('AI').toString('latin1').replace(/\/Length \d+/, '/Length 99999999'), 'latin1');
-  await expect(readMultimodalPdf(broken, () => {})).rejects.toThrow('bounded plain JSON');
+  await expect(readMultimodalPdf(broken, () => {})).rejects.toThrow('plain JSON');
 });
 
 for (const filter of ['/Filter 7 0 R', '/F#69lter /FlateDecode', '/Filter null', '/Filter /FlateDecode /DecodeParms 7 0 R']) {
   test(`PDF stream admission rejects unbounded filter syntax: ${filter}`, async () => {
     const bytes = Buffer.from(pdf('safe '.repeat(200_000)).toString('latin1').replace('/Filter /FlateDecode', filter), 'latin1');
-    await expect(readMultimodalPdf(bytes, () => {})).rejects.toThrow('bounded plain JSON');
+    await expect(readMultimodalPdf(bytes, () => {})).rejects.toThrow('plain JSON');
   });
 }
 test('unrecognized stream delimiters and empty text cannot become successful PDF analysis', async () => {
   const malformed = Buffer.from(pdf('AI').toString('latin1').replace('\nstream\n', '\nstream \n'), 'latin1');
-  await expect(readMultimodalPdf(malformed, () => {})).rejects.toThrow('bounded plain JSON');
+  await expect(readMultimodalPdf(malformed, () => {})).rejects.toThrow('plain JSON');
   await expect(readMultimodalPdf(pdf(''), () => {})).rejects.toThrow('OCR');
 });
 
 test('inline image filters cannot recursively decompress outside the ordinary-stream budget', async () => {
   const bytes = pdf('', 'q BI /W 1 /H 1 /BPC 8 /F /Fl ID hostile EI Q');
-  await expect(readMultimodalPdf(bytes, () => {})).rejects.toThrow('bounded plain JSON');
+  await expect(readMultimodalPdf(bytes, () => {})).rejects.toThrow('plain JSON');
 });
 
 test('decoded PDF metadata and real numeric content remain privacy screened', async () => {

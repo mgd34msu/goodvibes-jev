@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
+import * as asyncFs from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -50,9 +51,7 @@ for (const name of ['find', 'analyze'] as const) for (const captured of [false, 
     });
     const port: JudgmentPort = { ...gate.port, async ask(request) {
       request.beforeAttempt?.();
-      if (request.context?.battery === 'engine.walk.skip-directory') {
-        started.resolve(); await release.promise; return directories.port.ask(request);
-      }
+      if (request.context?.battery === 'engine.walk.skip-directory') throw new Error('Directory discovery must not call Jev');
       return 'disposition' in request.questions ? autonomous.port.ask(request) : gate.port.ask(request);
     } };
     const log = new SqliteDecisionLog(':memory:');
@@ -79,19 +78,24 @@ for (const name of ['find', 'analyze'] as const) for (const captured of [false, 
         sessionId: 'directory-admission', emitterContext: () => ({ sessionId: 'directory-admission', traceId: 'synthetic', source: 'orchestrator' }),
       };
       const args = name === 'find' ? { queries: [{ id: 'q', mode: 'content', pattern: 'needle' }] } : { mode: 'dependencies' };
-      pending = executeToolCalls(deps, 'walk-admission-turn', [{ id: 'walk-admission-call', name, arguments: args }]);
-      await Promise.race([started.promise, pending.then(result => { throw new Error(`No directory reading: ${JSON.stringify(result)}`); })]);
+      const readDirectory = asyncFs.readdir;
+      const tap = spyOn(asyncFs, 'readdir').mockImplementation((async (...args: Parameters<typeof readDirectory>) => {
+        if (String(args[0]) === join(view, 'src')) { started.resolve(); await release.promise; }
+        return readDirectory(...args);
+      }) as typeof readDirectory);
+      pending = executeToolCalls(deps, 'walk-admission-turn', [{ id: 'walk-admission-call', name, arguments: args }]).finally(() => tap.mockRestore());
+      await Promise.race([started.promise, pending.then(result => { throw new Error(`No directory traversal: ${JSON.stringify(result)}`); })]);
       if (revoked) directory = join(root, 'changed-owner-root');
       release.resolve();
       const result = await pending;
       expect(result[0]?.success).toBe(!revoked);
       if (revoked) {
-        expect(directories.requests).toHaveLength(1);
+        expect(directories.requests).toHaveLength(0);
         expect(result[0]?.output).toBeUndefined();
         expect(reads.some(path => path.endsWith('owned-marker.txt'))).toBe(false);
       } else {
         expect(result[0]?.output).toContain('owned-marker.txt');
-        expect(directories.requests.length).toBeGreaterThan(1);
+        expect(directories.requests).toHaveLength(0);
       }
     } finally {
       release.resolve(); await pending?.catch(() => {});

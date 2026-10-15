@@ -53,7 +53,6 @@ interface ArtifactPackagePayload {
 const DEFAULT_LIST_LIMIT = 25;
 const DEFAULT_PREVIEW_BYTES = 2_048;
 const MAX_PREVIEW_BYTES = 20_000;
-const MAX_PACKAGE_ARTIFACTS = 100;
 
 function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -306,7 +305,6 @@ async function loadArtifactsForPackage(
   if (!store.readContent) throw new Error('Artifact package export requires an artifact store with readContent support.');
   const artifactIds = readStringList(args.artifactIds);
   if (artifactIds.length === 0) throw new Error(`artifactIds is required for mode:"${mode}". Provide a comma-separated string or string array.`);
-  if (artifactIds.length > MAX_PACKAGE_ARTIFACTS) throw new Error(`Artifact package export supports at most ${MAX_PACKAGE_ARTIFACTS} artifacts per package.`);
   const loaded: Array<{ readonly record: ArtifactRecord; readonly buffer: Buffer }> = [];
   for (const artifactId of artifactIds) {
     assertCurrent();

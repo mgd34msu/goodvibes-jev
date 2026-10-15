@@ -145,8 +145,8 @@ export const featureConfigDefaults: {
     },
     contextWindowGuard: true,
     contextCompactThreshold: 0.85,
-    maxTurns: 50,
-    maxTurnsCap: 200,
+    maxTurns: 0,
+    maxTurnsCap: 0,
   },
 };
 
@@ -347,17 +347,17 @@ export const featureConfigSettings: ConfigSetting[] = [
   {
     key: 'agents.maxTurns',
     type: 'number',
-    default: 50,
+    default: 0,
     description:
-      'Default per-agent turn budget: the hard cap on how many turns one agent run may take before it terminates as a max-turns failure (a machine-readable turn-budget-exhausted outcome, distinct from an infrastructure error). A per-spawn override may lower or raise this, but never past agents.maxTurnsCap. Prevents an unbounded agent loop.',
-    ...intRange(1, 10_000),
+      'Per-agent turn budget. Zero (default) continues until completion or cancellation. A positive value stops the run with a max-turns outcome. A positive agents.maxTurnsCap remains an owner-controlled ceiling.',
+    ...intRange(0, Number.MAX_SAFE_INTEGER),
   },
   {
     key: 'agents.maxTurnsCap',
     type: 'number',
-    default: 200,
+    default: 0,
     description:
-      'The upper bound a per-spawn maxTurns override cannot exceed. When a spawn requests more turns than this, the cap wins and the applied budget is reported as policy-bound. Keeps a caller from lifting the turn ceiling without limit.',
-    ...intRange(1, 100_000),
+      'Owner-controlled ceiling on per-spawn turn budgets. Zero (default) disables this ceiling; a positive value cannot be raised by a spawn override.',
+    ...intRange(0, Number.MAX_SAFE_INTEGER),
   },
 ];

@@ -48,7 +48,6 @@ import { execFailureView, execRetry, type ExecFailureCategory } from '../batteri
 const DEFAULT_TIMEOUT_MS = 120_000;
 const PROGRESS_AUTO_THRESHOLD_MS = 30_000;
 const OVERFLOW_SUBDIR = ['.goodvibes', '.overflow'] as const;
-const MAX_EXEC_COMMANDS = 10;
 const MAX_PARALLEL_EXEC_COMMANDS = 3;
 
 function decodeCmd(cmdInput: ExecCommandInput): string {
@@ -319,6 +318,12 @@ async function runAdmittedCommand(
     const result = cmdInput.background || (cmdInput.until && !cmdInput.until.kill_after)
       ? await startCapturedBackground(processManager, policy.capturedInput, cmdStr, cmdInput, workingDirectory, cmdInput.timeout_ms ?? globalTimeout, signal, network, scrubbed.env, beforeSpawn, policy.assertWorkspaceCurrent)
       : await runCapturedCommand(policy.capturedInput, cmdStr, cmdInput, workingDirectory, cmdInput.timeout_ms ?? globalTimeout, signal, network, scrubbed.env, { beforeSpawn, beforePublish: policy.assertCurrent, ...(interactive && policy.interaction ? { interaction: policy.interaction } : {}) });
+    if (!result.denied) {
+      const out = await truncate(overflowHandler, result.stdout, 'stdout', cmdStr);
+      const err = await truncate(overflowHandler, result.stderr, 'stderr', cmdStr);
+      result.stdout = out.text; result.stderr = err.text;
+      result.stdout_truncated = out.truncated; result.stderr_truncated = err.truncated;
+    }
     return withheld.length > 0 ? { ...result, withheld_env: withheld } : result;
   }
   const interaction = policy.interaction;
@@ -630,7 +635,7 @@ async function runUntil(
   let streams: Promise<void[]> | undefined;
   try {
     current();
-    await using pattern = await createSafeRegex(until.pattern, '', { operation: 'exec until pattern', maxInputChars: 500_000, signal: active, assertCurrent: current });
+    await using pattern = await createSafeRegex(until.pattern, '', { operation: 'exec until pattern', signal: active, assertCurrent: current });
     current(); beforeSpawn?.();
     proc = Bun.spawn([...sandboxArgv, '/bin/sh', '-c', cmdStr], { ...(cwd !== undefined ? { cwd } : {}), env, stdout: 'pipe', stderr: 'pipe' } as Parameters<typeof Bun.spawn>[1]);
     let stdoutBuf = '', stderrBuf = '', matched = false;
@@ -645,7 +650,6 @@ async function runUntil(
           current();
           if (done) break;
           const chunk = decoder.decode(value, { stream: true });
-          if (stdoutBuf.length + stderrBuf.length + chunk.length > 500_000) throw new Error('Exec until regex input exceeds 500000 characters');
           if (isStderr) stderrBuf += chunk; else stdoutBuf += chunk;
           if (!matched && await pattern.test(stdoutBuf + stderrBuf)) {
             current(); matched = true; clearTimeout(untilTimer);
@@ -989,9 +993,6 @@ export function createExecTool(
         const executionPolicy = { ...policy, assertCurrent, assertWorkspaceCurrent: captureCurrentExecWorkspaceConstraint(args, opts) };
         if (!Array.isArray(args['commands']) || (args['commands'] as unknown[]).length === 0) {
           return { success: false, error: 'commands must be a non-empty array' };
-        }
-        if ((args['commands'] as unknown[]).length > MAX_EXEC_COMMANDS) {
-          return { success: false, error: `Too many commands: maximum ${MAX_EXEC_COMMANDS} per exec call` };
         }
         if (policy.capturedInput) {
           const unsupported = capturedExecUnsupportedOptions(args);

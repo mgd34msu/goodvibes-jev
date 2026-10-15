@@ -77,7 +77,6 @@ interface CacheEntry {
 }
 
 const MAX_CACHE_SIZE = 500;
-const MAX_FETCH_URLS = 20;
 const MAX_PARALLEL_FETCHES = 5;
 const MAX_REDIRECTS = 10;
 
@@ -119,21 +118,7 @@ export class FetchRuntimeService {
     const rateLimitMs = input.rate_limit_ms ?? 0;
     const maxContentLength = input.max_content_length;
 
-    if (input.urls.length > MAX_FETCH_URLS) {
-      return {
-        success: false,
-        summary: {
-          total: input.urls.length,
-          succeeded: 0,
-          failed: input.urls.length,
-          total_ms: 0,
-        },
-        results: [{
-          url: input.urls[0]?.url ?? '',
-          error: `Too many URLs: maximum ${MAX_FETCH_URLS} per fetch call`,
-        }],
-      };
-    }
+
 
     const sanitizeMode = resolveSanitizeMode(input.sanitize_mode ?? deps.defaultSanitizeMode);
     const trustTierConfig: TrustTierConfig = {

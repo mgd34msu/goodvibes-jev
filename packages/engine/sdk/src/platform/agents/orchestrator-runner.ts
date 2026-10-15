@@ -59,8 +59,8 @@ import { cleanupLeakedProcesses, disposeSession, finishCancelledRun, type AgentR
 export { resolveContextWindowModelDefinition } from './orchestrator-runner-context-window.js';
 export type { AgentOrchestratorRunContext } from './orchestrator-run-context.js';
 
-const MAX_TURNS = 50; // fallback turn budget when no config source (mirrors agents.maxTurns default)
-const MAX_TURNS_CAP = 200; // fallback policy bound when no config source (mirrors agents.maxTurnsCap default)
+const MAX_TURNS = 0; // fallback turn budget when no config source (mirrors agents.maxTurns default)
+const MAX_TURNS_CAP = 0; // fallback policy bound when no config source (mirrors agents.maxTurnsCap default)
 const NETWORK_RETRY_DELAYS_MS = [5_000, 10_000, 20_000, 40_000, 60_000]; // exponential back-off on transient network errors
 const RATE_LIMIT_RETRY_DELAY_MS = 60_000; // fixed pause on 429/quota responses
 const RATE_LIMIT_MAX_RETRIES = 3; // cap retries so a sustained quota violation terminates cleanly
@@ -551,7 +551,8 @@ export async function runAgentTask(
         await finishCancelledRun(context, record, session, preAgentProcessIds, turn, terminal);
         return;
       }
-      if (++turn > turnBudget.limit) {
+      turn++;
+      if (turnBudget.limit > 0 && turn > turnBudget.limit) {
         const lastMessages = conversation.getMessagesForLLM();
         const lastAssistant = [...lastMessages].reverse().find(m => m.role === 'assistant');
         if (lastAssistant) {

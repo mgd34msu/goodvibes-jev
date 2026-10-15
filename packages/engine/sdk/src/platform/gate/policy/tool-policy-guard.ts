@@ -40,7 +40,6 @@ import type {
   AgentToolPolicyExplanationOptions,
   AgentToolPolicyGuardOptions,
   AgentToolPolicyInvocationExplanation,
-  ExecCommandArgs,
   ExecToolArgs,
   FetchToolArgs,
   InspectToolArgs,
@@ -58,7 +57,6 @@ import {
 } from './state-policy.js';
 
 const BLOCKED_MAIN_CONVERSATION_TOOL_NAMES = [] as const;
-const AGENT_EXEC_BACKGROUND_COMMAND = /^\s*bg_(?:list|status|output|stop)\b/;
 
 const READ_ONLY_AGENT_TOOL_MODES = [
   'spawn',
@@ -113,9 +111,7 @@ const LOCAL_CODING_TOOL_DENIAL = [
 ].join(' ');
 
 const BACKGROUND_EXEC_DENIAL = [
-  'GoodVibes Agent only runs foreground, serial command-line work from the main conversation.',
-  'Raw exec background flags, parallel command batches, bg_* controls, and exec pre-command file operations are disabled here.',
-  'For user-approved long-running local commands, use execution action:"processes", terminal background:true, and process lifecycle actions. Delegate only when isolation, remote execution, or parallel work is the user benefit.',
+  'Invalid command options.',
 ].join(' ');
 
 const REMOTE_MUTATION_DENIAL = [
@@ -137,8 +133,8 @@ const MCP_SECURITY_MUTATION_DENIAL = [
 ].join(' ');
 
 const FETCH_NETWORK_MUTATION_DENIAL = [
-  'GoodVibes Agent only performs serial, unauthenticated, read-only HTTP fetches from the main conversation.',
-  'Non-read methods, request bodies, custom auth/header/service credentials, trust overrides, raw unsanitized responses, and parallel fetch batches are disabled here.',
+  'GoodVibes Agent only performs unauthenticated, read-only HTTP fetches from the main conversation.',
+  'Non-read methods, request bodies, custom auth/header/service credentials, trust overrides, raw unsanitized responses are disabled here.',
   'Network writes or credentialed external calls require an explicit Agent approval flow before they can run.',
 ].join(' ');
 
@@ -345,30 +341,13 @@ export function wrapInspectToolForAgentPolicy(tool: Tool): void {
   };
 }
 
-export function validateExecToolInvocationForAgentPolicy(args: ExecToolArgs): string | null {
-  if (args.parallel === true) return BACKGROUND_EXEC_DENIAL;
-  if (Array.isArray(args.file_ops) && args.file_ops.length > 0) return BACKGROUND_EXEC_DENIAL;
-  if (args.file_ops !== undefined && !Array.isArray(args.file_ops)) return BACKGROUND_EXEC_DENIAL;
-  if (!Array.isArray(args.commands)) return null;
-
-  for (const command of args.commands) {
-    if (!isRecord(command)) continue;
-    const commandArgs = command as ExecCommandArgs;
-    if (commandArgs.background === true) return BACKGROUND_EXEC_DENIAL;
-    if (typeof commandArgs.cmd === 'string' && AGENT_EXEC_BACKGROUND_COMMAND.test(commandArgs.cmd)) {
-      return BACKGROUND_EXEC_DENIAL;
-    }
-    if (isRecord(commandArgs.until)) {
-      const killAfter = commandArgs.until.kill_after;
-      if (killAfter !== true) return BACKGROUND_EXEC_DENIAL;
-    }
-  }
-
+export function validateExecToolInvocationForAgentPolicy(_args: ExecToolArgs): string | null {
+  // Background lifecycle, file operations and concurrency are owned by exec.
+  // The ordinary permission and publication checks still apply to every call.
   return null;
 }
 
 export function validateFetchToolInvocationForAgentPolicy(args: FetchToolArgs): string | null {
-  if (args.parallel === true) return FETCH_NETWORK_MUTATION_DENIAL;
   if (args.sanitize_mode === 'none') return FETCH_NETWORK_MUTATION_DENIAL;
   if (isPresent(args.trusted_hosts)) return FETCH_NETWORK_MUTATION_DENIAL;
   if (!Array.isArray(args.urls)) return null;
@@ -389,7 +368,7 @@ export function validateFetchToolInvocationForAgentPolicy(args: FetchToolArgs): 
 }
 
 export function normalizeFetchToolInvocationForAgentPolicy(args: FetchToolArgs): FetchToolArgs {
-  return { ...args, parallel: false };
+  return args;
 }
 
 export function validateStateToolInvocationForAgentPolicy(args: StateToolArgs): string | null {
@@ -591,37 +570,15 @@ function narrowAgentToolDefinitionForAgentPolicy(tool: Tool): void {
   modeProperty.description = 'Agent orchestration mode. Spawned work is visible, tracked, and cancellable.';
 }
 
-function narrowExecToolDefinitionForAgentPolicy(tool: Tool): void {
-  tool.definition.description = 'Execute foreground shell commands serially for GoodVibes Agent.';
-
-  const properties = tool.definition.parameters.properties;
-  if (!isRecord(properties)) return;
-  delete properties.parallel;
-  delete properties.file_ops;
-
-  const commandsProperty = properties.commands;
-  if (!isRecord(commandsProperty)) return;
-  const itemSchema = commandsProperty.items;
-  if (!isRecord(itemSchema)) return;
-  const commandProperties = itemSchema.properties;
-  if (!isRecord(commandProperties)) return;
-
-  delete commandProperties.background;
-  const untilProperty = commandProperties.until;
-  if (isRecord(untilProperty)) {
-    untilProperty.description = [
-      'Pattern-based early termination.',
-      'GoodVibes Agent requires kill_after:true so until-mode does not promote the process to background.',
-    ].join(' ');
-  }
+function narrowExecToolDefinitionForAgentPolicy(_tool: Tool): void {
+  // Keep the shared schema, including tracked background and batch execution.
 }
 
 function narrowFetchToolDefinitionForAgentPolicy(tool: Tool): void {
-  tool.definition.description = 'Fetch public URLs with serial, read-only HTTP requests.';
+  tool.definition.description = 'Fetch public URLs with read-only HTTP requests.';
 
   const properties = tool.definition.parameters.properties;
   if (!isRecord(properties)) return;
-  delete properties.parallel;
   delete properties.trusted_hosts;
 
   const sanitizeModeProperty = properties.sanitize_mode;

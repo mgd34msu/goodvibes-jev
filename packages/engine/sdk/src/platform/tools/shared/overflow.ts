@@ -457,7 +457,7 @@ export async function keepForCall(content: string, budget: number, call: string)
  *   `diagnostics:{filename}`
  *
  * A backend write failure returns the kept content without a ref; a
- * JudgmentError from the keep reading propagates.
+ * failed keep reading uses a marked head/tail preview of the retained output.
  */
 export class OverflowHandler {
   private readonly backend: SpillBackend;
@@ -506,7 +506,7 @@ export class OverflowHandler {
     }
 
     const label = this.sanitizeLabel(options.label ?? 'output');
-    const filename = `${Date.now()}-${label}.txt`;
+    const filename = `${Date.now()}-${crypto.randomUUID()}-${label}.txt`;
 
     let entry: SpillEntry | null;
     try {
@@ -516,7 +516,15 @@ export class OverflowHandler {
       entry = null;
     }
 
-    const kept = await keepForCall(content, maxChars, options.call);
+    let kept: string;
+    try { kept = await keepForCall(content, maxChars, options.call); }
+    catch (error) {
+      // Ranking is an aid to display, never a prerequisite for delivering a
+      // completed tool result. Full output has already been retained above.
+      logger.debug('[overflow] Output ranking unavailable', { error: summarizeError(error) });
+      const head = Math.floor(maxChars / 2);
+      kept = content.slice(0, head) + '\n[... middle omitted ...]\n' + content.slice(-(maxChars - head));
+    }
 
     if (!entry) {
       return {

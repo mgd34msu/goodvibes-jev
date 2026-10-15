@@ -20,7 +20,6 @@ import { mapWithConcurrency } from '../../utils/concurrency.js';
 
 export type { FileReadResult, ReadOutput } from './file-readers.js';
 
-const MAX_READ_FILES = 50;
 const MAX_PARALLEL_READ_FILES = 8;
 
 export class ReadTool implements Tool {
@@ -53,9 +52,6 @@ export class ReadTool implements Tool {
   async execute(args: Record<string, unknown>, options?: ToolExecuteOptions): Promise<{ success: boolean; output?: string; error?: string }> {
     if (!Array.isArray(args.files) || args.files.length === 0) {
       return { success: false, error: 'Missing or empty "files" array' };
-    }
-    if (args.files.length > MAX_READ_FILES) {
-      return { success: false, error: `Too many files: maximum ${MAX_READ_FILES} per read call` };
     }
     try {
       const assertCurrent = readExecutionGuard(args, options, this.projectIndex);

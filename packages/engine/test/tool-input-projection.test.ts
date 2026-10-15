@@ -303,25 +303,25 @@ test('ordinary model argument fields cannot request or disable the registration 
   expect(projects).toBe(1); expect(bodies).toHaveLength(0);
 });
 
-test('the declared-material privacy floor runs before the trusted projector', async () => {
+test('local capture delegates data handling to the trusted projector without a hosted reading', async () => {
   const { registry, tool } = fixture(); let projects = 0;
   registry.register(tool, { inputProjection: { async project() { projects++; return { status: 'projected', args: safe() }; } } });
-  await expect(registry.projectCall('one', tool.definition.name, { value: 'password=synthetic-secret' })).rejects.toThrow('inline credential');
-  expect(projects).toBe(0);
+  const call = await registry.projectCall('one', tool.definition.name, { value: 'password=synthetic-secret' });
+  expect(call.args).toEqual(safe());
+  expect(projects).toBe(1);
+  await registry.releaseProjected(call);
 });
 
 
-test('protected live capture capacity is bounded and only awaited release restores capacity', async () => {
-  const { registry, tool } = fixture(); let projects = 0;
-  registry.register(tool, { inputProjection: { async project() { projects++; return { status: 'projected', args: safe() }; } } });
+test('protected projections support a large batch and each release remains idempotent', async () => {
+  const { registry, tool } = fixture(); let projects = 0, releases = 0;
+  registry.register(tool, { inputProjection: { async project() { projects++; return { status: 'projected', args: safe(), async release() { releases++; } }; } } });
   const calls = [];
-  for (let i = 0; i < 128; i++) calls.push(await registry.projectCall(`call-${i}`, tool.definition.name, raw()));
-  await expect(registry.projectCall('overflow', tool.definition.name, raw())).rejects.toMatchObject({ problem: 'capacity' });
-  expect(projects).toBe(128);
+  for (let i = 0; i < 150; i++) calls.push(await registry.projectCall(`call-${i}`, tool.definition.name, raw()));
+  expect(projects).toBe(150);
   await registry.releaseProjected(calls[0]!);
-  const restored = await registry.projectCall('restored', tool.definition.name, raw());
-  expect(projects).toBe(129);
-  await Promise.all([...calls, restored].map(call => registry.releaseProjected(call)));
+  await Promise.all(calls.map(call => registry.releaseProjected(call)));
+  expect(releases).toBe(150);
 });
 
 
@@ -497,4 +497,19 @@ test.each(['registered', 'prepared'] as const)('%s read publication checks the o
     expect(await settled).toMatchObject({ error: { message: 'original caller superseded' } });
     expect(releases).toBe(1);
   } finally { finish.resolve(); await settled; }
+});
+
+
+test('local capture accepts large payloads, wide batches and deep JSON without a hosted budget', async () => {
+  const { captureOwnedJson, snapshotJudgmentInput } = await import('../sdk/src/platform/gate/judgment-input.js');
+  const payload = 'x'.repeat(1_100_000);
+  let nested: Record<string, unknown> = { value: payload };
+  for (let i = 0; i < 1000; i++) nested = { child: nested };
+  const input = { nested, batch: Array.from({ length: 20_100 }, (_, id) => id) };
+  const copy = captureOwnedJson(input) as typeof input;
+  expect(copy.batch).toEqual(input.batch);
+  let leaf = copy.nested;
+  for (let i = 0; i < 1000; i++) { expect(Object.isFrozen(leaf)).toBe(true); leaf = leaf.child as Record<string, unknown>; }
+  expect(leaf.value).toBe(payload);
+  expect(() => snapshotJudgmentInput({ apiKey: 'synthetic-private-key' })).toThrow('inline credential');
 });

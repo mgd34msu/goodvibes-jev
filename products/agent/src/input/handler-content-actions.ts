@@ -33,7 +33,6 @@ export const BINARY_IMAGE_MAGIC: {
 
 export const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
 const MAX_CONTEXT_FILE_BYTES = 64 * 1024;
-const MAX_CONTEXT_DIRECTORY_ENTRIES = 200;
 const URL_REFERENCE_REGEX = /^https?:\/\/[^\s]+$/i;
 const CONTEXT_REFERENCE_REGEX = /(^|\s)@([^\s]+)/g;
 const CONTEXT_REFERENCE_TRAILING_PUNCTUATION = /[),.;:!?]+$/;
@@ -84,7 +83,6 @@ function readContextFileBlock(reference: string, projectRoot: string): string | 
   const label = escapeContextAttribute(relative(projectRoot, resolvedPath) || basename(resolvedPath));
   if (stat.isDirectory()) {
     const entries = readdirSync(resolvedPath, { withFileTypes: true })
-      .slice(0, MAX_CONTEXT_DIRECTORY_ENTRIES)
       .map((entry) => `${entry.isDirectory() ? 'dir ' : 'file'} ${entry.name}`)
       .join('\n');
     return [

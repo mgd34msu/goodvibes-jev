@@ -33,11 +33,12 @@ const READ_ONLY_ANALYZE_TOOL_MODES = [
   'breaking',
   'permissions',
   'test_find',
+  'upgrade',
+  'semantic_diff',
 ] as const;
 
-const READ_ONLY_REGISTRY_TOOL_MODES = ['search', 'recommend', 'dependencies', 'preview'] as const;
+const READ_ONLY_REGISTRY_TOOL_MODES = ['search', 'recommend', 'dependencies', 'preview', 'content'] as const;
 
-const READ_ONLY_ANALYZE_TOOL_MODE_SET = new Set<string>(READ_ONLY_ANALYZE_TOOL_MODES);
 const READ_ONLY_REGISTRY_TOOL_MODE_SET = new Set<string>(READ_ONLY_REGISTRY_TOOL_MODES);
 
 const ANALYZE_NETWORK_DENIAL = [
@@ -81,52 +82,23 @@ export function wrapRegistryToolForAgentPolicy(tool: Tool): void {
   };
 }
 
-export function validateAnalyzeToolInvocationForAgentPolicy(args: AnalyzeToolArgs): string | null {
-  if (typeof args.mode === 'string' && !READ_ONLY_ANALYZE_TOOL_MODE_SET.has(args.mode)) return ANALYZE_NETWORK_DENIAL;
+export function validateAnalyzeToolInvocationForAgentPolicy(_args: AnalyzeToolArgs): string | null {
+  // Shared schema validation owns analysis modes and their configured providers.
   return null;
 }
 
 export function validateRegistryToolInvocationForAgentPolicy(args: RegistryToolArgs): string | null {
   if (typeof args.mode === 'string' && !READ_ONLY_REGISTRY_TOOL_MODE_SET.has(args.mode)) return REGISTRY_CONTENT_DENIAL;
-  if (args.mode === 'preview' && typeof args.path === 'string' && !isAllowedAgentRegistryPreviewPath(args.path)) {
+  if ((args.mode === 'preview' || args.mode === 'content') && typeof args.path === 'string' && !isAllowedAgentRegistryPreviewPath(args.path)) {
     return REGISTRY_CONTENT_DENIAL;
   }
   return null;
 }
 
-function narrowAnalyzeToolDefinitionForAgentPolicy(tool: Tool): void {
-  tool.definition.description = 'Run local, static project analysis for GoodVibes Agent.';
-  tool.definition.sideEffects = ['read_fs'];
-
-  const properties = tool.definition.parameters.properties;
-  if (!isRecord(properties)) return;
-  const modeProperty = properties.mode;
-  if (isRecord(modeProperty)) {
-    modeProperty.enum = [...READ_ONLY_ANALYZE_TOOL_MODES];
-    modeProperty.description = 'Local static analysis mode allowed by GoodVibes Agent main-conversation policy.';
-  }
-
-  delete properties.packages;
-}
-
-function narrowRegistryToolDefinitionForAgentPolicy(tool: Tool): void {
-  tool.definition.description = 'Discover and preview GoodVibes Agent registry entries.';
-  tool.definition.sideEffects = ['read_fs'];
-
-  const properties = tool.definition.parameters.properties;
-  if (!isRecord(properties)) return;
-  const modeProperty = properties.mode;
-  if (isRecord(modeProperty)) {
-    modeProperty.enum = [...READ_ONLY_REGISTRY_TOOL_MODES];
-    modeProperty.description = 'Bounded registry discovery modes allowed by GoodVibes Agent main-conversation policy.';
-  }
-}
+function narrowAnalyzeToolDefinitionForAgentPolicy(_tool: Tool): void {}
+function narrowRegistryToolDefinitionForAgentPolicy(_tool: Tool): void {}
 
 function isAllowedAgentRegistryPreviewPath(path: string): boolean {
   const normalized = path.replace(/\\/g, '/');
   return /(?:^|\/)\.goodvibes\/(?:skills|agents)\/.+(?:\.md|\/(?:SKILL|AGENT)\.md)$/i.test(normalized);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

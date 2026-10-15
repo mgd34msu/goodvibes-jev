@@ -2,14 +2,7 @@
 import { executePolicyCheck } from '../execute-policy-check.js';
 import type { Tool } from '../../types/tools.js';
 import { assertAdmittedAgentRead } from '../../tools/read/admission.js';
-import { AGENT_READ_IMAGE_MODES, AGENT_MAX_READ_FILES, AGENT_MAX_READ_IMAGE_SIZE_BYTES } from '../../tools/read/policy-contract.js';
 export { assertAdmittedAgentRead } from '../../tools/read/admission.js';
-
-type ReadFileArgs = {
-  readonly path?: unknown;
-  readonly image_mode?: unknown;
-  readonly [key: string]: unknown;
-};
 
 type ReadToolArgs = {
   readonly files?: unknown;
@@ -18,15 +11,7 @@ type ReadToolArgs = {
   readonly [key: string]: unknown;
 };
 
-const READ_IMAGE_MODES = AGENT_READ_IMAGE_MODES;
-const READ_IMAGE_MODE_SET = new Set<string>(READ_IMAGE_MODES);
-const MAX_READ_FILES = AGENT_MAX_READ_FILES;
-const MAX_READ_IMAGE_SIZE_BYTES = AGENT_MAX_READ_IMAGE_SIZE_BYTES;
-
-const READ_POLICY_DENIAL = [
-  'GoodVibes Agent only exposes bounded, non-secret project reads from the main conversation.',
-  'The current admission must establish non-secret, in-scope subjects; broad batches, unoptimized extraction, and oversized image reads are disabled.',
-].join(' ');
+const READ_POLICY_DENIAL = 'Invalid read options.';
 
 export { AGENT_READ_IMAGE_MODES, AGENT_MAX_READ_FILES, AGENT_MAX_READ_IMAGE_SIZE_BYTES } from '../../tools/read/policy-contract.js';
 export const AGENT_READ_POLICY_DENIAL_MESSAGE = READ_POLICY_DENIAL;
@@ -64,23 +49,7 @@ export function wrapReadToolForAdmittedAgentPolicy(tool: Tool): void {
 }
 
 /** Published resource limits, separate from standalone legacy semantic validation. */
-export function validateAgentReadMechanics(args: ReadToolArgs): string | null {
-  if (Array.isArray(args.files) && args.files.length > MAX_READ_FILES) return READ_POLICY_DENIAL;
-  if (args.image_mode === 'unoptimized') return READ_POLICY_DENIAL;
-  if (typeof args.image_mode === 'string' && !READ_IMAGE_MODE_SET.has(args.image_mode)) return READ_POLICY_DENIAL;
-  if (typeof args.max_image_size === 'number' && args.max_image_size > MAX_READ_IMAGE_SIZE_BYTES) {
-    return READ_POLICY_DENIAL;
-  }
-
-  if (!Array.isArray(args.files)) return null;
-  for (const file of args.files) {
-    if (!isRecord(file)) continue;
-    const fileArgs = file as ReadFileArgs;
-    if (fileArgs.image_mode === 'unoptimized') return READ_POLICY_DENIAL;
-    if (typeof fileArgs.image_mode === 'string' && !READ_IMAGE_MODE_SET.has(fileArgs.image_mode)) {
-      return READ_POLICY_DENIAL;
-    }
-  }
+export function validateAgentReadMechanics(_args: ReadToolArgs): string | null {
 
   return null;
 }
@@ -91,46 +60,6 @@ export async function isBlockedReadPath(_path: string, signal?: AbortSignal): Pr
   return false;
 }
 
-function narrowReadToolDefinitionForAgentPolicy(tool: Tool): void {
-  tool.definition.description = 'Read project files for GoodVibes Agent.';
-  tool.definition.sideEffects = ['read_fs'];
-  tool.definition.concurrency = 'serial';
-
-  const properties = tool.definition.parameters.properties;
-  if (!isRecord(properties)) return;
-
-  const files = properties.files;
-  if (isRecord(files)) {
-    files.maxItems = MAX_READ_FILES;
-    files.description = 'Files to read.';
-    const itemSchema = files.items;
-    if (isRecord(itemSchema)) {
-      const fileProperties = itemSchema.properties;
-      if (isRecord(fileProperties)) {
-        const pathProperty = fileProperties.path;
-        if (isRecord(pathProperty)) {
-          pathProperty.description = 'Relative or absolute project path. The current owner checks each actual read subject.';
-        }
-        narrowImageModeProperty(fileProperties, 'image_mode');
-      }
-    }
-  }
-
-  narrowImageModeProperty(properties, 'image_mode');
-  const maxImageSize = properties.max_image_size;
-  if (isRecord(maxImageSize)) {
-    maxImageSize.maximum = MAX_READ_IMAGE_SIZE_BYTES;
-    maxImageSize.description = 'Maximum image file size in bytes allowed by GoodVibes Agent read policy.';
-  }
-}
-
-function narrowImageModeProperty(properties: Record<string, unknown>, key: string): void {
-  const property = properties[key];
-  if (!isRecord(property)) return;
-  property.enum = [...READ_IMAGE_MODES];
-  property.description = 'Image handling mode allowed by GoodVibes Agent read policy. Full-resolution unoptimized extraction is disabled.';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+function narrowReadToolDefinitionForAgentPolicy(_tool: Tool): void {
+  // The shared reader owns its schema, image modes and caller-selected size budget.
 }

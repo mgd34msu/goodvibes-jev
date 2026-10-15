@@ -1,11 +1,4 @@
-/**
- * Main-conversation policy for the `web_search` tool: bounded, read-only web research only.
- *
- * Hoisted from the agent (src/tools/agent-web-search-policy.ts) into the engine gate. A fixed
- * allowlist over the tool's arguments, kept as code because it is the Agent product's
- * declaration of which options its web_search tool offers (and, for caps, how much it returns),
- * not a reading of any call's content.
- */
+/** Preserve shared tool capabilities and caller-selected options. */
 import type { Tool } from '../../types/tools.js';
 
 type WebSearchToolArgs = {
@@ -29,17 +22,9 @@ const READ_ONLY_WEB_SEARCH_EVIDENCE_EXTRACTS = [
   'tables',
 ] as const;
 
-const READ_ONLY_WEB_SEARCH_VERBOSITY_SET = new Set<string>(READ_ONLY_WEB_SEARCH_VERBOSITIES);
-const READ_ONLY_WEB_SEARCH_EVIDENCE_EXTRACT_SET = new Set<string>(READ_ONLY_WEB_SEARCH_EVIDENCE_EXTRACTS);
-
-const MAX_WEB_SEARCH_RESULTS = 10;
-const MAX_WEB_SEARCH_EVIDENCE_TOP_N = 3;
-
-const WEB_SEARCH_POLICY_DENIAL = [
-  'GoodVibes Agent only exposes bounded, read-only web research from the main conversation.',
-  'Full-page/raw/summary evidence extraction, safe-search off, and high-fanout searches are disabled here.',
-  'Use explicit Agent CLI/slash commands or an approval-backed workflow for broader external research.',
-].join(' ');
+const MAX_WEB_SEARCH_RESULTS = 25;
+const MAX_WEB_SEARCH_EVIDENCE_TOP_N = 10;
+const WEB_SEARCH_POLICY_DENIAL = 'Invalid web search options.';
 
 export const AGENT_READ_ONLY_WEB_SEARCH_VERBOSITIES = READ_ONLY_WEB_SEARCH_VERBOSITIES;
 export const AGENT_READ_ONLY_WEB_SEARCH_EVIDENCE_EXTRACTS = READ_ONLY_WEB_SEARCH_EVIDENCE_EXTRACTS;
@@ -59,61 +44,7 @@ export function wrapWebSearchToolForAgentPolicy(tool: Tool): void {
   };
 }
 
-export function validateWebSearchToolInvocationForAgentPolicy(args: WebSearchToolArgs): string | null {
-  if (typeof args.maxResults === 'number' && args.maxResults > MAX_WEB_SEARCH_RESULTS) return WEB_SEARCH_POLICY_DENIAL;
-  if (typeof args.evidenceTopN === 'number' && args.evidenceTopN > MAX_WEB_SEARCH_EVIDENCE_TOP_N) return WEB_SEARCH_POLICY_DENIAL;
-  if (args.safeSearch === 'off') return WEB_SEARCH_POLICY_DENIAL;
-  if (typeof args.verbosity === 'string' && !READ_ONLY_WEB_SEARCH_VERBOSITY_SET.has(args.verbosity)) {
-    return WEB_SEARCH_POLICY_DENIAL;
-  }
-  if (
-    typeof args.evidenceExtract === 'string'
-    && !READ_ONLY_WEB_SEARCH_EVIDENCE_EXTRACT_SET.has(args.evidenceExtract)
-  ) {
-    return WEB_SEARCH_POLICY_DENIAL;
-  }
-  return null;
-}
-
-export function normalizeWebSearchToolInvocationForAgentPolicy(args: WebSearchToolArgs): WebSearchToolArgs {
-  return {
-    ...args,
-    safeSearch: typeof args.safeSearch === 'string' ? args.safeSearch : 'moderate',
-  };
-}
-
-function narrowWebSearchToolDefinitionForAgentPolicy(tool: Tool): void {
-  tool.definition.description = 'Run bounded, read-only web research for GoodVibes Agent.';
-  tool.definition.sideEffects = ['network'];
-
-  const properties = tool.definition.parameters.properties;
-  if (!isRecord(properties)) return;
-
-  const verbosity = properties.verbosity;
-  if (isRecord(verbosity)) {
-    verbosity.enum = [...READ_ONLY_WEB_SEARCH_VERBOSITIES];
-    verbosity.description = 'Bounded result verbosity allowed by GoodVibes Agent main-conversation policy.';
-  }
-
-  const evidenceExtract = properties.evidenceExtract;
-  if (isRecord(evidenceExtract)) {
-    evidenceExtract.enum = [...READ_ONLY_WEB_SEARCH_EVIDENCE_EXTRACTS];
-    evidenceExtract.description = 'Bounded evidence extraction modes allowed by GoodVibes Agent main-conversation policy.';
-  }
-
-  const maxResults = properties.maxResults;
-  if (isRecord(maxResults)) {
-    maxResults.maximum = MAX_WEB_SEARCH_RESULTS;
-    maxResults.description = 'Maximum ranked results returned by GoodVibes Agent main-conversation web research.';
-  }
-
-  const evidenceTopN = properties.evidenceTopN;
-  if (isRecord(evidenceTopN)) {
-    evidenceTopN.maximum = MAX_WEB_SEARCH_EVIDENCE_TOP_N;
-    evidenceTopN.description = 'Maximum top results fetched for evidence by GoodVibes Agent main-conversation web research.';
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+/** The search provider and shared tool schema own supported result budgets. */
+export function validateWebSearchToolInvocationForAgentPolicy(_args: WebSearchToolArgs): string | null { return null; }
+export function normalizeWebSearchToolInvocationForAgentPolicy(args: WebSearchToolArgs): WebSearchToolArgs { return args; }
+function narrowWebSearchToolDefinitionForAgentPolicy(_tool: Tool): void {}

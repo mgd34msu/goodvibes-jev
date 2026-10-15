@@ -72,7 +72,6 @@ export const EXEC_TOOL_SCHEMA = {
               max: {
                 type: 'integer',
                 minimum: 1,
-                maximum: 10,
                 description: 'Maximum retry attempts. Default: 3.',
               },
               delay_ms: {
@@ -137,7 +136,6 @@ export const EXEC_TOOL_SCHEMA = {
         // cmd or cmd_base64 required, validated at runtime
       },
       minItems: 1,
-      maxItems: 10,
     },
     parallel: {
       type: 'boolean',

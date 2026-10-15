@@ -98,7 +98,6 @@ interface CapturedProjection {
   preparation?: Promise<PreparedToolCall>;
 }
 
-const MAX_LIVE_INPUT_PROJECTIONS = 128;
 const applyIntrinsic = Reflect.apply;
 
 export type ToolExecutionEffect = 'write' | 'send';
@@ -148,7 +147,7 @@ function retiredSettingsResult(callId: string, receipt: PreparedConfigMutationRe
 }
 // Carries the same authentic body proof across trusted wrappers. It never
 // creates authority, and cannot be cleared or replaced by a tool argument.
-const executingContext = new AsyncLocalStorage<{ readonly proof: CurrentToolExecution; readonly options: ToolExecuteOptions }>();
+const executingContext = new AsyncLocalStorage<{ readonly proof: CurrentToolExecution; readonly options: ToolExecuteOptions } | undefined>();
 
 /** Effectful tools must not downgrade wrapped/copied options to legacy authority. */
 export function assertCurrentToolInvocation(args: Record<string, unknown>, options?: ToolExecuteOptions): boolean {
@@ -501,7 +500,6 @@ export class ToolRegistry {
     };
     this.assertCaptured(provisional, true);
     if (skeleton.ownsProjectionSlot) {
-      if (this.liveInputProjections >= MAX_LIVE_INPUT_PROJECTIONS) throw new ToolInputProjectionError('capacity');
       this.liveInputProjections++;
     }
     let release: (() => Promise<void>) | undefined;
@@ -724,7 +722,6 @@ export class ToolRegistry {
     const record = this.projections.get(projection)!;
     const stageGuard = opts === undefined ? undefined : projectionFunction<() => void>(projectionProperty(opts, 'assertCurrent'));
     if (stageGuard && stageGuard !== record.captureCurrent && !record.preparationGuards.callbacks.has(stageGuard)) {
-      if (record.preparationGuards.callbacks.size >= 128) throw new ToolInputProjectionError('capacity');
       record.preparationGuards.callbacks.add(stageGuard);
       record.preparationGuards.revision++;
     }
@@ -984,7 +981,7 @@ export class ToolRegistry {
         this.assertExecuting(call, record); assertProjectionSignal(signal);
       };
       const execute = () => { assertProjectionCurrent(callerCurrent); return applyIntrinsic(record.executor, record.tool, [call.args, executionOptions]); };
-      const result = await (proof ? executingContext.run({ proof, options: executionOptions }, execute) : execute());
+      const result = await executingContext.run(proof ? { proof, options: executionOptions } : undefined, execute);
       assertProjectionCurrent(callerCurrent);
       if (proof?.settingsReceipt) { assertProjectionSignal(signal); assertAdmissionCurrent?.(); }
       if (proof?.settingsRetired) throw new ToolInputProjectionError('stale');
@@ -1174,7 +1171,9 @@ export class ToolRegistry {
       }
       retireExecution = activateProjectionExecution(record.executionContext, effectiveArgs, signal);
       assertProjectionCurrent(callerCurrent, effectiveArgs);
-      const result = await applyIntrinsic(record.executor, record.tool, [effectiveArgs, executionOptions]);
+      // A separately dispatched call owns its own execution scope. Background
+      // agents must not inherit the completed spawning tool's body proof.
+      const result = await executingContext.run(undefined, () => applyIntrinsic(capturedRecord.executor, capturedRecord.tool, [effectiveArgs, executionOptions]));
       assertProjectionCurrent(callerCurrent, effectiveArgs);
       retireExecution(); retireExecution = undefined;
       const toolResult = { ...result, callId };
@@ -1218,7 +1217,7 @@ export class ToolRegistry {
       const executionOptions = assertCurrent ? Object.freeze({ signal, assertCurrent })
         : opts === undefined || projectionProperty(opts, 'inputProjectionContext') === undefined ? opts : Object.freeze({ signal });
       assertProjectionCurrent(assertCurrent, effectiveArgs);
-      const result = await tool.execute(effectiveArgs, executionOptions);
+      const result = await executingContext.run(undefined, () => tool.execute(effectiveArgs, executionOptions));
       assertProjectionCurrent(assertCurrent, effectiveArgs);
       const toolResult = { ...result, callId };
       if (repair.warnings?.length) toolResult.warnings = [...(toolResult.warnings ?? []), ...repair.warnings];

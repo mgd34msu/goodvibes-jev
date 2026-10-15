@@ -157,7 +157,7 @@ describe('state tool: mode=memory set mirrors into the retrievable memory store'
     expect(forKey[0]!.summary).toContain('spacious layout');
   });
 
-  test.each([0.4, 0.57])('an unsettled memory-class reading (%s) holds both writes', async (confidence) => {
+  test.each([0.4, 0.57])('an unsettled memory-class reading (%s) preserves the memory with pending classification', async (confidence) => {
     const unsure = toolReadingsPort([]).port;
     installJudgmentPort(statePort({
       model: unsure.model,
@@ -172,26 +172,31 @@ describe('state tool: mode=memory set mirrors into the retrievable memory store'
 
     const result = await tool.execute({ mode: 'memory', memoryAction: 'set', memoryKey: 'build_notes', memoryValue: 'Maybe the build is slow on CI sometimes.' });
 
-    expect(result.success).toBe(false);
-    expect(existsSync(join(memoryDir, 'build_notes.json'))).toBe(false);
-    expect(memoryRegistry.getAll()).toHaveLength(0);
+    expect(result.success).toBe(true);
+    expect(existsSync(join(memoryDir, 'build_notes.json'))).toBe(true);
+    expect(memoryRegistry.getAll()[0]?.tags).toContain('classification-pending');
   });
 
   test.each([
     'A long note. '.repeat(150) + 'Never deploy without review.',
     'A long note. '.repeat(150) + ' apiKey=private-example',
-  ])('complete oversized/protected memory is held before port access or writes', async (memoryValue) => {
+  ])('complete long memory is retained; private values never reach classification or indexing', async (memoryValue) => {
     let calls = 0;
     installJudgmentPort(statePort({ model: 'jev-1.13.0', ask: async () => { calls++; throw new Error('must not call'); } }));
     const { tool, memoryRegistry, memoryDir } = await makeHarness({ withRegistry: true });
     const result = await tool.execute({ mode: 'memory', memoryAction: 'set', memoryKey: 'long_note', memoryValue });
-    expect(result.success).toBe(false);
-    expect(calls).toBe(0);
-    expect(existsSync(join(memoryDir, 'long_note.json'))).toBe(false);
-    expect(memoryRegistry.getAll()).toHaveLength(0);
+    expect(result.success).toBe(true);
+    expect(existsSync(join(memoryDir, 'long_note.json'))).toBe(true);
+    if (memoryValue.includes('apiKey=')) {
+      expect(calls).toBe(0);
+      expect(memoryRegistry.getAll()).toHaveLength(0);
+    } else {
+      expect(calls).toBeGreaterThan(0);
+      expect(memoryRegistry.getAll()[0]?.detail).toBe(memoryValue);
+    }
   });
 
-  test('when Jev cannot read the class, the set fails before anything is written', async () => {
+  test('when Jev cannot read the class, the complete memory remains available', async () => {
     installJudgmentPort(statePort({
       model: 'jev-1.13.0',
       ask: async () => {
@@ -202,10 +207,9 @@ describe('state tool: mode=memory set mirrors into the retrievable memory store'
 
     const result = await tool.execute({ mode: 'memory', memoryAction: 'set', memoryKey: 'owner', memoryValue: 'The billing module is owned by the payments team.' });
 
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('Memory set failed');
-    expect(existsSync(join(memoryDir, 'owner.json'))).toBe(false);
-    expect(memoryRegistry.getAll().some((r) => r.tags.includes('state-memory:owner'))).toBe(false);
+    expect(result.success).toBe(true);
+    expect(existsSync(join(memoryDir, 'owner.json'))).toBe(true);
+    expect(memoryRegistry.getAll().some((r) => r.tags.includes('state-memory:owner'))).toBe(true);
   });
 
   test('with no registry wired, set still writes the flat file and reports retrievable:false (back-compat)', async () => {

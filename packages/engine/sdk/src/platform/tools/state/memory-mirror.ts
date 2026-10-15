@@ -2,6 +2,7 @@
  * The state tool's mirror of `mode=memory action=set` writes into the retrievable memory store
  * (see mirrorMemoryRecord), and the reading that files a new record under its memory class.
  */
+import { JudgmentInputError } from '../../gate/judgment-input.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { MemoryRegistry } from '../../state/memory-registry.js';
 import type { MemoryClass, ProvenanceLink } from '../../state/memory-store.js';
@@ -35,9 +36,8 @@ export type MemoryMirrorPlan = { readonly cls: MemoryClass; readonly assertCurre
 /**
  * Plan the mirror of a `mode=memory action=set` write before the flat file is written: find the
  * key's existing record, or read the class a new record is filed under with
- * `engine.tools.memory-class` (tools/batteries/memory-class.ts). Only an acted reading
- * files it under that class; uncertainty holds before either write. Updates are reclassified from their complete replacement content. Undefined when there is no registry or it cannot be read (mirroring is best-effort). A
- * JudgmentError from the reading propagates, so the set fails before anything is written.
+ * `engine.tools.memory-class` (tools/batteries/memory-class.ts). An acted reading files it under that class; an unavailable classification preserves
+ * the complete record as fresh with a classification-pending tag. Updates are reclassified from their complete replacement content. Undefined when there is no registry or it cannot be read (mirroring is best-effort). Classification failures never veto the requested memory write.
  */
 export async function planMemoryMirror(memoryRegistry: MemoryRegistry | undefined, safeKey: string, value: string): Promise<MemoryMirrorPlan | undefined> {
   if (!memoryRegistry) return undefined;
@@ -49,13 +49,24 @@ export async function planMemoryMirror(memoryRegistry: MemoryRegistry | undefine
     return undefined;
   }
   const expected = JSON.stringify(existing);
-  const cls = await readMemoryClass(safeKey, value);
+  let cls: MemoryClass = 'fact';
+  let classificationPending = false;
+  try { cls = await readMemoryClass(safeKey, value); }
+  catch (error) {
+    // Keep private/untransmittable values in the local source of truth only.
+    // Mirroring may embed content, so it must not bypass its transmission check.
+    if (error instanceof JudgmentInputError) return undefined;
+    classificationPending = true;
+    logger.debug('state tool: classification unavailable; preserving complete memory for review', { error: summarizeError(error) });
+  }
   const assertCurrent = () => {
     const current = memoryRegistry.getAll().find((record) => record.tags.includes(`state-memory:${safeKey}`));
     if (JSON.stringify(current) !== expected) throw new ToolInputProjectionError('held');
   };
   assertCurrent();
-  return { cls, assertCurrent, ...(existing ? { existingId: existing.id, tags: existing.tags } : {}) };
+  return { cls, assertCurrent, ...(existing ? { existingId: existing.id } : {}),
+    tags: [...(existing?.tags ?? ['state-memory', `state-memory:${safeKey}`]).filter(tag => tag !== 'classification-pending'),
+      ...(classificationPending ? ['classification-pending'] : [])] };
 }
 
 /**
@@ -97,7 +108,7 @@ export async function mirrorMemoryRecord(
         cls: plan.cls,
         summary,
         detail: value,
-        tags: ['state-memory', `state-memory:${safeKey}`],
+        tags: plan.tags ?? ['state-memory', `state-memory:${safeKey}`],
         provenance,
         review: { state: 'fresh' },
       });

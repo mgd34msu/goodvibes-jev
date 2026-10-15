@@ -1,3 +1,5 @@
+import { checkCapturedInputsInBatches } from './captured-exec-validation.js';
+import { fileContentDigest } from '../../utils/file-content.js';
 import { projectCapturedExecBunRuntime, type CapturedExecBunRuntimeInput } from './captured-bun-runtime-input.js';
 import { resolveProcessCapturedBunRuntimeExecutable } from '../../runtime/captured-bun-runtime.js';
 import { collectCommandNodes } from '../../runtime/permissions/normalization/ast.js';
@@ -16,11 +18,12 @@ import { projectCapturedExecDependencies, type CapturedExecDependencyInput } fro
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, existsSync, openSync } from 'node:fs';
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   assertContractInputAuthority,
+  withContractInputReadBatch,
   authorizeContractInputPath,
   contractInputAuthorityMutable,
   type ContractInputAuthority,
@@ -45,9 +48,6 @@ export type CapturedExecAvailability =
   | { readonly available: true; readonly backend: 'linux-bwrap-projection' }
   | { readonly available: false; readonly reason: 'unsupported-platform' | 'unsupported-architecture' | 'missing-bwrap' | 'unusable-boundary'; readonly message: string };
 const HELD = 'Captured exec held: original-owner/view authority is unavailable, changed, cancelled or restricted. Output withheld.';
-const MAX_FILES = 20_000;
-const MAX_BYTES = 256 * 1024 * 1024;
-const MAX_OUTPUT = 2 * 1024 * 1024;
 
 /** These are not exec schema inputs; never pretend that supplied stdin ran. */
 export function capturedExecUnsupportedOptions(input: Record<string, unknown>): string[] {
@@ -242,7 +242,7 @@ export async function runCapturedCommand(
     }
     if (!binding.readAccessFilter) throw new Error('captured exec requires original-owner read authorization');
     await assertContractInputAuthority(binding.authority, root, combined);
-    for (const path of paths) await authorize(path);
+    await withContractInputReadBatch(binding.authority, () => checkCapturedInputsInBatches([...paths], async path => { await authorize(path); }, operationSignal));
     await checkDependencies();
     if (observer.repairCandidate) assertCapturedPublicationOwner(observer.publicationLease!, binding.authority);
   }, operationSignal);
@@ -257,7 +257,7 @@ export async function runCapturedCommand(
       captured_exec_unsupported_options: unsupported,
     };
     if (input.background) throw new Error('captured background must be retained by its ProcessManager owner');
-    await using untilPattern = input.until ? await createSafeRegex(input.until.pattern, '', { operation: 'exec until pattern', maxInputChars: 500_000, signal: operationSignal }) : undefined;
+    await using untilPattern = input.until ? await createSafeRegex(input.until.pattern, '', { operation: 'exec until pattern', signal: operationSignal }) : undefined;
     await check();
     const availability = await probeCapturedExecAvailability();
     await check();
@@ -287,32 +287,33 @@ export async function runCapturedCommand(
     temporary = await mkdtemp(join(tmpdir(), 'goodvibes-captured-exec-'));
     const projection = join(temporary, 'view');
     await mkdir(projection);
-    const originals = new Map<string, { data: Buffer; mode: number }>();
+    const originals = new Map<string, { digest: string; mode: number }>();
     const originalDirectories = new Map<string, number>();
-    let bytes = 0;
     const populate = async (dir: string): Promise<void> => {
-      for (const entry of await readdir(join(root, dir), { withFileTypes: true })) {
-        if (CONTRACT_INPUT_EXCLUSIONS.includes(entry.name as typeof CONTRACT_INPUT_EXCLUSIONS[number])) continue;
+      const entries = await readdir(join(root, dir), { withFileTypes: true });
+      const visit = async (entry: (typeof entries)[number]): Promise<void> => {
+        if (CONTRACT_INPUT_EXCLUSIONS.includes(entry.name as typeof CONTRACT_INPUT_EXCLUSIONS[number])) return;
         const rel = join(dir, entry.name);
         const source = join(root, rel);
         try { await authorize(source); }
-        catch { await assertContractInputAuthority(binding.authority, root, combined); continue; }
+        catch { await assertContractInputAuthority(binding.authority, root, combined); return; }
         const stat = await lstat(source);
         if (stat.isDirectory()) { originalDirectories.set(rel, stat.mode & 0o777); await mkdir(join(projection, rel), { recursive: true, mode: stat.mode & 0o777 }); await chmod(join(projection, rel), stat.mode & 0o777); await populate(rel); }
         else if (stat.isFile() && !stat.isSymbolicLink()) {
-          if (stat.size > 32 * 1024 * 1024 || bytes + stat.size > MAX_BYTES) throw new Error('captured input exceeds byte limit');
-          const data = await readFile(source);
+          const destination = join(projection, rel);
+          const digest = await fileContentDigest(source, operationSignal);
+          await copyFile(source, destination);
+          if (await fileContentDigest(destination, operationSignal) !== digest) throw new Error('captured input changed while copying');
           await authorize(source);
           paths.add(source);
-          bytes += data.length;
-          if (originals.size >= MAX_FILES || bytes > MAX_BYTES) throw new Error('captured projection exceeds resource limit');
-          originals.set(rel, { data, mode: stat.mode & 0o777 });
-          await writeFile(join(projection, rel), data, { mode: stat.mode & 0o777 });
-          await chmod(join(projection, rel), stat.mode & 0o777);
+          originals.set(rel, { digest, mode: stat.mode & 0o777 });
+          await chmod(destination, stat.mode & 0o777);
         }
-      }
+      };
+      for (const entry of entries.filter(entry => entry.isDirectory())) await visit(entry);
+      await checkCapturedInputsInBatches(entries.filter(entry => !entry.isDirectory()), visit, operationSignal);
     };
-    await populate('');
+    await withContractInputReadBatch(binding.authority, () => populate(''));
     const candidate = observer.repairCandidate;
     let candidateRelative: string | undefined;
     if (candidate) {
@@ -321,7 +322,7 @@ export async function runCapturedCommand(
       const target = resolve(root, candidate.path);
       candidateRelative = relative(root, target);
       await authorize(target);
-      if (!candidateRelative || !originals.has(candidateRelative) || Buffer.byteLength(candidate.content) > 32 * 1024 * 1024)
+      if (!candidateRelative || !originals.has(candidateRelative))
         throw new Error('repair candidate requires one existing admitted file');
       paths.add(target);
       await writeFile(join(projection, candidateRelative), candidate.content, 'utf8');
@@ -362,7 +363,7 @@ export async function runCapturedCommand(
         modeResult = await runInteractiveCommand({
           cmdStr: command, cwd: undefined, env: environment, timeoutMs, startTime: start,
           sandboxArgv: ['/usr/bin/bwrap', ...argv, '--'], interaction: observer.interaction,
-          signal: executionSignal, beforeSpawn: observer.beforeSpawn, extraStdio: [fd], beforeOutput: check, maxOutputChars: MAX_OUTPUT,
+          signal: executionSignal, beforeSpawn: observer.beforeSpawn, extraStdio: [fd], beforeOutput: check,
         });
         stdout = modeResult.stdout; stderr = modeResult.stderr; exitCode = modeResult.exit_code;
         timedOut = modeResult.timed_out === true;
@@ -393,7 +394,6 @@ export async function runCapturedCommand(
       let untilCompletion: Promise<void> = Promise.resolve();
       const capture = (data: Buffer, output: 'stdout' | 'stderr'): void => {
         if (output === 'stdout') stdout += data.toString(); else stderr += data.toString();
-        if (stdout.length + stderr.length > MAX_OUTPUT) { invalid = true; stop(); return; }
         untilDirty = true;
         if (checkingUntil || !untilPattern || untilMatched) return;
         checkingUntil = true;
@@ -430,40 +430,40 @@ export async function runCapturedCommand(
     await check();
     if (invalid) throw new Error('authority changed');
     if (killed) return { cmd: command, cwd, exit_code: null, stdout: '', stderr: '', success: false, timed_out: timedOut, duration_ms: Date.now() - start };
-    const changes = new Map<string, { data: Buffer; mode: number }>();
+    const changes = new Map<string, { path: string; digest: string; mode: number }>();
     const present = new Set<string>();
     const directories = new Map<string, number>();
-    let resultBytes = 0;
     const inspect = async (dir: string): Promise<boolean> => {
       let retained = false;
-      for (const entry of await readdir(join(projection, dir), { withFileTypes: true })) {
+      const entries = await readdir(join(projection, dir), { withFileTypes: true });
+      const visit = async (entry: (typeof entries)[number]): Promise<void> => {
         const rel = join(dir, entry.name);
         const target = join(root, rel);
-        if (dependencies.mounts.some((mount) => mount.target === target)) continue;
+        if (dependencies.mounts.some((mount) => mount.target === target)) return;
         await authorize(target);
         paths.add(target);
         const stat = await lstat(join(projection, rel));
         if (stat.isDirectory()) {
           const children = await inspect(rel);
-          if (!originalDirectories.has(rel) && !children && dependencies.mounts.some((mount) => within(target, mount.target))) continue;
+          if (!originalDirectories.has(rel) && !children && dependencies.mounts.some((mount) => within(target, mount.target))) return;
           directories.set(rel, stat.mode & 0o777);
           retained = true;
         }
         else if (stat.isFile() && !stat.isSymbolicLink()) {
           if (candidateRelative === rel && stat.nlink !== 1) throw new Error('repair candidate is a hardlink');
-          if (stat.size > 32 * 1024 * 1024 || resultBytes + stat.size > MAX_BYTES) throw new Error('captured output exceeds byte limit');
-          const data = await readFile(join(projection, rel));
-          resultBytes += data.length;
-          if (present.size >= MAX_FILES || resultBytes > MAX_BYTES) throw new Error('captured output exceeds resource limit');
+          const path = join(projection, rel);
+          const digest = await fileContentDigest(path, operationSignal);
           present.add(rel);
           retained = true;
           const previous = originals.get(rel);
-          if (!previous?.data.equals(data) || previous.mode !== (stat.mode & 0o777)) changes.set(rel, { data, mode: stat.mode & 0o777 });
+          if (previous?.digest !== digest || previous.mode !== (stat.mode & 0o777)) changes.set(rel, { path, digest, mode: stat.mode & 0o777 });
         } else throw new Error('captured output contains an alias or special file');
-      }
+      };
+      for (const entry of entries.filter(entry => entry.isDirectory())) await visit(entry);
+      await checkCapturedInputsInBatches(entries.filter(entry => !entry.isDirectory()), visit, operationSignal);
       return retained;
     };
-    await inspect('');
+    await withContractInputReadBatch(binding.authority, () => inspect(''));
     await check();
     untilPattern?.assertCurrent();
     if (!candidate && contractInputAuthorityMutable(binding.authority))
@@ -472,7 +472,7 @@ export async function runCapturedCommand(
     if (candidate && candidateRelative) {
       assertCapturedPublicationOwner(observer.publicationLease!, binding.authority);
       if (!present.has(candidateRelative)) throw new Error('repair removed its target');
-      const bytes = changes.get(candidateRelative)?.data ?? originals.get(candidateRelative)!.data;
+      const bytes = await readFile(join(projection, candidateRelative));
       combined?.throwIfAborted();
       const text = bytes.toString('utf8');
       if (!Buffer.from(text, 'utf8').equals(bytes)) throw new Error('repair candidate is not valid UTF-8');

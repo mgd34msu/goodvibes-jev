@@ -7,7 +7,7 @@ import { registerComparisonCandidate, runAdmittedComparisonCandidate } from './a
 import { createComparisonOperation } from './agent-model-compare-operation.ts';
 import { createZipArchive } from './artifact-archive.ts';
 import type { AgentModelCompareToolArgs, AgentModelCompareToolDeps, SavedComparisonArtifact, StoredComparison } from './agent-model-compare-types.ts';
-import { BLIND_LABELS, DEFAULT_CANDIDATE_COUNT, DEFAULT_MAX_TOKENS, DEFAULT_SIDE_BY_SIDE_PREVIEW_BYTES, MAX_CANDIDATES, MAX_COMPLETION_TOKENS, MAX_PROMPT_CHARS, MAX_SIDE_BY_SIDE_PREVIEW_BYTES, MIN_CANDIDATES, MODE_ANALYTICS, MODE_APPLY, MODE_EXPORT, MODE_HANDOFF, MODE_HANDOFF_ARCHIVE, MODE_HANDOFF_DIFF, MODE_JUDGE, MODE_REVEAL, MODE_REVIEW, MODE_ROUTE_DECISION, MODE_RUN, MODE_SIDE_BY_SIDE, MODE_SYNTHESIS } from './agent-model-compare-types.ts';
+import { BLIND_LABELS, DEFAULT_CANDIDATE_COUNT, DEFAULT_MAX_TOKENS, DEFAULT_SIDE_BY_SIDE_PREVIEW_BYTES, MAX_SIDE_BY_SIDE_PREVIEW_BYTES, MIN_CANDIDATES, MODE_ANALYTICS, MODE_APPLY, MODE_EXPORT, MODE_HANDOFF, MODE_HANDOFF_ARCHIVE, MODE_HANDOFF_DIFF, MODE_JUDGE, MODE_REVEAL, MODE_REVIEW, MODE_ROUTE_DECISION, MODE_RUN, MODE_SIDE_BY_SIDE, MODE_SYNTHESIS } from './agent-model-compare-types.ts';
 import { buildRunPromptFromArtifact, formatPreview, formatReveal, formatReview, formatRunResult, formatSavedComparisonArtifacts, formatSavedHandoffArtifacts, loadComparisonFromArtifact, parseMode, rememberComparison, resolveComparisonForRead, resolveCurrentModel, runCandidate, saveComparisonArtifact, selectComparisonModels } from './agent-model-compare-run.ts';
 import { ensureSelectableWinnerModel, findCandidate, formatApplyPreview, formatApplyResult, formatComparisonAnalytics, formatComparisonSynthesis, formatJudgePreview, formatJudgmentResult, formatRouteDecisionPreview, formatRouteDecisionResult, loadJudgmentFromArtifact, loadSavedJudgments, parseRouteDecision, readComparisonAnalyticsFilters, saveComparisonJudgmentArtifact, saveRouteDecisionArtifact } from './agent-model-compare-judgment.ts';
 import { comparisonExportMarkdown, comparisonHandoffMarkdown, formatSideBySideReview, judgmentExportMarkdown, loadHandoffRelatedArtifacts, saveComparisonExportArtifact, saveComparisonHandoffArtifact } from './agent-model-compare-export.ts';
@@ -41,7 +41,7 @@ export function createAgentModelCompareTool(sourceDeps: AgentModelCompareToolDep
           },
           candidateCount: {
             type: 'number',
-            description: 'Number of candidates to auto-select when modelRefs is omitted. 2 to 4.',
+            description: 'Number of candidates to auto-select when modelRefs is omitted. At least 2.',
           },
           rubric: {
             type: 'string',
@@ -53,7 +53,7 @@ export function createAgentModelCompareTool(sourceDeps: AgentModelCompareToolDep
           },
           maxTokens: {
             type: 'number',
-            description: 'Optional per-candidate output cap. Defaults to 2048, max 8192.',
+            description: 'Optional per-candidate output cap. Defaults to 2048; the selected provider determines supported limits.',
           },
           reveal: {
             type: 'boolean',
@@ -610,7 +610,7 @@ export function createAgentModelCompareTool(sourceDeps: AgentModelCompareToolDep
         const benchmarkKind = readBenchmarkKind(args.benchmarkKind);
         const taskType = readComparisonTag(args.taskType);
         const requestedDocumentId = readComparisonTag(args.documentId);
-        const candidateCount = clamp(readNumber(args.candidateCount, DEFAULT_CANDIDATE_COUNT), MIN_CANDIDATES, MAX_CANDIDATES);
+        const candidateCount = Math.max(MIN_CANDIDATES, Math.trunc(readNumber(args.candidateCount, DEFAULT_CANDIDATE_COUNT)));
         if (!promptInput && !sourceArtifactId) return failure('prompt or artifactId is required.');
         if (args.preview === true) return output(formatPreview(args, refs, candidateCount));
         if (!assertCurrentToolEffect(rawArgs, options, 'send')) {
@@ -626,9 +626,8 @@ export function createAgentModelCompareTool(sourceDeps: AgentModelCompareToolDep
           artifactId: sourceArtifactId,
         });
         const prompt = runPrompt.prompt;
-        if (prompt.length > MAX_PROMPT_CHARS) return failure(`prompt exceeds ${MAX_PROMPT_CHARS} characters.`);
 
-        const maxTokens = clamp(readNumber(args.maxTokens, DEFAULT_MAX_TOKENS), 1, MAX_COMPLETION_TOKENS);
+        const maxTokens = Math.max(1, Math.trunc(readNumber(args.maxTokens, DEFAULT_MAX_TOKENS)));
         const systemPrompt = readString(args.systemPrompt);
         const models = await selectComparisonModels(deps.modelCatalog, refs, candidateCount);
         operation.assertSend();

@@ -34,7 +34,6 @@ interface ImportGraphDiagnostics {
 
 const SUPPORTED_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', '.next', '.nuxt', '.cache', '__pycache__']);
-const MAX_FILES = 5_000;
 const MAX_WARNINGS = 20;
 
 function addImportGraphWarning(diagnostics: ImportGraphDiagnostics, warning: string): void {
@@ -158,7 +157,6 @@ export function resolveSpecifierForTest(
 // ---------------------------------------------------------------------------
 
 function collectSourceFiles(dir: string, diagnostics: ImportGraphDiagnostics, results: string[] = []): string[] {
-  if (results.length >= MAX_FILES) return results;
   try { assertCapturedInputPathContext(dir); } catch { return results; }
 
   let entries: Dirent[];
@@ -171,7 +169,6 @@ function collectSourceFiles(dir: string, diagnostics: ImportGraphDiagnostics, re
   }
 
   for (const entry of entries) {
-    if (results.length >= MAX_FILES) break;
     if (SKIP_DIRS.has(entry.name)) continue;
 
     const full = join(dir, entry.name);
@@ -224,9 +221,6 @@ export class ImportGraph {
 
     const diagnostics: ImportGraphDiagnostics = { warnings: [] };
     const files = collectSourceFiles(projectRoot, diagnostics);
-    if (files.length >= MAX_FILES) {
-      addImportGraphWarning(diagnostics, `Import graph scan stopped after ${MAX_FILES} source files; relationships may be incomplete.`);
-    }
     const imports: ImportsMap = new Map();
     const dependents: DependentsMap = new Map();
 

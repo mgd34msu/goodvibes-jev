@@ -1,12 +1,14 @@
+import { fileContentDigestSync } from '../../utils/file-content.js';
 import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 /** Compare and publish a completed projection under the captured mutation lock. */
 import type { Stats } from 'node:fs';
-import { chmodSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmdirSync, unlinkSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { assertContractInputAuthority, authorizeContractInputPath, contractInputAuthorityMutable } from '../../contract/input-authority.js';
 import { withCapturedPublication, publishWithinCapturedLease, type CapturedPublicationLease } from '../shared/captured-publication.js';
 import type { CapturedExecAuthority } from './captured-exec.js';
-export interface CapturedFileBytes { readonly data: Buffer; readonly mode: number }
+export interface CapturedFileBytes { readonly digest: string; readonly mode: number }
+interface CapturedFileChange extends CapturedFileBytes { readonly path: string }
 
 export async function publishCapturedProjection(
   binding: CapturedExecAuthority,
@@ -14,7 +16,7 @@ export async function publishCapturedProjection(
   originalDirectories: ReadonlyMap<string, number>,
   present: ReadonlySet<string>,
   directories: ReadonlyMap<string, number>,
-  changes: ReadonlyMap<string, CapturedFileBytes>,
+  changes: ReadonlyMap<string, CapturedFileChange>,
   signal?: AbortSignal,
   lease?: CapturedPublicationLease,
   beforePublish?: () => void,
@@ -55,7 +57,7 @@ export async function publishCapturedProjection(
     for (const path of writes) {
       const current = physical(path);
       const original = originals.get(path);
-      if (original ? !current?.isFile() || !original.data.equals(readFileSync(join(binding.root, path))) || (current.mode & 0o777) !== original.mode : current !== undefined)
+      if (original ? !current?.isFile() || original.digest !== fileContentDigestSync(join(binding.root, path)) || (current.mode & 0o777) !== original.mode : current !== undefined)
         throw new Error('captured output conflicts with a newer member edit');
     }
     for (const [path] of changedDirectories) {
@@ -80,8 +82,10 @@ export async function publishCapturedProjection(
       if (!originalDirectories.has(path)) mkdirSync(join(binding.root, path));
       chmodSync(join(binding.root, path), mode);
     }
-    for (const [path, { data, mode }] of changes) {
-      writeFileSync(join(binding.root, path), data, { mode });
+    for (const [path, change] of changes) {
+      const { mode } = change;
+      if (fileContentDigestSync(change.path) !== change.digest) throw new Error('captured output changed before publication');
+      copyFileSync(change.path, join(binding.root, path));
       chmodSync(join(binding.root, path), mode);
     }
     for (const path of removedFiles) unlinkSync(join(binding.root, path));

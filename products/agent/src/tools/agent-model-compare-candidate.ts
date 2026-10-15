@@ -2,7 +2,7 @@ import { assertCurrentToolEffect, type ToolRegistry } from '@goodvibes-jev/engin
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolExecuteOptions } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { runCandidate, listSelectableModels, parseArtifactCandidate } from './agent-model-compare-run.ts';
-import { MAX_COMPLETION_TOKENS, MAX_PROMPT_CHARS, type AgentModelCompareToolDeps, type CompareCandidateResult, type ResolvedCompareModel } from './agent-model-compare-types.ts';
+import { type AgentModelCompareToolDeps, type CompareCandidateResult, type ResolvedCompareModel } from './agent-model-compare-types.ts';
 import { assertComparisonCandidateSource, createComparisonCandidateProjector } from './agent-model-compare-candidate-input.ts';
 
 const NAME = 'agent_model_compare_candidate';
@@ -15,7 +15,7 @@ export function registerComparisonCandidate(registry: ToolRegistry, deps: AgentM
     definition: { name: NAME, description: 'Run one metered blind-comparison candidate using an exact model and bounded output.', sideEffects: ['network'], concurrency: 'parallel', parameters: {
       type: 'object', properties: {
         registryKey: { type: 'string' }, modelId: { type: 'string' }, providerId: { type: 'string' }, blindId: { type: 'string' },
-        prompt: { type: 'string' }, systemPrompt: { type: 'string' }, maxTokens: { type: 'integer', minimum: 1, maximum: MAX_COMPLETION_TOKENS },
+        prompt: { type: 'string' }, systemPrompt: { type: 'string' }, maxTokens: { type: 'integer', minimum: 1 },
         metered: { type: 'boolean', const: true },
         comparisonRequest: { type: 'object', additionalProperties: true }, sourceArtifactId: { type: 'string' },
       }, required: ['registryKey', 'modelId', 'providerId', 'blindId', 'prompt', 'systemPrompt', 'maxTokens', 'metered', 'comparisonRequest'], additionalProperties: false,
@@ -26,8 +26,8 @@ export function registerComparisonCandidate(registry: ToolRegistry, deps: AgentM
         assertSend();
         const { registryKey, modelId, providerId, blindId, prompt, systemPrompt, maxTokens } = args;
         if (typeof registryKey !== 'string' || typeof modelId !== 'string' || typeof providerId !== 'string' || typeof blindId !== 'string'
-          || typeof prompt !== 'string' || typeof systemPrompt !== 'string' || typeof maxTokens !== 'number' || !Number.isInteger(maxTokens)
-          || maxTokens < 1 || maxTokens > MAX_COMPLETION_TOKENS || prompt.length > MAX_PROMPT_CHARS || args.metered !== true) {
+          || typeof prompt !== 'string' || typeof systemPrompt !== 'string' || typeof maxTokens !== 'number' || !Number.isSafeInteger(maxTokens)
+          || maxTokens < 1 || args.metered !== true) {
           return { success: false, error: 'Invalid bounded comparison request.' };
         }
         const models = await listSelectableModels(deps.modelCatalog);

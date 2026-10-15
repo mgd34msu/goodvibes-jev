@@ -1,10 +1,12 @@
+import { fileContentDigest } from '../../utils/file-content.js';
 import { checkCapturedInputsInBatches } from './captured-exec-validation.js';
 import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 /** Construction-admitted immutable dependency inputs. No prefix is a read grant. */
-import { lstat, mkdir, readFile, readdir, realpath, symlink, unlink, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, lstat, mkdir, readdir, realpath, symlink, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   assertContractInputAuthority,
+  withContractInputReadBatch,
   authorizeContractInputPath,
   contractInputAuthoritySourceRoot,
   contractInputAuthorityRoot,
@@ -37,7 +39,7 @@ interface WorkspaceLink {
 interface Admission {
   readonly binding: Binding;
   readonly target: string;
-  readonly files: readonly { path: string; data: Buffer; mode: number }[];
+  readonly files: readonly { path: string; source: string; digest: string; mode: number }[];
   readonly workspaceLinks: readonly WorkspaceLink[];
   readonly fileLinks: readonly { path: string; target: string }[];
   readonly checkWorkspaceRead: (captured: string, originalAlias: string, projectedAlias: string, signal?: AbortSignal) => Promise<void>;
@@ -98,7 +100,7 @@ export async function admitCapturedExecDependency(
     workspaceReads.set(`${captured}\0${projectedAlias}`, [captured, originalAlias, projectedAlias]);
   };
   const reads: DependencyRead[] = [];
-  const files: { path: string; data: Buffer; mode: number }[] = [];
+  const files: { path: string; source: string; digest: string; mode: number }[] = [];
   const checkRead = async (read: DependencyRead, full = true, signal: AbortSignal | undefined = binding.signal): Promise<void> => {
     signal?.throwIfAborted();
     if (!await readAllowed(read.source, signal) || !await readAllowed(read.canonical, signal) || !await readAllowed(read.alias, signal)) throw new Error('dependency input is access-restricted');
@@ -122,7 +124,6 @@ export async function admitCapturedExecDependency(
     for (const read of workspaceReads.values()) await checkWorkspaceRead(...read, signal);
     await checkRoot(true, signal);
   };
-  let bytes = 0;
   const visit = async (source: string, alias: string, path: string, ancestors: ReadonlySet<string>): Promise<void> => {
     const canonical = await realpath(source);
     if (!contained(sourceRoot, canonical)) {
@@ -153,22 +154,18 @@ export async function admitCapturedExecDependency(
       }
     } else if (stat.isFile()) {
       if ((await lstat(source)).isSymbolicLink()) fileLinks.push({ path, target: relative(sourceRoot, canonical) });
-      if (files.length >= 20_000 || stat.size > 32n * 1024n * 1024n || bytes + Number(stat.size) > 256 * 1024 * 1024)
-        throw new Error('dependency input exceeds resource limit');
       const read = { source, canonical, alias, identity: fingerprint(stat) };
-      const data = await readFile(canonical);
+      const digest = await fileContentDigest(canonical, binding.signal);
       await checkRead(read, false);
-      bytes += data.length;
-      if (bytes > 256 * 1024 * 1024) throw new Error('dependency input exceeds byte limit');
       reads.push(read);
-      files.push({ path, data, mode: Number(stat.mode & 0o777n) });
+      files.push({ path, source: canonical, digest, mode: Number(stat.mode & 0o777n) });
     } else throw new Error('dependency special-file input is unsupported');
   };
   // Admission bytes remain private until the complete fresh sweep succeeds.
   // Each read retains current permission/root/file identity checks; full
   // recorded-view validation brackets collection before a token can escape.
   await checkRoot();
-  await visit(sourceRoot, target, '', new Set());
+  await withContractInputReadBatch(binding.authority, () => visit(sourceRoot, target, '', new Set()));
   await check();
   const token = Object.freeze({ kind: 'captured-exec-dependency-input' as const });
   admissions.set(token, { binding, target, files, workspaceLinks, fileLinks, checkWorkspaceRead, check });
@@ -209,10 +206,10 @@ export async function projectCapturedExecDependencies(
       const destination = join(staged, file.path);
       await mkdir(dirname(destination), { recursive: true });
       signal?.throwIfAborted();
-      await writeFile(destination, file.data, { mode: file.mode });
+      await copyFile(file.source, destination);
+      if (await fileContentDigest(destination, signal) !== file.digest) throw new Error('dependency source changed while copying');
+      await chmod(destination, file.mode);
     }
-    let workspaceBytes = 0;
-    let workspaceCount = 0;
     const copyWorkspace = async (link: WorkspaceLink, suffix: string): Promise<void> => {
       signal?.throwIfAborted();
       const captured = join(link.captured, suffix);
@@ -227,18 +224,17 @@ export async function projectCapturedExecDependencies(
         await mkdir(destination, { recursive: true });
         for (const entry of await readdir(input)) await copyWorkspace(link, join(suffix, entry));
       } else if (stat.isFile() && !stat.isSymbolicLink()) {
-        if (++workspaceCount > 20_000 || stat.size > 32 * 1024 * 1024 || workspaceBytes + stat.size > 256 * 1024 * 1024)
-          throw new Error('workspace dependency exceeds resource limit');
-        const data = await readFile(input);
-        workspaceBytes += data.length;
         await state.checkWorkspaceRead(captured, originalAlias, projectedAlias, signal);
         signal?.throwIfAborted();
         await mkdir(dirname(destination), { recursive: true });
         signal?.throwIfAborted();
-        await writeFile(destination, data, { mode: stat.mode & 0o777 });
+        await copyFile(input, destination);
+        await chmod(destination, stat.mode & 0o777);
       } else throw new Error('workspace dependency projection contains an unsupported alias');
     };
-    for (const link of state.workspaceLinks) await copyWorkspace(link, '');
+    await withContractInputReadBatch(binding.authority, async () => {
+      for (const link of state.workspaceLinks) await copyWorkspace(link, '');
+    });
     // Preserve executable file aliases so Node resolves relative imports from
     // the admitted canonical package. Directory aliases remain filtered copies:
     // linking them could expose a child denied under the alias path.

@@ -38,7 +38,6 @@ interface CitationCoverage {
   readonly pass: boolean;
 }
 
-const MAX_REPORT_CHARS = 80_000;
 
 function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -407,7 +406,6 @@ async function saveResearchReport(
   }
   const includeVisualReport = readBoolean(args.visualReport);
   const markdown = buildMarkdown(args, sources, includeVisualReport);
-  if (markdown.length > MAX_REPORT_CHARS) throw new Error(`Research report is too large (${markdown.length} chars). Keep it under ${MAX_REPORT_CHARS}.`);
   assertWrite();
   return artifactStore.create({
     kind: 'document',

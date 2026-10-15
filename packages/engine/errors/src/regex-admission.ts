@@ -1,5 +1,5 @@
 import { defineBattery, STAKES_BANDS, yesNo, type YesNoReading } from '@goodvibes-jev/judgment/decisions';
-import { captureJudgmentPort, type JudgmentReadingOptions } from './judgment-authority.js';
+import { type JudgmentReadingOptions } from './judgment-authority.js';
 
 /** A composition-owned authenticated reading capability, never execution authority. */
 export interface RegexReadingCapability {
@@ -43,7 +43,7 @@ const regexSourceView = (source: string, flags: string) => ({ source, flags, exp
 
 export const regexBacktracking = defineBattery({
   name: 'engine.regex.backtracking', version: 2, accuracyFloor: 0.99,
-  description: 'Whether this exact ECMAScript regular expression can take superlinear time on some input. A reading is an additional veto, never a substitute for isolated bounded execution.',
+  description: 'Whether this exact ECMAScript regular expression can take superlinear time on some input. Diagnostic only; regex execution is controlled by its isolated worker and deadline.',
   items: { backtracking: yesNo([
     'Is the ECMAScript regular expression in expression vulnerable to catastrophic or otherwise superlinear backtracking?',
     'Consider failing inputs as well as successful matches. A suffix that cannot match can force the engine to revisit earlier choices.',
@@ -59,8 +59,7 @@ export const regexBacktracking = defineBattery({
   ],
 });
 
-const MAX_INPUT = 500_000;
-const MAX_OUTPUT = 2_000_000;
+const MAX_OUTPUT_GROWTH = 2_000_000;
 const DEADLINE_MS = 1_000;
 const ALLOWED_FLAGS = /^[dgimsuvy]*$/;
 export class RegexAdmissionError extends Error {
@@ -72,7 +71,7 @@ function limit(value: number | undefined, fallback: number, ceiling: number): nu
   return result;
 }
 function syntax(source: string, flags: string, options: RegexAdmissionOptions): void {
-  const maximum = limit(options.maxPatternChars, 512, 512);
+  const maximum = limit(options.maxPatternChars, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
   if (source.length > maximum) throw new Error(`${options.operation} regex exceeds ${maximum} characters`);
   if (!ALLOWED_FLAGS.test(flags) || new Set(flags).size !== flags.length) throw new Error(`${options.operation} regex flags are invalid`);
   // Compilation checks grammar only. No operator expression runs on this thread.
@@ -100,10 +99,9 @@ export function compileLegacyRegex(source: string, flags: string, options: Regex
 // One small self-contained program works in Web Workers (including Bun) and
 // node:worker_threads. No source interpolation, executable input or asset URL.
 const PROGRAM = String.raw`
-const MAX_OUTPUT = 2000000;
 const advance = (input, index, unicode) => unicode && index + 1 < input.length && input.charCodeAt(index) >= 0xd800 && input.charCodeAt(index) <= 0xdbff && input.charCodeAt(index + 1) >= 0xdc00 && input.charCodeAt(index + 1) <= 0xdfff ? index + 2 : index + 1;
 function execute(message) {
-  const { source, flags, input, operation, replacement, lastIndex } = message;
+  const { source, flags, input, operation, replacement, lastIndex, maxOutput: MAX_OUTPUT } = message;
   const regex = new RegExp(source, flags);
   regex.lastIndex = lastIndex || 0;
   if (operation === 'test') return regex.test(input);
@@ -119,7 +117,6 @@ function execute(message) {
     const positions = [];
     let match;
     while ((match = regex.exec(input)) !== null) {
-      if (positions.length >= 50000) throw Error('match output limit');
       positions.push({ start: match.index, end: match.index + match[0].length });
       if (!regex.global && !regex.sticky) break;
       if (!match[0].length) regex.lastIndex = advance(input, regex.lastIndex, regex.unicode || regex.unicodeSets);
@@ -157,7 +154,7 @@ function execute(message) {
   return output;
 }
 function receive(message, send) {
-  try { const result = execute(message); if (JSON.stringify(result).length > MAX_OUTPUT) throw Error('output limit'); send({ id: message.id, result }); }
+  try { const result = execute(message); if (JSON.stringify(result).length > message.maxOutput) throw Error('output limit'); send({ id: message.id, result }); }
   catch { send({ id: message.id, error: true }); }
 }
 `;
@@ -210,57 +207,34 @@ export async function admitRegex(source: string, flags: string, options: RegexAd
   // never a semantic backtracking heuristic. Named groups can duplicate values.
   let captureSlots = 1;
   for (const character of source) if (character === '(') captureSlots += 2;
-  const maximum = limit(options.maxInputChars, 50_000, MAX_INPUT);
+  const maximum = limit(options.maxInputChars, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
+  // A probability reading is not permission to evaluate a regular expression.
+  // Preserve caller ownership and execute off-thread under a real deadline.
   const capability = options.reading;
-  const owner = capability ? (() => {
-    const read = capability.read, current = capability.assertCurrent, sourceSignal = capability.signal;
-    const callerCurrent = options.assertCurrent;
-    const signal = AbortSignal.any([sourceSignal, ...(options.signal ? [options.signal] : [])]);
-    const synchronous = (check: (() => void) | undefined) => {
+  const sourceSignal = capability?.signal;
+  const sourceCurrent = capability?.assertCurrent;
+  const callerCurrent = options.assertCurrent;
+  const signal = AbortSignal.any([...(sourceSignal ? [sourceSignal] : []), ...(options.signal ? [options.signal] : [])]);
+  const owner = { signal, assertCurrent: () => {
+    signal.throwIfAborted();
+    if (capability && (capability.signal !== sourceSignal || capability.assertCurrent !== sourceCurrent))
+      throw new RegexAdmissionError(operation, 'execution owner changed');
+    for (const check of [sourceCurrent, callerCurrent]) {
       const result: unknown = check?.();
       if (result !== undefined) { void Promise.resolve(result).catch(() => {}); throw new RegexAdmissionError(operation, 'asynchronous owner check'); }
-    };
-    const assertCurrent = () => {
-      signal.throwIfAborted(); synchronous(current); synchronous(callerCurrent);
-      if (capability.read !== read || capability.assertCurrent !== current || capability.signal !== sourceSignal) throw new RegexAdmissionError(operation, 'reading capability changed');
-      signal.throwIfAborted();
-    };
-    return { signal, assertCurrent, read: () => read.call(capability, source, flags, maximum, signal) };
-  })() : (() => {
-    const captured = captureJudgmentPort(operation, { signal: options.signal, assertCurrent: options.assertCurrent });
-    return { signal: captured.signal, assertCurrent: captured.assertCurrent, read: async () => {
-      const run = await regexBacktracking.run(captured.port, { ...regexSourceView(source, flags), maxInputChars: maximum, deadlineMs: DEADLINE_MS }, { site: operation, signal: captured.signal });
-      captured.assertCurrent();
-      const reading = run.readings.backtracking;
-      run.recordAction(reading.outcome === 'act' && reading.verdict === 'no'
-        ? 'admitted only for request-owned bounded isolated evaluation' : 'held regex execution');
-      captured.assertCurrent();
-      return reading;
-    } };
-  })();
+    }
+    signal.throwIfAborted();
+  } };
   owner.assertCurrent();
-  let abortReading = () => {};
-  const interrupted = new Promise<never>((_, reject) => {
-    abortReading = () => reject(new RegexAdmissionError(operation, 'reading owner cancelled'));
-    owner.signal.addEventListener('abort', abortReading, { once: true });
-    if (owner.signal.aborted) abortReading();
-  });
-  let reading: YesNoReading;
-  try { reading = await Promise.race([Promise.resolve().then(() => { owner.assertCurrent(); return owner.read(); }), interrupted]); }
-  finally { owner.signal.removeEventListener('abort', abortReading); }
-  owner.assertCurrent();
-  if (reading.outcome !== 'act' || reading.verdict !== 'no') throw new RegexAdmissionError(operation, 'backtracking reading did not admit this pattern');
   let retired = false, sequence = 0;
-  let lifetime: ReturnType<typeof setTimeout> | undefined;
   let worker: WorkerPort | undefined;
-  const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
+  const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; maxOutput: number }>();
   const stop = () => {
     if (retired) return;
-    retired = true; clearTimeout(lifetime); owner.signal.removeEventListener('abort', stop); worker?.stop();
+    retired = true; owner.signal.removeEventListener('abort', stop); worker?.stop();
     for (const item of pending.values()) { clearTimeout(item.timer); item.reject(new RegexAdmissionError(operation, 'executor retired, cancelled or exceeded its deadline')); }
     pending.clear();
   };
-  lifetime = setTimeout(stop, 60_000);
   owner.signal.addEventListener('abort', stop, { once: true });
   if (owner.signal.aborted) stop();
   try {
@@ -270,7 +244,7 @@ export async function admitRegex(source: string, flags: string, options: RegexAd
         if (!value || typeof value !== 'object') { stop(); return; }
         const response = value as { id: number; result?: unknown; error?: boolean };
         const item = pending.get(response.id);
-        if (!item || response.error || JSON.stringify(response.result).length > MAX_OUTPUT) { stop(); return; }
+        if (!item || response.error || JSON.stringify(response.result).length > item.maxOutput) { stop(); return; }
         pending.delete(response.id); clearTimeout(item.timer); item.resolve(response.result);
       } catch { stop(); }
     }, stop);
@@ -280,16 +254,18 @@ export async function admitRegex(source: string, flags: string, options: RegexAd
   const call = async <T>(kind: string, input: string, lastIndex = 0, replacement = '', inputLimit = maximum): Promise<T> => {
     try {
       owner.assertCurrent();
-      if (retired || pending.size >= 32 || sequence >= 50_000) throw new RegexAdmissionError(operation, 'executor is unavailable');
+      if (retired || pending.size >= 32) throw new RegexAdmissionError(operation, 'executor is unavailable');
       const bound = limit(inputLimit, maximum, maximum);
       if (input.length > bound) throw new RegexAdmissionError(operation, `input exceeds ${bound} characters`);
-      if (input.length * captureSlots > MAX_OUTPUT) throw new RegexAdmissionError(operation, 'capture storage exceeds the output budget');
-      if (replacement.length > MAX_INPUT || !Number.isSafeInteger(lastIndex) || lastIndex < 0) throw new RegexAdmissionError(operation, 'invalid operation input');
+      const maxOutput = kind === 'positions' ? MAX_OUTPUT_GROWTH + 64 * (input.length + 1)
+        : MAX_OUTPUT_GROWTH + 6 * (input.length + replacement.length);
+      if (kind === 'exec' && input.length * captureSlots > maxOutput) throw new RegexAdmissionError(operation, 'capture storage exceeds the output budget');
+      if (!Number.isSafeInteger(lastIndex) || lastIndex < 0) throw new RegexAdmissionError(operation, 'invalid operation input');
       const id = ++sequence;
       const result = await new Promise<T>((resolve, reject) => {
         const timer = setTimeout(stop, DEADLINE_MS);
-        pending.set(id, { resolve: value => resolve(value as T), reject, timer });
-        worker!.post({ id, source, flags, operation: kind, input, lastIndex, replacement });
+        pending.set(id, { resolve: value => resolve(value as T), reject, timer, maxOutput });
+        worker!.post({ id, source, flags, operation: kind, input, lastIndex, replacement, maxOutput });
       });
       owner.assertCurrent();
       if (retired) throw new RegexAdmissionError(operation, 'executor retired');

@@ -99,7 +99,7 @@ async function executeContentQuery(
 
   const flags = [query.case_sensitive === false ? 'i' : '', query.multiline ? 'm' : '', 'g'].join('');
 
-  await using regex = await createSafeRegex(rawPattern, flags, { ...options, assertCurrent: current, operation: 'find content', maxInputChars: 500_000 });
+  await using regex = await createSafeRegex(rawPattern, flags, { ...options, assertCurrent: current, operation: 'find content' });
 
   const files = await collectFilesForSearch(basePath, query.glob, diagnostics, walkOptions);
   // Read-side deny enforcement: a file whose read the gate would hold behind an
@@ -125,8 +125,7 @@ async function executeContentQuery(
     for (const file of files) {
       const content = await readTextFile(file, diagnostics);
       if (content === null) continue;
-      if (content.length > 500_000) continue;
-      if (!await regex.test(content, 500_000)) {
+      if (!await regex.test(content)) {
         nonMatchingFiles.push(file);
         if (nonMatchingFiles.length >= maxTotal) break;
       }
@@ -172,9 +171,8 @@ async function executeContentQuery(
       for (let i = 0; i < lines.length; i++) {
         if (fileMatches.length >= maxPerFile) break;
         if (totalMatches >= maxTotal) break outer;
-        if ((lines[i]?.length ?? 0) > 50_000) continue;
 
-        if (await regex.test(lines[i]!, 50_000)) {
+        if (await regex.test(lines[i]!)) {
           const match: ContentMatch = { file, line: i + 1, text: lines[i]! };
           if (format === 'context') {
             match.context_before = lines.slice(Math.max(0, i - ctxBefore), i);
@@ -291,7 +289,7 @@ async function executeContentQuery(
         let displayText = m.text;
         let replacedText: string | undefined;
         if (query.preview_replace !== undefined) {
-          replacedText = await regex.replace(m.text, query.preview_replace, 50_000);
+          replacedText = await regex.replace(m.text, query.preview_replace);
         }
         if (output.max_line_length && displayText.length > output.max_line_length) {
           displayText = displayText.slice(0, output.max_line_length) + '...';

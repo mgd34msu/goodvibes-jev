@@ -21,7 +21,7 @@ export type TurnBudgetSource = 'default' | 'spawn-override' | 'policy-bound';
 
 export interface ResolvedTurnBudget {
   /** The turn ceiling that actually applies to the run. */
-  readonly limit: number;
+  readonly limit: number; // 0 means no turn ceiling
   /** Which input set it, for the honest turn-budget-exhausted outcome. */
   readonly source: TurnBudgetSource;
 }
@@ -35,28 +35,19 @@ export interface ResolveTurnBudgetInput {
   readonly policyCap: number;
 }
 
-function positiveIntOr(value: number | undefined, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 1
-    ? Math.floor(value)
-    : fallback;
+function turnLimitOr(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : fallback;
 }
 
-/**
- * Resolve the applied turn budget and its provenance. A spawn override above the
- * policy cap is clamped to the cap and reported as `policy-bound`; a valid
- * override at or below the cap is `spawn-override`; no override is `default`.
- */
+/** Zero disables a ceiling. An explicitly configured owner cap still wins. */
 export function resolveTurnBudget(input: ResolveTurnBudgetInput): ResolvedTurnBudget {
-  const cap = positiveIntOr(input.policyCap, input.configDefault);
-  const configDefault = Math.min(positiveIntOr(input.configDefault, 1), cap);
-  if (input.spawnOverride === undefined) {
-    return { limit: configDefault, source: 'default' };
-  }
-  const requested = positiveIntOr(input.spawnOverride, configDefault);
-  if (requested > cap) {
+  const cap = turnLimitOr(input.policyCap, 0);
+  const configured = turnLimitOr(input.configDefault, 0);
+  const requested = turnLimitOr(input.spawnOverride, configured);
+  if (cap > 0 && (requested === 0 || requested > cap)) {
     return { limit: cap, source: 'policy-bound' };
   }
-  return { limit: requested, source: 'spawn-override' };
+  return { limit: requested, source: input.spawnOverride === undefined ? 'default' : 'spawn-override' };
 }
 
 /** The human-readable turn-limit error string, unchanged prose, so nothing that reads it breaks. */

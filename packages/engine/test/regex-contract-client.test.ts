@@ -38,39 +38,30 @@ test('actual operator invocation binds browser capability to method, exact schem
     } };
   });
   expect(await f.client.invoke<string>(f.method.id, {}, { signal: request.signal })).toBe('ok');
-  expect(calls).toBe(1);
+  expect(calls).toBe(0);
   owner.abort();
   await expect(f.client.invoke(f.method.id, {}, { signal: request.signal })).rejects.toThrow();
 });
 
-test('the operator client holds unavailable and stale browser schema authority', async () => {
+test('operator schema validation works without Jev and rejects changed schema ownership', async () => {
   const unavailable = fixture();
-  await expect(unavailable.client.invoke(unavailable.method.id)).rejects.toThrow();
-  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  expect(await unavailable.client.invoke<string>(unavailable.method.id)).toBe('ok');
   const owner = new AbortController();
-  const f = fixture(context => ({ signal: owner.signal, assertCurrent: context.assertCurrent, async read() {
-    entered.resolve(); await release.promise;
-    return readYesNo({ type: 'noul', noul: 0.001 }, STAKES_BANDS.high.yesNo);
-  } }));
-  const pending = f.client.invoke(f.method.id);
-  await entered.promise;
-  f.outputSchema.pattern = '^other$'; release.resolve();
-  await expect(pending).rejects.toThrow('changed');
+  const f = fixture(context => {
+    f.outputSchema.pattern = '^other$';
+    return { signal: owner.signal, assertCurrent: context.assertCurrent, async read() { throw new Error('must not call Jev'); } };
+  });
+  await expect(f.client.invoke(f.method.id)).rejects.toThrow('changed');
 });
 
-test('cancelling the actual invoke interrupts a noncooperating injected reader', async () => {
-  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+test('cancelling the actual invoke retires its regex owner', async () => {
   const controller = new AbortController();
-  const f = fixture(context => ({ signal: controller.signal, assertCurrent: context.assertCurrent, async read() {
-    entered.resolve(); await release.promise;
-    return readYesNo({ type: 'noul', noul: 0.001 }, STAKES_BANDS.high.yesNo);
-  } }));
-  const pending = f.client.invoke(f.method.id, {}, { signal: controller.signal });
-  await entered.promise; controller.abort();
-  await expect(pending).rejects.toThrow();
-  release.resolve();
+  const f = fixture(context => {
+    controller.abort();
+    return { signal: controller.signal, assertCurrent: context.assertCurrent, async read() { throw new Error('must not call Jev'); } };
+  });
+  await expect(f.client.invoke(f.method.id, {}, { signal: controller.signal })).rejects.toThrow();
 });
-
 
 test('the actual peer invocation uses its own method/schema-bound capability', async () => {
   const base = getPeerContract();
@@ -87,6 +78,6 @@ test('the actual peer invocation uses its own method/schema-bound capability', a
       return readYesNo({ type: 'noul', noul: 0.001 }, STAKES_BANDS.high.yesNo);
     } };
   } });
-  expect(await client.invoke<string>(endpoint.id)).toBe('peer'); expect(read).toBe(1);
+  expect(await client.invoke<string>(endpoint.id)).toBe('peer'); expect(read).toBe(0);
   owner.abort(); await expect(client.invoke(endpoint.id)).rejects.toThrow();
 });

@@ -1,8 +1,9 @@
+import { fileContentDigest } from '../../utils/file-content.js';
 import { checkCapturedInputsInBatches } from './captured-exec-validation.js';
 import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 /** Trusted runtime declarations are separate from model arguments and project dependencies. */
 import { accessSync, constants, existsSync, lstatSync, realpathSync } from 'node:fs';
-import { access, chmod, lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
+import { access, chmod, copyFile, lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { assertContractInputAuthority, contractInputAuthorityRoot, registerContractInputReadAssertion } from '../../contract/input-authority.js';
 import type { CapturedExecAuthority } from './captured-exec.js';
@@ -16,7 +17,7 @@ export interface CapturedExecNodeRuntimeDeclaration {
 export interface CapturedExecNodeRuntimeInput { readonly kind: 'captured-exec-node-runtime' }
 const TARGET = '/captured-runtime/node';
 const states = new WeakMap<CapturedExecNodeRuntimeInput, {
-  binding: Binding; files: readonly { path: string; data: Buffer; mode: number }[]; check: (signal?: AbortSignal) => Promise<void>;
+  binding: Binding; files: readonly { path: string; source: string; digest: string; mode: number }[]; check: (signal?: AbortSignal) => Promise<void>;
 }>();
 const identity = (s: { dev: bigint; ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint; mode: bigint }): string =>
   `${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}:${s.mode}`;
@@ -111,7 +112,7 @@ export async function admitCapturedExecNodeRuntime(
   if (npm !== join(packageRoot, 'bin/npm-cli.js') || npx !== join(packageRoot, 'bin/npx-cli.js'))
     throw new Error('Node runtime npm/npx must belong to the same declared npm package');
   const reads: { source: string; canonical: string; alias: string; identity: string }[] = [];
-  const files: { path: string; data: Buffer; mode: number }[] = [];
+  const files: { path: string; source: string; digest: string; mode: number }[] = [];
   const checkRead = async (read: typeof reads[number], signal: AbortSignal | undefined = binding.signal): Promise<void> => {
     signal?.throwIfAborted();
     if (contractInputAuthorityRoot(binding.authority) !== resolve(binding.root)) throw new Error('Node runtime authority changed');
@@ -127,7 +128,6 @@ export async function admitCapturedExecNodeRuntime(
     await checkCapturedInputsInBatches(reads, (read, current) => checkRead(read, current), signal);
     await assertContractInputAuthority(binding.authority, binding.root, signal);
   };
-  let bytes = 0;
   const visit = async (source: string, path: string, root: string): Promise<void> => {
     const aliasStat = await lstat(source);
     const canonical = await realpath(source);
@@ -143,11 +143,9 @@ export async function admitCapturedExecNodeRuntime(
     if (stat.isDirectory()) {
       for (const entry of await readdir(canonical)) await visit(join(source, entry), join(path, entry), root);
     } else if (stat.isFile()) {
-      if (files.length >= 10000 || Number(stat.size) + bytes > 256 * 1024 * 1024) throw new Error('Node runtime exceeds bounded input size');
-      const data = await readFile(canonical);
+      const digest = await fileContentDigest(canonical, binding.signal);
       await checkRead(read);
-      bytes += data.length;
-      files.push({ path, data, mode: Number(stat.mode & 0o777n) });
+      files.push({ path, source: canonical, digest, mode: Number(stat.mode & 0o777n) });
     } else throw new Error('Node runtime special file is unsupported');
   };
   // Pin command aliases as well as their canonical payloads.
@@ -164,7 +162,7 @@ export async function admitCapturedExecNodeRuntime(
   // user npmrc, cache, docs, man pages or sibling globally installed packages.
   for (const part of ['package.json', 'index.js', 'bin', 'lib', 'node_modules'])
     await visit(join(packageRoot, part), join('lib/node_modules/npm', part), packageRoot);
-  const metadata = JSON.parse(files.find((file) => file.path === 'lib/node_modules/npm/package.json')!.data.toString()) as { name?: string };
+  const metadata = JSON.parse(await readFile(files.find((file) => file.path === 'lib/node_modules/npm/package.json')!.source, 'utf8')) as { name?: string };
   if (metadata.name !== 'npm') throw new Error('Declared runtime package is not npm');
   await check();
   const token = Object.freeze({ kind: 'captured-exec-node-runtime' as const });
@@ -217,7 +215,8 @@ export async function projectCapturedExecNodeRuntime(binding: CapturedExecAuthor
     const path = join(staged, file.path);
     await mkdir(dirname(path), { recursive: true });
     signal?.throwIfAborted();
-    await writeFile(path, file.data, { mode: file.mode });
+    await copyFile(file.source, path, constants.COPYFILE_EXCL);
+    if (await fileContentDigest(path, signal) !== file.digest) throw new Error('Node runtime input changed during projection');
     signal?.throwIfAborted();
     await chmod(path, file.mode);
   }

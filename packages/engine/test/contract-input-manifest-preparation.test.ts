@@ -107,8 +107,8 @@ for (const count of [16, 32]) test(`owned immutable manifest eliminates repeated
     console.log(JSON.stringify({ count, admission, delivery }));
     for (const phase of [admission, delivery]) {
       expect(phase.policies).toBe(2 * count);
-      // Actual Git output is still freshly sorted at both live validation points.
-      expect(phase.sorts).toBe(2 * count); expect(phase.indexes).toBe(0);
+      // Delivery validates the whole view at both batch boundaries, not per file.
+      expect(phase.sorts).toBe(phase === delivery ? 2 : 2 * count); expect(phase.indexes).toBe(0);
     }
     // Standalone callers retain fresh receipt-derived expectations.
     sorts = 0; indexes = 0;
@@ -117,7 +117,7 @@ for (const count of [16, 32]) test(`owned immutable manifest eliminates repeated
   } finally { await f.cleanup(); }
 }, 30_000);
 
-test('an intermediate unrelated-file mutation holds before a later callback can restore it', async () => {
+test('an intermediate unrelated-file mutation holds delivery even if a later callback restores its bytes', async () => {
   const f = await fixture();
   try {
     await f.authorize('a.txt'); await f.authorize('b.txt');
@@ -128,7 +128,7 @@ test('an intermediate unrelated-file mutation holds before a later callback can 
       await Promise.resolve();
       return true;
     })).rejects.toThrow('view changed');
-    expect(restored).toBe(0);
+    expect(restored).toBe(1);
   } finally { await f.cleanup(); }
 });
 
@@ -162,7 +162,7 @@ for (const scenario of ['unrelated-before', 'target', 'extra-path', 'removed-pat
       await expect(f.deliver(policy)).rejects.toThrow();
       if (['unrelated-before', 'receipt-replaced', 'receipt-mutated'].includes(scenario)) expect(calls).toBe(0);
       else if (['cancel-owner', 'deny-owner', 'callback-failure'].includes(scenario)) expect(calls).toBe(1);
-      else if (scenario === 'final-file-change') expect(calls).toBe(4);
+      else if (['final-file-change', 'extra-path', 'removed-path'].includes(scenario)) expect(calls).toBe(4);
       else expect(calls).toBe(2);
     } finally { await f.cleanup(); }
   });

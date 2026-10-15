@@ -56,7 +56,7 @@ async function assertRejectedHistoricalSelection(
   const ownerBytes = readFileSync(join(f.root, 'api.ts')); const capturedBytes = readFileSync(join(f.view, 'api.ts'));
   try {
     const result = await f.tool.execute({ mode, files: [...files] });
-    expect(result.success).toBe(false); expect(result.output).toBeUndefined(); expect(result.error).toBe('[REDACTED]');
+    expect(result.success).toBe(false); expect(result.output).toBeUndefined(); expect(result.error).toContain('unsupported captured comparison');
     expect(JSON.stringify(result)).not.toContain('HISTORY_ONLY_MARKER'); expect(f.prompts).toHaveLength(0);
     expect(commands.some(args => args.includes('diff-tree') && args.includes('-p'))).toBe(false);
     expect(commands.some(args => files.some(file => args.includes(file)))).toBe(false);

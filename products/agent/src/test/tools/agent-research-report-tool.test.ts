@@ -467,7 +467,7 @@ describe('research report source containment', () => {
         const store = new ResearchReportArtifactStore();
         const result = await createAgentResearchReportTool(store, ordinaryResearchOwner()).execute({ ...base, sources: [entry] });
         expect(result.success).toBe(false);
-        expect(result.error).toContain('Refused before judgment');
+        expect(result.error).toContain('Tool input projection unavailable');
         expect(JSON.stringify(result)).not.toContain('sentinel');
         expect(store.records).toHaveLength(0);
       }

@@ -42,7 +42,6 @@ export interface AgentDocumentsToolArgs {
 type AgentDocumentArtifactStore = Partial<Pick<ArtifactStore, 'create' | 'get' | 'readContent'>>;
 
 const MODES: readonly AgentDocumentsToolMode[] = ['list', 'show', 'create', 'update', 'review', 'comment', 'resolveComment', 'suggest', 'acceptSuggestion', 'rejectSuggestion', 'export', 'insertArtifact', 'attachArtifact'];
-const MAX_INSERT_TEXT_BYTES = 40_000;
 
 function isMode(value: unknown): value is AgentDocumentsToolMode {
   return typeof value === 'string' && MODES.some(mode => mode === value);
@@ -279,12 +278,8 @@ function renderArtifactDocumentBlock(
     return lines.join('\n');
   }
 
-  const sliced = buffer.subarray(0, Math.min(buffer.byteLength, MAX_INSERT_TEXT_BYTES));
-  const text = sliced.toString('utf-8').replace(/\0/g, '').trim();
+  const text = buffer.toString('utf-8').replace(/\0/g, '').trim();
   lines.push('', text || '_Empty text artifact._');
-  if (buffer.byteLength > sliced.byteLength) {
-    lines.push('', `_Truncated ${formatBytes(buffer.byteLength - sliced.byteLength)} from the inserted artifact preview._`);
-  }
   return lines.join('\n');
 }
 

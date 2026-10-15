@@ -4,12 +4,11 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { lstat, readdir, realpath, stat } from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import type { CallOptions } from '@goodvibes-jev/judgment/decisions';
-import { snapshotJudgmentInput } from '../gate/judgment-input.js';
-import { readWalkDirectories, type WalkDirectoryCandidate } from './directory-reading.js';
+import type { WalkDirectoryCandidate } from './directory-reading.js';
 import { logger } from './logger.js';
 import { summarizeError } from './error-display.js';
 
-/** @deprecated Historical compatibility data only; traversal uses canonical directory readings. */
+/** Conventional generated/dependency directories excluded from recursive discovery. An explicit directory selection may include them. */
 export const WALK_SKIP_DIRS = new Set([
   '.git',
   'node_modules',
@@ -20,12 +19,12 @@ export const WALK_SKIP_DIRS = new Set([
   '__pycache__',
 ]);
 
-/** A memory limit, independent of the directory-meaning reading (1 MiB). */
+/** @deprecated Optional legacy byte budget. Traversal no longer silently excludes large files. */
 export const WALK_MAX_FILE_SIZE = 1024 * 1024;
 
 /**
  * beforeAttempt fences every filesystem checkpoint. beforeAsyncAttempt fences
- * traversal entry/exit and actual directory readings/retries, not local stat calls.
+ * traversal entry/exit and owner access checks, not local stat calls.
  */
 export interface WalkDirOptions extends CallOptions {
   readonly includeHidden?: boolean;
@@ -33,7 +32,7 @@ export interface WalkDirOptions extends CallOptions {
   readonly maxFileSize?: number;
   /** Explicit caller selection, evaluated before opening a file. */
   readonly selectFile?: (path: string) => boolean;
-  /** Conservative explicit caller scope, evaluated before judging/descent. */
+  /** Conservative explicit caller scope, evaluated before descent. */
   readonly selectDirectory?: (path: string) => boolean;
   /** A bounded caller can stop without publishing files discovered after its deadline. */
   readonly shouldContinue?: () => boolean;
@@ -44,7 +43,7 @@ export interface WalkDirOptions extends CallOptions {
 class WalkStopped extends Error {}
 
 /**
- * A root-owned reading cache. Share only within one invocation (for example its
+ * A root-owned directory selection cache. Share only within one invocation (for example its
  * ignore-file discovery and glob scan), never between roots or requests.
  */
 export class DirectoryWalk {
@@ -59,26 +58,12 @@ export class DirectoryWalk {
   private async readDirectories(candidates: readonly WalkDirectoryCandidate[], options: CallOptions): Promise<void> {
     options.signal?.throwIfAborted();
     options.beforeAttempt?.();
-    // Screen complete current identities before consulting any cached outcome.
-    snapshotJudgmentInput(candidates);
-    const unread = candidates.filter(candidate => !this.skipped.has(candidate.relativePath));
-    if (unread.length === 0) return;
-    await options.beforeAsyncAttempt?.();
-    options.signal?.throwIfAborted();
-    options.beforeAttempt?.();
-    const readings = await readWalkDirectories(unread, options);
-    options.signal?.throwIfAborted();
-    options.beforeAttempt?.();
-    await options.beforeAsyncAttempt?.();
-    options.signal?.throwIfAborted();
-    options.beforeAttempt?.();
-    if (readings.length !== unread.length || readings.some(reading => typeof reading !== 'boolean')) {
-      throw new Error('Directory reading withheld');
-    }
-    unread.forEach((candidate, index) => this.skipped.set(candidate.relativePath, readings[index] as boolean));
+    // Directory discovery is local filesystem work. A probabilistic reading must
+    // not veto descent or make a project disappear when Jev is unavailable.
+    for (const candidate of candidates) this.skipped.set(candidate.relativePath, WALK_SKIP_DIRS.has(candidate.name));
   }
 
-  /** Automatic index maintenance uses the same root-relative ancestor verdicts. */
+  /** Automatic index maintenance uses the same root-relative directory exclusions. */
   async excludesFile(filePath: string, options: CallOptions = {}): Promise<boolean> {
     const path = relative(this.root, resolve(filePath));
     if (isAbsolute(path) || path === '..' || path.startsWith(`..${sep}`)) throw new Error('File is outside the directory walk root');
@@ -110,20 +95,20 @@ export class DirectoryWalk {
     return false;
   }
 
-  /** Gate each visible level before descent; a held/failed reading aborts it. */
+  /** Traverse selected directories under the caller’s cancellation and access checks. */
   async *files(options: WalkDirOptions = {}): AsyncGenerator<string> {
     const root = this.root;
     const skipped = this.skipped;
     const owner = this;
-    const maxFileSize = options.maxFileSize ?? WALK_MAX_FILE_SIZE;
+    const maxFileSize = options.maxFileSize;
     const assertCurrent = (): void => {
       options.signal?.throwIfAborted();
       options.beforeAttempt?.();
       if (options.shouldContinue?.() === false) throw new WalkStopped();
     };
     // Local metadata steps need the current invocation/token, not a replay of
-    // every previously authorized file. Full readset checks fence external
-    // readings (including retries) and the traversal's entry/exit instead.
+    // every previously authorized file. Full readset checks fence the
+    // traversal’s entry and exit instead.
     const checkCurrent = async (): Promise<void> => { assertCurrent(); };
     const checkReadAccess = async (): Promise<void> => {
       assertCurrent();
@@ -237,11 +222,11 @@ export class DirectoryWalk {
         options.assertPath?.(fullPath);
         if (directoryNames.has(entry.name)) {
           const identity = relative(root, fullPath).split(sep).join('/');
-          if (!skipped.get(identity)) yield* visit(fullPath, descendants);
+          if (!skipped.get(identity) || options.selectDirectory?.(fullPath) === true) yield* visit(fullPath, descendants);
         } else if (fileNames.has(entry.name)) {
           try {
             const info = options.followSymlinks ? await stat(fullPath) : await lstat(fullPath);
-            if (!info.isFile() || info.size > maxFileSize) continue;
+            if (!info.isFile() || (maxFileSize !== undefined && info.size > maxFileSize)) continue;
           } catch (err) {
             await checkCurrent();
             logger.warn('walkDir skipped unreadable file', { path: fullPath, error: summarizeError(err) });
@@ -274,7 +259,7 @@ export class DirectoryWalk {
   }
 }
 
-/** Hidden entries, symlinks and files over 1 MiB are excluded by default. */
+/** Hidden entries and symlinks follow caller options; file size is unrestricted by default. */
 export async function* walkDir(dirPath: string, options: WalkDirOptions = {}): AsyncGenerator<string> {
   yield* new DirectoryWalk(dirPath).files(options);
 }

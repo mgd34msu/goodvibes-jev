@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, openSync, ftruncateSync, statSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { admitCapturedExecDependency } from '../sdk/src/platform/tools/exec/captured-exec-dependencies.js';
@@ -179,7 +179,7 @@ for (const policy of ['disabled', 'enabled', 'denied'] as const)
       expect(output.stdout).toBe(policy === 'enabled' ? 'SOCKET_ALLOWED' : 'SOCKET_BLOCKED');
       expect(output.sandbox_network).toBe(policy);
     }
-    expect(escalations).toBeGreaterThan(0);
+    expect(escalations).toBe(policy === 'disabled' ? 0 : 1);
   });
 
 test.skipIf(!supported)('real ignored TypeScript dependency requires admitted immutable original and alias inputs', async () => {
@@ -359,3 +359,34 @@ for (const position of ['top-level', 'command'] as const)
     expect(output.denied).toBe(true);
     expect(output.captured_exec_unsupported_options).toEqual([option]);
   });
+
+
+test.skipIf(!supported)('large files do not block delegated commands or publication', async () => {
+  const binding = await fixture();
+  const bytes = 257 * 1024 * 1024;
+  const fd = openSync(join(binding.root, 'large.bin'), 'w');
+  try { ftruncateSync(fd, bytes); } finally { closeSync(fd); }
+  const dependencies = join(binding.owner, 'node_modules');
+  mkdirSync(dependencies);
+  const dependency = openSync(join(dependencies, 'archive.bin'), 'w');
+  try { ftruncateSync(dependency, bytes); } finally { closeSync(dependency); }
+  const admitted = await admitCapturedExecDependency(binding, { sourceRoot: dependencies, targetRelativePath: 'node_modules' });
+  expect(admitted).toBeDefined();
+  const result = await runCapturedCommand({ ...binding, dependencyInputs: [admitted!] }, 'wc -c large.bin node_modules/archive.bin; printf updated > input.txt; cp large.bin generated.bin', {}, binding.root, 30_000);
+  expect(result.success).toBe(true);
+  expect(result.stdout).toContain(String(bytes));
+  expect(statSync(join(binding.root, 'generated.bin')).size).toBe(bytes);
+  expect(readFileSync(join(binding.root, 'input.txt'), 'utf8')).toBe('updated');
+  expect(readFileSync(join(binding.owner, 'input.txt'), 'utf8')).toBe('captured-fixture\n');
+}, 30_000);
+
+
+test.skipIf(!supported)('output over 2 MiB does not kill a valid command or suppress its later work', async () => {
+  const binding = await fixture();
+  const result = await run(binding, 'head -c 2200000 /dev/zero | tr "\\0" x; printf done > finished.txt; printf TAIL');
+  expect(result.success, result.stderr).toBe(true);
+  expect(result.stdout.length).toBe(2_200_004);
+  expect(result.stdout.endsWith('TAIL')).toBe(true);
+  expect(readFileSync(join(binding.root, 'finished.txt'), 'utf8')).toBe('done');
+  expect(existsSync(join(binding.owner, 'finished.txt'))).toBe(false);
+});

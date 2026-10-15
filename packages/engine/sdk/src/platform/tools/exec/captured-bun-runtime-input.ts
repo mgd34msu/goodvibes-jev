@@ -1,6 +1,7 @@
 /** Ordinary Bun is an explicit, pinned runtime input, never a PATH fallback. */
+import { fileContentDigest } from '../../utils/file-content.js';
 import { accessSync, constants, existsSync, lstatSync, realpathSync } from 'node:fs';
-import { chmod, lstat, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, lstat, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { assertContractInputAuthority, contractInputAuthorityRoot, registerContractInputReadAssertion } from '../../contract/input-authority.js';
@@ -12,10 +13,10 @@ type Binding = Pick<CapturedExecAuthority, 'authority' | 'root' | 'readAccessFil
 export interface CapturedExecBunRuntimeDeclaration { readonly bunExecutable: string }
 export interface CapturedExecBunRuntimeInput { readonly kind: 'captured-exec-bun-runtime' }
 const TARGET = '/captured-runtime/bin/bun';
-const MAX_BYTES = 256 * 1024 * 1024;
 const states = new WeakMap<CapturedExecBunRuntimeInput, {
   readonly binding: Binding;
-  readonly data: Buffer;
+  readonly source: string;
+  readonly digest: string;
   readonly mode: number;
   readonly check: (signal?: AbortSignal) => Promise<void>;
 }>();
@@ -39,7 +40,7 @@ export function createCapturedExecBunRuntimeAdmission(
     accessSync(source, constants.X_OK);
     const canonical = realpathSync(source);
     const stat = lstatSync(canonical, { bigint: true });
-    if (!stat.isFile() || stat.size > BigInt(MAX_BYTES)) throw new Error('Bun runtime must be a bounded executable file');
+    if (!stat.isFile()) throw new Error('Bun runtime must be an executable file');
     pinned = { canonical, identity: identity(stat) };
   } catch (error) { initialError = error; }
   let admission: Promise<CapturedExecBunRuntimeInput> | undefined;
@@ -67,15 +68,16 @@ export function createCapturedExecBunRuntimeAdmission(
         current?.throwIfAborted();
       };
       await check(combined);
-      const data = await readFile(original.canonical);
+      const digest = await fileContentDigest(original.canonical, combined);
       await check(combined);
-      if (data.length > MAX_BYTES) throw new Error('Bun runtime exceeds bounded input size');
       const mode = Number((await lstat(original.canonical, { bigint: true })).mode & 0o777n);
       await check(combined);
       const temporary = await mkdtemp(join(tmpdir(), 'captured-bun-admission-'));
       try {
         const staged = join(temporary, 'bun');
-        await writeFile(staged, data, { mode }); await chmod(staged, mode);
+        await copyFile(original.canonical, staged, constants.COPYFILE_EXCL);
+        if (await fileContentDigest(staged, combined) !== digest) throw new Error('Bun runtime changed during admission');
+        await chmod(staged, mode);
         await check(combined);
         // This proof sees no project mount or host configuration, and receives
         // no BUN_BE_BUN marker. A product executable is not an interpreter.
@@ -83,7 +85,7 @@ export function createCapturedExecBunRuntimeAdmission(
         await check(combined);
       } finally { await rm(temporary, { recursive: true, force: true }); }
       const token = Object.freeze({ kind: 'captured-exec-bun-runtime' as const });
-      states.set(token, { binding, data, mode, check });
+      states.set(token, { binding, source: original.canonical, digest, mode, check });
       registerContractInputReadAssertion(binding.authority, check);
       return token;
     })();
@@ -126,7 +128,9 @@ export async function projectCapturedExecBunRuntime(binding: CapturedExecAuthori
   }
   if (!state) return { argv: ['--ro-bind', refusal, TARGET, ...aliases], check: async () => {} };
   const staged = join(temporary, 'bun-runtime');
-  await writeFile(staged, state.data, { mode: state.mode }); await chmod(staged, state.mode);
+  await copyFile(state.source, staged, constants.COPYFILE_EXCL);
+  if (await fileContentDigest(staged, signal) !== state.digest) throw new Error('Bun runtime changed during projection');
+  await chmod(staged, state.mode);
   await state.check(signal);
   return { check: () => state.check(signal), argv: ['--ro-bind', staged, TARGET, ...aliases] };
 }

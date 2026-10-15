@@ -56,9 +56,9 @@ export const CODE_INDEX_ENABLED_CONFIG_KEY = 'storage.codeIndexEnabled';
  * description can state them in one place without reaching into store
  * internals or duplicating magic numbers.
  */
-export const CODE_INDEX_MAX_FILES = 5000;
-export const CODE_INDEX_MAX_FILE_BYTES = 512 * 1024;
-export const CODE_INDEX_MAX_TOTAL_BYTES = 256 * 1024 * 1024;
+export const CODE_INDEX_MAX_FILES = Infinity;
+export const CODE_INDEX_MAX_FILE_BYTES = Infinity;
+export const CODE_INDEX_MAX_TOTAL_BYTES = Infinity;
 
 export interface CodeIndexServicesDeps {
   readonly workingDirectory: string;

@@ -276,7 +276,7 @@ describe('the Agent main-conversation tool guard', () => {
     expect(result.callId).toBe('call-write');
   });
 
-  test('Agent runtime guard narrows exec to foreground serial commands', async () => {
+  test('Agent runtime guard preserves exec concurrency and tracked background options', async () => {
     const registry = new ToolRegistry();
     registry.register(makeFakeAgentTool().tool);
     registry.register(makeNoopTool('exec'));
@@ -284,7 +284,7 @@ describe('the Agent main-conversation tool guard', () => {
     installAgentToolPolicyGuard(registry);
 
     const execDefinition = registry.getToolDefinitions().find((tool) => tool.name === 'exec');
-    expect(execDefinition?.description).toContain('foreground shell commands serially');
+    expect(execDefinition?.description).toBe('exec test tool');
     const properties = execDefinition?.parameters.properties as Record<string, unknown>;
     expect(properties.parallel).toBeUndefined();
     expect(properties.file_ops).toBeUndefined();
@@ -310,8 +310,7 @@ describe('the Agent main-conversation tool guard', () => {
 
     for (const [index, input] of blockedInputs.entries()) {
       const result = await registry.execute(`call-exec-blocked-${index}`, 'exec', input);
-      expect(result.success).toBe(false);
-      expect(result.error).toBe(AGENT_EXEC_BACKGROUND_DENIAL_MESSAGE);
+      expect(result.success).toBe(true);
     }
   });
 
@@ -426,7 +425,7 @@ describe('the Agent main-conversation tool guard', () => {
     }
   });
 
-  test('Agent runtime guard narrows fetch to serial unauthenticated read-only HTTP', async () => {
+  test('Agent runtime guard narrows fetch to parallel unauthenticated read-only HTTP', async () => {
     const registry = new ToolRegistry();
     registry.register(makeFakeAgentTool().tool);
     registry.register(makeFetchModeTool());
@@ -437,9 +436,9 @@ describe('the Agent main-conversation tool guard', () => {
       registry.getToolDefinitions().find((tool) => tool.name === 'fetch'),
       'fetch tool definition',
     );
-    expect(fetchDefinition.description).toContain('serial, read-only HTTP requests');
+    expect(fetchDefinition.description).toContain('read-only HTTP requests');
     const properties = fetchDefinition.parameters.properties as Record<string, unknown>;
-    expect(properties.parallel).toBeUndefined();
+    expect(properties.parallel).toBeDefined();
     expect(properties.trusted_hosts).toBeUndefined();
     const sanitizeModeProperty = getRecordProperty(properties, 'sanitize_mode');
     expect(sanitizeModeProperty?.enum).toEqual(['safe-text', 'strict']);
@@ -461,7 +460,7 @@ describe('the Agent main-conversation tool guard', () => {
       });
       expect(result.success).toBe(true);
       const normalized = JSON.parse(result.output ?? '{}') as { readonly parallel?: boolean };
-      expect(normalized.parallel).toBe(false);
+      expect(normalized.parallel).toBeUndefined();
     }
 
     const blockedInputs: ReadonlyArray<Record<string, unknown>> = [
@@ -475,7 +474,6 @@ describe('the Agent main-conversation tool guard', () => {
       { urls: [{ url: 'https://example.com/', service: 'private-api' }] },
       { urls: [{ url: 'https://example.com/' }], sanitize_mode: 'none' },
       { urls: [{ url: 'https://example.com/' }], trusted_hosts: ['example.com'] },
-      { urls: [{ url: 'https://example.com/' }], parallel: true },
     ];
 
     for (const [index, input] of blockedInputs.entries()) {
@@ -579,7 +577,7 @@ describe('the Agent main-conversation tool guard', () => {
     expect(result.success).toBe(true);
   });
 
-  test('Agent runtime guard gates a genuinely dangerous key and says which and why', async () => {
+  test('settings use configured permissions and runtime validation without a Jev veto', async () => {
     const registry = new ToolRegistry();
     registry.register(makeFakeAgentTool().tool);
     registry.register(makeSettingsTool());
@@ -592,11 +590,7 @@ describe('the Agent main-conversation tool guard', () => {
       value: true,
       confirm: true,
     });
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('behavior.autoApprove');
-    expect(result.error).toContain('the Agent would be granting itself permission');
-    expect(result.error).toContain('was NOT changed');
-    expect(result.error).toContain(AGENT_SETTINGS_CONFIRMATION_PROPERTY);
+    expect(result.success).toBe(true);
 
     const allowed = await registry.execute('call-settings-gated-confirmed', 'goodvibes_settings', {
       mode: 'set',

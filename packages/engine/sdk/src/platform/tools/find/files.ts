@@ -82,16 +82,11 @@ export async function executeFilesQuery(
   }
 
   await using hasContentRegex = query.has_content
-    ? await createSafeRegex(query.has_content, '', { ...options, assertCurrent: current, operation: 'find files has_content', maxInputChars: 500_000 }) : undefined;
+    ? await createSafeRegex(query.has_content, '', { ...options, assertCurrent: current, operation: 'find files has_content' }) : undefined;
 
-  const SCAN_CEILING = 50_000;
   const scannedFiles = await collectGlobFiles(basePath, patterns, includeHidden, followSymlinks, diagnostics, walk, walkOptions);
   const matchedFiles = new Set<string>();
   for (const file of scannedFiles) {
-    if (matchedFiles.size >= SCAN_CEILING) {
-      addFindWarning(diagnostics, `File scan stopped after ${SCAN_CEILING} matches; results may be incomplete.`);
-      break;
-    }
     const rel = relative(basePath, file);
     if (gitignoreMatcher && gitignoreMatcher(rel)) continue;
     const excluded = compiledExcludes.some((excl) => matchesGlob(excl, file, basePath));
@@ -160,7 +155,7 @@ export async function executeFilesQuery(
         if (capturedReadAccess && !await capturedReadAccess(entry.path)) throw new Error('file read is access-restricted');
         assertCapturedInputPathContext(entry.path);
         const text = await Bun.file(entry.path).text();
-        if (await hasContentRegex.test(text, 500_000)) filtered.push(entry);
+        if (await hasContentRegex.test(text)) filtered.push(entry);
       } catch (err) {
         addFindWarning(diagnostics, `Could not read '${entry.path}' for has_content filtering: ${summarizeError(err)}`);
       }

@@ -16,7 +16,7 @@ export interface CapturedRegistryBinding {
   readonly readAccessFilter: ReadAccessFilter | undefined;
   readonly signal?: AbortSignal | undefined;
 }
-interface CapturedFile { readonly data: string; readonly fingerprint: string }
+interface CapturedFile { readonly fingerprint: string }
 interface Admission {
   readonly authority: ContractInputAuthority;
   readonly workingDirectory: string;
@@ -37,8 +37,8 @@ const contained = (root: string, path: string): boolean => {
  * Capture only .goodvibes/{skills,agents} below the admitted owner/configured home.
  * Other .goodvibes paths and symlinks remain unavailable. Included files may have
  * any extension, but an excluded/restricted/out-of-scope include holds content.
- * Each context is bounded to 2,048 files/directories, depth 16, 1 MiB per file and
- * 8 MiB total; a larger context fails admission rather than returning partial data.
+ * Capture metadata for the complete registry; read bytes on demand under the
+ * same identity and owner checks, so unrelated large files cannot block discovery.
  */
 export async function admitCapturedRegistryContext(
   binding: CapturedRegistryBinding,
@@ -57,7 +57,6 @@ export async function admitCapturedRegistryContext(
   const directoryIdentities = new Map<string, string>();
   const used = new Set<string>();
   const withheld = new Set<string>();
-  let bytes = 0;
   const inScope = (path: string): boolean => declared.some((root) => contained(root, path) &&
     !relative(root, path).split(sep).some((part) => CONTRACT_INPUT_EXCLUSIONS.includes(part as typeof CONTRACT_INPUT_EXCLUSIONS[number])));
   const checkPath = (path: string): void => {
@@ -98,25 +97,12 @@ export async function admitCapturedRegistryContext(
     await checkAuthority();
     checkPath(path);
     if (stat.isDirectory()) {
-      if (depth > 16 || directories.size >= 2048) throw new Error('registry input exceeds directory limit');
       directoryIdentities.set(path, identity(stat));
       const entries = readdirSync(path).sort();
       directories.set(path, Object.freeze(entries));
       for (const entry of entries) await visit(join(path, entry), depth + 1);
     } else if (stat.isFile()) {
-      if (files.size >= 2048 || stat.size > 1024n * 1024n || bytes + Number(stat.size) > 8 * 1024 * 1024)
-        throw new Error('registry input exceeds byte/file limit');
-      const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-      let data: string;
-      try {
-        if (fingerprint(fstatSync(fd, { bigint: true })) !== fingerprint(stat)) throw new Error('registry source changed during capture');
-        checkPath(path);
-        data = readFileSync(fd, 'utf8');
-        if (fingerprint(fstatSync(fd, { bigint: true })) !== fingerprint(stat)) throw new Error('registry source changed during capture');
-      } finally { closeSync(fd); }
-      files.set(path, { data, fingerprint: fingerprint(stat) });
-      bytes += Buffer.byteLength(data);
-      if (bytes > 8 * 1024 * 1024) throw new Error('registry input exceeds byte limit');
+      files.set(path, { fingerprint: fingerprint(stat) });
       await checkRead(path);
     }
   };
@@ -150,7 +136,15 @@ export async function admitCapturedRegistryContext(
         if (!file) throw new Error('registry file was not admitted');
         used.add(path);
         await checkRead(path, signal);
-        return file.data;
+        const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        let data: string;
+        try {
+          if (fingerprint(fstatSync(fd, { bigint: true })) !== file.fingerprint) throw new Error('registry source changed during read');
+          data = readFileSync(fd, 'utf8');
+          if (fingerprint(fstatSync(fd, { bigint: true })) !== file.fingerprint) throw new Error('registry source changed during read');
+        } finally { closeSync(fd); }
+        await checkRead(path, signal);
+        return data;
       },
       assertCurrent: () => checkUsed(signal),
     }),

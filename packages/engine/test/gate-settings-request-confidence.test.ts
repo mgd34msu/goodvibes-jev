@@ -66,7 +66,7 @@ test('protected formats and unsupported accessors are rejected before the settin
   const { port, requests } = answer(0.97);
   await expect(readSettingsWriteEvidence({ mode: 'set', key: 'surfaces.slack.botToken', value: 'synthetic-credential-material' }, port)).rejects.toThrow('Refused before judgment');
   let reads = 0;
-  await expect(readSettingsWriteEvidence({ get key() { reads++; return 'display.theme'; } }, port)).rejects.toThrow('bounded plain JSON');
+  await expect(readSettingsWriteEvidence({ get key() { reads++; return 'display.theme'; } }, port)).rejects.toThrow('plain JSON');
   expect(reads).toBe(0);
   expect(requests).toHaveLength(0);
 });

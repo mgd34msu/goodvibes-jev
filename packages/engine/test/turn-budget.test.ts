@@ -33,11 +33,13 @@ describe('resolveTurnBudget', () => {
   });
 
   test('the config default itself is clamped by the policy cap', () => {
-    expect(resolveTurnBudget({ configDefault: 500, policyCap: 200 })).toEqual({ limit: 200, source: 'default' });
+    expect(resolveTurnBudget({ configDefault: 500, policyCap: 200 })).toEqual({ limit: 200, source: 'policy-bound' });
   });
 
-  test('invalid inputs fall back sensibly rather than producing a zero/NaN ceiling', () => {
-    expect(resolveTurnBudget({ configDefault: 50, spawnOverride: 0, policyCap: 200 }).limit).toBe(50);
+  test('zero disables the turn ceiling while explicit owner caps still apply', () => {
+    expect(resolveTurnBudget({ configDefault: 50, spawnOverride: 0, policyCap: 200 }).limit).toBe(200);
+    expect(resolveTurnBudget({ configDefault: 0, policyCap: 0 }).limit).toBe(0);
+    expect(resolveTurnBudget({ configDefault: 50, spawnOverride: 0, policyCap: 0 }).limit).toBe(0);
     expect(resolveTurnBudget({ configDefault: 50, spawnOverride: Number.NaN, policyCap: 200 }).limit).toBe(50);
   });
 });

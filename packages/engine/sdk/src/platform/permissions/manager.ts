@@ -517,7 +517,6 @@ export class PermissionManager {
     assertPermissionActive(options.signal);
     if (this.autonomousClaims.has(sourceId)) throw new Error('Autonomous tool source was already claimed');
     if (this.autonomousPending.has(sourceId)) throw new Error('Autonomous admission is already pending for this source');
-    if (!this.autonomousEpochs.has(sourceId) && this.autonomousEpochs.size >= 10_000) throw new Error('Autonomous source capacity reached');
     const epoch = (this.autonomousEpochs.get(sourceId) ?? 0) + 1;
     this.autonomousEpochs.set(sourceId, epoch);
     this.autonomousPending.add(sourceId);
@@ -630,7 +629,6 @@ export class PermissionManager {
       claim: () => {
         assertCurrent();
         if (!result.approved) throw new Error('Owner policy denied this tool call');
-        if (this.autonomousClaims.size >= 10_000) throw new Error('Autonomous admission claim capacity reached');
         this.autonomousClaims.add(sourceId);
         this.autonomousDeferred.delete(sourceId);
       },

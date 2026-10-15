@@ -1,5 +1,8 @@
 /** Apply only a captured generation's result delta, without staging owner work. */
 import { spawnSync } from 'node:child_process';
+import { closeSync, mkdtempSync, openSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ReadAccessFilter } from '../tools/shared/read-access.js';
 import type { Contract } from './types.js';
 import {
@@ -11,24 +14,23 @@ import {
 import { assertContractExecutionView, assertContractInputObjects, assertContractInputOwner } from './input-snapshot.js';
 
 const applyTails = new Map<string, Promise<void>>();
-const MAX_PATCH_BYTES = 512 * 1024 * 1024;
+const MAX_METADATA_BYTES = 256 * 1024 * 1024;
 
-function git(root: string, args: readonly string[], input?: Buffer): Buffer {
+function git(root: string, args: readonly string[], output?: number): Buffer {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GIT_')));
   const result = spawnSync(
     'git',
     ['-C', root, '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', ...args],
     {
       env: { ...env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
-      input,
-      maxBuffer: MAX_PATCH_BYTES,
-      timeout: 30_000,
+      stdio: ['ignore', output ?? 'pipe', 'pipe'],
+      maxBuffer: MAX_METADATA_BYTES,
     },
   );
   // Git's diagnostic may include source hunk content. Keep retained-result notes fixed.
   if (result.status !== 0)
     throw new Error(`captured result ${args[0]} failed; owner changes and result branch are retained`);
-  return result.stdout;
+  return result.stdout ?? Buffer.alloc(0);
 }
 
 async function applyDelta(
@@ -43,6 +45,7 @@ async function applyDelta(
   if (!filter) throw new Error('captured result requires original-owner read authorization');
   const root = snapshot.sourceRoot;
   const authority = await createContractInputAuthority(contract, view, { signal, mutable: true, branch });
+  let patchDirectory: string | undefined;
   try {
     assertContractInputObjects(snapshot, root);
     assertContractExecutionView(snapshot, view, branch);
@@ -87,7 +90,10 @@ async function applyDelta(
     )
       throw new Error('captured result has ambiguous paths');
     for (const path of paths) await authorizeContractInputPath(authority, path, filter, signal);
-    const patch = git(root, [
+    patchDirectory = mkdtempSync(join(tmpdir(), 'captured-result-patch-'));
+    const patch = join(patchDirectory, 'changes.patch');
+    const patchFd = openSync(patch, 'wx', 0o600);
+    try { git(root, [
       'diff',
       '--binary',
       '--no-color',
@@ -100,12 +106,12 @@ async function applyDelta(
       snapshot.inputCommit,
       resultHead,
       '--',
-    ]);
+    ], patchFd); } finally { closeSync(patchFd); }
     await assertContractInputOwner(snapshot, signal);
     if (paths.length === 0) return 0;
     // Default git apply is all-or-nothing on a failed hunk; never use --reject,
     // --3way, --index, --cached or a reset against the owner's working tree.
-    git(root, ['apply', '--check', '--binary', '--whitespace=nowarn', '-'], patch);
+    git(root, ['apply', '--check', '--binary', '--whitespace=nowarn', patch]);
     for (const path of paths) await authorizeContractInputPath(authority, path, filter, signal);
     await assertContractInputAuthority(authority, view, signal);
     await assertContractInputOwner(snapshot, signal);
@@ -114,9 +120,10 @@ async function applyDelta(
     signal.throwIfAborted();
     // No await between the final admission and synchronous Git application.
     // External noncooperating filesystem writers remain outside this transaction.
-    git(root, ['apply', '--binary', '--whitespace=nowarn', '-'], patch);
+    git(root, ['apply', '--binary', '--whitespace=nowarn', patch]);
     return paths.length;
   } finally {
+    if (patchDirectory) rmSync(patchDirectory, { recursive: true, force: true });
     revokeContractInputAuthority(authority);
   }
 }

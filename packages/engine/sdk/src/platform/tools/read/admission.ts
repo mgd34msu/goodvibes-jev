@@ -7,7 +7,6 @@ import type { ToolExecuteOptions } from '../../types/tools.js';
 import { resolveAndValidatePath } from '../../utils/path-safety.js';
 import { assertProjectionExecution, ToolInputProjectionError, type ToolInputProjector } from '../input-projection.js';
 import { assertCurrentToolExecution } from '../registry.js';
-import { AGENT_MAX_READ_FILES } from './policy-contract.js';
 
 interface ReadSubject {
   readonly input: string;
@@ -24,7 +23,7 @@ interface ReadCapture {
 const captures = new WeakMap<object, ReadCapture>();
 
 function paths(args: Record<string, unknown>): readonly string[] {
-  if (!Array.isArray(args.files) || args.files.length === 0 || args.files.length > AGENT_MAX_READ_FILES) throw new ToolInputProjectionError('invalid');
+  if (!Array.isArray(args.files) || args.files.length === 0) throw new ToolInputProjectionError('invalid');
   return args.files.map(file => {
     if (!file || typeof file !== 'object' || typeof file.path !== 'string' || !file.path) throw new ToolInputProjectionError('invalid');
     return file.path;

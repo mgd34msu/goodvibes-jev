@@ -22442,7 +22442,7 @@
     {
       "name": "ownerReply",
       "kind": "const",
-      "text": "ownerReply: import(\"@goodvibes-jev/judgment\").ReplyReader<\"approve\" | \"reject\" | \"amend\" | \"unclear\">"
+      "text": "ownerReply: import(\"@goodvibes-jev/judgment\").ReplyReader<\"reject\" | \"amend\" | \"approve\" | \"unclear\">"
     },
     {
       "name": "parseAmendment",
@@ -28792,7 +28792,7 @@
     {
       "name": "AGENT_FIND_POLICY_DENIAL_MESSAGE",
       "kind": "const",
-      "text": "AGENT_FIND_POLICY_DENIAL_MESSAGE: string"
+      "text": "AGENT_FIND_POLICY_DENIAL_MESSAGE = \"Invalid search options.\""
     },
     {
       "name": "AGENT_INSPECT_WRITE_DENIAL_MESSAGE",
@@ -28822,12 +28822,12 @@
     {
       "name": "AGENT_MAX_WEB_SEARCH_EVIDENCE_TOP_N",
       "kind": "const",
-      "text": "AGENT_MAX_WEB_SEARCH_EVIDENCE_TOP_N = 3"
+      "text": "AGENT_MAX_WEB_SEARCH_EVIDENCE_TOP_N = 10"
     },
     {
       "name": "AGENT_MAX_WEB_SEARCH_RESULTS",
       "kind": "const",
-      "text": "AGENT_MAX_WEB_SEARCH_RESULTS = 10"
+      "text": "AGENT_MAX_WEB_SEARCH_RESULTS = 25"
     },
     {
       "name": "AGENT_MCP_SECURITY_MUTATION_DENIAL_MESSAGE",
@@ -28847,12 +28847,12 @@
     {
       "name": "AGENT_READ_IMAGE_MODES",
       "kind": "const",
-      "text": "AGENT_READ_IMAGE_MODES: readonly [\"default\", \"metadata-only\", \"thumbnail-only\"]"
+      "text": "AGENT_READ_IMAGE_MODES: readonly [\"default\", \"metadata-only\", \"thumbnail-only\", \"unoptimized\"]"
     },
     {
       "name": "AGENT_READ_ONLY_ANALYZE_TOOL_MODES",
       "kind": "const",
-      "text": "AGENT_READ_ONLY_ANALYZE_TOOL_MODES: readonly [\"impact\", \"dependencies\", \"dead_code\", \"security\", \"coverage\", \"bundle\", \"preview\", \"diff\", \"surface\", \"breaking\", \"permissions\", \"test_find\"]"
+      "text": "AGENT_READ_ONLY_ANALYZE_TOOL_MODES: readonly [\"impact\", \"dependencies\", \"dead_code\", \"security\", \"coverage\", \"bundle\", \"preview\", \"diff\", \"surface\", \"breaking\", \"permissions\", \"test_find\", \"upgrade\", \"semantic_diff\"]"
     },
     {
       "name": "AGENT_READ_ONLY_CHANNEL_TOOL_MODES",
@@ -28892,7 +28892,7 @@
     {
       "name": "AGENT_READ_ONLY_REGISTRY_TOOL_MODES",
       "kind": "const",
-      "text": "AGENT_READ_ONLY_REGISTRY_TOOL_MODES: readonly [\"search\", \"recommend\", \"dependencies\", \"preview\"]"
+      "text": "AGENT_READ_ONLY_REGISTRY_TOOL_MODES: readonly [\"search\", \"recommend\", \"dependencies\", \"preview\", \"content\"]"
     },
     {
       "name": "AGENT_READ_ONLY_REMOTE_TOOL_MODES",
@@ -28957,7 +28957,7 @@
     {
       "name": "AGENT_READ_POLICY_DENIAL_MESSAGE",
       "kind": "const",
-      "text": "AGENT_READ_POLICY_DENIAL_MESSAGE: string"
+      "text": "AGENT_READ_POLICY_DENIAL_MESSAGE = \"Invalid read options.\""
     },
     {
       "name": "AGENT_REGISTRY_CONTENT_DENIAL_MESSAGE",
@@ -28992,7 +28992,7 @@
     {
       "name": "AGENT_WEB_SEARCH_POLICY_DENIAL_MESSAGE",
       "kind": "const",
-      "text": "AGENT_WEB_SEARCH_POLICY_DENIAL_MESSAGE: string"
+      "text": "AGENT_WEB_SEARCH_POLICY_DENIAL_MESSAGE = \"Invalid web search options.\""
     },
     {
       "name": "AgentExecutionLedger",
@@ -29359,7 +29359,7 @@
     {
       "name": "validateAgentReadMechanics",
       "kind": "function",
-      "text": "export declare function validateAgentReadMechanics(args: ReadToolArgs): string | null; ;; via ReadToolArgs = type ReadToolArgs = { readonly files?: unknown; readonly image_mode?: unknown; readonly max_image_size?: unknown; readonly [key: string]: unknown; };"
+      "text": "export declare function validateAgentReadMechanics(_args: ReadToolArgs): string | null; ;; via ReadToolArgs = type ReadToolArgs = { readonly files?: unknown; readonly image_mode?: unknown; readonly max_image_size?: unknown; readonly [key: string]: unknown; };"
     },
     {
       "name": "validateAgentSettingsMechanics",
@@ -29374,7 +29374,7 @@
     {
       "name": "validateAnalyzeToolInvocationForAgentPolicy",
       "kind": "function",
-      "text": "export declare function validateAnalyzeToolInvocationForAgentPolicy(args: AnalyzeToolArgs): string | null; ;; via AnalyzeToolArgs = type AnalyzeToolArgs = { readonly mode?: unknown; readonly [key: string]: unknown; };"
+      "text": "export declare function validateAnalyzeToolInvocationForAgentPolicy(_args: AnalyzeToolArgs): string | null; ;; via AnalyzeToolArgs = type AnalyzeToolArgs = { readonly mode?: unknown; readonly [key: string]: unknown; };"
     },
     {
       "name": "validateChannelToolInvocationForAgentPolicy",
@@ -29384,7 +29384,7 @@
     {
       "name": "validateExecToolInvocationForAgentPolicy",
       "kind": "function",
-      "text": "export declare function validateExecToolInvocationForAgentPolicy(args: ExecToolArgs): string | null;"
+      "text": "export declare function validateExecToolInvocationForAgentPolicy(_args: ExecToolArgs): string | null;"
     },
     {
       "name": "validateFetchToolInvocationForAgentPolicy",
@@ -29394,7 +29394,7 @@
     {
       "name": "validateFindToolInvocationForAgentPolicy",
       "kind": "function",
-      "text": "export declare function validateFindToolInvocationForAgentPolicy(args: FindToolArgs): string | null; ;; via FindToolArgs = type FindToolArgs = { readonly queries?: unknown; readonly output?: unknown; readonly parallel?: unknown; readonly [key: string]: unknown; };"
+      "text": "export declare function validateFindToolInvocationForAgentPolicy(_args: FindToolArgs): string | null; ;; via FindToolArgs = type FindToolArgs = { readonly queries?: unknown; readonly output?: unknown; readonly parallel?: unknown; readonly [key: string]: unknown; };"
     },
     {
       "name": "validateInspectToolInvocationForAgentPolicy",
@@ -29429,7 +29429,7 @@
     {
       "name": "validateWebSearchToolInvocationForAgentPolicy",
       "kind": "function",
-      "text": "export declare function validateWebSearchToolInvocationForAgentPolicy(args: WebSearchToolArgs): string | null; ;; via WebSearchToolArgs = type WebSearchToolArgs = { readonly maxResults?: unknown; readonly verbosity?: unknown; readonly safeSearch?: unknown; readonly includeEvidence?: unknown; readonly evidenceTopN?: unknown; readonly evidenceExtract?: unknown; readonly [key: string]: unknown; };"
+      "text": "export declare function validateWebSearchToolInvocationForAgentPolicy(_args: WebSearchToolArgs): string | null; ;; via WebSearchToolArgs = type WebSearchToolArgs = { readonly maxResults?: unknown; readonly verbosity?: unknown; readonly safeSearch?: unknown; readonly includeEvidence?: unknown; readonly evidenceTopN?: unknown; readonly evidenceExtract?: unknown; readonly [key: string]: unknown; };"
     },
     {
       "name": "wrapAgentToolForAgentPolicy",
@@ -56851,7 +56851,7 @@
     {
       "name": "CODE_INDEX_MAX_FILES",
       "kind": "const",
-      "text": "CODE_INDEX_MAX_FILES = 5000"
+      "text": "CODE_INDEX_MAX_FILES: number"
     },
     {
       "name": "CODE_INDEX_MAX_FILE_BYTES",

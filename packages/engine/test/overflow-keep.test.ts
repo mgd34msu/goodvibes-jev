@@ -3,6 +3,7 @@
  * engine.tools.output-keep ranks highest against the call that produced the
  * output, as many as fit the budget, in their original order.
  */
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { describe, expect, test } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -60,7 +61,20 @@ describe('OverflowHandler.handle', () => {
     const content = `${'progress line\n'.repeat(300)}FAILURE_SUMMARY: 2 failed\n${'progress line\n'.repeat(300)}`;
     const result = await handler().handle(content, { maxChars: 800, label: 'stdout', call: 'bun test' });
     expect(result.content).toContain('FAILURE_SUMMARY: 2 failed');
-    expect(result.content).toMatch(/truncated\. Full output: \.goodvibes\/\.overflow\/\d+-stdout\.txt/);
+    expect(result.content).toMatch(/truncated\. Full output: \.goodvibes\/\.overflow\/\d+-[a-f0-9-]+-stdout\.txt/);
     expect(result.overflowRef).toMatch(/^file:/);
   });
+});
+
+
+test('Jev unavailability leaves a retained complete output and a usable preview', async () => {
+  const previous = installJudgmentPort(undefined);
+  try {
+    const handler = new OverflowHandler({ baseDir: mkdtempSync(join(tmpdir(), 'gv-overflow-fallback-')) });
+    const content = 'BEGIN' + 'x'.repeat(2000) + 'END';
+    const result = await handler.handle(content, { maxChars: 100, call: 'fixture' });
+    expect(result.content).toContain('BEGIN'); expect(result.content).toContain('END');
+    expect(result.overflowRef).toMatch(/^file:/);
+    expect(handler.list()[0]?.content).toBe(content);
+  } finally { installJudgmentPort(previous); }
 });

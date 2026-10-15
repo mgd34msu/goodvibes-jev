@@ -390,7 +390,7 @@ export const runtimePrimaryConfigSettings: ConfigSettingDefinition[] = [
     key: 'controlPlane.tls.keyFile',
     type: 'string',
     default: '',
-    description: 'Private key PEM path for direct control-plane TLS (empty = ~/.goodvibes/certs/privkey.pem)',
+    description: 'Filesystem pathname of the PEM file used for direct control-plane TLS. This setting stores a path, not the private key contents. Empty uses ~/.goodvibes/certs/privkey.pem.',
   },
   {
     key: 'httpListener.hostMode',

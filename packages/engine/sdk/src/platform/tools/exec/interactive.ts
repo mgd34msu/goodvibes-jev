@@ -251,7 +251,6 @@ interface InteractiveRunInput {
   /** Trusted boundary resources and delivery checks; never model arguments. */
   readonly extraStdio?: readonly number[] | undefined;
   readonly beforeOutput?: (() => Promise<void>) | undefined;
-  readonly maxOutputChars?: number | undefined;
   readonly cmdStr: string;
   readonly cwd: string | undefined;
   readonly env: Record<string, string>;
@@ -332,12 +331,6 @@ export async function runInteractiveCommand(input: InteractiveRunInput): Promise
         if (done) break;
         // PTYs emit CRLF; normalize so transcripts and prompt tails are stable.
         transcript += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-        if (input.maxOutputChars !== undefined && transcript.length > input.maxOutputChars) {
-          transcript = transcript.slice(0, input.maxOutputChars);
-          judgmentFailure = new Error('Interactive output exceeded its boundary limit');
-          await kill();
-          return;
-        }
         lastDataAt = Date.now();
       }
     } catch (err: unknown) {
@@ -370,7 +363,7 @@ export async function runInteractiveCommand(input: InteractiveRunInput): Promise
       answer = await executePolicyCheck(() => interaction.requestPromptAnswer!({
         command: cmdStr,
         prompt,
-        recentOutput: transcript,
+        recentOutput: transcript.slice(-8000),
         ...(cwd !== undefined ? { workingDirectory: cwd } : {}),
       }, { signal: policySignal, assertCurrent }), policySignal);
       await executePolicyCheck(() => input.beforeOutput?.(), policySignal);
@@ -411,7 +404,7 @@ export async function runInteractiveCommand(input: InteractiveRunInput): Promise
       let prompt: string | null;
       try {
         await executePolicyCheck(() => input.beforeOutput?.(), policySignal);
-        prompt = await readPendingPrompt(cmdStr, transcript, policySignal);
+        prompt = await readPendingPrompt(cmdStr, transcript.slice(-8000), policySignal);
         await executePolicyCheck(() => input.beforeOutput?.(), policySignal);
       } catch (err: unknown) {
         if (exited || timedOut || cancelled || promptDeclined) return;

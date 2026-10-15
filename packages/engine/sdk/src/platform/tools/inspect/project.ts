@@ -65,16 +65,10 @@ const SKIPPED_DIRS = new Set([
   'out',
   'coverage',
 ]);
-/** The walk that counts source files stops after this many files and this depth. */
-const MAX_COUNTED_FILES = 2_000;
-const MAX_COUNT_DEPTH = 4;
-
-/** Files by extension in a bounded walk of the project (a fact the project-type reading weighs). */
+/** Count source files across the complete project tree. */
 function countSourceFiles(root: string): Record<string, number> {
   const counts: Record<string, number> = {};
-  let seen = 0;
-  const visit = (dir: string, depth: number): void => {
-    if (depth > MAX_COUNT_DEPTH || seen >= MAX_COUNTED_FILES) return;
+  const visit = (dir: string): void => {
     let entries: import('node:fs').Dirent[];
     try {
       entries = readdirSync(dir, { withFileTypes: true });
@@ -82,19 +76,17 @@ function countSourceFiles(root: string): Record<string, number> {
       return;
     }
     for (const entry of entries) {
-      if (seen >= MAX_COUNTED_FILES) return;
       if (entry.isDirectory()) {
-        if (!SKIPPED_DIRS.has(entry.name) && !entry.name.startsWith('.')) visit(join(dir, entry.name), depth + 1);
+        if (!SKIPPED_DIRS.has(entry.name) && !entry.name.startsWith('.')) visit(join(dir, entry.name));
       } else if (entry.isFile()) {
         const ext = extname(entry.name);
         if (ext) {
           counts[ext] = (counts[ext] ?? 0) + 1;
-          seen++;
         }
       }
     }
   };
-  visit(root, 0);
+  visit(root);
   return counts;
 }
 

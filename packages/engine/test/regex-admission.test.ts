@@ -25,7 +25,7 @@ test('actual regex edits retain numeric captures and flag-sensitive matching', a
   const fake = admit();
   const result = await computeSingleEdit('Foo_bar', { path: 'file.ts', find: '(foo)_(bar)', replace: '$2_$1' }, 'regex', false);
   expect(result).toMatchObject({ newContent: 'bar_Foo', occurrencesReplaced: 1 });
-  expect(fake.requests.map(request => (request.state as { flags: string }).flags)).toEqual(['gi', 'i']);
+  expect(fake.requests).toHaveLength(0);
   expect(JSON.stringify(fake.requests.map(request => request.state))).not.toContain('Foo_bar');
 });
 
@@ -48,17 +48,18 @@ test('one async schema walker preserves refs, not, allOf, anyOf, oneOf and dicti
   const schema = { type: 'object', $defs: { tag: { type: 'string', pattern: '^ok$' } },
     additionalProperties: { allOf: [{ $ref: '#/$defs/tag' }], not: { pattern: '^bad$' }, anyOf: [{ pattern: '^ok$' }, { const: 'alternate' }], oneOf: [{ pattern: '^ok$' }, { const: 'other' }] } };
   expect(await firstJsonSchemaFailureAsync(schema, { first: 'ok', second: 'ok' })).toBeUndefined();
-  expect(fake.requests).toHaveLength(2); // Scoped to this invocation, one handle per exact source.
+  expect(fake.requests).toHaveLength(0);
   expect((await firstJsonSchemaFailureAsync(schema, { first: 'bad' }))?.path).toBe('$.first');
-  expect(fake.requests).toHaveLength(3); // A second request cannot reuse authorization.
+  expect(fake.requests).toHaveLength(0);
 });
 
-test('unavailable readings hold permission deny rules instead of falling through to default allow', async () => {
+test('configured permission deny expressions work without a judgment service', async () => {
   const rule = { type: 'arg-shape' as const, id: 'deny', origin: 'user' as const, effect: 'deny' as const, toolPattern: 'read', argMatchers: { path: '/private/' } };
   const evaluator = new LayeredPolicyEvaluator({ mode: 'default', rules: [rule], defaultEffect: 'allow' });
-  await expect(evaluator.evaluateAsync('read', { path: 'private' }, 'read')).rejects.toThrow();
-  await expect(evaluateArgShapeRuleAsync(rule, 'read', { path: '/private/' })).rejects.toThrow();
+  expect((await evaluator.evaluateAsync('read', { path: 'private' }, 'read')).allowed).toBe(false);
+  expect((await evaluateArgShapeRuleAsync(rule, 'read', { path: '/private/' })).matched).toBe(true);
 });
+
 
 test('Bun native execution remains correct or retires within the independent worker deadline', async () => {
   admit(); // Deliberately wrong model verdict: runtime safety must remain independent.
@@ -130,61 +131,48 @@ test('worker output and input bounds cannot be relaxed by per-call options', asy
   await expect(expansion.replace('a'.repeat(50_000), 'b'.repeat(100))).rejects.toThrow();
 });
 
-test('yes and held readings veto execution; syntax and caps fail before a reading', async () => {
+test('Jev verdicts cannot veto regex execution; invalid syntax and explicit owner limits still fail', async () => {
   const fake = fakePort(() => noulAnswer(0.999)); installJudgmentPort(fake.port);
-  await expect(admitRegex('a', '', { operation: 'fixture' })).rejects.toThrow('backtracking');
-  expect(fake.requests).toHaveLength(1);
-  await expect(admitRegex('[', '', { operation: 'fixture' })).rejects.toThrow();
-  await expect(admitRegex('a', 'gg', { operation: 'fixture' })).rejects.toThrow('flags');
-  await expect(admitRegex('a'.repeat(513), '', { operation: 'fixture' })).rejects.toThrow('exceeds');
-  expect(fake.requests).toHaveLength(1);
-  installJudgmentPort(fakePort(() => noulAnswer(0.5)).port);
-  await expect(admitRegex('a', '', { operation: 'fixture' })).rejects.toThrow('backtracking');
-});
-
-test('cancellation interrupts a noncooperating read and late settlement creates no reusable admission', async () => {
-  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
-  const fake = fakePort(() => noulAnswer(0.001));
-  installJudgmentPort({ ...fake.port, async ask(request) { entered.resolve(); await release.promise; return fake.port.ask(request); } });
-  const controller = new AbortController();
-  const pending = admitRegex('a', '', { operation: 'fixture', signal: controller.signal });
-  await entered.promise;
-  controller.abort();
-  await expect(pending).rejects.toThrow();
-  release.resolve();
-  installJudgmentPort(undefined);
-  await expect(admitRegex('a', '', { operation: 'fixture' })).rejects.toThrow();
-});
-
-test('installed-port replacement retires an already-created executor', async () => {
-  admit();
   await using pattern = await admitRegex('a', '', { operation: 'fixture' });
   expect(await pattern.test('a')).toBe(true);
-  admit();
+  await expect(admitRegex('[', '', { operation: 'fixture' })).rejects.toThrow();
+  await expect(admitRegex('a', 'gg', { operation: 'fixture' })).rejects.toThrow('flags');
+  await expect(admitRegex('a'.repeat(513), '', { operation: 'fixture', maxPatternChars: 512 })).rejects.toThrow('exceeds');
+  expect(fake.requests).toHaveLength(0);
+});
+
+
+test('cancellation retires a regex executor without consulting Jev', async () => {
+  const controller = new AbortController();
+  await using pattern = await admitRegex('a', '', { operation: 'fixture', signal: controller.signal });
+  controller.abort();
   await expect(pattern.test('a')).rejects.toThrow();
 });
 
-test('rule and schema source mutations during a held read cannot authorize changed values', async () => {
-  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
-  const fake = fakePort(() => noulAnswer(0.001));
-  installJudgmentPort({ ...fake.port, async ask(request) { entered.resolve(); await release.promise; return fake.port.ask(request); } });
+
+test('changing Jev configuration does not retire local regex execution', async () => {
+  admit();
+  await using pattern = await admitRegex('a', '', { operation: 'fixture' });
+  installJudgmentPort(undefined);
+  expect(await pattern.test('a')).toBe(true);
+});
+
+
+test('schema source mutations during worker startup cannot authorize changed values', async () => {
   const schema = { type: 'string', pattern: '^a$' };
   const pending = firstJsonSchemaFailureAsync(schema, 'a');
-  await entered.promise;
-  schema.pattern = '^b$'; release.resolve();
+  schema.pattern = '^b$';
   await expect(pending).rejects.toThrow();
 });
 
-test('permission matcher mutation during a pending read is held rather than becoming an allow', async () => {
-  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
-  const fake = fakePort(() => noulAnswer(0.001));
-  installJudgmentPort({ ...fake.port, async ask(request) { entered.resolve(); await release.promise; return fake.port.ask(request); } });
+
+test('permission matcher mutation during worker startup cannot become an allow', async () => {
   const rule = { type: 'arg-shape' as const, id: 'allow', origin: 'user' as const, effect: 'allow' as const, toolPattern: 'read', argMatchers: { path: '/public/' } };
   const pending = evaluateArgShapeRuleAsync(rule, 'read', { path: 'public' });
-  await entered.promise;
-  rule.argMatchers.path = '/private/'; release.resolve();
+  rule.argMatchers.path = '/private/';
   await expect(pending).rejects.toThrow();
 });
+
 
 test('cancellation during worker construction terminates the late startup handle', async () => {
   admit();
@@ -236,47 +224,39 @@ test('the four exact wire grammars retain native anchors, Unicode, nested-not an
   }
   expect(firstJsonSchemaFailure({ pattern: '\\S' }, 'x'.repeat(60_000))).toBeUndefined();
   expect(() => firstJsonSchemaFailure({ pattern: '[^!-~]' }, 'x'.repeat(60_000))).toThrow('input exceeds');
-  await expect(firstJsonSchemaFailureAsync({ pattern: '^a+$' }, 'a')).rejects.toThrow();
+  expect(await firstJsonSchemaFailureAsync({ pattern: '^a+$' }, 'a')).toBeUndefined();
 });
 
-test('a session deny arriving during a held arg-shape reading invalidates pending policy allow', async () => {
-  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
-  const fake = fakePort(() => noulAnswer(0.001));
-  installJudgmentPort({ ...fake.port, async ask(request) { entered.resolve(); await release.promise; return fake.port.ask(request); } });
+test('a session deny arriving during regex execution invalidates pending policy allow', async () => {
   const rule = { type: 'arg-shape' as const, id: 'allow', origin: 'user' as const, effect: 'allow' as const, toolPattern: 'read', argMatchers: { path: '/public/' } };
   const args = { path: 'public' };
   const evaluator = new LayeredPolicyEvaluator({ mode: 'default', rules: [rule], defaultEffect: 'deny' });
   const pending = evaluator.evaluateAsync('read', args, 'read');
-  await entered.promise;
   evaluator.recordSessionOverride('read', args, false, true);
-  release.resolve();
   await expect(pending).rejects.toThrow();
 });
 
 
-test('simulator cannot publish an actual decision changed during the simulated reading', async () => {
-  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
-  const fake = fakePort(() => noulAnswer(0.001));
-  let count = 0;
-  installJudgmentPort({ ...fake.port, async ask(request) { if (++count === 2) { entered.resolve(); await release.promise; } return fake.port.ask(request); } });
+test('simulator cannot publish a decision whose source changed during execution', async () => {
   const rule = { type: 'arg-shape' as const, id: 'allow', origin: 'user' as const, effect: 'allow' as const, toolPattern: 'read', argMatchers: { path: '/public/' } };
   const simulated = { ...rule, argMatchers: { path: '/public/' } };
   const simulator = new PermissionSimulator({ mode: 'default', rules: [rule] }, { mode: 'default', rules: [simulated] }, 'simulation-only');
   const pending = simulator.evaluateAsync('read', { path: 'public' }, 'read');
-  await entered.promise; rule.argMatchers.path = '/private/'; release.resolve();
+  rule.argMatchers.path = '/private/';
   await expect(pending).rejects.toThrow();
 });
 
 
-test('actual find invocation cancellation reaches a suspended pattern reading', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'regex-find-cancel-'));
-  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
-  const fake = fakePort(() => noulAnswer(0.001));
-  installJudgmentPort({ ...fake.port, async ask(request) { entered.resolve(); await release.promise; return fake.port.ask(request); } });
-  const controller = new AbortController();
-  const pending = createFindTool(root).execute({ queries: [{ id: 'q', mode: 'content', pattern: 'a' }] }, { signal: controller.signal });
+test('find searches long lines and large files without a Jev gate or a hidden skip', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'regex-find-large-'));
   try {
-    await entered.promise; controller.abort();
-    expect((await pending).success).toBe(false);
-  } finally { release.resolve(); await pending.catch(() => {}); rmSync(root, { recursive: true, force: true }); }
+    writeFileSync(join(root, 'large.txt'), 'x'.repeat(600_000) + 'NEEDLE');
+    const result = await createFindTool(root).execute({ queries: [{ id: 'q', mode: 'content', pattern: 'NEEDLE' }], output: { format: 'count_only' } });
+    expect(result.success).toBe(true);
+    expect(JSON.parse(result.output!).q.count).toBe(1);
+    const content = 'x'.repeat(2_100_000) + 'NEEDLE';
+    expect(await computeSingleEdit(content, { path: 'large.txt', find: 'NEEDLE', replace: 'done' }, 'regex', true)).toMatchObject({ newContent: 'x'.repeat(2_100_000) + 'done' });
+    const controller = new AbortController(); controller.abort();
+    expect((await createFindTool(root).execute({ queries: [{ id: 'q', mode: 'content', pattern: 'x' }] }, { signal: controller.signal })).success).toBe(false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

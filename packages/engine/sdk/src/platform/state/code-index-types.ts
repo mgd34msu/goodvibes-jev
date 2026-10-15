@@ -75,11 +75,11 @@ export interface CodeContextResult {
 }
 
 export interface CodeIndexOptions {
-  /** Maximum number of files walked per build. Default 5000. */
+  /** Maximum number of files walked per build. Default unlimited. */
   readonly maxFiles?: number | undefined;
-  /** Files larger than this are skipped and counted as `tooLarge`. Default 512KB. */
+  /** Files larger than this are skipped and counted as `tooLarge`. Default unlimited. */
   readonly maxFileBytes?: number | undefined;
-  /** Cumulative byte budget for one build; once exceeded, remaining files count as `overTotalBytes`. Default 256MB. */
+  /** Cumulative byte budget for one build; once exceeded, remaining files count as `overTotalBytes`. Default unlimited. */
   readonly maxTotalBytes?: number | undefined;
   /** Fallback window size (lines) for unsupported/parse-failed/symbol-less files. Default 60. */
   readonly windowLines?: number | undefined;

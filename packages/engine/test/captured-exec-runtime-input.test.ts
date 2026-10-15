@@ -118,17 +118,17 @@ test.skipIf(!supported)('direct commands consume the construction-owned Node/npm
     '  fs.writeFileSync("node-proof.txt", "REAL_CONTAINED_NODE\\n");',
     '});',
   ].join('\n'));
-  const opened: string[] = [];
-  const read = asyncFs.readFile;
-  const tap = spyOn(asyncFs, 'readFile').mockImplementation(((...args: Parameters<typeof read>) => {
-    opened.push(String(args[0]));
-    return read(...args);
-  }) as typeof read);
+  const copied: string[] = [];
+  const copy = asyncFs.copyFile;
+  const tap = spyOn(asyncFs, 'copyFile').mockImplementation(((...args: Parameters<typeof copy>) => {
+    copied.push(String(args[0]));
+    return copy(...args);
+  }) as typeof copy);
   let result;
   try { result = await runCapturedCommand({ ...binding, nodeRuntimeAdmission }, 'node --version && npm test && npx --version', {}, binding.root, 30000); }
   finally { tap.mockRestore(); }
-  expect(opened).toContain(join(binding.root, 'input.txt'));
-  expect(opened.some((path) => path.endsWith('/private.txt'))).toBe(false);
+  expect(copied).toContain(join(binding.root, 'input.txt'));
+  expect(copied.some((path) => path.endsWith('/private.txt'))).toBe(false);
   expect(result.success, JSON.stringify(result)).toBe(true);
   expect(result.sandboxed).toBe(true);
   expect(result.stdout).toContain('contained direct runtime');

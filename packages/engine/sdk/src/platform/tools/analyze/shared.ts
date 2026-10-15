@@ -7,8 +7,9 @@ import type { AnalyzeInput, JsonObject, DiffStatFile } from './types.js';
 import { summarizeError } from '../../utils/error-display.js';
 
 export const BINARY_CHECK_BYTES = 8192;
-export const MAX_SCAN_FILES = 500;
-export const MAX_SCAN_MS = 5000;
+/** Default discovery covers the requested scope; callers may supply a finite page budget. */
+export const MAX_SCAN_FILES = Number.POSITIVE_INFINITY;
+export const MAX_SCAN_MS = Number.POSITIVE_INFINITY;
 export const ANALYZE_SUMMARY_SAMPLE_LIMIT = 5;
 
 export async function isBinary(filePath: string): Promise<boolean> {

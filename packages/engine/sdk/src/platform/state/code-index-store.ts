@@ -132,9 +132,9 @@ import type {
   CodeIndexOptions,
   CodeIndexStats,
 } from './code-index-types.js';
-const DEFAULT_MAX_FILES = 5000;
-const DEFAULT_MAX_FILE_BYTES = 512 * 1024;
-const DEFAULT_MAX_TOTAL_BYTES = 256 * 1024 * 1024;
+const DEFAULT_MAX_FILES = Infinity;
+const DEFAULT_MAX_FILE_BYTES = Infinity;
+const DEFAULT_MAX_TOTAL_BYTES = Infinity;
 const BUILD_ABORTED_BY_REROOT = 'build aborted by reroot';
 function distanceToSimilarity(distance: number): number {
   if (!Number.isFinite(distance)) return 0;

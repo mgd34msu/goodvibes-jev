@@ -57,7 +57,6 @@ export const READ_TOOL_SCHEMA = {
         required: ['path'],
       },
       minItems: 1,
-      maxItems: 50,
     },
     extract: {
       type: 'string',

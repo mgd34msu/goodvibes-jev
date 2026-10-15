@@ -153,8 +153,8 @@ test('denied and excluded files are never opened during admission; invocation ow
   }) as typeof fs.openSync);
   try {
     const context = await admitCapturedRegistryContext(f.binding, { homeDirectory: f.home });
-    expect(opened).toContain(f.allowed);
-    expect(opened).toContain(f.global);
+    expect(opened).not.toContain(f.allowed); // metadata-only admission
+    expect(opened).not.toContain(f.global);
     for (const path of [f.denied, f.deniedGlobal, f.outside, join(f.root, '.goodvibes/skills/alias.md'), join(f.root, '.goodvibes/skills/.git/config.md')])
       expect(opened).not.toContain(path);
     const tool = createRegistryTool(new ToolRegistry(), { workingDirectory: f.view, capturedInput: context });

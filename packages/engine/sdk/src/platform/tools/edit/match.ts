@@ -7,7 +7,7 @@ import { summarizeError } from '../../utils/error-display.js';
 import { assertSafeRegexInput, compileSafeRegExp, createSafeRegex, safeRegExpExec } from '../../utils/safe-regex.js';
 import { judgmentPort, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { editWindow } from '../batteries/edit-window.js';
-import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
+import { assertJudgmentInput } from '../../gate/judgment-input.js';
 import { requireActingReading, JudgmentHeldError } from '../../types/judgment-held.js';
 import { editTarget, editTargetView } from '../batteries/edit-target.js';
 
@@ -39,7 +39,6 @@ function lineNumberAt(content: string, offset: number): number {
   return content.slice(0, offset).split('\n').length;
 }
 
-const MAX_FUZZY_FILE_LINES = 5000;
 
 /** The decision site the edit-target reading is logged under. */
 export const EDIT_TARGET_SITE = 'tools.edit-fuzzy-line';
@@ -60,7 +59,7 @@ export function findAllPositions(
       if (!flags.includes('s')) flags += 's';
       if (!flags.includes('m')) flags += 'm';
     }
-    assertSafeRegexInput(content, { operation: 'edit regex search', maxInputChars: 500_000 });
+    assertSafeRegexInput(content, { operation: 'edit regex search' });
     const re = compileSafeRegExp(find, flags, { operation: 'edit regex search' });
     let m: RegExpExecArray | null;
     while ((m = re.exec(content)) !== null) {
@@ -276,7 +275,7 @@ async function findAllPositionsAsync(
   if (mode !== 'regex') return findAllPositions(content, find, mode, caseSensitive, whitespaceSensitive, multiline);
   await assertCapturedToolAccessCurrent();
   const flags = `${caseSensitive ? 'g' : 'gi'}${multiline ? 'sm' : ''}`;
-  await using pattern = await createSafeRegex(find, flags, { ...options, operation: 'edit regex search', maxInputChars: 500_000 });
+  await using pattern = await createSafeRegex(find, flags, { ...options, operation: 'edit regex search' });
   const positions = await pattern.positions(content);
   await assertCapturedToolAccessCurrent();
   pattern.assertCurrent();
@@ -295,12 +294,11 @@ async function applyReplacementsAsync(
     const match = await pattern.exec(content.slice(start, end));
     // Preserve the edit API's historical numeric-capture substitution (not
     // String.replace's full replacement language, used by find preview).
-    const budget = 2_000_000 - (result.length - (end - start));
-    if (budget < 0 || replace.length > 2_000_000) throw new Error('edit regex replacement output exceeds 2000000 characters');
+    const budget = 2_000_000 + (end - start) + replace.length;
     const parts: string[] = [];
     let size = 0, cursor = 0;
     const append = (part: string) => {
-      if (size + part.length > budget) throw new Error('edit regex replacement output exceeds 2000000 characters');
+      if (size + part.length > budget) throw new Error('edit regex replacement output exceeds the expansion budget');
       size += part.length; if (part.length) parts.push(part);
     };
     if (match) {
@@ -574,24 +572,17 @@ export function buildFailedEditResult(item: EditItem, error: string, status: Edi
 
 /** All structurally possible windows participate; similarity never hides a target. */
 async function selectEditWindow(file: string, find: string) {
-  const context = { find, file };
-  assertJudgmentInput(context);
-  if (JSON.stringify(context).length > 160_000) throw new JudgmentInputError('unsupported-input');
   const lines = file.split('\n'), size = find.split('\n').length;
-  if (lines.length > MAX_FUZZY_FILE_LINES) throw new JudgmentInputError('unsupported-input');
-  let offset = 0;
-  const windows = lines.flatMap((line, i) => {
-    const start = offset; offset += line.length + 1;
-    if (i + size > lines.length) return [];
-    const candidateLines = lines.slice(i, i + size), text = candidateLines.join('\n');
-    return [{ id: `line-${i + 1}`, content: { startLine: i + 1, text }, start, end: start + text.length, candidateLines }];
-  });
-  const batches = Array.from({ length: Math.ceil(windows.length / 64) }, (_, i) => windows.slice(i * 64, (i + 1) * 64));
-  for (const candidates of batches) if (JSON.stringify({ context, candidates }).length > 160_000) throw new JudgmentInputError('unsupported-input');
+  // Each reading sees the complete candidate and its neighboring lines. Do not
+  // send the whole file with every candidate or reject files by line count.
+  const context = { find, totalLines: lines.length, scope: 'Candidates include neighboring lines; other file locations are evaluated in separate batches.' };
+  if (JSON.stringify(context).length > 160_000) return null;
+  assertJudgmentInput(context);
+  type Window = { id: string; content: { startLine: number; text: string; before: string; after: string }; start: number; end: number; candidateLines: string[] };
   const port = judgmentPort(EDIT_TARGET_SITE), model = port.model;
   const current = () => { if (judgmentPort(EDIT_TARGET_SITE) !== port || port.model !== model) throw new JudgmentHeldError(); };
-  const matches: typeof windows = [];
-  for (const candidates of batches) {
+  const matches: Window[] = [];
+  const evaluate = async (candidates: Window[]) => {
     await assertCapturedToolAccessCurrent(); current();
     const selection = await editWindow.select(port, context, candidates, { site: EDIT_TARGET_SITE, beforeAttempt: current, beforeAsyncAttempt: assertCapturedToolAccessCurrent });
     current(); await assertCapturedToolAccessCurrent();
@@ -600,8 +591,28 @@ async function selectEditWindow(file: string, find: string) {
       const fit = requireActingReading(selection.fits[candidate.id]!);
       if (fit.verdict === 'yes') matches.push(candidate);
     }
-    selection.recordAction('Evaluate every possible edit location; only one unambiguous target may proceed.');
+    selection.recordAction('Evaluate candidate locations; only one unambiguous target may proceed.');
+  };
+  let offset = 0;
+  let batch: Window[] = [];
+  let batchChars = JSON.stringify(context).length;
+  for (let i = 0; i + size <= lines.length; i++) {
+    const start = offset; offset += lines[i]!.length + 1;
+    const candidateLines = lines.slice(i, i + size), text = candidateLines.join('\n');
+    const candidate = { id: `line-${i + 1}`, content: { startLine: i + 1, text,
+      before: lines.slice(Math.max(0, i - 2), i).join('\n'), after: lines.slice(i + size, i + size + 2).join('\n') }, start, end: start + text.length, candidateLines };
+    const chars = JSON.stringify(candidate).length;
+    // An oversized individual target cannot be safely inferred by a bounded
+    // model request. Exact replacement remains available for the entire file.
+    if (JSON.stringify(context).length + chars > 160_000) return null;
+    if (batch.length && (batch.length >= 64 || batchChars + chars > 160_000)) {
+      await evaluate(batch);
+      if (matches.length > 1) return null;
+      batch = []; batchChars = JSON.stringify(context).length;
+    }
+    batch.push(candidate); batchChars += chars;
   }
+  if (batch.length) await evaluate(batch);
   if (matches.length !== 1) return null;
   const match = matches[0]!;
   // A separate same-target reading independently verifies the selected bytes.

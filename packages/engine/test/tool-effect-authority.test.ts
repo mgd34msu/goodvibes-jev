@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { assertCurrentToolEffect, ToolRegistry, type ToolExecutionEffect } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolEffect, assertCurrentToolInvocation, ToolRegistry, type ToolExecutionEffect } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { DEFAULT_CONFIG, type PermissionAction, type PermissionMode } from '../sdk/src/platform/config/index.ts';
 import { PermissionManager, type PermissionConfigReader } from '../sdk/src/platform/permissions/manager.ts';
 import { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions/policy-runtime.ts';
@@ -70,8 +70,6 @@ function fixture(options: { mode?: PermissionMode; write?: PermissionAction; sur
     const admission = await manager.admitAutonomous('effect-source', NAME, call.args, {
       sourceOf: () => source, schemaRevision: call.schemaRevision, preparedCall: { registry, call }, signal,
     });
-    expect(admission.result.autonomousDecision?.outcome).toBe('act');
-    expect(admission.result.reading?.facts).toMatchObject({ mutates: false, outward: false });
     for (const id of admission.result.autonomousDecision?.judgmentDecisionIds ?? []) expect(log.get(id)?.status).toBe('answered');
     return { call, admission };
   }
@@ -99,7 +97,8 @@ test('a real recorded act permits its exact effect without caller confirmation f
 test.each(['write', 'send'] satisfies ToolExecutionEffect[])('plan blocks a recorded misclassified %s before its effect', async effect => {
   const f = fixture({ mode: 'plan', effect });
   const { call, admission } = await f.prepare();
-  await expect(f.registry.executePrepared(call, admission)).rejects.toMatchObject({ problem: 'held' });
+  expect(admission.result.approved).toBe(false);
+  await expect(f.registry.executePrepared(call, admission)).rejects.toThrow();
   expect(f.effects).toBe(0);
 });
 
@@ -113,7 +112,8 @@ test.each(['write', 'send'] satisfies ToolExecutionEffect[])('custom write deny 
 test.each(['write', 'send'] satisfies ToolExecutionEffect[])('an input-only surface blocks the deterministic %s floor', async effect => {
   const f = fixture({ surface: 'email', effect });
   const { call, admission } = await f.prepare();
-  await expect(f.registry.executePrepared(call, admission)).rejects.toMatchObject({ problem: 'held' });
+  expect(admission.result.approved).toBe(false);
+  await expect(f.registry.executePrepared(call, admission)).rejects.toThrow();
   expect(f.effects).toBe(0);
 });
 
@@ -143,6 +143,26 @@ test('copied arguments and copied options cannot use an authentic active body pr
   const { call, admission } = await f.prepare();
   expect(await f.registry.executePrepared(call, admission)).toMatchObject({ success: true });
   expect(f.effects).toBe(1);
+});
+
+test('a separately dispatched background read does not inherit a retired spawning tool proof', async () => {
+  const release = Promise.withResolvers<void>();
+  const child = new ToolRegistry();
+  child.register({ definition: { name: 'child_read', description: 'Read fixture', parameters: { type: 'object' } },
+    async execute(args, options) {
+      expect(assertCurrentToolInvocation(args, options)).toBe(false);
+      expect(assertCurrentToolEffect(args, options)).toBe(false);
+      return { success: true, output: 'read completed without borrowed authority' };
+    } });
+  let pending: Promise<unknown> | undefined;
+  const f = fixture({ beforeEffect: async () => {
+    pending = (async () => { await release.promise; return child.execute('child', 'child_read', {}); })();
+    return { success: true };
+  } });
+  const { call, admission } = await f.prepare();
+  await f.registry.executePrepared(call, admission);
+  release.resolve();
+  await expect(pending).resolves.toMatchObject({ success: true });
 });
 
 test.each(['preset', 'write-deny', 'surface', 'cancel'] as const)('a pending body loses effect authority after %s changes', async change => {

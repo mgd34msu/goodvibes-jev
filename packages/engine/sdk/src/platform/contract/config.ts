@@ -57,10 +57,10 @@ export interface ContractConfig {
 export const CONTRACT_CONFIG_DEFAULTS: ContractConfig = {
   autoCommit: true,
   commitScope: 'scoped',
-  // The defaults carried over from the retired review loop: typecheck and lint gate every unit, build is opt-in.
+  // Gates are project-specific commands and run only when the owner enables them.
   gates: [
-    { name: 'typecheck', command: 'npx tsc --noEmit', enabled: true },
-    { name: 'lint', command: 'npx eslint . --max-warnings 0', enabled: true },
+    { name: 'typecheck', command: 'npx tsc --noEmit', enabled: false },
+    { name: 'lint', command: 'npx eslint . --max-warnings 0', enabled: false },
     { name: 'build', command: 'npm run build', enabled: false },
   ],
   gateTimeoutMs: 120_000,

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 /** Construction-owned provenance. A captured path never grants permission by itself. */
 import { realpathSync } from 'node:fs';
+import { fileContentDigest } from '../utils/file-content.js';
 import { lstat, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Contract } from './types.js';
@@ -33,12 +34,16 @@ interface Authority {
   readonly mutable: boolean;
   /** Exact construction-selected generation membership; never a read grant. */
   readonly inputFiles: readonly string[];
+  readonly inputEntries: ReadonlyMap<string, ContractInputSnapshot['files'][number]>;
   readonly signal?: AbortSignal | undefined;
   readonly assertView: () => Promise<void>;
+  readonly batchable: boolean;
   revoked: boolean;
   readonly reads: Set<string>;
   readonly readAssertions: Set<() => Promise<void>>;
 }
+const readBatches = new AsyncLocalStorage<ReadonlyMap<ContractInputAuthority, { active: boolean }>>();
+const inReadBatch = (token: ContractInputAuthority): boolean => readBatches.getStore()?.get(token)?.active === true;
 const admissions = new WeakMap<Contract, Admission>();
 const authorities = new WeakMap<ContractInputAuthority, Authority>();
 const bindings = new WeakMap<object, ContractInputAuthority>();
@@ -47,11 +52,11 @@ const activeInputAuthority = new AsyncLocalStorage<ContractInputAuthority>();
 const capturedRoots = new Set<string>();
 const identity = (stat: { dev: bigint; ino: bigint }): string => `${stat.dev}:${stat.ino}`;
 
-function assertAdmission(admission: Admission): void {
+function assertAdmission(admission: Admission, compareContents = true): void {
   admission.signal?.throwIfAborted();
   if (
     admission.contract.inputSnapshot !== admission.original ||
-    JSON.stringify(admission.contract.inputSnapshot) !== admission.serialized
+    (compareContents && JSON.stringify(admission.contract.inputSnapshot) !== admission.serialized)
   )
     throw new Error('contract input receipt changed after admission');
 }
@@ -119,7 +124,9 @@ export async function createContractInputAuthority(
     identity: identity(stat),
     mutable: options.mutable === true,
     inputFiles: Object.freeze(snapshot.files.filter(file => file.kind === 'file').map(file => file.path)),
+    inputEntries: new Map(snapshot.files.map(file => [file.path, file])),
     assertView,
+    batchable: options.assertView === undefined,
     signal: options.signal,
     revoked: false,
     reads: new Set(),
@@ -165,7 +172,7 @@ function stateOf(token: ContractInputAuthority): Authority {
   const state = authorities.get(token);
   if (!state || state.revoked) throw new Error('captured input authority is missing or revoked');
   state.signal?.throwIfAborted();
-  assertAdmission(state.admission);
+  assertAdmission(state.admission, !inReadBatch(token));
   return state;
 }
 export async function assertContractInputAuthority(
@@ -195,10 +202,39 @@ export async function assertContractInputAuthority(
     (await realpath(state.root)) !== state.root
   )
     throw new Error('captured input root identity changed');
-  await state.assertView();
+  if (!inReadBatch(token)) await state.assertView();
   signal?.throwIfAborted();
   stateOf(token);
 }
+/** Whole-view validation surrounds a batch; every path still checks owner policy,
+ * root identity, aliases and immutable content before and after callbacks.
+ * Avoid recursively rescanning the entire repository for each directory entry.
+ */
+export async function withContractInputReadBatch<T>(token: ContractInputAuthority, operation: () => Promise<T>): Promise<T> {
+  if (!stateOf(token).batchable) return operation();
+  const active = readBatches.getStore();
+  if (inReadBatch(token)) return operation();
+  await assertContractInputAuthority(token);
+  const lease = { active: true };
+  const scope = new Map(active); scope.set(token, lease);
+  let result: T;
+  try { result = await readBatches.run(scope, operation); }
+  finally { lease.active = false; }
+  await assertContractInputAuthority(token);
+  return result;
+}
+
+async function assertBatchedInputPath(token: ContractInputAuthority, path: string, rel: string, signal?: AbortSignal): Promise<void> {
+  if (!inReadBatch(token)) return;
+  const state = stateOf(token);
+  if (state.mutable) return;
+  const expected = state.inputEntries.get(rel.split(sep).join('/'));
+  const stat = await lstat(path);
+  if (stat.isDirectory()) return;
+  if (!expected || expected.kind !== 'file' || (stat.mode & 0o111 ? '100755' : '100644') !== expected.mode || await fileContentDigest(path, signal) !== expected.digest)
+    throw new Error('contract input view changed at accessed path');
+}
+
 /** Repository provenance for bounded historical-object readers; never a path/read grant. */
 export async function assertContractInputGitAuthority(token: ContractInputAuthority, signal?: AbortSignal): Promise<void> {
   await assertContractInputAuthority(token, undefined, signal);
@@ -267,12 +303,14 @@ export async function authorizeContractInputPath(
     throw new Error('path is outside authorized captured input');
   const original = await checkedPath(state.admission.receipt.sourceRoot, rel);
   await checkedPath(state.root, rel);
+  await assertBatchedInputPath(token, path, rel, signal);
   if (!(await executePolicyCheck(() => filter(original), signal)) ||
       !(await executePolicyCheck(() => filter(path), signal))) throw new Error('captured input path is access-restricted');
   // Recheck both roots and paths after permission callbacks can yield/revoke.
   await assertContractInputAuthority(token, undefined, signal);
   await checkedPath(state.admission.receipt.sourceRoot, rel);
   await checkedPath(state.root, rel);
+  await assertBatchedInputPath(token, path, rel, signal);
   signal?.throwIfAborted();
   stateOf(token);
   state.reads.add(path);
@@ -291,7 +329,9 @@ export async function assertContractInputReadAccess(
   signal?: AbortSignal,
 ): Promise<void> {
   if (!filter) throw new Error('captured input requires original-owner read authorization');
-  for (const path of stateOf(token).reads) await authorizeContractInputPath(token, path, filter, signal);
+  await withContractInputReadBatch(token, async () => {
+    for (const path of stateOf(token).reads) await authorizeContractInputPath(token, path, filter, signal);
+  });
   for (const assertion of [...stateOf(token).readAssertions]) {
     signal?.throwIfAborted();
     await executePolicyCheck(assertion, signal);

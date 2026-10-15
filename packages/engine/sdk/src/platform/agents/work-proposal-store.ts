@@ -94,7 +94,6 @@ function optionalString(value: unknown): string | undefined {
 const STATUSES: readonly WorkProposalStatus[] = ['pending', 'accepted', 'declined', 'expired'];
 
 /** Cap on a single field so a hostile payload cannot bloat the store. */
-const MAX_TASK_LENGTH = 8_000;
 const MAX_SUMMARY_LENGTH = 200;
 
 /**
@@ -107,7 +106,6 @@ export function validateWorkProposal(value: unknown): WorkProposalRecord | null 
   const task = optionalString(value.task);
   const surfaceKind = optionalString(value.surfaceKind);
   if (!id || !task || !surfaceKind) return null;
-  if (task.length > MAX_TASK_LENGTH) return null;
   const createdAt = value.createdAt;
   const expiresAt = value.expiresAt;
   if (!Number.isFinite(createdAt) || !Number.isFinite(expiresAt)) return null;
@@ -265,7 +263,7 @@ export class WorkProposalStore {
       expiresAt: createdAt + Math.max(1, input.ttlMs),
       status: 'pending',
       surfaceKind: input.surfaceKind,
-      task: input.task.slice(0, MAX_TASK_LENGTH),
+      task: input.task,
       summary: input.summary.slice(0, MAX_SUMMARY_LENGTH),
       // Not answerable until the send is confirmed, see markDelivered.
       delivered: false,

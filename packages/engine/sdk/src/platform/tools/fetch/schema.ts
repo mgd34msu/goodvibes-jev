@@ -116,7 +116,6 @@ export const FETCH_TOOL_SCHEMA = {
         required: ['url'],
       },
       minItems: 1,
-      maxItems: 20,
     },
     extract: {
       type: 'string',

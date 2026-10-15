@@ -1,7 +1,8 @@
 /** Historical comparison inputs are pinned objects, never a mount of the owner's Git directory. */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { spawnSync } from 'node:child_process';
-import { lstatSync, realpathSync } from 'node:fs';
+import { closeSync, lstatSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   assertCapturedInputPathContext,
@@ -23,7 +24,6 @@ interface CapturedAnalysis {
 }
 const active = new AsyncLocalStorage<CapturedAnalysis>();
 const OID = /^[0-9a-f]{40,64}$/;
-const MAX_OUTPUT = 32 * 1024 * 1024;
 
 export function withCapturedAnalyzeInput<T>(
   authority: ContractInputAuthority,
@@ -51,6 +51,10 @@ export interface AnalyzeGitReader extends Pick<GitService, 'diffBetween' | 'diff
 /** Only fixed metadata/diff commands reach this helper. Never inherit Git routing or executable diff drivers. */
 function git(cwd: string, args: readonly string[], gitDir?: string): string {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+  const scratch = mkdtempSync(join(tmpdir(), 'goodvibes-git-read-'));
+  const outputPath = join(scratch, 'output');
+  const fd = openSync(outputPath, 'wx', 0o600);
+  try {
   const result = spawnSync('git', [
     '--no-replace-objects', '--no-optional-locks', '-C', cwd,
     '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false',
@@ -62,13 +66,15 @@ function git(cwd: string, args: readonly string[], gitDir?: string): string {
       ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_GLOBAL: '/dev/null',
       GIT_ATTR_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1',
     },
-    timeout: 10_000, maxBuffer: MAX_OUTPUT,
+    stdio: ['ignore', fd, 'ignore'],
   });
   // Neither subprocess diagnostics nor partially read bytes are deliverable on failure.
   if (result.status !== 0) throw new Error('captured historical Git read failed');
-  const output = result.stdout.toString('utf8');
-  if (!Buffer.from(output).equals(result.stdout)) throw new Error('captured historical Git output is not UTF-8');
+  const bytes = readFileSync(outputPath);
+  const output = bytes.toString('utf8');
+  if (!Buffer.from(output).equals(bytes)) throw new Error('captured historical Git output is not UTF-8');
   return output;
+  } finally { closeSync(fd); rmSync(scratch, { recursive: true, force: true }); }
 }
 
 function identity(path: string): string {
@@ -170,15 +176,16 @@ export async function createAnalyzeGitReader(projectRoot: string, before: string
     // --name-only does not open blobs. Authorize both sides of every selected change before diff/stat reads them.
     const names = git(source, [...base, '--name-only', '-z', beforeCommit, afterCommit,
       ...(selection?.length ? ['--', ...selection] : [])], gitDir).split('\0').filter(Boolean);
-    if (names.length > 20_000) throw new Error('captured comparison exceeds file-count bound');
     for (const path of names) {
       if (!safeRelativePath(path)) throw new Error('captured comparison contains an excluded or ambiguous path');
       await assertCapturedToolReadAccess(join(context.root, path));
     }
     await assertCurrent();
     if (names.length === 0) return '';
-    const output = git(source, ['--literal-pathspecs', 'diff-tree', '--no-commit-id', '-r',
-      '--no-ext-diff', '--no-textconv', '--submodule=short', stat ? '--stat' : '-p', beforeCommit, afterCommit, '--', ...names], gitDir);
+    // Reuse the pinned comparison selectors after authorizing every selected
+    // path. Expanding names into argv would hit the OS argument-size limit.
+    const output = git(source, [...base, '--submodule=short', stat ? '--stat' : '-p', beforeCommit, afterCommit,
+      ...(selection?.length ? ['--', ...selection] : [])], gitDir);
     await assertCurrent();
     return output;
   };

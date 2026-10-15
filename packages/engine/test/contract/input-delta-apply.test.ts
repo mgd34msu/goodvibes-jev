@@ -73,7 +73,7 @@ test('conflicting later owner edit retains both owner and contract result withou
   await waitFor(() => terminal(h, contract.id), 'conflicting dirty input hold', 15_000);
   const done = h.store.get(contract.id)!;
   expect(done.commit?.status).toBe('failed');
-  expect(done.commit?.note).toBe(`not applied: [REDACTED]; the work stays on branch ${done.branch}`);
+  expect(done.commit?.note).toBe(`not applied: contract input owner changed: src/csv.ts; the work stays on branch ${done.branch}`);
   expect(done.commit?.hash).toBeUndefined();
   expect(readFileSync(join(h.root, 'src/csv.ts'), 'utf8')).toBe('owner later replacement\n');
   expect(readFileSync(join(done.worktreePath!, 'src/csv.ts'), 'utf8')).toBe('contract replacement\n');
@@ -120,7 +120,7 @@ for (const boundary of ['restricted', 'cancelled'] as const) {
     const done = h.store.get(contractId)!;
     if (boundary === 'restricted') {
       expect(done.commit?.status).toBe('failed');
-      expect(done.commit?.note).toBe(`not applied: [REDACTED]; the work stays on branch ${done.branch}`);
+      expect(done.commit?.note).toBe(`not applied: captured input path is access-restricted; the work stays on branch ${done.branch}`);
       expect(done.commit?.hash).toBeUndefined();
       expect(readFileSync(join(done.worktreePath!, 'src/csv.ts'), 'utf8')).toBe('contract output\n');
     }

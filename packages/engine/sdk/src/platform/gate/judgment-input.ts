@@ -23,7 +23,7 @@ export type JudgmentInputProblem = 'credential-material' | 'card-material' | 'un
 const REASONS: Readonly<Record<JudgmentInputProblem, string>> = {
   'credential-material': 'Refused before judgment: inline credential material must use the secure credential setup path. Pass a stored secret reference instead of a raw value.',
   'card-material': 'Refused before judgment: payment card material must be entered through the local terminal or web UI secure card setup path. Use the stored card id for tool calls.',
-  'unsupported-input': 'Refused before judgment: arguments must be bounded plain JSON data without accessors or cycles.',
+  'unsupported-input': 'Refused before judgment: arguments must be plain JSON data without accessors or cycles.',
 };
 
 /** A value-free refusal, including when a reading is called without a manager. */
@@ -130,57 +130,62 @@ export function retainOwnedJson(value: unknown, rejectObject?: (value: object) =
 
 function captureOwnedJsonInternal(value: unknown, rejectObject?: (value: object) => boolean,
   retained?: RetainedJsonObject[], includeHidden = false): unknown {
-  let nodes = 0;
-  let chars = 0;
-  let slots = 0;
+  // Local tool data is not a hosted judgment request. Walk iteratively so large
+  // files, batches and deeply nested JSON do not inherit transport/stack limits.
   const ancestors = new Set<object>();
   const observed = retained ? new WeakSet<object>() : undefined;
   const unsupported = (): never => { throw new JudgmentInputError('unsupported-input'); };
-  function capture(entry: unknown, depth: number): unknown {
-    if (++nodes > MAX_NODES || depth > MAX_DEPTH) return unsupported();
-    if (typeof entry === 'string') {
-      chars += entry.length;
-      if (chars > MAX_TEXT_CHARS) return unsupported();
-      return entry;
-    }
-    if (entry === null || entry === undefined || typeof entry === 'boolean') return entry;
-    if (typeof entry === 'number') return Number.isFinite(entry) ? entry : unsupported();
-    if (typeof entry !== 'object' || ancestors.has(entry) || rejectObject?.(entry)) return unsupported();
-    const array = Array.isArray(entry);
-    const prototype: unknown = Object.getPrototypeOf(entry);
-    if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return unsupported();
-    const descriptors = Object.getOwnPropertyDescriptors(entry);
-    // Neither species construction nor hidden serialization/iterator hooks are JSON data.
-    if (Object.getOwnPropertySymbols(descriptors).length > 0 || (array && Object.hasOwn(descriptors, 'constructor'))) return unsupported();
-    if (Object.values(descriptors).some((descriptor) => !('value' in descriptor) || typeof descriptor.value === 'function')) return unsupported();
-    if (retained && observed && !observed.has(entry)) {
-      observed.add(entry);
-      const keys = ownJsonKeys(entry);
-      if (keys.length !== ownJsonKeys(descriptors).length) return unsupported();
-      retained.push({ value: entry, prototype, slots: keys.map(key => {
-        const descriptor: PropertyDescriptor | undefined = Object.getOwnPropertyDescriptor(descriptors, key)?.value;
-        if (!descriptor || !('value' in descriptor)) return unsupported();
-        return { key, value: descriptor.value, writable: descriptor.writable,
-          enumerable: descriptor.enumerable, configurable: descriptor.configurable };
-      }) });
-    }
-    const length: unknown = array ? descriptors['length']?.value : 0;
-    if (typeof length !== 'number' || !Number.isInteger(length) || length < 0 || (slots += length) > MAX_NODES) return unsupported();
-    const copy: object = array ? new Array(length) : Object.create(null) as object;
-    ancestors.add(entry);
-    try {
-      for (const [key, descriptor] of Object.entries(descriptors)) {
-        if (array ? key === 'length' : !includeHidden && !descriptor.enumerable) continue;
-        const index = Number(key);
-        if (array && Number.isInteger(index) && index >= 0 && index < 0xffff_ffff && String(index) === key && index >= length) return unsupported();
-        // DefineProperty preserves __proto__ as data instead of changing the clone's prototype.
-        Object.defineProperty(copy, key, { value: capture(descriptor.value, depth + 1), enumerable: true });
+  type Work = { entry: unknown; parent: object; key: string } | { original: object; copy: object };
+  const result = Object.create(null) as Record<string, unknown>;
+  const pending: Work[] = [{ entry: value, parent: result, key: 'value' }];
+  try {
+    while (pending.length) {
+      const work = pending.pop()!;
+      if ('original' in work) {
+        Object.freeze(work.copy);
+        ancestors.delete(work.original);
+        continue;
       }
-      return Object.freeze(copy);
-    } finally { ancestors.delete(entry); }
-  }
-  try { return capture(value, 0); }
-  catch { return unsupported(); }
+      const { entry, parent, key } = work;
+      const assign = (data: unknown) => Object.defineProperty(parent, key, { value: data, enumerable: true });
+      if (entry === null || entry === undefined || typeof entry === 'boolean' || typeof entry === 'string') {
+        assign(entry); continue;
+      }
+      if (typeof entry === 'number') {
+        if (!Number.isFinite(entry)) return unsupported();
+        assign(entry); continue;
+      }
+      if (typeof entry !== 'object' || ancestors.has(entry) || rejectObject?.(entry)) return unsupported();
+      const array = Array.isArray(entry);
+      const prototype: unknown = Object.getPrototypeOf(entry);
+      if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return unsupported();
+      const descriptors = Object.getOwnPropertyDescriptors(entry);
+      if (Object.getOwnPropertySymbols(descriptors).length > 0 || (array && Object.hasOwn(descriptors, 'constructor'))) return unsupported();
+      if (Object.values(descriptors).some((descriptor) => !('value' in descriptor) || typeof descriptor.value === 'function')) return unsupported();
+      if (retained && observed && !observed.has(entry)) {
+        observed.add(entry);
+        const keys = ownJsonKeys(entry);
+        if (keys.length !== ownJsonKeys(descriptors).length) return unsupported();
+        retained.push({ value: entry, prototype, slots: keys.map(key => {
+          const descriptor: PropertyDescriptor | undefined = Object.getOwnPropertyDescriptor(descriptors, key)?.value;
+          if (!descriptor || !('value' in descriptor)) return unsupported();
+          return { key, value: descriptor.value, writable: descriptor.writable,
+            enumerable: descriptor.enumerable, configurable: descriptor.configurable };
+        }) });
+      }
+      const length: unknown = array ? descriptors['length']?.value : 0;
+      if (typeof length !== 'number' || !Number.isInteger(length) || length < 0 || length > 0xffff_ffff) return unsupported();
+      const copy: object = array ? new Array(length) : Object.create(null) as object;
+      assign(copy);
+      ancestors.add(entry);
+      pending.push({ original: entry, copy });
+      for (const [childKey, descriptor] of Object.entries(descriptors).reverse()) {
+        if (array ? childKey === 'length' : !includeHidden && !descriptor.enumerable) continue;
+        pending.push({ entry: descriptor.value, parent: copy, key: childKey });
+      }
+    }
+    return result['value'];
+  } catch { return unsupported(); }
 }
 
 function present(value: unknown): boolean {

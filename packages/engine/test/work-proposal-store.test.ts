@@ -167,10 +167,11 @@ describe('WorkProposalStore bounds', () => {
     store.dispose();
   });
 
-  test('oversized task and summary text is truncated on the way in', () => {
+  test('complete task text is retained while display summaries remain short', () => {
     const store = new WorkProposalStore();
     const proposal = propose(store, makeInput({ task: 'x'.repeat(50_000), summary: 'y'.repeat(5_000) }));
-    expect(proposal.task.length).toBeLessThanOrEqual(8_000);
+    expect(proposal.task).toBe('x'.repeat(50_000));
+    expect(validateWorkProposal(proposal)?.task).toBe(proposal.task);
     expect(proposal.summary.length).toBeLessThanOrEqual(200);
     store.dispose();
   });
@@ -186,7 +187,6 @@ describe('validateWorkProposal', () => {
     ['missing surfaceKind', { id: 'a', task: 't', createdAt: 1, expiresAt: 2 }],
     ['non-finite timestamps', { id: 'a', task: 't', surfaceKind: 'ntfy', createdAt: Number.NaN, expiresAt: 2 }],
     ['expiry before creation', { id: 'a', task: 't', surfaceKind: 'ntfy', createdAt: 5, expiresAt: 4 }],
-    ['oversized task', { id: 'a', task: 'x'.repeat(20_000), surfaceKind: 'ntfy', createdAt: 1, expiresAt: 2 }],
   ])('rejects %s without throwing', (_label, value) => {
     expect(validateWorkProposal(value)).toBeNull();
   });

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ArtifactRecord } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import { createZipArchive, packageArtifactFilename, sanitizeArtifactMetadata, sanitizeArtifactSourceUri, type ArtifactPackageEntry } from './artifact-archive.ts';
 import type { AgentModelCompareArtifactStore, LoadedComparisonHandoff, SavedComparisonArtifact } from './agent-model-compare-types.ts';
-import { MAX_HANDOFF_ARCHIVE_ARTIFACTS, MAX_HANDOFF_ARTIFACT_BYTES, MAX_HANDOFF_DIFF_INPUT_LINES, MAX_HANDOFF_DIFF_ROWS, MAX_HANDOFF_DIFF_SECTION_PREVIEW_CHARS } from './agent-model-compare-types.ts';
+import { MAX_HANDOFF_ARTIFACT_BYTES, MAX_HANDOFF_DIFF_INPUT_LINES, MAX_HANDOFF_DIFF_ROWS, MAX_HANDOFF_DIFF_SECTION_PREVIEW_CHARS } from './agent-model-compare-types.ts';
 import { isModelCompareHandoffArtifact, isModelCompareRouteDecisionArtifact, toSavedComparisonArtifact } from './agent-model-compare-run.ts';
 import { isTextLike, readString, readStringList, previewText } from './agent-model-compare-utils.ts';
 
@@ -318,9 +318,6 @@ export async function loadHandoffArchiveArtifacts(
   for (const request of requested) {
     if (!request.id || seen.has(request.id)) continue;
     seen.add(request.id);
-    if (artifacts.length >= MAX_HANDOFF_ARCHIVE_ARTIFACTS) {
-      throw new Error(`Reviewer handoff archive supports at most ${MAX_HANDOFF_ARCHIVE_ARTIFACTS} artifacts.`);
-    }
     const loaded = await artifactStore.readContent(request.id);
     artifacts.push({ role: request.role, ...loaded });
   }

@@ -14,7 +14,6 @@ import { summarizeError } from '../../utils/error-display.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import type { ReadAccessFilter } from '../shared/read-access.js';
 
-const MAX_FIND_QUERIES = 20;
 const MAX_PARALLEL_FIND_QUERIES = 5;
 
 export function createFindTool(
@@ -49,9 +48,6 @@ export function createFindTool(
         const queryOptions = { ...walkOptions, ...reading };
         if (!Array.isArray(args.queries) || (args.queries as unknown[]).length === 0) {
           return { success: false, error: 'Missing or empty "queries" array' };
-        }
-        if ((args.queries as unknown[]).length > MAX_FIND_QUERIES) {
-          return { success: false, error: `Too many queries: maximum ${MAX_FIND_QUERIES} per find call` };
         }
 
         const input = args as unknown as FindInput;

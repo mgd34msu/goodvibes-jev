@@ -8,7 +8,7 @@ import type { Contract } from '../sdk/src/platform/contract/types.js';
 import { useGateReadings } from './_helpers/gate-readings.js';
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, openSync, ftruncateSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assertContractInputObjects, assertContractInputOwner, assertContractInputView, captureContractInput, contractInputPath, isContractInputSnapshot, materializeContractInput, initializeContractMemberWorktree } from '../sdk/src/platform/contract/input-snapshot.js';
@@ -216,5 +216,29 @@ test('generated snapshot paths preserve allowed repository maps through the unch
   expect(map).toContain('value');
   expect(map).not.toContain('[access-restricted]');
   expect(snapshot.id).toMatch(/^[a-z-]+$/);
-  expect(await manager.readAccess(join(root, rawId, 'tracked.ts'))).toBe('restricted');
+  expect(await manager.readAccess(join(root, rawId, 'tracked.ts'))).toBe('allow');
 });
+
+
+test('large repositories retain exact files through snapshot, planner and member materialization', async () => {
+  const root = repo();
+  // Exceeds both former limits (32 MiB per file and 256 MiB per repository).
+  const bytes = 257 * 1024 * 1024;
+  const fd = openSync(join(root, 'large.bin'), 'w');
+  try { ftruncateSync(fd, bytes); } finally { closeSync(fd); }
+  const snapshot = await captureContractInput(root);
+  expect(isContractInputSnapshot(snapshot)).toBe(true);
+  const frozen = await view(root, snapshot);
+  expect(lstatSync(join(frozen, 'large.bin')).size).toBe(bytes);
+  await assertContractInputView(snapshot);
+  const member = join(root, '.goodvibes/member');
+  await initializeContractMemberWorktree(frozen, {
+    path: member,
+    async create(commit, checkout) {
+      expect(checkout).toBe(false);
+      git(root, 'worktree', 'add', '--no-checkout', '-b', 'large-member', member, commit!);
+    },
+  });
+  expect(lstatSync(join(member, 'large.bin')).size).toBe(bytes);
+  expect(git(member, 'hash-object', 'large.bin').toString().trim()).toBe(snapshot.files.find(file => file.path === 'large.bin')!.oid!);
+}, 30_000);

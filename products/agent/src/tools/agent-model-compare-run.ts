@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ArtifactDescriptor } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { ChatRequest, ChatResponse } from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { AgentModelCompareArtifactStore, AgentModelCompareCatalogModel, AgentModelCompareModelCatalog, AgentModelCompareToolArgs, AgentModelCompareToolDeps, CompareCandidateResult, ComparisonArtifactStatus, ResolvedCompareModel, SavedComparisonArtifact, StoredComparison } from './agent-model-compare-types.ts';
-import { BLIND_LABELS, COMPARISON_STORE_LIMIT, DEFAULT_CANDIDATE_COUNT, DEFAULT_CANDIDATE_OUTPUT_CHARS, DEFAULT_MAX_TOKENS, DEFAULT_SIDE_BY_SIDE_PREVIEW_BYTES, MAX_CANDIDATES, MAX_COMPLETION_TOKENS, MAX_PROMPT_CHARS, MAX_SIDE_BY_SIDE_PREVIEW_BYTES, MAX_SOURCE_ARTIFACT_BYTES, MIN_CANDIDATES, MODE_ANALYTICS, MODE_APPLY, MODE_EXPORT, MODE_HANDOFF, MODE_HANDOFF_ARCHIVE, MODE_HANDOFF_DIFF, MODE_JUDGE, MODE_REVEAL, MODE_REVIEW, MODE_ROUTE_DECISION, MODE_RUN, MODE_SIDE_BY_SIDE, MODE_SYNTHESIS } from './agent-model-compare-types.ts';
+import { BLIND_LABELS, COMPARISON_STORE_LIMIT, DEFAULT_CANDIDATE_COUNT, DEFAULT_CANDIDATE_OUTPUT_CHARS, DEFAULT_MAX_TOKENS, DEFAULT_SIDE_BY_SIDE_PREVIEW_BYTES, MAX_SIDE_BY_SIDE_PREVIEW_BYTES, MIN_CANDIDATES, MODE_ANALYTICS, MODE_APPLY, MODE_EXPORT, MODE_HANDOFF, MODE_HANDOFF_ARCHIVE, MODE_HANDOFF_DIFF, MODE_JUDGE, MODE_REVEAL, MODE_REVIEW, MODE_ROUTE_DECISION, MODE_RUN, MODE_SIDE_BY_SIDE, MODE_SYNTHESIS } from './agent-model-compare-types.ts';
 import { clamp, isTextLike, readBenchmarkKind, readBoolean, readComparisonTag, readModelRefs, readNumber, readOptionalBoolean, readRecord, readString, readStringList, previewText } from './agent-model-compare-utils.ts';
 
 export function normalizeCatalogModel(model: AgentModelCompareCatalogModel): ResolvedCompareModel | null {
@@ -101,12 +101,11 @@ export async function selectComparisonModels(
       throw new Error(`Could not resolve ${missing} requested model reference(s). Use registry keys from models action:"status".`);
     }
     if (requested.length < MIN_CANDIDATES) throw new Error(`Select at least ${MIN_CANDIDATES} different models.`);
-    if (requested.length > MAX_CANDIDATES) throw new Error(`Select at most ${MAX_CANDIDATES} models.`);
     return requested;
   }
 
   const current = await resolveCurrentModel(catalog);
-  const count = clamp(candidateCount, MIN_CANDIDATES, MAX_CANDIDATES);
+  const count = Math.max(MIN_CANDIDATES, Math.trunc(candidateCount));
   const ordered = dedupeModels([
     ...(current ? [current] : []),
     ...selectableModels,
@@ -541,8 +540,7 @@ export async function loadRunSourceArtifact(
   if (!isTextLike(record.mimeType)) {
     throw new Error(`Saved artifact ${record.id} is ${record.mimeType}; blind comparison can only inline text-like artifacts.`);
   }
-  const sliced = buffer.subarray(0, Math.min(buffer.byteLength, MAX_SOURCE_ARTIFACT_BYTES));
-  const text = sliced.toString('utf-8').replace(/\0/g, '').trim();
+  const text = buffer.toString('utf-8').replace(/\0/g, '').trim();
   const lines = [
     'Saved artifact context',
     `Artifact ID: ${record.id}`,
@@ -551,9 +549,6 @@ export async function loadRunSourceArtifact(
     '',
     text || '(empty text artifact)',
   ];
-  if (buffer.byteLength > sliced.byteLength) {
-    lines.push('', `[Artifact content truncated at ${MAX_SOURCE_ARTIFACT_BYTES} bytes.]`);
-  }
   return {
     artifact: toSavedComparisonArtifact(record),
     promptBlock: lines.join('\n'),

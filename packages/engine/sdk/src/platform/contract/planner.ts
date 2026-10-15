@@ -1,6 +1,6 @@
 import { assertOwnedContractSource, checkOwnedSourcePlan, hasDerivedAcceptanceChecks } from './owned-source.js';
 import { nativeContractTaskSource } from './native-source.js';
-import { createContractInputAuthority, bindContractInputAuthority, assertContractInputAdmission, pinContractInputAdmission, authorizeContractInputPath, assertContractInputReadAccess, withContractInputAuthority, type ContractInputAuthority } from './input-authority.js';
+import { withContractInputReadBatch, createContractInputAuthority, bindContractInputAuthority, assertContractInputAdmission, pinContractInputAdmission, authorizeContractInputPath, assertContractInputReadAccess, withContractInputAuthority, type ContractInputAuthority } from './input-authority.js';
 import { bindContractActionSource, getContractActionSource } from '../tools/agent/contract-binding.js';
 import { nativeContractActionSource } from './native-decisions.js';
 /**
@@ -543,7 +543,7 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
     catch { return false; }
   };
   const map = () => deps.repositoryMap === undefined ? defaultRepositoryMap(workingDirectory, readAccessFilter, authority ? readAccessFilter : undefined) : deps.repositoryMap(workingDirectory);
-  const repositoryMap = await (authority ? withContractInputAuthority(authority, map) : map());
+  const repositoryMap = await (authority ? withContractInputReadBatch(authority, () => withContractInputAuthority(authority, map)) : map());
   if (authority) await assertContractInputReadAccess(authority, filter, signal);
   const bounds = readPlannerBounds(deps.configManager);
   const systemPrompt = buildContractPlannerPrompt();
