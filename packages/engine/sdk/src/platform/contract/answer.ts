@@ -8,7 +8,7 @@
  * "Contract ctr-1a2b3c4d passed (3 of 3 criteria met...)". The answer belongs
  * to the unit that produced the deliverable: the integration unit of a
  * multi-unit plan, otherwise the plan's one unit. A structured completion
- * report is reduced to its prose summary.
+ * report contributes its result, falling back to its summary.
  */
 import { parseCompletionReport } from '../agents/completion-report.js';
 import type { Contract, ContractUnit } from './types.js';
@@ -22,11 +22,16 @@ export function answerUnit(contract: Pick<Contract, 'units' | 'groups'>): Contra
   return planUnits.find((unit) => unit.role === 'integration') ?? (planUnits.length === 1 ? planUnits[0] : undefined);
 }
 
-/** The contract's answer: the deliverable unit's, a completion report reduced to its summary, or an empty string. */
+/** The contract's answer: the deliverable result, its summary, or the unstructured answer. */
 export function renderContractAnswer(contract: Pick<Contract, 'units' | 'groups'>): string {
   const raw = (answerUnit(contract)?.answer ?? '').trim();
   if (raw.length === 0) return '';
-  const summary = parseCompletionReport(raw)?.summary?.trim();
+  const report = parseCompletionReport(raw);
+  // Reviews and research carry their findings in result. Returning only the
+  // summary loses the file references and evidence the caller requested.
+  const result = report && 'result' in report && typeof report.result === 'string' ? report.result.trim() : '';
+  if (result.length > 0) return result;
+  const summary = report?.summary?.trim();
   return summary !== undefined && summary.length > 0 ? summary : raw;
 }
 

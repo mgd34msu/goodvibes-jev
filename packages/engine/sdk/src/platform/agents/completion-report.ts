@@ -8,7 +8,7 @@ import { logger } from '../utils/logger.js';
  * their final output with one as a fenced JSON block (the format the agent
  * prompt dictates, read here as a fixed format). The contract runner reads a
  * unit's report to verify its claims (contract/claims.ts) and to take its
- * summary as the unit's answer (contract/answer.ts).
+ * result (or summary when absent) as the unit's answer (contract/answer.ts).
  */
 
 /** Base fields shared by all completion reports. */

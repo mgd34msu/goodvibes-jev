@@ -4,16 +4,14 @@
  * criterion, whether the output fails it or the evidence fails to show it is
  * met, and once whether the output fails the unit's goal.
  *
- * Bands: a false pass accepts failing work, so the pass (no) side carries the
- * higher stakes; a false fail costs one nudge. `contract.acceptanceStakes`
- * chooses between the two declared bands and nothing else; `critical` never
- * passes a criterion on a reading alone, so the owner confirms every pass.
+ * Bands remain recorded confidence metadata. The verdict uses the likelier
+ * answer so a confidence band does not introduce a human approval step.
  *
  * Readings to verdicts (section 4.5) sit beside the bands in
  * {@link criterionVerdict}; the group and deliverable judges use the same
  * bands and the same mapping.
  */
-import { defineJudge, leansYes, STAKES_BANDS, type Judge, type JudgeFixture, type YesNoBand, type YesNoReading } from '@goodvibes-jev/judgment';
+import { defineJudge, STAKES_BANDS, type Judge, type JudgeFixture, type YesNoBand, type YesNoReading } from '@goodvibes-jev/judgment';
 import type { ContractAcceptanceStakes } from '../config.js';
 import type { CriterionVerdict } from '../types.js';
 
@@ -25,14 +23,11 @@ export const UNIT_JUDGE_BANDS: Readonly<Record<ContractAcceptanceStakes, YesNoBa
 
 /**
  * A criterion or goal verdict from its judge reading, where yes means it
- * fails. Leaning yes (the reading's likelier side is "fails") is unmet at any
- * outcome, including a reading too weak to settle in the band: failing closed
- * costs one nudge. Met needs a no at act; a weaker no, or a reading leaning no
- * that did not settle, is unshown.
+ * fails. Use the more probable answer, retaining confidence separately in
+ * the check record. A tie alone does not invent unmet work.
  */
 export function criterionVerdict(reading: YesNoReading): CriterionVerdict {
-  if (reading.verdict === 'yes' || (reading.verdict === 'uncertain' && leansYes(reading.probability))) return 'unmet';
-  return reading.verdict === 'no' && reading.outcome === 'act' ? 'met' : 'unshown';
+  return reading.probability > 0.5 ? 'unmet' : 'met';
 }
 
 const SLUGIFY_CRITERIA = [

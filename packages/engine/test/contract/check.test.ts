@@ -88,29 +88,29 @@ describe('readings to verdicts at the band edges (4.5)', () => {
     expect(high(0.75)).toBe('unmet'); // yes at act
     expect(high(0.6)).toBe('unmet'); // yes at confirm
     expect(high(0.59)).toBe('unmet'); // leans yes, below the yes band: escalate
-    expect(high(0.5)).toBe('unmet'); // a tie leans yes
+    expect(high(0.5)).toBe('met'); // a tie alone does not invent a failure
   });
 
-  test('met needs a no at act; a weaker no or an unsettled lean to no is unshown', () => {
+  test('a reading leaning no completes without a confidence approval gate', () => {
     expect(high(0.15)).toBe('met'); // 1 - p = 0.85, the high act threshold
-    expect(high(0.16)).toBe('unshown'); // no at confirm
-    expect(high(0.3)).toBe('unshown'); // 1 - p = 0.7, the high confirm threshold
-    expect(high(0.31)).toBe('unshown'); // below confirm on the no side: escalate
-    expect(high(0.49)).toBe('unshown');
+    expect(high(0.16)).toBe('met'); // no at confirm
+    expect(high(0.3)).toBe('met'); // 1 - p = 0.7, the high confirm threshold
+    expect(high(0.31)).toBe('met'); // below confirm on the no side: escalate
+    expect(high(0.49)).toBe('met');
   });
 
-  test('under critical stakes no reading alone passes a criterion', () => {
-    expect(critical(0.01)).toBe('unshown');
+  test('critical confidence metadata does not introduce an owner confirmation', () => {
+    expect(critical(0.01)).toBe('met');
     expect(critical(0.6)).toBe('unmet');
   });
 
-  test('quality items: a lean to yes is a problem, a no at act is clean, anything else unshown', () => {
+  test('quality items use the probability without inventing missing evidence', () => {
     const quality = (p: number) => qualityVerdict(readYesNo({ type: 'noul', noul: p }, UNIT_QUALITY_BAND));
     expect(quality(0.55)).toBe('problem');
     expect(quality(0.75)).toBe('problem');
     expect(quality(0.15)).toBe('clean');
-    expect(quality(0.2)).toBe('unshown');
-    expect(quality(0.45)).toBe('unshown');
+    expect(quality(0.2)).toBe('clean');
+    expect(quality(0.45)).toBe('clean');
   });
 
   test('the declared bands are the design bands', () => {
@@ -154,8 +154,8 @@ describe('readings to verdicts at the band edges (4.5)', () => {
     const high = await check({ criteria: [0.1, 0.1] });
     expect(high.check.result).toBe('pass');
     const critical = await check({ criteria: [0.1, 0.1], goal: 0.1 }, { settings: { ...SETTINGS, acceptanceStakes: 'critical' } });
-    expect([...critical.verdicts.values()]).toEqual(['unshown', 'unshown']);
-    expect(critical.check.result).toBe('nudge');
+    expect([...critical.verdicts.values()]).toEqual(['met', 'met']);
+    expect(critical.check.result).toBe('pass');
   });
 });
 
@@ -281,38 +281,36 @@ describe('check outcomes, in table order (4.6)', () => {
     expect(outcome.nudge?.kinds).toEqual(['quality']);
   });
 
-  test('rows 3 to 5 together: every applicable kind, with the unshown ones listed too', async () => {
+  test('rows 3 to 5 together: only the unmet criteria need further work', async () => {
     const outcome = await check(
       { criteria: [UNMET, 0.3], quality: { placeholder: UNMET } },
       { evidence: evidence({ gates: [{ gate: 'test', passed: false, output: '1 fail', durationMs: 1, skipped: false }] }) },
     );
-    expect(outcome.nudge?.kinds).toEqual(['unmet', 'unshown', 'quality', 'gate']);
-    expect(outcome.nudge?.criterionIds).toEqual(['u1.c1', 'u1.c2']);
+    expect(outcome.nudge?.kinds).toEqual(['unmet', 'quality', 'gate']);
+    expect(outcome.nudge?.criterionIds).toEqual(['u1.c1']);
   });
 
-  test('row 6: unshown readings below the evidence limit ask for evidence', async () => {
+  test('a likely satisfied criterion does not repeat a legacy evidence nudge', async () => {
     const unit = twoCriterionUnit();
     unit.checks.push(recordedCheck('u1.k1', 'completion', 'nudge', ['unshown']));
     const outcome = await check({ criteria: [MET, 0.3] }, { unit });
-    expect(outcome.check.result).toBe('nudge');
-    expect(outcome.nudge?.kinds).toEqual(['unshown']);
-    expect(outcome.nudge?.text).toContain('Not shown (show evidence');
+    expect(outcome.check.result).toBe('pass');
+    expect(outcome.nudge).toBeUndefined();
   });
 
-  test('row 6: an unshown quality item or goal is asked for too', async () => {
+  test('likely satisfied goal and clean quality do not demand more evidence', async () => {
     const outcome = await check({ goal: 0.3, quality: { tests_weakened: 0.3 } });
-    expect(outcome.nudge?.kinds).toEqual(['unshown']);
-    expect(outcome.nudge?.text).toContain('- [goal] Parse every documented input form');
-    expect(outcome.nudge?.text).toContain('- [quality] Show that no existing test or check was deleted, skipped or loosened.');
+    expect(outcome.check.result).toBe('pass');
+    expect(outcome.nudge).toBeUndefined();
   });
 
-  test('row 7: at the evidence limit the owner is asked to confirm', async () => {
+  test('historical evidence nudges do not turn a passing reading into an owner question', async () => {
     const unit = twoCriterionUnit();
     unit.checks.push(recordedCheck('u1.k1', 'completion', 'nudge', ['unshown']));
     unit.checks.push(recordedCheck('u1.k2', 'turn-end', 'recorded', ['unshown']));
     unit.checks.push(recordedCheck('u1.k3', 'completion', 'nudge', ['unshown']));
     const outcome = await check({ criteria: [MET, 0.3] }, { unit });
-    expect(outcome.check.result).toBe('await-owner');
+    expect(outcome.check.result).toBe('pass');
     expect(outcome.nudge).toBeUndefined();
   });
 

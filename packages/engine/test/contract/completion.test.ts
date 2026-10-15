@@ -149,12 +149,16 @@ describe('answer and status (6.5)', () => {
     }
   }, 40_000);
 
-  test('a structured completion report is reduced to its summary, and a passing contract with no answer says so', () => {
+  test('a structured completion report preserves its result, falls back to its summary, and handles no answer', () => {
     const report = '```json\n{"version":1,"archetype":"integrator","summary":"Wired the parser into convert.","filesCreated":[],"filesModified":["src/convert.ts"]}\n```';
     const plan = twoUnitPlan();
     const units = plan.groups.flatMap((group) => group.units.map((unit) => ({ id: unit.id, groupId: group.id, role: unit.role, answer: unit.role === 'integration' ? report : 'parser done' })));
     const groups = plan.groups.map((group) => ({ id: group.id, kind: group.kind }));
     expect(renderContractAnswer({ units, groups } as unknown as Parameters<typeof renderContractAnswer>[0])).toBe('Wired the parser into convert.');
+    const findings = 'registry-models.ts:86 permits duplicate registry keys when native and discovered models share a key.';
+    const review = '```json\n' + JSON.stringify({ version: 1, archetype: 'researcher', summary: 'Found one bug.', result: findings }) + '\n```';
+    const reviewed = units.map(unit => unit.role === 'integration' ? { ...unit, answer: review } : unit);
+    expect(renderContractAnswer({ units: reviewed, groups } as unknown as Parameters<typeof renderContractAnswer>[0])).toBe(findings);
     expect(renderContractAnswer({ units: [], groups: [] })).toBe('');
     expect(describeCommitOutcome(null, ['.goodvibes/x'], false)).toBe('commit skipped: 1 ignored path skipped');
     expect(describeCommitOutcome(null, [], true)).toBe('commit skipped: the contract changed no files');

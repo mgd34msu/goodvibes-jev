@@ -14,7 +14,7 @@
  * Readings to verdicts (section 4.5) and the mid-run nudge rule sit beside
  * the band: {@link qualityVerdict} and {@link midRunNudgeItems}.
  */
-import { defineBattery, leansYes, STAKES_BANDS, yesNo, type YesNoBand, type YesNoReading } from '@goodvibes-jev/judgment';
+import { defineBattery, STAKES_BANDS, yesNo, type YesNoBand, type YesNoReading } from '@goodvibes-jev/judgment';
 import { QUALITY_ITEMS, type QualityItem } from '../types.js';
 
 export const UNIT_QUALITY_BAND: YesNoBand = { yes: STAKES_BANDS.medium.yesNo.yes, no: STAKES_BANDS.high.yesNo.no };
@@ -22,13 +22,11 @@ export const UNIT_QUALITY_BAND: YesNoBand = { yes: STAKES_BANDS.medium.yesNo.yes
 export type QualityVerdict = 'problem' | 'clean' | 'unshown';
 
 /**
- * A quality item's verdict, where yes means the problem is present: a problem
- * when the reading leans yes at any outcome (failing closed costs one nudge),
- * clean only at a no at act, unshown otherwise.
+ * A quality item's verdict follows the likelier answer. A low-confidence no
+ * does not create a new demand for evidence or an owner approval.
  */
 export function qualityVerdict(reading: YesNoReading): QualityVerdict {
-  if (reading.verdict === 'yes' || (reading.verdict === 'uncertain' && leansYes(reading.probability))) return 'problem';
-  return reading.verdict === 'no' && reading.outcome === 'act' ? 'clean' : 'unshown';
+  return reading.probability > 0.5 ? 'problem' : 'clean';
 }
 
 /** The items a mid-run (turn-end) check may nudge on at act; the rest are recorded until the agent finishes. */
