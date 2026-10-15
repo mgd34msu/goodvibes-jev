@@ -33,6 +33,7 @@ test('daemon dependencies compose one runner, count its ACP ownership, and resum
   const workPlanService = new ProjectPlanningService(store, { defaultProjectId: 'fixture-project' });
   const planManager = new ExecutionPlanManager(f.workingDirectory);
   const runtimeStore = createRuntimeStore();
+  const readAccessFilter = async (path: string) => path !== join(f.workingDirectory, 'private.txt');
   const acpSessions = [{ id: 'fixture-acp-one' }, { id: 'fixture-acp-two' }];
   const original = composition.composeContractRunner;
   let resumed: ReturnType<typeof spyOn> | undefined;
@@ -47,9 +48,13 @@ test('daemon dependencies compose one runner, count its ACP ownership, and resum
     contracts = createDaemonContractServices({ ...f, projectRoot: f.workingDirectory,
       agentManager: graph.agentManager, agentMessageBus: graph.agentMessageBus,
       acpHost: { list: () => acpSessions }, runtimeStore, workPlanService, planManager,
+      readAccessFilter,
     });
     expect(compose).toHaveBeenCalledTimes(1); expect(install).toHaveBeenCalledTimes(1);
     const passed = compose.mock.calls[0]![0];
+    expect(passed.readAccessFilter).toBe(readAccessFilter);
+    expect(await passed.readAccessFilter!(join(f.workingDirectory, 'source.ts'))).toBe(true);
+    expect(await passed.readAccessFilter!(join(f.workingDirectory, 'private.txt'))).toBe(false);
     expect(passed.workPlanService).toBe(workPlanService); expect(passed.planManager).toBe(planManager); expect(passed.runtimeStore).toBe(runtimeStore);
     expect(passed.fleetCapacity()).toMatchObject({ active: 2, capKey: 'fleet.maxSize' });
     acpSessions.push({ id: 'fixture-acp-three' });

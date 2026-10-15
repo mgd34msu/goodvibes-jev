@@ -2,7 +2,8 @@
 import { composeContractRunner, makeRuntimeFleetProbe, type ContractRunnerCompositionOptions } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { createContractOperatorService } from '@goodvibes-jev/engine/sdk/platform/contract';
 
-export type DaemonContractCompositionOptions = Omit<ContractRunnerCompositionOptions, 'fleetCapacity'> & {
+export type DaemonContractCompositionOptions = Omit<ContractRunnerCompositionOptions, 'fleetCapacity' | 'readAccessFilter'> & {
+  readonly readAccessFilter: NonNullable<ContractRunnerCompositionOptions['readAccessFilter']>;
   readonly acpHost: { list(): readonly { readonly id: string }[] };
   /** Trusted sibling execution graphs, not observed external processes. */
   readonly additionalFleetOwnership?: (() => ReturnType<ContractRunnerCompositionOptions['agentManager']['fleetOwnership']>) | undefined;

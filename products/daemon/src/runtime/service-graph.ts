@@ -554,6 +554,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     disposalScope.registry.add('hosted ACP agents', closeAcpAgents);
     acpFleetOwnership = () => acpHost.list().map(session => ({ id: `acp:${session.id}`, active: true }));
     const contracts = createDaemonContractServices({ runtimeBus: options.runtimeBus, agentManager, agentMessageBus, configManager, providerRegistry, projectRoot: workingDirectory, acpHost, runtimeStore: options.runtimeStore, workPlanService: projectPlanningService, planManager,
+      readAccessFilter: async path => (await permissionManager.readAccess(path)) === 'allow',
       additionalFleetOwnership: () => nativeFleetOwnership() });
     disposalScope.ownUntilRegistered('contract runner', () => contracts.dispose());
     const { runner: contractRunner, operator: contractOperator } = contracts;
