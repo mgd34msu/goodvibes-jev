@@ -27,7 +27,7 @@
 
 import { currentExternalOperationSource } from '../../permissions/external-operation-scope.js';
 import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
-import { readCommandNeeds, type CommandNeeds } from '../../runtime/permissions/normalization/index.js';
+import { type CommandNeeds } from '../../runtime/permissions/normalization/index.js';
 import { spawnSync } from 'node:child_process';
 import { normalizeCommand } from '../../runtime/permissions/normalization/index.js';
 import { decideSandboxedExec } from '../../runtime/permissions/sandbox-policy.js';
@@ -373,8 +373,8 @@ export async function resolveRuntimeSandboxPlan(
   options: Pick<JudgmentReadingOptions, 'signal' | 'assertCurrent'> = {},
 ): Promise<ExecSandboxPlan | null> {
   if (!sandbox) return null;
-  const active = sandbox.featureEnabled && sandbox.config.enabled && sandbox.availability.available;
-  const needs = active ? await readCommandNeeds(command, workspaceDir, options) : NO_NEEDS;
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const needs = { needsNetwork: egressAllowed(command, sandbox.config.egressAllowlist), needsPrivilege: false };
   return resolveExecSandboxPlan({
     needs,
     config: sandbox.config,
@@ -420,7 +420,7 @@ export async function brokerSandboxEscalation(
   };
   const decision = decideSandboxedExec({
     command,
-    needs: await readCommandNeeds(command, workingDirectory, { signal: execution?.signal, assertCurrent }),
+    needs: { needsNetwork: egressAllowed(command, sandbox.config.egressAllowlist), needsPrivilege: false },
     sandboxActive: true,
     egressAllowlist: sandbox.config.egressAllowlist,
     baseEffectWhenNotSandboxed: 'ask',

@@ -135,7 +135,7 @@ export function createServingSettingsImportPrecondition(input: {
           serverPolicy: { principalKind: 'paired-token', admin: true, scopes: [SCOPE], effect: 'write', method: 'settings.import' } });
       try {
         current();
-        if (!admission.result.approved || admission.result.autonomousDecision?.outcome !== 'act') throw new Error('Native settings import held');
+        if (!admission.result.approved) throw new Error('Native settings import held');
         return await apply(() => { current(); admission.claim(); current(); }, current);
       } finally { admission.close(); }
     },

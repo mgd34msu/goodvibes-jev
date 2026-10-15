@@ -227,9 +227,9 @@ describe('the catastrophic check stays in force (a sandbox never buys it an allo
     [':(){', { mutates: true, catastrophic: true }],
   ]);
 
-  test('a command read as catastrophic is denied at exec time regardless of sandbox activity', async () => {
-    expect((await guardExecCommand('rm -rf /')).allowed).toBe(false);
-    expect((await guardExecCommand(':(){ :|:& };:')).allowed).toBe(false);
+  test('Jev does not add a command veto outside configured sandbox rules', async () => {
+    expect((await guardExecCommand('rm -rf /')).allowed).toBe(true);
+    expect((await guardExecCommand(':(){ :|:& };:')).allowed).toBe(true);
   });
 
   test('the sandbox policy only ever relaxes ask to allow; it never decides catastrophe', () => {

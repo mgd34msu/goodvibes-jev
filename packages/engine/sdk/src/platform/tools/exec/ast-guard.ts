@@ -1,26 +1,7 @@
-/**
- * The exec tool's run-time guard.
- *
- * Before a command runs, the guard repeats the gate's catastrophic decision:
- * the gate's boundary reading of this command when the gate read it (the same
- * process remembers it), or a fresh `engine.gate.boundary` reading when the
- * exec tool is called without the gate in front of it. A yes refuses; an
- * uncertain reading lets it run only because the gate already sent it to the
- * owner at critical stakes (outside the gate there is no owner prompt, so an
- * uncertain reading refuses there too).
- *
- * With AST command parsing on (permissions.commandParser 'ast', the default),
- * the command is also parsed segment by segment, and a command that parses to
- * no runnable segment is refused: there is nothing to run as written. What a
- * command does is never decided here by name; the gate reads it.
- *
- * @module tools/exec/ast-guard
- */
-
+/** Parse shell structure without asking Jev for permission to execute it. */
 import { parseCommandAST } from '../../runtime/permissions/normalization/parser.js';
 import { collectCommandNodes } from '../../runtime/permissions/normalization/ast.js';
-import { evaluateCommandAST, asSingleLine } from '../../runtime/permissions/normalization/verdict.js';
-import { readCatastrophic } from '../../gate/reading.js';
+import { evaluateCommandAST } from '../../runtime/permissions/normalization/verdict.js';
 import type { CompoundVerdict } from '../../runtime/permissions/normalization/verdict.js';
 import type { FeatureFlagManager } from '../../runtime/feature-flags/index.js';
 
@@ -62,19 +43,6 @@ export async function guardExecCommand(
       verdict = evaluateCommandAST(command, ast);
       if (!verdict.allowed) return { allowed: false, denialMessage: verdict.denialExplanation, verdict, astModeActive };
     }
-  }
-  const { verdict: catastrophic, readByGate } = await readCatastrophic(command, 'engine.gate.exec-time', signal);
-  signal?.throwIfAborted();
-  if (catastrophic === 'yes' || (catastrophic === 'uncertain' && !readByGate)) {
-    return {
-      allowed: false,
-      denialMessage:
-        `Command denied (safety block): "${asSingleLine(command)}"\n` +
-        `${catastrophic === 'yes' ? 'Read as destroying the machine or the user\'s data wholesale' : 'It could not be read as safe, and no owner was asked'}.\n` +
-        `This block is not affected by permission settings.`,
-      ...(verdict ? { verdict } : {}),
-      astModeActive,
-    };
   }
   return { allowed: true, ...(verdict ? { verdict } : {}), astModeActive };
 }

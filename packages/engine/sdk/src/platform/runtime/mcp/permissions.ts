@@ -22,11 +22,8 @@ import type {
 } from './types.js';
 import { logger } from '../../utils/logger.js';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { sideEffect } from '../../gate/batteries/side-effect.js';
 import { hostsInScope, pathsInScope, readScopedValues } from './scope.js';
 import { assertJudgmentInput } from '../../gate/judgment-input.js';
-import { readingArguments, readingState, readToolCall } from '../../gate/reading.js';
 
 // ── Defaults ──────────────────────────────────────────────────────────────────
 
@@ -50,61 +47,8 @@ function modeFromTrustLevel(level: McpTrustLevel): McpTrustMode {
   }
 }
 
-/**
- * What an MCP tool call is, read by Jev: its capability class
- * (`engine.gate.side-effect` `capability`) and its stakes (the gate's full
- * reading, gate/reading.ts), asked together. They replace the keyword match
- * over tool names and the fixed capability-to-risk table (secret_read
- * critical, write_fs high...): how much a call risks is what it does with
- * these arguments, not which bucket its name falls in. A capability reading
- * that does not reach act counts as incoherent with the server's role, so the
- * trust-mode rules ask or refuse. The role, scope and trust-mode rules that
- * consume the readings stay code: they carry out the owner's configuration.
- */
+/** Compatibility context for callers; tool permissions do not request Jev readings. */
 export interface McpReadingOwner { readonly externalRequestEvidence?: ExternalRequestEvidence | undefined; readonly port?: JudgmentPort | undefined; readonly signal?: AbortSignal | undefined }
-
-async function readMcpCall(
-  serverName: string,
-  toolName: string,
-  args: Record<string, unknown>,
-  owner: McpReadingOwner,
-): Promise<{ readonly capability: McpCapabilityClass; readonly confident: boolean; readonly judgmentDecisionIds: readonly string[]; readonly riskLevel: import('./types.js').McpRiskLevel }> {
-  const site = 'engine.mcp.capability';
-  assertJudgmentInput(serverName);
-  const external = readExternalRequestEvidence(owner.externalRequestEvidence);
-  const state = { ...readingState(toolName, args), ...(external ? { externalRequest: readingArguments(external) } : {}) };
-  const [run, reading] = await Promise.all([
-    sideEffect.run(owner.port ?? judgmentPort(site), { ...state, server: serverName }, { site, only: ['capability'], ...(owner.signal ? { signal: owner.signal } : {}) }),
-    readToolCall({ toolName: `mcp:${serverName}.${toolName}`, args, externalRequestEvidence: owner.externalRequestEvidence, port: owner.port, ...(owner.signal ? { signal: owner.signal } : {}) }, site),
-  ]);
-  const capabilityReading = run.readings.capability;
-  run.recordAction(`capability:${capabilityReading.choice}`);
-  reading.recordAction(`stakes:${reading.stakes}`);
-  return { capability: capabilityReading.choice, confident: capabilityReading.outcome === 'act' && reading.familyConfident && reading.uncertain.length === 0 && reading.boundary.cardDetails !== 'uncertain' && reading.boundary.catastrophic !== 'uncertain', judgmentDecisionIds: [...(reading.judgmentDecisionIds ?? []), ...(run.result.decisionId ? [run.result.decisionId] : [])], riskLevel: reading.stakes };
-}
-
-function roleAllowsCapability(role: McpServerRole, capability: McpCapabilityClass): boolean {
-  switch (role) {
-    case 'docs':
-      return capability === 'metadata' || capability === 'network_read' || capability === 'read_fs' || capability === 'generic';
-    case 'filesystem':
-      return capability === 'metadata' || capability === 'read_fs' || capability === 'write_fs' || capability === 'generic';
-    case 'git':
-      return capability === 'metadata' || capability === 'read_fs' || capability === 'write_fs' || capability === 'system_mutation' || capability === 'generic';
-    case 'database':
-      return capability === 'metadata' || capability === 'network_read' || capability === 'network_write' || capability === 'generic';
-    case 'browser':
-      return capability === 'metadata' || capability === 'network_read' || capability === 'network_write' || capability === 'generic';
-    case 'automation':
-      return capability !== 'secret_read';
-    case 'ops':
-    case 'remote':
-    case 'general':
-    default:
-      return true;
-  }
-}
-
 
 function scopeLabel(items: readonly string[]): string {
   if (items.length === 0) return 'unbounded';
@@ -486,113 +430,18 @@ export class McpPermissionManager {
       };
     }
 
-    const { capability, confident, riskLevel, judgmentDecisionIds } = await readMcpCall(serverName, toolName, args, owner);
-    const capabilityAllowed = record.profile.allowedCapabilities.length === 0 || record.profile.allowedCapabilities.includes(capability);
-    const coherentRole = roleAllowsCapability(record.profile.role, capability);
-    const scoped = await readScopedValues(serverName, toolName, args, { paths: record.profile.allowedPaths.length > 0, hosts: record.profile.allowedHosts.length > 0 }, owner);
-    const pathScoped = pathsInScope(record.profile.allowedPaths, scoped.paths);
-    const hostScoped = hostsInScope(record.profile.allowedHosts, scoped.hosts);
+    owner.signal?.throwIfAborted();
+    const scoped = await readScopedValues(serverName, toolName, args,
+      { paths: record.profile.allowedPaths.length > 0, hosts: record.profile.allowedHosts.length > 0 }, owner);
+    owner.signal?.throwIfAborted();
     const causes = [
-      ...(!confident || scoped.uncertain ? ['uncertain-reading' as const] : []),
-      ...(!coherentRole ? ['role-mismatch' as const] : []),
-      ...(!capabilityAllowed ? ['capability-out-of-scope' as const] : []),
-      ...(!pathScoped ? ['path-out-of-scope' as const] : []),
-      ...(!hostScoped ? ['host-out-of-scope' as const] : []),
+      ...(record.profile.allowedCapabilities.length > 0 && !record.profile.allowedCapabilities.includes('generic') ? ['capability-out-of-scope' as const] : []),
+      ...(!pathsInScope(record.profile.allowedPaths, scoped.paths) ? ['path-out-of-scope' as const] : []),
+      ...(!hostsInScope(record.profile.allowedHosts, scoped.hosts) ? ['host-out-of-scope' as const] : []),
     ];
-    const incoherent = causes.length > 0;
-
-    let assessment: McpCoherenceAssessment;
-    if (record.profile.mode === 'allow-all') {
-      assessment = {
-        verdict: 'allow',
-        riskLevel,
-        capability,
-        incoherent,
-        reason: incoherent
-          ? `server '${serverName}' is elevated to allow-all; request bypassed coherence concerns`
-          : `server '${serverName}' is elevated to allow-all`,
-      };
-    } else if (record.profile.mode === 'constrained') {
-      if (incoherent || riskLevel === 'high' || riskLevel === 'critical') {
-        assessment = {
-          verdict: 'deny',
-          riskLevel,
-          capability,
-          incoherent,
-          reason: incoherent
-            ? `request is incoherent for ${record.profile.role} server '${serverName}'`
-            : `capability '${capability}' exceeds constrained trust for server '${serverName}'`,
-        };
-      } else if (riskLevel === 'medium') {
-        assessment = {
-          verdict: 'ask',
-          riskLevel,
-          capability,
-          incoherent,
-          reason: `capability '${capability}' requires approval in constrained mode`,
-        };
-      } else {
-        assessment = {
-          verdict: 'allow',
-          riskLevel,
-          capability,
-          incoherent,
-          reason: `capability '${capability}' allowed in constrained mode`,
-        };
-      }
-    } else {
-      if (incoherent && (riskLevel === 'high' || riskLevel === 'critical')) {
-        assessment = {
-          verdict: 'deny',
-          riskLevel,
-          capability,
-          incoherent,
-          reason: `request is incoherent for ${record.profile.role} server '${serverName}'`,
-        };
-      } else if (incoherent || riskLevel === 'high' || riskLevel === 'critical') {
-        assessment = {
-          verdict: 'ask',
-          riskLevel,
-          capability,
-          incoherent,
-          reason: incoherent
-            ? `request exceeds the normal envelope for ${record.profile.role} server '${serverName}'`
-            : `capability '${capability}' requires approval`,
-        };
-      } else {
-        assessment = {
-          verdict: 'allow',
-          riskLevel,
-          capability,
-          incoherent,
-          reason: `capability '${capability}' allowed for ${record.profile.role} server '${serverName}'`,
-        };
-      }
-    }
-
-    const permission: McpPermission = {
-      causes: assessment.verdict === 'ask' && !incoherent ? ['risk-policy'] : causes,
-      judgmentDecisionIds: [...judgmentDecisionIds, ...scoped.judgmentDecisionIds],
-      allowed: assessment.verdict === 'allow',
-      reason: assessment.reason,
-      verdict: assessment.verdict,
-      riskLevel: assessment.riskLevel,
-      capability: assessment.capability,
-      incoherent: assessment.incoherent,
-      profileMode: record.profile.mode,
-    };
-    this._recordDecision({
-      serverName,
-      toolName,
-      verdict: assessment.verdict,
-      riskLevel: assessment.riskLevel,
-      capability: assessment.capability,
-      incoherent: assessment.incoherent,
-      reason: assessment.reason,
-      profileMode: record.profile.mode,
-      evaluatedAt: Date.now(),
-    });
-    return permission;
+    const allowed = record.profile.mode === 'allow-all' || causes.length === 0;
+    return { allowed, verdict: allowed ? 'allow' : 'deny', profileMode: record.profile.mode, causes,
+      reason: allowed ? `server '${serverName}' permits this tool` : `request exceeds configured scope for server '${serverName}'` };
   }
 
   // ── Inspection ────────────────────────────────────────────────────────────

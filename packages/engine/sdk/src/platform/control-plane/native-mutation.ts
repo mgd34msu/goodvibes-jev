@@ -156,7 +156,7 @@ export async function runNativeMutation<T>(input: {
         });
     try {
       assertCurrent();
-      if (!admission.result.approved || admission.result.autonomousDecision?.outcome !== 'act') {
+      if (!admission.result.approved) {
         throw new HandlerError('Native mutation was not admitted', 'NATIVE_MUTATION_HELD', 422);
       }
       admission.claim(); assertCurrent();

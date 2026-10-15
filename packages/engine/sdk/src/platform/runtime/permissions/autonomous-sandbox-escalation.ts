@@ -10,7 +10,7 @@ import type { SandboxEscalationExecution, SandboxEscalationPermit, SandboxEscala
 export async function admitSandboxEscalation(host: AutonomousToolPromptHost, input: SandboxEscalationRequest,
   execution?: SandboxEscalationExecution): Promise<SandboxEscalationPermit | false> {
   const operation = currentExternalOperationSource();
-  if (!operation || !execution || !host.port.recorder || host.workspaceTrust === undefined) return false;
+  if (!operation || !execution || host.workspaceTrust === undefined) return false;
   const workspaceTrust = host.workspaceTrust;
   const prepareTrust = workspaceTrust?.prepareAutonomousConstraint;
   if (workspaceTrust !== null && typeof prepareTrust !== 'function') return false;
@@ -34,7 +34,7 @@ export async function admitSandboxEscalation(host: AutonomousToolPromptHost, inp
       tool: 'exec', args: { commands: [{ cmd: input.command, cwd: input.workingDirectory }], sandboxEscalation: input },
     });
     assertCurrent();
-    if (admission.result.autonomousDecision?.outcome !== 'act') return false;
+    if (!admission.result.approved) return false;
     const owned = admission;
     transferred = true;
     return Object.freeze({ signal, assertCurrent, claim() { assertCurrent(); owned.claim(); },

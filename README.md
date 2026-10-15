@@ -21,8 +21,7 @@ records the October 3 direction and supersedes older human-confirmation and
 owner-escalation designs. These are target requirements, not a claim that all
 callers already implement them:
 
-- Jev makes semantic decisions everywhere, with no human in the runtime decision
-  loop. Its shared outcomes are `act`, `revise`, `defer` and `reject`.
+- Jev automates interpretation, planning, repairs and execution choices. It does not decide whether a user prompt reaches the model or whether the model may use a tool. Tool permissions follow explicit owner configuration; Jev uncertainty or unavailability cannot veto a valid tool call.
 - One shared judgment-port transport implementation owns transient Jev
   unavailability. A primary-only route retries until recovery or cancellation.
   An explicit failover chain tries compatible targets once and returns typed
@@ -119,7 +118,7 @@ Each one is imported as `@goodvibes-jev/engine/<package>`. The platform subsyste
 
 Beyond the ported code, the engine's target architecture adds:
 - **routing:** reads each request's tier, intent, difficulty, risk, domain and language before tokens are spent, and picks a route from the whole model catalog.
-- **gate:** the one path for every side effect. Jev selects the semantic disposition from complete bound input and evidence; current deterministic authority/scope checks and an atomic execution claim still precede any effect. Legacy permission presets and approval dispatch remain migration work, not the target decision contract.
+- **tool execution:** owner-configured permissions, workspace scope, schema validation and cancellation apply across native and external tools. Jev helps carry out the work; it is not a second permission authority.
 - **observe:** analytics over the decision log: accuracy against confidence, threshold sweeps, drift and question discovery.
 - **the contract runner:** replaces the old write, review, fix, check (WRFC) loop.
 

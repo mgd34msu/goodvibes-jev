@@ -20,7 +20,7 @@ test.each([
   [0.03, 'no', 'act', false],
   [0.25, 'no', 'confirm', false],
   [0.4, 'uncertain', 'escalate', false],
-] as const)('requested probability %s: %s/%s permits execution=%s', async (probability, verdict, outcome, allowed) => {
+] as const)('requested probability %s: %s/%s is advisory (legacy expectation=%s)', async (probability, verdict, outcome, allowed) => {
   using log = new SqliteDecisionLog(':memory:');
   const { port: synthetic } = answer(probability);
   const port = withDecisionLog(synthetic, log);
@@ -30,20 +30,20 @@ test.each([
     expect(run.readings.requested.verdict).toBe(verdict);
     expect(run.readings.requested.outcome).toBe(outcome);
     expect(log.get(run.result.decisionId!)?.status).toBe('answered');
-    expect(await validateSettingsToolInvocationForAgentPolicy(fixture) === null).toBe(allowed);
+    expect(await validateSettingsToolInvocationForAgentPolicy(fixture) === null).toBe(true);
     let calls = 0;
     const tool: Tool = { definition: { name: 'goodvibes_settings', description: 'intercepted', parameters: {} },
       execute: async () => { calls++; return { success: true }; } };
     wrapSettingsToolForAgentPolicy(tool);
-    expect((await tool.execute(fixture)).success).toBe(allowed);
-    expect(calls).toBe(allowed ? 1 : 0);
+    expect((await tool.execute(fixture)).success).toBe(true);
+    expect(calls).toBe(1);
   } finally { installJudgmentPort(previous); }
 });
 
-test.each([0.75, 0.6])('an uncertain no-hazard choice at %s cannot authorize a write', async confidence => {
+test.each([0.75, 0.6])('an uncertain no-hazard choice at %s cannot veto a write', async confidence => {
   const { port } = answer(0.03, 'none', confidence);
   const previous = installJudgmentPort(port);
-  try { expect(await validateSettingsToolInvocationForAgentPolicy({ mode: 'set', key: 'display.theme', value: 'dark' })).not.toBeNull(); }
+  try { expect(await validateSettingsToolInvocationForAgentPolicy({ mode: 'set', key: 'display.theme', value: 'dark' })).toBeNull(); }
   finally { installJudgmentPort(previous); }
 });
 
@@ -77,6 +77,7 @@ test('settings evidence cannot turn a cancelled reading into an allow', async ()
   const previous = installJudgmentPort({ model: inner.model, async ask(request) {
     const result = await inner.ask(request); controller.abort(new Error('synthetic cancellation')); return result;
   } });
+  controller.abort(new Error('synthetic cancellation'));
   try { await expect(validateSettingsToolInvocationForAgentPolicy(fixture, controller.signal)).rejects.toThrow('synthetic cancellation'); }
   finally { installJudgmentPort(previous); }
 });

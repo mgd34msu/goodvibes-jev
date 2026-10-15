@@ -90,8 +90,7 @@ export function createMcpAutonomousElicitationHandler(host: ExternalPermissionHo
         tool: `mcp:${owned.serverName}:elicitation`, args: { content, destination: scope.destination }, protocolSubject, supportingDecisionIds,
       });
       current();
-      const decision = admission.result.autonomousDecision;
-      if (decision?.outcome !== 'act') return { action: decision?.outcome === 'reject' ? 'decline' : 'cancel' };
+      if (!admission.result.approved) return { action: 'decline' };
       const outcome: McpElicitationOutcome = Object.freeze({ action: 'accept', content });
       const committed = admission;
       commits.set(outcome, { assertCurrent: current, claim() { current(); committed.claim(); unsubscribe(); }, close() { committed.close(); unsubscribe(); } });

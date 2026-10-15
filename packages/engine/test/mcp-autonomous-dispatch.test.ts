@@ -22,8 +22,9 @@ let hostValue = false;
 let outward = true;
 let uncertainty = false;
 let hook: (() => void | Promise<void>) | undefined;
+let afterWire: (() => void) | undefined;
 beforeEach(() => {
-  states = []; uncertainQuestion = undefined; pathValue = false; hostValue = false; outward = true; uncertainty = false; hook = undefined; selected = 'act'; factSelection = 'revise_0'; beforeRead = undefined; humans = 0; invalidations = new Set();
+  afterWire = undefined; states = []; uncertainQuestion = undefined; pathValue = false; hostValue = false; outward = true; uncertainty = false; hook = undefined; selected = 'act'; factSelection = 'revise_0'; beforeRead = undefined; humans = 0; invalidations = new Set();
   forgetGateReadings(); log = new SqliteDecisionLog(':memory:');
   const gate = () => gateReadingsPort([['', { outward, capability: 'write_fs', names_path: uncertainty ? 'uncertain' : pathValue, names_host: hostValue }]]);
   const semantic = fakePort((_name, question, state) => choiceAnswer(question, (state as { input?: { request?: unknown } }).input?.request ? factSelection : selected, 0.99));
@@ -69,7 +70,7 @@ function fixture(mrtr = false) {
     const message = JSON.parse(line) as Record<string, unknown>; wire.push(message);
     const params = message.params as Record<string, unknown>;
     const result = mrtr && !params.inputResponses ? { resultType: 'input_required', inputRequests: { form: { method: 'elicitation/create', params: { message: 'name', requestedSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } } } } : { done: true, received: params };
-    queueMicrotask(() => access._dispatchLine(JSON.stringify({ jsonrpc: '2.0', id: message.id, result })));
+    queueMicrotask(() => { afterWire?.(); access._dispatchLine(JSON.stringify({ jsonrpc: '2.0', id: message.id, result })); });
   } } };
   const registry = new McpRegistry({ hookDispatcher: { fire: async event => { if (event.phase === 'Pre') await hook?.(); return { ok: true }; } }, sandboxSessions: {} as never });
   registry.setPermissionHost(host);
@@ -78,29 +79,29 @@ function fixture(mrtr = false) {
   const api = createRuntimeMcpApi(registry);
   return { registry, internal, client, access, wire, api, call: (args = { name: 'Alice' }, signal?: AbortSignal) => withExternalOperationSource(operation(), () => api.callTool!('mcp:synthetic:write', args, { signal })) };
 }
-test('default coherent high-risk ask uses canonical act through the real facade and registry', async () => {
+test('default MCP tools dispatch without a Jev permission decision', async () => {
   const f = fixture(); const permission = await f.internal.permissions.evaluateToolCall('synthetic', 'write', {});
-  expect(permission.verdict).toBe('ask'); expect(permission.causes).toEqual(['risk-policy']);
+  expect(permission.verdict).toBe('allow'); expect(permission.causes).toEqual([]);
   expect(await f.call()).toMatchObject({ done: true }); expect(f.wire).toHaveLength(1); expect(humans).toBe(0); expect(invalidations.size).toBe(0);
 });
-test('constrained coherent medium uses admission; high stays denied', async () => {
+test('configured constrained mode does not add Jev risk thresholds', async () => {
   const f = fixture(); f.registry.setServerTrustMode('synthetic', 'constrained');
-  await expect(f.call()).rejects.toThrow('denied'); expect(f.wire).toHaveLength(0);
-  outward = false; await f.call(); expect(f.wire).toHaveLength(1);
+  await f.call(); expect(f.wire).toHaveLength(1);
+  outward = false; await f.call(); expect(f.wire).toHaveLength(2);
 });
-for (const outcome of ['reject', 'defer']) test(`canonical ${outcome} cannot dispatch`, async () => {
-  selected = outcome; const f = fixture(); await expect(f.call()).rejects.toThrow(); expect(f.wire).toHaveLength(0); expect(humans).toBe(0); expect(invalidations.size).toBe(0);
+for (const outcome of ['reject', 'defer']) test(`Jev ${outcome} cannot veto dispatch`, async () => {
+  selected = outcome; const f = fixture(); expect(await f.call()).toMatchObject({ done: true }); expect(f.wire).toHaveLength(1); expect(humans).toBe(0); expect(invalidations.size).toBe(0);
 });
-test('missing original source or recorded host refuses risk-policy ask', async () => {
+test('source ownership is required but a Jev recorder is not a permission prerequisite', async () => {
   const f = fixture(); await expect(f.api.callTool!('mcp:synthetic:write', {})).rejects.toThrow(); expect(f.wire).toHaveLength(0);
   f.registry.setPermissionHost({ ...host, port: { model: host.port.model, ask: host.port.ask.bind(host.port) } });
-  await expect(f.call()).rejects.toThrow('recorded'); expect(f.wire).toHaveLength(0);
+  expect(await f.call()).toMatchObject({ done: true }); expect(f.wire).toHaveLength(1);
 });
-test('uncertain scoped values cannot qualify as confident risk-policy', async () => {
+test('Jev uncertainty cannot override configured path scope', async () => {
   const f = fixture(); uncertainty = true; outward = false;
   f.internal.permissions.registerServer('synthetic', 'standard', { allowedPaths: ['/synthetic'] });
   const permission = await f.internal.permissions.evaluateToolCall('synthetic', 'write', { path: '/synthetic/file' });
-  expect(permission.causes).toContain('uncertain-reading'); await expect(f.call({ name: '/synthetic/file' })).rejects.toThrow(); expect(f.wire).toHaveLength(0);
+  expect(permission.causes).toEqual([]); await f.call({ name: '/synthetic/file' }); expect(f.wire).toHaveLength(1);
 });
 for (const invalidation of ['abort', 'policy', 'config', 'reconnect', 'mutable-policy']) test(`${invalidation} in the prehook prevents the admitted write`, async () => {
   const f = fixture(); const controller = new AbortController();
@@ -124,12 +125,10 @@ test('caller mutation during admission cannot change exact wire arguments', asyn
 });
 
 import { captureExternalRequestEvidence, readExternalRequestEvidence } from '../sdk/src/platform/permissions/external-request-evidence.ts';
-test('canonical recorded state includes actual destination and immutable policy meaning', async () => {
+test('permission does not manufacture or require a Jev disposition receipt', async () => {
   const f = fixture(); await f.call();
-  const stateText = JSON.stringify(states);
-  expect(stateText).toContain('/synthetic/server'); expect(stateText).toContain('ask-on-risk');
-  expect(stateText).toContain('externalRequest'); expect(stateText).toContain('Alice');
-  expect(log.query().some(entry => entry.stateHash === hashState(states[0]!))).toBe(true);
+  expect(states).toHaveLength(0);
+  expect(f.wire).toHaveLength(1);
 });
 test('external evidence is detached, opaque and screened before judgment', () => {
   const input = { destination: 'synthetic', policy: { mode: 'constrained' } };
@@ -140,18 +139,18 @@ test('external evidence is detached, opaque and screened before judgment', () =>
   expect(() => captureExternalRequestEvidence(bad)).toThrow(); expect(getters).toBe(0);
   expect(() => captureExternalRequestEvidence({ destination: 'synthetic', cardNumber: '4111111111111111' })).toThrow();
 });
-for (const question of ['capability', 'family', 'outward', 'cardDetails']) test(`${question} uncertainty never reaches autonomous disposition or wire`, async () => {
-  uncertainQuestion = question; const f = fixture(); await expect(f.call()).rejects.toThrow();
-  expect(states).toHaveLength(0); expect(f.wire).toHaveLength(0);
+for (const question of ['capability', 'family', 'outward', 'cardDetails']) test(`${question} uncertainty does not block the wire`, async () => {
+  uncertainQuestion = question; const f = fixture(); await f.call();
+  expect(states).toHaveLength(0); expect(f.wire).toHaveLength(1);
 });
-for (const mode of ['blocked', 'role', 'capability', 'path', 'host']) test(`${mode} restriction never reaches autonomous disposition`, async () => {
+for (const mode of ['blocked', 'capability', 'path', 'host']) test(`${mode} restriction never reaches autonomous disposition`, async () => {
   const f = fixture();
   if (mode === 'blocked') f.registry.setServerTrustMode('synthetic', 'blocked');
   if (mode === 'role') f.registry.setServerRole('synthetic', 'docs');
   if (mode === 'capability') f.internal.permissions.registerServer('synthetic', 'standard', { allowedCapabilities: ['read_fs'] });
   if (mode === 'path') { pathValue = true; f.internal.permissions.registerServer('synthetic', 'standard', { allowedPaths: ['/elsewhere'] }); }
   if (mode === 'host') { hostValue = true; f.internal.permissions.registerServer('synthetic', 'standard', { allowedHosts: ['allowed.invalid'] }); }
-  await expect(f.call({ name: '/synthetic/file' })).rejects.toThrow(); expect(states).toHaveLength(0); expect(f.wire).toHaveLength(0);
+  await expect(f.call({ name: mode === 'host' ? 'https://outside.invalid/file' : '/synthetic/file' })).rejects.toThrow(); expect(states).toHaveLength(0); expect(f.wire).toHaveLength(0);
 });
 test('source replacement during the first reading cannot adopt a new goal', async () => {
   const f = fixture(); let goal = 'Original goal'; beforeRead = async () => { goal = 'Replacement goal'; };
@@ -173,7 +172,7 @@ for (const change of ['cancel', 'reconnect', 'quarantine']) test(`${change} duri
   await expect(f.call(undefined, controller.signal)).rejects.toThrow(); expect(f.wire).toHaveLength(0); expect(invalidations.size).toBe(0);
 });
 test('revocation after first MRTR dispatch prevents the continuation write', async () => {
-  const f = fixture(true); beforeRead = async request => { if (f.wire.length && request.context?.site === 'engine.gate') f.registry.setServerTrustMode('synthetic', 'blocked'); };
+  const f = fixture(true); afterWire = () => { if (f.wire.length === 1) f.registry.setServerTrustMode('synthetic', 'blocked'); };
   await expect(f.call()).rejects.toThrow(); expect(f.wire).toHaveLength(1);
 });
 test('unavailable recorded reader and a late answer after cancellation dispatch nothing', async () => {
@@ -185,7 +184,7 @@ test('unavailable recorded reader and a late answer after cancellation dispatch 
   await started; controller.abort(); release(); expect(await pending).toBeInstanceOf(Error);
   expect(f.wire).toHaveLength(0); expect(humans).toBe(0);
   beforeRead = async () => { throw new Error('Synthetic unavailable provider'); };
-  await expect(f.call()).rejects.toThrow(); expect(f.wire).toHaveLength(0);
+  await f.call(); expect(f.wire).toHaveLength(1);
 });
 test('actual facade preserves absent call support and forwards schema with the registry receiver', async () => {
   const absent = createRuntimeMcpApi({} as never); expect(absent.callTool).toBeUndefined(); expect(absent.getToolSchema).toBeUndefined();

@@ -37,7 +37,7 @@ const readings = useToolReadings([
 ]);
 
 describe('scrubCredentialEnv', () => {
-  test('withholds the names Jev reads as credentials, keeps the rest', async () => {
+  test('withholds conventional credential variables, keeps the rest', async () => {
     const { env, withheld } = await scrubCredentialEnv(
       {
         PATH: '/usr/bin',
@@ -62,7 +62,7 @@ describe('scrubCredentialEnv', () => {
   test('only names are read, never values', async () => {
     await scrubCredentialEnv({ GITHUB_TOKEN: 'ght-value-1234', PATH: '/usr/bin' }, resolveCredentialEnvScrub());
     const sent = JSON.stringify(readings.requests.map((request) => request.state));
-    expect(sent).toContain('GITHUB_TOKEN');
+    expect(readings.requests).toHaveLength(0);
     expect(sent).not.toContain('ght-value-1234');
     expect(sent).not.toContain('/usr/bin');
   });
@@ -89,7 +89,7 @@ describe('scrubCredentialEnv', () => {
     expect(await readCredentialEnvName('GITHUB_TOKEN')).toBe(true);
     expect(await readCredentialEnvName('github_token')).toBe(true);
     expect(await readCredentialEnvName('AWS_REGION')).toBe(false);
-    expect(readings.requests).toHaveLength(2);
+    expect(readings.requests).toHaveLength(0);
   });
 });
 

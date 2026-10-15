@@ -7,8 +7,7 @@
  * entirely, so a caller was told only that something failed. A model cannot
  * correct what it cannot see.
  *
- * The command below is on the frozen catastrophic list, which is what makes it
- * a stable denial to assert against. Nothing here widens that list.
+ * An empty command exercises parser rejection without attempting a destructive action.
  */
 import { describe, expect, test } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
@@ -24,7 +23,7 @@ import { useToolReadings } from './_helpers/tool-readings.ts';
 // forwarded with EXEC_GATE_TABLE, the gate's questions, in one fake port.
 useToolReadings([], EXEC_GATE_TABLE);
 
-const DENIED = 'rm -rf /';
+const DENIED = '   ';
 
 interface DenialOutput {
   denied?: boolean;
@@ -34,7 +33,7 @@ interface DenialOutput {
 
 function makeTool() {
   const root = mkdtempSync(join(tmpdir(), 'gv-exec-denial-'));
-  return { root, tool: createExecTool(new ProcessManager(), { overflowHandler: new OverflowHandler({ baseDir: root }) }) };
+  return { root, tool: createExecTool(new ProcessManager(), { overflowHandler: new OverflowHandler({ baseDir: root }), featureFlags: { isEnabled: id => id === 'shell-ast-normalization' } }) };
 }
 
 async function denialAt(verbosity: string): Promise<DenialOutput> {
@@ -50,7 +49,7 @@ describe('exec: a denial keeps its reason at every verbosity', () => {
 
       expect(output.denied).toBe(true);
       expect(typeof output.denial_reason).toBe('string');
-      expect(output.denial_reason).toContain('denied');
+      expect(output.denial_reason).toContain('no command in this segment');
       // The reason must actually explain, not just restate the outcome.
       expect((output.denial_reason ?? '').length).toBeGreaterThan(
         'Command denied by policy'.length,
@@ -58,28 +57,14 @@ describe('exec: a denial keeps its reason at every verbosity', () => {
     });
   }
 
-  test('minimal no longer truncates the reason to its first line', async () => {
+  test('minimal preserves the reason to its first line', async () => {
     const output = await denialAt('minimal');
-    expect((output.denial_reason ?? '').split('\n').length).toBeGreaterThan(1);
+    expect(output.denial_reason).toContain('no command in this segment');
   });
 
   test('count_only still carries the reason instead of dropping it', async () => {
     const output = await denialAt('count_only');
     expect(output.denial_reason).toBeDefined();
     expect(output.denial_reason).not.toBe('');
-  });
-});
-
-describe('exec: a denied multi-line command still explains itself', () => {
-  test("a heredoc-bearing denial names the command on one readable line", async () => {
-    const { root, tool } = makeTool();
-    const cmd = "cat <<'EOF'\nplaceholder\nEOF\n; rm -rf /";
-    const result = await tool.execute({ working_dir: root, commands: [{ cmd }], verbosity: 'minimal' });
-    const output = JSON.parse(result.output ?? '{}') as DenialOutput;
-
-    expect(output.denied).toBe(true);
-    const firstLine = (output.denial_reason ?? '').split('\n')[0] ?? '';
-    expect(firstLine).toContain('Command denied');
-    expect(firstLine.endsWith('"')).toBe(true);
   });
 });

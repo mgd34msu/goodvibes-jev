@@ -473,10 +473,8 @@ export class AcpConnection {
                 ? owned.toolCall.rawInput as Record<string, unknown> : {}), destination: { command: this.spawnCmd, cwd: this.task.workingDirectory } },
             });
           assertCurrent();
-          const decision = admission.result.autonomousDecision;
-          if (!decision || decision.outcome === 'defer' || decision.outcome === 'revise') return cancelled;
-          const response = permissionOutcomeFor(owned.options, { approved: decision.outcome === 'act', remember: false });
-          binding.defer(response, admission, decision.outcome === 'act' && response.outcome.outcome === 'selected', () => {});
+          const response = permissionOutcomeFor(owned.options, { approved: admission.result.approved, remember: false });
+          binding.defer(response, admission, admission.result.approved && response.outcome.outcome === 'selected', () => {});
           deferred = true;
           return response;
         } catch { return cancelled; }

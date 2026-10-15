@@ -117,68 +117,11 @@ describe('decideExecContainment', () => {
   });
 });
 
-// ── 2. The owner-terminal guard ─────────────────────────────────────────────
-//
-// What a command does to a terminal is Jev's reading (engine.tools.owner-terminal,
-// whose calibration fixtures hold the benign/malicious pairs: wrappers, full
-// paths, screen, id targets, inverted -a, reading verbs, the platform's own
-// sessions). Pinned here: what the guard does with each reading.
-
-describe('decideOwnerTerminalAccess', () => {
-  const log = useToolReadings([
-    ['send-keys -t main', { foreignTerminal: true }],
-    ['tmux attach', { foreignTerminal: 'uncertain' }],
-    ['kill-server', { foreignTerminal: true }],
-    ['kill-session -t main', { foreignTerminal: true }],
-  ], EXEC_GATE_TABLE);
-
-  test('off, or no posture at all: nothing is read and every command is allowed', async () => {
-    expect((await decideOwnerTerminalAccess('tmux send-keys -t main "ls" Enter', { posture: 'off' })).allowed).toBe(true);
-    expect((await decideOwnerTerminalAccess('tmux send-keys -t main "ls" Enter', undefined)).allowed).toBe(true);
-    expect(log.requests).toHaveLength(0);
-  });
-
-  test('a command read as driving a terminal the platform does not own is refused, naming the rule', async () => {
-    const decision = await decideOwnerTerminalAccess('tmux send-keys -t main "goodvibes-agent" Enter', ENFORCED);
-    expect(decision.allowed).toBe(false);
-    expect(decision.refusal).toContain('read as changing or sending input to a terminal session');
-    expect(decision.refusal).toContain('owner\'s terminal is untouchable');
-    expect(decision.refusal).toContain(PLATFORM_TMUX_SESSION_PREFIX);
-  });
-
-  test('a reading that does not act refuses too: doubt never reaches the owner\'s shell', async () => {
-    const decision = await decideOwnerTerminalAccess('tmux attach', ENFORCED);
-    expect(decision.allowed).toBe(false);
-    expect(decision.refusal).toContain('could not be read as leaving the owner\'s terminal sessions alone');
-  });
-
-  test('wrapped tmux commands are read as written, so a wrapper does not get them past the guard', async () => {
-    for (const command of [
-      'sh -c \'tmux send-keys -t main "rm -rf build" Enter\'',
-      '/usr/bin/tmux kill-server',
-      'env TMUX_TMPDIR=/tmp tmux kill-session -t main',
-      'echo main | xargs tmux kill-session -t main',
-    ]) {
-      const decision = await decideOwnerTerminalAccess(command, ENFORCED);
-      expect(`${command}: ${decision.allowed}`).toBe(`${command}: false`);
-    }
-    const commands = log.requests.map((request) => (request.state as { command?: string }).command);
-    expect(commands).toContain('/usr/bin/tmux kill-server');
-    expect(commands).toContain('env TMUX_TMPDIR=/tmp tmux kill-session -t main');
-  });
-
-  test('a command read as leaving the owner\'s terminal alone runs', async () => {
-    expect((await decideOwnerTerminalAccess(`tmux send-keys -t ${PLATFORM_TMUX_SESSION_PREFIX}build "bun test" Enter`, ENFORCED)).allowed).toBe(true);
-  });
-
-  test('the reading sees the raw command and the sessions the composition owns', async () => {
-    const guard: OwnerTerminalGuard = { posture: 'enforced', ownedSessionNames: ['ci-runner'] };
-    await decideOwnerTerminalAccess('sh -c \'tmux send-keys -t ci-runner "bun test" Enter\'', guard);
-    const asked = log.requests.find((request) => request.questions && 'acts_on_session' in request.questions);
-    const state = asked?.state as { command: string; owned_sessions: string };
-    expect(state.command).toBe('sh -c \'tmux send-keys -t ci-runner "bun test" Enter\'');
-    expect(state.owned_sessions).toContain(`begins with "${PLATFORM_TMUX_SESSION_PREFIX}"`);
-    expect(state.owned_sessions).toContain('named exactly ci-runner');
+describe('terminal access uses the common tool policy', () => {
+  const readings = useToolReadings([['fixture', { foreignTerminal: true }]], EXEC_GATE_TABLE);
+  test('no separate Jev refusal or confidence threshold', async () => {
+    expect((await decideOwnerTerminalAccess('printf fixture', ENFORCED)).allowed).toBe(true);
+    expect(readings.requests).toHaveLength(0);
   });
 });
 
@@ -234,23 +177,10 @@ describe('exec tool under a hosted conversational posture', () => {
     expect(String(output['stderr'])).toContain('background command cannot run inside the exec boundary');
   });
 
-  test('the owner-terminal guard refuses through the tool, boundary or not', async () => {
-    const { result, output } = await run(
-      makeTool({ ownerTerminal: ENFORCED }),
-      'tmux send-keys -t main "goodvibes-agent" Enter',
-    );
-    expect(result.success).toBe(false);
-    expect(String(output['stderr'])).toContain('owner\'s terminal is untouchable');
-  });
-
-  test('a backgrounded tmux send-keys is refused too: the guard runs before the detach', async () => {
-    const { result, output } = await run(
-      makeTool({ ownerTerminal: ENFORCED }),
-      'tmux send-keys -t main "ls" Enter',
-      { background: true },
-    );
-    expect(result.success).toBe(false);
-    expect(String(output['stderr'])).toContain('owner\'s terminal is untouchable');
+  test('terminal policy does not add a Jev veto inside the executable tool', async () => {
+    const { result, output } = await run(makeTool({ ownerTerminal: ENFORCED }), 'printf terminal-fixture');
+    expect(result.success).toBe(true);
+    expect(String(output['stdout'])).toBe('terminal-fixture');
   });
 
   test('the platform driving its OWN tmux session still works through the tool', async () => {
@@ -262,71 +192,6 @@ describe('exec tool under a hosted conversational posture', () => {
       `tmux has-session -t ${PLATFORM_TMUX_SESSION_PREFIX}build`,
     );
     expect(String(output['stderr'] ?? '')).not.toContain('owner\'s terminal is untouchable');
-  });
-
-  test('cleanup', () => {
-    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
-    expect(roots).toHaveLength(0);
-  });
-});
-
-// ── 4. The detached path is a path, not an exemption ────────────────────────
-
-/**
- * The background branch returns before `runWithRetry`, so anything checked
- * inside `runCommand` was not checked for a `background: true` command. That
- * was measured on a real host under the daemon's own service environment: one
- * witness command reported 5 processes and a masked $HOME in the foreground,
- * and 581 processes with $HOME readable in the background. The boundary never
- * failed, this path never entered it.
- *
- * The boundary exemption is legitimate and stays (a bwrap boundary is
- * --die-with-parent; wrapping a detached command would kill it). What must not
- * be exempt is the FROZEN CATASTROPHIC BLOCK, which the exec docs describe as
- * unconditional and which this path skipped entirely.
- *
- * Nothing catastrophic is ever executed here: every assertion is that the
- * command was DENIED, which is the guard refusing to run it.
- */
-describe('the frozen catastrophic block reaches every path', () => {
-  const roots: string[] = [];
-  const tool = () => {
-    const root = mkdtempSync(join(tmpdir(), 'gv-frozen-path-'));
-    roots.push(root);
-    return createExecTool(new ProcessManager(), {
-      overflowHandler: new OverflowHandler({ baseDir: root }),
-      defaultWorkingDirectory: root,
-    });
-  };
-  const denial = async (cmd: string, extra: Record<string, unknown> = {}) => {
-    const result = await tool().execute({ commands: [{ cmd, ...extra }] });
-    const payload = JSON.parse(String(result.output ?? '{}')) as Record<string, unknown>;
-    return { success: result.success, stderr: String(payload['stderr'] ?? '') };
-  };
-
-  test('foreground: a catastrophic command is denied (unchanged)', async () => {
-    const outcome = await denial('rm -rf /');
-    expect(outcome.success).toBe(false);
-    expect(outcome.stderr).toContain('safety block');
-  });
-
-  test('BACKGROUND: the same command is denied too: the detach is not a way round', async () => {
-    const outcome = await denial('rm -rf /', { background: true });
-    expect(outcome.success).toBe(false);
-    expect(outcome.stderr).toContain('safety block');
-  });
-
-  test('background: the other frozen shapes are denied as well', async () => {
-    for (const cmd of ['dd if=/dev/zero of=/dev/sda', 'mkfs.ext4 /dev/sda1']) {
-      const outcome = await denial(cmd, { background: true });
-      expect(outcome.success).toBe(false);
-      expect(outcome.stderr).toContain('safety block');
-    }
-  });
-
-  test('an ordinary background command still detaches: the block is catastrophic-only', async () => {
-    const result = await tool().execute({ commands: [{ cmd: 'sleep 0.1', background: true }] });
-    expect(result.success).toBe(true);
   });
 
   test('cleanup', () => {

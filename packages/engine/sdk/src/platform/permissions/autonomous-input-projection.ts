@@ -2,7 +2,7 @@
 import { hashState, type EntryType } from '@goodvibes-jev/judgment';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { ProjectedToolCall } from '../tools/input-projection.js';
-import { captureAutonomousChoices, type AutonomousToolChoices } from './autonomous.js';
+import { captureCurrentAutonomousChoices, type AutonomousToolChoices } from './autonomous.js';
 import { assertPermissionActive } from './cancellation.js';
 
 declare const autonomousChoiceProjection: unique symbol;
@@ -68,7 +68,7 @@ export class AutonomousChoiceProjectionOwner {
           toolName: revision.toolName, args: projected.args,
         }));
       }
-      const inspected = captureAutonomousChoices({ revisions, resumeConditions: original.autonomousChoices.resumeConditions });
+      const inspected = captureCurrentAutonomousChoices({ revisions, resumeConditions: original.autonomousChoices.resumeConditions });
       // The public selector makes another inspected copy. Keep our registry
       // identities privately and restore the selected one in the manager.
       const choices = Object.freeze({ ...inspected, revisions: Object.freeze(revisions) });

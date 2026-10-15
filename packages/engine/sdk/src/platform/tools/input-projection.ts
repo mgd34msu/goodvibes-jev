@@ -1,7 +1,7 @@
 /** Trusted registration-only input projection. Nothing in this module grants tool admission. */
 import { types as nodeTypes } from 'node:util';
 import type { ToolExecuteOptions } from '../types/tools.js';
-import { captureOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { captureOwnedJson } from '../gate/judgment-input.js';
 import type { SecretsManager, PreparedScopedSecretDeletion, PreparedSecretImport } from '../config/secrets.js';
 import type { SubscriptionManager, PreparedSubscriptionImport } from '../config/subscriptions.js';
 import type { ConfigManager, PreparedConfigMutation } from '../config/manager.js';
@@ -300,7 +300,7 @@ export function captureProjectionStructure(value: unknown): Record<string, unkno
 
 export function captureProjectionArgs(value: unknown, name: string): Record<string, unknown> {
   inspectProjectionStructure(value);
-  const captured = snapshotJudgmentInput(value, name);
+  const captured = captureOwnedJson(value, nodeTypes.isProxy);
   if (!captured || typeof captured !== 'object' || Array.isArray(captured)) throw new ToolInputProjectionError('invalid');
   return captured as Record<string, unknown>;
 }

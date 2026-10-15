@@ -16,7 +16,8 @@ import {
 import { captureNativeReferenceProjection } from './native-reference-projection.js';
 import { canonicalJson, type EntryType, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { captureOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
-import { autonomousRevision } from '../permissions/autonomous.js';
+// Local tool identity is independent of whether its bytes may be sent to hosted judgment.
+const autonomousRevision = (value: unknown): string => createHash('sha256').update(canonicalJson(captureOwnedJson(value) as EntryType)).digest('hex');
 import { assertAutonomousConfigTransition, completeAutonomousConfigTransition, bindAutonomousNestedAdmission, readAutonomousSettingsPresentation, readAutonomousWorkspaceConstraint, readAutonomousEffectConstraint, readAutonomousNestedOwner, consumeAutonomousAdmission, type AutonomousNestedOwner, type AutonomousPermissionAdmission, type PermissionManager } from '../permissions/manager.js';
 import type { AutonomousChoiceProjection } from '../permissions/autonomous-input-projection.js';
 import type { PreparedConfigMutationReceipt } from '../config/manager.js';

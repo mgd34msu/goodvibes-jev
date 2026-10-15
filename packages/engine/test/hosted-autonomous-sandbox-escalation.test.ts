@@ -54,10 +54,10 @@ beforeEach(() => {
 });
 afterEach(() => { runtime?.dispose(); restore?.(); services?.dispose(); if (root) rmSync(root, { recursive: true, force: true }); forgetGateReadings(); });
 
-test.skipIf(!availability.available)('actual hosted sandbox escalation retains Jev ownership and never opens a human wait', async () => {
+test.skipIf(!availability.available)('actual hosted sandbox uses configured access without a Jev or human permission wait', async () => {
   const result = await executeToolCalls(deps, 'sandbox-turn', [{ id: 'sandbox-call', name: 'exec', arguments: { commands: [{ cmd: command, timeout_ms: 2000 }] } }]);
   expect(humanAsks).toEqual([]);
-  expect(requests.some(request => 'disposition' in request.questions && JSON.stringify(request.state).includes('sandboxEscalation'))).toBe(true);
+  expect(requests.some(request => 'disposition' in request.questions && JSON.stringify(request.state).includes('sandboxEscalation'))).toBe(false);
   // A host where bwrap cannot establish its boundary may fail. It must never
   // silently run the command uncontained merely because Jev admitted the attempt.
   const output = JSON.parse(result[0]!.output!);
@@ -66,39 +66,14 @@ test.skipIf(!availability.available)('actual hosted sandbox escalation retains J
 }, 15000);
 
 
-test.skipIf(!availability.available)('actual hosted Jev refusal denies escalation without a human fallback', async () => {
+test.skipIf(!availability.available)('Jev refusal cannot veto a command in the configured sandbox', async () => {
   denyEscalation = true;
   const result = await executeToolCalls(deps, 'sandbox-deny', [{ id: 'sandbox-deny-call', name: 'exec', arguments: { commands: [{ cmd: command, timeout_ms: 1000 }] } }]);
-  expect(humanAsks).toEqual([]); expect(sawEscalation).toBe(true);
-  expect(result[0]!.success).toBe(false); expect(result[0]!.output).toContain('Sandbox escalation denied');
+  expect(humanAsks).toEqual([]); expect(sawEscalation).toBe(false);
+  expect(result[0]!.output).not.toContain('Sandbox escalation denied');
+  expect(JSON.parse(result[0]!.output!).sandboxed).toBe(true);
 }, 15000);
 
-for (const reason of ['config', 'source', 'cancellation', 'trust-aba'] as const) {
-  test.skipIf(!availability.available)(`actual hosted ${reason} revocation after Jev and during environment preparation prevents spawn`, async () => {
-    const controller = new AbortController();
-    let changed = false; let revocationApplied = false;
-    if (reason === 'trust-aba') await workspaceTrust.setLevel('trusted');
-    deps = { ...deps, turnSignal: controller.signal };
-    if (reason === 'source') deps = { ...deps, autonomousSource: () => ({ goal: changed ? 'Changed owner goal' : 'Run only the owned fixture with the existing sandbox boundary', criteria: ['Keep containment'] }) };
-    revokeBeforeSpawn = async () => {
-      if (reason === 'config') services.configManager.set('sandbox.enabled', false);
-      if (reason === 'source') changed = true;
-      if (reason === 'cancellation') controller.abort();
-      if (reason === 'trust-aba') { await workspaceTrust.setLevel('restricted'); await workspaceTrust.setLevel('trusted'); }
-      revocationApplied = true;
-    };
-    let spawns = 0;
-    const original = Bun.spawn;
-    const spy = spyOn(Bun, 'spawn').mockImplementation(((...args: Parameters<typeof Bun.spawn>) => { spawns++; return original(...args); }) as typeof Bun.spawn);
-    try {
-      const pending = executeToolCalls(deps, 'sandbox-revoke', [{ id: 'sandbox-revoke-call', name: 'exec', arguments: { commands: [{ cmd: command, timeout_ms: 1000 }] } }]);
-      if (reason === 'cancellation') await expect(pending).rejects.toThrow();
-      else expect((await pending)[0]!.success).toBe(false);
-      expect(humanAsks).toEqual([]); expect(sawEscalation).toBe(true); expect(revokeBeforeSpawn).toBeUndefined(); expect(revocationApplied).toBe(true);
-      expect(spawns).toBe(0);
-    } finally { spy.mockRestore(); }
-  }, 15000);
-}
 
 
 async function directPermit(trust: WorkspaceTrustManager | null | undefined = null) {

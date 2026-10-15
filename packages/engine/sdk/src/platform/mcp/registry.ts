@@ -477,7 +477,7 @@ export class McpRegistry {
           tool: qualifiedName, args, serverPolicy, supportingDecisionIds: permission.judgmentDecisionIds ?? [],
         });
         assertCurrent();
-        if (admission.result.autonomousDecision?.outcome !== 'act') throw new Error(`MCP call '${qualifiedName}' autonomous admission did not act`);
+        if (!admission.result.approved) throw new Error(`MCP call '${qualifiedName}' autonomous admission did not act`);
       }
 
       // Pre:mcp:call hook

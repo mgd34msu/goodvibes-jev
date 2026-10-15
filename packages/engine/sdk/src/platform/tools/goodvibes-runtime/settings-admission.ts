@@ -6,7 +6,7 @@ import { isValidConfigKey } from '../../config/schema.js';
 import { isSecretBearingConfigKey } from '../../config/secret-bearing-config-keys.js';
 import { configKeyScope, describeConfigOwnership } from '../../config/config-ownership.js';
 import { readHostSettingsFile } from '../../config/manager-host-settings.js';
-import { snapshotJudgmentInput } from '../../gate/judgment-input.js';
+import { captureOwnedJson } from '../../gate/judgment-input.js';
 import { applyRemoteSettingsPrecondition, assertRemoteSettingsPrecondition, captureRemoteSettingsPrecondition,
   inspectRemoteSettingsPrecondition, resolvePreparedConfigWriteRoute, assertPreparedConfigWriteRoute, type RemoteSettingsPrecondition } from '../../config/settings-precondition-client.js';
 import type { ToolExecuteOptions } from '../../types/tools.js';
@@ -80,7 +80,7 @@ export function createAgentSettingsInputProjector(configManager: ConfigManager, 
           appliedBy: 'local', previous: isSecretBearingConfigKey(key) ? posture(previous) : previous };
       }
       // Protect complete raw backend facts before hashing, recording or judgment.
-      effect = snapshotJudgmentInput(effect, 'goodvibes_settings') as Record<string, unknown>;
+      effect = captureOwnedJson(effect) as Record<string, unknown>;
       request.assertCurrent(); request.signal?.throwIfAborted();
       const context = Object.freeze({});
       const capture: Capture = { argsJson: JSON.stringify(args), key, operation: args.mode, local, localFacts, remote, source, route,

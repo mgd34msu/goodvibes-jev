@@ -1,15 +1,4 @@
-/**
- * Exec guard: the run-time catastrophic check.
- *
- * Every risk a command carries is decided by the gate before the exec tool
- * runs (Jev's stakes reading and the preset), so the guard never re-denies a
- * command by name or class: kill, docker, sudo and rm on real paths run. What
- * the guard repeats is the gate's catastrophic reading (engine.gate.boundary):
- * a yes is refused; an uncertain reading is allowed only when the gate read it
- * (and so already sent it to the owner at critical stakes), and refused when
- * the exec tool runs without the gate in front of it. With AST parsing on, a
- * command that parses to no runnable segment is refused.
- */
+/** Shell parsing never asks Jev to approve a command. These tests do not execute commands. */
 import { describe, expect, test } from 'bun:test';
 import { useGateReadings } from './_helpers/gate-readings.ts';
 import { guardExecCommand } from '../sdk/src/platform/tools/exec/ast-guard.js';
@@ -22,7 +11,7 @@ const flags = (enabledIds: readonly string[]) => ({
   },
 });
 
-describe('exec guard: the gate owns command risk', () => {
+describe('exec guard: parsing is independent of Jev', () => {
   useGateReadings([
     ['"rm -rf /"', { mutates: true, catastrophic: true }],
     ['dd if=/dev/zero of=/dev/sda', { mutates: true, catastrophic: true }],
@@ -34,27 +23,27 @@ describe('exec guard: the gate owns command risk', () => {
     }
   });
 
-  test('a command Jev reads as catastrophic is refused, in both parse modes', async () => {
+  test('a Jev classification does not veto a command in either parse mode', async () => {
     for (const mode of [[], ['shell-ast-normalization']]) {
       const result = await guardExecCommand('rm -rf /', flags(mode));
-      expect(result.allowed).toBe(false);
-      expect(result.denialMessage).toContain('destroying the machine');
+      expect(result.allowed).toBe(true);
+      expect(result.denialMessage).toBeUndefined();
     }
-    expect((await guardExecCommand('dd if=/dev/zero of=/dev/sda')).allowed).toBe(false);
+    expect((await guardExecCommand('dd if=/dev/zero of=/dev/sda')).allowed).toBe(true);
   });
 
   test('the guard reuses the gate\'s reading of the same command instead of asking again', async () => {
     const reading = await readToolCall({ toolName: 'exec', args: { command: 'rm -rf /' }, askObfuscated: true });
     expect(reading.boundary.catastrophic).toBe('yes');
-    expect((await guardExecCommand('rm -rf /')).allowed).toBe(false);
+    expect((await guardExecCommand('rm -rf /')).allowed).toBe(true);
   });
 });
 
 describe('exec guard: an uncertain reading', () => {
   useGateReadings([['maybe-wipe.sh', { mutates: true, catastrophic: 'uncertain' }]]);
 
-  test('is refused when the exec tool runs without the gate in front of it', async () => {
-    expect((await guardExecCommand('./maybe-wipe.sh')).allowed).toBe(false);
+  test('does not block standalone execution', async () => {
+    expect((await guardExecCommand('./maybe-wipe.sh')).allowed).toBe(true);
   });
 
   test('runs when the gate read it (the gate already sent it to the owner at critical stakes)', async () => {

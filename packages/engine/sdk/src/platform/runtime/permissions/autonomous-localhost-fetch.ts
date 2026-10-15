@@ -17,7 +17,7 @@ function wireRevision(input: LocalhostFetchApprovalInput): string {
 export async function admitLocalhostFetch(host: AutonomousToolPromptHost, input: LocalhostFetchApprovalInput,
   execution?: LocalhostFetchExecutionContext): Promise<LocalhostFetchPermit | false> {
   const operation = currentExternalOperationSource();
-  if (!operation || !execution?.assertCurrent || !input.request || !input.originalRequest || !host.port.recorder
+  if (!operation || !execution?.assertCurrent || !input.request || !input.originalRequest
     || host.workspaceTrust === undefined) return false;
   const workspaceTrust = host.workspaceTrust;
   const prepareTrust = workspaceTrust?.prepareAutonomousConstraint;
@@ -56,7 +56,7 @@ export async function admitLocalhostFetch(host: AutonomousToolPromptHost, input:
         localhostAdmission: 'This exact prepared hop only; does not allow future requests or alter project trust.' },
     });
     assertCurrent();
-    if (admission.result.autonomousDecision?.outcome !== 'act') return false;
+    if (!admission.result.approved) return false;
     const owned = admission;
     const permit: LocalhostFetchPermit = Object.freeze({ signal, assertCurrent,
       claim() { assertCurrent(); owned.claim(); assertCurrent(); },

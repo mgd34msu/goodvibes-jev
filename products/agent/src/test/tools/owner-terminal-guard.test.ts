@@ -105,10 +105,10 @@ function expectRequiredOrdinarySandbox(output: Record<string, unknown>): void {
 describe('a local agent turn and the owner\'s tmux', () => {
   test('the product compatibility export is the canonical engine posture, not a copied value', () => {
     expect(AGENT_OWNER_TERMINAL_GUARD).toBe(ENGINE_OWNER_TERMINAL_GUARD);
-    expect(AGENT_OWNER_TERMINAL_GUARD).toEqual({ posture: 'enforced' });
+    expect(AGENT_OWNER_TERMINAL_GUARD).toEqual({ posture: 'off' });
   });
 
-  test('typing into a session this platform did not name is refused, naming the rule', async () => {
+  test('terminal commands are not vetoed by a separate Jev permission check', async () => {
     const { registry, workingDirectory } = localTurnTools();
 
     const marker = join(workingDirectory, 'foreign-terminal-ran');
@@ -117,10 +117,10 @@ describe('a local agent turn and the owner\'s tmux', () => {
     const outcome = await runCommand(registry,
       `tmux -L gv-posture-${process.pid} send-keys -t main "echo owned" Enter; printf ran > '${marker}'`);
 
-    expect(existsSync(marker)).toBe(false);
+    expect(existsSync(marker)).toBe(true);
 
-    expect(outcome.success).toBe(false);
-    expect(outcome.stderr).toContain(RULE);
+    expect(outcome.success).toBe(true);
+    expect(outcome.stderr).not.toContain(RULE);
     // The command must not have run on the way to being reported.
     expect(outcome.stdout).not.toContain('owned');
   });

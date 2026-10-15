@@ -557,7 +557,7 @@ GoodVibes ships **161** built-in slash commands across **75** categories. Every 
 | `/pastes` | `/pending-pastes` | `[pN]` | Preview the actual content behind each [TEXT: pN, M lines] fold in the composer, before you submit |
 | `/power` | None | `[status \| on \| off \| toggle]` | Host sleep ownership: show status and toggle keep-awake |
 | `/queue` | `/q` | `[list \| edit <n> <text> \| delete <n>]` | Mid-turn message queue: list, edit, or delete still-undelivered messages |
-| `/quit` | `/:q` | None | Exit the application |
+| `/quit` | `/:q`, `/exit` | None | Exit the application |
 | `/reset` | None | None | Full reset: clear display and conversation context |
 | `/shortcuts` | `/keys`, `/keybinds` | None | Show keyboard shortcuts reference |
 | `/wq` | `/:wq` | None | Commit all git changes and then exit |

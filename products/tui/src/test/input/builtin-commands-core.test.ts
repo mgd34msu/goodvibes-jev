@@ -16,6 +16,10 @@ describe('input/registerBuiltinCommands shell core extraction', () => {
     expect(registry.get('paste')?.name).toBe('paste');
     expect(registry.get('clip')?.name).toBe('paste');
     expect(registry.get('quit')?.name).toBe('quit');
+    expect(registry.get('exit')).toBe(registry.get('quit'));
+    let exited = false;
+    registry.get('exit')!.handler([], { exit: () => { exited = true; } } as unknown as CommandContext);
+    expect(exited).toBe(true);
     expect(registry.get('wq')?.name).toBe('wq');
     expect(registry.get('effort')?.name).toBe('effort');
     expect(registry.get('lines')).toBeUndefined();

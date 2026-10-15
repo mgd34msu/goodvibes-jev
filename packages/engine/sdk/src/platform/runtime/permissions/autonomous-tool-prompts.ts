@@ -78,7 +78,7 @@ export async function answerExecPrompt(host: AutonomousToolPromptHost, ask: Exec
       supportingDecisionIds: selected.context.judgmentDecisionIds,
     });
     assertCurrent();
-    if (admission.result.autonomousDecision?.outcome !== 'act') return { answered: false };
+    if (!admission.result.approved) return { answered: false };
     const owned = admission;
     const answer = Object.freeze({ answered: true, text });
     answers.set(answer, { claim() { assertCurrent(); owned.claim(); }, close() { if (!closed) { closed = true; owned.close(); unsubscribe(); } } });

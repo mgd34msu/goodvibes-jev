@@ -1,19 +1,6 @@
-/**
- * Main-conversation policy for the `read` tool: bounded, non-secret project
- * reads only.
- *
- * Hoisted from the agent (src/tools/agent-read-policy.ts) into the engine
- * gate. Read under the owner ruling of 2026-09-27: the secret-looking segment,
- * file-name and extension lists, and the rule refusing every hidden (dotted)
- * name, decided "does this path hold secrets" by spelling, so a token file
- * with an ordinary name passed and a harmless dotfile was refused. That is
- * now the gate's `secrets` reading (readTouchesSecrets), asked per path. The
- * file-count, image-mode and image-size limits stay code: they bound how much
- * one call reads and interpret nothing about the files.
- */
+/** Agent read mechanics. Access follows owner configuration, never a Jev classification. */
 import { executePolicyCheck } from '../execute-policy-check.js';
 import type { Tool } from '../../types/tools.js';
-import { readTouchesSecrets } from '../../permissions/credential-read-defaults.js';
 import { assertAdmittedAgentRead } from '../../tools/read/admission.js';
 import { AGENT_READ_IMAGE_MODES, AGENT_MAX_READ_FILES, AGENT_MAX_READ_IMAGE_SIZE_BYTES } from '../../tools/read/policy-contract.js';
 export { assertAdmittedAgentRead } from '../../tools/read/admission.js';
@@ -60,13 +47,7 @@ export function wrapReadToolForAgentPolicy(tool: Tool): void {
 
 export async function validateReadToolInvocationForAgentPolicy(args: ReadToolArgs, signal?: AbortSignal): Promise<string | null> {
   signal?.throwIfAborted();
-  const mechanical = validateAgentReadMechanics(args);
-  if (mechanical) return mechanical;
-  if (!Array.isArray(args.files)) return null;
-  for (const file of args.files) {
-    if (isRecord(file) && typeof file.path === 'string' && await isBlockedReadPath(file.path, signal)) return READ_POLICY_DENIAL;
-  }
-  return null;
+  return validateAgentReadMechanics(args);
 }
 
 /** The adopted runtime wrapper never performs a second semantic decision. */
@@ -104,13 +85,14 @@ export function validateAgentReadMechanics(args: ReadToolArgs): string | null {
   return null;
 }
 
-/** Whether a read of `path` touches secret or credential material, read by Jev (uncertain counts as yes). */
-export function isBlockedReadPath(path: string, signal?: AbortSignal): Promise<boolean> {
-  return readTouchesSecrets('read', { path }, undefined, signal);
+/** Compatibility helper: permission is decided by the configured read access filter. */
+export async function isBlockedReadPath(_path: string, signal?: AbortSignal): Promise<boolean> {
+  signal?.throwIfAborted();
+  return false;
 }
 
 function narrowReadToolDefinitionForAgentPolicy(tool: Tool): void {
-  tool.definition.description = 'Read ordinary non-secret project files for GoodVibes Agent.';
+  tool.definition.description = 'Read project files for GoodVibes Agent.';
   tool.definition.sideEffects = ['read_fs'];
   tool.definition.concurrency = 'serial';
 
@@ -120,7 +102,7 @@ function narrowReadToolDefinitionForAgentPolicy(tool: Tool): void {
   const files = properties.files;
   if (isRecord(files)) {
     files.maxItems = MAX_READ_FILES;
-    files.description = 'Bounded project files whose current admission establishes non-secret, requested scope.';
+    files.description = 'Files to read.';
     const itemSchema = files.items;
     if (isRecord(itemSchema)) {
       const fileProperties = itemSchema.properties;

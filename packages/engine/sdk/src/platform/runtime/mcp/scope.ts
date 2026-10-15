@@ -1,17 +1,8 @@
-/**
- * The owner's path and host scope for an MCP server's calls: which argument
- * values a call touches as filesystem paths or reaches as network
- * destinations (a Jev reading per argument, `engine.gate.mcp-scope-arg`), and
- * whether each lies inside the owner's allowed paths and hosts (code: real-path
- * containment and the URL grammar's host).
- */
+/** Apply configured MCP scopes to structured path/URL arguments without remote classification. */
 import { realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mapLimit, type YesNoReading } from '@goodvibes-jev/judgment';
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { McpReadingOwner } from './permissions.js';
-import { mcpScopeArg } from '../../gate/batteries/mcp-scope-arg.js';
 
 /**
  * The path as the file system will resolve it: `..` and `.` segments removed
@@ -35,24 +26,7 @@ function realPathOf(path: string): string {
   }
 }
 
-/** Arguments read at once when a call's scope is read. */
-const SCOPE_READ_CONCURRENCY = 8;
-
-/** The string values a call carries: top-level strings and the strings in top-level arrays. */
-function stringArguments(args: Record<string, unknown>): Array<{ readonly argument: string; readonly value: string }> {
-  return Object.entries(args).flatMap(([argument, value]) => {
-    if (typeof value === 'string') return value.trim() ? [{ argument, value }] : [];
-    if (Array.isArray(value)) return value.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '').map((entry) => ({ argument, value: entry }));
-    return [];
-  });
-}
-
-/**
- * The argument values a call touches as filesystem paths and reaches as
- * network destinations, read by Jev per argument (`engine.gate.mcp-scope-arg`)
- * and asked only for the scopes the owner set. An uncertain reading counts as
- * a yes, so a value that might be a path or destination is held to the scope.
- */
+/** Extract structured addresses locally; owner scopes remain real-path and host checks. */
 export async function readScopedValues(
   serverName: string,
   toolName: string,
@@ -60,29 +34,20 @@ export async function readScopedValues(
   scopes: { readonly paths: boolean; readonly hosts: boolean },
   owner: McpReadingOwner = {},
 ): Promise<{ readonly paths: readonly string[]; readonly hosts: readonly string[]; readonly uncertain: boolean; readonly judgmentDecisionIds: readonly string[] }> {
-  const only = [...(scopes.paths ? (['names_path'] as const) : []), ...(scopes.hosts ? (['names_host'] as const) : [])];
-  if (only.length === 0) return { paths: [], hosts: [], uncertain: false, judgmentDecisionIds: [] };
-  const site = 'engine.mcp.scope';
-  const port = owner.port ?? judgmentPort(site);
-  const entries = stringArguments(args);
-  const runs = await mapLimit(entries, SCOPE_READ_CONCURRENCY, (entry) =>
-    mcpScopeArg.run(port, { server: serverName, tool: toolName, argument: entry.argument, value: entry.value }, { site, only, ...(owner.signal ? { signal: owner.signal } : {}) }));
-  let uncertain = false;
-  const judgmentDecisionIds: string[] = [];
+  owner.signal?.throwIfAborted();
   const paths: string[] = [];
   const hosts: string[] = [];
-  runs.forEach((run, index) => {
-    const { value } = entries[index]!;
-    const readings = run.readings as Partial<Record<'names_path' | 'names_host', YesNoReading>>;
-    if (run.result.decisionId) judgmentDecisionIds.push(run.result.decisionId);
-    uncertain ||= Object.values(readings).some(reading => reading.verdict === 'uncertain');
-    const isPath = readings.names_path !== undefined && readings.names_path.verdict !== 'no';
-    const isHost = readings.names_host !== undefined && readings.names_host.verdict !== 'no';
-    if (isPath) paths.push(value);
-    if (isHost) hosts.push(value);
-    run.recordAction(`${isPath ? 'path' : ''}${isPath && isHost ? '+' : ''}${isHost ? 'host' : ''}` || 'neither');
-  });
-  return { paths, hosts, uncertain, judgmentDecisionIds };
+  const pathKeys = new Set(['path', 'paths', 'file', 'files', 'filename', 'directory', 'directories', 'cwd', 'root']);
+  const hostKeys = new Set(['host', 'hosts', 'hostname', 'hostnames', 'url', 'urls', 'uri', 'endpoint', 'href']);
+  const visit = (value: unknown, key: string): void => {
+    if (Array.isArray(value)) { for (const entry of value) visit(entry, key); return; }
+    if (value && typeof value === 'object') { for (const [name, entry] of Object.entries(value)) visit(entry, name.toLowerCase()); return; }
+    if (typeof value !== 'string' || !value.trim()) return;
+    if (scopes.paths && (pathKeys.has(key) || value.startsWith('file:') || value.startsWith('/') || value.startsWith('./') || value.startsWith('../'))) paths.push(value);
+    if (scopes.hosts && (hostKeys.has(key) || value.startsWith('https://') || value.startsWith('http://')) && !value.startsWith('file:')) hosts.push(value);
+  };
+  visit(args, '');
+  return { paths, hosts, uncertain: false, judgmentDecisionIds: [] };
 }
 
 /** A path value as a filesystem path: a `file:` URL is converted by the URL grammar. */

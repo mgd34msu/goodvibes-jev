@@ -56,8 +56,7 @@ export async function startAdmittedCiRepair(host: ExternalPermissionHost | undef
         prNumber: input.subscription.prNumber, triggerFixSession: input.subscription.triggerFixSession, failure: input.brief } },
   });
     assertCurrent();
-    const outcome = admission.result.autonomousDecision?.outcome;
-    if (outcome !== 'act') return { error: outcome === 'reject' ? 'Jev refused this CI repair' : `CI repair did not execute (${outcome ?? 'no current autonomous admission'})` };
+    if (!admission.result.approved) return { error: `CI repair denied by owner policy (${admission.result.reasonCode})` };
     await input.refreshCurrent();
     assertCurrent();
     // One claim immediately precedes the owned starter; neither the flag nor logs are authority.

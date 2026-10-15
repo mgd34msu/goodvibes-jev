@@ -556,10 +556,8 @@ export class AcpHostService {
                 destination: { binaryPath: record.info.binaryPath, cwd: record.info.cwd } },
             });
           assertCurrent();
-          const decision = admission.result.autonomousDecision;
-          if (!decision || decision.outcome === 'defer' || decision.outcome === 'revise') return cancelled;
-          const response = permissionOutcomeFor(owned.options, { approved: decision.outcome === 'act', remember: false });
-          const claim = decision.outcome === 'act' && response.outcome.outcome === 'selected';
+          const response = permissionOutcomeFor(owned.options, { approved: admission.result.approved, remember: false });
+          const claim = admission.result.approved && response.outcome.outcome === 'selected';
           if (wireBinding) {
             wireBinding.defer(response, admission, claim, cleanup); deferred = true;
           } else if (claim) admission.claim();
