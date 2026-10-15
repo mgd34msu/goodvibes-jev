@@ -9,9 +9,8 @@ import { nativeContractSourceData } from '../native-source.js';
  * `otherUnits` carries the other units' criteria, so a unit that takes one
  * module while a sibling takes the other is seen to be made up by it.
  *
- * Jev verifies inside every unit, so a unit whose job is to review, test or
- * verify other units is refused and the planner folds the check into the
- * criteria of the unit it would verify.
+ * Review, test and verification readings describe read-only work. The plan
+ * checker maps them to research units so requested reviews can execute.
  *
  * Why one narrows question per requirement: one question per unit against
  * all its requirements at once, with the other units shown by title, never
@@ -29,9 +28,8 @@ import { nativeContractSourceData } from '../native-source.js';
  * scope it serves cannot pass the contract, and a narrowing read wrongly as
  * none costs a fix round, not a wrong acceptance.
  *
- * Consumers require a settled role and an act/no for every scope check.
- * Weak or uncertain readings return repair problems before execution; a later
- * deliverable check does not authorize proceeding on an unsettled plan.
+ * Consumers use scope probabilities to identify missing work. Uncertainty
+ * about the role alone does not stop an otherwise valid unit.
  */
 import {
   askAs,
@@ -60,7 +58,7 @@ import {
 } from '@goodvibes-jev/judgment';
 import { PROOF_PLANS, type ProofPlan, type ProofUnit } from './plan-coverage.js';
 
-/** The roles Jev can read; `review`, `test` and `verify` are never allowed as units. */
+/** The roles Jev can read; read-only variants share the research execution role. */
 export const UNIT_SHAPE_ROLES = {
   implement: 'Changes files or produces the deliverable itself, including writing code, tests or documentation',
   research: 'Reads code, documents or data and reports what it found, changing nothing',

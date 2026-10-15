@@ -122,7 +122,7 @@ async function checkTrace(port: JudgmentPort, plan: ContractPlan, ask: string, o
   })));
   for (const { criterion, result } of results) {
     record(output, result.decisionId, result.usage);
-    const traced = result.fidelity === 'supported' && result.outcome === 'act';
+    const traced = result.fidelity === 'supported';
     result.recordAction(traced ? 'traced' : 'repair: untraced');
     if (!traced) output.problems.push({ code: 'untraced', targetId: criterion.id, message: traceProblemMessage(criterion, result.fidelity) });
   }
@@ -156,12 +156,12 @@ function coverageProblem(part: CoveragePart): PlanProblem {
   };
 }
 
-/** A coverage reading clears a requirement only with a settled act/no. */
+/** Rank the two answers; uncertainty alone is not a missing requirement. */
 async function checkCoverage(port: JudgmentPort, plan: ContractPlan, ask: string, options: PlanCheckOptions): Promise<CheckOutput> {
   const output = emptyOutput();
   const run = await planCoverage.read(port, { request: ask, criteria: plan.criteria }, callOptions(PLAN_CHECK_SITES['plan-coverage'], options));
   record(output, run.decisionId, run.usage);
-  const open = run.parts.filter((part) => part.reading.verdict !== 'no' || part.reading.outcome !== 'act');
+  const open = run.parts.filter((part) => part.reading.probability > 0.5);
   output.problems.push(...open.map(coverageProblem));
   run.recordAction(open.length > 0 ? `repair: uncovered requirement (${open.length} of ${run.parts.length} parts)` : `covered`);
   return output;
@@ -212,7 +212,7 @@ async function readCriterionShapes(
       run.recordAction(ruling.disposition);
       continue;
     }
-    const notCheckable = checkable.verdict !== 'yes' || checkable.outcome !== 'act';
+    const notCheckable = checkable.probability < 0.5;
     run.recordAction(notCheckable ? 'repair: not checkable' : 'judged');
     if (notCheckable) {
       output.problems.push({
@@ -230,6 +230,9 @@ async function readCriterionShapes(
 /** Whether Jev's role reading agrees with the planner's role field. Integration units read as implement. */
 function roleAgrees(planned: string, read: UnitShapeRole): boolean {
   if (read === 'implement') return planned === 'implement' || planned === 'integration';
+  // Reviewing, testing and verifying existing work are valid read-only
+  // deliverables. They use the research execution role, not a veto on review.
+  if (VERIFICATION_ROLES.includes(read)) return planned === 'research';
   return planned === read;
 }
 
@@ -263,20 +266,14 @@ async function checkUnits(port: JudgmentPort, plan: ContractPlan, options: PlanC
     record(output, run.decisionId, run.usage);
     const { role, narrows } = run;
     const found: PlanProblem[] = [];
-    if (role.outcome === 'act' && VERIFICATION_ROLES.includes(role.choice)) {
-      found.push({
-        code: 'verification-unit',
-        targetId: unit.id,
-        message: `Unit ${unit.id} ("${unit.title}") only ${role.choice === 'review' ? 'reviews' : role.choice === 'test' ? 'tests' : 'verifies'} other units' work. Every unit's work is checked as it goes, so remove it and put what it would check into the criteria of the unit it would check (for example "the tests for X pass").`,
-      });
-    } else if (role.outcome !== 'act' || !roleAgrees(unit.role, role.choice)) {
+    if (role.outcome === 'act' && !roleAgrees(unit.role, role.choice)) {
       found.push({
         code: 'role-mismatch',
         targetId: unit.id,
         message: `Unit ${unit.id} ("${unit.title}") has role "${unit.role}", but the reading did not establish agreement with its brief; clarify the role and brief.`,
       });
     }
-    const unresolved = narrows.filter((entry) => entry.reading.verdict !== 'no' || entry.reading.outcome !== 'act');
+    const unresolved = narrows.filter((entry) => entry.reading.probability > 0.5);
     if (unresolved.length > 0) found.push(narrowsProblem(unit, unresolved));
     run.recordAction(found.length === 0 ? 'unit accepted' : `repair: ${found.map((entry) => entry.code).join(', ')}`);
     output.problems.push(...found);

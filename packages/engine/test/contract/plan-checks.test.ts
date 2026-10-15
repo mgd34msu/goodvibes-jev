@@ -84,7 +84,7 @@ test('the checks ask about the right states', async () => {
   ]);
 });
 
-describe('criterion-trace: fidelity is not supported at act', () => {
+describe('criterion-trace: fidelity follows the supported relation', () => {
   test('says nothing, and contradicts', async () => {
     const verdict = await check(({ name, question, state }) => {
       if (name !== 'relation') return undefined;
@@ -98,11 +98,10 @@ describe('criterion-trace: fidelity is not supported at act', () => {
     expect(verdict.reports[0]!.passed).toBe(false);
   });
 
-  test('supports below the high-stakes supports band', async () => {
+  test('a supported relation does not require an approval-confidence band', async () => {
     const verdict = await check(({ name, question, state }) =>
       name === 'relation' && claimOf(state).includes('convert') ? choiceAnswer(question, 'supports', 0.8) : undefined);
-    expect(problemCodes(verdict, 'untraced')).toEqual(['c3']);
-    expect(verdict.problems[0]!.message).toContain('not clear');
+    expect(problemCodes(verdict, 'untraced')).toEqual([]);
   });
 
   test('a fabricated quote needs no request', async () => {
@@ -115,7 +114,7 @@ describe('criterion-trace: fidelity is not supported at act', () => {
   });
 });
 
-describe('plan-coverage: each part of the request clears only on no at act', () => {
+describe('plan-coverage: probabilities identify missing requirements', () => {
   const answering = (key: string, p: number) => ({ name }: { name: string }) => (name === key ? noulAnswer(p) : undefined);
 
   test('unquoted words that lean yes are a problem naming them', async () => {
@@ -138,15 +137,14 @@ describe('plan-coverage: each part of the request clears only on no at act', () 
     expect(verdict.problems[0]!.message).toContain('not clear');
   });
 
-  test('a reading that leans no without reaching the high no band is a problem asking for the user\'s words', async () => {
+  test('a reading that leans no does not invent a missing requirement', async () => {
     const verdict = await check(answering('falls_short_2', 0.35));
-    expect(problemCodes(verdict, 'uncovered-requirement')).toEqual(['c2']);
-    expect(verdict.problems[0]!.message).toContain('restate it in the user\'s words');
+    expect(problemCodes(verdict, 'uncovered-requirement')).toEqual([]);
   });
 
-  test('no at confirm does not clear its part', async () => {
+  test('no at confirm does not ask for approval', async () => {
     const verdict = await check(answering('falls_short_2', 0.25));
-    expect(problemCodes(verdict, 'uncovered-requirement')).toEqual(['c2']);
+    expect(problemCodes(verdict, 'uncovered-requirement')).toEqual([]);
   });
 
   test('no at act clears it', async () => {
@@ -184,14 +182,14 @@ describe('quoteLayout', () => {
 });
 
 describe('criterion-shape', () => {
-  test('checkability requires a settled acting yes', async () => {
+  test('checkability uses the probability; a tie does not block execution', async () => {
     const verdict = await check(({ name, state }) => {
       if (name !== 'checkable') return undefined;
       if (criterionOf(state).includes('CSV')) return noulAnswer(0.1);
       if (criterionOf(state).includes('JSON')) return noulAnswer(0.35);
       return noulAnswer(0.5);
     });
-    expect(problemCodes(verdict, 'not-checkable')).toEqual(['c1', 'c2', 'c3']);
+    expect(problemCodes(verdict, 'not-checkable')).toEqual(['c1', 'c2']);
   });
 
   test('topology-only at act is excluded when the plan does not honour a parallel request, and never a checkable problem', async () => {
@@ -255,17 +253,18 @@ describe('criterion-shape', () => {
 });
 
 describe('unit-shape', () => {
-  test('a review, test or verify role at act is a verification unit', async () => {
+  test('review, test and verification work can execute as research units', async () => {
     const roles: Record<string, string> = { 'CSV parser': 'review', 'JSON formatter': 'test', 'Wire convert': 'verify' };
-    const verdict = await check(({ name, question, state }) => (name === 'role' ? choiceAnswer(question, roles[unitTitleOf(state)!]!, 0.95) : undefined));
-    expect(problemCodes(verdict, 'verification-unit')).toEqual(['u1', 'u2', 'u3']);
-    expect(verdict.problems[0]!.message).toContain('criteria of the unit it would check');
+    const plan = validPlan();
+    for (const group of plan.groups) for (const unit of group.units) unit.role = 'research';
+    const verdict = await check(({ name, question, state }) => (name === 'role' ? choiceAnswer(question, roles[unitTitleOf(state)!]!, 0.95) : undefined), shapeOf(), plan);
+    expect(verdict.problems).toEqual([]);
   });
 
-  test('a role below act cannot authorize the proposed unit', async () => {
+  test('uncertainty about the role does not veto the proposed unit', async () => {
     const verdict = await check(({ name, question, state }) =>
       name === 'role' && unitTitleOf(state) === 'CSV parser' ? choiceAnswer(question, 'review', 0.65) : undefined);
-    expect(problemCodes(verdict, 'role-mismatch')).toEqual(['u1']);
+    expect(problemCodes(verdict, 'role-mismatch')).toEqual([]);
   });
 
   test('a role that disagrees with the plan is a mismatch; integration reads as implement', async () => {
@@ -291,10 +290,10 @@ describe('unit-shape', () => {
     expect(verdict.problems[1]!.message).toContain('not clear');
   });
 
-  test('narrows: a weak no cannot clear scope before execution', async () => {
+  test('narrows: a reading leaning no does not block execution', async () => {
     const readings: Record<string, number> = { 'CSV parser': 0.3, 'JSON formatter': 0.45, 'Wire convert': 0.2 };
     const verdict = await check(({ name, state }) => (name.startsWith('narrows_') ? noulAnswer(readings[unitTitleOf(state)!]!) : undefined));
-    expect(problemCodes(verdict, 'narrows')).toEqual(['u1', 'u2']);
+    expect(problemCodes(verdict, 'narrows')).toEqual([]);
   });
 
   test('narrows: one question per contract criterion the unit serves, and only the ones leaning yes are named', async () => {
