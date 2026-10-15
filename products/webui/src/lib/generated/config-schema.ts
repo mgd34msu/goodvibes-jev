@@ -831,7 +831,7 @@ export const CONFIG_SCHEMA_ENTRIES: readonly ConfigSchemaEntry[] = [
     "key": "controlPlane.tls.keyFile",
     "type": "string",
     "default": "",
-    "description": "Private key PEM path for direct control-plane TLS (empty = ~/.goodvibes/certs/privkey.pem)"
+    "description": "Filesystem pathname of the PEM file used for direct control-plane TLS. This setting stores a path, not the private key contents. Empty uses ~/.goodvibes/certs/privkey.pem."
   },
   {
     "key": "httpListener.hostMode",
@@ -3986,16 +3986,16 @@ export const CONFIG_SCHEMA_ENTRIES: readonly ConfigSchemaEntry[] = [
   {
     "key": "agents.maxTurns",
     "type": "number",
-    "default": 50,
-    "description": "Default per-agent turn budget: the hard cap on how many turns one agent run may take before it terminates as a max-turns failure (a machine-readable turn-budget-exhausted outcome, distinct from an infrastructure error). A per-spawn override may lower or raise this, but never past agents.maxTurnsCap. Prevents an unbounded agent loop.",
-    "validationHint": "integer in [1, 10000]"
+    "default": 0,
+    "description": "Per-agent turn budget. Zero (default) continues until completion or cancellation. A positive value stops the run with a max-turns outcome. A positive agents.maxTurnsCap remains an owner-controlled ceiling.",
+    "validationHint": "integer in [0, 9007199254740991]"
   },
   {
     "key": "agents.maxTurnsCap",
     "type": "number",
-    "default": 200,
-    "description": "The upper bound a per-spawn maxTurns override cannot exceed. When a spawn requests more turns than this, the cap wins and the applied budget is reported as policy-bound. Keeps a caller from lifting the turn ceiling without limit.",
-    "validationHint": "integer in [1, 100000]"
+    "default": 0,
+    "description": "Owner-controlled ceiling on per-spawn turn budgets. Zero (default) disables this ceiling; a positive value cannot be raised by a spawn override.",
+    "validationHint": "integer in [0, 9007199254740991]"
   },
   {
     "key": "permissions.engine",
