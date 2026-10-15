@@ -6,7 +6,6 @@
 import { fanOut, type ChoiceReading, type ScoreReading } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { assertJudgmentInput } from '../gate/judgment-input.js';
-import { requireActingReading } from '../types/judgment-held.js';
 import { REQUEST_BATTERIES, type RequestDomain, type RequestIntent, type RequestLanguage } from './batteries/request.js';
 import {
   TIER_FLOOR_FOR_PURPOSE,
@@ -52,15 +51,14 @@ export function requestState(request: RoutingRequest): { purpose: string; work: 
 const pct = (value: number): string => value.toFixed(2);
 
 /**
- * Settled Jev readings determine the tier. Published risk and purpose floors
- * can raise it; uncertainty cannot be replaced by a difficulty-based guess.
+ * Jev's most probable tier determines the assignment. Confidence describes
+ * the reading; it is not permission to execute the user's request.
  */
 export function composeTier(
   readings: RequestReading['readings'],
   purpose: string,
 ): { readonly tier: RouteTier; readonly because: string } {
   const clauses: string[] = [];
-  for (const reading of Object.values(readings)) requireActingReading(reading);
   let tier = readings.tier.choice;
   clauses.push(`tier read ${tier} (${pct(readings.tier.confidence)})`);
   const raise = (floor: RouteTier | undefined, why: string): void => {

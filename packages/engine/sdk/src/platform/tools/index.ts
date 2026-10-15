@@ -599,6 +599,7 @@ export function registerAllTools(
       contractRunner: deps.contractRunner,
       projectRoot: deps.projectRoot,
       resolveSessionId: resolveContractSessionId,
+      ...(deps.providerRegistry ? { getSelectedModel: () => deps.providerRegistry!.getCurrentModel() } : {}),
     }),
   );
   // Scoped under the surface (surfaceRoot is required above, so this is

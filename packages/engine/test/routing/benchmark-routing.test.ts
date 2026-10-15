@@ -132,8 +132,8 @@ test('a no-match or escalated identity stays unscored, with no lexical guess', a
       await prepareRouteBenchmarks(benchmarks, [model(alias)]);
       expect(fake.requests).toHaveLength(1);
     } else {
-      await expect(prepareRouteBenchmarks(benchmarks, [model(alias)])).rejects.toThrow('has not settled');
-      await expect(prepareRouteBenchmarks(benchmarks, [model(alias)])).rejects.toThrow('has not settled');
+      await prepareRouteBenchmarks(benchmarks, [model(alias)]);
+      await prepareRouteBenchmarks(benchmarks, [model(alias)]);
       expect(fake.requests).toHaveLength(2);
     }
     expect(routeBenchmarkFor(benchmarks)(model(alias))).toBeNull();

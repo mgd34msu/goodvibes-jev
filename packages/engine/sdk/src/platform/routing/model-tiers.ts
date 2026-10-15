@@ -46,23 +46,17 @@ export function modelFactsState(facts: ModelFacts): { model: Record<string, Json
   return { model: out };
 }
 
-/** A reading that code may act on without asking anyone. */
-const holds = (reading: YesNoReading): boolean => reading.verdict === 'yes' && reading.outcome === 'act';
-const clearlyNot = (reading: YesNoReading): boolean => reading.verdict === 'no' && reading.outcome === 'act';
-
 /**
- * The tier the two readings support: a frontier flagship is premium, a small
- * or special-purpose model is economy, a model that clearly reads as neither
- * is standard. Contradictory or unsure readings give no tier.
+ * Compose a routing tier from both Jev probabilities. The larger positive
+ * reading wins when the labels overlap; neither positive means standard.
+ * Confidence bands remain in the decision log, not as execution gates.
  */
-export function modelTierFrom(readings: { readonly frontier: YesNoReading; readonly small: YesNoReading }): RouteTier | undefined {
-  const frontier = holds(readings.frontier);
-  const small = holds(readings.small);
-  if (frontier && small) return undefined;
-  if (frontier) return 'premium';
-  if (small) return 'economy';
-  if (clearlyNot(readings.frontier) && clearlyNot(readings.small)) return 'standard';
-  return undefined;
+export function modelTierFrom(readings: { readonly frontier: YesNoReading; readonly small: YesNoReading }): RouteTier {
+  const frontier = readings.frontier.probability;
+  const small = readings.small.probability;
+  if (frontier >= 0.5 && frontier >= small) return 'premium';
+  if (small >= 0.5) return 'economy';
+  return 'standard';
 }
 
 export interface TierRecord {
@@ -83,7 +77,7 @@ interface TierFile {
 
 /** The facts a tier depends on and the battery version that read them; a change to either means a new reading. */
 function fingerprint(facts: ModelFacts): string {
-  return `v${modelTier.version}:${JSON.stringify(modelFactsState({ ...facts, registryKey: '' }).model)}`;
+  return `probability-v1:${modelTier.version}:${JSON.stringify(modelFactsState({ ...facts, registryKey: '' }).model)}`;
 }
 
 /**

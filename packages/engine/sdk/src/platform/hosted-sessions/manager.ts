@@ -355,7 +355,11 @@ export class HostedSessionManager {
         if (!live || live.record.status === 'terminated') return null;
         await this.ensureComposed(live);
         this.assertSessionUsable(live);
-        return live.lease ? { runner: live.lease.floor.contractRunner, workspaceRoot: live.record.workspaceRoot } : null;
+        if (!live.lease) return null;
+        const registry = live.lease.floor.services.providerRegistry;
+        return { runner: live.lease.floor.contractRunner, workspaceRoot: live.record.workspaceRoot,
+          selectedModel: live.record.modelId ? resolveHostedModelDefinition(registry, live.record.modelId) : registry.getCurrentModel(),
+        };
       },
     };
   }

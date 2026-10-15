@@ -83,6 +83,7 @@ import { nativeContractActionSource, nativeContractPort } from './native-decisio
 import type { DurableContractExecution } from './durable-admission.js';
 
 export interface ContractRunnerDeps {
+  readonly getSelectedModel?: (() => Pick<import('../providers/registry-types.js').ModelDefinition, 'id' | 'provider' | 'registryKey' | 'displayName'>) | undefined;
   readonly nativeDecisions?: NativeContractDecisionHost | undefined;
   /** Host ledger synchronization and live deterministic validation for native-bound launches. */
   readonly durableAdmission?: DurableContractBoundary | undefined;
@@ -498,7 +499,11 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
   function captureStartInput(input: StartContractInput): StartContractInput {
     if (input.nativeSource === undefined && deps.nativeDecisions !== undefined) throw new Error('Native admission requires the complete original source snapshot');
     if (input.nativeSource !== undefined && deps.nativeDecisions === undefined) throw new Error('Native contract requires its authenticated semantic owner');
-    return input.nativeSource === undefined ? input : { ...input, nativeSource: captureNativeContractSource(input.nativeSource) };
+    const selectedModel = input.selectedModel ?? deps.getSelectedModel?.();
+    return { ...input,
+      ...(selectedModel === undefined ? {} : { selectedModel: { id: selectedModel.id, provider: selectedModel.provider, registryKey: selectedModel.registryKey, displayName: selectedModel.displayName } }),
+      ...(input.nativeSource === undefined ? {} : { nativeSource: captureNativeContractSource(input.nativeSource) }),
+    };
   }
 
   function durableResult(admission: DurableContractAdmission): DurableStartedContract {
@@ -700,7 +705,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
       ...(record.parentAgentId === undefined ? {} : { parentAgentId: record.parentAgentId }),
       ...(record.proposedUnits === undefined ? {} : { proposedUnits: record.proposedUnits }),
     };
-    return create(input, id, record, {}, requireSettlement);
+    return create(captureStartInput(input), id, record, {}, requireSettlement);
   }
 
   function assertOwnedExecution(): void {
@@ -729,6 +734,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
         task: input.ask,
         template: 'orchestrator',
         outsideContract: true,
+        ...(input.selectedModel === undefined ? {} : { model: input.selectedModel.registryKey, provider: input.selectedModel.provider }),
         ...(input.parentAgentId === undefined ? {} : { parentAgentId: input.parentAgentId }),
       },
       { contractId: id, contractRole: 'owner', progress: `Contract ${id}: queued`, settled: reserveSettlement(id).promise },
@@ -750,6 +756,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
     const originalSource = input.nativeSource === undefined && sourceOf ? captureAutonomousSource(sourceOf()) : undefined;
     const contract: Contract = {
       id,
+      ...(input.selectedModel === undefined ? {} : { selectedModel: input.selectedModel }),
       ...(extra.durableAdmission === undefined ? {} : { durableAdmission: extra.durableAdmission, durableLaunchState: 'prepared' as const }),
       schemaVersion: CURRENT_CONTRACT_SCHEMA_VERSION,
       sessionId: input.sessionId,

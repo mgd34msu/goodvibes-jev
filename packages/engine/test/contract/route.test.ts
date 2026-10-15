@@ -52,13 +52,15 @@ describe('createRoutePlannerContractSelector', () => {
     const { planner, asked } = fakePlanner(['beta:model-2', 'gamma:model-3']);
     const unit = makeUnit({ title: 'CSV parser', goal: 'Parse CSV', brief: 'Write src/csv.ts.' });
     const route = await createRoutePlannerContractSelector(planner)({ purpose: 'unit', contract: makeContract(), unit });
-    expect(route).toEqual({ model: 'alpha:model-1', provider: 'alpha', fallbackModels: ['beta:model-2', 'gamma:model-3'], reason: PLANNER_REASON });
-    expect(asked).toEqual([{ purpose: 'unit', brief: 'CSV parser: Parse CSV\n\nWrite src/csv.ts.', requires: { toolCalling: true } }]);
+    expect(route).toEqual({ model: 'alpha:model-1', provider: 'alpha', fallbackModels: ['beta:model-2', 'gamma:model-3'], reason: PLANNER_REASON, routing: { providerFailurePolicy: 'ordered-fallbacks' } });
+    expect(asked).toMatchObject([{ purpose: 'unit', brief: 'CSV parser: Parse CSV\n\nWrite src/csv.ts.', requires: { toolCalling: true } }]);
   });
 
   test('the planner agent is routed on the request, and a route without failover carries none', async () => {
     const { planner, asked } = fakePlanner([]);
-    const route = await createRoutePlannerContractSelector(planner)({ purpose: 'planner', contract: makeContract({ ask: 'Add a --json flag.' }) });
+    const selectedModel = { id: 'model-1', registryKey: 'alpha:model-1', provider: 'alpha', displayName: 'Model 1' };
+    const route = await createRoutePlannerContractSelector(planner, { getSelectedModel: () => ({ ...selectedModel, provider: 'other' }) })({ purpose: 'planner', contract: makeContract({ ask: 'Add a --json flag.', selectedModel }) });
+    expect(asked[0]!.selectedModel).toEqual(selectedModel);
     expect(route.fallbackModels).toBeUndefined();
     expect(route.reason).toBe(PLANNER_REASON);
     expect(asked[0]!.purpose).toBe('planner');
@@ -113,7 +115,7 @@ describe('the runner when the route planner finds no route', () => {
     const done = h.store.get(contract.id)!;
     expect(done.status).toBe('failed');
     expect(done.failureKind).toBe('other');
-    expect(done.error).toBe('group g1 could not start: [REDACTED]');
+    expect(done.error).toBe(`group g1 could not start: ${noRoute.message}`);
     expect(purposes).toEqual(['planner', 'unit']);
     expect(done.units[0]!.route).toBeUndefined();
     expect(eventsOf(h, 'CONTRACT_UNIT_SPAWNED')).toEqual([]);
@@ -145,7 +147,7 @@ describe('the runner when the route planner finds no route', () => {
     const done = h.store.get(contract.id)!;
     expect(done.status).toBe('failed');
     expect(done.failureKind).toBe('other');
-    expect(done.error).toBe(`the owner's reply to ${escalation.id} could not be acted on: [REDACTED]`);
+    expect(done.error).toBe(`the owner's reply to ${escalation.id} could not be acted on: ${noRoute.message}`);
     expect(plannerRoutes).toBe(2);
     expect(planner.of('amend')).toEqual([]);
   });

@@ -26,6 +26,7 @@ export type OperatorContractRunner = Pick<ContractRunner, 'start' | 'get' | 'lis
 
 /** A live hosted session's floor runner and the workspace its turns work in. */
 export interface HostedSessionContracts {
+  readonly selectedModel?: import('./types.js').StartContractInput['selectedModel'];
   readonly runner: OperatorContractRunner;
   readonly workspaceRoot: string;
 }
@@ -146,6 +147,7 @@ export function createContractOperatorService(deps: ContractOperatorServiceDeps)
     const origin: ContractOrigin = hosted === null ? 'external' : 'hosted';
     const started = (hosted?.runner ?? deps.runner).start({
       ask,
+      ...(hosted?.selectedModel === undefined ? {} : { selectedModel: hosted.selectedModel }),
       sessionId: input.sessionId ?? OPERATOR_SESSION_ID,
       origin,
       projectRoot: hosted?.workspaceRoot ?? input.workspaceRoot ?? deps.workingDirectory,

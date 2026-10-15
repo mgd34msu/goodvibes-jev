@@ -56,13 +56,19 @@ describe('the nudge loop', () => {
         u2: () => [{ files: { 'src/convert.ts': 'import { parse } from "./csv";\n' }, text: 'Wired convert to the parser.' }],
       },
     }));
-    const { contract, owner } = startContract(h);
+    const selection = { id: 'gpt-6.1-sol', registryKey: 'subscription:gpt-6.1-sol', provider: 'subscription', displayName: 'GPT-6.1 Sol' };
+    const { contract, owner } = startContract(h, { selectedModel: selection });
+    selection.provider = 'metered';
+    expect(contract.selectedModel?.provider).toBe('subscription');
+    expect(owner.provider).toBe('subscription');
+    expect(owner.model).toBe('subscription:gpt-6.1-sol');
     expect(owner.contractRole).toBe('owner');
     expect(owner.status).toBe('running');
     await waitFor(() => terminal(h, contract.id), 'the contract to end');
 
     const done = h.store.get(contract.id)!;
     expect(done.status).toBe('passed');
+    expect(done.selectedModel?.provider).toBe('subscription');
     const u1 = done.units.find((unit) => unit.id === 'u1')!;
     expect(u1.status).toBe('passed');
     expect(u1.checks.map((check) => [check.trigger, check.result])).toEqual([['completion', 'nudge'], ['completion', 'pass']]);

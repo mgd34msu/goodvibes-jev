@@ -1,5 +1,5 @@
 import { assertJudgmentInput } from '../gate/judgment-input.js';
-import { requireActingReading, JudgmentHeldError } from '../types/judgment-held.js';
+import { JudgmentHeldError } from '../types/judgment-held.js';
 /**
  * The route planner: given a piece of work, picks the model that does it from
  * the whole catalog, cross-checked with the accounts that are configured and
@@ -27,6 +27,7 @@ import { modelFactsState, type ModelFacts, type ModelTierStore } from './model-t
 import { FALLBACK_ROUTES } from './policy.js';
 import { readRequest, type RequestReading, type RoutingRequest } from './request-reading.js';
 import { tierSearchOrder, type RouteTier } from './tiers.js';
+import { withinSelectedFamily } from './route-scope.js';
 
 /** What the planner reads from the provider registry. */
 export interface RoutePlannerCatalog {
@@ -58,6 +59,8 @@ export interface RouteRequirements {
 }
 
 export interface RoutePlanRequest extends RoutingRequest {
+  /** Captured user selection: all agent routes and fallbacks stay on this provider and model family. */
+  readonly selectedModel?: Pick<ModelDefinition, 'id' | 'provider' | 'registryKey' | 'displayName'> | undefined;
   readonly beforeAttempt?: (() => void) | undefined;
   readonly onRetry?: ((progress: import('@goodvibes-jev/judgment').JudgmentRetryProgress) => void) | undefined;
   readonly requires?: RouteRequirements | undefined;
@@ -205,7 +208,10 @@ export function createRoutePlanner(deps: RoutePlannerDeps): RoutePlanner {
       request.signal?.throwIfAborted();
       const signalOption = { ...(request.signal ? { signal: request.signal } : {}), ...(request.beforeAttempt ? { beforeAttempt: request.beforeAttempt } : {}), ...(request.onRetry ? { onRetry: request.onRetry } : {}) };
       const reading = await readRequest(request, { site: 'routing.route-planner.request', ...signalOption });
-      const eligible = eligibleModels(deps, request.requires);
+      const available = eligibleModels(deps, request.requires);
+      const eligible = request.selectedModel
+        ? await withinSelectedFamily(available, request.selectedModel, signalOption)
+        : available;
       if (eligible.length === 0) {
         throw new NoRouteError('No configured, healthy provider serves a model that meets this work\'s requirements (tool calling, context window, image input).');
       }
@@ -230,10 +236,14 @@ export function createRoutePlanner(deps: RoutePlannerDeps): RoutePlanner {
             const group = poolCandidates.slice(offset, offset + 64);
             current();
             const selection = await modelChoice.select(port, choiceContext(request, reading), group, { ...signalOption, site: 'routing.route-planner.choice', beforeAttempt: current });
-            current(); requireActingReading(selection);
-            Object.assign(fits, selection.fits); pick = selection;
-            if (selection.chosen) winners.push(group.find((candidate) => candidate.id === selection.chosen)!);
-            selection.recordAction('Compare every eligible model in bounded groups; advance settled fitting winners.');
+            current();
+            // The catalog already establishes that these models can execute.
+            // Compose both Jev readings into a ranking, not an approval gate.
+            const support = (id: string): number => (selection.pick.probabilities[id] ?? 0) * (selection.fits[id]?.probability ?? 0);
+            const winner = [...group].sort((a, b) => support(b.id) - support(a.id))[0]!;
+            Object.assign(fits, selection.fits); pick = { ...selection, chosen: winner.id };
+            winners.push(winner);
+            selection.recordAction(`advance:${winner.id}; ranked by choice probability times fit probability`);
           }
           if (poolCandidates.length <= 64) break;
           poolCandidates = winners;
@@ -243,7 +253,7 @@ export function createRoutePlanner(deps: RoutePlannerDeps): RoutePlanner {
         const model = byKey.get(pick.chosen!)!;
         const fallbackModels = shortlist
           .map((member) => member.registryKey)
-          .filter((key) => key !== pick.chosen && pick.fits[key]?.verdict === 'yes' && pick.fits[key]?.outcome === 'act')
+          .filter((key) => key !== pick.chosen)
           .sort((a, b) => pick.fits[b]!.probability - pick.fits[a]!.probability)
           .slice(0, FALLBACK_ROUTES);
         pick.recordAction(`route:${pick.chosen}`);

@@ -21,6 +21,8 @@ import { modelChoice, modelIdentity, modelTier } from './batteries/model.js';
 registry.register(modelTier);
 registry.register(modelChoice);
 registry.register(modelIdentity);
+import { sameFamily } from './route-scope.js';
+registry.register(sameFamily);
 
 // Catalog: how a provider's models are paid for.
 import { catalogProviderAccess } from './batteries/catalog.js';

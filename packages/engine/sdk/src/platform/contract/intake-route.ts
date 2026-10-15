@@ -45,6 +45,7 @@ export interface ContractIntake {
 }
 
 export interface ContractIntakeDeps {
+  readonly getSelectedModel?: (() => Pick<import('../providers/registry-types.js').ModelDefinition, 'id' | 'provider' | 'registryKey' | 'displayName'>) | undefined;
   readonly runner: Pick<ContractRunner, 'start' | 'list' | 'reply' | 'nativeMode'>;
   /** The project a turn's contract works in. */
   readonly projectRoot: string;
@@ -88,7 +89,9 @@ export function createContractIntake(deps: ContractIntakeDeps): ContractIntake {
         routed.recordAction(`left to the conversation (${routed.route}, ${routed.reading.outcome})`);
         return { kind: 'turn' };
       }
-      const started = deps.runner.start({ ask: turn.text, sessionId: turn.sessionId, origin: 'turn', projectRoot: deps.projectRoot });
+      const started = deps.runner.start({ ask: turn.text, sessionId: turn.sessionId, origin: 'turn', projectRoot: deps.projectRoot,
+        ...(deps.getSelectedModel === undefined ? {} : { selectedModel: deps.getSelectedModel() }),
+      });
       routed.recordAction(`started contract ${started.contract.id}`);
       return { kind: 'started', contractId: started.contract.id, ownerAgentId: started.owner.id };
     },

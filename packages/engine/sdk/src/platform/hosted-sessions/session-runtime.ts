@@ -295,7 +295,7 @@ export function createHostedSessionRuntime(options: HostedSessionRuntimeOptions)
     services: {
       agentManager: services.agentManager,
       contractRunner: options.floor.contractRunner,
-      contractIntake: createContractIntake({ runner: options.floor.contractRunner, projectRoot: options.workspaceRoot }),
+      contractIntake: createContractIntake({ runner: options.floor.contractRunner, projectRoot: options.workspaceRoot, getSelectedModel: () => providerRegistry.getCurrentModel() }),
     },
   });
   orchestrator.setCoreServices({

@@ -1,20 +1,7 @@
 /**
- * The runner's route selector over the routing subsystem's route planner
- * (docs/design/contract-runner.md 2.2 and 6.1): the planner and every unit get
- * the model the route planner picks from the whole catalog for that piece of
- * work, with the other fitting models as the failover chain. No rule here
- * names a vendor or a model; the reason string is the planner's own account of
- * the tier the work needs, the tier it chose from, the model it chose and the
- * pick's confidence, and is copied onto the unit and its agent record.
- *
- * A planner failure (NoRouteError when no configured, healthy model fits, or a
- * Jev outage) is the selector's failure: nothing picks a model in its place,
- * and the runner fails the contract with the planner's message.
- *
- * A route is picked only from the settled catalog: when the composition's
- * provider registry is still sweeping providers for the models they serve
- * (startup discovery replaces their preliminary lists), the selector waits for
- * the sweep, so no route names a model the sweep is about to remove.
+ * Assign planners and units using Jev within the user's captured provider and
+ * model family. The same boundary covers every fallback; the session's own
+ * model selection is never changed. Wait for catalog discovery before routing.
  */
 import type { PlannedRoute, RoutePlanRequest } from '../routing/route-planner.js';
 import type { ContractRouteSelector, UnitRoute } from './types.js';
@@ -51,6 +38,8 @@ function briefFor(request: RouteRequest): string {
 }
 
 export interface ContractSelectorOptions {
+  /** Only for older contracts that predate captured user selections. */
+  readonly getSelectedModel?: (() => Pick<import('../providers/registry-types.js').ModelDefinition, 'id' | 'provider' | 'registryKey' | 'displayName'>) | undefined;
   /** Resolves when the catalog the route planner reads has settled (the provider registry's startup model discovery); awaited before every pick. */
   readonly catalogSettled?: (() => Promise<void>) | undefined;
 }
@@ -61,13 +50,17 @@ export function createRoutePlannerContractSelector(planner: ContractRoutePlanner
     await options.catalogSettled?.();
     request.signal?.throwIfAborted();
     const planned = await planner.planRoute({ purpose: routingPurpose(request), brief: briefFor(request),
-      ...(request.contract.nativeSource === undefined ? {} : { originalSource: nativeContractSourceForAdmission(request.contract) }),
+      selectedModel: request.contract.selectedModel ?? options.getSelectedModel?.(),
+      originalSource: request.contract.nativeSource === undefined
+        ? { goal: request.contract.ask, criteria: request.contract.criteria.map((criterion) => criterion.text) }
+        : nativeContractSourceForAdmission(request.contract),
       requires: { toolCalling: true }, signal: request.signal, beforeAttempt: request.beforeAttempt, onRetry: request.onRetry });
     const route: UnitRoute = {
       model: planned.model,
       provider: planned.provider,
       ...(planned.fallbackModels.length === 0 ? {} : { fallbackModels: [...planned.fallbackModels] }),
       reason: planned.reason,
+      routing: { providerFailurePolicy: planned.fallbackModels.length ? 'ordered-fallbacks' : 'fail' },
     };
     return route;
   };

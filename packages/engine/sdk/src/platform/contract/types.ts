@@ -150,6 +150,8 @@ export interface NativeContractSource {
 }
 
 export interface StartContractInput {
+  /** User-selected connection and family at submission, retained for every agent and fallback. */
+  readonly selectedModel?: Pick<import('../providers/registry-types.js').ModelDefinition, 'id' | 'provider' | 'registryKey' | 'displayName'> | undefined;
   /** Untrusted CI context; never original requirements or authority. */
   readonly taskEvidence?: string | undefined;
   /** Native callers supply the complete immutable source. Absence explicitly retains legacy ask-derived planning. */
@@ -420,6 +422,8 @@ export interface JudgmentUsage {
 }
 
 export interface Contract {
+  /** Captured at submission; changing another session's selection does not reroute this contract. */
+  readonly selectedModel?: Pick<import('../providers/registry-types.js').ModelDefinition, 'id' | 'provider' | 'registryKey' | 'displayName'> | undefined;
   /** Original live source evidence; serialized data cannot recreate its owner. */
   readonly originalSource?: import('../permissions/autonomous.js').AutonomousToolSource | undefined;
   readonly taskEvidence?: string | undefined;

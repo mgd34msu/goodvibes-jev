@@ -141,6 +141,8 @@ function batchAsk(input: AgentInput, units: readonly ProposedUnit[]): string {
 }
 
 export interface AgentToolConfig {
+  /** Session-local user selection, rather than the shared workspace registry's selection. */
+  readonly getSelectedModel?: (() => import('../../providers/registry-types.js').ModelDefinition) | undefined;
   readonly manager: AgentManager;
   readonly messageBus: Pick<AgentMessageBus, 'getMessages' | 'send'>;
   readonly configManager: Pick<ConfigManager, 'get'>;
@@ -196,6 +198,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
     config.manager.guardContractLeafSpawn(input.parentAgentId);
     const contractInput = {
       ask,
+      ...(config.getSelectedModel === undefined ? {} : { selectedModel: config.getSelectedModel() }),
       sessionId: config.resolveSessionId(),
       origin: 'agent-tool' as const,
       projectRoot: config.projectRoot,

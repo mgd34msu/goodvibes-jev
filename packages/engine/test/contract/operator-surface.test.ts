@@ -25,6 +25,7 @@ import { escalate, fakeRunner, nextContractId, type FakeRunner } from './operato
 
 const WORKDIR = '/srv/daemon-work';
 const HOSTED_ROOT = '/work/hosted';
+const HOSTED_MODEL = { id: 'gpt-6.1-sol', registryKey: 'subscription:gpt-6.1-sol', provider: 'subscription', displayName: 'GPT-6.1 Sol' };
 
 interface Surface {
   readonly service: ContractOperatorService;
@@ -39,7 +40,7 @@ function surface(): Surface {
   const service = createContractOperatorService({ runner: daemon, workingDirectory: WORKDIR });
   const hosted: HostedContractRunners = {
     runners: () => [floor],
-    forSession: async (sessionId) => (sessionId === 'hosted-1' ? { runner: floor, workspaceRoot: HOSTED_ROOT } : null),
+    forSession: async (sessionId) => (sessionId === 'hosted-1' ? { runner: floor, workspaceRoot: HOSTED_ROOT, selectedModel: HOSTED_MODEL } : null),
   };
   service.attachHosted(hosted);
   return { service, daemon, floor };
@@ -64,7 +65,7 @@ describe('the contracts operator service', () => {
   test('start in a live hosted session runs on its floor, origin hosted, in its workspace', async () => {
     const { service, daemon, floor } = surface();
     await service.start({ ask: 'Rename the config key.', sessionId: 'hosted-1' });
-    expect(floor.started).toEqual([{ ask: 'Rename the config key.', sessionId: 'hosted-1', origin: 'hosted', projectRoot: HOSTED_ROOT }]);
+    expect(floor.started).toEqual([{ ask: 'Rename the config key.', sessionId: 'hosted-1', origin: 'hosted', projectRoot: HOSTED_ROOT, selectedModel: HOSTED_MODEL }]);
     expect(daemon.started).toEqual([]);
   });
 
@@ -233,7 +234,7 @@ describe('the contracts.* methods', () => {
     const listed = await rest(helper, READ, 'GET', '/api/contracts?includeTerminal=true');
     expect((listed.body as { contracts: { id: string }[] }).contracts.map((entry) => entry.id)).toEqual([id]);
 
-    const hosted = floor.start({ ask: 'Other work.', sessionId: 'hosted-1', origin: 'hosted', projectRoot: HOSTED_ROOT });
+    const hosted = floor.start({ ask: 'Other work.', sessionId: 'hosted-1', origin: 'hosted', projectRoot: HOSTED_ROOT, selectedModel: HOSTED_MODEL });
     const escalationId = escalate(floor, hosted.contract.id, 'Contract asks.');
     const replied = await rest(helper, WRITE, 'POST', `/api/contracts/${hosted.contract.id}/reply`, { escalationId, text: 'Yes.' });
     expect(replied.body).toMatchObject({ escalationId, action: 'approved' });

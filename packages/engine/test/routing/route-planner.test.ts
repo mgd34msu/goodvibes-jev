@@ -6,7 +6,6 @@ import { composeTier, readRequest, type RequestReading } from '../../sdk/src/pla
 import { createRoutePlanner, eligibleModels, NoRouteError, shortlistOrder, type RoutePlannerCatalog } from '../../sdk/src/platform/routing/route-planner.js';
 import { ModelTierStore, modelTierFrom, type ModelFacts } from '../../sdk/src/platform/routing/model-tiers.js';
 import { tierSearchOrder } from '../../sdk/src/platform/routing/tiers.js';
-import { JudgmentHeldError } from '../../sdk/src/platform/types/judgment-held.js';
 import type { ModelDefinition } from '../../sdk/src/platform/providers/registry-types.js';
 import type { ResolvedModelPricing } from '../../sdk/src/platform/providers/model-pricing.js';
 
@@ -34,10 +33,10 @@ describe('tier composition', () => {
     expect(composeTier(readings(), 'unit').tier).toBe('economy');
   });
 
-  test.each(['tier', 'intent', 'difficulty', 'risk', 'domain', 'language'] as const)('an unsettled %s holds routing', (key) => {
+  test.each(['tier', 'intent', 'difficulty', 'risk', 'domain', 'language'] as const)('confidence in %s does not veto an assignment', (key) => {
     for (const outcome of ['confirm', 'escalate'] as const) {
       const input = readings();
-      expect(() => composeTier({ ...input, [key]: { ...input[key], outcome } }, 'unit')).toThrow(JudgmentHeldError);
+      expect(composeTier({ ...input, [key]: { ...input[key], outcome } }, 'unit').tier).toBe('economy');
     }
   });
 
@@ -46,8 +45,8 @@ describe('tier composition', () => {
     expect(composeTier(readings(), 'planner').tier).toBe('standard');
   });
 
-  test('a non-English request also requires a settled tier', () => {
-    expect(() => composeTier(readings({ tier: choice('economy', 0.7, 'confirm'), language: choice('german', 0.99, 'act') }), 'unit')).toThrow(JudgmentHeldError);
+  test('a non-English request uses the tier probabilities', () => {
+    expect(composeTier(readings({ tier: choice('economy', 0.7, 'confirm'), language: choice('german', 0.99, 'act') }), 'unit').tier).toBe('economy');
     expect(composeTier(readings({ language: choice('german', 0.99, 'act') }), 'unit').tier).toBe('economy');
   });
 
@@ -61,12 +60,12 @@ describe('model tier composition', () => {
   const yes = { kind: 'yes-no' as const, probability: 0.95, verdict: 'yes' as const, outcome: 'act' as const };
   const no = { kind: 'yes-no' as const, probability: 0.05, verdict: 'no' as const, outcome: 'act' as const };
   const unsure = { kind: 'yes-no' as const, probability: 0.5, verdict: 'uncertain' as const, outcome: 'escalate' as const };
-  test('frontier is premium, small is economy, clearly neither is standard, unsure is unsettled', () => {
+  test('both probabilities compose a tier even at a tie or with overlapping labels', () => {
     expect(modelTierFrom({ frontier: yes, small: no })).toBe('premium');
     expect(modelTierFrom({ frontier: no, small: yes })).toBe('economy');
     expect(modelTierFrom({ frontier: no, small: no })).toBe('standard');
-    expect(modelTierFrom({ frontier: unsure, small: no })).toBeUndefined();
-    expect(modelTierFrom({ frontier: yes, small: yes })).toBeUndefined();
+    expect(modelTierFrom({ frontier: unsure, small: no })).toBe('premium');
+    expect(modelTierFrom({ frontier: yes, small: yes })).toBe('premium');
   });
 });
 
@@ -96,8 +95,10 @@ function catalogOf(models: ModelDefinition[], configured: string[], prices: Reco
 }
 
 /** Answers the request batteries, the tier questions and the model choice. */
-function routingPort(options: { tier: string; frontier: (state: EntryType) => boolean; pick: string; fit?: (index: number) => number }) {
+function routingPort(options: { tier: string; frontier: (state: EntryType) => boolean; pick: string; fit?: (index: number) => number; override?: (name: string, question: Question, state: EntryType) => unknown }) {
   return fakePort((name: string, question: Question, state: EntryType) => {
+    const override = options.override?.(name, question, state);
+    if (override !== undefined) return override;
     if (name === 'tier__tier') return choiceAnswer(question, options.tier, 0.95);
     if (name === 'intent__intent') return choiceAnswer(question, 'code_change', 0.95);
     if (name === 'domain__domain') return choiceAnswer(question, 'software', 0.95);
@@ -184,11 +185,42 @@ describe('route planner', () => {
     expect(route.reason).toContain('no fitting economy model is configured');
   });
 
-  test('a choice of none moves on, and no fitting model anywhere is an error', async () => {
+  test('a weak fit ranks capable models instead of vetoing execution', async () => {
     const { port } = routingPort({ tier: 'premium', frontier: isFlagship, pick: 'none', fit: () => 0.05 });
     installJudgmentPort(port);
     const planner = createRoutePlanner({ catalog: catalogOf(models, ['alpha']), tiers: new ModelTierStore() });
-    await expect(planner.planRoute({ purpose: 'unit', brief: 'x' })).rejects.toBeInstanceOf(NoRouteError);
+    const route = await planner.planRoute({ purpose: 'unit', brief: 'x' });
+    expect(route.model).toBe('alpha:flagship-1');
+    expect(route.pick.pick.choice).toBe('none');
+    expect(route.pick.fits[route.model]?.probability).toBe(0.05);
+  });
+
+
+  test('the recorded review ambiguity still assigns an agent within the selected subscription provider and family', async () => {
+    const selected = def('subscription', 'gpt-6.1-sol');
+    const sibling = def('subscription', 'gpt-6-astra');
+    const offered = [selected, sibling, def('subscription', 'claude-opus-4.5'), def('metered', 'gpt-6.1-sol')];
+    const fake = routingPort({ tier: 'premium', frontier: () => true, pick: sibling.registryKey, override: (name, question, state) => {
+      if (name === 'same_family') return noulAnswer(JSON.stringify((state as { candidate: unknown }).candidate).includes('gpt-6') ? 0.98 : 0.02);
+      if (name === 'intent__intent') return { type: 'choice', choice: 'planning', confidence: 0.52, probabilities: { planning: 0.57, code_review: 0.43, code_change: 0, debugging: 0, research: 0, writing: 0, analysis: 0, operations: 0, conversation: 0 } };
+      if (name === 'difficulty__difficulty') return scoreAnswer(question, 2, 0.68);
+      if (name === 'risk__risk') return scoreAnswer(question, 2, 0.53);
+      if (name === 'pick') return choiceAnswer(question, sibling.registryKey, 0.51);
+      return undefined;
+    } });
+    installJudgmentPort(fake.port);
+    const route = await createRoutePlanner({ catalog: catalogOf(offered, ['subscription', 'metered']), tiers: new ModelTierStore() })
+      .planRoute({ purpose: 'planner', brief: 'Plan a comprehensive code review', selectedModel: selected });
+    expect(route.model).toBe(sibling.registryKey);
+    expect(route.provider).toBe('subscription');
+    expect(route.fallbackModels).toEqual([selected.registryKey]);
+    expect(route.request.readings.intent.outcome).not.toBe('act');
+    expect(route.request.readings.intent.choice).toBe('planning');
+    const choices = fake.requests.filter((request) => 'pick' in request.questions);
+    expect(choices).toHaveLength(1);
+    expect(JSON.stringify(choices[0]!.state)).not.toContain('metered');
+    expect(JSON.stringify(choices[0]!.state)).not.toContain('claude');
+    expect(selected.id).toBe('gpt-6.1-sol');
   });
 
   test('no eligible model is an error before any tier is read', async () => {

@@ -42,6 +42,7 @@ import { createRoutePlanner, type RoutePlanner, type RoutePlannerDeps } from '..
 import { BENCHMARK_PREPARATION_ATTEMPTS, BENCHMARK_READ_CONCURRENCY } from '../routing/policy.js';
 import type { AgentManager } from '../tools/agent/index.js';
 import { summarizeError } from '../utils/error-display.js';
+import { JudgmentHeldError } from '../types/judgment-held.js';
 import { logger } from '../utils/logger.js';
 import { buildPricingSeams } from './cost/pricing-seams.js';
 import type { RuntimeEventBus } from './events/index.js';
@@ -100,8 +101,8 @@ type RouteBenchmarks = Pick<BenchmarkStore, 'getKnownBenchmarks' | 'readBenchmar
  * Resolve each eligible model's leaderboard identity before the first tier
  * shortlist is sorted. Exact names and remembered readings need no Jev call;
  * new aliases are read with bounded concurrency. A refresh retries the whole
- * batch, including aliases already read. Failed readings or repeated refreshes
- * reject the route instead of silently sorting by price with unknown identities.
+ * batch, including aliases already read. Uncertain identity matches remain unscored; transport failures and repeated
+ * refreshes are reported. Unknown benchmark metadata never vetoes routing.
  */
 async function readRouteBenchmarkSnapshot(
   benchmarks: RouteBenchmarks,
@@ -119,10 +120,17 @@ async function readRouteBenchmarkSnapshot(
       await mapLimit(models, BENCHMARK_READ_CONCURRENCY, async (model) => {
         readingSignal.throwIfAborted();
         if (benchmarks.getKnownBenchmarks(model.displayName) ?? benchmarks.getKnownBenchmarks(model.id)) return;
-        const entry = await benchmarks.readBenchmarks(model.displayName, 'routing.route-planner.benchmark-identity', readingSignal);
-        readingSignal.throwIfAborted();
-        if (entry === undefined && model.id !== model.displayName) {
-          await benchmarks.readBenchmarks(model.id, 'routing.route-planner.benchmark-identity', readingSignal);
+        try {
+          const entry = await benchmarks.readBenchmarks(model.displayName, 'routing.route-planner.benchmark-identity', readingSignal);
+          readingSignal.throwIfAborted();
+          if (entry === undefined && model.id !== model.displayName) {
+            await benchmarks.readBenchmarks(model.id, 'routing.route-planner.benchmark-identity', readingSignal);
+          }
+        } catch (error) {
+          readingSignal.throwIfAborted();
+          // Optional leaderboard metadata is not an execution prerequisite.
+          // Never attach a possibly different model's benchmark to this one.
+          if (!(error instanceof JudgmentHeldError)) throw error;
         }
       });
       readingSignal.throwIfAborted();
@@ -214,6 +222,7 @@ export function composeContractRunner(options: ContractRunnerCompositionOptions)
     providerHealth: routeProviderHealth(options.providerRegistry, options.runtimeStore),
   }, options.providerRegistry.benchmarks);
   const runner = createContractRunner({
+    getSelectedModel: () => options.providerRegistry.getCurrentModel(),
     ...(options.nativeOwner === undefined ? {} : { nativeDecisions: options.nativeOwner.decisions, durableAdmission: options.nativeOwner.admission }),
     agentManager: options.agentManager,
     messageBus: options.agentMessageBus,
@@ -222,6 +231,7 @@ export function composeContractRunner(options: ContractRunnerCompositionOptions)
     projectRoot: options.projectRoot,
     readAccessFilter: options.readAccessFilter,
     routeSelector: createRoutePlannerContractSelector(planner, {
+      getSelectedModel: () => options.providerRegistry.getCurrentModel(),
       catalogSettled: async () => {
         await Promise.all([options.providerRegistry.modelDiscoverySettled(), options.providerRegistry.benchmarks.benchmarksSettled()]);
       },

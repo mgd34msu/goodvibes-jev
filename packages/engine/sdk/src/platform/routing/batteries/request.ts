@@ -72,11 +72,11 @@ export type RequestIntent = keyof typeof INTENTS;
 
 export const requestIntent = defineBattery({
   name: 'routing.request-intent',
-  version: 1,
+  version: 2,
   description: 'What kind of work a request is: changing code, reviewing, debugging, planning, research, writing, analysis, operations or conversation.',
   accuracyFloor: 0.9,
   items: {
-    intent: oneOf('What kind of work does `work` ask for?', INTENTS, LOW.confidence),
+    intent: oneOf('What kind of work does the underlying user request in `work` ask for? Use originalSource.goal when present. The execution purpose (for example a planner breaking a code review into units) does not change the user request from code_review to planning.', INTENTS, LOW.confidence),
   },
   fixtures: [
     { name: 'implement an endpoint', state: work('Implement a PATCH /users/:id endpoint that updates the display name and email.'), expect: { intent: 'code_change' } },
