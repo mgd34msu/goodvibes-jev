@@ -167,7 +167,7 @@ export interface HarnessSettingMutationResult {
  * not a promise of completeness: {@link countHarnessSettings} reports how many
  * settings actually match, and every caller must say when it returned fewer.
  */
-export const MAX_SETTING_LIMIT = 2000;
+export const MAX_SETTING_LIMIT = Number.MAX_SAFE_INTEGER;
 const DEFAULT_SETTING_LIMIT = MAX_SETTING_LIMIT;
 /**
  * Credential-looking LEAF names. Matched against the last dot segment only, and

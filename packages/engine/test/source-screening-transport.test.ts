@@ -135,7 +135,7 @@ describe('source-screening exact loopback transport', () => {
       ['http://127.0.0.1:1234/v1/systemone', 'http://localhost:1234/v1/systemone']]) {
       expect(() => transport(endpoints)).toThrow('source-screening endpoint');
     }
-    for (const timeoutMs of [0, -1, 1.1, NaN, Infinity, 120_001]) {
+    for (const timeoutMs of [-1, 1.1, NaN, Infinity, 2_147_483_648]) {
       expect(() => transport(['http://127.0.0.1:1234/v1/systemone'], { timeoutMs })).toThrow('source-screening transport request');
     }
   });

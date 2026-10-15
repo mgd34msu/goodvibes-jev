@@ -12,7 +12,6 @@
  * `user` messages (which would trip a consecutive-user-message API error).
  */
 
-const MAX_SHELL_OUTPUT = 16_000;
 
 export const SHELL_USAGE_HINT =
   '[Shell] Usage: !<command>, runs a shell command; its output is shown and added as context for your next message.';
@@ -36,10 +35,7 @@ export class ShellPassthrough {
     ]);
     const exitCode = await proc.exited;
     const combined = [out, err].filter((s) => s.trim().length > 0).join('\n').trimEnd();
-    const truncated = combined.length > MAX_SHELL_OUTPUT
-      ? `${combined.slice(0, MAX_SHELL_OUTPUT)}\n… [truncated ${combined.length - MAX_SHELL_OUTPUT} chars]`
-      : combined;
-    const body = truncated.length > 0 ? truncated : '(no output)';
+    const body = combined.length > 0 ? combined : '(no output)';
     const result: ShellRunResult = {
       display: `[Shell] ${body}\n(exit ${exitCode})`,
       context: `The user ran a shell command via the \`!\` prefix:\n$ ${command}\n--- output (exit ${exitCode}) ---\n${body}`,

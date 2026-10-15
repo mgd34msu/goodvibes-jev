@@ -29,12 +29,10 @@ import type { WorkItem } from '../orchestration/types.js';
 import { stallRoute } from './batteries/stall-route.js';
 import { emptyJudgmentUsage, meteredPort, type DecidedCheck } from './check.js';
 import { readContractConfig } from './config.js';
-import { headAndTail } from './evidence.js';
 import { failedGates } from './gates.js';
 import { buildFixGroup, buildFixPlannerPrompt, buildFixPlannerRequest, buildFreshGroup, validateFixPlan, type FixBrief, type FixScope } from './fix-plan.js';
 import { nativeContractRoute, decideNativeContract, nativeContractPort, nativeDecisionState, nativeSpent, spendNative } from './native-decisions.js';
 import { assertNativeContractSource } from './native-source.js';
-import { NUDGE_GATE_TAIL_LINES } from './nudge.js';
 import { runUnitShapeChecks } from './plan-checks.js';
 import { renderContractPlan, type ContractPlan, type PlanProblem } from './plan-schema.js';
 import { prepareFixPlannerInput, type FixPlannerInput } from './fix-planner-input.js';
@@ -53,10 +51,7 @@ export const STALL_ROUTE_SITE = 'contract.stall-route';
 export const SESSION_NO_DELEGATION_NOTE = 'You asked for this work to be done without delegating, so it cannot be split into planned fixes or handed to a fresh agent.';
 
 /** The last nudges and checks a stall reading sees. */
-const STALL_NUDGES = 3;
-const STALL_CHECKS = 6;
 /** Characters of the agent's last report a stall reading or a fix plan sees. */
-const OUTPUT_CAP_CHARS = 4_000;
 
 /** What a failed group or deliverable check found, for correction. */
 export interface TargetFinding {
@@ -81,7 +76,7 @@ export interface Correction {
 
 /** One line per check: each criterion's verdict at that check. */
 export function checkSummaries(criteria: readonly Criterion[], checks: readonly UnitCheck[]): string[] {
-  return checks.filter((check) => check.trigger !== 'turn-end').slice(-STALL_CHECKS).map((check) => {
+  return checks.filter((check) => check.trigger !== 'turn-end').map((check) => {
     const verdicts = criteria.flatMap((criterion) => {
       const reading = criterion.readings.find((candidate) => candidate.checkId === check.id);
       return reading === undefined ? [] : [`${criterion.id} ${reading.verdict}`];
@@ -93,7 +88,7 @@ export function checkSummaries(criteria: readonly Criterion[], checks: readonly 
 
 /** Failing gates, each with the tail of its output, for a fix plan. */
 function gateFailureLines(gates: UnitCheck['gates']): string[] {
-  return failedGates(gates).map((gate) => `${gate.gate}:\n${gate.output.split('\n').slice(-NUDGE_GATE_TAIL_LINES).join('\n')}`);
+  return failedGates(gates).map((gate) => `${gate.gate}:\n${gate.output}`);
 }
 
 function engineItem(run: ContractRun, itemId: string): WorkItem | undefined {
@@ -341,9 +336,9 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
       goal: unit.goal,
       criteria,
       requiredIds: criteria.filter((criterion) => criterion.status !== 'met').map((criterion) => criterion.id),
-      lastNudges: unit.nudges.slice(-STALL_NUDGES).map((nudge) => nudge.text),
+      lastNudges: unit.nudges.map((nudge) => nudge.text),
       gateFailures: gateFailureLines(unit.checks.at(-1)?.gates),
-      output: headAndTail(record?.fullOutput ?? unit.answer ?? run.runtime(unit).lastAssistantText, OUTPUT_CAP_CHARS),
+      output: record?.fullOutput ?? unit.answer ?? run.runtime(unit).lastAssistantText,
       touchedPaths: unit.touchedPaths,
       ...(conflict === undefined ? {} : { conflict }),
     };
@@ -365,7 +360,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
       requiredIds: [...finding.unmet, ...finding.unshown],
       lastNudges: [],
       gateFailures: gateFailureLines(finding.gates),
-      output: headAndTail(finding.output, OUTPUT_CAP_CHARS),
+      output: finding.output,
       touchedPaths: [...new Set(target.units.flatMap((unit) => unit.touchedPaths))],
     };
   }
@@ -448,9 +443,9 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
       unit: { goal: unit.goal, criteria: judgedCriteria.map((criterion) => `${criterion.id} ${criterion.text}`) },
       unmet,
       unshown,
-      lastNudges: unit.nudges.slice(-STALL_NUDGES).map((nudge) => nudge.text),
+      lastNudges: unit.nudges.map((nudge) => nudge.text),
       checks: checkSummaries(judgedCriteria, unit.checks),
-      lastOutput: headAndTail(record?.fullOutput ?? run.runtime(unit).lastAssistantText, OUTPUT_CAP_CHARS),
+      lastOutput: record?.fullOutput ?? run.runtime(unit).lastAssistantText,
     });
     if (run.terminal) return;
     const route: StallRoute = read.act ? read.route : 'owner';
@@ -547,7 +542,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
         unshown: finding.unshown,
         lastNudges: [],
         checks: checkSummaries(judgedCriteria, target.checks),
-        lastOutput: headAndTail(finding.output, OUTPUT_CAP_CHARS),
+        lastOutput: finding.output,
       });
       if (run.terminal) return;
       decisionId = read.decisionId;

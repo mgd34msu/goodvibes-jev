@@ -10,7 +10,6 @@ import { normalizeForMatch } from '@goodvibes-jev/judgment';
 import { GROUP_KINDS, UNIT_ROLES, type ContractPlanProblem } from '../../events/contract.js';
 import { PLANNER_DECOMPOSITION_TOOLS } from '../agents/planner-decomposition-runner.js';
 import { wouldCreateCycle, type GraphNode } from '../orchestration/graph-dynamics.js';
-import { MAX_ATTEMPTS } from '../orchestration/types.js';
 import { delegationForbidden, saysYesAtAct } from './batteries/request-shape.js';
 import type { GroupKind, NativeContractSource, RequestShape, UnitRole } from './types.js';
 
@@ -448,14 +447,14 @@ function checkParallel(plan: ContractPlan, shape: RequestShape): PlanProblem[] {
   return [problem('parallel-missing', 'The user asked for agents working in parallel: put the independent units in one group with no dependency between them.')];
 }
 
-/** Check 7: attempts stay at one unless several were asked for, and never pass MAX_ATTEMPTS. */
+/** Check 7: attempts stay at one unless several were asked for, and are positive whole numbers. */
 function checkAttempts(plan: ContractPlan, shape: RequestShape, limits: PlanLimits): PlanProblem[] {
   const severalAllowed = saysYesAtAct(shape.asks_for_attempts) || limits.defaultAttempts > 1;
   const problems: PlanProblem[] = [];
   for (const unit of planUnits(plan)) {
     const attempts = effectiveAttempts(unit, limits.defaultAttempts);
-    if (!Number.isInteger(attempts) || attempts < 1 || attempts > MAX_ATTEMPTS) {
-      problems.push(problem('attempts', `Unit ${unit.id} has ${attempts} attempts; attempts is a whole number from 1 to ${MAX_ATTEMPTS}.`, unit.id));
+    if (!Number.isSafeInteger(attempts) || attempts < 1) {
+      problems.push(problem('attempts', `Unit ${unit.id} has ${attempts} attempts; attempts must be a positive safe integer.`, unit.id));
     } else if (attempts > 1 && !severalAllowed) {
       problems.push(problem('attempts', `Unit ${unit.id} has ${attempts} attempts, but the user did not ask for several attempts; set attempts to 1.`, unit.id));
     }

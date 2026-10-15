@@ -29,6 +29,6 @@ export class KnowledgeSelfImprovementAssessmentHeldError extends Error {
   }
 }
 export const SELF_IMPROVEMENT_ASSESSMENT_LIMITS = Object.freeze({
-  subjects: 100, facts: 100, sources: 100, profiles: 100, characters: 160_000, bytes: 16_000_000,
-  defaultTimeoutMs: 30_000, timeoutMs: 60_000,
+  subjects: Number.POSITIVE_INFINITY, facts: Number.POSITIVE_INFINITY, sources: Number.POSITIVE_INFINITY, profiles: Number.POSITIVE_INFINITY, characters: Number.POSITIVE_INFINITY, bytes: Number.POSITIVE_INFINITY,
+  defaultTimeoutMs: 0, timeoutMs: 2_147_483_647,
 });

@@ -20,7 +20,6 @@
  * here, so engine.ts stays small.
  */
 import {
-  MAX_ATTEMPTS,
   type AttemptCandidate,
   type AttemptJudge,
   type AttemptJudgment,
@@ -94,7 +93,7 @@ interface GroupEntry {
 
 function clampAttempts(n: number | undefined): number {
   if (!n || !Number.isFinite(n) || n < 1) return 1;
-  return Math.min(Math.floor(n), MAX_ATTEMPTS);
+  return Math.floor(n);
 }
 
 /** The item id of attempt `index` of the item `sourceId`: the contract runner names its attempt units the same way. */

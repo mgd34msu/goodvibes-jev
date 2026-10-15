@@ -466,8 +466,8 @@ export const CONFIG_SCHEMA_ENTRIES: readonly ConfigSchemaEntry[] = [
     "key": "orchestration.maxDepth",
     "type": "number",
     "default": 0,
-    "description": "Maximum recursive orchestration depth: 0=disabled, higher values allow deeper bounded recursion",
-    "validationHint": "number in [0, 5]"
+    "description": "Optional recursive orchestration depth limit; 0 is unlimited. recursionEnabled controls whether recursion is allowed.",
+    "validationHint": "non-negative safe integer; 0 means unlimited"
   },
   {
     "key": "planner.decomposition",
@@ -482,23 +482,23 @@ export const CONFIG_SCHEMA_ENTRIES: readonly ConfigSchemaEntry[] = [
   {
     "key": "planner.maxTurns",
     "type": "number",
-    "default": 6,
-    "description": "Maximum turns the planning-decomposition agent may take before it is stopped and the heuristic path is used",
-    "validationHint": "number in [1, 20]"
+    "default": 0,
+    "description": "Optional planner turn limit; 0 runs until completion or cancellation.",
+    "validationHint": "non-negative safe integer; 0 means unlimited"
   },
   {
     "key": "planner.tokenCeiling",
     "type": "number",
-    "default": 120000,
-    "description": "Total token budget for the planning-decomposition agent; exceeding it stops the agent and falls back to the heuristic path",
-    "validationHint": "number in [1000, 2000000]"
+    "default": 0,
+    "description": "Optional total planner token limit; 0 imposes no work budget.",
+    "validationHint": "non-negative safe integer; 0 means unlimited"
   },
   {
     "key": "planner.wallTimeoutMs",
     "type": "number",
-    "default": 120000,
-    "description": "Wall-clock timeout (ms) for the planning-decomposition agent; exceeding it cancels the agent and falls back to the heuristic path",
-    "validationHint": "number in [1000, 600000]"
+    "default": 0,
+    "description": "Optional planner wall-clock limit in milliseconds; 0 runs until completion or cancellation.",
+    "validationHint": "non-negative safe integer; 0 means unlimited"
   },
   {
     "key": "sandbox.enabled",
@@ -661,9 +661,9 @@ export const CONFIG_SCHEMA_ENTRIES: readonly ConfigSchemaEntry[] = [
   {
     "key": "automation.defaultTimeoutMs",
     "type": "number",
-    "default": 900000,
-    "description": "Default execution timeout for automation runs in milliseconds",
-    "validationHint": "integer in [1000, 86400000]"
+    "default": 0,
+    "description": "Optional execution timeout for automation runs in milliseconds; 0 disables the deadline",
+    "validationHint": "integer in [0, 2147483647]"
   },
   {
     "key": "automation.catchUpWindowMinutes",
@@ -3543,9 +3543,9 @@ export const CONFIG_SCHEMA_ENTRIES: readonly ConfigSchemaEntry[] = [
   {
     "key": "tools.defaultTokenBudget",
     "type": "number",
-    "default": 5000,
-    "description": "Default token budget for precision read operations",
-    "validationHint": "number in [100, 100000]"
+    "default": 0,
+    "description": "Optional token budget for precision read operations; 0 includes the complete result",
+    "validationHint": "non-negative safe integer; 0 means unlimited"
   },
   {
     "key": "tools.hooksFile",
@@ -3649,9 +3649,9 @@ export const CONFIG_SCHEMA_ENTRIES: readonly ConfigSchemaEntry[] = [
   {
     "key": "contract.gateTimeoutMs",
     "type": "number",
-    "default": 120000,
-    "description": "Timeout in ms for each quality gate command a contract check runs (contract.gates)",
-    "validationHint": "integer in [1000, 3600000]"
+    "default": 0,
+    "description": "Optional timeout in ms for each quality gate command; 0 runs until completion or cancellation",
+    "validationHint": "integer in [0, 2147483647]"
   },
   {
     "key": "contract.acceptanceStakes",
@@ -3798,15 +3798,15 @@ export const CONFIG_SCHEMA_ENTRIES: readonly ConfigSchemaEntry[] = [
     "key": "judgment.fallbacks",
     "type": "object",
     "default": [],
-    "description": "Ordered array of zero to eight System One fallback objects. Each object has exactly endpoint, model, keySource and keyName. endpoint is an HTTP or HTTPS URL without embedded credentials, query or fragment. model is a Jev model name or alias such as jev-latest; it must match the requested primary model. keySource is env or secret; keyName names the environment variable or native secret-store entry from which the runtime privately resolves the API key. This setting accepts only that reference name, never a credential value or an inline apiKey field. An empty array disables fallbacks, including inherited fallbacks.",
-    "validationHint": "array of { endpoint, model, keySource: \"env\" | \"secret\", keyName }, at most eight compatible targets; no credentials in URLs or inline keys"
+    "description": "Ordered array of compatible System One fallback objects. Each object has exactly endpoint, model, keySource and keyName. endpoint is an HTTP or HTTPS URL without embedded credentials, query or fragment. model is a Jev model name or alias such as jev-latest; it must match the requested primary model. keySource is env or secret; keyName names the environment variable or native secret-store entry from which the runtime privately resolves the API key. This setting accepts only that reference name, never a credential value or an inline apiKey field. An empty array disables fallbacks, including inherited fallbacks.",
+    "validationHint": "array of { endpoint, model, keySource: \"env\" | \"secret\", keyName }; no credentials in URLs or inline keys"
   },
   {
     "key": "judgment.timeoutMs",
     "type": "number",
-    "default": 10000,
-    "description": "Timeout per judgment attempt in milliseconds",
-    "validationHint": "integer in [1000, 120000]"
+    "default": 0,
+    "description": "Optional timeout per judgment attempt in milliseconds; 0 waits until completion or cancellation",
+    "validationHint": "integer in [0, 2147483647]"
   },
   {
     "key": "fetch.sanitizeMode",

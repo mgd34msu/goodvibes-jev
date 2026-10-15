@@ -25,7 +25,7 @@ export const contractConfigDefaults: { contract: ContractSettings } = {
       { name: 'lint', command: 'npx eslint . --max-warnings 0', enabled: false },
       { name: 'build', command: 'npm run build', enabled: false },
     ],
-    gateTimeoutMs: 120_000,
+    gateTimeoutMs: 0,
     acceptanceStakes: 'high',
     midRunChecks: true,
     evidenceNudgeLimit: 0,
@@ -67,9 +67,9 @@ export const contractConfigSettings: ConfigSettingDefinition[] = [
   {
     key: 'contract.gateTimeoutMs',
     type: 'number',
-    default: 120000,
-    description: 'Timeout in ms for each quality gate command a contract check runs (contract.gates)',
-    ...intRange(1000, 3_600_000),
+    default: 0,
+    description: 'Optional timeout in ms for each quality gate command; 0 runs until completion or cancellation',
+    ...intRange(0, 2_147_483_647),
   },
   {
     key: 'contract.acceptanceStakes',

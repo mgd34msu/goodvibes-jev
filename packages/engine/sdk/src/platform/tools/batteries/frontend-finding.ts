@@ -37,7 +37,7 @@ import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 /** Lines of context carried on each side of a candidate line. */
 export const FRONTEND_CONTEXT_LINES = 3;
 /** Most lines of a hook call the omits_dependency reading carries. */
-export const MAX_JUDGED_HOOK_LINES = 40;
+export const MAX_JUDGED_HOOK_LINES = Number.POSITIVE_INFINITY;
 
 /** One line that sets a z-index value, with the lines around it. */
 export type ZIndexUse = { line: number; text: string; before: string[]; after: string[] };

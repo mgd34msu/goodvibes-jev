@@ -21,7 +21,6 @@ export async function filterFactsForQuery(query: string, facts: readonly Knowled
     trust: 'untrusted reference material',
   } }));
   assertJudgmentInput({ query, candidates: candidates.map((candidate) => candidate.content) });
-  if (candidates.some(candidate => JSON.stringify({ query, candidate: candidate.content }).length > 160_000)) throw new JudgmentInputError('unsupported-input');
   const port = judgmentPort('engine.knowledge.answer-fact-rank');
   const model = port.model, version = JSON.stringify({ facts });
   const current = () => {
@@ -39,7 +38,6 @@ export async function filterFactsForQuery(query: string, facts: readonly Knowled
 export async function hasFeatureIntentForQuery(query: string, signal?: AbortSignal): Promise<boolean> {
   assertAnswerVerificationActive(signal);
   assertJudgmentInput({ query });
-  if (query.length > 160_000) throw new JudgmentInputError('unsupported-input');
   const port = judgmentPort('engine.knowledge.answer-query-intent'), model = port.model;
   const current = () => { assertAnswerVerificationActive(signal); if (judgmentPort('engine.knowledge.answer-query-intent') !== port || port.model !== model) throw new KnowledgeFactSelectionHeldError(); };
   const run = await answerQueryIntent.run(port, { query }, { beforeAttempt: current, site: 'engine.knowledge.answer-query-intent', ...(signal ? { signal } : {}) });

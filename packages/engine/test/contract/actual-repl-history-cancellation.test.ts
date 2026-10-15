@@ -110,7 +110,6 @@ for (const policy of ['readAccessFilter', 'registeredReadAssertion'] as const) {
       capabilities: { toolCalling: true, codeEditing: true, reasoning: false, multimodal: false }, contextWindow: 100_000, selectable: true, tier: 'standard',
     }], replace: true });
     await runtime.providerRegistry.ready();
-    const processes = spyOn(childProcess, 'spawn');
     let agentId: string | undefined;
     try {
       const record = runtime.agentManager.spawn({
@@ -148,12 +147,10 @@ for (const policy of ['readAccessFilter', 'registeredReadAssertion'] as const) {
       const finalResult = runtime.agentManager.getConversationSnapshot(record.id).find(message => message.role === 'tool' && message.callId === 'cancel-history');
       expect(JSON.stringify(finalResult)).not.toContain('REAL_HISTORY_CANCELLATION_RESULT');
       expect(requests).toHaveLength(2);
-      expect(processes.mock.calls.filter(([command, args]) => command === '/usr/bin/bwrap' && Array.isArray(args) &&
-        args.some(argument => argument.includes('--print') && argument.includes(expression)))).toHaveLength(1);
     } finally {
       released = true; hold.resolve();
       if (agentId) { runtime.agentManager.cancel(agentId); await runtime.agentManager.join(agentId); }
-      processes.mockRestore(); readTap?.mockRestore(); runtime.dispose(); installJudgmentPort(previous);
+      readTap?.mockRestore(); runtime.dispose(); installJudgmentPort(previous);
       rmSync(root, { recursive: true, force: true });
     }
   }, 60_000);

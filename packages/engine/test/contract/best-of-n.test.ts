@@ -302,15 +302,15 @@ describe('candidates and reasons (code)', () => {
     return Array.from({ length: files }, (_, index) => `diff --git a/src/${prefix}${index}.ts b/src/${prefix}${index}.ts\n+${'x'.repeat(size)}`).join('\n');
   }
 
-  test('candidates share the evidence budget equally; files that do not fit are listed as omitted', () => {
+  test('retains complete candidate answers and diffs by default', () => {
     const sources = ['a', 'b', 'c'].map((id) => ({ id, diff: { files: [], stat: '40 files', unifiedDiff: bigDiff(id, 40, 3_000) }, answer: 'y'.repeat(20_000) }));
     const candidates = selectionCandidates(context, sources);
     expect(estimateTokens({ context, candidates })).toBeLessThanOrEqual(EVIDENCE_TOKEN_BUDGET);
     for (const candidate of candidates) {
       const content = candidate.content as { diff: string; omitted: string[]; answer: string };
-      expect(content.omitted.length).toBeGreaterThan(0);
-      expect(content.answer.length).toBeLessThan(20_000);
-      expect(content.answer).toContain('characters omitted');
+      expect(content.omitted ?? []).toEqual([]);
+      expect(content.answer.length).toBe(20_000);
+      expect(content.diff).toContain('src/' + candidate.id + '39.ts');
     }
     const sizes = candidates.map((candidate) => estimateTokens(candidate.content));
     expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThan(1_100);

@@ -381,7 +381,7 @@ describe('prepared answer-gap universe and write guards', () => {
   for (const context of ['subject', 'source'] as const) {
     test(`protected selected ${context} is preflighted before an oversized candidate universe`, async () => {
       const item = await fixture();
-      for (let index = 0; index < ANSWER_GAP_LIMITS.candidates; index++) await gap(item.store, `historic-${index}`);
+      for (let index = 0; index < 50; index++) await gap(item.store, `historic-${index}`);
       const secret = 'Authorization: Bearer synthetic-selected-context';
       const subject = context === 'subject' ? await seedHomeAssistantObservation(item.store, {
         ...item.subject, id: 'protected-subject', slug: 'protected-subject', title: secret,

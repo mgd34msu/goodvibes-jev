@@ -59,7 +59,7 @@ export async function prepareRepairFactScoring(inputs: readonly RepairFactScorin
   };
   assertOwnerCurrent();
   if (!states.length) return Object.freeze({ readings: Object.freeze([]), assertCurrent: assertOwnerCurrent });
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs) throw new Held('budget');
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > LIMITS.timeoutMs) throw new Held('budget');
   const bytes = states.reduce((sum, { state }) => sum + new TextEncoder().encode(JSON.stringify({ state, questions: repairFactScoring.items })).byteLength + 1_024, 0);
   if (states.length > LIMITS.requests || bytes > LIMITS.bytes) throw new Held('budget');
   const admission = prepareJudgmentResult({ factTrust: repairFactScoring.items.factTrust.question,
@@ -70,7 +70,7 @@ export async function prepareRepairFactScoring(inputs: readonly RepairFactScorin
   const stop = (error: Error) => { failed ??= error; stoppedError ??= error; controller.abort(); rejectStopped(stoppedError); };
   const abort = () => stop(new Held('aborted'));
   signal?.addEventListener('abort', abort, { once: true });
-  const timer = setTimeout(() => stop(new Held('budget')), timeoutMs);
+  const timer = timeoutMs > 0 ? setTimeout(() => stop(new Held('budget')), timeoutMs) : undefined;
   try {
     const authority = captureJudgmentPort(repairFactScoring.name, { signal: controller.signal, assertCurrent: assertOwnerCurrent });
     const configured = judgmentPort(repairFactScoring.name), configuredModel = configured.model;

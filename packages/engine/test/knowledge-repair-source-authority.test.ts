@@ -120,16 +120,16 @@ describe('repair source authority canonical reader', () => {
   });
   test('protected complete batch content precedes source, character and request caps', async () => {
     for (const inputs of [
-      [...Array.from({ length: LIMITS.inputs }, (_, i) => distinct(i + 1)), { ...distinct(LIMITS.inputs + 1), text: 'Authorization: Bearer never-send-this' }],
-      [{ ...input(), text: 'x'.repeat(LIMITS.characters + 1), claimedProvenance: { trustReason: 'Authorization: Bearer never-send-this' } }],
+      [...Array.from({ length: 50 }, (_, i) => distinct(i + 1)), { ...distinct(50 + 1), text: 'Authorization: Bearer never-send-this' }],
+      [{ ...input(), text: 'x'.repeat(160_000 + 1), claimedProvenance: { trustReason: 'Authorization: Bearer never-send-this' } }],
     ]) {
       const fake = readings(); await expect(createRepairSourceAuthorityReader().read(inputs)).rejects.toBeInstanceOf(JudgmentInputError);
       expect(fake.requests).toHaveLength(0);
     }
     const fake = readings(), reader = createRepairSourceAuthorityReader();
-    for (let i = 1; i <= LIMITS.requests; i++) await reader.read([distinct(i)]);
+    for (let i = 1; i <= 50; i++) await reader.read([distinct(i)]);
     await expect(reader.read([{ ...distinct(100), text: 'Authorization: Bearer never-send-this' }])).rejects.toBeInstanceOf(JudgmentInputError);
-    expect(fake.requests).toHaveLength(LIMITS.requests);
+    expect(fake.requests).toHaveLength(50);
   });
   test('unknown shapes, getters, sparse arrays and malformed choice distributions cannot authorize', async () => {
     const fake = readings(); let getterReads = 0;

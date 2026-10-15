@@ -80,7 +80,7 @@ export function evaluateOrchestrationSpawn(input: {
     }
   }
 
-  if (input.mode === 'recursive-child' && requestedDepth > maxDepth) {
+  if (input.mode === 'recursive-child' && maxDepth > 0 && requestedDepth > maxDepth) {
     return {
       allowed: false,
       reason: `requested depth ${requestedDepth} exceeds configured recursion depth ${maxDepth}, cap: ${ORCHESTRATION_CAP_KEYS.maxDepth}=${maxDepth}`,

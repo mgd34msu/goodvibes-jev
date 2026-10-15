@@ -75,22 +75,28 @@ function killGateProcess(proc: ReturnType<typeof Bun.spawn>, reason: string): vo
 /**
  * Runs one gate command through `/bin/sh -c`. `cwd` is the unit's worktree in
  * worktree mode, so the gate sees the unit's isolated changes; omitted, the
- * command runs in the process cwd. A command still running at `timeoutMs` is
+ * command runs in the process cwd. A positive explicit `timeoutMs` is an optional
+ * deadline; zero waits for completion or cancellation. An expired command is
  * killed and fails, with the timeout stated at the end of its output.
  */
 export async function executeGateCommand(
   command: string,
   cwd?: string,
   timeoutMs: number = CONTRACT_CONFIG_DEFAULTS.gateTimeoutMs,
+  signal?: AbortSignal,
 ): Promise<{ passed: boolean; output: string }> {
   try {
+    signal?.throwIfAborted();
     const proc = Bun.spawn(['/bin/sh', '-c', command], { detached: true, stdout: 'pipe', stderr: 'pipe', ...(cwd ? { cwd } : {}) });
+    const cancel = () => killGateProcess(proc, 'cancellation');
+    signal?.addEventListener('abort', cancel, { once: true });
+    if (signal?.aborted) cancel();
     let timedOut = false;
-    const timer = setTimeout(() => {
+    const timer = timeoutMs > 0 ? setTimeout(() => {
       timedOut = true;
       killGateProcess(proc, 'timeout');
-    }, timeoutMs);
-    timer.unref?.();
+    }, timeoutMs) : undefined;
+    timer?.unref?.();
     let exitCode: number;
     let stdout: string;
     let stderr: string;
@@ -107,19 +113,23 @@ export async function executeGateCommand(
       throw error;
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
     }
+    signal?.throwIfAborted();
     const output = [stdout, stderr, timedOut ? `Gate timed out after ${timeoutMs} ms and was stopped.` : '']
       .filter(Boolean)
       .join('\n')
       .trim();
     return { passed: exitCode === 0 && !timedOut, output };
   } catch (error) {
+    signal?.throwIfAborted();
     return { passed: false, output: summarizeError(error) };
   }
 }
 
 export interface RunContractGatesOptions {
   readonly configManager: ContractConfigReader;
+  readonly signal?: AbortSignal | undefined;
   /** The tree the gates run against: the unit's worktree, the contract worktree, or the project root. */
   readonly cwd: string;
   readonly runtimeBus: RuntimeEventBus;
@@ -143,9 +153,10 @@ export async function runContractGates(options: RunContractGatesOptions): Promis
   const results: QualityGateResult[] = [];
 
   for (const gate of gates) {
+    options.signal?.throwIfAborted();
     const skipReason = getSkippedGateReason(gate.name, options.cwd, pkgScripts);
     const startedAt = Date.now();
-    const run = skipReason === null ? await executeGateCommand(gate.command, options.cwd, timeoutMs) : { passed: true, output: skipReason };
+    const run = skipReason === null ? await executeGateCommand(gate.command, options.cwd, timeoutMs, options.signal) : { passed: true, output: skipReason };
     const result: QualityGateResult = {
       gate: gate.name,
       passed: run.passed,

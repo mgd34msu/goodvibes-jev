@@ -34,12 +34,11 @@ export interface ValidatorResult {
 }
 
 /**
- * Run a single validator via Bun.spawn. Times out after 30 seconds.
+ * Run a single validator via Bun.spawn and collect its complete result.
  */
 export async function runValidator(name: ValidatorName, cwd: string, execution?: ValidatorExecution): Promise<ValidatorResult> {
   if (hasCapturedToolInvocation()) throw new Error('Captured validators require a construction-owned contained runner');
   const cmd = validatorCommand(name);
-  const TIMEOUT_MS = 30_000;
 
   execution?.assertCurrent();
   const proc = Bun.spawn([...cmd], {
@@ -48,30 +47,11 @@ export async function runValidator(name: ValidatorName, cwd: string, execution?:
     stderr: 'pipe',
   });
 
-  let timedOut = false;
-  const timeoutHandle = setTimeout(() => {
-    timedOut = true;
-    proc.kill();
-  }, TIMEOUT_MS);
-  timeoutHandle.unref?.();
-
   const [exitCode, stdoutBuf, stderrBuf] = await Promise.all([
     proc.exited,
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
   ]);
-
-  clearTimeout(timeoutHandle);
-
-  if (timedOut) {
-    return {
-      validator: name,
-      passed: false,
-      stdout: '',
-      stderr: `Validator '${name}' timed out after ${TIMEOUT_MS}ms`,
-      exitCode: -1,
-    };
-  }
 
   return {
     validator: name,

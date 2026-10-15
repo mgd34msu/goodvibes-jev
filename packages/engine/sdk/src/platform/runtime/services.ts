@@ -653,26 +653,22 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   const agentKnowledgeStore = new KnowledgeStore({ configManager, dbFileName: GOODVIBES_AGENT_KNOWLEDGE_DB_FILE, family: 'agent' });
   const homeGraphKnowledgeStore = new KnowledgeStore({ configManager, dbFileName: HOME_GRAPH_KNOWLEDGE_DB_FILE, family: 'home-graph' });
   const knowledgeSemanticLlm = createProviderBackedKnowledgeSemanticLlm(providerRegistry, {
-    timeoutMs: 20_000,
     maxConcurrent: 1,
   });
   const isKnowledgeBackgroundPaused = (): boolean => pauseController.isPaused('knowledge-self-improvement');
   const knowledgeSemanticService = new KnowledgeSemanticService(knowledgeStore, {
     llm: knowledgeSemanticLlm,
-    maxLlmSourcesPerReindex: 3,
     isBackgroundPaused: isKnowledgeBackgroundPaused,
     admitExpensiveWork,
   });
   const homeGraphSemanticService = new KnowledgeSemanticService(homeGraphKnowledgeStore, {
     llm: knowledgeSemanticLlm,
-    maxLlmSourcesPerReindex: 3,
     objectProfiles: HOME_GRAPH_KNOWLEDGE_EXTENSION.objectProfiles,
     isBackgroundPaused: isKnowledgeBackgroundPaused,
     admitExpensiveWork,
   });
   const agentKnowledgeSemanticService = new KnowledgeSemanticService(agentKnowledgeStore, {
     llm: knowledgeSemanticLlm,
-    maxLlmSourcesPerReindex: 3,
     isBackgroundPaused: isKnowledgeBackgroundPaused,
     admitExpensiveWork,
   });

@@ -604,7 +604,7 @@ async function waitForProcess(manager: ProcessManager, processId: string, timeou
     options.signal?.throwIfAborted(); options.assertCurrent?.();
     const entry = manager.getStatus(processId);
     if (!entry || entry.done) return entry;
-    if (Date.now() - started >= timeoutMs) return entry;
+    if (timeoutMs > 0 && Date.now() - started >= timeoutMs) return entry;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 }
@@ -694,7 +694,7 @@ export async function runBackgroundProcessAction(context: CommandContext, args: 
       status: 'started',
       processClass,
       killOnTimeout,
-      timeoutBehavior: killOnTimeout
+      timeoutBehavior: timeoutMs === 0 ? 'No automatic deadline; stop it explicitly with process action:"kill".' : killOnTimeout
         ? `SIGTERM then SIGKILL after ${timeoutMs}ms.`
         : `Left running past ${timeoutMs}ms; stop it explicitly with process action:"kill".`,
       processId: result.process_id,
@@ -714,7 +714,7 @@ export async function runBackgroundProcessAction(context: CommandContext, args: 
         visibleMonitor: 'workspace action:"open" surfaceId:"process-monitor"',
         liveTail: result.process_id ? `workspace action:"open" surfaceId:"live-tail" target:"${result.process_id}"` : null,
       },
-      policy: 'Started as a tracked local background process with bounded timeout and visible monitor/live-tail routes.',
+      policy: 'Started as a tracked local background process with visible monitor/live-tail routes.',
     };
   }
 

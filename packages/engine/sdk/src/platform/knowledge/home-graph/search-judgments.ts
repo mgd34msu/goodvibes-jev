@@ -183,7 +183,7 @@ export async function readHomeGraphSearchSelection(input: {
       const subjects = linkedObjects.map((node) => ({ title: node.title, kind: node.kind, summary: node.summary,
         aliases: node.aliases, identity: subjectIdentity(node.metadata) }));
       const relevance = await prepareAnswerEvidenceRelevanceBatches({ query: input.query.query, candidates, subjects },
-        { signal, timeoutMs: Math.max(1, deadlineAt - Date.now()), assertCurrent: () => {
+        { signal, timeoutMs: Number.isFinite(deadlineAt) ? Math.max(1, deadlineAt - Date.now()) : 0, assertCurrent: () => {
           try { checkObjects(); }
           catch { throw new KnowledgeEvidenceRelevanceHeldError(signal.aborted ? 'aborted' : 'stale'); }
         } });

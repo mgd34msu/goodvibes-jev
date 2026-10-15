@@ -78,14 +78,14 @@ export async function prepareRepairProfileSelections(inputs: readonly RepairProf
   const callerCurrent = options.assertCurrent;
   if (!snapshots.length) return [];
   const timeoutMs = options.timeoutMs;
-  if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs)) throw new Held('budget');
+  if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > LIMITS.timeoutMs)) throw new Held('budget');
   const controller = new AbortController();
   let stoppedError: Error | undefined, rejectStopped: (error: Error) => void = () => {};
   const stopped = new Promise<never>((_resolve, reject) => { rejectStopped = reject; });
   const stop = (error: Error) => { stoppedError ??= error; controller.abort(); rejectStopped(stoppedError); };
   const abort = () => stop(new Held('aborted'));
   options.signal?.addEventListener('abort', abort, { once: true });
-  const timer = timeoutMs === undefined ? undefined : setTimeout(() => stop(new Held('budget')), timeoutMs);
+  const timer = timeoutMs === undefined || timeoutMs === 0 ? undefined : setTimeout(() => stop(new Held('budget')), timeoutMs);
   const check = () => {
     if (stoppedError) throw stoppedError;
     if (options.signal?.aborted) throw new Held('aborted');

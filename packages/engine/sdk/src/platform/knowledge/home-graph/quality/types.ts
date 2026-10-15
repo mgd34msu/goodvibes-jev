@@ -28,4 +28,4 @@ export class HomeGraphQualityHeldError extends Error {
     super(`Home Graph derived quality held (${reason}); existing issues and passport fields were not replaced.`);
   }
 }
-export const HOME_GRAPH_QUALITY_LIMITS = Object.freeze({ devices: 1_000, entities: 1_000, facts: 500, concurrency: 4, timeoutMs: 60_000, defaultTimeoutMs: 30_000 });
+export const HOME_GRAPH_QUALITY_LIMITS = Object.freeze({ devices: Number.POSITIVE_INFINITY, entities: Number.POSITIVE_INFINITY, facts: Number.POSITIVE_INFINITY, concurrency: 4, timeoutMs: 2_147_483_647, defaultTimeoutMs: 0 });

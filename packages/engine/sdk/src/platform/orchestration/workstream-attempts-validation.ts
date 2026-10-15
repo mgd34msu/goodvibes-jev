@@ -13,12 +13,9 @@
 //   • STABLE id when depended upon. A dependency edge references an id, so a
 //     best-of-N item that others depend on must carry a stable `id`; an
 //     anonymous best-of-N item stays a leaf by construction (nothing can name it).
-// Values above the engine's MAX_ATTEMPTS (5) are clamped by the engine; that is
-// returned as a note so a preview never overstates the fan-out.
 // ---------------------------------------------------------------------------
 
 import type { CreateWorkstreamInput } from './engine.js';
-import { MAX_ATTEMPTS } from './types.js';
 
 export interface AttemptsValidation {
   /** True when any item requests best-of-N (attempts >= 2). */
@@ -66,9 +63,7 @@ export function validateAttempts(spec: CreateWorkstreamInput): AttemptsValidatio
     if (dependedUpon.has(itemKey(item)) && !item.id) {
       violations.push(`another item depends on best-of-N item "${label}", but it has no stable id, give the item an id so the dependency can resolve to the winner (an anonymous best-of-N item cannot be a dependency target).`);
     }
-    if (attempts > MAX_ATTEMPTS) {
-      notes.push(`"${label}" requests ${attempts} attempts, the engine caps best-of-N at ${MAX_ATTEMPTS}, so ${MAX_ATTEMPTS} siblings will run.`);
-    }
+
   }
 
   return { hasAttempts, violations, notes };

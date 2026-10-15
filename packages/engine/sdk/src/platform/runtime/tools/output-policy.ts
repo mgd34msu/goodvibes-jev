@@ -112,50 +112,46 @@ const BYTES_PER_TOKEN = 4;
 /**
  * DEFAULT_POLICIES, one policy per tool class.
  *
- * Byte limits are calibrated to stay well under typical LLM context windows:
- * - read    : 200 KB, file reads can be large; spill remainder to disk
- * - write   : 32 KB , confirmations should be concise; inline truncation
- * - execute : 128 KB, command output can be chatty; keep tail (most recent)
- * - network : 256 KB, remote responses can be large; spill to disk
- * - analyze : 64 KB , structured summaries; inline truncation
+ * Defaults preserve the full result. A caller can supply an explicit output
+ * policy; large background streams retain complete output in spill files.
  */
 export const DEFAULT_POLICIES: Readonly<Record<ToolClass, ToolOutputPolicy>> = {
   read: {
     toolClass: 'read',
-    maxBytes: 200 * 1024,
-    maxTokens: Math.round((200 * 1024) / BYTES_PER_TOKEN),
+    maxBytes: Number.POSITIVE_INFINITY,
+    maxTokens: Number.POSITIVE_INFINITY,
     truncationMode: 'tail',
     spillMode: 'file',
     auditMetadata: true,
   },
   write: {
     toolClass: 'write',
-    maxBytes: 32 * 1024,
-    maxTokens: Math.round((32 * 1024) / BYTES_PER_TOKEN),
+    maxBytes: Number.POSITIVE_INFINITY,
+    maxTokens: Number.POSITIVE_INFINITY,
     truncationMode: 'tail',
     spillMode: 'inline',
     auditMetadata: true,
   },
   execute: {
     toolClass: 'execute',
-    maxBytes: 128 * 1024,
-    maxTokens: Math.round((128 * 1024) / BYTES_PER_TOKEN),
+    maxBytes: Number.POSITIVE_INFINITY,
+    maxTokens: Number.POSITIVE_INFINITY,
     truncationMode: 'head',
     spillMode: 'file',
     auditMetadata: true,
   },
   network: {
     toolClass: 'network',
-    maxBytes: 256 * 1024,
-    maxTokens: Math.round((256 * 1024) / BYTES_PER_TOKEN),
+    maxBytes: Number.POSITIVE_INFINITY,
+    maxTokens: Number.POSITIVE_INFINITY,
     truncationMode: 'tail',
     spillMode: 'file',
     auditMetadata: true,
   },
   analyze: {
     toolClass: 'analyze',
-    maxBytes: 64 * 1024,
-    maxTokens: Math.round((64 * 1024) / BYTES_PER_TOKEN),
+    maxBytes: Number.POSITIVE_INFINITY,
+    maxTokens: Number.POSITIVE_INFINITY,
     truncationMode: 'tail',
     spillMode: 'inline',
     auditMetadata: true,

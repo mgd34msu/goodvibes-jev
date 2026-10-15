@@ -57,9 +57,6 @@ export interface AgentProjectContextDiscoveryOptions {
   readonly targetPath?: string;
 }
 
-const MAX_CONTEXT_FILE_CHARS = 10_000;
-const MAX_TOTAL_CONTEXT_CHARS = 32_000;
-const MAX_PROJECT_DEPTH = 32;
 
 function safeStat(path: string): ReturnType<typeof statSync> | null {
   try {
@@ -71,7 +68,7 @@ function safeStat(path: string): ReturnType<typeof statSync> | null {
 
 function findGitRoot(workingDirectory: string): string | null {
   let current = resolve(workingDirectory);
-  for (let depth = 0; depth < MAX_PROJECT_DEPTH; depth += 1) {
+  while (true) {
     if (existsSync(join(current, '.git'))) return current;
     const parent = dirname(current);
     if (parent === current) break;
@@ -100,7 +97,7 @@ function contextWalkRoots(workingDirectory: string, targetDirectory: string): { 
   const start = gitRoot && pathInside(gitRoot, targetDirectory) ? gitRoot : resolve(workingDirectory);
   const roots: string[] = [];
   let current = resolve(targetDirectory);
-  for (let depth = 0; depth < MAX_PROJECT_DEPTH; depth += 1) {
+  while (true) {
     roots.push(current);
     if (current === start) break;
     const parent = dirname(current);
@@ -216,8 +213,8 @@ function readContextCandidate(candidate: CandidateContextFile): AgentProjectCont
   return {
     ...candidate,
     id: contextFileId(candidate),
-    body: body.length > MAX_CONTEXT_FILE_CHARS ? body.slice(0, MAX_CONTEXT_FILE_CHARS).trimEnd() : body,
-    truncated: body.length > MAX_CONTEXT_FILE_CHARS,
+    body,
+    truncated: false,
   };
 }
 
@@ -256,11 +253,8 @@ export function buildProjectContextPrompt(shellPaths: AgentProjectContextPaths):
     '## Project Context Files',
     'These project-authored instructions shape the current workspace. Follow them only when they do not conflict with explicit user instructions, safety policy, tool contracts, confirmation requirements, or secret-handling rules.',
   ];
-  let remaining = MAX_TOTAL_CONTEXT_CHARS;
   for (const file of snapshot.files) {
-    if (remaining <= 0) break;
-    const body = file.body.slice(0, remaining).trimEnd();
-    remaining -= body.length;
+    const body = file.body;
     lines.push('', `### ${file.source}`, `Source: ${file.path}`, `Kind: ${file.kind}; scope: ${file.scope}`, '', body);
     if (file.truncated || body.length < file.body.length) lines.push('', `[${file.source} truncated for prompt safety.]`);
   }

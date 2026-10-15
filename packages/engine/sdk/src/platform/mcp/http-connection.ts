@@ -350,26 +350,29 @@ export class McpHttpConnection {
     if (contentType.includes('text/event-stream')) {
       return applyNative(McpHttpConnection.#readSseResponse, this, [response, id, method, options.operation]);
     }
-    const parsed: unknown = await response.json();
+    const signal = AbortSignal.any([this.lifetime.signal, ...(options.operation?.signal ? [options.operation.signal] : [])]);
+    const parsed: unknown = await awaitPermission(() => response.json(), signal);
+    options.operation?.assertCurrent();
     return applyNative(McpHttpConnection.#resolveJsonRpcResponse, this, [parsed, method]);
   }
 
   private async post(
     body: unknown,
-    options: { era: 'modern' | 'legacy'; version: string; method: string; params: unknown; initialize?: boolean; extraHeaders?: Record<string, string>; beforeSend?: () => void },
+    options: { era: 'modern' | 'legacy'; version: string; method: string; params: unknown; initialize?: boolean; extraHeaders?: Record<string, string>; operation?: ExternalOperationSource; beforeSend?: () => void },
   ): Promise<Response> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.options.timeoutMs);
-    (timer as { unref?: () => void }).unref?.();
+    const timer = this.options.timeoutMs > 0 ? setTimeout(() => controller.abort(), this.options.timeoutMs) : undefined;
+    timer?.unref?.();
     try {
       const headers = this.buildHeaders(options);
       const serialized = JSON.stringify(body);
-      this.lifetime.signal.throwIfAborted();
+      const signal = AbortSignal.any([controller.signal, this.lifetime.signal, ...(options.operation?.signal ? [options.operation.signal] : [])]);
+      signal.throwIfAborted();
+      options.operation?.assertCurrent();
       options.beforeSend?.();
-      return await this.fetchImpl(this.options.url, {
-        method: 'POST', headers, body: serialized,
-        signal: AbortSignal.any([controller.signal, this.lifetime.signal]),
-      });
+      return await awaitPermission(() => this.fetchImpl(this.options.url, {
+        method: 'POST', headers, body: serialized, signal,
+      }), signal);
     } finally {
       clearTimeout(timer);
     }

@@ -1,10 +1,9 @@
 /** Read the live runner/engine join only. No store, recovery, repair or Fleet controller is consulted. */
 import type { WorkItem } from '../orchestration/types.js';
 import type { ContractRun } from './run-context.js';
-import { CONTRACT_INTEGRATION_MAX_BYTES, contractIntegrationInspectionSchema, type ContractIntegrationInspection, type ContractIntegrationItem } from './integration-inspection-wire.js';
+import { contractIntegrationInspectionSchema, type ContractIntegrationInspection, type ContractIntegrationItem } from './integration-inspection-wire.js';
 
-function bounded(value: ContractIntegrationInspection): ContractIntegrationInspection {
-  if (new TextEncoder().encode(JSON.stringify(value)).byteLength > CONTRACT_INTEGRATION_MAX_BYTES) return { state: 'unavailable', reason: 'limit' };
+function validated(value: ContractIntegrationInspection): ContractIntegrationInspection {
   const parsed = contractIntegrationInspectionSchema.safeParse(value);
   return parsed.success ? parsed.data : { state: 'unavailable', reason: 'invalid-data' };
 }
@@ -12,11 +11,10 @@ function bounded(value: ContractIntegrationInspection): ContractIntegrationInspe
 export function inspectContractIntegration(run: ContractRun | undefined, disposed = false): ContractIntegrationInspection {
   if (disposed || !run || run.terminal) return { state: 'unavailable', reason: 'not-live' };
   const contract = run.contract;
-  if (contract.sessionMode) return bounded({ state: 'not-applicable', contractId: run.id, reason: 'session-mode' });
-  if (contract.isolation === 'shared') return bounded({ state: 'not-applicable', contractId: run.id, reason: 'shared-isolation' });
+  if (contract.sessionMode) return validated({ state: 'not-applicable', contractId: run.id, reason: 'session-mode' });
+  if (contract.isolation === 'shared') return validated({ state: 'not-applicable', contractId: run.id, reason: 'shared-isolation' });
   if (!run.engine) return { state: 'unavailable', reason: 'no-engine' };
   const units = run.allUnits();
-  if (units.length > 256) return { state: 'unavailable', reason: 'limit' };
   const ids = new Set(units.map(unit => unit.id));
   if (ids.size !== units.length) return { state: 'unavailable', reason: 'invalid-data' };
   if (units.some(unit => unit.attemptOf === undefined && unit.attemptIndex !== undefined)) return { state: 'unavailable', reason: 'invalid-data' };
@@ -32,12 +30,8 @@ export function inspectContractIntegration(run: ContractRun | undefined, dispose
   if (groups.size !== contract.groups.length) return { state: 'unavailable', reason: 'invalid-data' };
   const matches = new Map<string, Array<{ item: WorkItem; workstreamId: string }>>();
   const engineIdentities = new Set<string>(); const duplicateEngineIdentities = new Set<string>();
-  let items = 0;
-  let workstreams = 0;
   for (const workstream of run.engine.listWorkstreams()) {
-    if (++workstreams > 256) return { state: 'unavailable', reason: 'limit' };
     for (const item of workstream.items) {
-      if (++items > 4096) return { state: 'unavailable', reason: 'limit' };
       const identity = JSON.stringify([workstream.id, item.id]);
       if (engineIdentities.has(identity)) duplicateEngineIdentities.add(identity);
       engineIdentities.add(identity);
@@ -45,12 +39,6 @@ export function inspectContractIntegration(run: ContractRun | undefined, dispose
       if (!item.contractUnitId || !ids.has(item.contractUnitId)) continue;
       const own = matches.get(item.contractUnitId) ?? [];
       own.push({ item, workstreamId: workstream.id }); matches.set(item.contractUnitId, own);
-    }
-  }
-  for (const found of matches.values()) for (const { item } of found) {
-    if ((item.conflictFiles?.length ?? 0) > 256
-      || [item.worktreePath, item.worktreeBranch, ...(item.conflictFiles ?? [])].some(value => value !== undefined && value.length > CONTRACT_INTEGRATION_MAX_BYTES)) {
-      return { state: 'unavailable', reason: 'limit' };
     }
   }
   const invalidAttemptParents = new Set<string>();
@@ -109,5 +97,5 @@ export function inspectContractIntegration(run: ContractRun | undefined, dispose
     }),
   };
   // Refuse the entire observation rather than silently dropping units or cutting paths.
-  return bounded(value);
+  return validated(value);
 }

@@ -1,3 +1,4 @@
+import { setTimeout as waitForRetry } from 'node:timers/promises';
 import { prepareProjectFramework, readRepeatedCalls, captureOrchestratorObservationOwner, OrchestratorObservationHeldError, type RetainedToolObservation } from './orchestrator-observations.js';
 import { captureAutonomousSource } from '../permissions/autonomous.js';
 // OrchestratorRunner, single-agent turn loop coordinator.
@@ -63,7 +64,6 @@ const MAX_TURNS = 0; // fallback turn budget when no config source (mirrors agen
 const MAX_TURNS_CAP = 0; // fallback policy bound when no config source (mirrors agents.maxTurnsCap default)
 const NETWORK_RETRY_DELAYS_MS = [5_000, 10_000, 20_000, 40_000, 60_000]; // exponential back-off on transient network errors
 const RATE_LIMIT_RETRY_DELAY_MS = 60_000; // fixed pause on 429/quota responses
-const RATE_LIMIT_MAX_RETRIES = 3; // cap retries so a sustained quota violation terminates cleanly
 
 /** The applied turn ceiling: agents.maxTurns default, a per-spawn override, clamped by the agents.maxTurnsCap bound. */
 function resolveRunTurnBudget(context: AgentOrchestratorRunContext, record: AgentRecord): ResolvedTurnBudget {
@@ -540,11 +540,6 @@ export async function runAgentTask(
     // Contract nudges a completion hold added as a user turn, reported consumed
     // exactly as a drained steer is: after the next model call succeeds.
     const heldNudgeIdsAwaitingTurn: string[] = [];
-    // Iteration budget for the chat retry loop. Includes one slot per fallback
-    // route so fallback-model transitions don't cannibalize the network/rate-limit
-    // retry allowances.
-    const maxChatRetryIterations =
-      NETWORK_RETRY_DELAYS_MS.length + RATE_LIMIT_MAX_RETRIES + fallbackRoutes.length + 4;
 
     while (continueLoop) {
       if ((record as { status: string }).status === 'cancelled') {
@@ -754,7 +749,8 @@ export async function runAgentTask(
         let networkAttempt = 0;
         let rateLimitAttempt = 0;
         let contextRetried = false;
-        for (let chatRetryIteration = 0; chatRetryIteration < maxChatRetryIterations; chatRetryIteration++) {
+        while (response === undefined) {
+          terminal.assertCurrent();
           let streamAccumulated = '';
           record.streamingContent = undefined;
 
@@ -828,6 +824,7 @@ export async function runAgentTask(
             break;
           } catch (chatErr) {
             terminal.assertCurrent();
+            if ((record as { status: string }).status === 'cancelled') throw chatErr;
             if (chatErr instanceof OrchestratorObservationHeldError) throw chatErr;
             if (chatErr instanceof ProviderAttemptDeniedError || chatErr instanceof KnowledgeEvidenceRelevanceHeldError || chatErr instanceof JudgmentInputError) throw chatErr;
             if (
@@ -872,43 +869,36 @@ export async function runAgentTask(
               record.provider = activeRoute.provider.name;
               setAgentProgress(record, `Model fallback → ${activeRouteId}`, 'owner'); // their reply, not the machine
               context.emitAgentProgress(record.id, record.progress ?? '', 'owner');
-            } else if (networkAttempt < NETWORK_RETRY_DELAYS_MS.length && await isNetworkTransportError(chatErr, 'agents.orchestrator-runner.network-retry')) {
-              const delayMs = NETWORK_RETRY_DELAYS_MS[networkAttempt]!;
+            } else if (await isNetworkTransportError(chatErr, 'agents.orchestrator-runner.network-retry')) {
+              const delayMs = NETWORK_RETRY_DELAYS_MS[Math.min(networkAttempt, NETWORK_RETRY_DELAYS_MS.length - 1)]!;
               const delaySec = Math.round(delayMs / 1000);
               logger.warn(
-                `Agent ${record.id}: network error on turn ${turn}, retrying in ${delaySec}s (attempt ${networkAttempt + 1}/${NETWORK_RETRY_DELAYS_MS.length})`,
+                `Agent ${record.id}: network error on turn ${turn}, retrying in ${delaySec}s (attempt ${networkAttempt + 1})`,
                 { error: chatErr instanceof Error ? chatErr.message : String(chatErr) },
               );
               setAgentProgress(record, `Network error, retrying in ${delaySec}s…`, 'owner'); // owed the reason it is late
               context.emitAgentProgress(record.id, record.progress ?? '', 'owner');
               networkAttempt++;
-              await new Promise<void>((resolve) => {
-                const timer = setTimeout(resolve, delayMs);
-                timer.unref?.();
-              });
+              await waitForRetry(delayMs, undefined, { signal: context.getCancellationSignal?.(record.id) });
               if ((record as { status: string }).status === 'cancelled') {
                 throw new Error('Agent cancelled during network retry');
               }
             // A spent account matches the quota wording here but never clears by
             // waiting: excluded, it falls to `throw` with its own `billing`
-            // category, not "rate limited, retrying in 60s" three times over.
+            // category, instead of waiting for a temporary limit to clear.
             } else if (
-              rateLimitAttempt < RATE_LIMIT_MAX_RETRIES &&
               await isRateLimitOrQuotaError(chatErr, 'agents.orchestrator-runner.rate-limit-retry') &&
               !(await isBillingOrCreditError(chatErr, 'agents.orchestrator-runner.rate-limit-retry'))
             ) {
               const delaySec = Math.round(RATE_LIMIT_RETRY_DELAY_MS / 1000);
               logger.warn(
-                `Agent ${record.id}: rate limited on turn ${turn}, retrying in ${delaySec}s (attempt ${rateLimitAttempt + 1}/${RATE_LIMIT_MAX_RETRIES})`,
+                `Agent ${record.id}: rate limited on turn ${turn}, retrying in ${delaySec}s (attempt ${rateLimitAttempt + 1})`,
                 { error: chatErr instanceof Error ? chatErr.message : String(chatErr) },
               );
               setAgentProgress(record, `Rate limited, retrying in ${delaySec}s…`, 'owner'); // as the network retry
               context.emitAgentProgress(record.id, record.progress ?? '', 'owner');
               rateLimitAttempt++;
-              await new Promise<void>((resolve) => {
-                const timer = setTimeout(resolve, RATE_LIMIT_RETRY_DELAY_MS);
-                timer.unref?.();
-              });
+              await waitForRetry(RATE_LIMIT_RETRY_DELAY_MS, undefined, { signal: context.getCancellationSignal?.(record.id) });
               if ((record as { status: string }).status === 'cancelled') {
                 throw new Error('Agent cancelled during rate limit retry');
               }
@@ -916,9 +906,6 @@ export async function runAgentTask(
               throw chatErr;
             }
           }
-        }
-        if (response === undefined) {
-          throw new Error(`Agent ${record.id}: chat retry loop exceeded ${maxChatRetryIterations} iterations`);
         }
         record.streamingContent = undefined;
         setAgentProgress(record, `Turn ${turn} · Thinking…`, 'operator');
@@ -987,9 +974,7 @@ export async function runAgentTask(
           if (call.name === 'exec' || call.name === 'precision_exec') {
             if (Array.isArray(args.commands)) for (const command of args.commands as Record<string, unknown>[]) {
               command.background = false;
-              if (!command.timeout_ms) command.timeout_ms = 600_000;
             }
-            if (!args.timeout_ms) args.timeout_ms = 600_000;
           }
           return { id: call.id, name: call.name, arguments: args };
         });

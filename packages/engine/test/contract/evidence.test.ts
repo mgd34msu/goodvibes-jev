@@ -89,13 +89,13 @@ const TURNS: readonly ContractTurnRecord[] = [
 ];
 
 describe('what the agent did, from its turns', () => {
-  test('exec calls become commands with success and the first 20 lines of output', () => {
+  test('exec calls become commands with success and all lines of output', () => {
     const commands = commandsFromTurns(TURNS);
     expect(commands).toHaveLength(1);
     expect(commands[0]!.command).toBe('bun test\necho hi');
     expect(commands[0]!.success).toBe(false);
-    expect(commands[0]!.head.split('\n')).toHaveLength(20);
-    expect(commands[0]!.head.endsWith('out 20')).toBe(true);
+    expect(commands[0]!.head.split('\n')).toHaveLength(30);
+    expect(commands[0]!.head.endsWith('out 30')).toBe(true);
   });
 
   test('write and edit calls name the written paths, once each, in first-seen order', () => {
@@ -225,7 +225,7 @@ describe('what the quality reading sees', () => {
   });
 });
 
-describe('trimming to the budget', () => {
+describe('complete evidence', () => {
   const unit = makeUnit({ goal: 'Parse every documented input form', brief: 'Write the parser.', files: ['src/wanted.ts'] });
   const big = (label: string, chars: number) => `${label}:`.padEnd(chars, 'x');
 
@@ -242,25 +242,17 @@ describe('trimming to the budget', () => {
     };
   }
 
-  test('a huge unit stays under the evidence budget, with the caps applied', () => {
-    const evidence = trimEvidence(huge(), unit);
-    expect(evidenceTokens(unit, evidence)).toBeLessThanOrEqual(EVIDENCE_TOKEN_BUDGET);
-    expect(evidence.output.length).toBeLessThanOrEqual(OUTPUT_CAP_CHARS + 100);
-    expect(evidence.gates![0]!.output.length).toBeLessThanOrEqual(GATE_OUTPUT_CAP_CHARS + 100);
-    expect(evidence.gates![0]!.output.endsWith('THE FAILURE')).toBe(true);
-    expect(evidence.commands.length).toBeLessThanOrEqual(MAX_COMMANDS);
-    expect(evidence.commands.at(-1)!.command).toBe('cmd 199');
+  test('retains every command, path, diff, gate and output beyond the former caps', () => {
+    const raw = huge();
+    const evidence = trimEvidence(raw, unit);
+    expect(evidence.output).toBe(raw.output);
+    expect(evidence.gates).toEqual(raw.gates);
+    expect(evidence.commands).toEqual(raw.commands);
     expect(evidence.changedPaths).toHaveLength(62);
-    expect(evidence.omitted.length).toBeGreaterThan(0);
-    expect(evidence.omitted.length + evidence.diff.split('\n\n').length).toBe(62);
-  });
-
-  test('the unit\'s own files fill first, capped per file, then the rest smallest first', () => {
-    const evidence = trimEvidence(huge(), unit);
+    expect(evidence.omitted).toEqual([]);
+    for (const change of raw.changes) expect(evidence.diff).toContain(change.diff);
     expect(evidence.diff.startsWith('wanted:')).toBe(true);
-    expect(evidence.diff).toContain(`[... ${30_000 - DIFF_FILE_CAP_CHARS} characters of src/wanted.ts omitted ...]`);
     expect(evidence.diff.split('\n\n')[1]).toBe('small diff');
-    expect(evidence.omitted).not.toContain('src/wanted.ts');
   });
 
   test('small evidence passes through untouched', () => {
@@ -295,13 +287,9 @@ describe('trimming to the budget', () => {
     for (const request of port.requests) {
       expect(() => validateContextBudget(request.state, request.questions)).not.toThrow();
       expect(estimateTokens(request.state)).toBeLessThanOrEqual(EVIDENCE_TOKEN_BUDGET);
-      expect(estimateTokens(request.state)).toBeLessThan(LIMITS.maxStateWithQuestionTokens);
+      expect(JSON.stringify(request.state)).toContain(huge().output);
     }
   });
 
-  test('untrimmed, the same evidence would break the budget', () => {
-    const raw = huge();
-    const untrimmed = { output: raw.output, changedPaths: [], diff: raw.changes.map((change) => change.diff).join('\n'), omitted: [], commands: raw.commands };
-    expect(() => validateContextBudget(JSON.stringify({ goal: unit.goal, output: untrimmed.output, evidence: untrimmed }), {})).toThrow();
-  });
+
 });

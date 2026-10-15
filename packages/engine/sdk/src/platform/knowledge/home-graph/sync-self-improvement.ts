@@ -9,14 +9,8 @@ import { isHomeGraphPageFactCandidate } from './page-quality.js';
 import { readHomeGraphSearchState } from './search.js';
 import { readHomeGraphState } from './state.js';
 
-const MAX_DEVICE_PAGE_REPAIRS_PER_REFRESH = 16;
-const SYNC_SELF_IMPROVEMENT_MAX_RUN_MS = 120_000;
-const SYNC_SELF_IMPROVEMENT_MAX_ROUNDS = 10;
-const SYNC_SELF_IMPROVEMENT_INITIAL_LIMIT = 24;
-const SYNC_SELF_IMPROVEMENT_FOLLOWUP_LIMIT = 12;
-const SYNC_SELF_IMPROVEMENT_INGEST_LIMIT = 12;
-const SYNC_SELF_IMPROVEMENT_INITIAL_RUN_MS = 45_000;
-const SYNC_SELF_IMPROVEMENT_FOLLOWUP_RUN_MS = 30_000;
+const MAX_DEVICE_PAGE_REPAIRS_PER_REFRESH = Infinity;
+const SYNC_SELF_IMPROVEMENT_INGEST_LIMIT = 0;
 const SYNC_SELF_IMPROVEMENT_FAST_SLEEP_MS = 5_000;
 const SYNC_SELF_IMPROVEMENT_SLOW_SLEEP_MS = 15_000;
 
@@ -35,8 +29,7 @@ export async function runHomeGraphSyncSelfImprovementPump(
   installationId: string,
   signal: AbortSignal,
 ): Promise<void> {
-  const deadlineAt = Date.now() + SYNC_SELF_IMPROVEMENT_MAX_RUN_MS;
-  for (let round = 0; round < SYNC_SELF_IMPROVEMENT_MAX_ROUNDS; round += 1) {
+  for (let round = 0; !signal.aborted; round += 1) {
     if (signal.aborted) return;
     // Between-rounds governor gate: a high-tier pause (pauseAll) must stop the
     // pump at the next ROUND boundary, the pump is exactly the deferrable
@@ -47,8 +40,6 @@ export async function runHomeGraphSyncSelfImprovementPump(
       logger.info('Home Graph sync self-improvement pump stopped: background knowledge work is paused for memory pressure', { spaceId, round });
       return;
     }
-    const remainingMs = Math.max(0, deadlineAt - Date.now());
-    if (remainingMs <= 0) return;
     // stopWhenPaused: the pump is background work, a governor pause stops each
     // round at the next safe boundary (the allowlist justification requires it).
     // This is threaded through to the runner's per-gap yield points, so it is
@@ -56,11 +47,6 @@ export async function runHomeGraphSyncSelfImprovementPump(
     const result = await runtime.semanticService.selfImprove({
       knowledgeSpaceId: spaceId,
       reason: 'homegraph-sync',
-      limit: round === 0 ? SYNC_SELF_IMPROVEMENT_INITIAL_LIMIT : SYNC_SELF_IMPROVEMENT_FOLLOWUP_LIMIT,
-      maxRunMs: Math.min(
-        round === 0 ? SYNC_SELF_IMPROVEMENT_INITIAL_RUN_MS : SYNC_SELF_IMPROVEMENT_FOLLOWUP_RUN_MS,
-        remainingMs,
-      ),
       force: round > 0,
       signal,
     }, { stopWhenPaused: true });
@@ -69,10 +55,7 @@ export async function runHomeGraphSyncSelfImprovementPump(
       await refreshHomeGraphDevicePagesForSourceIds(runtime, spaceId, installationId, result.acceptedSourceIds ?? [], signal);
     }
     if (!shouldContinueHomeGraphSyncSelfImprovement(result)) return;
-    await sleep(Math.min(
-      round < 2 ? SYNC_SELF_IMPROVEMENT_FAST_SLEEP_MS : SYNC_SELF_IMPROVEMENT_SLOW_SLEEP_MS,
-      Math.max(0, deadlineAt - Date.now()),
-    ), { signal });
+    await sleep(round < 2 ? SYNC_SELF_IMPROVEMENT_FAST_SLEEP_MS : SYNC_SELF_IMPROVEMENT_SLOW_SLEEP_MS, { signal });
   }
 }
 

@@ -76,11 +76,11 @@ describe('exact answer excerpt reader', () => {
     }
     expect(fake.requests).toHaveLength(0);
   });
-  test('accessors, extra fields, duplicate refs and oversized input are rejected without requests', () => {
+  test('accessors, extra fields and duplicate refs are rejected without requests', () => {
     const fake = readings(); let accesses = 0;
     expect(() => prepare([{ ...input(), get context() { accesses++; return ''; } }])).toThrow(JudgmentInputError);
     expect(accesses).toBe(0);
-    for (const values of [[input(), input()], [{ ...input(), metadata: {} } as AnswerExcerptInput], [input('x'.repeat(161_000))], [input(Array.from({ length: 101 }, (_, index) => `Paragraph ${index}`).join('\n\n'))]]) {
+    for (const values of [[input(), input()], [{ ...input(), metadata: {} } as AnswerExcerptInput]]) {
       expect(() => prepare(values)).toThrow();
     }
     expect(fake.requests).toHaveLength(0);
@@ -121,10 +121,10 @@ describe('exact answer excerpt reader', () => {
     const controller = new AbortController(); const result = prepare([input()], { signal: controller.signal }).read(); controller.abort();
     await expect(result).rejects.toMatchObject({ reason: 'aborted' });
   });
-  test('complete request-byte budget is checked before any requests and concurrency is bounded', async () => {
+  test('large complete inputs are admitted and concurrency is bounded', async () => {
     const fake = readings();
     const value = input(); const documents = Array.from({ length: 50 }, (_, index) => ({ reference: `document-${index + 1}`, kind: 'extraction' as const, text: `${'x'.repeat(1_450)}\n\n${'y'.repeat(1_450)}` }));
-    expect(() => prepare([{ ...value, documents }])).toThrow(); expect(fake.requests).toHaveLength(0);
+    expect(() => prepare([{ ...value, documents }])).not.toThrow(); expect(fake.requests).toHaveLength(0);
     let active = 0, maximum = 0;
     installJudgmentPort({ ...fake.port, async ask(request) { active++; maximum = Math.max(maximum, active); await new Promise((resolve) => setTimeout(resolve, 1)); const result = await fake.port.ask(request); active--; return result; } });
     await prepare(Array.from({ length: 20 }, (_, index) => input('AC-7: No Bluetooth.', `source-${index + 1}`))).read();

@@ -51,10 +51,10 @@ const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
 const FETCH_TIMEOUT_MS = 15_000;
 
 const DEFAULT_TOKEN_LIMITS: Required<TokenLimits> = {
-  maxOutputTokens: 8192,
-  maxToolResultTokens: 50_000,
-  maxToolCalls: 128,
-  maxReasoningTokens: 16384,
+  maxOutputTokens: 0,
+  maxToolResultTokens: 0,
+  maxToolCalls: 0,
+  maxReasoningTokens: 0,
 };
 
 export interface ModelLimitsServiceOptions {

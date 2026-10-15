@@ -32,7 +32,6 @@ export const BINARY_IMAGE_MAGIC: {
 ];
 
 export const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
-const MAX_CONTEXT_FILE_BYTES = 64 * 1024;
 const URL_REFERENCE_REGEX = /^https?:\/\/[^\s]+$/i;
 const CONTEXT_REFERENCE_REGEX = /(^|\s)@([^\s]+)/g;
 const CONTEXT_REFERENCE_TRAILING_PUNCTUATION = /[),.;:!?]+$/;
@@ -93,13 +92,6 @@ function readContextFileBlock(reference: string, projectRoot: string): string | 
   }
 
   if (!stat.isFile()) return null;
-  if (stat.size > MAX_CONTEXT_FILE_BYTES) {
-    return [
-      `<context-file path="${label}" truncated="true" bytes="${stat.size}">`,
-      readFileSync(resolvedPath, 'utf-8').slice(0, MAX_CONTEXT_FILE_BYTES),
-      '</context-file>',
-    ].join('\n');
-  }
 
   return [
     `<context-file path="${label}" bytes="${stat.size}">`,

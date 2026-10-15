@@ -61,14 +61,14 @@ export interface SelectionRequest {
   readonly options?: CallOptions;
 }
 
-const withinCandidateLimit = (count: number): boolean => count >= 1 && count <= MAX_CANDIDATES;
+const withinCandidateLimit = (count: number): boolean => count >= 1;
 const allDistinct = (ids: readonly string[]): boolean => new Set(ids).size === ids.length;
 const avoidsNone = (ids: readonly string[]): boolean => !ids.includes(NONE);
 /** Candidate ids a selection can offer as options: distinct, and never the "none" option's name. */
 const usableIds = (ids: readonly string[]): boolean => allDistinct(ids) && avoidsNone(ids);
 
 function assertCandidates(decision: string, ids: readonly string[]): void {
-  if (!withinCandidateLimit(ids.length)) throw new RangeError(`selector ${decision}: needs 1 to ${MAX_CANDIDATES} candidates, got ${ids.length}`);
+  if (!withinCandidateLimit(ids.length)) throw new RangeError(`selector ${decision}: needs at least one candidate, got ${ids.length}`);
   if (!usableIds(ids)) throw new RangeError(`selector ${decision}: candidate ids must be unique and not "${NONE}"`);
 }
 
@@ -99,6 +99,28 @@ export async function runSelection(port: JudgmentPort, request: SelectionRequest
   const { header, config, candidates } = request;
   const ids = candidates.map((candidate) => candidate.id);
   assertCandidates(header.name, ids);
+  // A Choice has 255 wire options, including NONE. Process every candidate in
+  // rounds instead of treating the endpoint's per-request limit as a work cap.
+  if (candidates.length > MAX_CANDIDATES) {
+    const rounds: Selection[] = [];
+    const winners: Candidate[] = [];
+    for (let offset = 0; offset < candidates.length; offset += MAX_CANDIDATES) {
+      request.options?.signal?.throwIfAborted();
+      const group = candidates.slice(offset, offset + MAX_CANDIDATES);
+      const result = await runSelection(port, { ...request, candidates: group });
+      rounds.push(result);
+      const winner = group.find(candidate => candidate.id === result.pick.choice);
+      if (winner) winners.push(winner);
+    }
+    const final = winners.length ? await runSelection(port, { ...request, candidates: winners }) : rounds.at(-1)!;
+    // A low-confidence NONE in any group must not disappear behind a later
+    // group's settled answer. Preserve the weakest unresolved group reading.
+    const unresolved = rounds.filter(round => round.pick.choice === NONE && round.outcome !== 'act');
+    const outcome = [final, ...unresolved].some(round => round.outcome === 'escalate') ? 'escalate'
+      : [final, ...unresolved].some(round => round.outcome === 'confirm') ? 'confirm' : 'act';
+    return { ...final, outcome, fits: Object.assign({}, ...rounds.map(round => round.fits), final.fits),
+      recordAction(action) { for (const round of rounds) round.recordAction(action); if (winners.length) final.recordAction(action); } };
+  }
   const state = { context: request.context, candidates: candidates.map(({ id, content }) => ({ id, content })) };
   const result = await askAs(port, header, request.pattern, state, selectionQuestions(config, ids), request.options);
   const answers = result.answers as Record<string, unknown>;

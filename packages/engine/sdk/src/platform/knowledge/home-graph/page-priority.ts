@@ -42,13 +42,11 @@ export async function rankHomeGraphPageCandidates<T>(input: {
   assertJudgmentInput({ purpose: input.purpose, candidates: originalAdmission });
   const content = input.candidates.map(candidate => captureOwnedJson(input.content(candidate)));
   assertJudgmentInput(content);
-  if (content.length > 500 || JSON.stringify(content).length > 1_000_000) throw new HomeGraphPagePriorityHeldError('budget');
   const original = captureOwnedJson(content);
   const timeout = new AbortController();
-  let timedOut = false;
+
   const check = () => {
     if (signal?.aborted) throw new HomeGraphPagePriorityHeldError('aborted');
-    if (timedOut) throw new HomeGraphPagePriorityHeldError('budget');
     callerCurrent?.();
     if (input.signal !== signal || input.assertCurrent !== callerCurrent || input.purpose !== purpose || input.candidates !== offered || input.content !== project || input.store !== store
       || !sameKnowledgeRecord(rawCandidates(), originalCandidates)
@@ -62,11 +60,10 @@ export async function rankHomeGraphPageCandidates<T>(input: {
     return { id: `page-${index + 1}`, content: toJson(value) };
   });
   let authority: ReturnType<typeof captureJudgmentPort>;
-  const timer = setTimeout(() => { timedOut = true; timeout.abort(); }, 15_000);
   const boundedSignal = signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal;
   try { authority = captureJudgmentPort(homeGraphPagePriority.name, { signal: boundedSignal, assertCurrent: check }); }
   catch (error) {
-    clearTimeout(timer); check();
+    check();
     if (error instanceof JudgmentPortMissingError) throw new HomeGraphPagePriorityHeldError('unavailable');
     throw new HomeGraphPagePriorityHeldError('stale');
   }
@@ -88,5 +85,5 @@ export async function rankHomeGraphPageCandidates<T>(input: {
     try { authority.assertCurrent(); } catch { throw new HomeGraphPagePriorityHeldError(signal?.aborted ? 'aborted' : 'stale'); }
     if (error instanceof HomeGraphPagePriorityHeldError || error instanceof JudgmentInputError) throw error;
     throw new HomeGraphPagePriorityHeldError('unavailable');
-  } finally { clearTimeout(timer); }
+  }
 }

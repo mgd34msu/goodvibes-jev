@@ -2,10 +2,10 @@
 import { array, boolean, enum as enumSchema, literal, number, strictObject, string, union, type z } from 'zod/v4';
 import { CHECK_RESULTS, CHECK_TRIGGERS, CONTRACT_UNIT_STATUSES } from '../../events/contract.js';
 
-/** Leave room for the authenticated execution envelope within its existing 16 KiB limit. */
-export const CONTRACT_INTEGRATION_MAX_BYTES = 12_288;
+/** @deprecated Integration inspection retains the complete result. */
+export const CONTRACT_INTEGRATION_MAX_BYTES = Infinity;
 const id = string().min(1).max(200);
-const path = string().max(CONTRACT_INTEGRATION_MAX_BYTES);
+const path = string();
 const count = number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
 export const contractIntegrationItemSchema = union([
@@ -15,7 +15,7 @@ export const contractIntegrationItemSchema = union([
     mergeHash: string().min(1).max(200).optional(),
     worktreePath: path.optional(), worktreeBranch: path.optional(), worktreeKept: boolean().optional(),
     // Absence means not recorded, not an empty/conflict-free path list.
-    conflictFiles: array(path).max(256).optional(),
+    conflictFiles: array(path).optional(),
   }),
   strictObject({ state: literal('unavailable'), reason: enumSchema(['missing-item', 'invalid-join']) }),
   strictObject({ state: literal('not-applicable'), reason: literal('best-of-n-plan') }),
@@ -29,7 +29,7 @@ export const contractIntegrationUnitSchema = strictObject({
 });
 
 export const contractIntegrationInspectionSchema = union([
-  strictObject({ state: literal('live'), contractId: id, isolation: literal('worktree'), units: array(contractIntegrationUnitSchema).max(256) }),
+  strictObject({ state: literal('live'), contractId: id, isolation: literal('worktree'), units: array(contractIntegrationUnitSchema) }),
   strictObject({ state: literal('unavailable'), reason: enumSchema(['not-live', 'no-engine', 'no-receipt', 'stale-attempt', 'recovery-required', 'unsupported-runner', 'invalid-data', 'limit']) }),
   strictObject({ state: literal('not-applicable'), contractId: id, reason: enumSchema(['session-mode', 'shared-isolation']) }),
 ]);

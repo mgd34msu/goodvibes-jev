@@ -5,7 +5,7 @@ export async function withSupportBudget<T>(
   run: (signal: AbortSignal) => Promise<T>, timeoutMs: number, parent?: AbortSignal,
 ): Promise<T> {
   if (parent?.aborted) throw new KnowledgeGeneratedFactSupportHeldError('aborted');
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new KnowledgeGeneratedFactSupportHeldError('budget');
+  if ((!Number.isFinite(timeoutMs) && timeoutMs !== Infinity) || timeoutMs < 0 || (Number.isFinite(timeoutMs) && timeoutMs > 2_147_483_647)) throw new KnowledgeGeneratedFactSupportHeldError('budget');
   const controller = new AbortController();
   let rejectStop: (error: KnowledgeGeneratedFactSupportHeldError) => void = () => {};
   const stopped = new Promise<never>((_resolve, reject) => { rejectStop = reject; });
@@ -14,7 +14,7 @@ export async function withSupportBudget<T>(
   };
   const abort = () => stop('aborted');
   parent?.addEventListener('abort', abort, { once: true });
-  const timer = setTimeout(() => stop('budget'), timeoutMs);
+  const timer = timeoutMs > 0 && Number.isFinite(timeoutMs) ? setTimeout(() => stop('budget'), timeoutMs) : undefined;
   try {
     if (parent?.aborted) abort();
     return await Promise.race([run(controller.signal), stopped]);

@@ -25,7 +25,7 @@ function isFallback(value: unknown): value is JudgmentFallbackSettings {
 /** Validate and detach persisted inputs without invoking accessors or toJSON. */
 export function captureJudgmentFallbackSettings(value: unknown): readonly JudgmentFallbackSettings[] {
   if (value === undefined) return Object.freeze([]);
-  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length > 8
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype
     || Reflect.ownKeys(value).length !== value.length + 1) throw new Error('Invalid judgment fallback settings');
   const result: JudgmentFallbackSettings[] = [];
   for (let index = 0; index < value.length; index++) {

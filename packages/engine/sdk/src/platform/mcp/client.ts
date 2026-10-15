@@ -71,17 +71,15 @@ function applyNative<Args extends unknown[], Result>(method: (...args: Args) => 
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | undefined;
 }
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 0;
 const PING_TIMEOUT_MS = 5_000;
 const RESTART_DELAY_MS = 2_000;
 const MAX_RESTART_ATTEMPTS = 3;
 /** Era-detection probe: a legacy server answers `server/discover` quickly with method-not-found; this bound covers servers that stay silent instead. */
 const DISCOVER_PROBE_TIMEOUT_MS = 3_000;
-/** Upper bound on Multi Round-Trip Request retries for one tool call. */
-const MAX_MRTR_ROUND_TRIPS = 4;
 
 export type { JsonRpcId } from './jsonrpc.js';
 export type {
@@ -121,7 +119,7 @@ export class McpClient {
     const httpSession = http?.sessionGeneration;
     const serverName = this.config.name;
     const destination = this.config.url ?? this.options?.processSpec?.command ?? this.config.command ?? '';
-    const signal = AbortSignal.any([this.connectionLife.signal, AbortSignal.timeout(this.options?.timeout ?? DEFAULT_TIMEOUT_MS)]);
+    const signal = AbortSignal.any([this.connectionLife.signal, ...((this.options?.timeout ?? DEFAULT_TIMEOUT_MS) > 0 ? [AbortSignal.timeout(this.options!.timeout!)] : [])]);
     const assertCurrent = () => {
       signal.throwIfAborted();
       if (this.connectionId !== connectionId || this.proc !== proc || this.http !== http || http?.sessionGeneration !== httpSession
@@ -153,7 +151,7 @@ export class McpClient {
     const connectionId = this.connectionId, proc = this.proc, http = this.http;
     const httpSession = http?.sessionGeneration;
     const serverName = this.config.name;
-    const signal = AbortSignal.any([this.connectionLife.signal, controller.signal, AbortSignal.timeout(this.options?.timeout ?? DEFAULT_TIMEOUT_MS), ...(operation?.signal ? [operation.signal] : [])]);
+    const signal = AbortSignal.any([this.connectionLife.signal, controller.signal, ...((this.options?.timeout ?? DEFAULT_TIMEOUT_MS) > 0 ? [AbortSignal.timeout(this.options!.timeout!)] : []), ...(operation?.signal ? [operation.signal] : [])]);
     const destination = this.config.url ?? this.options?.processSpec?.command ?? this.config.command ?? '';
     const assertCurrent = () => {
       signal.throwIfAborted(); operation?.assertCurrent();
@@ -417,7 +415,7 @@ export class McpClient {
       if (!schema) throw new Error('MCP tool schema is unavailable');
       schemaSnapshot = captureOwnedJson(schema, nodeTypes.isProxy);
       let params: Record<string, unknown> = { name: toolName, arguments: ownedArgs };
-      for (let roundTrip = 0; roundTrip <= MAX_MRTR_ROUND_TRIPS; roundTrip++) {
+      while (true) {
         assertCurrent();
         const pendingResponses = responses;
         const beforeSend = () => { assertCurrent(); if (this.schemaCache.get(toolName) !== schema) throw new Error('MCP tool schema changed'); if (!claimed) { effect?.claim(); claimed = true; } if (pendingResponses) for (const response of Object.values(pendingResponses)) commitMcpElicitation(response); };
@@ -430,7 +428,6 @@ export class McpClient {
         params = { name: toolName, arguments: ownedArgs, ...(responses ? { inputResponses: responses } : {}),
           ...(typeof ownedResult.requestState === 'string' ? { requestState: ownedResult.requestState } : {}) };
       }
-      throw new Error(`McpClient(${this.config.name}): tool '${toolName}' still required input after ${MAX_MRTR_ROUND_TRIPS} round trips`);
     } finally { if (responses) for (const response of Object.values(responses)) discardMcpElicitation(response); lifetime.abort(); }
   }
 
@@ -625,11 +622,11 @@ export class McpClient {
     if (this.http) {
       return this.http.request(method, finalParams, extraHeaders, operation, beforeSend) as Promise<T>;
     }
-    return this._rawRequest<T>(method, finalParams, undefined, beforeSend);
+    return this._rawRequest<T>(method, finalParams, undefined, beforeSend, operation?.signal);
   }
 
   /** Send a JSON-RPC request over stdio without protocol decoration. */
-  private _rawRequest<T = unknown>(method: string, params?: unknown, timeoutOverrideMs?: number, beforeSend?: () => void): Promise<T> {
+  private _rawRequest<T = unknown>(method: string, params?: unknown, timeoutOverrideMs?: number, beforeSend?: () => void, operationSignal?: AbortSignal): Promise<T> {
     if (!this.proc) {
       return Promise.reject(new Error(`McpClient(${this.config.name}): not running`));
     }
@@ -640,24 +637,30 @@ export class McpClient {
     const line = JSON.stringify(msg) + '\n';
     const timeoutMs = timeoutOverrideMs ?? this.options?.timeout ?? DEFAULT_TIMEOUT_MS;
 
+    const signal = operationSignal ? AbortSignal.any([this.connectionLife.signal, operationSignal]) : this.connectionLife.signal;
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const cleanup = () => { clearTimeout(timer); signal.removeEventListener('abort', onAbort); };
+      const onAbort = () => { this.pendingRequests.delete(pendingKey); cleanup(); reject(signal.reason); };
+      const timer = timeoutMs > 0 ? setTimeout(() => {
         this.pendingRequests.delete(pendingKey);
+        cleanup();
         reject(new Error(`McpClient(${this.config.name}): request '${method}' timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-      timer.unref?.();
+      }, timeoutMs) : undefined;
+      timer?.unref?.();
 
       this.pendingRequests.set(pendingKey, {
-        resolve: resolve as (value: unknown) => void,
-        reject,
+        resolve: value => { cleanup(); resolve(value as T); },
+        reject: error => { cleanup(); reject(error); },
         timer,
       });
 
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) { onAbort(); return; }
       try {
         beforeSend?.();
         (this.proc?.stdin as import('bun').FileSink | undefined)?.write(line);
       } catch (err) {
-        clearTimeout(timer);
+        cleanup();
         this.pendingRequests.delete(pendingKey);
         reject(new Error(`McpClient(${this.config.name}): write failed: ${summarizeError(err)}`));
       }

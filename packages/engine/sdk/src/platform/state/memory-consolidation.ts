@@ -121,7 +121,7 @@ const SITE = 'state.memory-consolidation';
  * is the likeliest duplicate of an old one) and leaves the rest for later
  * passes.
  */
-const MAX_PAIR_READINGS_PER_RUN = 60;
+const MAX_PAIR_READINGS_PER_RUN = Infinity;
 
 /** Pair readings in flight at once. */
 const PAIR_CONCURRENCY = 8;

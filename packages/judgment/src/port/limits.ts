@@ -14,35 +14,34 @@ export const LIMITS = {
   maxRequestTokens: 64_000,
   /** Jev 1.13: 32k tokens for the state plus the single longest question. */
   maxStateWithQuestionTokens: 32_000,
+  /** Hosted long-context mode, enabled per request when needed. */
+  maxLongContextTokens: 262_000,
+  maxRequestBytes: 32 * 1024 * 1024,
 } as const;
 
 /**
  * A conservative token estimate for a JSON value: its serialized length over
  * three. Real tokenization averages closer to four characters per token for
- * English, so this overestimates and refuses before the endpoint would.
+ * English. The estimate selects long-context transport; the endpoint performs exact tokenization.
  */
 export function estimateTokens(value: unknown): number {
   const text = typeof value === 'string' ? value : JSON.stringify(value);
   return Math.ceil((text?.length ?? 0) / 3);
 }
 
-/** Rejects a request whose state and questions would not fit the model's context. */
-export function validateContextBudget(state: EntryType, questions: Questions): void {
+/** Estimates select the provider's context mode; they must not reject valid input. */
+export function requiresLongContext(state: EntryType, questions: Questions): boolean {
   const stateTokens = estimateTokens(state);
-  const questionTokens = Object.values(questions).map((question) => estimateTokens(question));
-  const total = stateTokens + questionTokens.reduce((sum, tokens) => sum + tokens, 0);
-  const longest = stateTokens + Math.max(0, ...questionTokens);
-  if (total > LIMITS.maxRequestTokens) {
-    throw new JudgmentError(
-      'invalid-request',
-      `request is about ${total} tokens; the limit is ${LIMITS.maxRequestTokens}. Filter the state or split the questions.`,
-    );
-  }
-  if (longest > LIMITS.maxStateWithQuestionTokens) {
-    throw new JudgmentError(
-      'invalid-request',
-      `state plus the longest question is about ${longest} tokens; the limit is ${LIMITS.maxStateWithQuestionTokens}. Filter the state to what the questions need.`,
-    );
+  const questionTokens = Object.values(questions).map(question => estimateTokens(question));
+  return stateTokens + questionTokens.reduce((sum, tokens) => sum + tokens, 0) > LIMITS.maxRequestTokens
+    || questionTokens.some(tokens => stateTokens + tokens > LIMITS.maxStateWithQuestionTokens);
+}
+
+/** Enforce the documented wire-body limit, leaving exact tokenization to Jev. */
+export function validateContextBudget(state: EntryType, questions: Questions): void {
+  const bytes = new TextEncoder().encode(JSON.stringify({ state, questions })).byteLength;
+  if (bytes > LIMITS.maxRequestBytes) {
+    throw new JudgmentError('invalid-request', `System One request exceeds its ${LIMITS.maxRequestBytes}-byte body limit; partition the evidence into separate readings.`);
   }
 }
 

@@ -143,7 +143,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     const tree = contractTree(contract);
     const paths = new Set(contract.units.filter((unit) => input.unitIds.has(unit.id)).flatMap((unit) => unit.touchedPaths));
     const changes = (await collectChanges({ baseline: input.baseline }, { cwd: tree, turns: turnsOf(run, input.unitIds) })).filter((change) => paths.has(change.path));
-    const gates = await runContractGates({ configManager: context.configManager, cwd: tree, runtimeBus: context.runtimeBus, sessionId: contract.sessionId, contractId: contract.id, targetId: input.targetId });
+    const gates = await runContractGates({ configManager: context.configManager, cwd: tree, runtimeBus: context.runtimeBus, sessionId: contract.sessionId, contractId: contract.id, targetId: input.targetId, signal: run.abort.signal });
     if (run.terminal) return null;
     assertOwnedContractSource(contract);
     const evidence = trimEvidence({ output: input.output, changes, gates, commands: [] }, { goal: input.goal, brief: '', files: [] });

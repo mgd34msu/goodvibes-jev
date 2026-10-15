@@ -104,10 +104,10 @@ describe('expandItems', () => {
     expect(items[0]!.attemptGroupId).toBeUndefined();
   });
 
-  test('clamps attempts above the cap and passes single items through', () => {
+  test('honors requested attempts and passes single items through', () => {
     const h = harness();
     const many = h.coordinator.expandItems('ws-1', 'worktree', [{ title: 'T', task: 'x', attempts: 99 }], makeItem);
-    expect(many.length).toBeLessThanOrEqual(5);
+    expect(many.length).toBe(99);
     const single = h.coordinator.expandItems('ws-1', 'worktree', [{ title: 'S', task: 'x' }], makeItem);
     expect(single).toHaveLength(1);
     expect(single[0]!.attemptGroupId).toBeUndefined();

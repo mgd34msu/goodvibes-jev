@@ -34,7 +34,7 @@ async function select(battery: SelectionBattery, candidates: readonly ProviderMe
   if (!candidates.length) return new Set();
   const states = candidates.map(message => Object.freeze({ candidateSourcePosition: source.indexOf(message) + 1, conversation }));
   const questionTokens = judgmentTokens(battery.items.selected.question);
-  if (states.some(state => judgmentTokens(state) + questionTokens > Math.min(LIMITS.maxStateWithQuestionTokens, LIMITS.maxRequestTokens))) {
+  if (states.some(state => judgmentTokens(state) + questionTokens > LIMITS.maxLongContextTokens)) {
     throw new CompactionReadingError('budget');
   }
   const options = work.options(battery.name);
@@ -113,7 +113,7 @@ export async function readCompactionSections(input: {
       { battery: resolvedProblemEvidence, candidates: exchanges },
     ];
     const fullSourceFits = groups.every(({ battery }) => judgmentTokens({ conversation, candidateSourcePosition: input.messages.length })
-      + judgmentTokens(battery.items.selected.question) <= Math.min(LIMITS.maxStateWithQuestionTokens, LIMITS.maxRequestTokens));
+      + judgmentTokens(battery.items.selected.question) <= LIMITS.maxStateWithQuestionTokens);
     let selections: Set<number>[];
     if (fullSourceFits) {
       selections = await Promise.all(groups.map(({ battery, candidates }) => select(battery, candidates, conversation, input.messages, work)));

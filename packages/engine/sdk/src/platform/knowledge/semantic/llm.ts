@@ -14,7 +14,7 @@ export function createProviderBackedKnowledgeSemanticLlm(
   options: ProviderBackedKnowledgeSemanticLlmOptions = {},
 ): KnowledgeSemanticLlm {
   const limiter = new SemanticLlmLimiter(Math.max(1, options.maxConcurrent ?? 1));
-  const timeoutMs = Math.max(1_000, options.timeoutMs ?? 20_000);
+  const timeoutMs = Math.max(0, options.timeoutMs ?? 0);
   return {
     completeJson: async (input) => limiter.run(async () => {
       const text = await completeWithCurrentModel(providerRegistry, { ...input, timeoutMs: input.timeoutMs ?? timeoutMs });
@@ -38,7 +38,7 @@ async function completeWithCurrentModel(
     readonly timeoutMs?: number | undefined;
   },
 ): Promise<string | null> {
-  const timeoutMs = Math.max(1_000, input.timeoutMs ?? 20_000);
+  const timeoutMs = Math.max(0, input.timeoutMs ?? 0);
   const controller = new AbortController();
   const timeoutSentinel = Symbol('semantic-timeout');
   let timedOut = false;
@@ -53,7 +53,7 @@ async function completeWithCurrentModel(
       model: current.id,
       messages: [{ role: 'user', content: input.prompt }],
       systemPrompt: input.systemPrompt,
-      maxTokens: input.maxTokens ?? 1800,
+      ...(input.maxTokens === undefined ? {} : { maxTokens: input.maxTokens }),
       reasoningEffort: 'low',
       signal: controller.signal,
     }).catch((error) => {
@@ -61,6 +61,7 @@ async function completeWithCurrentModel(
       throw error;
     });
     const timeoutPromise = new Promise<typeof timeoutSentinel>((resolve) => {
+      if (timeoutMs <= 0) return;
       timer = setTimeout(() => {
         timedOut = true;
         controller.abort();

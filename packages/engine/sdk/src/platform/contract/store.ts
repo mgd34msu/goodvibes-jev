@@ -28,10 +28,10 @@ import { assertNativeContractSource, bindNativeContractSource } from './native-s
 import { CURRENT_CONTRACT_SCHEMA_VERSION, isContractId, isTerminalContractStatus, type Contract } from './types.js';
 
 const DEBOUNCE_MS = 250;
-/** Terminal contract files kept at most; the oldest beyond this are reaped. */
-export const MAX_TERMINAL_CONTRACT_FILES = 50;
+/** @deprecated Completed contracts are retained until explicitly removed. */
+export const MAX_TERMINAL_CONTRACT_FILES = Infinity;
 /** Age past which a terminal contract file is reaped, from its completion (or last write). */
-export const TERMINAL_CONTRACT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+export const TERMINAL_CONTRACT_MAX_AGE_MS = Infinity;
 /** Quarantine files are forensic, so they outlive terminal contracts: a month. */
 export const CONTRACT_QUARANTINE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 /** A crash loop can mint one quarantine file per start, so the age bound alone is not a bound. Newest are kept. */

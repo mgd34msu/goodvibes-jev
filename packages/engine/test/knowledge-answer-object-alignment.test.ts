@@ -3,7 +3,7 @@ import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.js';
-import { readAnswerObjectAlignment, ANSWER_OBJECT_LIMITS, type AnswerObjectCandidate } from '../sdk/src/platform/knowledge/semantic/answer-object-alignment/reader.js';
+import { readAnswerObjectAlignment, type AnswerObjectCandidate } from '../sdk/src/platform/knowledge/semantic/answer-object-alignment/reader.js';
 
 let previous: JudgmentPort | undefined;
 beforeEach(() => { previous = installJudgmentPort(undefined); });
@@ -88,16 +88,18 @@ describe('prepared answer object and integration readings', () => {
     const controller = new AbortController(); controller.abort();
     await expect(readAnswerObjectAlignment({ query: 'What plays music?', candidates: [] }, { signal: controller.signal })).rejects.toMatchObject({ reason: 'aborted' });
   });
-  test('candidate overflow holds without clipping and before a request', async () => {
-    const fake = port({});
-    const candidates = Array.from({ length: ANSWER_OBJECT_LIMITS.candidates + 1 }, (_, index) => ({ ...speaker, reference: `object-${index + 1}` }));
-    await expect(readAnswerObjectAlignment({ query: 'What plays music?', candidates })).rejects.toMatchObject({ reason: 'budget' });
-    expect(fake.requests).toHaveLength(0);
-  });
-  test('a settled selection larger than its explicit result budget holds rather than choosing arbitrary targets', async () => {
+  test('all candidates beyond the former cap are judged', async () => {
     const fake = port({ 'Kitchen speaker': [0.99, 0.01, 0.99] });
-    const candidates = Array.from({ length: ANSWER_OBJECT_LIMITS.selected + 1 }, (_, index) => ({ ...speaker, reference: `object-${index + 1}` }));
-    await expect(readAnswerObjectAlignment({ query: 'Which speakers play music?', candidates })).rejects.toMatchObject({ reason: 'budget' });
+    const candidates = Array.from({ length: 100 + 1 }, (_, index) => ({ ...speaker, reference: `object-${index + 1}` }));
+    const result = await readAnswerObjectAlignment({ query: 'What plays music?', candidates });
+    expect(result.accepted).toHaveLength(candidates.length);
+    expect(fake.requests).toHaveLength(candidates.length + 1);
+  });
+  test('all settled selections beyond the former cap are returned', async () => {
+    const fake = port({ 'Kitchen speaker': [0.99, 0.01, 0.99] });
+    const candidates = Array.from({ length: 24 + 1 }, (_, index) => ({ ...speaker, reference: `object-${index + 1}` }));
+    const result = await readAnswerObjectAlignment({ query: 'Which speakers play music?', candidates });
+    expect(result.accepted).toHaveLength(candidates.length);
     expect(fake.requests.filter((request) => 'aligned' in request.questions)).toHaveLength(candidates.length);
   });
   test('reader cancellation and deadline race uncooperative providers', async () => {

@@ -77,8 +77,8 @@ export function captureRepairFailureReader(options: { readonly signal?: AbortSig
     const stop = (reason: string) => { stopReason = reason; controller.abort(); rejectStopped(new Error(reason)); };
     const abort = () => stop('cancelled');
     options.signal?.addEventListener('abort', abort, { once: true });
-    const timer = setTimeout(() => stop('reading-budget-unavailable'), remaining);
-    timer.unref?.();
+    const timer = Number.isFinite(remaining) ? setTimeout(() => stop('reading-budget-unavailable'), remaining) : undefined;
+    timer?.unref?.();
     const beforeAttempt = () => { if (!current() || controller.signal.aborted || Date.now() >= options.deadlineAt) throw new Error('Failure reading is no longer current'); };
     try {
       const message = error instanceof Error ? error.message : typeof error === 'string' ? error : 'Failure carries no textual cause.';

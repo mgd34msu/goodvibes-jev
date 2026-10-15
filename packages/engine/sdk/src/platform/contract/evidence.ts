@@ -2,8 +2,7 @@
  * A unit's evidence (docs/design/contract-runner.md section 4.3): what Jev
  * reads when it checks the unit. The diff of the paths the unit touched, the
  * claim verification and gate results (at the triggers that run them), the
- * agent's output and the commands it ran, trimmed so the request stays inside
- * the Jev context budget.
+ * agent's complete output and the commands it ran.
  *
  * Where the diff comes from:
  * - In git (the unit's item worktree in worktree mode, the project root in
@@ -33,24 +32,23 @@ import { runContractGates, type QualityGateResult } from './gates.js';
 import type { CheckTrigger, ContractUnit, ContractView } from './types.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
 
-// ── Budget (design 4.3) ────────────────────────────────────────────────────────
-
-/** Estimated tokens the whole state of a check request may take (the Jev limit is 32k for state plus the longest question). */
-export const EVIDENCE_TOKEN_BUDGET = 24_000;
-/** The agent's output, head and tail. */
-export const OUTPUT_CAP_CHARS = 12_000;
-/** Each gate's output, from the end, where failures print. */
-export const GATE_OUTPUT_CAP_CHARS = 4_000;
-/** Each file's diff. */
-export const DIFF_FILE_CAP_CHARS = 8_000;
-/** Lines of each command's output. */
-export const COMMAND_HEAD_LINES = 20;
-/** Characters of each of those lines. */
-export const COMMAND_LINE_CAP_CHARS = 240;
-/** The most recent commands kept; older ones are dropped first when the budget is short. */
-export const MAX_COMMANDS = 40;
-/** Paths listed in `changedPaths` or `omitted` before the rest are counted. */
-export const MAX_LISTED_PATHS = 300;
+// Kept as compatibility exports; evidence collection no longer discards content.
+/** @deprecated No application evidence budget. Provider context limits apply. */
+export const EVIDENCE_TOKEN_BUDGET = Number.POSITIVE_INFINITY;
+/** @deprecated Full output is retained. */
+export const OUTPUT_CAP_CHARS = Number.POSITIVE_INFINITY;
+/** @deprecated Full gate output is retained. */
+export const GATE_OUTPUT_CAP_CHARS = Number.POSITIVE_INFINITY;
+/** @deprecated Full diffs are retained. */
+export const DIFF_FILE_CAP_CHARS = Number.POSITIVE_INFINITY;
+/** @deprecated Full command output is retained. */
+export const COMMAND_HEAD_LINES = Number.POSITIVE_INFINITY;
+/** @deprecated Full command lines are retained. */
+export const COMMAND_LINE_CAP_CHARS = Number.POSITIVE_INFINITY;
+/** @deprecated All commands are retained. */
+export const MAX_COMMANDS = Number.POSITIVE_INFINITY;
+/** @deprecated All paths are retained. */
+export const MAX_LISTED_PATHS = Number.POSITIVE_INFINITY;
 
 // ── Shapes ────────────────────────────────────────────────────────────────────
 
@@ -66,7 +64,7 @@ export interface ContractTurnRecord {
 export interface EvidenceCommand {
   readonly command: string;
   readonly success: boolean;
-  /** The first lines of its output. */
+  /** Complete command output. */
   readonly head: string;
 }
 
@@ -80,7 +78,7 @@ export interface UnitEvidence {
   /** record.fullOutput at completion; the last assistant text mid-run. */
   readonly output: string;
   readonly changedPaths: readonly string[];
-  /** Trimmed to the budget. */
+  /** Complete collected evidence. */
   readonly diff: string;
   /** Paths whose diff did not fit. */
   readonly omitted: readonly string[];
@@ -226,6 +224,7 @@ export interface UnitEvidenceSources {
   /** The unit's worktree path, or the project root in shared mode. */
   readonly cwd: string;
   readonly configManager: ContractConfigReader;
+  readonly signal?: AbortSignal | undefined;
   readonly runtimeBus: RuntimeEventBus;
   /**
    * The completion report the agent's output ends with, null when it gave none.
@@ -249,7 +248,7 @@ export async function collectChanges(unit: Pick<ContractUnit, 'baseline'>, sourc
 }
 
 /**
- * Collects a unit's evidence for one check, trimmed to the budget: the diff
+ * Collects a unit's complete evidence for one check: the diff
  * always; claims at completion and at resume; gates at every trigger but turn-end.
  */
 export async function collectUnitEvidence(
@@ -273,6 +272,7 @@ export async function collectUnitEvidence(
       sessionId: contract.sessionId,
       contractId: contract.id,
       targetId: unit.id,
+      signal: sources.signal,
     })
     : undefined;
   return trimEvidence({ output: sources.output, changes, claims, gates, commands: commandsFromTurns(sources.turns) }, unit);
@@ -350,11 +350,6 @@ export function tail(text: string, cap: number): string {
   return `[... ${text.length - cap} characters omitted ...]\n${text.slice(text.length - cap)}`;
 }
 
-function capFileDiff(change: FileChange): string {
-  if (change.diff.length <= DIFF_FILE_CAP_CHARS) return change.diff;
-  return `${change.diff.slice(0, DIFF_FILE_CAP_CHARS)}\n[... ${change.diff.length - DIFF_FILE_CAP_CHARS} characters of ${change.path} omitted ...]`;
-}
-
 /** Changes in fill order: the unit's `files` in their listed order, then the rest smallest first. */
 function fillOrder(changes: readonly FileChange[], files: readonly string[]): FileChange[] {
   const rank = (path: string): number => {
@@ -364,44 +359,15 @@ function fillOrder(changes: readonly FileChange[], files: readonly string[]): Fi
   return [...changes].sort((a, b) => rank(a.path) - rank(b.path) || a.diff.length - b.diff.length);
 }
 
-/**
- * Trims raw evidence so the larger check state stays under
- * EVIDENCE_TOKEN_BUDGET: output head and tail, gate output tails, the most
- * recent commands, then the diff filled file by file until the budget is used,
- * the rest listed in `omitted`. When even an empty diff does not fit, older
- * commands go first, then the output is cut further.
- */
+/** Assemble complete evidence without per-file, command, output or total cuts. */
 export function trimEvidence(raw: RawUnitEvidence, unit: Pick<ContractUnit, 'goal' | 'brief' | 'files'>): UnitEvidence {
-  let commands = raw.commands.slice(-MAX_COMMANDS);
-  let output = headAndTail(raw.output, OUTPUT_CAP_CHARS);
-  const gates = raw.gates?.map((gate) => ({ ...gate, output: tail(gate.output, GATE_OUTPUT_CAP_CHARS) }));
-  const changedPaths = raw.changes.map((change) => change.path);
-  const ordered = fillOrder(raw.changes, unit.files);
-  const base = (): UnitEvidence => ({
-    output,
-    changedPaths,
-    diff: '',
-    omitted: ordered.map((change) => change.path),
+  return {
+    output: raw.output,
+    changedPaths: raw.changes.map(change => change.path),
+    diff: fillOrder(raw.changes, unit.files).map(change => change.diff).join('\n\n'),
+    omitted: [],
     ...(raw.claims === undefined ? {} : { claims: raw.claims }),
-    ...(gates === undefined ? {} : { gates }),
-    commands,
-  });
-
-  while (evidenceTokens(unit, base()) > EVIDENCE_TOKEN_BUDGET && commands.length > 0) commands = commands.slice(Math.ceil(commands.length / 2));
-  while (evidenceTokens(unit, base()) > EVIDENCE_TOKEN_BUDGET && output.length > 200) output = headAndTail(raw.output, Math.floor(output.length / 2));
-
-  const included: string[] = [];
-  const omitted: string[] = [];
-  let evidence = base();
-  for (const change of ordered) {
-    const section = capFileDiff(change);
-    const candidate: UnitEvidence = { ...evidence, diff: [...included, section].join('\n\n') };
-    if (evidenceTokens(unit, { ...candidate, omitted: [...omitted, ...ordered.slice(included.length + omitted.length + 1).map((c) => c.path)] }) <= EVIDENCE_TOKEN_BUDGET) {
-      included.push(section);
-      evidence = candidate;
-    } else {
-      omitted.push(change.path);
-    }
-  }
-  return { ...evidence, diff: included.join('\n\n'), omitted };
+    ...(raw.gates === undefined ? {} : { gates: raw.gates }),
+    commands: raw.commands,
+  };
 }

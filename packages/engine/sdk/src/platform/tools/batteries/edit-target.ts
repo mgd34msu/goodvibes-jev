@@ -20,7 +20,7 @@ import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-inp
 import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 
 /** Most characters of the find text or the window one request carries; larger inputs are rejected without clipping. */
-export const MAX_JUDGED_EDIT_CHARS = 160_000;
+export const MAX_JUDGED_EDIT_CHARS = Number.POSITIVE_INFINITY;
 
 function clip(text: string): string {
   assertJudgmentInput(text);

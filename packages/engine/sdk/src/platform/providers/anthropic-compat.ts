@@ -1,3 +1,4 @@
+import { documentedMaxOutput } from './anthropic.js';
 import { safeEndpointOrigin } from './provider-setup.js';
 import { revalidateProviderAttempt } from './attempt-guard.js';
 import type {
@@ -245,7 +246,7 @@ export class AnthropicCompatProvider implements LLMProvider {
 
       const body: Record<string, unknown> = {
         model: resolvedModel,
-        max_tokens: maxTokens ?? 8192,
+        max_tokens: maxTokens ?? documentedMaxOutput(model),
         messages: toAnthropicMessages(messages),
         stream: true,
       };

@@ -127,10 +127,8 @@ export class OrchestratorFollowUpRuntime {
     }
     const providerRegistry = this.options.getProviderRegistry();
     const provider = providerRegistry.getForModel(model.registryKey, model.provider);
-    const tokenLimit = Math.min(
-      FOLLOW_UP_MAX_OUTPUT_TOKENS,
-      providerRegistry.getTokenLimitsForModel(model).maxOutputTokens ?? FOLLOW_UP_MAX_OUTPUT_TOKENS,
-    );
+    const reportedLimit = providerRegistry.getTokenLimitsForModel(model).maxOutputTokens ?? 0;
+    const tokenLimit = reportedLimit > 0 ? Math.min(FOLLOW_UP_MAX_OUTPUT_TOKENS, reportedLimit) : FOLLOW_UP_MAX_OUTPUT_TOKENS;
     this.isRunning = true;
     const controller = new AbortController();
     this.activeAbortController = controller;

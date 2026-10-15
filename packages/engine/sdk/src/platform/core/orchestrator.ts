@@ -601,7 +601,7 @@ export class Orchestrator {
     }
 
     // Set the original task on the first user message (idempotent, subsequent calls are no-ops)
-    getSessionLineageTracker(this.coreServices, this.ownedSessionLineageTracker).setOriginalTask(text.slice(0, 200));
+    getSessionLineageTracker(this.coreServices, this.ownedSessionLineageTracker).setOriginalTask(text);
 
     // Process any messages queued while the LLM was thinking. Draining is gated on
     // isCompacting so a queued turn cannot start while a background auto-compaction is

@@ -12,7 +12,6 @@ import {
   type PlanLimits,
   type PlanProblemCode,
 } from '../../sdk/src/platform/contract/plan-schema.js';
-import { MAX_ATTEMPTS } from '../../sdk/src/platform/orchestration/types.js';
 import { PLANNER_DECOMPOSITION_TOOLS } from '../../sdk/src/platform/agents/planner-decomposition-runner.js';
 import { ASK, asPlan, draftUnit, plannerOutput, shapeOf, singleUnitPlan, validPlan, type DraftPlan } from './plan-support.js';
 
@@ -306,14 +305,14 @@ describe('validateContractPlan', () => {
       expect(codes(plan, shapeOf(), { ...LIMITS, defaultAttempts: 2 })).not.toContain('attempts');
     });
 
-    test('never above MAX_ATTEMPTS, never below one, always whole', () => {
+    test('accepts only positive representable integer attempt counts', () => {
       const asked = shapeOf(['asks_for_attempts']);
-      for (const attempts of [MAX_ATTEMPTS + 1, 0, 1.5]) {
+      for (const attempts of [Number.POSITIVE_INFINITY, 0, 1.5]) {
         const plan = validPlan();
         plan.groups[0]!.units[0]!.attempts = attempts;
         expect(targetsOf(plan, 'attempts', asked)).toEqual(['u1']);
       }
-      expect(codes(validPlan(), shapeOf(), { ...LIMITS, defaultAttempts: MAX_ATTEMPTS + 1 })).toContain('attempts');
+      expect(codes(validPlan(), shapeOf(), { ...LIMITS, defaultAttempts: Number.POSITIVE_INFINITY })).toContain('attempts');
     });
   });
 

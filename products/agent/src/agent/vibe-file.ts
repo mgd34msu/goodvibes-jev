@@ -59,8 +59,6 @@ export interface AgentVibeImportSource {
   readonly scope: AgentVibeScope;
 }
 
-const MAX_VIBE_BODY_CHARS = 8_000;
-const MAX_PROJECT_DEPTH = 32;
 
 const DEFAULT_VIBE_BODY = [
   '# VIBE.md',
@@ -111,9 +109,9 @@ function readVibeCandidate(path: string, scope: AgentVibeScope): AgentVibeFile |
   return {
     path,
     scope,
-    body: rawBody.length > MAX_VIBE_BODY_CHARS ? rawBody.slice(0, MAX_VIBE_BODY_CHARS).trimEnd() : rawBody,
+    body: rawBody,
     frontmatter,
-    truncated: rawBody.length > MAX_VIBE_BODY_CHARS,
+    truncated: false,
   };
 }
 
@@ -121,7 +119,7 @@ function projectWalkRoots(workingDirectory: string): readonly string[] {
   const roots: string[] = [];
   let current = resolve(workingDirectory);
   let foundGitRoot = false;
-  for (let depth = 0; depth < MAX_PROJECT_DEPTH; depth += 1) {
+  while (true) {
     roots.push(current);
     if (existsSync(join(current, '.git'))) {
       foundGitRoot = true;
@@ -203,7 +201,6 @@ export function buildVibePrompt(shellPaths: AgentVibePaths): string | null {
 
   for (const file of snapshot.files) {
     lines.push('', `### ${vibeHeading(file)}`, `Source: ${file.path}`, '', file.body);
-    if (file.truncated) lines.push('', `[VIBE.md truncated to ${MAX_VIBE_BODY_CHARS} characters for prompt safety.]`);
   }
 
   if (snapshot.blocked.length > 0) {

@@ -160,7 +160,7 @@ export class KnowledgeSemanticService {
     const sources = listSemanticSources(this.store, input.knowledgeSpaceId)
       .filter((source) => !allowed || allowed.has(source.id))
       .slice(0, Math.max(1, input.limit ?? 10_000));
-    const maxLlmSources = Math.max(0, this.options.maxLlmSourcesPerReindex ?? 3);
+    const maxLlmSources = Math.max(0, this.options.maxLlmSourcesPerReindex ?? Infinity);
     const maxRunMs = Math.max(100, input.maxRunMs ?? this.options.maxReindexRunMs ?? 45_000);
     const startedAt = Date.now();
     let llmAttempts = 0;
@@ -233,7 +233,7 @@ export class KnowledgeSemanticService {
         foregroundRepair = await this.repairAnswerGaps({
           answer, signal: input.signal,
           maxRunMs: foregroundBudgetMs,
-          limit: Math.min(5, answer.answer.gaps.length),
+          limit: answer.answer.gaps.length,
         });
         assertAnswerVerificationActive(input.signal);
         foregroundTaskIds.push(...foregroundRepair.taskIds);
@@ -258,7 +258,7 @@ export class KnowledgeSemanticService {
           const waited = await this.waitForActiveAnswerGapRepairs(
             repairSpaceId,
             answerGapIdsForRefinement(answer, originalGapIds),
-            Math.min(15_000, foregroundBudgetMs), input.signal,
+            foregroundBudgetMs, input.signal,
           );
           if (waited) {
             input = await refreshAnswerCandidateWindowAfterRepair(input);
@@ -584,11 +584,8 @@ function foregroundAnswerRepairBudget(
   answer: KnowledgeSemanticAnswerResult,
 ): number {
   if (!answerNeedsForegroundRepair(input, answer)) return 0;
-  const requested = typeof input.timeoutMs === 'number' && Number.isFinite(input.timeoutMs)
-    ? input.timeoutMs
-    : 45_000;
-  if (requested < 12_000) return 0;
-  return Math.max(3_000, Math.min(20_000, requested - 5_000));
+  return typeof input.timeoutMs === 'number' && Number.isFinite(input.timeoutMs) && input.timeoutMs > 0
+    ? input.timeoutMs : Infinity;
 }
 
 function answerNeedsForegroundRepair(

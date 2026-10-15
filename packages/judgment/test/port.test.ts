@@ -220,3 +220,19 @@ describe('endpoint configuration', () => {
     expect(() => judgmentConfigFromEnv({})).toThrow(JudgmentError);
   });
 });
+
+
+test('uses long context for complete evidence and does not reject an approximate token estimate', async () => {
+  const headers: Headers[] = [];
+  const states: unknown[] = [];
+  const port = createSystemOnePort({ endpoint: { kind: 'hosted', baseURL: 'https://judge.test', apiKey: 'test-key' },
+    model: 'jev-latest', timeoutMs: 0, retry: {}, fetch: async (_url, init) => {
+      headers.push(new Headers(init?.headers)); states.push(JSON.parse(String(init?.body)).state);
+      return json(200, { model: 'jev-1.13.0', answers: { urgent: GOOD_ANSWERS.urgent }, usage: { input_tokens: 1, output_tokens: 1 } });
+    } });
+  for (const state of ['short', 'x'.repeat(180_000), 'x'.repeat(800_000)]) await port.ask({ state, questions: { urgent: QUESTIONS.urgent } });
+  expect(headers[0]!.has('TypeSafe-Danger-Zone-Long-Context')).toBe(false);
+  expect(headers[1]!.get('TypeSafe-Danger-Zone-Long-Context')).toBe('true');
+  expect(headers[2]!.get('TypeSafe-Danger-Zone-Long-Context')).toBe('true');
+  expect(states[2]).toBe('x'.repeat(800_000));
+});

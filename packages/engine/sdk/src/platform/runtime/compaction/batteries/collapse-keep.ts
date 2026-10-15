@@ -49,7 +49,7 @@ const KEEP_CRITERIA = {
 } as const;
 
 /** Most characters of one message a request carries; longer messages are clipped with a note. */
-export const MAX_JUDGED_MESSAGE_CHARS = 160_000;
+export const MAX_JUDGED_MESSAGE_CHARS = Number.POSITIVE_INFINITY;
 
 /** Pair requests in flight at once when a conversation needs more than one. */
 const REQUEST_CONCURRENCY = 4;

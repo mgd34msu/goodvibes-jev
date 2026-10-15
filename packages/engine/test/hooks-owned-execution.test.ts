@@ -99,7 +99,7 @@ describe('owned prompt invocation', () => {
       } finally { released.resolve(); }
       const result = await work;
       expect(result.ok).toBe(false);
-      expect(result.error).toBe('[REDACTED]');
+      expect(result.error).toBe(cause === 'abort' ? 'turn stopped' : 'prompt hook timed out after 0.03s');
     });
   }
 
@@ -139,7 +139,7 @@ describe('owned HTTP invocation', () => {
       } finally { body.close(); }
       const result = await work;
       expect(result.ok).toBe(false);
-      expect(result.error).toBe('[REDACTED]');
+      expect(result.error).toBe(cause === 'abort' ? 'turn stopped' : 'http hook timed out after 0.03s');
     });
   }
 
@@ -183,7 +183,7 @@ describe('owned TypeScript invocation', () => {
       } finally { release.resolve(); }
       const result = await work;
       expect(result.ok).toBe(false);
-      expect(result.error).toBe('[REDACTED]');
+      expect(result.error).toBe(cause === 'abort' ? 'turn stopped' : 'ts hook timed out after 0.03s');
     });
   }
 
@@ -225,7 +225,7 @@ test('Windows owned-command support is explicitly unavailable before any child s
     expect(result).toEqual({
       ok: false,
       code: 'OWNED_PROCESS_GROUP_UNSUPPORTED',
-      error: '[REDACTED]',
+      error: 'Owned process-group cleanup is unavailable on Windows; command was not started.',
     });
     expect(spawn).not.toHaveBeenCalled();
   } finally { Object.defineProperty(process, 'platform', platform); }

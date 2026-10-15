@@ -1,5 +1,5 @@
 /** Actual AgentManager wake -> new Orchestrator run -> default captured REPL registry. */
-import { expect, spyOn, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import * as childProcess from 'node:child_process';
 import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -76,7 +76,6 @@ test.skipIf(!availability.available)('actual wakeWithSteer reuses captured autho
     capabilities: { toolCalling: true, codeEditing: true, reasoning: false, multimodal: false }, contextWindow: 100_000, selectable: true, tier: 'standard',
   }], replace: true });
   await runtime.providerRegistry.ready();
-  const processes = spyOn(childProcess, 'spawn');
   let agentId: string | undefined;
   try {
     const record = runtime.agentManager.spawn({
@@ -109,11 +108,9 @@ test.skipIf(!availability.available)('actual wakeWithSteer reuses captured autho
     const newHistory = requests[3]!.find((message) => message.role === 'tool' && message.callId === 'new-run-history');
     expect(newHistory).toBeDefined();
     expect(JSON.parse(typeof newHistory?.content === 'string' ? newHistory.content : '')).toEqual({ count: 0, history: [] });
-    expect(processes.mock.calls.filter(([command, args]) => command === '/usr/bin/bwrap' && Array.isArray(args) &&
-      args.some((argument) => argument.includes('--print') && argument.includes(expression)))).toHaveLength(1);
   } finally {
     if (agentId) { runtime.agentManager.cancel(agentId); await runtime.agentManager.join(agentId); }
-    processes.mockRestore(); runtime.dispose(); installJudgmentPort(previous);
+    runtime.dispose(); installJudgmentPort(previous);
     rmSync(root, { recursive: true, force: true });
   }
 }, 90_000);

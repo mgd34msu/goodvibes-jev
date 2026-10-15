@@ -216,7 +216,7 @@ export class HelperModel {
       const response = await resolved.provider.chat({
         model: resolved.modelId,
         messages: [{ role: 'user', content: prompt }],
-        maxTokens: options.maxTokens ?? 2048,
+        ...(options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens }),
         systemPrompt: options.systemPrompt,
       });
 

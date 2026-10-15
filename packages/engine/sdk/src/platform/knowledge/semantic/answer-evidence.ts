@@ -103,11 +103,11 @@ export async function collectAnswerEvidence(
   // Structural bounded windows, never a keyword/record-kind quality guess.
   // Inferred subject scope cannot discard a semantic paraphrase before the reading.
   const sources = answerSources.filter((source) => candidateWindow ? candidateWindow.sourceIds.has(source.id)
-      : !strictCandidates || candidateSourceIds.has(source.id) || linkedSourceIds.has(source.id)).slice(0, 50);
+      : !strictCandidates || candidateSourceIds.has(source.id) || linkedSourceIds.has(source.id));
   const nodes = listAnswerNodes(selection)
     .filter((node) => node.metadata.semanticKind !== 'fact' || factHasUsableSource(node, usableSourceIds))
     .filter((node) => candidateWindow ? candidateWindow.nodeIds.has(node.id) : !strictCandidates || candidateNodeIds.has(node.id) || linkedObjectIds.has(node.id)
-      || (typeof node.sourceId === 'string' && candidateSourceIds.has(node.sourceId))).slice(0, 50);
+      || (typeof node.sourceId === 'string' && candidateSourceIds.has(node.sourceId)));
   const texts = new Map<string, string>();
   const items: EvidenceItem[] = [];
   store.assertRecordSnapshotFrame(() => {
@@ -194,7 +194,6 @@ export function initialNodeReferenceContext(store: KnowledgeStore, node: Knowled
   const selectedSources = new Set(selection.sources.map((source) => source.id));
   const selectedNodes = new Set(selection.nodes.map((subject) => subject.id));
   const sourceIds = factSourceIds(node);
-  if (sourceIds.length > 32) throw new KnowledgeEvidenceRelevanceHeldError('budget');
   const hints = Array.isArray(node.metadata.targetHints) ? node.metadata.targetHints : [];
   const subjects = new Set(uniqueStrings([readString(node.metadata.subjectId),
     ...readStringArray(node.metadata.subjectIds), ...readStringArray(node.metadata.linkedObjectIds),
@@ -308,7 +307,7 @@ export async function includeOfficialLinkedEvidence(
     .filter((source) => !initial?.rejectedSourceIds.has(source.id))
     .filter((source) => !initial?.sourceWindow || initial.sourceWindow.has(source.id))
     .filter((source) => linkedSourceIds.has(source.id) || readStringArray(readRecord(source.metadata.sourceDiscovery).linkedObjectIds).some((id) => linkedIds.has(id)))
-    .slice(0, 50);
+    ;
   if (officialSources.length === 0) return carryInitialPass([...evidence], initial);
   for (const node of scopedObjects) guard.node(node.id, snapshotNodeInput(node));
   const retrievalScores = new Map(evidence.filter((item) => item.source).map((item) => [item.source!.id, item]));

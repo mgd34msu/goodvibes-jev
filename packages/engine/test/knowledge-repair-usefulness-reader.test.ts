@@ -245,7 +245,7 @@ describe('repair fact usefulness complete-pass reader', () => {
     installJudgmentPort({ ...fake.port, get model() { modelReads++; return 'jev-1.13.0'; } });
     const protectedLast = { ...input('fact-101'), fact: { ...input().fact, evidence: { password: 'synthetic-protected' } } };
     await expect(prepareRepairFactUsefulness([...Array.from({ length: 100 }, (_, i) => input(`fact-${i + 1}`)), protectedLast])).rejects.toBeInstanceOf(JudgmentInputError);
-    await expect(prepareRepairFactUsefulness([{ ...input(), evidence: [{ ...input().evidence[0]!, text: 'x'.repeat(LIMITS.characters + 1) }] }, protectedLast])).rejects.toBeInstanceOf(JudgmentInputError);
+    await expect(prepareRepairFactUsefulness([{ ...input(), evidence: [{ ...input().evidence[0]!, text: 'x'.repeat(160_000 + 1) }] }, protectedLast])).rejects.toBeInstanceOf(JudgmentInputError);
     expect(modelReads).toBe(0); expect(fake.requests).toHaveLength(0);
   });
 
@@ -291,21 +291,21 @@ describe('repair fact usefulness complete-pass reader', () => {
     expect(fake.requests[0]?.state).toEqual(JSON.parse(JSON.stringify(candidate)));
   });
 
-  test('input, character and invalid deadline budgets reject without clipping or requests', async () => {
+  test('large inputs are complete and only invalid deadlines are rejected', async () => {
     const fake = readings();
-    await held(prepareRepairFactUsefulness(Array.from({ length: LIMITS.inputs + 1 }, (_, i) => input(`fact-${i + 1}`))), 'budget');
-    await held(prepareRepairFactUsefulness([{ ...input(), evidence: [{ ...input().evidence[0]!, text: 'x'.repeat(LIMITS.characters) }] }]), 'budget');
-    for (const timeoutMs of [0, -1, NaN, Infinity, LIMITS.timeoutMs + 1]) await held(prepareRepairFactUsefulness([input()], { timeoutMs }), 'budget');
-    expect(fake.requests).toHaveLength(0);
+    expect(await prepareRepairFactUsefulness(Array.from({ length: 101 }, (_, i) => input(`fact-${i + 1}`)))).toHaveLength(101);
+    expect(await prepareRepairFactUsefulness([{ ...input(), evidence: [{ ...input().evidence[0]!, text: 'x'.repeat(160_000) }] }])).toHaveLength(1);
+    for (const timeoutMs of [-1, NaN, Infinity, LIMITS.timeoutMs + 1]) await held(prepareRepairFactUsefulness([input()], { timeoutMs }), 'budget');
+    expect(fake.requests).toHaveLength(2); // Equivalent candidates share a reading; every reference is returned.
   });
 
-  test('operation request budget includes later batches and rejects the whole over-budget batch', async () => {
+  test('later batches continue beyond the former request ceiling', async () => {
     const fake = readings(); const reader = createRepairFactUsefulnessReader();
     await reader.read(Array.from({ length: 99 }, (_, i) => distinctInput(`fact-${i + 1}`)));
-    await held(reader.read([distinctInput('fact-100'), distinctInput('fact-101')]), 'budget'); expect(fake.requests).toHaveLength(99);
+    expect(await reader.read([distinctInput('fact-100'), distinctInput('fact-101')])).toHaveLength(2); expect(fake.requests).toHaveLength(101);
   });
 
-  test('UTF-8 byte budget is operation-wide even when every input fits its character cap', async () => {
+  test('all UTF-8 evidence survives across batches beyond the former byte cap', async () => {
     const fake = readings(); const reader = createRepairFactUsefulnessReader();
     const text = '\u0800'.repeat(155_000);
     let rejection: unknown;
@@ -313,9 +313,8 @@ describe('repair fact usefulness complete-pass reader', () => {
       try { await reader.read([{ ...distinctInput(`fact-${index}`), evidence: [{ source: { sourceType: 'manual' }, text }] }]); }
       catch (error) { rejection = error; break; }
     }
-    expect(rejection).toBeInstanceOf(KnowledgeRepairFactUsefulnessHeldError);
-    expect((rejection as KnowledgeRepairFactUsefulnessHeldError).reason).toBe('budget');
-    expect(fake.requests.length).toBeGreaterThan(20); expect(fake.requests.length).toBeLessThan(40);
+    expect(rejection).toBeUndefined();
+    expect(fake.requests).toHaveLength(40);
   });
 });
 

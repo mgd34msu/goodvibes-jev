@@ -317,6 +317,24 @@ describe('selector', () => {
     expect(got.outcome).toBe('escalate');
   });
 
+  test('more than 254 candidates are all read in rounds within the wire option limit', async () => {
+    const candidates = Array.from({ length: 600 }, (_, index) => ({ id: `candidate-${index}`, content: index }));
+    const { port, requests } = fakePort((name, question) => {
+      if (name !== 'pick') return noulAnswer(0.99);
+      if (question.type !== 'choice') throw new Error('Expected choice');
+      const ids = Object.keys(question.criteria).filter(id => id !== 'none');
+      return choiceAnswer(question, ids.at(-1)!, 0.99);
+    });
+    const result = await selector.select(port, 'choose', candidates);
+    expect(result.chosen).toBe('candidate-599');
+    expect(Object.keys(result.fits)).toHaveLength(600);
+    expect(requests).toHaveLength(4);
+    for (const request of requests) {
+      const question = request.questions.pick!;
+      expect(question.type === 'choice' && Object.keys(question.criteria).length <= 255).toBe(true);
+    }
+  });
+
   test("a 'none' pick selects nothing", async () => {
     const { port } = fakePort((name, q) => (name === 'pick' ? choiceAnswer(q, 'none', 0.95) : noulAnswer(0.9)));
     expect((await selector.select(port, 'q', candidates)).chosen).toBeUndefined();

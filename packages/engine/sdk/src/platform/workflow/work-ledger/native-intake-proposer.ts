@@ -31,7 +31,7 @@ export function createNativeRequirementProposer(providers: Pick<ProviderRegistry
       const model = providers.getCurrentModel();
       const provider = providers.getForModel(model.id, model.provider);
       input.signal.throwIfAborted(); input.assertCurrent();
-      const response = await provider.chat({ model: model.id, signal: input.signal, maxTokens: 8_192,
+      const response = await provider.chat({ model: model.id, signal: input.signal,
         systemPrompt: [
           'Select the original requirements from the person\'s immutable input. Return one strict JSON object, without markdown.',
           'The only allowed shape is {"sourceRevision":"the supplied revision","spans":[{"partId":"input","start":0,"end":12}]} .',

@@ -323,17 +323,17 @@ export function awaitCompanionReply(
   timeoutMs: number,
   post: (pendingReply: {
     readonly resolve: (result: CompanionReplyWait) => void;
-    readonly timeout: ReturnType<typeof setTimeout>;
+    readonly timeout: ReturnType<typeof setTimeout> | undefined;
   }) => Promise<string>,
   onTimeout: (messageId: string) => void,
 ): Promise<CompanionReplyWait> {
   let messageId = '';
   return new Promise<CompanionReplyWait>((resolve) => {
-    const timeout = setTimeout(() => {
+    const timeout = timeoutMs > 0 ? setTimeout(() => {
       if (messageId) onTimeout(messageId);
       resolve({ messageId, error: 'Timed out waiting for companion chat reply' });
-    }, timeoutMs);
-    timeout.unref?.();
+    }, timeoutMs) : undefined;
+    timeout?.unref?.();
     void post({ resolve, timeout })
       .then((id) => { messageId = id; })
       .catch((error: unknown) => {

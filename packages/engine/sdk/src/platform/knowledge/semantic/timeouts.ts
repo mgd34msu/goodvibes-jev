@@ -3,6 +3,7 @@ export async function withTimeout<T>(
   timeoutMs: number,
   message: string,
 ): Promise<T> {
+  if (timeoutMs === 0 || timeoutMs === Infinity) return promise;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(message)), Math.max(1, timeoutMs));

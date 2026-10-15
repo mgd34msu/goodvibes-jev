@@ -24,7 +24,7 @@ import { completeJudgmentView } from './complete-view.js';
 import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 
 /** Most characters of the diff one request carries; retained for API compatibility; complete evidence has a shared whole-input budget. */
-export const MAX_JUDGED_DIFF_CHARS = 12_000;
+export const MAX_JUDGED_DIFF_CHARS = Number.POSITIVE_INFINITY;
 
 /** What the reading sees: the refs, the changed files, and the (bounded) unified diff. */
 export function semanticDiffView(range: string, changedFiles: readonly string[], diff: string): { range: string; changedFiles: string[]; diff: string } {

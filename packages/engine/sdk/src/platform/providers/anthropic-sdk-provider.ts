@@ -1,3 +1,4 @@
+import { documentedMaxOutput } from './anthropic.js';
 import { revalidateProviderAttempt } from './attempt-guard.js';
 import type { MessageStreamEvent } from '@anthropic-ai/sdk/resources/messages';
 import type {
@@ -25,7 +26,6 @@ import { buildStandardProviderAuthRoutes, summarizeProviderAuth } from './runtim
 import { toProviderError } from '../utils/error-display.js';
 import { parseRateLimitHeaders } from './rate-limit-headers.js';
 
-const DEFAULT_MAX_OUTPUT = 8192;
 
 type AnthropicStreamCapableClient = {
   messages: {
@@ -109,7 +109,7 @@ export class AnthropicSdkProvider implements LLMProvider {
       const resolvedModel = normalizeAnthropicModel(params.model ?? this.options.defaultModel);
       const body: Record<string, unknown> = {
         model: resolvedModel,
-        max_tokens: params.maxTokens ?? DEFAULT_MAX_OUTPUT,
+        max_tokens: params.maxTokens ?? documentedMaxOutput(resolvedModel),
         messages: toAnthropicMessages(params.messages),
         stream: true,
       };

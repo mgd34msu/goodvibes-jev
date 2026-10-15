@@ -13,8 +13,6 @@ import {
   CURRENT_CONTRACT_SCHEMA_VERSION,
   ContractStore,
   MAX_CONTRACT_QUARANTINE_FILES,
-  MAX_TERMINAL_CONTRACT_FILES,
-  TERMINAL_CONTRACT_MAX_AGE_MS,
   contractPath,
   contractsDir,
   deserializeContract,
@@ -182,33 +180,33 @@ describe('quarantine', () => {
 });
 
 describe('reaping', () => {
-  test('a terminal contract past 14 days is reaped; one within 14 days and any live contract are kept', () => {
+  test('terminal contracts remain available beyond 14 days alongside live contracts', () => {
     const root = tempRoot();
     const now = 100 * DAY;
-    const old = terminalContract(now - TERMINAL_CONTRACT_MAX_AGE_MS - 1, 'failed');
-    const recent = terminalContract(now - TERMINAL_CONTRACT_MAX_AGE_MS + 1, 'cancelled');
+    const old = terminalContract(now - (14 * DAY) - 1, 'failed');
+    const recent = terminalContract(now - (14 * DAY) + 1, 'cancelled');
     const live = makeContract({ status: 'awaiting-owner', createdAt: 0 });
     for (const contract of [old, recent, live]) writeRaw(root, contract.id, envelope(contract, 1, 0));
 
     const summary = storeAt(root, now).reap();
-    expect(summary.terminalExpired).toBe(1);
-    expect(summary.reapedIds).toEqual([old.id]);
-    expect(existsSync(contractPath(root, old.id))).toBe(false);
+    expect(summary.terminalExpired).toBe(0);
+    expect(summary.reapedIds).toEqual([]);
+    expect(existsSync(contractPath(root, old.id))).toBe(true);
     expect(existsSync(contractPath(root, recent.id))).toBe(true);
     expect(existsSync(contractPath(root, live.id))).toBe(true);
   });
 
-  test('beyond 50 terminal files the oldest go; live contracts do not count and are never reaped', () => {
+  test('all terminal and live contracts are retained beyond 50 files', () => {
     const root = tempRoot();
     const now = 100 * DAY;
-    const terminal = Array.from({ length: MAX_TERMINAL_CONTRACT_FILES + 3 }, (_, index) => terminalContract(now - DAY + index));
+    const terminal = Array.from({ length: 50 + 3 }, (_, index) => terminalContract(now - DAY + index));
     const live = Array.from({ length: 5 }, () => makeContract({ status: 'running' }));
     for (const contract of [...terminal, ...live]) writeRaw(root, contract.id, envelope(contract));
 
     const summary = storeAt(root, now).reap();
-    expect(summary.terminalOverCap).toBe(3);
-    expect([...summary.reapedIds].sort()).toEqual(terminal.slice(0, 3).map((contract) => contract.id).sort());
-    expect(readdirSync(contractsDir(root))).toHaveLength(MAX_TERMINAL_CONTRACT_FILES + 5);
+    expect(summary.terminalOverCap).toBe(0);
+    expect(summary.reapedIds).toEqual([]);
+    expect(readdirSync(contractsDir(root))).toHaveLength(53 + 5);
   });
 
   test('a contract held live in memory is not reaped even when its file on disk says terminal', () => {

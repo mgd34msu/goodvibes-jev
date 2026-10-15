@@ -107,13 +107,13 @@ export interface GoodVibesConfig {
   };
   orchestration: {
     recursionEnabled: boolean;  // default: false. Allow recursive agent spawning under bounded policy
-    maxDepth: number;           // default: 0. 0=off, higher values allow deeper bounded recursion
+    maxDepth: number;           // default: 0. No depth limit; recursionEnabled still controls delegation
   };
   planner: {
     decomposition: 'agent' | 'heuristic';  // default: 'agent'. 'heuristic' forces the old single-item path
-    maxTurns: number;                       // default: 6. Turn ceiling for the planning-decomposition agent
-    tokenCeiling: number;                   // default: 120000. Token budget for the planning-decomposition agent
-    wallTimeoutMs: number;                  // default: 60000. Wall-clock timeout for the planning-decomposition agent
+    maxTurns: number;                       // default: 0 (unlimited). Optional planner turn ceiling
+    tokenCeiling: number;                   // default: 0 (unlimited). Optional planner token budget
+    wallTimeoutMs: number;                  // default: 0 (unlimited). Optional planner wall-clock timeout
     adaptive: boolean;                      // default: false. Score single/cohort/background/remote strategies each turn
   };
   sandbox: {
@@ -165,7 +165,7 @@ export interface GoodVibesConfig {
     llmProvider: string;            // default: ''. Provider for tool LLM calls (empty = use current)
     llmModel: string;               // default: ''. Model for tool LLM calls (empty = fastest available)
     autoHeal: boolean;              // default: false. Auto-fix syntax errors on write/edit
-    defaultTokenBudget: number;     // default: 5000. Default token budget for read operations
+    defaultTokenBudget: number;     // default: 0. No automatic token budget for read operations
     hooksFile: string;              // default: 'hooks.json'. Hook configuration file name
     overflowSpillBackend: 'file' | 'ledger' | 'diagnostics'; // default: 'file'. Where overflow content spills
     contractVerification: boolean;  // default: true. Registration-time contract checks on every tool

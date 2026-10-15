@@ -191,7 +191,6 @@ export async function exportToMarkdownExtended(
 // ── HTML export ───────────────────────────────────────────────────────────────
 
 /** Maximum characters of tool result content to include in the HTML export. */
-const MAX_TOOL_RESULT_LENGTH = 4000;
 
 /**
  * exportToHTML - Generate a self-contained, styled HTML document from a
@@ -303,7 +302,7 @@ export async function exportToHTML(
       const rawContent = typeof msg.content === 'string' ? msg.content : extractText(msg.content);
       const content = rawContent;
       const toolLabel = msg.toolName ? `Tool result: ${escapeHtml(msg.toolName)}` : 'Tool result';
-      const truncated = content.length > MAX_TOOL_RESULT_LENGTH ? content.slice(0, MAX_TOOL_RESULT_LENGTH) + '\n...(truncated)' : content;
+      const truncated = content;
 
       let html = `<div class="message tool">`;
       html += `<details class="tool-result">`;

@@ -23,4 +23,4 @@ export class HomeGraphTriageHeldError extends Error {
     super(`Home Graph triage held (${reason}); no automatic fact, issue or cache write was authorized.`);
   }
 }
-export const TRIAGE_READING_LIMITS = Object.freeze({ inputs: 100, concurrency: 4, timeoutMs: 60_000, defaultTimeoutMs: 30_000 });
+export const TRIAGE_READING_LIMITS = Object.freeze({ inputs: Number.POSITIVE_INFINITY, concurrency: 4, timeoutMs: 2_147_483_647, defaultTimeoutMs: 0 });

@@ -98,6 +98,7 @@ export function createTimeoutController(
   timeoutMs: number,
   parentSignal?: AbortSignal,
 ): { readonly signal: AbortSignal; dispose(): void } {
+  if (timeoutMs === 0) return { signal: parentSignal ?? new AbortController().signal, dispose: () => {} };
   if (typeof AbortSignal.timeout === 'function' && !parentSignal) {
     return { signal: AbortSignal.timeout(timeoutMs), dispose: () => {} };
   }

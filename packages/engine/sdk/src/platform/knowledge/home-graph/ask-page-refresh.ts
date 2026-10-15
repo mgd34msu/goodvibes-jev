@@ -25,9 +25,9 @@ import { getKnowledgeSpaceId } from '../spaces.js';
 import { createSemanticWriteGuard } from '../semantic/primary-source-plan.js';
 import type { HomeGraphAskResult } from './types.js';
 
-const MAX_ASK_REFRESH_DEVICES = 2;
-const MAX_ASK_PAGE_SOURCES_TO_CONSIDER = 16;
-const MAX_ASK_PAGE_SOURCES_TO_LINK = 8;
+const MAX_ASK_REFRESH_DEVICES = Infinity;
+const MAX_ASK_PAGE_SOURCES_TO_CONSIDER = Infinity;
+const MAX_ASK_PAGE_SOURCES_TO_LINK = Infinity;
 const ASK_FACT_SOURCE_WEIGHT = 0.82;
 const ASK_FACT_DESCRIBES_WEIGHT = 0.8;
 

@@ -7,6 +7,8 @@
  * c) spawn returns a process_id and pid
  */
 import { describe, expect, test } from 'bun:test';
+import { readFile, rm } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { ProcessManager } from '../sdk/src/platform/tools/shared/process-manager.js';
 import { waitFor } from './_helpers/test-timeout.js';
 import { useToolReadings } from './_helpers/tool-readings.ts';
@@ -42,6 +44,24 @@ describe('ProcessManager.spawn', () => {
     expect(status?.killDeadline).toBeNull();
     expect(status?.done).toBe(true);
     expect(status?.exitCode).toBe(0);
+  });
+
+  test('large output is preserved in full on disk after the memory preview fills', async () => {
+    const pm = new ProcessManager();
+    let path: string | undefined;
+    const expected = '🛰️'.repeat(90_000) + '\nLAST_OUTPUT_MARKER\n';
+    try {
+      const result = await pm.spawnArgv(process.execPath, ['-e', "process.stdout.write('🛰️'.repeat(90000) + '\\nLAST_OUTPUT_MARKER\\n')"], '/tmp', undefined);
+      await waitFor(() => pm.getStatus(result.process_id!)?.done === true);
+      const status = pm.getStatus(result.process_id!)!;
+      expect(status.exitCode).toBe(0);
+      path = /complete output continues in ([^\n]+)\]/.exec(status.stdout.join(''))?.[1];
+      expect(path).toBeDefined();
+      expect(await readFile(path!, 'utf8')).toBe(expected);
+    } finally {
+      await pm.close();
+      if (path) await rm(dirname(path), { recursive: true, force: true });
+    }
   });
 
   test('hanging process: SIGKILL deadline is set after timeout', async () => {

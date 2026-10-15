@@ -36,7 +36,7 @@ export async function run(
   }
 
   const task = promptTemplate.replaceAll('$ARGUMENTS', JSON.stringify(event));
-  const timeoutMs = (hook.timeout ?? 60) * 1000;
+  const timeoutMs = (hook.timeout ?? 0) * 1000;
   logger.debug('agent hook: spawning agent', {
     event: event.path,
     timeoutMs,
@@ -62,7 +62,7 @@ export async function run(
 
   // Poll the owner record until the contract settles it or the timeout passes.
   const pollInterval = 100; // ms
-  const deadline = Date.now() + timeoutMs;
+  const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
 
   while (Date.now() < deadline) {
     const current = manager.getStatus(agentId);
@@ -96,7 +96,7 @@ export async function run(
 
   // Timed out: cancelling the owner record stops the contract and its unit agents.
   manager.cancel(agentId);
-  const timeoutSecs = hook.timeout ?? 60;
+  const timeoutSecs = hook.timeout ?? 0;
   logger.error('agent hook: timed out', { agentId, timeoutSecs });
   return { ok: false, error: `agent hook timed out after ${timeoutSecs}s (agentId: ${agentId})` };
 }
@@ -112,7 +112,7 @@ async function runOwned(
   if (hook.prompt == null) return { ok: false, error: 'agent hook missing "prompt" field' };
   if (options.signal?.aborted) return { ok: false, error: 'agent hook cancelled' };
   if (!manager.spawnOwned) return { ok: false, code: 'OWNED_AGENT_EXECUTION_UNSUPPORTED', error: 'agent hook requires captured execution settlement' };
-  const execution = createHookExecution(options, hook.timeout ?? 60, 'agent');
+  const execution = createHookExecution(options, hook.timeout ?? 0, 'agent');
   try {
     execution.signal.throwIfAborted();
     const owned = manager.spawnOwned({
@@ -124,7 +124,7 @@ async function runOwned(
     const current = await owned.settled;
     const agentId = current.id;
     if (execution.signal.aborted) {
-      return { ok: false, error: options.signal?.aborted ? 'agent hook cancelled' : `agent hook timed out after ${hook.timeout ?? 60}s (agentId: ${agentId})` };
+      return { ok: false, error: options.signal?.aborted ? 'agent hook cancelled' : `agent hook timed out after ${hook.timeout ?? 0}s (agentId: ${agentId})` };
     }
     if (current.status === 'completed') return current.fullOutput ? { ok: true, additionalContext: current.fullOutput } : { ok: true };
     if (current.status === 'cancelled') return { ok: false, error: `agent ${agentId} was cancelled before completing` };

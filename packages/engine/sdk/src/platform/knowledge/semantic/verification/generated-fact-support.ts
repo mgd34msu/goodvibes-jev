@@ -18,8 +18,9 @@ type RequestPlan = {
   readonly attachment: boolean;
 };
 function bounded(value: number | undefined, maximum: number): number {
-  const result = value ?? maximum;
-  if (!Number.isInteger(result) || result <= 0 || result > maximum) throw new Held('budget');
+  if (value === undefined) return maximum;
+  const result = value;
+  if (!Number.isInteger(result) || result < 0 || (maximum > 0 && result > maximum)) throw new Held('budget');
   return result;
 }
 function versionsAgree(inputs: readonly ProjectedSupportInput[]): void {
@@ -84,7 +85,7 @@ export async function prepareGeneratedFactSupport(inputs: readonly GeneratedFact
   if (Object.getPrototypeOf(inputs) !== Array.prototype || Object.values(Object.getOwnPropertyDescriptors(inputs)).some((item) => item.get || item.set)) throw new Held('malformed');
   for (let index = 0; index < inputs.length; index++) if (!Object.hasOwn(inputs, index)) throw new Held('malformed');
   const maxRequests = bounded(options.maxRequests, LIMITS.requests), maxBytes = bounded(options.maxBytes, LIMITS.bytes);
-  const concurrency = bounded(options.concurrency, LIMITS.concurrency), timeoutMs = bounded(options.timeoutMs, LIMITS.timeoutMs);
+  const concurrency = Math.max(1, bounded(options.concurrency, LIMITS.concurrency)), timeoutMs = bounded(options.timeoutMs ?? 0, 2_147_483_647);
   // No port is even acquired until every selected input has passed privacy and
   // identity checks. In particular, a protected late field cannot leak early ones.
   let projectionBytes = 0;
@@ -120,7 +121,7 @@ export async function prepareGeneratedFactSupport(inputs: readonly GeneratedFact
   const cancel = (reason: Held) => { cancellation ??= reason; controller.abort(); };
   const onAbort = () => cancel(new Held('aborted'));
   options.signal?.addEventListener('abort', onAbort, { once: true });
-  const timeout = setTimeout(() => cancel(new Held('budget')), timeoutMs);
+  const timeout = timeoutMs > 0 ? setTimeout(() => cancel(new Held('budget')), timeoutMs) : undefined;
   const assertCurrent = () => { if (cancellation) throw cancellation; if (options.signal?.aborted) throw new Held('aborted'); };
   const settled: GeneratedFactSupportReceipt[] = [];
   let next = 0;

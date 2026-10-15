@@ -215,7 +215,7 @@ describe('agent tool spawn', () => {
     expect(runner.starts[0]).toMatchObject({ ask: 'Fix the failing date test', proposedUnits: [{ task: 'Fix the failing date test' }] });
   });
 
-  test('a failed contract start admits no agent while its private error reading is unavailable', async () => {
+  test('a failed contract start reports the actual error without admitting an agent', async () => {
     const { manager, runner, tool, ran } = harness();
     let attemptedStarts = 0;
     runner.start = () => { attemptedStarts++; throw new Error('No contract runner is composed in this runtime.'); };
@@ -223,7 +223,7 @@ describe('agent tool spawn', () => {
     const result = await tool.execute({ mode: 'spawn', task: 'Fix the failing date test' });
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe('[REDACTED]');
+    expect(result.error).toBe('No contract runner is composed in this runtime.');
     expect(attemptedStarts).toBe(1);
     expect(startedContract(result)).toBe(false);
     expect(ran).toHaveLength(0);
@@ -329,12 +329,12 @@ describe('a contract leaf cannot spawn', () => {
 
     for (const result of [intoContract, batch, outside]) {
       expect(result.success).toBe(false);
-      expect(result.error).toBe('[REDACTED]');
+      expect(result.error).toBe('units are leaves; the contract plans sub-work');
     }
     // One task of a batch from a unit is enough to refuse the whole batch before the contract starts.
     const mixed = await tool.execute({ mode: 'batch-spawn', tasks: [{ task: 'a' }, { task: 'b', parentAgentId: unit.id, outsideContract: true }] });
     expect(mixed.success).toBe(false);
-    expect(mixed.error).toBe('[REDACTED]');
+    expect(mixed.error).toBe('units are leaves; the contract plans sub-work');
 
     expect(runner.starts).toHaveLength(0);
     expect(manager.list()).toEqual([unit]);
@@ -447,7 +447,7 @@ describe('AgentManager startForOwner seam', () => {
     expect(attemptedStarts).toBe(1);
     expect(manager.list()).toHaveLength(1);
     const [record] = manager.list();
-    expect(record).toMatchObject({ status: 'failed', error: 'The contract could not start: [REDACTED]' });
+    expect(record).toMatchObject({ status: 'failed', error: 'The contract could not start: store unavailable' });
     expect(record?.completedAt).toBeDefined();
     await flush();
     expect(executions).toBe(0);

@@ -52,7 +52,7 @@ const CONTENT_CRITERIA = {
 } as const;
 
 /** Most characters of one block a request carries; longer blocks are clipped with a note. */
-export const MAX_JUDGED_BLOCK_CHARS = 160_000;
+export const MAX_JUDGED_BLOCK_CHARS = Number.POSITIVE_INFINITY;
 
 /** Requests in flight at once when a page needs more than one. */
 const REQUEST_CONCURRENCY = 4;

@@ -32,7 +32,7 @@ export interface JudgmentConfig {
   readonly endpoint: JudgmentEndpoint;
   /** The model id or alias to ask; defaults to {@link DEFAULT_MODEL}. */
   readonly model: string;
-  /** Timeout per attempt in milliseconds. */
+  /** Optional timeout per attempt in milliseconds; 0 waits until completion or cancellation. */
   readonly timeoutMs: number;
   /** Backoff between transient failures: a configured chain runs once; primary-only retries persist. */
   readonly retry: Partial<JudgmentRetryPolicy>;
@@ -68,7 +68,7 @@ export function judgmentConfigFromEnv(
   return {
     endpoint: { kind: endpointKind(baseURL), baseURL, apiKey },
     model: overrides.model ?? (env['TYPESAFE_DEFAULT_MODEL']?.trim() || DEFAULT_MODEL),
-    timeoutMs: overrides.timeoutMs ?? 10_000,
+    timeoutMs: overrides.timeoutMs ?? 0,
     retry: overrides.retry ?? {},
     ...(overrides.fallbacks === undefined ? {} : { fallbacks: overrides.fallbacks }),
     ...(overrides.fetch === undefined ? {} : { fetch: overrides.fetch }),
@@ -77,7 +77,7 @@ export function judgmentConfigFromEnv(
 
 /** Validate the complete chain before constructing clients or transmitting state. */
 export function validateJudgmentConfig(config: JudgmentConfig): void {
-  if (!Array.isArray(config.fallbacks ?? []) || (config.fallbacks?.length ?? 0) > 8) throw new JudgmentError('invalid-request', 'judgment allows at most eight fallback targets');
+  if (!Array.isArray(config.fallbacks ?? [])) throw new JudgmentError('invalid-request', 'judgment fallback targets must be an array');
   const targets = [{ endpoint: config.endpoint, model: config.model }, ...(config.fallbacks ?? [])];
   for (const target of targets) {
     if (!target || !target.endpoint || !['hosted', 'local'].includes(target.endpoint.kind)
@@ -86,9 +86,9 @@ export function validateJudgmentConfig(config: JudgmentConfig): void {
       throw new JudgmentError('invalid-request', 'invalid judgment target; use an http(s) URL without credentials, query or fragment, a model and a resolved key');
     }
   }
-  if (!Number.isInteger(config.timeoutMs) || config.timeoutMs < 1 || config.timeoutMs > 120_000
+  if (!Number.isInteger(config.timeoutMs) || config.timeoutMs < 0 || config.timeoutMs > 2_147_483_647
     || 'totalTimeoutMs' in config) {
-    throw new JudgmentError('invalid-request', 'judgment attempt timeout must be positive bounded milliseconds; total-time limits are not supported');
+    throw new JudgmentError('invalid-request', 'judgment attempt timeout must be 0 or valid timer milliseconds; total-time limits are not supported');
   }
   retryPolicy(config.retry);
 }

@@ -1,7 +1,7 @@
 /** Lightweight projection tests. Full source-bound native lifecycle proof is separate. */
 import { expect, test } from 'bun:test';
 import { inspectContractIntegration } from '../../sdk/src/platform/contract/integration-inspection.js';
-import { CONTRACT_INTEGRATION_MAX_BYTES, contractIntegrationInspectionSchema } from '../../sdk/src/platform/contract/integration-inspection-wire.js';
+import { contractIntegrationInspectionSchema } from '../../sdk/src/platform/contract/integration-inspection-wire.js';
 import { ContractRun } from '../../sdk/src/platform/contract/run-context.js';
 import type { Contract, UnitCheck } from '../../sdk/src/platform/contract/types.js';
 import type { OrchestrationEngine } from '../../sdk/src/platform/orchestration/engine.js';
@@ -134,12 +134,15 @@ test('shared/session, absent engines, terminal/cancelled/aborted/disposed runs n
   }
 });
 
-test('oversize observations fail bounded without truncating paths or rows; duplicate unit IDs fail closed', () => {
-  const f = fixture(); const path = '☃'.repeat(CONTRACT_INTEGRATION_MAX_BYTES);
+test('large observations preserve all paths and rows; duplicate unit IDs still fail validation', () => {
+  const f = fixture(); const path = '☃'.repeat(16_384);
   f.workstreams[0]!.items[0]!.conflictFiles = [path];
-  expect(inspectContractIntegration(f.run)).toEqual({ state: 'unavailable', reason: 'limit' });
+  expect(live(f).units[0]!.item).toMatchObject({ conflictFiles: [path] });
   expect(f.workstreams[0]!.items[0]!.conflictFiles).toEqual([path]);
   expect(inspectContractIntegration(fixture({ units: [makeUnit(), makeUnit()] }).run)).toEqual({ state: 'unavailable', reason: 'invalid-data' });
-  expect(inspectContractIntegration(fixture({ units: Array.from({ length: 257 }, (_, n) => makeUnit({ id: String(n) })) }).run)).toEqual({ state: 'unavailable', reason: 'limit' });
+  expect(live(fixture({ units: Array.from({ length: 257 }, (_, n) => makeUnit({ id: String(n) })) })).units).toHaveLength(257);
+  const paths = Array.from({ length: 300 }, (_, n) => `src/file-${n}.ts`);
+  f.workstreams[0]!.items[0]!.conflictFiles = paths;
+  expect(live(f).units[0]!.item).toMatchObject({ conflictFiles: paths });
   expect(contractIntegrationInspectionSchema.safeParse({ state: 'live', contractId: f.contract.id, isolation: 'worktree', units: [], resolve: true }).success).toBe(false);
 });

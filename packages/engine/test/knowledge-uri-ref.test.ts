@@ -104,7 +104,7 @@ describe('Knowledge concrete ref identity', () => {
     for (const inputs of [
       [contentOne, 'https://docs.example.test/page?ref=document&password=never-transmit'],
       [contentOne, 'https://docs.example.test/page?ref=password%3Dnever-transmit'],
-      [...Array.from({ length: LIMITS.inputs + 1 }, (_, index) => `https://docs.example.test/page?ref=document-${index}`), 'https://docs.example.test/page?ref=document&password=never-transmit'],
+      [...Array.from({ length: 1001 }, (_, index) => `https://docs.example.test/page?ref=document-${index}`), 'https://docs.example.test/page?ref=document&password=never-transmit'],
     ]) {
       const fake = answers(0.01);
       await expect(createKnowledgeUriCanonicalizer().canonicalizeAll(inputs)).rejects.toBeInstanceOf(JudgmentInputError);

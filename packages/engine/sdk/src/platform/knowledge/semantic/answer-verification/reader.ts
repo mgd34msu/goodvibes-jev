@@ -7,7 +7,7 @@ import { KnowledgeAnswerQualityHeldError as Held, type AnswerCandidate, type Ans
   type AnswerVerificationInput, type VerifiedAnswerSelection } from './types.js';
 export * from './types.js';
 
-export const ANSWER_VERIFICATION_LIMITS = Object.freeze({ evidence: 24, candidates: 2, characters: 160_000, candidateCharacters: 16_000, timeoutMs: 60_000 });
+export const ANSWER_VERIFICATION_LIMITS = Object.freeze({ evidence: Infinity, candidates: Infinity, characters: Infinity, candidateCharacters: Infinity, timeoutMs: 2_147_483_647 });
 function jsonState(value: object): Record<string, JsonValue> {
   const state = toJson(value);
   if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Held('malformed');
@@ -20,7 +20,7 @@ function booleanReading(reading: YesNoReading): AnswerQualityBoolean {
 function snapshotInput(input: AnswerVerificationInput): AnswerVerificationInput {
   assertJudgmentInput(input);
   if (typeof input.query !== 'string' || !input.query.trim() || !Array.isArray(input.evidence) || !Array.isArray(input.candidates)) throw new Held('malformed');
-  if (input.evidence.length > ANSWER_VERIFICATION_LIMITS.evidence || input.candidates.length > 2) throw new Held('budget');
+  if (input.evidence.length > ANSWER_VERIFICATION_LIMITS.evidence || input.candidates.length > ANSWER_VERIFICATION_LIMITS.candidates) throw new Held('budget');
   const references = new Set<string>(), candidates = new Set<string>();
   for (const evidence of input.evidence) {
     if (!evidence || typeof evidence.reference !== 'string' || !/^evidence-[1-9]\d*$/.test(evidence.reference)
@@ -68,12 +68,12 @@ export async function verifyKnowledgeAnswer(input: AnswerVerificationInput,
   const snapshot = snapshotInput(input);
   if (!snapshot.evidence.some((row) => row.text.trim())) return freezeSupport({ confidence: 0, quality: { status: 'no-evidence', decisionIds: [] } });
   const timeoutMs = options.timeoutMs;
-  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > ANSWER_VERIFICATION_LIMITS.timeoutMs)) throw new Held('budget');
+  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > ANSWER_VERIFICATION_LIMITS.timeoutMs)) throw new Held('budget');
   const controller = new AbortController();
   let reason: 'aborted' | 'budget' | undefined;
   const abort = () => { reason ??= 'aborted'; controller.abort(); };
   options.signal?.addEventListener('abort', abort, { once: true });
-  const timer = timeoutMs === undefined ? undefined : setTimeout(() => { reason ??= 'budget'; controller.abort(); }, timeoutMs);
+  const timer = timeoutMs === undefined || timeoutMs === 0 ? undefined : setTimeout(() => { reason ??= 'budget'; controller.abort(); }, timeoutMs);
   let stopRace = () => {};
   const cancelled = new Promise<never>((_resolve, reject) => {
     const stop = () => reject(new Held(reason ?? 'aborted'));

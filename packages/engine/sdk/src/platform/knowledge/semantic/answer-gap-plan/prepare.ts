@@ -47,7 +47,7 @@ export function prepareAnswerGapUniverse(store: KnowledgeStore, requestedSpace: 
   const space = normalizeKnowledgeSpaceId(requestedSpace);
   const guard = createSemanticWriteGuard(store, signal);
   const timeoutMs = options.timeoutMs ?? LIMITS.defaultTimeoutMs;
-  const deadlineAt = Date.now() + timeoutMs;
+  const deadlineAt = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
   const assertCurrent = () => {
     if (signal?.aborted) throw new Held('aborted');
     if (Date.now() >= deadlineAt) throw new Held('budget');
@@ -125,7 +125,7 @@ export function prepareAnswerGapUniverse(store: KnowledgeStore, requestedSpace: 
       subjects: subjectRows.map((node) => ({ reference: subjectReferences.get(node!.id)!, content: subjectContent(node!) })),
       sources: sourceRows.map((source) => ({ reference: sourceReferences.get(source!.id)!, content: jsonRecord(sourceContent(source!)) })) };
   };
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs) throw new Held('budget');
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > LIMITS.timeoutMs) throw new Held('budget');
   assertCurrent();
   return {
     assertCurrent,

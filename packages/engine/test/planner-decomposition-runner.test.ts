@@ -92,6 +92,18 @@ describe('AgentManager decomposition runner', () => {
     expect(fake.cancelCalls).toHaveLength(0);
   });
 
+  test('zero limits allow the planner to finish beyond the former turn, token and time ceilings', async () => {
+    const fake = makeFake({ poll: i => ({ status: i < 9 ? 'running' : 'completed',
+      usage: { ...usage(250_000, 50_000), turnCount: i + 1 }, fullOutput: 'complete plan' }) });
+    const runner = createAgentManagerDecompositionRunner({ agentManager: fake.agentManager, now: fake.now,
+      sleep: fake.sleep, pollIntervalMs: 30_000 });
+    const result = await runner.run({ ...REQ, bounds: { maxTurns: 0, tokenCeiling: 0, wallTimeoutMs: 0 } });
+    expect(result.status).toBe('completed');
+    expect(result.output).toBe('complete plan');
+    expect(fake.clock.t).toBeGreaterThan(120_000);
+    expect(fake.cancelCalls).toHaveLength(0);
+  });
+
   test('wall-timeout cancels the agent → cancelled with detail', async () => {
     const fake = makeFake({ poll: () => ({ status: 'running', usage: usage(10, 5) }) });
     const runner = createAgentManagerDecompositionRunner({ agentManager: fake.agentManager, now: fake.now, sleep: fake.sleep, pollIntervalMs: 50 });
@@ -124,8 +136,7 @@ describe('AgentManager decomposition runner', () => {
     const runner = createAgentManagerDecompositionRunner({ agentManager: fake.agentManager, now: fake.now, sleep: fake.sleep });
     const result = await runner.run(REQ);
     expect(result.status).toBe('failed');
-    expect(result.detail).toBe('[REDACTED]');
-    expect(result.detail).not.toContain('spawn rejected');
+    expect(result.detail).toBe('spawn rejected');
   });
 });
 

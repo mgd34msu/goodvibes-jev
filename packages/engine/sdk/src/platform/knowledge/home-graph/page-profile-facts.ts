@@ -10,7 +10,7 @@ import { buildHomeGraphMetadata } from './helpers.js';
 import type { HomeGraphPageSourceReader } from './page-quality.js';
 
 type ExtractionBySourceId = ReadonlyMap<string, ReturnType<KnowledgeStore['getExtractionBySourceId']>>;
-const MAX_PROFILE_SOURCES_PER_DEVICE_PAGE = 8;
+const MAX_PROFILE_SOURCES_PER_DEVICE_PAGE = Infinity;
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new GoodVibesSdkError('Home Graph device passport refresh was cancelled.', {
     category: 'timeout', source: 'runtime', operation: 'homegraph.refreshDevicePassport',

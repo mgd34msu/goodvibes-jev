@@ -22,4 +22,4 @@ export class KnowledgeAnswerGapHeldError extends Error {
   override readonly name = 'KnowledgeAnswerGapHeldError';
   constructor(readonly reason: AnswerGapHoldReason) { super(`Knowledge answer gap held (${reason}); no gap write was authorized.`); }
 }
-export const ANSWER_GAP_LIMITS = Object.freeze({ candidates: 50, characters: 160_000, bytes: 8_000_000, timeoutMs: 60_000, defaultTimeoutMs: 15_000 });
+export const ANSWER_GAP_LIMITS = Object.freeze({ candidates: Number.POSITIVE_INFINITY, characters: Number.POSITIVE_INFINITY, bytes: Number.POSITIVE_INFINITY, timeoutMs: 2_147_483_647, defaultTimeoutMs: 0 });

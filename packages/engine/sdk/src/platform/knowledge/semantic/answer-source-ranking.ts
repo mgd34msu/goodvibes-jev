@@ -48,7 +48,6 @@ export async function readAnswerSourceRanking(
   }));
   // Preflight the complete selected batch before any concurrent request starts.
   assertJudgmentInput({ query, candidates: candidates.map((candidate) => candidate.content) });
-  if (candidates.some(candidate => JSON.stringify({ query, candidate: candidate.content }).length > 160_000)) throw new JudgmentInputError('unsupported-input');
   const port = judgmentPort('engine.knowledge.answer-source-rank');
   const model = port.model, version = JSON.stringify({ facts, evidence });
   const current = () => {

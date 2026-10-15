@@ -469,6 +469,6 @@ test('a single-unit plan is accepted without an integration group', async () => 
 
 test('the planner bounds come from planner.* settings with a finite guard', () => {
   expect(readPlannerBounds(configReader({}, { 'planner.maxTurns': 4, 'planner.tokenCeiling': Number.NaN }))).toEqual({
-    maxTurns: 4, tokenCeiling: 120_000, wallTimeoutMs: 120_000,
+    maxTurns: 4, tokenCeiling: 0, wallTimeoutMs: 0,
   });
 });

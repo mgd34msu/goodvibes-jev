@@ -180,7 +180,7 @@ export function buildCurrentTask(
 ): CompactionSection | null {
   const task =
     planTitle ??
-    (lastUserMessage ? lastUserMessage.slice(0, 200).trim() : null);
+    (lastUserMessage ? lastUserMessage.trim() : null);
   if (!task) return null;
   return makeSection('current-task', '## Current Task', task);
 }
@@ -328,9 +328,9 @@ export function buildCompletedAgentWork(
     const answer = contract.answer?.trim();
     if (!answer && answered.length === 0) continue;
     const head = `- [${terminalResult(contract.status)}] ${contract.id} | ${contractSubject(contract, 80)}`;
-    lines.push(answer ? `${head} | ${answer.slice(0, 200).replace(/\n/g, ' ')}` : head);
+    lines.push(answer ? `${head} | ${answer.replace(/\n/g, ' ')}` : head);
     for (const unit of answered) {
-      lines.push(`  - ${unit.id} [${unit.status}] ${unit.title.slice(0, 60).replace(/\n/g, ' ')}: ${unit.answer!.trim().slice(0, 120).replace(/\n/g, ' ')}`);
+      lines.push(`  - ${unit.id} [${unit.status}] ${unit.title.slice(0, 60).replace(/\n/g, ' ')}: ${unit.answer!.trim().replace(/\n/g, ' ')}`);
     }
   }
 
@@ -368,8 +368,7 @@ function describeAgentFiles(agent: AgentRecord): string | null {
     ...engineerReport.filesDeleted,
   ];
   if (paths.length === 0) return null;
-  const shown = paths.slice(0, 5).join(', ');
-  return `files: ${shown}${paths.length > 5 ? ` (+${paths.length - 5} more)` : ''}`;
+  return `files: ${paths.join(', ')}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -458,13 +457,13 @@ export function buildToolResultsPrompt(toolMessages: ProviderMessage[]): string 
       'From these tool call results, select the ones that are still relevant for ongoing work.',
       'Include: file paths touched with what was done (created/edited/deleted), any error outputs',
       'that have not been resolved, any build/test results.',
-      'Max 1,500 tokens. Use relative paths and short descriptions.',
+      'Use relative paths and preserve the information needed to continue the work.',
     ],
     delimiter: 'TOOL RESULTS',
     messages: toolMessages,
     render: (msg) => {
       const text = extractText(msg.content);
-      return text.trim() ? `[tool]: ${text.trim().slice(0, 2000)}` : null;
+      return text.trim() ? `[tool]: ${text.trim()}` : null;
     },
     outro: 'Provide a concise summary of relevant tool results now:',
   });
@@ -660,7 +659,7 @@ export function buildResolvedProblemsPrompt(
     messages,
     render: (msg) => {
       const text = extractText(msg.content);
-      return text.trim() ? `[${msg.role}]: ${text.trim().slice(0, 1000)}` : null;
+      return text.trim() ? `[${msg.role}]: ${text.trim()}` : null;
     },
     outro: 'List resolved problems now (or return empty if none):',
   });

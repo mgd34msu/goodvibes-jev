@@ -82,7 +82,7 @@ async function promoteRepairSourcesWithinBudget(
 ): Promise<PromoteRepairSourcesResult> {
   assertSemanticWriteAllowed(signal, context.shouldStop);
   const requestStore = context.store, requestEnrich = context.enrichSource, requestStop = context.shouldStop;
-  const requestData = () => captureOwnedJson({ spaceId, gap, sourceIds, taskId: task.id, deadlineAt, objectProfiles: context.objectProfiles });
+  const requestData = () => captureOwnedJson({ spaceId, gap, sourceIds, taskId: task.id, deadlineAt: Number.isFinite(deadlineAt) ? deadlineAt : null, objectProfiles: context.objectProfiles });
   const requestVersion = JSON.stringify(requestData());
   const assertRequestCurrent = () => {
     assertSemanticWriteAllowed(signal, requestStop);
@@ -180,7 +180,7 @@ async function promoteRepairSourcesWithinBudget(
       try {
         const enrich = context.enrichSource;
         await withSupportBudget((childSignal) => enrich(sourceId, { knowledgeSpaceId: spaceId, force: true, signal: childSignal, shouldStop: context.shouldStop }),
-          Math.min(remainingMs, 20_000), signal);
+          Number.isFinite(remainingMs) ? remainingMs : 0, signal);
       } catch (error) {
         // Earlier settled promotion/link passes stand; this hold must not start a fallback pass.
         if (isKnowledgeSourceQualityFailure(error) || error instanceof KnowledgeGeneratedFactSupportHeldError) throw error;
@@ -255,8 +255,8 @@ async function waitForRepairSourceText(
     const source = store.getSource(sourceId);
     if (!source) return;
     const extraction = store.getExtractionBySourceId(source.id);
-    if (extractedSemanticText(extraction).length >= 40) return;
-    if (!sourceRequiresExtractedEvidence(source) && sourceSemanticText(source, extraction).length >= 80) return;
+    if (extractedSemanticText(extraction).length > 0) return;
+    if (!sourceRequiresExtractedEvidence(source) && sourceSemanticText(source, extraction).length > 0) return;
     await yieldToEventLoop();
     await sleep(100);
   }

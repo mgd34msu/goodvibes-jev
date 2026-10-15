@@ -112,8 +112,8 @@ describe('answer gap admission and equivalence in actual answer callers', () => 
 
   test('fully useful answers do not read protected or overbudget historic gaps', async () => {
     const store = await fixture(true);
-    for (let index = 0; index <= ANSWER_GAP_LIMITS.candidates; index++) await seedGap(store, `Historic question ${index}`, `old-${index}`,
-      index === ANSWER_GAP_LIMITS.candidates ? { subject: 'Authorization: Bearer synthetic-unused-history' } : {});
+    for (let index = 0; index <= 50; index++) await seedGap(store, `Historic question ${index}`, `old-${index}`,
+      index === 50 ? { subject: 'Authorization: Bearer synthetic-unused-history' } : {});
     const fake = readings({ enough: 0.99 }), before = snapshot(store);
     const result = await answerKnowledgeQuery({ store }, input('How many connectors does the device have?'));
     expect(result.answer.quality?.status).toBe('verified'); expect(result.answer.gaps).toEqual([]);
@@ -198,11 +198,11 @@ describe('gap reader strict boundaries', () => {
   function projection(count = 1): AnswerGapInput { return { question, needsSubject: false,
     candidates: Array.from({ length: count }, (_, index) => ({ reference: `gap-${index + 1}`, title: 'Previous need', ...question })) }; }
   const options = () => ({ deadlineAt: Date.now() + 1_000, assertCurrent() {} });
-  test('preflights the late protected candidate before oversized-pass rejection or any request', () => {
-    const fake = readings(); const value = projection(ANSWER_GAP_LIMITS.candidates + 1);
+  test('preflights the late protected candidate before admitting a large pass or any request', () => {
+    const fake = readings(); const value = projection(50 + 1);
     const candidates = [...value.candidates]; candidates[candidates.length - 1] = { ...candidates.at(-1)!, query: 'Authorization: Bearer synthetic-late-gap' };
     expect(() => prepareAnswerGapReadings({ ...value, candidates }, options())).toThrow(JudgmentInputError); expect(fake.requests).toHaveLength(0);
-    expect(() => prepareAnswerGapReadings(value, options())).toThrow(/budget/); expect(fake.requests).toHaveLength(0);
+    expect(() => prepareAnswerGapReadings(value, options())).not.toThrow(); expect(fake.requests).toHaveLength(0);
   });
   for (const mode of ['unavailable', 'malformed', 'uncertain'] as const) test(`${mode} never resolves a guessed target`, async () => {
     const fake = readings();

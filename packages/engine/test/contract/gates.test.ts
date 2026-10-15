@@ -27,7 +27,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function config(gates: readonly QualityGate[], gateTimeoutMs = 120_000): ContractConfigReader {
+function config(gates: readonly QualityGate[], gateTimeoutMs = 0): ContractConfigReader {
   const values: Record<string, unknown> = { gateTimeoutMs };
   return {
     get: (key: string): unknown => values[key.replace(/^contract\./, '')],
@@ -104,6 +104,17 @@ describe('executeGateCommand', () => {
     expect(result.passed).toBe(false);
     await Bun.sleep(400);
     expect(existsSync(join(dir, 'escaped'))).toBe(false);
+  });
+
+  test('cancellation stops an untimed gate and its descendants', async () => {
+    const controller = new AbortController();
+    const work = executeGateCommand("sh -c 'trap \"\" TERM; sleep 0.3; touch escaped' & wait", dir, 0, controller.signal);
+    const timer = setTimeout(() => controller.abort(new Error('review cancelled')), 50);
+    try {
+      await expect(work).rejects.toThrow('review cancelled');
+      await Bun.sleep(400);
+      expect(existsSync(join(dir, 'escaped'))).toBe(false);
+    } finally { clearTimeout(timer); }
   });
 
   test('stdout and stderr are drained while a large-output gate is running', async () => {

@@ -48,4 +48,4 @@ export class KnowledgeEvidenceRelevanceHeldError extends Error {
     super(`Knowledge evidence relevance held (${reason}); no partial evidence selection was authorized.`);
   }
 }
-export const EVIDENCE_RELEVANCE_LIMITS = Object.freeze({ candidates: 100, facts: 100, subjects: 24, characters: 160_000, concurrency: 4, defaultTimeoutMs: 30_000, timeoutMs: 60_000 });
+export const EVIDENCE_RELEVANCE_LIMITS = Object.freeze({ candidates: Number.POSITIVE_INFINITY, facts: Number.POSITIVE_INFINITY, subjects: Number.POSITIVE_INFINITY, characters: Number.POSITIVE_INFINITY, concurrency: 4, defaultTimeoutMs: 0, timeoutMs: 2_147_483_647 });

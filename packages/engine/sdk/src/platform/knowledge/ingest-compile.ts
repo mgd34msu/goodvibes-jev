@@ -36,9 +36,9 @@ import type {
 } from './types.js';
 import { getKnowledgeSpaceId, knowledgeSpaceMetadata } from './spaces.js';
 
-const MAX_EXTRACTION_SECTION_NODES = 12;
-const MAX_EXTRACTION_LINK_EDGES = 24;
-const MAX_ENTITY_HINT_VALUES_PER_KIND = 8;
+const MAX_EXTRACTION_SECTION_NODES = Number.POSITIVE_INFINITY;
+const MAX_EXTRACTION_LINK_EDGES = Number.POSITIVE_INFINITY;
+const MAX_ENTITY_HINT_VALUES_PER_KIND = Number.POSITIVE_INFINITY;
 
 export async function finalizeKnowledgeIngestedSource(
   context: KnowledgeIngestContext,

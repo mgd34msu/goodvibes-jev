@@ -22,7 +22,7 @@ import { JudgmentPortMissingError, judgmentPort } from '@goodvibes-jev/engine/er
 import { JudgmentError } from '@goodvibes-jev/judgment';
 import type { ContractEvent } from '../../events/contract.js';
 import type { DecompositionBounds, DecompositionRunner, DecompositionRunResult } from '../core/plan-decomposition.js';
-import { emptyWorkItemUsage, MAX_ATTEMPTS } from '../orchestration/types.js';
+import { emptyWorkItemUsage } from '../orchestration/types.js';
 import { createRepoMapTool } from '../tools/repo-map/index.js';
 import { summarizeError } from '../utils/error-display.js';
 import { delegationForbidden, readRequestShape, REQUEST_SHAPE_SITE, saysYesAtAct, writingUnclear } from './batteries/request-shape.js';
@@ -183,7 +183,7 @@ function shapeLines(shape: RequestShape, config: PlannerRequestInput['config']):
     lines.push('- The request-shape reading is uncertain about file changes. Resolve the work from the original request: reviews and reports inspect and report; implementation requests make the requested changes. Continue planning without an owner approval question.');
   }
   if (saysYesAtAct(shape.asks_for_attempts)) {
-    lines.push(`- The user asked for several attempts to pick from: set "attempts" (at most ${MAX_ATTEMPTS}) on each unit that should be tried more than once.`);
+    lines.push(`- The user asked for several attempts to pick from: set "attempts" on each unit that should be tried more than once.`);
   } else if (config.defaultAttempts > 1) {
     lines.push(`- Each unit runs ${config.defaultAttempts} attempts unless it sets "attempts".`);
   } else {
@@ -422,18 +422,18 @@ function describeShape(shape: RequestShape): string {
 export function readPlannerBounds(configManager: ContractConfigReader): DecompositionBounds {
   const read = (key: 'planner.maxTurns' | 'planner.tokenCeiling' | 'planner.wallTimeoutMs', fallback: number): number => {
     const value: unknown = configManager.get(key);
-    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
   };
   return {
-    maxTurns: read('planner.maxTurns', 6),
-    tokenCeiling: read('planner.tokenCeiling', 120_000),
-    wallTimeoutMs: read('planner.wallTimeoutMs', 120_000),
+    maxTurns: read('planner.maxTurns', 0),
+    tokenCeiling: read('planner.tokenCeiling', 0),
+    wallTimeoutMs: read('planner.wallTimeoutMs', 0),
   };
 }
 
 /** The repository summary the planner starts from: the repo_map tool's ranked map. */
 export async function defaultRepositoryMap(projectRoot: string, readAccessFilter?: ReadAccessFilter, capturedReadAccess?: ReadAccessFilter): Promise<string> {
-  const result = await createRepoMapTool({ projectRoot, ...(capturedReadAccess === undefined ? {} : { capturedReadAccess }), ...(readAccessFilter === undefined ? {} : { readAccessFilter }) }).execute({ budgetTokens: 2_000 });
+  const result = await createRepoMapTool({ projectRoot, ...(capturedReadAccess === undefined ? {} : { capturedReadAccess }), ...(readAccessFilter === undefined ? {} : { readAccessFilter }) }).execute({});
   return result.success ? (result.output ?? '') : `No repository map: ${result.error ?? 'the map could not be built'}. Use your read tools.`;
 }
 

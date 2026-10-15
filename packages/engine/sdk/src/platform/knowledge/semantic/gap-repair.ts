@@ -47,12 +47,12 @@ async function repair(request: KnowledgeSemanticGapRepairRequest, options: WebGa
   const policy = Object.fromEntries(policyKeys.map(key => [key, options[key]]));
   for (const value of Object.values(policy)) if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) throw new Held('malformed');
   if (input.maxSources !== undefined && (!Number.isInteger(input.maxSources) || input.maxSources < 0)) throw new Held('malformed');
-  const sourceLimit = Math.max(2, Math.min(5, input.maxSources ?? options.maxSources ?? options.maxIngest ?? 5));
-  const searchLimit = Math.max(1, Math.min(5, options.maxSearches ?? 5));
+  const sourceLimit = input.maxSources ?? options.maxSources ?? options.maxIngest ?? Infinity;
+  const searchLimit = options.maxSearches ?? Infinity;
   const minConfidence = Math.max(1, Math.min(100, options.minConfidence ?? 70));
   const controller = new AbortController();
   const signal = AbortSignal.any([controller.signal, ...(owned.signal ? [owned.signal] : [])]);
-  const deadlineAt = Math.min(owned.deadlineAt ?? Infinity, Date.now() + LIMITS.timeoutMs);
+  const deadlineAt = owned.deadlineAt ?? Infinity;
   const responses: { original: WebSearchResponse; snapshot: WebSearchResponse }[] = [];
   let timedOut = false, finished = false;
   const ownerCurrent = () => {
@@ -70,7 +70,7 @@ async function repair(request: KnowledgeSemanticGapRepairRequest, options: WebGa
   const stopped = new Promise<never>((_, reject) => { rejectStop = reject; });
   const abort = () => rejectStop(new Held(timedOut ? 'budget' : 'aborted'));
   signal.addEventListener('abort', abort, { once: true });
-  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, Math.max(1, deadlineAt - Date.now()));
+  const timer = Number.isFinite(deadlineAt) ? setTimeout(() => { timedOut = true; controller.abort(); }, Math.max(1, deadlineAt - Date.now())) : undefined;
   const queries: string[] = [], all: Candidate[] = [], ingested: string[] = [], skipped: string[] = [];
   let searched = false;
   const result = (selected: readonly Candidate[], sufficient: boolean, reason?: string): KnowledgeSemanticGapRepairResult => {
@@ -104,8 +104,6 @@ async function repair(request: KnowledgeSemanticGapRepairRequest, options: WebGa
     // uniqueStrings helper normalizes whitespace/case and is not query identity.
     const queryTexts = [...new Set([input.query, ...input.gaps.map(gap => [gap.title, gap.summary].filter(value => value !== undefined).join('\n'))])].filter(query => query.length > 0);
     const offered = [...new Set(queryTexts.flatMap(query => subjectText ? [query, `${subjectText}\n${query}`] : [query]))];
-    // No lexical window: oversize candidate sets hold in full after admission.
-    if (offered.length > 30 || input.sources.length > LIMITS.candidates) throw new Held('budget');
     const candidates = offered.map((text, index) => ({ id: `query-${index + 1}`, content: text }));
     const first = await reader.query(context, candidates); check();
     if (!first) return result([], false, 'No grounded web query was selected.');
@@ -148,8 +146,8 @@ async function repair(request: KnowledgeSemanticGapRepairRequest, options: WebGa
       check(); const query = candidates.find(candidate => candidate.id === next)?.content;
       if (typeof query !== 'string') throw new Held('malformed');
       queries.push(query); searched = true;
-      const response = await bounded(() => search.call(searchService, { query, maxResults: Math.max(sourceLimit, Math.min(8, options.maxResults ?? sourceLimit)),
-        verbosity: 'snippets', safeSearch: 'moderate', metadata: { purpose: 'knowledge-gap-repair', knowledgeSpaceId: input.spaceId } }), options.searchTimeoutMs ?? 8_000);
+      const response = await bounded(() => search.call(searchService, { query, ...(options.maxResults !== undefined ? { maxResults: options.maxResults } : {}),
+        verbosity: 'snippets', safeSearch: 'moderate', metadata: { purpose: 'knowledge-gap-repair', knowledgeSpaceId: input.spaceId } }), options.searchTimeoutMs ?? 0);
       check();
       // Full raw response privacy comes before cap, deduplication, eligibility or projection.
       const snapshot = admitRepairJson(response) as WebSearchResponse;
@@ -182,7 +180,7 @@ async function repair(request: KnowledgeSemanticGapRepairRequest, options: WebGa
           originalSourceIds: input.sources.map(source => source.id), linkedObjectIds: input.linkedObjects.map(node => node.id), confidence: candidate.confidence,
           confidenceReasons: ['semantic-relevance', `publisher:${candidate.authority}`], sourceRank: candidate.rank, sourceDomain: domain(candidate.url),
           trustReason: `Canonical publisher reading: ${candidate.authority}`, agreementSourceCount: selected.length, checkedSourceLimit: sourceLimit, selectedUrl: candidate.url }) },
-      }, { signal, assertCurrent: effectCurrent, deferSemanticEnrichment: true, onCommitted: id => { committed = id; } }), options.ingestTimeoutMs ?? 10_000);
+      }, { signal, assertCurrent: effectCurrent, deferSemanticEnrichment: true, onCommitted: id => { committed = id; } }), options.ingestTimeoutMs ?? 0);
       } finally { effectOpen = false; }
       check();
       if (committed && committed !== ingestedResult.source.id) throw new Held('stale');
@@ -193,6 +191,7 @@ async function repair(request: KnowledgeSemanticGapRepairRequest, options: WebGa
   };
   async function bounded<T>(work: () => Promise<T>, timeoutMs: number): Promise<T> {
     check();
+    if (timeoutMs === 0) return Promise.race([work(), stopped]);
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const expired = new Promise<never>((_, reject) => { timeout = setTimeout(() => { timedOut = true; controller.abort(); reject(new Held('budget')); }, Math.min(timeoutMs, Math.max(1, deadlineAt - Date.now()))); });
     try { return await Promise.race([work(), stopped, expired]); }

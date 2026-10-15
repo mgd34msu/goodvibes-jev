@@ -11,8 +11,8 @@ import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { withLongLivedProcessReading, type ProcessClassificationOptions } from './agent-harness-process-classification.ts';
 import type { AgentHarnessBackgroundProcessArgs } from './agent-harness-background-processes-types.ts';
 
-export const DEFAULT_BACKGROUND_TIMEOUT_MS = 30 * 60 * 1000;
-export const MAX_BACKGROUND_TIMEOUT_MS = 8 * 60 * 60 * 1000;
+export const DEFAULT_BACKGROUND_TIMEOUT_MS = 0;
+export const MAX_BACKGROUND_TIMEOUT_MS = 2_147_483_647;
 
 function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -34,7 +34,9 @@ function readNumber(value: unknown, fallback: number): number {
 }
 
 export function clampTimeout(value: unknown, fallback: number): number {
-  return Math.max(1_000, Math.min(MAX_BACKGROUND_TIMEOUT_MS, readNumber(value, fallback)));
+  const timeout = readNumber(value, fallback);
+  if (timeout < 0 || timeout > MAX_BACKGROUND_TIMEOUT_MS) throw new RangeError('timeoutMs exceeds the runtime timer range');
+  return timeout;
 }
 
 /** How a started process is treated when its timeout expires. */

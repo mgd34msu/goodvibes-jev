@@ -26,9 +26,6 @@ type HookRunnerDeps = {
   readonly projectRoot?: string | undefined;
 };
 
-/** Global timeout: if cumulative hook time exceeds this, skip remaining */
-const GLOBAL_TIMEOUT_MS = 120_000;
-
 function runHook(
   hook: HookDefinition,
   event: HookEvent,
@@ -242,18 +239,9 @@ export class HookDispatcher {
     const contextParts: string[] = [];
     let updatedInput: Record<string, unknown> | undefined;
     const onceToRemove: Array<{ pattern: string; hook: HookDefinition }> = [];
-    const startTime = Date.now();
 
     for (const { pattern, hook } of matchingEntries) {
       if (owner?.signal.aborted) break;
-      // Global timeout check
-      if (Date.now() - startTime > GLOBAL_TIMEOUT_MS) {
-        logger.error('HookDispatcher: global timeout exceeded, skipping remaining hooks', {
-          path: event.path,
-        });
-        break;
-      }
-
       // Async hooks run concurrently; a turn owner joins them before settlement.
       if (hook.async) {
         const asyncStart = Date.now();

@@ -23,7 +23,7 @@ import type { ProviderMessage } from '../../providers/interface.js';
  * question, estimated at three characters a token (about 96k characters);
  * JSON encoding of newlines and quotes and the question text need the rest.
  */
-export const VIEW_BUDGET_CHARS = 60_000;
+export const VIEW_BUDGET_CHARS = Number.POSITIVE_INFINITY;
 
 /** Characters each rendered entry costs beyond its body (position label). */
 const ENTRY_OVERHEAD_CHARS = 40;
@@ -138,7 +138,7 @@ export function compactionViews(
     ? undefined
     : { body: renderMessage(msg), droppable: false, omitted: false }));
   const entries = [...sourceEntries, ...writtenEntries.filter((entry): entry is Entry => entry !== undefined)];
-  if (!Number.isFinite(budget) || budget < 1 || costAt(entries, Infinity) > budget) throw new JudgmentInputError('unsupported-input');
+  if (Number.isNaN(budget) || budget < 1 || costAt(entries, Infinity) > budget) throw new JudgmentInputError('unsupported-input');
   const cap = Infinity; // Judgment evidence stays complete. Handoff formatting uses fit separately.
 
   const sourceLines: string[] = [];

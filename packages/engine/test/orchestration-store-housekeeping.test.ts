@@ -559,7 +559,7 @@ describe('orchestration snapshot housekeeping', () => {
     expect(loadWorkstreamSnapshot(root, 'ws-atomic')?.workstream.id).toBe('ws-atomic');
   });
 
-  test('completed snapshots age out while a running workstream survives', () => {
+  test('completed and running snapshots remain available regardless of age', () => {
     const root = scratch('ws-ttl-');
     writeSnapshotFile(root, 'ws-old-done', ['passed'], NOW - 20 * DAY_MS);
     writeSnapshotFile(root, 'ws-recent-done', ['passed', 'failed'], NOW - 2 * DAY_MS);
@@ -567,16 +567,16 @@ describe('orchestration snapshot housekeeping', () => {
     const info = spyInfo();
 
     const summary = reapOrchestrationSnapshots(root, { now: NOW });
-    expect(summary.terminalExpired).toBe(1);
-    expect(summary.total).toBe(1);
-    expect(summary.bytesReclaimed).toBeGreaterThan(0);
+    expect(summary.terminalExpired).toBe(0);
+    expect(summary.total).toBe(0);
+    expect(summary.bytesReclaimed).toBe(0);
 
-    expect(readdirSync(orchestrationDir(root)).sort()).toEqual(['ws-recent-done.json', 'ws-running.json']);
-    expect(dataFor(info, 'reclaimed snapshot files')?.['terminalExpired']).toBe(1);
+    expect(readdirSync(orchestrationDir(root)).sort()).toEqual(['ws-old-done.json', 'ws-recent-done.json', 'ws-running.json']);
+    expect(dataFor(info, 'reclaimed snapshot files')).toBeUndefined();
 
     // Idempotent: the second pass reclaims nothing and discloses nothing.
     expect(reapOrchestrationSnapshots(root, { now: NOW }).total).toBe(0);
-    expect(messages(info).filter((message) => message.includes('reclaimed snapshot files'))).toHaveLength(1);
+    expect(messages(info).filter((message) => message.includes('reclaimed snapshot files'))).toHaveLength(0);
   });
 
   test('a still-running workstream is exempt even when the injected predicate is the only signal', () => {
@@ -589,17 +589,17 @@ describe('orchestration snapshot housekeeping', () => {
     expect(existsSync(join(orchestrationDir(root), 'ws-live.json'))).toBe(true);
   });
 
-  test('completed snapshots over the count cap are trimmed oldest-first', () => {
+  test('completed snapshots remain available beyond the former count cap', () => {
     const root = scratch('ws-cap-');
     for (let index = 0; index < 60; index++) {
       writeSnapshotFile(root, `ws-${String(index).padStart(3, '0')}`, ['passed'], NOW - index * 1000);
     }
 
     const summary = reapOrchestrationSnapshots(root, { now: NOW });
-    expect(summary.terminalOverCap).toBe(10);
-    expect(readdirSync(orchestrationDir(root))).toHaveLength(50);
-    // The oldest (largest index, earliest writtenAt) went first.
-    expect(existsSync(join(orchestrationDir(root), 'ws-059.json'))).toBe(false);
+    expect(summary.terminalOverCap).toBe(0);
+    expect(readdirSync(orchestrationDir(root))).toHaveLength(60);
+    // The oldest completion is still available.
+    expect(existsSync(join(orchestrationDir(root), 'ws-059.json'))).toBe(true);
     expect(existsSync(join(orchestrationDir(root), 'ws-000.json'))).toBe(true);
   });
 

@@ -16,8 +16,8 @@
 import { BrowserSessionError } from './browser-sessions.js';
 import type { CardFieldGuard, OwnerApproval, UntrustedContentPort } from './browser-types.js';
 
-export const DEFAULT_NAVIGATION_TIMEOUT_MS = 30_000;
-export const DEFAULT_ACTION_TIMEOUT_MS = 15_000;
+export const DEFAULT_NAVIGATION_TIMEOUT_MS = 0;
+export const DEFAULT_ACTION_TIMEOUT_MS = 0;
 export const DEFAULT_TEXT_LIMIT = 20_000;
 
 /**

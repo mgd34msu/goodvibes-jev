@@ -283,11 +283,11 @@ describe('compound split', () => {
 });
 
 describe('model listing', () => {
-  test('lists the models the endpoint accepts', async () => {
+  test.each([0, 1_000])('lists the models the endpoint accepts with timeout %i', async (timeoutMs) => {
     const models = await createModelCatalog({
       endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:7000', apiKey: 'k' },
       model: 'jev-1.13.0',
-      timeoutMs: 1_000,
+      timeoutMs,
       retry: {},
       fetch: async () => new Response(JSON.stringify({ models: [{ name: 'local-s1', description: 'local', release_date: '2026-09-01' }] }), { status: 200 }),
     }).list();

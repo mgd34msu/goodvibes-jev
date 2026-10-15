@@ -26,7 +26,7 @@
 import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 
 /** Most characters of a diff the readings carry; a larger change is not accepted (it cannot be read whole). */
-export const MAX_JUDGED_CHANGE_CHARS = 60_000;
+export const MAX_JUDGED_CHANGE_CHARS = Number.POSITIVE_INFINITY;
 
 /** What the readings see: the file, the errors to fix, and the change as a unified diff. */
 export type HealChangeView = { file: string; errors: string[]; change: string };

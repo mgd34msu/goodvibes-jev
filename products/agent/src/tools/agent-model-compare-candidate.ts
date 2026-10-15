@@ -15,7 +15,7 @@ export function registerComparisonCandidate(registry: ToolRegistry, deps: AgentM
     definition: { name: NAME, description: 'Run one metered blind-comparison candidate using an exact model and bounded output.', sideEffects: ['network'], concurrency: 'parallel', parameters: {
       type: 'object', properties: {
         registryKey: { type: 'string' }, modelId: { type: 'string' }, providerId: { type: 'string' }, blindId: { type: 'string' },
-        prompt: { type: 'string' }, systemPrompt: { type: 'string' }, maxTokens: { type: 'integer', minimum: 1 },
+        prompt: { type: 'string' }, systemPrompt: { type: 'string' }, maxTokens: { type: 'integer', minimum: 0 },
         metered: { type: 'boolean', const: true },
         comparisonRequest: { type: 'object', additionalProperties: true }, sourceArtifactId: { type: 'string' },
       }, required: ['registryKey', 'modelId', 'providerId', 'blindId', 'prompt', 'systemPrompt', 'maxTokens', 'metered', 'comparisonRequest'], additionalProperties: false,
@@ -27,8 +27,8 @@ export function registerComparisonCandidate(registry: ToolRegistry, deps: AgentM
         const { registryKey, modelId, providerId, blindId, prompt, systemPrompt, maxTokens } = args;
         if (typeof registryKey !== 'string' || typeof modelId !== 'string' || typeof providerId !== 'string' || typeof blindId !== 'string'
           || typeof prompt !== 'string' || typeof systemPrompt !== 'string' || typeof maxTokens !== 'number' || !Number.isSafeInteger(maxTokens)
-          || maxTokens < 1 || args.metered !== true) {
-          return { success: false, error: 'Invalid bounded comparison request.' };
+          || maxTokens < 0 || args.metered !== true) {
+          return { success: false, error: 'Invalid comparison request.' };
         }
         const models = await listSelectableModels(deps.modelCatalog);
         assertSend();

@@ -110,7 +110,7 @@ async function upsertIntrinsicFeatureGap(
       slug: semanticSlug(`${spaceId}-intrinsic-gap-${subject.title}`),
       title,
       summary: `The current source-backed facts for ${subjectTitle(subject)} do not yet cover the full feature/specification profile.`,
-      aliases: [subject.title, ...subject.aliases].slice(0, 8),
+      aliases: [subject.title, ...subject.aliases],
       confidence: 75,
       ...(primarySource ? { sourceId: primarySource.id } : {}),
       metadata: semanticMetadata(spaceId, {

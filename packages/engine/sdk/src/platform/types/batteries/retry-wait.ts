@@ -78,7 +78,7 @@ const UNIT_ANSWERS = Object.keys(UNIT_OPTIONS);
 const MS_PER_UNIT: Readonly<Record<RetryWaitUnit, number>> = { ms: 1, s: 1_000, min: 60_000 };
 
 /** Long provider bodies say what they mean in their opening; the same clip the failure reading uses. */
-export const MAX_RETRY_WAIT_MESSAGE_CHARS = 160_000;
+export const MAX_RETRY_WAIT_MESSAGE_CHARS = Number.POSITIVE_INFINITY;
 
 /** Characters of text shown on each side of a number. */
 const ADJACENT_CHARS = 32;

@@ -25,7 +25,7 @@ export async function prepareRepairProfileRequirement(input: { readonly query: s
   }
   if (JSON.stringify(state).length > LIMITS.characters || input.subjects.length > LIMITS.inputs) throw new Held('budget');
   const timeoutMs = configuredTimeout ?? LIMITS.defaultTimeoutMs;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs) throw new Held('budget');
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > LIMITS.timeoutMs) throw new Held('budget');
   let failed: Error | undefined;
   const assertOwnerCurrent = () => {
     if (failed) throw failed;
@@ -45,7 +45,7 @@ export async function prepareRepairProfileRequirement(input: { readonly query: s
   const stop = (error: Error) => { failed ??= error; controller.abort(); rejectStopped(failed); };
   const abort = () => stop(new Held('aborted'));
   signal?.addEventListener('abort', abort, { once: true });
-  const timer = setTimeout(() => stop(new Held('budget')), timeoutMs);
+  const timer = timeoutMs > 0 ? setTimeout(() => stop(new Held('budget')), timeoutMs) : undefined;
   try {
     const authority = captureJudgmentPort(repairProfileRequirement.name, { signal: controller.signal, assertCurrent: assertOwnerCurrent });
     const configured = judgmentPort(repairProfileRequirement.name), configuredModel = configured.model;

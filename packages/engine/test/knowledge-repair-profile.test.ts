@@ -141,11 +141,12 @@ describe('repair profile facts', () => {
       expect(fake.requests).toHaveLength(0);
     }
   });
-  test('candidate and text caps hold without returning a truncated prefix', async () => {
+  test('all candidate text beyond the former caps is read without truncation', async () => {
     const fake = readings([]);
-    await held(deriveRepairProfileFacts(input(Array.from({ length: REPAIR_PROFILE_LIMITS.candidates + 1 }, (_, index) => `Value ${index}.`).join('\n\n'))), 'budget');
-    await held(deriveRepairProfileFacts(input('a'.repeat(REPAIR_PROFILE_LIMITS.characters + 1))), 'budget');
-    expect(fake.requests).toHaveLength(0);
+    await deriveRepairProfileFacts(input(Array.from({ length: 101 }, (_, index) => `Value ${index}.`).join('\n\n')));
+    await deriveRepairProfileFacts(input('a'.repeat(160_001)));
+    expect(fake.requests.length).toBeGreaterThan(0);
+    expect(JSON.stringify(fake.requests)).toContain('a'.repeat(160_001));
   });
   test('registered adversarial fixtures validate plumbing, not live calibration', async () => {
     expect(registry.list().map((battery) => battery.name)).toEqual([repairProfileCategory.name, repairProfileValue.name, repairProfileSupport.name].sort());

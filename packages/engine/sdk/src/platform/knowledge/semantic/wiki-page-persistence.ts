@@ -55,7 +55,7 @@ export function renderDeterministicWikiPage(
   const sections = [...grouped.entries()].flatMap(([kind, entries]) => [
     `## ${titleCase(kind)}`,
     '',
-    ...entries.slice(0, 24).map((fact) => `- ${fact.title}${fact.value ? `: ${fact.value}` : ''}${fact.summary ? ` - ${fact.summary}` : ''}`),
+    ...entries.map((fact) => `- ${fact.title}${fact.value ? `: ${fact.value}` : ''}${fact.summary ? ` - ${fact.summary}` : ''}`),
     '',
   ]);
   return [

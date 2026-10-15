@@ -34,7 +34,7 @@ export async function run(hook: HookDefinition, event: HookEvent, projectRoot: s
     return { ok: false, error: `ts hook path '${path}' is outside the project directory` };
   }
 
-  const execution = options === undefined ? undefined : createHookExecution(options, hook.timeout ?? 30, 'ts');
+  const execution = options === undefined ? undefined : createHookExecution(options, hook.timeout ?? 0, 'ts');
   try {
     execution?.signal.throwIfAborted();
     let moduleUrl = pathToFileURL(resolvedPath).href;

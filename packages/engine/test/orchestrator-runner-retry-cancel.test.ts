@@ -3,8 +3,8 @@
  * cancelled: AGENT_CANCELLED and the orchestration cancelled event, never
  * AGENT_FAILED. Drives the real turn loop (`runAgentTask`) with a scripted
  * provider whose first chat fails with a network or rate-limit error; the
- * record is cancelled while the retry wait is pending. The waits (5s and 60s)
- * are shortened by a setTimeout wrapper for the duration of each test.
+ * record is cancelled as the retry wait begins. Its owning signal must release
+ * the wait immediately, without advancing a clock or changing retry timing.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -95,8 +95,8 @@ function makeRecord(id: string): AgentRecord {
   };
 }
 
-/** A provider whose first chat cancels the record and fails with `wording`; a second chat would complete. */
-function cancellingProvider(record: AgentRecord, wording: string): { provider: LLMProvider; calls: () => number } {
+/** A provider whose first chat fails; a second chat would complete. */
+function failingProvider(wording: string): { provider: LLMProvider; calls: () => number } {
   let calls = 0;
   const provider: LLMProvider = {
     name: 'fake',
@@ -104,8 +104,6 @@ function cancellingProvider(record: AgentRecord, wording: string): { provider: L
     async chat(): Promise<ChatResponse> {
       calls += 1;
       if (calls === 1) {
-        // The operator cancels while this call is failing; the runner sees it after the retry wait.
-        (record as { status: string }).status = 'cancelled';
         throw new Error(wording);
       }
       return { content: 'done', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
@@ -114,16 +112,12 @@ function cancellingProvider(record: AgentRecord, wording: string): { provider: L
   return { provider, calls: () => calls };
 }
 
-const realSetTimeout = globalThis.setTimeout;
 let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'retry-cancel-'));
-  // Retry waits are 5s to 60s; run them at once so the test sees the post-wait check.
-  globalThis.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) =>
-    realSetTimeout(handler as () => void, (delay ?? 0) >= 5_000 ? 0 : delay, ...args)) as unknown as typeof setTimeout; // the wrapper has no promisify member
+
 });
 afterEach(() => {
-  globalThis.setTimeout = realSetTimeout;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -133,10 +127,23 @@ describe('a cancel during a retry wait', () => {
     ['rate-limit retry', RATE_LIMIT_WORDING],
   ])('during the %s ends the run cancelled, with no failure event', async (_label, wording) => {
     const record = makeRecord(`ag-${wording.length}`);
-    const { provider, calls } = cancellingProvider(record, wording);
+    const { provider, calls } = failingProvider(wording);
     const emitted: Emitted = { cancelled: [], failed: [], completed: [] };
 
-    await runAgentTask(makeContext(dir, provider, emitted), record);
+    const controller = new AbortController();
+    const context: AgentOrchestratorRunContext = {
+      ...makeContext(dir, provider, emitted),
+      getCancellationSignal: () => controller.signal,
+      emitAgentProgress: (_id, progress) => {
+        if (progress.includes('retrying in')) {
+          record.status = 'cancelled';
+          controller.abort();
+        }
+      },
+    };
+    const started = Date.now();
+    await runAgentTask(context, record);
+    expect(Date.now() - started).toBeLessThan(2_000);
 
     expect(calls()).toBe(1);
     expect(record.status).toBe('cancelled');

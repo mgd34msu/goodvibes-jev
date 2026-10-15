@@ -63,7 +63,7 @@ export const CONTRACT_CONFIG_DEFAULTS: ContractConfig = {
     { name: 'lint', command: 'npx eslint . --max-warnings 0', enabled: false },
     { name: 'build', command: 'npm run build', enabled: false },
   ],
-  gateTimeoutMs: 120_000,
+  gateTimeoutMs: 0,
   acceptanceStakes: 'high',
   midRunChecks: true,
   evidenceNudgeLimit: 0,

@@ -84,7 +84,7 @@ export function prepareAnswerGapReadings(input: AnswerGapInput, options: {
     const stop = (reason: Held) => { stoppedError ??= reason; controller.abort(); stopped.reject(stoppedError); };
     const abort = () => stop(new Held('aborted'));
     signal?.addEventListener('abort', abort, { once: true });
-    const timer = setTimeout(() => stop(new Held('budget')), Math.max(1, deadlineAt - Date.now()));
+    const timer = Number.isFinite(deadlineAt) ? setTimeout(() => stop(new Held('budget')), Math.max(1, deadlineAt - Date.now())) : undefined;
     const check = () => { if (stoppedError) throw stoppedError; assertCurrent(); };
     const run = async () => {
       check();

@@ -29,7 +29,7 @@ export async function run(hook: HookDefinition, event: HookEvent, options?: Hook
     return { ok: false, error: 'command hook missing "command" field' };
   }
 
-  const timeoutMs = (hook.timeout ?? 30) * 1000;
+  const timeoutMs = (hook.timeout ?? 0) * 1000;
   const eventJson = JSON.stringify(event);
 
   try {
@@ -42,7 +42,7 @@ export async function run(hook: HookDefinition, event: HookEvent, options?: Hook
         ownedProcessGroup: true,
       });
       options.signal?.throwIfAborted();
-      if (result.timedOut) return { ok: false, error: `command hook timed out after ${hook.timeout ?? 30}s` };
+      if (result.timedOut) return { ok: false, error: `command hook timed out after ${hook.timeout ?? 0}s` };
       if (result.exitCode !== 0) {
         return {
           ok: false,
@@ -68,10 +68,10 @@ export async function run(hook: HookDefinition, event: HookEvent, options?: Hook
     proc.stdin.end();
 
     // Kill the process on timeout; always clear the timer on success.
-    const timer = setTimeout(() => {
+    const timer = timeoutMs > 0 ? setTimeout(() => {
       killHookProcess(proc, command, 'timeout');
-    }, timeoutMs);
-    timer.unref?.();
+    }, timeoutMs) : undefined;
+    timer?.unref?.();
 
     // Start draining stdout/stderr concurrently with the exit wait. If we only
     // read after exit, a hook that writes more than the OS pipe buffer (~64KB)

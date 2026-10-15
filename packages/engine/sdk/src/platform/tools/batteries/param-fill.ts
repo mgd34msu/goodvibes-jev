@@ -20,7 +20,7 @@ import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-inp
 import { defineSelector, STAKES_BANDS, type Candidate, type JsonValue } from '@goodvibes-jev/judgment';
 
 /** Most characters of an argument value or description the reading carries. */
-export const MAX_JUDGED_ARGUMENT_CHARS = 160_000;
+export const MAX_JUDGED_ARGUMENT_CHARS = Number.POSITIVE_INFINITY;
 
 function clip(text: string): string {
   assertJudgmentInput(text);

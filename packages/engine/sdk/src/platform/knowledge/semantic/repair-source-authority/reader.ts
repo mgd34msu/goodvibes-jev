@@ -95,7 +95,7 @@ export function createRepairSourceAuthorityReader(options: RepairSourceAuthority
   async function run(snapshots: ReturnType<typeof snapshotInputs>): Promise<readonly RepairSourceAuthorityReading[]> {
     assertCurrent();
     if (!snapshots.length) return Object.freeze([]);
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs) throw new Held('budget');
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > LIMITS.timeoutMs) throw new Held('budget');
     const pending = [...new Map(snapshots.filter(({ key }) => !cache.has(key)).map((snapshot) => [snapshot.key, snapshot])).values()];
     const rebound = () => freezeSupport(snapshots.map(({ reference, key }) => ({ reference, ...cache.get(key)! })));
     const questions = { authority: repairSourceAuthority.items.authority.question };
@@ -109,7 +109,7 @@ export function createRepairSourceAuthorityReader(options: RepairSourceAuthority
     const stop = (error: Error) => { stoppedError ??= error; controller.abort(); rejectStopped(stoppedError); };
     const abort = () => stop(new Held('aborted'));
     signal?.addEventListener('abort', abort, { once: true });
-    const timer = setTimeout(() => stop(new Held('budget')), timeoutMs);
+    const timer = timeoutMs > 0 ? setTimeout(() => stop(new Held('budget')), timeoutMs) : undefined;
     const check = () => { if (stoppedError) throw stoppedError; assertCurrent(); };
     const captured = authority!.port;
     const port: JudgmentPort = {

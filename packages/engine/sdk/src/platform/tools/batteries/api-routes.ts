@@ -26,7 +26,7 @@ import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 /** Lines of context carried on each side of a candidate route line. */
 export const ROUTE_CONTEXT_LINES = 3;
 /** Most characters of a pages/api handler file the method readings carry. */
-export const MAX_HANDLER_CHARS = 24_000;
+export const MAX_HANDLER_CHARS = Number.POSITIVE_INFINITY;
 
 /** The HTTP methods a pages/api handler is read for, in the order they are reported. */
 export const HANDLER_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const;

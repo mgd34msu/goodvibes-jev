@@ -1,4 +1,4 @@
-export const NODE_ACTIVATION_LIMITS = Object.freeze({ nodes: 320, sources: 32, bytes: 2_000_000, concurrency: 4, timeoutMs: 30_000, defaultTimeoutMs: 15_000 });
+export const NODE_ACTIVATION_LIMITS = Object.freeze({ nodes: Number.POSITIVE_INFINITY, sources: Number.POSITIVE_INFINITY, bytes: Number.POSITIVE_INFINITY, concurrency: 4, timeoutMs: 2_147_483_647, defaultTimeoutMs: 0 });
 export interface KnowledgeNodeActivationOptions {
   readonly signal?: AbortSignal | undefined;
   /** Retained caller authority, rechecked synchronously at every final commit. */

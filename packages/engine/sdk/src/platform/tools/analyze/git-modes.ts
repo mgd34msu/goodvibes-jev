@@ -98,7 +98,7 @@ async function trySemanticDiffLlm(
 ): Promise<string> {
   try {
     return await Promise.race([
-      toolLLM.chat(prompt, { maxTokens: 512 }),
+      toolLLM.chat(prompt),
       new Promise<string>((resolve) => {
         const timer = setTimeout(() => resolve(''), GIT_PROBE_TIMEOUT_MS);
         timer.unref?.();

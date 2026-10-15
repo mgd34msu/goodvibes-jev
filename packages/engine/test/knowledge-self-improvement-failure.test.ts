@@ -171,14 +171,13 @@ async function serviceFixture(error: unknown) {
 }
 
 describe('actual semantic service failure path', () => {
-  test('actual owned timeout preserves the five-second minimum run floor', async () => {
+  test('an explicit short timeout is honored without a five-second minimum', async () => {
     const fake = fixture('other');
     const { store, service, gap, spaceId } = await serviceFixture(new Error('unused'));
     service.setGapRepairer(() => new Promise(() => {}));
     const started = Date.now();
     const result = await service.selfImprove({ knowledgeSpaceId: spaceId, gapIds: [gap.id], force: true, maxRunMs: 1 });
-    expect(Date.now() - started).toBeGreaterThanOrEqual(4_950);
-    expect(Date.now() - started).toBeLessThan(7_000);
+    expect(Date.now() - started).toBeLessThan(4_500);
     const task = store.getRefinementTask(result.taskIds[0]!)!;
     expect(task.state).toBe('blocked'); expect(task.trace.at(-1)?.data?.failureCause).toMatchObject({ cause: 'run_budget', basis: 'owned-timer' });
     expect(fake.requests.filter(request => 'cause' in request.questions)).toHaveLength(0);

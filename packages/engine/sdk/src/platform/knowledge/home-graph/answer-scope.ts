@@ -86,7 +86,7 @@ export async function prepareHomeGraphAnswerScope(input: {
       const subjects = linkedObjects.map((node) => ({ title: node.title, kind: node.kind, summary: node.summary,
         aliases: node.aliases, identity: subjectIdentity(node.metadata) }));
       const plan = await prepareAnswerEvidenceRelevance({ query: input.query.query, candidates, subjects },
-        { signal, timeoutMs: Math.max(1, deadlineAt - Date.now()) });
+        { signal, timeoutMs: Number.isFinite(deadlineAt) ? Math.max(1, deadlineAt - Date.now()) : 0 });
       check();
       const selected = new Set(plan.accepted.map((reading) => reading.reference));
       // A settled rejection remains rejected. This scope pass changes membership,

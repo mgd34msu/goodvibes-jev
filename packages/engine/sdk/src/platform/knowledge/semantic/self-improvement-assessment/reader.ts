@@ -47,7 +47,7 @@ export async function readSelfImprovementAssessment(kind: 'context' | 'coverage'
   const { signal, assertCurrent: ownerCurrent, timeoutMs: configuredTimeout } = options;
   const snapshot = snapshotInput(input);
   const timeoutMs = configuredTimeout ?? LIMITS.defaultTimeoutMs;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs) throw new Held('budget');
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > LIMITS.timeoutMs) throw new Held('budget');
   const battery = kind === 'context' ? selfImprovementGapContext : selfImprovementEvidenceCoverage;
   const questions = Object.fromEntries(Object.entries(battery.items).map(([name, item]) => [name, item.question]));
   if (new TextEncoder().encode(JSON.stringify({ state: snapshot.state, questions })).byteLength + 1_024 > LIMITS.bytes) throw new Held('budget');
@@ -83,7 +83,7 @@ export async function readSelfImprovementAssessment(kind: 'context' | 'coverage'
   const stop = (error: Error) => { failed ??= error; controller.abort(); rejectStopped(failed); };
   const abort = () => stop(new Held('aborted'));
   signal?.addEventListener('abort', abort, { once: true });
-  const timer = setTimeout(() => stop(new Held('budget')), timeoutMs);
+  const timer = timeoutMs > 0 ? setTimeout(() => stop(new Held('budget')), timeoutMs) : undefined;
   const run = async (): Promise<SelfImprovementAssessment> => {
     assertCurrent();
     const result = kind === 'context'

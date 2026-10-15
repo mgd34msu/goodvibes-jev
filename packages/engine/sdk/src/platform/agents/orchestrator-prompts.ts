@@ -78,7 +78,7 @@ function buildProjectContext(workingDirectory: string, observation?: ProjectFram
         if (observation?.framework) lines.push(`- Test framework: ${observation.framework}`);
 
         // Scripts
-        const scriptNames = Object.keys(pkg.scripts ?? {}).slice(0, 10);
+        const scriptNames = Object.keys(pkg.scripts ?? {});
         if (scriptNames.length > 0) {
           lines.push(`- Available scripts: ${scriptNames.join(', ')}`);
         }
@@ -117,11 +117,7 @@ function loadConventions(workingDirectory: string): string | null {
     for (const path of candidates) {
       if (existsSync(path)) {
         const content = readFileSync(path, 'utf-8');
-        // Truncate to ~800 chars
-        const truncated = content.length > 800
-          ? content.slice(0, 800) + '\n[...truncated]'
-          : content;
-        return `## Conventions\n${truncated}`;
+        return `## Conventions\n${content}`;
       }
     }
     return null;

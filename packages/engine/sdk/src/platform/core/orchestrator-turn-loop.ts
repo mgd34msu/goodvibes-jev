@@ -564,7 +564,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         messages: context.conversation.getMessagesForLLM(),
         tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
         systemPrompt: composeTurnSystemPrompt(composedBaseSystemPrompt) + privateDiffBlock,
-        maxTokens: tokenLimits.maxOutputTokens,
+        ...((tokenLimits.maxOutputTokens ?? 0) > 0 ? { maxTokens: tokenLimits.maxOutputTokens } : {}),
         ...resolveTurnReasoning(
           model,
           context.configManager.get('provider.reasoningEffort'),

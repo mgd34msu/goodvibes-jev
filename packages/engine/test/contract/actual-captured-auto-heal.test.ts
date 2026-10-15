@@ -387,8 +387,9 @@ for (const outcome of ['reject', 'unparsable'] as const) {
 test('actual captured repair respects a stored original-owner source denial before ToolLLM admission', async () => {
   const f = await fixture('write', 'deny-before');
   try {
-    f.start(); const contract = await f.settle();
-    expect(contract.status).toBe('awaiting-owner');
+    const id = f.start();
+    expect(await f.awaitRepair()).toBe('ended-before-repair');
+    const contract = f.runner.get(id)!;
     expect(contract.error ?? '').not.toContain('probability distribution');
     expect(f.repairRequests).toHaveLength(0); expect(f.acceptance).toHaveLength(0);
     // A path denied before its first read need not block subsequent safe model

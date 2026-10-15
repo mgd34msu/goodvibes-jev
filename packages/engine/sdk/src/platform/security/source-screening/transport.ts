@@ -9,8 +9,8 @@ export const HOSTED_SOURCE_SCREENING_ROUTES = Object.freeze({
 });
 
 const RESPONSE_LIMIT = 256 * 1024;
-const DEFAULT_TIMEOUT_MS = 10_000;
-const MAX_TIMEOUT_MS = 120_000;
+const DEFAULT_TIMEOUT_MS = 0;
+const MAX_TIMEOUT_MS = 2_147_483_647;
 
 const diagnostics = new WeakSet<object>();
 function diagnostic(message: string): Error {
@@ -125,7 +125,7 @@ export function createScreeningTransport(options: ScreeningTransportOptions): Sc
   const hosted = options.kind === 'hosted' ? captureHostedScreeningCredentials(options.credentials) : undefined;
   const targets = options.kind === 'hosted' ? new Set<string>(Object.values(HOSTED_SOURCE_SCREENING_ROUTES)) : captureTargets(options.endpoints);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS) throw invalidRequest();
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > MAX_TIMEOUT_MS) throw invalidRequest();
   const assertCurrent = options.assertCurrent;
   const sourceSignal = options.signal;
   const lifetime = new AbortController();
@@ -178,7 +178,7 @@ export function createScreeningTransport(options: ScreeningTransportOptions): Sc
       lifetime.signal.addEventListener('abort', abort, { once: true });
       request.signal.addEventListener('abort', abort, { once: true });
       if (lifetime.signal.aborted || request.signal.aborted) abort();
-      const timer = setTimeout(() => controller.abort(timedOut()), timeoutMs);
+      const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(timedOut()), timeoutMs) : undefined;
       let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
       let cancellation: Promise<void> | undefined;
       let bodyFinished = false;

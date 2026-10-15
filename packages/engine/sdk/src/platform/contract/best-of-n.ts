@@ -36,7 +36,8 @@ import { addJudgmentUsage } from './usage.js';
 export const BEST_OF_N_SITE = 'contract.best-of-n';
 
 /** Characters of each candidate's answer, head and tail, before the budget is shared out. */
-export const ATTEMPT_ANSWER_CAP_CHARS = 4_000;
+/** @deprecated Answers are retained in full unless a caller supplies a budget. */
+export const ATTEMPT_ANSWER_CAP_CHARS = Number.POSITIVE_INFINITY;
 
 // ── Attempt units ─────────────────────────────────────────────────────────────
 
@@ -140,7 +141,7 @@ export function selectionCandidates(
   files: readonly string[] = [],
   budget = EVIDENCE_TOKEN_BUDGET,
 ): Candidate[] {
-  let answerCap = ATTEMPT_ANSWER_CAP_CHARS;
+  let answerCap = Math.max(0, ...sources.map(source => (source.answer ?? '').length));
   const answers = (): string[] => sources.map((source) => headAndTail(source.answer ?? '', answerCap));
   const bare = (): Candidate[] => sources.map((source, index) => ({
     id: source.id,

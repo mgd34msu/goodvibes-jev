@@ -318,7 +318,6 @@ export class AutoHealer {
       await this.check();
       const signal = this.execution?.signal ?? this.invocationSignal;
       const response = await executePolicyCheck(() => { this.checkSynchronous(); return this.toolLLM.chat(prompt, {
-        maxTokens: 4096,
         systemPrompt: 'You are a code repair tool. Output only the corrected file content with no additional text or markdown.',
         ...(signal ? { signal } : {}),
         beforeAttempt: () => this.check(),

@@ -85,11 +85,10 @@ const A11Y_RULES = {
 type A11yCode = keyof typeof A11Y_RULES;
 
 /** Lines an element may span before its opening tag closes. */
-const MAX_ELEMENT_LINES = 8;
 
 function openingTag(lines: readonly string[], index: number): string {
   const parts: string[] = [];
-  for (let j = index; j < Math.min(lines.length, index + MAX_ELEMENT_LINES); j++) {
+  for (let j = index; j < lines.length; j++) {
     parts.push(lines[j]!);
     if (lines[j]!.includes('>')) break;
   }

@@ -12,7 +12,7 @@ import { getContractActionSource, getContractActionPort } from '../tools/agent/c
  * an external kill lands here as a `'cancelled'` result → heuristic fallback.
  *
  * Bounds are enforced cooperatively by polling `AgentRecord.usage`:
- *   - wall-clock: `cancel()` once `now() >= start + wallTimeoutMs`
+ *   - wall-clock: optional positive timeout cancels once `now() >= start + wallTimeoutMs`
  *   - token ceiling: `cancel()` once input+output tokens exceed the ceiling
  *   - turns: `cancel()` once `usage.turnCount` exceeds `maxTurns`
  * All three collapse to a `'cancelled'` run result (with a `detail`), which the
@@ -139,17 +139,17 @@ export function createAgentManagerDecompositionRunner(
         if (cur.status === 'completed' || cur.status === 'failed' || cur.status === 'cancelled') break;
 
         const tokens = (cur.usage?.inputTokens ?? 0) + (cur.usage?.outputTokens ?? 0);
-        if (tokens > request.bounds.tokenCeiling) {
+        if (request.bounds.tokenCeiling > 0 && tokens > request.bounds.tokenCeiling) {
           stopDetail = `token ceiling exceeded (${tokens} > ${request.bounds.tokenCeiling})`;
           deps.agentManager.cancel(agentId, 'kill');
           break;
         }
-        if ((cur.usage?.turnCount ?? 0) > request.bounds.maxTurns) {
+        if (request.bounds.maxTurns > 0 && (cur.usage?.turnCount ?? 0) > request.bounds.maxTurns) {
           stopDetail = `max turns exceeded (${request.bounds.maxTurns})`;
           deps.agentManager.cancel(agentId, 'kill');
           break;
         }
-        if (now() >= deadline) {
+        if (request.bounds.wallTimeoutMs > 0 && now() >= deadline) {
           stopDetail = `wall-timeout ${request.bounds.wallTimeoutMs}ms`;
           deps.agentManager.cancel(agentId, 'kill');
           break;

@@ -73,4 +73,4 @@ export class KnowledgeGeneratedFactSupportHeldError extends Error {
     super(`Generated fact support held (${reason}); no affected claim or attachment is authorized for persistence.`);
   }
 }
-export const GENERATED_FACT_SUPPORT_LIMITS = Object.freeze({ inputs: 400, requests: 4_000, bytes: 32_000_000, concurrency: 4, timeoutMs: 120_000 });
+export const GENERATED_FACT_SUPPORT_LIMITS = Object.freeze({ inputs: Number.POSITIVE_INFINITY, requests: Number.POSITIVE_INFINITY, bytes: Number.POSITIVE_INFINITY, concurrency: 4, timeoutMs: 2_147_483_647 });

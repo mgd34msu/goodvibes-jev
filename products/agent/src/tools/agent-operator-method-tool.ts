@@ -62,7 +62,6 @@ const AUTONOMOUS_PROFILE_METHOD_IDS = new Set([
 const PROFILE_QUOTE_METHOD_IDS = new Set([
   'profile.set', 'profile.append', 'occasions.confirm', 'occasions.plans.confirm',
 ]);
-const MAX_OUTPUT_CHARS = 18_000;
 const SERVICE_METHOD_IDS = new Set<string>(['services.status', 'services.install', 'services.start', 'services.restart']);
 const WATCHER_METHOD_IDS = new Set<string>([
   'watchers.create',
@@ -263,8 +262,7 @@ async function stringifyOutput(value: unknown, options: Parameters<typeof redact
   const protectedOutput = await redactStructuredDataAsync(value, options);
   if (!isRecord(protectedOutput)) throw new Error('Connected operator output could not be projected safely.');
   const text = JSON.stringify(protectedOutput, null, 2);
-  if (text.length <= MAX_OUTPUT_CHARS) return text;
-  return `${text.slice(0, MAX_OUTPUT_CHARS)}\n...[truncated ${text.length - MAX_OUTPUT_CHARS} chars]`;
+  return text;
 }
 
 function summarizeError(error: unknown): string {

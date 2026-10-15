@@ -19,7 +19,7 @@ import { completeJudgmentView } from './complete-view.js';
 import { defineSelector, NONE, STAKES_BANDS, type Candidate, type JsonValue } from '@goodvibes-jev/judgment';
 
 /** Most variables of one file the reading carries. */
-export const MAX_JUDGED_ENV_KEYS = 80;
+export const MAX_JUDGED_ENV_KEYS = Number.POSITIVE_INFINITY;
 
 /** One found env file as a candidate: its name and its variables, each marked blank or set. */
 export function envTemplateCandidate(name: string, variables: ReadonlyArray<{ readonly key: string; readonly blank: boolean }>): Candidate {

@@ -35,5 +35,5 @@ export class KnowledgeAnswerObjectAlignmentHeldError extends Error {
     super(`Knowledge answer object alignment held (${reason}); no linked-object selection was authorized.`);
   }
 }
-export const ANSWER_OBJECT_LIMITS = Object.freeze({ candidates: 100, selected: 24, associations: 400,
-  characters: 160_000, concurrency: 4, defaultTimeoutMs: 30_000, timeoutMs: 60_000 });
+export const ANSWER_OBJECT_LIMITS = Object.freeze({ candidates: Number.POSITIVE_INFINITY, selected: Number.POSITIVE_INFINITY, associations: Number.POSITIVE_INFINITY,
+  characters: Number.POSITIVE_INFINITY, concurrency: 4, defaultTimeoutMs: 0, timeoutMs: 2_147_483_647 });

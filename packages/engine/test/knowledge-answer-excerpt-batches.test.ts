@@ -63,10 +63,13 @@ describe('complete-source excerpt batches', () => {
     expect(() => prepareAnswerSourceExcerptBatches(store, query, entries, createSemanticWriteGuard(store))).toThrow(JudgmentInputError);
     expect(fake.requests).toHaveLength(0);
   });
-  test('one source above the unchanged complete-input budget holds without clipping', async () => {
+  test('a source above the former input cap is retained without clipping', async () => {
     const { store, entries } = await fixture(['AC-7 has four inputs.', 'x'.repeat(160_000)]); const fake = readings();
-    expect(() => prepareAnswerSourceExcerptBatches(store, query, entries, createSemanticWriteGuard(store))).toThrow('budget');
-    expect(fake.requests).toHaveLength(0);
+    const prepared = prepareAnswerSourceExcerptBatches(store, query, entries, createSemanticWriteGuard(store));
+    prepared.start();
+    const selected = await prepared.read(new Set(entries.map(entry => entry.source.id)));
+    expect(selected.get(entries[1]!.source.id)?.[0]?.text).toBe('x'.repeat(160_000));
+    expect(fake.requests).toHaveLength(2);
   });
   test('cross-source actual and requested model drift holds the complete selection', async () => {
     const { store, entries } = await fixture(['AC-7 has four inputs.', 'AC-7 does not support Bluetooth.']);

@@ -12,11 +12,10 @@ function admitPdfStreams(buffer: Buffer): void {
   if (buffer.length > 8 * 1024 * 1024) throw refuse();
   const body = buffer.toString('latin1');
   if (!body.startsWith('%PDF-') || /\/Encrypt\b/.test(body)) throw refuse();
-  let expanded = 0, streams = 0;
+  let expanded = 0;
   const pattern = /\bstream\b/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(body))) {
-    if (++streams > 256) throw refuse();
     const eol = body.slice(pattern.lastIndex).match(/^(?:\r\n|\n|\r)/);
     if (!eol) throw refuse();
     pattern.lastIndex += eol[0].length;
@@ -72,7 +71,6 @@ export async function readMultimodalPdf(buffer: Buffer, assertCurrent: () => voi
       assertCurrent();
       assertJudgmentInput({ info: metadata.info, metadata: metadata.metadata?.getAll() });
       count = document.numPages;
-      if (count > 64) throw refuse();
       for (let number = 1; number <= count; number++) {
         assertCurrent();
         const page = await document.getPage(number);
@@ -94,7 +92,7 @@ export async function readMultimodalPdf(buffer: Buffer, assertCurrent: () => voi
   assertCurrent();
   return { source, extraction: { extractorId: 'pdfjs', format: 'pdf',
     title: source.split('\n').find(line => line.trim())?.slice(0, 320),
-    summary: source.slice(0, 320), excerpt: source.slice(0, 480), sections: pages.slice(0, 12), links: [],
+    summary: source.slice(0, 320), excerpt: source.slice(0, 480), sections: pages, links: [],
     estimatedTokens: Math.ceil(source.length / 4), structure: { pageCount: count, extractedTextChars: source.length },
     metadata: { limitations: ['PDF text extraction does not perform OCR for scanned images.'] },
   } };

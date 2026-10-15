@@ -1,14 +1,9 @@
 import { assertCapturedInputPathContext } from '../../contract/input-authority.js';
-// repo_map, a model-invoked, token-budgeted repository map.
-//
-// STANDING RULE: this is a tool the model CALLS, not passive always-on context
-// injection. It returns a ranked outline of the repo (a directory summary plus
-// the highest-centrality source files and their top-level exports), prioritized
-// by import-graph centrality with file size as a tie-break, and capped to a
-// token budget. It reuses the SDK's existing ImportGraph for structure and a
-// cheap regex for exports, no tree-sitter, no LLM, no process spawn.
+// Model-invoked repository map. Every indexed source file and export is
+// included by default; a caller can explicitly request a smaller token budget.
+// Import-graph centrality determines ordering, not which files are included.
 import { statSync } from 'node:fs';
-import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { Tool, ToolDefinition, ToolResult } from '../../types/tools.js';
 import { ImportGraph } from '../../intelligence/index.js';
@@ -16,13 +11,9 @@ import { estimateTokens } from '../../core/compaction-types.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { accessRestrictedNote, partitionByReadAccess, type ReadAccessFilter } from '../shared/read-access.js';
 
-const DEFAULT_BUDGET_TOKENS = 2_000;
-const MIN_BUDGET_TOKENS = 200;
-const MAX_BUDGET_TOKENS = 32_000;
 /** Ranked files whose read access is asked together. */
 const READ_ACCESS_WINDOW = 16;
 
-const MAX_EXPORTS_PER_FILE = 12;
 
 interface RankedFile {
   readonly rel: string;
@@ -100,9 +91,8 @@ function formatBytes(bytes: number): string {
   return `${bytes}B`;
 }
 
-function clampBudget(raw: unknown): number {
-  const n = typeof raw === 'number' && Number.isFinite(raw) ? Math.floor(raw) : DEFAULT_BUDGET_TOKENS;
-  return Math.max(MIN_BUDGET_TOKENS, Math.min(MAX_BUDGET_TOKENS, n));
+function requestedBudget(raw: unknown): number | undefined {
+  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : undefined;
 }
 
 const REPO_MAP_SCHEMA: Record<string, unknown> = {
@@ -114,7 +104,7 @@ const REPO_MAP_SCHEMA: Record<string, unknown> = {
     },
     budgetTokens: {
       type: 'number',
-      description: `Approximate token budget for the map (default ${DEFAULT_BUDGET_TOKENS}, clamped to ${MIN_BUDGET_TOKENS}–${MAX_BUDGET_TOKENS}). Lower budgets return fewer key files.`,
+      description: 'Optional approximate token budget explicitly requested for this map. Omit or set 0 to include every indexed source file and its exported symbols.',
     },
   },
   additionalProperties: false,
@@ -143,8 +133,8 @@ export function createRepoMapTool(options: {
   const definition: ToolDefinition = {
     name: 'repo_map',
     description:
-      'Return a token-budgeted map of the repository: a per-directory source-file count plus the '
-      + 'highest-centrality source files (ranked by how many other files import them, size as a '
+      'Return a map of the repository: a per-directory source-file count plus all indexed '
+      + 'source files (ranked by how many other files import them, size as a '
       + 'tie-break) with their top-level exported symbols. Call this to orient in an unfamiliar '
       + 'codebase before reading files. Read-only; covers TypeScript/JavaScript source files.',
     parameters: REPO_MAP_SCHEMA,
@@ -154,7 +144,7 @@ export function createRepoMapTool(options: {
 
   async function execute(args: Record<string, unknown>): Promise<Omit<ToolResult, 'callId'>> {
     try {
-      const budgetTokens = clampBudget(args['budgetTokens']);
+      const budgetTokens = requestedBudget(args['budgetTokens']);
       const rawPath = typeof args['path'] === 'string' ? args['path'].trim() : '';
       const requested = rawPath ? (isAbsolute(rawPath) ? rawPath : resolve(projectRoot, rawPath)) : projectRoot;
       // Keep the scan inside the project root (read-only, but no reason to escape it).
@@ -168,7 +158,7 @@ export function createRepoMapTool(options: {
 
       const header = [
         `# Repository map: ${relative(projectRoot, root) || '.'}`,
-        `${stats.files} source file(s), ${stats.edges} import edge(s). Budget: ${budgetTokens} tokens.`,
+        `${stats.files} source file(s), ${stats.edges} import edge(s).${budgetTokens === undefined ? '' : ` Requested budget: ${budgetTokens} tokens.`}`,
         '',
         'Directories:',
         ...directorySummary(ranked),
@@ -180,7 +170,7 @@ export function createRepoMapTool(options: {
       let included = 0;
       let restrictedCount = 0;
       // Read access is asked a window of ranked files at a time (bounded
-      // concurrency), only as far as the token budget reaches.
+      // concurrency), continuing through all files unless a budget was requested.
       const restrictedFiles = new Set<string>();
       let asked = 0;
       let full = false;
@@ -204,14 +194,14 @@ export function createRepoMapTool(options: {
           try {
             if (options.capturedReadAccess && !await options.capturedReadAccess(absolute)) throw new Error('captured map path is access-restricted');
             assertCapturedInputPathContext(absolute);
-            const exports = extractTopLevelExports(readFileSync(absolute, 'utf-8')).slice(0, MAX_EXPORTS_PER_FILE);
+            const exports = extractTopLevelExports(await readFile(absolute, 'utf-8'));
             const exportsLine = exports.length > 0 ? `\n    exports: ${exports.join(', ')}` : '';
             block = `\n  ${file.rel}  (dependents: ${file.dependents}, ${formatBytes(file.bytes)})${exportsLine}`;
           } catch {
             block = `\n  ${file.rel}  (dependents: ${file.dependents}, ${formatBytes(file.bytes)})`;
           }
         }
-        if (estimateTokens(output + block) > budgetTokens) {
+        if (budgetTokens !== undefined && estimateTokens(output + block) > budgetTokens) {
           full = true;
           break;
         }

@@ -424,7 +424,7 @@ export class AgentManager {
       mode: input.parentAgentId && !isContractOwnerChild ? 'recursive-child' : 'manual-batch',
       activeAgents,
       requestedDepth: orchestrationDepth,
-      ...(isContractOwnerChild ? { overrides: { recursionEnabled: true, maxDepth: 1 } } : {}),
+      ...(isContractOwnerChild ? { overrides: { recursionEnabled: true } } : {}),
     });
     if (!spawnDecision.allowed) {
       if (this.runtimeBus) {

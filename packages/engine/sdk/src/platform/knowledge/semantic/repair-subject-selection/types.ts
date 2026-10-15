@@ -24,6 +24,6 @@ export class KnowledgeRepairSubjectSelectionHeldError extends Error {
   }
 }
 export const REPAIR_SUBJECT_SELECTION_LIMITS = Object.freeze({
-  inputs: 100, characters: 160_000, requests: 100, bytes: 16_000_000,
-  concurrency: 4, defaultTimeoutMs: 30_000, timeoutMs: 60_000,
+  inputs: Number.POSITIVE_INFINITY, characters: Number.POSITIVE_INFINITY, requests: Number.POSITIVE_INFINITY, bytes: Number.POSITIVE_INFINITY,
+  concurrency: 4, defaultTimeoutMs: 0, timeoutMs: 2_147_483_647,
 });

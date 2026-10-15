@@ -75,7 +75,7 @@ export async function readHomeGraphQuality(inputs: readonly HomeGraphQualityInpu
   let owner: JudgmentPortCapture | undefined;
   if (!snapshots.length) return [];
   const timeoutMs = options.timeoutMs;
-  if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs)) throw new Held('budget');
+  if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > LIMITS.timeoutMs)) throw new Held('budget');
   const controller = new AbortController();
   let held: Held | undefined;
   let rejectStopped: (error: Held) => void = () => {};
@@ -83,7 +83,7 @@ export async function readHomeGraphQuality(inputs: readonly HomeGraphQualityInpu
   const stop = (error: Held) => { held ??= error; controller.abort(); rejectStopped(held); };
   const abort = () => stop(new Held('aborted'));
   options.signal?.addEventListener('abort', abort, { once: true });
-  const timer = timeoutMs === undefined ? undefined : setTimeout(() => stop(new Held('budget')), timeoutMs);
+  const timer = timeoutMs === undefined || timeoutMs === 0 ? undefined : setTimeout(() => stop(new Held('budget')), timeoutMs);
   const checkSource = () => {
     if (held) throw held; if (callerSignal?.aborted) throw new Held('aborted');
     try { original.assertCurrent(); } catch { throw new Held('stale'); }

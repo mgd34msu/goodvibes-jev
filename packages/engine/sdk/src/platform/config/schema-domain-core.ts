@@ -1,4 +1,4 @@
-import { type ConfigSettingDefinition, intRange, numRange, reasoningEffortSetting } from './schema-shared.js';
+import { type ConfigSettingDefinition, intRange, numRange, optionalWorkLimit, reasoningEffortSetting } from './schema-shared.js';
 
 export const coreConfigDefaults = {
   display: {
@@ -76,9 +76,9 @@ export const coreConfigDefaults = {
   },
   planner: {
     decomposition: 'agent',
-    maxTurns: 6,
-    tokenCeiling: 120_000,
-    wallTimeoutMs: 120_000, // 60s starved reasoning models that think silently before emitting (live replay: planner hit the wall at Turn 3 and fell back)
+    maxTurns: 0,
+    tokenCeiling: 0,
+    wallTimeoutMs: 0,
     adaptive: false,
   },
   sandbox: {
@@ -122,7 +122,7 @@ export const coreConfigDefaults = {
     llmProvider: '',
     llmModel: '',
     autoHeal: false,
-    defaultTokenBudget: 5000,
+    defaultTokenBudget: 0,
     hooksFile: 'hooks.json',
     overflowSpillBackend: 'file',
     contractVerification: true,
@@ -495,8 +495,8 @@ export const coreHeadConfigSettings: ConfigSettingDefinition[] = [
     key: 'orchestration.maxDepth',
     type: 'number',
     default: 0,
-    description: 'Maximum recursive orchestration depth: 0=disabled, higher values allow deeper bounded recursion',
-    ...numRange(0, 5),
+    description: 'Optional recursive orchestration depth limit; 0 is unlimited. recursionEnabled controls whether recursion is allowed.',
+    ...optionalWorkLimit(),
   },
   {
     key: 'planner.decomposition',
@@ -508,23 +508,23 @@ export const coreHeadConfigSettings: ConfigSettingDefinition[] = [
   {
     key: 'planner.maxTurns',
     type: 'number',
-    default: 6,
-    description: 'Maximum turns the planning-decomposition agent may take before it is stopped and the heuristic path is used',
-    ...numRange(1, 20),
+    default: 0,
+    description: 'Optional planner turn limit; 0 runs until completion or cancellation.',
+    ...optionalWorkLimit(),
   },
   {
     key: 'planner.tokenCeiling',
     type: 'number',
-    default: 120_000,
-    description: 'Total token budget for the planning-decomposition agent; exceeding it stops the agent and falls back to the heuristic path',
-    ...numRange(1_000, 2_000_000),
+    default: 0,
+    description: 'Optional total planner token limit; 0 imposes no work budget.',
+    ...optionalWorkLimit(),
   },
   {
     key: 'planner.wallTimeoutMs',
     type: 'number',
-    default: 120_000,
-    description: 'Wall-clock timeout (ms) for the planning-decomposition agent; exceeding it cancels the agent and falls back to the heuristic path',
-    ...numRange(1_000, 600_000),
+    default: 0,
+    description: 'Optional planner wall-clock limit in milliseconds; 0 runs until completion or cancellation.',
+    ...optionalWorkLimit(),
   },
   {
     key: 'sandbox.enabled',
@@ -683,9 +683,9 @@ export const coreTailConfigSettings: ConfigSettingDefinition[] = [
   {
     key: 'tools.defaultTokenBudget',
     type: 'number',
-    default: 5000,
-    description: 'Default token budget for precision read operations',
-    ...numRange(100, 100000),
+    default: 0,
+    description: 'Optional token budget for precision read operations; 0 includes the complete result',
+    ...optionalWorkLimit(),
   },
   {
     key: 'tools.hooksFile',

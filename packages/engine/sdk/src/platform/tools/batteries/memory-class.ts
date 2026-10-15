@@ -18,7 +18,7 @@ import { assertJudgmentInput } from '../../gate/judgment-input.js';
 import { ToolInputProjectionError } from '../input-projection.js';
 
 /** Maximum complete memory value admitted to the reading; never a clipping limit. */
-export const MAX_JUDGED_MEMORY_CHARS = 160_000;
+export const MAX_JUDGED_MEMORY_CHARS = Number.POSITIVE_INFINITY;
 
 export const MEMORY_CLASS_OPTIONS = {
   decision: 'A choice that was made and why (a library, design or approach picked over others).',

@@ -72,12 +72,6 @@ export interface HomeGraphPageContext {
 }
 
 export const HOME_GRAPH_PAGE_POLICY_VERSION = 'homegraph-pages-v9';
-const DEFAULT_SYNC_DEVICE_PASSPORT_LIMIT = 32;
-const DEFAULT_SYNC_ROOM_PAGE_LIMIT = 12;
-const DEFAULT_SYNC_PAGE_RUN_MS = 15_000;
-const MAX_FOREGROUND_SYNC_DEVICE_PASSPORTS = 32;
-const MAX_FOREGROUND_SYNC_ROOM_PAGES = 12;
-const MAX_FOREGROUND_SYNC_PAGE_RUN_MS = 30_000;
 
 interface DevicePassportSourceLookup {
   readonly sourcesById: ReadonlyMap<string, KnowledgeSourceRecord>;
@@ -89,25 +83,7 @@ type ExtractionBySourceId = ReadonlyMap<string, ReturnType<KnowledgeStore['getEx
 export async function generateAutomaticHomeGraphPages(
   context: HomeGraphPageContext & { readonly input: HomeGraphSnapshotInput },
 ): Promise<HomeGraphGeneratedPagesSummary> {
-  const requested = context.input.pageAutomation ?? {};
-  return generateHomeGraphPagesForCurrentState(context, {
-    ...requested,
-    maxDevicePassports: clampForegroundLimit(
-      requested.maxDevicePassports,
-      DEFAULT_SYNC_DEVICE_PASSPORT_LIMIT,
-      MAX_FOREGROUND_SYNC_DEVICE_PASSPORTS,
-    ),
-    maxRoomPages: clampForegroundLimit(
-      requested.maxRoomPages,
-      DEFAULT_SYNC_ROOM_PAGE_LIMIT,
-      MAX_FOREGROUND_SYNC_ROOM_PAGES,
-    ),
-    maxRunMs: clampForegroundLimit(
-      requested.maxRunMs,
-      DEFAULT_SYNC_PAGE_RUN_MS,
-      MAX_FOREGROUND_SYNC_PAGE_RUN_MS,
-    ),
-  });
+  return generateHomeGraphPagesForCurrentState(context, context.input.pageAutomation ?? {});
 }
 
 export async function refreshAutomaticHomeGraphPages(
@@ -125,9 +101,9 @@ async function generateHomeGraphPagesForCurrentState(
   if (context.signal?.aborted) abort();
   else context.signal?.addEventListener('abort', abort, { once: true });
   const maxRunMs = options?.maxRunMs;
-  const budget = typeof maxRunMs === 'number' && Number.isFinite(maxRunMs)
-    ? Math.max(1_000, Math.trunc(maxRunMs)) : DEFAULT_SYNC_PAGE_RUN_MS;
-  const timer = setTimeout(abort, budget);
+  const budget = typeof maxRunMs === 'number' && Number.isFinite(maxRunMs) && maxRunMs > 0
+    ? Math.trunc(maxRunMs) : 0;
+  const timer = budget > 0 ? setTimeout(abort, budget) : undefined;
   try {
     return await generateHomeGraphPagesWithinBudget({ ...context, signal: controller.signal }, options);
   } finally {
@@ -143,8 +119,8 @@ async function generateHomeGraphPagesWithinBudget(
   const effectiveOptions = options ?? {};
   const summary = createGeneratedPagesSummary();
   if (effectiveOptions.enabled === false) return summary;
-  const deadlineAt = typeof effectiveOptions.maxRunMs === 'number' && Number.isFinite(effectiveOptions.maxRunMs)
-    ? Date.now() + Math.max(1_000, Math.trunc(effectiveOptions.maxRunMs))
+  const deadlineAt = typeof effectiveOptions.maxRunMs === 'number' && Number.isFinite(effectiveOptions.maxRunMs) && effectiveOptions.maxRunMs > 0
+    ? Date.now() + Math.trunc(effectiveOptions.maxRunMs)
     : undefined;
 
   const state = readHomeGraphServingState(context.store, context.spaceId);
@@ -864,10 +840,6 @@ function limitRecords<T>(records: readonly T[], limit: number | undefined): read
   return records.slice(0, Math.max(0, Math.trunc(limit)));
 }
 
-function clampForegroundLimit(value: number | undefined, fallback: number, max: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
-  return Math.max(0, Math.min(max, Math.trunc(value)));
-}
 
 function resolveRoomTitle(nodes: readonly KnowledgeNodeRecord[], areaId: string | undefined): string | undefined {
   if (!areaId) return undefined;

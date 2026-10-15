@@ -17,10 +17,10 @@ export function createHookExecution(
   const onAbort = () => controller.abort(options.signal?.reason);
   options.signal?.addEventListener('abort', onAbort, { once: true });
   if (options.signal?.aborted) onAbort();
-  const timer = setTimeout(() => {
+  const timer = timeoutSeconds > 0 ? setTimeout(() => {
     controller.abort(new Error(`${kind} hook timed out after ${timeoutSeconds}s`));
-  }, timeoutSeconds * 1000);
-  timer.unref?.();
+  }, timeoutSeconds * 1000) : undefined;
+  timer?.unref?.();
   return {
     signal: controller.signal,
     dispose() {

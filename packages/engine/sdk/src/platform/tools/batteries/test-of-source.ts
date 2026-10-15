@@ -25,7 +25,7 @@ export const TEST_CANDIDATES_PER_READING = 16;
 /** Opening lines of an importer the reading carries. */
 export const TEST_CANDIDATE_HEAD_LINES = 12;
 /** Most characters of one carried line. */
-export const MAX_JUDGED_TEST_LINE_CHARS = 200;
+export const MAX_JUDGED_TEST_LINE_CHARS = Number.POSITIVE_INFINITY;
 
 
 /** What the selection sees about the source: its path relative to the project. */
@@ -36,7 +36,6 @@ export function testOfSourceContext(source: string): JsonValue {
 /** One importer as a candidate: its path, the lines importing the source, and its opening lines. */
 export function testOfSourceCandidate(file: string, importLines: readonly string[], lines: readonly string[]): Candidate {
   assertJudgmentInput({ file, importLines, lines });
-  if (JSON.stringify({ file, importLines, lines }).length > 160_000) throw new JudgmentInputError('unsupported-input');
   return {
     id: file,
     content: { file, importsSource: [...importLines], opening: [...lines] },

@@ -1,10 +1,10 @@
 import { APITimeoutError, type Questions } from '@typesafe-ai/sdk';
 import { checkAnswers, projectAnswers } from './answers.ts';
-import { clientFor, toJudgmentError } from './client.ts';
+import { clientFor, systemOneWithoutDeadline, toJudgmentError } from './client.ts';
 import { validateJudgmentConfig, type JudgmentConfig } from './config.ts';
 import { matchesJudgmentModel } from './endpoint-validation.ts';
 import { JudgmentError } from './errors.ts';
-import { validateContextBudget, validateQuestions } from './limits.ts';
+import { requiresLongContext, validateContextBudget, validateQuestions } from './limits.ts';
 import { withRequestId } from './request-id.ts';
 import { delay, interruptible, retryable, retryDelay, retryPolicy } from './retry.ts';
 import type { JudgmentAttempt, JudgmentEndpointHealth, JudgmentPort, JudgmentRequest, JudgmentResult } from './types.ts';
@@ -13,7 +13,8 @@ import type { JudgmentAttempt, JudgmentEndpointHealth, JudgmentPort, JudgmentReq
 export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
   validateJudgmentConfig(config);
   const targets = [{ endpoint: { ...config.endpoint }, model: config.model }, ...(config.fallbacks ?? []).map((t) => ({ ...t, endpoint: { ...t.endpoint } }))];
-  const clients = targets.map(({ endpoint, model }) => clientFor({ ...config, endpoint, model }, true));
+  const fetch = config.fetch;
+  const clients = targets.map(({ endpoint, model }) => config.timeoutMs > 0 ? clientFor({ ...config, endpoint, model }, true) : undefined);
   const policy = retryPolicy(config.retry);
   const timeoutMs = config.timeoutMs;
   const defaultModel = config.model;
@@ -57,6 +58,7 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
         const { state, questions } = input;
         validateQuestions(questions);
         validateContextBudget(state, questions);
+        const headers = requiresLongContext(state, questions) ? { 'TypeSafe-Danger-Zone-Long-Context': 'true' } : undefined;
         // Exhaust a configured failover chain once; a primary-only outage retries until cancellation.
         const eligible = targets.map((target, endpointIndex) => ({ target, endpointIndex }))
           .filter(({ target, endpointIndex }) => endpointIndex === 0 || target.model === requestedModel);
@@ -97,11 +99,13 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
             const attemptController = new AbortController();
             const abortAttempt = () => attemptController.abort(controller.signal.reason);
             controller.signal.addEventListener('abort', abortAttempt, { once: true });
-            const attemptTimer = setTimeout(() => attemptController.abort(new APITimeoutError(timeoutMs)), timeoutMs);
+            const attemptTimer = timeoutMs > 0 ? setTimeout(() => attemptController.abort(new APITimeoutError(timeoutMs)), timeoutMs) : undefined;
             let failure: unknown;
             try {
               const response = await interruptible(withRequestId(
-                () => clients[endpointIndex]!.systemOne({ state, questions, model: requestedModel }, { signal: attemptController.signal }),
+                () => timeoutMs === 0
+                  ? systemOneWithoutDeadline({ ...target, timeoutMs: 0, retry: {}, ...(fetch ? { fetch } : {}) }, { state, questions, model: requestedModel }, attemptController.signal, headers)
+                  : clients[endpointIndex]!.systemOne({ state, questions, model: requestedModel }, { signal: attemptController.signal, ...(headers === undefined ? {} : { headers }) }),
                 (id) => { requestId = safeId(id); },
               ), attemptController.signal);
               checkCancellation();

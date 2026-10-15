@@ -258,9 +258,9 @@ describe('answer excerpts on real initial and linked ranking paths', () => {
     await expect(answerKnowledgeQuery({ store, llm: { async completeText() { generations++; return recovery; }, async completeJson() { return null; } } }, input)).rejects.toMatchObject({ reason: 'stale' });
     expect(generations).toBe(0); expect(store.listIssues()).toEqual([]);
   });
-  test('uncertain, unavailable, malformed, aborted and over-budget excerpt passes spend no generation or gap writes', async () => {
-    for (const mode of ['uncertain', 'unavailable', 'malformed', 'aborted', 'budget'] as const) {
-      const { store, source } = await fixture(mode === 'budget' ? Array.from({ length: 101 }, (_, index) => `Paragraph ${index}`).join('\n\n') : recovery);
+  test('uncertain, unavailable, malformed and aborted excerpt passes spend no generation or gap writes', async () => {
+    for (const mode of ['uncertain', 'unavailable', 'malformed', 'aborted'] as const) {
+      const { store, source } = await fixture(recovery);
       const fake = port(); const controller = new AbortController(); const before = snapshot(store); let generations = 0;
       installJudgmentPort({ ...fake.port, async ask(request) {
         if ('excerptUseful' in request.questions) {

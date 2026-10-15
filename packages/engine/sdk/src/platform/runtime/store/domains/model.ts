@@ -122,9 +122,9 @@ export function createInitialModelState(): ModelDomainState {
     registryKey: '',
     tier: 'hosted',
     tokenLimits: {
-      maxOutputTokens: 8192,
-      maxToolResultTokens: 50000,
-      maxToolCalls: 64,
+      maxOutputTokens: 0,
+      maxToolResultTokens: 0,
+      maxToolCalls: 0,
       contextWindow: 200000,
     },
     supportsStreaming: true,

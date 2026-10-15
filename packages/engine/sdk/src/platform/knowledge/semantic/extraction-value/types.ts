@@ -21,4 +21,4 @@ export class KnowledgeExtractionValueHeldError extends Error {
   }
 }
 
-export const EXTRACTION_VALUE_LIMITS = Object.freeze({ characters: 160_000, bytes: 800_000, timeoutMs: 20_000 });
+export const EXTRACTION_VALUE_LIMITS = Object.freeze({ characters: Number.POSITIVE_INFINITY, bytes: Number.POSITIVE_INFINITY, timeoutMs: 2_147_483_647 });

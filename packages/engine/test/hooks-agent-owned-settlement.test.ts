@@ -176,7 +176,7 @@ test('owned native contract rejects a legacy engine before any phase or workstre
   const owner = h.manager.list().find((record) => record.contractRole === 'owner');
   expect(owner).toBeDefined();
   if (!owner?.contractId) throw new Error('Expected the refused native contract owner binding');
-  expect(result.error).toBe(`contract ${owner.contractId} could not start: [REDACTED]`);
+  expect(result.error).toBe(`contract ${owner.contractId} could not start: Owned contract requires an orchestration engine with execution settlement`);
   expect(result.code).toBe('OWNED_AGENT_EXECUTION_UNSUPPORTED');
   expect(created).toBe(0);
   expect(started).toBe(0);
@@ -208,7 +208,7 @@ test('native owned-start preflight refuses a manager without a real join before 
   Object.defineProperty(h.manager, 'join', { value: undefined });
   const result = await run(hook, event, h.manager, {});
   expect(result.ok).toBe(false);
-  expect(result.error).toBe('agent hook failed: [REDACTED]');
+  expect(result.error).toBe('agent hook failed: Owned contract requires agent execution settlement');
   expect(result.code).toBe('OWNED_AGENT_EXECUTION_UNSUPPORTED');
   expect(h.manager.list()).toHaveLength(0);
   expect(h.events).toHaveLength(0);

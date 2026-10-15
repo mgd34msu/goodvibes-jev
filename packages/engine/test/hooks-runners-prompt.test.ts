@@ -122,7 +122,7 @@ describe('$ARGUMENTS substitution', () => {
       const hook: HookDefinition = { match: 'Pre:tool:*', type: 'prompt', prompt: 'Check $ARGUMENTS' };
       const result = await run(hook, makeEvent(), toolLLM);
       expect(result.ok).toBe(false);
-      expect(result.error).toBe('[REDACTED]');
+      expect(result.error).toBe('API rate limit');
     });
   });
 
@@ -139,7 +139,7 @@ describe('$ARGUMENTS substitution', () => {
       };
       const result = await run(hook, makeEvent(), toolLLM);
       expect(result.ok).toBe(false);
-      expect(result.error).toBe('[REDACTED]');
+      expect(result.error).toBe('prompt hook timed out after 1s');
     }, 5000);
   });
 });

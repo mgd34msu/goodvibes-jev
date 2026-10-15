@@ -36,5 +36,5 @@ export class KnowledgeRepairSourceAuthorityHeldError extends Error {
     super(`Knowledge repair source authority held (${reason}); no source tier was authorized.`);
   }
 }
-export const REPAIR_SOURCE_AUTHORITY_LIMITS = Object.freeze({ inputs: 50, characters: 160_000,
-  requests: 50, bytes: 8_000_000, concurrency: 4, defaultTimeoutMs: 30_000, timeoutMs: 60_000 });
+export const REPAIR_SOURCE_AUTHORITY_LIMITS = Object.freeze({ inputs: Number.POSITIVE_INFINITY, characters: Number.POSITIVE_INFINITY,
+  requests: Number.POSITIVE_INFINITY, bytes: Number.POSITIVE_INFINITY, concurrency: 4, defaultTimeoutMs: 0, timeoutMs: 2_147_483_647 });

@@ -33191,6 +33191,30 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
             "ask": {
               "type": "string"
             },
+            "selectedModel": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "provider": {
+                  "type": "string"
+                },
+                "registryKey": {
+                  "type": "string"
+                },
+                "displayName": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "provider",
+                "registryKey",
+                "displayName"
+              ],
+              "additionalProperties": false
+            },
             "ownerAgentId": {
               "type": "string"
             },
@@ -39823,6 +39847,30 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                   },
                   "ask": {
                     "type": "string"
+                  },
+                  "selectedModel": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "provider": {
+                        "type": "string"
+                      },
+                      "registryKey": {
+                        "type": "string"
+                      },
+                      "displayName": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "provider",
+                      "registryKey",
+                      "displayName"
+                    ],
+                    "additionalProperties": false
                   },
                   "ownerAgentId": {
                     "type": "string"
@@ -46560,6 +46608,30 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                 },
                 "ask": {
                   "type": "string"
+                },
+                "selectedModel": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "provider": {
+                      "type": "string"
+                    },
+                    "registryKey": {
+                      "type": "string"
+                    },
+                    "displayName": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "provider",
+                    "registryKey",
+                    "displayName"
+                  ],
+                  "additionalProperties": false
                 },
                 "ownerAgentId": {
                   "type": "string"
@@ -134189,7 +134261,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                           ]
                         },
                         "units": {
-                          "maxItems": 256,
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -134318,22 +134389,18 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                         "maxLength": 200
                                       },
                                       "worktreePath": {
-                                        "type": "string",
-                                        "maxLength": 12288
+                                        "type": "string"
                                       },
                                       "worktreeBranch": {
-                                        "type": "string",
-                                        "maxLength": 12288
+                                        "type": "string"
                                       },
                                       "worktreeKept": {
                                         "type": "boolean"
                                       },
                                       "conflictFiles": {
-                                        "maxItems": 256,
                                         "type": "array",
                                         "items": {
-                                          "type": "string",
-                                          "maxLength": 12288
+                                          "type": "string"
                                         }
                                       }
                                     },
@@ -135124,7 +135191,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                           ]
                         },
                         "units": {
-                          "maxItems": 256,
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -135253,22 +135319,18 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                         "maxLength": 200
                                       },
                                       "worktreePath": {
-                                        "type": "string",
-                                        "maxLength": 12288
+                                        "type": "string"
                                       },
                                       "worktreeBranch": {
-                                        "type": "string",
-                                        "maxLength": 12288
+                                        "type": "string"
                                       },
                                       "worktreeKept": {
                                         "type": "boolean"
                                       },
                                       "conflictFiles": {
-                                        "maxItems": 256,
                                         "type": "array",
                                         "items": {
-                                          "type": "string",
-                                          "maxLength": 12288
+                                          "type": "string"
                                         }
                                       }
                                     },
@@ -136059,7 +136121,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                           ]
                         },
                         "units": {
-                          "maxItems": 256,
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -136188,22 +136249,18 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                         "maxLength": 200
                                       },
                                       "worktreePath": {
-                                        "type": "string",
-                                        "maxLength": 12288
+                                        "type": "string"
                                       },
                                       "worktreeBranch": {
-                                        "type": "string",
-                                        "maxLength": 12288
+                                        "type": "string"
                                       },
                                       "worktreeKept": {
                                         "type": "boolean"
                                       },
                                       "conflictFiles": {
-                                        "maxItems": 256,
                                         "type": "array",
                                         "items": {
-                                          "type": "string",
-                                          "maxLength": 12288
+                                          "type": "string"
                                         }
                                       }
                                     },
@@ -136994,7 +137051,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                           ]
                         },
                         "units": {
-                          "maxItems": 256,
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -137123,22 +137179,18 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                         "maxLength": 200
                                       },
                                       "worktreePath": {
-                                        "type": "string",
-                                        "maxLength": 12288
+                                        "type": "string"
                                       },
                                       "worktreeBranch": {
-                                        "type": "string",
-                                        "maxLength": 12288
+                                        "type": "string"
                                       },
                                       "worktreeKept": {
                                         "type": "boolean"
                                       },
                                       "conflictFiles": {
-                                        "maxItems": 256,
                                         "type": "array",
                                         "items": {
-                                          "type": "string",
-                                          "maxLength": 12288
+                                          "type": "string"
                                         }
                                       }
                                     },

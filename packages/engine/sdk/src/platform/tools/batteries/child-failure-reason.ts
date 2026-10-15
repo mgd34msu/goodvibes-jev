@@ -34,7 +34,7 @@ export const CHILD_FAILURE_OPTIONS = {
 export type ChildFailureReading = keyof typeof CHILD_FAILURE_OPTIONS;
 
 /** Most characters of the error message one request carries. */
-export const MAX_JUDGED_CHILD_ERROR_CHARS = 2_000;
+export const MAX_JUDGED_CHILD_ERROR_CHARS = Number.POSITIVE_INFINITY;
 
 /** What the reading sees: the child's own error message. */
 export function childFailureView(error: string): { error: string } {

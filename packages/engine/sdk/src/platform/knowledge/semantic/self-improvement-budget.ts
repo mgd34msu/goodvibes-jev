@@ -12,8 +12,8 @@ export async function runWithRepairBudget<T>(work: (signal: AbortSignal) => Prom
   const stop = (error: unknown) => { rejectStop(error); controller.abort(error); };
   const abort = () => stop(parent?.reason ?? new DOMException('Repair cancelled', 'AbortError'));
   parent?.addEventListener('abort', abort, { once: true });
-  const timer = setTimeout(() => stop(new KnowledgeRepairBudgetError()), Math.max(1, remainingMs));
-  timer.unref?.();
+  const timer = Number.isFinite(remainingMs) ? setTimeout(() => stop(new KnowledgeRepairBudgetError()), Math.max(1, remainingMs)) : undefined;
+  timer?.unref?.();
   try {
     if (parent?.aborted) { abort(); return await stopped; }
     return await Promise.race([stopped, work(controller.signal)]);

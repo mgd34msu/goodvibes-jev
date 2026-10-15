@@ -42,8 +42,8 @@ export const EXEC_FAILURE_OPTIONS = {
 export type ExecFailureCategory = keyof typeof EXEC_FAILURE_OPTIONS;
 
 /** Most characters of stderr and of stdout one request carries, from the end, where failures are reported. */
-export const MAX_JUDGED_STDERR_CHARS = 2_000;
-export const MAX_JUDGED_STDOUT_CHARS = 800;
+export const MAX_JUDGED_STDERR_CHARS = Number.POSITIVE_INFINITY;
+export const MAX_JUDGED_STDOUT_CHARS = Number.POSITIVE_INFINITY;
 
 
 

@@ -24,7 +24,7 @@ export async function readNodeActivations(inputs: readonly { readonly state: Rec
   inputs.forEach(({ state }) => assertJudgmentInput(state));
   if (inputs.length > LIMITS.nodes) throw new Held('budget');
   const timeoutMs = options.timeoutMs;
-  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs)) throw new Held('budget');
+  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > LIMITS.timeoutMs)) throw new Held('budget');
   const snapshots = freezeSupport(structuredClone(inputs));
   const questions = Object.fromEntries(Object.entries(nodeServingWithoutReview.items).map(([name, item]) => [name, item.question]));
   const requestBytes = snapshots.reduce((sum, { state }) => sum + new TextEncoder().encode(JSON.stringify({ state, questions })).byteLength + 1_024, 0);
@@ -36,7 +36,7 @@ export async function readNodeActivations(inputs: readonly { readonly state: Rec
   const stop = (error: Held) => { failure ??= error; controller.abort(); rejectStop(failure); };
   const abort = () => stop(new Held('aborted'));
   options.signal?.addEventListener('abort', abort, { once: true });
-  const timer = timeoutMs === undefined ? undefined : setTimeout(() => stop(new Held('budget')), timeoutMs);
+  const timer = timeoutMs === undefined || timeoutMs === 0 ? undefined : setTimeout(() => stop(new Held('budget')), timeoutMs);
   const check = () => { if (failure) throw failure; if (options.signal?.aborted) throw new Held('aborted'); };
   async function run(): Promise<readonly NodeActivationReading[]> {
     check();

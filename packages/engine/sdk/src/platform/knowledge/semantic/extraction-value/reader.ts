@@ -31,7 +31,7 @@ export function prepareKnowledgeExtractionValueReading(input: KnowledgeExtractio
   const signal = Object.hasOwn(optionDescriptors, 'signal') ? options.signal : undefined;
   const callerCurrent = options.assertCurrent;
   const configuredTimeout = Object.hasOwn(optionDescriptors, 'timeoutMs') ? options.timeoutMs : undefined;
-  const timeoutMs = configuredTimeout ?? LIMITS.timeoutMs;
+  const timeoutMs = configuredTimeout ?? 0;
   const retained = retainStrictJudgmentJson(input, problem => new Held(problem));
   // Full source content is screened before bounds, projection or port acquisition.
   assertJudgmentInput(retained.snapshot);
@@ -54,7 +54,7 @@ export function prepareKnowledgeExtractionValueReading(input: KnowledgeExtractio
   const question = freezeSupport(item.snapshot.extractionValue.question);
   const body = JSON.stringify({ state, questions: { extractionValue: question } });
   if (JSON.stringify(state).length > LIMITS.characters || new TextEncoder().encode(body).byteLength + 1_024 > LIMITS.bytes
-    || !Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs) throw new Held('budget');
+    || !Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > LIMITS.timeoutMs) throw new Held('budget');
 
   let authority: JudgmentPortCapture | undefined;
   let failure: Error | undefined;
@@ -90,7 +90,7 @@ export function prepareKnowledgeExtractionValueReading(input: KnowledgeExtractio
   const read = (): Promise<boolean> => reading ??= (async () => {
     assertCurrent();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
     try {
       authority = captureJudgmentPort(knowledgeExtractionValue.name, {
         signal: AbortSignal.any([controller.signal, ...(signal ? [signal] : [])]), assertCurrent: assertOwnerCurrent,

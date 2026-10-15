@@ -48,8 +48,9 @@ export function createProviderBackedCheckinJudge(
       // Only a settled yes reaches the ordinary content provider. No free-text decision is parsed.
       active();
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), Math.max(1_000, options.timeoutMs ?? 20_000));
-      timer.unref?.();
+      const timeoutMs = options.timeoutMs ?? 0;
+      const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+      timer?.unref?.();
       const signal = lifetime.signal ? AbortSignal.any([lifetime.signal, controller.signal]) : controller.signal;
       let message: string;
       try {
@@ -58,7 +59,7 @@ export function createProviderBackedCheckinJudge(
         active();
         const response = await provider.chat({ model: current.id,
           messages: [{ role: 'user', content: briefing }], systemPrompt: CONTENT_PROMPT,
-          maxTokens: 400, reasoningEffort: 'low', signal });
+          reasoningEffort: 'low', signal });
         signal.throwIfAborted();
         active();
         message = response.content?.trim() ?? '';

@@ -22,13 +22,13 @@ interface Batch {
   readonly jobs: ReadonlyMap<string, Job>;
 }
 /** Operation budgets, not user-adjustable fallback switches. */
-export const COMPACTION_EVIDENCE_LIMITS = Object.freeze({ sourceMessages: 512, cases: 768, calls: 256, sweeps: 6, deadlineMs: 120_000, chunkTokens: 8_000 });
+export const COMPACTION_EVIDENCE_LIMITS = Object.freeze({ sourceMessages: Infinity, cases: Infinity, calls: Infinity, sweeps: Infinity, deadlineMs: 0, chunkTokens: 8_000 });
 
 function fits(batch: Batch): boolean {
   const state = estimateTokens(batch.state);
   const questions = Object.values(batch.questions).map(estimateTokens);
-  return questions.length > 0 && state + Math.max(...questions) <= LIMITS.maxStateWithQuestionTokens
-    && state + questions.reduce((sum, value) => sum + value, 0) <= LIMITS.maxRequestTokens;
+  return questions.length > 0 && state + Math.max(...questions) <= LIMITS.maxLongContextTokens
+    && state + questions.reduce((sum, value) => sum + value, 0) <= LIMITS.maxLongContextTokens;
 }
 function stateFor(sources: readonly string[], cases: readonly Case[], extra: readonly number[] = []): Batch['state'] {
   const indexes = new Set(extra);
@@ -135,7 +135,7 @@ export async function readDependencyQualifiedMembership(
 ): Promise<ReadonlyMap<string, boolean>> {
   if (sources.length > COMPACTION_EVIDENCE_LIMITS.sourceMessages || inputs.length > COMPACTION_EVIDENCE_LIMITS.cases) throw new CompactionReadingError('budget');
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new CompactionReadingError('budget')), COMPACTION_EVIDENCE_LIMITS.deadlineMs);
+  // The finite set of source messages reaches a fixed point; only the owner cancels.
   const work = new OwnedJudgmentWork({ signal: AbortSignal.any([owner.signal, controller.signal]), assertCurrent: owner.assertCurrent });
   const cases: Case[] = inputs.map(input => ({ ...input, evidence: new Set([input.sourceIndex, ...partners(input.sourceIndex)]) }));
   const byId = new Map(cases.map(entry => [entry.id, entry]));
@@ -188,5 +188,5 @@ export async function readDependencyQualifiedMembership(
     }
     work.assertCurrent();
     return membership;
-  } finally { clearTimeout(timer); work.retire(); }
+  } finally { work.retire(); }
 }

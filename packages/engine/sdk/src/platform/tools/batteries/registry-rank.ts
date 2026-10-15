@@ -19,7 +19,7 @@ import { completeJudgmentView } from './complete-view.js';
 import { defineRerank, STAKES_BANDS } from '@goodvibes-jev/judgment';
 
 /** Most characters of a candidate's description or preview the reading carries. */
-export const MAX_JUDGED_REGISTRY_CHARS = 600;
+export const MAX_JUDGED_REGISTRY_CHARS = Number.POSITIVE_INFINITY;
 
 
 

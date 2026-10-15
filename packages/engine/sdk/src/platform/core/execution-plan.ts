@@ -416,7 +416,6 @@ export class ExecutionPlanManager {
     const controller = new AbortController();
     const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
     const assertCurrent = () => { signal.throwIfAborted(); options.assertCurrent?.(); authority?.assertCurrent(); };
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const readStatus = async (checkbox: string, label?: string): Promise<PlanItemStatus> => {
       assertCurrent();
       const canonical = canonicalStatus(label);
@@ -425,7 +424,6 @@ export class ExecutionPlanManager {
       // Screen the COMPLETE markdown before the first projection/transmission,
       // including unrelated lines and later items; never send a partial safe prefix.
       assertJudgmentInput({ markdown });
-      timer ??= setTimeout(() => controller.abort(), 15_000);
       authority ??= captureJudgmentPort('engine.core.plan-item-status', { signal, assertCurrent: options.assertCurrent });
       const run = await planItemStatus.run(authority.port, { label }, { site: 'engine.core.plan-item-status', signal: authority.signal });
       assertCurrent();
@@ -557,7 +555,6 @@ export class ExecutionPlanManager {
         assertCurrent,
       };
     } catch { throw new PlanStatusUnavailableError(); }
-    finally { if (timer !== undefined) clearTimeout(timer); }
   }
 
   // --------------------------------------------------------------------------

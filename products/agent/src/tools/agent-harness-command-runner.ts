@@ -116,11 +116,8 @@ export async function runCommand(deps: AgentHarnessToolDeps, args: Record<string
   const handled = await executeModelCommand(resolved.command.name, commandArgs);
   options.signal?.throwIfAborted(); options.assertCurrent?.(); resolved.assertCurrent?.();
   if (!handled) return error(`Unknown slash command /${resolved.command.name}.`);
-  const MAX_PRINTED_CHARS = 6000;
   const raw = printed.length > 0 ? printed.join('\n') : '(no text output)';
-  const printedText = raw.length > MAX_PRINTED_CHARS
-    ? `${raw.slice(0, MAX_PRINTED_CHARS)}\n... output truncated`
-    : raw;
+  const printedText = raw;
   return output([
     `Command ${safeCommandDisplay(resolved.command.name)} completed.`,
     `Resolved by ${resolved.lookup.source} ${resolved.lookup.resolvedBy}.`,

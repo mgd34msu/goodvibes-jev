@@ -54,7 +54,7 @@ function prepareBatches(input: AnswerEvidenceRelevanceInput) {
     const text = JSON.stringify(candidate);
     hash.update('\0').update(text);
     const nextCharacters = characters + text.length + (candidates.length ? 1 : 0);
-    if (candidates.length === LIMITS.candidates || nextCharacters > LIMITS.characters) flush();
+    if (candidates.length === 100 || nextCharacters > 160_000) flush();
     characters += text.length + (candidates.length ? 1 : 0);
     candidates.push(candidate);
   }
@@ -90,7 +90,7 @@ export async function prepareAnswerEvidenceRelevanceBatches(input: AnswerEvidenc
       let model: string | undefined, requestedModel: string | undefined;
       for (const batch of prepared.batches) {
         check();
-        const plan = await prepareAnswerEvidenceRelevance(batch, { signal, timeoutMs: Math.max(1, deadlineAt - Date.now()), assertCurrent: check });
+        const plan = await prepareAnswerEvidenceRelevance(batch, { signal, timeoutMs: Number.isFinite(deadlineAt) ? Math.max(1, deadlineAt - Date.now()) : 0, assertCurrent: check });
         check();
         if ((model !== undefined && model !== plan.model) || (requestedModel !== undefined && requestedModel !== plan.requestedModel)) throw new Held('stale');
         model = plan.model; requestedModel = plan.requestedModel;

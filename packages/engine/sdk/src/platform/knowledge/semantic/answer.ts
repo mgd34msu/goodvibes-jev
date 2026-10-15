@@ -89,7 +89,7 @@ async function answerWithinBudget(context: KnowledgeAnswerContext, input: Knowle
   const limit = Math.max(1, input.limit ?? 8);
   const objectProfiles = context.objectProfiles ?? [];
   const checkPorts = captureAnswerReadingPorts();
-  const gapUniverse = prepareAnswerGapUniverse(context.store, spaceId, input.query, { signal, timeoutMs: Math.max(1, deadlineAt - Date.now()) });
+  const gapUniverse = prepareAnswerGapUniverse(context.store, spaceId, input.query, { signal, timeoutMs: Number.isFinite(deadlineAt) ? Math.max(1, deadlineAt - Date.now()) : 0 });
   // Protect the full structural candidate universe before the first evidence reading.
   const objects = input.includeLinkedObjects === false ? undefined
     : prepareAnswerLinkedObjects(context.store, spaceId, input, objectProfiles, signal);
@@ -158,7 +158,7 @@ async function answerWithinBudget(context: KnowledgeAnswerContext, input: Knowle
   const candidateFacts = candidateClaims.map((claim) => JSON.stringify(claim));
   checkGap();
   const generated = prepared.evidence.length ? await synthesizeAnswer(context.llm ?? null, input.query, mode, prepared.evidence,
-    { signal, timeoutMs: Math.max(1, deadlineAt - Date.now()) }) : null;
+    { signal, timeoutMs: Number.isFinite(deadlineAt) ? Math.max(1, deadlineAt - Date.now()) : 0 }) : null;
   checkGap();
   const rendered = renderFallbackAnswer(input.query, mode, prepared.evidence.map((row) => ({ title: row.title ?? row.reference, excerpt: row.text })), facts);
   const candidates: AnswerCandidate[] = [
@@ -166,7 +166,7 @@ async function answerWithinBudget(context: KnowledgeAnswerContext, input: Knowle
     ...(rendered.synthesized ? [{ id: 'rendered' as const, text: rendered.text, facts: candidateFacts }] : []),
   ];
   const selection = await verifyKnowledgeAnswer({ query: input.query, evidence: prepared.evidence, candidates },
-    { signal, timeoutMs: Math.max(1, deadlineAt - Date.now()) });
+    { signal, timeoutMs: Number.isFinite(deadlineAt) ? Math.max(1, deadlineAt - Date.now()) : 0 });
   checkGap();
   const missingExtraction = selection.quality.status === 'no-evidence';
   const evidenceGap = answerNeedsEvidenceGap(selection.quality) || missingExtraction
@@ -265,7 +265,7 @@ async function resolveAnswerEvidence(
 }
 
 async function collectRawAnswerFacts(query: string, evidence: readonly EvidenceItem[], signal?: AbortSignal): Promise<readonly KnowledgeNodeRecord[]> {
-  return (settledAnswerFacts(query, evidence) ?? await filterFactsForQuery(query, uniqueNodes(evidence.flatMap((item) => item.facts)), signal)).slice(0, 24);
+  return (settledAnswerFacts(query, evidence) ?? await filterFactsForQuery(query, uniqueNodes(evidence.flatMap((item) => item.facts)), signal));
 }
 
 function withAnswerFactContract(

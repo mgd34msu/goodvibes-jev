@@ -174,18 +174,18 @@ function remoteRunnerAvailable(sources: PlannerInputSources): boolean {
  * Read the planner decomposition config (mode + bounds) from the config
  * manager, defensively defaulting anything missing or invalid. Real config
  * always supplies the DEFAULT_CONFIG values; these fallbacks matter only for a
- * partially-stubbed config manager, and guarantee finite positive bounds so a
- * planning-agent poll can never loop forever on a NaN deadline.
+ * partially-stubbed config manager. Zero means no automatic work limit;
+ * positive values are explicit caller ceilings.
  */
 function readDecompositionConfig(configManager: Pick<ConfigManager, 'get'>): DecompositionServiceConfig {
   const num = (value: unknown, fallback: number): number =>
-    typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
   return {
     mode: configManager.get('planner.decomposition') === 'heuristic' ? 'heuristic' : 'agent',
     bounds: {
-      maxTurns: num(configManager.get('planner.maxTurns'), 6),
-      tokenCeiling: num(configManager.get('planner.tokenCeiling'), 120_000),
-      wallTimeoutMs: num(configManager.get('planner.wallTimeoutMs'), 60_000),
+      maxTurns: num(configManager.get('planner.maxTurns'), 0),
+      tokenCeiling: num(configManager.get('planner.tokenCeiling'), 0),
+      wallTimeoutMs: num(configManager.get('planner.wallTimeoutMs'), 0),
     },
   };
 }

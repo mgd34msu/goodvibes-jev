@@ -20,8 +20,6 @@ const CARD_FIELD_CONCURRENCY = 8;
  * focus": without a resolvable ref, an action fails instead of guessing.
  */
 
-const MAX_ELEMENTS = 400;
-const MAX_NAME_LENGTH = 160;
 
 interface RawElement {
   readonly documentUrl?: string;
@@ -618,7 +616,7 @@ export async function takeSnapshot(
   pageId: string,
   options: { readonly limit?: number | undefined; readonly guard?: CardFieldGuard | undefined; readonly controls?: BrowserControlAdmission | undefined } = {},
 ): Promise<BrowserSnapshot> {
-  const limit = Math.max(1, Math.min(MAX_ELEMENTS, options.limit ?? MAX_ELEMENTS));
+  const limit = options.limit !== undefined && options.limit > 0 ? Math.floor(options.limit) : Number.MAX_SAFE_INTEGER;
   const raw: (RawElement & { readonly frameChain: readonly string[] })[] = [];
   for (const frame of page.frames()) {
     if (!options.controls && raw.length >= limit) break;
@@ -630,7 +628,6 @@ export async function takeSnapshot(
   }
   if (options.controls) {
     options.controls.admit(raw.map((element, index) => ({ ref: `e${String(index + 1)}`, role: element.role, name: element.name, tag: element.tag, disabled: element.disabled, ...(element.control ? { control: element.control } : {}) })));
-    if (raw.length > MAX_ELEMENTS) throw new Error('The complete browser control snapshot exceeds its limit.');
   }
   snapshotCounter += 1;
   const scrub = (text: string): string =>
@@ -668,7 +665,7 @@ export async function takeSnapshot(
       // The name is scrubbed too: a page is free to copy what was typed into a
       // label, an aria-label or a placeholder, and every one of those becomes
       // this field.
-      name: options.controls ? scrub(element.name) : scrub(element.name).slice(0, MAX_NAME_LENGTH),
+      name: scrub(element.name),
       tag: element.tag,
       selector: element.selector,
       value,

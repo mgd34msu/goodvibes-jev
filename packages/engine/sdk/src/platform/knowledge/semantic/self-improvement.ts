@@ -37,10 +37,6 @@ import {
 import { BASE_OBJECT_PROFILES } from './self-improvement-graph.js';
 import { captureGapRepairLifecycle } from './self-improvement-lifecycle.js';
 
-const DEFAULT_REFINEMENT_LIMIT = 12;
-const MAX_REFINEMENT_LIMIT = 24;
-const DEFAULT_REFINEMENT_RUN_MS = 45_000;
-const MAX_REFINEMENT_RUN_MS = 60_000;
 
 interface SelfImproveContext {
   readonly store: KnowledgeStore;
@@ -223,8 +219,8 @@ function createSelfImproveRunPlan(
   candidates: readonly KnowledgeNodeRecord[],
   input: KnowledgeSemanticSelfImproveInput,
 ): SelfImproveRunPlan {
-  const requestedLimit = Math.max(1, input.limit ?? DEFAULT_REFINEMENT_LIMIT);
-  const cappedLimit = Math.min(requestedLimit, MAX_REFINEMENT_LIMIT);
+  const requestedLimit = input.limit !== undefined && input.limit > 0 ? Math.floor(input.limit) : candidates.length;
+  const cappedLimit = requestedLimit;
   const gaps = candidates.slice(0, cappedLimit);
   return {
     candidates,
@@ -232,10 +228,7 @@ function createSelfImproveRunPlan(
     requestedLimit,
     cappedLimit,
     effectiveLimit: gaps.length,
-    maxRunMs: Math.min(
-      MAX_REFINEMENT_RUN_MS,
-      Math.max(5_000, input.maxRunMs ?? DEFAULT_REFINEMENT_RUN_MS),
-    ),
+    maxRunMs: input.maxRunMs !== undefined && input.maxRunMs > 0 ? input.maxRunMs : Infinity,
     startedAt: Date.now(),
     trigger: input.reason ?? 'manual',
   };
@@ -465,7 +458,7 @@ async function executeGapRepair(options: {
   if (options.shouldStop()) return emptyRepairOutcome({ skippedGaps: 1 });
   let task = await updateRefinementTask(context.store, options.task, 'searching', 'Searching for source-backed repair evidence.', { query: gap.title });
   if (options.shouldStop()) return emptyRepairOutcome({ skippedGaps: 1 });
-  const remainingMs = Math.max(1_000, startedAt + maxRunMs - Date.now());
+  const remainingMs = Math.max(0, startedAt + maxRunMs - Date.now());
   const result = await runGapRepairerWithBudget({
     input,
     spaceId,
@@ -516,8 +509,7 @@ async function runGapRepairerWithBudget(input: {
     sources: gapContext.sources,
     linkedObjects: gapContext.linkedObjects,
     facts: gapContext.facts,
-    maxSources: 5,
-    deadlineAt: Date.now() + remainingMs,
+    ...(Number.isFinite(remainingMs) ? { deadlineAt: Date.now() + remainingMs } : {}),
     signal,
   }, input.assertCurrent)), remainingMs, runInput.signal);
 }

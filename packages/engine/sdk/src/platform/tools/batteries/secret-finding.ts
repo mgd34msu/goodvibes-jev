@@ -18,7 +18,7 @@ import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 /** Lines of context carried on each side of the candidate line. */
 export const SECRET_CONTEXT_LINES = 2;
 /** Most characters of one line the reading carries. */
-export const MAX_JUDGED_SCAN_LINE_CHARS = 300;
+export const MAX_JUDGED_SCAN_LINE_CHARS = Number.POSITIVE_INFINITY;
 
 
 /** What a scan reading sees: the file, the candidate line, and the lines around it. */

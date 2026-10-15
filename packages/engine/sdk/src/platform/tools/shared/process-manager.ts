@@ -1,4 +1,7 @@
 import { executePolicyCheck } from '../../gate/execute-policy-check.js';
+import { mkdtemp, open, type FileHandle } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 import { summarizeError } from '../../utils/error-display.js';
@@ -88,7 +91,7 @@ export interface SpawnOptions {
   /** Captured admission authority, rechecked after async preparation and immediately
    * before spawning. Never called to govern an already-running child. */
   assertCurrent?: (() => void) | undefined;
-  /** Abort the process if it hasn't completed within this many ms. Default: 60000. */
+  /** Abort the process if it hasn't completed within this many ms. Omit or use 0 for no deadline. */
   timeout_ms?: number | undefined;
   /** Grace period (ms) between SIGTERM and SIGKILL during termination. Default: 5000. */
   sigterm_grace_ms?: number | undefined;
@@ -300,7 +303,7 @@ export class ProcessManager {
   ): Promise<BgCommandResult> {
     admissionSignal?.throwIfAborted(); assertSynchronousAdmission(assertAdmissionCurrent);
     admissionSignal?.throwIfAborted();
-    const timeoutMs = opts?.timeout_ms ?? 60_000;
+    const timeoutMs = opts?.timeout_ms ?? 0;
     const sigtermGraceMs = opts?.sigterm_grace_ms ?? 5_000;
     assertTimerRange('timeout_ms', timeoutMs);
     assertTimerRange('sigterm_grace_ms', sigtermGraceMs);
@@ -458,7 +461,7 @@ export class ProcessManager {
 
     // Timeout opt-outs preserve externally owned lifetimes. Explicit stop and
     // runtime close share one termination sequence, including escalation/reap.
-    const timeoutHandle = setTimeout(() => {
+    const timeoutHandle = timeoutMs > 0 ? setTimeout(() => {
       if (entry.done) return;
       entry.timedOut = true;
       if (!killOnTimeout) {
@@ -469,8 +472,8 @@ export class ProcessManager {
       void owner.stop().catch((error: unknown) => {
         logger.warn('Background process termination failed', { processId: id, error: summarizeError(error) });
       });
-    }, timeoutMs);
-    timeoutHandle.unref?.();
+    }, timeoutMs) : undefined;
+    timeoutHandle?.unref?.();
 
     // Reject the spawn promise if the process errors immediately (ENOENT/EACCES
     // on the child process level), the outer try/catch handles Bun.spawn throws;
@@ -847,8 +850,8 @@ function killTrackedProcess(proc: ReturnType<typeof Bun.spawn>, signal: Paramete
  * makes `bg_output` reflect the process's output up to that moment, and gives
  * an on-exit trigger a real output tail to put in its payload.
  *
- * The byte cap is unchanged and is still enforced across the whole stream; the
- * truncation notice is appended once, at the point the cap is first crossed.
+ * Large streams spill to a private local file. The bounded in-memory preview
+ * names that file; subsequent output is retained there with backpressure.
  */
 async function readProcessStream(
   stream: ReadableStream<Uint8Array>,
@@ -858,7 +861,7 @@ async function readProcessStream(
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let total = 0;
-  let truncated = false;
+  let spill: FileHandle | undefined;
 
   // Abort releases the read loop for a pipe whose write end a surviving
   // descendant still holds; without it the pending read outlives the process.
@@ -874,21 +877,23 @@ async function readProcessStream(
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      const remaining = MAX_PROCESS_OUTPUT_BYTES - total;
-      if (remaining > 0) {
-        const chunk = value.byteLength > remaining ? value.subarray(0, remaining) : value;
-        const decoded = decoder.decode(chunk, { stream: true });
-        if (decoded.length > 0) sink.push(decoded);
-        total += chunk.byteLength;
+      const decoded = decoder.decode(value, { stream: true });
+      if (!spill && total + value.byteLength > MAX_PROCESS_OUTPUT_BYTES) {
+        const directory = await mkdtemp(join(tmpdir(), 'goodvibes-process-output-'));
+        const path = join(directory, 'output.log');
+        spill = await open(path, 'wx', 0o600);
+        await spill.writeFile(sink.join(''));
+        sink.push(`\n[goodvibes: complete output continues in ${path}]\n`);
       }
-      if (value.byteLength > remaining && !truncated) {
-        truncated = true;
-        sink.push(`\n[goodvibes: output truncated after ${MAX_PROCESS_OUTPUT_BYTES} bytes]\n`);
-      }
+      if (spill) await spill.writeFile(decoded);
+      else if (decoded.length > 0) sink.push(decoded);
+      total += value.byteLength;
     }
     const tail = decoder.decode();
-    if (tail.length > 0) sink.push(tail);
+    if (spill) await spill.writeFile(tail);
+    else if (tail.length > 0) sink.push(tail);
   } finally {
+    await spill?.close();
     cancelSignal?.removeEventListener('abort', onAbort);
     reader.releaseLock();
   }

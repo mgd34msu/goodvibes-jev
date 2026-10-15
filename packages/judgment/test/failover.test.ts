@@ -243,10 +243,10 @@ describe('configured System One failover and primary-only retry', () => {
     expect(calls).toBe(1);
   });
 
-  test('cancellation stops a fetch ignoring abort and records exactly once', async () => {
+  test.each([0, 500])('cancellation stops a fetch ignoring abort and records exactly once with timeout %i', async (timeoutMs) => {
     let calls = 0;
     const controller = new AbortController();
-    const port = createSystemOnePort(config(async () => { calls += 1; setTimeout(() => controller.abort(), 15); return await new Promise<Response>(() => {}); }));
+    const port = createSystemOnePort(config(async () => { calls += 1; setTimeout(() => controller.abort(), 15); return await new Promise<Response>(() => {}); }, { timeoutMs }));
     using log = new SqliteDecisionLog(':memory:');
     const error = await failure(withDecisionLog(port, log).ask({ ...request, signal: controller.signal }));
     expect(error.kind).toBe('aborted');

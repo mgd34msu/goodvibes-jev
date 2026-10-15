@@ -67,6 +67,14 @@ export function numRange(
   };
 }
 
+/** An optional owner-configured work limit; zero disables it. */
+export function optionalWorkLimit(): Pick<ConfigSettingDefinition, 'validate' | 'validationHint'> {
+  return {
+    validate: (value) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0,
+    validationHint: 'non-negative safe integer; 0 means unlimited',
+  };
+}
+
 /** Returns validate + validationHint for a TCP port (integer in [1, 65535]). */
 /**
  * The hint every port setting carries.

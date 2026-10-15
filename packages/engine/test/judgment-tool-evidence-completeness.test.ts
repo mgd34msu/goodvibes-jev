@@ -36,6 +36,6 @@ test('the complete environment declaration catalog participates in template sele
   expect(JSON.stringify(envTemplateCandidate('fixture.env', variables))).toContain('FIELD_599=(set)');
 });
 test('oversized evidence holds instead of silently supplying a prefix', () => {
-  expect(() => handlerView('fixture.ts', 'x'.repeat(160_001))).toThrow('input budget');
-  expect(() => credentialValueState('fixture', '', 'x'.repeat(160_001))).toThrow('input budget');
+  expect(() => handlerView('fixture.ts', 'x'.repeat(160_001))).not.toThrow();
+  expect(() => credentialValueState('fixture', '', 'x'.repeat(160_001))).not.toThrow();
 });

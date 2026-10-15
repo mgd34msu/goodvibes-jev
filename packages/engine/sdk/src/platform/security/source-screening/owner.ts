@@ -99,8 +99,8 @@ export function createProtectedSourceOwner(options: ProtectedSourceOwnerOptions)
   const judgment = Object.freeze(isHosted ? { endpoint: 'https://api.typesafe.ai', model: 'jev-latest' }
     : { endpoint: captureLoopbackEndpoint(options.judgment.endpoint), model: options.judgment.model ?? DEFAULT_MODEL });
   if (!reference(proposal.model) || !reference(judgment.model)) return invalid();
-  const timeoutMs = options.timeoutMs ?? 10_000;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000
+  const timeoutMs = options.timeoutMs ?? 0;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 2_147_483_647
     || (options.onRetry !== undefined && typeof options.onRetry !== 'function')) return invalid();
   const lifetime = new AbortController();
   const signal = AbortSignal.any([parentSignal, lifetime.signal]);

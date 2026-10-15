@@ -60,7 +60,6 @@ import {
 } from './companion-chat-branching.js';
 import {
   executeCompanionToolCalls,
-  runToolExhaustionFinalizer,
 } from './companion-chat-turn-execution.js';
 import { planCompanionSweep } from './companion-chat-gc.js';
 import type { CompanionSessionBrokerBridge } from './companion-chat-broker-bridge.js';
@@ -124,14 +123,6 @@ const DEFAULT_IDLE_ACTIVE_MS = 30 * 60 * 1_000; // 30 minutes with messages
 const DEFAULT_IDLE_EMPTY_MS = 5 * 60 * 1_000;   // 5 minutes empty session
 const DEFAULT_CLOSED_MEMORY_GRACE_MS = 5 * 60 * 1_000; // evict closed bodies from RAM after 5 min
 const GC_INTERVAL_MS = 60 * 1_000;               // sweep every minute
-const MAX_TOOL_ROUNDS_PER_TURN = 8;
-const TOOL_EXHAUSTION_FINALIZER_PROMPT = [
-  `The tool-call budget for this turn is exhausted after ${MAX_TOOL_ROUNDS_PER_TURN} rounds.`,
-  'Do not call any more tools. Use the conversation and tool results already available to give '
-    + 'the user the best concise final answer you can.',
-  'If the available tool results are insufficient, say what is missing and ask one short follow-up '
-    + 'question.',
-].join(' ');
 function assertCompleteProviderModelRoute(
   input: { readonly model?: string | undefined; readonly provider?: string | undefined },
 ): void {
@@ -175,7 +166,7 @@ export interface CompanionChatReplyResult {
 
 interface PendingReply {
   readonly resolve: (result: CompanionChatReplyResult) => void;
-  readonly timeout: ReturnType<typeof setTimeout>;
+  readonly timeout: ReturnType<typeof setTimeout> | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -564,7 +555,7 @@ export class CompanionChatManager {
     } = {},
   ): Promise<CompanionChatReplyResult> {
     return awaitCompanionReply(
-      options.timeoutMs ?? 120_000,
+      options.timeoutMs ?? 0,
       (pendingReply) => this._postMessageInternal(sessionId, content, clientId, {
         pendingReply,
         attachments: options.attachments,
@@ -821,9 +812,8 @@ export class CompanionChatManager {
 
     try {
       const toolDefinitions = this.toolRegistry?.getToolDefinitions() ?? [];
-      let completed = false;
 
-      for (let round = 0; round < MAX_TOOL_ROUNDS_PER_TURN; round++) {
+      while (!abortSignal.aborted) {
         const stream = this.provider.chatStream([...session.conversation.getMessagesForLLM()], {
           systemPrompt: appendGoodVibesRuntimeAwarenessPrompt(session.meta.systemPrompt),
           model: session.meta.model,
@@ -888,7 +878,6 @@ export class CompanionChatManager {
         if (toolCalls.length === 0) {
           session.conversation.addAssistantMessage(uncommittedContent);
           uncommittedContent = '';
-          completed = true;
           break;
         }
 
@@ -896,7 +885,6 @@ export class CompanionChatManager {
         uncommittedContent = '';
 
         if (!this.toolRegistry) {
-          completed = true;
           break;
         }
 
@@ -905,23 +893,6 @@ export class CompanionChatManager {
           toolCalls, publish, sessionId, turnId,
         );
         session.conversation.addToolResults(toolResults);
-      }
-
-      if (!completed && !abortSignal.aborted) {
-        const finalResponse = await runToolExhaustionFinalizer(
-          { provider: this.provider, finalizerPrompt: TOOL_EXHAUSTION_FINALIZER_PROMPT },
-          session, abortSignal, turnId, publish,
-        );
-        if (finalResponse.trim()) {
-          assistantContent += finalResponse;
-          session.conversation.addAssistantMessage(finalResponse);
-          completed = true;
-        } else {
-          const fallbackResponse = 'I could not finish a final answer after using the available tools. Please try again with a narrower request.';
-          assistantContent += fallbackResponse;
-          session.conversation.addAssistantMessage(fallbackResponse);
-          completed = true;
-        }
       }
 
       // A detected abort (user cancel, session close, or shutdown) where the

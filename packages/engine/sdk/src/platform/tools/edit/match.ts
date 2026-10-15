@@ -574,7 +574,6 @@ async function selectEditWindow(file: string, find: string) {
   // Each reading sees the complete candidate and its neighboring lines. Do not
   // send the whole file with every candidate or reject files by line count.
   const context = { find, totalLines: lines.length, scope: 'Candidates include neighboring lines; other file locations are evaluated in separate batches.' };
-  if (JSON.stringify(context).length > 160_000) return null;
   assertJudgmentInput(context);
   type Window = { id: string; content: { startLine: number; text: string; before: string; after: string }; start: number; end: number; candidateLines: string[] };
   const port = judgmentPort(EDIT_TARGET_SITE), model = port.model;
@@ -602,7 +601,6 @@ async function selectEditWindow(file: string, find: string) {
     const chars = JSON.stringify(candidate).length;
     // An oversized individual target cannot be safely inferred by a bounded
     // model request. Exact replacement remains available for the entire file.
-    if (JSON.stringify(context).length + chars > 160_000) return null;
     if (batch.length && (batch.length >= 64 || batchChars + chars > 160_000)) {
       await evaluate(batch);
       if (matches.length > 1) return null;

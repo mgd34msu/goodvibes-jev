@@ -25,24 +25,9 @@ import {
 
 const DEBOUNCE_MS = 250;
 
-/**
- * Count cap on retained TERMINAL workstream snapshots (every item passed or
- * failed). 50 is several weeks of finished work for a busy project, enough
- * that "what did that run do?" is still answerable, while keeping the
- * directory small enough to enumerate cheaply on every resume.
- *
- * A snapshot for a workstream that is still RUNNING is NEVER reaped, at any
- * count or age: resumability is the entire point of the store.
- */
-const MAX_TERMINAL_SNAPSHOTS = 50;
-
-/**
- * Age TTL for a terminal workstream snapshot, measured from its `writtenAt`.
- * 14 days: two working weeks covers "resume the thing I finished before
- * vacation" and post-mortem reads, past which a finished workstream is history
- * nobody re-enters.
- */
-const TERMINAL_SNAPSHOT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+/** Completed workstream snapshots remain available until explicitly removed. */
+const MAX_TERMINAL_SNAPSHOTS = Infinity;
+const TERMINAL_SNAPSHOT_MAX_AGE_MS = Infinity;
 
 /**
  * Age TTL for `.unrecognized` quarantine files.

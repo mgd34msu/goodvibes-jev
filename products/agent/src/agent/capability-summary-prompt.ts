@@ -15,27 +15,6 @@ import { UNTRUSTED_CONTENT_RULE } from '../trust/untrusted-content.ts';
  * are problems.
  */
 
-const MAX_LISTED_PER_GROUP = 12;
-
-/**
- * A shortened group has to say it was shortened.
- *
- * `CAPABILITY_CLAIM_RULE` tells the agent to trust this summary, to call a
- * capability unavailable only when the summary says so. A group silently cut at
- * twelve turns that instruction into the very failure this file exists to
- * prevent: a real capability drops off the end and its absence reads as an
- * answer. The count is small today, so this is a guard rather than a repair,
- * which is exactly when it is cheap to put in.
- */
-function withOverflowNote(entries: readonly string[], total: number): readonly string[] {
-  if (total <= MAX_LISTED_PER_GROUP) return entries;
-  const hidden = total - MAX_LISTED_PER_GROUP;
-  return [
-    ...entries,
-    `- (${hidden} more in this group are not listed here. The list is shortened, not complete, do not read an absence from it. Ask for the full capability report before concluding anything is missing.)`,
-  ];
-}
-
 /**
  * The rule the owner's incident turned into policy: an empty list is not
  * evidence of incapacity. It appears in the prompt whether or not the index has
@@ -102,10 +81,7 @@ export function buildCapabilitySummaryPrompt(report: CapabilityIndexReport | nul
   if (ready.length > 0) {
     sections.push([
       'Available now, call these directly:',
-      ...withOverflowNote(
-        ready.slice(0, MAX_LISTED_PER_GROUP).map((entry) => line('-', `${entry.title}: ${entry.modelRoute ?? ''}`.trim())),
-        ready.length,
-      ),
+      ...ready.map((entry) => line('-', `${entry.title}: ${entry.modelRoute ?? ''}`.trim())),
     ].join('\n'));
   } else {
     sections.push('No capability is currently resolvable as ready.');
@@ -114,29 +90,23 @@ export function buildCapabilitySummaryPrompt(report: CapabilityIndexReport | nul
   if (needsSetup.length > 0) {
     sections.push([
       'Not ready, and this is what each one needs; tell the user this, do not just refuse:',
-      ...withOverflowNote(
-        needsSetup.slice(0, MAX_LISTED_PER_GROUP).map((entry) =>
+      ...needsSetup.map((entry) =>
           line('-', `${entry.title}: ${entry.reason ?? 'a prerequisite is missing'} Fix: ${entry.fix ?? 'unknown'}`)),
-        needsSetup.length,
-      ),
     ].join('\n'));
   }
 
   if (unavailable.length > 0) {
     sections.push([
       'Not wired up in this build:',
-      ...withOverflowNote(
-        unavailable.slice(0, MAX_LISTED_PER_GROUP).map((entry) =>
+      ...unavailable.map((entry) =>
           line('-', `${entry.title}: ${entry.reason ?? 'no route is registered'}`)),
-        unavailable.length,
-      ),
     ].join('\n'));
   }
 
   if (report.disagreements.length > 0) {
     sections.push([
       'Configured on this machine but not wired up. Say this instead of claiming you cannot do it:',
-      ...report.disagreements.slice(0, MAX_LISTED_PER_GROUP).map((entry) =>
+      ...report.disagreements.map((entry) =>
         line('-', `${entry.problem} Found: ${entry.evidence.join('; ')}. Fix: ${entry.fix}`)),
     ].join('\n'));
   }

@@ -235,6 +235,7 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
         configManager: deps.configManager,
         runtimeBus: deps.runtimeBus,
         paths: runtime.evidencePaths,
+        signal,
       });
       if (check.superseded || signal.aborted) return;
       const prior = unit.checks.at(-1);

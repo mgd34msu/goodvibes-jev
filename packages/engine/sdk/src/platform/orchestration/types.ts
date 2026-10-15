@@ -381,7 +381,7 @@ export interface WorkItemSpec extends WorkItemContractFields {
    * Best-of-N: run this item as N sibling attempts in isolated worktrees (see
    * attempts.ts), then HOLD the merge and expose the candidates instead of
    * auto-merging. Omitted/1 ⇒ an ordinary single item (unchanged behavior).
-   * Values above {@link MAX_ATTEMPTS} are clamped. Only honored when the
+   * The requested positive integer is honored when the
    * workstream is `worktree`-isolated, attempts need isolated trees to compare;
    * under `shared` isolation the value is ignored (a single item runs).
    *
@@ -436,8 +436,8 @@ export interface WorkItemContractFields {
  */
 export type ReleasePolicy = 'passed' | 'reviewed-and-merged';
 
-/** Sensible cap on best-of-N sibling attempts per work item, enough to compare, bounded against runaway fan-out/cost. */
-export const MAX_ATTEMPTS = 5;
+/** @deprecated Attempts have no application-imposed ceiling. */
+export const MAX_ATTEMPTS = Number.POSITIVE_INFINITY;
 
 /**
  * Where a workstream's item phases run their file changes.

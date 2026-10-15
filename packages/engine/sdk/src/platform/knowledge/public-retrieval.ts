@@ -360,7 +360,7 @@ export async function readPublicKnowledgeSelection(store: KnowledgeStore, input:
       }
       check();
       const plan = await prepareAnswerEvidenceRelevanceBatches({ query, candidates }, {
-        signal, timeoutMs: Math.max(1, deadlineAt - Date.now()), assertCurrent: check,
+        signal, timeoutMs: Number.isFinite(deadlineAt) ? Math.max(1, deadlineAt - Date.now()) : 0, assertCurrent: check,
       });
       check();
       const byReference = new Map(candidates.map((candidate, index) => [candidate.reference, rows[index]!]));

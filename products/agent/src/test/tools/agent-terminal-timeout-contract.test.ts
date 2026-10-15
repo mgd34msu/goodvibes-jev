@@ -149,11 +149,13 @@ describe('terminal: deterministic timeout arithmetic and explicit flags', () => 
     expect(resolveKillOnTimeout(args({ fields: { killOnTimeout: 'false' } }), 'command')).toBe(false);
     expect(resolveKillOnTimeout(args({ killOnTimeout: true, fields: { killOnTimeout: 'false' } }), 'command')).toBe(true);
   });
-  test('clamps preserve default, truncation and one-second/eight-hour limits', () => {
-    expect(clampTimeout(undefined, DEFAULT_BACKGROUND_TIMEOUT_MS)).toBe(30 * 60 * 1000);
+  test('timeouts default to unlimited and preserve explicit values within the timer range', () => {
+    expect(clampTimeout(undefined, DEFAULT_BACKGROUND_TIMEOUT_MS)).toBe(0);
+    expect(clampTimeout(1, 5000)).toBe(1);
     expect(clampTimeout('120000.9', 5000)).toBe(120000);
-    expect(clampTimeout(-1, 5000)).toBe(1000);
-    expect(clampTimeout(Number.MAX_SAFE_INTEGER, 5000)).toBe(MAX_BACKGROUND_TIMEOUT_MS);
+    expect(() => clampTimeout(-1, 5000)).toThrow('runtime timer range');
+    expect(clampTimeout(MAX_BACKGROUND_TIMEOUT_MS, 5000)).toBe(MAX_BACKGROUND_TIMEOUT_MS);
+    expect(() => clampTimeout(Number.MAX_SAFE_INTEGER, 5000)).toThrow('runtime timer range');
     expect(clampTimeout(NaN, 5000)).toBe(5000);
   });
   test('OS exit status, timeout flag, and elapsed time remain mechanical', () => {

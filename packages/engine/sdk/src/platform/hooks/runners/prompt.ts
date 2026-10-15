@@ -28,7 +28,7 @@ export async function run(
   }
 
   const resolvedPrompt = promptTemplate.replaceAll('$ARGUMENTS', JSON.stringify(event));
-  const timeoutMs = (hook.timeout ?? 30) * 1000;
+  const timeoutMs = (hook.timeout ?? 0) * 1000;
 
   logger.debug('prompt hook: sending to LLM', {
     event: event.path,
@@ -36,7 +36,7 @@ export async function run(
   });
 
   let timerId: ReturnType<typeof setTimeout> | undefined;
-  const execution = options === undefined ? undefined : createHookExecution(options, hook.timeout ?? 30, 'prompt');
+  const execution = options === undefined ? undefined : createHookExecution(options, hook.timeout ?? 0, 'prompt');
 
   try {
     let response: string;
@@ -48,10 +48,10 @@ export async function run(
       execution.signal.throwIfAborted();
     } else {
       const timeoutPromise = new Promise<never>((_resolve, reject) => {
-        timerId = setTimeout(() => {
-          reject(new Error(`prompt hook timed out after ${hook.timeout ?? 30}s`));
+        if (timeoutMs > 0) timerId = setTimeout(() => {
+          reject(new Error(`prompt hook timed out after ${hook.timeout ?? 0}s`));
         }, timeoutMs);
-        timerId.unref?.();
+        timerId?.unref?.();
       });
       try {
         response = await Promise.race([toolLLM.chat(resolvedPrompt), timeoutPromise]);

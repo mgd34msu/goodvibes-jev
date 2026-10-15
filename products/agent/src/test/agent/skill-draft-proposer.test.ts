@@ -72,8 +72,8 @@ describe('proposeSkillDrafts: filtering', () => {
 // Cap
 // ---------------------------------------------------------------------------
 
-describe('proposeSkillDrafts: cap', () => {
-  test('emits at most 3 proposals per pass', () => {
+describe('proposeSkillDrafts: complete candidate set', () => {
+  test('emits all eligible proposals', () => {
     const candidates = Array.from({ length: 6 }, (_, i) =>
       makeCandidate({
         id: `c-${i}`,
@@ -82,8 +82,7 @@ describe('proposeSkillDrafts: cap', () => {
       }),
     );
     const result = proposeSkillDrafts(makeInput({ candidates }));
-    expect(result.length).toBeLessThanOrEqual(3);
-    expect(result).toHaveLength(3);
+    expect(result).toHaveLength(6);
   });
 });
 

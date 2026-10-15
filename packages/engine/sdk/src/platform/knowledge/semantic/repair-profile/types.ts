@@ -35,8 +35,8 @@ export class KnowledgeRepairProfileHeldError extends Error {
     super(`Knowledge repair profile held (${reason}); no partial profile was authorized.`);
   }
 }
-export const REPAIR_PROFILE_LIMITS = Object.freeze({ inputs: 50, characters: 160_000, candidates: 100, requests: 2_000,
-  bytes: 16_000_000, concurrency: 4, defaultTimeoutMs: 30_000, timeoutMs: 60_000 });
+export const REPAIR_PROFILE_LIMITS = Object.freeze({ inputs: Number.POSITIVE_INFINITY, characters: Number.POSITIVE_INFINITY, candidates: Number.POSITIVE_INFINITY, requests: Number.POSITIVE_INFINITY,
+  bytes: Number.POSITIVE_INFINITY, concurrency: 4, defaultTimeoutMs: 0, timeoutMs: 2_147_483_647 });
 /** Presentation taxonomy, not detection rules. Every category and exact value is read. */
 export const REPAIR_PROFILE_CATEGORIES: readonly RepairProfileCategory[] = Object.freeze([
   { title: 'Display and picture specifications', kind: 'specification', labels: ['display', 'picture'], aliases: ['display', 'picture', 'screen'] },

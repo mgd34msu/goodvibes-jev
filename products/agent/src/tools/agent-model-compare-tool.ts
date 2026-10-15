@@ -53,7 +53,7 @@ export function createAgentModelCompareTool(sourceDeps: AgentModelCompareToolDep
           },
           maxTokens: {
             type: 'number',
-            description: 'Optional per-candidate output cap. Defaults to 2048; the selected provider determines supported limits.',
+            description: 'Optional per-candidate output cap. Omit or use 0 for the selected model’s supported output limit.',
           },
           reveal: {
             type: 'boolean',
@@ -627,7 +627,7 @@ export function createAgentModelCompareTool(sourceDeps: AgentModelCompareToolDep
         });
         const prompt = runPrompt.prompt;
 
-        const maxTokens = Math.max(1, Math.trunc(readNumber(args.maxTokens, DEFAULT_MAX_TOKENS)));
+        const maxTokens = Math.max(0, Math.trunc(readNumber(args.maxTokens, DEFAULT_MAX_TOKENS)));
         const systemPrompt = readString(args.systemPrompt);
         const models = await selectComparisonModels(deps.modelCatalog, refs, candidateCount);
         operation.assertSend();

@@ -55,7 +55,6 @@ export class DistillerUnavailableError extends Error {
 }
 
 /** Max characters of conversation transcript fed into the distiller prompt. */
-const MAX_TRANSCRIPT_CHARS = 24_000;
 
 /**
  * Build the transcript text handed to the distiller. Prior re-injected
@@ -75,9 +74,7 @@ function buildTranscript(messages: readonly ProviderMessage[]): string {
     lines.push(`[${msg.role}]: ${text}`);
   }
   const joined = lines.join('\n\n');
-  if (joined.length <= MAX_TRANSCRIPT_CHARS) return joined;
-  // Keep the tail, the most recent exchanges carry the live task state.
-  return joined.slice(joined.length - MAX_TRANSCRIPT_CHARS);
+  return joined;
 }
 
 /** The instruction prompt that shapes the continuation brief. */

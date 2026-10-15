@@ -24,8 +24,8 @@
 import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 
 /** Complete-evidence budgets; oversized input holds instead of dropping context. */
-export const MAX_JUDGED_PROMPT_LINE_CHARS = 160_000;
-export const MAX_JUDGED_RECENT_OUTPUT_CHARS = 160_000;
+export const MAX_JUDGED_PROMPT_LINE_CHARS = Number.POSITIVE_INFINITY;
+export const MAX_JUDGED_RECENT_OUTPUT_CHARS = Number.POSITIVE_INFINITY;
 
 /** What `awaiting_input` sees: the command, the unterminated last line, and the output before it. */
 export function pendingPromptView(command: string, line: string, recentOutput: string): { command: string; lastLine: string; recentOutput: string } {

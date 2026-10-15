@@ -416,7 +416,7 @@ export function buildAgentWorkspaceConfigSettingsSnapshot(context: CommandContex
     releaseChannel: readConfigString(context, 'release.channel', '(default)'),
     permissionMode: readConfigString(context, 'permissions.mode', '(default)'),
     toolAutoHeal: readConfigBoolean(context, 'tools.autoHeal', false),
-    toolsDefaultTokenBudget: readConfigNumber(context, 'tools.defaultTokenBudget', 5000),
+    toolsDefaultTokenBudget: readConfigNumber(context, 'tools.defaultTokenBudget', 0),
     artifactMaxBytes: readConfigNumber(context, 'storage.artifacts.maxBytes', 512 * 1024 * 1024),
     rawPromptTelemetry: readConfigBoolean(context, 'telemetry.includeRawPrompts', false),
     automationEnabled: readConfigBoolean(context, 'automation.enabled', false),

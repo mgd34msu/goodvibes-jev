@@ -144,7 +144,7 @@ export class ToolLLM {
       const response = await provider.chat({
         model: modelId,
         messages: [{ role: 'user', content: prompt }],
-        maxTokens: options.maxTokens ?? 1024,
+        ...(options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens }),
         systemPrompt: options.systemPrompt,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
         ...(options.beforeAttempt === undefined ? {} : { beforeAttempt: options.beforeAttempt }),

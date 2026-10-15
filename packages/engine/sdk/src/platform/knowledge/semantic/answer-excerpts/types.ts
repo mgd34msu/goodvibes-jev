@@ -37,5 +37,5 @@ export class KnowledgeAnswerExcerptHeldError extends Error {
     super(`Knowledge answer excerpts held (${reason}); no partial selection was authorized.`);
   }
 }
-export const ANSWER_EXCERPT_LIMITS = Object.freeze({ inputs: 50, documents: 100, characters: 160_000,
-  candidates: 100, requests: 1_000, bytes: 16_000_000, concurrency: 4, defaultTimeoutMs: 30_000, timeoutMs: 60_000 });
+export const ANSWER_EXCERPT_LIMITS = Object.freeze({ inputs: Number.POSITIVE_INFINITY, documents: Number.POSITIVE_INFINITY, characters: Number.POSITIVE_INFINITY,
+  candidates: Number.POSITIVE_INFINITY, requests: Number.POSITIVE_INFINITY, bytes: Number.POSITIVE_INFINITY, concurrency: 4, defaultTimeoutMs: 0, timeoutMs: 2_147_483_647 });

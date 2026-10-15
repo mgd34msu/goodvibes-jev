@@ -5,12 +5,12 @@ import { assertJudgmentInput } from '../gate/judgment-input.js';
 import { entityAlias } from './batteries/entity-alias.js';
 
 // Transport/work budgets, never semantic acceptance or word-frequency thresholds.
-export const MAX_ENTITY_ALIAS_REQUESTS = 128;
-export const MAX_ENTITY_ALIAS_CANDIDATES = 16;
-export const MAX_ENTITY_ALIAS_EVIDENCE_CHARS = 4_096;
-export const MAX_ENTITY_ALIAS_NAME_CHARS = 512;
-export const MAX_ENTITY_ALIAS_WORD_CHARS = 128;
-const MAX_ALIASES_PER_ENTITY = 4;
+export const MAX_ENTITY_ALIAS_REQUESTS = Number.POSITIVE_INFINITY;
+export const MAX_ENTITY_ALIAS_CANDIDATES = Number.POSITIVE_INFINITY;
+export const MAX_ENTITY_ALIAS_EVIDENCE_CHARS = Number.POSITIVE_INFINITY;
+export const MAX_ENTITY_ALIAS_NAME_CHARS = Number.POSITIVE_INFINITY;
+export const MAX_ENTITY_ALIAS_WORD_CHARS = Number.POSITIVE_INFINITY;
+const MAX_ALIASES_PER_ENTITY = Number.POSITIVE_INFINITY;
 
 interface EntityIdentity {
   readonly kind: string;
@@ -55,7 +55,7 @@ export async function readKnowledgeEntityAliases(
   assertJudgmentInput(complete);
   // Do not fabricate a candidate by cutting through a word at the sample boundary.
   const evidence = complete.slice(0, MAX_ENTITY_ALIAS_EVIDENCE_CHARS);
-  const candidateLimit = Math.min(MAX_ENTITY_ALIAS_CANDIDATES, Math.floor(MAX_ENTITY_ALIAS_REQUESTS / identities.length));
+  const candidateLimit = Number.POSITIVE_INFINITY;
   const candidates: string[] = [];
   for (const match of complete.matchAll(/[\p{L}\p{N}\p{M}]+(?:[-_.'’][\p{L}\p{N}\p{M}]+)*/gu)) {
     if (match.index + match[0].length > evidence.length) break;
@@ -82,7 +82,7 @@ export async function readKnowledgeEntityAliases(
       } catch { throw new KnowledgeEntityAliasHoldError(); }
     };
     retainGuard?.(assertCurrent);
-    // Sequential, at most 128 calls total, and every retained alias has its own reading.
+    // Every retained alias has its own reading; the owner can cancel the pass.
     for (const { index, state } of requests) {
       assertCurrent();
       const run = await abortableAliasRead(entityAlias.run(port, state, { site: 'knowledge.ingest.entity-alias', ...(signal ? { signal } : {}), beforeAttempt: assertCurrent }), signal);

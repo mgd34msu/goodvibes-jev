@@ -5523,6 +5523,12 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       "sessionId": "sample",
       "origin": "turn",
       "ask": "sample",
+      "selectedModel": {
+        "id": "sample",
+        "provider": "sample",
+        "registryKey": "sample",
+        "displayName": "sample"
+      },
       "ownerAgentId": "sample",
       "parentAgentId": "sample",
       "projectRoot": "sample",
@@ -6533,6 +6539,12 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "sessionId": "sample",
           "origin": "turn",
           "ask": "sample",
+          "selectedModel": {
+            "id": "sample",
+            "provider": "sample",
+            "registryKey": "sample",
+            "displayName": "sample"
+          },
           "ownerAgentId": "sample",
           "parentAgentId": "sample",
           "projectRoot": "sample",
@@ -7559,6 +7571,12 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "sessionId": "sample",
         "origin": "turn",
         "ask": "sample",
+        "selectedModel": {
+          "id": "sample",
+          "provider": "sample",
+          "registryKey": "sample",
+          "displayName": "sample"
+        },
         "ownerAgentId": "sample",
         "parentAgentId": "sample",
         "projectRoot": "sample",

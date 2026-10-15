@@ -30,8 +30,8 @@ export async function run(hook: HookDefinition, event: HookEvent, options?: Hook
     }
   }
 
-  const timeoutMs = (hook.timeout ?? 30) * 1000;
-  const execution = options === undefined ? undefined : createHookExecution(options, hook.timeout ?? 30, 'http');
+  const timeoutMs = (hook.timeout ?? 0) * 1000;
+  const execution = options === undefined ? undefined : createHookExecution(options, hook.timeout ?? 0, 'http');
 
   try {
     execution?.signal.throwIfAborted();

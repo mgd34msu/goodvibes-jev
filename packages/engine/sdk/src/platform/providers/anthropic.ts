@@ -112,7 +112,7 @@ const NOOP_CACHE_HIT_TRACKER: Pick<CacheHitTracker, 'getHitRate' | 'recordTurn'>
 };
 
 /** This model's max output tokens per its documented row as read so far. Live limits win, see `clampMaxTokens`. */
-function documentedMaxOutput(model: string): number {
+export function documentedMaxOutput(model: string): number {
   const row = knownAnthropicOutputCapRow(model);
   return row ? ANTHROPIC_OUTPUT_CAPS[row] : ANTHROPIC_SMALLEST_OUTPUT_CAP;
 }
@@ -197,7 +197,7 @@ export class AnthropicProvider implements LLMProvider {
 
       const body: Record<string, unknown> = {
         model: resolvedModel,
-        max_tokens: this.clampMaxTokens(resolvedModel, maxTokens ?? 8192),
+        max_tokens: this.clampMaxTokens(resolvedModel, maxTokens ?? Number.POSITIVE_INFINITY),
         stream: true,
       };
 
@@ -629,7 +629,7 @@ export class AnthropicProvider implements LLMProvider {
     const resolvedModel = normalizeAnthropicModel(params.model);
     const body: Record<string, unknown> = {
       model: resolvedModel,
-      max_tokens: this.clampMaxTokens(resolvedModel, params.maxTokens ?? 8192),
+      max_tokens: this.clampMaxTokens(resolvedModel, params.maxTokens ?? Number.POSITIVE_INFINITY),
       messages: toAnthropicMessages(params.messages),
     };
     if (params.systemPrompt) {

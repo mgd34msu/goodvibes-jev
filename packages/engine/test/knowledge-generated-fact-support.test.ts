@@ -185,13 +185,13 @@ describe('generated fact field support and subject attachment', () => {
     catch (error) { expect(error).toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError); expect(String(error)).not.toContain('SENSITIVE_BACKEND_DETAIL'); }
   });
 
-  test('request/byte/input caps reject the entire plan, with no silent prefix truncation', async () => {
+  test('explicit request and byte budgets are honored; input count has no automatic cap', async () => {
     const fake = readings();
     await held(prepareGeneratedFactSupport([input()], { maxRequests: 9 }), 'budget');
     await held(prepareGeneratedFactSupport([input()], { maxBytes: 1 }), 'budget');
-    await held(prepareGeneratedFactSupport(Array.from({ length: 401 }, () => input())), 'budget');
     await held(prepareGeneratedFactSupport([input()], { concurrency: 5 }), 'budget');
     expect(fake.requests).toHaveLength(0);
+    expect(await prepareGeneratedFactSupport(Array.from({ length: 401 }, () => input()))).toHaveLength(401);
   });
 
   test('pre-cancelled calls and cancel during readings never return plans or schedule more calls', async () => {

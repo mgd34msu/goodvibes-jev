@@ -184,7 +184,6 @@ async function analyzeWithScope(
   const response = await selected.provider.chat({
     model: selected.modelId,
     messages,
-    maxTokens: 1200,
   });
 
   const structured = parseStructuredAnalysis(response.content);

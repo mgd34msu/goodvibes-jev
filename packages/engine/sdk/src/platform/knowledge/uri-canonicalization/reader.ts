@@ -88,7 +88,7 @@ export function createKnowledgeUriCanonicalizer(options: KnowledgeUriOptions = {
     assertJudgmentInput(states);
     const pendingBytes = states.reduce((sum, state) => sum + new TextEncoder().encode(JSON.stringify({ state, questions: knowledgeUriRef.items })).byteLength + 1_024, 0);
     if (requests + refs.length > LIMITS.requests || bytes + pendingBytes > LIMITS.bytes) throw new Held('budget');
-    if (refs.length && (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs)) throw new Held('budget');
+    if (refs.length && (!Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > LIMITS.timeoutMs)) throw new Held('budget');
     const removals = new Map<string, Set<number>>();
     if (refs.length) {
       authority ??= captureJudgmentPort(knowledgeUriRef.name, { signal, assertCurrent: assertOwnerCurrent,
@@ -102,7 +102,7 @@ export function createKnowledgeUriCanonicalizer(options: KnowledgeUriOptions = {
       const stop = (error: Error) => { stoppedError ??= error; controller.abort(); rejectStopped(stoppedError); };
       const abort = () => { if (!stoppedError) stop(new Held(signal?.aborted ? 'aborted' : 'stale')); };
       active.addEventListener('abort', abort, { once: true });
-      const timer = setTimeout(() => stop(new Held('budget')), timeoutMs);
+      const timer = timeoutMs > 0 ? setTimeout(() => stop(new Held('budget')), timeoutMs) : undefined;
       const check = () => { if (stoppedError) throw stoppedError; batch.assertCurrent(); assertCurrent(); };
       const port: JudgmentPort = { model: configuredModel, ...(captured.recorder ? { recorder: captured.recorder } : {}), async ask(request) {
         check(); const result = await captured.ask({ ...request, model: configuredModel }); check();

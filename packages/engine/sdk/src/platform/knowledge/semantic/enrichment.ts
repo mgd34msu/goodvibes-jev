@@ -32,7 +32,6 @@ import type {
   KnowledgeSemanticRelationInput,
 } from './types.js';
 import {
-  MAX_SEMANTIC_SOURCE_CHARS,
   clampText,
   normalizeWhitespace,
   readRecord,
@@ -191,8 +190,6 @@ async function extractSemanticsWithLlm(
   return llm.completeJson({
     purpose: 'knowledge-semantic-enrichment',
     signal,
-    maxTokens: 2600,
-    timeoutMs: 20_000,
     systemPrompt: [
       'You extract a durable semantic knowledge graph from source material.',
       'Return only JSON. Do not invent facts. Every fact must be grounded in the supplied source text.',
@@ -226,7 +223,7 @@ async function extractSemanticsWithLlm(
           wikiPage: { title: 'living page title', markdown: 'concise markdown page synthesized only from extracted facts' },
         },
       },
-      text: clampText(text, MAX_SEMANTIC_SOURCE_CHARS),
+      text,
     }),
   });
 }

@@ -323,7 +323,7 @@ describe('TR5: companion remote chat advertises tools and loops over tool result
     manager.dispose();
   });
 
-  test('exhausted tool loops force a tool-free final answer instead of failing', async () => {
+  test('continues beyond eight tool rounds until the provider finishes', async () => {
     const { registry, calls } = makeMockRegistry('weather is 72F and clear');
     const { publisher, events } = makeRecordingPublisher();
     const observed: Array<{
@@ -338,7 +338,7 @@ describe('TR5: companion remote chat advertises tools and loops over tool result
           toolNames: (options.tools ?? []).map((tool) => tool.name),
         });
 
-        if (observed.length <= 8) {
+        if (observed.length <= 12) {
           yield {
             type: 'tool_call',
             toolCallId: `call-loop-${observed.length}`,
@@ -349,7 +349,7 @@ describe('TR5: companion remote chat advertises tools and loops over tool result
           return;
         }
 
-        expect(options.tools ?? []).toHaveLength(0);
+        expect(options.tools ?? []).toHaveLength(1);
         yield { type: 'text_delta', delta: 'It is 72F and clear.' };
         yield { type: 'done' };
       },
@@ -375,12 +375,12 @@ describe('TR5: companion remote chat advertises tools and loops over tool result
 
     expect(reply.error).toBeUndefined();
     expect(reply.response).toBe('It is 72F and clear.');
-    expect(calls).toHaveLength(8);
-    expect(observed).toHaveLength(9);
-    expect(observed[8]!.toolNames).toEqual([]);
-    expect(observed[8]!.messages.some((message) => (
+    expect(calls).toHaveLength(12);
+    expect(observed).toHaveLength(13);
+    expect(observed[12]!.toolNames).toEqual(['mock_tool']);
+    expect(observed[12]!.messages.some((message) => (
       message.role === 'tool'
-      && message.callId === 'call-loop-8'
+      && message.callId === 'call-loop-12'
       && message.content === 'weather is 72F and clear'
     ))).toBe(true);
     expect(events.map((event) => event.event)).toContain('companion-chat.turn.completed');

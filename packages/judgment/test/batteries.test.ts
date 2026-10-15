@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import {
   BatteryRegistry,
   defineBattery,
-  JudgmentError,
   oneOf,
   rated,
   STAKES_BANDS,
@@ -175,17 +174,8 @@ describe('BatteryRegistry', () => {
 });
 
 describe('context budget', () => {
-  test('a state beyond the 32k budget with its longest question is refused before sending', () => {
-    const state = 'word '.repeat(20_000);
-    const error = (() => {
-      try {
-        validateContextBudget(state, { q: { type: 'noul', instructions: 'Is this long?' } });
-      } catch (e) {
-        return e;
-      }
-    })();
-    expect(error).toBeInstanceOf(JudgmentError);
-    expect((error as JudgmentError).kind).toBe('invalid-request');
+  test('a state beyond the normal 32k context is passed to long-context transport', () => {
+    expect(() => validateContextBudget('word '.repeat(20_000), { q: { type: 'noul', instructions: 'Is this long?' } })).not.toThrow();
   });
 
   test('a normal request fits', () => {

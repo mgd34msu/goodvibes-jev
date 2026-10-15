@@ -25,7 +25,7 @@ export interface ProposeSkillDraftsInput {
 }
 
 /** Maximum draft proposals emitted per pass. */
-const MAX_PROPOSALS = 3;
+const MAX_PROPOSALS = Number.POSITIVE_INFINITY;
 
 
 

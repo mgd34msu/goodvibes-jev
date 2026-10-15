@@ -20,7 +20,7 @@ import { captureNativeDecisionPolicy } from './decision-policy.js';
 import { defineBattery, oneOf, STAKES_BANDS } from '@goodvibes-jev/judgment';
 
 /** Complete admitted strings are retained; the caller owns request budgets. */
-export const MAX_JUDGED_BOOLEAN_CHARS = 300;
+export const MAX_JUDGED_BOOLEAN_CHARS = Number.POSITIVE_INFINITY;
 
 
 export const BOOLEAN_VALUE_OPTIONS = {

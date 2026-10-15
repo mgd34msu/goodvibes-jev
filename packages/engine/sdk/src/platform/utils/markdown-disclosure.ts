@@ -18,7 +18,6 @@ export interface MarkdownDisclosure {
   readonly preview: string;
 }
 
-const MAX_INCLUDE_DEPTH = 5;
 
 export function parseMarkdownFrontmatter(content: string): {
   metadata: MarkdownFrontmatter;
@@ -163,16 +162,14 @@ export function readMarkdownDisclosure(filePath: string): MarkdownDisclosure {
 export function materializeMarkdownBody(filePath: string, body?: string): string {
   const resolvedPath = resolve(filePath);
   const sourceBody = body ?? readMarkdownDisclosure(resolvedPath).body;
-  return resolveMarkdownIncludes(resolvedPath, sourceBody, new Set<string>(), 0);
+  return resolveMarkdownIncludes(resolvedPath, sourceBody, new Set<string>());
 }
 
 function resolveMarkdownIncludes(
   sourcePath: string,
   body: string,
   visited: Set<string>,
-  depth: number,
 ): string {
-  if (depth >= MAX_INCLUDE_DEPTH) return '';
 
   const resolvedSourcePath = resolve(sourcePath);
   if (visited.has(resolvedSourcePath)) return '';
@@ -203,7 +200,7 @@ function resolveMarkdownIncludes(
     }
 
     const included = readMarkdownDisclosure(includePath);
-    const materialized = resolveMarkdownIncludes(includePath, included.body, visited, depth + 1);
+    const materialized = resolveMarkdownIncludes(includePath, included.body, visited);
     if (!materialized) continue;
     result.push(materialized);
   }

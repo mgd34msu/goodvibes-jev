@@ -59,7 +59,7 @@ export function buildAgentModelComparePromptSubmission(
   const reveal = isAffirmative(readField('reveal'));
   const rubric = readField('rubric').trim();
   const systemPrompt = readField('systemPrompt').trim();
-  const maxTokens = readPositiveInteger(readField('maxTokens')) ?? 2048;
+  const maxTokens = readPositiveInteger(readField('maxTokens')) ?? 0;
   const benchmarkKind = readField('benchmarkKind').trim();
   const taskType = readField('taskType').trim();
   const documentId = readField('documentId').trim();

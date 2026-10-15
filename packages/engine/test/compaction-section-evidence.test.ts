@@ -55,8 +55,8 @@ describe('dependency-qualified large compaction evidence', () => {
     expect(requests.length).toBeLessThan(64);
     for (const request of requests) {
       const tokenCounts = Object.values(request.questions).map(estimateTokens);
-      expect(estimateTokens(request.state) + Math.max(...tokenCounts)).toBeLessThanOrEqual(LIMITS.maxStateWithQuestionTokens);
-      expect(estimateTokens(request.state) + tokenCounts.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(LIMITS.maxRequestTokens);
+      expect(estimateTokens(request.state) + Math.max(...tokenCounts)).toBeLessThanOrEqual(LIMITS.maxLongContextTokens);
+      expect(estimateTokens(request.state) + tokenCounts.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(LIMITS.maxLongContextTokens);
     }
   });
   test('later aliases cause reconsideration of a correction and its retraction-of-retraction', async () => {
@@ -83,11 +83,11 @@ describe('dependency-qualified large compaction evidence', () => {
     expect(result.sections.find(section => section.id === 'recent-conversation')!.content).toContain('Preserve the parser API.');
     expect(result.tokensAfterEstimate).toBeLessThan(result.tokensBeforeEstimate);
     expect(requests.some(request => request.context?.battery === 'engine.compaction.evidence-dependency')).toBe(true);
-    expect(requests.length).toBeLessThan(COMPACTION_EVIDENCE_LIMITS.calls);
+    expect(requests.length).toBeLessThan(256);
     const covered = requests.filter(request => request.context?.battery === 'engine.compaction.evidence-dependency').map(request => (request.state as unknown as State).conversation).join('\n');
     for (const message of messages) expect(covered).toContain(message.content as string);
   });
-  test('large-history caller preserves messages and lineage when complete quality evidence exceeds its budget', async () => {
+  test('large-history caller judges complete quality evidence beyond the former budget', async () => {
     const ctx = context(distinctSources().map(content => ({ role: 'assistant', content })));
     ctx.messages.push({ role: 'user', content: 'Keep the API compatible.' }, { role: 'assistant', content: 'Compatibility retained; tests pass.' });
     const { port, requests } = fakePort((key, question) => {
@@ -101,10 +101,10 @@ describe('dependency-qualified large compaction evidence', () => {
       replaceMessagesForLLM: messages => { current = messages; replacements++; }, getSessionMemoryStore: () => null,
       getSessionLineageTracker: () => ({ addCompactionEntry: () => { lineage++; } }) };
     const original = current;
-    await expect(compactConversation(host, provider, 'test/model', 'manual', 'test', ctx)).rejects.toMatchObject({ problem: 'unsupported-input' });
-    expect(replacements).toBe(0); expect(lineage).toBe(0); expect(current).toBe(original);
-    expect(current.at(-2)?.content).toBe('Keep the API compatible.');
-    expect(requests.some(request => request.context?.battery === 'engine.compaction.retention')).toBe(false);
+    await compactConversation(host, provider, 'test/model', 'manual', 'test', ctx);
+    expect(replacements).toBe(1); expect(lineage).toBe(1); expect(current).not.toBe(original);
+    expect(JSON.stringify(current)).toContain('Keep the API compatible.');
+    expect(requests.some(request => request.context?.battery === 'engine.compaction.retention')).toBe(true);
     expect(requests.some(request => request.context?.battery === 'engine.compaction.evidence-dependency')).toBe(true);
   });
   test('final requests cannot acquire a different case unaudited alias', async () => {
@@ -183,10 +183,11 @@ describe('dependency-qualified large compaction evidence', () => {
     fixturePort(key => noulAnswer(key.startsWith('dependency_') ? 0.01 : 0.5));
     await expect(readDependencyQualifiedMembership(distinctSources(), cases, () => [], new OwnedJudgmentWork())).rejects.toThrow('selection unqualified');
   });
-  test('source size bound refuses before any canonical request', async () => {
-    const { requests } = fixturePort(() => noulAnswer(0.99));
-    await expect(readDependencyQualifiedMembership(Array.from({ length: COMPACTION_EVIDENCE_LIMITS.sourceMessages + 1 }, () => 'source'), cases, () => [], new OwnedJudgmentWork())).rejects.toThrow('selection budget');
-    expect(requests).toHaveLength(0);
+  test('reads all messages beyond the former 512-message limit', async () => {
+    const { requests } = fixturePort(key => noulAnswer(key.startsWith('dependency_') ? 0.01 : 0.99));
+    const result = await readDependencyQualifiedMembership(Array.from({ length: 600 }, (_, index) => `source ${index}`), cases, () => [], new OwnedJudgmentWork());
+    expect(result.get('target')).toBe(true);
+    expect(JSON.stringify(requests)).toContain('source 599');
   });
   test('later sweep cancellation stops an ignored-abort transport and never reaches final membership', async () => {
     const controller = new AbortController(); let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
