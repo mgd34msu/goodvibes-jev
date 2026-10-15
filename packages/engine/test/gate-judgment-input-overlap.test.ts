@@ -1,6 +1,20 @@
 /** Literal declaration syntax must not be hidden by an ordinary outer label. */
 import { expect, test } from 'bun:test';
-import { assertJudgmentInput, JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.ts';
+import { assertJudgmentInput, judgmentInputCardProblem, snapshotJudgmentEvidence, JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.ts';
+
+test('repeated screening keeps credential modes and changed input distinct', () => {
+  const credential = 'password=synthetic-mode-check';
+  expect(judgmentInputCardProblem(credential)).toBeUndefined();
+  expect(() => assertJudgmentInput(credential)).toThrow(JudgmentInputError);
+  const redacted = 'password=[REDACTED]';
+  expect(() => snapshotJudgmentEvidence(redacted)).not.toThrow();
+  expect(() => assertJudgmentInput(redacted)).toThrow(JudgmentInputError);
+  const input = { content: 'ordinary review text '.repeat(80_000) };
+  assertJudgmentInput(input);
+  assertJudgmentInput(input);
+  input.content += ' password=synthetic-late-value';
+  expect(() => assertJudgmentInput(input)).toThrow(JudgmentInputError);
+});
 
 for (const text of [
   '- Jo: password=synthetic-secret',

@@ -147,6 +147,8 @@ describe('orchestrator prepared curated knowledge', () => {
     let received = '';
     const provider: LLMProvider = { name: 'fixture', models: ['fixture-model'], async chat(request) {
       received = String(request.messages.find(message => message.role === 'user')?.content);
+      expect(request.systemPrompt).not.toContain(task);
+      expect((request.systemPrompt ?? '').length).toBeLessThan(100_000);
       return { content: 'Review plan ready', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
     } };
     const previous = installJudgmentPort(fake.port);
@@ -168,7 +170,7 @@ describe('orchestrator prepared curated knowledge', () => {
       for (const text of ['Deploy the exact release.', 'Preserve the release qualification.',
         'Keep the derived deployment instructions.', 'Restore the missing qualification.',
         'Previous plan retained the staging requirement.', 'Repository context: release package']) {
-        expect(agent.task).toContain(text); expect(prompt).toContain(text);
+        expect(agent.task).toContain(text); expect(prompt).not.toContain(text);
         expect(JSON.stringify(fake.requests)).toContain(text);
       }
       expect(agent.task).toContain(JSON.stringify(['Preserve the release qualification.', 'Preserve the release qualification.']));
@@ -240,7 +242,7 @@ describe('orchestrator prepared curated knowledge', () => {
     const { deps, preparations } = await fixture(); const agent = record(); const fake = readings(0.01);
     const previous = installJudgmentPort(fake.port);
     try {
-      expect(buildLayeredOrchestratorSystemPrompt(agent, 0, deps)).toContain(agent.task);
+      expect(buildLayeredOrchestratorSystemPrompt(agent, 0, deps)).not.toContain(agent.task);
       expect(preparations()).toBe(0); expect(fake.requests).toHaveLength(0);
       const prepared = await prepareOrchestratorPromptContext(agent, deps);
       const prompt = buildOrchestratorSystemPrompt(agent, undefined, prepared);

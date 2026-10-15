@@ -244,12 +244,38 @@ function literalValue(text: string, problem: JudgmentInputProblem, evidence: boo
   return value.length > 0 && !safeReference(value, problem, evidence);
 }
 
+// Syntax screening is deterministic for an immutable string and these two
+// modes. Repeated ownership checks must still validate the source, but need
+// not rescan unchanged multi-megabyte task text at every nested boundary.
+// This bounds retained cache memory only; all input is always inspected.
+const clearInlineText = new Map<string, number>();
+const MAX_INLINE_CACHE_CHARS = 4 * 1024 * 1024;
+const MAX_INLINE_CACHE_ENTRIES = 2048;
+let inlineCacheChars = 0;
+function inlineProblem(text: string, cardOnly = false, evidence = false): JudgmentInputProblem | undefined {
+  const mode = 1 << ((cardOnly ? 1 : 0) + (evidence ? 2 : 0));
+  const known = clearInlineText.get(text) ?? 0;
+  if (known & mode) return undefined;
+  const problem = inspectInlineProblem(text, cardOnly, evidence);
+  // Never retain rejected credential/card material in the cache.
+  if (problem === undefined && text.length <= MAX_INLINE_CACHE_CHARS) {
+    if (known) clearInlineText.delete(text);
+    else inlineCacheChars += text.length;
+    clearInlineText.set(text, known | mode);
+    while (inlineCacheChars > MAX_INLINE_CACHE_CHARS || clearInlineText.size > MAX_INLINE_CACHE_ENTRIES) {
+      const oldest = clearInlineText.keys().next().value!;
+      inlineCacheChars -= oldest.length; clearInlineText.delete(oldest);
+    }
+  }
+  return problem;
+}
+
 /**
  * Read only syntax with a declared meaning: KEY=value / JSON key:value and
  * HTTP authentication headers. Refusing the entire call avoids pretending a
  * redacted shell program has the same effects as the original program.
  */
-function inlineProblem(text: string, cardOnly = false, evidence = false): JudgmentInputProblem | undefined {
+function inspectInlineProblem(text: string, cardOnly = false, evidence = false): JudgmentInputProblem | undefined {
   if (findCardNumberShapes(text, 1).length > 0) return 'card-material';
   if (!cardOnly && /-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/.test(text)) return 'credential-material';
   const assignments = /(?:^|[\s{[,;&?="'])--?([A-Za-z_][A-Za-z0-9_.-]*)\s*(?:=|\s)\s*(?=([^\s,;}]+))/g;

@@ -361,8 +361,9 @@ ${conversational ? `${CONVERSATIONAL_OUTPUT_SECTION}\n\n${CONVERSATIONAL_DIAGNOS
     ].join('\n'));
   }
 
-  // --- Layer 5: Task ---
-  parts.push(`## Task\n${record.task}`);
+  // The runner supplies the complete task as the user message. Repeating it
+  // here doubles large repository inputs and can exceed provider instructions
+  // field limits before the model gets a chance to plan.
 
   // --- Layer 6: System prompt addendum (the contract planner's instructions, or a caller's own) ---
   if (record.systemPromptAddendum) {
@@ -375,13 +376,12 @@ ${conversational ? `${CONVERSATIONAL_OUTPUT_SECTION}\n\n${CONVERSATIONAL_DIAGNOS
 /**
  * Build a system prompt with progressively fewer layers based on token budget.
  * Layer order (dropped last to first when space is tight):
- *   Layer 5: Task (always included)
  *   Layer 1: Base instructions (always included)
  *   Layer 2: Archetype overlay (always included)
  *   Layer 3: Project context (dropped first when tight)
  *   Layer 4: Conventions (dropped first when tightest)
  *
- * When remainingTokens is 0, returns the minimal prompt (layers 1+2+5 only).
+ * The task remains in the conversation regardless of the system-prompt layout.
  */
 export function buildLayeredOrchestratorSystemPrompt(
   record: AgentRecord,
@@ -389,12 +389,11 @@ export function buildLayeredOrchestratorSystemPrompt(
   deps?: PromptContextDeps,
 ): string {
   if (remainingTokens === 0) {
-    // Emergency: strip to task-only minimal prompt
+    // Emergency: retain base instructions; the user message owns the task.
     logger.warn('[AgentOrchestrator] context-window awareness: emergency system prompt - base layers only', { agentId: record.id });
     const parts: string[] = [];
     const toolNames = record.tools.filter(t => t !== 'agent').join(', ');
     parts.push(`You are an autonomous agent. Complete your task. Tools: ${toolNames}.`);
-    parts.push(`## Task\n${record.task}`);
     return parts.join('\n\n');
   }
   // All layout alternatives use the same completed retrieval operation.
