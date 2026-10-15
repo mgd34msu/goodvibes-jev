@@ -21,6 +21,18 @@ const exposedError = (error: unknown) => {
 };
 
 describe('recording port trust boundary', () => {
+  test('keeps HTTP failure status visible without exposing provider exception text', async () => {
+    for (const status of [401, 402, 403, 429, 503]) {
+      using log = new SqliteDecisionLog(':memory:');
+      const upstream = new JudgmentError('rejected', SECRET, { status });
+      const failure = exposedError(await withDecisionLog(rejecting(upstream), log).ask(request).catch((error: unknown) => error));
+      expect(failure.message).toContain(`HTTP ${status}`);
+      if (status === 402) expect(failure.message).toContain('Payment Required');
+      expect(log.query()[0]?.error?.message).toBe(failure.message);
+      expect(JSON.stringify(log.query())).not.toContain(SECRET);
+    }
+  });
+
   test('projects provider answers and metadata before recording and returning them', async () => {
     using log = new SqliteDecisionLog(':memory:');
     const raw = {

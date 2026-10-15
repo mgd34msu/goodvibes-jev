@@ -86,7 +86,7 @@ describe('configured System One failover and primary-only retry', () => {
     expect(error.status).toBe(status);
     expect(error.requestId).toBe('failed-2');
     expect(error.cause).toBeUndefined();
-    expect(error.message).toBe('the judgment provider could not answer');
+    expect(error.message).toBe(`the judgment provider could not answer (HTTP ${status})`);
     expect(error.lineage?.attempts.map((attempt) => [attempt.attempt, attempt.endpointIndex, attempt.outcome, attempt.status, attempt.requestId]))
       .toEqual([[1, 0, 'unavailable', status, 'failed-1'], [2, 1, 'unavailable', status, 'failed-2']]);
     expect(error.lineage?.omittedAttempts).toBeUndefined();

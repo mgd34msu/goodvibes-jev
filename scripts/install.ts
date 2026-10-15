@@ -196,8 +196,15 @@ export async function install(options: Options, hooks: InstallHooks = {}): Promi
       execute(daemon, ['webui', 'enable', '--loopback', '--bundle-dir', join(options.prefix, 'current/webui')], { cwd: options.dataDir, capture: true });
       if (!hooks.stage) {
         console.log('Verifying the Jev connection...');
-        execute('sh', ['-c', 'set -a; . "$1"; set +a; exec "$2" "$3" "$4"', 'jev-setup', environment,
-          join(release, 'runtime/bun'), join(ROOT, 'scripts/check-judgment.ts'), options.dataDir], { cwd: options.dataDir });
+        try {
+          execute('sh', ['-c', 'set -a; . "$1"; set +a; exec "$2" "$3" "$4"', 'jev-setup', environment,
+            join(release, 'runtime/bun'), join(ROOT, 'scripts/check-judgment.ts'), options.dataDir], { cwd: options.dataDir });
+        } catch {
+          // Account setup and upstream availability do not determine whether
+          // the software can be installed or updated. Keep the check's exact
+          // diagnostic visible; local service readiness is still required.
+          console.warn('Jev connection check failed; continuing software installation. Resolve the account or connection problem reported above to use Jev.');
+        }
       }
       if (options.service) {
         atomicWrite(unitPath(options), unit, 0o644);

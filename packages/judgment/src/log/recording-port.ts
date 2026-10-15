@@ -89,7 +89,12 @@ function asFailure(error: unknown, overrideKind?: JudgmentErrorKind): JudgmentEr
   const status = statusCode(rawStatus) ? rawStatus : undefined;
   const requestId = optional(() => identifier(source?.requestId));
   const lineage = optional(() => projectLineage(source?.lineage));
-  return new JudgmentError(kind, FAILURE_MESSAGES[kind], {
+  // HTTP status is validated metadata, not private upstream exception text.
+  // Preserve it in the displayed diagnostic as well as the structured error:
+  // a billing refusal must not look like Jev rejected the task itself.
+  const message = status === undefined ? FAILURE_MESSAGES[kind]
+    : `${FAILURE_MESSAGES[kind]} (HTTP ${status}${status === 402 ? ': Payment Required' : ''})`;
+  return new JudgmentError(kind, message, {
     ...(status === undefined ? {} : { status }),
     ...(requestId === undefined ? {} : { requestId }),
     ...(lineage === undefined ? {} : { lineage }),
