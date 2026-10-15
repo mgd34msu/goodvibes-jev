@@ -226,6 +226,7 @@ interface TimedRow {
 }
 
 interface BuildContext {
+  readonly beadContentCache?: import('./bead-content-cache.ts').BeadContentCache;
   readonly sources: WorkTreeSources;
   readonly collapse: ReadonlyMap<string, boolean>;
   readonly waiting: ReadonlySet<string>;
@@ -264,10 +265,11 @@ function makeBead(
     waiting: call.id !== undefined && ctx.waiting.has(call.id),
     ownerActive,
     background: isBackgroundCall(call),
-    attention: content !== undefined && outcome === 'ok' && needsAttention(call, content),
+    attention: content !== undefined && outcome === 'ok' && (ctx.beadContentCache?.needsAttention(id, call, content) ?? needsAttention(call, content)),
   });
   if (status === 'run' || status === 'wait') ctx.live = true;
-  const body = beadBody(call, status, content);
+  const cached = ctx.beadContentCache?.read(id, call, status, content);
+  const body = cached ? cached.body : beadBody(call, status, content);
   const key = beadKeyOf(id);
   ctx.beadKeys.push(key);
   const time = callTime(ctx, call, status);
@@ -284,7 +286,7 @@ function makeBead(
       status,
       name: beadName(call),
       arg: beadArgument(call),
-      summary: beadSummary(call, status, content),
+      summary: cached ? cached.summary : beadSummary(call, status, content),
       time: time.text,
       body,
       open: body !== null && ctx.collapse.get(key) === false,
@@ -470,6 +472,7 @@ function callRows(
 }
 
 export interface BuildTurnInput {
+  readonly beadContentCache?: import('./bead-content-cache.ts').BeadContentCache;
   readonly messages: readonly Message[];
   /** Absolute index of messages[0]. */
   readonly offset: number;
@@ -491,6 +494,7 @@ export function buildTurnModel(input: BuildTurnInput): TurnModel {
   const ctx: BuildContext = {
     sources,
     collapse: input.collapse,
+    beadContentCache: input.beadContentCache,
     waiting: sources.waitingCallIds?.() ?? new Set<string>(),
     now,
     lanes: 0,
@@ -638,6 +642,7 @@ export function buildTurnModel(input: BuildTurnInput): TurnModel {
 
 /** A contract owner supervises the public tree and the actual planner/unit transcripts. */
 export function buildContractOwnerModel(input: {
+  readonly beadContentCache?: import('./bead-content-cache.ts').BeadContentCache;
   readonly info: AgentLaneInfo;
   readonly sources: WorkTreeSources;
   readonly collapse: ReadonlyMap<string, boolean>;
@@ -645,7 +650,7 @@ export function buildContractOwnerModel(input: {
   const { info, sources } = input;
   const contract = info.contract;
   const now = sources.now?.() ?? Date.now();
-  const ctx: BuildContext = { sources, collapse: input.collapse, waiting: sources.waitingCallIds?.() ?? new Set<string>(), now, lanes: 0, live: false, beadKeys: [] };
+  const ctx: BuildContext = { beadContentCache: input.beadContentCache, sources, collapse: input.collapse, waiting: sources.waitingCallIds?.() ?? new Set<string>(), now, lanes: 0, live: false, beadKeys: [] };
   const scope = `contract:${contract?.id ?? info.id}/`;
   const active = contract ? contractIsActive(contract) : info.status === 'running' || info.status === 'pending';
   const items: Pending[] = contract ? contractLaneRows(ctx, contract, SPINE, scope) : [];
@@ -697,14 +702,14 @@ function turnOutcomeFor(sources: WorkTreeSources, userIndex: number, userMessage
 /**
  * Everything a drawn turn depends on, flattened for an element-by-element
  * comparison (the line cache reuses a turn's lines while this is unchanged).
- * Strings compare by value; a bead's result only counts while its body is open.
+ * Strings compare by value; results also keep copied block metadata current.
  */
 export function turnSignature(model: TurnModel): Array<string | number | boolean | undefined> {
   const parts: Array<string | number | boolean | undefined> = [model.turnKey, model.folded, model.headerText, model.live, model.rows.length];
   for (const notice of model.notices) parts.push('notice', notice.messageIndex, notice.content);
   const bead = (b: BeadModel): void => {
-    parts.push(b.id, b.lane, b.status, b.name, b.arg, b.summary?.text, b.summary?.tone, b.time, b.open, b.expanded, b.answers, b.body?.kind);
-    if (b.open) parts.push(b.result, b.body?.kind === 'diff' ? b.body.diff : undefined);
+    parts.push(b.id, b.lane, b.status, b.name, b.arg, b.summary?.text, b.summary?.tone, b.time, b.open, b.expanded, b.answers, b.body?.kind, b.result);
+    if (b.open && b.body?.kind === 'diff') parts.push(b.body.diff);
   };
   const lane = (l: LaneModel): void => {
     parts.push(l.id, l.key, l.parent, l.name, l.arg, l.outcome, l.mergeText, l.foldSummary, l.time, l.folded, l.truncated);

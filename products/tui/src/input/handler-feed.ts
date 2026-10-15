@@ -162,7 +162,7 @@ export interface InputFeedContext {
   readonly getWrappedPromptInfo: (contentWidth: number) => WrappedPromptInfo;
   readonly moveCursorVertical: (direction: -1 | 1) => boolean;
   readonly handlePathCompletion: () => boolean;
-  readonly footerTargetAt: (row: number) => import('../renderer/footer-targets.ts').FooterTarget | undefined;
+  readonly footerTargetAt: (row: number, col?: number) => import('../renderer/footer-targets.ts').FooterTarget | undefined;
   readonly openFooterTarget: (target: import('../renderer/footer-targets.ts').FooterTarget) => void;
   readonly bodyTopRow: () => number;
   readonly handleBlockToggle: () => void;
@@ -208,7 +208,7 @@ export function feedInputTokens(context: InputFeedContext, tokens: readonly Inpu
     // Kit modals sit on top of everything else: focus belongs to the top one.
     // Esc goes through the shared chain (handler-modal-stack.ts), which pops
     // exactly one level of the host before anything else.
-    if (context.surfaceModals?.active && (token.type === 'key' || token.type === 'text')) {
+    if (context.surfaceModals?.active) {
       if (token.type === 'key' && token.logicalName === 'escape') context.handleEscape();
       else context.surfaceModals.handleToken(token);
       context.requestRender();
@@ -491,6 +491,7 @@ export function feedInputTokens(context: InputFeedContext, tokens: readonly Inpu
       }
     } else if (token.type === 'mouse') {
       const mouseRoute = handleMouseToken({
+        openSessionView: target => context.commandContext?.openSessionView?.(target) ?? false,
         conversationManager: context.conversationManager,
         selection: context.selection,
         mouseDownRow: context.mouseDownRow,

@@ -108,7 +108,7 @@ export function renderNotificationsModal(view: NotificationsModalView, screenWid
       { text: 'Agent, task, workflow and security notices collect here as they happen; warnings and critical ones also show as a toast in the top right.', style: { fg: t.textMuted } },
     ], bottom);
   } else {
-    const result = drawList(f.canvas, { rows: notificationRows(view).rows, top: f.top, bottom, x0: f.l, x1: f.r, scrollKey: { owner: view, name: 'list' } });
+    const result = drawList(f.canvas, { mouseNavigation: true, rows: notificationRows(view).rows, top: f.top, bottom, x0: f.l, x1: f.r, scrollKey: { owner: view, name: 'list' } });
     f.hintRight = scrollCountText(result.above, result.below);
   }
   if (view.status) drawTextBlock(f.canvas, f.l, f.bottom, f.r - f.l + 1, [{ text: view.status, style: { fg: t.textMuted } }], f.bottom);

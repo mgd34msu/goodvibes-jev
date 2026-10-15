@@ -21,13 +21,13 @@ const press = (row: number): InputToken => ({ type: 'mouse', button: 0, action: 
 describe('mouse rows under the header block', () => {
   test('main screen: the header and its gap row sit above the first transcript row', () => {
     const starts: number[] = [];
-    handleMouseToken(state(2, starts), press(3)); // 1-based: row 3 is the first transcript row
+    handleMouseToken(state(2, starts), press(2)); // InputTokenizer supplies zero-based coordinates
     expect(starts).toEqual([0]);
   });
 
   test('main screen with the session chips: header, chips, gap', () => {
     const starts: number[] = [];
-    handleMouseToken(state(3, starts), press(4));
+    handleMouseToken(state(3, starts), press(3));
     expect(starts).toEqual([0]);
   });
 

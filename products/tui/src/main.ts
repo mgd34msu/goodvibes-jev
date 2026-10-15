@@ -629,8 +629,10 @@ async function main() {
 
     // Flush pending renders after updating the width provider and splash posture
     // so the transcript and splash rebuild against the current shell layout.
-    conversation.workTree.tickLive(); // running beads spin and count up
-    conversation.getDisplayBlocks();
+    if (!viewFrame) {
+      conversation.workTree.tickLive(); // animate only the visible transcript
+      conversation.getDisplayBlocks();
+    }
     if (conversation.consumeSplashTransition()) compositor.requestFullRepaint(); // splash → transcript: repaint the whole viewport once
 
     // Calculate how many rows are consumed by overlays (thinking, permissions, queue, file picker)
@@ -642,7 +644,7 @@ async function main() {
       overlayRows += 1;
     }
 
-    const conversationViewport = buildConversationViewport({
+    const conversationViewport = viewFrame ? null : buildConversationViewport({
       conversation,
       width: conversationWidth,
       viewportHeight: vHeight,
@@ -652,11 +654,11 @@ async function main() {
     });
     // Unlocked but already at the bottom (a jump that landed there, output that
     // shrank) is the live bottom: it follows again, and the pill drawn this frame goes.
-    if (transcript.settle(conversationViewport.nextScrollTop, conversationViewport.maxScroll) && backToBottom && !viewFrame) render();
+    if (conversationViewport && transcript.settle(conversationViewport.nextScrollTop, conversationViewport.maxScroll) && backToBottom && !viewFrame) render();
     const scrollTop = transcript.top;
     let viewport = viewFrame ? viewFrame.body(vHeight) : conversation.isSplashShowing()
-      ? centerViewportContent(conversationViewport.viewport, conversationViewport.effectiveHeight, conversationWidth)
-      : conversationViewport.viewport;
+      ? centerViewportContent(conversationViewport!.viewport, conversationViewport!.effectiveHeight, conversationWidth)
+      : conversationViewport!.viewport;
 
     if (orchestrator.isThinking && !viewFrame) {
       // The spinner and phrase are the throbber's (above the input area); the
@@ -670,6 +672,8 @@ async function main() {
     const overlayContext = { input, conversation, commandRegistry, keybindingsManager: ctx.services.keybindingsManager, contextWindow };
     viewport = applyConversationOverlays(viewport, { ...overlayContext, conversationWidth, viewportHeight: vHeight });
 
+    const layers = buildConversationLayers({ ...overlayContext, screenWidth: width, screenHeight: height, headerRows: shellHeaderLines.length, footerRows: shellFooterLines.length, permission: pendingPermission ? PermissionPromptUI.renderPromptModal(width, height, pendingPermission, pendingPermission, approvalBroker) : null });
+    input.surfacePointer.layers = layers;
     compositor.composite({
       width, height,
       header: shellHeaderLines,
@@ -685,10 +689,11 @@ async function main() {
         scrollTop,
         viewportStartY: shellHeaderLines.length,
       } : undefined,
-      layers: buildConversationLayers({ ...overlayContext, screenWidth: width, screenHeight: height, headerRows: shellHeaderLines.length, footerRows: shellFooterLines.length, permission: pendingPermission ? PermissionPromptUI.renderPromptModal(width, height, pendingPermission, pendingPermission, approvalBroker) : null }),
+      layers,
     }); typeahead.framePainted(); // a startup modal counts as seen from its first painted frame
   };
-  const renderScheduler = createRenderScheduler(renderNow, undefined, () => lifecycle.isTerminalRestored()); // coalescer; no frames after terminal restore
+  // Yield to input and daemon I/O between coalesced frames during agent fan-out.
+  const renderScheduler = createRenderScheduler(renderNow, (flush) => { setTimeout(flush, 16); }, () => lifecycle.isTerminalRestored()); // coalescer; no frames after terminal restore
   deferredRender.set(() => renderScheduler.schedule()); // from here on, render() actually schedules
   const terminalOutputGuard = installFullScreenTerminalOutputGuard({ stdout, stderr: process.stderr, onCapture: (total) => { commandContext.session.runtime.terminalWritesIntercepted = total; render(); } });
 

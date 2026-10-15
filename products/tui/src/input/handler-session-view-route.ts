@@ -31,6 +31,7 @@ import { isTextBackspace } from './delete-key-policy.ts';
 
 /** What the route can do to the session views (shell/session-views.ts). */
 export interface SessionViewControls {
+  handleMouse?(token: InputToken & { type: 'mouse' }): boolean;
   /** 'main' when no view is open. */
   readonly kind: 'main' | 'agent' | 'process';
   readonly active: boolean;
@@ -77,6 +78,7 @@ function isBackTab(token: InputToken): boolean {
 export function handleSessionViewToken(state: SessionViewRouteState, token: InputToken): boolean {
   const c = state.controls;
   if (!c) return false;
+  if (token.type === 'mouse' && c.handleMouse?.(token)) return true;
   const composerIdle = state.prompt.length === 0 && !state.commandMode;
 
   if (token.type === 'key' && composerIdle && !token.ctrl && !token.meta && (token.logicalName === 'tab' || isBackTab(token)) && c.chipsVisible()) {

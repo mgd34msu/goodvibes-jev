@@ -83,7 +83,7 @@ export function renderCommandPalette(palette: PaletteView, screenWidth: number, 
   // A preview when there is room for it; below that the list takes the width.
   const sideBySide = inner >= 70;
   const x1 = sideBySide ? f.l + Math.floor(inner * 0.55) - 1 : f.r;
-  const result = drawList(f.canvas, { rows: rowsFor(palette), top: body, bottom: f.bottom, x0: f.l, x1, scrollKey: { owner: palette, name: 'list' } });
+  const result = drawList(f.canvas, { mouseNavigation: true, rows: rowsFor(palette), top: body, bottom: f.bottom, x0: f.l, x1, scrollKey: { owner: palette, name: 'list' } });
   if (sideBySide) {
     const p = inset(f.canvas, x1 + 3, body, f.r + 2 - (x1 + 3) + 1, f.bottom - body + 1);
     drawPreview(palette, palette.getSelected(), f.canvas, p);

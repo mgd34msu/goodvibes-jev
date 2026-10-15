@@ -274,6 +274,7 @@ export function inferResultToolName(content: string): string {
  */
 export function needsAttention(call: ToolCall, content: string): boolean {
   const family = toolFamily(call.name);
+  if (family !== 'exec' && family !== 'edit') return false;
   const obj = parseObject(content);
   if (family === 'exec' && obj) {
     return execCommands(obj).some((c) => (c.exitCode !== undefined && c.exitCode !== null && c.exitCode !== 0) || c.timedOut);

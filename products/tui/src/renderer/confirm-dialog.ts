@@ -46,5 +46,9 @@ export function renderConfirmDialog(dialog: ConfirmView, screenWidth: number, sc
   f.canvas.put(confirmX, by, ` ${confirmLabel} `, dialog.chosen === 1
     ? { fg: t.selectedListItemText, bg: toneBg, bold: true }
     : { fg: toneBg, bg: t.border, bold: true });
+  f.canvas.hitTargets.push(
+    { id: 'cancel', x: cancelX, y: by, width: cancelW, height: 1, keys: ['n'] },
+    { id: 'confirm', x: confirmX, y: by, width: confirmW, height: 1, keys: ['y'] },
+  );
   return finishModal(f);
 }

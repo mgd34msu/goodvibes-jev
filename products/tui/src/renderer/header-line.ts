@@ -33,6 +33,7 @@ interface Seg { readonly text: string; readonly fg: string; readonly bold?: bool
 
 /** An agent or process view: the breadcrumb in place of the title, the session's own right side. */
 export interface HeaderView {
+  readonly onCrumb?: (index: number, start: number, end: number) => void;
   /** main, then each level down to the one shown; the last is drawn bold in its color. */
   readonly crumbs: ReadonlyArray<{ readonly text: string; readonly fg: string; readonly bold?: boolean }>;
   /** Replaces the branch and model on the right (the agent's model; pid · uptime · port). */
@@ -145,9 +146,11 @@ function renderViewHeader(line: Line, width: number, version: string, view: Head
   x += 2;
   view.crumbs.forEach((crumb, i) => {
     if (i > 0) x = put(line, x + 1, crumbEnd, { text: '›', fg: t.textFaint }) + 1;
+    const start = x;
     const last = i === view.crumbs.length - 1;
     const room = crumbEnd - x;
     x = put(line, x, crumbEnd, { text: last ? truncateDisplay(crumb.text, Math.max(0, room)) : crumb.text, fg: crumb.fg, bold: crumb.bold });
+    if (x > start) view.onCrumb?.(i, start, x);
   });
   if (right) put(line, rightX, end, { text: right, fg: view.rightFg ?? t.text });
   return line;

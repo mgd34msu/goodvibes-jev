@@ -244,7 +244,7 @@ export function installProcessLifecycle(deps: ProcessLifecycleDeps): ProcessLife
 
   const uncaughtExceptionHandler = (err: Error): void => {
     restoreTerminal();
-    bestEffort('uncaughtException logging', () => logger.error('uncaughtException: terminal restored, exiting', { error: summarizeError(err) }));
+    bestEffort('uncaughtException logging', () => logger.error('uncaughtException: terminal restored, exiting', { error: summarizeError(err), stack: err.stack }));
     // The line naming the crash is the only record of it. process.exit does not
     // drain the activity log's buffer, so it goes to disk here rather than
     // relying on the exit hook that also runs, the crash log is worth stating

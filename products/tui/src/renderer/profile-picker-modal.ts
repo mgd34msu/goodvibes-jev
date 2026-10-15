@@ -69,7 +69,7 @@ export function renderProfilePickerModal(
   } else if (rows.length === 0) {
     drawTextBlock(f.canvas, f.l, top, f.r - f.l + 1, [{ text: `No profiles match "${modal.query}".`, style: { fg: t.textMuted } }], listBottom);
   } else {
-    const res = drawList(f.canvas, { rows, top, bottom: listBottom, x0: f.l, x1: f.r });
+    const res = drawList(f.canvas, { mouseNavigation: true, rows, top, bottom: listBottom, x0: f.l, x1: f.r });
     f.hintRight = scrollCountText(res.above, res.below);
   }
   return finishModal(f);

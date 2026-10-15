@@ -109,7 +109,7 @@ export function renderSelectionModalOverlay(
     return finishModal(f);
   }
 
-  const res = drawList(f.canvas, { rows, top, bottom: f.bottom, x0: f.l, x1: f.r });
+  const res = drawList(f.canvas, { mouseNavigation: true, rows, top, bottom: f.bottom, x0: f.l, x1: f.r });
   f.hintRight = scrollCountText(res.above, res.below);
   return finishModal(f);
 }

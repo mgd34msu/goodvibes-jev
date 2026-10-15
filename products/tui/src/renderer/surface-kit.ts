@@ -30,8 +30,20 @@ import { activeTokens } from './theme.ts';
 // Layers
 // ---------------------------------------------------------------------------
 
+/** A pointer action whose rectangle is local to its painted layer. */
+export interface SurfaceHitTarget {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly keys?: readonly string[];
+  readonly onClick?: () => void;
+}
+
 /** A rectangle of cells stamped over the composed screen. */
 export interface SurfaceLayer {
+  readonly hitTargets?: readonly SurfaceHitTarget[];
   /** Screen column of the layer's first cell. */
   readonly x: number;
   /** Screen row of the layer's first line. */
@@ -70,6 +82,7 @@ export interface KitStyle {
 
 /** A width x height grid of cells with the concept's small painter API. */
 export class SurfaceCanvas {
+  readonly hitTargets: SurfaceHitTarget[] = [];
   readonly lines: Line[];
   /**
    * True when the screen is narrower than the modal breakpoint (90 columns):
@@ -439,7 +452,11 @@ export function beginModal(screenW: number, screenH: number, options: ModalOptio
   if (options.sub && tx + 3 < r - escW) {
     tx = canvas.put(tx + 2, titleRow, clipText(options.sub, r - escW - tx - 2), { fg: t.textMuted });
   }
-  if (options.escKey !== false) keycap(canvas, r - keycapWidth('esc') + 1, titleRow, 'esc');
+  if (options.escKey !== false) {
+    const x = r - keycapWidth('esc') + 1;
+    keycap(canvas, x, titleRow, 'esc');
+    canvas.hitTargets.push({ id: 'escape', x, y: titleRow, width: keycapWidth('esc'), height: 1, keys: ['escape'] });
+  }
 
   return {
     canvas,
@@ -473,6 +490,7 @@ export function finishModal(frame: ModalFrame): SurfaceLayer {
     x: frame.geometry.x,
     y: frame.geometry.y - 1,
     lines: frame.canvas.lines,
+    hitTargets: frame.canvas.hitTargets,
     dim: frame.dim,
   };
 }

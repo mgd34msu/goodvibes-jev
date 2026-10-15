@@ -43,6 +43,7 @@
  * what remains. It never pushes the bar off the row.
  */
 
+import { tagFooterRegion } from './footer-targets.ts';
 import { type Line, createEmptyLine } from '@goodvibes-jev/engine/sdk/platform/types';
 import { getDisplayWidth, interpolateColor, truncateDisplay } from '../utils/terminal-width.ts';
 import { abbreviateCount } from '../utils/format-number.ts';
@@ -322,6 +323,7 @@ function drawLeft(line: Line, options: StatusLineOptions, startX: number, maxX: 
       const text = truncateDisplay(`◐ ${summary}`, Math.max(0, end - start));
       x = putText(line, start, end, { text, fg: t.brand, bold: true });
     }
+    if (x > start) tagFooterRegion(line, start, x, 'agents');
   }
   return x;
 }
@@ -455,6 +457,7 @@ function layoutStatusLine(options: StatusLineOptions, withDirectory: boolean): {
   let rx = rightEdge;
   if (rx - menuW >= leftEnd + GAP) {
     paintKeycapHints(line, rx - menuW, rx, menu, { fg: t.textFaint });
+    tagFooterRegion(line, rx - menuW, rx, 'commands');
     rx -= menuW + GAP;
   } else {
     return { line, fullFit, summaryCut: cut.summary };

@@ -311,7 +311,7 @@ export function renderSessionPickerModal(
   }
 
   modal.setVisibleRows(Math.max(3, savedBottom - top + 1));
-  const result = drawList(f.canvas, { rows, top, bottom: savedBottom, x0: f.l, x1: f.r, scrollKey: { owner: modal, name: 'sessions' } });
+  const result = drawList(f.canvas, { mouseNavigation: true, rows, top, bottom: savedBottom, x0: f.l, x1: f.r, scrollKey: { owner: modal, name: 'sessions' } });
   f.hintRight = scrollCountText(result.above, result.below);
 
   let y = listBottom + 2;

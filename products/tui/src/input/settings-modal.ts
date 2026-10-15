@@ -352,24 +352,26 @@ export class SettingsModal {
     this.searchFocused = false;
   }
 
-  /** Cycle to the next category (Tab). */
-  nextCategory(): void {
+  /** Select a category directly, loading only the destination. */
+  selectCategory(category: SettingsCategory): void {
     if (this.editingMode) return;
-    this.categoryIndex = (this.categoryIndex + 1) % SETTINGS_CATEGORIES.length;
+    const index = SETTINGS_CATEGORIES.indexOf(category);
+    if (index < 0) return;
+    this.categoryIndex = index;
     this.selectedIndex = 0;
     this.contextScroll = 0;
     this.subscriptionLogoutConfirmationTarget = null;
     this._reloadTabEntries();
   }
 
+  /** Cycle to the next category (Tab). */
+  nextCategory(): void {
+    this.selectCategory(SETTINGS_CATEGORIES[(this.categoryIndex + 1) % SETTINGS_CATEGORIES.length]!);
+  }
+
   /** Cycle to the previous category (Shift+Tab). */
   prevCategory(): void {
-    if (this.editingMode) return;
-    this.categoryIndex = (this.categoryIndex - 1 + SETTINGS_CATEGORIES.length) % SETTINGS_CATEGORIES.length;
-    this.selectedIndex = 0;
-    this.contextScroll = 0;
-    this.subscriptionLogoutConfirmationTarget = null;
-    this._reloadTabEntries();
+    this.selectCategory(SETTINGS_CATEGORIES[(this.categoryIndex - 1 + SETTINGS_CATEGORIES.length) % SETTINGS_CATEGORIES.length]!);
   }
 
   focusCategories(): void {
@@ -455,6 +457,7 @@ export class SettingsModal {
     if (items.length === 0) return null;
     return items[Math.max(0, Math.min(items.length - 1, this.selectedIndex))] ?? null;
   }
+
 
   /**
    * Get the flag entry for the currently selected feature-unit header row, or

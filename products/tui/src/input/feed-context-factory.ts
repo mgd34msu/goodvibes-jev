@@ -161,7 +161,7 @@ export interface FeedContextClosures {
   moveCursorVertical: (direction: -1 | 1) => boolean;
   handlePathCompletion: () => boolean;
   /** The view a clicked footer screen row opens (the usage rows open Usage), or undefined. */
-  footerTargetAt: (row: number) => import('../renderer/footer-targets.ts').FooterTarget | undefined;
+  footerTargetAt: (row: number, col?: number) => import('../renderer/footer-targets.ts').FooterTarget | undefined;
   openFooterTarget: (target: import('../renderer/footer-targets.ts').FooterTarget) => void;
   /** Screen rows above the transcript (the header, the chips, the gap under them). */
   bodyTopRow: () => number;

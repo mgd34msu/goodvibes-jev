@@ -110,6 +110,7 @@ export function buildConversationTurnModel(
     offset,
     unit,
     sources: context.workTreeSources ?? {},
+    beadContentCache: context.beadContentCache,
     collapse: context.collapseState,
     streamingIndex,
     showThinking: config?.get('display.showThinking') ?? false,

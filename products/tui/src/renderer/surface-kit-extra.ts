@@ -201,6 +201,8 @@ export function drawTabRows(canvas: SurfaceCanvas, x: number, y: number, labels:
     const pos = layout.at[k]!;
     const text = wrapLines(label, Math.max(1, maxX - pos.x + 1))[0] ?? label;
     const w = getDisplayWidth(text);
+    const delta = k - active;
+    canvas.hitTargets.push({ id: `tab:${k}:${label}`, x: pos.x - 1, y: y + pos.row, width: w + 2, height: 1, keys: Array.from({ length: Math.abs(delta) }, () => delta < 0 ? 'left' : 'right') });
     if (k === active) {
       canvas.grad(pos.x - 1, y + pos.row, w + 2, t.brand, t.brandEnd);
       canvas.put(pos.x, y + pos.row, text, { fg: t.selectedListItemText, bold: true });

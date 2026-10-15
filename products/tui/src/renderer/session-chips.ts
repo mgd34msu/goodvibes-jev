@@ -54,7 +54,7 @@ function chipWidth(chip: SessionChip): number {
   return CHIP_PAD * 2 + getDisplayWidth(chip.mark) + 1 + getDisplayWidth(truncateDisplay(chip.name, NAME_MAX));
 }
 
-export function renderSessionChips(width: number, chips: readonly SessionChip[]): Line {
+export function renderSessionChips(width: number, chips: readonly SessionChip[], onChip?: (index: number, start: number, end: number) => void): Line {
   const t = activeTokens();
   const line = createEmptyLine(width);
   for (const cell of line) cell.bg = '';
@@ -89,6 +89,7 @@ export function renderSessionChips(width: number, chips: readonly SessionChip[])
     const name = truncateDisplay(chip.name, NAME_MAX);
     const bg = chip.current ? chip.color : t.backgroundPanel;
     const end = x + chipWidth(chip);
+    onChip?.(i, x, end);
     put(line, x, end, ' '.repeat(end - x), { fg: t.text, bg });
     let cx = x + CHIP_PAD;
     cx = put(line, cx, end, chip.mark, chip.current ? { fg: t.selectedListItemText, bg, bold: true } : { fg: chip.markFg, bg, bold: true });

@@ -101,7 +101,7 @@ function capabilityNames(model: ModelDefinition): string[] {
 
 /** Model rows; without a detail inset the selected row names its full key instead of the provider. */
 /** The muted row shown while the catalog is still loading behind an open picker. */
-const LOADING_ROW: KitRow = { label: 'loading catalog…', muted: true };
+const LOADING_ROW: KitRow = { label: 'loading catalog…', muted: true, selectable: false };
 
 function modelRows(picker: ModelPickerModal, compact = false): KitRow[] {
   const t = activeTokens();
@@ -186,15 +186,15 @@ function effortRows(picker: ModelPickerModal): KitRow[] {
   const t = activeTokens();
   const presentation = picker.effortPresentation;
   const rows: KitRow[] = [];
-  if (presentation) rows.push({ label: presentation.headline, labelFg: t.accent });
+  if (presentation) rows.push({ label: presentation.headline, selectable: false, labelFg: t.accent });
   if (presentation && !presentation.configurable) {
-    rows.push({ label: 'Esc returns to the model list.', labelFg: t.textFaint });
+    rows.push({ label: 'Esc returns to the model list.', selectable: false, labelFg: t.textFaint });
     return rows;
   }
   picker.effortLevels.forEach((effort, index) => {
     rows.push({ label: effort, desc: presentation?.choices[index]?.description || undefined, selected: index === picker.selectedIndex });
   });
-  if (presentation?.caveat && picker.effortLevels.length > 0) rows.push({ label: presentation.caveat, labelFg: t.textFaint });
+  if (presentation?.caveat && picker.effortLevels.length > 0) rows.push({ label: presentation.caveat, selectable: false, labelFg: t.textFaint });
   return rows;
 }
 
@@ -395,7 +395,7 @@ export function renderModelWorkspace(picker: ModelPickerModal, screenWidth: numb
   const labels = picker.targetInfos.length > 0
     ? picker.targetInfos.map((info) => `${targetLabelFor(info.target)}${info.enabled ? '' : ' (off)'}`)
     : [targetLabelFor(picker.target)];
-  tabs(f.canvas, f.l, f.top, labels, picker.targetInfos.length > 0 ? picker.targetIndex : 0, f.r);
+  tabs(f.canvas, f.l, f.top, labels, picker.targetInfos.length > 0 ? picker.targetIndex : 0, f.r, index => { const target = picker.targetInfos[index]; if (target) picker.setTarget(target.target); });
 
   const searchable = picker.mode === 'model' || picker.mode === 'provider';
   let body = f.top + 2;
@@ -421,7 +421,7 @@ export function renderModelWorkspace(picker: ModelPickerModal, screenWidth: numb
       : effortRows(picker);
     // The picker opens on its cached catalog; the rest fills in while this row shows.
     const rows = picker.catalogLoading && picker.mode !== 'effort' ? [LOADING_ROW, ...listed] : listed;
-    result = drawList(f.canvas, { rows, top: body, bottom: f.bottom, x0: f.l, x1, scrollKey });
+    result = drawList(f.canvas, { mouseNavigation: true, rows, top: body, bottom: f.bottom, x0: f.l, x1, scrollKey });
   }
   if (sideBySide) {
     const p = inset(f.canvas, x1 + 3, body, f.r + 2 - (x1 + 3) + 1, f.bottom - body + 1);

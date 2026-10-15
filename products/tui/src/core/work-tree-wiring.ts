@@ -112,6 +112,7 @@ export function wireWorkTree(deps: WorkTreeWiringDeps): { readonly timings: Work
   };
 
   conversation.setWorkTreeSources({
+    contract: agentId => deps.listContracts().find(view => view.ownerAgentId === agentId),
     callTiming: (callId) => timings.callTiming(callId),
     turnTiming: (index) => timings.turnTiming(index),
     agent,

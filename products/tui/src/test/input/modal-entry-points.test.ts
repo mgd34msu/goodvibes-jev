@@ -180,7 +180,7 @@ describe('the status line opens Usage on a click', () => {
     const press = handleMouseToken(mouseState(targets, opened), { type: 'mouse', button: 0, col: 10, row: 36, action: 'press' } as InputToken);
     expect(press.handled).toBe(true);
     expect(opened).toEqual([]);
-    const release = handleMouseToken(mouseState(targets, opened, press.mouseDownRow), { type: 'mouse', button: 0, col: 10, row: 36, action: 'release' } as InputToken);
+    const release = handleMouseToken({ ...mouseState(targets, opened, press.mouseDownRow), mouseDownCol: press.mouseDownCol }, { type: 'mouse', button: 0, col: 10, row: 36, action: 'release' } as InputToken);
     expect(release.handled).toBe(true);
     expect(opened).toEqual(['usage']);
 

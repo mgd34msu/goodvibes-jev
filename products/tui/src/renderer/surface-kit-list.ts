@@ -31,6 +31,8 @@ export interface KitSpan {
 
 /** One list row: a group header when `header` is set, an item otherwise. */
 export interface KitRow {
+  readonly selectable?: boolean;
+  readonly onClick?: () => void;
   readonly header?: string;
   readonly headerRight?: string;
   readonly label?: string;
@@ -170,6 +172,7 @@ export function drawRow(canvas: SurfaceCanvas, y: number, row: KitRow, x0: numbe
   const sel = row.selected === true;
   const ink = t.selectedListItemText;
   const used = Math.min(layout.lines.length, Math.max(1, maxY - y + 1));
+  if (row.onClick) canvas.hitTargets.push({ id: `row:${row.label ?? ''}`, x: x0 - MODAL_MARK_INSET, y, width: x1 - x0 + 1 + MODAL_MARK_INSET, height: used, onClick: row.onClick });
   if (sel) {
     // An armed (danger) row is red, not the gradient: it is about to do something destructive.
     const span = x1 - x0 + 1 + 2 * MODAL_MARK_INSET;
@@ -192,6 +195,8 @@ export function drawRow(canvas: SurfaceCanvas, y: number, row: KitRow, x0: numbe
 // ---------------------------------------------------------------------------
 
 export interface KitListOptions {
+  /** Opt in only when this list uses Up/Down and Enter. */
+  readonly mouseNavigation?: boolean;
   readonly rows: readonly KitRow[];
   /** First and last canvas rows the list may use (inclusive). */
   readonly top: number;
@@ -326,6 +331,8 @@ export function drawList(canvas: SurfaceCanvas, options: KitListOptions): KitLis
   rememberStart(options.scrollKey, start);
   let y = top;
   let lastDrawn = start - 1;
+  const itemIndexes = rows.map((row, index) => isHeader(row) || row.selectable === false ? -1 : index).filter(index => index >= 0);
+  const selectedItem = itemIndexes.findIndex(index => rows[index]!.selected);
   for (let i = start; i < rows.length; i++) {
     const gap = gaps && i > start && isHeader(rows[i]!) ? 1 : 0;
     if (y + gap > bottom) break;
@@ -333,6 +340,11 @@ export function drawList(canvas: SurfaceCanvas, options: KitListOptions): KitLis
     if (isHeader(rows[i]!) && y + gap + 1 > bottom && i < rows.length - 1) break;
     y += gap;
     const used = drawRow(canvas, y, rows[i]!, x0, x1, bottom);
+    if (options.mouseNavigation && selectedItem >= 0 && !isHeader(rows[i]!) && rows[i]!.selectable !== false && !rows[i]!.onClick) {
+      const delta = itemIndexes.indexOf(i) - selectedItem;
+      const keys = delta === 0 ? ['enter'] : Array.from({ length: Math.abs(delta) }, () => delta < 0 ? 'up' : 'down');
+      canvas.hitTargets.push({ id: `item:${i}:${rows[i]!.label ?? ''}`, keys, x: x0 - MODAL_MARK_INSET, y, width: x1 - x0 + 1 + MODAL_MARK_INSET, height: used });
+    }
     y += used;
     lastDrawn = i;
     if (used < heights[i]!) break;

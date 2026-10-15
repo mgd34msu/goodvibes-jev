@@ -145,12 +145,13 @@ export function paintKeycapHints(line: Line, x: number, endX: number, hints: rea
 // ---------------------------------------------------------------------------
 
 /** Tabs across a row; the active one carries the gradient with dark bold text. Returns the column after the last tab. */
-export function tabs(canvas: SurfaceCanvas, x: number, y: number, labels: readonly string[], active: number, maxX: number): number {
+export function tabs(canvas: SurfaceCanvas, x: number, y: number, labels: readonly string[], active: number, maxX: number, onSelect?: (index: number) => void): number {
   const t = activeTokens();
   let cx = x;
   labels.forEach((label, k) => {
     const w = getDisplayWidth(label);
     if (cx + w > maxX) return;
+    if (onSelect) canvas.hitTargets.push({ id: `tab:${k}:${label}`, x: cx - 1, y, width: w + 2, height: 1, onClick: () => onSelect(k) });
     if (k === active) {
       canvas.grad(cx - 1, y, w + 2, t.brand, t.brandEnd);
       canvas.put(cx, y, label, { fg: t.selectedListItemText, bold: true });

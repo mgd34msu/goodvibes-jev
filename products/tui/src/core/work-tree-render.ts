@@ -378,7 +378,7 @@ export function renderSingleBead(bead: BeadModel, options: TurnRenderOptions): T
   if (bead.open && bead.body) {
     const drawn = paintBody(bead.body, p, { expanded: bead.expanded, semantic: bead.body.kind === 'diff' ? semanticSummaryFor(bead.body.diff, bead.body.path) : undefined });
     capped = drawn.capped;
-    lines.push(...drawn.lines);
+    for (const line of drawn.lines) lines.push(line);
   }
   return { lines, blocks: [beadMeta(bead, 0, lines.length, capped, undefined)], errorLines: [], messageLines: new Map(), focusIds, tail: { gutter: [], gutterWidth: 6 } };
 }

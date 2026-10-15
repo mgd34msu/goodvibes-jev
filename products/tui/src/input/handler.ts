@@ -1,3 +1,5 @@
+import { resolveFooterTarget } from '../renderer/footer-targets.ts';
+import { SurfacePointer } from './surface-pointer.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { InputTokenizer, type InputToken } from '@goodvibes-jev/engine/sdk/platform/core';
@@ -204,6 +206,7 @@ export class InputHandler implements InputHandlerLike {
   private selectionQueue!: SelectionModalQueue;
   /** Time of last [COPIED] block feedback, for brief display. */
   public lastBlockCopyTime = 0;
+  public readonly surfacePointer = new SurfacePointer();
   public mouseDownRow = -1;
   public mouseDownCol = -1;
   /** Clickable footer screen rows (set by the shell each frame) and what opens them. */
@@ -342,7 +345,7 @@ export class InputHandler implements InputHandlerLike {
         getWrappedPromptInfo: (contentWidth: number) => this.getWrappedPromptInfo(contentWidth),
         moveCursorVertical: (direction: -1 | 1) => this.moveCursorVertical(direction),
         handlePathCompletion: () => this.handlePathCompletion(),
-        footerTargetAt: (row: number) => this.footerTargets.get(row),
+        footerTargetAt: (row: number, col?: number) => resolveFooterTarget(this.footerTargets, row, col),
         openFooterTarget: (target) => { this.onFooterTarget?.(target); },
         bodyTopRow: () => this.bodyTopRow,
         handleBlockToggle: () => this.handleBlockToggle(),
@@ -517,7 +520,18 @@ export class InputHandler implements InputHandlerLike {
         context.selectionCallback = callback;
       };
       context.handleHostPairingToken = token => this.hostPairing?.handleToken(token) ?? false;
-      feedInputTokens(context, this.tokenizer.feed(data));
+      const tokens = this.tokenizer.feed(data);
+      if (tokens.some(token => token.type === 'mouse')) {
+        let pending: typeof tokens = [];
+        for (const token of tokens) {
+          if (token.type !== 'mouse') { pending.push(token); continue; }
+          if (pending.length) { feedInputTokens(context, pending); pending = []; }
+          const routed = this.surfacePointer.route(token);
+          if (routed.length) feedInputTokens(context, routed);
+          if (token.button !== 32) bufferedRequestRender();
+        }
+        if (pending.length) feedInputTokens(context, pending);
+      } else feedInputTokens(context, tokens);
       this.prompt = context.prompt;
       this.cursorPos = context.cursorPos;
       this.inputScrollTop = context.inputScrollTop;

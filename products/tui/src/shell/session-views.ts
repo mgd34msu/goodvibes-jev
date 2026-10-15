@@ -19,6 +19,10 @@
  * leaving one never stops what it shows. Stopping is ctrl+x twice.
  */
 
+import { BeadContentCache } from '../core/bead-content-cache.ts';
+import { MessageLineCache } from '../core/conversation-line-cache.ts';
+import type { BlockMeta } from '../core/conversation-types.ts';
+import type { InputToken } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { Line } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ContractRunner, ContractView } from '@goodvibes-jev/engine/sdk/platform/contract';
 import { contractIsActive } from '../core/work-tree-contract.ts';
@@ -109,7 +113,15 @@ export class SessionViews implements SessionViewControls {
   private notice: { readonly text: string; readonly tone: 'error' | 'info'; readonly until: number } | null = null;
   private search: { query: string; editing: boolean; current: number } | null = null;
   private rowsCache: { key: string; rows: ProcessRow[] } | null = null;
-  private agentCache: { key: string; lines: Line[] } | null = null;
+  private readonly contractCaches = new Map<string, BeadContentCache>();
+  private readonly agentCaches = new Map<string, MessageLineCache>();
+  private headerTargets: Array<{ start: number; end: number; target: SessionTarget }> = [];
+  private chipTargets: Array<{ start: number; end: number; target: SessionTarget }> = [];
+  private pointerDown: { row: number; col: number } | null = null;
+  private shownBlocks: readonly BlockMeta[] = [];
+  private bodyStart = 0;
+  private bodyEnd = 0;
+  private bodyOffset = 0;
   private lastPage = 10;
   private timer: ReturnType<typeof setInterval> | null = null;
 
@@ -144,7 +156,7 @@ export class SessionViews implements SessionViewControls {
       mainBusy: deps.mainBusy,
       now: deps.now,
     });
-    this.focus.onChange(() => { this.search = null; this.agentCache = null; });
+    this.focus.onChange(() => { this.search = null; this.shownBlocks = []; });
     const pollMs = deps.pollMs ?? 500;
     if (pollMs > 0) {
       this.timer = setInterval(() => {
@@ -161,6 +173,9 @@ export class SessionViews implements SessionViewControls {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     void this.log.dispose();
+    for (const cache of this.agentCaches.values()) cache.clear();
+    this.agentCaches.clear();
+    this.contractCaches.clear();
   }
 
   private now(): number { return this.deps.now?.() ?? Date.now(); }
@@ -170,6 +185,9 @@ export class SessionViews implements SessionViewControls {
   /** True when a process ended since the last call (by any means: exit, timeout, kill). */
   noteEnded(): boolean {
     let ended = false;
+    for (const [id, cache] of this.agentCaches) if (!this.deps.agentManager.getStatus(id)) {
+      cache.clear(); this.agentCaches.delete(id); this.contractCaches.delete(id); this.collapse.delete(id);
+    }
     const known = new Set<string>();
     for (const p of this.deps.processManager.list()) {
       known.add(p.id);
@@ -202,6 +220,38 @@ export class SessionViews implements SessionViewControls {
     const ok = this.focus.open(target);
     if (ok) this.deps.requestRender();
     return ok;
+  }
+
+  /** Coordinates come from the frame that is actually on screen. */
+  handleMouse(token: InputToken & { type: 'mouse' }): boolean {
+    const row = token.row, col = token.col;
+    const targets = row === 0 ? this.headerTargets : row === 1 ? this.chipTargets : [];
+    const target = targets.find(hit => col >= hit.start && col < hit.end)?.target;
+    const inBody = this.active && row >= this.bodyStart && row < this.bodyEnd;
+    if (inBody && (token.button === 64 || token.button === 65)) {
+      this.scroll(token.button === 64 ? 3 : -3); this.deps.requestRender(); return true;
+    }
+    if (!target && !inBody) { this.pointerDown = null; return false; }
+    if (token.button === 0 && token.action === 'press') this.pointerDown = { row, col };
+    if (token.action === 'release') {
+      const down = this.pointerDown; this.pointerDown = null;
+      if (down && down.row === row && Math.abs(down.col - col) <= 1) {
+        if (target) return this.open(target);
+        if (this.kind === 'agent') {
+          const line = row + this.bodyOffset;
+          const block = this.shownBlocks.find(b => b.startLine === line);
+          const wt = block?.workTree;
+          if (wt?.agentId) this.open({ kind: 'agent', id: wt.agentId });
+          else if (wt?.processId) this.open({ kind: 'process', id: wt.processId });
+          else if (block && this.focus.current.kind === 'agent') {
+            const collapse = this.collapse.get(this.focus.current.id)!;
+            collapse.set(block.collapseKey, wt ? wt.open : collapse.get(block.collapseKey) !== true);
+          }
+          this.deps.requestRender();
+        }
+      }
+    }
+    return true;
   }
 
   chipsVisible(): boolean { return this.focus.chipsVisible(); }
@@ -282,7 +332,9 @@ export class SessionViews implements SessionViewControls {
   private contractOf(agentId: string): ContractView | undefined {
     const record = this.deps.agentManager.getStatus(agentId);
     const current = record?.contractRole === 'owner' && record.contractId ? this.deps.contractRunner?.get(record.contractId) : null;
-    return current ?? this.deps.conversation.getWorkTreeSources().agent?.(agentId)?.contract;
+    if (current) return current;
+    const sources = this.deps.conversation.getWorkTreeSources();
+    return sources.contract ? sources.contract(agentId) : sources.agent?.(agentId)?.contract;
   }
 
   private replyToOwner(contract: ContractView, text: string): boolean {
@@ -300,7 +352,7 @@ export class SessionViews implements SessionViewControls {
       this.say(messages[result.action], result.action === 'refused' ? 'error' : 'info');
     }, (error: unknown) => {
       this.say(`Owner reply failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
-    }).finally(() => { this.pendingOwnerReplies.delete(contract.id); this.agentCache = null; this.deps.requestRender(); });
+    }).finally(() => { this.pendingOwnerReplies.delete(contract.id); this.deps.requestRender(); });
     return true;
   }
 
@@ -348,6 +400,7 @@ export class SessionViews implements SessionViewControls {
   /** The chips row, or null when there is only main. */
   chips(width: number): Line | null {
     const sessions = this.focus.sessions();
+    this.chipTargets = [];
     if (sessions.length < 2) return null;
     const t = activeTokens();
     const chips: SessionChip[] = sessions.map((s) => {
@@ -357,7 +410,7 @@ export class SessionViews implements SessionViewControls {
         : s.mark === 'run' ? '◐' : s.mark === 'idle' ? '●' : s.mark === 'ok' ? '✓' : s.mark === 'err' ? '✕' : s.mark === 'cancel' ? '○' : '◌';
       return { mark: glyph, markFg, name: s.name, color, current: sameTarget(s.target, this.focus.current) };
     });
-    return renderSessionChips(width, chips);
+    return renderSessionChips(width, chips, (index, start, end) => { this.chipTargets.push({ start, end, target: sessions[index]!.target }); });
   }
 
   /** The session's own color: brand for main, the lane color for an agent, success for a process. */
@@ -375,6 +428,7 @@ export class SessionViews implements SessionViewControls {
   /** What the frame draws inside a view, or null in main. */
   frame(width: number, version?: string): SessionViewFrame | null {
     this.lastWidth = width;
+    this.headerTargets = [];
     const target = this.focus.current;
     if (target.kind === 'agent') {
       const record = this.deps.agentManager.getStatus(target.id);
@@ -448,6 +502,7 @@ export class SessionViews implements SessionViewControls {
     const running = contract ? contractIsActive(contract) : record.status === 'running' || record.status === 'pending';
     const header = renderHeaderLine(width, '', undefined, undefined, version, undefined, {
       crumbs: this.crumbs(),
+      onCrumb: (index, start, end) => { const target = this.focus.breadcrumb()[index]; if (target) this.headerTargets.push({ start, end, target }); },
       right: record.model ?? this.deps.mainModel(),
     })[0]!;
     const keys: Array<readonly [string, string]> = [this.escHint()];
@@ -464,30 +519,24 @@ export class SessionViews implements SessionViewControls {
     const body = (height: number): Line[] => {
       this.lastPage = height;
       const info = this.deps.conversation.getWorkTreeSources().agent?.(record.id);
-      const messages = this.deps.agentManager.getConversationSnapshot(record.id);
+      const messages = info?.messages ?? this.deps.agentManager.getConversationSnapshot(record.id);
       const steers = this.queuedSteers(record.id, messages, running);
       const now = this.now();
       const frame = Math.floor(now / 150);
-      const key = [width, record.id, record.status, record.toolCallCount, messages.length, messages[messages.length - 1]?.content.length ?? 0, steers.length, JSON.stringify(this.contractOf(record.id)), running ? frame : 0, running ? Math.floor(now / 1000) : 0, colorIndex].join('|');
-      if (!this.agentCache || this.agentCache.key !== key) {
-        const collapse = this.collapse.get(record.id) ?? new Map<string, boolean>();
-        this.collapse.set(record.id, collapse);
-        const lines = renderAgentView({
-          width,
-          agent: info ? { ...info, contract: this.contractOf(record.id) } : { contract: this.contractOf(record.id), id: record.id, name, task: record.task, status: record.status, startedAt: record.startedAt, completedAt: record.completedAt, toolCallCount: record.toolCallCount, error: record.error, messages: [] },
-          messages,
-          colorIndex,
-          parentName: parent,
-          sources: this.deps.conversation.getWorkTreeSources(),
-          collapse,
-          glyphSet: this.deps.conversation.getTreeGlyphSet(),
-          frame,
-          now,
-          queuedSteers: steers,
-        });
-        this.agentCache = { key, lines };
-      }
-      return this.window(this.agentCache.lines, height, width, interpolateColor(color, t.background || t.backgroundBase, 0.35));
+      let lineCache = this.agentCaches.get(record.id);
+      if (!lineCache) { lineCache = new MessageLineCache(); this.agentCaches.set(record.id, lineCache); }
+      const collapse = this.collapse.get(record.id) ?? new Map<string, boolean>();
+      this.collapse.set(record.id, collapse);
+      let contentCache = this.contractCaches.get(record.id);
+      if (!contentCache) { contentCache = new BeadContentCache(); this.contractCaches.set(record.id, contentCache); }
+      const blocks: BlockMeta[] = [];
+      const lines = renderAgentView({
+        width, agent: info ? { ...info, contract } : { contract, id: record.id, name, task: record.task, status: record.status, startedAt: record.startedAt, completedAt: record.completedAt, toolCallCount: record.toolCallCount, error: record.error, messages: [] },
+        messages, colorIndex, parentName: parent, sources: this.deps.conversation.getWorkTreeSources(),
+        collapse, glyphSet: this.deps.conversation.getTreeGlyphSet(), frame, now, queuedSteers: steers, lineCache, contentCache, blocks,
+      });
+      this.shownBlocks = blocks;
+      return this.window(lines, height, width, interpolateColor(color, t.background || t.backgroundBase, 0.35));
     };
     return { header, body, footer };
   }
@@ -508,6 +557,7 @@ export class SessionViews implements SessionViewControls {
     const up = rec.done ? `ran ${formatElapsed((rec.completedAt ?? now) - rec.startTime)}` : `up ${formatElapsed(now - rec.startTime)}`;
     const header = renderHeaderLine(width, '', undefined, undefined, version, undefined, {
       crumbs: this.crumbs(),
+      onCrumb: (index, start, end) => { const target = this.focus.breadcrumb()[index]; if (target) this.headerTargets.push({ start, end, target }); },
       right: [`pid ${rec.pid}`, up, port !== undefined ? `:${port}` : ''].filter(Boolean).join(' · '),
       rightFg: t.textMuted,
     })[0]!;
@@ -571,7 +621,11 @@ export class SessionViews implements SessionViewControls {
     const scroll = Math.min(this.scrollBy.get(key) ?? 0, maxScroll);
     if (this.kind === 'agent') { this.scrollBy.set(key, scroll); this.maxScrollBy.set(key, maxScroll); }
     const end = this.kind === 'agent' ? all.length - scroll : all.length;
-    const shown = all.slice(Math.max(0, end - inner), end).map((l) => l.slice(0, width));
+    const first = Math.max(0, end - inner);
+    this.bodyStart = this.headerRows();
+    this.bodyEnd = this.bodyStart + height;
+    this.bodyOffset = first - this.bodyStart - (inner < height ? 1 : 0);
+    const shown = all.slice(first, end).map((l) => l.slice(0, width));
     while (shown.length < inner) shown.push(blank());
     for (const line of shown) {
       if (line.length > 0) line[0] = { char: '┃', fg: barColor, bg: '', bold: false, dim: false, underline: false, italic: false, strikethrough: false };

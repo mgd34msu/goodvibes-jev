@@ -489,6 +489,7 @@ export function handlePromptKeyToken(state: KeyRouteState, token: InputToken): {
 }
 
 export type MouseRouteState = {
+  openSessionView?: (target: { kind: 'agent' | 'process'; id: string }) => boolean;
   conversationManager: ConversationManager | null;
   selection: SelectionManager;
   mouseDownRow: number;
@@ -501,7 +502,7 @@ export type MouseRouteState = {
   handlePaste: () => void;
   handleCopy: () => void;
   /** The view a footer screen row opens on a click (the usage rows open Usage). */
-  footerTargetAt?: (row: number) => FooterTarget | undefined;
+  footerTargetAt?: (row: number, col?: number) => FooterTarget | undefined;
   openFooterTarget?: (target: FooterTarget) => void;
   /** Screen rows above the transcript (the header, the chips, the gap under them); 2 when not given. */
   bodyTopRow?: () => number;
@@ -518,8 +519,8 @@ export function handleMouseToken(state: MouseRouteState, token: InputToken): {
     return { handled: false, mouseDownRow, mouseDownCol };
   }
 
-  // Mouse rows are 1-based; the transcript's first row is the one after the header block.
-  const viewportRow = token.row - 1 - (state.bodyTopRow?.() ?? 2);
+  // InputTokenizer already converts terminal coordinates to zero-based rows.
+  const viewportRow = token.row - (state.bodyTopRow?.() ?? 2);
 
   if (token.button === 64) {
     state.scroll(-3);
@@ -535,12 +536,16 @@ export function handleMouseToken(state: MouseRouteState, token: InputToken): {
   }
   // A click on a clickable footer row (press and release on the same row)
   // opens its view; it never starts a text selection.
-  const footerTarget = state.footerTargetAt?.(token.row);
+  const footerTarget = state.footerTargetAt?.(token.row, token.col);
   if (footerTarget && token.button === 0 && token.action === 'press') {
     return { handled: true, mouseDownRow: token.row, mouseDownCol: token.col };
   }
-  if (footerTarget && token.action === 'release' && mouseDownRow === token.row) {
+  if (footerTarget && token.button === 0 && token.action === 'release' && mouseDownRow === token.row && Math.abs(token.col - mouseDownCol) <= 2 && state.footerTargetAt?.(mouseDownRow, mouseDownCol) === footerTarget) {
     state.openFooterTarget?.(footerTarget);
+    return { handled: true, mouseDownRow: -1, mouseDownCol: -1 };
+  }
+  if (viewportRow < 0 || viewportRow >= state.viewportHeight) {
+    state.selection.endSelection();
     return { handled: true, mouseDownRow: -1, mouseDownCol: -1 };
   }
   if (token.button === 0 && token.action === 'press') {
@@ -559,7 +564,17 @@ export function handleMouseToken(state: MouseRouteState, token: InputToken): {
       const offset = Math.max(0, state.viewportHeight - state.lineCount);
       const absoluteLine = state.scrollTop + (viewportRow - offset);
       if (absoluteLine >= 0) {
-        const blockIdx = state.conversationManager.toggleCollapseAtLine(absoluteLine);
+        const block = state.conversationManager.getBlockRegistry().find(b => b.startLine === absoluteLine);
+        const wt = block?.workTree;
+        const target = wt?.kind === 'lane' && wt.agentId ? { kind: 'agent' as const, id: wt.agentId }
+          : wt?.processId ? { kind: 'process' as const, id: wt.processId } : null;
+        if (target && state.openSessionView?.(target)) {
+          state.conversationManager.workTree.leave();
+          state.selection.clearSelection();
+          state.requestRender();
+          return { handled: true, mouseDownRow: -1, mouseDownCol: -1 };
+        }
+        const blockIdx = block ? state.conversationManager.toggleCollapseAtLine(absoluteLine) : -1;
         if (blockIdx >= 0) {
           state.selection.clearSelection();
           state.requestRender();

@@ -173,6 +173,12 @@ function categoryRows(modal: SettingsModal): KitRow[] {
       const active = SETTINGS_CATEGORIES.indexOf(category) === modal.categoryIndex && !modal.searchFocused;
       const count = categoryItemCount(modal, category);
       rows.push({
+        onClick: () => {
+          if (modal.editingMode) return;
+          modal.clearSearch();
+          modal.selectCategory(category);
+          modal.focusRegion = 'settings';
+        },
         label: CATEGORY_LABELS[category],
         right: count > 0 ? String(count) : undefined,
         selected: active && focused,
@@ -269,6 +275,9 @@ function drawSettingsColumn(f: ModalFrame, modal: SettingsModal, p: KitInset): {
   notices.forEach((line, k) => f.canvas.put(sx, bottom + 2 + k, line, { fg: t.accent }));
 
   const { rows, selected } = listRows(modal, width);
+  if (!modal.editingMode) rows.forEach((row, index) => {
+    rows[index] = { ...row, onClick: () => { modal.selectedIndex = index; modal.focusRegion = 'settings'; modal.contextScroll = 0; } };
+  });
   const capacity = Math.max(1, bottom - p.top + 1);
   const doc = docLines(modal, selected >= 0, width);
 

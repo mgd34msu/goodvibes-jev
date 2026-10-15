@@ -64,6 +64,7 @@ export function collectCompletedToolCallIds(messages: readonly Message[]): Set<s
 }
 
 export interface ConversationRenderContext {
+  readonly beadContentCache?: import('./bead-content-cache.ts').BeadContentCache;
   readonly history: {
     addLine: (line: Line) => void;
     addLines: (lines: Line[]) => void;

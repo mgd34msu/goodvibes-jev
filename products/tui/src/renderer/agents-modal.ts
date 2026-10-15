@@ -257,7 +257,7 @@ function drawListLevel(f: ModalFrame, view: AgentsModalView): void {
     return;
   }
   const split = splitListDetail(f.l, f.r, top, bottom, 0.5, 6);
-  const result = drawList(f.canvas, { rows: view.rows, top: split.top, bottom: split.bottom, x0: split.x0, x1: split.x1, scrollKey: { owner: view.scrollOwner, name: 'list' } });
+  const result = drawList(f.canvas, { mouseNavigation: true, rows: view.rows, top: split.top, bottom: split.bottom, x0: split.x0, x1: split.x1, scrollKey: { owner: view.scrollOwner, name: 'list' } });
   f.hintRight = scrollCountText(result.above, result.below);
   if (view.detail && split.detailH >= 4) {
     const p = inset(f.canvas, split.detailX, split.detailY, split.detailW, split.detailH);
@@ -295,7 +295,7 @@ function drawPickerLevel(f: ModalFrame, view: AgentsModalView): void {
   const bottom = f.bottom - bottomRows(view, width);
   const rows: KitRow[] = picker.options.map((option) => ({ label: option.label, desc: option.detail, selected: option.selected }));
   const split = picker.side.length > 0 ? splitListDetail(f.l, f.r, y, bottom, 0.5, 6) : null;
-  const result = drawList(f.canvas, { rows, top: y, bottom: split ? split.bottom : bottom, x0: f.l, x1: split ? split.x1 : f.r, scrollKey: { owner: view.scrollOwner, name: 'picker' } });
+  const result = drawList(f.canvas, { mouseNavigation: true, rows, top: y, bottom: split ? split.bottom : bottom, x0: f.l, x1: split ? split.x1 : f.r, scrollKey: { owner: view.scrollOwner, name: 'picker' } });
   f.hintRight = scrollCountText(result.above, result.below);
   if (split && split.detailH >= 4) {
     const p = inset(f.canvas, split.detailX, split.detailY, split.detailW, split.detailH);

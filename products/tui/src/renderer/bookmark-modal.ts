@@ -64,7 +64,7 @@ export function renderBookmarkModal(
     drawWrapped(f.canvas, f.l, top, f.r - f.l + 1, message, { fg: t.textMuted }, f.bottom);
     return finishModal(f);
   }
-  const res = drawList(f.canvas, { rows, top, bottom: f.bottom, x0: f.l, x1: f.r });
+  const res = drawList(f.canvas, { mouseNavigation: true, rows, top, bottom: f.bottom, x0: f.l, x1: f.r });
   f.hintRight = scrollCountText(res.above, res.below);
   return finishModal(f);
 }

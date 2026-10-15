@@ -94,6 +94,13 @@ export function wireViewOpeners(options: WireViewOpenersOptions): void {
   // A click on the footer's token or context row opens Usage.
   input.onFooterTarget = (target) => {
     if (target === 'usage') commandContext.openUsage?.();
+    else if (target === 'agents') commandContext.openAgents?.();
+    else if (target === 'commands') commandContext.openCommandPalette?.();
+    else if (target === 'bottom') {
+      if (input.sessionView?.active) input.sessionView.follow();
+      else input.transcriptScroll?.toBottom();
+      render();
+    }
   };
 
   // ── Changes ───────────────────────────────────────────────────────────────

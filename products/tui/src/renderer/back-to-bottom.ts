@@ -19,6 +19,7 @@
  * below it (shell-surface.ts builds that stack). Gone at the bottom.
  */
 
+import { tagFooterRegion } from './footer-targets.ts';
 import { type Line, createEmptyLine } from '@goodvibes-jev/engine/sdk/platform/types';
 import { getDisplayWidth } from '../utils/terminal-width.ts';
 import { activeTokens } from './theme.ts';
@@ -56,6 +57,7 @@ export function renderBackToBottomPill(width: number, state: BackToBottomState):
   if (pillW < PAD * 2 + 1) return line;
   const x0 = Math.max(3, Math.floor((width - pillW) / 2));
   const x1 = x0 + pillW; // exclusive
+  tagFooterRegion(line, x0, x1, 'bottom');
   const bg = t.backgroundElement;
   for (let x = x0; x < x1; x++) line[x] = { ...line[x]!, char: ' ', bg };
   let cx = x0 + PAD;

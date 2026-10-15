@@ -173,6 +173,8 @@ function drawRows(
   r: number,
 ): number {
   const rows = model.rows.map(kitRowFor);
+  const selectable = model.rows.map((row, index) => row.selectable ? index : -1).filter(index => index >= 0);
+  const selected = selectable.findIndex(index => model.rows[index]!.selected);
   let cut = 0;
   const capacity = Math.max(1, bottom - top + 1);
   const needed = rows.reduce((n, row, k) => n + measureRow(row, l, r) + (k > 0 && row.header !== undefined ? 1 : 0), 0);
@@ -191,6 +193,11 @@ function drawRows(
       return;
     }
     const used = drawRow(canvas, y, row, l, r, bottom);
+    if (source.selectable && selected >= 0) {
+      const delta = selectable.indexOf(k) - selected;
+      canvas.hitTargets.push({ id: `config:${source.id}`, x: l, y, width: r - l + 1, height: used,
+        keys: delta === 0 ? ['enter'] : Array.from({ length: Math.abs(delta) }, () => delta < 0 ? 'up' : 'down') });
+    }
     cut += measureRow(row, l, r) - used;
     y += used;
   });

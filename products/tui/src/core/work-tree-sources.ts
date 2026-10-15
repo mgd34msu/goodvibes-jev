@@ -71,6 +71,8 @@ export interface AgentLaneInfo {
 }
 
 export interface WorkTreeSources {
+  /** Lightweight owner lookup; does not clone an agent transcript. */
+  readonly contract?: (agentId: string) => ContractView | undefined;
   readonly callTiming?: ((callId: string) => CallTiming | undefined) | undefined;
   /** Wall time of the turn answering the user message at this absolute index. */
   readonly turnTiming?: ((userMessageIndex: number) => TurnTiming | undefined) | undefined;

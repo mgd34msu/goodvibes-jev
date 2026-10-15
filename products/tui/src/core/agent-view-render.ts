@@ -20,6 +20,8 @@
  * every line.
  */
 
+import type { MessageLineCache } from './conversation-line-cache.ts';
+import type { BlockMeta } from './conversation-types.ts';
 import { createEmptyLine, type Line } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ConversationMessageSnapshot } from '@goodvibes-jev/engine/sdk/platform/core';
 import { appendConversationMessages, drawConversationTurn, type ConversationRenderContext } from './conversation-rendering.ts';
@@ -34,6 +36,9 @@ import { formatElapsed } from '../utils/format-elapsed.ts';
 import { getDisplayWidth, truncateDisplay } from '../utils/terminal-width.ts';
 
 export interface AgentViewInput {
+  readonly lineCache?: MessageLineCache;
+  readonly contentCache?: import('./bead-content-cache.ts').BeadContentCache;
+  readonly blocks?: BlockMeta[];
   readonly width: number;
   readonly agent: AgentLaneInfo;
   /** The agent's transcript (a contract owner's work lives in its contract). */
@@ -117,8 +122,8 @@ export function renderAgentView(input: AgentViewInput): Line[] {
   const lines: Line[] = [headRow(input), createEmptyLine(input.width)];
   const running = input.agent.contract ? contractIsActive(input.agent.contract) : input.agent.status === 'running' || input.agent.status === 'pending';
   const context: ConversationRenderContext = {
-    history: { addLine: (l) => { lines.push(l); }, addLines: (ls) => { lines.push(...ls); }, getLineCount: () => lines.length },
-    blockRegistry: [],
+    history: { addLine: (l) => { lines.push(l); }, addLines: (ls) => { for (const line of ls) lines.push(line); }, getLineCount: () => lines.length },
+    blockRegistry: input.blocks ?? [],
     collapseState: input.collapse,
     errorLineRegistry: [],
     messageKindRegistry: new Map(),
@@ -131,10 +136,20 @@ export function renderAgentView(input: AgentViewInput): Line[] {
     frame: input.frame,
   };
   if (input.agent.contract) {
-    const model = buildContractOwnerModel({ info: input.agent, sources: context.workTreeSources ?? {}, collapse: input.collapse });
-    withLaneColorBase(input.colorIndex, () => { lines.push(...drawConversationTurn(context, model, input.width).lines); });
+    input.contentCache?.begin();
+    const model = buildContractOwnerModel({ info: input.agent, sources: context.workTreeSources ?? {}, collapse: input.collapse, beadContentCache: input.contentCache });
+    input.contentCache?.end();
+    withLaneColorBase(input.colorIndex, () => {
+      const drawn = drawConversationTurn(context, model, input.width);
+      const base = lines.length;
+      for (const line of drawn.lines) lines.push(line);
+      for (const block of drawn.blocks) context.blockRegistry.push({ ...block, startLine: block.startLine + base });
+    });
   } else {
-    withLaneColorBase(input.colorIndex, () => appendConversationMessages(context, [...input.messages], input.width, []));
+    withLaneColorBase(input.colorIndex, () => {
+      if (input.lineCache) input.lineCache.renderInto(context, [...input.messages], input.width, [], 0, -1);
+      else appendConversationMessages(context, [...input.messages], input.width, []);
+    });
   }
   if (!input.agent.contract && input.messages.length === 0) {
     const note = createEmptyLine(input.width);

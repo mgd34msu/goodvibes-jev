@@ -34,6 +34,7 @@
  * metas and error lines are replayed at the same buffer offsets.
  */
 
+import { BeadContentCache } from './bead-content-cache.ts';
 import { createEmptyLine, type Line } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { BlockMeta } from './conversation-types.ts';
 import {
@@ -132,6 +133,7 @@ function unitId(unit: TranscriptUnit): string {
  * A rebuild that reuses entries is byte-identical to a cold rebuild.
  */
 export class MessageLineCache {
+  private readonly beadContentCache = new BeadContentCache();
   private entries: Map<string, CacheEntry> = new Map();
   private _lastTail: TurnTail | null = null;
   private _live = false;
@@ -139,6 +141,7 @@ export class MessageLineCache {
   /** Drop all cached entries (wholesale message replacement / reset). */
   public clear(): void {
     this.entries.clear();
+    this.beadContentCache.clear();
   }
 
   /** Number of retained entries (for tests / diagnostics). */
@@ -179,6 +182,7 @@ export class MessageLineCache {
      */
     afterUnit?: (lastIndex: number, streaming: boolean) => void,
   ): void {
+    this.beadContentCache.begin();
     const config = context.configManager;
     const common: Part[] = [
       width,
@@ -199,7 +203,7 @@ export class MessageLineCache {
       const base = context.history.getLineCount();
       const readKeys = new Set<string>();
       const scratchCollapse = makeRecordingCollapseState(context.collapseState, readKeys);
-      const scratchContext: ConversationRenderContext = { ...context, collapseState: scratchCollapse };
+      const scratchContext: ConversationRenderContext = { ...context, collapseState: scratchCollapse, beadContentCache: this.beadContentCache };
 
       // The turn still streaming ends without its blank row: the streamed text continues under its spine.
       const streaming = unit.kind === 'turn' && streamingPlaceholderAbsIdx >= unit.start && streamingPlaceholderAbsIdx <= unit.end;
@@ -238,6 +242,8 @@ export class MessageLineCache {
       afterUnit?.(lastIndex, streaming);
     }
 
+    this.beadContentCache.end();
+
     // Mark-and-sweep: a full rebuild plans every visible unit, so an entry not
     // touched this pass is gone and is dropped to bound memory.
     if (this.entries.size > touched.size) {
@@ -275,9 +281,9 @@ export class MessageLineCache {
 
     if (unit.kind === 'turn' && turnModel) {
       const render = drawConversationTurn(context, turnModel, width);
-      lines.push(...render.lines);
-      blocks.push(...render.blocks);
-      errors.push(...render.errorLines);
+      for (const line of render.lines) lines.push(line);
+      for (const block of render.blocks) blocks.push(block);
+      for (const error of render.errorLines) errors.push(error);
       for (const [index, line] of render.messageLines) messageLines.set(index, line);
       for (let index = unit.start; index <= unit.end; index++) if (!messageLines.has(index)) messageLines.set(index, 0);
       focusIds = render.focusIds;
