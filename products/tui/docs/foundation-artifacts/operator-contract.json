@@ -33812,6 +33812,30 @@
             "ask": {
               "type": "string"
             },
+            "selectedModel": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "provider": {
+                  "type": "string"
+                },
+                "registryKey": {
+                  "type": "string"
+                },
+                "displayName": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "provider",
+                "registryKey",
+                "displayName"
+              ],
+              "additionalProperties": false
+            },
             "ownerAgentId": {
               "type": "string"
             },
@@ -40444,6 +40468,30 @@
                   },
                   "ask": {
                     "type": "string"
+                  },
+                  "selectedModel": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "provider": {
+                        "type": "string"
+                      },
+                      "registryKey": {
+                        "type": "string"
+                      },
+                      "displayName": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "provider",
+                      "registryKey",
+                      "displayName"
+                    ],
+                    "additionalProperties": false
                   },
                   "ownerAgentId": {
                     "type": "string"
@@ -47181,6 +47229,30 @@
                 },
                 "ask": {
                   "type": "string"
+                },
+                "selectedModel": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "provider": {
+                      "type": "string"
+                    },
+                    "registryKey": {
+                      "type": "string"
+                    },
+                    "displayName": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "provider",
+                    "registryKey",
+                    "displayName"
+                  ],
+                  "additionalProperties": false
                 },
                 "ownerAgentId": {
                   "type": "string"
