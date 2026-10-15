@@ -218,8 +218,6 @@ async function main() {
   const getViewportHeight = (): number => {
     if (input.onboardingWizard.active) return stdout.rows || 24;
     const promptLines: number = input.getVisiblePromptLineCount(getPromptContentWidth());
-    const currentModel = providerRegistry.getCurrentModel();
-    const contextWindow = providerRegistry.getContextWindowForModel(currentModel);
     const rows = stdout.rows || 24;
     // The header row (+ the session chips), and on the main screen the empty row under them (a view's body brings its own).
     return rows - (sessionViews?.headerRows() ?? 1) - (sessionViews?.active ? 0 : HEADER_GAP_ROWS) - estimateShellFooterHeight(promptLines);
@@ -241,8 +239,15 @@ async function main() {
   const scrollToEnd = (vHeight: number) => transcript.followTail(conversation.history.getLineCount(), vHeight);
 
   const unsubs: Array<() => void> = [];
+  // Breadcrumbs, agent lanes and cost totals share one live fleet snapshot per
+  // paint. Outside a paint, actions still query current state directly.
+  type FleetNodes = ReturnType<typeof ctx.services.processRegistry.query>['nodes'];
+  let frameFleet: { nodes?: FleetNodes } | undefined;
+  const fleetNodes = (): FleetNodes => frameFleet
+    ? (frameFleet.nodes ??= ctx.services.processRegistry.query().nodes)
+    : ctx.services.processRegistry.query().nodes;
   // The work tree's live facts: call/turn timings, agent lanes, the call a permission prompt holds, fold persistence (work-tree-wiring.ts).
-  unsubs.push(...wireWorkTree({ conversation, events: uiServices.events, agentManager, listContracts: () => ctx.services.contractRunner.list({ sessionId: runtime.sessionId, includeTerminal: true }), onContractsChanged: (listener) => ctx.services.contractRunner.on(listener), fleetNodes: () => ctx.services.processRegistry.query().nodes, pendingCallId: () => pendingPermission?.callId, turnActive: () => orchestrator.isThinking, sessionsDir: ctx.services.surface.sessionsDir, sessionId: () => runtime.sessionId, requestRender: () => render() }).unsubs);
+  unsubs.push(...wireWorkTree({ conversation, events: uiServices.events, agentManager, listContracts: () => ctx.services.contractRunner.list({ sessionId: runtime.sessionId, includeTerminal: true }), onContractsChanged: (listener) => ctx.services.contractRunner.on(listener), fleetNodes, pendingCallId: () => pendingPermission?.callId, turnActive: () => orchestrator.isThinking, sessionsDir: ctx.services.surface.sessionsDir, sessionId: () => runtime.sessionId, requestRender: () => render() }).unsubs);
   let recoveryInterval: ReturnType<typeof setInterval> | null = null;
   let stopSpokenOutputForExit: (() => Promise<void>) | null = null;
   // The optional "used N memories" provenance chip (default OFF), see interaction-seams.ts.
@@ -472,7 +477,7 @@ async function main() {
   orchestratorRefs.getViewportHeight = getViewportHeight; orchestratorRefs.scrollToEnd = scrollToEnd;
   const views = new SessionViews({
     contractRunner: ctx.services.contractRunner,
-    conversation, agentManager, processManager, fleetNodes: () => ctx.services.processRegistry.query().nodes,
+    conversation, agentManager, processManager, fleetNodes,
     steer: (id, text) => ctx.views.fleet.actions.steer(id, text), killAgent: (id) => ctx.views.fleet.actions.kill(id, { cascade: true }),
     mainBusy: () => orchestrator.isThinking, mainModel: () => lastHeaderModel, promptText: () => input.prompt, requestRender: () => render(),
   });
@@ -508,7 +513,7 @@ async function main() {
     lastSessionId: readLastSessionPointer({ surface: ctx.services.surface }) ?? undefined,
   };
 
-  const renderNow = () => {
+  const renderFrame = () => {
     hostPairing?.checkPresentation();
     const width = stdout.columns || 80;
     const height = stdout.rows || 24;
@@ -581,7 +586,7 @@ async function main() {
       promptText: promptInfo.visibleLines.join('\n'),
       promptLineCount: promptInfo.visibleLines.length,
       promptCursorPos: promptCursorOffset(promptInfo),
-      usage: { available: isConversationUsageAvailable(orchestrator.usage), up: orchestrator.usage.input, down: orchestrator.usage.output, cacheRead: orchestrator.usage.cacheRead, cacheWrite: orchestrator.usage.cacheWrite, fleetCostUsd: footerFleetCost(() => ctx.services.processRegistry.query().nodes, runningAgentCount > 0) },
+      usage: { available: isConversationUsageAvailable(orchestrator.usage), up: orchestrator.usage.input, down: orchestrator.usage.output, cacheRead: orchestrator.usage.cacheRead, cacheWrite: orchestrator.usage.cacheWrite, fleetCostUsd: footerFleetCost(fleetNodes, runningAgentCount > 0) },
       showExitNotice: input.showExitNotice,
       lastCopyTime: input.lastCopyTime,
       model: activeModel.footerModel, // prices the cost; the header names the model
@@ -692,9 +697,16 @@ async function main() {
       layers,
     }); typeahead.framePainted(); // a startup modal counts as seen from its first painted frame
   };
+  let renderRequested = false;
+  const renderNow = () => {
+    renderRequested = false;
+    frameFleet = {};
+    try { renderFrame(); }
+    finally { frameFleet = undefined; }
+  };
   // Yield to input and daemon I/O between coalesced frames during agent fan-out.
   const renderScheduler = createRenderScheduler(renderNow, (flush) => { setTimeout(flush, 16); }, () => lifecycle.isTerminalRestored()); // coalescer; no frames after terminal restore
-  deferredRender.set(() => renderScheduler.schedule()); // from here on, render() actually schedules
+  deferredRender.set(() => { renderRequested = true; renderScheduler.schedule(); });
   const terminalOutputGuard = installFullScreenTerminalOutputGuard({ stdout, stderr: process.stderr, onCapture: (total) => { commandContext.session.runtime.terminalWritesIntercepted = total; render(); } });
 
   setRenderRequest(() => renderScheduler.flushNow()); // bootstrap's 16ms coalescer composites via the (restore-gated) scheduler
@@ -829,7 +841,7 @@ async function main() {
   const typeaheadHooks = { onModalShown: () => typeahead.arm(), onFlowSettled: () => { const held = typeahead.release(); if (held.length > 0) routeInput(held); } };
   applyInitialTuiCliState({ cli, input, commandRegistry, commandContext, shellPaths: ctx.services.shellPaths, surface: ctx.services.surface, render, continueRecovery: { sessionManager: ctx.services.sessionManager, runtime, conversation, writeLastSessionPointer, receipt: (line) => systemMessageRouter.userReceipt(line), typeahead: typeaheadHooks } });
 
-  const routeInput = (data: string): void => {
+  const dispatchInput = (data: string): void => {
     if (hostPairing?.ownsInput) {
       if (pendingPermission) hostPairing.cancelForTakeover();
       input.feed(data); return;
@@ -856,6 +868,12 @@ async function main() {
     }
 
     input.feed(data);
+  };
+  const routeInput = (data: string): void => {
+    dispatchInput(data);
+    // InputHandler batches the tokens in a stdin chunk. Paint its final state
+    // before unrelated background work runs; only streaming waits for a frame.
+    if (renderRequested) renderScheduler.flushNow();
   };
   stdin.on('data', (raw: string) => { const data = typeahead.filter(themeProbe.filterInput(raw)); if (data.length > 0) routeInput(data); });
   stdin.on('end', () => { hostPairing?.dispose(); void exitApp(); });

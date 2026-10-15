@@ -24,9 +24,7 @@ import type { StreamingAudioPlayer } from './player.ts';
 import { createVoiceSttGateway } from '../core/voice-stt-gateway.ts';
 import { wireVoiceInputRuntime } from './voice-input-session.ts';
 import { startWakeRuntime, wireWakeRuntime } from './wake-runtime.ts';
-import { terminalWakeCapabilities } from '../core/wake-provision-status.ts';
 import { resolveWakeRuntimeSettings } from '@goodvibes-jev/engine/sdk/platform/voice/wake/runtime';
-import { wakeProvisionStatus } from '@goodvibes-jev/engine/sdk/platform/voice';
 
 export interface VoiceCaptureWiringDeps {
   readonly configManager: ConfigManager;
@@ -75,14 +73,14 @@ export function wireVoiceCapture(deps: VoiceCaptureWiringDeps): VoiceCaptureWiri
       ? { available: true as const, gateway: resolution.gateway }
       : { available: false as const, reason: resolution.reason };
   };
-  // Capabilities are re-read per resolve rather than captured once: provisioning
-  // the speech gate is something a user does WHILE the session is running, and a
-  // capability snapshot taken at startup would keep reporting it unavailable.
-  const readSettings = () => resolveWakeRuntimeSettings(
-    readConfig,
-    'tui',
-    terminalWakeCapabilities(wakeProvisionStatus({ managedRoot: deps.managedVoiceRoot })),
-  );
+  // Push-to-talk uses capture settings, not the wake detector's model files.
+  // The footer reads these settings too: verifying wake artifacts here re-read
+  // and hashed megabytes on every keystroke and animation frame. The wake
+  // runtime verifies its own artifacts when resolving/starting the detector.
+  const readSettings = () => {
+    const { capture, captureMaxSeconds, indicator } = resolveWakeRuntimeSettings(readConfig, 'tui');
+    return { capture, captureMaxSeconds, indicator };
+  };
   const subscribeConfig = (key: string, listener: () => void): (() => void) => deps.configManager.subscribe(key as ConfigKey, listener);
   const player = deps.player ?? new LocalStreamingAudioPlayer();
 

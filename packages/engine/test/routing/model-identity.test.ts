@@ -45,6 +45,69 @@ describe('shortlist', () => {
 });
 
 describe('resolver', () => {
+  test('a catalog refresh can resolve while an older lookup is still pending', async () => {
+    let chosen = 'openai/gpt-4o';
+    let source: readonly IdentityCandidate[] = [{ key: chosen, id: chosen }];
+    const fake = identityPort(() => chosen);
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let calls = 0;
+    installJudgmentPort({ model: fake.port.model, async ask(request) {
+      const first = calls++ === 0;
+      const answer = await fake.port.ask(request);
+      if (first) await held;
+      return answer;
+    } });
+    const resolver = new ModelIdentityResolver({ universe: 'test', candidates: () => source });
+    const query = { id: 'gpt-4o-latest' };
+    let staleNotifications = 0;
+    let currentNotifications = 0;
+    try {
+      resolver.lookup(query, 'test', () => { staleNotifications++; });
+      await Bun.sleep(0);
+      expect(calls).toBe(1);
+      chosen = 'openai/gpt-4o-new';
+      source = [{ key: chosen, id: chosen }];
+      resolver.lookup(query, 'test', () => { currentNotifications++; });
+      await Bun.sleep(0);
+      expect(currentNotifications).toBe(1);
+      expect(resolver.lookup(query, 'test')).toBe(chosen);
+    } finally { release(); }
+    await Bun.sleep(0);
+    expect(staleNotifications).toBe(0);
+    expect(resolver.lookup(query, 'test')).toBe(chosen);
+  });
+
+  test('lookup defers catalog indexing and refreshes its cached answer when the source changes', async () => {
+    let visited = 0;
+    let chosen = 'openai/gpt-4o';
+    const { port, requests } = identityPort(() => chosen);
+    installJudgmentPort(port);
+    let source: readonly IdentityCandidate[] = new Proxy([...candidates], {
+      get(target, property, receiver) {
+        if (typeof property === 'string' && /^\d+$/.test(property)) visited++;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const resolver = new ModelIdentityResolver({ universe: 'test', candidates: () => source });
+    const query = { id: 'gpt-4o-latest' };
+    expect(resolver.lookup(query, 'test')).toBeNull();
+    expect(visited).toBe(0);
+    await Bun.sleep(0);
+    expect(visited).toBeGreaterThan(0);
+    expect(resolver.lookup(query, 'test')).toBe(chosen);
+    const indexedReads = visited;
+    expect(resolver.lookup(query, 'test')).toBe(chosen);
+    expect(visited).toBe(indexedReads);
+    expect(requests).toHaveLength(1);
+    chosen = 'openai/gpt-4o-new';
+    source = [{ key: chosen, id: chosen }];
+    expect(resolver.lookup(query, 'test')).toBeNull();
+    await Bun.sleep(0);
+    expect(resolver.lookup(query, 'test')).toBe(chosen);
+    expect(requests).toHaveLength(2);
+  });
+
   test('background lookups yield to input and bound requests while a catalog is being read', async () => {
     const fake = identityPort(() => 'openai/gpt-4o');
     let release!: () => void;

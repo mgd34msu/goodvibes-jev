@@ -124,7 +124,8 @@ export class ModelIdentityResolver {
   #index: readonly IndexedCandidate[] = [];
   readonly #byToken = new Map<string, number[]>();
   readonly #shortlists = new Map<string, readonly IdentityCandidate[]>();
-  readonly #background = new Set<string>();
+  readonly #background = new Map<string, readonly IdentityCandidate[]>();
+  readonly #lookupCache = new Map<string, { source: readonly IdentityCandidate[]; value: string | null }>();
   readonly #queued: (() => Promise<void>)[] = [];
   #active = 0;
   #scheduled = false;
@@ -143,6 +144,7 @@ export class ModelIdentityResolver {
       this.#index = indexCandidates(candidates);
       this.#byToken.clear();
       this.#shortlists.clear();
+      this.#lookupCache.clear();
       for (const [position, entry] of this.#index.entries()) {
         for (const token of entry.tokens) {
           const positions = this.#byToken.get(token) ?? [];
@@ -189,24 +191,36 @@ export class ModelIdentityResolver {
    * and asked again on a later lookup.
    */
   lookup(query: IdentityQuery, site: string, onResolved?: () => void): string | null {
-    const known = this.known(query);
-    if (known !== undefined) return known;
-    const key = this.#keyFor(query, this.#shortlist(query));
-    if (!this.#background.has(key)) {
+    const source = this.#source();
+    const key = JSON.stringify([query.provider, query.id, query.name, query.family, query.otherProviderThan]);
+    const cached = this.#lookupCache.get(key);
+    if (cached?.source === source) return cached.value;
+    // A synchronous resolve/known caller may already have prepared this query.
+    const shortlist = source === this.#indexedFrom ? this.#shortlists.get(key) : undefined;
+    const known = shortlist && (shortlist.length === 0 ? null : this.#memo.get(this.#keyFor(query, shortlist)));
+    if (known !== undefined) {
+      this.#lookupCache.set(key, { source, value: known });
+      return known;
+    }
+    if (this.#background.get(key) !== source) {
       let owner: ReturnType<typeof judgmentPort>;
       try { owner = judgmentPort(site); }
       catch { return null; }
-      const snapshot = this.#indexedFrom;
-      this.#background.add(key);
+      this.#background.set(key, source);
       this.#queued.push(async () => {
         try {
-          if (judgmentPort(site) !== owner || this.#source() !== snapshot) return;
-          await this.resolve(query, site);
-          if (judgmentPort(site) === owner && this.#source() === snapshot) onResolved?.();
+          if (judgmentPort(site) !== owner || this.#source() !== source) return;
+          // Indexing and lexical retrieval belong to background work too. A
+          // registry rebuild can request thousands of identities in one frame.
+          const value = await this.resolve(query, site);
+          if (judgmentPort(site) === owner && this.#source() === source) {
+            this.#lookupCache.set(key, { source, value });
+            onResolved?.();
+          }
         }
         catch (error: unknown) {
           logger.warn('[routing] Model identity reading failed', { universe: this.#universe, model: query.id, error: summarizeError(error) });
-        } finally { this.#background.delete(key); }
+        } finally { if (this.#background.get(key) === source) this.#background.delete(key); }
       });
       this.#scheduleBackground();
     }
@@ -218,10 +232,11 @@ export class ModelIdentityResolver {
     this.#scheduled = true;
     setImmediate(() => {
       this.#scheduled = false;
-      while (this.#active < 4 && this.#queued.length > 0) {
-        this.#active++;
-        void this.#queued.shift()!().finally(() => { this.#active--; this.#scheduleBackground(); });
-      }
+      // Yield between preparations as well as network requests. Four requests
+      // may overlap, but their synchronous catalog work must not form one stall.
+      this.#active++;
+      void this.#queued.shift()!().finally(() => { this.#active--; this.#scheduleBackground(); });
+      this.#scheduleBackground();
     });
   }
 

@@ -65,30 +65,21 @@ export function buildModelRegistry(input: {
   const catalogModels = input.catalogModels.map(withRegistryKey);
   const discoveredModels = input.discoveredModels.map(withRegistryKey);
   const providerNativeModels = (input.providerNativeModels ?? []).map(withRegistryKey);
-  const sameRegistryKey = (left: ModelDefinition, right: ModelDefinition): boolean =>
-    left.registryKey === right.registryKey;
-
+  // Membership checks must stay linear across a full provider catalog. This
+  // merge is also reached by live model lookups after discovery updates.
+  const overrides = new Set([...customModels, ...runtimeModels].map(model => model.registryKey));
+  const catalogKeys = new Set(catalogModels.map(model => model.registryKey));
   const providerNativeFiltered = providerNativeModels.filter(
-    (native) =>
-      !customModels.some((model) => sameRegistryKey(model, native)) &&
-      !runtimeModels.some((model) => sameRegistryKey(model, native)) &&
-      !catalogModels.some((model) => sameRegistryKey(model, native)),
+    model => !overrides.has(model.registryKey) && !catalogKeys.has(model.registryKey),
   );
-
   const catalogFiltered = catalogModels.filter(
-    (builtin) =>
-      !customModels.some((model) => sameRegistryKey(model, builtin)) &&
-      !runtimeModels.some((model) => sameRegistryKey(model, builtin)) &&
-      !input.suppressedCatalogRegistryKeys.has(builtin.registryKey) &&
-      !input.suppressedCatalogRegistryKeys.has(`${builtin.provider}:${builtin.id}`) &&
-      !builtin.id.startsWith('hf:'),
+    model => !overrides.has(model.registryKey)
+      && !input.suppressedCatalogRegistryKeys.has(model.registryKey)
+      && !input.suppressedCatalogRegistryKeys.has(`${model.provider}:${model.id}`)
+      && !model.id.startsWith('hf:'),
   );
-
   const discoveredFiltered = discoveredModels.filter(
-    (discovered) =>
-      !catalogModels.some((model) => sameRegistryKey(model, discovered)) &&
-      !customModels.some((model) => sameRegistryKey(model, discovered)) &&
-      !runtimeModels.some((model) => sameRegistryKey(model, discovered)),
+    model => !catalogKeys.has(model.registryKey) && !overrides.has(model.registryKey),
   );
 
   return [

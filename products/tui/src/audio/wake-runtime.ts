@@ -160,7 +160,10 @@ export function wireWakeRuntime(deps: WakeRuntimeDeps): WakeRuntime {
   const status = (): VoiceCaptureIndicatorState | null => {
     const kind = PHASE_INDICATOR[phase];
     if (kind === undefined) return null;
-    return { kind, deviceLabel, indicator: resolve().indicator, ...(detail !== undefined ? { detail } : {}) };
+    // Display preferences are pure config. Model verification belongs to
+    // detector startup, never to an animation or input repaint.
+    const indicator = resolveWakeRuntimeSettings(deps.readConfig, 'tui').indicator;
+    return { kind, deviceLabel, indicator, ...(detail !== undefined ? { detail } : {}) };
   };
 
   const retainClip = (utterance: CapturedUtterance): void => {

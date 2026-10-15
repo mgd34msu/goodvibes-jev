@@ -71,11 +71,12 @@ export function wireVoiceInputRuntime(deps: VoiceInputRuntimeDeps): VoiceInputRu
   let transcribing = false;
 
   const status = (): VoiceCaptureIndicatorState | null => {
+    const kind = PHASE_INDICATOR[phase];
+    if (!transcribing && kind === undefined) return null;
     const indicator = deps.readSettings().indicator;
     if (transcribing) {
       return { kind: 'transcribing', deviceLabel: session?.deviceLabel ?? null, indicator };
     }
-    const kind = PHASE_INDICATOR[phase];
     if (kind === undefined) return null;
     const seconds = Math.floor((session?.durationMs ?? 0) / 1000);
     return {

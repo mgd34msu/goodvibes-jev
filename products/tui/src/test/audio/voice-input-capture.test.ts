@@ -107,6 +107,7 @@ function makeVoiceInputHarness(options: {
   readonly noTranscriber?: string;
   readonly backend?: WakeRuntimeSettings['capture']['backend'];
   readonly installed?: (command: string) => boolean;
+  readonly onReadSettings?: () => void;
 } = {}): VoiceInputHarness {
   const spawns = recordingSpawn();
   const drafts: string[] = [];
@@ -118,10 +119,10 @@ function makeVoiceInputHarness(options: {
       isInstalled: options.installed ?? (() => true),
       platform: 'linux',
     }),
-    readSettings: () => ({
+    readSettings: () => { options.onReadSettings?.(); return {
       ...CAPTURE_SETTINGS,
       capture: { ...CAPTURE_SETTINGS.capture, backend: options.backend ?? 'auto' },
-    }),
+    }; },
     resolveTranscriber: () => (options.noTranscriber !== undefined
       ? { available: false as const, reason: options.noTranscriber }
       : {
@@ -142,6 +143,13 @@ function makeVoiceInputHarness(options: {
 }
 
 describe('push-to-talk voice input', () => {
+  test('an idle footer does not resolve capture settings on each paint', () => {
+    let reads = 0;
+    const harness = makeVoiceInputHarness({ onReadSettings: () => { reads++; } });
+    for (let i = 0; i < 60; i++) expect(harness.runtime.status()).toBeNull();
+    expect(reads).toBe(0);
+  });
+
   test('press starts a recording, press again transcribes it into the composer', async () => {
     const harness = makeVoiceInputHarness({ transcript: 'summarise the failing job' });
 
