@@ -136746,7 +136746,6 @@
                           ]
                         },
                         "units": {
-                          "maxItems": 256,
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -136875,22 +136874,18 @@
                                         "maxLength": 200
                                       },
                                       "worktreePath": {
-                                        "type": "string",
-                                        "maxLength": 12288
+                                        "type": "string"
                                       },
                                       "worktreeBranch": {
-                                        "type": "string",
-                                        "maxLength": 12288
+                                        "type": "string"
                                       },
                                       "worktreeKept": {
                                         "type": "boolean"
                                       },
                                       "conflictFiles": {
-                                        "maxItems": 256,
                                         "type": "array",
                                         "items": {
-                                          "type": "string",
-                                          "maxLength": 12288
+                                          "type": "string"
                                         }
                                       }
                                     },
@@ -137681,7 +137676,6 @@
                           ]
                         },
                         "units": {
-                          "maxItems": 256,
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -137810,22 +137804,18 @@
                                         "maxLength": 200
                                       },
                                       "worktreePath": {
-                                        "type": "string",
-                                        "maxLength": 12288
+                                        "type": "string"
                                       },
                                       "worktreeBranch": {
-                                        "type": "string",
-                                        "maxLength": 12288
+                                        "type": "string"
                                       },
                                       "worktreeKept": {
                                         "type": "boolean"
                                       },
                                       "conflictFiles": {
-                                        "maxItems": 256,
                                         "type": "array",
                                         "items": {
-                                          "type": "string",
-                                          "maxLength": 12288
+                                          "type": "string"
                                         }
                                       }
                                     },
@@ -138616,7 +138606,6 @@
                           ]
                         },
                         "units": {
-                          "maxItems": 256,
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -138745,22 +138734,18 @@
                                         "maxLength": 200
                                       },
                                       "worktreePath": {
-                                        "type": "string",
-                                        "maxLength": 12288
+                                        "type": "string"
                                       },
                                       "worktreeBranch": {
-                                        "type": "string",
-                                        "maxLength": 12288
+                                        "type": "string"
                                       },
                                       "worktreeKept": {
                                         "type": "boolean"
                                       },
                                       "conflictFiles": {
-                                        "maxItems": 256,
                                         "type": "array",
                                         "items": {
-                                          "type": "string",
-                                          "maxLength": 12288
+                                          "type": "string"
                                         }
                                       }
                                     },
@@ -139551,7 +139536,6 @@
                           ]
                         },
                         "units": {
-                          "maxItems": 256,
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -139680,22 +139664,18 @@
                                         "maxLength": 200
                                       },
                                       "worktreePath": {
-                                        "type": "string",
-                                        "maxLength": 12288
+                                        "type": "string"
                                       },
                                       "worktreeBranch": {
-                                        "type": "string",
-                                        "maxLength": 12288
+                                        "type": "string"
                                       },
                                       "worktreeKept": {
                                         "type": "boolean"
                                       },
                                       "conflictFiles": {
-                                        "maxItems": 256,
                                         "type": "array",
                                         "items": {
-                                          "type": "string",
-                                          "maxLength": 12288
+                                          "type": "string"
                                         }
                                       }
                                     },
