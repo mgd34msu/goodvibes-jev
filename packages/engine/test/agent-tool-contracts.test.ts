@@ -23,6 +23,10 @@ import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { AgentManager, createAgentTool, type AgentRecord } from '../sdk/src/platform/tools/agent/index.js';
 import { createWorkflowServices, createWorkflowTool } from '../sdk/src/platform/tools/workflow/index.js';
 import { makeContract, makeCriterion, makeUnit } from './contract/fixtures.js';
+import { makeHarness as realRunnerHarness, oneUnitPlan } from './contract/runner-support.js';
+import { AgentOrchestrator } from '../sdk/src/platform/agents/orchestrator.js';
+import type { ModelDefinition } from '../sdk/src/platform/providers/registry-types.js';
+import type { LLMProvider } from '../sdk/src/platform/providers/interface.js';
 
 const PROJECT_ROOT = '/work/agent-tool-contracts';
 const SESSION_ID = 'session-7';
@@ -123,6 +127,41 @@ async function flush(): Promise<void> {
 }
 
 describe('agent tool spawn', () => {
+  test('batch-spawn creates a real contract owner and resolves its OpenAI subscription model', async () => {
+    const selected: ModelDefinition = { id: 'gpt-6.1-sol', registryKey: 'openai:gpt-6.1-sol', provider: 'openai-subscriber',
+      displayName: 'GPT 6.1 Sol', description: 'fixture', capabilities: { toolCalling: true, codeEditing: true, reasoning: true, multimodal: false },
+      contextWindow: 128000, selectable: true };
+    const h = realRunnerHarness({ plan: oneUnitPlan(1), scripts: {} });
+    const subscription: LLMProvider = { name: 'openai-subscriber', models: [selected.id], async chat() { throw new Error('routing test must not call a model'); } };
+    const catalog = [{ ...selected, provider: 'openai' }, { ...selected, id: 'gpt-6-sol', registryKey: 'openai:gpt-6-sol', provider: 'openai' }];
+    const registry = { listModels: () => catalog, getForModel: (_model: string, provider?: string) => {
+      expect(provider).toBe('openai-subscriber'); return subscription;
+    } };
+    const resolver = new AgentOrchestrator({ messageBus: h.messageBus }) as unknown as {
+      resolveProviderForRecord(source: typeof registry, record: AgentRecord, current: ModelDefinition): { provider: LLMProvider; modelId: string };
+      resolveFallbackModelRoutes(source: typeof registry, record: AgentRecord, current: ModelDefinition, primary: string): Array<{ provider: LLMProvider; modelId: string; requestedModelId: string }>;
+    };
+    try {
+      const tool = createAgentTool({ manager: h.manager, messageBus: h.messageBus, configManager: configManager(),
+        archetypeLoader: { loadArchetype: () => null }, contractRunner: h.runner, projectRoot: h.root,
+        resolveSessionId: () => SESSION_ID, getSelectedModel: () => selected });
+      const result = await tool.execute({ mode: 'batch-spawn', tasks: [{ task: 'Review the engine' }, { task: 'Review the TUI' }] });
+      expect(result.success, result.error).toBe(true);
+      const owner = h.manager.list().find(agent => agent.contractRole === 'owner')!;
+      expect(owner).toMatchObject({ model: selected.registryKey, provider: 'openai-subscriber' });
+      for (const model of [selected.id, selected.registryKey, 'openai-subscriber:gpt-6.1-sol']) {
+        expect(resolver.resolveProviderForRecord(registry, { ...owner, model }, selected)).toMatchObject({ provider: subscription, modelId: selected.id });
+      }
+      expect(resolver.resolveProviderForRecord(registry, { ...owner, provider: undefined }, selected).provider).toBe(subscription);
+      expect(resolver.resolveFallbackModelRoutes(registry, { ...owner, fallbackModels: ['openai:gpt-6-sol'] }, selected, selected.registryKey))
+        .toEqual([{ provider: subscription, modelId: 'gpt-6-sol', requestedModelId: 'openai:gpt-6-sol' }]);
+    } finally {
+      for (const contract of h.runner.list()) h.runner.cancel(contract.id, 'routing regression complete');
+      await Promise.all(h.runner.list({ includeTerminal: true }).map(contract => h.runner.join(contract.id)));
+      h.dispose();
+    }
+  });
+
   test('a spawn outside a contract runs the agent directly and starts no contract', async () => {
     const { runner, tool, ran } = harness();
 

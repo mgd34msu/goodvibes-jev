@@ -12,6 +12,8 @@ import type { ConversationMessageSnapshot } from '../sdk/src/platform/core/conve
 import { handleToolResponseOutcome } from '../sdk/src/platform/core/orchestrator-turn-helpers.js';
 import type { ToolCall, ToolResult } from '../sdk/src/platform/types/tools.js';
 import type { ConfigManager } from '../sdk/src/platform/config/manager.js';
+import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
+import type { TurnEvent } from '../sdk/src/events/turn.js';
 
 function createProviderRegistry() {
   return {
@@ -28,45 +30,61 @@ function createProviderRegistry() {
   };
 }
 
-async function runOutcome(input: { readonly toolCalls: ToolCall[]; readonly userText: string; readonly result: Record<string, unknown>; readonly onExecute?: (calls: ToolCall[]) => void }) {
+async function runOutcome(input: { readonly toolCalls: ToolCall[]; readonly userText: string; readonly result: Record<string, unknown>; readonly success?: boolean; readonly onExecute?: (calls: ToolCall[]) => void }) {
   const conversation = new ConversationManager();
-  await handleToolResponseOutcome({
+  const runtimeBus = new RuntimeEventBus();
+  const completions: string[] = [];
+  runtimeBus.on<Extract<TurnEvent, { type: 'TURN_COMPLETED' }>>('TURN_COMPLETED', event => { completions.push(event.payload.stopReason); });
+  const outcome = await handleToolResponseOutcome({
     conversation,
     agentManager: { list: () => [], spawn: () => { throw new Error('not used'); } },
     planManager: null,
     configManager: { get: () => undefined } as unknown as Pick<ConfigManager, 'get'>,
     providerRegistry: createProviderRegistry(),
-    runtimeBus: null,
+    runtimeBus,
     emitterContext: () => ({ sessionId: 'test', traceId: 'test', source: 'test' }),
     turnId: 'turn-1',
     response: { content: '', toolCalls: input.toolCalls, usage: undefined } as never,
     userText: input.userText,
     executeToolCalls: async (_turnId, calls): Promise<ToolResult[]> => {
       input.onExecute?.(calls);
-      return [{ callId: 'call-agent', success: true, output: JSON.stringify(input.result) }];
+      return [{ callId: 'call-agent', success: input.success ?? true, output: JSON.stringify(input.result) }];
     },
     setPendingToolCalls: () => {},
     messageQueueLength: 0,
     requestRender: () => {},
     sessionId: 'session-1',
   });
+  await new Promise(resolve => setTimeout(resolve, 0));
   const systemMessages = conversation.getMessageSnapshot()
     .filter((message): message is { role: 'system'; content: string } => message.role === 'system')
     .map((message) => message.content);
-  return { conversation, systemMessages };
+  return { conversation, systemMessages, outcome, completions };
 }
 
 const spawnCall = (task: string): ToolCall[] => [{ id: 'call-agent', name: 'agent', arguments: { mode: 'spawn', task } }];
 
 describe('the turn loop after an agent tool call', () => {
   test('a call that started a contract gets the contract note, not the nudge to spawn more agents', async () => {
-    const { systemMessages } = await runOutcome({
+    const { systemMessages, outcome, completions } = await runOutcome({
       toolCalls: spawnCall('Build a token bucket rate limiter.'),
       userText: '',
       result: { contractStarted: true, contractId: 'ctr-1a2b3c4d', ownerAgentId: 'agent-owner' },
     });
     expect(systemMessages.some((message) => message.includes('continue spawning agents now'))).toBe(false);
     expect(systemMessages.some((message) => message.startsWith('A contract now owns this work'))).toBe(true);
+    expect(outcome.continueLoop).toBe(false);
+    expect(completions).toEqual(['completed']);
+  });
+
+  test('a failed batch spawn stays in the model loop so it can handle the tool error', async () => {
+    const { systemMessages, outcome, completions } = await runOutcome({
+      toolCalls: [{ id: 'call-agent', name: 'agent', arguments: { mode: 'batch-spawn', tasks: [{ task: 'Review source' }] } }],
+      userText: 'Review source', success: false, result: { error: 'Agent could not start' },
+    });
+    expect(outcome.continueLoop).toBe(true);
+    expect(completions).toEqual([]);
+    expect(systemMessages).toEqual([]);
   });
 
   test('an ordinary spawn keeps the continuation nudge', async () => {

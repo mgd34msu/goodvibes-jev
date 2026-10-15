@@ -52,7 +52,8 @@ import {
   emitAgentRunning,
   emitAgentStreamDelta,
 } from '../runtime/emitters/index.js';
-import { findModelDefinition } from '../providers/registry-models.js';
+import { findModelDefinition, findModelDefinitionForProvider } from '../providers/registry-models.js';
+import { CATALOG_PROVIDER_NAME_ALIASES, sameProviderCatalog } from '../providers/provider-aliases.js';
 import { resolveModelReference } from '../providers/model-id-resolution.js';
 import { runAgentTask, type AgentOrchestratorRunContext } from './orchestrator-runner.js';
 export { summarizeToolArgs } from './orchestrator-utils.js';
@@ -614,13 +615,11 @@ export class AgentOrchestrator {
       ? resolveModelReference(record.model, modelRegistry, { contextProviderId: record.provider })
       : undefined;
     const requestedModelId = this.normalizeRequestedModelId(resolvedModelOverride ?? currentModel.registryKey);
-    const providerFromRegistryKey = resolvedModelOverride
-      ? findModelDefinition(resolvedModelOverride, modelRegistry)?.provider
-      : undefined;
+    const providerFromRegistryKey = resolvedModelOverride?.slice(0, resolvedModelOverride.indexOf(':'));
     if (record.provider && !record.model) {
       throw new Error('Agent provider routing requires a provider-qualified model when provider is supplied.');
     }
-    if (record.provider && providerFromRegistryKey && providerFromRegistryKey !== record.provider) {
+    if (record.provider && providerFromRegistryKey && !sameProviderCatalog(providerFromRegistryKey, record.provider)) {
       throw new Error(`Agent model override '${record.model}' conflicts with provider '${record.provider}'.`);
     }
     const fallbackModels = (record.routing?.fallbackModels ?? record.fallbackModels ?? [])
@@ -630,12 +629,17 @@ export class AgentOrchestrator {
       record.routing?.providerSelection ??
       (record.provider === 'synthetic' ? 'synthetic' : record.provider ? 'concrete' : 'inherit-current');
     const providerId = record.provider;
+    // A catalog-qualified model in the current provider keeps its selected
+    // connection (e.g. OpenAI subscription). An explicit connection alias stays explicit.
+    const modelProvider = providerFromRegistryKey && !CATALOG_PROVIDER_NAME_ALIASES[providerFromRegistryKey]
+      && sameProviderCatalog(providerFromRegistryKey, currentModel.provider)
+      ? currentModel.provider : providerFromRegistryKey;
     const effectiveProviderId =
       providerSelection === 'synthetic'
         ? undefined
         : providerSelection === 'concrete'
-          ? (providerId ?? providerFromRegistryKey ?? currentModel.provider)
-          : (providerFromRegistryKey ?? currentModel.provider);
+          ? (providerId ?? modelProvider ?? currentModel.provider)
+          : (modelProvider ?? currentModel.provider);
     const providerOverride = effectiveProviderId !== 'synthetic' ? effectiveProviderId : undefined;
     const providerFailurePolicy =
       record.routing?.providerFailurePolicy ?? (fallbackModels.length > 0 ? 'ordered-fallbacks' : 'fail');
@@ -668,12 +672,8 @@ export class AgentOrchestrator {
   ): string {
     const registry = providerRegistry.listModels();
     const def = providerOverride
-      ? registry.find(
-          (model) =>
-            model.provider === providerOverride &&
-            (model.registryKey === requestedModelId || model.id === requestedModelId),
-        )
-      : registry.find((model) => model.registryKey === requestedModelId);
+      ? findModelDefinitionForProvider(requestedModelId, providerOverride, registry, CATALOG_PROVIDER_NAME_ALIASES)
+      : findModelDefinition(requestedModelId, registry);
     if (def) return def.id;
     throw new Error(`Model '${requestedModelId}' is not in registry.`);
   }
@@ -700,9 +700,11 @@ export class AgentOrchestrator {
       if (!fallbackDef) {
         throw new Error(`Agent fallback model '${requestedModelId}' is not in registry.`);
       }
+      const fallbackProvider = routing.providerOverride && sameProviderCatalog(fallbackDef.provider, routing.providerOverride)
+        ? routing.providerOverride : fallbackDef.provider;
       routes.push({
-        provider: providerRegistry.getForModel(requestedModelId, fallbackDef.provider),
-        modelId: this.resolveChatModelId(providerRegistry, requestedModelId, fallbackDef.provider),
+        provider: providerRegistry.getForModel(requestedModelId, fallbackProvider),
+        modelId: this.resolveChatModelId(providerRegistry, requestedModelId, fallbackProvider),
         requestedModelId,
       });
     }

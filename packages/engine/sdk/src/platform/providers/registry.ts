@@ -373,6 +373,7 @@ export class ProviderRegistry {
    */
   has(id: string): boolean {
     if (this.providers.has(id)) return true;
+    if (id === 'openai-subscriber') return false;
     const aliased = CATALOG_PROVIDER_NAME_ALIASES[id]!;
     return aliased !== undefined && this.providers.has(aliased);
   }
@@ -405,11 +406,12 @@ export class ProviderRegistry {
    */
   tryGet(name: string): LLMProvider | undefined {
     if (name === 'openai' && this.subscriptionManager.get('openai')) {
-      const subscriber = this.providers.get('openai-subscriber');
-      if (subscriber) return subscriber;
+      return this.providers.get('openai-subscriber');
     }
     const p = this.providers.get(name);
     if (p) return p;
+    // A subscription is an authentication route, not permission to use API billing.
+    if (name === 'openai-subscriber') return undefined;
     // Check alias map. The catalog may use a different name than the registered provider
     const aliased = CATALOG_PROVIDER_NAME_ALIASES[name]!;
     if (aliased) {
@@ -435,7 +437,7 @@ export class ProviderRegistry {
     if (p) return p;
     // Check alias map. The catalog may use a different name than the registered provider
     const aliased = CATALOG_PROVIDER_NAME_ALIASES[name]!;
-    if (aliased) {
+    if (aliased && name !== 'openai-subscriber') {
       const pa = this.providers.get(aliased);
       if (pa) return pa;
     }
@@ -460,7 +462,7 @@ export class ProviderRegistry {
       if (provider) throw new Error(`No model '${modelId}' for provider '${provider}' in registry.`);
       throw new Error(`No model '${modelId}' in registry.`);
     }
-    return this.require(def.provider);
+    return this.require(provider ?? (resolvedModelId.startsWith('openai-subscriber:') ? 'openai-subscriber' : def.provider));
   }
 
   /** All registered model definitions. */

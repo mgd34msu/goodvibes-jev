@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { OpenAICodexProvider } from '../sdk/src/platform/providers/openai-codex.js';
 import type { ProviderSubscription, SubscriptionManager } from '../sdk/src/platform/config/subscriptions.js';
+import { computeConfiguredProviderIds } from '../sdk/src/platform/providers/registry-configured-ids.js';
 
 /**
  * A revoked-but-unexpired subscription token: the backend answers 401 while
@@ -102,6 +103,17 @@ const CHAT_PARAMS = {
 };
 
 describe('OpenAICodexProvider refresh-on-401', () => {
+  test('the planner recognizes a subscription, including one awaiting token refresh', () => {
+    const { manager } = makeManager({ ...liveRecord(), expiresAt: Date.now() - 1000 });
+    const provider = new OpenAICodexProvider(manager);
+    const configured = () => computeConfiguredProviderIds([], new Map([[provider.name, provider]]), () => new Set(), () => ({}));
+    expect(configured()).toContain('openai-subscriber');
+    manager.saveSubscription({ ...liveRecord(), revokedAt: Date.now() });
+    expect(configured()).not.toContain('openai-subscriber');
+    manager.get = () => null;
+    expect(configured()).not.toContain('openai-subscriber');
+  });
+
   test('a dead session surfaces as a subscription-session error, never an API-key one', async () => {
     const { manager, saved } = makeManager(liveRecord());
     const log = stubFetch({

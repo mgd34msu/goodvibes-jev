@@ -197,9 +197,9 @@ describe('route planner', () => {
 
 
   test('the recorded review ambiguity still assigns an agent within the selected subscription provider and family', async () => {
-    const selected = def('subscription', 'gpt-6.1-sol');
-    const sibling = def('subscription', 'gpt-6-astra');
-    const offered = [selected, sibling, def('subscription', 'claude-opus-4.5'), def('metered', 'gpt-6.1-sol')];
+    const selected = def('openai-subscriber', 'gpt-6.1-sol', { registryKey: 'openai:gpt-6.1-sol' });
+    const sibling = def('openai', 'gpt-6-astra');
+    const offered = [{ ...selected, provider: 'openai' }, sibling, def('openai-subscriber', 'gpt-6.1-sol'), def('openai', 'claude-opus-4.5'), def('metered', 'gpt-6.1-sol')];
     const fake = routingPort({ tier: 'premium', frontier: () => true, pick: sibling.registryKey, override: (name, question, state) => {
       if (name === 'same_family') return noulAnswer(JSON.stringify((state as { candidate: unknown }).candidate).includes('gpt-6') ? 0.98 : 0.02);
       if (name === 'intent__intent') return { type: 'choice', choice: 'planning', confidence: 0.52, probabilities: { planning: 0.57, code_review: 0.43, code_change: 0, debugging: 0, research: 0, writing: 0, analysis: 0, operations: 0, conversation: 0 } };
@@ -209,10 +209,10 @@ describe('route planner', () => {
       return undefined;
     } });
     installJudgmentPort(fake.port);
-    const route = await createRoutePlanner({ catalog: catalogOf(offered, ['subscription', 'metered']), tiers: new ModelTierStore() })
+    const route = await createRoutePlanner({ catalog: catalogOf(offered, ['openai-subscriber', 'metered']), tiers: new ModelTierStore() })
       .planRoute({ purpose: 'planner', brief: 'Plan a comprehensive code review', selectedModel: selected });
     expect(route.model).toBe(sibling.registryKey);
-    expect(route.provider).toBe('subscription');
+    expect(route.provider).toBe('openai-subscriber');
     expect(route.fallbackModels).toEqual([selected.registryKey]);
     expect(route.request.readings.intent.outcome).not.toBe('act');
     expect(route.request.readings.intent.choice).toBe('planning');

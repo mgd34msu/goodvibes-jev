@@ -461,6 +461,13 @@ export class OpenAICodexProvider implements LLMProvider {
     private readonly subscriptionManager: Pick<SubscriptionManager, 'get' | 'saveSubscription' | 'resolveAccessToken'>,
   ) {}
 
+  isConfigured(): boolean {
+    const subscription = this.subscriptionManager.get('openai');
+    // Expiring credentials refresh inside chat(); their age does not remove
+    // a working subscription from the planner's configured providers.
+    return Boolean(subscription?.accessToken && subscription.revokedAt === undefined);
+  }
+
   async chat(params: ChatRequest): Promise<ChatResponse> {
     // Interaction-free freshness first: a near-expiry token refreshes
     // silently here, so the ordinary expiry case never surfaces anything.

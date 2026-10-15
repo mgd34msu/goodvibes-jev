@@ -22,6 +22,7 @@ import { OwnedWork } from '../../utils/owned-work.js';
 import { splitModelRegistryKey } from '../../providers/registry-helpers.js';
 import type { ProviderRegistry } from '../../providers/registry.js';
 import { requireProviderQualifiedModel, normalizeProviderQualifiedModelList } from './model-routing.js';
+import { sameProviderCatalog } from '../../providers/provider-aliases.js';
 import type { AgentRecord } from './record.js';
 import { splitContractBinding, startContractOwner, type ContractOwnerBinding, type ContractUnitBinding } from './contract-binding.js';
 
@@ -454,7 +455,7 @@ export class AgentManager {
     if (!model && provider) {
       throw new Error('Agent provider routing requires a provider-qualified model when provider is supplied.');
     }
-    if (model && provider && splitModelRegistryKey(model).providerId !== provider) {
+    if (model && provider && !sameProviderCatalog(splitModelRegistryKey(model).providerId, provider)) {
       throw new Error(`Agent model override '${model}' conflicts with provider '${provider}'.`);
     }
     const fallbackModels = normalizeProviderQualifiedModelList(input.fallbackModels, 'Agent fallback models', modelCandidates);

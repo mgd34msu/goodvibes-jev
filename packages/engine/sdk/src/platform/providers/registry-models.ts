@@ -1,5 +1,6 @@
 import type { ModelDefinition } from './registry-types.js';
 import { splitModelRegistryKey, stableStringify, withRegistryKey } from './registry-helpers.js';
+import { sameProviderCatalog } from './provider-aliases.js';
 
 export function getProviderLookupCandidates(
   providerName: string,
@@ -20,7 +21,11 @@ export function findModelDefinition(
   registry: readonly ModelDefinition[],
 ): ModelDefinition | undefined {
   if (!modelId.includes(':')) return undefined;
-  return registry.find((model) => model.registryKey === modelId);
+  const exact = registry.find((model) => model.registryKey === modelId);
+  if (exact) return exact;
+  const separator = modelId.indexOf(':');
+  return registry.find(model => model.id === modelId.slice(separator + 1)
+    && sameProviderCatalog(model.provider, modelId.slice(0, separator)));
 }
 
 export function findModelDefinitionForProvider(

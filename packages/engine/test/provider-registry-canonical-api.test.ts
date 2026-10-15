@@ -148,6 +148,26 @@ function writeCustomProvider(root: string, name: string, modelId: string): void 
 // ---------------------------------------------------------------------------
 
 describe('ProviderRegistry.has()', () => {
+  test('OpenAI catalog models resolve through the requested subscription connection', () => {
+    const registry = makeRegistry();
+    const api = makeProvider('openai', ['gpt-6.1-sol']);
+    const subscription = makeProvider('openai-subscriber', ['gpt-6.1-sol']);
+    registry.register(api);
+    const unregister = registry.registerRuntimeProvider({ provider: subscription, models: [], replace: true });
+    for (const model of ['gpt-6.1-sol', 'openai:gpt-6.1-sol', 'openai-subscriber:gpt-6.1-sol']) {
+      expect(registry.getForModel(model, 'openai-subscriber')).toBe(subscription);
+    }
+    expect(registry.getForModel('openai-subscriber:gpt-6.1-sol')).toBe(subscription);
+    expect(registry.getForModel('gpt-6.1-sol')).toBe(api);
+    expect(registry.getForModel('openai:gpt-6.1-sol', 'openai')).toBe(api);
+    expect(() => registry.getForModel('openai:gpt-6.1-sol', 'anthropic')).toThrow();
+    unregister();
+    expect(registry.has('openai-subscriber')).toBe(false);
+    expect(registry.tryGet('openai-subscriber')).toBeUndefined();
+    expect(() => registry.getForModel('openai:gpt-6.1-sol', 'openai-subscriber')).toThrow();
+    expect(() => registry.getRegistered('openai-subscriber')).toThrow();
+  });
+
   test('returns true for a registered provider', () => {
     const registry = makeRegistry();
     registry.register(makeProvider('anthropic'));

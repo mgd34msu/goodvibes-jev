@@ -1,6 +1,7 @@
 import { defineBattery, mapLimit, STAKES_BANDS, yesNo, type CallOptions, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { ModelDefinition } from '../providers/registry-types.js';
+import { sameProviderCatalog } from '../providers/provider-aliases.js';
 
 export const sameFamily = defineBattery({
   name: 'routing.same-model-family',
@@ -23,7 +24,16 @@ const identity = (model: SelectedModel) => ({ id: model.id, name: model.displayN
 
 /** Provider is an exact connection boundary. Jev reads family membership within it. */
 export async function withinSelectedFamily(models: readonly ModelDefinition[], selected: SelectedModel, options: CallOptions): Promise<ModelDefinition[]> {
-  const candidates = models.filter((model) => model.provider === selected.provider);
+  const byModel = new Map<string, ModelDefinition>();
+  for (const model of models) {
+    if (!sameProviderCatalog(model.provider, selected.provider)) continue;
+    // Both catalog spellings describe the same model. Keep one candidate and
+    // the selected connection on every route, including its fallbacks.
+    if (!byModel.has(model.id) || model.registryKey === selected.registryKey) {
+      byModel.set(model.id, model.provider === selected.provider ? model : { ...model, provider: selected.provider });
+    }
+  }
+  const candidates = [...byModel.values()];
   const port = judgmentPort('routing.same-model-family');
   const version = port.model;
   const cache = remembered.get(port) ?? new Map<string, boolean>();
@@ -31,7 +41,7 @@ export async function withinSelectedFamily(models: readonly ModelDefinition[], s
   const allowed = await mapLimit(candidates, 8, async (candidate) => {
     options.signal?.throwIfAborted();
     options.beforeAttempt?.();
-    if (candidate.registryKey === selected.registryKey) return true;
+    if (candidate.id === selected.id) return true;
     const state = { selected: identity(selected), candidate: identity(candidate) };
     const key = `${version}:${JSON.stringify(state)}`;
     if (cache.has(key)) return cache.get(key)!;

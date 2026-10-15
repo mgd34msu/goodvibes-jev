@@ -319,7 +319,8 @@ async function handleOwnedToolResponseOutcome(args: ToolResponseOutcomeArgs): Pr
 
   const spawnedAgents = !isNativeConversationTurn() && toolCalls.some((tc: ToolCall) => {
     const mode = (tc.arguments as Record<string, unknown>).mode;
-    return tc.name === 'agent' && (mode === 'spawn' || mode === 'batch-spawn');
+    return tc.name === 'agent' && (mode === 'spawn' || mode === 'batch-spawn')
+      && results.some(result => result.callId === tc.id && result.success);
   });
   const startedContract = spawnedAgents && results.some(toolResultStartedContract);
 
@@ -377,7 +378,9 @@ async function handleOwnedToolResponseOutcome(args: ToolResponseOutcomeArgs): Pr
       publishTurnTerminal(() => emitTurnCompleted(args.runtimeBus!, args.emitterContext(args.turnId), {
         turnId: args.turnId,
         response: args.response.content,
-        stopReason: args.response.content.trim().length > 0 ? 'completed' : 'empty_response',
+        // A successful handoff is a response even when the tool call carries
+        // no accompanying prose. The contract/agent reports its own outcome.
+        stopReason: spawnedAgents || args.response.content.trim().length > 0 ? 'completed' : 'empty_response',
         memoryRecordIds: args.memoryRecordIds,
       }), args.onTurnTerminal);
     }

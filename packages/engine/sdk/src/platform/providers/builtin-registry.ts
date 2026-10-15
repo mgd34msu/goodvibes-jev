@@ -22,19 +22,7 @@ export interface ProviderRegistrar {
   register(provider: LLMProvider): void;
 }
 
-export const CATALOG_PROVIDER_NAME_ALIASES: Record<string, string> = {
-  'openai-subscriber': 'openai',
-  inception: 'inceptionlabs',
-  copilot: 'github-copilot',
-  'azure-openai': 'microsoft-foundry',
-  'azure-openai-responses': 'microsoft-foundry',
-  dashscope: 'qwen',
-  'volcano-engine': 'volcengine',
-  'x-ai': 'xai',
-  'z-ai': 'zai',
-  'cloudflare-gateway': 'cloudflare-ai-gateway',
-  'ai-gateway': 'vercel-ai-gateway',
-};
+export { CATALOG_PROVIDER_NAME_ALIASES } from './provider-aliases.js';
 
 function firstEnvValue(envVars: readonly string[]): string | undefined {
   for (const envVar of envVars) {

@@ -23,6 +23,8 @@
  * of one shared, example-carrying resolver.
  */
 
+import { CATALOG_PROVIDER_NAME_ALIASES, sameProviderCatalog } from './provider-aliases.js';
+
 export interface ModelIdCandidate {
   readonly id: string;
   readonly provider: string;
@@ -61,9 +63,8 @@ export function resolveModelReference(
 
   // Rule 2: provider already known from context.
   if (options.contextProviderId) {
-    const contextMatch = candidates.find(
-      (candidate) => candidate.provider === options.contextProviderId && candidate.id === trimmed,
-    );
+    const contextMatch = candidates.find(candidate => candidate.provider === options.contextProviderId && candidate.id === trimmed)
+      ?? candidates.find(candidate => sameProviderCatalog(candidate.provider, options.contextProviderId!) && candidate.id === trimmed);
     if (contextMatch) return contextMatch.registryKey;
   }
 
@@ -71,6 +72,11 @@ export function resolveModelReference(
 
   // Rule 3: unique across the registry.
   if (matches.length === 1) return matches[0]!.registryKey;
+  // Subscription and API spellings share one model identity. Prefer its
+  // catalog key; provider selection decides which connection executes it.
+  if (matches.length > 1 && matches.every(candidate => sameProviderCatalog(candidate.provider, matches[0]!.provider))) {
+    return (matches.find(candidate => !CATALOG_PROVIDER_NAME_ALIASES[candidate.provider]) ?? matches[0]!).registryKey;
+  }
 
   // Rule 4: ambiguous.
   if (matches.length > 1) {

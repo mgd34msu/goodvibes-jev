@@ -28,6 +28,7 @@ import { FALLBACK_ROUTES } from './policy.js';
 import { readRequest, type RequestReading, type RoutingRequest } from './request-reading.js';
 import { tierSearchOrder, type RouteTier } from './tiers.js';
 import { withinSelectedFamily } from './route-scope.js';
+import { sameProviderCatalog } from '../providers/provider-aliases.js';
 
 /** What the planner reads from the provider registry. */
 export interface RoutePlannerCatalog {
@@ -145,13 +146,14 @@ export function shortlistOrder(tier: RouteTier): (a: ModelFacts, b: ModelFacts) 
 }
 
 /** Catalog models a configured, healthy provider serves that meet the hard requirements. */
-export function eligibleModels(deps: RoutePlannerDeps, requires: RouteRequirements = {}): ModelDefinition[] {
+export function eligibleModels(deps: RoutePlannerDeps, requires: RouteRequirements = {}, selectedProvider?: string): ModelDefinition[] {
   const configured = new Set(deps.catalog.getConfiguredProviderIds());
   const health = deps.providerHealth?.();
   const needsTools = requires.toolCalling ?? true;
   return deps.catalog.listModels().filter((model) => {
-    if (!model.selectable || !configured.has(model.provider)) return false;
-    const status = health?.get(model.provider)?.status;
+    const provider = selectedProvider && sameProviderCatalog(model.provider, selectedProvider) ? selectedProvider : model.provider;
+    if (!model.selectable || !configured.has(provider)) return false;
+    const status = health?.get(provider)?.status;
     if (status !== undefined && UNUSABLE.has(status)) return false;
     if (needsTools && !model.capabilities.toolCalling) return false;
     if (requires.imageInput && !model.capabilities.multimodal) return false;
@@ -208,7 +210,7 @@ export function createRoutePlanner(deps: RoutePlannerDeps): RoutePlanner {
       request.signal?.throwIfAborted();
       const signalOption = { ...(request.signal ? { signal: request.signal } : {}), ...(request.beforeAttempt ? { beforeAttempt: request.beforeAttempt } : {}), ...(request.onRetry ? { onRetry: request.onRetry } : {}) };
       const reading = await readRequest(request, { site: 'routing.route-planner.request', ...signalOption });
-      const available = eligibleModels(deps, request.requires);
+      const available = eligibleModels(deps, request.requires, request.selectedModel?.provider);
       const eligible = request.selectedModel
         ? await withinSelectedFamily(available, request.selectedModel, signalOption)
         : available;
