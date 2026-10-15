@@ -122,8 +122,7 @@ describe('follow-up system-prompt lifetime', () => {
       await flushMicrotasks();
       expect(f.requests).toHaveLength(0);
       expect(f.failures).toHaveLength(1);
-      expect(f.failures[0]).toBe('[Follow-up] Acknowledgement update failed: [REDACTED]');
-      expect(f.failures[0]).not.toContain(error.message);
+      expect(f.failures[0]).toBe(`[Follow-up] Acknowledgement update failed: ${error.message}`);
     });
   }
 

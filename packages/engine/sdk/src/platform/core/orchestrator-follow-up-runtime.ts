@@ -49,7 +49,7 @@ export class OrchestratorFollowUpRuntime {
     const lastSeenAt = this.recentKeys.get(item.key);
     if (lastSeenAt !== undefined && now - lastSeenAt < FOLLOW_UP_DEDUP_TTL_MS) return;
     this.recentKeys.set(item.key, now);
-    this.queue.push({ key: item.key, summary });
+    this.queue.push({ ...item, summary });
     this.scheduleFlush();
   }
 
@@ -108,16 +108,29 @@ export class OrchestratorFollowUpRuntime {
       return;
     }
 
-    const providerRegistry = this.options.getProviderRegistry();
     const model = this.options.getCurrentModel();
+    const batch = this.takeBatch();
+    if (batch.length === 0) return;
+    const results = batch.flatMap(item => item.result ? [item.result] : []);
+    if (results.length > 0) {
+      // The agents already produced the answer. An acknowledgement request
+      // would discard their findings, add latency, and charge for a rewrite.
+      this.options.conversation.addAssistantMessage(results.join('\n\n'), {
+        model: model.displayName,
+        provider: model.provider,
+        followUp: true,
+      });
+      this.options.scrollToEnd(this.options.getViewportHeight());
+      this.options.requestRender();
+      if (this.queue.length > 0) this.scheduleFlush();
+      return;
+    }
+    const providerRegistry = this.options.getProviderRegistry();
     const provider = providerRegistry.getForModel(model.registryKey, model.provider);
     const tokenLimit = Math.min(
       FOLLOW_UP_MAX_OUTPUT_TOKENS,
       providerRegistry.getTokenLimitsForModel(model).maxOutputTokens ?? FOLLOW_UP_MAX_OUTPUT_TOKENS,
     );
-    const batch = this.takeBatch();
-    if (batch.length === 0) return;
-
     this.isRunning = true;
     const controller = new AbortController();
     this.activeAbortController = controller;

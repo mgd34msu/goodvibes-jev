@@ -3,6 +3,8 @@
 export interface ConversationFollowUpItem {
   readonly key: string;
   readonly summary: string;
+  /** Completed work to deliver verbatim, separate from its brief status. */
+  readonly result?: string | undefined;
 }
 
 const MAX_BATCH_SIZE = 6;
@@ -21,7 +23,7 @@ export function normalizeConversationFollowUpItems(
   for (const item of items) {
     const summary = normalizeSummary(item.summary);
     if (!summary) continue;
-    deduped.set(item.key, { key: item.key, summary });
+    deduped.set(item.key, { key: item.key, summary, ...(item.result?.trim() ? { result: item.result.trim() } : {}) });
   }
   return [...deduped.values()].slice(0, MAX_BATCH_SIZE);
 }

@@ -11,6 +11,7 @@ import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
  */
 import { describe, expect, spyOn, test } from 'bun:test';
 import { RuntimeEventBus } from '../../sdk/src/platform/runtime/events/index.js';
+import { emitAgentCompleted } from '../../sdk/src/platform/runtime/emitters/agents.js';
 import { emitContractEvent } from '../../sdk/src/platform/contract/events.js';
 import { Notifier } from '../../sdk/src/platform/integrations/notifier.js';
 import { WebhookNotifier } from '../../sdk/src/platform/integrations/webhooks.js';
@@ -123,7 +124,7 @@ describe('the lifecycle hook bridge', () => {
 });
 
 describe('the host runtime event bridge', () => {
-  function host(options: { contractsOnly?: boolean; contracts?: readonly ContractView[]; agents?: ReadonlyArray<{ id: string; status: string; cohort?: string; startedAt: number; template: string; toolCallCount: number; task: string }> } = {}) {
+  function host(options: { contractsOnly?: boolean; contracts?: readonly ContractView[]; agents?: ReadonlyArray<{ id: string; status: string; cohort?: string; contractId?: string; fullOutput?: string; startedAt: number; template: string; toolCallCount: number; task: string }> } = {}) {
     const bus = new RuntimeEventBus();
     const store = createRuntimeStore();
     const domainDispatch = createDomainDispatch(store);
@@ -221,6 +222,26 @@ describe('the host runtime event bridge', () => {
       expect(h.lines).toHaveLength(lineCount);
       expect(h.followUps).toHaveLength(1);
     } finally { h.stop(); intervals.mockRestore(); }
+  });
+
+  test('contract results reach the conversation once, without planner or unit acknowledgements', async () => {
+    const answer = 'registry-models.ts:86 duplicates native and discovered model keys.';
+    const h = host({
+      contracts: [{ id: CTR, status: 'passed', answer, units: [] } as unknown as ContractView],
+      agents: ['planner', 'unit', 'owner'].map(template => ({
+        id: template, status: 'completed', contractId: CTR, fullOutput: 'internal milestone',
+        startedAt: 1, template, toolCallCount: 1, task: 'review',
+      })),
+    });
+    try {
+      for (const agentId of ['planner', 'unit', 'owner']) emitAgentCompleted(h.bus, { sessionId: 's1', traceId: 'test:review-completed', source: 'test' }, { agentId, durationMs: 1 });
+      await delivered();
+      expect(h.followUps).toEqual([]);
+      emitContractEvent(h.bus, 's1', SAMPLES.CONTRACT_PASSED);
+      await delivered();
+      expect(h.followUps).toHaveLength(1);
+      expect(h.followUps[0]?.result).toBe(answer);
+    } finally { h.stop(); }
   });
 
   test('a turn-end check that only records history writes no line', async () => {

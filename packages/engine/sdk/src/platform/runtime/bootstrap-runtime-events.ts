@@ -239,12 +239,14 @@ export function registerContractRuntimeEvents(options: ContractRuntimeEventBridg
 
   onContract('CONTRACT_PASSED', (payload) => {
     contractLine(`\u2713 ${payload.contractId} PASSED: ${payload.criteriaMet} of ${payload.criteriaJudged} criteria met, ${payload.nudges} corrections`, payload);
+    const answer = contractRunner.get(payload.contractId)?.answer?.trim();
     // A conversation follow-up is read by the person, not the operator, so it
     // is named in plain words. The `key` keeps the id: it is a dedupe key
     // nobody reads. See channels/workstream-labels.ts.
     queueConversationFollowUp?.({
       key: `contract:${payload.contractId}:passed`,
       summary: `${workstreamLabel(payload.contractId)} passed all its checks.`,
+      ...(answer ? { result: answer } : {}),
     });
     finishWorkstreamLabel(payload.contractId);
     checkContractCohorts(payload.contractId);
@@ -333,9 +335,12 @@ export function registerHostRuntimeEvents(
       withRouter(getSystemMessageRouter, (router) => {
         router.low(`[Agents] \u2713 ${record.template} ${payload.agentId.slice(-8)}: "${taskSnippet}" \u2014 completed in ${durationSeconds}s (${record.toolCallCount} tool calls)`, payload);
       });
-      queueConversationFollowUp?.({
+      // A contract delivers its checked answer when the owner finishes.
+      // Planner/unit milestones are not separate replies to the user.
+      if (!record.contractId) queueConversationFollowUp?.({
         key: `agent:${payload.agentId}:completed`,
         summary: `${record.template} agent ${payload.agentId.slice(-8)} completed "${taskSnippet}" in ${durationSeconds}s after ${record.toolCallCount} tool calls.`,
+        ...(record.fullOutput?.trim() ? { result: record.fullOutput.trim() } : {}),
       });
     }
     checkCohortCompletion(agentManager, contractRunner, record ?? null, getSystemMessageRouter, queueConversationFollowUp);
@@ -350,7 +355,7 @@ export function registerHostRuntimeEvents(
       withRouter(getSystemMessageRouter, (router) => {
         router.low(`[Agents] \u2717 ${record.template} ${payload.agentId.slice(-8)}: "${taskSnippet}" \u2014 failed in ${durationSeconds}s: ${payload.error}`, payload);
       });
-      queueConversationFollowUp?.({
+      if (!record.contractId) queueConversationFollowUp?.({
         key: `agent:${payload.agentId}:failed`,
         summary: `${record.template} agent ${payload.agentId.slice(-8)} failed after ${durationSeconds}s while working on "${taskSnippet}": ${payload.error.slice(0, 120)}`,
       });

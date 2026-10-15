@@ -22,6 +22,29 @@ function flush(): Promise<void> {
 }
 
 describe('follow-up acknowledgement usage', () => {
+  test('a completed review is delivered in full without a provider call or extra usage', async () => {
+    const conversation = new ConversationManager();
+    conversation.addUserMessage('Review the code.');
+    const result = Array.from({ length: 12 }, (_, index) => `src/file-${index}.ts:42 — verified finding with its evidence.`).join('\n');
+    const runtime = new OrchestratorFollowUpRuntime({
+      conversation,
+      getViewportHeight: () => 20, scrollToEnd: () => {}, requestRender: () => {},
+      getThinkingState: () => ({ isThinking: false, isCompacting: false }),
+      getQueuedUserMessageCount: () => 0,
+      getCurrentModel: () => ({ displayName: 'gpt-6.1-sol', provider: 'openai-subscriber' }) as never,
+      getProviderRegistry: () => { throw new Error('Delivery must not call a provider'); },
+      getSystemPrompt: () => { throw new Error('Delivery must not rewrite the answer'); },
+      routeLowPriorityMessage: () => {},
+      applyUsage: () => { throw new Error('Delivery must not charge again'); },
+    });
+    try {
+      runtime.enqueue({ key: 'review:passed', summary: 'Review passed.', result });
+      await flush();
+      expect(conversation.getMessageSnapshot().at(-1)).toMatchObject({ role: 'assistant', content: result, followUp: true });
+      expect(JSON.stringify(conversation.getMessagesForLLM())).toContain('src/file-11.ts:42');
+    } finally { runtime.dispose(); }
+  });
+
   test('the acknowledgement message is marked followUp and its usage goes to the totals hook', async () => {
     const conversation = new ConversationManager();
     conversation.addUserMessage('spawn a reviewer and do not wait');
