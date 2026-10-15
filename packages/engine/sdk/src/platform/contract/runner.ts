@@ -170,7 +170,9 @@ export interface ContractRunner {
   get(contractId: string): ContractView | null;
   /** Detached live facts only; never loads, starts or resumes. Optional for custom runners; the factory always supplies it. */
   inspectIntegration?(contractId: string): ContractIntegrationInspection;
-  list(filter?: { readonly sessionId?: string | undefined; readonly includeTerminal?: boolean | undefined }): ContractView[];
+  list(filter?: { readonly sessionId?: string | undefined; readonly includeTerminal?: boolean | undefined;
+    /** Display summaries do not need the captured repository's file manifest. Full reads remain the default. */
+    readonly includeInputSnapshot?: boolean | undefined }): ContractView[];
   /** Stops a contract and everything it runs. False when it is unknown or already ended. */
   cancel(contractId: string, reason: string): boolean;
   /** An owner's free-text reply to an open escalation, read with the reply pattern (design 6.3). */
@@ -1158,7 +1160,8 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
     list: (filter = {}) => deps.store.list()
       .filter((contract) => filter.sessionId === undefined || contract.sessionId === filter.sessionId)
       .filter((contract) => filter.includeTerminal === true || !isTerminalContractStatus(contract.status))
-      .map((contract) => structuredClone(contract)),
+      .map((contract) => structuredClone(filter.includeInputSnapshot === false
+        ? { ...contract, inputSnapshot: undefined } : contract)),
     cancel: (contractId, reason) => {
       const run = runs.get(contractId);
       return run === undefined ? false : cancelRun(run, reason);

@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { executeContentQuery } from '../sdk/src/platform/tools/find/content.ts';
 import { executeFilesQuery } from '../sdk/src/platform/tools/find/files.ts';
 import { FindRuntimeService, type ImportGraphLike } from '../sdk/src/platform/tools/find/shared.ts';
+import { ImportGraph } from '../sdk/src/platform/intelligence/import-graph.ts';
 
 let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => { previous = installJudgmentPort(fakePort(() => noulAnswer(0.001)).port); });
@@ -27,6 +28,26 @@ class DegradedImportGraphRuntime extends FindRuntimeService {
 }
 
 describe('find/search degradation observability', () => {
+  test('import indexing lets input callbacks run while preserving the complete graph', async () => {
+    const root = tempRoot('gv-import-responsive-');
+    for (let i = 0; i < 500; i++) writeFileSync(join(root, `f${i}.ts`), i ? `export { value } from './f${i - 1}.ts';\n` : 'export const value = 1;\n');
+    let ticks = 0;
+    const timer = setInterval(() => { ticks++; }, 0);
+    const graph = new ImportGraph();
+    try {
+      await graph.build(root, async () => {
+        // Model local access-check work even when the fixture's files are hot
+        // in the OS cache; awaiting a resolved promise alone does not yield.
+        const until = performance.now() + 0.1;
+        while (performance.now() < until) { /* CPU work */ }
+        return true;
+      });
+    } finally { clearInterval(timer); }
+    expect(ticks).toBeGreaterThan(0);
+    expect(graph.stats().files).toBe(500);
+    expect(graph.stats().edges).toBe(499);
+  });
+
   test('files mode warns when nested gitignore files are present but not applied', async () => {
     const root = tempRoot('gv-find-gitignore-');
     mkdirSync(join(root, 'src'), { recursive: true });

@@ -76,8 +76,8 @@ export function withFleetArchive(registry: ProcessRegistry): ArchivableProcessRe
     nodes: snapshot.nodes.filter((node) => !archivedIds.has(node.id)),
   });
 
-  const notifyAll = (): void => {
-    const snapshot = filterSnapshot(registry.query());
+  const notifyAll = (source = registry.query()): void => {
+    const snapshot = filterSnapshot(source);
     for (const listener of listeners) listener(snapshot);
   };
 
@@ -109,7 +109,7 @@ export function withFleetArchive(registry: ProcessRegistry): ArchivableProcessRe
       listeners.add(listener);
       // One shared underlying subscription fans filtered snapshots out to
       // every wrapper listener; archive/unarchive mutations notify directly.
-      underlyingUnsub ??= registry.subscribe(() => { notifyAll(); });
+      underlyingUnsub ??= registry.subscribe(snapshot => { notifyAll(snapshot); });
       return () => {
         listeners.delete(listener);
         if (listeners.size === 0 && underlyingUnsub) {

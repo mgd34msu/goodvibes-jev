@@ -3,7 +3,7 @@
  * of the live fleet view into a session-scoped archive, stay inspectable via
  * listArchived(), and running work can never be archived.
  */
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test, spyOn } from 'bun:test';
 import { withFleetArchive } from '../sdk/src/platform/runtime/fleet/archive.js';
 import type {
   FleetSnapshot,
@@ -137,8 +137,10 @@ describe('withFleetArchive', () => {
     const seen: string[][] = [];
     archived.subscribe((snapshot) => { seen.push(snapshot.nodes.map((n) => n.id)); });
 
+    const query = spyOn(fake.registry, 'query');
     fake.fireTick();
     expect(seen.at(-1)).toEqual(['finished', 'live']);
+    expect(query).not.toHaveBeenCalled(); // The tick already carries its snapshot.
 
     archived.archive('finished');
     expect(seen.at(-1)).toEqual(['live']);

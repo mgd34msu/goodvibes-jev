@@ -3,7 +3,7 @@ import { assertCapturedInputPathContext } from '../../contract/input-authority.j
 import { resolve, relative, basename, sep } from 'node:path';
 import { stat as statAsync } from 'node:fs/promises';
 import { statSync, lstatSync, existsSync, readFileSync, realpathSync } from 'node:fs';
-import { walkDir, DirectoryWalk, type WalkDirOptions } from '../../utils/walk-dir.js';
+import { walkDir, DirectoryWalk, WALK_SKIP_DIRS, type WalkDirOptions } from '../../utils/walk-dir.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { logger } from '../../utils/logger.js';
 
@@ -264,16 +264,28 @@ export async function collectGlobFiles(
   }
   if (!globs.length) return matchedFiles;
 
-  // Prove a narrow literal subset only. Unknown glob syntax (including
-  // escapes and negation) must remain traversable. File matching below always
-  // uses Bun.Glob, so this proof can only remove irrelevant directory work.
-  const literalPaths = patterns.every(pattern => /^[A-Za-z0-9_./ -]+$/.test(pattern)
-    && !pattern.split('/').some(part => part === '.' || part === '..'))
-    ? patterns.map(pattern => resolve(basePath, pattern)) : undefined;
+  // Literal prefixes prove which subtrees cannot match. Complex syntax stays
+  // conservative; Bun.Glob remains the authority on individual file matches.
+  const root = resolve(basePath);
+  const prefixes = patterns.map(pattern => {
+    const parts = pattern.split('/');
+    if (pattern.startsWith('/') || parts.some(part => part === '.' || part === '..')) return root;
+    const end = parts.findIndex(part => !/^[A-Za-z0-9_. -]+$/.test(part));
+    return resolve(basePath, ...parts.slice(0, end < 0 ? parts.length : end));
+  });
+  const explicitDirectories = patterns.flatMap(pattern => pattern.split('/').flatMap((part, index, parts) =>
+    WALK_SKIP_DIRS.has(part) ? [new Bun.Glob(parts.slice(0, index + 1).join('/'))] : []));
   const selectedFile = (file: string): boolean => globs.some(glob => matchesGlob(glob, file, basePath))
     && walkOptions.selectFile?.(file) !== false;
-  const selectedDirectory = (directory: string): boolean => walkOptions.selectDirectory?.(directory) !== false
-    && (literalPaths === undefined || literalPaths.some(file => file.startsWith(`${directory}${sep}`)));
+  const selectedDirectory = (directory: string): boolean | undefined => {
+    const selection = walkOptions.selectDirectory?.(directory);
+    if (selection === false || !prefixes.some(prefix => prefix === root || prefix === directory
+      || prefix.startsWith(`${directory}${sep}`) || directory.startsWith(`${prefix}${sep}`))) return false;
+    // A wildcard's "possibly relevant" must not accidentally opt all generated
+    // and dependency directories into discovery. Explicitly named ones work.
+    if (selection === true || explicitDirectories.some(glob => matchesGlob(glob, directory, basePath))) return true;
+    return undefined;
+  };
 
   // Scan once for all explicit patterns. Directory meaning is settled before
   // descent, rather than filtering after Bun.Glob has already traversed it.

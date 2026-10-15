@@ -271,20 +271,9 @@ export class WatcherRegistry {
       return [];
     }
     this.ensureLoaded();
-    const refreshed: WatcherRecord[] = [];
-    let changed = false;
-    for (const watcher of this.watchers.values()) {
-      const normalized = this.normalizeRecord(watcher.record);
-      refreshed.push(normalized);
-      if (normalized !== watcher.record) {
-        this.watchers.set(normalized.id, { ...watcher, record: normalized });
-        changed = true;
-      }
-    }
-    if (changed) {
-      this.persist();
-    }
-    return sortWatchers(refreshed);
+    // Freshness is a projection of the clock, not a watcher mutation. Rendering
+    // the fleet must not write a snapshot or dispatch another render event.
+    return sortWatchers([...this.watchers.values()].map(watcher => this.normalizeRecord(watcher.record)));
   }
 
   getWatcher(id: string): WatcherRecord | null {
@@ -295,13 +284,7 @@ export class WatcherRegistry {
     this.ensureLoaded();
     const watcher = this.watchers.get(id);
     if (!watcher) return null;
-    const normalized = this.normalizeRecord(watcher.record);
-    if (normalized !== watcher.record) {
-      this.watchers.set(id, { ...watcher, record: normalized });
-      this.persist();
-      this.runtimeDispatch?.syncWatcher(normalized, 'watchers.refresh');
-    }
-    return normalized;
+    return this.normalizeRecord(watcher.record);
   }
 
   startWatcher(id: string): WatcherRecord | null {
@@ -645,9 +628,8 @@ export class WatcherRegistry {
   /**
    * Write the snapshot and refresh the runtime store's copy of every record.
    *
-   * Every mutation here persists, and `list()` persists too, which the fleet
-   * registry's coalesced tick calls on a timer, from a callback with nothing
-   * above it. So this must not be able to throw: a failed snapshot write is
+   * Mutations and heartbeat completions persist, including timer callbacks
+   * with nothing above them. This must not throw: a failed snapshot write is
    * logged loudly with the path and errno by the store and then dropped, the
    * in-memory registry carries on as the source of truth, and the next persist
    * retries. Watcher state rebuilds from live registrations on any load, so

@@ -32,7 +32,11 @@ test('directory discovery and files over 1 MiB require no Jev availability or se
 
 test('analysis no longer silently stops after 500 source files', async () => {
   const path = root(); for (let i = 0; i < 505; i++) put(path, `src/${i}.ts`);
-  expect(await collectTextFiles(path)).toHaveLength(505);
+  let ticks = 0;
+  const timer = setInterval(() => { ticks++; }, 0);
+  try { expect(await collectTextFiles(path)).toHaveLength(505); }
+  finally { clearInterval(timer); }
+  expect(ticks).toBeGreaterThan(0);
   expect(await collectTextFiles(path, 12)).toHaveLength(12);
 });
 
@@ -41,6 +45,14 @@ test('hidden inclusion, literal glob selection and ignore discovery preserve cal
   const walk = new DirectoryWalk(path);
   expect([...await collectGlobFiles(path, ['src/**/*.ts'], false, false, undefined, walk)].map(file => relative(path, file))).toEqual(['src/a.ts']);
   expect(await findNestedGitignoreFiles(path, join(path, '.gitignore'), walk)).toContain(join(path, 'src/.gitignore'));
+});
+
+test('wildcards keep discovery exclusions while explicit dependency and build paths remain searchable', async () => {
+  const path = root(); put(path, 'src/a.ts'); put(path, 'node_modules/pkg/index.ts'); put(path, 'pkg/dist/b.ts');
+  const discover = async (patterns: string[]) => [...await collectGlobFiles(path, patterns, false, false)].map(file => relative(path, file)).sort();
+  expect(await discover(['**/*.ts'])).toEqual(['src/a.ts']);
+  expect(await discover(['node_modules/pkg/**/*.ts'])).toEqual(['node_modules/pkg/index.ts']);
+  expect(await discover(['**/dist/**/*.ts'])).toEqual(['pkg/dist/b.ts']);
 });
 
 test('no-follow excludes file and directory aliases; following handles cycles', async () => {

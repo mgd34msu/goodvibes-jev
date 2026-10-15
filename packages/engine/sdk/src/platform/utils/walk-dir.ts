@@ -32,8 +32,8 @@ export interface WalkDirOptions extends CallOptions {
   readonly maxFileSize?: number;
   /** Explicit caller selection, evaluated before opening a file. */
   readonly selectFile?: (path: string) => boolean;
-  /** Conservative explicit caller scope, evaluated before descent. */
-  readonly selectDirectory?: (path: string) => boolean;
+  /** False prunes a subtree; true explicitly includes it, even if conventionally skipped; undefined keeps the default. */
+  readonly selectDirectory?: (path: string) => boolean | undefined;
   /** A bounded caller can stop without publishing files discovered after its deadline. */
   readonly shouldContinue?: () => boolean;
   /** Checked outside filesystem-error catches, before opening each path. */
@@ -109,7 +109,17 @@ export class DirectoryWalk {
     // Local metadata steps need the current invocation/token, not a replay of
     // every previously authorized file. Full readset checks fence the
     // traversal’s entry and exit instead.
-    const checkCurrent = async (): Promise<void> => { assertCurrent(); };
+    let yieldAt = performance.now() + 4;
+    const checkCurrent = async (): Promise<void> => {
+      assertCurrent();
+      // Resolved promises keep running in the microtask queue. Concurrent
+      // scans with owner checks must also give stdin and timers a turn.
+      if (performance.now() >= yieldAt) {
+        await new Promise<void>(resolve => setImmediate(resolve));
+        yieldAt = performance.now() + 4;
+        assertCurrent();
+      }
+    };
     const checkReadAccess = async (): Promise<void> => {
       assertCurrent();
       await options.beforeAsyncAttempt?.();

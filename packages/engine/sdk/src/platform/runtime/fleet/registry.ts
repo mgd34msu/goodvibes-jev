@@ -321,7 +321,7 @@ export function createProcessRegistry(deps: ProcessRegistryDeps): ProcessRegistr
   function assemble(): { capturedAt: number; nodes: ProcessNode[] } {
     const capturedAt = now();
     const agents: AgentRecord[] = deps.agentManager.list();
-    const contracts: readonly ContractView[] = deps.contractRunner.list({ includeTerminal: true });
+    const contracts: readonly ContractView[] = deps.contractRunner.list({ includeTerminal: true, includeInputSnapshot: false });
     const contractIds = new Set<string>(contracts.map((contract) => contract.id));
     const unitNodeIds = new Set<string>();
     for (const contract of contracts) {

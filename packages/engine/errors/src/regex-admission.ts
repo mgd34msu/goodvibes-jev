@@ -227,8 +227,15 @@ export async function admitRegex(source: string, flags: string, options: RegexAd
     owner.assertCurrent();
     if (retired) { worker.stop(); throw new RegexAdmissionError(operation, 'executor retired'); }
   } catch { worker?.stop(); stop(); throw new RegexAdmissionError(operation, 'isolated worker startup is unavailable'); }
+  let yieldAt = performance.now() + 4;
   const call = async <T>(kind: string, input: string, lastIndex = 0, replacement = '', inputLimit = maximum): Promise<T> => {
     try {
+      // Worker replies can continuously replenish the message/microtask queue
+      // during a line-by-line search. Give input and timers a turn as well.
+      if (performance.now() >= yieldAt) {
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+        yieldAt = performance.now() + 4;
+      }
       owner.assertCurrent();
       if (retired) throw new RegexAdmissionError(operation, 'executor is unavailable');
       const bound = limit(inputLimit, maximum, maximum);

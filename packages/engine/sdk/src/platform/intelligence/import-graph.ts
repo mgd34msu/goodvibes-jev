@@ -156,12 +156,21 @@ export function resolveSpecifierForTest(
 // File collection
 // ---------------------------------------------------------------------------
 
-function collectSourceFiles(dir: string, diagnostics: ImportGraphDiagnostics, results: string[] = []): string[] {
+/** Yield between short batches, without adding an event-loop round trip per file. */
+function scanCheckpoint(): () => Promise<void> | undefined {
+  let until = performance.now() + 4;
+  return () => {
+    if (performance.now() < until) return;
+    return new Promise<void>(resolve => setImmediate(() => { until = performance.now() + 4; resolve(); }));
+  };
+}
+
+async function collectSourceFiles(dir: string, diagnostics: ImportGraphDiagnostics, checkpoint: () => Promise<void> | undefined, results: string[] = []): Promise<string[]> {
   try { assertCapturedInputPathContext(dir); } catch { return results; }
 
   let entries: Dirent[];
   try {
-    entries = readdirSync(dir, { withFileTypes: true }) as unknown as Dirent[];
+    entries = readdirSync(dir, { withFileTypes: true });
   } catch (err) {
     logger.warn('[import-graph] Skipping unreadable directory', { dir, error: summarizeError(err) });
     addImportGraphWarning(diagnostics, `Skipped unreadable directory '${dir}' while building import graph: ${summarizeError(err)}`);
@@ -169,11 +178,13 @@ function collectSourceFiles(dir: string, diagnostics: ImportGraphDiagnostics, re
   }
 
   for (const entry of entries) {
+    const pending = checkpoint();
+    if (pending) { await pending; assertCapturedInputPathContext(dir); }
     if (SKIP_DIRS.has(entry.name)) continue;
 
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      collectSourceFiles(full, diagnostics, results);
+      await collectSourceFiles(full, diagnostics, checkpoint, results);
     } else if (entry.isFile() && SUPPORTED_EXTENSIONS.has(extname(entry.name))) {
       results.push(full);
     }
@@ -220,7 +231,8 @@ export class ImportGraph {
     if (!readAccessFilter && !this.dirty && this.scannedRoot === projectRoot) return;
 
     const diagnostics: ImportGraphDiagnostics = { warnings: [] };
-    const files = collectSourceFiles(projectRoot, diagnostics);
+    const checkpoint = scanCheckpoint();
+    const files = await collectSourceFiles(projectRoot, diagnostics, checkpoint);
     const imports: ImportsMap = new Map();
     const dependents: DependentsMap = new Map();
 
@@ -231,6 +243,8 @@ export class ImportGraph {
     }
 
     for (const filePath of files) {
+      const pending = checkpoint();
+      if (pending) await pending;
       let content: string;
       try {
         if (readAccessFilter && !await readAccessFilter(filePath)) continue;

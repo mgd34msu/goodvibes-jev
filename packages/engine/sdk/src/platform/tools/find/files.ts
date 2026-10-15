@@ -31,7 +31,8 @@ async function scanFilesQuery(
 ): Promise<Record<string, unknown>> {
   const before = JSON.stringify([query, output]);
   const current = () => {
-    options.signal?.throwIfAborted(); options.beforeAttempt?.(); options.assertCurrent?.();
+    options.signal?.throwIfAborted(); options.beforeAttempt?.();
+    if (options.assertCurrent !== options.beforeAttempt) options.assertCurrent?.();
     if (JSON.stringify([query, output]) !== before) throw new Error('Find regex request changed');
   };
   current();

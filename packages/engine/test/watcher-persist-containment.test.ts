@@ -2,27 +2,18 @@
  * watcher-persist-containment.test.ts, a watcher-store write that fails must
  * not be able to kill the process that attempted it.
  *
- * The live crash: `WatcherRegistry.list()` refreshes every record and persists
- * the refreshed snapshot, and the fleet registry's coalesced tick calls that
- * list on a `setInterval`. When the snapshot write threw, a concurrent writer
- * had swept its temp file, so `chmod` came back ENOENT, the exception left a
- * timer callback with no caller above it to catch anything, reached the top as
- * an uncaught exception, and the agent process died.
- *
- * The store the write was for rebuilds from live registrations on the next
- * load, so nothing was even being protected by the crash. These tests hold the
- * containment: the failure is logged at error level with the store path and the
- * errno, `list()` still answers from memory, and it can be called again, which
- * is exactly what the next tick does.
+ * Mutations contain write failures. Reads derive freshness without publishing
+ * state or writing files: doing either from a render caused a render feedback loop.
  */
 import { afterEach, describe, expect, test, spyOn } from 'bun:test';
 import type { Mock } from 'bun:test';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeProjectTempDir } from './_helpers/project-temp.ts';
 import { WatcherRegistry } from '../sdk/src/platform/watchers/registry.ts';
 import { logger } from '../sdk/src/platform/utils/logger.ts';
 import type { AutomationSourceRecord } from '../sdk/src/platform/automation/sources.ts';
+import { createRuntimeStore } from '../sdk/src/platform/runtime/store/index.ts';
 
 /** The watcher-framework gate every registry operation sits behind. */
 const watcherFlagsOn = { isEnabled: (id: string): boolean => id === 'watcher-framework' };
@@ -80,7 +71,7 @@ describe('watcher snapshot persistence failures are contained', () => {
     expect(registry.getWatcher('poller-1')?.id).toBe('poller-1');
   });
 
-  test('a failed persist inside the refresh the fleet tick drives is logged with path and errno, and the tick survives to run again', () => {
+  test('mutation write failures are logged with path and errno while subsequent reads remain usable', () => {
     const storePath = unwritableStorePath();
     const registry = track(new WatcherRegistry({ storePath, featureFlags: watcherFlagsOn }));
     registry.registerWatcher({
@@ -93,10 +84,7 @@ describe('watcher snapshot persistence failures are contained', () => {
 
     const errorSpy = spyOn(logger, 'error') as Mock<typeof logger.error>;
     try {
-      // list() is what the fleet registry's assemble() calls on every tick, and
-      // it persists the refreshed snapshot every time. Two calls: the crash
-      // took the process out on the first one, so surviving to a second is the
-      // whole point.
+      registry.stopWatcher('poller-1');
       const firstTick = registry.list();
       const secondTick = registry.list();
 
@@ -104,7 +92,7 @@ describe('watcher snapshot persistence failures are contained', () => {
       expect(secondTick.map((watcher) => watcher.id)).toEqual(['poller-1']);
 
       const reports = errorSpy.mock.calls.filter(([message]) => String(message).includes('[watchers/store]'));
-      expect(reports.length).toBeGreaterThanOrEqual(2);
+      expect(reports).toHaveLength(1);
       const [, data] = reports[0] as [string, Record<string, unknown>];
       expect(data.filePath).toBe(storePath);
       expect(data.code).toBe('ENOTDIR');
@@ -114,7 +102,7 @@ describe('watcher snapshot persistence failures are contained', () => {
     }
   });
 
-  test('the same refresh against a writable store still persists the snapshot', () => {
+  test('reading live freshness neither rewrites the snapshot nor dispatches another render', () => {
     const storePath = join(makeProjectTempDir('gv-watcher-persist'), 'watchers.json');
     const registry = track(new WatcherRegistry({ storePath, featureFlags: watcherFlagsOn }));
     registry.registerWatcher({
@@ -125,7 +113,22 @@ describe('watcher snapshot persistence failures are contained', () => {
       intervalMs: 600_000,
     });
 
-    expect(registry.list().map((watcher) => watcher.id)).toEqual(['poller-1']);
     expect(existsSync(storePath)).toBe(true);
+    utimesSync(storePath, new Date(1000), new Date(1000));
+    const stamp = statSync(storePath).mtimeMs;
+    const runtimeStore = createRuntimeStore();
+    registry.attachRuntime({ runtimeStore });
+    let updates = 0;
+    const unsubscribe = runtimeStore.subscribe(() => { updates++; });
+    const clock = spyOn(Date, 'now').mockReturnValue(2000);
+    try {
+      const first = registry.list()[0]!;
+      clock.mockReturnValue(4000);
+      const second = registry.getWatcher('poller-1')!;
+      expect(second.sourceLagMs! - first.sourceLagMs!).toBe(2000);
+      expect(registry.list().map(watcher => watcher.id)).toEqual(['poller-1']);
+      expect(updates).toBe(0);
+      expect(statSync(storePath).mtimeMs).toBe(stamp);
+    } finally { clock.mockRestore(); unsubscribe(); }
   });
 });

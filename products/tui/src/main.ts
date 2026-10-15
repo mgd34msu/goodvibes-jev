@@ -239,15 +239,18 @@ async function main() {
   const scrollToEnd = (vHeight: number) => transcript.followTail(conversation.history.getLineCount(), vHeight);
 
   const unsubs: Array<() => void> = [];
-  // Breadcrumbs, agent lanes and cost totals share one live fleet snapshot per
-  // paint. Outside a paint, actions still query current state directly.
+  // Consume the registry's change feed. Querying here used to clone every
+  // historical contract and inspect host processes on each frame/keystroke.
+  // Controls still act through the registry and revalidate their live targets.
   type FleetNodes = ReturnType<typeof ctx.services.processRegistry.query>['nodes'];
-  let frameFleet: { nodes?: FleetNodes } | undefined;
-  const fleetNodes = (): FleetNodes => frameFleet
-    ? (frameFleet.nodes ??= ctx.services.processRegistry.query().nodes)
-    : ctx.services.processRegistry.query().nodes;
+  let currentFleet: FleetNodes = [];
+  unsubs.push(ctx.services.processRegistry.subscribe(snapshot => {
+    currentFleet = snapshot.nodes;
+    render();
+  }));
+  const fleetNodes = (): FleetNodes => currentFleet;
   // The work tree's live facts: call/turn timings, agent lanes, the call a permission prompt holds, fold persistence (work-tree-wiring.ts).
-  unsubs.push(...wireWorkTree({ conversation, events: uiServices.events, agentManager, listContracts: () => ctx.services.contractRunner.list({ sessionId: runtime.sessionId, includeTerminal: true }), onContractsChanged: (listener) => ctx.services.contractRunner.on(listener), fleetNodes, pendingCallId: () => pendingPermission?.callId, turnActive: () => orchestrator.isThinking, sessionsDir: ctx.services.surface.sessionsDir, sessionId: () => runtime.sessionId, requestRender: () => render() }).unsubs);
+  unsubs.push(...wireWorkTree({ conversation, events: uiServices.events, agentManager, listContracts: () => ctx.services.contractRunner.list({ sessionId: runtime.sessionId, includeTerminal: true, includeInputSnapshot: false }), onContractsChanged: (listener) => ctx.services.contractRunner.on(listener), fleetNodes, pendingCallId: () => pendingPermission?.callId, turnActive: () => orchestrator.isThinking, sessionsDir: ctx.services.surface.sessionsDir, sessionId: () => runtime.sessionId, requestRender: () => render() }).unsubs);
   let recoveryInterval: ReturnType<typeof setInterval> | null = null;
   let stopSpokenOutputForExit: (() => Promise<void>) | null = null;
   // The optional "used N memories" provenance chip (default OFF), see interaction-seams.ts.
@@ -542,7 +545,7 @@ async function main() {
       : (transcript.scrolledBack && !conversation.isSplashShowing() ? { escKey: promptEmpty && !conversation.workTree.focused && !input.indicatorFocused } : null);
     const managerAgents = agentManager.list().filter((a) => a.status === 'running' || a.status === 'pending');
     const runtimeAgents = agentSnapshot.active;
-    const runningAgentSummary = summarizeRunningAgents(managerAgents, runtimeAgents, ctx.services.contractRunner.list({ sessionId: runtime.sessionId, includeTerminal: true }));
+    const runningAgentSummary = summarizeRunningAgents(managerAgents, runtimeAgents, ctx.services.contractRunner.list({ sessionId: runtime.sessionId, includeTerminal: true, includeInputSnapshot: false }));
     const runningAgentCount = runningAgentSummary.count;
     const runningProcessCount = processManager.list().filter((p) => processManager.getStatus(p.id)?.done === false).length;
     const cw = getPromptContentWidth();
@@ -700,9 +703,7 @@ async function main() {
   let renderRequested = false;
   const renderNow = () => {
     renderRequested = false;
-    frameFleet = {};
-    try { renderFrame(); }
-    finally { frameFleet = undefined; }
+    renderFrame();
   };
   // Yield to input and daemon I/O between coalesced frames during agent fan-out.
   const renderScheduler = createRenderScheduler(renderNow, (flush) => { setTimeout(flush, 16); }, () => lifecycle.isTerminalRestored()); // coalescer; no frames after terminal restore

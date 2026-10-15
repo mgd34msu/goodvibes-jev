@@ -16,6 +16,7 @@ import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors'
 import type { DecompositionRunner } from '../../sdk/src/platform/core/plan-decomposition.js';
 import { acquireSharedTree, sharedTreeWaiters } from '../../sdk/src/platform/contract/index.js';
 import { emitAgentCompleted, emitAgentFailed } from '../../sdk/src/platform/runtime/emitters/agents.js';
+import { captureContractInput } from '../../sdk/src/platform/contract/input-snapshot.ts';
 import {
   eventsOf,
   makeHarness,
@@ -544,5 +545,12 @@ describe('persistence', () => {
     expect(h.runner.get(contract.id)!.status).toBe('passed');
     expect(h.runner.list()).toEqual([]);
     expect(h.runner.list({ includeTerminal: true }).map((view) => view.id)).toEqual([contract.id]);
+    h.store.get(contract.id)!.inputSnapshot = await captureContractInput(h.root);
+    const full = h.runner.get(contract.id)!;
+    expect(full.inputSnapshot).toBeDefined();
+    const display = h.runner.list({ includeTerminal: true, includeInputSnapshot: false })[0]!;
+    expect(display.inputSnapshot).toBeUndefined();
+    expect(display.units).toEqual(full.units);
+    expect(h.runner.list({ includeTerminal: true })[0]!.inputSnapshot).toEqual(full.inputSnapshot);
   });
 });
