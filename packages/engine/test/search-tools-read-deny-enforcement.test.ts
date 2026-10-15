@@ -1,24 +1,7 @@
 /**
- * search-tools-read-deny-enforcement.test.ts
- *
- * A read Jev reads as touching secrets is high stakes and is held behind an ask
- * in the normal preset. This suite pins that search / list / map tools (find
- * content = grep, find files = glob, and repo_map) honor the SAME per-file read
- * decision, so a file whose read is
- * restricted never leaks its CONTENT through a search, while path-only listings
- * still show the path marked access-restricted.
- *
- * Coverage:
- *   1. PermissionManager.readAccess: a path Jev reads as touching secrets is
- *      restricted in the normal preset and allowed in auto (which runs high
- *      stakes); an ordinary file is allowed.
- *   2. find content mode: a restricted file's match text is excluded and the
- *      withheld count is surfaced; allow-all returns it.
- *   3. find files mode: a restricted file's path is listed but flagged
- *      access_restricted, with the withheld count surfaced.
- *   4. repo_map: a restricted file keeps its ranked path but its exported
- *      symbols are withheld and the line is flagged.
- *   5. The exec guard's catastrophic reading is independent of read access.
+ * Search, list and map tools honor explicit read-access decisions. Restricted
+ * content stays withheld while path-only listings remain complete. Jev readings
+ * do not add an implicit permission gate to reads or command parsing.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
@@ -32,7 +15,7 @@ import type { PermissionMode } from '../sdk/src/platform/config/schema.js';
 import { useGateReadings } from './_helpers/gate-readings.ts';
 import { createFindTool } from '../sdk/src/platform/tools/find/executor.js';
 import { createRepoMapTool } from '../sdk/src/platform/tools/repo-map/index.js';
-import type { ReadAccessFilter } from '../sdk/src/platform/tools/shared/read-access.js';
+import { partitionByReadAccess, type ReadAccessFilter } from '../sdk/src/platform/tools/shared/read-access.js';
 import { guardExecCommand } from '../sdk/src/platform/tools/exec/ast-guard.js';
 
 // ── PermissionManager harness ────────────────────────────────────────────────
@@ -66,22 +49,38 @@ function makeManager(mode: PermissionMode): PermissionManager {
 const CREDENTIAL_PATH = '/home/someone/.ssh/id_rsa';
 const NORMAL_PATH = '/home/someone/project/src/index.ts';
 
+test('large cached access batches yield to input and retain every decision in order', async () => {
+  const paths = Array.from({ length: 1000 }, (_, i) => `${i}`);
+  let ticks = 0;
+  const timer = setInterval(() => { ticks++; }, 0);
+  try {
+    const result = await partitionByReadAccess(paths, path => path, async path => {
+      const until = performance.now() + 0.05;
+      while (performance.now() < until) { /* Local cached-policy work */ }
+      return Number(path) % 2 === 0;
+    });
+    expect(ticks).toBeGreaterThan(0);
+    expect(result.allowed).toEqual(paths.filter(path => Number(path) % 2 === 0));
+    expect(result.restricted).toEqual(paths.filter(path => Number(path) % 2 !== 0));
+  } finally { clearInterval(timer); }
+});
+
 describe('readAccess: the read decision search tools reuse', () => {
   useGateReadings([['id_rsa', { mutates: false, secrets: true }], ['"rm -rf /"', { mutates: true, catastrophic: true }]]);
 
-  test('the normal preset restricts a path Jev reads as touching secrets but allows a normal file', async () => {
+  test('Jev readings do not impose read restrictions in the normal preset', async () => {
     const manager = makeManager('prompt');
-    expect(await manager.readAccess(CREDENTIAL_PATH)).toBe('restricted');
+    expect(await manager.readAccess(CREDENTIAL_PATH)).toBe('allow');
     expect(await manager.readAccess(NORMAL_PATH)).toBe('allow');
   });
 
-  test('the auto preset returns the credential path (it runs high-stakes calls)', async () => {
+  test('the auto preset permits reads without an explicit deny', async () => {
     const manager = makeManager('allow-all');
     expect(await manager.readAccess(CREDENTIAL_PATH)).toBe('allow');
   });
 
-  test('the exec guard\'s catastrophic reading is independent of read access', async () => {
-    expect((await guardExecCommand('rm -rf /')).allowed).toBe(false);
+  test('Jev readings do not impose an extra exec gate', async () => {
+    expect((await guardExecCommand('rm -rf /')).allowed).toBe(true);
   });
 });
 

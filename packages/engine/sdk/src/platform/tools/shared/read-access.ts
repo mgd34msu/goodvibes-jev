@@ -39,9 +39,20 @@ export async function partitionByReadAccess<T>(
   if (!filter) return { allowed: [...items], restricted: [] };
   const verdicts: boolean[] = new Array(items.length);
   let next = 0;
+  let yieldAt = performance.now() + 4;
+  let pendingYield: Promise<void> | undefined;
   const worker = async (): Promise<void> => {
-    while (next < items.length) {
+    while (true) {
+      // Cached permission answers may resolve synchronously for thousands of
+      // paths. Share a yield across workers so those microtasks cannot starve input.
+      if (!pendingYield && performance.now() >= yieldAt) {
+        pendingYield = new Promise<void>(resolve => setTimeout(() => {
+          yieldAt = performance.now() + 4; pendingYield = undefined; resolve();
+        }, 0));
+      }
+      if (pendingYield) await pendingYield;
       const index = next++;
+      if (index >= items.length) return;
       verdicts[index] = await filter(pathOf(items[index]!));
     }
   };
