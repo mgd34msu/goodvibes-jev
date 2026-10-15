@@ -345,19 +345,19 @@ describe('error-response, connection failures read by Jev', () => {
   test('refused: network, with the cannot-connect summary', async () => {
     const body = await readErrorResponseBody(new Error('connect ECONNREFUSED 127.0.0.1:3210'));
     expect(body.category).toBe('network');
-    expect(body.error).toBe('Cannot connect to the provider. Check whether the service is reachable.');
+    expect(body.error).toBe('connect ECONNREFUSED 127.0.0.1:3210');
   });
 
   test('timed out: timeout, with the timed-out summary', async () => {
     const body = await readErrorResponseBody(new Error('companion handshake stalled'));
     expect(body.category).toBe('timeout');
-    expect(body.error).toBe('Connection timed out before the request completed.');
+    expect(body.error).toBe('companion handshake stalled');
   });
 
   test('DNS failure: network, with the DNS summary', async () => {
     const body = await readErrorResponseBody(new Error('lookup of api.example.com gave nothing'));
     expect(body.category).toBe('network');
-    expect(body.error).toMatch(/^DNS lookup failed for the provider/);
+    expect(body.error).toBe('lookup of api.example.com gave nothing');
   });
 
   test('none: the error\'s own message stays the summary', async () => {
@@ -366,7 +366,7 @@ describe('error-response, connection failures read by Jev', () => {
     expect(body.error).toBe('upstream said no');
   });
 
-  test('the summary names the provider the error carries', async () => {
+  test('keeps the original diagnostic for a provider-attributed error', async () => {
     const body = await readErrorResponseBody({
       message: 'ECONNREFUSED 127.0.0.1:3210',
       provider: 'inceptionlabs',
@@ -374,13 +374,13 @@ describe('error-response, connection failures read by Jev', () => {
       source: 'provider',
     });
     expect(body.category).toBe('network');
-    expect(body.error).toMatch(/inceptionlabs/);
+    expect(body.error).toBe('ECONNREFUSED 127.0.0.1:3210');
   });
 
-  test('an explicit category stands; the connection reading only sets the summary', async () => {
+  test('an explicit category and the original message both survive the connection reading', async () => {
     const body = await readErrorResponseBody({ message: 'ECONNREFUSED 127.0.0.1:3210', category: 'config' });
     expect(body.category).toBe('config');
-    expect(body.error).toMatch(/^Cannot connect/);
+    expect(body.error).toBe('ECONNREFUSED 127.0.0.1:3210');
   });
 
   test('an error with an HTTP status is not a connection failure and is not read for one', async () => {

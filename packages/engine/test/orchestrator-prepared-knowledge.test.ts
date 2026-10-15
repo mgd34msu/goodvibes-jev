@@ -140,6 +140,25 @@ function nativePlannerTask(field?: 'goal' | 'criterion' | 'unit' | 'repair', val
 }
 
 describe('orchestrator prepared curated knowledge', () => {
+  test('a full repository planning request reaches the provider with its complete task', async () => {
+    const { deps } = await fixture(), fake = readings();
+    const task = nativePlannerTask() + '\n' + 'packages/engine/source.ts exports repositorySymbol\n'.repeat(40_000);
+    const agent = { ...record(), template: 'planner', task };
+    let received = '';
+    const provider: LLMProvider = { name: 'fixture', models: ['fixture-model'], async chat(request) {
+      received = String(request.messages.find(message => message.role === 'user')?.content);
+      return { content: 'Review plan ready', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
+    } };
+    const previous = installJudgmentPort(fake.port);
+    try {
+      expect(task.length).toBeGreaterThan(1_000_000);
+      await runAgentTask(runnerContext(deps, provider), agent);
+      expect(agent.error).toBeUndefined();
+      expect(agent.status).toBe('completed');
+      expect(received).toBe(task);
+    } finally { installJudgmentPort(previous); }
+  });
+
   test('native planner knowledge reads preserve roots and derived repair context while protocol identity stays local', async () => {
     const { deps } = await fixture(); const agent = { ...record(), task: nativePlannerTask() }; const fake = readings();
     const previous = installJudgmentPort(fake.port);

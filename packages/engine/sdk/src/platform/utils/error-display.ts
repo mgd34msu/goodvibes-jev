@@ -2,7 +2,6 @@ import {
   categoryDependsOnWording,
   categoryForCode,
   categoryForStatus,
-  connectionSummary,
   captureJudgmentPort,
   JudgmentPortMissingError,
   readFailure,
@@ -335,7 +334,10 @@ function normalizeWith(error: unknown, options: ErrorNormalizationOptions, displ
   const cleanedMessage = cleanMessage(rawMessage, options.fallbackMessage, display);
   const category = settleCategory(fixed, statusCode, fromProvider, options.failure) as PlatformErrorCategory;
   const source = inferSource(error, options.source, options.failure);
-  const summary = buildSummary(connectionSummary(options.failure?.connection, provider) ?? cleanedMessage, {
+  // Classification can inform recovery, but must never replace the actual
+  // failure with an inferred cause (for example a local refusal with a network
+  // outage). Keep the source diagnostic visible to both operators and agents.
+  const summary = buildSummary(cleanedMessage, {
     requestId: error instanceof AppError ? error.requestId : undefined,
     providerCode: error instanceof AppError ? error.providerCode : undefined,
     phase: error instanceof AppError ? error.phase : undefined,

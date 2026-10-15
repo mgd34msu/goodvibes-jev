@@ -2,7 +2,6 @@ import {
   categoryDependsOnWording,
   categoryForCode,
   categoryForStatus,
-  connectionSummary,
   type DaemonErrorCategory,
   type DaemonErrorSource,
   type FailureConclusions,
@@ -336,7 +335,7 @@ function buildUnreferencedErrorResponseBody(error: unknown, options: JsonErrorRe
     // hint the error carried for that provisional category.
     const ownHint = category === fixed ? (error instanceof GoodVibesSdkError ? error.hint : error.hint ?? error.guidance) : undefined;
     const hint = ownHint ?? inferHint(category, status, providerAttributed);
-    const summary = buildSummary(connectionSummary(options.failure?.connection, provider) ?? message, {
+    const summary = buildSummary(message, {
       requestId,
       providerCode,
       phase,
@@ -381,7 +380,7 @@ function buildUnreferencedErrorResponseBody(error: unknown, options: JsonErrorRe
     const ownHint = category === fixed ? readStringProperty(error.hint) ?? readStringProperty(error.guidance) : undefined;
     const hint = ownHint ?? inferHint(category, status, providerAttributed);
     return {
-      error: buildSummary(connectionSummary(options.failure?.connection, provider) ?? message, { requestId, providerCode, phase }),
+      error: buildSummary(message, { requestId, providerCode, phase }),
       ...(hint ? { hint } : {}),
       ...(code ? { code } : {}),
       category,
@@ -402,7 +401,7 @@ function buildUnreferencedErrorResponseBody(error: unknown, options: JsonErrorRe
   const category = settleCategory(fixedCategory(undefined, options.status, undefined, message), options.status, options.source === 'provider', options.failure);
   const hint = inferHint(category, options.status, options.source === 'provider');
   return {
-    error: connectionSummary(options.failure?.connection) ?? message,
+    error: message,
     ...(hint ? { hint } : {}),
     category,
     ...(options.source ? { source: options.source } : {}),

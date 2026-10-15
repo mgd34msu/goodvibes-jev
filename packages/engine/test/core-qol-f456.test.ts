@@ -88,15 +88,15 @@ describe('F6 - error normalization and display', () => {
     });
 
     const formatted = formatProviderError(err);
-    expect(formatted).toContain('[REDACTED]');
+    expect(formatted).toContain('token rejected by upstream');
     expect(formatted).toContain('request_id=req-review-1');
     expect(formatted).toContain('Hint:');
     expect(formatted).not.toContain('Check your API key for this provider.');
   });
 
-  it('holds unqualified raw JSON diagnostic text', () => {
+  it('preserves structured local diagnostic text', () => {
     const raw = '{"error":{"message":"model not found","code":"model_not_found"}}';
-    expect(summarizeError(raw)).toBe('[REDACTED] [REDACTED]');
+    expect(summarizeError(raw)).toBe('model not found, model_not_found');
     expect(raw).toContain('model_not_found');
   });
 
@@ -104,7 +104,7 @@ describe('F6 - error normalization and display', () => {
     const error = new Error('connect ECONNREFUSED 127.0.0.1:11434');
     const read = await readNormalizedError(error, { provider: 'ollama', site: 'test.f6' });
     expect(read.category).toBe('network');
-    expect(read.summary).toContain('Cannot connect to ollama');
+    expect(read.summary).toBe('connect ECONNREFUSED 127.0.0.1:11434');
     // The synchronous path can reuse the still-current settled privacy proof.
     const shown = normalizeError(error, { provider: 'ollama' });
     expect(shown.category).toBe('unknown');
@@ -113,7 +113,7 @@ describe('F6 - error normalization and display', () => {
 
   it('formats generic errors through the same display path', () => {
     const formatted = formatError(new Error('invalid JSON response from upstream'));
-    expect(formatted).toBe('[REDACTED]');
+    expect(formatted).toBe('invalid JSON response from upstream');
   });
 
   it('builds structured HTTP error bodies without losing compatibility', () => {
@@ -125,7 +125,7 @@ describe('F6 - error normalization and display', () => {
       requestId: 'req-503',
     }));
     expect(body).toMatchObject({
-      error: '[REDACTED] (phase=request, request_id=req-503)',
+      error: 'request failed (request_id=req-503)',
       hint: 'The provider is temporarily unavailable. Retry shortly or switch providers if the issue persists.',
       code: 'PROVIDER_ERROR',
       category: 'service',
@@ -150,7 +150,7 @@ describe('F6 - error normalization and display', () => {
     // Nothing structural names the failure, so the rewrapped error leaves the
     // category for the wording to be read where it matters.
     expect(err.category).toBe('unknown');
-    expect(err.message).toBe('[REDACTED]');
+    expect(err.message).toBe('connect ECONNREFUSED 127.0.0.1:11434');
     expect(err.rawMessage).toBe('connect ECONNREFUSED 127.0.0.1:11434');
     expect(err.provider).toBe('ollama');
     expect(err.operation).toBe('chat');

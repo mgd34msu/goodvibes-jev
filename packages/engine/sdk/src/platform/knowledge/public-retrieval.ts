@@ -45,36 +45,37 @@ export interface PublicKnowledgeSelection {
   readonly relatedLabels: (kind: 'source' | 'node', id: string) => readonly string[];
 }
 
-/** Local structural capture only: preserve hidden data fields without invoking
- * accessors. IDs and administrative metadata never enter a privacy projection.
- * Bounds match the existing single-record snapshot; there is no corpus bound.
+/** Local structural capture preserves hidden data fields without invoking
+ * accessors. Iteration accepts large repository queries without a size cutoff.
  */
 function capture<T>(input: T): T {
-  let count = 0, characters = 0;
   const ancestors = new Set<object>();
   const fail = (): never => { throw new JudgmentInputError('unsupported-input'); };
-  function visit(value: unknown, depth: number): unknown {
-    if (++count > 20_000 || depth > 64) return fail();
-    if (typeof value === 'string') { characters += value.length; if (characters > 1_000_000) return fail(); return value; }
-    if (value === undefined || value === null || typeof value === 'boolean') return value;
-    if (typeof value === 'number') return Number.isFinite(value) ? value : fail();
+  type Work = { value: unknown; parent: object; key: string } | { original: object; result: object };
+  const root = Object.create(null) as { value: T };
+  const pending: Work[] = [{ value: input, parent: root, key: 'value' }];
+  while (pending.length) {
+    const work = pending.pop()!;
+    if ('original' in work) { Object.freeze(work.result); ancestors.delete(work.original); continue; }
+    const { value, parent, key } = work;
+    const assign = (value: unknown) => Object.defineProperty(parent, key, { value, enumerable: true });
+    if (value === undefined || value === null || typeof value === 'string' || typeof value === 'boolean') { assign(value); continue; }
+    if (typeof value === 'number') { if (!Number.isFinite(value)) return fail(); assign(value); continue; }
     if (typeof value !== 'object' || ancestors.has(value)) return fail();
     const array = Array.isArray(value), proto: unknown = Object.getPrototypeOf(value);
     if ((array ? proto !== Array.prototype : proto !== Object.prototype && proto !== null) || Object.getOwnPropertySymbols(value).length) return fail();
     const descriptors = Object.getOwnPropertyDescriptors(value);
     if (Object.values(descriptors).some((entry) => !('value' in entry) || typeof entry.value === 'function')
       || (array && Object.hasOwn(descriptors, 'constructor'))) return fail();
-    if (array && (value.length > 20_000 || Array.from({ length: value.length }, (_, index) => !Object.hasOwn(descriptors, index)).some(Boolean))) return fail();
-    ancestors.add(value);
-    const result: Record<string, unknown> | unknown[] = array ? [] : {};
-    for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (array) for (let index = 0; index < value.length; index++) if (!Object.hasOwn(descriptors, index)) return fail();
+    const result = array ? new Array(value.length) : Object.create(null) as object;
+    assign(result); ancestors.add(value); pending.push({ original: value, result });
+    for (const [key, descriptor] of Object.entries(descriptors).reverse()) {
       if (array && key === 'length') continue;
-      Object.defineProperty(result, key, { value: visit(descriptor.value, depth + 1), enumerable: true });
+      pending.push({ value: descriptor.value, parent: result, key });
     }
-    ancestors.delete(value);
-    return Object.freeze(result);
   }
-  return visit(input, 0) as T;
+  return root.value;
 }
 
 /** The shared excerpt adapter also receives descriptor-safe local captures. */
@@ -379,10 +380,8 @@ export async function readPublicKnowledgeSelection(store: KnowledgeStore, input:
       check();
       return { accepted: result, assertCurrent,
         relatedLabels(kind: 'source' | 'node', id: string) { assertCurrent(); return related.get(`${kind}:${id}`) ?? Object.freeze([]); } };
-    // One bounded deadline covers the complete admitted corpus, including
-    // privacy projection and every relevance batch. The per-batch default
-    // cannot serve as a shorter deadline for an arbitrarily larger corpus.
-    }, 60_000, externalSignal);
+    // The caller owns cancellation; corpus size does not invent a deadline.
+    }, 0, externalSignal);
   } catch (error) {
     if (error instanceof JudgmentInputError || error instanceof Held) throw error;
     if (error instanceof KnowledgeScopeSelectionHeldError) throw new Held(error.reason === 'uncertain' ? 'unsettled' : error.reason);

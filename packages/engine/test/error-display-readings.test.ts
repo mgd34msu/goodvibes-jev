@@ -22,6 +22,7 @@ const publicLines = [
   '[1,2,3]', 'plain words only', 'connect ECONNREFUSED 127.0.0.1:11434',
   'getaddrinfo ENOTFOUND api.example.com', 'something else broke', 'socket trouble',
   'upstream ECONNREFUSED behind the gateway',
+  'Local planning input was rejected',
   'No credits remain for the API.',
   'You exceeded your current quota, please check your plan and billing details. insufficient_quota',
   'No credits remain for the API. [REDACTED_GITHUB_TOKEN]',
@@ -181,29 +182,37 @@ describe('display payload', () => {
 });
 
 describe('connection failure', () => {
-  test('refused: network, with the cannot-connect summary naming the provider', async () => {
+  test('a mistaken connection reading cannot replace a local input failure', async () => {
+    const { port } = readingsPort({ connection: 'refused' });
+    installJudgmentPort(port);
+    const message = 'Local planning input was rejected';
+    const normalized = await readNormalizedError(new Error(message), { site: 'test.display', provider: 'openai-subscriber' });
+    expect(normalized.summary).toBe(message);
+  });
+
+  test('refused: network classification retains the original diagnostic', async () => {
     const { port } = readingsPort({ connection: 'refused' });
     installJudgmentPort(port);
     const normalized = await readNormalizedError(new Error('connect ECONNREFUSED 127.0.0.1:11434'), { site: 'test.display', provider: 'ollama' });
     expect(normalized.category).toBe('network');
-    expect(normalized.summary).toBe('Cannot connect to ollama. Check whether the service is reachable.');
+    expect(normalized.summary).toBe('connect ECONNREFUSED 127.0.0.1:11434');
     expect(normalized.message).toBe('connect ECONNREFUSED 127.0.0.1:11434');
   });
 
-  test('timed out: timeout, with the timed-out summary', async () => {
+  test('timed out: retains the actual timed-out operation', async () => {
     const { port } = readingsPort({ connection: 'timed_out' });
     installJudgmentPort(port);
     const formatted = await readFormattedError(new Error('ETIMEDOUT: companion pairing handshake'), { site: 'test.display' });
-    expect(formatted.split('\n')[0]).toBe('Connection timed out before the request completed.');
+    expect(formatted.split('\n')[0]).toBe('ETIMEDOUT: [REDACTED_TEXT]');
     expect((await readNormalizedError(new Error('ETIMEDOUT: companion pairing handshake'), { site: 'test.display' })).category).toBe('timeout');
   });
 
-  test('DNS failure: network, with the DNS summary', async () => {
+  test('DNS failure: retains the failed hostname', async () => {
     const { port } = readingsPort({ connection: 'dns_failed' });
     installJudgmentPort(port);
     const normalized = await readNormalizedError(new Error('getaddrinfo ENOTFOUND api.example.com'), { site: 'test.display' });
     expect(normalized.category).toBe('network');
-    expect(normalized.summary).toBe('DNS lookup failed for the provider. Check the base URL and network.');
+    expect(normalized.summary).toBe('getaddrinfo ENOTFOUND api.example.com');
   });
 
   test('none: the message is the summary', async () => {
@@ -220,7 +229,7 @@ describe('connection failure', () => {
     const error = Object.assign(new Error('socket trouble'), { code: 'ETIMEDOUT' });
     const normalized = await readNormalizedError(error, { site: 'test.display' });
     expect(normalized.category).toBe('timeout');
-    expect(normalized.summary).toMatch(/^Cannot connect/);
+    expect(normalized.summary).toBe('socket trouble');
   });
 
   test('an error with an HTTP status is not read for a connection failure', async () => {

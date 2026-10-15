@@ -1,6 +1,6 @@
 import { projectKnowledgeSourceReferences } from '../source-structural-references.js';
 import type { JsonValue } from '@goodvibes-jev/judgment';
-import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
+import { assertJudgmentInput, captureOwnedJson } from '../../gate/judgment-input.js';
 import { getKnowledgeSpaceId } from '../spaces.js';
 import { isGeneratedKnowledgeSource } from '../generated-projections.js';
 import { freezeSupport, supportHash } from '../semantic/verification/projection.js';
@@ -115,22 +115,12 @@ export function projectNodeActivation(node: KnowledgeNodeRecord, evidence: reado
 }
 /** Detach caller data before the first await without scaling, inventing or serializing nonfinite confidence. */
 export function snapshotNodeInput<T>(input: T): T {
-  let count = 0, chars = 0;
-  const seen = new Set<object>();
-  function visit(value: unknown, depth: number): unknown {
-    if (++count > 20_000 || depth > 64) throw new JudgmentInputError('unsupported-input');
-    if (typeof value === 'string') { chars += value.length; if (chars > 1_000_000) throw new JudgmentInputError('unsupported-input'); return value; }
-    if (value === undefined || value === null || typeof value === 'boolean' || typeof value === 'number') return value;
-    if (typeof value !== 'object' || seen.has(value)) throw new JudgmentInputError('unsupported-input');
-    const proto = Object.getPrototypeOf(value);
-    if (Array.isArray(value) ? proto !== Array.prototype : proto !== Object.prototype && proto !== null) throw new JudgmentInputError('unsupported-input');
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Object.getOwnPropertySymbols(value).length || Object.values(descriptors).some((item) => item.get || item.set)) throw new JudgmentInputError('unsupported-input');
-    if (Array.isArray(value)) for (let index = 0; index < value.length; index++) if (!Object.hasOwn(value, index)) throw new JudgmentInputError('unsupported-input');
-    seen.add(value);
-    const result = Array.isArray(value) ? value.map((item) => visit(item, depth + 1))
-      : Object.fromEntries(Object.entries(descriptors).filter(([, item]) => item.enumerable).map(([key, item]) => [key, visit(item.value, depth + 1)]));
-    seen.delete(value); return result;
-  }
-  return freezeSupport(visit(input, 0)) as T;
+  // Planning inputs contain the repository map. Their size is not evidence of
+  // malformed JSON. The shared iterative capture detaches and freezes every
+  // field without a character, item-count or recursion-depth cutoff.
+  return captureOwnedJson(input, (value) => {
+    if (!Array.isArray(value)) return false;
+    for (let index = 0; index < value.length; index++) if (!Object.hasOwn(value, index)) return true;
+    return false;
+  }) as T;
 }
