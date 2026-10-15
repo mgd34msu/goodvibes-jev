@@ -19,10 +19,10 @@ import { nativeContractSourceData } from '../native-source.js';
  * plan-schema.ts and plan-checks.ts read them this way). Both are low stakes:
  * a plan shaped without them is checked like any other.
  * `forbids_delegation` allows delegating only on a no at act
- * (`delegationForbidden`), and `forbids_writing` read on neither side at act
- * asks the owner (`writingUnclear`).
+ * (`delegationForbidden`). An uncertain `forbids_writing` reading is passed
+ * to the planner, which resolves the requested work from the original request.
  *
- * The owner's reply to that question is read with `forbids_writing` alone
+ * A reply to a previously saved writing question is read with `forbids_writing` alone
  * (`readForbidsWriting`), since the reply says nothing about the others.
  */
 import { defineBattery, STAKES_BANDS, yesNo, type JudgmentPort, type YesNoBand, type YesNoReading } from '@goodvibes-jev/judgment';
@@ -33,7 +33,7 @@ const PERMISSION_BAND: YesNoBand = { yes: STAKES_BANDS.medium.confidence, no: ST
 
 export const requestShape = defineBattery({
   name: 'contract.request-shape',
-  version: 1,
+  version: 2,
   description: 'How the person asked for the work to be done: whether they forbid delegating it, ask for parallel agents, forbid changing files, or ask for several attempts to pick from.',
   accuracyFloor: 0.9,
   items: {
@@ -46,7 +46,7 @@ export const requestShape = defineBattery({
       STAKES_BANDS.low.yesNo,
     ),
     forbids_writing: yesNo(
-      'Does the user forbid changing files, or ask only for a design, plan or report without edits?',
+      'Does the user ask for read-only work, such as a code review, investigation, design, plan, or report, or explicitly forbid changing files? A code review asks for findings, not implementation, unless the user also requests fixes.',
       PERMISSION_BAND,
     ),
     asks_for_attempts: yesNo(
@@ -74,6 +74,11 @@ export const requestShape = defineBattery({
       name: 'separate agents for each module at once',
       state: { request: 'Have separate agents write the unit tests for each of the three modules at the same time.' },
       expect: { forbids_delegation: 'no', requests_parallel_agents: 'yes', forbids_writing: 'no', asks_for_attempts: 'no' },
+    },
+    {
+      name: 'comprehensive code review without an explicit no-edit instruction',
+      state: { request: 'do a comprehensive code review of this project, the full codebase' },
+      expect: { forbids_delegation: 'no', requests_parallel_agents: 'no', forbids_writing: 'yes', asks_for_attempts: 'no' },
     },
     {
       name: 'report only, no file changes',
@@ -185,8 +190,8 @@ export function delegationForbidden(shape: RequestShape): boolean {
 }
 
 /**
- * Whether the owner must say if files may change before planning starts: the
- * forbids-writing reading settled on neither side at act.
+ * Whether the forbids-writing reading settled on neither side at act.
+ * The planner resolves this uncertainty from the original request.
  */
 export function writingUnclear(shape: RequestShape): boolean {
   return !saysYesAtAct(shape.forbids_writing) && !saysNoAtAct(shape.forbids_writing);

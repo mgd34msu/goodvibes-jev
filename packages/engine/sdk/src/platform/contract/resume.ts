@@ -175,7 +175,7 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
         continue;
       }
       const run = deps.adopt(contract);
-      prepareNativeResume(run);
+      prepareResume(run);
       const zombie = findZombieCause(contract);
       if (zombie !== null) {
         const reason = `contract ${contract.id} could not resume: ${zombie}`;
@@ -212,9 +212,22 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
     return { resumed, queued, reaped, skipped };
   }
 
-  function prepareNativeResume(run: ContractRun): void {
+  function prepareResume(run: ContractRun): void {
     const contract = run.contract;
-    if (contract.nativeSource === undefined) return;
+    if (contract.nativeSource === undefined) {
+      const pending = contract.escalations.filter(item => item.resolvedAt === undefined);
+      if (contract.status === 'awaiting-owner' && contract.units.length === 0 && pending.length > 0
+        && pending.every(item => item.scope === 'shape' && item.reason === 'writing-unclear')) {
+        // The old shaping question is no longer a prerequisite for planning.
+        // Preserve its history without inventing an owner reply or permission to edit.
+        for (const item of pending) item.resolvedAt = run.env.now();
+        contract.statusBeforeOwner = undefined;
+        run.moveContract('planning');
+        run.decide('resumed', contract.id, 'Retired writing-unclear question; planning continues from the original request');
+        deps.store.put(contract);
+      }
+      return;
+    }
     contract.nativeWaiting = undefined;
     const state = nativeDecisionState(contract);
     if (contract.status !== 'awaiting-owner') return;
@@ -363,5 +376,5 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
     }
   }
 
-  return { resumeAll, continueResumed, prepareNative: prepareNativeResume };
+  return { resumeAll, continueResumed, prepareNative: prepareResume };
 }

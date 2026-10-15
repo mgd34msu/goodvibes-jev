@@ -454,13 +454,6 @@ export function handlePromptKeyToken(state: KeyRouteState, token: InputToken): {
   }
 
   if (token.logicalName === 'down') {
-    // Announce the focus move honestly, this handoff is otherwise silent
-    // and easy to miss (the next keystrokes look like they're doing nothing,
-    // because they're now landing on the indicator, not the composer).
-    const announceIndicatorFocus = () => {
-      indicatorFocused = true;
-      state.commandContext?.print('[Down] Focus moved to the process indicator; Up or Esc returns to the composer.');
-    };
     const move = computeCursorVerticalMove(prompt, cursorPos, inputScrollTop, state.contentWidth, state.maxInputRows, 1);
     if (move.moved) {
       cursorPos = move.cursorPos;
@@ -475,10 +468,10 @@ export function handlePromptKeyToken(state: KeyRouteState, token: InputToken): {
           cursorPos = recalled.length;
           ensureLocalInputCursorVisible();
         } else {
-          announceIndicatorFocus();
+          indicatorFocused = true;
         }
       } else {
-        announceIndicatorFocus();
+        indicatorFocused = true;
       }
     }
     return { handled: true, prompt, cursorPos, inputScrollTop, commandMode, indicatorFocused };

@@ -97,6 +97,25 @@ async function ended(h: Harness, id: string): Promise<ContractView> {
 const running = (contract: ContractView) => contract.units[0]?.status === 'running' && (contract.units[0]?.checks.length ?? 0) >= 1;
 
 describe('planning starts again', () => {
+  test('a saved writing-unclear question resumes planning without an owner reply', async () => {
+    const { root, ids: [id] } = await interrupt({ plan: oneUnitPlan(1), planner: stuckPlanner, scripts: {} }, contract => contract.status === 'planning', 'planning');
+    editContract(root, id!, contract => {
+      contract.status = 'awaiting-owner';
+      contract.shape = { ...contract.shape!, forbids_writing: { verdict: 'uncertain', probability: 0.5, outcome: 'escalate' } };
+      contract.escalations.push({ id: `${contract.id}.e1`, at: Date.now(), scope: 'shape', targetId: contract.id,
+        reason: 'writing-unclear', question: 'May files change?', unmetCriterionIds: [] });
+    });
+    const h = restart(root, { plan: oneUnitPlan(1), scripts: { u1: () => [{ files: { 'src/csv.ts': 'parse\n' }, text: 'Wrote the parser.' }] } });
+    const report = await h.runner.resumeAll();
+    expect(report.resumed).toEqual([{ contractId: id!, step: 'plan' }]);
+    const done = await ended(h, id!);
+    expect(done.status).toBe('passed');
+    expect(done.shape!.forbids_writing.probability).toBe(0.5);
+    expect(done.escalations[0]!.resolvedAt).toBeDefined();
+    expect(done.escalations[0]!.reply).toBeUndefined();
+    expect(eventsOf(h, 'CONTRACT_OWNER_REPLIED')).toHaveLength(0);
+  });
+
   test('a contract stopped while shaping is shaped again, planned and run', async () => {
     const { root, ids: [id] } = await interrupt({ plan: oneUnitPlan(1), planner: stuckPlanner, scripts: {} }, (contract) => contract.status === 'planning', 'planning');
     editContract(root, id!, (contract) => {

@@ -101,24 +101,28 @@ describe('shapeContract', () => {
     expect(ofType(events, 'CONTRACT_SHAPED')[0]!.requestsParallelAgents.verdict).toBe('yes');
   });
 
-  test('an unsettled forbids-writing reading asks the owner before planning', async () => {
-    install(({ name }) => (name === 'forbids_writing' ? noulAnswer(0.5) : undefined));
-    const contract = queuedContract();
-    const { deps, events } = harness([]);
+  test.each([0.5, 0.7])('a code review continues through planning with an uncertain writing reading of %s', async probability => {
+    install(({ name, question }) => name === 'forbids_writing' ? noulAnswer(probability)
+      : name === 'role' ? choiceAnswer(question, 'research', 0.99) : undefined);
+    const ask = 'do a comprehensive code review of this project, the full codebase';
+    const contract = queuedContract({ ask });
+    const plan = singleUnitPlan();
+    plan.goal = ask;
+    plan.criteria = [{ id: 'c1', text: 'Report code review findings across the full codebase', quote: ask }];
+    const unit = plan.groups[0]!.units[0]!;
+    unit.role = 'research';
+    unit.goal = unit.brief = 'Inspect the full codebase and report findings without editing files';
+    unit.criteria = [{ id: 'u1.c1', text: plan.criteria[0]!.text, serves: ['c1'] }];
+    const { deps, events, requests } = harness([plannerOutput(plan)]);
     const outcome = await shapeContract(contract, deps);
-    expect(outcome.kind).toBe('awaiting-owner');
-    expect(contract.status).toBe('awaiting-owner');
-    expect(contract.escalations).toHaveLength(1);
-    expect(contract.escalations[0]!.reason).toBe('writing-unclear');
-    expect(contract.escalations[0]!.scope).toBe('shape');
-    expect(contract.escalations[0]!.question).toContain('may change files');
-    expect(ofType(events, 'CONTRACT_ESCALATED')).toHaveLength(1);
-  });
-
-  test('a forbids-writing yes below act also asks the owner', async () => {
-    install(({ name }) => (name === 'forbids_writing' ? noulAnswer(0.7) : undefined));
-    const outcome = await shapeContract(queuedContract(), harness([]).deps);
-    expect(outcome.kind).toBe('awaiting-owner');
+    expect(outcome.kind).toBe('shaped');
+    expect(contract.shape!.forbids_writing.probability).toBe(probability);
+    expect((await planContract(contract, deps)).kind).toBe('accepted');
+    expect(contract.units).toHaveLength(1);
+    expect(unitToolContract(contract.units[0]!.role, contract.shape!).readOnly).toBe(true);
+    expect(requests[0]!.userPrompt).toContain(ask);
+    expect(contract.escalations).toEqual([]);
+    expect(ofType(events, 'CONTRACT_ESCALATED')).toEqual([]);
   });
 
   test('the owner deciding about writing makes a reading code acts on', () => {
@@ -361,7 +365,7 @@ describe('planContract: failure, with no single-item fallback', () => {
     let routes = 0;
     const outcome = await planContract(contract, { ...deps, routeSelector: async () => { routes++; throw noRoute; } });
     expect(outcome).toMatchObject({ kind: 'failed', failureKind: 'planning' });
-    expect(contract.error).toBe('no route for the planner: [REDACTED]');
+    expect(contract.error).toBe(`no route for the planner: ${noRoute.message}`);
     expect(routes).toBe(1);
     expect(contract.units).toEqual([]);
     expect(contract.groups).toEqual([]);

@@ -380,10 +380,8 @@ export function handleBlockToggle(
   const lineIndex = getAnchorLine();
   const nearest = conversationManager.findNearestBlock(lineIndex);
   if (!nearest) return;
-  const wasCollapsed = conversationManager.isCollapsed(nearest.blockIndex);
   const blockIdx = conversationManager.toggleCollapseAtLine(lineIndex);
   if (blockIdx >= 0) {
-    conversationManager.log(`[${wasCollapsed ? 'Expanded' : 'Collapsed'} ${describeBlockForReceipt(nearest)}]`, { fg: activeTokens().textMuted });
     requestRender();
   }
 }

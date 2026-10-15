@@ -21,11 +21,12 @@ async function done(h: Harness, id: string) { await waitFor(() => terminal(h, id
 function noOwner(h: Harness, id: string) { expect(h.store.get(id)!.escalations).toHaveLength(0); expect(h.events.some(event => event.type === 'CONTRACT_ESCALATED' || event.type === 'CONTRACT_OWNER_REPLIED')).toBe(false); }
 
 describe('native semantic callers', () => {
-  test('unresolved writing is a recorded semantic action without manufacturing a settled shape', async () => {
+  test('unresolved writing proceeds to native planning without a permission decision or manufactured shape', async () => {
     const h = use({ scripts: { u1: finishes('complete parser') }, port: context => context.name === 'forbids_writing' ? noulAnswer(0.5) : undefined });
     const { contract } = startContract(h, { nativeSource: source }); const result = await done(h, contract.id);
     expect(result.status).toBe('passed'); expect(result.shape!.forbids_writing.outcome).toBe('escalate');
-    expect(result.nativeDecisions!.history.some(item => item.stage === 'shape' && item.decision.outcome === 'act')).toBe(true); noOwner(h, contract.id);
+    expect(result.nativeDecisions!.history.some(item => item.stage === 'shape')).toBe(false);
+    expect(result.nativeDecisions!.history.some(item => item.stage === 'plan' && item.decision.outcome === 'act')).toBe(true); noOwner(h, contract.id);
   });
 
   test('native plan reject starts no units and preserves exact roots', async () => {

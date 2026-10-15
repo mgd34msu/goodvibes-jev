@@ -146,7 +146,8 @@ export function buildContractPlannerPrompt(): string {
     '- Every unit has at least one criterion, and every contract criterion is served by at least one unit criterion.',
     '- A group "dependsOn" names other groups; a unit "dependsOn" names units in the same group. No dependency cycles.',
     '- Unit roles: "implement" (changes files or produces the deliverable), "research" (reads and reports, changes nothing), "design" (answers with a plan or design, changes nothing), "integration" (joins the other units\' work into the deliverable).',
-    '- There are no review, test or verification units: every unit\'s work is checked against its criteria as it goes. When something must be verified, make it a criterion of the unit that does the work, for example "the tests for X pass".',
+    '- A code review, investigation, or report is work to perform: inspect the project and return findings using research units. Do not ask whether to change files before doing the requested review. Only plan edits when the original request calls for edits; uncertainty in a request-shape reading is not a reason to stop or ask for permission.',
+    '- Use research units for reviews or test reports the user requested. Do not invent extra units whose only purpose is to sign off other units: each unit\'s work is already checked against its criteria. Make those internal checks criteria of the unit doing the work, for example "the tests for X pass".',
     '- No unit may do less than the criteria it serves require unless another unit covers the rest.',
     '- A plan with one unit has one group of kind "work" and no integration group. A plan with more than one unit ends with exactly one group of kind "integration" that depends on every other group and holds one unit with role "integration".',
     '- Units that do not depend on each other go in the same group so they can run at the same time.',
@@ -178,6 +179,8 @@ function shapeLines(shape: RequestShape, config: PlannerRequestInput['config']):
   }
   if (saysYesAtAct(shape.forbids_writing)) {
     lines.push('- The user does not allow changing files: every unit is read-only, so plan research or design units whose answers are the deliverable.');
+  } else if (writingUnclear(shape)) {
+    lines.push('- The request-shape reading is uncertain about file changes. Resolve the work from the original request: reviews and reports inspect and report; implementation requests make the requested changes. Continue planning without an owner approval question.');
   }
   if (saysYesAtAct(shape.asks_for_attempts)) {
     lines.push(`- The user asked for several attempts to pick from: set "attempts" (at most ${MAX_ATTEMPTS}) on each unit that should be tried more than once.`);
@@ -369,8 +372,8 @@ function isAbort(error: unknown, signal: AbortSignal | undefined): boolean {
 
 /**
  * Reads the request shape (section 3.1) for a queued or shaping contract,
- * stores it, and asks the owner first when it cannot tell whether files may
- * change.
+ * stores it, and passes uncertainty to the planner to resolve from the
+ * original request. Shaping does not ask the owner to authorize planning.
  */
 export async function shapeContract(contract: Contract, deps: ContractPlannerDeps, options: { readonly signal?: AbortSignal | undefined } = {}): Promise<ShapeOutcome> {
   const context = new PlanningContext(contract, deps);
@@ -400,19 +403,6 @@ export async function shapeContract(contract: Contract, deps: ContractPlannerDep
     asksForAttempts: shape.asks_for_attempts,
     decisionIds: shape.decisionIds,
   });
-  if (writingUnclear(shape) && contract.nativeSource !== undefined) {
-    const decision = await decideNativeContract(contract, deps.native, { stage: 'shape', targetId: contract.id,
-      action: 'Proceed to planning with the observed request shape. Any writing must satisfy the complete original requirements and live capability boundaries. No reading is changed by this decision.',
-      allowAct: true, state: () => ({ forbidsWriting: { ...shape.forbids_writing }, forbidsDelegation: { ...shape.forbids_delegation } }),
-      continuations: [], decisionIds: shape.decisionIds, signal: options.signal ?? new AbortController().signal });
-    if (decision.decision.outcome !== 'act') return context.fail('planning', 'Jev refused proceeding from the unresolved request shape');
-    decision.recordClaim();
-    return { kind: 'shaped', shape };
-  }
-  if (writingUnclear(shape)) {
-    const escalation = context.escalate('shape', 'writing-unclear', buildWritingEscalationQuestion(contract.id, contract.ask), shape.decisionIds);
-    return { kind: 'awaiting-owner', shape, escalation };
-  }
   return { kind: 'shaped', shape };
 }
 

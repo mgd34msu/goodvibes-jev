@@ -4,8 +4,7 @@
 // Covers the anchor-based block actions (Ctrl+Y/B/S, Tab) after the fix that
 // resolves them against the block the user is actually looking at (an
 // injected getAnchorLine callback) instead of a raw scrollTop, plus the
-// honest-receipt requirement: every action names its target block instead of
-// an opaque collapseKey or silence. Also covers the removal of the dead
+// receipts for copy/save actions and silent expansion. Also covers the removal of the dead
 // "rerun" action.
 // ---------------------------------------------------------------------------
 
@@ -104,14 +103,18 @@ describe('viewport-anchored block actions', () => {
     expect(text).not.toContain(execBlock!.collapseKey);
   });
 
-  test('handleBlockToggle announces which block it collapsed/expanded', () => {
+  test('handleBlockToggle changes expansion without adding transcript messages', () => {
     const cm = buildConversationWithTwoToolBlocks();
     const blocks = cm.getBlockRegistry();
     const execBlock = blocks.find((b) => b.toolName === 'exec');
 
-    handleBlockToggle(cm, () => execBlock!.startLine, () => {});
-
-    const text = textOf(cm);
-    expect(text.includes('Collapsed tool result: exec') || text.includes('Expanded tool result: exec')).toBe(true);
+    const collapsed = cm.isCollapsed(execBlock!.blockIndex);
+    let rendered = 0;
+    handleBlockToggle(cm, () => execBlock!.startLine, () => { rendered++; });
+    expect(cm.isCollapsed(execBlock!.blockIndex)).toBe(!collapsed);
+    handleBlockToggle(cm, () => execBlock!.startLine, () => { rendered++; });
+    expect(cm.isCollapsed(execBlock!.blockIndex)).toBe(collapsed);
+    expect(rendered).toBe(2);
+    expect(textOf(cm)).not.toMatch(/Expanded tool result|Collapsed tool result/);
   });
 });
