@@ -7385,6 +7385,7 @@ export interface OperatorMethodInputMap {
     "sessions.messages.list": {
         sessionId: string;
         limit?: number;
+        offset?: number;
         before?: string;
     };
     // (undocumented)
@@ -28315,6 +28316,10 @@ export interface OperatorMethodOutputMap {
                 }) | boolean | null | number | readonly JsonValue[] | string;
             });
         })[];
+        total?: number;
+        offset?: number;
+        nextOffset?: number;
+        hasMore?: boolean;
     };
     // (undocumented)
     "sessions.hosted.attach": {
@@ -28835,6 +28840,10 @@ export interface OperatorMethodOutputMap {
                 }) | boolean | null | number | readonly JsonValue[] | string;
             });
         })[];
+        total?: number;
+        offset?: number;
+        nextOffset?: number;
+        hasMore?: boolean;
     };
     // (undocumented)
     "sessions.permissionMode.get": {

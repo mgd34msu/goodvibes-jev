@@ -29,8 +29,7 @@
                 ]
               },
               "content": {
-                "type": "string",
-                "maxLength": 131072
+                "type": "string"
               }
             },
             "required": [

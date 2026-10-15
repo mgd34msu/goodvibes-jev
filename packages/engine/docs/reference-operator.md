@@ -30972,8 +30972,7 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
                 ]
               },
               "content": {
-                "type": "string",
-                "maxLength": 131072
+                "type": "string"
               }
             },
             "required": [
@@ -37610,8 +37609,7 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
                       ]
                     },
                     "content": {
-                      "type": "string",
-                      "maxLength": 131072
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -44356,8 +44354,7 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
                     ]
                   },
                   "content": {
-                    "type": "string",
-                    "maxLength": 131072
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -123594,6 +123591,18 @@ Return metadata for a shared session.
         ],
         "additionalProperties": false
       }
+    },
+    "total": {
+      "type": "number"
+    },
+    "offset": {
+      "type": "number"
+    },
+    "nextOffset": {
+      "type": "number"
+    },
+    "hasMore": {
+      "type": "boolean"
     }
   },
   "required": [
@@ -126333,7 +126342,7 @@ Append a user message to a shared session. Omitted `kind` defaults to `message` 
 
 #### `sessions.messages.list`
 
-Return message history for a shared session.
+Return a page of retained session messages. Offset counts backward from the newest message; nextOffset reads the preceding page. History is retained until explicitly deleted.
 
 - Title: `List Shared Session Messages`
 - Source: `builtin`
@@ -126355,6 +126364,9 @@ Return message history for a shared session.
       "type": "string"
     },
     "limit": {
+      "type": "number"
+    },
+    "offset": {
       "type": "number"
     },
     "before": {
@@ -126602,6 +126614,18 @@ Return message history for a shared session.
         ],
         "additionalProperties": false
       }
+    },
+    "total": {
+      "type": "number"
+    },
+    "offset": {
+      "type": "number"
+    },
+    "nextOffset": {
+      "type": "number"
+    },
+    "hasMore": {
+      "type": "boolean"
     }
   },
   "required": [
@@ -140044,7 +140068,6 @@ Read at most 100 events after an exclusive cursor, pinned to a history high-wate
                                   },
                                   "messages": {
                                     "readOnly": true,
-                                    "maxItems": 128,
                                     "type": "array",
                                     "items": {
                                       "type": "object",
@@ -140059,8 +140082,7 @@ Read at most 100 events after an exclusive cursor, pinned to a history high-wate
                                           ]
                                         },
                                         "content": {
-                                          "type": "string",
-                                          "maxLength": 131072
+                                          "type": "string"
                                         }
                                       },
                                       "required": [
@@ -140829,7 +140851,6 @@ Read at most 100 events after an exclusive cursor, pinned to a history high-wate
                                     },
                                     "messages": {
                                       "readOnly": true,
-                                      "maxItems": 128,
                                       "type": "array",
                                       "items": {
                                         "type": "object",
@@ -140844,8 +140865,7 @@ Read at most 100 events after an exclusive cursor, pinned to a history high-wate
                                             ]
                                           },
                                           "content": {
-                                            "type": "string",
-                                            "maxLength": 131072
+                                            "type": "string"
                                           }
                                         },
                                         "required": [
@@ -141443,7 +141463,6 @@ Import one exact versioned legacy manifest only after fresh recorded autonomous 
                                         },
                                         "messages": {
                                           "readOnly": true,
-                                          "maxItems": 128,
                                           "type": "array",
                                           "items": {
                                             "type": "object",
@@ -141458,8 +141477,7 @@ Import one exact versioned legacy manifest only after fresh recorded autonomous 
                                                 ]
                                               },
                                               "content": {
-                                                "type": "string",
-                                                "maxLength": 131072
+                                                "type": "string"
                                               }
                                             },
                                             "required": [
@@ -142221,7 +142239,6 @@ Import one exact versioned legacy manifest only after fresh recorded autonomous 
                                           },
                                           "messages": {
                                             "readOnly": true,
-                                            "maxItems": 128,
                                             "type": "array",
                                             "items": {
                                               "type": "object",
@@ -142236,8 +142253,7 @@ Import one exact versioned legacy manifest only after fresh recorded autonomous 
                                                   ]
                                                 },
                                                 "content": {
-                                                  "type": "string",
-                                                  "maxLength": 131072
+                                                  "type": "string"
                                                 }
                                               },
                                               "required": [
@@ -143779,7 +143795,6 @@ Start the single initial semantic admission of captured conversation text. Repla
             },
             "messages": {
               "readOnly": true,
-              "maxItems": 128,
               "type": "array",
               "items": {
                 "type": "object",
@@ -143794,8 +143809,7 @@ Start the single initial semantic admission of captured conversation text. Repla
                     ]
                   },
                   "content": {
-                    "type": "string",
-                    "maxLength": 131072
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -144767,7 +144781,6 @@ Start the single initial semantic admission of captured conversation text. Repla
                     },
                     "messages": {
                       "readOnly": true,
-                      "maxItems": 128,
                       "type": "array",
                       "items": {
                         "type": "object",
@@ -144782,8 +144795,7 @@ Start the single initial semantic admission of captured conversation text. Repla
                             ]
                           },
                           "content": {
-                            "type": "string",
-                            "maxLength": 131072
+                            "type": "string"
                           }
                         },
                         "required": [
@@ -145588,7 +145600,6 @@ Persist a terminal intake cancellation before work admission. If admission alrea
             },
             "messages": {
               "readOnly": true,
-              "maxItems": 128,
               "type": "array",
               "items": {
                 "type": "object",
@@ -145603,8 +145614,7 @@ Persist a terminal intake cancellation before work admission. If admission alrea
                     ]
                   },
                   "content": {
-                    "type": "string",
-                    "maxLength": 131072
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -146576,7 +146586,6 @@ Persist a terminal intake cancellation before work admission. If admission alrea
                     },
                     "messages": {
                       "readOnly": true,
-                      "maxItems": 128,
                       "type": "array",
                       "items": {
                         "type": "object",
@@ -146591,8 +146600,7 @@ Persist a terminal intake cancellation before work admission. If admission alrea
                             ]
                           },
                           "content": {
-                            "type": "string",
-                            "maxLength": 131072
+                            "type": "string"
                           }
                         },
                         "required": [
@@ -147520,7 +147528,6 @@ Persist exact original conversation text and unsupported-source disclosures on t
             },
             "messages": {
               "readOnly": true,
-              "maxItems": 128,
               "type": "array",
               "items": {
                 "type": "object",
@@ -147535,8 +147542,7 @@ Persist exact original conversation text and unsupported-source disclosures on t
                     ]
                   },
                   "content": {
-                    "type": "string",
-                    "maxLength": 131072
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -148508,7 +148514,6 @@ Persist exact original conversation text and unsupported-source disclosures on t
                     },
                     "messages": {
                       "readOnly": true,
-                      "maxItems": 128,
                       "type": "array",
                       "items": {
                         "type": "object",
@@ -148523,8 +148528,7 @@ Persist exact original conversation text and unsupported-source disclosures on t
                             ]
                           },
                           "content": {
-                            "type": "string",
-                            "maxLength": 131072
+                            "type": "string"
                           }
                         },
                         "required": [
@@ -149325,7 +149329,6 @@ Read the current conversation intake or immutable admitted-work receipt by origi
                 },
                 "messages": {
                   "readOnly": true,
-                  "maxItems": 128,
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -149340,8 +149343,7 @@ Read the current conversation intake or immutable admitted-work receipt by origi
                         ]
                       },
                       "content": {
-                        "type": "string",
-                        "maxLength": 131072
+                        "type": "string"
                       }
                     },
                     "required": [
@@ -150313,7 +150315,6 @@ Read the current conversation intake or immutable admitted-work receipt by origi
                         },
                         "messages": {
                           "readOnly": true,
-                          "maxItems": 128,
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -150328,8 +150329,7 @@ Read the current conversation intake or immutable admitted-work receipt by origi
                                 ]
                               },
                               "content": {
-                                "type": "string",
-                                "maxLength": 131072
+                                "type": "string"
                               }
                             },
                             "required": [
@@ -151151,7 +151151,6 @@ Explicitly recover captured conversation admission with a fresh semantic operati
             },
             "messages": {
               "readOnly": true,
-              "maxItems": 128,
               "type": "array",
               "items": {
                 "type": "object",
@@ -151166,8 +151165,7 @@ Explicitly recover captured conversation admission with a fresh semantic operati
                     ]
                   },
                   "content": {
-                    "type": "string",
-                    "maxLength": 131072
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -152139,7 +152137,6 @@ Explicitly recover captured conversation admission with a fresh semantic operati
                     },
                     "messages": {
                       "readOnly": true,
-                      "maxItems": 128,
                       "type": "array",
                       "items": {
                         "type": "object",
@@ -152154,8 +152151,7 @@ Explicitly recover captured conversation admission with a fresh semantic operati
                             ]
                           },
                           "content": {
-                            "type": "string",
-                            "maxLength": 131072
+                            "type": "string"
                           }
                         },
                         "required": [
@@ -152722,7 +152718,6 @@ Read the selected host project ledger, without mutation authority or allowedActi
                               },
                               "messages": {
                                 "readOnly": true,
-                                "maxItems": 128,
                                 "type": "array",
                                 "items": {
                                   "type": "object",
@@ -152737,8 +152732,7 @@ Read the selected host project ledger, without mutation authority or allowedActi
                                       ]
                                     },
                                     "content": {
-                                      "type": "string",
-                                      "maxLength": 131072
+                                      "type": "string"
                                     }
                                   },
                                   "required": [

@@ -24358,7 +24358,11 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "displayName": "sample",
           "metadata": {}
         }
-      ]
+      ],
+      "total": 0,
+      "offset": 0,
+      "nextOffset": 0,
+      "hasMore": false
     }
   },
   "sessions.hosted.attach": {
@@ -24849,6 +24853,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
     "input": {
       "sessionId": "sample",
       "limit": 0,
+      "offset": 0,
       "before": "sample"
     },
     "output": {
@@ -24903,7 +24908,11 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "displayName": "sample",
           "metadata": {}
         }
-      ]
+      ],
+      "total": 0,
+      "offset": 0,
+      "nextOffset": 0,
+      "hasMore": false
     }
   },
   "sessions.permissionMode.get": {

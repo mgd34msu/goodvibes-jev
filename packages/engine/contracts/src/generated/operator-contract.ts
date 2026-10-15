@@ -30583,8 +30583,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                         ]
                       },
                       "content": {
-                        "type": "string",
-                        "maxLength": 131072
+                        "type": "string"
                       }
                     },
                     "required": [
@@ -37217,8 +37216,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                               ]
                             },
                             "content": {
-                              "type": "string",
-                              "maxLength": 131072
+                              "type": "string"
                             }
                           },
                           "required": [
@@ -43955,8 +43953,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                             ]
                           },
                           "content": {
-                            "type": "string",
-                            "maxLength": 131072
+                            "type": "string"
                           }
                         },
                         "required": [
@@ -121837,6 +121834,18 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                 ],
                 "additionalProperties": false
               }
+            },
+            "total": {
+              "type": "number"
+            },
+            "offset": {
+              "type": "number"
+            },
+            "nextOffset": {
+              "type": "number"
+            },
+            "hasMore": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -124534,7 +124543,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
       {
         "id": "sessions.messages.list",
         "title": "List Shared Session Messages",
-        "description": "Return message history for a shared session.",
+        "description": "Return a page of retained session messages. Offset counts backward from the newest message; nextOffset reads the preceding page. History is retained until explicitly deleted.",
         "category": "sessions",
         "source": "builtin",
         "access": "authenticated",
@@ -124556,6 +124565,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
               "type": "string"
             },
             "limit": {
+              "type": "number"
+            },
+            "offset": {
               "type": "number"
             },
             "before": {
@@ -124798,6 +124810,18 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                 ],
                 "additionalProperties": false
               }
+            },
+            "total": {
+              "type": "number"
+            },
+            "offset": {
+              "type": "number"
+            },
+            "nextOffset": {
+              "type": "number"
+            },
+            "hasMore": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -138074,7 +138098,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                           },
                                           "messages": {
                                             "readOnly": true,
-                                            "maxItems": 128,
                                             "type": "array",
                                             "items": {
                                               "type": "object",
@@ -138089,8 +138112,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                                   ]
                                                 },
                                                 "content": {
-                                                  "type": "string",
-                                                  "maxLength": 131072
+                                                  "type": "string"
                                                 }
                                               },
                                               "required": [
@@ -138859,7 +138881,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                             },
                                             "messages": {
                                               "readOnly": true,
-                                              "maxItems": 128,
                                               "type": "array",
                                               "items": {
                                                 "type": "object",
@@ -138874,8 +138895,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                                     ]
                                                   },
                                                   "content": {
-                                                    "type": "string",
-                                                    "maxLength": 131072
+                                                    "type": "string"
                                                   }
                                                 },
                                                 "required": [
@@ -139473,7 +139493,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                                 },
                                                 "messages": {
                                                   "readOnly": true,
-                                                  "maxItems": 128,
                                                   "type": "array",
                                                   "items": {
                                                     "type": "object",
@@ -139488,8 +139507,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                                         ]
                                                       },
                                                       "content": {
-                                                        "type": "string",
-                                                        "maxLength": 131072
+                                                        "type": "string"
                                                       }
                                                     },
                                                     "required": [
@@ -140251,7 +140269,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                                   },
                                                   "messages": {
                                                     "readOnly": true,
-                                                    "maxItems": 128,
                                                     "type": "array",
                                                     "items": {
                                                       "type": "object",
@@ -140266,8 +140283,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                                           ]
                                                         },
                                                         "content": {
-                                                          "type": "string",
-                                                          "maxLength": 131072
+                                                          "type": "string"
                                                         }
                                                       },
                                                       "required": [
@@ -141809,7 +141825,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                     },
                     "messages": {
                       "readOnly": true,
-                      "maxItems": 128,
                       "type": "array",
                       "items": {
                         "type": "object",
@@ -141824,8 +141839,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                             ]
                           },
                           "content": {
-                            "type": "string",
-                            "maxLength": 131072
+                            "type": "string"
                           }
                         },
                         "required": [
@@ -142797,7 +142811,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                             },
                             "messages": {
                               "readOnly": true,
-                              "maxItems": 128,
                               "type": "array",
                               "items": {
                                 "type": "object",
@@ -142812,8 +142825,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                     ]
                                   },
                                   "content": {
-                                    "type": "string",
-                                    "maxLength": 131072
+                                    "type": "string"
                                   }
                                 },
                                 "required": [
@@ -143618,7 +143630,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                     },
                     "messages": {
                       "readOnly": true,
-                      "maxItems": 128,
                       "type": "array",
                       "items": {
                         "type": "object",
@@ -143633,8 +143644,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                             ]
                           },
                           "content": {
-                            "type": "string",
-                            "maxLength": 131072
+                            "type": "string"
                           }
                         },
                         "required": [
@@ -144606,7 +144616,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                             },
                             "messages": {
                               "readOnly": true,
-                              "maxItems": 128,
                               "type": "array",
                               "items": {
                                 "type": "object",
@@ -144621,8 +144630,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                     ]
                                   },
                                   "content": {
-                                    "type": "string",
-                                    "maxLength": 131072
+                                    "type": "string"
                                   }
                                 },
                                 "required": [
@@ -145550,7 +145558,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                     },
                     "messages": {
                       "readOnly": true,
-                      "maxItems": 128,
                       "type": "array",
                       "items": {
                         "type": "object",
@@ -145565,8 +145572,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                             ]
                           },
                           "content": {
-                            "type": "string",
-                            "maxLength": 131072
+                            "type": "string"
                           }
                         },
                         "required": [
@@ -146538,7 +146544,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                             },
                             "messages": {
                               "readOnly": true,
-                              "maxItems": 128,
                               "type": "array",
                               "items": {
                                 "type": "object",
@@ -146553,8 +146558,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                     ]
                                   },
                                   "content": {
-                                    "type": "string",
-                                    "maxLength": 131072
+                                    "type": "string"
                                   }
                                 },
                                 "required": [
@@ -147355,7 +147359,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                         },
                         "messages": {
                           "readOnly": true,
-                          "maxItems": 128,
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -147370,8 +147373,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                 ]
                               },
                               "content": {
-                                "type": "string",
-                                "maxLength": 131072
+                                "type": "string"
                               }
                             },
                             "required": [
@@ -148343,7 +148345,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                 },
                                 "messages": {
                                   "readOnly": true,
-                                  "maxItems": 128,
                                   "type": "array",
                                   "items": {
                                     "type": "object",
@@ -148358,8 +148359,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                         ]
                                       },
                                       "content": {
-                                        "type": "string",
-                                        "maxLength": 131072
+                                        "type": "string"
                                       }
                                     },
                                     "required": [
@@ -149181,7 +149181,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                     },
                     "messages": {
                       "readOnly": true,
-                      "maxItems": 128,
                       "type": "array",
                       "items": {
                         "type": "object",
@@ -149196,8 +149195,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                             ]
                           },
                           "content": {
-                            "type": "string",
-                            "maxLength": 131072
+                            "type": "string"
                           }
                         },
                         "required": [
@@ -150169,7 +150167,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                             },
                             "messages": {
                               "readOnly": true,
-                              "maxItems": 128,
                               "type": "array",
                               "items": {
                                 "type": "object",
@@ -150184,8 +150181,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                     ]
                                   },
                                   "content": {
-                                    "type": "string",
-                                    "maxLength": 131072
+                                    "type": "string"
                                   }
                                 },
                                 "required": [
@@ -150750,7 +150746,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                       },
                                       "messages": {
                                         "readOnly": true,
-                                        "maxItems": 128,
                                         "type": "array",
                                         "items": {
                                           "type": "object",
@@ -150765,8 +150760,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                               ]
                                             },
                                             "content": {
-                                              "type": "string",
-                                              "maxLength": 131072
+                                              "type": "string"
                                             }
                                           },
                                           "required": [

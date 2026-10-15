@@ -21620,7 +21620,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "displayName": "sample",
           "metadata": {}
         }
-      ]
+      ],
+      "total": 0,
+      "offset": 0,
+      "nextOffset": 0,
+      "hasMore": false
     }
   },
   "sessions.hosted.attach": {
@@ -22144,7 +22148,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "displayName": "sample",
           "metadata": {}
         }
-      ]
+      ],
+      "total": 0,
+      "offset": 0,
+      "nextOffset": 0,
+      "hasMore": false
     }
   },
   "sessions.permissionMode.get": {

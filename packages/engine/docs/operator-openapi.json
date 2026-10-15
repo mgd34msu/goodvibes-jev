@@ -30602,8 +30602,7 @@
                                 ]
                               },
                               "content": {
-                                "type": "string",
-                                "maxLength": 131072
+                                "type": "string"
                               }
                             },
                             "required": [
@@ -37245,8 +37244,7 @@
                                       ]
                                     },
                                     "content": {
-                                      "type": "string",
-                                      "maxLength": 131072
+                                      "type": "string"
                                     }
                                   },
                                   "required": [
@@ -43899,8 +43897,7 @@
                                     ]
                                   },
                                   "content": {
-                                    "type": "string",
-                                    "maxLength": 131072
+                                    "type": "string"
                                   }
                                 },
                                 "required": [
@@ -119082,6 +119079,18 @@
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "total": {
+                      "type": "number"
+                    },
+                    "offset": {
+                      "type": "number"
+                    },
+                    "nextOffset": {
+                      "type": "number"
+                    },
+                    "hasMore": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -121791,7 +121800,7 @@
       "get": {
         "operationId": "sessions.messages.list",
         "summary": "List Shared Session Messages",
-        "description": "Return message history for a shared session.",
+        "description": "Return a page of retained session messages. Offset counts backward from the newest message; nextOffset reads the preceding page. History is retained until explicitly deleted.",
         "tags": [
           "sessions"
         ],
@@ -122031,6 +122040,18 @@
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "total": {
+                      "type": "number"
+                    },
+                    "offset": {
+                      "type": "number"
+                    },
+                    "nextOffset": {
+                      "type": "number"
+                    },
+                    "hasMore": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -122066,6 +122087,14 @@
           },
           {
             "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "offset",
             "in": "query",
             "required": false,
             "schema": {
@@ -136417,7 +136446,6 @@
                                                   },
                                                   "messages": {
                                                     "readOnly": true,
-                                                    "maxItems": 128,
                                                     "type": "array",
                                                     "items": {
                                                       "type": "object",
@@ -136432,8 +136460,7 @@
                                                           ]
                                                         },
                                                         "content": {
-                                                          "type": "string",
-                                                          "maxLength": 131072
+                                                          "type": "string"
                                                         }
                                                       },
                                                       "required": [
@@ -137202,7 +137229,6 @@
                                                     },
                                                     "messages": {
                                                       "readOnly": true,
-                                                      "maxItems": 128,
                                                       "type": "array",
                                                       "items": {
                                                         "type": "object",
@@ -137217,8 +137243,7 @@
                                                             ]
                                                           },
                                                           "content": {
-                                                            "type": "string",
-                                                            "maxLength": 131072
+                                                            "type": "string"
                                                           }
                                                         },
                                                         "required": [
@@ -137823,7 +137848,6 @@
                                                         },
                                                         "messages": {
                                                           "readOnly": true,
-                                                          "maxItems": 128,
                                                           "type": "array",
                                                           "items": {
                                                             "type": "object",
@@ -137838,8 +137862,7 @@
                                                                 ]
                                                               },
                                                               "content": {
-                                                                "type": "string",
-                                                                "maxLength": 131072
+                                                                "type": "string"
                                                               }
                                                             },
                                                             "required": [
@@ -138601,7 +138624,6 @@
                                                           },
                                                           "messages": {
                                                             "readOnly": true,
-                                                            "maxItems": 128,
                                                             "type": "array",
                                                             "items": {
                                                               "type": "object",
@@ -138616,8 +138638,7 @@
                                                                   ]
                                                                 },
                                                                 "content": {
-                                                                  "type": "string",
-                                                                  "maxLength": 131072
+                                                                  "type": "string"
                                                                 }
                                                               },
                                                               "required": [
@@ -140185,7 +140206,6 @@
                             },
                             "messages": {
                               "readOnly": true,
-                              "maxItems": 128,
                               "type": "array",
                               "items": {
                                 "type": "object",
@@ -140200,8 +140220,7 @@
                                     ]
                                   },
                                   "content": {
-                                    "type": "string",
-                                    "maxLength": 131072
+                                    "type": "string"
                                   }
                                 },
                                 "required": [
@@ -141173,7 +141192,6 @@
                                     },
                                     "messages": {
                                       "readOnly": true,
-                                      "maxItems": 128,
                                       "type": "array",
                                       "items": {
                                         "type": "object",
@@ -141188,8 +141206,7 @@
                                             ]
                                           },
                                           "content": {
-                                            "type": "string",
-                                            "maxLength": 131072
+                                            "type": "string"
                                           }
                                         },
                                         "required": [
@@ -142009,7 +142026,6 @@
                             },
                             "messages": {
                               "readOnly": true,
-                              "maxItems": 128,
                               "type": "array",
                               "items": {
                                 "type": "object",
@@ -142024,8 +142040,7 @@
                                     ]
                                   },
                                   "content": {
-                                    "type": "string",
-                                    "maxLength": 131072
+                                    "type": "string"
                                   }
                                 },
                                 "required": [
@@ -142997,7 +143012,6 @@
                                     },
                                     "messages": {
                                       "readOnly": true,
-                                      "maxItems": 128,
                                       "type": "array",
                                       "items": {
                                         "type": "object",
@@ -143012,8 +143026,7 @@
                                             ]
                                           },
                                           "content": {
-                                            "type": "string",
-                                            "maxLength": 131072
+                                            "type": "string"
                                           }
                                         },
                                         "required": [
@@ -143833,7 +143846,6 @@
                             },
                             "messages": {
                               "readOnly": true,
-                              "maxItems": 128,
                               "type": "array",
                               "items": {
                                 "type": "object",
@@ -143848,8 +143860,7 @@
                                     ]
                                   },
                                   "content": {
-                                    "type": "string",
-                                    "maxLength": 131072
+                                    "type": "string"
                                   }
                                 },
                                 "required": [
@@ -144821,7 +144832,6 @@
                                     },
                                     "messages": {
                                       "readOnly": true,
-                                      "maxItems": 128,
                                       "type": "array",
                                       "items": {
                                         "type": "object",
@@ -144836,8 +144846,7 @@
                                             ]
                                           },
                                           "content": {
-                                            "type": "string",
-                                            "maxLength": 131072
+                                            "type": "string"
                                           }
                                         },
                                         "required": [
@@ -145782,7 +145791,6 @@
                                 },
                                 "messages": {
                                   "readOnly": true,
-                                  "maxItems": 128,
                                   "type": "array",
                                   "items": {
                                     "type": "object",
@@ -145797,8 +145805,7 @@
                                         ]
                                       },
                                       "content": {
-                                        "type": "string",
-                                        "maxLength": 131072
+                                        "type": "string"
                                       }
                                     },
                                     "required": [
@@ -146770,7 +146777,6 @@
                                         },
                                         "messages": {
                                           "readOnly": true,
-                                          "maxItems": 128,
                                           "type": "array",
                                           "items": {
                                             "type": "object",
@@ -146785,8 +146791,7 @@
                                                 ]
                                               },
                                               "content": {
-                                                "type": "string",
-                                                "maxLength": 131072
+                                                "type": "string"
                                               }
                                             },
                                             "required": [
@@ -147617,7 +147622,6 @@
                             },
                             "messages": {
                               "readOnly": true,
-                              "maxItems": 128,
                               "type": "array",
                               "items": {
                                 "type": "object",
@@ -147632,8 +147636,7 @@
                                     ]
                                   },
                                   "content": {
-                                    "type": "string",
-                                    "maxLength": 131072
+                                    "type": "string"
                                   }
                                 },
                                 "required": [
@@ -148605,7 +148608,6 @@
                                     },
                                     "messages": {
                                       "readOnly": true,
-                                      "maxItems": 128,
                                       "type": "array",
                                       "items": {
                                         "type": "object",
@@ -148620,8 +148622,7 @@
                                             ]
                                           },
                                           "content": {
-                                            "type": "string",
-                                            "maxLength": 131072
+                                            "type": "string"
                                           }
                                         },
                                         "required": [
@@ -149225,7 +149226,6 @@
                                               },
                                               "messages": {
                                                 "readOnly": true,
-                                                "maxItems": 128,
                                                 "type": "array",
                                                 "items": {
                                                   "type": "object",
@@ -149240,8 +149240,7 @@
                                                       ]
                                                     },
                                                     "content": {
-                                                      "type": "string",
-                                                      "maxLength": 131072
+                                                      "type": "string"
                                                     }
                                                   },
                                                   "required": [
