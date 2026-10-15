@@ -175,7 +175,7 @@ export interface DaemonRuntimeRouteContext extends Omit<
       conflict?: { readonly status: 'closed' } | undefined;
     }>;
     getSession(sessionId: string): { id: string; status: string; messageCount: number; activeAgentId?: string } | null;
-    getMessages(sessionId: string, limit: number): unknown[];
+    getMessages(sessionId: string, limit: number, offset?: number): unknown[];
     getInputs(sessionId: string, limit: number): unknown[];
     getInputsSince(sessionId: string, options: { state?: string | undefined; since?: number | undefined; limit?: number | undefined }): unknown[];
     markInputDelivered(sessionId: string, inputId: string, options: { consumed?: boolean | undefined; agentId?: string | undefined }): Promise<unknown | null>;

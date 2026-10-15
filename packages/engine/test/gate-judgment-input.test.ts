@@ -45,7 +45,7 @@ test('native card inspection rejects unsupported complete input without reading 
   Object.defineProperty(value, 'late', { enumerable: true, get() { calls++; return PAN; } });
   expect(judgmentInputCardProblem(value)).toBe('unsupported-input');
   expect(calls).toBe(0);
-  expect(judgmentInputCardProblem({ apiKey: SECRET, content: 'a'.repeat(1_000_001) })).toBe('unsupported-input');
+  expect(judgmentInputCardProblem({ apiKey: SECRET, content: 'a'.repeat(1_000_001) })).toBeUndefined();
 });
 
 function hiddenArrayValue(value: unknown, index = 0): unknown[] {
@@ -317,9 +317,9 @@ describe('pre-judgment protected input refusal', () => {
     expect(log.requests).toEqual([]);
   });
 
-  test('bounds refuse complete oversized data without a partial reading', async () => {
+  test('privacy inspection accepts complete large ordinary input', () => {
     const args = { content: 'x'.repeat(1_000_001) };
-    expect((await gate().manager.checkDetailed('write', args)).approved).toBe(false);
+    expect(judgmentInputProblem(args)).toBeUndefined();
     expect(log.requests).toEqual([]);
   });
 });
@@ -624,23 +624,23 @@ describe('complete declared path inspection', () => {
     expect(judgmentInputProblem({ 'surfaces.': JSON.stringify({ slack: { botToken: SECRET } }) })).toBeUndefined();
   });
 
-  test('complete encoded depth and node limits still refuse the original input', () => {
+  test('complete encoded deep and wide data retains privacy inspection', () => {
     const nested = (levels: number): unknown => {
       let value: unknown = 'ordinary';
       for (let index = 0; index < levels; index++) value = { child: value };
       return value;
     };
     expect(judgmentInputProblem(JSON.stringify(nested(63)))).toBeUndefined();
-    expect(judgmentInputProblem(JSON.stringify(nested(64)))).toBe('unsupported-input');
+    expect(judgmentInputProblem(JSON.stringify(nested(300)))).toBeUndefined();
     expect(judgmentInputProblem(JSON.stringify(Array.from({ length: 19_998 }, () => null)))).toBeUndefined();
-    expect(judgmentInputProblem(JSON.stringify(Array.from({ length: 19_999 }, () => null)))).toBe('unsupported-input');
+    expect(judgmentInputProblem(JSON.stringify(Array.from({ length: 30_000 }, () => null)))).toBeUndefined();
     const complete = Array.from({ length: 19_997 }, () => null);
     expect(judgmentInputProblem(JSON.stringify([...complete, PAN]))).toBe('card-material');
   });
 
-  test('complete decoded text retains the original whole-source character bound', () => {
+  test('complete decoded text is inspected without a character cutoff', () => {
     expect(judgmentInputProblem(JSON.stringify(['x'.repeat(499_998)]))).toBeUndefined();
-    expect(judgmentInputProblem(JSON.stringify(['x'.repeat(499_999)]))).toBe('unsupported-input');
+    expect(judgmentInputProblem(JSON.stringify(['x'.repeat(1_100_000)]))).toBeUndefined();
     const prefix = 'ordinary '.repeat(1_100);
     expect(judgmentInputProblem({ surfaces: { slack: JSON.stringify({ botToken: `${prefix}${SECRET}` }) } })).toBe('credential-material');
     expect(judgmentInputCardProblem(JSON.stringify({ apiKey: SECRET, tail: `${prefix}${PAN}` }))).toBe('card-material');

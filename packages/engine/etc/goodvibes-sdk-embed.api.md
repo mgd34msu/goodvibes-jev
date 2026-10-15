@@ -347,7 +347,7 @@ export class SharedSessionBroker {
     // Warning: (ae-forgotten-export) The symbol "SharedSessionMessage" needs to be exported by the entry point embed.d.ts
     //
     // (undocumented)
-    getMessages(sessionId: string, limit?: number): SharedSessionMessage[];
+    getMessages(sessionId: string, limit?: number, offset?: number): SharedSessionMessage[];
     // (undocumented)
     getSession(sessionId: string): SharedSessionRecord | null;
     // Warning: (ae-forgotten-export) The symbol "ListSharedSessionsOptions" needs to be exported by the entry point embed.d.ts
@@ -396,7 +396,7 @@ export class SharedSessionBroker {
     submitDelegatedMessage(input: SubmitSharedSessionMessageInput, onQueued: (input: SharedSessionInputRecord) => DelegatedSessionInputBinding): Promise<DelegatedSessionSubmission>;
     // (undocumented)
     submitMessage(input: SubmitSharedSessionMessageInput): Promise<SharedSessionSubmission>;
-    trimRetained(level: 'floor' | 'flush'): void;
+    trimRetained(_level: 'floor' | 'flush'): void;
 }
 
 // @public (undocumented)

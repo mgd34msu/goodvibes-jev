@@ -11,13 +11,11 @@ import { join, relative, isAbsolute, sep } from 'node:path';
 import { captureJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { retainStrictJudgmentJson, prepareJudgmentResult } from '../gate/judgment-result.js';
 import { assertJudgmentInput } from '../gate/judgment-input.js';
-import { codeChunkView, codeSearchRerank } from './batteries/code-search-rerank.js';
+import { codeChunkView, rerankCodeParts } from './batteries/code-search-rerank.js';
 import type { CodeChunk } from './code-index-chunking.js';
 import type { CodeContextResult } from './code-index-types.js';
 
 const CODE_SEARCH_SITE = 'state.code-index-search';
-
-const MAX_SOURCE_BYTES = 512_000;
 
 /** Retain the complete native source, including text outside the indexed chunk. */
 function readLexicalSource(root: string, path: string): { code?: string; version: string } {
@@ -34,11 +32,11 @@ function readLexicalSource(root: string, path: string): { code?: string; version
   if (!actualRelative || actualRelative === '..' || actualRelative.startsWith('..' + sep) || isAbsolute(actualRelative)) throw new Error('Code search source is outside its root');
   const identity = (value: Stats) => `${value.dev}:${value.ino}:${value.size}:${value.mtimeMs}:${value.ctimeMs}`;
   const before = lstatSync(actual);
-  if (!before.isFile() || before.size > MAX_SOURCE_BYTES) throw new Error('Code search source exceeds its complete-input budget');
+  if (!before.isFile()) throw new Error('Code search source is not a regular file');
   const fd = openSync(actual, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     if (identity(fstatSync(fd)) !== identity(before)) throw new Error('Code search source changed');
-    const buffer = Buffer.alloc(MAX_SOURCE_BYTES + 1); let offset = 0;
+    const buffer = Buffer.alloc(before.size + 1); let offset = 0;
     while (offset < buffer.length) {
       const count = readSync(fd, buffer, offset, buffer.length - offset, offset);
       if (count === 0) break;
@@ -81,7 +79,7 @@ export async function rankLexicalChunks(
     }
   };
   const owner = captureJudgmentPort(CODE_SEARCH_SITE, { assertCurrent: current, prepareResultCapture: prepareJudgmentResult });
-  const { ranked } = await codeSearchRerank.rerank(owner.port, snapshot.query, candidates,
+  const { ranked } = await rerankCodeParts(owner.port, snapshot.query, candidates,
     { site: CODE_SEARCH_SITE, signal: owner.signal, beforeAttempt: owner.assertCurrent });
   owner.assertCurrent();
   const byId = new Map(snapshot.chunks.map(chunk => [chunk.chunkId, chunk]));

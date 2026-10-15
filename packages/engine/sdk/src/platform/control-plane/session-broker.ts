@@ -76,8 +76,8 @@ import { handleSharedSessionIntent } from './session-broker-intent.js';
 import { isDelegatedSessionInput } from './session-intents.js';
 import { submitDelegatedSessionMessage, type DelegatedSessionInputBinding, type DelegatedSessionSubmission } from './session-broker-delegated.js';
 
-const MAX_PERSISTED_MESSAGES = 2_000;
-const MAX_CONTINUATION_MESSAGES = 16;
+const MAX_PERSISTED_MESSAGES = Infinity;
+const MAX_CONTINUATION_MESSAGES = Infinity;
 /**
  * Default retention for CLOSED sessions (HISTORY): `POSITIVE_INFINITY` = retain
  * indefinitely, so the GC sweep NEVER deletes a closed session. A finite value
@@ -355,8 +355,8 @@ export class SharedSessionBroker {
     return updated;
   }
 
-  getMessages(sessionId: string, limit = 100): SharedSessionMessage[] {
-    return listSharedSessionMessages(this.messageStore(), sessionId, limit);
+  getMessages(sessionId: string, limit = 100, offset = 0): SharedSessionMessage[] {
+    return listSharedSessionMessages(this.messageStore(), sessionId, limit, offset);
   }
 
   getInputs(sessionId: string, limit = 100): SharedSessionInputRecord[] {
@@ -917,31 +917,9 @@ export class SharedSessionBroker {
     return total;
   }
 
-  /**
-   * MemoryGovernor trim hook, a REAL reclaim. `floor` runs the idle/closed
-   * session GC sweep immediately; `flush` additionally truncates the message
-   * and input buckets of every non-busy session to a short tail (the full
-   * transcript persists in the session store; these buckets are the live
-   * relay mirror).
-   */
-  trimRetained(level: 'floor' | 'flush'): void {
+  /** Only explicit retention policy can delete durable session history. */
+  trimRetained(_level: 'floor' | 'flush'): void {
     this.gcSweep();
-    if (level !== 'flush') return;
-    const keepTail = 20;
-    const isBusy = (sessionId: string): boolean => {
-      const session = this.sessions.get(sessionId);
-      return session ? session.pendingInputCount > 0 : false;
-    };
-    for (const [sessionId, bucket] of this.messages) {
-      if (!isBusy(sessionId) && bucket.length > keepTail) {
-        this.messages.set(sessionId, bucket.slice(-keepTail));
-      }
-    }
-    for (const [sessionId, bucket] of this.inputs) {
-      if (!isBusy(sessionId) && bucket.length > keepTail) {
-        this.inputs.set(sessionId, bucket.slice(-keepTail));
-      }
-    }
   }
 
   private gcSweep(): void {

@@ -32,7 +32,7 @@ export function buildRouterSessionBrokerAdapter(
     ),
     register: (input) => sessionBroker.register(input as Parameters<SharedSessionBroker['register']>[0]),
     getSession: (sessionId) => sessionBroker.getSession(sessionId) as never,
-    getMessages: (sessionId, limit) => sessionBroker.getMessages(sessionId, limit),
+    getMessages: (sessionId, limit, offset) => sessionBroker.getMessages(sessionId, limit, offset),
     getInputs: (sessionId, limit) => sessionBroker.getInputs(sessionId, limit),
     getInputsSince: (sessionId, options) => sessionBroker.getInputsSince(
       sessionId,

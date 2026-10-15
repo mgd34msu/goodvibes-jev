@@ -154,6 +154,8 @@ export interface CapturedExecutionLease {
   readonly readOutput: () => Promise<ExecCommandResult>;
 }
 export interface CapturedExecutionObserver {
+  /** Construction-owned source, mounted read-only for this invocation only. */
+  readonly script?: { readonly name: string; readonly content: string } | undefined;
   /** Final construction-owned command admission, after all async preparation. */
   readonly beforeSpawn?: (() => void) | undefined;
   /** Final publication restriction; retained jobs supply their independent owner constraint. */
@@ -213,7 +215,7 @@ export async function runCapturedCommand(
 ): Promise<ExecCommandResult> {
   binding = Object.freeze({ ...binding, dependencyInputs: binding.dependencyInputs ? Object.freeze([...binding.dependencyInputs]) : undefined });
   input = structuredClone(input);
-  observer = { ...observer, repairCandidate: observer.repairCandidate ? Object.freeze({ ...observer.repairCandidate }) : undefined, fileOps: observer.fileOps ? structuredClone(observer.fileOps) : undefined };
+  observer = { ...observer, script: observer.script ? Object.freeze({ ...observer.script }) : undefined, repairCandidate: observer.repairCandidate ? Object.freeze({ ...observer.repairCandidate }) : undefined, fileOps: observer.fileOps ? structuredClone(observer.fileOps) : undefined };
   const start = Date.now();
   const root = resolve(binding.root);
   const cwd = resolve(workingDirectory, input.cwd ?? '.');
@@ -338,6 +340,12 @@ export async function runCapturedCommand(
     const bunRuntime = await projectCapturedExecBunRuntime(binding, temporary, operationSignal);
     checkDependencies = async () => { await dependencies.check(); await nodeRuntime.check(); await bunRuntime.check(); };
     await check();
+    const script = observer.script;
+    if (script && !/^\.goodvibes-repl-[a-f0-9-]+\.ts$/.test(script.name)) throw new Error('Invalid captured script name');
+    if (script) {
+      await writeFile(join(temporary, 'repl-source.ts'), script.content, { flag: 'wx', mode: 0o400 });
+      await writeFile(join(projection, script.name), '', { flag: 'wx', mode: 0o400 });
+    }
     const filterPath = join(temporary, 'sockets.bpf');
     await writeFile(filterPath, socketFilter(network));
     const fd = openSync(filterPath, 'r');
@@ -345,6 +353,7 @@ export async function runCapturedCommand(
     argv.push(...nodeRuntime.argv, ...bunRuntime.argv);
     argv.push(contractInputAuthorityMutable(binding.authority) ? '--bind' : '--ro-bind', projection, root,
       '--chdir', cwd, '--seccomp', '3');
+    if (script) argv.push('--ro-bind', join(temporary, 'repl-source.ts'), join(root, script.name));
     for (const mount of dependencies.mounts) argv.push('--ro-bind', mount.source, mount.target);
     const environment = { ...ambientEnvironment, PATH: '/captured-runtime/bin:/usr/bin:/bin', HOME: '/home/captured', TMPDIR: '/tmp', LANG: ambientEnvironment.LANG ?? 'C.UTF-8', ...input.env };
     const boundaryStop = new AbortController();
@@ -388,7 +397,10 @@ export async function runCapturedCommand(
       executionSignal.addEventListener('abort', onAbort, { once: true });
       if (executionSignal.aborted) onAbort();
       const timeout = (): void => { timedOut = true; stop(); };
-      timer = setTimeout(timeout, input.until?.timeout_ms ?? timeoutMs);
+      const commandDeadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
+      const untilTimeout = input.until?.timeout_ms ?? 0;
+      const initialTimeout = Math.min(timeoutMs > 0 ? timeoutMs : Infinity, untilTimeout > 0 ? untilTimeout : Infinity);
+      if (Number.isFinite(initialTimeout)) timer = setTimeout(timeout, initialTimeout);
       let untilDirty = false;
       let checkingUntil = false;
       let untilCompletion: Promise<void> = Promise.resolve();
@@ -406,7 +418,7 @@ export async function runCapturedCommand(
                 untilMatched = true;
                 clearTimeout(timer);
                 if (input.until?.kill_after) child.kill('SIGKILL');
-                else timer = setTimeout(timeout, timeoutMs);
+                else if (Number.isFinite(commandDeadline)) timer = setTimeout(timeout, Math.max(0, commandDeadline - Date.now()));
                 observer.onUntilMatched?.();
               }
             }
@@ -430,6 +442,7 @@ export async function runCapturedCommand(
     await check();
     if (invalid) throw new Error('authority changed');
     if (killed) return { cmd: command, cwd, exit_code: null, stdout: '', stderr: '', success: false, timed_out: timedOut, duration_ms: Date.now() - start };
+    if (script) await rm(join(projection, script.name), { force: true });
     const changes = new Map<string, { path: string; digest: string; mode: number }>();
     const present = new Set<string>();
     const directories = new Map<string, number>();

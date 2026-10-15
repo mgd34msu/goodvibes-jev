@@ -1,3 +1,4 @@
+import { WebSocketMessageAssembler, sendWebSocketMessage } from '@goodvibes-jev/engine/transport-core';
 import {
   RUNTIME_EVENT_DOMAINS,
   SerializedEventEnvelopeSchema,
@@ -90,15 +91,6 @@ type TimeoutHandle = ReturnType<typeof setTimeout> & { unref?: () => void };
 /** Default max reconnect attempts for WebSocket connections (finite to prevent infinite auth loops). */
 export const DEFAULT_WS_MAX_ATTEMPTS = 10;
 
-/** Maximum number of messages that may be queued in the outbound queue before the oldest entry is dropped. */
-const MAX_OUTBOUND_QUEUE = 1024;
-/** Maximum size for a single queued outbound WebSocket message. */
-const MAX_OUTBOUND_MESSAGE_BYTES = 1024 * 1024;
-/** Maximum total queued outbound WebSocket payload bytes. */
-const MAX_OUTBOUND_QUEUE_BYTES = 16 * 1024 * 1024;
-/** Maximum size accepted for one inbound WebSocket runtime-event frame. */
-const MAX_INBOUND_FRAME_BYTES = 1024 * 1024;
-const textEncoder = new TextEncoder();
 
 function getSocketOpenState(WebSocketImpl: typeof WebSocket): number {
   return typeof WebSocketImpl.OPEN === 'number' ? WebSocketImpl.OPEN : 1;
@@ -362,111 +354,17 @@ export function createWebSocketConnector<TEvent extends RuntimeEventRecord = Run
       options.onConnectionStateChange?.(state);
       options.onTransportEvent?.({ type: 'TRANSPORT_CONNECTION_STATE', transportId, state });
     };
-    // Bounded outbound message queue, max entries and total bytes, drop-oldest policy.
-    // Messages pushed while the socket is not yet open or is reconnecting are buffered here
-    // and flushed on the next successful open event.
-    const outboundQueue: Array<{ readonly data: string; readonly sizeBytes: number }> = [];
-    let outboundQueueBytes = 0;
-    let droppedOutboundCount = 0;
-    // Track overflow bursts so notifications fire on every burst rather than once per
-    // connection lifetime. overflowEventCount is reset to 0 in flushOutboundQueue on
-    // reconnect, so the first burst after a restore is reported again.
-    let overflowEventCount = 0;
+    // Retain pending logical messages across reconnects. Native writes use backpressure.
+    const outboundQueue: string[] = [];
+    const assembler = new WebSocketMessageAssembler();
+    let connectionAbort = new AbortController();
+    let flushing = false;
+    let authenticated = false;
     const getAuthToken = normalizeAuthToken(token ?? undefined);
-
-    /**
-     * Enqueue a message for delivery over this WebSocket connection.
-     *
-     * If the socket is currently open the message is sent immediately.
-     * If the socket is not yet open (or is reconnecting), the message is
-     * buffered and will be flushed once the connection is re-established.
-     *
-     * When the buffer is full by count or byte budget, the oldest pending
-     * message is dropped and a counter is incremented. A single message larger
-     * than MAX_OUTBOUND_MESSAGE_BYTES is rejected instead of being queued.
-     * Callers that need back-pressure should check `socket?.readyState` before
-     * calling.
-     *
-     * @param data - Serialised message string to send.
-     */
     const emitLocal = (data: string): void => {
-      if (socket && isSocketOpen(socket, WebSocketImpl)) {
-        socket.send(data);
-        return;
-      }
-      const sizeBytes = textEncoder.encode(data).byteLength;
-      if (sizeBytes > MAX_OUTBOUND_MESSAGE_BYTES) {
-        droppedOutboundCount += 1;
-        overflowEventCount += 1;
-        // fire on first overflow and every 10th thereafter so bursts between
-        // reconnects stay observable after the first.
-        if (overflowEventCount === 1 || overflowEventCount % 10 === 0) {
-          const bpError = new WebSocketTransportError(
-            `WebSocket outbound message too large (${sizeBytes} bytes, limit ${MAX_OUTBOUND_MESSAGE_BYTES}). Dropping the message while the socket reconnects.`,
-            {
-              code: 'WS_QUEUE_OVERFLOW',
-              hint: 'Split large runtime event frames before enqueueing them while the WebSocket is disconnected.',
-            },
-          );
-          options.onError?.(bpError);
-          options.onBackpressure?.({
-            droppedCount: droppedOutboundCount,
-            queueLength: outboundQueue.length,
-            queueBytes: outboundQueueBytes,
-            reason: 'message_too_large',
-          });
-          // Dispatch typed event so UI event-bus subscribers receive the same
-          // information as the onBackpressure callback.
-          options.onTransportEvent?.({
-            type: 'TRANSPORT_BACKPRESSURE',
-            transportId,
-            droppedCount: droppedOutboundCount,
-            queueLength: outboundQueue.length,
-            queueBytes: outboundQueueBytes,
-            reason: 'message_too_large',
-          });
-        }
-        return;
-      }
-      while (
-        outboundQueue.length >= MAX_OUTBOUND_QUEUE
-        || outboundQueueBytes + sizeBytes > MAX_OUTBOUND_QUEUE_BYTES
-      ) {
-        const dropped = outboundQueue.shift();
-        if (!dropped) break;
-        outboundQueueBytes -= dropped.sizeBytes;
-        droppedOutboundCount += 1;
-        overflowEventCount += 1;
-        // fire on first overflow and every 10th thereafter.
-        if (overflowEventCount === 1 || overflowEventCount % 10 === 0) {
-          const bpError = new WebSocketTransportError(
-            `WebSocket outbound queue full (limit ${MAX_OUTBOUND_QUEUE} messages / ${MAX_OUTBOUND_QUEUE_BYTES} bytes). Dropping oldest messages until the socket reconnects.`,
-            {
-              code: 'WS_QUEUE_OVERFLOW',
-              hint: 'Wait for the runtime event WebSocket to reconnect before sending more local frames.',
-            },
-          );
-          options.onError?.(bpError);
-          options.onBackpressure?.({
-            droppedCount: droppedOutboundCount,
-            queueLength: outboundQueue.length,
-            queueBytes: outboundQueueBytes,
-            reason: 'queue_full',
-          });
-          // Dispatch typed event so UI event-bus subscribers receive the same
-          // information as the onBackpressure callback.
-          options.onTransportEvent?.({
-            type: 'TRANSPORT_BACKPRESSURE',
-            transportId,
-            droppedCount: droppedOutboundCount,
-            queueLength: outboundQueue.length,
-            queueBytes: outboundQueueBytes,
-            reason: 'queue_full',
-          });
-        }
-      }
-      outboundQueue.push({ data, sizeBytes });
-      outboundQueueBytes += sizeBytes;
+      if (stopped) return;
+      outboundQueue.push(data);
+      if (authenticated && socket && isSocketOpen(socket, WebSocketImpl)) flushOutboundQueue(socket);
     };
 
     // Notify caller of the emitter handle for tests and local frame injection.
@@ -474,6 +372,9 @@ export function createWebSocketConnector<TEvent extends RuntimeEventRecord = Run
 
     const closeSocket = () => {
       if (!socket) return;
+      authenticated = false;
+      connectionAbort.abort();
+      assembler.reset();
       // clear any pending reconnect timer so close() cannot schedule
       // a second reconnect while one is already pending.
       if (reconnectTimer) {
@@ -534,22 +435,22 @@ export function createWebSocketConnector<TEvent extends RuntimeEventRecord = Run
       reconnectTimer.unref?.();
     };
 
-    const flushOutboundQueue = (ws: WebSocket) => {
-      // re-check socket open before each send so queued messages are not
-      // lost when the socket closes between the auth frame and the drain loop.
-      // Messages that cannot be sent are left in the queue for the next reconnect cycle.
-      while (outboundQueue.length > 0) {
-        if (!isSocketOpen(ws, WebSocketImpl)) {
-          // Socket closed mid-drain; leave the remaining items for the next reconnect.
-          break;
+    const flushOutboundQueue = (openedSocket: WebSocket): void => {
+      if (!authenticated || flushing || stopped || socket !== openedSocket) return;
+      flushing = true;
+      const signal = connectionAbort.signal;
+      void (async () => {
+        try {
+          while (outboundQueue.length && !stopped && socket === openedSocket) {
+            await sendWebSocketMessage(openedSocket, outboundQueue[0]!, signal);
+            outboundQueue.shift();
+          }
+        } catch (error) { if (!signal.aborted) options.onError?.(transportErrorFromUnknown(error, 'WebSocket send failed')); }
+        finally {
+          flushing = false;
+          if (socket && socket !== openedSocket && isSocketOpen(socket, WebSocketImpl)) flushOutboundQueue(socket);
         }
-        const item = outboundQueue.shift();
-        if (!item) break;
-        outboundQueueBytes -= item.sizeBytes;
-        ws.send(item.data);
-      }
-      // Reset overflow state on successful reconnect so the next burst is reported.
-      overflowEventCount = 0;
+      })();
     };
 
     const onOpen = async (event: Event) => {
@@ -588,7 +489,7 @@ export function createWebSocketConnector<TEvent extends RuntimeEventRecord = Run
           ...(wsTraceHeaders['traceparent'] ? { traceparent: wsTraceHeaders['traceparent'] } : {}),
           ...(wsTraceHeaders['tracestate'] ? { tracestate: wsTraceHeaders['tracestate'] } : {}),
         }));
-        flushOutboundQueue(openedSocket);
+
         emitConnectionState('connected');
         options.onOpen?.();
         // Reset the reconnect-attempt budget only after the connection proves stable.
@@ -622,23 +523,10 @@ export function createWebSocketConnector<TEvent extends RuntimeEventRecord = Run
         if (typeof event.data !== 'string') {
           throw new WebSocketTransportError('WebSocket runtime event frame was not a string payload.', { code: 'WS_EVENT_ERROR' });
         }
-        // cheap pre-check (1 byte per char worst case) avoids allocating
-        // the full UTF-8 buffer for clearly-oversized frames. Only fall through
-        // to textEncoder.encode when within the fast bound.
-        if (event.data.length > MAX_INBOUND_FRAME_BYTES) {
-          throw new WebSocketTransportError(
-            `WebSocket runtime event frame too large (>${MAX_INBOUND_FRAME_BYTES} bytes, limit ${MAX_INBOUND_FRAME_BYTES}).`,
-            { code: 'WS_FRAME_TOO_LARGE' },
-          );
-        }
-        const frameBytes = textEncoder.encode(event.data).byteLength;
-        if (frameBytes > MAX_INBOUND_FRAME_BYTES) {
-          throw new WebSocketTransportError(
-            `WebSocket runtime event frame too large (${frameBytes} bytes, limit ${MAX_INBOUND_FRAME_BYTES}).`,
-            { code: 'WS_FRAME_TOO_LARGE' },
-          );
-        }
-        const frame = JSON.parse(event.data) as { type?: string; event?: string; payload?: unknown };
+        const decoded = assembler.accept(JSON.parse(event.data));
+        if (decoded === undefined) return;
+        const frame = decoded as { type?: string; event?: string; payload?: unknown; ok?: boolean };
+        if (frame.type === 'auth' && frame.ok === true && socket) { authenticated = true; flushOutboundQueue(socket); }
         if (!hasReceivedMessage) {
           hasReceivedMessage = true;
           reconnectAttempt = 0;
@@ -731,6 +619,7 @@ export function createWebSocketConnector<TEvent extends RuntimeEventRecord = Run
       emitConnectionState('connecting');
       const nextSocket = new WebSocketImpl(url);
       socket = nextSocket;
+      connectionAbort = new AbortController();
       nextSocket.addEventListener('open', onOpen);
       nextSocket.addEventListener('message', onMessage);
       nextSocket.addEventListener('close', onClose);
@@ -749,10 +638,9 @@ export function createWebSocketConnector<TEvent extends RuntimeEventRecord = Run
       closeSocket();
       emitConnectionState('disconnected');
       // reset the outbound buffer on disposal so a future reconnect
-      // (or re-use of the returned cleanup path in tests) does not accumulate
-      // stale byte totals. Both must be reset together to prevent accounting drift.
+      // releases queued messages when the connector is explicitly disposed.
       outboundQueue.length = 0;
-      outboundQueueBytes = 0;
+
     };
   };
 }

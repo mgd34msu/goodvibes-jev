@@ -12,7 +12,6 @@ import { autonomousSourceEvidence, captureAutonomousChoices, captureAutonomousSo
 import { createPermissionConfigReader, PermissionManager } from '../sdk/src/platform/permissions/manager.ts';
 import { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions/policy-runtime.ts';
 import { assertCurrentToolEffect, ToolRegistry } from '../sdk/src/platform/tools/registry.ts';
-import { NATIVE_CONVERSATION_CONTINUATION_MAX_MESSAGES } from '../sdk/src/platform/workflow/work-ledger/native-continuation-context.ts';
 import type { NativeSelectedDiffContext } from '../sdk/src/platform/workflow/work-ledger/native-diff-context.ts';
 import { forgetGateReadings, gateReadingsPort, READ_ONLY } from './_helpers/gate-readings.ts';
 
@@ -118,8 +117,8 @@ test('complete source validation refuses hidden accessors and nested proxies wit
   expect(() => captureAutonomousSourceFrame(proxied)).toThrow();
   expect(accessed).toBe(0);
   const oversized = source();
-  oversized.conversationContext = Array.from({ length: NATIVE_CONVERSATION_CONTINUATION_MAX_MESSAGES + 1 }, () => ({ role: 'user' as const, content: 'Ordinary discussion.' }));
-  expect(() => captureAutonomousSourceFrame(oversized)).toThrow();
+  oversized.conversationContext = Array.from({ length: 300 }, () => ({ role: 'user' as const, content: 'Ordinary discussion.' }));
+  expect(captureAutonomousSourceFrame(oversized).source.conversationContext).toHaveLength(300);
 });
 
 test('catalog factory preserves the original canonical context and fresh detached references', () => {

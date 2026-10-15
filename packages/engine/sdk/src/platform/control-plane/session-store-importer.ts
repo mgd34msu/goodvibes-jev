@@ -38,7 +38,7 @@ import { summarizeError } from '../utils/error-display.js';
  * stamped with an honest `retainedMessageCount` (see createSessionBrokerSnapshot).
  * Migration therefore never silently drops whole sessions' transcripts.
  */
-const MAX_PERSISTED_MESSAGES_PER_SESSION = 2_000;
+const MAX_PERSISTED_MESSAGES_PER_SESSION = Infinity;
 
 /** A legacy store to fold into the home store. */
 export interface LegacySessionSource {

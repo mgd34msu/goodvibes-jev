@@ -1,3 +1,4 @@
+import { WebSocketMessageAssembler, sendWebSocketMessage } from '@goodvibes-jev/engine/transport-core';
 /**
  * daemon-ws-call.ts, invoking a verb that has no REST binding.
  *
@@ -37,6 +38,7 @@ export const DAEMON_WS_TIMEOUT_MS = 15_000;
  * and requiring them would push every test into a cast.
  */
 export interface DaemonWebSocket {
+  readonly bufferedAmount?: number;
   send(data: string): void;
   close(): void;
   onopen: ((event: unknown) => void) | null;
@@ -126,6 +128,8 @@ export async function callDaemonWsVerb<T>(
   }
 
   return new Promise<DaemonVerbOutcome<T>>((resolve) => {
+    const assembler = new WebSocketMessageAssembler();
+    const lifetime = new AbortController();
     let settled = false;
     let authSent = false;
     let callSent = false;
@@ -142,6 +146,8 @@ export async function callDaemonWsVerb<T>(
     const finish = (outcome: DaemonVerbOutcome<T>): void => {
       if (settled) return;
       settled = true;
+      lifetime.abort();
+      assembler.reset();
       clearTimeout(timer);
       try {
         socket.close();
@@ -153,8 +159,7 @@ export async function callDaemonWsVerb<T>(
 
     const send = (frame: unknown): void => {
       if (settled) return;
-      try { socket.send(JSON.stringify(frame)); }
-      catch {
+      void sendWebSocketMessage(socket, JSON.stringify(frame), lifetime.signal).catch(() => {
         finish({
           ok: false,
           error: `could not send the request to ${where}`,
@@ -162,7 +167,7 @@ export async function callDaemonWsVerb<T>(
             ? 'check the daemon is running: goodvibes-daemon service-status'
             : `check that machine is reachable and its daemon is listening on ${target.baseUrl}`,
         });
-      }
+      });
     };
 
     socket.onopen = (): void => {
@@ -173,7 +178,8 @@ export async function callDaemonWsVerb<T>(
 
     socket.onmessage = (event): void => {
       if (settled) return;
-      const frame = parseFrame(event.data);
+      let frame: ParsedFrame | null;
+      try { frame = assembler.accept(parseFrame(event.data)) as ParsedFrame | null; } catch { finish({ ok: false, error: 'Invalid chunked daemon response', fix: 'Reconnect to the daemon and retry.' }); return; }
       if (!frame) return;
 
       if (frame.type === 'auth') {

@@ -165,3 +165,15 @@ describe('receipt-authorized code index', () => {
   });
 
 });
+
+test('authorized indexing loads all files and chunks beyond the retired input budgets', async () => {
+  const { store, input } = setup();
+  const snapshots = Array.from({ length: 70 }, (_, index) => ({ path: `${index}.txt`, content: '', mtimeMs: 1 }));
+  let loaded = 0;
+  await store.prepareAuthorizedSnapshots({ ...input, snapshots, loadSnapshot: async snapshot => {
+    loaded++;
+    return { ...snapshot, content: Array.from({ length: 200 }, () => 'ordinary source '.repeat(50)).join('\n') };
+  } });
+  const stats = await store.statsAuthorized();
+  expect(loaded).toBe(70); expect(stats.indexedFiles).toBe(70); expect(stats.indexedChunks).toBeGreaterThan(128);
+});

@@ -91,6 +91,8 @@ export interface StructuralQuery extends QueryBase {
 export type FindQuery = FilesQuery | ContentQuery | SymbolsQuery | ReferencesQuery | StructuralQuery;
 
 export interface OutputOptions {
+  /** Offset into the complete ordered result set. */
+  offset?: number | undefined;
   format?: OutputFormat | undefined;
   context_before?: number | undefined;
   context_after?: number | undefined;

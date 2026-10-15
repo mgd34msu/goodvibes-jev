@@ -3,7 +3,7 @@ import { captureJudgmentPort, type JudgmentPortCapture } from '@goodvibes-jev/en
 import type { ReadAccessFilter } from '../tools/shared/read-access.js';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { captureOwnedJson, assertJudgmentInput } from '../gate/judgment-input.js';
-import { codeChunkView, codeSearchRerank } from './batteries/code-search-rerank.js';
+import { codeChunkView, rerankCodeParts } from './batteries/code-search-rerank.js';
 import type { CodeContextResult } from './code-index-types.js';
 
 const SITE = 'state.code-injection-relevance';
@@ -34,7 +34,6 @@ export async function rankCodeInjectionSnapshots(query: string, inputs: readonly
     path: hit.chunk.path, symbol: hit.chunk.symbol, kind: hit.chunk.kind, lang: hit.chunk.lang,
     startLine: hit.chunk.startLine, endLine: hit.chunk.endLine, code,
   })) });
-  if (snapshot.inputs.length > 50 || JSON.stringify(snapshot).length > 750_000) throw held('budget exceeded');
   const controller = new AbortController();
   const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
   let authority: JudgmentPortCapture | undefined;
@@ -49,7 +48,6 @@ export async function rankCodeInjectionSnapshots(query: string, inputs: readonly
   const stopped = new Promise<never>((_resolve, reject) => { rejectStopped = reject; });
   const abort = () => rejectStopped(held('canceled'));
   signal.addEventListener('abort', abort, { once: true });
-  const timer = setTimeout(() => controller.abort(), 15_000);
   const work = async () => {
     await check();
     authority = captureJudgmentPort(SITE, { signal });
@@ -71,7 +69,7 @@ export async function rankCodeInjectionSnapshots(query: string, inputs: readonly
       return { ...result, answers: { ...result.answers, match: Object.freeze({ type: 'noul' as const, noul: answer.noul }) } };
     } };
     const candidates = snapshot.inputs.map(({ hit, code }, i) => ({ id: String(i), content: codeChunkView(hit.chunk, code.split('\n').slice(hit.chunk.startLine - 1, hit.chunk.endLine).join('\n')) }));
-    const result = await codeSearchRerank.rerank(port, snapshot.query, candidates, { site: SITE, signal });
+    const result = await rerankCodeParts(port, snapshot.query, candidates, { site: SITE, signal });
     await check();
     if (result.ranked.some(entry => entry.reading.outcome !== 'act' || entry.reading.verdict === 'uncertain')) throw held('unsettled');
     return { ranked: Object.freeze(result.ranked.filter(entry => entry.reading.verdict === 'yes')
@@ -79,5 +77,5 @@ export async function rankCodeInjectionSnapshots(query: string, inputs: readonly
   };
   try { return await Promise.race([work(), stopped]); }
   catch (error) { controller.abort(); throw error; }
-  finally { clearTimeout(timer); signal.removeEventListener('abort', abort); }
+  finally { signal.removeEventListener('abort', abort); }
 }

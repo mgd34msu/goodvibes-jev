@@ -4,9 +4,6 @@ import type { ExecutorConfig, PhaseResult, ToolExecutionRecord } from '../types.
 import { summarizeError } from '../../../utils/error-display.js';
 import { repairToolCall } from '../../../tools/auto-repair.js';
 
-/** Default per-call execution timeout (30 seconds). */
-const DEFAULT_EXECUTE_TIMEOUT_MS = 30_000;
-
 /**
  * execute, Phase 4 of the tool execution pipeline.
  *
@@ -35,37 +32,33 @@ export async function executePhase(
   record._repair = repair;
   const effectiveArgs = repair.repaired ? repair.fixed : requestedArgs;
 
-  // Resolve timeout: per-phase override → budget → default
-  let timeoutMs =
-    config?.phaseTimeouts?.['executing'] ?? context.budget?.maxMs ?? DEFAULT_EXECUTE_TIMEOUT_MS;
-
-  // The exec tool accepts its own `timeout_ms` input for long-running commands
-  // (e.g. a full test suite). Never let the phase deadline undercut a caller-
-  // requested exec timeout, otherwise the phase times out the call while the
-  // underlying command legitimately still has time left to run.
-  if (call.name === 'exec') {
-    const requestedTimeoutMs = (effectiveArgs as Record<string, unknown>)['timeout_ms'];
-    if (typeof requestedTimeoutMs === 'number' && requestedTimeoutMs > timeoutMs) {
-      timeoutMs = requestedTimeoutMs;
-    }
-  }
+  const budgets = [config?.phaseTimeouts?.['executing'], context.budget?.maxMs].filter((value): value is number => typeof value === 'number' && value > 0);
+  const timeoutMs = budgets.length ? Math.min(...budgets) : 0;
+  const deadline = new AbortController();
+  const signal = AbortSignal.any([context.cancellation.signal, deadline.signal]);
+  let onAbort: (() => void) | undefined;
 
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   try {
+    signal.throwIfAborted();
     // Race between the tool and a timeout; clear the timer regardless of outcome
     const rawResult = await Promise.race([
-      tool.execute(effectiveArgs),
+      tool.execute(effectiveArgs, { signal }),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`Tool '${call.name}' timed out after ${timeoutMs}ms`)),
-          timeoutMs,
-        );
-        timer.unref?.();
+        onAbort = () => reject(signal.reason ?? new Error(`Tool '${call.name}' cancelled`));
+        signal.addEventListener('abort', onAbort, { once: true });
+        if (signal.aborted) onAbort();
+        if (timeoutMs > 0) {
+          timer = setTimeout(() => deadline.abort(new Error(`Tool '${call.name}' timed out after ${timeoutMs}ms`)), timeoutMs);
+          timer.unref?.();
+        }
       }),
     ]);
     clearTimeout(timer);
+    if (onAbort) signal.removeEventListener('abort', onAbort);
 
+    signal.throwIfAborted();
     const toolResult: ToolResult = { ...rawResult, callId: call.id };
 
     return {
@@ -76,6 +69,7 @@ export async function executePhase(
     };
   } catch (err) {
     clearTimeout(timer);
+    if (onAbort) signal.removeEventListener('abort', onAbort);
     const message = summarizeError(err);
     return {
       phase: 'executing',

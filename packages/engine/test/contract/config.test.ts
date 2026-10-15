@@ -85,7 +85,8 @@ describe('ConfigManager and the contract settings', () => {
     manager.set('contract.acceptanceStakes', 'critical');
     expect(readContractConfig(manager).acceptanceStakes).toBe('critical');
     expect(() => manager.set('contract.acceptanceStakes', 'low' as never)).toThrow();
-    expect(() => manager.set('contract.stallLimit', 0)).toThrow();
+    manager.set('contract.stallLimit', 0);
+    expect(manager.get('contract.stallLimit')).toBe(0);
     expect(() => manager.set('contract.maxUnits', 1.5)).toThrow();
     expect(() => manager.set('contract.heartbeatTimeoutMs', -1)).toThrow();
     manager.set('contract.heartbeatTimeoutMs', 90_000);
@@ -104,12 +105,12 @@ describe('readContractConfig', () => {
   test('the dotted key wins over the category, and the category over the default', () => {
     expect(readContractConfig(reader({ stallLimit: 7 }, { stallLimit: 4 })).stallLimit).toBe(7);
     expect(readContractConfig(reader({}, { stallLimit: 4 })).stallLimit).toBe(4);
-    expect(readContractConfig(reader({})).stallLimit).toBe(3);
+    expect(readContractConfig(reader({})).stallLimit).toBe(0);
   });
 
   test('a non-finite number is skipped at each step, so a loop bound can never be NaN or Infinity', () => {
     for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, '5', null]) {
-      expect(readContractConfig(reader({ maxNudgesPerUnit: bad })).maxNudgesPerUnit).toBe(12);
+      expect(readContractConfig(reader({ maxNudgesPerUnit: bad })).maxNudgesPerUnit).toBe(0);
       expect(readContractConfig(reader({ maxNudgesPerUnit: bad }, { maxNudgesPerUnit: 9 })).maxNudgesPerUnit).toBe(9);
     }
   });

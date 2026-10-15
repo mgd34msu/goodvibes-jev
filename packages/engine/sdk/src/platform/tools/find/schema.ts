@@ -235,20 +235,24 @@ export const findSchema: ToolDefinition = {
               'Requires tree-sitter grammar for the file language; results remain unexpanded when unavailable. ' +
               "'line' and 'block' are accepted but currently behave the same as no expansion.",
           },
+          offset: {
+            type: 'integer', minimum: 0,
+            description: 'Zero-based result offset for pagination. Use next_offset from the previous page.',
+          },
           max_results: {
             type: 'integer',
             minimum: 0,
-            description: 'Maximum total results per query. Default: 100.',
+            description: 'Results per page. Default: 100. Searches all eligible files and reports the full count and next_offset.',
           },
           max_per_item: {
             type: 'integer',
             minimum: 0,
-            description: 'Maximum matches per file. Default: 10.',
+            description: 'Optional per-file display limit. By default all matches are eligible for pagination.',
           },
           max_total_matches: {
             type: 'integer',
             minimum: 0,
-            description: 'Maximum total matches across all files. Default: 100.',
+            description: 'Matches per page across all files. Default: 100. Does not stop the search scan.',
           },
           max_tokens: {
             type: 'integer',

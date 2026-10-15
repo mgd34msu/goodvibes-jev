@@ -1,3 +1,6 @@
+import { readResponseSpool } from './response-spool.js';
+import { WebSocketOutbox } from './websocket-outbox.js';
+import { WebSocketMessageAssembler } from '@goodvibes-jev/engine/transport-core';
 import type { AgentManager } from '../tools/agent/index.js';
 import { startTurnForOwnerRequest } from '../security/turn-boundary.js';
 import type { UserAuthManager, SettingsSessionAuthority } from '../security/user-auth.js';
@@ -21,7 +24,7 @@ import type { RuntimeEventDomain } from '../runtime/events/index.js';
 import { isRuntimeEventDomain } from '../runtime/events/index.js';
 import type { DistributedRuntimeManager } from '../runtime/remote/index.js';
 import { extractForwardedClientIp } from '../runtime/network/index.js';
-import { resolveGatewayPathTemplate, readBodyBounded } from './helpers.js';
+import { resolveGatewayPathTemplate } from './helpers.js';
 import { SYNTHESIZED_DISPATCH_HEADER, guardSelfDispatch, guardSynthesizedDepth } from './gateway-self-dispatch.js';
 import { summarizeError } from '../utils/error-display.js';
 import { validateInvocationInput } from '../control-plane/invoke-input-validation.js';
@@ -102,19 +105,6 @@ interface UpgradeCapableServer {
  * refused with an honest structured 503, never retained.
  */
 const WS_CALL_MAX_IN_FLIGHT = 256;
-/**
- * Ceiling on a WS-call response body. A response larger than this (or a
- * never-ending stream reached as a plain call) is aborted with a structured
- * error instead of being buffered without bound by `response.text()`.
- */
-const WS_CALL_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
-/**
- * Per-event WS send backpressure ceiling: when the socket's native outgoing
- * buffer exceeds this, further events to that client are dropped (counted)
- * rather than growing the native buffer without bound to a stalled consumer.
- */
-const WS_EVENT_MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
-
 /** The one envelope every refusal this dispatcher mints is written in. */
 function refusalBody(message: string, code: string, status: number): ReturnType<typeof buildErrorResponseBody> {
   return buildErrorResponseBody({ message, code, status });
@@ -143,6 +133,20 @@ export class DaemonControlPlaneHelper {
   private wsCallsRefused = 0;
   /** Events dropped to stalled WS consumers (cumulative). */
   private wsEventsDropped = 0;
+  private readonly socketLifetimes = new WeakMap<object, AbortController>();
+  private socketSignal(ws: object): AbortSignal {
+    let lifetime = this.socketLifetimes.get(ws);
+    if (!lifetime) { lifetime = new AbortController(); this.socketLifetimes.set(ws, lifetime); }
+    return lifetime.signal;
+  }
+  private readonly messageAssemblers = new WeakMap<object, WebSocketMessageAssembler>();
+  private readonly outboxes = new WeakMap<object, WebSocketOutbox>();
+  private sendFrame(ws: { data: ControlPlaneWebSocketData; send(message: string): void; getBufferedAmount?(): number }, message: string): void {
+    if (this.socketSignal(ws).aborted) return;
+    let outbox = this.outboxes.get(ws);
+    if (!outbox) { outbox = new WebSocketOutbox(ws); this.outboxes.set(ws, outbox); }
+    outbox.send(message);
+  }
 
   private readonly settingsLifetime: (() => object | null) | undefined;
   private readonly settingsAuthorities = new WeakMap<SettingsAdminAuthority, SettingsAdminAuthorityRecord>();
@@ -493,6 +497,7 @@ export class DaemonControlPlaneHelper {
     send(message: string): void;
     getBufferedAmount?(): number;
   }): void {
+    this.socketSignal(ws);
     const connection = this.context.controlPlaneGateway.openWebSocketClient({
       clientKind: ws.data.clientKind,
       transport: 'ws',
@@ -502,15 +507,7 @@ export class DaemonControlPlaneHelper {
       ...(ws.data.scopes.length > 0 ? { scopes: ws.data.scopes } : {}),
       remoteAddress: ws.data.remoteAddress,
     }, (event, payload) => {
-      // Backpressure guard: a stalled consumer must not grow the socket's
-      // native outgoing buffer without bound during an event storm, drop the
-      // event (counted) once the buffered amount crosses the ceiling.
-      const buffered = ws.getBufferedAmount?.() ?? 0;
-      if (buffered > WS_EVENT_MAX_BUFFERED_BYTES) {
-        this.wsEventsDropped += 1;
-        return;
-      }
-      ws.send(JSON.stringify({ type: 'event', event, payload }));
+      this.sendFrame(ws, JSON.stringify({ type: 'event', event, payload }));
     });
     ws.data.clientId = connection.clientId;
   }
@@ -533,9 +530,16 @@ export class DaemonControlPlaneHelper {
           : Buffer.from(message).toString('utf8');
     let frame: Record<string, unknown>;
     try {
-      frame = JSON.parse(text) as Record<string, unknown>;
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      if (parsed?.type === 'chunk' && !ws.data.authenticated) throw new Error('Authenticate before sending chunks');
+      let assembler = this.messageAssemblers.get(ws);
+      if (!assembler) { assembler = new WebSocketMessageAssembler(); this.messageAssemblers.set(ws, assembler); }
+      const decoded = assembler.accept(parsed);
+      if (decoded === undefined) return;
+      if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) throw new Error('Invalid frame');
+      frame = decoded as Record<string, unknown>;
     } catch {
-      ws.send(JSON.stringify({ type: 'error', error: 'Invalid JSON frame' }));
+      this.sendFrame(ws, JSON.stringify({ type: 'error', error: 'Invalid JSON frame' }));
       return;
     }
 
@@ -544,7 +548,7 @@ export class DaemonControlPlaneHelper {
     });
 
     if (frame.type === 'ping') {
-      ws.send(JSON.stringify({ type: 'pong', ts: Date.now() }));
+      this.sendFrame(ws, JSON.stringify({ type: 'pong', ts: Date.now() }));
       return;
     }
 
@@ -552,7 +556,7 @@ export class DaemonControlPlaneHelper {
       const token = typeof frame.token === 'string' ? frame.token : ws.data.authToken;
       const principal = this.describeAuthenticatedPrincipal(token);
       if (!principal) {
-        ws.send(JSON.stringify({ type: 'auth', ok: false, error: 'Unauthorized' }));
+        this.sendFrame(ws, JSON.stringify({ type: 'auth', ok: false, error: 'Unauthorized' }));
         return;
       }
       this.context.controlPlaneGateway.authenticateClient(clientId, {
@@ -565,7 +569,7 @@ export class DaemonControlPlaneHelper {
       if (Array.isArray(frame.domains)) {
         const domains = normalizeFrameDomains(frame.domains);
         if (domains instanceof Response) {
-          ws.send(JSON.stringify({ type: 'auth', ok: false, error: 'Invalid runtime event domain' }));
+          this.sendFrame(ws, JSON.stringify({ type: 'auth', ok: false, error: 'Invalid runtime event domain' }));
           return;
         }
         this.context.controlPlaneGateway.subscribeWebSocketClient(
@@ -579,24 +583,24 @@ export class DaemonControlPlaneHelper {
       ws.data.scopes = principal.scopes;
       ws.data.admin = principal.admin;
       ws.data.authenticated = true;
-      ws.send(JSON.stringify({ type: 'auth', ok: true, clientId, principalId: principal.principalId }));
+      this.sendFrame(ws, JSON.stringify({ type: 'auth', ok: true, clientId, principalId: principal.principalId }));
       return;
     }
 
     if (frame.type === 'subscribe') {
       if (!ws.data.authenticated) {
-        ws.send(JSON.stringify({ type: 'error', error: 'Authenticate before subscribing' }));
+        this.sendFrame(ws, JSON.stringify({ type: 'error', error: 'Authenticate before subscribing' }));
         return;
       }
       const domains = Array.isArray(frame.domains)
         ? normalizeFrameDomains(frame.domains)
         : [];
       if (domains instanceof Response) {
-        ws.send(JSON.stringify({ type: 'error', error: 'Invalid runtime event domain' }));
+        this.sendFrame(ws, JSON.stringify({ type: 'error', error: 'Invalid runtime event domain' }));
         return;
       }
       this.context.controlPlaneGateway.subscribeWebSocketClient(clientId, domains);
-      ws.send(JSON.stringify({ type: 'subscribed', clientId, domains }));
+      this.sendFrame(ws, JSON.stringify({ type: 'subscribed', clientId, domains }));
       return;
     }
 
@@ -605,17 +609,17 @@ export class DaemonControlPlaneHelper {
         ? normalizeFrameDomains(frame.domains)
         : undefined;
       if (domains instanceof Response) {
-        ws.send(JSON.stringify({ type: 'error', error: 'Invalid runtime event domain' }));
+        this.sendFrame(ws, JSON.stringify({ type: 'error', error: 'Invalid runtime event domain' }));
         return;
       }
       this.context.controlPlaneGateway.unsubscribeWebSocketClient(clientId, domains);
-      ws.send(JSON.stringify({ type: 'unsubscribed', clientId, domains: domains ?? [] }));
+      this.sendFrame(ws, JSON.stringify({ type: 'unsubscribed', clientId, domains: domains ?? [] }));
       return;
     }
 
     if (frame.type === 'call') {
       if (!ws.data.authenticated || !ws.data.principalId || !ws.data.principalKind) {
-        ws.send(JSON.stringify({ type: 'error', error: 'Authenticate before invoking methods' }));
+        this.sendFrame(ws, JSON.stringify({ type: 'error', error: 'Authenticate before invoking methods' }));
         return;
       }
       const id = typeof frame.id === 'string' ? frame.id : `call-${Date.now()}`;
@@ -623,6 +627,7 @@ export class DaemonControlPlaneHelper {
       const response = methodId
         ? await this.invokeGatewayMethodCall({
             authToken: ws.data.authToken,
+            signal: this.socketSignal(ws),
             methodId,
             query: typeof frame.query === 'object' && frame.query !== null ? frame.query as Record<string, unknown> : undefined,
             body: frame.body,
@@ -641,6 +646,7 @@ export class DaemonControlPlaneHelper {
           })
         : await this.invokeWebSocketControlPlaneCall({
             authToken: ws.data.authToken,
+            signal: this.socketSignal(ws),
             method: typeof frame.method === 'string' ? frame.method.toUpperCase() : 'GET',
             path: typeof frame.path === 'string' ? frame.path : '/api/control-plane',
             query: typeof frame.query === 'object' && frame.query !== null ? frame.query as Record<string, unknown> : undefined,
@@ -651,7 +657,7 @@ export class DaemonControlPlaneHelper {
               scopes: ws.data.scopes,
             },
           });
-      ws.send(JSON.stringify({
+      this.sendFrame(ws, JSON.stringify({
         type: 'response',
         id,
         ok: response.ok,
@@ -661,18 +667,23 @@ export class DaemonControlPlaneHelper {
       return;
     }
 
-    ws.send(JSON.stringify({ type: 'error', error: 'Unsupported frame type' }));
+    this.sendFrame(ws, JSON.stringify({ type: 'error', error: 'Unsupported frame type' }));
   }
 
   handleControlPlaneWebSocketClose(ws: {
     data: ControlPlaneWebSocketData;
   }): void {
+    this.socketLifetimes.get(ws)?.abort();
+    this.outboxes.get(ws)?.close();
+    this.messageAssemblers.get(ws)?.reset();
+    this.outboxes.delete(ws);
     if (!ws.data.clientId) return;
     this.context.controlPlaneGateway.closeWebSocketClient(ws.data.clientId, 'socket-closed');
   }
 
   async invokeWebSocketControlPlaneCall(input: {
     readonly authToken: string;
+    readonly signal?: AbortSignal | undefined;
     readonly method: string;
     readonly path: string;
     readonly query?: Record<string, unknown> | undefined;
@@ -722,6 +733,7 @@ export class DaemonControlPlaneHelper {
     // request.signal abort, without this, a stream reached as a plain call
     // would pin the Request + Response + a growing buffer forever.
     const abort = new AbortController();
+    const signal = input.signal ? AbortSignal.any([abort.signal, input.signal]) : abort.signal;
     try {
       const request = new Request(url.toString(), {
         method: input.method,
@@ -732,7 +744,7 @@ export class DaemonControlPlaneHelper {
           ...(input.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
         },
         ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}),
-        signal: abort.signal,
+        signal,
       });
       const response = await this.context.dispatchApiRoutes(request) ?? Response.json({ error: 'Not found' }, { status: 404 });
       // A streaming response cannot be delivered over the request/response call
@@ -748,16 +760,7 @@ export class DaemonControlPlaneHelper {
           body: { error: 'streaming-not-supported', message: 'This path serves an event stream; it cannot be invoked as a WS call. Subscribe via the events channel instead.' },
         };
       }
-      const bounded = await readBodyBounded(response, WS_CALL_MAX_RESPONSE_BYTES);
-      if (!bounded.ok) {
-        abort.abort();
-        return {
-          status: 502,
-          ok: false,
-          body: { error: 'response-too-large', message: `Response exceeded the ${WS_CALL_MAX_RESPONSE_BYTES}-byte WS-call ceiling (streaming or oversized endpoint).` },
-        };
-      }
-      const raw = bounded.text;
+      const raw = await readResponseSpool(response, signal);
       let body: unknown = raw;
       if (raw.length > 0) {
         try {
@@ -907,20 +910,13 @@ export class DaemonControlPlaneHelper {
               body: { error: 'streaming-not-supported', message: 'This method serves an event stream; it cannot be invoked as a WS call. Subscribe via the events channel instead.' },
             };
           }
-          const bounded = await readBodyBounded(body, WS_CALL_MAX_RESPONSE_BYTES);
-          if (!bounded.ok) {
-            return {
-              status: 502,
-              ok: false,
-              body: { error: 'response-too-large', message: `Response exceeded the ${WS_CALL_MAX_RESPONSE_BYTES}-byte WS-call ceiling (streaming or oversized endpoint).` },
-            };
-          }
-          let responseBody: unknown = bounded.text || null;
-          if (bounded.text.length > 0) {
+          const text = await readResponseSpool(body, input.signal);
+          let responseBody: unknown = text || null;
+          if (text.length > 0) {
             try {
-              responseBody = JSON.parse(bounded.text);
+              responseBody = JSON.parse(text);
             } catch {
-              responseBody = bounded.text;
+              responseBody = text;
             }
           }
           return { status: body.status, ok: body.ok, body: responseBody };
@@ -978,6 +974,7 @@ export class DaemonControlPlaneHelper {
     }
     return this.invokeWebSocketControlPlaneCall({
       authToken: input.authToken,
+      signal: input.signal,
       method: descriptor.http.method,
       path: resolvedPath.path,
       query: input.query,

@@ -1,3 +1,4 @@
+import { paginateFindResult } from './pagination.js';
 import type { WalkDirOptions } from '../../utils/walk-dir.js';
 import { extname } from 'node:path';
 import type { OutputOptions, StructuralQuery } from './shared.js';
@@ -31,7 +32,7 @@ function getAstGrepLang(
   }
 }
 
-export async function executeStructuralQuery(
+async function scanStructuralQuery(
   query: StructuralQuery,
   output: OutputOptions,
   projectRoot: string,
@@ -54,8 +55,6 @@ export async function executeStructuralQuery(
   }
 
   const format = output.format ?? 'matches';
-  const maxPerFile = output.max_per_item ?? 10;
-  const maxTotal = output.max_total_matches ?? output.max_results ?? 100;
   const files = await collectFilesForSearch(basePath, query.glob, undefined, walkOptions);
 
   interface StructuralMatch { file: string; line: number; text: string }
@@ -63,8 +62,7 @@ export async function executeStructuralQuery(
   const matchedFiles = new Set<string>();
   let totalMatches = 0;
 
-  outer: for (const file of files) {
-    if (totalMatches >= maxTotal) break;
+  for (const file of files) {
 
     const parser = getAstGrepLang(astGrep, file, query.lang);
     if (!parser) continue;
@@ -88,8 +86,7 @@ export async function executeStructuralQuery(
 
     let fileMatchCount = 0;
     for (const match of matches) {
-      if (fileMatchCount >= maxPerFile) break;
-      if (totalMatches >= maxTotal) break outer;
+
       const text = match.text();
       const line = match.range().start.line + 1;
       allMatches.push({ file, line, text });
@@ -110,4 +107,8 @@ export async function executeStructuralQuery(
     return makeLocationsResult(locations, totalMatches);
   }
   return { matches: allMatches, count: totalMatches };
+}
+
+export async function executeStructuralQuery(...args: Parameters<typeof scanStructuralQuery>): Promise<Record<string, unknown>> {
+  return paginateFindResult(await scanStructuralQuery(...args), args[1]);
 }

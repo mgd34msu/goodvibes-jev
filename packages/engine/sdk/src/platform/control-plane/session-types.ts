@@ -124,9 +124,8 @@ export interface SharedSessionRecord {
   readonly messageCount: number;
   /**
    * How many of this session's message BODIES are actually retained in the
-   * durable store, when that is fewer than {@link messageCount}. Persistence
-   * caps retained bodies per session (see MAX_PERSISTED_MESSAGES_PER_SESSION);
-   * when the cap prunes the oldest bodies, `messageCount` stays the honest
+   * durable store, when that is fewer than {@link messageCount}. Legacy stores may have pruned older bodies;
+   * when that happened, `messageCount` stays the honest
    * logical total and this field records how many bodies survived. Omitted when
    * nothing was pruned (retained === messageCount), so the common case carries
    * no marker. Readers must treat an absent value as "fully retained".

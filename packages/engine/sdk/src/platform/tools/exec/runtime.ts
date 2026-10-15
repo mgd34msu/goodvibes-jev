@@ -45,7 +45,7 @@ import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 import { execFailureView, execRetry, type ExecFailureCategory } from '../batteries/exec-retry.js';
 
-const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_TIMEOUT_MS = 0;
 const PROGRESS_AUTO_THRESHOLD_MS = 30_000;
 const OVERFLOW_SUBDIR = ['.goodvibes', '.overflow'] as const;
 const MAX_PARALLEL_EXEC_COMMANDS = 3;
@@ -362,7 +362,7 @@ async function runAdmittedCommand(
     return attachWithheld(await runUntil(processManager, overflowHandler, cmdStr, cmdInput, cwd, mergedEnv, timeoutMs, startTime, sandboxArgv, beforeSpawn, signal, assertOwnerCurrent ?? policy.assertCurrent));
   }
 
-  const useProgress = cmdInput.progress === true || timeoutMs > PROGRESS_AUTO_THRESHOLD_MS;
+  const useProgress = cmdInput.progress === true || (cmdInput.progress !== false && (timeoutMs === 0 || timeoutMs > PROGRESS_AUTO_THRESHOLD_MS));
   if (useProgress) {
     return attachWithheld(await runCommandWithProgress(processManager, overflowHandler, cmdStr, cmdInput, workingDirectory, cwd, mergedEnv, timeoutMs, startTime, sandboxArgv, signal, beforeSpawn));
   }
@@ -375,7 +375,7 @@ async function runAdmittedCommand(
   let stopResolve!: () => void;
   const stopSentinel = new Promise<void>((res) => { stopResolve = res; });
 
-  killTimer = setTimeout(async () => {
+  if (timeoutMs > 0) killTimer = setTimeout(async () => {
     timedOut = true;
     try {
       proc.kill('SIGTERM');
@@ -387,7 +387,7 @@ async function runAdmittedCommand(
     }
     stopResolve();
   }, timeoutMs);
-  killTimer.unref?.();
+  killTimer?.unref?.();
 
   const onAbort = (): void => {
     if (timedOut || cancelled) return;
@@ -480,7 +480,7 @@ async function runCommandWithProgress(
   let stopResolve!: () => void;
   const stopSentinel = new Promise<void>((res) => { stopResolve = res; });
 
-  killTimer = setTimeout(async () => {
+  if (timeoutMs > 0) killTimer = setTimeout(async () => {
     timedOut = true;
     try {
       proc.kill('SIGTERM');
@@ -492,7 +492,7 @@ async function runCommandWithProgress(
     progressFile.append('# Timed out\n');
     stopResolve();
   }, timeoutMs);
-  killTimer.unref?.();
+  killTimer?.unref?.();
 
   const onAbort = (): void => {
     if (timedOut || cancelled) return;
@@ -629,7 +629,7 @@ async function runUntil(
     try { proc?.kill('SIGKILL'); } catch { /* Already exited. */ }
     for (const reader of readers) void reader.cancel().catch(() => {});
   };
-  const commandTimer = setTimeout(() => deadline.abort(), Math.max(0, timeoutMs - (Date.now() - startTime)));
+  const commandTimer = timeoutMs > 0 ? setTimeout(() => deadline.abort(), Math.max(0, timeoutMs - (Date.now() - startTime))) : undefined;
   let untilTimer: ReturnType<typeof setTimeout> | undefined;
   active.addEventListener('abort', stop, { once: true });
   let streams: Promise<void[]> | undefined;
@@ -639,7 +639,8 @@ async function runUntil(
     current(); beforeSpawn?.();
     proc = Bun.spawn([...sandboxArgv, '/bin/sh', '-c', cmdStr], { ...(cwd !== undefined ? { cwd } : {}), env, stdout: 'pipe', stderr: 'pipe' } as Parameters<typeof Bun.spawn>[1]);
     let stdoutBuf = '', stderrBuf = '', matched = false;
-    untilTimer = setTimeout(() => { if (!matched) deadline.abort(); }, until.timeout_ms ?? timeoutMs);
+    const untilTimeout = until.timeout_ms ?? timeoutMs;
+    if (untilTimeout > 0) untilTimer = setTimeout(() => { if (!matched) deadline.abort(); }, untilTimeout);
     const readStream = async (stream: ReadableStream<Uint8Array>, isStderr: boolean): Promise<void> => {
       const decoder = new TextDecoder();
       const reader = stream.getReader(); readers.add(reader);

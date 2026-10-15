@@ -11,7 +11,7 @@ import type { SQLitePublicationIO } from '../sdk/src/platform/state/sqlite-store
 import { createWorkLedger, migrateLegacyWorkLedgerState, readWorkLedgerState } from '../sdk/src/platform/workflow/work-ledger/service.js';
 import { criteriaSetIdForWork, freezeDurableRequest } from '../sdk/src/platform/contract/durable-admission.js';
 import { parseNativeWorkExecutionIntent } from '../sdk/src/platform/workflow/work-ledger/native-execution-types.js';
-import { NATIVE_WORK_SUBMISSION_MAX_REQUEST_BYTES, nativeWorkSubmissionRequestSchema } from '../sdk/src/platform/workflow/work-ledger/native-submission-wire.js';
+import { nativeWorkSubmissionRequestSchema } from '../sdk/src/platform/workflow/work-ledger/native-submission-wire.js';
 import type { LedgerWork, WorkLedgerEvent, WorkLedgerState } from '../sdk/src/platform/workflow/work-ledger/types.js';
 
 const roots: string[] = []; const stores: KnowledgeStore[] = [];
@@ -65,11 +65,11 @@ test('the full wire byte budget survives escaped host display text and metadata 
   const input = { requestId: command.requestId, inputId: command.source.inputId, expectedRevision: 0, goal,
     criteria: ['\u0001'.repeat(19_999) + 'c', 'x'.repeat(20_000), 'z'] };
   const byteLength = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
-  input.criteria[2] += 'x'.repeat(NATIVE_WORK_SUBMISSION_MAX_REQUEST_BYTES - byteLength(input));
-  expect(byteLength(input)).toBe(NATIVE_WORK_SUBMISSION_MAX_REQUEST_BYTES);
+  input.criteria[2] += 'x'.repeat(262_144 - byteLength(input));
+  expect(byteLength(input)).toBe(262_144);
   expect(nativeWorkSubmissionRequestSchema.safeParse(input).success).toBe(true);
   const enriched = { ...command, title: input.goal, goal: input.goal, criteria: input.criteria };
-  expect(byteLength(enriched)).toBeGreaterThan(NATIVE_WORK_SUBMISSION_MAX_REQUEST_BYTES);
+  expect(byteLength(enriched)).toBeGreaterThan(262_144);
   const submitted = event(await f.service.execute(enriched, f.actor));
   expect(submitted.work).toMatchObject({ title: input.goal, goal: input.goal, criteria: input.criteria, source: command.source });
   const reopened = await open(f.file); const bytes = readFileSync(f.file);
@@ -78,9 +78,9 @@ test('the full wire byte budget survives escaped host display text and metadata 
   expect(submitted).toEqual(recovered);
   expect(await reopened.service.execute(enriched, reopened.actor)).toMatchObject({ kind: 'accepted', replayed: true, event: submitted });
   const oversized = { ...input, criteria: [...input.criteria.slice(0, 2), input.criteria[2] + 'x'] };
-  expect(byteLength(oversized)).toBe(NATIVE_WORK_SUBMISSION_MAX_REQUEST_BYTES + 1);
-  expect(nativeWorkSubmissionRequestSchema.safeParse(oversized).success).toBe(false);
-  expect(await reopened.service.execute({ ...enriched, criteria: oversized.criteria }, reopened.actor)).toMatchObject({ kind: 'rejected', code: 'invalid_command' });
+  expect(byteLength(oversized)).toBe(262_145);
+  expect(nativeWorkSubmissionRequestSchema.safeParse(oversized).success).toBe(true);
+  expect(await reopened.service.execute({ ...enriched, criteria: oversized.criteria }, reopened.actor)).toMatchObject({ kind: 'rejected' });
   expect(readFileSync(f.file)).toEqual(bytes);
 });
 
@@ -115,7 +115,7 @@ test('native requirements cannot be revised through legacy API; source-less crea
 
 test('blank, oversized and untrusted native command fields cannot mutate storage', async () => {
   const f = await open(); const bytes = readFileSync(f.file);
-  for (const altered of [{ goal: ' \n\t' }, { goal: 'a'.repeat(20_001) }, { criteria: ['\n'] }, { criteria: [] }, { criteria: Array(101).fill('criterion') }, { criteria: Array(100).fill('a'.repeat(20_000)) }, { source: { ...command.source, actorId: 'forged' } }, { source: { ...command.source, version: 2 } }, { actorId: 'forged' }]) {
+  for (const altered of [{ goal: ' \n\t' }, { goal: 'a'.repeat(20_001) }, { criteria: ['\n'] }, { criteria: [] }, { criteria: Array(101).fill('criterion') }, { source: { ...command.source, actorId: 'forged' } }, { source: { ...command.source, version: 2 } }, { actorId: 'forged' }]) {
     expect(await f.service.execute({ ...command, ...altered }, f.actor)).toMatchObject({ kind: 'rejected', code: 'invalid_command' });
   }
   const worker = f.authority.issueActor({ actorId: 'worker', projectId: 'project', role: 'worker' });

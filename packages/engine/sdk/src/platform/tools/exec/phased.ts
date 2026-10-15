@@ -11,8 +11,7 @@ import { ProcessManager } from '../shared/process-manager.js';
  * It is cancellable: the underlying process manager supports SIGTERM/SIGKILL,
  * so the phased executor can abort long-running commands via AbortSignal.
  *
- * Phase timeout: 120 000 ms (2 min) for the executing phase, matching the
- * exec tool's own default timeout for individual commands.
+ * Execution waits for completion or cancellation unless the caller supplies a timeout.
  *
  * @returns A PhasedTool wrapping an owned exec tool instance.
  */
@@ -20,8 +19,5 @@ export function createPhasedExecTool(): PhasedTool {
   return asPhasedTool(createExecTool(new ProcessManager()), {
     category: 'execute',
     cancellable: true,
-    phaseTimeouts: {
-      executing: 120_000,
-    },
   });
 }

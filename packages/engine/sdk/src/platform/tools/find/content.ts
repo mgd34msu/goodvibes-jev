@@ -1,3 +1,4 @@
+import { paginateFindResult } from './pagination.js';
 import type { WalkDirOptions } from '../../utils/walk-dir.js';
 import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { assertCapturedToolAccessCurrent } from '../shared/captured-input-tools.js';
@@ -54,7 +55,7 @@ interface CacheKey {
   flags: string;
 }
 
-async function executeContentQuery(
+async function scanContentQuery(
   query: ContentQuery,
   output: OutputOptions,
   runtime: FindRuntimeService,
@@ -73,8 +74,6 @@ async function executeContentQuery(
   if (typeof validatedPath === 'object') return validatedPath;
   const basePath = validatedPath;
   const format = output.format ?? 'matches';
-  const maxPerFile = output.max_per_item ?? 10;
-  const maxTotal = output.max_total_matches ?? output.max_results ?? 100;
   const ctxBefore = output.context_before ?? 0;
   const ctxAfter = output.context_after ?? 0;
   const diagnostics = createFindDiagnostics();
@@ -127,7 +126,7 @@ async function executeContentQuery(
       if (content === null) continue;
       if (!await regex.test(content)) {
         nonMatchingFiles.push(file);
-        if (nonMatchingFiles.length >= maxTotal) break;
+
       }
     }
     const reported = await onlyReadable(nonMatchingFiles);
@@ -137,7 +136,7 @@ async function executeContentQuery(
     return withFindWarnings(makeFilesResult(reported, reported.length), diagnostics.warnings);
   }
 
-  const cacheKey: CacheKey = { pattern: rawPattern, glob: query.glob ?? '', path: basePath, flags };
+  const cacheKey: CacheKey = { pattern: JSON.stringify([rawPattern, format, ctxBefore, ctxAfter]), glob: query.glob ?? '', path: basePath, flags };
   await assertCapturedToolAccessCurrent();
   const cachedEntry = runtime.searchCacheGet(cacheKey);
   // A fresh directory reading may change eligibility without touching a file's
@@ -158,8 +157,7 @@ async function executeContentQuery(
     matchedFiles = new Map<string, { content: string; matches: ContentMatch[] }>();
     totalMatches = 0;
 
-    outer: for (const file of files) {
-      if (totalMatches >= maxTotal) break;
+    for (const file of files) {
 
       const content = await readTextFile(file, diagnostics);
       if (content === null) continue;
@@ -169,8 +167,6 @@ async function executeContentQuery(
       const fileMatches: ContentMatch[] = [];
 
       for (let i = 0; i < lines.length; i++) {
-        if (fileMatches.length >= maxPerFile) break;
-        if (totalMatches >= maxTotal) break outer;
 
         if (await regex.test(lines[i]!)) {
           const match: ContentMatch = { file, line: i + 1, text: lines[i]! };
@@ -212,7 +208,7 @@ async function executeContentQuery(
   if (!query.ranked && !query.preview_replace && !query.relationships) {
     const fileMtimesForCache = new Map<string, number>();
     await Promise.all(
-      Array.from(matchedFiles.keys()).map(async (f) => {
+      files.map(async (f) => {
         try {
           const s = await statAsync(f);
           fileMtimesForCache.set(f, s.mtimeMs);
@@ -333,4 +329,6 @@ async function executeContentQuery(
   return withFindWarnings(makeCountResult(totalMatches), diagnostics.warnings);
 }
 
-export { executeContentQuery };
+export async function executeContentQuery(...args: Parameters<typeof scanContentQuery>): Promise<Record<string, unknown>> {
+  return paginateFindResult(await scanContentQuery(...args), args[1]);
+}

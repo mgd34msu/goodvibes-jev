@@ -3,7 +3,7 @@ import { ContractError, admitRegex, compileLegacyRegex, type RegexAdmissionOptio
 import { retainJsonSchemaSource } from './retained-schema-source.js';
 
 const MAX_SCHEMA_PATTERN_CHARS = 512;
-const MAX_SCHEMA_PATTERN_INPUT_CHARS = 50_000;
+const MAX_SCHEMA_PATTERN_INPUT_CHARS = Number.MAX_SAFE_INTEGER;
 
 /**
  * The required keys of a contract input.
@@ -126,7 +126,6 @@ function fixedSchemaGrammar(source: string, value: string): boolean | undefined 
   }
 }
 
-const MAX_SCHEMA_WALK_DEPTH = 32;
 
 /** @deprecated Synchronous compatibility only. Production callers use firstJsonSchemaFailureAsync. */
 export function firstJsonSchemaFailure(
@@ -180,39 +179,74 @@ export async function firstJsonSchemaFailureAsync(
   }
 }
 
-function* walkJsonSchema(
+type PatternRequest = { source: string; value: string };
+type SchemaArguments = [schema: Record<string, unknown>, value: unknown, path: string, root: Record<string, unknown>, depth: number];
+type SchemaStep = Generator<PatternRequest | { walk: SchemaArguments }, JsonSchemaValidationFailure | undefined, boolean | JsonSchemaValidationFailure | undefined>;
+function* requestSchema(...walk: SchemaArguments): SchemaStep {
+  return (yield { walk }) as JsonSchemaValidationFailure | undefined;
+}
+/** Iterate the schema/value call stack; cyclic refs cannot bypass validation. */
+function* walkJsonSchema(schema: Record<string, unknown>, value: unknown, path = '$', root = schema, depth = 0): Generator<PatternRequest, JsonSchemaValidationFailure | undefined, boolean> {
+  const active = new Map<Record<string, unknown>, Set<unknown>>();
+  const stack: { args: SchemaArguments; iterator: SchemaStep }[] = [];
+  const push = (args: SchemaArguments) => {
+    let values = active.get(args[0]);
+    if (!values) { values = new Set(); active.set(args[0], values); }
+    values.add(args[1]);
+    stack.push({ args, iterator: walkJsonSchemaStep(...args) });
+  };
+  push([schema, value, path, root, depth]);
+  let answer: boolean | JsonSchemaValidationFailure | undefined;
+  while (stack.length) {
+    const current = stack[stack.length - 1]!;
+    const step = current.iterator.next(answer);
+    answer = undefined;
+    if (step.done) {
+      active.get(current.args[0])!.delete(current.args[1]);
+      stack.pop(); answer = step.value;
+      continue;
+    }
+    if ('walk' in step.value) {
+      const args = step.value.walk;
+      if (active.get(args[0])?.has(args[1])) {
+        answer = { path: args[2], expected: 'a resolvable non-cyclic schema constraint', received: 'cyclic schema reference' };
+      } else push(args);
+    } else answer = yield step.value;
+  }
+  return answer as JsonSchemaValidationFailure | undefined;
+}
+
+function* walkJsonSchemaStep(
   schema: Record<string, unknown>,
   value: unknown,
   path = '$',
   root: Record<string, unknown> = schema,
   _depth = 0,
-): Generator<{ source: string; value: string }, JsonSchemaValidationFailure | undefined, boolean> {
-  // Guard against cyclic $ref chains.
-  if (_depth >= MAX_SCHEMA_WALK_DEPTH) return undefined;
+): SchemaStep {
   if (typeof schema.$ref === 'string') {
     const resolved = resolveLocalSchemaRef(root, schema.$ref);
-    return resolved ? yield* walkJsonSchema(resolved, value, path, root, _depth + 1) : undefined;
+    return resolved ? yield* requestSchema(resolved, value, path, root, _depth + 1) : undefined;
   }
   const excluded = schema.not;
   if (excluded === true || (excluded !== null && typeof excluded === 'object' && !Array.isArray(excluded)
-    && (yield* walkJsonSchema(excluded as Record<string, unknown>, value, path, root, _depth + 1)) === undefined)) {
+    && (yield* requestSchema(excluded as Record<string, unknown>, value, path, root, _depth + 1)) === undefined)) {
     return { path, expected: 'not to match the excluded schema', received: typeOfJsonValue(value) };
   }
   const allOf = readSchemaList(schema.allOf);
   for (const child of allOf) {
-    const failure = yield* walkJsonSchema(child, value, path, root, _depth + 1);
+    const failure = yield* requestSchema(child, value, path, root, _depth + 1);
     if (failure) return failure;
   }
   const anyOf = readSchemaList(schema.anyOf);
   if (anyOf.length > 0) {
     const failures: (JsonSchemaValidationFailure | undefined)[] = [];
-    for (const child of anyOf) failures.push(yield* walkJsonSchema(child, value, path, root, _depth + 1));
+    for (const child of anyOf) failures.push(yield* requestSchema(child, value, path, root, _depth + 1));
     if (failures.every(Boolean)) return bestSchemaFailure(failures) ?? { path, expected: 'one matching schema', received: typeOfJsonValue(value) };
   }
   const oneOf = readSchemaList(schema.oneOf);
   if (oneOf.length > 0) {
     let matches = 0;
-    for (const child of oneOf) if (!(yield* walkJsonSchema(child, value, path, root, _depth + 1))) matches++;
+    for (const child of oneOf) if (!(yield* requestSchema(child, value, path, root, _depth + 1))) matches++;
     if (matches !== 1) return { path, expected: 'exactly one matching schema', received: `${matches} matches` };
   }
   const enumValues = schema.enum;
@@ -264,7 +298,7 @@ function* walkJsonSchema(
     if (itemSchema && typeof itemSchema === 'object' && !Array.isArray(itemSchema)) {
       for (let index = 0; index < value.length; index++) {
         // pass _depth + 1 so depth-reset through array items is prevented.
-        const failure = yield* walkJsonSchema(itemSchema as Record<string, unknown>, value[index], `${path}[${index}]`, root, _depth + 1);
+        const failure = yield* requestSchema(itemSchema as Record<string, unknown>, value[index], `${path}[${index}]`, root, _depth + 1);
         if (failure) return failure;
       }
     }
@@ -305,7 +339,7 @@ function* walkJsonSchema(
         if (!(key in objectValue)) continue;
         if (!propertySchema || typeof propertySchema !== 'object' || Array.isArray(propertySchema)) continue;
         // pass _depth + 1 so nested property recursion respects the walk depth limit.
-        const failure = yield* walkJsonSchema(propertySchema as Record<string, unknown>, objectValue[key], `${path}.${key}`, root, _depth + 1);
+        const failure = yield* requestSchema(propertySchema as Record<string, unknown>, objectValue[key], `${path}.${key}`, root, _depth + 1);
         if (failure) return failure;
       }
     }
@@ -316,7 +350,7 @@ function* walkJsonSchema(
       if (declared.has(key)) continue;
       if (additional === false) return { path: `${path}.${key}`, expected: 'no additional property', received: 'present' };
       if (additional !== null && typeof additional === 'object' && !Array.isArray(additional)) {
-        const failure = yield* walkJsonSchema(additional as Record<string, unknown>, objectValue[key], `${path}.${key}`, root, _depth + 1);
+        const failure = yield* requestSchema(additional as Record<string, unknown>, objectValue[key], `${path}.${key}`, root, _depth + 1);
         if (failure) return failure;
       }
     }
@@ -325,6 +359,7 @@ function* walkJsonSchema(
 }
 
 function resolveLocalSchemaRef(root: Record<string, unknown>, ref: string): Record<string, unknown> | undefined {
+  if (ref === '#') return root;
   if (!ref.startsWith('#/')) return undefined;
   let current: unknown = root;
   for (const token of ref.slice(2).split('/')) {

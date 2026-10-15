@@ -25,8 +25,7 @@ export interface SharedSessionGcOptions {
    * evict independently of disk, dropping a closed session's bodies from these
    * maps would also drop them from the next persisted snapshot. Retention is
    * therefore all-or-nothing here: retained closed sessions stay both listable
-   * and on disk; memory stays bounded by the per-session message cap
-   * (MAX_PERSISTED_MESSAGES_PER_SESSION) rather than by body eviction.
+   * and on disk. Memory pressure must not truncate the durable source maps.
    */
   readonly deletionRetentionMs: number;
   readonly publishUpdate: (event: string, payload: unknown) => void;

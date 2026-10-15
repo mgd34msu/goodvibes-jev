@@ -1,12 +1,4 @@
-/**
- * exec-phase-timeout.test.ts
- *
- * Regression coverage (narrow scope only): the
- * `executing` phase timeout must never undercut an exec call's own
- * `timeout_ms` input. Full cooperative-cancellation/signal wiring (so an
- * abandoned child process actually gets killed when a phase timeout does
- * fire) is explicitly out of scope for this fix and deferred to a later wave.
- */
+/** Explicit execution budgets and cancellation remain effective without a default tool deadline. */
 
 import { describe, expect, test } from 'bun:test';
 import { createPhasedExecutor } from '../sdk/src/platform/runtime/tools/index.js';
@@ -55,8 +47,29 @@ function runtimeContext(): ToolRuntimeContext {
   } as unknown as ToolRuntimeContext;
 }
 
-describe('executePhase: exec timeout_ms honored', () => {
-  test('a large exec input.timeout_ms is honored even when it exceeds the configured phase timeout', async () => {
+describe('executePhase: explicit budgets and cancellation', () => {
+  test('an operation without a deadline receives and honors caller cancellation', async () => {
+    const executor = createPhasedExecutor({ enableHooks: false, enablePermissions: false, enableEvents: false });
+    const controller = new AbortController();
+    const context = { ...runtimeContext(), cancellation: { signal: controller.signal } };
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    let cancelled = false;
+    const tool = sleepingTool('exec', 0);
+    tool.execute = async (_args, options) => {
+      await new Promise<never>((_, reject) => {
+        options!.signal!.addEventListener('abort', () => { cancelled = true; reject(options!.signal!.reason); }, { once: true });
+        started();
+      });
+      return { success: true };
+    };
+    const pending = executor.execute({ id: 'cancel-exec', name: 'exec', arguments: { commands: [{ cmd: 'true' }] } }, tool, context);
+    await ready; controller.abort(new Error('Owner cancelled execution'));
+    expect((await pending).success).toBe(false);
+    expect(cancelled).toBe(true);
+  });
+
+  test('an exec argument cannot override an explicit phase deadline', async () => {
     const executor = createPhasedExecutor({
       enableHooks: false,
       enablePermissions: false,
@@ -71,8 +84,8 @@ describe('executePhase: exec timeout_ms honored', () => {
       runtimeContext(),
     );
 
-    expect(result.success).toBe(true);
-    expect(result.output).toBe('done');
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('timed out after 50ms');
   });
 
   test('a non-exec tool is unaffected: the small configured phase timeout still applies', async () => {
@@ -95,13 +108,13 @@ describe('executePhase: exec timeout_ms honored', () => {
       const result = await executor.execute(
         { id: 'call-other', name: 'some_other_tool', arguments: { timeout_ms: 2000 } }, tool, runtimeContext(),
       );
-      expect(result.success).toBe(false); expect(result.error).toBe('[REDACTED]'); expect(result.output).toBeUndefined();
+      expect(result.success).toBe(false); expect(result.error).toContain('timed out after 50ms'); expect(result.output).toBeUndefined();
       expect(started).toBe(1); expect(finished).toBe(false);
       const record = executor.getRecord('call-other');
       if (!record) throw new Error('Timed-out call must retain its execution record');
       expect(record.currentPhase).toBe('failed'); expect(record.result).toBeUndefined();
       expect(record.phases.filter(phase => phase.phase === 'executing')).toEqual([
-        expect.objectContaining({ phase: 'executing', success: false, abort: true, error: '[REDACTED]' }),
+        expect.objectContaining({ phase: 'executing', success: false, abort: true, error: expect.stringContaining('timed out after 50ms') }),
       ]);
       await settled;
       expect(finished).toBe(true); expect(record.currentPhase).toBe('failed'); expect(record.result).toBeUndefined();

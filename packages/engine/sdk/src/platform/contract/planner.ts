@@ -186,7 +186,7 @@ function shapeLines(shape: RequestShape, config: PlannerRequestInput['config']):
   } else {
     lines.push('- Every unit has "attempts": 1.');
   }
-  lines.push(`- The plan has at most ${config.maxUnits} units.`);
+  if (config.maxUnits > 0) lines.push(`- The plan has at most ${config.maxUnits} units.`);
   return lines;
 }
 
@@ -593,7 +593,7 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
         acceptPlan(contract, checked.plan, checked.verdict?.dispositions ?? new Map(), context, decisionIds);
         return { kind: 'accepted', plan: checked.plan, decisionIds };
       }
-      if (repair >= context.config.planRepairLimit) {
+      if (context.config.planRepairLimit > 0 && repair >= context.config.planRepairLimit) {
         if (checked.plan === undefined) {
           return context.fail('planning', `the planner's answer was not a readable plan after ${repair} repairs: ${checked.problems.map((entry) => entry.message).join(' ')}`);
         }
@@ -634,9 +634,9 @@ async function planNativeContract(context: PlanningContext, input: PlanContractI
       signal.throwIfAborted();
       await admitted.assertCurrent();
       if (needsPlan) {
-        if (nativeSpent(contract, budgetKey) >= context.config.planRepairLimit + 1) {
+        if (context.config.planRepairLimit > 0 && nativeSpent(contract, budgetKey) >= context.config.planRepairLimit + 1) {
           await decideNativeContract(contract, deps.native, { stage: 'plan', targetId: contract.id, action: 'Start another planning attempt', allowAct: false,
-            state: () => ({ attempts: nativeSpent(contract, budgetKey), limit: context.config.planRepairLimit + 1, reason: 'Planning budget exhausted' }), continuations: [], signal });
+            state: () => ({ attempts: nativeSpent(contract, budgetKey), limit: context.config.planRepairLimit === 0 ? null : context.config.planRepairLimit + 1, reason: 'Planning budget exhausted' }), continuations: [], signal });
           return context.fail('planning', 'Native planning budget exhausted; no eligible planning continuation');
         }
         const attempt = spendNative(contract, deps.native, budgetKey);
@@ -654,11 +654,11 @@ async function planNativeContract(context: PlanningContext, input: PlanContractI
       const checked = await checkPlanText(context, output!, nativeSpent(contract, budgetKey) - 1, signal);
       await admitted.assertCurrent();
       const valid = checked.problems.length === 0 && checked.plan !== undefined;
-      const canRepair = nativeSpent(contract, budgetKey) < context.config.planRepairLimit + 1;
+      const canRepair = context.config.planRepairLimit === 0 || nativeSpent(contract, budgetKey) < context.config.planRepairLimit + 1;
       const decisionIds = [...contract.shape!.decisionIds, ...(checked.verdict?.decisionIds ?? [])];
       const decision = await decideNativeContract(contract, deps.native, { stage: 'plan', targetId: contract.id,
         action: 'Accept this exact checked plan and schedule its derived units against the immutable original roots', allowAct: valid,
-        state: () => ({ plan: checked.plan ?? null, problems: checked.problems, attempts: nativeSpent(contract, budgetKey), limit: context.config.planRepairLimit + 1 }) as unknown as import('@goodvibes-jev/judgment').EntryType,
+        state: () => ({ plan: checked.plan ?? null, problems: checked.problems, attempts: nativeSpent(contract, budgetKey), limit: context.config.planRepairLimit === 0 ? null : context.config.planRepairLimit + 1 }) as unknown as import('@goodvibes-jev/judgment').EntryType,
         continuations: canRepair ? [{ id: 'repair-plan', kind: 'revise-action', description: 'Use one remaining planner attempt to revise the derived plan while preserving all original roots.' }] : [], decisionIds, signal });
       await admitted.assertCurrent();
       decision.assertCurrent();

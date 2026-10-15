@@ -243,7 +243,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
         startFixGroup(run, brief, round, group, units, checked.decisionIds, route);
         return;
       }
-      if (attempt >= config().planRepairLimit) {
+      if (config().planRepairLimit > 0 && attempt >= config().planRepairLimit) {
         escalations.raise(run, {
           scope: brief.scope,
           targetId: brief.targetId,
@@ -271,9 +271,9 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
       if (run.terminal) return;
       await input.assertCurrent();
       if (needsPlan) {
-        if (nativeSpent(contract, key) >= config().planRepairLimit + 1) {
+        if (config().planRepairLimit > 0 && nativeSpent(contract, key) >= config().planRepairLimit + 1) {
           await decideNativeContract(contract, context.native, { stage: 'fix-plan', targetId: brief.targetId, action: 'Start another fix-planning attempt', allowAct: false,
-            state: () => ({ attempts: nativeSpent(contract, key), limit: config().planRepairLimit + 1 }), continuations: [], signal: run.abort.signal });
+            state: () => ({ attempts: nativeSpent(contract, key), limit: config().planRepairLimit === 0 ? null : config().planRepairLimit + 1 }), continuations: [], signal: run.abort.signal });
           run.control.fail('planning', 'Native fix planner exhausted its unchanged budget'); return;
         }
         const attempt = spendNative(contract, context.native, key);
@@ -289,10 +289,10 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
       const checked = await checkFixPlan(run, brief, output!);
       await input.assertCurrent();
       const valid = checked.problems.length === 0 && checked.group !== undefined;
-      const canRepair = nativeSpent(contract, key) < config().planRepairLimit + 1;
+      const canRepair = config().planRepairLimit === 0 || nativeSpent(contract, key) < config().planRepairLimit + 1;
       const decision = await decideNativeContract(contract, context.native, { stage: 'fix-plan', targetId: brief.targetId,
         action: 'Run this exact checked fix group against the existing target criteria', allowAct: valid,
-        state: () => ({ plan: checked.plan ?? null, problems: checked.problems, requiredIds: brief.requiredIds, round, attempts: nativeSpent(contract, key), limit: config().planRepairLimit + 1 }) as unknown as import('@goodvibes-jev/judgment').EntryType,
+        state: () => ({ plan: checked.plan ?? null, problems: checked.problems, requiredIds: brief.requiredIds, round, attempts: nativeSpent(contract, key), limit: config().planRepairLimit === 0 ? null : config().planRepairLimit + 1 }) as unknown as import('@goodvibes-jev/judgment').EntryType,
         continuations: canRepair ? [{ id: 'repair-fix-plan', kind: 'revise-action', description: 'Use one remaining fix-planner attempt to repair only this derived group.' }] : [],
         decisionIds: checked.decisionIds, signal: run.abort.signal });
       await input.assertCurrent();
@@ -393,8 +393,8 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
     if (run.contract.nativeSource !== undefined) {
       const cost = itemClosed(run, unit) ? 2 : 1;
       const decision = await decideNativeContract(run.contract, context.native, { stage: 'stall', targetId: unit.id, action: 'Start a fresh worker with this exact unit brief, criteria and selected route',
-        allowAct: run.contract.sessionMode !== true && unit.fixRounds + unit.freshAgents + cost <= config().maxFixRounds,
-        state: () => ({ goal: unit.goal, brief: unit.brief, criteria: unit.criteria.map(c => ({ id: c.id, text: c.text, status: c.status })), route, spent: unit.fixRounds + unit.freshAgents, limit: config().maxFixRounds, cost }) as unknown as import('@goodvibes-jev/judgment').EntryType,
+        allowAct: run.contract.sessionMode !== true && (config().maxFixRounds === 0 || unit.fixRounds + unit.freshAgents + cost <= config().maxFixRounds),
+        state: () => ({ goal: unit.goal, brief: unit.brief, criteria: unit.criteria.map(c => ({ id: c.id, text: c.text, status: c.status })), route, spent: unit.fixRounds + unit.freshAgents, limit: config().maxFixRounds === 0 ? null : config().maxFixRounds, cost }) as unknown as import('@goodvibes-jev/judgment').EntryType,
         continuations: [], decisionIds, signal: run.abort.signal });
       if (decision.decision.outcome !== 'act') { run.control.fail('other', 'Jev refused a fresh native worker'); return; }
       decision.recordClaim();
@@ -420,7 +420,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
   }
 
   function exhausted(run: ContractRun, spent: number): boolean {
-    return spent >= config().maxFixRounds;
+    return config().maxFixRounds > 0 && spent >= config().maxFixRounds;
   }
 
   async function unitStalled(run: ContractRun, unitId: string, check: DecidedCheck): Promise<void> {
@@ -465,11 +465,11 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
 
   async function nativeUnitCorrection(run: ContractRun, unit: ContractUnit, check: DecidedCheck): Promise<void> {
     const canSplit = run.contract.sessionMode !== true && !exhausted(run, unit.fixRounds + unit.freshAgents);
-    const canFresh = canSplit && unit.fixRounds + unit.freshAgents + (itemClosed(run, unit) ? 2 : 1) <= config().maxFixRounds;
+    const canFresh = canSplit && (config().maxFixRounds === 0 || unit.fixRounds + unit.freshAgents + (itemClosed(run, unit) ? 2 : 1) <= config().maxFixRounds);
     const decision = await decideNativeContract(run.contract, context.native, { stage: check.check.result === 'native-decision' || check.check.result === 'await-owner' ? 'evidence' : 'stall', targetId: unit.id,
       action: 'Plan a bounded correction that must preserve all criteria and produce actual new evidence', allowAct: canSplit,
       state: () => ({ goal: unit.goal, criteria: unit.criteria.map(c => ({ id: c.id, text: c.text, status: c.status })), check: { id: check.check.id, result: check.check.result, goal: check.check.goal, quality: check.check.quality },
-        fixRounds: unit.fixRounds, freshAgents: unit.freshAgents, limit: config().maxFixRounds, sessionMode: run.contract.sessionMode === true }) as unknown as import('@goodvibes-jev/judgment').EntryType,
+        fixRounds: unit.fixRounds, freshAgents: unit.freshAgents, limit: config().maxFixRounds === 0 ? null : config().maxFixRounds, sessionMode: run.contract.sessionMode === true }) as unknown as import('@goodvibes-jev/judgment').EntryType,
       continuations: canFresh ? [{ id: 'fresh-worker', kind: 'revise-action', description: 'Prepare a fresh worker for the same requirements and obtain a new exact-action decision before starting it.' }] : [],
       decisionIds: check.check.decisionIds, signal: run.abort.signal });
     if (decision.decision.outcome === 'reject') { run.control.fail('other', 'Jev refused further native correction without sufficient evidence or remaining budget'); return; }
@@ -489,7 +489,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
     if (run.contract.nativeSource !== undefined) {
       const decision = await decideNativeContract(run.contract, context.native, { stage: 'stall', targetId: unit.id, action: 'Plan a bounded repair of this exact merge conflict without weakening criteria',
         allowAct: run.contract.sessionMode !== true && !exhausted(run, unit.fixRounds + unit.freshAgents),
-        state: () => ({ conflict: { ...conflict, files: [...conflict.files] }, goal: unit.goal, spent: unit.fixRounds + unit.freshAgents, limit: config().maxFixRounds }), continuations: [], signal: run.abort.signal });
+        state: () => ({ conflict: { ...conflict, files: [...conflict.files] }, goal: unit.goal, spent: unit.fixRounds + unit.freshAgents, limit: config().maxFixRounds === 0 ? null : config().maxFixRounds }), continuations: [], signal: run.abort.signal });
       if (decision.decision.outcome !== 'act') { run.control.fail('other', 'Jev refused the native merge repair'); return; }
       decision.recordClaim(); run.runtime(unit).cwd = run.contract.worktreePath ?? run.contract.projectRoot; stopForFix(run, unit); unit.fixRounds += 1;
       await planFix(run, unitBrief(run, unit, conflict), unit.fixRounds); return;
@@ -514,7 +514,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
     if (run.contract.nativeSource !== undefined) {
       const decision = await decideNativeContract(run.contract, context.native, { stage: 'stall', targetId: target.id, action: 'Plan a bounded correction of this failed target, preserving all original criteria',
         allowAct: run.contract.sessionMode !== true && !exhausted(run, target.fixRounds),
-        state: () => ({ scope, goal: target.goal, criteria: target.criteria.map(c => ({ id: c.id, text: c.text, status: c.status })), unmet: [...finding.unmet], unshown: [...finding.unshown], spent: target.fixRounds, limit: config().maxFixRounds, sessionMode: run.contract.sessionMode === true }),
+        state: () => ({ scope, goal: target.goal, criteria: target.criteria.map(c => ({ id: c.id, text: c.text, status: c.status })), unmet: [...finding.unmet], unshown: [...finding.unshown], spent: target.fixRounds, limit: config().maxFixRounds === 0 ? null : config().maxFixRounds, sessionMode: run.contract.sessionMode === true }),
         continuations: [], decisionIds: finding.decisionIds, signal: run.abort.signal });
       if (decision.decision.outcome !== 'act') { run.control.fail('other', 'Jev refused native target correction'); return; }
       decision.recordClaim(); target.fixRounds += 1;

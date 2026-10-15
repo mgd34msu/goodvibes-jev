@@ -1679,6 +1679,9 @@ export type DomainEventMap = {
 export type DomainEvents<TDomain extends string, TEvent extends EventLike = EventLike> = RuntimeEventFeeds<TDomain, TEvent>;
 
 // @public (undocumented)
+export function encodeWebSocketMessage(text: string): Generator<string>;
+
+// @public (undocumented)
 export type EnvelopeSubscriber<TEvent extends EventLike> = <TType extends TEvent['type']>(type: TType, listener: (envelope: EventEnvelope<TType, EventForType<TEvent, TType>>) => void) => () => void;
 
 // @public
@@ -34823,6 +34826,7 @@ export interface RegexAdmissionOptions extends JudgmentReadingOptions {
     readonly operation: string;
     // (undocumented)
     readonly reading?: RegexReadingCapability | undefined;
+    readonly timeoutMs?: number | undefined;
 }
 
 // @public (undocumented)
@@ -35380,6 +35384,13 @@ export type SecurityEvent =
 
 // @public
 export type SecurityEventType = SecurityEvent['type'];
+
+// @public
+export function sendWebSocketMessage(socket: {
+    send(data: string): unknown;
+    readonly bufferedAmount?: number;
+    getBufferedAmount?(): number;
+}, text: string, signal?: AbortSignal): Promise<void>;
 
 // @public (undocumented)
 export interface SerializedEventEnvelope<TEvent extends EventLike = EventLike> {
@@ -36457,6 +36468,17 @@ export type WatcherSourceKind = (typeof WATCHER_SOURCE_KINDS)[number];
 
 // @public
 export type WebGoodVibesSdkOptions = BrowserGoodVibesSdkOptions;
+
+// @public
+export const WEBSOCKET_CHUNK_CHARS: number;
+
+// @public
+export class WebSocketMessageAssembler {
+    // (undocumented)
+    accept(frame: unknown): unknown | undefined;
+    // (undocumented)
+    reset(): void;
+}
 
 // @public (undocumented)
 export class WebSocketTransportError extends GoodVibesSdkError {

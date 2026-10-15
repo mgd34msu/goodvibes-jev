@@ -115,7 +115,7 @@ export function detectStall(
   const twice = [...counts].filter(([, count]) => count >= 2).map(([id]) => id);
   if (twice.length > 0) return { kind: 'double-regression', criterionIds: twice };
 
-  if (unit.nudges.length >= limits.maxNudgesPerUnit) return { kind: 'nudge-limit', nudges: unit.nudges.length };
+  if (limits.maxNudgesPerUnit > 0 && unit.nudges.length >= limits.maxNudgesPerUnit) return { kind: 'nudge-limit', nudges: unit.nudges.length };
 
   const settled = unit.checks.filter((check) => check.trigger !== 'turn-end').map((check) => standingOf(unit, check));
   if (current.trigger !== 'turn-end') settled.push(current);
@@ -124,7 +124,7 @@ export function detectStall(
     if (madeProgress(settled[index]!, settled[index - 1])) break;
     run += 1;
   }
-  return run >= limits.stallLimit ? { kind: 'no-progress', checks: run } : null;
+  return limits.stallLimit > 0 && run >= limits.stallLimit ? { kind: 'no-progress', checks: run } : null;
 }
 
 /** A stall reason in words, for the stall event and the decision record. */

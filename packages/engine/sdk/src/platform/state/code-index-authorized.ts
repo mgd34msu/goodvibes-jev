@@ -27,6 +27,8 @@ export interface AuthorizedCodePrepareInput {
    */
   readonly guard: (boundary: AuthorizedIndexBoundary, path?: string) => Promise<void>;
   readonly maxChunks?: number;
+  /** Load one authorized file at a time, avoiding a second copy of the entire tree. */
+  readonly loadSnapshot?: (snapshot: AuthorizedCodeSnapshot) => Promise<AuthorizedCodeSnapshot>;
 }
 
 export interface AuthorizedCodeIndex {
@@ -42,7 +44,7 @@ export async function prepareAuthorizedCodeSnapshots(
   intelligence: ChunkingIntelligence,
   checkLifecycle: () => void,
 ): Promise<AuthorizedCodeIndex> {
-  const { provider, signal, guard } = input;
+  const { provider, signal, guard, loadSnapshot } = input;
   const embed = provider.embed;
   const embedSync = provider.embedSync;
   const check = async (boundary: AuthorizedIndexBoundary, path?: string): Promise<void> => {
@@ -59,16 +61,12 @@ export async function prepareAuthorizedCodeSnapshots(
       throw new Error('Authorized code index requires the unchanged registered semantic provider');
     }
   };
-  const maxChunks = input.maxChunks ?? 256;
-  if (!Number.isInteger(maxChunks) || maxChunks < 1 || maxChunks > 512) {
+  const maxChunks = input.maxChunks ?? Infinity;
+  if (input.maxChunks !== undefined && (!Number.isSafeInteger(maxChunks) || maxChunks < 1)) {
     throw new Error('Authorized code index bounds are invalid');
-  }
-  if (input.snapshots.length > 64) {
-    throw new Error('Authorized code index input exceeds bounds');
   }
   // Copy caller-owned containers before the first await. Never retain mutable input views.
   const snapshots = input.snapshots.map(({ path, content, mtimeMs }) => ({ path, content, mtimeMs }));
-  let bytes = 0;
   const paths = new Set<string>();
   for (const snapshot of snapshots) {
     if (!snapshot.path || snapshot.path.startsWith('/') || snapshot.path.includes('\\')
@@ -78,11 +76,6 @@ export async function prepareAuthorizedCodeSnapshots(
       throw new Error('Authorized code snapshot path or metadata is invalid');
     }
     paths.add(snapshot.path);
-    const size = Buffer.byteLength(snapshot.content, 'utf8');
-    bytes += size;
-    if (size > 1024 * 1024 || bytes > 4 * 1024 * 1024) {
-      throw new Error('Authorized code snapshot exceeds byte bounds');
-    }
   }
   await check('cache');
   if (countIndexedChunks(db) !== 0) throw new Error('Authorized code index requires an empty per-run database');
@@ -100,14 +93,16 @@ export async function prepareAuthorizedCodeSnapshots(
     return new Float32Array(result.vector);
   };
   let chunkCount = 0;
-  for (const snapshot of snapshots) {
+  for (const descriptor of snapshots) {
+    const snapshot = loadSnapshot ? await loadSnapshot(descriptor) : descriptor;
+    if (snapshot.path !== descriptor.path || snapshot.mtimeMs !== descriptor.mtimeMs) throw new Error('Authorized code snapshot identity changed');
     await check('chunk', snapshot.path);
     const { drafts } = await chunkFileContent({
       intelligence, absPath: snapshot.path, relPath: snapshot.path,
       content: snapshot.content, fileHash: sha256(snapshot.content), mtimeMs: snapshot.mtimeMs,
     });
     await check('chunk', snapshot.path);
-    if (chunkCount + drafts.length > maxChunks || drafts.some((draft) => draft.embedText.length > 32_768)) {
+    if (chunkCount + drafts.length > maxChunks) {
       throw new Error('Authorized code index chunk budget exceeded');
     }
     chunkCount += drafts.length;
@@ -115,6 +110,7 @@ export async function prepareAuthorizedCodeSnapshots(
       const vector = await embedText(draft.embedText, 'record', snapshot.path);
       await check('cache', snapshot.path);
       writeChunk(db, draft.chunk, vector);
+      await new Promise<void>(resolve => setImmediate(resolve));
     }
   }
   await check('result');
@@ -130,7 +126,7 @@ export async function prepareAuthorizedCodeSnapshots(
     },
     async search(query, options = {}) {
       const limit = options.limit ?? 5;
-      if (!Number.isInteger(limit) || limit < 1 || limit > 50 || query.length > 16_384) {
+      if (!Number.isSafeInteger(limit) || limit < 1) {
         throw new Error('Authorized code query exceeds bounds');
       }
       await check('result');

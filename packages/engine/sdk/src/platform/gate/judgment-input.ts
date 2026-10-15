@@ -51,9 +51,6 @@ const CARD_FIELDS = new Set([
 const CARD_CREATE = 'payments.cards.create';
 const CREDENTIAL_SET = 'credentials.set';
 const OPERATION_FIELDS = ['method', 'operation', 'tool', 'name'] as const;
-const MAX_DEPTH = 64;
-const MAX_NODES = 20_000;
-const MAX_TEXT_CHARS = 1_000_000;
 
 /** Structural capture only. Callers must separately privacy-screen every semantic field.
  * Internal protocol adapters use this to separate validated identity from raw content.
@@ -291,33 +288,59 @@ function inlineProblem(text: string, cardOnly = false, evidence = false): Judgme
  * Empty credential fields and goodvibes secret references carry no raw value.
  */
 function snapshotProblem(value: unknown, toolName: string, cardOnly = false, evidence = false): JudgmentInputProblem | undefined {
-  let nodes = 0;
-  let chars = 0;
   const ancestors = new Set<object>();
-  function visit(entry: unknown, suffixes: readonly string[], parentKey: string | undefined, operation: string, depth: number): JudgmentInputProblem | undefined {
-    if (++nodes > MAX_NODES || depth > MAX_DEPTH) return 'unsupported-input';
+  type Entry = { entry: unknown; suffixes: readonly string[]; parentKey: string | undefined; operation: string };
+  type Work = Entry | { leave: object } | { field: string; child: unknown; parent: Entry };
+  const named = inlineProblem(toolName, cardOnly);
+  if (named) return named;
+  const pending: Work[] = [{ entry: value, suffixes: [], parentKey: undefined, operation: toolName }];
+  while (pending.length) {
+    const work = pending.pop()!;
+    if ('leave' in work) { ancestors.delete(work.leave); continue; }
+    if ('field' in work) {
+      const { field: key, child, parent: { suffixes, parentKey, operation } } = work;
+        const keyProblem = inlineProblem(key, cardOnly, evidence);
+        if (keyProblem) return keyProblem;
+        const fullSuffixes = [...suffixes.map(suffix => `${suffix}.${key}`), key];
+        const cardField = (parentKey === 'cardMaterial' && (CARD_FIELD_NAMES as readonly string[]).includes(key)) || (parentKey === 'card' && (key === 'number' || key === 'expiry'));
+        let declared: JudgmentInputProblem | undefined = cardField ? 'card-material' : protectedKey(key);
+        if (declared === undefined) {
+          for (const suffix of fullSuffixes) {
+            declared = protectedKey(suffix);
+            if (declared !== undefined) break;
+          }
+        }
+        if (declared && (!cardOnly || declared === 'card-material') && present(child) && !safeReference(child, declared, evidence) && !fieldDeclaration(child)) return declared;
+        pending.push({ entry: child, suffixes: fullSuffixes, parentKey: key, operation });
+      continue;
+    }
+    const { entry, suffixes, parentKey, operation } = work;
     if (typeof entry === 'string') {
-      chars += entry.length;
-      if (chars > MAX_TEXT_CHARS) return 'unsupported-input';
       const trimmed = entry.trim();
       if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
         let decoded: unknown;
-        try { decoded = JSON.parse(entry); } catch { return inlineProblem(entry, cardOnly, evidence); }
-        return visit(decoded, suffixes, parentKey, operation, depth + 1);
+        try { decoded = JSON.parse(entry); } catch { const problem = inlineProblem(entry, cardOnly, evidence); if (problem) return problem; continue; }
+        pending.push({ entry: decoded, suffixes, parentKey, operation });
+        continue;
       }
-      return inlineProblem(entry, cardOnly, evidence);
+      const problem = inlineProblem(entry, cardOnly, evidence);
+      if (problem) return problem;
+      continue;
     }
-    if (entry === null || entry === undefined || typeof entry === 'boolean') return undefined;
+    if (entry === null || entry === undefined || typeof entry === 'boolean') continue;
     if (typeof entry === 'number') {
       if (!Number.isFinite(entry)) return 'unsupported-input';
-      return inlineProblem(String(entry), cardOnly);
+      const problem = inlineProblem(String(entry), cardOnly);
+      if (problem) return problem;
+      continue;
     }
     if (typeof entry !== 'object' || ancestors.has(entry)) return 'unsupported-input';
     const array = Array.isArray(entry);
     const prototype: unknown = Object.getPrototypeOf(entry);
     if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return 'unsupported-input';
     ancestors.add(entry);
-    try {
+    pending.push({ leave: entry });
+    {
       const descriptors = Object.getOwnPropertyDescriptors(entry);
       // Array.map consults constructor[Symbol.species], and JSON hooks can run
       // even when non-enumerable. Plain JSON must not supply executable hooks.
@@ -345,26 +368,10 @@ function snapshotProblem(value: unknown, toolName: string, cardOnly = false, evi
         && typeof namedKey === 'string' && protectedKey(namedKey) === 'card-material') return 'card-material';
       const namedProblem = op === CREDENTIAL_SET ? 'credential-material' : typeof namedKey === 'string' ? protectedKey(namedKey) : undefined;
       if (!cardOnly && present(fields['value']) && !safeReference(fields['value'], namedProblem, evidence) && !fieldDeclaration(fields['value']) && namedProblem) return 'credential-material';
-      for (const [key, child] of Object.entries(fields)) {
-        const keyProblem = inlineProblem(key, cardOnly, evidence);
-        if (keyProblem) return keyProblem;
-        const fullSuffixes = [...suffixes.map(suffix => `${suffix}.${key}`), key];
-        const cardField = (parentKey === 'cardMaterial' && (CARD_FIELD_NAMES as readonly string[]).includes(key)) || (parentKey === 'card' && (key === 'number' || key === 'expiry'));
-        let declared: JudgmentInputProblem | undefined = cardField ? 'card-material' : protectedKey(key);
-        if (declared === undefined) {
-          for (const suffix of fullSuffixes) {
-            declared = protectedKey(suffix);
-            if (declared !== undefined) break;
-          }
-        }
-        if (declared && (!cardOnly || declared === 'card-material') && present(child) && !safeReference(child, declared, evidence) && !fieldDeclaration(child)) return declared;
-        const problem = visit(child, fullSuffixes, key, op, depth + 1);
-        if (problem) return problem;
-      }
-      return undefined;
-    } finally { ancestors.delete(entry); }
+      for (const [key, child] of Object.entries(fields).reverse()) pending.push({ field: key, child, parent: { entry, suffixes, parentKey, operation: op } });
+    }
   }
-  return inlineProblem(toolName, cardOnly) ?? visit(value, [], undefined, toolName, 0);
+  return undefined;
 }
 
 /** Native evidence inspection only: no credential exception, projection or admission is produced. */

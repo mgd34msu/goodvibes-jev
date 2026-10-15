@@ -213,7 +213,7 @@ function chooseResult(
     return { result: 'nudge', nudgeKinds: findings.kinds, nudgeQuality: findings.qualityProblems };
   }
   if (findings.kinds.includes('unshown')) {
-    const underLimit = consecutiveUnsettledChecks(input.unit) < input.settings.evidenceNudgeLimit;
+    const underLimit = input.settings.evidenceNudgeLimit === 0 || consecutiveUnsettledChecks(input.unit) < input.settings.evidenceNudgeLimit;
     return underLimit ? { result: 'nudge', nudgeKinds: ['unshown'], nudgeQuality: [] } : { result: input.contract.nativeSource === undefined ? 'await-owner' : 'native-decision', nudgeKinds: [], nudgeQuality: [] };
   }
   return { result: 'pass', nudgeKinds: [], nudgeQuality: [] };

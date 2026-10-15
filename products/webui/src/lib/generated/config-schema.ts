@@ -3672,44 +3672,44 @@ export const CONFIG_SCHEMA_ENTRIES: readonly ConfigSchemaEntry[] = [
   {
     "key": "contract.evidenceNudgeLimit",
     "type": "number",
-    "default": 2,
-    "description": "Consecutive checks where the work does not show a criterion is met before the owner is asked to confirm",
-    "validationHint": "integer in [1, 10]"
+    "default": 0,
+    "description": "Consecutive checks where the work does not show a criterion is met before the owner is asked to confirm; 0 disables this limit",
+    "validationHint": "integer in [0, 9007199254740991]"
   },
   {
     "key": "contract.stallLimit",
     "type": "number",
-    "default": 3,
-    "description": "Consecutive checks without progress that mark a unit as stalled and hand it to correction",
-    "validationHint": "integer in [1, 20]"
+    "default": 0,
+    "description": "Consecutive checks without progress that mark a unit as stalled and hand it to correction; 0 disables this limit",
+    "validationHint": "integer in [0, 9007199254740991]"
   },
   {
     "key": "contract.maxNudgesPerUnit",
     "type": "number",
-    "default": 12,
-    "description": "The most corrections one unit receives before it is treated as stalled",
-    "validationHint": "integer in [1, 100]"
+    "default": 0,
+    "description": "The most corrections one unit receives before it is treated as stalled; 0 disables this limit",
+    "validationHint": "integer in [0, 9007199254740991]"
   },
   {
     "key": "contract.maxFixRounds",
     "type": "number",
-    "default": 5,
-    "description": "Planned-fix rounds plus fresh agents for one unit, group or deliverable before the owner decides",
-    "validationHint": "number in [0, 20]"
+    "default": 0,
+    "description": "Planned-fix rounds plus fresh agents for one unit, group or deliverable before the owner decides; 0 disables this limit",
+    "validationHint": "integer in [0, 9007199254740991]"
   },
   {
     "key": "contract.planRepairLimit",
     "type": "number",
-    "default": 2,
-    "description": "Times the planner is asked to repair a plan that fails its checks before the owner decides",
-    "validationHint": "integer in [0, 10]"
+    "default": 0,
+    "description": "Times the planner is asked to repair a plan that fails its checks before the owner decides; 0 disables this limit",
+    "validationHint": "integer in [0, 9007199254740991]"
   },
   {
     "key": "contract.maxUnits",
     "type": "number",
-    "default": 64,
-    "description": "The most units one contract plan may hold",
-    "validationHint": "integer in [1, 256]"
+    "default": 0,
+    "description": "The most units one contract plan may hold; 0 disables this limit",
+    "validationHint": "integer in [0, 9007199254740991]"
   },
   {
     "key": "contract.defaultAttempts",

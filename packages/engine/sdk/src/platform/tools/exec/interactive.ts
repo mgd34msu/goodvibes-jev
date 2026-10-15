@@ -306,11 +306,11 @@ export async function runInteractiveCommand(input: InteractiveRunInput): Promise
     }
   };
 
-  const killTimer = setTimeout(() => {
+  const killTimer = timeoutMs > 0 ? setTimeout(() => {
     timedOut = true;
     void kill();
-  }, timeoutMs);
-  killTimer.unref?.();
+  }, timeoutMs) : undefined;
+  killTimer?.unref?.();
 
   const onAbort = (): void => {
     if (timedOut || cancelled) return;

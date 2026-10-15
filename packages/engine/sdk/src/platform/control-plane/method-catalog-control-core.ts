@@ -504,13 +504,14 @@ export const builtinGatewayControlCoreMethodDescriptors: readonly GatewayMethodD
   methodDescriptor({
     id: 'sessions.messages.list',
     title: 'List Shared Session Messages',
-    description: 'Return message history for a shared session.',
+    description: 'Return a page of retained session messages. Offset counts backward from the newest message; nextOffset reads the preceding page. History is retained until explicitly deleted.',
     category: 'sessions',
     scopes: ['read:sessions'],
     http: { method: 'GET', path: '/api/sessions/{sessionId}/messages' },
     inputSchema: objectSchema({
       sessionId: STRING_SCHEMA,
       limit: NUMBER_SCHEMA,
+      offset: NUMBER_SCHEMA,
       before: STRING_SCHEMA,
     }, ['sessionId']),
     outputSchema: SHARED_SESSION_WITH_MESSAGES_SCHEMA,

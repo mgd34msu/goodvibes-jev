@@ -28,9 +28,11 @@ export function listSharedSessionMessages(
   store: SharedSessionMessageStore,
   sessionId: string,
   limit = 100,
+  offset = 0,
 ): SharedSessionMessage[] {
   const bucket = store.messages.get(sessionId) ?? [];
-  return bucket.slice(-Math.max(1, limit));
+  const end = Math.max(0, bucket.length - Math.max(0, offset));
+  return bucket.slice(Math.max(0, end - Math.max(1, limit)), end);
 }
 
 /**

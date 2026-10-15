@@ -294,12 +294,10 @@ async function applyReplacementsAsync(
     const match = await pattern.exec(content.slice(start, end));
     // Preserve the edit API's historical numeric-capture substitution (not
     // String.replace's full replacement language, used by find preview).
-    const budget = 2_000_000 + (end - start) + replace.length;
     const parts: string[] = [];
-    let size = 0, cursor = 0;
+    let cursor = 0;
     const append = (part: string) => {
-      if (size + part.length > budget) throw new Error('edit regex replacement output exceeds the expansion budget');
-      size += part.length; if (part.length) parts.push(part);
+      if (part.length) parts.push(part);
     };
     if (match) {
       const tokens = /\$(\d+)/g;

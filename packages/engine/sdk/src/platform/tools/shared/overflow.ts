@@ -30,7 +30,7 @@ export interface RetentionPolicyConfig {
 }
 
 const DEFAULT_RETENTION: Required<RetentionPolicyConfig> = {
-  maxAgeMs: 60 * 60 * 1000, // 1 hour
+  maxAgeMs: Infinity, // Retain full output unless the owner configures cleanup.
   maxCount: Infinity,
   maxSizeBytes: Infinity,
 };

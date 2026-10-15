@@ -1,6 +1,9 @@
 /** One-shot evaluation and authority-owned attempt history. No host eval,
- * shared VM, host history file or model-selected workspace is available here. */
+ * shared VM or model-selected workspace is available here. */
 import { randomUUID } from 'node:crypto';
+import { closeSync, constants, mkdirSync, openSync, readSync, writeSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import {
   assertContractInputAuthority,
   assertContractInputReadAccess,
@@ -13,14 +16,11 @@ import { guardExecCommand } from '../exec/ast-guard.js';
 import { probeCapturedExecAvailability, runCapturedCommand, type CapturedExecAuthority } from '../exec/captured-exec.js';
 import { createCapturedExecBunRuntimeAdmission } from '../exec/captured-bun-runtime-input.js';
 import { REPL_TOOL_SCHEMA } from './schema.js';
+import { capturedReplScript } from './captured-script.js';
 import type { ReplToolInput } from './schema.js';
 
 const tools = new WeakMap<Tool, ContractInputAuthority>();
 const HELD = 'Captured REPL held: original-owner/view authority is unavailable, changed, cancelled or restricted. Output withheld.';
-const MAX_COMMAND_BYTES = 64 * 1024;
-const TIMEOUT_MS = 10_000;
-const MAX_HISTORY_ENTRIES = 100;
-const MAX_HISTORY_BYTES = 2 * 1024 * 1024;
 type Runtime = NonNullable<ReplToolInput['runtime']>;
 interface HistoryEntry {
   readonly ts: number;
@@ -33,7 +33,7 @@ interface HistoryEntry {
   readonly error?: string | undefined;
 }
 interface RetainedEntry {
-  readonly entry: HistoryEntry;
+  readonly offset: number;
   readonly bytes: number;
   readonly check: (signal?: AbortSignal) => Promise<void>;
   readonly signal?: AbortSignal | undefined;
@@ -43,7 +43,7 @@ interface History {
   readonly signal?: AbortSignal | undefined;
   readonly entries: RetainedEntry[];
   bytes: number;
-  omitted: number;
+  readonly fd: number;
 }
 // A copied root, serialized session ID or newly minted authority never selects
 // another execution's journal. Weak ownership also lets disposed runs be freed.
@@ -55,11 +55,16 @@ const histories = new WeakMap<CapturedReplHistory, History>();
 /** Mint once per actual agent run, then reuse only for its registry rebuilds. */
 export function createCapturedReplHistory(authority: ContractInputAuthority, signal?: AbortSignal): CapturedReplHistory {
   const owner = Object.freeze({ kind: 'captured-repl-history' as const });
-  histories.set(owner, { authority, signal, entries: [], bytes: 0, omitted: 0 });
+  const directory = join(process.env.GOODVIBES_HOME ?? join(homedir(), '.local', 'share', 'goodvibes-jev-data'), '.goodvibes', 'repl-history');
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const fd = openSync(join(directory, `${randomUUID()}.jsonl`), constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+  histories.set(owner, { authority, signal, entries: [], bytes: 0, fd });
   return owner;
 }
 
 export function disposeCapturedReplHistory(owner: CapturedReplHistory): void {
+  const history = histories.get(owner);
+  if (history) closeSync(history.fd);
   histories.delete(owner);
 }
 
@@ -71,15 +76,11 @@ function historyOf(owner: CapturedReplHistory, authority: ContractInputAuthority
 }
 
 function retain(history: History, entry: HistoryEntry, check: RetainedEntry['check'], signal?: AbortSignal): void {
-  const bytes = Buffer.byteLength(JSON.stringify(entry));
-  // Do not silently truncate a completion/error into a different result.
-  if (bytes > MAX_HISTORY_BYTES) { history.omitted++; return; }
-  while (history.entries.length >= MAX_HISTORY_ENTRIES || history.bytes + bytes > MAX_HISTORY_BYTES) {
-    history.bytes -= history.entries.shift()!.bytes;
-    history.omitted++;
-  }
-  history.entries.push({ entry: Object.freeze(entry), bytes, check, signal });
-  history.bytes += bytes;
+  const data = Buffer.from(JSON.stringify(entry) + '\n');
+  let written = 0;
+  while (written < data.length) written += writeSync(history.fd, data, written, data.length - written, history.bytes + written);
+  history.entries.push({ offset: history.bytes, bytes: data.length, check, signal });
+  history.bytes += data.length;
 }
 
 export function isCapturedReplTool(tool: Tool, authority: ContractInputAuthority): boolean {
@@ -102,7 +103,7 @@ export function createCapturedReplTool(
   const tool: Tool = {
     definition: {
       ...REPL_TOOL_SCHEMA,
-      description: 'Evaluate one JavaScript or TypeScript snippet in a fresh contained captured workspace. Bindings are JSON values exposed as globals. Returns printed completion and console output. Each eval is stateless (no shared variables or VM); authorized file changes persist only in a mutable member view. History lists authorized attempts for this captured run in the current process, retaining at most 100 entries and 2 MiB. History is not inherited by another run or resumed/rebound authority and never reads host history files. Network, ambient host environment and other runtimes are unavailable.',
+      description: 'Evaluate one JavaScript or TypeScript snippet in a fresh contained captured workspace. Bindings are JSON values exposed as globals. Returns printed completion and console output. Each eval is stateless (no shared variables or VM); authorized file changes persist only in a mutable member view. History retains all authorized attempts in a private per-run journal with optional pagination. History is not inherited by another run or resumed/rebound authority. Network, ambient host environment and other runtimes are unavailable.',
       sideEffects: ['exec', 'read_fs', 'write_fs', 'state'],
       concurrency: 'serial',
     },
@@ -119,20 +120,24 @@ export function createCapturedReplTool(
           // backend completed. Such an attempt must not become replayable.
           for (let index = history.entries.length - 1; index >= 0; index--) {
             if (history.entries[index]!.signal?.aborted) {
-              history.bytes -= history.entries[index]!.bytes;
               history.entries.splice(index, 1);
             }
           }
-          const entries = [...history.entries];
-          const omitted = history.omitted;
+          const offset = args.offset ?? 0, limit = args.limit ?? history.entries.length;
+          if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0 || typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 0) return { success: false, error: 'History offset and limit must be nonnegative integers.' };
+          const entries = history.entries.slice(offset, offset + limit);
           const previousChecks = new Set(entries.map(entry => entry.check));
           previousChecks.delete(check);
           // Replaying through a newly constructed registry must not replace an
           // earlier binding's permission filter or lifecycle with a broader one.
           for (const originalCheck of previousChecks) await originalCheck(signal);
           for (const retained of entries) retained.signal?.throwIfAborted();
-          const output = JSON.stringify({ count: entries.length, history: entries.map(entry => entry.entry),
-            ...(omitted ? { omitted } : {}) });
+          const output = JSON.stringify({ count: history.entries.length, history: entries.map(entry => {
+            const data = Buffer.alloc(entry.bytes);
+            let read = 0;
+            while (read < data.length) { const n = readSync(history.fd, data, read, data.length - read, entry.offset + read); if (!n) throw new Error('Incomplete REPL journal'); read += n; }
+            return JSON.parse(data.toString('utf8')) as HistoryEntry;
+          }), ...(offset > 0 || entries.length < history.entries.length ? { offset, returned: entries.length, has_more: offset + entries.length < history.entries.length, ...(entries.length && offset + entries.length < history.entries.length ? { next_offset: offset + entries.length } : {}) } : {}) });
           for (const originalCheck of previousChecks) await originalCheck(signal);
           await check(signal);
           for (const retained of entries) retained.signal?.throwIfAborted();
@@ -143,8 +148,8 @@ export function createCapturedReplTool(
         const runtime = args.runtime ?? 'javascript';
         if (typeof runtime !== 'string' || !['javascript', 'typescript', 'python', 'sql', 'graphql'].includes(runtime))
           return { success: false, error: 'Captured REPL runtime is invalid.' };
-        if (Buffer.byteLength(args.expression) > MAX_COMMAND_BYTES)
-          return { success: false, error: 'Captured REPL expression and bindings exceed the 64 KiB command limit.' };
+        const timeoutMs = args.timeout_ms ?? 0;
+        if (typeof timeoutMs !== 'number' || !Number.isSafeInteger(timeoutMs) || timeoutMs < 0) return { success: false, error: 'timeout_ms must be a nonnegative integer.' };
         const attempt = { ts: Date.now(), runtime: runtime as Runtime, expression: args.expression, sessionId: `captured_repl_${randomUUID()}` };
         const finish = async (result: Omit<ToolResult, 'callId'>, details: Partial<HistoryEntry> = {}): Promise<Omit<ToolResult, 'callId'>> => {
           await check(signal);
@@ -158,16 +163,9 @@ export function createCapturedReplTool(
           return await finish({ success: false, error: 'Captured REPL requires the trusted Bun runtime. Host evaluation is unavailable as a fallback.' });
         if (args.bindings !== undefined && (args.bindings === null || typeof args.bindings !== 'object' || Array.isArray(args.bindings)))
           return { success: false, error: 'Captured REPL bindings must be an object of JSON values.' };
-        // JSON.parse preserves keys such as __proto__ as ordinary data. Defining
-        // own globals avoids prototype assignment and needs no guessed identifier
-        // classification. Code and bindings are a single literal shell argument.
-        const bindings = JSON.stringify(args.bindings ?? {});
-        const script = `Object.defineProperties(globalThis, Object.fromEntries(Object.entries(JSON.parse(${JSON.stringify(bindings)})).map(([key, value]) => [key, {value, configurable: true, writable: true}])));\n${args.expression}`;
-        const command = `bun --no-env-file --print '${script.replace(/'/g, `'\\''`)}'`;
-        if (Buffer.byteLength(command) > MAX_COMMAND_BYTES)
-          return { success: false, error: 'Captured REPL expression and bindings exceed the 64 KiB command limit.' };
-        // Preserve the existing semantic safety reading; the contained runtime
-        // below is filesystem/process authority, never a replacement permission.
+        const script = capturedReplScript(args.expression, JSON.stringify(args.bindings ?? {}));
+        const scriptName = `.goodvibes-repl-${randomUUID()}.ts`;
+        const command = `bun --no-env-file ./${scriptName}`;
         const guard = await guardExecCommand(command, featureFlags, signal);
         await check(signal);
         if (!guard.allowed) return await finish({ success: false, error: guard.denialMessage ?? 'Captured REPL command denied by policy.' });
@@ -188,9 +186,9 @@ export function createCapturedReplTool(
             return await finish({ success: false, error: 'Captured REPL ordinary Bun runtime is unavailable, changed or access-restricted. Host evaluation is unavailable as a fallback.' });
           }
         }
-        const result = await runCapturedCommand({ ...binding, bunRuntimeInput }, command, {}, binding.root, TIMEOUT_MS, signal, 'disabled', {});
+        const result = await runCapturedCommand({ ...binding, bunRuntimeInput }, command, {}, binding.root, timeoutMs, signal, 'disabled', {}, { script: { name: scriptName, content: script } });
         await check(signal);
-        const error = result.timed_out ? 'Captured REPL evaluation timed out after 10000ms.' : result.stderr;
+        const error = result.timed_out ? `Captured REPL evaluation timed out after ${timeoutMs}ms.` : result.stderr;
         return await finish({
           success: result.success,
           ...(result.cancelled ? { cancelled: true } : {}),

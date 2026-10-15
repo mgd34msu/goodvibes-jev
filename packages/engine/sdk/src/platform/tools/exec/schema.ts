@@ -33,8 +33,8 @@ export const EXEC_TOOL_SCHEMA = {
           },
           timeout_ms: {
             type: 'integer',
-            minimum: 1,
-            description: 'Per-command timeout in milliseconds. Default: 120000 (2 min).',
+            minimum: 0,
+            description: 'Optional per-command timeout in milliseconds. Omitted or 0 waits for completion or cancellation.',
           },
           env: {
             type: 'object',
@@ -107,8 +107,8 @@ export const EXEC_TOOL_SCHEMA = {
               },
               timeout_ms: {
                 type: 'integer',
-                minimum: 1,
-                description: 'Max wait time in ms. Defaults to command timeout.',
+                minimum: 0,
+                description: 'Optional pattern-wait timeout in ms. Omitted uses the command timeout; 0 waits until cancellation.',
               },
               kill_after: {
                 type: 'boolean',
@@ -122,7 +122,7 @@ export const EXEC_TOOL_SCHEMA = {
             type: 'boolean',
             description:
               'Stream stdout lines to a pollable progress file at .goodvibes/.overflow/{id}-progress.txt.'
-              + ' Auto-enabled when timeout_ms > 30000. The result includes a progress_file path.',
+              + ' Auto-enabled without a timeout or when timeout_ms > 30000. The result includes a progress_file path.',
           },
           interactive: {
             type: 'boolean',
@@ -149,8 +149,8 @@ export const EXEC_TOOL_SCHEMA = {
     },
     timeout_ms: {
       type: 'integer',
-      minimum: 1,
-      description: 'Global timeout in ms applied to all commands. Default: 120000.',
+      minimum: 0,
+      description: 'Optional timeout in ms applied to all commands. Omitted or 0 waits for completion or cancellation.',
     },
     verbosity: {
       type: 'string',
@@ -275,7 +275,7 @@ export interface ExecCommandInput {
   background?: boolean | undefined;
   retry?: ExecRetry | undefined;
   until?: ExecUntil | undefined;
-  /** Stream stdout to a pollable progress file. Auto-enabled when timeout_ms > 30000. */
+  /** Stream stdout to a pollable progress file. Auto-enabled without a timeout or when timeout_ms > 30000. */
   progress?: boolean | undefined;
   /**
    * Run under a PTY with the prompt-answer path (see exec/interactive.ts).

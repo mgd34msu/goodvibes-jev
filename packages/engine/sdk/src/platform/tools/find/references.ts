@@ -1,3 +1,4 @@
+import { paginateFindResult } from './pagination.js';
 import type { WalkDirOptions } from '../../utils/walk-dir.js';
 import { resolve } from 'node:path';
 import { assertCapturedToolReadAccess } from '../shared/captured-input-tools.js';
@@ -22,13 +23,12 @@ function withFallbackReason<T extends Record<string, unknown>>(
   return { ...result, fallback_reason: reason };
 }
 
-export async function executeReferencesQuery(
+async function scanReferencesQuery(
   query: ReferencesQuery,
   output: OutputOptions,
   projectRoot: string,
   walkOptions: WalkDirOptions = {},
 ): Promise<Record<string, unknown>> {
-  const maxResults = output.max_results ?? 100;
 
   interface ReferenceLocation {
     file: string;
@@ -45,7 +45,7 @@ export async function executeReferencesQuery(
     const lspLocations = await ci.getReferences(query.file, query.line, query.column);
     if (lspLocations.length > 0) {
       for (const loc of lspLocations) {
-        if (locations.length >= maxResults) break;
+
         try {
           const filePath = uriToPath(loc.uri);
           locations.push({ file: filePath, line: loc.range.start.line + 1 });
@@ -109,12 +109,12 @@ export async function executeReferencesQuery(
 
   const files = await collectTextFiles(projectRoot, diagnostics, walkOptions);
   for (const file of files) {
-    if (locations.length >= maxResults) break;
+
     const content = await readTextFile(file, diagnostics);
     if (content === null) continue;
     const lines = content.split('\n');
     for (let i = 0; i < lines.length; i++) {
-      if (locations.length >= maxResults) break;
+
       regex.lastIndex = 0;
       if (regex.test(lines[i]!)) {
         locations.push({ file, line: i + 1 });
@@ -139,4 +139,8 @@ export async function executeReferencesQuery(
     withFallbackReason(makeLocationsResult(locations, locations.length, 'grep_fallback'), lspFallbackReason),
     diagnostics.warnings,
   );
+}
+
+export async function executeReferencesQuery(...args: Parameters<typeof scanReferencesQuery>): Promise<Record<string, unknown>> {
+  return paginateFindResult(await scanReferencesQuery(...args), args[1]);
 }

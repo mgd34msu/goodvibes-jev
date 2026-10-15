@@ -253,6 +253,7 @@ export const SESSION_BROKER_SNAPSHOT_SCHEMA = objectSchema({
 export const SHARED_SESSION_WITH_MESSAGES_SCHEMA = objectSchema({
   session: SHARED_SESSION_RECORD_SCHEMA,
   messages: arraySchema(SHARED_SESSION_MESSAGE_SCHEMA),
+  total: NUMBER_SCHEMA, offset: NUMBER_SCHEMA, nextOffset: NUMBER_SCHEMA, hasMore: BOOLEAN_SCHEMA,
 }, ['session', 'messages']);
 
 export const SHARED_SESSION_WITH_INPUTS_SCHEMA = objectSchema({

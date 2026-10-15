@@ -333,6 +333,8 @@ export type DaemonVerbOutcome<T> = {
 // @public
 export interface DaemonWebSocket {
     // (undocumented)
+    readonly bufferedAmount?: number;
+    // (undocumented)
     close(): void;
     // (undocumented)
     onclose: ((event: unknown) => void) | null;

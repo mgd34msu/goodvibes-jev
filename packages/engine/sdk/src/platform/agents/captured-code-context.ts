@@ -3,7 +3,7 @@ import { constants, closeSync, fstatSync, lstatSync, openSync, opendirSync, read
 import { dirname, join, relative } from 'node:path';
 import {
   assertContractInputAuthority, authorizeContractInputPath, contractInputAuthoritySourceRoot, contractInputAuthorityFiles,
-  registerContractInputReadAssertion, type ContractInputAuthority,
+  registerContractInputReadAssertion, withContractInputReadBatch, type ContractInputAuthority,
 } from '../contract/input-authority.js';
 import { CONTRACT_INPUT_EXCLUSIONS } from '../contract/input-snapshot.js';
 import { executePolicyCheck } from '../gate/execute-policy-check.js';
@@ -15,10 +15,9 @@ import { HASHED_MEMORY_EMBEDDING_PROVIDER, type MemoryEmbeddingProvider, type Me
 import type { ReadAccessFilter } from '../tools/shared/read-access.js';
 import type { TurnCodeIndexSource } from './turn-knowledge-injection.js';
 
-const LIMITS = Object.freeze({ entries: 1024, files: 64, fileBytes: 128 * 1024, bytes: 1024 * 1024, chunks: 128, ms: 15_000 });
 const excluded = new Set<string>([...CONTRACT_INPUT_EXCLUSIONS, 'node_modules']);
 const fingerprint = (s: BigIntStats): string => `${s.dev}:${s.ino}:${s.mode}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`;
-interface Snapshot { readonly path: string; readonly content: string; readonly mtimeMs: number; readonly fingerprint: string; readonly digest: string }
+interface Snapshot { readonly path: string; readonly mtimeMs: number; readonly fingerprint: string; readonly digest: string }
 interface Generation { readonly files: readonly Snapshot[]; readonly directories: ReadonlyMap<string, string>; readonly id: string }
 
 export function createCapturedCodeContext(input: {
@@ -38,8 +37,7 @@ export function createCapturedCodeContext(input: {
   let disposed = false;
   let sequence = 0;
   let unavailable: string | undefined;
-  let deadline = Number.POSITIVE_INFINITY;
-  const checkSignal = (): void => { if (Date.now() > deadline) operation?.abort(new Error('captured code operation time budget exceeded')); input.signal?.throwIfAborted(); operation?.signal.throwIfAborted(); if (disposed) throw new Error('captured code context is closed'); };
+  const checkSignal = (): void => { input.signal?.throwIfAborted(); operation?.signal.throwIfAborted(); if (disposed) throw new Error('captured code context is closed'); };
   const checkProvider = (): void => {
     checkSignal();
     if (!pinnedProvider || registry?.getDefaultProviderOrNull() !== pinnedProvider || pinnedProvider.capturedInputAdmission !== 'per-attempt') throw new Error('captured code embedding provider changed');
@@ -59,7 +57,7 @@ export function createCapturedCodeContext(input: {
     checkProvider();
     if (realpathSync(root) !== root || realpathSync(path) !== path) throw new Error('captured code path is redirected');
     const before = lstatSync(path, { bigint: true });
-    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || before.size > BigInt(LIMITS.fileBytes)) throw new Error('captured code file is unsupported or over budget');
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) throw new Error('captured code file is unsupported');
     const fp = fingerprint(before);
     if (expected !== undefined && fp !== expected) throw new Error('captured code generation changed');
     const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -73,7 +71,7 @@ export function createCapturedCodeContext(input: {
       return { content: buffer.subarray(0, offset).toString('utf8'), fingerprint: fp, mtimeMs: Number(before.mtimeMs) };
     } finally { closeSync(fd); }
   };
-  const assertGeneration = async (generation: Generation, signal: AbortSignal, onlyPath?: string): Promise<void> => {
+  const assertGeneration = async (generation: Generation, signal: AbortSignal, onlyPath?: string): Promise<void> => withContractInputReadBatch(authority, async () => {
     checkProvider();
     await authorize(root, signal);
     for (const [path, fp] of generation.directories) {
@@ -88,9 +86,9 @@ export function createCapturedCodeContext(input: {
     // Recheck every metadata identity synchronously after the last yielding policy
     // check. Other member writes cannot silently alter an already-checked file.
     for (const [path, fp] of generation.directories) if (fingerprint(lstatSync(path, { bigint: true })) !== fp) throw new Error('captured code directory generation changed');
-    for (const file of generation.files) if (fingerprint(lstatSync(join(root, file.path), { bigint: true })) !== file.fingerprint) throw new Error('captured code generation changed');
+    for (const file of generation.files) if ((onlyPath === undefined || file.path === onlyPath) && fingerprint(lstatSync(join(root, file.path), { bigint: true })) !== file.fingerprint) throw new Error('captured code generation changed');
     checkProvider();
-  };
+  });
   registerContractInputReadAssertion(authority, async () => {
     if (current && operation && !disposed) { const selected = current; await bounded(signal => assertGeneration(selected, signal)); }
   });
@@ -101,7 +99,11 @@ export function createCapturedCodeContext(input: {
     const timer = setInterval(() => {
       if (running || signal.aborted) return;
       running = true;
-      pending = executePolicyCheck(() => assertGeneration(generation, signal), signal)
+      pending = executePolicyCheck(async () => {
+        checkProvider();
+        for (const [path, fp] of generation.directories) if (fingerprint(lstatSync(path, { bigint: true })) !== fp) throw new Error('captured code directory generation changed');
+        for (const file of generation.files) if (fingerprint(lstatSync(join(root, file.path), { bigint: true })) !== file.fingerprint) throw new Error('captured code generation changed');
+      }, signal)
         .catch((error: unknown) => { owner.abort(error); }).finally(() => { running = false; });
     }, 100);
     timer.unref?.();
@@ -111,12 +113,8 @@ export function createCapturedCodeContext(input: {
     checkSignal();
     if (!operation) throw new Error('captured code operation is unavailable');
     const owner = operation;
-    deadline = Date.now() + LIMITS.ms;
     const signal = input.signal ? AbortSignal.any([input.signal, owner.signal]) : owner.signal;
-    const timer = setTimeout(() => owner.abort(new Error('captured code operation time budget exceeded')), LIMITS.ms);
-    timer.unref?.();
-    try { return await executePolicyCheck(() => work(signal), signal); }
-    finally { clearTimeout(timer); deadline = Number.POSITIVE_INFINITY; }
+    return executePolicyCheck(() => work(signal), signal);
   };
   const source: TurnCodeIndexSource = {
     async prepare() {
@@ -124,94 +122,89 @@ export function createCapturedCodeContext(input: {
       if (disposed) throw new Error('captured code context is closed');
       assertReadingCurrent = undefined; current = undefined; cachedStats = undefined; operation?.abort(); store?.close(); store = undefined;
       operation = new AbortController();
-      deadline = Date.now() + LIMITS.ms;
       const signal = input.signal ? AbortSignal.any([input.signal, operation.signal]) : operation.signal;
       pinnedProvider = registry?.getDefaultProviderOrNull() ?? null;
       unavailable = undefined;
       if (pinnedProvider && pinnedProvider.id !== HASHED_MEMORY_EMBEDDING_PROVIDER.id && pinnedProvider.capturedInputAdmission !== 'per-attempt') {
-        unavailable = 'captured code unavailable: embedding provider lacks per-attempt admission'; deadline = Number.POSITIVE_INFINITY; return;
+        unavailable = 'captured code unavailable: embedding provider lacks per-attempt admission'; return;
       }
       if (!registry || !pinnedProvider || pinnedProvider.id === HASHED_MEMORY_EMBEDDING_PROVIDER.id || pinnedProvider.dimensions !== MEMORY_VECTOR_DIMS || (!pinnedProvider.embed && !pinnedProvider.embedSync)) {
-        unavailable = 'no semantic embedding provider'; deadline = Number.POSITIVE_INFINITY; return;
+        unavailable = 'no semantic embedding provider'; return;
       }
-      const timer = setTimeout(() => operation?.abort(new Error('captured code preparation time budget exceeded')), LIMITS.ms);
-      timer.unref?.();
       const files: Snapshot[] = []; const directories = new Map<string, string>();
-      let visited = 0; let total = 0;
       let stopWatching: (() => Promise<void>) | undefined;
       try {
-        const membership = contractInputAuthorityFiles(authority);
-        if (membership) {
-          await authorize(root, signal);
-          directories.set(root, fingerprint(lstatSync(root, { bigint: true })));
-          for (const rel of membership) {
-            signal.throwIfAborted();
-            if (++visited > LIMITS.entries) throw new Error('captured code entry budget exceeded');
-            if (rel.split('/').some(part => excluded.has(part))) continue;
-            const path = join(root, rel);
-            try { await authorize(path, signal); } catch (error) {
-              if (error instanceof Error && error.message === 'captured input path is access-restricted') continue;
-              throw error;
-            }
-            const stat = lstatSync(path, { bigint: true });
-            if (stat.size > BigInt(LIMITS.fileBytes)) continue;
-            if (files.length >= LIMITS.files || total + Number(stat.size) > LIMITS.bytes) throw new Error('captured code file/byte budget exceeded');
-            const read = bytes(path); total += Buffer.byteLength(read.content);
-            if (read.content.includes('\0')) continue;
-            files.push({ path: rel, ...read, digest: sha256(read.content) });
-            for (let directory = dirname(path); directory !== root; directory = dirname(directory)) {
-              await authorize(directory, signal);
-              directories.set(directory, fingerprint(lstatSync(directory, { bigint: true })));
-            }
-          }
-        }
-        const queue = membership ? [] : [root];
-        while (queue.length) {
-          const directory = queue.shift()!;
-          await authorize(directory, signal);
-          const stat = lstatSync(directory, { bigint: true });
-          if (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync(directory) !== directory) throw new Error('captured code directory is redirected');
-          directories.set(directory, fingerprint(stat));
-          const dir = opendirSync(directory);
-          try {
-            for (let entry = dir.readSync(); entry; entry = dir.readSync()) {
-              checkSignal(); signal.throwIfAborted();
-              if (++visited > LIMITS.entries) throw new Error('captured code entry budget exceeded');
-              if (excluded.has(entry.name)) continue;
-              const path = join(directory, entry.name);
+        await withContractInputReadBatch(authority, async () => {
+          const membership = contractInputAuthorityFiles(authority);
+          if (membership) {
+            await authorize(root, signal);
+            directories.set(root, fingerprint(lstatSync(root, { bigint: true })));
+            for (const rel of membership) {
+              signal.throwIfAborted();
+              if (rel.split('/').some(part => excluded.has(part))) continue;
+              const path = join(root, rel);
               try { await authorize(path, signal); } catch (error) {
                 if (error instanceof Error && error.message === 'captured input path is access-restricted') continue;
                 throw error;
               }
-              if (entry.isDirectory()) { queue.push(path); continue; }
-              if (!entry.isFile()) throw new Error('captured code special-file access is unsupported');
-              const stat = lstatSync(path, { bigint: true });
-              if (stat.size > BigInt(LIMITS.fileBytes)) continue;
-              if (files.length >= LIMITS.files || total + Number(stat.size) > LIMITS.bytes) throw new Error('captured code file/byte budget exceeded');
-              const read = bytes(path); total += Buffer.byteLength(read.content);
-              // Binary filtering consumes only the already-authorized bounded bytes.
+              const read = bytes(path);
               if (read.content.includes('\0')) continue;
-              files.push({ path: relative(root, path), ...read, digest: sha256(read.content) });
+              await new Promise<void>(resolve => setImmediate(resolve));
+              signal.throwIfAborted();
+              files.push({ path: rel, fingerprint: read.fingerprint, mtimeMs: read.mtimeMs, digest: sha256(read.content) });
+              for (let directory = dirname(path); directory !== root; directory = dirname(directory)) {
+                await authorize(directory, signal);
+                directories.set(directory, fingerprint(lstatSync(directory, { bigint: true })));
+              }
             }
-          } finally { dir.closeSync(); }
-        }
+          }
+          const queue = membership ? [] : [root];
+          while (queue.length) {
+            const directory = queue.shift()!;
+            await authorize(directory, signal);
+            const stat = lstatSync(directory, { bigint: true });
+            if (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync(directory) !== directory) throw new Error('captured code directory is redirected');
+            directories.set(directory, fingerprint(stat));
+            const dir = opendirSync(directory);
+            try {
+              for (let entry = dir.readSync(); entry; entry = dir.readSync()) {
+                checkSignal(); signal.throwIfAborted();
+                if (excluded.has(entry.name)) continue;
+                const path = join(directory, entry.name);
+                try { await authorize(path, signal); } catch (error) {
+                  if (error instanceof Error && error.message === 'captured input path is access-restricted') continue;
+                  throw error;
+                }
+                if (entry.isDirectory()) { queue.push(path); continue; }
+                if (!entry.isFile()) throw new Error('captured code special-file access is unsupported');
+                  const read = bytes(path);
+                // Binary filtering consumes only the already-authorized bytes.
+                if (read.content.includes('\0')) continue;
+                files.push({ path: relative(root, path), fingerprint: read.fingerprint, mtimeMs: read.mtimeMs, digest: sha256(read.content) });
+              }
+            } finally { dir.closeSync(); }
+          }
+        });
         const generation: Generation = Object.freeze({ files: Object.freeze(files), directories, id: `${++sequence}:${sha256(files.map(f => `${f.path}:${f.digest}`).join('\n'))}` });
         await assertGeneration(generation, signal);
         stopWatching = watch(generation, signal);
         store = new CodeIndexStore(root, ':memory:', registry);
         await store.init(); checkProvider(); signal.throwIfAborted();
         if (!store.stats().available) { unavailable = 'code index unavailable'; store.close(); store = undefined; return; }
-        await store.prepareAuthorizedSnapshots({ snapshots: files, provider: pinnedProvider, signal, maxChunks: LIMITS.chunks,
+        await store.prepareAuthorizedSnapshots({ snapshots: files.map(file => ({ path: file.path, mtimeMs: file.mtimeMs, content: '' })), provider: pinnedProvider, signal,
+          loadSnapshot: async file => {
+            await assertGeneration(generation, signal, file.path);
+            const captured = files.find(candidate => candidate.path === file.path)!;
+            return { ...file, content: bytes(join(root, file.path), captured.fingerprint).content };
+          },
           guard: async (_boundary, path) => { signal.throwIfAborted(); await assertGeneration(generation, signal, path); } });
         cachedStats = Object.freeze({ ...await store.statsAuthorized() });
         await assertGeneration(generation, signal);
         current = generation;
       } catch (error) {
         current = undefined; cachedStats = undefined; store?.close(); store = undefined;
-        if (error instanceof Error && /^(captured code (?:preparation time|operation time|entry|file\/byte) budget exceeded|Authorized code index chunk budget exceeded)$/.test(error.message)) {
-          unavailable = error.message;
-        } else throw error;
-      } finally { try { await stopWatching?.(); } finally { clearTimeout(timer); deadline = Number.POSITIVE_INFINITY; } }
+        throw error;
+      } finally { await stopWatching?.(); }
     },
     async search(query, options) {
       checkSignal();
@@ -240,7 +233,9 @@ export function createCapturedCodeContext(input: {
         const snapshots = hits.map(hit => {
           const file = selected.files.find(file => file.path === hit.chunk.path);
           if (!file || file.digest !== hit.chunk.fileHash) throw new Error('captured code hit is stale');
-          return { hit, code: file.content };
+          const content = bytes(join(root, file.path), file.fingerprint).content;
+          if (sha256(content) !== file.digest) throw new Error('captured code hit changed');
+          return { hit, code: content };
         });
         const stopWatching = watch(selected, signal);
         try {

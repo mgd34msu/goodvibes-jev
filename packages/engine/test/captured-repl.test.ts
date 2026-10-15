@@ -12,6 +12,7 @@ import { SandboxSessionRegistry } from '../sdk/src/platform/runtime/sandbox/sess
 import { probeCapturedExecAvailability, type CapturedExecAuthority } from '../sdk/src/platform/tools/exec/captured-exec.js';
 import { createCapturedReplHistory, createCapturedReplTool, disposeCapturedReplHistory, isCapturedReplTool } from '../sdk/src/platform/tools/repl/captured.js';
 import { createReplTool } from '../sdk/src/platform/tools/repl/index.js';
+import { capturedReplScript } from '../sdk/src/platform/tools/repl/captured-script.js';
 import { capturedInputTool } from '../sdk/src/platform/tools/shared/captured-input-tools.js';
 import { useToolReadings } from './_helpers/tool-readings.js';
 
@@ -21,6 +22,26 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 const availability = await probeCapturedExecAvailability();
 if (process.env.GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT === '1' && !availability.available)
   throw new Error('required captured REPL containment backend is unavailable');
+
+test('file-backed completion matches native printed evaluation for statements and async TypeScript', () => {
+  const root = mkdtempSync(join(tmpdir(), 'repl-completion-')); roots.push(root);
+  for (const source of [
+    '1; const a = 2', 'if (true) { 42 }', '1; if (false) 2',
+    '1; for (let i=0;i<3;i++) { i }', 'while (true) { 42; break }',
+    'outer: for(let i=0;i<2;i++) { if(i===0) continue outer; 42 }',
+    'switch(2) {case 1: 1; break; case 2: 42; break; default: 0}',
+    'try { 42 } finally { 1 }', 'try { throw 1 } catch { 42 } finally { 2 }',
+    'outer: { try { 42 } finally { 7; break outer } }',
+    'const text: string = "Unicode: é🦊"; await Promise.resolve(text)',
+    'const console = null; 42', 'if(true) 42', '1; {const a=2}',
+  ]) {
+    const original = childProcess.spawnSync(process.execPath, ['--print', source], { encoding: 'utf8' });
+    const path = join(root, 'snippet.ts'); writeFileSync(path, capturedReplScript(source, '{}'));
+    const actual = childProcess.spawnSync(process.execPath, [path], { encoding: 'utf8' });
+    expect({ source, code: actual.status, stdout: actual.stdout, stderr: actual.stderr })
+      .toEqual({ source, code: original.status, stdout: original.stdout, stderr: original.stderr });
+  }
+});
 
 function git(root: string, ...args: string[]): void {
   const result = childProcess.spawnSync('git', ['-C', root, ...args]);
@@ -62,7 +83,7 @@ for (const runtime of ['javascript', 'typescript'] as const) {
   });
 }
 
-test.skipIf(!availability.available)('quoted multiline input and bindings remain one code argument', async () => {
+test.skipIf(!availability.available)('quoted multiline input and bindings remain file-backed code', async () => {
   const f = await fixture();
   const text = "' ; $(touch shell-injected)\n`backticks` \\\"";
   const result = await f.tool.execute({ mode: 'eval', runtime: 'typescript', expression: 'const suffix: string = "\\\"quoted\\\"";\ntext + suffix', bindings: { text } });
@@ -88,7 +109,6 @@ for (const side of ['original', 'copy'] as const) {
       expect(result.output).toContain('CAPTURED_ALLOWED');
       expect(JSON.parse(result.output!).result).toContain('false, false');
       expect(JSON.stringify(result)).not.toContain('DENIED_REPL_BYTES');
-      expect(opened).toContain(join(f.root, 'allowed.ts'));
       expect(opened).not.toContain(join(f.root, 'private.ts'));
       expect(opened).not.toContain(join(f.owner, 'private.ts'));
       expect(opened).not.toContain(join(f.root, 'alias.ts'));
@@ -121,13 +141,13 @@ test.skipIf(!availability.available)('immutable captured eval reads but cannot p
   expect(JSON.parse(next.output!)).toMatchObject({ result: 'false\n', workspace_changes_persist: false });
 });
 
-test('semantic safety denial reaches no evaluation backend', async () => {
+test.skipIf(!availability.available)('Jev does not veto contained REPL evaluation', async () => {
   const f = await fixture();
   const spawn = spyOn(childProcess, 'spawn');
   try {
     const result = await f.tool.execute({ mode: 'eval', expression: '"REFUSED_REPL_ACTION"' });
-    expect(result.success).toBe(false); expect(result.error).toContain('Command denied');
-    expect(spawn).not.toHaveBeenCalled();
+    expect(result.success).toBe(true); expect(result.output).toContain('REFUSED_REPL_ACTION');
+    expect(spawn).toHaveBeenCalled();
   } finally { spawn.mockRestore(); }
 });
 
@@ -171,7 +191,7 @@ test('construction binding rejects forged/copied/ordinary tools and foreign auth
   expect((await ordinary.execute({ mode: 'history', workspaceRoot: f.root })).success).toBe(false);
 });
 
-test('unsupported runtimes and oversized code do not start evaluation or import host history', async () => {
+test('unsupported runtimes do not start evaluation or import host history', async () => {
   const f = await fixture();
   mkdirSync(join(f.root, '.goodvibes', 'agent'), { recursive: true });
   const history = join(f.root, '.goodvibes', 'agent', 'repl-history.json');
@@ -180,7 +200,7 @@ test('unsupported runtimes and oversized code do not start evaluation or import 
   const read = spyOn(fs, 'readFile');
   try {
     expect(JSON.parse((await f.tool.execute({ mode: 'history' })).output!)).toEqual({ count: 0, history: [] });
-    for (const args of [...['python', 'sql', 'graphql'].map(runtime => ({ mode: 'eval', runtime, expression: '42' })), { mode: 'eval', expression: 'x'.repeat(70_000) }]) {
+    for (const args of ['python', 'sql', 'graphql'].map(runtime => ({ mode: 'eval', runtime, expression: '42' }))) {
       const result = await f.tool.execute(args);
       expect(result.success).toBe(false); expect(JSON.stringify(result)).not.toContain('UNRELATED_HISTORY_BYTES');
     }
@@ -200,7 +220,7 @@ test.skipIf(!availability.available)('history retains actual success, error and 
   const expression = 'import { value } from "./allowed.ts"; value';
   expect((await f.tool.execute({ mode: 'eval', runtime: 'typescript', expression })).success).toBe(true);
   expect((await f.tool.execute({ mode: 'eval', expression: 'throw new Error("ACTUAL_EVAL_FAILURE")' })).success).toBe(false);
-  expect((await f.tool.execute({ mode: 'eval', expression: '"REFUSED_REPL_ACTION"' })).success).toBe(false);
+  expect((await f.tool.execute({ mode: 'eval', expression: '"REFUSED_REPL_ACTION"' })).success).toBe(true);
   const rebuilt = createCapturedReplTool(f.binding, undefined, f.historyOwner);
   const spawn = spyOn(childProcess, 'spawn');
   try {
@@ -210,7 +230,7 @@ test.skipIf(!availability.available)('history retains actual success, error and 
     expect(history.count).toBe(3);
     expect(history.history[0]).toMatchObject({ runtime: 'typescript', expression, result: 'CAPTURED_ALLOWED\n', backend: 'linux-bwrap-projection' });
     expect(history.history[1].error).toContain('ACTUAL_EVAL_FAILURE');
-    expect(history.history[2].error).toContain('Command denied');
+    expect(history.history[2].result).toContain('REFUSED_REPL_ACTION');
     expect(history.history.every((entry: { ts: number; sessionId: string }) => entry.ts > 0 && entry.sessionId.startsWith('captured_repl_'))).toBe(true);
     expect(new Set(history.history.map((entry: { sessionId: string }) => entry.sessionId)).size).toBe(3);
     expect(JSON.stringify(history)).not.toContain('DENIED_REPL_BYTES');
@@ -308,28 +328,33 @@ test.skipIf(!availability.available)('registry recreation cannot replace the ret
   expect(await broader.execute({ mode: 'history' })).toMatchObject({ success: false });
 });
 
-test('history retention bounds entry count and encoded bytes with visible omissions', async () => {
+test('history preserves every entry and encoded byte with explicit pagination', async () => {
   const f = await fixture();
   for (let i = 0; i < 102; i++)
     expect((await f.raw.execute({ mode: 'eval', runtime: 'python', expression: `REFUSED_${i}` })).success).toBe(false);
   let result = JSON.parse((await f.raw.execute({ mode: 'history' })).output!);
-  expect(result.count).toBe(100); expect(result.omitted).toBe(2);
-  expect(result.history[0].expression).toBe('REFUSED_2');
+  expect(result.count).toBe(102); expect(result.omitted).toBeUndefined();
+  expect(result.history[0].expression).toBe('REFUSED_0');
   for (let i = 0; i < 40; i++)
     await f.raw.execute({ mode: 'eval', runtime: 'sql', expression: `${i}:` + 'x'.repeat(60_000) });
   result = JSON.parse((await f.raw.execute({ mode: 'history' })).output!);
-  expect(result.count).toBeGreaterThan(0); expect(result.count).toBeLessThan(40);
-  expect(result.omitted).toBe(142 - result.count);
+  expect(result.count).toBe(142);
+  expect(result.omitted).toBeUndefined();
   expect(result.history.at(-1).expression).toStartWith('39:');
-  expect(result.history.reduce((total: number, entry: unknown) => total + Buffer.byteLength(JSON.stringify(entry)), 0)).toBeLessThanOrEqual(2 * 1024 * 1024);
+  expect(result.history.reduce((total: number, entry: unknown) => total + Buffer.byteLength(JSON.stringify(entry)), 0)).toBeGreaterThan(2 * 1024 * 1024);
+  const page = JSON.parse((await f.raw.execute({ mode: 'history', offset: 100, limit: 3 })).output!);
+  expect(page).toMatchObject({ count: 142, returned: 3, next_offset: 103, has_more: true });
+  expect(page.history[0].expression).toBe('REFUSED_100');
 }, 30_000);
 
-test.skipIf(!availability.available)('an individually oversized encoded result is explicitly omitted from history', async () => {
+test.skipIf(!availability.available)('an individually large encoded result remains available in history', async () => {
   const f = await fixture();
   const result = await f.raw.execute({ mode: 'eval', expression: '"\\u0000".repeat(400_000)' });
   expect(result.success).toBe(true);
   expect(JSON.parse(result.output!).result.length).toBe(400_001);
-  expect(JSON.parse((await f.raw.execute({ mode: 'history' })).output!)).toEqual({ count: 0, history: [], omitted: 1 });
+  const history = JSON.parse((await f.raw.execute({ mode: 'history' })).output!);
+  expect(history.count).toBe(1);
+  expect(history.history[0].result.length).toBe(400_001);
 });
 
 test('concurrent authorized refusals retain every completed attempt without lost entries', async () => {
@@ -350,7 +375,7 @@ for (const interruption of ['abort', 'revoke', 'permission'] as const) {
     let started = false;
     const tap = spyOn(childProcess, 'spawn').mockImplementation(((...args: Parameters<typeof childProcess.spawn>) => {
       const child = originalSpawn(...args);
-      if (String(args[0]) === '/usr/bin/bwrap' && JSON.stringify(args[1]).includes('LATE_REPL_OUTPUT')) {
+      if (String(args[0]) === '/usr/bin/bwrap' && JSON.stringify(args[1]).includes('.goodvibes-repl-')) {
         started = true;
         setTimeout(() => { if (interruption === 'abort') controller.abort(); else if (interruption === 'revoke') revokeContractInputAuthority(f.binding.authority); else allowed = false; }, 50);
       }
@@ -392,7 +417,7 @@ test.skipIf(!availability.available)('revocation of a previously read file preve
 
 test.skipIf(!availability.available)('the execution deadline withholds partial output and leaves no late member changes', async () => {
   const f = await fixture();
-  const result = await f.tool.execute({ mode: 'eval', expression: 'console.log("PARTIAL_TIMEOUT_OUTPUT"); await Bun.sleep(20_000); require("node:fs").writeFileSync("late-timeout.txt", "TOO_LATE")' });
+  const result = await f.tool.execute({ mode: 'eval', timeout_ms: 100, expression: 'console.log("PARTIAL_TIMEOUT_OUTPUT"); await Bun.sleep(1000); require("node:fs").writeFileSync("late-timeout.txt", "TOO_LATE")' });
   expect(result.success).toBe(false); expect(result.error).toContain('timed out');
   expect(JSON.stringify(result)).not.toContain('PARTIAL_TIMEOUT_OUTPUT');
   expect(existsSync(join(f.root, 'late-timeout.txt'))).toBe(false);
@@ -414,3 +439,19 @@ test('unsupported host capability is surfaced without host fallback', async () =
     expect(existsSync(join(f.root, 'host-fallback'))).toBe(false);
   } finally { Object.defineProperty(process, 'platform', descriptor); }
 });
+
+ test.skipIf(!availability.available)('large file-backed TypeScript supports top-level await, Unicode and completion without publishing the script', async () => {
+  const f = await fixture();
+  const expression = '/*' + 'padding '.repeat(20_000) + '*/\nconst text: string = "🌻"; await Promise.resolve(text + ":ok")';
+  const result = await f.tool.execute({ mode: 'eval', runtime: 'typescript', expression });
+  expect(result.success).toBe(true);
+  expect(JSON.parse(result.output!).result).toBe('🌻:ok\n');
+  expect((await fs.readdir(f.root)).some(name => name.startsWith('.goodvibes-repl-'))).toBe(false);
+});
+
+test.skipIf(!availability.available)('default REPL execution outlives the retired ten-second deadline', async () => {
+  const f = await fixture();
+  const result = await f.tool.execute({ mode: 'eval', expression: 'await Bun.sleep(10_100); "completed"' });
+  expect(result.success).toBe(true);
+  expect(JSON.parse(result.output!).result).toBe('completed\n');
+}, 20_000);

@@ -472,7 +472,7 @@ function checkSize(plan: ContractPlan, shape: RequestShape, limits: PlanLimits):
   if (delegationForbidden(shape) && count > 1) {
     return [problem('too-many-units', `The user does not allow handing the work to other agents, so the plan has exactly one unit; it has ${count}. Merge them into one.`)];
   }
-  return count > limits.maxUnits
+  return limits.maxUnits > 0 && count > limits.maxUnits
     ? [problem('too-many-units', `The plan has ${count} units; the limit is ${limits.maxUnits}. Merge related units.`)]
     : [];
 }

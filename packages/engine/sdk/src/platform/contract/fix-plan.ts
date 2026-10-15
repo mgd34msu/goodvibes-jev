@@ -131,7 +131,7 @@ export function validateFixPlan(text: string, brief: FixBrief, limits: Pick<Cont
   const group = plan.groups[0]!;
   const problems: PlanProblem[] = [];
   if (group.units.length === 0) problems.push(problem('no-units', 'The fix group has no units.'));
-  if (group.units.length > limits.maxUnits) problems.push(problem('too-many-units', `The fix group has ${group.units.length} units; the limit is ${limits.maxUnits}.`));
+  if (limits.maxUnits > 0 && group.units.length > limits.maxUnits) problems.push(problem('too-many-units', `The fix group has ${group.units.length} units; the limit is ${limits.maxUnits}.`));
   const targetIds = new Set(brief.criteria.map((criterion) => criterion.id));
   const unitIds = new Set<string>();
   const nodes = group.units.map((unit) => ({ id: unit.id, title: unit.title, dependsOn: [] as string[] }));

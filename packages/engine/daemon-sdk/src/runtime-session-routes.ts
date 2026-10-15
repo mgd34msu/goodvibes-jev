@@ -391,10 +391,15 @@ async function handleGetSharedSessionMessages(
     return jsonErrorResponse({ error: 'Unknown shared session' }, { status: 404 });
   }
   const limit = readBoundedLimit(url);
-  const messages = context.sessionBroker.getMessages(sessionId, limit);
+  const offset = Number(url.searchParams.get('offset') ?? 0);
+  if (!Number.isSafeInteger(offset) || offset < 0) return jsonErrorResponse({ error: 'offset must be a nonnegative integer' }, { status: 400 });
+  const messages = context.sessionBroker.getMessages(sessionId, limit, offset);
+  const record: Record<string, unknown> = isJsonRecord(session) ? session : {};
+  const total = typeof record.retainedMessageCount === 'number' ? record.retainedMessageCount : typeof record.messageCount === 'number' ? record.messageCount : messages.length;
+  const hasMore = offset + messages.length < total;
   return Response.json({
-    session: toSharedSessionRecordResponse(sessionId, session, { messageCount: messages.length }),
-    messages,
+    session: toSharedSessionRecordResponse(sessionId, session, { messageCount: total }),
+    messages, total, offset, hasMore, ...(hasMore ? { nextOffset: offset + messages.length } : {}),
   });
 }
 

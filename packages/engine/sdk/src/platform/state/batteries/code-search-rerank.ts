@@ -1,4 +1,4 @@
-import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
+import { assertJudgmentInput } from '../../gate/judgment-input.js';
 /**
  * Canonical `engine.state.code-search` relevance owner. Lexical search and
  * passive vector-code injection both use these pair readings; recall remains
@@ -9,7 +9,7 @@ import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-inp
 import { defineRerank, STAKES_BANDS } from '@goodvibes-jev/judgment';
 import type { CodeChunk } from '../code-index-chunking.js';
 
-/** Most characters of a chunk's code one pair request carries; larger inputs are rejected without clipping. */
+/** @deprecated Legacy threshold; source is now split into complete overlapping parts. */
 export const MAX_JUDGED_CODE_CHARS = 160_000;
 
 /** What the rerank sees of a chunk: where it is, what it defines, and its code when the file could be read. */
@@ -18,7 +18,6 @@ export function codeChunkView(
   code: string | undefined,
 ): { [field: string]: string } {
   assertJudgmentInput({ path: chunk.path, symbol: chunk.symbol, kind: chunk.kind, startLine: chunk.startLine, endLine: chunk.endLine, code });
-  if (code && code.length > MAX_JUDGED_CODE_CHARS) throw new JudgmentInputError('unsupported-input');
   return {
     path: chunk.path,
     ...(chunk.symbol ? { symbol: chunk.symbol } : {}),
@@ -130,3 +129,51 @@ export const codeSearchRerank = defineRerank({
     { name: 'nothing about websocket reconnects', query: 'websocket reconnect', candidates: [DOCS_URL, SOCKET_PATH, DATABASE_ICON], expect: { top: 'none' } },
   ],
 });
+
+/** Read every part of large source/query text through the existing pair-ranking foundation.
+ * A source is relevant when a part is relevant; the returned probability belongs
+ * to the best actual part reading, never an invented aggregate probability.
+ */
+export async function rerankCodeParts(
+  port: Parameters<typeof codeSearchRerank.rerank>[0], query: string,
+  candidates: readonly { id: string; content: { [field: string]: string } }[],
+  options: Parameters<typeof codeSearchRerank.rerank>[3] = {},
+): ReturnType<typeof codeSearchRerank.rerank> {
+  const parts = (text: string): string[] => {
+    if (JSON.stringify(text).length <= 24_000) return [text];
+    const result: string[] = [];
+    for (let offset = 0; offset < text.length;) {
+      let low = offset + 1, high = Math.min(text.length, offset + 24_000);
+      while (low < high) {
+        const end = Math.ceil((low + high) / 2);
+        if (JSON.stringify(text.slice(offset, end)).length <= 24_000) low = end;
+        else high = end - 1;
+      }
+      result.push(text.slice(offset, low));
+      if (low === text.length) break;
+      offset = Math.max(offset + 1, low - 1_000);
+    }
+    return result;
+  };
+  const origins = new Map<string, string>();
+  const expanded = candidates.flatMap((candidate, index) => {
+    const code = candidate.content.code;
+    const chunks = code === undefined ? [undefined] : parts(code);
+    return chunks.map((chunk, part) => {
+      const id = `${index}:${part}`; origins.set(id, candidate.id);
+      return { id, content: { ...candidate.content, ...(chunk === undefined ? {} : { code: chunk }), ...(chunks.length > 1 ? { part: `${part + 1}/${chunks.length}` } : {}) } };
+    });
+  });
+  type Ranked = Awaited<ReturnType<typeof codeSearchRerank.rerank>>['ranked'][number];
+  const best = new Map<string, Ranked>();
+  for (const queryPart of parts(query)) {
+    const result = await codeSearchRerank.rerank(port, queryPart, expanded, options);
+    for (const entry of result.ranked) {
+      const id = origins.get(entry.id)!;
+      if (!best.has(id) || entry.probability > best.get(id)!.probability) best.set(id, { ...entry, id });
+    }
+  }
+  const ranked = [...best.values()].sort((a, b) => b.probability - a.probability);
+  const top = ranked[0]?.reading.verdict === 'yes' ? ranked[0] : undefined;
+  return { ranked, top };
+}

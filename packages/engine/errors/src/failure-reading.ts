@@ -238,19 +238,15 @@ export interface FailureConclusions {
   readonly decisionId?: string | undefined;
 }
 
-/** Refuse oversized evidence; never classify a prefix as though it were the complete error. */
-const MAX_MESSAGE_CHARS = 160_000;
-
 /** The state Jev reads: one labelled line per piece of evidence. */
 export function failureState(evidence: FailureEvidence): string {
-  if (typeof evidence.message !== 'string' || evidence.message.length > MAX_MESSAGE_CHARS) throw new TypeError('Failure evidence exceeds the judgment input budget.');
+  if (typeof evidence.message !== 'string') throw new TypeError('Failure evidence must contain a message string.');
   const lines: string[] = [];
   if (evidence.status !== undefined) lines.push(`HTTP status: ${evidence.status}`);
   if (evidence.code !== undefined && evidence.code.length > 0) lines.push(`Error code: ${evidence.code}`);
   if (evidence.errorName !== undefined && evidence.errorName !== 'Error') lines.push(`Error type: ${evidence.errorName}`);
   lines.push(`Message: ${evidence.message}`);
   const state = lines.join('\n');
-  if (state.length > MAX_MESSAGE_CHARS) throw new TypeError('Failure evidence exceeds the judgment input budget.');
   return state;
 }
 

@@ -50,13 +50,13 @@ describe('canonical JSON schema container constraints', () => {
     expect(firstJsonSchemaFailure(JEV_DECISION_SCHEMA, { ...receipt, summary: '🙂'.repeat(2001) })).toBeDefined();
   });
 
-  test('nonblank native text has no regex input ceiling while arbitrary patterns remain guarded', () => {
+  test('schema text has no implicit regex input ceiling; synchronous compatibility still rejects expensive patterns', () => {
     const schema = { type: 'string', pattern: '\\S' };
     expect(firstJsonSchemaFailure(schema, ' '.repeat(60_000))).toBeDefined();
     expect(firstJsonSchemaFailure(schema, '\n\t\u00a0')).toBeDefined();
     expect(firstJsonSchemaFailure(schema, ' '.repeat(60_000) + '🙂')).toBeUndefined();
     expect(firstJsonSchemaFailure(schema, 'long goal '.repeat(10_000))).toBeUndefined();
-    expect(() => firstJsonSchemaFailure({ type: 'string', pattern: '^a+$' }, 'a'.repeat(60_000))).toThrow('pattern input exceeds');
+    expect(firstJsonSchemaFailure({ type: 'string', pattern: '^a+$' }, 'a'.repeat(60_000))).toBeUndefined();
     expect(() => firstJsonSchemaFailure({ type: 'string', pattern: '(a+)+$' }, 'aaa')).toThrow('too expensive');
   });
 

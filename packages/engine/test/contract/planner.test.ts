@@ -297,11 +297,11 @@ describe('planContract: the repair loop', () => {
     expect(contract.units).toEqual([]);
   });
 
-  test('a repair limit of zero asks the owner after the first plan', async () => {
+  test('an explicitly configured repair limit asks the owner after the allowed repair', async () => {
     install(({ name }) => (name === 'unquoted_2' ? noulAnswer(0.9) : undefined));
-    const { deps, requests } = harness([plannerOutput(validPlan())], { planRepairLimit: 0 });
+    const { deps, requests } = harness([plannerOutput(validPlan())], { planRepairLimit: 1 });
     const outcome = await planContract(shapedContract(), deps);
-    expect(requests).toHaveLength(1);
+    expect(requests).toHaveLength(2);
     expect(outcome.kind).toBe('awaiting-owner');
   });
 
@@ -418,7 +418,7 @@ describe('acceptEscalatedPlan', () => {
   async function escalated() {
     install(({ name }) => (name === 'unquoted_2' ? noulAnswer(0.9) : undefined));
     const contract = shapedContract();
-    const run = harness([plannerOutput(validPlan())], { planRepairLimit: 0 });
+    const run = harness([plannerOutput(validPlan())], { planRepairLimit: 1 });
     await planContract(contract, run.deps);
     return { contract, run };
   }

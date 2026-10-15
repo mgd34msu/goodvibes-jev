@@ -1,3 +1,4 @@
+import { paginateFindResult } from './pagination.js';
 import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { assertCapturedInputPathContext } from '../../contract/input-authority.js';
 import { DirectoryWalk, type WalkDirOptions } from '../../utils/walk-dir.js';
@@ -20,7 +21,7 @@ import { summarizeError } from '../../utils/error-display.js';
 import { createSafeRegex } from '../../utils/safe-regex.js';
 import { accessRestrictedNote, partitionByReadAccess, type ReadAccessFilter } from '../shared/read-access.js';
 
-export async function executeFilesQuery(
+async function scanFilesQuery(
   query: FilesQuery,
   output: OutputOptions,
   projectRoot: string,
@@ -41,7 +42,6 @@ export async function executeFilesQuery(
   const walk = new DirectoryWalk(basePath);
   const patterns = query.patterns ?? ['**/*'];
   const excludePatterns = query.exclude ?? [];
-  const maxResults = output.max_results ?? 100;
   const includeHidden = query.include_hidden ?? false;
   const followSymlinks = query.follow_symlinks ?? false;
   const respectGitignore = query.respect_gitignore !== false;
@@ -136,8 +136,6 @@ export async function executeFilesQuery(
     entries = withStats;
   }
 
-  entries = entries.slice(0, maxResults);
-
   // Read-side deny enforcement: a file whose read is currently restricted keeps
   // its PATH in listings (hiding existence would be dishonest) but never has its
   // CONTENT read or returned. Files mode is path-oriented, so restricted entries
@@ -226,4 +224,8 @@ export async function executeFilesQuery(
       : filesResult,
     diagnostics.warnings,
   );
+}
+
+export async function executeFilesQuery(...args: Parameters<typeof scanFilesQuery>): Promise<Record<string, unknown>> {
+  return paginateFindResult(await scanFilesQuery(...args), args[1]);
 }

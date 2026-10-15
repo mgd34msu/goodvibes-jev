@@ -96,18 +96,19 @@ describe('registered gateway handlers preserve native HTTP responses', () => {
     expect(helper.wsCallStats().inFlight).toBe(0);
   });
 
-  test('oversized native response streams use the existing byte ceiling and release the handler', async () => {
+  test('large finite native response streams retain the complete body and release the handler', async () => {
     let cancelled = false;
     let pulls = 0;
     const chunk = new Uint8Array(1024 * 1024);
     const helper = helperFor(() => new Response(new ReadableStream<Uint8Array>({
-      pull(controller) { pulls += 1; controller.enqueue(chunk); },
+      pull(controller) { pulls += 1; controller.enqueue(chunk); if (pulls === 10) controller.close(); },
       cancel() { cancelled = true; },
     }, { highWaterMark: 0 }), { headers: { 'content-type': 'application/octet-stream' } }));
     const result = await invoke(helper);
-    expect(result).toMatchObject({ status: 502, ok: false, body: { error: 'response-too-large' } });
-    expect(cancelled).toBe(true);
-    expect(pulls).toBe(9);
+    expect(result.status).toBe(200); expect(result.ok).toBe(true);
+    expect((result.body as string).length).toBe(10 * 1024 * 1024);
+    expect(cancelled).toBe(false);
+    expect(pulls).toBe(10);
     expect(helper.wsCallStats().inFlight).toBe(0);
   });
 
@@ -226,24 +227,16 @@ describe('WS call path retained-context caps', () => {
     expect(live).toBe(0);
   });
 
-  test('an oversized response body is aborted with a structured 502, not buffered without bound', async () => {
-    const chunk = new Uint8Array(1024 * 1024); // 1MB chunks, endless
-    const helper = makeHelper(async (req) => {
-      const stream = new ReadableStream<Uint8Array>({
-        pull(controller) {
-          if (req.signal.aborted) { try { controller.close(); } catch { /* closed */ } return; }
-          controller.enqueue(chunk);
-        },
-      });
-      return new Response(stream, { headers: { 'content-type': 'application/octet-stream' } });
-    });
+  test('a finite response larger than eight MiB reaches the caller intact', async () => {
+    const payload = 'x'.repeat(10 * 1024 * 1024);
+    const helper = makeHelper(async () => new Response(payload));
     const result = await helper.invokeWebSocketControlPlaneCall({ authToken: 't', method: 'GET', path: '/probe/huge' });
-    expect(result.status).toBe(502);
-    expect((result.body as { error: string }).error).toBe('response-too-large');
+    expect(result.status).toBe(200);
+    expect((result.body as string).length).toBe(payload.length);
     expect(helper.wsCallStats().inFlight).toBe(0);
   });
 
-  test('a stalled WS consumer gets events dropped past the buffered ceiling instead of unbounded native growth', () => {
+  test('a stalled WS consumer queues events on disk and drains them without dropping', async () => {
     let sent = 0;
     let buffered = 0;
     const gateway = {
@@ -272,8 +265,11 @@ describe('WS call path retained-context caps', () => {
       send: () => { sent += 1; },
       getBufferedAmount: () => buffered,
     });
-    expect(sent).toBe(0); // all dropped, never queued onto a stalled socket
-    expect(helper.wsCallStats().eventsDropped).toBe(1000);
+    expect(sent).toBe(0);
+    expect(helper.wsCallStats().eventsDropped).toBe(0);
+    buffered = 0;
+    for (let attempt = 0; sent < 1000 && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+    expect(sent).toBe(1000);
   });
 });
 

@@ -1,3 +1,4 @@
+import { paginateFindResult } from './pagination.js';
 import type { WalkDirOptions } from '../../utils/walk-dir.js';
 import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { CodeIntelligence } from '../../intelligence/index.js';
@@ -26,7 +27,7 @@ interface SymbolResult {
   exported: boolean;
 }
 
-export async function executeSymbolsQuery(
+async function scanSymbolsQuery(
   query: SymbolsQuery,
   output: OutputOptions,
   projectRoot: string,
@@ -42,7 +43,6 @@ export async function executeSymbolsQuery(
   const validatedPath = validateSearchPath(query.path, projectRoot);
   if (typeof validatedPath === 'object') return validatedPath;
   const basePath = validatedPath;
-  const maxResults = output.max_results ?? 100;
   const kindFilter = query.kinds ? new Set(query.kinds) : null;
   const diagnostics = createFindDiagnostics();
 
@@ -74,7 +74,6 @@ export async function executeSymbolsQuery(
   let regexFallbackFiles = 0;
 
   for (const file of files) {
-    if (symbols.length >= maxResults) break;
 
     const content = await readTextFile(file, diagnostics);
     if (content === null) continue;
@@ -86,7 +85,7 @@ export async function executeSymbolsQuery(
         usedTreeSitter = true;
         treeSitterFiles++;
         for (const sym of tsSymbols) {
-          if (symbols.length >= maxResults) break;
+
           const kind = toSymbolKind(sym.kind);
           if (kindFilter && !kindFilter.has(kind)) continue;
           if (query.exported_only && !query.include_private && !sym.exported) continue;
@@ -103,7 +102,7 @@ export async function executeSymbolsQuery(
 
     const lines = content.split('\n');
     for (let i = 0; i < lines.length; i++) {
-      if (symbols.length >= maxResults) break;
+
       const line = (lines[i] ?? '').trimStart();
       for (const { kind, regex, exported } of activePatterns) {
         if (query.exported_only && !query.include_private && !exported) continue;
@@ -206,4 +205,8 @@ function symbolSource(treeSitterFiles: number, regexFallbackFiles: number): 'tre
   if (treeSitterFiles > 0 && regexFallbackFiles > 0) return 'mixed';
   if (treeSitterFiles > 0) return 'tree_sitter';
   return 'regex_fallback';
+}
+
+export async function executeSymbolsQuery(...args: Parameters<typeof scanSymbolsQuery>): Promise<Record<string, unknown>> {
+  return paginateFindResult(await scanSymbolsQuery(...args), args[1]);
 }

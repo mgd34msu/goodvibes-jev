@@ -3,8 +3,8 @@ import { nativeConversationContinuationRefSchema, nativeConversationContinuation
 import { nativeSelectedDiffSelector, nativeSelectedDiffSelectorSchema, nativeSelectedDiffContextSchema } from './native-diff-context.js';
 import { array, enum as enumSchema, literal, number, strictObject, string, union, type z } from 'zod/v4';
 
-export const NATIVE_CONVERSATION_INTAKE_MAX_REQUEST_BYTES = 262_144;
-export const NATIVE_CONVERSATION_INTAKE_MAX_RESPONSE_BYTES = 409_600;
+export const NATIVE_CONVERSATION_INTAKE_MAX_REQUEST_BYTES = Infinity;
+export const NATIVE_CONVERSATION_INTAKE_MAX_RESPONSE_BYTES = Infinity;
 const id = string().min(1).max(200);
 const revision = number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 // Count UTF-16 units and preserve the exact submitted string.

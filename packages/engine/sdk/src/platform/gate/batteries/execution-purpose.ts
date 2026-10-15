@@ -1,6 +1,6 @@
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { defineBattery, yesNo, toJson, STAKES_BANDS } from '@goodvibes-jev/judgment';
-import { assertJudgmentInput, JudgmentInputError } from '../judgment-input.js';
+import { assertJudgmentInput } from '../judgment-input.js';
 import { JudgmentHeldError, requireActingReading } from '../../types/judgment-held.js';
 export const executionPurpose = defineBattery({
   name: 'engine.gate.execution-purpose', version: 1, accuracyFloor: 0.95,
@@ -15,7 +15,6 @@ export const executionPurpose = defineBattery({
 });
 export async function readExecutionPurpose(tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<boolean> {
   const state = { tool, args }; assertJudgmentInput(state);
-  if (JSON.stringify(state).length > 160_000) throw new JudgmentInputError('unsupported-input');
   const snapshot = { tool, args: toJson(args) }, port = judgmentPort(executionPurpose.name), model = port.model;
   const current = () => { signal.throwIfAborted(); if (judgmentPort(executionPurpose.name) !== port || port.model !== model) throw new JudgmentHeldError(); };
   const run = await executionPurpose.run(port, snapshot, { site: 'engine.gate.execution-ledger', signal, beforeAttempt: current });

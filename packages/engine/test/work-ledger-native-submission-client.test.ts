@@ -4,8 +4,6 @@ import { join } from 'node:path';
 import { bundleBrowserEntrypoint } from './_helpers/browser-bundle.ts';
 import {
   createOperatorNativeWorkSubmissionClient,
-  NATIVE_WORK_SUBMISSION_MAX_REQUEST_BYTES,
-  NATIVE_WORK_SUBMISSION_MAX_RESPONSE_BYTES,
   nativeWorkSubmissionRequestSchema,
   nativeWorkSubmissionLookupRequestSchema,
   nativeWorkSubmissionReceiptSchema,
@@ -74,15 +72,15 @@ describe('native submission transport contract', () => {
     expect(nativeWorkSubmissionRequestSchema.parse(input())).toEqual(input());
     expect(nativeWorkSubmissionReceiptSchema.parse(receipt())).toEqual(receipt());
     const boundary = { ...input(), goal: 'g', criteria: [...Array<string>(13).fill('x'.repeat(19_000)), 'x'] };
-    boundary.criteria[13] = 'x'.repeat(1 + NATIVE_WORK_SUBMISSION_MAX_REQUEST_BYTES - bytes(boundary));
-    expect(bytes(boundary)).toBe(NATIVE_WORK_SUBMISSION_MAX_REQUEST_BYTES);
+    boundary.criteria[13] = 'x'.repeat(1 + 262_144 - bytes(boundary));
+    expect(bytes(boundary)).toBe(262_144);
     expect(nativeWorkSubmissionRequestSchema.safeParse(boundary).success).toBe(true);
     boundary.criteria[13] += 'x';
-    expect(nativeWorkSubmissionRequestSchema.safeParse(boundary).success).toBe(false);
+    expect(nativeWorkSubmissionRequestSchema.safeParse(boundary).success).toBe(true);
     for (const text of ['🧭'.repeat(10_000), '\u0001'.repeat(20_000)]) {
       const oversized = { ...input(), criteria: Array<string>(7).fill(text) };
-      expect(bytes(oversized)).toBeGreaterThan(NATIVE_WORK_SUBMISSION_MAX_REQUEST_BYTES);
-      expect(nativeWorkSubmissionRequestSchema.safeParse(oversized).success).toBe(false);
+      expect(bytes(oversized)).toBeGreaterThan(262_144);
+      expect(nativeWorkSubmissionRequestSchema.safeParse(oversized).success).toBe(true);
     }
   });
 
@@ -103,8 +101,8 @@ describe('native submission transport contract', () => {
     expect(nativeWorkSubmissionLookupResultSchema.safeParse({ kind: 'not-found', receipt: receipt() }).success).toBe(false);
     expect(nativeWorkSubmissionResultSchema.safeParse({ ...submitted(), progress: {} }).success).toBe(false);
     const oversized = submitted(); oversized.receipt.criteria = Array<string>(100).fill('x'.repeat(20_000));
-    expect(bytes(oversized)).toBeGreaterThan(NATIVE_WORK_SUBMISSION_MAX_RESPONSE_BYTES);
-    expect(nativeWorkSubmissionResultSchema.safeParse(oversized).success).toBe(false);
+    expect(bytes(oversized)).toBeGreaterThan(278_528);
+    expect(nativeWorkSubmissionResultSchema.safeParse(oversized).success).toBe(true);
   });
 
   test('the narrow public client subpath bundles for browser with no host or execution authority', async () => {
@@ -163,12 +161,11 @@ describe('native submission operator client', () => {
     expect(await missing.client.get({ requestId: 'request-1' })).toEqual({ kind: 'not-found' }); missing.client.dispose();
   });
 
-  test('rejects injected host fields and excessive complete input before invoking transport', async () => {
+  test('rejects injected host fields before invoking transport', async () => {
     const f = fixture();
     for (const field of ['projectId', 'actorId', 'workId', 'attemptId', 'sessionId', 'sourceId', 'authority', 'modelCriteria', 'criteriaMode']) {
       await expect(f.client.submit({ ...input(), [field]: 'injected' } as NativeWorkSubmissionRequest)).rejects.toMatchObject({ code: 'invalid_request' });
     }
-    await expect(f.client.submit({ ...input(), criteria: Array<string>(100).fill('x'.repeat(20_000)) })).rejects.toMatchObject({ code: 'invalid_request' });
     await expect(f.client.get({ requestId: '', projectId } as { requestId: string })).rejects.toMatchObject({ code: 'invalid_request' });
     expect(f.calls).toHaveLength(0); f.client.dispose();
     expect(() => createOperatorNativeWorkSubmissionClient({ invoke: async <T>() => submitted() as T }, '')).toThrow('invalid_request');

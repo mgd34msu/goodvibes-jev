@@ -63,7 +63,7 @@ test('configured permission deny expressions work without a judgment service', a
 
 test('Bun native execution remains correct or retires within the independent worker deadline', async () => {
   admit(); // Deliberately wrong model verdict: runtime safety must remain independent.
-  await using pattern = await admitRegex('(a|aa)+$', '', { operation: 'adversarial fixture' });
+  await using pattern = await admitRegex('(a|aa)+$', '', { operation: 'adversarial fixture', timeoutMs: 1000 });
   // JSC can bound this native backtracking operation before the host deadline.
   const result = await pattern.test('a'.repeat(1000) + '!').then(
     value => ({ kind: 'settled' as const, value }),
@@ -90,7 +90,7 @@ test('the actual Node worker deadline retires catastrophic native execution desp
       import { admitRegex } from ${JSON.stringify(source)};
       const controller = new AbortController();
       const reading = { signal: controller.signal, assertCurrent() {}, async read() { return { outcome: 'act', verdict: 'no' }; } };
-      await using pattern = await admitRegex('(a|aa)+$', '', { operation: 'native Node deadline', reading });
+      await using pattern = await admitRegex('(a|aa)+$', '', { operation: 'native Node deadline', reading, timeoutMs: 1000 });
       await assert.rejects(pattern.test('a'.repeat(1000) + '!'), /executor/);
       await assert.rejects(pattern.test('a'), /executor/);
       console.log('native-node-deadline-retired');
@@ -128,7 +128,7 @@ test('worker output and input bounds cannot be relaxed by per-call options', asy
   await using pattern = await admitRegex('a', 'g', { operation: 'fixture', maxInputChars: 100 });
   await expect(pattern.test('a', 101)).rejects.toThrow();
   await using expansion = await admitRegex('a', 'g', { operation: 'fixture' });
-  await expect(expansion.replace('a'.repeat(50_000), 'b'.repeat(100))).rejects.toThrow();
+  expect((await expansion.replace('a'.repeat(50_000), 'b'.repeat(100))).length).toBe(5_000_000);
 });
 
 test('Jev verdicts cannot veto regex execution; invalid syntax and explicit owner limits still fail', async () => {
@@ -194,16 +194,20 @@ test('cancellation during worker construction terminates the late startup handle
   }
 });
 
-test('capture storage is bounded before native execution for deeply nested groups', async () => {
+test('large capture results survive deeply nested groups', async () => {
   admit();
   const source = '('.repeat(200) + 'a+' + ')'.repeat(200);
   await using pattern = await admitRegex(source, '', { operation: 'capture budget', maxInputChars: 500_000 });
-  await expect(pattern.exec('a'.repeat(500_000))).rejects.toThrow('capture storage');
+  const result = await pattern.exec('a'.repeat(100_000));
+  expect(result?.captures).toHaveLength(201);
+  expect(result?.captures.at(-1)?.length).toBe(100_000);
 });
 
-test('edit numeric substitution refuses excessive expansion before allocating the result', async () => {
+test('edit numeric substitution preserves large valid expansions', async () => {
   admit();
-  await expect(computeSingleEdit('a'.repeat(50_000), { path: 'fixture', find: '(a+)', replace: '$1'.repeat(50_000) }, 'regex', true)).rejects.toThrow('output exceeds');
+  const result = await computeSingleEdit('a'.repeat(50_000), { path: 'fixture', find: '(a+)', replace: '$1'.repeat(100) }, 'regex', true);
+  if ('error' in result) throw new Error(result.error);
+  expect(result.newContent.length).toBe(5_000_000);
 });
 
 
@@ -223,7 +227,7 @@ test('the four exact wire grammars retain native anchors, Unicode, nested-not an
     expect(firstJsonSchemaFailure({ not: schema }, value) === undefined).toBe(!literal.test(value));
   }
   expect(firstJsonSchemaFailure({ pattern: '\\S' }, 'x'.repeat(60_000))).toBeUndefined();
-  expect(() => firstJsonSchemaFailure({ pattern: '[^!-~]' }, 'x'.repeat(60_000))).toThrow('input exceeds');
+  expect(firstJsonSchemaFailure({ pattern: '[^!-~]' }, 'x'.repeat(60_000))?.received).toBe('non-matching string');
   expect(await firstJsonSchemaFailureAsync({ pattern: '^a+$' }, 'a')).toBeUndefined();
 });
 
@@ -259,4 +263,17 @@ test('find searches long lines and large files without a Jev gate or a hidden sk
     const controller = new AbortController(); controller.abort();
     expect((await createFindTool(root).execute({ queries: [{ id: 'q', mode: 'content', pattern: 'x' }] }, { signal: controller.signal })).success).toBe(false);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('concurrent regex operations queue instead of rejecting after 32 requests', async () => {
+  await using pattern = await admitRegex('^a+$', '', { operation: 'queued fixture' });
+  expect(await Promise.all(Array.from({ length: 100 }, () => pattern.test('a'.repeat(60_000))))).toEqual(Array(100).fill(true));
+});
+
+test('deep schema constraints are validated and cyclic references do not bypass validation', async () => {
+  let schema: Record<string, unknown> = { type: 'string', pattern: '^required$' };
+  let value: unknown = 'wrong';
+  for (let i = 0; i < 100; i++) { schema = { type: 'object', properties: { child: schema } }; value = { child: value }; }
+  expect((await firstJsonSchemaFailureAsync(schema, value))?.received).toBe('non-matching string');
+  expect(firstJsonSchemaFailure({ $ref: '#' }, 'value')?.received).toBe('cyclic schema reference');
 });

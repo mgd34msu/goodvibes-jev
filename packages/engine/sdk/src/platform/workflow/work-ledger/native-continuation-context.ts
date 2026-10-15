@@ -2,15 +2,15 @@
 import { captureNativeSelectedDiffContext, nativeSelectedDiffContextSchema, nativeSelectedDiffSelectorSchema, type NativeSelectedDiffContext } from './native-diff-context.js';
 import { array, enum as enumSchema, strictObject, string, type z } from 'zod/v4';
 
-export const NATIVE_CONVERSATION_CONTINUATION_MAX_MESSAGES = 128;
-export const NATIVE_CONVERSATION_CONTINUATION_MAX_BYTES = 131_072;
+export const NATIVE_CONVERSATION_CONTINUATION_MAX_MESSAGES = Infinity;
+export const NATIVE_CONVERSATION_CONTINUATION_MAX_BYTES = Infinity;
 const id = string().min(1).max(200);
 export const nativeConversationContinuationRefSchema = strictObject({ sessionId: id, revision: string().regex(/^[a-f0-9]{64}$/), selectedDiff: nativeSelectedDiffSelectorSchema.optional() });
-export const nativeConversationContinuationMessageSchema = strictObject({ role: enumSchema(['user', 'assistant', 'system', 'tool']), content: string().max(NATIVE_CONVERSATION_CONTINUATION_MAX_BYTES) });
+export const nativeConversationContinuationMessageSchema = strictObject({ role: enumSchema(['user', 'assistant', 'system', 'tool']), content: string() });
 export const nativeConversationContinuationSchema = nativeConversationContinuationRefSchema.extend({
   selectedDiff: nativeSelectedDiffContextSchema.optional(),
-  messages: array(nativeConversationContinuationMessageSchema).max(NATIVE_CONVERSATION_CONTINUATION_MAX_MESSAGES).readonly(),
-}).refine(value => value.selectedDiff?.kind !== 'session' || value.selectedDiff.provenance.sessionId === value.sessionId, 'Selected diff session mismatch').refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= NATIVE_CONVERSATION_CONTINUATION_MAX_BYTES, 'Continuation snapshot exceeds byte limit');
+  messages: array(nativeConversationContinuationMessageSchema).readonly(),
+}).refine(value => value.selectedDiff?.kind !== 'session' || value.selectedDiff.provenance.sessionId === value.sessionId, 'Selected diff session mismatch');
 export type NativeConversationContinuation = Readonly<Omit<z.infer<typeof nativeConversationContinuationSchema>, 'messages'> & {
   readonly messages: readonly Readonly<z.infer<typeof nativeConversationContinuationMessageSchema>>[];
 }>;
@@ -31,7 +31,7 @@ function data(value: unknown, seen = new Set<object>()): void {
   seen.delete(value);
 }
 
-/** Strictly captures all available messages; exceeding bounds is refused, never truncated. */
+/** Strictly captures all available messages without truncating conversation evidence. */
 export function captureNativeConversationContinuation(value: unknown): NativeConversationContinuation {
   data(value);
   const parsed = nativeConversationContinuationSchema.parse(value);

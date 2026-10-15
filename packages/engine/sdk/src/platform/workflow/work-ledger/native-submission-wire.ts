@@ -1,8 +1,8 @@
 /** Transport data only. Source text does not confer execution or verification authority. */
 import { array, boolean, literal, number, strictObject, string, union, type z } from 'zod/v4';
 
-export const NATIVE_WORK_SUBMISSION_MAX_REQUEST_BYTES = 262_144;
-export const NATIVE_WORK_SUBMISSION_MAX_RESPONSE_BYTES = 278_528;
+export const NATIVE_WORK_SUBMISSION_MAX_REQUEST_BYTES = Infinity;
+export const NATIVE_WORK_SUBMISSION_MAX_RESPONSE_BYTES = Infinity;
 
 const id = string().min(1).max(200);
 const revision = number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);

@@ -202,7 +202,7 @@ export async function amendTarget(run: ContractRun, escalation: Escalation, inst
   const servable = servableCriteria(run, escalation);
   const servableIds = new Set(servable.map((criterion) => criterion.id));
   let problems: string[] = [];
-  for (let attempt = 0; attempt <= config.planRepairLimit; attempt += 1) {
+  for (let attempt = 0; config.planRepairLimit === 0 || attempt <= config.planRepairLimit; attempt += 1) {
     run.abort.signal.throwIfAborted();
     if (authority) await assertContractInputAuthority(authority, workingDirectory, run.abort.signal);
     const result = await context.decompositionRunner.run(bindContractInputAuthority({
