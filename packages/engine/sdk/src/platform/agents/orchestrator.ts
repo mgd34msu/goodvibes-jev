@@ -16,6 +16,7 @@ import {
   isCapturedInputPath,
   authorizeContractInputPath,
   assertContractInputReadAccess,
+  withContractInputReadBatch,
   type ContractInputAuthority,
 } from '../contract/input-authority.js';
 import { capturedInputTool, capturedInputReadFilter } from '../tools/shared/captured-input-tools.js';
@@ -803,9 +804,11 @@ export class AgentOrchestrator {
             beforeProviderRequest: async () => {
               autonomousSource?.();
               if (authority) {
-                await assertContractInputAuthority(authority, cwd, signal);
-                await assertContractInputReadAccess(authority, ownerReadAccess, signal);
-                for (const path of delivered) await authorizeContractInputPath(authority, path, ownerReadAccess, signal);
+                await withContractInputReadBatch(authority, async () => {
+                  await assertContractInputAuthority(authority, cwd, signal);
+                  await assertContractInputReadAccess(authority, ownerReadAccess, signal);
+                  for (const path of delivered) await authorizeContractInputPath(authority, path, ownerReadAccess, signal);
+                });
               }
               autonomousSource?.();
             },
