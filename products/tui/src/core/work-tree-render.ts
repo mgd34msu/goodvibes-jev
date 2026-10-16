@@ -182,6 +182,12 @@ export function renderTurn(model: TurnModel, options: TurnRenderOptions): TurnRe
   const messageLines = new Map<number, number>();
   const focusIds = new Set<string>();
   const laneOfBead = new Map<string, string>();
+  let responseSpaced = false;
+  const spacer = (gutter: GutterRow): void => {
+    const blank = createEmptyLine(options.width);
+    if (!folded && !bare) paintGutter(blank, gutter, p);
+    lines.push(blank);
+  };
   const noteMessage = (index: number | undefined, line: number): void => {
     if (index !== undefined && index >= 0 && !messageLines.has(index)) messageLines.set(index, line);
   };
@@ -199,11 +205,11 @@ export function renderTurn(model: TurnModel, options: TurnRenderOptions): TurnRe
   rows.forEach((row, i) => {
     const gutter = layout.rows[i]!;
     const cont = layout.cont[i]!;
-    // Two prose blocks in a row keep a blank row between them, lanes running past it.
-    if ((row.kind === 'prose' || row.kind === 'answer') && rows[i - 1]?.kind === 'prose') {
-      const blank = createEmptyLine(options.width);
-      if (!folded && !bare) paintGutter(blank, layout.cont[i - 1]!, p);
-      lines.push(blank);
+    const response = row.kind === 'answer' || (row.kind === 'prose' && row.role === 'assistant');
+    // Response padding is part of the lane graph, so every live connector
+    // continues through the blank rows. Adjacent responses share one spacer.
+    if (!responseSpaced && (response || (row.kind === 'prose' && rows[i - 1]?.kind === 'prose'))) {
+      spacer(i > 0 ? layout.cont[i - 1]! : []);
     }
     const start = lines.length;
     switch (row.kind) {
@@ -336,6 +342,9 @@ export function renderTurn(model: TurnModel, options: TurnRenderOptions): TurnRe
         break;
       }
     }
+    // The transcript supplies the separator after the turn's final row.
+    responseSpaced = response && i < rows.length - 1;
+    if (responseSpaced) spacer(cont);
   });
 
   blocks.forEach((b, k) => { b.blockIndex = k; });
@@ -356,12 +365,19 @@ export function renderTurn(model: TurnModel, options: TurnRenderOptions): TurnRe
 export function renderStreamingContinuation(
   content: string,
   width: number,
-  tail: { readonly gutter: GutterRow; readonly gutterWidth: number },
+  tail: TurnRender['tail'],
   glyphSet: TreeGlyphSetName,
 ): Line[] {
+  if (content.length === 0) return [];
   const p: GraphPaint = { width, gutterWidth: tail.gutterWidth, glyphs: laneGlyphs(glyphSet), frame: 0 };
   const shift = Math.max(0, textColumn(p) - MARKDOWN_TEXT_COL);
-  return renderMarkdown(content, Math.max(20, width - shift), { isStreaming: true }).map((line) => shiftUnderGutter(line, shift, tail.gutter, p));
+  const spacer = (): Line => {
+    const line = createEmptyLine(width);
+    paintGutter(line, tail.gutter, p);
+    return line;
+  };
+  const body = renderMarkdown(content, Math.max(20, width - shift), { isStreaming: true }).map((line) => shiftUnderGutter(line, shift, tail.gutter, p));
+  return [spacer(), ...body, spacer()];
 }
 
 /** One bead with no turn around it (a result whose call is outside the slice). */
