@@ -36,7 +36,8 @@ export class RateLimiter {
     const now = Date.now();
     const windowStart = now - RATE_WINDOW_MS;
     const hits = (this.counts.get(ip) ?? []).filter((t) => t > windowStart);
-    hits.push(now);
+    const allowed = hits.length < this.limit;
+    if (allowed) hits.push(now);
     this.counts.set(ip, hits);
 
     // Promote to MRU: delete then re-set (both O(1) Map operations).
@@ -52,7 +53,7 @@ export class RateLimiter {
       }
     }
 
-    return hits.length <= this.limit;
+    return allowed;
   }
 
   /** Stop the background sweep interval. Call this when the listener stops. */

@@ -1,3 +1,4 @@
+import { createNativeHostFetch } from './client/native-host-fetch.ts';
 import { isNativePairedPrincipal } from './native-paired-principal.ts';
 import { realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -15,7 +16,7 @@ export function nativeSubmissionIdentity(host: NativeSubmissionHost, projectId: 
     host.selectionIdentity ?? null, host.expectedPrincipalId ?? null])).digest('hex');
 }
 export function createNativeWorkSubmissionBinding(host: NativeSubmissionHost, projectId: string, current: () => boolean = () => true): NativeWorkSubmissionBinding {
-  const operator = createOperatorSdk({ baseUrl: host.baseUrl, authToken: host.token });
+  const operator = createOperatorSdk({ baseUrl: host.baseUrl, authToken: host.token, fetchImpl: createNativeHostFetch({ current }) });
   const reader = createOperatorWorkLedgerReadClient(operator, projectId);
   const readPrincipal = async (signal?: AbortSignal): Promise<string> => {
     if (!current()) throw new Error('Native submission host selection changed');

@@ -106,6 +106,10 @@ export function defineRankRecheck(spec: RankRecheckSpec): RankRecheck {
   const compound: RankRecheck = {
     ...header,
     async suggest(port, state, options, call = {}) {
+      const ids = options.map(option => option.id);
+      if (new Set(ids).size !== ids.length || ids.includes(NONE)) {
+        throw new RangeError(`rank-recheck ${spec.name}: option ids must be unique and not "${NONE}"`);
+      }
       const optionCountOk = options.length >= 2 && options.length <= LIMITS.maxChoiceOptions;
       if (!optionCountOk) throw new RangeError(`rank-recheck ${spec.name}: needs 2 to ${LIMITS.maxChoiceOptions} options; split larger sets into chunks`);
       const wide = await askAs(port, spec, 'rank-recheck.wide', state, wideQuestions(spec, options), call);

@@ -24,6 +24,7 @@ export async function handleBlueBubblesSurfaceWebhook(req: Request, context: Sur
     { kind: 'env', name: 'BLUEBUBBLES_PASSWORD' },
   );
   if (credential.state === 'unresolvable') return surfaceCredentialUnavailable('bluebubbles', credential);
+  if (credential.state === 'absent') return Response.json({ error: 'Webhook credential is not configured' }, { status: 503 });
   const url = new URL(req.url);
   // Header FIRST, query parameter second.
   //

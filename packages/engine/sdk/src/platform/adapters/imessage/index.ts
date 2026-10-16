@@ -18,6 +18,7 @@ export async function handleIMessageSurfaceWebhook(req: Request, context: Surfac
     { kind: 'env', name: 'IMESSAGE_BRIDGE_TOKEN' },
   );
   if (credential.state === 'unresolvable') return surfaceCredentialUnavailable('imessage', credential);
+  if (credential.state === 'absent') return Response.json({ error: 'Webhook credential is not configured' }, { status: 503 });
   if (credential.state === 'resolved') {
     const providedToken = readBearerOrHeaderToken(req, 'x-goodvibes-imessage-token');
     if (!constantTimeEquals(credential.value, providedToken)) {

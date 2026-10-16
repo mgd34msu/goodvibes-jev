@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test, type Mock } from 'bun:test';
 import { createHmac } from 'node:crypto';
 import { WebhookNotifier, type WebhookNotifierOptions } from '../sdk/src/platform/integrations/webhooks.ts';
-import * as http from '../sdk/src/platform/utils/fetch-with-timeout.ts';
+import * as http from '../sdk/src/platform/utils/url-safety.ts';
 import { logger } from '../sdk/src/platform/utils/logger.ts';
 import { RuntimeEventBus, createEventEnvelope } from '../sdk/src/platform/runtime/events/index.ts';
 import type { NotificationDelivery } from '../sdk/src/platform/runtime/turn-notification.ts';
@@ -15,7 +15,7 @@ const turn = (): NotificationDelivery => ({ kind: 'turn', facts: {
   outcome: 'failed', elapsedMs: 1000, name: PRIVATE, reason: PRIVATE,
 } });
 
-let fetchSpy: Mock<typeof http.instrumentedFetch>;
+let fetchSpy: Mock<typeof http.postToPublicWebhook>;
 let notifiers: WebhookNotifier[];
 let releases: Array<() => void>;
 let restorers: Array<() => void>;
@@ -70,7 +70,7 @@ beforeEach(() => {
   notifiers = [];
   releases = [];
   restorers = [];
-  fetchSpy = spyOn(http, 'instrumentedFetch').mockImplementation(async () => new Response('ok'));
+  fetchSpy = spyOn(http, 'postToPublicWebhook').mockImplementation(async () => new Response('ok'));
 });
 afterEach(async () => {
   for (const release of releases) release();

@@ -100,6 +100,14 @@ describe('rank-recheck', () => {
     { id: 'apple-notes', summary: 'Manage Apple Notes', detail: 'Notes.app via memo' },
   ];
 
+  test('rejects duplicate and reserved option ids before calling Jev', async () => {
+    const { port, requests } = fakePort(() => { throw new Error('Must not ask'); });
+    for (const ids of [['same', 'same'], ['none', 'valid']]) {
+      await expect(compound.suggest(port, 's', ids.map(id => ({ id, summary: id, detail: id })))).rejects.toThrow('unique');
+    }
+    expect(requests).toHaveLength(0);
+  });
+
   test('a low gate stops after the wide pass', async () => {
     const { port, requests } = fakePort((name, q) => (name === 'which' ? choiceAnswer(q, 'apple-notes', 0.5) : noulAnswer(name === 'gate_prose' ? 0.95 : 0.1)));
     const got = await compound.suggest(port, { request: 'explain monads' }, options);

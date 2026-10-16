@@ -86,6 +86,7 @@ export async function handleTelegramSurfaceWebhook(
     { kind: 'env', name: 'TELEGRAM_WEBHOOK_SECRET' },
   );
   if (credential.state === 'unresolvable') return surfaceCredentialUnavailable('telegram', credential);
+  if (credential.state === 'absent') return Response.json({ error: 'Webhook credential is not configured' }, { status: 503 });
   if (credential.state === 'resolved') {
     const providedSecret = req.headers.get('x-telegram-bot-api-secret-token') ?? '';
     if (!constantTimeEquals(credential.value, providedSecret)) {

@@ -1,3 +1,4 @@
+import { findSessionCandidates } from '@goodvibes-jev/engine/sdk/platform/sessions';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { SecretsManager } from '../config/secrets.ts';
@@ -292,7 +293,9 @@ export async function handleSessions(runtime: CliCommandRuntime): Promise<string
     if (sub === 'show' || sub === 'info') {
       const target = rest.join(' ').trim();
       if (!target) return `Usage: ${binary} sessions show <id|name>`;
-      const found = sessions.find((session) => session.name === target || session.name.startsWith(target) || session.title.toLowerCase() === target.toLowerCase());
+      const candidates = findSessionCandidates(sessions, target);
+      if (candidates.length > 1) return `Ambiguous session: ${target}. Use an exact ID: ${candidates.map(session => session.name).join(', ')}`;
+      const found = candidates[0];
       if (!found) return `Session not found ${target}`;
       return formatJsonOrText(runtime.cli)(found, [
         `Session ${found.name}`,
@@ -307,7 +310,9 @@ export async function handleSessions(runtime: CliCommandRuntime): Promise<string
       const target = rest[0];
       const outputPath = rest[1];
       if (!target) return `Usage: ${binary} sessions export <id|name> [path]`;
-      const found = sessions.find((session) => session.name === target || session.name.startsWith(target) || session.title.toLowerCase() === target.toLowerCase());
+      const candidates = findSessionCandidates(sessions, target);
+      if (candidates.length > 1) return `Ambiguous session: ${target}. Use an exact ID: ${candidates.map(session => session.name).join(', ')}`;
+      const found = candidates[0];
       if (!found) return `Session not found ${target}`;
       const data = services.sessionManager.load(found.name);
       const text = JSON.stringify({ name: found.name, ...data }, null, 2) + '\n';

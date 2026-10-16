@@ -383,3 +383,28 @@ describe('serving work', () => {
     expect(completions[0]?.status).toBe('completed');
   });
 });
+
+test('a stopped phone does not execute work from a late pull response', async () => {
+  const store = memoryStorage({ nodeId: 'phone', token: 'token', label: 'Phone' });
+  let release!: (response: Response) => void; let executions = 0;
+  const pending = new Promise<Response>(resolve => { release = resolve; });
+  const client = new PhoneNodeClient({ baseUrl: 'https://daemon.test', label: 'Phone', storage: store, bindings: bindings(),
+    fetchImpl: async () => pending, runCapability: async () => { executions++; return { ok: true }; } });
+  const pumping = client.pumpOnce(); client.stop();
+  release(Response.json({ work: [{ id: 'work', type: 'device.capability', payload: { capabilityId: 'notify' } }] }));
+  await pumping;
+  expect(executions).toBe(0); expect(store.executed).toHaveLength(0);
+});
+
+test('unpairing during a capability prevents stale completion and state publication', async () => {
+  const store = memoryStorage({ nodeId: 'phone', token: 'token', label: 'Phone' });
+  let entered!: () => void; let release!: () => void; let requests = 0;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const client = new PhoneNodeClient({ baseUrl: 'https://daemon.test', label: 'Phone', storage: store, bindings: bindings(),
+    fetchImpl: (async () => { requests++; return Response.json({ work: [{ id: 'work', type: 'device.capability', payload: { capabilityId: 'notify' } }] }); }),
+    runCapability: async () => { entered(); await pending; return { ok: true }; } });
+  const pumping = client.pumpOnce(); await started; client.unpair(); release(); await pumping;
+  expect(requests).toBe(1); expect(store.executed).toHaveLength(0); expect(store.current).toBeNull();
+  expect(client.getState().activity).toHaveLength(0);
+});

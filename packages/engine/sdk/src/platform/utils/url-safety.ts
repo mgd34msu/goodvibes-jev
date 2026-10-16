@@ -31,13 +31,17 @@ function isBlockedHostname(hostname: string): boolean {
 }
 
 export function validatePublicWebhookUrl(rawUrl: string): { ok: true; url: string } | { ok: false; error: string } {
+  return validateWebhookDeliveryUrl(rawUrl, false);
+}
+
+function validateWebhookDeliveryUrl(rawUrl: string, allowHttp: boolean): { ok: true; url: string } | { ok: false; error: string } {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
   } catch {
     return { ok: false, error: 'Invalid webhook URL' };
   }
-  if (parsed.protocol !== 'https:') {
+  if (parsed.protocol !== 'https:' && !(allowHttp && parsed.protocol === 'http:')) {
     return { ok: false, error: 'Webhook URL must use https' };
   }
   if (parsed.username || parsed.password) {
@@ -57,12 +61,16 @@ export function validatePublicWebhookUrl(rawUrl: string): { ok: true; url: strin
 export async function postToPublicWebhook(
   rawUrl: string,
   init: RequestInit,
-  options: DeliveryLifetime & { readonly resolveHost?: HostResolver | undefined } = {},
+  options: DeliveryLifetime & {
+    readonly resolveHost?: HostResolver | undefined;
+    /** Preserve HTTP for configured generic notification endpoints. HTTPS remains the default. */
+    readonly allowHttp?: boolean | undefined;
+  } = {},
 ): Promise<Response> {
   const lifetime = { signal: init.signal && options.signal ? AbortSignal.any([init.signal, options.signal]) : init.signal ?? options.signal,
     assertCurrent: options.assertCurrent, withPublication: options.withPublication };
   assertDeliveryCurrent(lifetime);
-  const validation = validatePublicWebhookUrl(rawUrl);
+  const validation = validateWebhookDeliveryUrl(rawUrl, options.allowHttp === true);
   if (!validation.ok) throw new Error(validation.error);
   const addresses = await resolveCheckedAddresses(validation.url, {
     trustTierConfig: {},

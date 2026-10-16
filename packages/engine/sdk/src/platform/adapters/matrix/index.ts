@@ -24,6 +24,7 @@ export async function handleMatrixSurfaceWebhook(req: Request, context: SurfaceA
     { kind: 'env', name: 'MATRIX_ACCESS_TOKEN' },
   );
   if (credential.state === 'unresolvable') return surfaceCredentialUnavailable('matrix', credential);
+  if (credential.state === 'absent') return Response.json({ error: 'Webhook credential is not configured' }, { status: 503 });
   const providedToken = readBearerOrHeaderToken(req, 'x-goodvibes-matrix-token');
   if (credential.state === 'resolved' && !constantTimeEquals(credential.value, providedToken)) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });

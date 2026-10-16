@@ -35,19 +35,20 @@ function toolMatchesPathPattern(
 
 /**
  * extractPathArgs, Extracts EVERY path string from args.
- * Understands the edit tool's real shape (`edits: [{ path }, ...]`) as well
+ * Understands edit/write batches (`edits` and `files` entries) as well
  * as flat `path`/`file`/`target` strings.
  */
 export function extractPathArgs(args: Record<string, unknown>): string[] {
-  const edits = args['edits'];
-  if (Array.isArray(edits)) {
-    const paths = edits
+  const paths: string[] = [];
+  for (const entries of [args['edits'], args['files']]) {
+    if (!Array.isArray(entries)) continue;
+    paths.push(...entries
       .map((entry) => (entry && typeof entry === 'object' && typeof (entry as Record<string, unknown>)['path'] === 'string'
         ? (entry as Record<string, unknown>)['path'] as string
         : null))
-      .filter((path): path is string => path !== null);
-    if (paths.length > 0) return paths;
+      .filter((path): path is string => path !== null));
   }
+  if (paths.length > 0) return paths;
   if (typeof args['path'] === 'string') return [args['path']];
   if (typeof args['file'] === 'string') return [args['file']];
   if (typeof args['target'] === 'string') return [args['target']];

@@ -1,3 +1,4 @@
+import { createNativeHostFetch } from './client/native-host-fetch.ts';
 import { NativeConversationIntakePreflight } from './native-conversation-intake-preflight.ts';
 import { NativeConversationIntakeControls, type NativeConversationIntakeState } from './native-conversation-intake.ts';
 import { NativeConversationIntakeJournal } from './native-conversation-intake-journal.ts';
@@ -16,7 +17,7 @@ import { NativeWorkLedgerModel, type NativeWorkLedgerView, type NativeWorkLedger
 export type NativeLedgerHost = NativeSubmissionHost | { readonly reason: string };
 export type NativeLedgerBindingFactory = (host: Exclude<NativeLedgerHost, { reason: string }>, project: string, unavailable: (error: Error) => void, current?: () => boolean) => NativeWorkLedgerBinding;
 export const createNativeLedgerBinding: NativeLedgerBindingFactory = (host, project, onUnavailable, current = () => true) => {
-  const operator = createOperatorSdk({ baseUrl: host.baseUrl, authToken: host.token });
+  const operator = createOperatorSdk({ baseUrl: host.baseUrl, authToken: host.token, fetchImpl: createNativeHostFetch({ current }) });
   const reader = createOperatorWorkLedgerReadClient(operator, project, { onUnavailable });
   const invoke = (async (...args: Parameters<OperatorRemoteClient['invoke']>) => {
     if (!current()) throw new Error('Native execution host selection changed');
@@ -45,7 +46,8 @@ export const createNativeLedgerBinding: NativeLedgerBindingFactory = (host, proj
 };
 
 export async function discoverNativeLedgerProject(host: Exclude<NativeLedgerHost, { reason: string }>, signal: AbortSignal): Promise<string> {
-  const operator = createOperatorSdk({ baseUrl: host.baseUrl, authToken: host.token });
+  const current = () => !signal.aborted;
+  const operator = createOperatorSdk({ baseUrl: host.baseUrl, authToken: host.token, fetchImpl: createNativeHostFetch({ current }) });
   try {
     return await getOperatorWorkLedgerProject(operator, { signal });
   } finally { operator.dispose(); }

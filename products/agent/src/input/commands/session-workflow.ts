@@ -1,3 +1,4 @@
+import { findSessionCandidates } from '@goodvibes-jev/engine/sdk/platform/sessions';
 import { captureTranscriptSource, readTranscriptIndex, transcriptReadingCanceled, TRANSCRIPT_UNAVAILABLE } from './transcript-reading.ts';
 import { randomBytes } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
@@ -304,11 +305,12 @@ export async function handleSessionWorkflowCommand(args: string[], ctx: CommandC
       return true;
     }
     const sessions = sm.list();
-    const found = sessions.find((session) =>
-      session.name === target ||
-      session.name.startsWith(target) ||
-      session.title.toLowerCase() === target.toLowerCase(),
-    );
+    const candidates = findSessionCandidates(sessions, target);
+    if (candidates.length > 1) {
+      ctx.print(`Ambiguous session: ${target}. Use an exact ID: ${candidates.map(session => session.name).join(', ')}`);
+      return true;
+    }
+    const found = candidates[0];
     if (!found) {
       ctx.print(`Session not found ${target}\nUse /session list to see available sessions.`);
       return true;
@@ -329,6 +331,7 @@ export async function handleSessionWorkflowCommand(args: string[], ctx: CommandC
       // boundaries stay valid because the resume above rehydrated the same
       // history the anchors were recorded against.
       const restoredAnchorCount = ctx.session.restoreTurnAnchors?.(found.name) ?? 0;
+      if (meta.provider) ctx.session.runtime.provider = meta.provider;
       if (meta.model) {
         try {
           const selected = await providerApi.selectModel(meta.model);
@@ -339,7 +342,6 @@ export async function handleSessionWorkflowCommand(args: string[], ctx: CommandC
           // model may not exist locally
         }
       }
-      if (meta.provider) ctx.session.runtime.provider = meta.provider;
       ctx.renderRequest();
       ctx.print([
         'Resumed session',
@@ -446,7 +448,12 @@ export async function handleSessionWorkflowCommand(args: string[], ctx: CommandC
   if (sub === 'info') {
     const target = args[1] || ctx.session.runtime.sessionId;
     const sessions = sm.list();
-    const found = sessions.find((session) => session.name === target || session.name.startsWith(target));
+    const candidates = findSessionCandidates(sessions, target);
+    if (candidates.length > 1) {
+      ctx.print(`Ambiguous session: ${target}. Use an exact ID: ${candidates.map(session => session.name).join(', ')}`);
+      return true;
+    }
+    const found = candidates[0];
     if (!found) {
       ctx.print(`Session not found ${target}`);
       return true;
@@ -540,7 +547,12 @@ export async function handleSessionWorkflowCommand(args: string[], ctx: CommandC
       return true;
     }
     const sessions = sm.list();
-    const found = sessions.find((session) => session.name === target || session.name.startsWith(target));
+    const candidates = findSessionCandidates(sessions, target);
+    if (candidates.length > 1) {
+      ctx.print(`Ambiguous session: ${target}. Use an exact ID: ${candidates.map(session => session.name).join(', ')}`);
+      return true;
+    }
+    const found = candidates[0];
     if (!found) {
       ctx.print(`Session not found ${target}`);
       return true;

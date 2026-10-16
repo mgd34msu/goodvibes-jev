@@ -3,7 +3,7 @@
 // before each request hop (the first and every redirect), and the request is
 // pinned to the checked address so a second lookup cannot rebind it.
 import { afterEach, describe, expect, test } from 'bun:test';
-import { executeFetchInput } from '../sdk/src/platform/tools/fetch/runtime.ts';
+import { executeFetchInput, FetchRuntimeService } from '../sdk/src/platform/tools/fetch/runtime.ts';
 import { classifyHostTrustTier, classifyResolvedAddress } from '../sdk/src/platform/tools/fetch/trust-tiers.ts';
 import type { HostResolver } from '../sdk/src/platform/tools/fetch/pinned-request.ts';
 
@@ -147,4 +147,22 @@ describe('classifyResolvedAddress', () => {
     expect(classifyResolvedAddress('8.8.8.8')).toBeNull();
     expect(classifyResolvedAddress('2606:4700::1')).toBeNull();
   });
+});
+
+test('processed fetch cache separates credentials and response options', async () => {
+  let calls = 0;
+  globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+    calls++;
+    return new Response(new Headers(init?.headers).get('authorization') ?? 'anonymous payload', { headers: { 'content-type': 'text/plain' } });
+  }) as typeof fetch;
+  const runtime = new FetchRuntimeService();
+  const get = async (headers?: Record<string, string>, max_content_length?: number) =>
+    (await runtime.execute({ urls: [{ url: 'https://public.test/data', headers, max_content_length }], cache_ttl_seconds: 60, extract: 'raw' }, { resolveHost: resolver })).results?.[0];
+  expect((await get({ Authorization: 'Bearer A' }))?.content).toBe('Bearer A');
+  expect((await get({ Authorization: 'Bearer B' }))?.content).toBe('Bearer B');
+  expect((await get())?.content).toBe('anonymous payload');
+  expect((await get())?.content).toBe('anonymous payload');
+  expect(calls).toBe(3);
+  expect((await get(undefined, 3))?.content).toBe('ano');
+  expect(calls).toBe(4);
 });

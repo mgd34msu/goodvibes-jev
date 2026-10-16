@@ -61,11 +61,18 @@ export async function handleWhatsAppSurfaceWebhook(req: Request, context: Surfac
   if (parsed instanceof Response) return parsed;
   const payload = readRecord(parsed);
   if (!payload) return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
-  const entry = Array.isArray(payload.entry) ? readRecord(payload.entry[0]) : null;
-  const change = entry && Array.isArray(entry.changes) ? readRecord(entry.changes[0]) : null;
-  const value = readRecord(change?.value);
-  const message = value && Array.isArray(value.messages) ? readRecord(value.messages[0]) : null;
-  if (!message) {
+  const messages: { value: Record<string, unknown>; message: Record<string, unknown> }[] = [];
+  for (const entry of Array.isArray(payload.entry) ? payload.entry : []) {
+    const changes = readRecord(entry)?.changes;
+    for (const change of Array.isArray(changes) ? changes : []) {
+      const value = readRecord(readRecord(change)?.value);
+      for (const raw of Array.isArray(value?.messages) ? value.messages : []) {
+        const message = readRecord(raw);
+        if (value && message) messages.push({ value, message });
+      }
+    }
+  }
+  if (!messages.length) {
     logger.info('handleWhatsAppSurfaceWebhook: payload ignored', {
       reason: 'no-message-event',
       provider,
@@ -77,7 +84,16 @@ export async function handleWhatsAppSurfaceWebhook(req: Request, context: Surfac
       reason: 'no-message-event',
     });
   }
-  const contact = value && Array.isArray(value.contacts) ? readRecord(value.contacts[0]) : null;
+  const responses: Response[] = [];
+  for (const { value, message } of messages) responses.push(await handleWhatsAppMessage(value, message, context));
+  if (responses.length === 1) return responses[0]!;
+  const failed = responses.find(response => !response.ok);
+  const results = await Promise.all(responses.map(response => response.json()));
+  return Response.json({ acknowledged: !failed, results }, { status: failed?.status ?? 200 });
+}
+
+async function handleWhatsAppMessage(value: Record<string, unknown>, message: Record<string, unknown>, context: SurfaceAdapterContext): Promise<Response> {
+  const contact = Array.isArray(value.contacts) ? value.contacts.map(readRecord).find(contact => contact?.wa_id === message.from) ?? readRecord(value.contacts[0]) : null;
   const from = readString(message.from);
   const text = readString(readRecord(message.text)?.body) ?? readString(message.caption) ?? '';
   if (!from) return Response.json({ error: 'Missing sender' }, { status: 400 });

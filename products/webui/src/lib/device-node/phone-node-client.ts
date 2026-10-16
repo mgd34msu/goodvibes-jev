@@ -204,6 +204,7 @@ export class PhoneNodeClient {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private pendingChallenge = '';
   private busy = false;
+  private lifetime = new AbortController();
   /**
    * Work item ids whose capability has already run, keyed to their reported
    * outcome. Checked at the top of runWork() so a redelivery, caused by our
@@ -253,26 +254,41 @@ export class PhoneNodeClient {
     return `${this.options.baseUrl.replace(/\/$/, '')}${path}`;
   }
 
+  private isCurrent(lifetime: AbortController): boolean {
+    return lifetime === this.lifetime && !lifetime.signal.aborted;
+  }
+
   private async post(path: string, body: unknown, token?: string): Promise<{ status: number; json: unknown }> {
-    const response = await this.fetchImpl(this.url(path), {
+    const lifetime = this.lifetime;
+    if (!this.isCurrent(lifetime)) return { status: 499, json: null };
+    let response: Response;
+    try { response = await this.fetchImpl(this.url(path), {
+      signal: lifetime.signal,
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         ...(token ? { authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(body ?? {}),
-    });
+    }); } catch (error) {
+      if (!this.isCurrent(lifetime)) return { status: 499, json: null };
+      throw error;
+    }
     let json: unknown;
     try {
       json = await response.json();
     } catch {
       json = null;
     }
+    if (!this.isCurrent(lifetime)) return { status: 499, json: null };
     return { status: response.status, json };
   }
 
   /** Ask the daemon to pair this browser as a device node. */
   async requestPairing(): Promise<void> {
+    this.stop();
+    this.lifetime = new AbortController();
+    const lifetime = this.lifetime;
     this.setState({ status: 'pairing', message: 'Asking the daemon to pair…' });
     const announced = announcedCapabilities(this.bindings);
     const { status, json } = await this.post('/api/remote/pair/request', {
@@ -292,6 +308,7 @@ export class PhoneNodeClient {
         },
       },
     });
+    if (!this.isCurrent(lifetime)) return;
     if (status >= 400) {
       this.setState({ status: 'error', message: `The daemon refused the pairing request (HTTP ${status}).` });
       return;
@@ -313,6 +330,7 @@ export class PhoneNodeClient {
 
   /** Complete pairing once the operator has approved the request. */
   async verifyPairing(): Promise<void> {
+    const lifetime = this.lifetime;
     if (!this.state.pendingRequestId || !this.pendingChallenge) {
       this.setState({ status: 'error', message: 'There is no pairing request to finish. Ask to pair again.' });
       return;
@@ -321,6 +339,7 @@ export class PhoneNodeClient {
       requestId: this.state.pendingRequestId,
       challenge: this.pendingChallenge,
     });
+    if (!this.isCurrent(lifetime)) return;
     if (status >= 400) {
       this.setState({
         status: 'awaiting-approval',
@@ -374,7 +393,8 @@ export class PhoneNodeClient {
   }
 
   private async heartbeat(): Promise<void> {
-    if (!this.identity) return;
+    const lifetime = this.lifetime;
+    if (!this.identity || !this.isCurrent(lifetime)) return;
     const announced = announcedCapabilities(this.bindings);
     const { status } = await this.post('/api/remote/heartbeat', {
       capabilities: announced,
@@ -389,6 +409,7 @@ export class PhoneNodeClient {
         },
       },
     }, this.identity.token);
+    if (!this.isCurrent(lifetime)) return;
     if (status === 401 || status === 403) {
       this.handleAuthFailure();
       return;
@@ -398,24 +419,31 @@ export class PhoneNodeClient {
 
   /** Pull one batch of work and run it. */
   async pumpOnce(): Promise<void> {
-    if (!this.identity || this.busy) return;
+    const lifetime = this.lifetime;
+    if (!this.identity || this.busy || !this.isCurrent(lifetime)) return;
     this.busy = true;
     try {
       const { status, json } = await this.post('/api/remote/work/pull', { maxItems: 3 }, this.identity.token);
+      if (!this.isCurrent(lifetime)) return;
       if (status === 401 || status === 403) {
         this.handleAuthFailure();
         return;
       }
       if (status >= 400) return;
       const items = Array.isArray((json as { work?: unknown }).work) ? (json as { work: WorkItem[] }).work : [];
-      for (const item of items) await this.runWork(item);
+      for (const item of items) {
+        if (!this.isCurrent(lifetime)) break;
+        await this.runWork(item);
+      }
     } finally {
       this.busy = false;
     }
   }
 
   private async runWork(item: WorkItem): Promise<void> {
-    if (!this.identity) return;
+    const lifetime = this.lifetime;
+    const identity = this.identity;
+    if (!identity || !this.isCurrent(lifetime)) return;
     const executed = this.executedWork.get(item.id);
     if (executed) {
       // Redelivered: the daemon's lease on this item expired before our completion
@@ -440,7 +468,8 @@ export class PhoneNodeClient {
     const runner = this.options.runCapability
       ?? ((id: string, capabilityInput: Record<string, unknown>) => runWebNodeCapability(id, capabilityInput, this.bindings));
     const result = await runner(capabilityId, input);
-    this.note(capabilityId, result.ok, result.ok ? 'Served' : (result.error ?? 'Failed'));
+    if (identity !== this.identity) return;
+    if (this.isCurrent(lifetime)) this.note(capabilityId, result.ok, result.ok ? 'Served' : (result.error ?? 'Failed'));
     const status = result.ok ? 'completed' : 'failed';
     const completionResult = {
       contractVersion: WEB_NODE_CONTRACT_VERSION,
@@ -454,7 +483,10 @@ export class PhoneNodeClient {
     // Marker persisted BEFORE the report is attempted: if completeWork's POST
     // never lands, a later redelivery of this same item id must still find the
     // marker and skip straight to re-reporting, not re-run the capability.
+    // Preserve deduplication for an action already performed, even if polling stopped.
+    // Unpairing changes identity and returns above without repopulating cleared storage.
     this.rememberExecuted(item.id, status, completionResult, completionError);
+    if (!this.isCurrent(lifetime)) return;
     await this.completeWork(item.id, status, completionResult, completionError);
   }
 
@@ -489,13 +521,24 @@ export class PhoneNodeClient {
   start(): void {
     if (!this.identity) return;
     this.stop();
-    void this.heartbeat();
-    void this.pumpOnce();
-    this.heartbeatTimer = setInterval(() => { void this.heartbeat(); }, this.options.heartbeatIntervalMs ?? 30_000);
-    this.pullTimer = setInterval(() => { void this.pumpOnce(); }, this.options.pullIntervalMs ?? 2_000);
+    this.lifetime = new AbortController();
+    this.background(() => this.heartbeat());
+    this.background(() => this.pumpOnce());
+    this.heartbeatTimer = setInterval(() => { this.background(() => this.heartbeat()); }, this.options.heartbeatIntervalMs ?? 30_000);
+    this.pullTimer = setInterval(() => { this.background(() => this.pumpOnce()); }, this.options.pullIntervalMs ?? 2_000);
+  }
+
+  private background(work: () => Promise<void>): void {
+    const lifetime = this.lifetime;
+    void work().catch((error: unknown) => {
+      if (this.isCurrent(lifetime)) {
+        this.setState({ message: error instanceof Error ? error.message : 'Device connection failed' });
+      }
+    });
   }
 
   stop(): void {
+    this.lifetime.abort();
     if (this.pullTimer) { clearInterval(this.pullTimer); this.pullTimer = null; }
     if (this.heartbeatTimer) { clearInterval(this.heartbeatTimer); this.heartbeatTimer = null; }
   }

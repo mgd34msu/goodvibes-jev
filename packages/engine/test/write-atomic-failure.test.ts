@@ -197,17 +197,28 @@ for (const failure of [
 test('ordinary atomic snapshot mode exception rolls back earlier writes and preserves history', async () => {
   const f = fixture();
   const actualStat = fs.lstatSync;
-  const stat = spyOn(fs, 'lstatSync')
-    .mockImplementationOnce(actualStat)
-    .mockImplementationOnce(() => { throw new Error('synthetic snapshot mode failure'); });
+  const stat = spyOn(fs, 'lstatSync').mockImplementation(((...args: Parameters<typeof fs.lstatSync>) => {
+    if (args[0] === join(f.root, 'second.txt')) throw new Error('synthetic snapshot mode failure');
+    return actualStat(...args);
+  }) as typeof fs.lstatSync);
   try {
     const result = await f.tool.execute({ files: [first, second, { path: 'later.txt', content: 'must not write' }], transaction: { mode: 'atomic' } });
     expect(result.success).toBe(false);
-    expect(result.error).toBe("Atomic transaction failed on 'second.txt': Atomic transaction cannot safely snapshot 'second.txt': [REDACTED]. Rolled back 1 file(s): first.txt");
-    expect(stat.mock.calls[1]?.[0]).toBe(join(f.root, 'second.txt'));
+    expect(result.error).toBe("Atomic transaction failed on 'second.txt': Atomic transaction cannot safely snapshot 'second.txt': synthetic snapshot mode failure. Rolled back 1 file(s): first.txt");
+    expect(stat.mock.calls.some(call => call[0] === join(f.root, 'second.txt'))).toBe(true);
     unchanged(f); expect(existsSync(join(f.root, 'later.txt'))).toBe(false);
     expect(f.undo.undoDepth()).toBe(1); expect(f.undo.redoDepth()).toBe(1);
     expect(f.undo.peekUndo()?.path).toBe(join(f.root, 'history-kept.txt'));
     expect(f.undo.redo()?.path).toBe(join(f.root, 'history.txt'));
   } finally { stat.mockRestore(); }
+});
+
+for (const mode of ['overwrite', 'backup']) test(`successful ${mode} preserves private and executable permissions`, async () => {
+  const f = fixture();
+  for (const bits of [0o600, 0o755]) {
+    chmodSync(join(f.root, 'first.txt'), bits);
+    const result = await f.tool.execute({ files: [{ ...first, mode }] });
+    expect(result.success).toBe(true);
+    expect(statSync(join(f.root, 'first.txt')).mode & 0o777).toBe(bits);
+  }
 });

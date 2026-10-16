@@ -17,7 +17,7 @@ export interface ServerSentEventHandlers {
   readonly onClose?: (() => void) | undefined;
   readonly onTerminate?: (input: { readonly error: unknown; readonly reconnectAttempts: number }) => void;
   /**
-   * Every `id:` this stream reads, as it reads it.
+   * The `id:` of each complete frame, when the frame is delivered.
    *
    * The stream already remembers its position so its OWN reconnects resume,
    * but a caller that closes this stream and opens a NEW one for the next
@@ -114,6 +114,7 @@ export async function openRawServerSentEventStream(
   handlers: ServerSentEventHandlers,
   options: ServerSentEventOptions = {},
 ): Promise<ServerSentEventStreamHandle> {
+  options.signal?.throwIfAborted();
   const outerController = new AbortController();
   const reconnectPolicy = normalizeStreamReconnectPolicy(options.reconnect);
   let lastEventId = options.lastEventId ?? null;
@@ -122,41 +123,44 @@ export async function openRawServerSentEventStream(
   let reconnectAttempts = 0;
   let readySettled = false;
 
-  if (options.signal) {
-    options.signal.addEventListener('abort', () => outerController.abort(), { once: true });
-  }
+  const abort = () => outerController.abort(options.signal?.reason);
+  options.signal?.addEventListener('abort', abort, { once: true });
 
   const readyPromise = new Promise<void>((resolve, reject) => {
-    const settleReady = (error?: unknown) => {
+    const settleReady = (...failure: [] | [unknown]) => {
       if (readySettled) return;
       readySettled = true;
-      if (error) {
-        reject(error);
+      if (failure.length > 0) {
+        reject(failure[0]);
       } else {
         resolve();
       }
     };
+    outerController.signal.addEventListener('abort', () => settleReady(outerController.signal.reason), { once: true });
 
     const runConnection = async (): Promise<void> => {
       const controller = new AbortController();
       activeController = controller;
-      outerController.signal.addEventListener('abort', () => controller.abort(), { once: true });
-      const token = await resolveAuthToken(options.authToken ?? null, options.getAuthToken);
-      const headers = mergeHeaders(
-        { Accept: 'text/event-stream' },
-        options.headers,
-        token ? { Authorization: `Bearer ${token}` } : undefined,
-        lastEventId ? { 'Last-Event-ID': lastEventId } : undefined,
-      );
-
+      const signal = AbortSignal.any([outerController.signal, controller.signal]);
       let response: Response;
       try {
+        signal.throwIfAborted();
+        const token = await resolveAuthToken(options.authToken ?? null, options.getAuthToken);
+        signal.throwIfAborted();
+        const headers = mergeHeaders(
+          { Accept: 'text/event-stream' },
+          options.headers,
+          token ? { Authorization: `Bearer ${token}` } : undefined,
+          lastEventId ? { 'Last-Event-ID': lastEventId } : undefined,
+        );
+
         response = await fetchImpl(url, {
           method: 'GET',
           credentials: 'include',
-          signal: controller.signal,
+          signal,
           headers,
         });
+        signal.throwIfAborted();
       } catch (error) {
         const wrapped = createStreamError(0, url, error instanceof Error ? error.message : String(error));
         if (!readySettled) {
@@ -183,8 +187,14 @@ export async function openRawServerSentEventStream(
       let buffer = '';
       let eventName = '';
       let data = '';
+      let pendingEventId: string | undefined;
 
       const flush = (): void => {
+        if (pendingEventId !== undefined) {
+          lastEventId = pendingEventId;
+          handlers.onEventId?.(pendingEventId);
+          pendingEventId = undefined;
+        }
         if (!eventName && !data.trim()) {
           eventName = '';
           data = '';
@@ -208,10 +218,7 @@ export async function openRawServerSentEventStream(
         if (line.startsWith(':')) return;
         if (line.startsWith('id:')) {
           const candidate = line.slice(3).replace(/^ /, '');
-          if (candidate) {
-            lastEventId = candidate;
-            handlers.onEventId?.(candidate);
-          }
+          if (!candidate.includes('\0')) pendingEventId = candidate;
           return;
         }
         if (line.startsWith('event:')) {
@@ -226,6 +233,7 @@ export async function openRawServerSentEventStream(
       try {
         while (true) {
           const { done, value } = await reader.read();
+          signal.throwIfAborted();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
           let newlineIndex = buffer.indexOf('\n');
@@ -236,10 +244,7 @@ export async function openRawServerSentEventStream(
             newlineIndex = buffer.indexOf('\n');
           }
         }
-        if (buffer.trim()) {
-          consumeLine(buffer.replace(/\r$/, ''));
-          flush();
-        }
+        // A disconnect before the blank frame terminator must replay this frame.
         // Abort and remote-close can land in the same microtask. Yield once so
         // the abort listener can mark the stream stopped before reconnect logic
         // treats the close as unexpected.
@@ -264,11 +269,13 @@ export async function openRawServerSentEventStream(
           return;
         } catch (error) {
           if (outerController.signal.aborted || stopped) {
+            settleReady(outerController.signal.reason ?? new DOMException('Stream closed', 'AbortError'));
             return;
           }
           const nextAttempt = reconnectAttempts + 1;
           const shouldReconnect = reconnectPolicy.enabled && nextAttempt <= reconnectPolicy.maxAttempts;
           if (!shouldReconnect) {
+            settleReady(error);
             handlers.onTerminate?.({ error, reconnectAttempts: nextAttempt });
             reportStreamError(error, handlers);
             return;
@@ -291,9 +298,13 @@ export async function openRawServerSentEventStream(
     };
 
     void loop().catch((error) => {
+      settleReady(error);
       if (!outerController.signal.aborted && !stopped) {
         reportStreamError(error, handlers);
       }
+    }).finally(() => {
+      activeController?.abort();
+      options.signal?.removeEventListener('abort', abort);
     });
   });
   await readyPromise;

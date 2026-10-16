@@ -5,7 +5,8 @@ import { logger } from '../utils/logger.js';
 import type { RuntimeEventBus, AgentEvent } from '../runtime/events/index.js';
 import type { ContractEvent } from '../../events/contract.js';
 import { classifyHostTrustTier, extractHostname, emitSsrfDeny } from '../tools/fetch/trust-tiers.js';
-import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
+import { sanitizeUrlForLog } from '../utils/fetch-with-timeout.js';
+import { postToPublicWebhook } from '../utils/url-safety.js';
 import { isNotifySuppressed } from '../utils/notify.js';
 import { workstreamLabel } from '../channels/workstream-labels.js';
 import { HttpStatusError } from '@goodvibes-jev/engine/errors';
@@ -96,7 +97,7 @@ export class WebhookNotifier {
     new URL(url); // throws TypeError if url is invalid
     if (!this.urls.includes(url)) {
       this.urls.push(url);
-      logger.info('WebhookNotifier: added URL', { url });
+      logger.info('WebhookNotifier: added URL', { url: sanitizeUrlForLog(url) });
     }
   }
 
@@ -105,7 +106,7 @@ export class WebhookNotifier {
     const before = this.urls.length;
     this.urls = this.urls.filter((u) => u !== url);
     const removed = this.urls.length < before;
-    if (removed) logger.info('WebhookNotifier: removed URL', { url });
+    if (removed) logger.info('WebhookNotifier: removed URL', { url: sanitizeUrlForLog(url) });
     return removed;
   }
 
@@ -175,7 +176,7 @@ export class WebhookNotifier {
 
     for (const delivery of deliveries) {
       if (!delivery.ok) {
-        logger.warn('WebhookNotifier: delivery failed', { url: delivery.url, error: delivery.error, ...(delivery.status === undefined ? {} : { status: delivery.status }) });
+        logger.warn('WebhookNotifier: delivery failed', { url: sanitizeUrlForLog(delivery.url), error: delivery.error, ...(delivery.status === undefined ? {} : { status: delivery.status }) });
       }
     }
     return {
@@ -329,7 +330,7 @@ export class WebhookNotifier {
     // GOODVIBES_SUPPRESS_NOTIFY), with `force` as the sanctioned opt-back-in
     // for tests that exercise this delivery layer itself.
     if (isNotifySuppressed(this.force)) {
-      logger.debug('WebhookNotifier: delivery suppressed under test', { url });
+      logger.debug('WebhookNotifier: delivery suppressed under test', { url: sanitizeUrlForLog(url) });
       throw new WebhookPolicyError('suppressed');
     }
 
@@ -360,9 +361,10 @@ export class WebhookNotifier {
         this.assertOpen(controller.signal);
         if (!current) continue;
         assertDeliveryCurrent(lifetime);
-        const res = await instrumentedFetch(url, {
+        const res = await postToPublicWebhook(url, {
           method: 'POST', headers, body, signal: controller.signal,
-        });
+        }, { ...lifetime, allowHttp: true, assertCurrent: () => { assertDeliveryCurrent(lifetime); this.assertOpen(controller.signal);
+          if (!envelope.isCurrent(prepared.revision)) throw new WebhookPolicyError('privacy'); } });
         // Own both successful and failed response cleanup. Never retain body
         // text: a remote response can echo previously permitted private content.
         try {

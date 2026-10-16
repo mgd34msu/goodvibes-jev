@@ -1,3 +1,5 @@
+import { invalidateClientLifetime } from '../lib/client-lifetime';
+import { getActiveRoute, setActiveRoute } from '../lib/relay-connection';
 /**
  * useSessionRealtime, the live-updates BLOCKER regression test.
  *
@@ -158,4 +160,20 @@ describe('useSessionRealtime', () => {
     expect(updateEventName({ event: 'session-closed' })).toBe('session-closed');
     expect(updateEventName({})).toBe('');
   });
+});
+
+test('identity and route changes retire old stream callbacks and reopen the stream', () => {
+  const { invalidate, unmount } = renderHook();
+  try {
+    const old = capturedHandlers;
+    flushSync(() => invalidateClientLifetime());
+    expect(openCalls.length).toBe(2);
+    old?.onEvent?.('hosted-session-update', { session: { id: 's1' } });
+    old?.onEvent?.('session-update', { payload: { sessionId: 's1' } });
+    expect(invalidate).not.toHaveBeenCalled();
+    const originalRoute = getActiveRoute();
+    flushSync(() => setActiveRoute(originalRoute === 'direct' ? 'relay' : 'direct'));
+    expect(openCalls.length).toBe(3);
+    flushSync(() => setActiveRoute(originalRoute));
+  } finally { unmount(); }
 });

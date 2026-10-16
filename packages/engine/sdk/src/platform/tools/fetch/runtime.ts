@@ -19,7 +19,7 @@ import { headersForOtherOrigin } from './redirect-headers.js';
 import { pinnedFetch, resolveCheckedAddresses, type HostResolver } from './pinned-request.js';
 import type { FeatureFlagManager } from '../../runtime/feature-flags/index.js';
 import { summarizeError } from '../../utils/error-display.js';
-import { createTimeoutController } from '../../utils/fetch-with-timeout.js';
+import { createTimeoutController, sanitizeUrlForLog } from '../../utils/fetch-with-timeout.js';
 import { recordFetchedPagesAsUntrusted } from './untrusted-ingest.js';
 import { toRecord } from '../../utils/record-coerce.js';
 import { mapWithConcurrency, sleep } from '../../utils/concurrency.js';
@@ -203,19 +203,6 @@ function buildUrl(base: string, params?: Record<string, string>): string {
   }
   return u.toString();
 }
-
-function cacheKey(
-  url: string,
-  params: Record<string, string> | undefined,
-  extract: FetchExtractMode,
-  verbosity: FetchVerbosity,
-): string {
-  const base = params && Object.keys(params).length > 0
-    ? `${url}?${new URLSearchParams(params).toString()}`
-    : url;
-  return `${base}|${extract}|${verbosity}`;
-}
-
 
 
 interface FetchOneOptions {
@@ -499,7 +486,12 @@ async function fetchOne(
   opts: FetchOneOptions,
   runtime: FetchRuntimeService,
 ): Promise<FetchUrlResult> {
-  const { globalExtract, verbosity, cacheTtlSeconds, maxContentLength, sanitizeMode, trustTierConfig, deps } = opts;
+  const { globalExtract, verbosity, maxContentLength, sanitizeMode, trustTierConfig, deps } = opts;
+  // Credential-bearing calls never share processed responses, including rotated service credentials.
+  let urlHasCredentials = true;
+  try { const parsed = new URL(urlInput.url); urlHasCredentials = !!(parsed.username || parsed.password); } catch { /* Invalid URLs bypass caching and report their fetch error below. */ }
+  const credentialed = !!(urlInput.auth || urlInput.service || Object.keys(urlInput.headers ?? {}).length || urlHasCredentials);
+  const cacheTtlSeconds = credentialed || currentExternalOperationSource() ? 0 : opts.cacheTtlSeconds;
   const extractMode: FetchExtractMode = urlInput.extract ?? globalExtract;
   const method = urlInput.method ?? 'GET';
   const effectiveMaxContent = urlInput.max_content_length ?? maxContentLength;
@@ -554,8 +546,9 @@ async function fetchOne(
     }
   }
 
-  if (!currentExternalOperationSource() && cacheTtlSeconds > 0 && method === 'GET') {
-    const key = cacheKey(urlInput.url, urlInput.params, extractMode, verbosity);
+  const key = JSON.stringify([effectiveUrl, extractMode, verbosity, effectiveMaxContent ?? null,
+    sanitizeMode, sanitizationEnabled, trustTierConfig, urlInput.selectors ?? null]);
+  if (cacheTtlSeconds > 0 && method === 'GET') {
     const cached = runtime.getCached(key, cacheTtlSeconds);
     if (cached) {
       return cached;
@@ -620,7 +613,7 @@ async function fetchOne(
     const result: FetchUrlResult = buildFetchResultBase(urlInput, response, durationMs);
 
     if (verbosity === 'count_only') {
-      cacheSuccessfulGet(runtime, cacheTtlSeconds, method, cacheKey(urlInput.url, urlInput.params, extractMode, verbosity), result);
+      cacheSuccessfulGet(runtime, response.headers.has('set-cookie') ? 0 : cacheTtlSeconds, method, key, result);
       return result;
     }
 
@@ -652,7 +645,7 @@ async function fetchOne(
       const sanitized = applySanitizer(extracted, effectiveSanitizeMode);
       logger.debug('SANITIZE_MODE_APPLIED', {
         event: 'SANITIZE_MODE_APPLIED',
-        url: urlInput.url,
+        url: sanitizeUrlForLog(urlInput.url),
         mode: effectiveSanitizeMode,
         modified: sanitized.modified,
       });
@@ -672,7 +665,7 @@ async function fetchOne(
       };
     }
 
-    cacheSuccessfulGet(runtime, cacheTtlSeconds, method, cacheKey(urlInput.url, urlInput.params, extractMode, verbosity), result);
+    cacheSuccessfulGet(runtime, response.headers.has('set-cookie') ? 0 : cacheTtlSeconds, method, key, result);
     return result;
   } catch (err) {
     const durationMs = Math.round(performance.now() - startTime);
@@ -682,7 +675,8 @@ async function fetchOne(
       : err instanceof Error
         ? err.message
         : summarizeError(err);
-    logger.warn('fetch tool: request failed', { url: urlInput.url, error: message });
+    logger.warn('fetch tool: request failed', { url: sanitizeUrlForLog(urlInput.url),
+      error: message.replaceAll(urlInput.url, sanitizeUrlForLog(urlInput.url)).replaceAll(effectiveUrl, sanitizeUrlForLog(effectiveUrl)) });
     return { url: urlInput.url, error: message, duration_ms: durationMs,
       ...(initialTrustResult?.tier === 'localhost' ? { host_trust_tier: 'localhost' as const } : {}) };
   } finally {

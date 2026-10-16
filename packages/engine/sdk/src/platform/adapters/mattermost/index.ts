@@ -51,6 +51,7 @@ export async function handleMattermostSurfaceWebhook(req: Request, context: Surf
     { kind: 'env', name: 'MATTERMOST_BOT_TOKEN' },
   );
   if (credential.state === 'unresolvable') return surfaceCredentialUnavailable('mattermost', credential);
+  if (credential.state === 'absent') return Response.json({ error: 'Webhook credential is not configured' }, { status: 503 });
   // Mattermost's outgoing webhooks send their token in the body; a header or
   // bearer token is preferred when present. `readBearerOrHeaderToken` returns
   // '' (never null) when neither header is set, so `||` falls through to it.

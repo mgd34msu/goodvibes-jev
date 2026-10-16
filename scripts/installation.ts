@@ -87,8 +87,12 @@ export function dataOwner(layout: Layout): string { return join(layout.dataDir, 
 export function readDataId(layout: Layout): string | undefined {
   const marker = dataOwner(layout); plainPath(marker);
   if (!present(marker)) return undefined;
-  const value = JSON.parse(readFileSync(marker, 'utf8')) as { package?: string; id?: string; dataDir?: string };
+  const value = JSON.parse(readFileSync(marker, 'utf8')) as { package?: string; id?: string; dataDir?: string; prefix?: string };
   if (value.package !== PACKAGE || value.dataDir !== layout.dataDir || typeof value.id !== 'string' || !/^[0-9a-f-]{36}$/.test(value.id)) throw new Error('Invalid Jev data ownership marker.');
+  const ownerPrefix = value.prefix ?? layout.prefix;
+  const owner = readInstallation(ownerPrefix);
+  if (ownerPrefix !== layout.prefix && owner?.id === value.id) throw new Error(`Data directory is in use by another installation: ${ownerPrefix}`);
+  if (!value.prefix && owner?.id !== value.id) throw new Error('Legacy data ownership cannot be established. Update the owning installation before moving its data.');
   return value.id;
 }
 export function assertOwnedFiles(receipt: Installation): void {
@@ -129,18 +133,20 @@ export async function uninstall(prefix: string, purge: boolean, execute: Run = r
   await withLock(prefix, async () => {
     const receipt = readInstallation(prefix);
     if (!receipt) { console.log(`No Jev installation at ${prefix}. Preserved data remains untouched.`); return; }
-    if (realpathSync(process.env.HOME ?? '') !== receipt.home) throw new Error('Run uninstall as the user who owns this installation.');
-    assertOwnedFiles(receipt);
-    if (receipt.service) {
-      stopService(receipt, execute);
-      execute('systemctl', ['--user', 'disable', SERVICE]);
-      rmSync(unitPath(receipt), { force: true });
-      execute('systemctl', ['--user', 'daemon-reload']);
-    }
-    for (const name of COMMANDS) rmSync(join(receipt.binDir, name), { force: true });
-    // Data lives outside the program prefix. Only an explicit purge removes it.
-    if (purge) { plainPath(receipt.dataDir); rmSync(receipt.dataDir, { recursive: true }); }
-    rmSync(prefix, { recursive: true });
-    console.log(purge ? 'GoodVibes Jev uninstalled, including its data.' : `GoodVibes Jev uninstalled. Data and credentials preserved at ${receipt.dataDir}`);
+    await withLock(receipt.dataDir, async () => {
+      if (realpathSync(process.env.HOME ?? '') !== receipt.home) throw new Error('Run uninstall as the user who owns this installation.');
+      assertOwnedFiles(receipt);
+      if (receipt.service) {
+        stopService(receipt, execute);
+        execute('systemctl', ['--user', 'disable', SERVICE]);
+        rmSync(unitPath(receipt), { force: true });
+        execute('systemctl', ['--user', 'daemon-reload']);
+      }
+      for (const name of COMMANDS) rmSync(join(receipt.binDir, name), { force: true });
+      // Data lives outside the program prefix. Only an explicit purge removes it.
+      if (purge) { plainPath(receipt.dataDir); rmSync(receipt.dataDir, { recursive: true }); }
+      rmSync(prefix, { recursive: true });
+      console.log(purge ? 'GoodVibes Jev uninstalled, including its data.' : `GoodVibes Jev uninstalled. Data and credentials preserved at ${receipt.dataDir}`);
+    });
   });
 }

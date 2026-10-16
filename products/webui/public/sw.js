@@ -241,7 +241,7 @@ function linkForNotification(data, action) {
     }
     return '/?view=fleet';
   }
-  if (data && typeof data.url === 'string' && data.url.startsWith('/')) return data.url;
+  if (data && typeof data.url === 'string' && data.url.startsWith('/') && !/^[\\/]{2}|[\\\x00-\x20\x7f]/.test(data.url)) return data.url;
   return '/';
 }
 

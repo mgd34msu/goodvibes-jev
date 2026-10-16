@@ -82,4 +82,13 @@ describe('postToPublicWebhook', () => {
     await expect(postToPublicWebhook('http://hooks.example/h', { method: 'POST' }, { resolveHost })).rejects.toThrow(/must use https/);
     expect(sent).toEqual([]);
   });
+
+  test('configured HTTP notification endpoints retain address checks and redirect protection', async () => {
+    stub(() => new Response(null, { status: 302, headers: { location: 'http://127.0.0.1/private' } }));
+    const response = await postToPublicWebhook('http://hooks.example/h', { method: 'POST' }, { resolveHost, allowHttp: true });
+    expect(response.status).toBe(302);
+    expect(sent).toEqual([{ url: 'http://203.0.113.31/h', host: 'hooks.example', redirect: 'manual' }]);
+    await expect(postToPublicWebhook('http://hooks.internal.example/h', { method: 'POST' }, { resolveHost, allowHttp: true })).rejects.toThrow(/private address/);
+    expect(sent).toHaveLength(1);
+  });
 });

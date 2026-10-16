@@ -620,3 +620,11 @@ export class SessionManager {
     return sanitizeSessionName(name);
   }
 }
+
+/** Exact ids win over titles and prefixes; callers must disambiguate multiple matches. */
+export function findSessionCandidates<T extends { name: string; title: string }>(sessions: readonly T[], target: string): T[] {
+  const exact = sessions.find(session => session.name === target);
+  if (exact) return [exact];
+  const titled = sessions.filter(session => session.title.toLowerCase() === target.toLowerCase());
+  return titled.length ? titled : sessions.filter(session => session.name.startsWith(target));
+}

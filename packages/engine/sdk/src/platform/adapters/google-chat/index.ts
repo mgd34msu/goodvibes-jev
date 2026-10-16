@@ -19,6 +19,7 @@ export async function handleGoogleChatSurfaceWebhook(req: Request, context: Surf
     { kind: 'env', name: 'GOOGLE_CHAT_VERIFICATION_TOKEN' },
   );
   if (credential.state === 'unresolvable') return surfaceCredentialUnavailable('google-chat', credential);
+  if (credential.state === 'absent') return Response.json({ error: 'Webhook credential is not configured' }, { status: 503 });
   const rawBody = await readTextBodyWithinLimit(req);
   if (rawBody instanceof Response) return rawBody;
   const body = parseJsonRecord(rawBody);

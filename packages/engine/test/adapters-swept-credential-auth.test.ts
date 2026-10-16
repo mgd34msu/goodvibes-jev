@@ -377,3 +377,23 @@ describe('mattermost: an outgoing webhook token in the body', () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+test('unconfigured inbound webhooks do not authorize or queue caller input', async () => {
+  for (const adapter of CASES.filter(c => ['google-chat','signal','imessage','matrix','mattermost','bluebubbles','telegram'].includes(c.name))) {
+    const f = makeContext({ shape: 'whitespace', configKeys: adapter.configKeys, ...(adapter.extraConfig ? { extraConfig: adapter.extraConfig } : {}) });
+    expect((await adapter.call('', f.context)).status).toBe(503);
+    expect(f.calls).toHaveLength(0);
+  }
+});
+
+test('WhatsApp processes every message across entries and changes', async () => {
+  const f = makeContext({ shape: 'literal', configKeys: ['surfaces.whatsapp.signingSecret'], extraConfig: { 'surfaces.whatsapp.provider': 'bridge' } });
+  const message = (id: string) => ({ id, from: 'sender', text: { body: id } });
+  const response = await handleWhatsAppSurfaceWebhook(new Request('https://test/whatsapp', { method: 'POST',
+    headers: { 'x-goodvibes-whatsapp-token': SECRET }, body: JSON.stringify({ entry: [
+      { changes: [{ value: { statuses: [] } }, { value: { messages: [message('one'), message('two')] } }] },
+      { changes: [{ value: { messages: [message('three')] } }] },
+    ] }) }), f.context);
+  expect(response.status).toBe(200);
+  expect(f.calls.filter(call => call.kind === 'submitMessage').map(call => (call.input as { body: string }).body)).toEqual(['one', 'two', 'three']);
+});

@@ -360,8 +360,8 @@ export class HttpListener {
       port: this.port,
       hostname: this.host,
       ...(this.tlsState.tls ? { tls: this.tlsState.tls } : {}),
-      async fetch(req: Request): Promise<Response> {
-        return self.handleRequest(req);
+      async fetch(req, server): Promise<Response> {
+        return self.handleRequest(req, server.requestIP(req)?.address);
       },
     });
 
@@ -524,26 +524,24 @@ export class HttpListener {
   // Request handling
   // -------------------------------------------------------------------------
 
-  private async handleRequest(req: Request): Promise<Response> {
+  private async handleRequest(req: Request, peerIp = 'unknown'): Promise<Response> {
     const requestId = randomUUID();
     const startMs = Date.now();
     const url = new URL(req.url);
     const effectiveTrustProxy = this.trustProxy || (this.tlsState?.trustProxy ?? false);
     let clientIp: string;
     if (this.trustCloudflare && effectiveTrustProxy) {
-      // Extract peer IP via standard x-forwarded-for first to validate against CF ranges.
-      const peerIp = extractForwardedClientIp(req, true) ?? 'unknown';
+      // Only the actual socket peer can establish Cloudflare provenance.
       const cfConnectingIp = req.headers.get('cf-connecting-ip')?.trim();
       if (cfConnectingIp && isCloudflareIp(peerIp)) {
         // Peer is a real Cloudflare edge node, trust the CF header.
         clientIp = cfConnectingIp;
       } else {
-        // Not validated as a CF edge or no CF header, fall through without CF trust.
-        // Use peerIp if available (x-forwarded-for from non-CF proxy), else 'unknown'.
+        // Without a verified Cloudflare peer, forwarded headers cannot establish identity.
         clientIp = peerIp;
       }
     } else {
-      clientIp = extractForwardedClientIp(req, effectiveTrustProxy) ?? 'unknown';
+      clientIp = extractForwardedClientIp(req, effectiveTrustProxy) ?? peerIp;
     }
     let response: Response | null = null;
     try {

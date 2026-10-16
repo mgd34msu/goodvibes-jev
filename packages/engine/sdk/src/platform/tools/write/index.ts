@@ -155,12 +155,15 @@ function atomicWrite(targetPath: string, content: string | Buffer, encoding: Buf
   const rand = randomBytes(4).toString('hex');
   const tmpPath = `${targetPath}.tmp.${rand}`;
   try {
-    writeFileSync(tmpPath, content, { encoding });
+    const mode = existsSync(targetPath) ? lstatSync(targetPath).mode & 0o777 : 0o666 & ~process.umask();
+    // Keep the temporary inode private until all bytes have been written.
+    writeFileSync(tmpPath, content, { encoding, flag: 'wx', mode: 0o600 });
+    chmodSync(tmpPath, mode);
     renameSync(tmpPath, targetPath);
   } catch (err) {
     // Clean up temp file if rename failed
     try {
-      unlinkSync(tmpPath);
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST' && existsSync(tmpPath)) unlinkSync(tmpPath);
     } catch (cleanupErr) {
       throw new Error(
         `Atomic write failed for '${targetPath}': ${summarizeError(err)}. `

@@ -124,6 +124,7 @@ export async function resumeSessionCore(sessionId: string, deps: SessionResumeDe
   // history now, before the caller renders.
   deps.hydrateSessionUsage?.();
 
+  if (meta.provider) deps.runtime.provider = meta.provider;
   if (meta.model) {
     if (deps.selectModel) {
       try {
@@ -137,7 +138,6 @@ export async function resumeSessionCore(sessionId: string, deps: SessionResumeDe
       deps.runtime.model = meta.model;
     }
   }
-  if (meta.provider) deps.runtime.provider = meta.provider;
 
   return {
     meta,

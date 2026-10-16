@@ -16,7 +16,7 @@
 
 import { describe, expect, test, beforeEach, afterEach, spyOn, type Mock } from 'bun:test';
 import { WebhookNotifier } from '../sdk/src/platform/integrations/webhooks.ts';
-import * as fetchWithTimeout from '../sdk/src/platform/utils/fetch-with-timeout.ts';
+import * as webhookTransport from '../sdk/src/platform/utils/url-safety.ts';
 
 // A hostname that passes the SSRF trust-tier filter (public, non-private) so
 // suppression, not the SSRF filter, is what's under test here.
@@ -25,15 +25,15 @@ const PUBLIC_URL = 'https://example.com/webhook';
 describe('WebhookNotifier delivery suppression', () => {
   let origNodeEnv: string | undefined;
   let origOverride: string | undefined;
-  let fetchSpy: Mock<typeof fetchWithTimeout.instrumentedFetch>;
+  let fetchSpy: Mock<typeof webhookTransport.postToPublicWebhook>;
 
   beforeEach(() => {
     origNodeEnv = process.env['NODE_ENV'];
     origOverride = process.env['GOODVIBES_SUPPRESS_NOTIFY'];
     delete process.env['GOODVIBES_SUPPRESS_NOTIFY'];
-    fetchSpy = spyOn(fetchWithTimeout, 'instrumentedFetch').mockImplementation(
+    fetchSpy = spyOn(webhookTransport, 'postToPublicWebhook').mockImplementation(
       async () => new Response('ok', { status: 200 }),
-    ) as Mock<typeof fetchWithTimeout.instrumentedFetch>;
+    ) as Mock<typeof webhookTransport.postToPublicWebhook>;
   });
 
   afterEach(() => {

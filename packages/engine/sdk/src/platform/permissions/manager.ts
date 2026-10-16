@@ -948,7 +948,7 @@ export class PermissionManager {
     }
     const paths = extractPathArgs(args);
     if (paths.length > 0) {
-      return `${toolName}:path:${[...new Set(paths)].sort().join('|')}`;
+      return `${toolName}:path:${JSON.stringify([...new Set(paths)].sort())}`;
     }
     if (typeof args['command'] === 'string') {
       return `${toolName}:${args['command']}`;

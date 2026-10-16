@@ -3,9 +3,11 @@
  * The app-wide session stream owns list liveness even when nothing is attached.
  * Row changes retarget callbacks through refs without reopening this stream.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { sdk, DEFAULT_SSE_RECONNECT } from '../lib/goodvibes';
+import { getClientLifetime, isClientLifetimeCurrent, subscribeClientLifetime } from '../lib/client-lifetime';
+import { getActiveRoute, subscribeActiveRoute } from '../lib/relay-connection';
 import { queryKeys } from '../lib/queries';
 import { HOSTED_SESSION_UPDATE_WIRE_EVENT } from '../lib/hosted-sessions';
 import { firstString, readPath } from '../lib/object';
@@ -36,8 +38,10 @@ export interface UseHostedSessionRealtimeResult {
 export function useHostedSessionRealtime(options: UseHostedSessionRealtimeOptions): UseHostedSessionRealtimeResult {
   const { enabled } = options;
   const queryClient = useQueryClient();
-  const [error, setError] = useState<string | null>(null);
-  const [connected, setConnected] = useState(false);
+  const lifetime = useSyncExternalStore(subscribeClientLifetime, getClientLifetime, getClientLifetime);
+  const route = useSyncExternalStore(subscribeActiveRoute, getActiveRoute, getActiveRoute);
+  const connection = useMemo(() => ({ enabled, queryClient, lifetime, route }), [enabled, queryClient, lifetime, route]);
+  const [state, setState] = useState({ connection, error: null as string | null, connected: false });
 
   // Read through refs inside the stream's long-lived callbacks so the effect below
   // never needs attachedSessionId/onStreamFrame/onLifecycleUpdate in its deps, see
@@ -54,6 +58,7 @@ export function useHostedSessionRealtime(options: UseHostedSessionRealtimeOption
     const controller = new AbortController();
     let disposed = false;
     let close: (() => void) | null = null;
+    const current = () => !disposed && !controller.signal.aborted && isClientLifetimeCurrent(lifetime) && route === getActiveRoute();
 
     const invalidateList = () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.hostedSessionsAll });
@@ -64,12 +69,11 @@ export function useHostedSessionRealtime(options: UseHostedSessionRealtimeOption
         HOSTED_SESSION_EVENTS_PATH,
         {
           onReady: () => {
-            if (disposed) return;
-            setConnected(true);
-            setError(null);
+            if (!current()) return;
+            setState({ connection, connected: true, error: null });
           },
           onEvent: (eventName: string, payload: unknown) => {
-            if (disposed) return;
+            if (!current()) return;
             const { attachedSessionId, onStreamFrame, onLifecycleUpdate } = optionsRef.current;
             if (eventName === RELAY_OVERFLOW_EVENT) {
               noteRelayOverflow(readDroppedCount(payload));
@@ -97,28 +101,26 @@ export function useHostedSessionRealtime(options: UseHostedSessionRealtimeOption
             // "unknown key, no-op" idiom for a frame outside this hook's scope.
           },
           onError: (err: unknown) => {
-            if (disposed) return;
-            setConnected(false);
-            setError(err instanceof Error ? err.message : 'Hosted session event stream error');
+            if (!current()) return;
+            setState({ connection, connected: false, error: err instanceof Error ? err.message : 'Hosted session event stream error' });
           },
           onTerminate: () => {
-            if (disposed) return;
-            setConnected(false);
-            setError('Live session output paused: reconnecting.');
+            if (!current()) return;
+            setState({ connection, connected: false, error: 'Live session output paused: reconnecting.' });
           },
         },
         { reconnect: DEFAULT_SSE_RECONNECT, signal: controller.signal },
       )
       .then((dispose) => {
-        if (disposed) {
+        if (!current()) {
           dispose();
           return;
         }
         close = dispose;
       })
       .catch((err: unknown) => {
-        if (disposed) return;
-        setError(err instanceof Error ? err.message : 'Failed to open the hosted session event stream');
+        if (!current()) return;
+        setState({ connection, connected: false, error: err instanceof Error ? err.message : 'Failed to open the hosted session event stream' });
       });
 
     return () => {
@@ -126,7 +128,7 @@ export function useHostedSessionRealtime(options: UseHostedSessionRealtimeOption
       controller.abort();
       if (close) close();
     };
-  }, [enabled, queryClient]);
+  }, [enabled, queryClient, lifetime, route, connection]);
 
-  return { error, connected };
+  return state.connection === connection ? { error: state.error, connected: state.connected } : { error: null, connected: false };
 }

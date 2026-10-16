@@ -82,6 +82,15 @@ describe('suite install and uninstall', () => {
     expect(readInstallation(options.prefix)!.id).toBe(id);
     expect(readFileSync(join(options.dataDir, 'user-notes'), 'utf8')).toBe('keep');
   });
+  test('two live prefixes cannot adopt or purge the same data, but preserved data can move', async () => {
+    await install(options, hooks);
+    const other = { ...options, prefix: join(home, 'other-program'), binDir: join(home, 'other-bin') };
+    await expect(install(other, hooks)).rejects.toThrow('another installation');
+    expect(existsSync(options.dataDir)).toBe(true);
+    await uninstall(options.prefix, false, execute);
+    await install(other, hooks);
+    expect(readInstallation(other.prefix)?.dataDir).toBe(options.dataDir);
+  });
   test('updates retain data and replace the release after success', async () => {
     await install(options, hooks);
     const before = readInstallation(options.prefix)!;

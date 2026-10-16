@@ -99,12 +99,7 @@ describe('resumeSessionCore', () => {
     });
 
     expect(runtime.model).toBe('resolved:saved-model-id');
-    // Pre-existing quirk carried over verbatim from the original
-    // session-workflow.ts implementation: the reselected provider is
-    // immediately overwritten by the raw saved meta.provider afterward
-    // (`if (meta.provider) runtime.provider = meta.provider`, unconditional).
-    // Not introduced or changed by this unification, out of this item's scope.
-    expect(runtime.provider).toBe('saved-provider');
+    expect(runtime.provider).toBe('resolved-provider');
     expect(outcome.meta.model).toBe('saved-model-id');
   });
 

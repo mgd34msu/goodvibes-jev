@@ -1,3 +1,4 @@
+import { createNativeHostFetch } from './client/native-host-fetch.ts';
 import { createNativeHostedTurnClient } from './native-hosted-turn.ts';
 import { isNativePairedPrincipal } from './native-paired-principal.ts';
 import { createOperatorNativeWorkExecutionClient } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client';
@@ -11,7 +12,7 @@ export function createNativeConversationIntakeBinding(host: NativeSubmissionHost
   // Each verification opens a fresh connection, fenced to the exact selected host.
   const invoke = (async (...args: Parameters<OperatorRemoteClient['invoke']>) => {
     if (!current()) throw new Error('Native intake host selection changed');
-    const operator = createOperatorSdk({ baseUrl: host.baseUrl, authToken: host.token });
+    const operator = createOperatorSdk({ baseUrl: host.baseUrl, authToken: host.token, fetchImpl: createNativeHostFetch({ current }) });
     try {
       // A prior principal read cannot authorize a later private-pairing call.
       // This also fences retained permits that outlive the initial binding.

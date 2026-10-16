@@ -23,6 +23,9 @@ export async function executeAdmittedHeadlessTurn(ctx: BootstrapContext, state: 
     if (signal.aborted) return { exitCode: 130, response: '', stopReason: 'cancelled' };
     await dispatchNativeConversationTurn(state, ctx.orchestrator);
     if (signal.aborted) exitCode = 130;
+    if (exitCode === 0 && !response.trim()) {
+      exitCode = 1; stopReason = 'empty_response'; error ||= 'The model returned no response.';
+    }
     return { exitCode, response, error, stopReason, sessionId: ctx.runtime.sessionId, model: ctx.runtime.model, provider: ctx.runtime.provider, events };
   } finally { signal.removeEventListener('abort', abort); for (const unsubscribe of unsubs) unsubscribe(); }
 }

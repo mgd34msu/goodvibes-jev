@@ -142,7 +142,7 @@ export interface InstallHooks {
 }
 export async function install(options: Options, hooks: InstallHooks = {}): Promise<void> {
   const execute = hooks.execute ?? run;
-  await withLock(options.prefix, async () => {
+  await withLock(options.prefix, () => withLock(options.dataDir, async () => {
     const old = readInstallation(options.prefix);
     preflight(options, old, execute);
     const commit = await (hooks.build ?? build)(ROOT, execute);
@@ -173,7 +173,7 @@ export async function install(options: Options, hooks: InstallHooks = {}): Promi
         plainPath(path); previousSettings.set(path, present(path) ? readFileSync(path, 'utf8') : undefined);
       }
       mkdirSync(options.dataDir, { recursive: true, mode: 0o700 }); chmodSync(options.dataDir, 0o700);
-      atomicWrite(dataOwner(options), JSON.stringify({ package: PACKAGE, id, dataDir: options.dataDir }) + '\n');
+      atomicWrite(dataOwner(options), JSON.stringify({ package: PACKAGE, id, dataDir: options.dataDir, prefix: options.prefix }) + '\n');
       const environment = join(options.dataDir, 'environment'); plainPath(environment);
       if (!present(environment)) {
         // TYPESAFE_API_KEY is classified daemon-needed by credential-scope-registry.ts.
@@ -268,7 +268,7 @@ export async function install(options: Options, hooks: InstallHooks = {}): Promi
       }
       throw error;
     }
-  });
+  }));
 }
 if (import.meta.main) {
   try {

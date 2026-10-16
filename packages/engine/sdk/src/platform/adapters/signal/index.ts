@@ -18,6 +18,7 @@ export async function handleSignalSurfaceWebhook(req: Request, context: SurfaceA
     { kind: 'env', name: 'SIGNAL_BRIDGE_TOKEN' },
   );
   if (credential.state === 'unresolvable') return surfaceCredentialUnavailable('signal', credential);
+  if (credential.state === 'absent') return Response.json({ error: 'Webhook credential is not configured' }, { status: 503 });
   if (credential.state === 'resolved') {
     const providedToken = readBearerOrHeaderToken(req, 'x-goodvibes-signal-token');
     if (!constantTimeEquals(credential.value, providedToken)) {

@@ -133,7 +133,7 @@ describe('WebhookNotifier SSRF filter', () => {
 
   test('public URL is not blocked by SSRF filter', async () => {
     const notifier = new WebhookNotifier([], { timeoutMs: 1_000, force: true });
-    notifier.addUrl('https://example.com/no-such-webhook');
+    notifier.addUrl('https://203.0.113.31/no-such-webhook');
 
     const results = await notifier.test();
     expect(results.length).toBe(1);

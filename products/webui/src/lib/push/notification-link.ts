@@ -60,6 +60,7 @@ export function linkForNotification(data: NotificationData | undefined | null, a
     }
     return '/?view=fleet';
   }
-  if (typeof data?.url === 'string' && data.url.startsWith('/')) return data.url;
+  // eslint-disable-next-line no-control-regex -- Reject control characters normalized by URL parsing.
+  if (typeof data?.url === 'string' && data.url.startsWith('/') && !/^[\\/]{2}|[\\\x00-\x20\x7f]/.test(data.url)) return data.url;
   return '/';
 }

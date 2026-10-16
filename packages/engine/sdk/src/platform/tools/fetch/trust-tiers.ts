@@ -1,3 +1,4 @@
+import { sanitizeUrlForLog } from '../../utils/fetch-with-timeout.js';
 /**
  * Host trust tier classification.
  *
@@ -389,7 +390,7 @@ export function emitSsrfDeny(host: string, url: string, reason: string): void {
   logger.warn('SSRF_DENY', {
     event: TRUST_TIER_EVENTS.SSRF_DENY,
     host,
-    url,
+    url: sanitizeUrlForLog(url),
     reason,
     timestamp: Date.now(),
   });
@@ -414,7 +415,7 @@ export function emitHostTrustTier(
   logger.debug('HOST_TRUST_TIER', {
     event: TRUST_TIER_EVENTS.HOST_TRUST_TIER,
     host,
-    url,
+    url: sanitizeUrlForLog(url),
     tier: result.tier,
     reason: result.reason,
     isSsrf: result.isSsrf,

@@ -2877,7 +2877,7 @@ export async function setExplicitAuthToken(rawToken: string): Promise<unknown> {
   if (!token) throw new Error('Token is required');
   await sdk.auth.setToken(token);
   try {
-    return await sdk.auth.current();
+    return await getCurrentAuth();
   } catch (error) {
     await sdk.auth.clearToken();
     throw error;

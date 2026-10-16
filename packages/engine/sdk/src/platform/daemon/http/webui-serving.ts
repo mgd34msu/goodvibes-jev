@@ -25,6 +25,7 @@
  * auto-enabled by network host mode.
  */
 
+import { realpath } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 import type { ConfigManager } from '../../config/manager.js';
 import { readStringList } from '../helpers.js';
@@ -345,7 +346,8 @@ export async function serveWebuiBundle(req: Request, posture: WebuiServingPostur
   if (pathname.includes('\0')) return new Response('Bad Request', { status: 400 });
   if (isReservedApiPath(pathname, posture)) return null;
 
-  const root = resolve(posture.bundleDir);
+  const root = await realpath(posture.bundleDir).catch(() => null);
+  if (!root) return new Response('Not Found', { status: 404 });
   const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
   const resolved = resolve(root, relative);
   // Reject anything that escapes the bundle root (path traversal).
@@ -353,21 +355,19 @@ export async function serveWebuiBundle(req: Request, posture: WebuiServingPostur
     return new Response('Forbidden', { status: 403 });
   }
 
-  const file = Bun.file(resolved);
-  if (await file.exists()) {
-    const isShell = resolved === resolve(root, 'index.html');
-    // Derive the content type from the resolved file path, not the request path,
-    // a `GET /` serves index.html and must answer text/html, not octet-stream.
-    return fileResponse(req, file, resolved, isShell);
-  }
-
-  // SPA fallback: an unknown navigation route serves the app shell; a missing
-  // concrete asset is an honest 404 (never the HTML shell in a JS/CSS request).
+  const serveFile = async (path: string, isShell: boolean): Promise<Response | null> => {
+    const canonical = await realpath(path).catch(() => null);
+    if (!canonical) return null;
+    if (canonical !== root && !canonical.startsWith(root + sep)) return new Response('Forbidden', { status: 403 });
+    const file = Bun.file(canonical);
+    if (!await file.exists()) return null;
+    return fileResponse(req, file, path, isShell);
+  };
+  const response = await serveFile(resolved, resolved === resolve(root, 'index.html'));
+  if (response) return response;
   if (isNavigationRequest(req, pathname)) {
-    const indexFile = Bun.file(resolve(root, 'index.html'));
-    if (await indexFile.exists()) {
-      return fileResponse(req, indexFile, '/index.html', true);
-    }
+    const shell = await serveFile(resolve(root, 'index.html'), true);
+    if (shell) return shell;
   }
   return new Response('Not Found', { status: 404 });
 }

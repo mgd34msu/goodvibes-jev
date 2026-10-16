@@ -1,3 +1,5 @@
+import { invalidateClientLifetime } from '../lib/client-lifetime';
+import { getActiveRoute, setActiveRoute } from '../lib/relay-connection';
 /**
  * useHostedSessionRealtime, one raw stream for hosted-session list liveness
  * (`hosted-session-update`, invalidates the list unconditionally) and, when
@@ -131,4 +133,20 @@ describe('useHostedSessionRealtime', () => {
     expect(frames.length).toBe(0);
     unmount();
   });
+});
+
+test('identity and route changes retire old stream callbacks and reopen the stream', () => {
+  const { invalidate, unmount } = renderHook();
+  try {
+    const old = capturedHandlers;
+    flushSync(() => invalidateClientLifetime());
+    expect(openCalls.length).toBe(2);
+    old?.onEvent?.('hosted-session-update', { session: { id: 's1' } });
+    old?.onEvent?.('session-update', { payload: { sessionId: 's1' } });
+    expect(invalidate).not.toHaveBeenCalled();
+    const originalRoute = getActiveRoute();
+    flushSync(() => setActiveRoute(originalRoute === 'direct' ? 'relay' : 'direct'));
+    expect(openCalls.length).toBe(3);
+    flushSync(() => setActiveRoute(originalRoute));
+  } finally { unmount(); }
 });

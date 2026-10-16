@@ -126,3 +126,29 @@ describe('openServerSentEventStream', () => {
     expect(reconnects).toEqual([{ attempt: 1, delayMs: 0 }]);
   });
 });
+
+test('already cancelled SSE never resolves credentials or opens a request', async () => {
+  const controller = new AbortController(); controller.abort();
+  let calls = 0;
+  await expect(openServerSentEventStream(createFetchStub(async () => { calls++; return createSseResponse([]); }),
+    'https://example.test/events', {}, { signal: controller.signal, getAuthToken: async () => { calls++; return 'token'; } })).rejects.toThrow();
+  expect(calls).toBe(0);
+});
+
+test('credential resolver rejection settles initial SSE readiness', async () => {
+  await expect(openServerSentEventStream(createFetchStub(async () => createSseResponse([])), 'https://example.test/events', {},
+    { reconnect: { enabled: false }, getAuthToken: async () => { throw new Error('credential unavailable'); } })).rejects.toThrow('credential unavailable');
+});
+
+test('an incomplete SSE frame cannot advance the replay cursor', async () => {
+  let calls = 0;
+  const ids: (string | null)[] = [];
+  const received: unknown[] = [];
+  const close = await openServerSentEventStream(createFetchStub(async (_url, init) => {
+    ids.push(new Headers(init?.headers).get('Last-Event-ID'));
+    return createSseResponse(++calls === 1 ? ['id: 1\ndata: first\n\nid: 2\ndata: lost'] : ['id: 2\ndata: replayed\n\n']);
+  }), 'https://example.test/events', { onEvent: (_name, data) => received.push(data) },
+  { reconnect: { enabled: true, baseDelayMs: 1, maxDelayMs: 1, maxAttempts: 1 } });
+  await new Promise(resolve => setTimeout(resolve, 30)); close();
+  expect(ids[1]).toBe('1'); expect(received).toEqual(['first', 'replayed']);
+});

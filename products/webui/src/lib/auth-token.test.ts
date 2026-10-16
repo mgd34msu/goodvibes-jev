@@ -82,3 +82,9 @@ describe('setExplicitAuthToken', () => {
     expect(hasStoredTokenSync()).toBe(false);
   });
 });
+
+test('clears a rejected pasted token even when the status endpoint returns HTTP 200', async () => {
+  globalThis.fetch = Object.assign(async () => Response.json({ authenticated: false, authMode: 'invalid' }), { preconnect: realFetch.preconnect }) as typeof fetch;
+  await expect(setExplicitAuthToken('synthetic-invalid-token')).rejects.toThrow('not authenticated');
+  expect(await tokenStore.getToken()).toBeFalsy();
+});

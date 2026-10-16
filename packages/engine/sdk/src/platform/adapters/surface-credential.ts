@@ -32,16 +32,9 @@
  *
  * `resolveSecretInput` returns `string | null`, and null means three different
  * things: nothing was configured, a reference failed to resolve, or a
- * reference-shaped value was refused. Seven of these adapters are written as
- *
- *     if (configuredToken && !constantTimeEquals(configuredToken, provided)) → 401
- *
- *, "no credential configured, so there is no check to run", which is a
- * deliberate and reasonable reading of an unconfigured surface. Collapse a
- * failed resolution into the same empty string and that line reads a BROKEN
- * credential as an ABSENT one: the comparison is skipped and the surface
- * authorises every caller. A locked surface would have become an open one, and
- * the only visible symptom would be that the 401s stopped.
+ * reference-shaped value was refused. Inbound routes require a configured
+ * credential; absence reports an unconfigured webhook, while a broken reference
+ * reports unavailable credentials. Neither case authorizes an inbound caller.
  *
  * So the three outcomes stay distinguishable in the type, and an adapter cannot
  * accidentally treat the third as the first: `absent` is a surface with no

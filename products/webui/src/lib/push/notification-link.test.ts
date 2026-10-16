@@ -66,3 +66,9 @@ describe('linkForNotification', () => {
     );
   });
 });
+
+test('notification URLs cannot change origin through slash, backslash or control characters', () => {
+  for (const url of ['//evil.test/path', '/\\evil.test', '/\tevil.test', 'https://evil.test']) {
+    expect(linkForNotification({ url })).toBe('/');
+  }
+});
