@@ -17,6 +17,7 @@ import {
   assertCapturedInputPathContext,
   assertContractInputReadAccess,
   withContractInputAuthority,
+  withContractInputReadBatch,
   authorizeContractInputPath,
   contractInputAuthorityMutable,
   contractInputAuthorityRoot,
@@ -185,86 +186,91 @@ export function capturedInputTool(
           },
           async () => {
             try {
-              assertInvocationCurrent();
-              // Model arguments and callers remain mutable outside this invocation.
-              // Pin an owned deep copy before the first permission/validation await.
-              if (!authenticated) args = freezeInput(structuredClone(args));
-              await assertContractInputAuthority(authority, root, signal);
-              assertInvocationCurrent();
-              if (!filter) throw new Error('captured input requires original-owner read authorization');
-              await assertCapturedToolAccessCurrent();
-              if (name === 'read') {
-                // Actual ReadTool gates each path before its in-process extractors read bytes.
-              } else if (name === 'find') {
-                const queries = Array.isArray(args.queries) ? args.queries : [];
-                if (queries.some((query) => object(query).follow_symlinks === true))
+              const execute = async () => {
+                assertInvocationCurrent();
+                // Model arguments and callers remain mutable outside this invocation.
+                // Pin an owned deep copy before the first permission/validation await.
+                if (!authenticated) args = freezeInput(structuredClone(args));
+                await assertContractInputAuthority(authority, root, signal);
+                assertInvocationCurrent();
+                if (!filter) throw new Error('captured input requires original-owner read authorization');
+                await assertCapturedToolAccessCurrent();
+                if (name === 'read') {
+                  // Actual ReadTool gates each path before its in-process extractors read bytes.
+                } else if (name === 'find') {
+                  const queries = Array.isArray(args.queries) ? args.queries : [];
+                  if (queries.some((query) => object(query).follow_symlinks === true))
+                    throw new UnsupportedCapturedWorkflow(
+                      'captured find cannot follow symlinks outside its authorized view',
+                    );
+                } else if (name === 'exec') {
+                  if (!isCapturedExecTool(tool, authority))
+                    throw new UnsupportedCapturedWorkflow(
+                      'captured exec requires its construction-owned execution backend',
+                    );
+                } else if (name === 'repl') {
+                  if (!isCapturedReplTool(tool, authority))
+                    throw new UnsupportedCapturedWorkflow(
+                      'captured REPL requires its construction-owned execution backend',
+                    );
+                } else if (name === 'edit') {
+                  if (!contractInputAuthorityMutable(authority))
+                    throw new UnsupportedCapturedWorkflow('immutable captured planner input cannot be edited');
+                } else if (name === 'registry') {
+                  if (!isCapturedRegistryTool(tool, authority))
+                    throw new UnsupportedCapturedWorkflow(
+                      'captured registry requires its construction-owned original-owner context',
+                    );
+                } else if (name === 'fetch') {
+                  // The actual fetch backend performs HTTP only, under its existing gate/network policy.
+                } else if (name === 'inspect') {
+                  if (args.mode === 'scaffold' && args.dryRun === false && !contractInputAuthorityMutable(authority))
+                    throw new UnsupportedCapturedWorkflow('immutable captured planner input cannot be scaffolded');
+                  const requestedRoot =
+                    typeof args.projectRoot === 'string' && args.projectRoot.trim().length > 0
+                      ? resolve(root, args.projectRoot)
+                      : root;
+                  if (requestedRoot !== root) await assertCapturedToolReadAccess(requestedRoot);
+                  args = freezeInput({ ...args, projectRoot: requestedRoot });
+                } else if (name === 'analyze') {
+                  const requestedRoot =
+                    typeof args.projectRoot === 'string' && args.projectRoot.trim().length > 0
+                      ? resolve(root, args.projectRoot)
+                      : root;
+                  if (requestedRoot !== root) await assertCapturedToolReadAccess(requestedRoot);
+                  args = freezeInput({ ...args, projectRoot: requestedRoot });
+                } else if (name === 'write') {
+                  if (!contractInputAuthorityMutable(authority))
+                    throw new UnsupportedCapturedWorkflow('immutable captured planner input cannot be written');
+                } else {
                   throw new UnsupportedCapturedWorkflow(
-                    'captured find cannot follow symlinks outside its authorized view',
+                    `captured ${name} requires an original-owner-authorized backend; this workflow is not yet available`,
                   );
-              } else if (name === 'exec') {
-                if (!isCapturedExecTool(tool, authority))
-                  throw new UnsupportedCapturedWorkflow(
-                    'captured exec requires its construction-owned execution backend',
-                  );
-              } else if (name === 'repl') {
-                if (!isCapturedReplTool(tool, authority))
-                  throw new UnsupportedCapturedWorkflow(
-                    'captured REPL requires its construction-owned execution backend',
-                  );
-              } else if (name === 'edit') {
-                if (!contractInputAuthorityMutable(authority))
-                  throw new UnsupportedCapturedWorkflow('immutable captured planner input cannot be edited');
-              } else if (name === 'registry') {
-                if (!isCapturedRegistryTool(tool, authority))
-                  throw new UnsupportedCapturedWorkflow(
-                    'captured registry requires its construction-owned original-owner context',
-                  );
-              } else if (name === 'fetch') {
-                // The actual fetch backend performs HTTP only, under its existing gate/network policy.
-              } else if (name === 'inspect') {
-                if (args.mode === 'scaffold' && args.dryRun === false && !contractInputAuthorityMutable(authority))
-                  throw new UnsupportedCapturedWorkflow('immutable captured planner input cannot be scaffolded');
-                const requestedRoot =
-                  typeof args.projectRoot === 'string' && args.projectRoot.trim().length > 0
-                    ? resolve(root, args.projectRoot)
-                    : root;
-                if (requestedRoot !== root) await assertCapturedToolReadAccess(requestedRoot);
-                args = freezeInput({ ...args, projectRoot: requestedRoot });
-              } else if (name === 'analyze') {
-                const requestedRoot =
-                  typeof args.projectRoot === 'string' && args.projectRoot.trim().length > 0
-                    ? resolve(root, args.projectRoot)
-                    : root;
-                if (requestedRoot !== root) await assertCapturedToolReadAccess(requestedRoot);
-                args = freezeInput({ ...args, projectRoot: requestedRoot });
-              } else if (name === 'write') {
-                if (!contractInputAuthorityMutable(authority))
-                  throw new UnsupportedCapturedWorkflow('immutable captured planner input cannot be written');
-              } else {
-                throw new UnsupportedCapturedWorkflow(
-                  `captured ${name} requires an original-owner-authorized backend; this workflow is not yet available`,
-                );
-              }
-              const childOptions = authenticated && args === invocationArgs ? invocationOptions : readOptions;
-              const publicationSignal = signal && callSignal ? AbortSignal.any([signal, callSignal]) : signal ?? callSignal;
-              const result = name === 'write' || name === 'edit' || (name === 'inspect' && args.mode === 'scaffold' && args.dryRun === false)
-                ? await withCapturedPublication(authority, (publicationLease) => deliveryReads.run(
-                  { ...deliveryReads.getStore()!, publicationLease, signal: publicationSignal },
-                  () => tool.execute(args, childOptions),
-                ), publicationSignal)
-                : name === 'analyze'
-                  ? await withCapturedAnalyzeInput(authority, root, publicationSignal, () => tool.execute(args, childOptions))
-                  : await tool.execute(args, childOptions);
-              await assertContractInputAuthority(authority, root, signal);
-              assertInvocationCurrent();
-              // No content, cached output, diagnostics or errors leave after revocation.
-              const combined = signal && callSignal ? AbortSignal.any([signal, callSignal]) : (signal ?? callSignal);
-              for (const path of deliveryReads.getStore()!.paths)
-                await authorizeContractInputPath(authority, path, filter, combined);
-              for (const check of deliveryReads.getStore()!.checks) await check();
-              await assertCapturedToolAccessCurrent();
-              combined?.throwIfAborted();
-              return result;
+                }
+                const childOptions = authenticated && args === invocationArgs ? invocationOptions : readOptions;
+                const publicationSignal = signal && callSignal ? AbortSignal.any([signal, callSignal]) : signal ?? callSignal;
+                const result = name === 'write' || name === 'edit' || (name === 'inspect' && args.mode === 'scaffold' && args.dryRun === false)
+                  ? await withCapturedPublication(authority, (publicationLease) => deliveryReads.run(
+                    { ...deliveryReads.getStore()!, publicationLease, signal: publicationSignal },
+                    () => tool.execute(args, childOptions),
+                  ), publicationSignal)
+                  : name === 'analyze'
+                    ? await withCapturedAnalyzeInput(authority, root, publicationSignal, () => tool.execute(args, childOptions))
+                    : await tool.execute(args, childOptions);
+                await assertContractInputAuthority(authority, root, signal);
+                assertInvocationCurrent();
+                // No content, cached output, diagnostics or errors leave after revocation.
+                const combined = signal && callSignal ? AbortSignal.any([signal, callSignal]) : (signal ?? callSignal);
+                for (const path of deliveryReads.getStore()!.paths)
+                  await authorizeContractInputPath(authority, path, filter, combined);
+                for (const check of deliveryReads.getStore()!.checks) await check();
+                await assertCapturedToolAccessCurrent();
+                combined?.throwIfAborted();
+                return result;
+              };
+              return name === 'read' || name === 'find'
+                ? await withContractInputReadBatch(authority, execute)
+                : await execute();
             } catch (error) {
               if (error instanceof UnsupportedCapturedWorkflow) return { success: false, error: error.message };
               // Backend error strings can include source bytes. A held call returns

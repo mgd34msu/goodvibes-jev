@@ -1,4 +1,4 @@
-import { assertCapturedToolReadAccess, assertCapturedToolAccessCurrent, assertCapturedToolInvocationCurrent } from '../shared/captured-input-tools.js';
+import { assertCapturedToolReadAccess, assertCapturedToolInvocationCurrent } from '../shared/captured-input-tools.js';
 import { assertCapturedInputPathContext } from '../../contract/input-authority.js';
 import { resolve, relative, basename, sep } from 'node:path';
 import { stat as statAsync } from 'node:fs/promises';
@@ -217,13 +217,13 @@ export async function collectTextFiles(dirPath: string, diagnostics?: FindDiagno
       assertCapturedToolInvocationCurrent();
       walkOptions.beforeAttempt?.();
     }, beforeAsyncAttempt: async () => {
-      await assertCapturedToolAccessCurrent();
+      assertCapturedToolInvocationCurrent();
       await walkOptions.beforeAsyncAttempt?.();
     }, assertPath: assertCapturedInputPathContext,
     site: 'tools.find.skip-directory',
   })) {
     const binary = await isBinary(filePath, diagnostics);
-    await assertCapturedToolAccessCurrent();
+    assertCapturedToolInvocationCurrent();
     walkOptions.signal?.throwIfAborted();
     walkOptions.beforeAttempt?.();
     if (!binary) {
@@ -297,7 +297,7 @@ export async function collectGlobFiles(
       walkOptions.beforeAttempt?.();
     },
     beforeAsyncAttempt: async () => {
-      await assertCapturedToolAccessCurrent();
+      assertCapturedToolInvocationCurrent();
       await walkOptions.beforeAsyncAttempt?.();
     },
     assertPath: assertCapturedInputPathContext, site: 'tools.find.glob.skip-directory',
@@ -436,7 +436,7 @@ export async function findNestedGitignoreFiles(
       walkOptions.beforeAttempt?.();
     },
     beforeAsyncAttempt: async () => {
-      await assertCapturedToolAccessCurrent();
+      assertCapturedToolInvocationCurrent();
       await walkOptions.beforeAsyncAttempt?.();
     },
     assertPath: assertCapturedInputPathContext, site: 'tools.find.gitignore.skip-directory',
