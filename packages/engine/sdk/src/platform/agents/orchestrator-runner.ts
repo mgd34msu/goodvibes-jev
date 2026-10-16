@@ -1070,9 +1070,7 @@ export async function runAgentTask(
         if (continueLoop && response.toolCalls.some(call => (sigCounts.get(`${call.name}::${JSON.stringify(call.arguments)}`)?.count ?? 0) >= 2)) {
           repeatObservation = await readRepeatedCalls(callHistory, context, record, worstSignature);
           projectFramework.assertCurrent();
-          repeatObservation.assertCurrent();
-          repeatObservation.recordAction(repeatObservation.stuck ? 'repeated calls are stuck' : 'repeated calls show progress');
-          repeatObservation.assertCurrent();
+          repeatObservation?.assertCurrent();
         }
         if (repeatObservation?.stuck && worstCount >= LOOP_USER_THRESHOLD) {
           logger.warn(`Agent ${record.id}: loop detected, ${worstTool} called ${worstCount} times with identical args`);

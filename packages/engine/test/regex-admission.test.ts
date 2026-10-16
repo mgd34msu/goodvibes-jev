@@ -43,6 +43,18 @@ test('native lookbehind, named/numbered captures, sticky lastIndex and replaceme
   expect(await empty.positions('🙂')).toEqual([{ start: 0, end: 0 }, { start: 2, end: 2 }]);
 });
 
+test('file-wide line matching preserves per-line flags and keeps owner checks independent of line count', async () => {
+  const text = Array.from({ length: 20_000 }, (_, i) => i % 3 ? 'other' : 'Match:🙂').join('\n') + '\n';
+  for (const [source, flags] of [['^match:', 'gi'], ['^', 'gm'], ['🙂$', 'gu'], ['Match', 'y']]) {
+    let checks = 0;
+    await using pattern = await admitRegex(source!, flags!, { operation: 'file search', assertCurrent() { checks++; } });
+    const native = new RegExp(source!, flags!);
+    const expected = text.split('\n').flatMap((line, i) => { native.lastIndex = 0; return native.test(line) ? [i] : []; });
+    expect(await pattern.matchingLines(text)).toEqual(expected);
+    expect(checks).toBeLessThan(20);
+  }
+});
+
 test('one async schema walker preserves refs, not, allOf, anyOf, oneOf and dictionary validation', async () => {
   const fake = admit();
   const schema = { type: 'object', $defs: { tag: { type: 'string', pattern: '^ok$' } },

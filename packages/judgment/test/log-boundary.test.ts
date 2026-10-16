@@ -28,7 +28,10 @@ describe('recording port trust boundary', () => {
       const failure = exposedError(await withDecisionLog(rejecting(upstream), log).ask(request).catch((error: unknown) => error));
       expect(failure.message).toContain(`HTTP ${status}`);
       if (status === 402) expect(failure.message).toContain('Payment Required');
-      expect(log.query()[0]?.error?.message).toBe(failure.message);
+      const entry = log.query()[0];
+      expect(entry?.status).toBe('failed');
+      if (entry?.status !== 'failed') throw new Error('Expected a recorded failure');
+      expect(entry.error.message).toBe(failure.message);
       expect(JSON.stringify(log.query())).not.toContain(SECRET);
     }
   });

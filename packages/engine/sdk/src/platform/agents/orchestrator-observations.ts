@@ -71,57 +71,59 @@ function manifest(path: string): { text: string | null; identity: string } {
 export async function prepareProjectFramework(context: AgentOrchestratorRunContext, record: AgentRecord): Promise<ProjectFrameworkObservation> {
   const owner = captureOrchestratorObservationOwner(context, record), path = join(context.workingDirectory, 'package.json');
   owner();
-  const source = manifest(path);
-  // Screen the entire manifest, including ignored fields and tails, before parsing or caps.
-  assertJudgmentInput({ manifest: source.text });
-  let authority: JudgmentPortCapture | undefined;
-  const assertSourceCurrent = () => {
-    owner(); const current = manifest(path);
-    if (current.identity !== source.identity || current.text !== source.text) throw new OrchestratorObservationHeldError();
-  };
-  const assertCurrent = () => {
-    assertSourceCurrent();
-    try { authority?.assertCurrent(); } catch { throw new OrchestratorObservationHeldError(); }
-  };
-  if (source.text === null) return Object.freeze({ assertCurrent });
-  if (source.text.length > 200_000) return Object.freeze({ assertCurrent });
-  let parsed: unknown;
-  try { parsed = JSON.parse(source.text); } catch { return Object.freeze({ assertCurrent }); }
-  assertJudgmentInput(parsed);
-  let state;
-  try { state = captureOwnedJson(parsed); } catch { return Object.freeze({ assertCurrent }); }
-  if (!object(state)) return Object.freeze({ assertCurrent });
-  // Unknown is an honest optional prompt label, never the old dependency ladder.
+  // This is prompt context, not permission to run the agent. Once consumed it
+  // describes the project at spawn time; a later port/config/file refresh must
+  // not revoke unrelated provider requests and tool results.
+  const omitted = Object.freeze({ assertCurrent: owner });
   try {
-    authority = captureJudgmentPort('agents.project-test-framework', { signal: context.getCancellationSignal?.(record.id), assertCurrent: assertSourceCurrent });
-    const run = await projectTestFramework.run(checkedPort(authority), state as never, { site: 'agents.project-test-framework', signal: authority.signal, beforeAttempt: assertCurrent });
-    assertCurrent();
+    const source = manifest(path);
+    assertJudgmentInput({ manifest: source.text });
+    if (source.text === null) return omitted;
+    const state = captureOwnedJson(JSON.parse(source.text));
+    assertJudgmentInput(state);
+    if (!object(state)) return omitted;
+    const assertSourceCurrent = () => {
+      owner();
+      const current = manifest(path);
+      if (current.identity !== source.identity || current.text !== source.text) throw new OrchestratorObservationHeldError();
+    };
+    const authority = captureJudgmentPort('agents.project-test-framework', { signal: context.getCancellationSignal?.(record.id), assertCurrent: assertSourceCurrent });
+    const run = await projectTestFramework.run(checkedPort(authority), state as never, { site: 'agents.project-test-framework', signal: authority.signal, beforeAttempt: authority.assertCurrent });
+    authority.assertCurrent();
     const reading = run.readings.framework;
-    if (reading.outcome !== 'act' || !Object.hasOwn(TEST_FRAMEWORK_OPTIONS, reading.choice) || reading.choice === 'none') return Object.freeze({ assertCurrent });
+    if (reading.outcome !== 'act' || !Object.hasOwn(TEST_FRAMEWORK_OPTIONS, reading.choice) || reading.choice === 'none') return omitted;
     const framework = reading.choice === 'bun' ? 'bun:test' : reading.choice;
-    run.recordAction('include project framework'); assertCurrent();
-    return Object.freeze({ framework, assertCurrent });
+    run.recordAction('include project framework');
+    authority.assertCurrent();
+    return Object.freeze({ framework, assertCurrent: owner });
   } catch {
-    assertCurrent();
-    return Object.freeze({ assertCurrent });
+    owner();
+    return omitted;
   }
 }
 
 export async function readRepeatedCalls(history: readonly RetainedToolObservation[], context: AgentOrchestratorRunContext, record: AgentRecord, repeatedSignature = history[0]?.signature) {
   const owner = captureOrchestratorObservationOwner(context, record);
-  // Own and screen every retained call and full result before limits or port lookup.
-  assertJudgmentInput({ calls: history, repeatedSignature });
-  const state = captureOwnedJson({ calls: history, repeatedSignature });
-  if (JSON.stringify(state).length > 750_000) throw new OrchestratorObservationHeldError();
-  const source = JSON.stringify(history), retained = [...history];
-  let toolsStarted = false;
-  const current = () => { owner(); if (JSON.stringify(toolsStarted ? retained : history) !== source) throw new OrchestratorObservationHeldError(); };
+  // The reading supplies a progress hint, not authorization for the next tool.
+  // Retain the original run and data checks, but consume the Jev observation
+  // here so a later service refresh cannot revoke an already-delivered hint.
   try {
+    assertJudgmentInput({ calls: history, repeatedSignature });
+    const state = captureOwnedJson({ calls: history, repeatedSignature });
+    const source = JSON.stringify(history), retained = [...history];
+    let toolsStarted = false;
+    const current = () => { owner(); if (JSON.stringify(toolsStarted ? retained : history) !== source) throw new OrchestratorObservationHeldError(); };
     const authority = captureJudgmentPort('agents.repeat-stuck', { signal: context.getCancellationSignal?.(record.id), assertCurrent: current });
     const run = await repeatStuck.run(checkedPort(authority), state as never, { site: 'agents.repeat-stuck', signal: authority.signal, beforeAttempt: authority.assertCurrent });
     authority.assertCurrent();
     const reading = run.readings.stuck;
-    if (reading.outcome !== 'act' || (reading.verdict !== 'yes' && reading.verdict !== 'no')) throw new OrchestratorObservationHeldError();
-    return Object.freeze({ stuck: reading.verdict === 'yes', assertCurrent: () => { try { authority.assertCurrent(); } catch { throw new OrchestratorObservationHeldError(); } }, retainForTools: () => { try { authority.assertCurrent(); toolsStarted = true; } catch { throw new OrchestratorObservationHeldError(); } }, recordAction: run.recordAction });
-  } catch { throw new OrchestratorObservationHeldError(); }
+    if (reading.outcome !== 'act' || (reading.verdict !== 'yes' && reading.verdict !== 'no')) return undefined;
+    const stuck = reading.verdict === 'yes';
+    run.recordAction(stuck ? 'repeated calls are stuck' : 'repeated calls show progress');
+    authority.assertCurrent();
+    return Object.freeze({ stuck, assertCurrent: current, retainForTools: () => { current(); toolsStarted = true; } });
+  } catch {
+    owner();
+    return undefined;
+  }
 }

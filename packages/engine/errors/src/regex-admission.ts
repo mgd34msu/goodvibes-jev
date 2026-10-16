@@ -35,6 +35,7 @@ export interface RegexMatch {
 export interface AdmittedRegex extends AsyncDisposable {
   assertCurrent(): void;
   test(input: string, maxInputChars?: number): Promise<boolean>;
+  matchingLines(input: string, maxInputChars?: number): Promise<readonly number[]>;
   exec(input: string, lastIndex?: number, maxInputChars?: number): Promise<RegexMatch | null>;
   replace(input: string, replacement: string, maxInputChars?: number): Promise<string>;
   positions(input: string, maxInputChars?: number): Promise<readonly { start: number; end: number }[]>;
@@ -105,6 +106,14 @@ function execute(message) {
   const regex = new RegExp(source, flags);
   regex.lastIndex = lastIndex || 0;
   if (operation === 'test') return regex.test(input);
+  if (operation === 'matchingLines') {
+    const lines = input.split('\n'), matches = [];
+    for (let i = 0; i < lines.length; i++) {
+      regex.lastIndex = 0;
+      if (regex.test(lines[i])) matches.push(i);
+    }
+    return matches;
+  }
   if (operation === 'exec') {
     const match = regex.exec(input);
     if (!match) return null;
@@ -254,6 +263,7 @@ export async function admitRegex(source: string, flags: string, options: RegexAd
   return Object.freeze({
     assertCurrent: () => { owner.assertCurrent(); if (retired) throw new RegexAdmissionError(operation, 'executor retired'); },
     test: (input: string, cap?: number) => call<boolean>('test', input, 0, '', cap),
+    matchingLines: (input: string, cap?: number) => call<readonly number[]>('matchingLines', input, 0, '', cap),
     exec: (input: string, lastIndex = 0, cap?: number) => call<RegexMatch | null>('exec', input, lastIndex, '', cap),
     replace: (input: string, replacement: string, cap?: number) => call<string>('replace', input, 0, replacement, cap),
     positions: (input: string, cap?: number) => call<readonly { start: number; end: number }[]>('positions', input, 0, '', cap),

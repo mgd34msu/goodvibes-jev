@@ -96,6 +96,6 @@ describe('find content ranked by engine.tools.content-rank', () => {
     await runFind({ mode: 'content', pattern: 'parseConfig', path: '.' });
     await runFind({ mode: 'content', pattern: 'uniqueMarkerWord', path: '.', ranked: true });
     expect(requests.filter(request => request.context?.battery === 'engine.tools.content-rank')).toHaveLength(0);
-    expect(requests.filter(request => request.context?.battery === 'engine.regex.backtracking')).toHaveLength(2);
+    expect(requests.filter(request => request.context?.battery === 'engine.regex.backtracking')).toHaveLength(0);
   });
 });

@@ -167,17 +167,16 @@ async function scanContentQuery(
       const lines = content.split('\n');
       const fileMatches: ContentMatch[] = [];
 
-      for (let i = 0; i < lines.length; i++) {
-
-        if (await regex.test(lines[i]!)) {
-          const match: ContentMatch = { file, line: i + 1, text: lines[i]! };
-          if (format === 'context') {
-            match.context_before = lines.slice(Math.max(0, i - ctxBefore), i);
-            match.context_after = lines.slice(i + 1, i + 1 + ctxAfter);
-          }
-          fileMatches.push(match);
-          totalMatches++;
+      // Match in the isolated worker once per file, not once per source line.
+      // The worker resets lastIndex for each line, preserving search semantics.
+      for (const i of await regex.matchingLines(content)) {
+        const match: ContentMatch = { file, line: i + 1, text: lines[i]! };
+        if (format === 'context') {
+          match.context_before = lines.slice(Math.max(0, i - ctxBefore), i);
+          match.context_after = lines.slice(i + 1, i + 1 + ctxAfter);
         }
+        fileMatches.push(match);
+        totalMatches++;
       }
 
       if (fileMatches.length > 0) {
