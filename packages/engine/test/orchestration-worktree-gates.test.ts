@@ -119,7 +119,7 @@ function workstreamOf(items: readonly WorkItemSpec[]): CreateWorkstreamInput {
   };
 }
 
-describe('worktree-mode gates + dependency composition (BIG-3 items 2/3/5)', () => {
+describe('worktree-mode gates + dependency composition', () => {
   test('gates run IN each item worktree; A integrates before B; C concurrent', async () => {
     const root = freshRepo();
     const gateLog = join(root, 'gate-cwds.log');

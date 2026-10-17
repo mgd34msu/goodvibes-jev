@@ -21,15 +21,10 @@ export type {
   HostedSessionCompositionInput,
 } from './hosted-sessions-composition.js';
 export { PlatformServiceManager } from './service-manager.js';
-// ManagedServiceActionResult joins ManagedServiceStatus: it is the return type
-// of the injectable `actionRunner`, so a host supplying one has to name it. The
-// agent mirrored its three fields structurally for want of this line.
+
 export type { ManagedServiceActionResult, ManagedServiceStatus } from './service-manager.js';
 export { isPortAvailable, requirePortAvailable } from './port-check.js';
-// The web listener's port resolver, beside the daemon host/port resolvers this
-// barrel already publishes. Both the TUI's and the daemon's endpoint resolution
-// re-implemented the coercion inline because only the daemon-port half was
-// reachable, so one binding was validated by the SDK and its neighbour by a copy.
+
 export { resolveHostBinding, resolveWebPort } from './host-resolver.js';
 export type { ResolvedHostBinding } from './host-resolver.js';
 export {

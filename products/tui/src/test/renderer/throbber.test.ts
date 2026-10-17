@@ -64,6 +64,27 @@ describe('throbber: what it names', () => {
     expect(throbberText({ activity })).toBe('Thinking... · 12s · first token 0.8s · 42 tok/s');
   });
 
+  test('agent work stays visible after main yields and disappears when the last agent finishes', () => {
+    for (const count of [6, 1, 0]) {
+      const activity = throbberFor({
+        turnActive: false, runningAgentCount: count,
+        activeTool: { name: 'agent', args: { mode: 'batch-spawn' } },
+        modelPhrase: 'Stalled 60s', ttftMs: 800, tokenSpeed: 42,
+      });
+      const rows = footer({ throbber: activity, runningAgentCount: count, turnRunning: false }).map(text);
+      if (count === 0) {
+        expect(activity).toBeNull();
+        expect(rows.some(row => row.startsWith('   ⠋ '))).toBe(false);
+      } else {
+        expect(rows[1]).toContain(`⠋ Waiting for ${count} ${count === 1 ? 'agent' : 'agents'}...`);
+        expect(rows[1]).not.toMatch(/Running|Stalled|tok\/s|first token/);
+        expect(rows.join('\n')).not.toContain('interrupt');
+      }
+    }
+    const resumed = throbberFor({ turnActive: true, runningAgentCount: 1 });
+    expect(throbberText(resumed!)).toBe('Thinking... · 12s');
+  });
+
   test('a running tool: its name, its key argument and its own elapsed time', () => {
     const activity = resolveThrobberActivity(input({ activeTool: { name: 'exec', args: { command: 'bun test src/net/retry.test.ts' }, startedAtMs: NOW - 3_000 } }))!;
     expect(throbberText({ activity })).toBe('Running exec · bun test src/net/retry.test.ts · 3s');

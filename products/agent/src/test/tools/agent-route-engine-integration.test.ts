@@ -199,7 +199,7 @@ for (const kind of ['route', 'harness'] as const) describe(`${kind} engine task-
     else expect(await tool.execute({ ...args })).toMatchObject({ success: false });
     installJudgmentPort({ model: 'fixture', ask: async () => { throw new Error('fixture reading unavailable'); } });
     if (kind === 'route') await expect(tool.execute({ ...args })).rejects.toThrow('fixture reading unavailable');
-    else expect(await tool.execute({ ...args })).toMatchObject({ success: false, error: '[REDACTED]' });
+    else expect(await tool.execute({ ...args })).toMatchObject({ success: false, error: 'fixture reading unavailable' });
   });
 
   test('catalog ranking failure is not swallowed as empty matches', async () => {
@@ -209,7 +209,7 @@ for (const kind of ['route', 'harness'] as const) describe(`${kind} engine task-
       return fake.port.ask(request);
     } });
     if (kind === 'route') await expect(caller(kind).execute({ ...args })).rejects.toThrow('fixture catalog unavailable');
-    else expect(await caller(kind).execute({ ...args })).toMatchObject({ success: false, error: '[REDACTED]' });
+    else expect(await caller(kind).execute({ ...args })).toMatchObject({ success: false, error: 'fixture catalog unavailable' });
   });
 
   test('uses live channel registry IDs and rejects a reader inventing an absent named ID', async () => {

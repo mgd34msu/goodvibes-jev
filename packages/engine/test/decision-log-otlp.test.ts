@@ -354,7 +354,7 @@ describe('telemetry.decisionOtlp*: the export the permission layer performs', ()
       'telemetry.decisionOtlpSignal': 'span',
     }));
     const result = await manager.checkDetailed('exec', { command: 'ls -la' });
-    expect(result.approved).toBe(false);
+    expect(result.approved).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, 60));
   });
 

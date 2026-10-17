@@ -214,7 +214,7 @@ describe('units resume at their step', () => {
     expect(done.units[0]!.checks.find((check) => check.trigger === 'resume')?.claims?.kind).toBe('files_verified');
   }, 30_000);
 
-  test('a completion check stores the whole report on the unit though lastOutput is capped', async () => {
+  test('a completion check retains the complete report and last output', async () => {
     const report = { version: 1, archetype: 'engineer', summary: `Wrote the parser. ${'detail '.repeat(4_000)}`, filesCreated: ['src/csv.ts'], filesModified: [], filesDeleted: [] };
     const text = `Finished.\n\`\`\`json\n${JSON.stringify(report)}\n\`\`\``;
     const root = makeRepo();
@@ -225,7 +225,7 @@ describe('units resume at their step', () => {
     expect(done.status).toBe('passed');
     const u1 = done.units[0]!;
     expect(u1.lastReport).toEqual(report as never);
-    expect(u1.lastOutput!.length).toBeLessThan(text.length);
+    expect(u1.lastOutput).toBe(text);
     expect(u1.checks.find((check) => check.trigger === 'completion')?.claims?.kind).toBe('files_verified');
   }, 30_000);
 

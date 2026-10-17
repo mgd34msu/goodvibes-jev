@@ -444,6 +444,10 @@ async function materializeFiles(sourceRoot: string, files: readonly ContractInpu
   } finally {
     signal?.removeEventListener('abort', abort);
     if (child.exitCode === null) child.kill('SIGTERM');
+    // A failed write can leave the async iterator paused with unread output.
+    // Close our pipe ends before joining: child 'close' waits for them too.
+    child.stdin.destroy();
+    child.stdout.destroy();
     await ended.catch(() => {});
   }
 }

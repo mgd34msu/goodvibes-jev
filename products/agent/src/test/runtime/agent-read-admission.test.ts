@@ -150,36 +150,40 @@ function expectNoReadAdmission(...withheld: string[]) {
   for (const value of withheld) expect(JSON.stringify(requests)).not.toContain(value);
 }
 
-test('immediate first Agent turn awaits owner readiness and reads once with a recorded act', async () => {
+test('immediate first Agent turn awaits owner readiness and reads once under automatic configuration', async () => {
   const f = fixture(); f.write('ordinary.txt'); reportsMutation = false;
   const result = await f.run('read', read('ordinary.txt'));
   expect(result.success).toBe(true); expect(result.output).toContain('SYNTHETIC ORDINARY FILE');
-  expect(result.autonomousDecision?.outcome).toBe('act'); expect(readBodies).toBe(1); expect(f.prompts()).toBe(0);
+  expect(result.autonomousDecision).toBeUndefined(); expect(readBodies).toBe(1); expect(f.prompts()).toBe(0);
 });
 
-test('recorded act reads a harmless hidden fixture without the obsolete name veto', async () => {
+test('automatic admission reads a harmless hidden fixture without the obsolete name veto', async () => {
   const f = fixture(); f.write('.ordinary-note'); reportsMutation = false;
   const result = await f.run('read', read('.ordinary-note'));
-  expect(result.autonomousDecision?.outcome).toBe('act');
+  expect(result.autonomousDecision).toBeUndefined();
   expect(result.success).toBe(true); expect(result.output).toContain('SYNTHETIC ORDINARY FILE'); expect(readBodies).toBe(1);
 });
 
-test('read evidence identifies each path before the common admission', async () => {
+test('local read preserves every requested path without semantic approval', async () => {
   const f = fixture(); f.write('one.txt'); f.write('two.txt'); reportsMutation = false;
   const result = await f.run('read', { files: [{ path: 'one.txt' }, { path: 'two.txt' }] });
   expect(result.success).toBe(true);
-  const admissionIndex = requests.findIndex(request => 'disposition' in request.questions);
-  const pathReads = requests.slice(0, admissionIndex).filter(request => 'secrets' in request.questions);
-  for (const path of ['one.txt', 'two.txt']) {
-    const other = path === 'one.txt' ? 'two.txt' : 'one.txt';
-    expect(pathReads.some(request => JSON.stringify(request.state).includes(path) && !JSON.stringify(request.state).includes(other))).toBe(true);
-  }
+  expect(result.output).toContain('one.txt'); expect(result.output).toContain('two.txt');
+  expect(readBodies).toBe(1); expectNoReadAdmission();
 });
 
-test.each(['reject', 'defer_0'] as const)('control: authoritative %s yields zero read bodies', async outcome => {
+test.each(['reject', 'defer_0'] as const)('a scripted %s is not consulted for configured local reads', async outcome => {
   const f = fixture(); f.write('ordinary.txt'); selected = outcome;
   const readResult = await f.run('read', read('ordinary.txt'));
-  expect(readResult.success).toBe(false);
+  expect(readResult.success).toBe(true);
+  expect(readBodies).toBe(1); expectNoReadAdmission(); expect(f.prompts()).toBe(0);
+});
+
+test('an explicit configured read denial prevents backend execution', async () => {
+  const f = fixture(); f.write('ordinary.txt');
+  f.runtime.configManager.set('permissions.mode', 'custom');
+  f.runtime.configManager.set('permissions.tools.read', 'deny');
+  expect((await f.run('read', read('ordinary.txt'))).success).toBe(false);
   expect(readBodies).toBe(0); expect(f.prompts()).toBe(0);
 });
 
@@ -223,25 +227,29 @@ test('control: genuine prepared execution is one-shot', async () => {
   expect(readBodies).toBe(1);
 });
 
-test('control: declared read batch limit still prevents backend execution', async () => {
+test('local read batches retain every requested file without an implicit cap', async () => {
   const f = fixture(); reportsMutation = false;
-  await f.run('read', { files: Array.from({ length: 11 }, (_, index) => ({ path: `ordinary-${index}.txt` })) }).catch(() => undefined);
-  expect(readBodies).toBe(0); expect(f.prompts()).toBe(0);
+  const files = Array.from({ length: 11 }, (_, index) => ({ path: `ordinary-${index}.txt` }));
+  for (const { path } of files) f.write(path, `contents of ${path}`);
+  const result = await f.run('read', { files });
+  expect(result.success).toBe(true);
+  for (const { path } of files) expect(result.output).toContain(`contents of ${path}`);
+  expect(readBodies).toBe(1); expect(f.prompts()).toBe(0);
 });
 
-test.each(['yes', 'uncertain'] as const)('a %s secrets observation cannot act beyond the declared non-secret read surface', async evidence => {
+test.each(['yes', 'uncertain'] as const)('a scripted %s secrets observation does not gate a local read', async evidence => {
   const f = fixture(); f.write('ordinary-report.txt', 'SYNTHETIC CLASSIFICATION FIXTURE'); reportsMutation = false; secrets = evidence;
   const result = await f.run('read', read('ordinary-report.txt'));
-  expect(result.success).toBe(false); expect(readBodies).toBe(0); expect(result.output).toBeUndefined(); expect(f.prompts()).toBe(0);
+  expect(result.success).toBe(true); expect(readBodies).toBe(1); expectNoReadAdmission(); expect(f.prompts()).toBe(0);
 });
 
-test('recorded act can read ordinary notes in a platform-looking directory without a second intent guess', async () => {
+test('automatic admission can read ordinary notes in a platform-looking directory without a second intent guess', async () => {
   const f = fixture(); reportsMutation = false;
   mkdirSync(join(f.workspace, 'goodvibes-notes'));
   f.write('goodvibes-notes/travel.txt', 'SYNTHETIC TRAVEL NOTES');
   f.source.goal = 'Read my synthetic travel notes';
   const result = await f.run('read', read('goodvibes-notes/travel.txt'));
-  expect(result.autonomousDecision?.outcome).toBe('act');
+  expect(result.autonomousDecision).toBeUndefined();
   expect(result.success).toBe(true); expect(result.output).toContain('SYNTHETIC TRAVEL NOTES'); expect(readBodies).toBe(1);
 });
 
@@ -250,23 +258,20 @@ test('platform source requested in the original host goal is admitted once', asy
   platform = 'yes'; platformRequested = 'yes'; f.source.goal = 'Investigate the implementation failure in the assistant source';
   const result = await f.run('read', read('source.ts'));
   expect(result.success).toBe(true); expect(readBodies).toBe(1); expect(f.prompts()).toBe(0);
-  const scopes = requests.filter(request => 'platform_requested' in request.questions);
-  expect(scopes).toHaveLength(1); expect(JSON.stringify(scopes[0]?.state)).toContain(f.source.goal);
-  expect(requests.filter(request => 'disposition' in request.questions)).toHaveLength(1);
-  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(1);
+  expectNoReadAdmission();
 });
 
-test.each(['no', 'uncertain'] as const)('platform source with %s requested-scope evidence cannot act', async request => {
+test.each(['no', 'uncertain'] as const)('local source read does not require a %s semantic scope judgment', async request => {
   const f = fixture(); f.write('source.ts'); reportsMutation = false; platform = 'yes'; platformRequested = request;
   f.source.goal = 'Log into my email account';
   const result = await f.run('read', read('source.ts'));
-  expect(result.success).toBe(false); expect(readBodies).toBe(0); expect(f.prompts()).toBe(0);
+  expect(result.success).toBe(true); expect(readBodies).toBe(1); expectNoReadAdmission(); expect(f.prompts()).toBe(0);
 });
 
-test('uncertain platform identity cannot expand unrelated task scope', async () => {
+test('uncertain platform identity does not gate a configured local read', async () => {
   const f = fixture(); f.write('source.ts'); reportsMutation = false; platform = 'uncertain';
   const result = await f.run('read', read('source.ts'));
-  expect(result.success).toBe(false); expect(readBodies).toBe(0);
+  expect(result.success).toBe(true); expect(readBodies).toBe(1); expectNoReadAdmission();
 });
 
 test.each(['revoke', 'cancel', 'replace-file'] as const)('read %s after an extraction await withholds its output', async change => {
@@ -307,35 +312,36 @@ test('a first turn cancelled while the actual rule owner initializes performs no
   }
 });
 
-test.each(['arguments', 'source'] as const)('protected %s are held before any read evidence leaves the process', async location => {
+test.each(['arguments', 'source'] as const)('protected %s remain local without semantic transmission', async location => {
   const f = fixture(); f.write('ordinary.txt'); reportsMutation = false;
   if (location === 'source') f.source.goal = 'Read this using password=synthetic-private';
   const args = location === 'arguments' ? read('password=synthetic-private') : read('ordinary.txt');
   await f.run('read', args).catch(() => undefined);
-  expectNoReadAdmission('synthetic-private'); expect(readBodies).toBe(0); expect(f.prompts()).toBe(0);
+  expectNoReadAdmission('synthetic-private'); expect(readBodies).toBe(1); expect(f.prompts()).toBe(0);
 });
 
-test('changed original source while path evidence is pending cannot execute', async () => {
+test('changed original source during the final admission hook cannot execute', async () => {
   const f = fixture(); f.write('ordinary.txt'); reportsMutation = false;
-  beforeAnswer = request => {
-    if ('platform_source' in request.questions) f.source.goal = 'A different current task';
-  };
+  f.deps.hookDispatcher = { fire: async () => {
+    f.source.goal = 'A different current task';
+    return { ok: true, decision: 'allow' };
+  } };
   await f.run('read', read('ordinary.txt')).catch(() => undefined);
   expect(readBodies).toBe(0); expect(f.prompts()).toBe(0);
 });
 
-test.each(['secret', 'platform'] as const)('an innocent in-root alias cannot hide its canonical %s subject', async kind => {
+test.each(['secret', 'platform'] as const)('an in-root alias reads its exact %s target under current configuration', async kind => {
   const f = fixture(); reportsMutation = false;
   const target = kind === 'secret' ? '.env' : 'platform-implementation.ts';
   f.write(target, 'SYNTHETIC TARGET ONLY');
   symlinkSync(target, join(f.workspace, 'innocent-alias.txt'));
   (kind === 'secret' ? secretTargets : platformTargets).add(join(f.workspace, target));
   const result = await f.run('read', read('innocent-alias.txt'));
-  expect(result.success).toBe(false); expect(readBodies).toBe(0); expect(result.output).toBeUndefined();
-  expect(requests.some(request => JSON.stringify(request.state).includes(join(f.workspace, target)))).toBe(true);
+  expect(result.success).toBe(true); expect(readBodies).toBe(1); expect(result.output).toContain('SYNTHETIC TARGET ONLY');
+  expectNoReadAdmission();
 });
 
-test('a requested platform read through an alias records the actual target and can act', async () => {
+test('a requested platform read through an alias returns the actual target', async () => {
   const f = fixture(); reportsMutation = false; platformRequested = 'yes';
   f.write('platform-implementation.ts', 'SYNTHETIC PLATFORM SOURCE');
   symlinkSync('platform-implementation.ts', join(f.workspace, 'alias.txt'));
@@ -343,7 +349,7 @@ test('a requested platform read through an alias records the actual target and c
   f.source.goal = 'Read the platform implementation reached by alias.txt';
   const result = await f.run('read', read('alias.txt'));
   expect(result.success).toBe(true); expect(readBodies).toBe(1);
-  expect(requests.some(request => JSON.stringify(request.state).includes(join(f.workspace, 'platform-implementation.ts')))).toBe(true);
+  expect(result.output).toContain('SYNTHETIC PLATFORM SOURCE'); expectNoReadAdmission();
 });
 
 test('an alias outside the admitted project is refused before semantic evidence or bytes', async () => {
@@ -363,7 +369,7 @@ test('the actual Agent registry rejects a different genuine manager for the same
     preparationDecisionIds: prepared.judgmentDecisionIds,
     assertPrepared: () => f.registry.assertPrepared(prepared), preparedCall: { registry: f.registry, call: prepared },
   });
-  expect(admission.result.autonomousDecision?.outcome).toBe('act');
+  expect(admission.result.approved).toBe(true);
   await expect(f.registry.executePrepared(prepared, admission)).rejects.toThrow();
   expect(readBodies).toBe(0); expect(f.prompts()).toBe(0);
 });
@@ -372,6 +378,6 @@ test('read explanation states pending admission and checks only mechanical shape
   const valid = explainAgentToolPolicyInvocation('read', read('ordinary.txt'));
   expect(valid.status).toBe('allowed'); expect(valid.reason).toContain('requires a current bound admission');
   expect(valid.reason).toContain('no execution authority');
-  expect(explainAgentToolPolicyInvocation('read', { files: Array.from({ length: 11 }, () => ({ path: 'ordinary.txt' })) }).status).toBe('denied');
+  expect(explainAgentToolPolicyInvocation('read', { files: Array.from({ length: 11 }, () => ({ path: 'ordinary.txt' })) }).status).toBe('allowed');
   expect(requests).toHaveLength(0); expect(readBodies).toBe(0);
 });

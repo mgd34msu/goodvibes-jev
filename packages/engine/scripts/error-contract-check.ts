@@ -103,7 +103,7 @@ async function assertRetryContract(): Promise<void> {
   const transienceSource = read('errors/src/failure-transience.ts');
   const sdkTypesSource = read('sdk/src/platform/types/errors.ts');
   const transportRetrySource = read('transport-http/src/retry.ts');
-  const retryLiteralPattern = new RegExp(String.raw`\[\s*408,\s*429,\s*500,\s*502,\s*503,\s*504\s*\]`);
+  const retryLiteralPattern = new RegExp(String.raw`\[\s*408,\s*429,\s*500,\s*502,\s*503,\s*504,\s*529\s*\]`);
   const retryLiteralAllowedFiles = new Set([
     'errors/src/failure-transience.ts',
     'scripts/error-contract-check.ts',
@@ -111,7 +111,7 @@ async function assertRetryContract(): Promise<void> {
   ]);
 
   assert(
-    /export\s+const\s+TRANSIENT_STATUS_CODES\s*:\s*readonly\s+number\[\]\s*=\s*\[\s*408,\s*429,\s*500,\s*502,\s*503,\s*504\s*\]/.test(transienceSource)
+    /export\s+const\s+TRANSIENT_STATUS_CODES\s*:\s*readonly\s+number\[\]\s*=\s*\[\s*408,\s*429,\s*500,\s*502,\s*503,\s*504,\s*529\s*\]/.test(transienceSource)
       && /export\s+const\s+RETRYABLE_STATUS_CODES\s*:\s*readonly\s+number\[\]\s*=\s*TRANSIENT_STATUS_CODES\s*;/.test(errorsSource),
     'errors must own the canonical retryable status list (failure-transience.ts, exported by errors/src/index.ts as RETRYABLE_STATUS_CODES)',
   );

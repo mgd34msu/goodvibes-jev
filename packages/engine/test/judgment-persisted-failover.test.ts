@@ -85,7 +85,7 @@ test('malformed persisted chains refuse reload and retain the complete last-good
 
 for (const value of [null, 'SYNTHETIC_DO_NOT_LOG', {}, [null], [{ ...fallback(), model: 'invalid model' }],
   [{ ...fallback(), endpoint: 'https://user:password@example.test' }], [{ ...fallback(), keySource: 'file' }],
-  [{ ...fallback(), apiKey: 'SYNTHETIC_DO_NOT_LOG' }], Array.from({ length: 9 }, () => fallback())]) {
+  [{ ...fallback(), apiKey: 'SYNTHETIC_DO_NOT_LOG' }]]) {
   test(`strict fallback admission rejects malformed shape ${JSON.stringify(value).length} without credential text`, async () => {
     const rejected = judgmentConfigFromSettings(source({ 'judgment.fallbacks': value })).catch(error => error);
     const error: unknown = await rejected;
@@ -94,6 +94,11 @@ for (const value of [null, 'SYNTHETIC_DO_NOT_LOG', {}, [null], [{ ...fallback(),
     expect(String(error)).not.toContain('password');
   });
 }
+
+test('configured fallback chains have no implicit length cap', async () => {
+  const targets = Array.from({ length: 9 }, () => fallback());
+  expect((await judgmentConfigFromSettings(source({ 'judgment.fallbacks': targets }))).fallbacks).toHaveLength(9);
+});
 
 test('accessor-shaped entries are refused without invoking borrowed code', () => {
   let invoked = false;

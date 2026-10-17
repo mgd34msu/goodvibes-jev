@@ -1,7 +1,7 @@
 /**
  * session-history-inversion-guard.test.ts
  *
- * BLOCKER inversion guard: closed sessions are HISTORY. This is the exact
+ * Closed sessions remain available as history. This is the exact
  * "299 on disk, serves 0" scenario expressed as a test. Seed many closed
  * sessions whose closedAt is ancient (far past any grace), boot, run the GC
  * sweep repeatedly, and assert that ALL of them remain listable and on disk,

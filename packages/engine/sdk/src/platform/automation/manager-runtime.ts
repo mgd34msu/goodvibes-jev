@@ -811,6 +811,8 @@ export class AutomationManager {
     );
   }
 
+  private readonly startingRuns = new Set<symbol>();
+
   private async executeJob(
     job: AutomationJob,
     trigger: AutomationRunTrigger,
@@ -818,7 +820,15 @@ export class AutomationManager {
     attempt = 1,
     operation?: ExternalOperationSource,
   ): Promise<AutomationRun> {
-    return await executeAutomationJob(this.runtimeExecutionContext(), job, trigger, dueRun, attempt, operation);
+    if (this.activeRunCount() >= this.maxConcurrentRuns()) {
+      throw new Error(`Automation concurrency limit reached (${this.maxConcurrentRuns()})`);
+    }
+    const reservation = Symbol(job.id);
+    this.startingRuns.add(reservation);
+    const release = () => { this.startingRuns.delete(reservation); };
+    try {
+      return await executeAutomationJob({ ...this.runtimeExecutionContext(), onRunRecorded: release }, job, trigger, dueRun, attempt, operation);
+    } finally { release(); }
   }
 
   private async syncExecutionRoute(job: AutomationJob, run: AutomationRun): Promise<void> {
@@ -868,7 +878,7 @@ export class AutomationManager {
   }
 
   private activeRunCount(): number {
-    let total = 0;
+    let total = this.startingRuns.size;
     for (const run of this.runs.values()) {
       if (run.status === 'running') total += 1;
     }
@@ -876,7 +886,8 @@ export class AutomationManager {
   }
 
   getSchedulerCapacity(): SchedulerCapacityReport {
-    return computeSchedulerCapacity(this.maxConcurrentRuns(), this.runs.values());
+    const report = computeSchedulerCapacity(this.maxConcurrentRuns(), this.runs.values());
+    return { ...report, slotsInUse: this.activeRunCount() };
   }
 
   private pruneRunHistory(jobId?: string): void {

@@ -895,7 +895,7 @@ describe('the daemon computes every number the owner acts on', () => {
   });
 });
 
-// ═══ 6, 7, 8. The one notice, and what silence means ═══════════════════════
+// ═══ The one notice, and what silence means ═══════════════════════
 
 describe('one notification, and the merchant decides what silence means', () => {
   for (const shape of shapes()) {

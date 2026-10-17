@@ -1,24 +1,4 @@
-/**
- * The live verb and the load path must agree at every boundary.
- *
- * The failure this file exists to rule out is not a refusal, a refusal is
- * loud. It is an expectation that `openExpectation` ACCEPTS and
- * `validatePersistedExpectation` then REFUSES: the workstream opens it, the
- * signup proceeds, the daemon restarts, and the grant is gone. Nothing errors,
- * nothing logs, and the verification mail that arrives afterwards matches
- * nothing. The store re-validates every entry it writes, so the drop happens
- * silently at the mirror write, `replaceAll` filters and returns void.
- *
- * §9.2 states the property in one direction: *a file on disk must not be able
- * to mint an expectation the live API would have refused.* This file asserts
- * the inverse, which is just as load-bearing and was never written down: **the
- * live API must not be able to mint an expectation the file would refuse.**
- *
- * Proved rather than asserted. The round trip is driven with generated input
- * across every boundary either side enforces, window clamping, the id bound,
- * domain registrability, address and purpose ceilings, and the whole restart
- * is exercised end to end: open, mirror, sweep, hydrate.
- */
+/** Expectations accepted by the live API must survive persistence and hydration. */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

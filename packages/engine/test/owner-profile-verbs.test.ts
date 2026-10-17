@@ -271,7 +271,7 @@ describe('profile.* write verbs: the gates, at the verb layer', () => {
     expect(readFileSync(path).equals(before)).toBe(true);
   });
 
-  // §14 #22: removal is a write and gets the same gate. An injection that
+  // removal is a write and gets the same gate. An injection that
   // cannot add a fact must not be able to delete one.
   test.each(UNTRUSTED)('forget from %s authority is refused and the file is byte-identical', async (authority) => {
     const { catalog, path } = await harness();
@@ -516,7 +516,7 @@ describe('profile.* verbs: a disabled or unreadable profile is a stated state', 
   });
 });
 
-describe('§12: the three owner switches actually govern the runtime', () => {
+describe('the three owner switches actually govern the runtime', () => {
   test('profile.autonomousWrites off refuses a learned fact, and the file is byte-identical', async () => {
     const { catalog, path } = await harness(FIXTURE, ALL_OFF);
     const before = readFileSync(path);

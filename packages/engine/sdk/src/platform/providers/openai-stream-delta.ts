@@ -109,6 +109,7 @@ function collectTypedContentFragments(value: unknown, kind: 'content' | 'reasoni
     if (!entry || typeof entry !== 'object') continue;
     const record = entry as Record<string, unknown>;
     const type = typeof record.type === 'string' ? record.type.toLowerCase() : '';
+    if (!type) continue;
     const text = asString(record.text)
       ?? asString(record.content)
       ?? asString(record.reasoning)

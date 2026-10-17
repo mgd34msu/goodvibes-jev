@@ -84,7 +84,7 @@ test('restricted workspace retains native read access but forbids initial write'
 }, 15000);
 
 for (const mode of ['foreground', 'progress', 'until', 'pty', 'background'] as const) {
-  test(`real native ${mode} refuses trust ABA during post-Jev environment preparation`, async () => {
+  test(`real native ${mode} refuses trust ABA after admission before spawning`, async () => {
     runtime.dispose();
     services.configManager.set('sandbox.enabled', false); // Explicit owned temporary workstream fixture, never a public hosted grant.
     runtime = createHostedSessionRuntime({ sessionId: 'trust-workstream', workspaceRoot: root, systemPrompt: 'Owned temporary workstream fixture',
@@ -92,13 +92,20 @@ for (const mode of ['foreground', 'progress', 'until', 'pty', 'background'] as c
     deps = { ...deps, toolRegistry: runtime.toolRegistry, sessionId: runtime.sessionId };
     await workspaceTrust.setLevel('trusted');
     let applied = false;
-    revokeBeforeSpawn = async () => { await workspaceTrust.setLevel('restricted'); await workspaceTrust.setLevel('trusted'); applied = true; };
+    const admit = services.permissionManager.admitAutonomous.bind(services.permissionManager);
+    services.permissionManager.admitAutonomous = async (...args) => {
+      const result = await admit(...args);
+      await workspaceTrust.setLevel('restricted'); await workspaceTrust.setLevel('trusted'); applied = true;
+      return result;
+    };
     let spawns = 0; const original = Bun.spawn;
     const spy = spyOn(Bun, 'spawn').mockImplementation(((...args: Parameters<typeof Bun.spawn>) => { spawns++; return original(...args); }) as typeof Bun.spawn);
     try {
       const result = await executeToolCalls(deps, `trust-${mode}`, [{ id: `trust-${mode}-call`, name: 'exec', arguments: { commands: [{ cmd: command, timeout_ms: 1000,
-        progress: mode === 'progress', interactive: mode === 'pty', background: mode === 'background', ...(mode === 'until' ? { until: { pattern: 'owned', kill_after: true } } : {}) }] } }]);
-      expect(applied).toBe(true); expect(spawns).toBe(0); expect(result[0]!.success).toBe(false); expect(humanAsks).toEqual([]);
+        progress: mode === 'progress', interactive: mode === 'pty', background: mode === 'background', ...(mode === 'until' ? { until: { pattern: 'owned', kill_after: true } } : {}) }] } }]).catch((error: unknown) => error);
+      expect(applied).toBe(true); expect(spawns).toBe(0); expect(humanAsks).toEqual([]);
+      if (result instanceof Error) expect(result.message).toMatch(/authority|workspace|trust/i);
+      else expect(result).toMatchObject([{ success: false }]);
     } finally { spy.mockRestore(); }
   }, 15000);
 }

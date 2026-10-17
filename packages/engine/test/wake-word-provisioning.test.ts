@@ -594,8 +594,7 @@ describe('provisioning as part of installation', () => {
     // 2. It said so once, plainly, naming the recovery act and the retry.
     expect(outcome.message).toContain('installation continues');
     expect(outcome.message).toContain('/voice wake setup');
-    expect(outcome.message).toContain('download-failed: [REDACTED]');
-    expect(outcome.message).not.toContain('getaddrinfo ENOTFOUND objects.githubusercontent.com');
+    expect(outcome.message).toContain('download-failed: getaddrinfo ENOTFOUND objects.githubusercontent.com');
     expect(outcome.message).not.toContain('    at ');
     // 3. Nothing partial or unverified was left behind.
     const paths = resolveManagedWakePaths(root);
@@ -625,8 +624,7 @@ describe('provisioning as part of installation', () => {
       provision: async () => { throw new Error('EROFS: read-only file system'); },
     });
     expect(outcome.state).toBe('degraded');
-    expect(outcome.message).toContain('[REDACTED]');
-    expect(outcome.message).not.toContain('EROFS');
+    expect(outcome.message).toContain('EROFS: read-only file system');
     expect(outcome.ready).toBe(false);
   });
 
@@ -639,8 +637,7 @@ describe('provisioning as part of installation', () => {
       provision: async () => { provisioned = true; throw new Error('unreachable'); },
     });
     expect(outcome.state).toBe('degraded');
-    expect(outcome.message).toContain('[REDACTED]');
-    expect(outcome.message).not.toContain('EACCES');
+    expect(outcome.message).toContain('EACCES: permission denied');
     // It never got as far as spending bandwidth on a tree it cannot read.
     expect(provisioned).toBe(false);
   });

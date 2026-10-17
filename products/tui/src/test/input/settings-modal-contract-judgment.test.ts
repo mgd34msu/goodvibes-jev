@@ -73,9 +73,9 @@ describe('contract and judgment settings workspace', () => {
   test('judgment timeout rejects invalid input and persists a number', () => {
     modal.selectTarget('judgment.timeoutMs');
     modal.activateSelected();
-    modal.editBuffer = '999';
+    modal.editBuffer = '-1';
     expect(modal.commitEdit()).toBe(false);
-    expect(cm.get('judgment.timeoutMs')).toBe(10000);
+    expect(cm.get('judgment.timeoutMs')).toBe(0);
     modal.activateSelected();
     modal.editBuffer = '20000';
     expect(modal.commitEdit()).toBe(true);

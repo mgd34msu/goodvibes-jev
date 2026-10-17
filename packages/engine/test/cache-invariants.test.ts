@@ -4,11 +4,11 @@
  * Unit tests covering the 5 cache correctness invariants introduced in 0.18.38
  * and fixed/hardened in 0.18.39.
  *
- * I2(a) setModelContextCap invalidation, both customModels and discoveredModels paths
- * I2(b) registerRuntimeProvider unregister callback invalidates cache
- * I2(c) recentEvents ring buffer ordering, count < cap and count >= cap
- * I2(d) _syncScheduled coalesces burst of rememberEvent calls into 1 dispatch per tick
- * I2(e) getMessagesForLLM reference identity, same ref on cache hit, fresh ref after mutation
+ * setModelContextCap invalidation, both customModels and discoveredModels paths
+ * registerRuntimeProvider unregister callback invalidates cache
+ * recentEvents ring buffer ordering, count < cap and count >= cap
+ * _syncScheduled coalesces burst of rememberEvent calls into 1 dispatch per tick
+ * getMessagesForLLM reference identity, same ref on cache hit, fresh ref after mutation
  */
 import { describe, expect, test, afterAll, beforeEach, mock } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -18,7 +18,7 @@ import { ConversationManager } from '../sdk/src/platform/core/conversation.js';
 import { ControlPlaneGateway } from '../sdk/src/platform/control-plane/gateway.js';
 
 // ---------------------------------------------------------------------------
-// I2(a) + I2(b): ProviderRegistry cache invalidation
+// ProviderRegistry cache invalidation
 // ---------------------------------------------------------------------------
 // ProviderRegistry has a heavy constructor; we test the invariants by importing
 // the class directly from source and constructing a minimal stub.
@@ -102,7 +102,7 @@ function makeCustomModel(id: string, registryKey: string) {
   };
 }
 
-describe('I2(a): setModelContextCap invalidation reflected in listModels()', () => {
+describe('setModelContextCap invalidation reflected in listModels()', () => {
   test('customModels path: cap change is reflected in listModels() after setModelContextCap', () => {
     const registry = makeMinimalRegistry();
 
@@ -163,7 +163,7 @@ describe('I2(a): setModelContextCap invalidation reflected in listModels()', () 
   });
 });
 
-describe('I2(b): registerRuntimeProvider unregister callback invalidates cache', () => {
+describe('registerRuntimeProvider unregister callback invalidates cache', () => {
   test('unregister callback removes provider models from listModels()', () => {
     const registry = makeMinimalRegistry();
 
@@ -189,10 +189,10 @@ describe('I2(b): registerRuntimeProvider unregister callback invalidates cache',
 });
 
 // ---------------------------------------------------------------------------
-// I2(c): ring buffer ordering
+// ring buffer ordering
 // ---------------------------------------------------------------------------
 
-describe('I2(c): recentEvents ring buffer ordering', () => {
+describe('recentEvents ring buffer ordering', () => {
   // ControlPlaneGateway.rememberEvent is private, so we access it via a
   // public method that calls it indirectly. We drive events through
   // trackRequest which calls rememberEvent internally.
@@ -244,10 +244,10 @@ describe('I2(c): recentEvents ring buffer ordering', () => {
 });
 
 // ---------------------------------------------------------------------------
-// I2(d): _syncScheduled coalesces burst
+// _syncScheduled coalesces burst
 // ---------------------------------------------------------------------------
 
-describe('I2(d): _syncScheduled coalesces burst of rememberEvent calls', () => {
+describe('_syncScheduled coalesces burst of rememberEvent calls', () => {
   test('N synchronous rememberEvent calls produce exactly 1 syncControlPlaneState dispatch per microtask', async () => {
     let dispatchCount = 0;
     const mockDispatch = {

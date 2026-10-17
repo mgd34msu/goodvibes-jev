@@ -165,10 +165,11 @@ describe('native contract source', () => {
 
   test('legacy deliverable amendment cannot weaken native roots', async () => {
     const scripted = stepPlanner(nativePlan(), { amend: () => { throw new Error('Native roots must not reach the amendment planner'); } });
-    const h = makeHarness({ recordNative: true, planner: scripted.runner, contract: { maxFixRounds: 0 }, scripts: { u1: finishes('initial result') },
+    const h = makeHarness({ recordNative: true, planner: scripted.runner, contract: { maxFixRounds: 1 }, scripts: { u1: finishes('initial result') },
       port: answers(context => judgeOf(context) === 'deliverable' ? noulAnswer(0.9) : undefined, replyAnswers([{ reading: 'amend' }])) });
     harnesses.push(h);
     const { contract } = startContract(h, { nativeSource: source() });
+    h.store.get(contract.id)!.fixRounds = 1;
     await waitFor(() => terminal(h, contract.id), 'native refusal at exhausted correction boundary');
     const live = h.store.get(contract.id)!;
     expect(live.escalations).toHaveLength(0);

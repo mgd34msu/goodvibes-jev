@@ -1,5 +1,5 @@
 /**
- * migrateWrfcSettings and its load pass (design 9.2): every `wrfc.*` key and
+ * migrateWrfcSettings and its load pass: every `wrfc.*` key and
  * `ui.wrfcMessages` moves to its `contract.*` successor, `wrfc.scoreThreshold`
  * is removed with a receipt saying what replaced it, and ConfigManager.load
  * applies it once, rewriting the file.

@@ -1,7 +1,7 @@
 /**
  * card-shapes.test.ts
  *
- * The detector behind the remote-channel card gate (docs/inbound-email.md
+ * The detector behind the remote-channel card gate (docs/decisions/2026-07-27-inbound-email-design.md
  * §11.0). Every card number below is a published test value that passes Luhn
  * and belongs to no cardholder.
  *

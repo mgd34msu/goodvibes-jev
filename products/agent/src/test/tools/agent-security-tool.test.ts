@@ -228,7 +228,7 @@ describe('security adapter', () => {
     ]);
   });
 
-  test('explains Agent policy denials before running blocked exec routes', async () => {
+  test('keeps an unadmitted exec explanation held without a speculative route denial', async () => {
     const tool = makeTool();
 
     const result = await tool.execute({
@@ -244,14 +244,14 @@ describe('security adapter', () => {
       readonly category: string;
       readonly policyLayers: readonly { readonly layer: string; readonly outcome: string; readonly reason: string }[];
     };
-    expect(body.status).toBe('denied');
+    expect(body.status).toBe('held');
     expect(body).toMatchObject({ preflight: { approvedWithoutMoreInput: false, permissionOutcome: 'unknown' } });
     expect(body.category).toBe('execute');
     expect(body.policyLayers[0]).toMatchObject({
       layer: 'Agent route guard',
-      outcome: 'denied',
+      outcome: 'allowed',
     });
-    expect(body.policyLayers[0]?.reason).toContain('Raw exec background flags');
+    expect(body.policyLayers[0]?.reason).not.toContain('Raw exec background flags');
   });
 
   test('explains typed confirmation requirements without executing the tool', async () => {

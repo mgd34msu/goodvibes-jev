@@ -68,12 +68,8 @@ export function createBuiltinChannelRuntime(
     routeBindings: runtime.routeBindings,
     gatewayMethods: runtime.gatewayMethods,
     deliverStructuredNotice: (binding, notice) => surfaceDeliveryHelper.deliverStructuredNotice(binding, notice),
-    // THE composition that has an adopted Google credential, the one the
-    // Gmail arm's own comment claimed existed while nothing built it. Google
-    // credentials resolve from the daemon's own config and secret tiers plus
-    // this runtime's home directory, which is where `~/.gmail-mcp` adoption
-    // looks; `createDaemonCalendarGatewayService` reaches for exactly the same
-    // three, for exactly the same reason.
+    // Resolve adopted Google credentials from the daemon config, secret store
+    // and runtime home, matching the calendar service.
     gmailReader: createDaemonGmailInboundReader({
       configManager: runtime.configManager,
       secretsManager: runtime.runtimeServices.secretsManager,

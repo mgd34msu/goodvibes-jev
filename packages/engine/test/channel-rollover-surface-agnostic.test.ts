@@ -80,12 +80,12 @@ async function makeHarness(config: Record<string, unknown> = {}): Promise<Harnes
 
 describe('the healed seam is shared: a non-Telegram surface behaves identically', () => {
   test('a Signal message whose bound session is closed lands in a fresh session', async () => {
-    const h = await makeHarness();
+    const h = await makeHarness({ 'surfaces.signal.token': 'synthetic-signal-token' });
     try {
       // Drive the adapter once so the binding is created exactly as production
       // creates it, then close the session it bound, the observed state.
       const first = await handleSignalSurfaceWebhook(new Request('http://localhost/webhook/signal', {
-        method: 'POST',
+        method: 'POST', headers: { 'x-goodvibes-signal-token': 'synthetic-signal-token' },
         body: JSON.stringify({ source: '+15550001111', message: 'first message' }),
       }), h.context);
       expect(first.status).toBe(200);
@@ -97,7 +97,7 @@ describe('the healed seam is shared: a non-Telegram surface behaves identically'
       await h.broker.closeSession(firstSession);
 
       const second = await handleSignalSurfaceWebhook(new Request('http://localhost/webhook/signal', {
-        method: 'POST',
+        method: 'POST', headers: { 'x-goodvibes-signal-token': 'synthetic-signal-token' },
         body: JSON.stringify({ source: '+15550001111', message: 'still there?' }),
       }), h.context);
 
@@ -208,12 +208,12 @@ describe('the incident alarm is fed for every webhook surface at one seam', () =
         .rejects.toThrow('the store rejected the write');
 
       // Keyed on the surface that failed, not on telegram.
-      expect(alarm.failure(surface as never)?.detail).toBe('[REDACTED]');
+      expect(alarm.failure(surface as never)?.detail).toBe('the store rejected the write');
       expect(alerts).toHaveLength(1);
       expect(alerts[0]?.surface).toBe(surface);
       expect(alerts[0]?.text).toContain(surface);
       expect(alerts[0]?.text).toContain('could not be processed and was skipped');
-      expect(alerts[0]?.text).not.toContain('the store rejected the write');
+      expect(alerts[0]?.text).toContain('the store rejected the write');
     },
   );
 

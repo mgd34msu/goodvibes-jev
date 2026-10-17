@@ -58,7 +58,7 @@ test('real recorded admission performs alias, record, forget and sweep without c
   expect(getSessionExpectationBook().list()).toHaveLength(1);
   expect(await current.fixture.run(VALID)).toMatchObject({ success: true }); expect(current.store.list()).toHaveLength(1);
   expect(await current.fixture.run({ action: 'forget', id: 'example-com' })).toMatchObject({ success: true }); expect(current.store.list()).toHaveLength(0);
-  expect(await current.fixture.run({ action: 'sweep' })).toMatchObject({ success: true }); expect(readings).toBeGreaterThan(0);
+  expect(await current.fixture.run({ action: 'sweep' })).toMatchObject({ success: true }); expect(readings).toBe(0);
 });
 
 test('owned writes create missing parents without invalidating their own source fence', async () => {
@@ -197,9 +197,9 @@ test.each(['cancel', 'revoke'] as const)('the final rename is held for late %s a
 
 test('a replaced expectation mutation method is refused without invoking it', async () => {
   const current = scene(), book = getSessionExpectationBook(); let invoked = 0, armed = true;
-  duringReading = () => { if (!armed) return; armed = false;
+  current.fixture.beforeAuthorityRead(() => { if (!armed) return; armed = false;
     book.sweepExpired = () => { invoked++; return []; };
-  };
+  });
   await expect(current.fixture.run({ action: 'alias', serviceDomain: 'github.com' })).rejects.toThrow();
-  expect(invoked).toBe(0); expect(book.list()).toHaveLength(0);
+  expect(armed).toBe(false); expect(invoked).toBe(0); expect(book.list()).toHaveLength(0);
 });

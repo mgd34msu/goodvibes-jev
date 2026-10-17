@@ -268,7 +268,7 @@ describe('primary source persistence preplanning', () => {
     }
   });
 
-  test('oversized support sets and aborted preparations are typed holds before writes or requests', async () => {
+  test('complete support sets persist while aborted preparations hold before further writes or requests', async () => {
     readings();
     const { store, subject, source } = await fixture();
     const input = profileInput(store, source, subject);
@@ -277,9 +277,10 @@ describe('primary source persistence preplanning', () => {
     const sources = [source];
     for (let index = 0; index < 50; index++) sources.push(await addSource(store, `bounded-${index}`, subject.id));
     const fact = store.getNode(prepared.plans[0]!.factId)!;
+    readings();
+    await store.upsertNode({ ...fact, metadata: { ...fact.metadata, sourceIds: sources.map(candidate => candidate.id) } });
+    expect(store.getNode(fact.id)?.metadata.sourceIds).toEqual(sources.map(candidate => candidate.id));
     const before = graph(store); const fake = readings();
-    // Refuse the oversized support update before it can become durable serving state.
-    await expect(store.upsertNode({ ...fact, metadata: { ...fact.metadata, sourceIds: sources.map((candidate) => candidate.id) } })).rejects.toBeInstanceOf(KnowledgeNodeActivationHeldError);
     const controller = new AbortController(); controller.abort();
     await expect(prepareSourceLinkedRepairProfileFacts([input], { signal: controller.signal })).rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError);
     await expect(prepareSourceLinkedRepairProfileFacts([], { signal: controller.signal })).rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError);

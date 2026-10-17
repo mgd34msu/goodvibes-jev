@@ -21,7 +21,6 @@ import {
   DECISION,
   ENGINE_ROOT,
   loadStaleServerKindReadings,
-  MODEL,
   saveStaleServerKindReadings,
   WINDOW,
   type StoredStaleServerKindReading,
@@ -31,8 +30,9 @@ const { values } = parseArgs({ args: Bun.argv.slice(2), options: { all: { type: 
 const SITE = 'errors.stale-server-kind.docs';
 
 const port = createSystemOnePort(judgmentConfigFromEnv(process.env));
+const model = staleServerKind.model ?? port.model;
 const stored = loadStaleServerKindReadings();
-const reuse = values.all !== true && stored?.decision === DECISION && stored.model === MODEL;
+const reuse = values.all !== true && stored?.decision === DECISION && stored.model === model;
 const currentKinds = currentErrorKinds();
 
 const readings: Record<string, StoredStaleServerKindReading> = {};
@@ -54,7 +54,7 @@ await Promise.all(toRead.map(async ({ rel, text, hash }) => {
   readings[rel] = { sha256: hash, ...fileReading(windows) };
 }));
 
-saveStaleServerKindReadings({ decision: DECISION, model: MODEL, readings });
+saveStaleServerKindReadings({ decision: DECISION, model, readings });
 console.log(`[error-kinds] ${toRead.length} read, ${CHECKED_FILES.length - toRead.length} reused, ${CHECKED_FILES.length} checked files`);
 const open = Object.entries(readings).filter(([, reading]) => !isSettledNo(reading));
 for (const [rel, reading] of open) console.log(`[error-kinds] ${rel}: ${reading.verdict} (${reading.outcome}, probability ${reading.probability})`);

@@ -87,7 +87,7 @@ describe('concrete external effects retain recorded authority', () => {
     const notify = notificationScene(), image = mediaScene(), google = googleScene();
     expect((await executeAdmitted(notify.tool, notification, { mode: 'plan' })).success).toBe(false);
     expect((await executeAdmitted(image.tool, media, { mode: 'plan' })).success).toBe(false);
-    await expect(executeAdmitted(google.tool, mail, { mode: 'plan' })).rejects.toThrow();
+    expect(await executeAdmitted(google.tool, mail, { mode: 'plan' })).toMatchObject({ success: false, error: 'plan_mode' });
     expect(notify.sent).toEqual([]); expect(image.prompts).toEqual([]); expect(google.requests).toEqual([]);
   });
   test.each(['cancel', 'revoke', 'config', 'config-aba', 'taint', 'turn-aba', 'descriptor'] as const)('notification final send rejects %s during its wait', async change => {

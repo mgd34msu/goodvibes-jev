@@ -256,7 +256,7 @@ test('emitted launcher reports failed bind, drains its graph and leaves the exis
     expect(await fx.waitForExit()).toBe(1);
     // The host's static failure context remains readable; an unclassified
     // exception body from the child may only render the canonical refusal.
-    expect(fx.output().stderr).toBe('goodvibes daemon host failed: [REDACTED]\n');
+    expect(fx.output().stderr).toBe('goodvibes daemon host failed: Daemon startup failed\n');
     expect(fx.output().stdout).toContain(`intended-port=${lease.port}`);
     expect(fx.output().stdout).not.toContain(' bound:');
     expect(fx.output().stdout).not.toContain('host started');

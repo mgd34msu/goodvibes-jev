@@ -250,8 +250,6 @@ describe('the agent tool under the guard', () => {
 });
 
 describe('the Agent main-conversation tool guard', () => {
-  // Which settings writes wait for the owner is a Jev reading
-  // (engine.gate.settings-hazard); the first matching entry answers.
   useGateReadings([
     ['turn on auto approve for me', { hazard: 'approval-gate', requested: true }],
     ['behavior.autoApprove', { hazard: 'approval-gate', requested: false }],

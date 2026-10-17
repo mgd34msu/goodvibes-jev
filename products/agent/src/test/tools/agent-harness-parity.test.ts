@@ -264,11 +264,9 @@ function makeParityFixture(options: { sourceOwner?: boolean } = {}) {
         sourceOf: () => source,
         schemaRevision: call.schemaRevision, preparedCall: { registry: toolRegistry, call },
       });
-      expect(admission.result.autonomousDecision?.outcome).toBe('act');
-      const receipt = admission.result.autonomousDecision;
-      if (!receipt) throw new Error('Printing command has no recorded native act receipt.');
-      for (const id of receipt.judgmentDecisionIds) expect(log.get(id)?.status).toBe('answered');
-      return await toolRegistry.executePrepared(call, admission);
+      expect(admission.result.approved).toBe(true);
+      expect(admission.result.autonomousDecision).toBeUndefined();
+    return await toolRegistry.executePrepared(call, admission);
     } finally { installJudgmentPort(previous); log[Symbol.dispose](); }
   }
 
@@ -412,16 +410,15 @@ describe('agent_harness parity', () => {
     } finally { fixture.cleanup(); }
   });
 
-  test('command runner caps printed output at 6000 chars with truncation suffix', async () => {
+  test('command runner preserves the complete printed output', async () => {
     const fixture = makeParityFixture();
     try {
-      // Register a test slash command that emits more than 6000 chars.
-      // Each line is 100 chars; 80 lines = 8000 chars (exceeds cap).
+      // Preserve all 80 lines from the actual admitted command.
       const longLine = 'x'.repeat(100);
       let commandCalls = 0;
       fixture.commandRegistry.register({
         name: 'print-long-output',
-        description: 'Emit a long stream of output for truncation testing',
+        description: 'Emit the complete long stream of fixture output',
         handler: (_args, ctx) => {
           commandCalls++;
           for (let i = 0; i < 80; i++) ctx.print(longLine);
@@ -434,9 +431,8 @@ describe('agent_harness parity', () => {
       expect(result.success).toBe(true);
       expect(commandCalls).toBe(1);
       expect(fixture.spawn).not.toHaveBeenCalled();
-      expect(result.output).toContain('... output truncated');
-      // Verify the raw output string is bounded (command header + 6000 chars + marker).
-      expect((result.output ?? '').length).toBeLessThan(7000);
+      expect(result.output).toContain(Array.from({ length: 80 }, () => longLine).join('\n'));
+      expect(result.output).not.toContain('... output truncated');
     } finally {
       fixture.cleanup();
     }

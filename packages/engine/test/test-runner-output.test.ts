@@ -353,7 +353,7 @@ test('original parent ownership and explicit stall limits survive per-call optio
 
 
 test.each(['timeout', 'error'] as const)('final network-violation diagnostic handles %s after child output is drained', async (mode) => {
-  const root = mkdtempSync(join(tmpdir(), 'gv-owned-final-diagnostic-review-'));
+  const root = mkdtempSync(join(tmpdir(), 'gv-owned-output-diagnostic-'));
   const pidPath = join(root, 'child.pid');
   writeFileSync(join(root, 'fixture.test.ts'), `
     import { test } from 'bun:test';

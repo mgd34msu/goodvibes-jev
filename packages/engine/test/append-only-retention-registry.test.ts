@@ -50,7 +50,7 @@ afterEach(() => {
 });
 
 describe('append-only store registry membership (fails loudly)', () => {
-  test('RED: an unregistered append-only store id fails the membership check', () => {
+  test('an unregistered append-only store id fails the membership check', () => {
     expect(() => assertAppendOnlyStoreRegistered('seeded-unknown-store', 'test composition'))
       .toThrow(/unknown append-only store id "seeded-unknown-store".*APPEND_ONLY_STORES/s);
     expect(isAppendOnlyStoreRegistered('seeded-unknown-store')).toBe(false);

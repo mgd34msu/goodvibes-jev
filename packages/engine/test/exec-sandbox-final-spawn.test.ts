@@ -30,10 +30,10 @@ for (const mode of ['foreground', 'progress', 'until', 'pty'] as const) {
       const manager = new ProcessManager();
       const tool = createExecTool(manager, { defaultWorkingDirectory: root,
         overflowHandler: new OverflowHandler({ baseDir: root }), credentialEnvScrub: { enabled: false },
-        sandbox: { config: { enabled: true, egressAllowlist: [], workspaceWritable: [] }, availability, featureEnabled: true,
+        sandbox: { config: { enabled: true, egressAllowlist: ['printf'], workspaceWritable: [] }, availability, featureEnabled: true,
           async requestEscalation(input) {
             expect(input.command).toBe(command); expect(input.workingDirectory).toBe(root!);
-            expect(input.plan?.argvPrefix).toContain('--unshare-net');
+            expect(input.plan?.argvPrefix).not.toContain('--unshare-net');
             expect(Object.isFrozen(input.plan?.argvPrefix)).toBe(true);
             return permit;
           } },
@@ -51,7 +51,7 @@ for (const mode of ['foreground', 'progress', 'until', 'pty'] as const) {
         if (revoked) expect(result.success).toBe(false);
         else {
           const output = JSON.parse(result.output!);
-          expect(output.sandboxed).toBe(true); expect(output.sandbox_network).not.toBe('enabled');
+          expect(output.sandboxed).toBe(true); expect(output.sandbox_network).toBe('enabled');
         }
       } finally { spy.mockRestore(); await manager.close(); }
     }, 10000);
@@ -61,7 +61,7 @@ for (const mode of ['foreground', 'progress', 'until', 'pty'] as const) {
 
 test.skipIf(!availability.available)('a canonical callback wrapper cannot downgrade an owned permit to boolean approval', async () => {
   root = mkdtempSync(join(tmpdir(), 'sandbox-no-downgrade-'));
-  const sandbox = { config: { enabled: true, egressAllowlist: [], workspaceWritable: [] }, availability, featureEnabled: true, requestEscalation: async () => true };
+  const sandbox = { config: { enabled: true, egressAllowlist: ['printf'], workspaceWritable: [] }, availability, featureEnabled: true, requestEscalation: async () => true };
   const plan = resolveExecSandboxPlan({ ...sandbox, command, workspaceDir: root, cwd: root, needs: { needsNetwork: true, needsPrivilege: false } });
   const result = await withExternalOperationSource({ sourceOf: () => ({ goal: 'Owned fixture', criteria: [] }), assertCurrent() {} },
     () => brokerSandboxEscalation(sandbox, plan, command, root!, { assertCurrent() {} }));

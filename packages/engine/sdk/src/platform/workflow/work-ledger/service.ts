@@ -116,7 +116,7 @@ export function readWorkLedgerState(input: unknown, projectId: string): WorkLedg
   return state;
 }
 
-/** DB5 only: validate the complete v1 authority first, then add explicit absence. */
+/** Validate legacy ledger history before adding absent source fields and upgrading to version 2. */
 export function migrateLegacyWorkLedgerState(input: unknown, projectId: string): WorkLedgerState {
   const legacy = legacyWorkLedgerStateSchema.parse(input);
   if (!isDeepStrictEqual(legacy, input)) throw new Error('Legacy work ledger persisted text is not canonical');

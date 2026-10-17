@@ -365,10 +365,11 @@ describe('exportToHTML', () => {
     expect(html).not.toContain('<script>');
   });
 
-  test('truncates long tool results', async () => {
+  test('retains complete long tool results', async () => {
     const longContent = 'x'.repeat(5000);
     const html = await exportToHTML([toolMsg(longContent)], basicMeta);
-    expect(html).toContain('(truncated)');
+    expect(html).toContain(longContent);
+    expect(html).not.toContain('(truncated)');
   });
 
   test('skips system messages', async () => {

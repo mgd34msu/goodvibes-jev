@@ -34,7 +34,7 @@ describe('safe host serve factory', () => {
     expect(response?.status).toBe(500);
     const body = await response?.json() as { error: string; code: string };
     expect(body).toEqual({
-      error: '[REDACTED]',
+      error: 'home graph sync failed',
       code: 'HOST_REQUEST_HANDLER_FAILED',
     });
   });
@@ -75,8 +75,7 @@ describe('safe host serve factory', () => {
     );
 
     const text = await response.text();
-    expect(JSON.parse(text)).toEqual({ error: '[REDACTED]', code: 'HOST_REQUEST_HANDLER_FAILED' });
-    expect(text).not.toContain('Cannot read properties of undefined');
+    expect(JSON.parse(text)).toEqual({ error: 'Cannot read properties of undefined', code: 'HOST_REQUEST_HANDLER_FAILED' });
     expect(text).not.toContain('$bunfs');
     expect(text).not.toContain('normalizeSpaceComponent');
     expect(text).not.toContain('value.trim');

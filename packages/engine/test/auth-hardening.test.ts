@@ -556,7 +556,7 @@ describe('shared-token constant-time comparison', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 8. accountLocks cap and stale eviction (M2)
+// accountLocks cap and stale eviction
 // ---------------------------------------------------------------------------
 describe('accountLocks cap and eviction', () => {
   let dir: string;
@@ -624,11 +624,11 @@ describe('accountLocks cap and eviction', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 9. Bootstrap credential retire, non-bootstrap vs bootstrap paths
+// Bootstrap credential retire, non-bootstrap vs bootstrap paths
 // ---------------------------------------------------------------------------
 describe('bootstrap credential retire: non-bootstrap only', () => {
   let dir: string;
-  beforeEach(() => { dir = tempDir('bootstrap-m3'); });
+  beforeEach(() => { dir = tempDir('bootstrap-retirement'); });
   afterEach(() => cleanup(dir));
 
   test('usedBootstrapCredential=true when logging in with the bootstrap password', () => {
@@ -683,7 +683,7 @@ describe('bootstrap credential retire: non-bootstrap only', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 10. lock escalation during active window is documented and tested
+// Lock escalation during active window is documented and tested
 // ---------------------------------------------------------------------------
 describe('lock escalation during active window', () => {
   let dir: string;
@@ -728,7 +728,7 @@ describe('lock escalation during active window', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 11. m2, ipv6ToBytes strict validation (zone index, oversized groups, garbage)
+// ipv6ToBytes strict validation (zone index, oversized groups, garbage)
 // ---------------------------------------------------------------------------
 describe('isCloudflareIp: ipv6ToBytes strict validation', () => {
   test('rejects IPv6 with zone index (fe80::1%eth0)', () => {

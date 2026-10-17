@@ -2,9 +2,9 @@
  * companion-chat-session-isolation.test.ts
  *
  * Verifies:
- * I1: Events for session A do NOT appear in session B's event stream.
- * I2: Chat session events do NOT appear in the global (TUI-visible) event feed.
- * I3: Two concurrent sessions can exchange messages without cross-contamination.
+ * Events for session A do NOT appear in session B's event stream.
+ * Chat session events do NOT appear in the global (TUI-visible) event feed.
+ * Two concurrent sessions can exchange messages without cross-contamination.
  */
 
 import { describe, expect, test, beforeEach } from 'bun:test';
@@ -57,10 +57,10 @@ function eventsNotForClient(events: PublishedEvent[], clientId: string): Publish
 }
 
 // ---------------------------------------------------------------------------
-// I1: Events for session A don't bleed into session B
+// Events for session A don't bleed into session B
 // ---------------------------------------------------------------------------
 
-describe('I1: session-scoped event isolation', () => {
+describe('session-scoped event isolation', () => {
   let publisher: ReturnType<typeof makeTrackingPublisher>;
   let manager: CompanionChatManager;
 
@@ -158,10 +158,10 @@ describe('I1: session-scoped event isolation', () => {
 });
 
 // ---------------------------------------------------------------------------
-// I2: Chat events don't leak into the global/TUI control-plane feed
+// Chat events don't leak into the global/TUI control-plane feed
 // ---------------------------------------------------------------------------
 
-describe('I2: no leak into global control-plane feed', () => {
+describe('no leak into global control-plane feed', () => {
   test('all published events carry a clientId filter (never broadcast to all clients)', async () => {
     const publisher = makeTrackingPublisher();
     const manager = disposables.add(
@@ -219,10 +219,10 @@ describe('I2: no leak into global control-plane feed', () => {
 });
 
 // ---------------------------------------------------------------------------
-// I3: Message history isolation
+// Message history isolation
 // ---------------------------------------------------------------------------
 
-describe('I3: conversation history isolation', () => {
+describe('conversation history isolation', () => {
   test('session A conversation does not share messages with session B', async () => {
     const publisher = makeTrackingPublisher();
     const manager = disposables.add(

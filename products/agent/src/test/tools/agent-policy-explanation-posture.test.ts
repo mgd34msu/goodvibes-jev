@@ -135,7 +135,7 @@ describe('agent-policy-explanation: approval posture agreement', () => {
     expect(posture.autoApprove).toBe(true);
     expect(posture.automaticApprovals).toBe(true);
     expect(posture.bypassesPrompts).toBe(false);
-    expect(posture.detail).toContain('Boundary checks still apply');
+    expect(posture.detail).toContain('Configured denials, read-only modes and surface authority still apply');
     expect(posture.label.toLowerCase()).toContain('auto-approve');
 
     // Must match the shared helper's output exactly, not a locally-worded approximation.
@@ -149,7 +149,7 @@ describe('agent-policy-explanation: approval posture agreement', () => {
     expect(resolved.explanation.status).toBe('held');
   });
 
-  test('default posture: a write is unevaluated while posture says Ask before powerful actions', async () => {
+  test('default posture: a write is unevaluated while posture says Automatic configured actions', async () => {
     const context = fakeContext({ 'behavior.autoApprove': false, 'permissions.mode': 'prompt' });
     const resolved = await explainAgentPolicyDecision(context, registryWithWriteTool(), { toolName: 'write' });
 
@@ -157,11 +157,11 @@ describe('agent-policy-explanation: approval posture agreement', () => {
     if (resolved.status !== 'found') return;
     const posture = resolved.explanation.posture as { label: string; bypassesPrompts: boolean };
     expect(posture.bypassesPrompts).toBe(false);
-    expect(posture.label).toBe('Ask before powerful actions');
+    expect(posture.label).toBe('Automatic configured actions');
     expect(resolved.explanation.status).toBe('held');
   });
 
-  test('allow-all mode, autoApprove=false: posture exposes automatic approvals and the critical-stakes exception', async () => {
+  test('allow-all mode, autoApprove=false: posture exposes automatic approvals and configured constraints', async () => {
     const context = fakeContext({ 'behavior.autoApprove': false, 'permissions.mode': 'allow-all' });
     const resolved = await explainAgentPolicyDecision(context, registryWithWriteTool(), { toolName: 'write' });
 
@@ -171,9 +171,9 @@ describe('agent-policy-explanation: approval posture agreement', () => {
     expect(posture.autoApprove).toBe(false);
     expect(posture.automaticApprovals).toBe(true);
     expect(posture.bypassesPrompts).toBe(false);
-    expect(posture.detail).toContain('Boundary checks still apply');
-    expect(posture.label).toBe('Automatic below critical stakes');
-    expect(posture.detail).toContain('critical calls still ask');
+    expect(posture.detail).toContain('Configured denials, read-only modes and surface authority still apply');
+    expect(posture.label).toBe('Allow all configured actions');
+    expect(posture.detail).toContain('Calls require current invocation authority');
   });
 
   test('plan mode: configuration is observable without predicting an unexamined write', async () => {
@@ -252,23 +252,23 @@ describe('policy explain never substitutes configuration for a live gate decisio
     approved: boolean;
     reason: Awaited<ReturnType<PermissionManager['checkDetailed']>>['reasonCode'];
   }[] = [
-    { name: 'critical shell in allow-all', mode: 'allow-all', call: 'critical', approved: false, reason: 'user_denied' },
-    { name: 'catastrophic shell with autoApprove', mode: 'prompt', autoApprove: true, call: 'catastrophic', approved: false, reason: 'boundary_catastrophic' },
-    { name: 'catastrophic shell in allow-all', mode: 'allow-all', call: 'catastrophic', approved: false, reason: 'boundary_catastrophic' },
-    { name: 'catastrophic shell with all custom rules allowing', mode: 'custom', tools: allAllow, call: 'catastrophic', approved: false, reason: 'boundary_catastrophic' },
-    { name: 'secret read in prompt mode', mode: 'prompt', call: 'secretRead', approved: false, reason: 'user_denied' },
-    { name: 'secret read in plan mode', mode: 'plan', call: 'secretRead', approved: false, reason: 'user_denied' },
-    { name: 'critical file action in accept-edits', mode: 'accept-edits', call: 'criticalEdit', approved: false, reason: 'user_denied' },
+    { name: 'critical shell in allow-all', mode: 'allow-all', call: 'critical', approved: true, reason: 'config_allow' },
+    { name: 'catastrophic shell with autoApprove', mode: 'prompt', autoApprove: true, call: 'catastrophic', approved: true, reason: 'config_allow' },
+    { name: 'catastrophic shell in allow-all', mode: 'allow-all', call: 'catastrophic', approved: true, reason: 'config_allow' },
+    { name: 'catastrophic shell with all custom rules allowing', mode: 'custom', tools: allAllow, call: 'catastrophic', approved: true, reason: 'config_allow' },
+    { name: 'secret read in prompt mode', mode: 'prompt', call: 'secretRead', approved: true, reason: 'config_allow' },
+    { name: 'secret read in plan mode', mode: 'plan', call: 'secretRead', approved: true, reason: 'config_allow' },
+    { name: 'critical file action in accept-edits', mode: 'accept-edits', call: 'criticalEdit', approved: true, reason: 'config_allow' },
     { name: 'ordinary write with autoApprove', mode: 'prompt', autoApprove: true, call: 'write', approved: true, reason: 'config_allow' },
     { name: 'ordinary read in prompt mode', mode: 'prompt', call: 'read', approved: true, reason: 'config_allow' },
-    { name: 'ordinary write in prompt mode', mode: 'prompt', call: 'write', approved: false, reason: 'user_denied' },
-    { name: 'file edit in accept-edits', mode: 'accept-edits', call: 'write', approved: true, reason: 'preset_allow' },
-    { name: 'read-only shell in plan mode', mode: 'plan', call: 'readOnlyExec', approved: true, reason: 'preset_allow' },
-    { name: 'read-only shell in prompt mode', mode: 'prompt', call: 'readOnlyExec', approved: true, reason: 'preset_allow' },
-    { name: 'unknown read-only tool in custom mode', mode: 'custom', call: 'unknownRead', approved: true, reason: 'preset_allow' },
+    { name: 'ordinary write in prompt mode', mode: 'prompt', call: 'write', approved: true, reason: 'config_allow' },
+    { name: 'file edit in accept-edits', mode: 'accept-edits', call: 'write', approved: true, reason: 'config_allow' },
+    { name: 'read-only shell in plan mode', mode: 'plan', call: 'readOnlyExec', approved: false, reason: 'plan_mode' },
+    { name: 'read-only shell in prompt mode', mode: 'prompt', call: 'readOnlyExec', approved: true, reason: 'config_allow' },
+    { name: 'unknown read-only tool in custom mode', mode: 'custom', call: 'unknownRead', approved: true, reason: 'config_allow' },
     { name: 'read with explicit custom allow', mode: 'custom', tools: { read: 'allow' }, call: 'secretRead', approved: true, reason: 'config_allow' },
     { name: 'read with explicit custom deny', mode: 'custom', tools: { read: 'deny' }, call: 'read', approved: false, reason: 'config_deny' },
-    { name: 'read with explicit custom prompt', mode: 'custom', tools: { read: 'prompt' }, call: 'read', approved: false, reason: 'user_denied' },
+    { name: 'read with explicit custom prompt', mode: 'custom', tools: { read: 'prompt' }, call: 'read', approved: true, reason: 'config_allow' },
   ];
 
   for (const scenario of cases) {

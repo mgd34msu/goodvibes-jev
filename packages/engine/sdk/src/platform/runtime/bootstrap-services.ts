@@ -504,15 +504,7 @@ export async function startHostServices(
     const daemonHomeDir = factories.daemonHomeDir ?? os.homedir();
     const runtimeDir = factories.daemonRuntimeDir ?? join(daemonHomeDir, '.goodvibes', 'daemon');
     const logFilePath = join(runtimeDir, 'detached-daemon.log');
-    // `--daemon-home` names the daemon's own STATE directory, the one holding
-    // operator-tokens.json, daemon-settings.json and the daemon config tier,
-    // which is `runtimeDir`, not the user home above it. This passed the user
-    // home, so a spawned daemon put its identity files a level up from where
-    // every reader in the SDK looks for them (workspace/daemon-home.ts,
-    // config/daemon-config-tier.ts, owner-profile/paths.ts, config/secrets.ts
-    // all resolve the flag as the state directory). On a normal machine the
-    // config half still landed right because the user home IS the default
-    // parent, which is exactly why this went unnoticed.
+    // --daemon-home points to runtimeDir, which holds the daemon state and identity files.
     const args = [
       '--daemon-home', runtimeDir,
       '--hostname', daemonHost,

@@ -132,8 +132,7 @@ function catalogFor(service: ContractOperatorService): GatewayMethodCatalog {
 }
 
 function helperFor(catalog: GatewayMethodCatalog): DaemonControlPlaneHelper {
-  // Only `gatewayMethods` is touched on the invoke and scope path.
-  return new DaemonControlPlaneHelper({ gatewayMethods: catalog } as unknown as DaemonControlPlaneContext);
+  return new DaemonControlPlaneHelper({ gatewayMethods: catalog, authToken: () => 'fixture-token', userAuth: { validateSession: () => null } } as unknown as DaemonControlPlaneContext);
 }
 
 /** The REST leg wired as the daemon wires it: path params and query into the query, path params and JSON body into the body. */

@@ -186,12 +186,8 @@ describe('Agent memory issuer protection', () => {
           const account = toolRegistry.execute(`protected-account-${field}-${credential.slice(0, 4)}`, 'accounts', {
             ...accountInput, [field]: credential,
           });
-          if (credential === 'password=synthetic-value') {
-            await expect(account).rejects.toMatchObject({ code: 'TOOL_ERROR', cause: { problem: 'credential-material' } });
-          } else {
-            await expect(account).rejects.toBeInstanceOf(ToolInputProjectionError);
-            await expect(account).rejects.toMatchObject({ problem: 'held', message: 'Tool input projection held.' });
-          }
+          await expect(account).rejects.toBeInstanceOf(ToolInputProjectionError);
+          await expect(account).rejects.toMatchObject({ problem: 'held', message: 'Tool input projection held.' });
           expect(protectedReads.requests).toHaveLength(0);
           expect(JSON.stringify(protectedPrivacy.privacyRequests)).not.toContain(credential);
           expect(existsSync(accountFile)).toBe(false);

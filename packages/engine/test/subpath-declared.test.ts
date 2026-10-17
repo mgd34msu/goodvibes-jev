@@ -82,10 +82,8 @@ describe('every shipped capability is importable from the published package', ()
   });
 
   test('the known-undeclared list is honest about what it covers', () => {
-    // The list exists so the gate can ship without blocking lanes that did not
-    // introduce the defect. It must stay a list of REAL top-level capability
-    // directories, an entry naming something that does not exist would be a
-    // silent widening of the exemption.
+    // Every deliberately internal entry must identify a real capability.
+    // A nonexistent module would silently widen the exemption.
     const source = readFileSync(join(REPO_ROOT, 'scripts', 'check-subpath-declared.ts'), 'utf8');
     const block = /const KNOWN_UNDECLARED: readonly string\[\] = \[([\s\S]*?)\];/.exec(source)?.[1] ?? '';
     const listed = [...block.matchAll(/'\.\/platform\/([^']+)'/g)].map((match) => match[1] ?? '');

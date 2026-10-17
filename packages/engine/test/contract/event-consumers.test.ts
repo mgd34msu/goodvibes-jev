@@ -1,7 +1,7 @@
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 /**
- * The consumers of the `contracts` event domain (design 8.2) that the
+ * The consumers of the `contracts` event domain that the
  * channel, replay and store tests do not already cover: the Slack and Discord
  * notifier, the webhook notifier's cancel line, the lifecycle hook bridge, the
  * host runtime event bridge (its `[Contract]` operator lines, the

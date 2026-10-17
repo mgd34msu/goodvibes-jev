@@ -261,7 +261,7 @@ describe('WS call path retained-context caps', () => {
       requireAuthenticatedSession: () => null,
     });
     helper.handleControlPlaneWebSocketOpen({
-      data: { channel: 'control-plane', authToken: 't', principalId: null, principalKind: null, admin: false, scopes: [], domains: [], clientKind: 'web', authenticated: true } as never,
+      data: { channel: 'control-plane', authToken: 't', principalId: 'shared-token', principalKind: 'token', admin: true, scopes: ['*'], domains: [], clientKind: 'web', authenticated: true } as never,
       send: () => { sent += 1; },
       getBufferedAmount: () => buffered,
     });
@@ -321,7 +321,7 @@ describe('methodId arm shares the in-flight cap (no unbounded handler concurrenc
       calls.push(helper.invokeGatewayMethodCall({
         authToken: 'operator-token-xyz',
         methodId: 'ops.memory.get',
-        context: { principalId: 'p', principalKind: 'user', admin: true, scopes: ['read:health'] },
+        context: { principalId: 'shared-token', principalKind: 'token', admin: true, scopes: ['read:health'] },
       }));
     }
     await new Promise((r) => setTimeout(r, 50));

@@ -1,5 +1,5 @@
 /**
- * PlanProposal to contract (proposal-workstream.ts, design 10.4).
+ * PlanProposal to contract (proposal-workstream.ts).
  * draftFromProposal maps one drafted unit per proposal item (title, brief,
  * dependencies, likely files, attempts) with the proposal's task as the goal,
  * and refuses a dangling dependency or a cycle. fromPlanProposal and

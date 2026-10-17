@@ -54,7 +54,8 @@ export async function createNativeIntakeExecutionHttpFixture(options: {
   // Observe the real graph for assertions/diagnostics; replace no owner, runner,
   // route, authority check, storage method or execution operation.
   const composition = spyOn(nativeComposition, 'createDaemonNativeWorkExecutionServices').mockImplementation(async options => {
-    native = await compose(options); return native;
+    native = await compose(options);
+    return native;
   });
   const restoreDiscovery = () => { composition.mockRestore(); identities.mockRestore(); benchmarks.mockRestore(); discovery.mockRestore(); };
   let daemon: Awaited<ReturnType<typeof startDaemonFixture>>;

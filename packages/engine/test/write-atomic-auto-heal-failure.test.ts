@@ -165,7 +165,7 @@ for (const frozen of [false, true]) {
       expect(terminal.kind).toBe('unavailable');
       if (frozen) expect(terminal.message).toBe('terminal heal judgment');
       else {
-        expect(terminal.message).toBe("terminal heal judgment. Atomic rollback incomplete: Failed to roll back 'first.txt': [REDACTED]");
+        expect(terminal.message).toBe("terminal heal judgment. Atomic rollback incomplete: Failed to roll back 'first.txt': synthetic rollback rename failure");
       }
       expect(failedRollbacks).toBe(1);
       expect(fs.readFileSync(join(f.root, first.path), 'utf8')).toBe(first.content);

@@ -17,6 +17,8 @@ import { ConversationManager } from '../../core/conversation.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import { handleSessionWorkflowCommand } from '../../input/commands/session-workflow.ts';
 import { writeLivenessMarker } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
+import { clearTurnAnchors, getTurnAnchors, recordTurnAnchor, restoreTurnAnchors } from '@goodvibes-jev/engine/sdk/platform/rewind';
+import { loadWorkTreeTurnOutcomes } from '../../core/work-tree-fold-store.ts';
 import { makeTestSurface } from '../helpers/session-surface.ts';
 
 let tmpDir: string;
@@ -126,4 +128,49 @@ describe('/session resume: multi-instance liveness confirm', () => {
     expect(handled).toBe(true);
     expect(printed.join('\n')).toContain('Resumed session: sess-stale');
   });
+});
+
+
+test.each(['resume', 'save', 'fork'])('%s leaves identity and transcript alone during active work', async sub => {
+  const sm = new SessionManager(tmpDir, { surface: makeTestSurface(tmpDir) });
+  sm.save('target', [{ role: 'user', content: 'target' }], { title: 'target', timestamp: 1, model: '', provider: '' });
+  const printed: string[] = [];
+  const ctx = makeCtx(sm, printed);
+  ctx.session.conversationManager.addUserMessage('active turn');
+  ctx.isGenerating = () => true;
+  await handleSessionWorkflowCommand([sub, 'target'], ctx);
+  expect(ctx.session.runtime.sessionId).toBe('current-session');
+  expect(ctx.session.conversationManager.getLastUserMessage()).toBe('active turn');
+  expect(sm.load('target').messages[0]).toMatchObject({ content: 'target' });
+  expect(printed.join(' ')).toContain('still running');
+});
+
+test.each(['save', 'fork'])('%s preserves rewind anchors and failed-turn sidecars across reload', async sub => {
+  const surface = makeTestSurface(tmpDir);
+  const sm = new SessionManager(tmpDir, { surface });
+  const ctx = makeCtx(sm, []);
+  ctx.session.conversationManager.addUserMessage('source');
+  ctx.session.conversationManager.workTree.recordTurnOutcome({ index: 0, fingerprint: '1:x', outcome: 'failed' });
+  recordTurnAnchor('current-session', { turnId: 'copied-turn', label: 'source', messageCount: 1, at: 1 });
+  await handleSessionWorkflowCommand([sub, 'copied'], ctx);
+  const destination = ctx.session.runtime.sessionId;
+  expect(destination).not.toBe('current-session');
+  expect(getTurnAnchors(destination)[0]?.turnId).toBe('copied-turn');
+  clearTurnAnchors(destination);
+  expect(restoreTurnAnchors(destination, surface)).toBe(1);
+  expect(loadWorkTreeTurnOutcomes(surface.sessionsDir, destination)[0]?.outcome).toBe('failed');
+  clearTurnAnchors(destination); clearTurnAnchors('current-session');
+});
+
+test('a turn starting during model lookup prevents a resume commit', async () => {
+  const sm = new SessionManager(tmpDir, { surface: makeTestSurface(tmpDir) });
+  sm.save('target', [{ role: 'user', content: 'target' }], { title: 'target', timestamp: 1, model: 'm', provider: '' });
+  const ctx = makeCtx(sm, []);
+  ctx.session.conversationManager.addUserMessage('active source');
+  let busy = false;
+  ctx.isGenerating = () => busy;
+  ctx.clients!.providerApi!.selectModel = async () => { busy = true; return { registryKey: 'm', providerId: 'p' } as never; };
+  await handleSessionWorkflowCommand(['resume', 'target'], ctx);
+  expect(ctx.session.runtime.sessionId).toBe('current-session');
+  expect(ctx.session.conversationManager.getLastUserMessage()).toBe('active source');
 });

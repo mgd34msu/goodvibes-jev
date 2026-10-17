@@ -35,8 +35,8 @@ function makePolicyRuntimeState(): Pick<PolicyRuntimeState, 'recordPermissionReq
   };
 }
 
-describe('PermissionManager.checkDetailed threads modifiedArgs', () => {
-  test('threads modifiedArgs verbatim from the requestPermission handler', async () => {
+describe('PermissionManager does not introduce implicit edit prompts', () => {
+  test('ignores unrequested callback modifications to the admitted edit', async () => {
     const manager = new PermissionManager(
       async () => ({ approved: true, remember: false, modifiedArgs: { edits: [{ path: 'a.ts', find: 'x', replace: 'y' }] } }),
       makePermissionConfigReader(),
@@ -47,7 +47,7 @@ describe('PermissionManager.checkDetailed threads modifiedArgs', () => {
 
     const result = await manager.checkDetailed('edit', { edits: [{ path: 'a.ts', find: 'x', replace: 'y' }, { path: 'a.ts', find: 'p', replace: 'q' }] });
     expect(result.approved).toBe(true);
-    expect(result.modifiedArgs).toEqual({ edits: [{ path: 'a.ts', find: 'x', replace: 'y' }] });
+    expect(result.modifiedArgs).toBeUndefined();
   });
 
   test('is undefined when the requestPermission handler omits it (back-compat)', async () => {
@@ -84,7 +84,7 @@ describe('PermissionManager.checkDetailed threads modifiedArgs', () => {
     expect(result.modifiedArgs).toBeUndefined();
   });
 
-  test('is undefined for the session-cache path', async () => {
+  test('repeated checks do not create implicit grants or modified arguments', async () => {
     let calls = 0;
     const manager = new PermissionManager(
       async () => {
@@ -98,13 +98,12 @@ describe('PermissionManager.checkDetailed threads modifiedArgs', () => {
     );
 
     const first = await manager.checkDetailed('edit', { path: 'a.ts', edits: [] });
-    expect(first.modifiedArgs).toEqual({ edits: [{ path: 'a.ts', find: 'x', replace: 'y' }] });
-    expect(calls).toBe(1);
+    expect(first.modifiedArgs).toBeUndefined();
+    expect(calls).toBe(0);
 
-    // Second call for the same key hits the session cache, never calling
-    // requestPermission again, so modifiedArgs must be absent.
+    // A repeated check retains the same explicit policy without prompting.
     const second = await manager.checkDetailed('edit', { path: 'a.ts', edits: [] });
-    expect(calls).toBe(1);
+    expect(calls).toBe(0);
     expect(second.modifiedArgs).toBeUndefined();
   });
 });

@@ -89,10 +89,8 @@ test('production composition ranks genuine host titles, records evidence, and is
     const known = await f.daemon.fetch('/api/companion/chat/sessions/absent-synthetic-session');
     expect(await known.json()).toMatchObject({ code: 'SESSION_NOT_FOUND' });
     const requests = operationJudgmentRequests(f.calls);
-    expect(requests).toHaveLength(4);
-    expect(requests[2]?.state).toEqual(FAILURE_SOURCE);
-    expect(Object.keys(requests[2]?.questions ?? {}).sort()).toEqual(['lineHasCredential', 'spanIsCredential']);
-    expect(requests[3]?.state).toMatchObject({ methodId: 'synthetic.browser.failure', message: '[REDACTED]', status: 500 });
+    expect(requests).toHaveLength(3);
+    expect(requests[2]?.state).toMatchObject({ methodId: 'synthetic.browser.failure', message: FAILURE_MESSAGE, status: 500 });
   } finally { await f.stop(); }
 }, 30_000);
 

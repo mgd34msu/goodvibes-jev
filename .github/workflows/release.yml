@@ -123,6 +123,10 @@ jobs:
         run: bun run release:dry-run
 
   publish-npm:
+    # Registry writes and latest-tag alignment share one owner across versions.
+    concurrency:
+      group: sdk-npm-publish
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 25
     needs: [verify-tag-version, release-verify]
@@ -218,9 +222,8 @@ jobs:
       # npm publish with no --tag moves `latest` to whatever it just published,
       # so two releases of DIFFERENT versions that overlap leave `latest`
       # pointing backward on every package where the older run landed last.
-      # This states the property instead (latest == highest version) and
-      # converges from any interleaving. Runs after the propagation poll so the
-      # versions it reads are the ones the registry serves.
+      # This job serializes publishing and alignment across all versions.
+      # Run after propagation so the registry snapshot includes this release.
       - name: Align the latest dist-tag with the highest published version
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

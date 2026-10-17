@@ -43,7 +43,7 @@ afterEach(() => {
   }
 });
 
-describe('CodeIndexStore: no-embedding-provider degradation (Stage A)', () => {
+describe('CodeIndexStore: no-embedding-provider degradation', () => {
   test('with only the hashed provider active, semantic retrieval is unavailable and the reason is stated exactly once', async () => {
     const root = makeRoot();
     writeFileSync(join(root, 'a.ts'), 'export function foo(): number {\n  return 1;\n}\n');
@@ -64,7 +64,7 @@ describe('CodeIndexStore: no-embedding-provider degradation (Stage A)', () => {
     expect(store.stats().semanticRetrievalAvailable).toBe(false);
   });
 
-  test('Stage-A search still returns results in hashed mode, labeled lexical (not semantic)', async () => {
+  test('Search still returns results in hashed mode, labeled lexical (not semantic)', async () => {
     const root = makeRoot();
     writeFileSync(join(root, 'a.ts'), 'export function foo(): number {\n  return 1;\n}\n');
     const configManager = new ConfigManager({ configDir: join(root, '.config') });

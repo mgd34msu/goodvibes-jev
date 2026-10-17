@@ -277,9 +277,9 @@ describe('actual spoken wiring canonical retry semantics', () => {
   test.each([
     ['status', Object.assign(new Error('credentials'), { status: 503 }), 'authentication', false, true, []],
     ['errno', Object.assign(new Error('credentials'), { code: 'ECONNRESET' }), 'authentication', false, true, []],
-    ['billing 429', Object.assign(new Error('rate limit concurrent 429'), { status: 429 }), 'billing', true, false, ['engine.failure-reading', 'engine.redaction.credential']],
+    ['billing 429', Object.assign(new Error('rate limit concurrent 429'), { status: 429 }), 'billing', true, false, ['engine.failure-reading']],
     ['rate limit 429', Object.assign(new Error('account details'), { status: 429 }), 'rate_limit', false, true, ['engine.failure-reading']],
-    ['contrary terminal wording', new Error('network timeout socket 429 concurrent'), 'authentication', false, false, ['engine.failure-reading', 'engine.redaction.credential']],
+    ['contrary terminal wording', new Error('network timeout socket 429 concurrent'), 'authentication', false, false, ['engine.failure-reading']],
     ['contrary retryable wording', new Error('The blue lantern is resting.'), 'service', false, true, ['engine.failure-reading']],
   ] as const)('%s follows the shared controller through actual wiring', async (_label, error, category, billing, retry, batteries) => {
     const fake = semanticFailurePort(category, billing, error.message);

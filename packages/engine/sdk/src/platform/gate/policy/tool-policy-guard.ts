@@ -481,10 +481,7 @@ export async function explainAgentToolPolicyInvocation(
       : allowedByAgentPolicy('Agent policy allows read-only channel inspection.', READ_ONLY_CHANNEL_TOOL_MODES);
   }
   if (toolName === 'mcp') {
-    // The call route is layered on after this guard, so the modes this tool
-    // really accepts depend on whether it was installed. Reporting the
-    // inspection-only list once calling is wired would be the same kind of
-    // stale claim that made browser control look available when it was not.
+    // The installed call route determines whether this tool accepts call modes.
     const mcpModes = options.mcpCallMode
       ? [...READ_ONLY_MCP_TOOL_MODES, options.mcpCallMode]
       : READ_ONLY_MCP_TOOL_MODES;

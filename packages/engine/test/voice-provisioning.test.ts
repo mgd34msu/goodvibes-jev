@@ -270,7 +270,7 @@ function fixtureManifests(binaryContent: string, engineVersion: string) {
   return { engine, voice, fetchImpl };
 }
 
-describe('fix-round hardening (reviewer scenarios)', () => {
+describe('provisioning failure handling', () => {
 
   test('an engine version bump RE-EXTRACTS and replaces the old binary (no silent no-op)', async () => {
     const dir = scratch();
@@ -321,7 +321,7 @@ describe('fix-round hardening (reviewer scenarios)', () => {
     };
     const result2 = await provision({ managedRoot: dir, platform: 'linux-x64', engineOverride: v1.engine, voiceOverride: v1.voice, fetchImpl: v1.fetchImpl, extractArchive: truncatedOk });
     expect(result2.tts.state).toBe('download-failed');
-    expect(result2.tts.reason).toBe('piper extract failed: [REDACTED]');
+    expect(result2.tts.reason).toBe('piper extract failed: extracted archive is missing a usable binary at piper/piper');
     expect(existsSync(paths.piperBinary)).toBe(false);
     rmSync(dir, { recursive: true, force: true });
   });
@@ -747,7 +747,7 @@ describe('managed STT (goodvibes-built whisper.cpp)', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test('finding 12: the default whisper model URL is pinned to an immutable HF revision, not the mutable main ref', async () => {
+  test('the default whisper model URL is pinned to an immutable HF revision, not the mutable main ref', async () => {
     const { DEFAULT_WHISPER_MODEL } = await import('../sdk/src/platform/voice/provisioning/manifest.ts');
     expect(DEFAULT_WHISPER_MODEL.bin.url).not.toContain('/resolve/main/');
     expect(DEFAULT_WHISPER_MODEL.bin.url).toMatch(/\/resolve\/[0-9a-f]{40}\/ggml-base\.en\.bin$/);

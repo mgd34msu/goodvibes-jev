@@ -94,7 +94,7 @@ describe('idle-empty reaper: live surface exemption', () => {
   });
 });
 
-describe('D7b: reaper is per-session among many', () => {
+describe('reaper is per-session among many', () => {
   test('one idle-dead session among live ones: only the dead one is reaped', () => {
     // Five sessions share one store; four have a fresh participant heartbeat, one
     // (the 3rd) went stale. The sweep must reap EXACTLY the stale one.

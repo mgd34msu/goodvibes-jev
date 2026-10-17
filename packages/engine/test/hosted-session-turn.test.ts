@@ -160,7 +160,7 @@ test('a hosted session runs a real turn and the transcript is its own', async ()
   await session.submit('say something');
 
   expect(readings.requests.filter((request) => request.context?.battery === 'contract.request-route')
-    .map((request) => request.state)).toEqual([{ request: 'say something' }]);
+    .map((request) => request.state)).toEqual([]);
   expect(requests).toHaveLength(1);
   // The system prompt this session was composed with reached the model.
   expect(requests[0]!.systemPrompt).toContain('you are hosted by the daemon');
@@ -199,49 +199,26 @@ test('a tool the model calls actually runs, rooted at this session\'s workspace'
   // means the registry was rooted at this workspace and the tool ran here.
   expect(secondCallMessages).toContain('the file this session can read');
   expect(approvalRequests).toBe(0);
-  const admission = readings.requests.find((request) => request.context?.site === 'engine.gate.autonomous-tool');
-  expect(admission?.state).toMatchObject({ input: { source: { goal: 'read the note', criteria: [] } } });
-  const records = readings.log.query({ site: 'engine.gate.autonomous-tool' });
-  expect(records).toHaveLength(1);
-  const record = records[0];
-  expect(record?.status).toBe('answered');
-  if (record?.status !== 'answered') throw new Error('Expected a recorded act decision');
-  expect(record.answers).toMatchObject({ disposition: { choice: 'act' } });
-  expect(record.notes.some((note) => note.kind === 'action')).toBe(true);
+  expect(readings.requests.some(request => request.context?.site === 'engine.gate.autonomous-tool')).toBe(false);
   session.dispose();
 });
 
-for (const disposition of ['reject', 'defer_0'] as const) {
-  test(`recorded hosted ${disposition} returns a refusal without entering the tool body`, async () => {
-    readings.restore();
-    readings = installHostedSessionReadings({ disposition, gate: [['"tool":"read"', READ_ONLY]] });
-    const session = cancellationSession();
-    const calls: string[] = [];
-    const outcomes: string[] = [];
-    runtimeBus.on('TOOL_PERMISSIONED', (event) => {
-      if (event.payload.type === 'TOOL_PERMISSIONED') outcomes.push(event.payload.autonomousDecision?.outcome ?? 'missing');
-    });
-    session.toolRegistry.unregister('read');
-    session.toolRegistry.register({ definition: { name: 'read', description: 'Read a synthetic note.', parameters: { type: 'object', properties: {} } }, execute: async () => { calls.push('read'); return { success: true, output: 'fixture' }; } });
-    answers.push({ content: '', toolCalls: [{ id: 'refused-read', name: 'read', arguments: {} }], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_call' } as unknown as ChatResponse, textAnswer('The read was not admitted.'));
-    try {
-      await session.submit('read the synthetic note');
-      expect(calls).toEqual([]);
-      expect(outcomes).toEqual([disposition === 'reject' ? 'reject' : 'defer']);
-      expect(requests).toHaveLength(2);
-      expect(JSON.stringify(requests[1]!.messages)).toContain('jev_decision');
-      expect(approvalRequests).toBe(0);
-      const records = readings.log.query({ site: 'engine.gate.autonomous-tool' });
-      expect(records).toHaveLength(1);
-      const record = records[0];
-      expect(record?.status).toBe('answered');
-      if (record?.status !== 'answered') throw new Error('Expected a recorded non-executing decision');
-      expect(record.answers).toMatchObject({ disposition: { choice: disposition } });
-    } finally { session.dispose(); }
-  });
-}
+test('configured read denial returns a refusal without entering the tool body', async () => {
+  services.configManager.set('permissions.mode', 'custom'); services.configManager.set('permissions.tools.read', 'deny');
+  const session = cancellationSession(); const calls: string[] = [];
+  session.toolRegistry.unregister('read');
+  session.toolRegistry.register({ definition: { name: 'read', description: 'Read a synthetic note.', parameters: { type: 'object', properties: {} } }, execute: async () => { calls.push('read'); return { success: true, output: 'fixture' }; } });
+  answers.push({ content: '', toolCalls: [{ id: 'refused-read', name: 'read', arguments: {} }], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_call' } as unknown as ChatResponse, textAnswer('The read was not admitted.'));
+  try {
+    await session.submit('read the synthetic note');
+    expect(calls).toEqual([]); expect(requests).toHaveLength(2);
+    expect(JSON.stringify(requests[1]!.messages)).toContain('config_deny');
+    expect(approvalRequests).toBe(0);
+    expect(readings.log.query({ site: 'engine.gate.autonomous-tool' })).toEqual([]);
+  } finally { session.dispose(); }
+});
 
-test('a hosted turn rejects an unrecorded port before tool admission', async () => {
+test('a hosted turn runs authorized tools without a semantic permission receipt', async () => {
   const session = cancellationSession();
   const recorded = judgmentPort('test');
   const previous = installJudgmentPort({ model: recorded.model, ask: (request) => recorded.ask(request) });
@@ -252,9 +229,9 @@ test('a hosted turn rejects an unrecorded port before tool admission', async () 
   answers.push({ content: '', toolCalls: [{ id: 'unrecorded-read', name: 'read', arguments: { files: [{ path: 'note.txt' }] } }], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_call' } as unknown as ChatResponse);
   try {
     await session.submit('read the note');
-    expect(errors).toEqual(['[REDACTED]']);
-    expect(executed).toEqual([]);
-    expect(requests).toHaveLength(1);
+    expect(errors).toEqual([]);
+    expect(executed).toEqual(['unrecorded-read']);
+    expect(requests).toHaveLength(2);
     expect(readings.log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
     expect(approvalRequests).toBe(0);
   } finally { installJudgmentPort(previous); session.dispose(); }
@@ -272,15 +249,7 @@ test('the real hosted service boundary still excludes a mutating write from admi
     expect(executed).toEqual([]);
     expect(existsSync(join(workspace, 'blocked.txt'))).toBe(false);
     expect(workspaceTrust.isDecided()).toBe(false);
-    const admission = readings.requests.find((request) => request.context?.site === 'engine.gate.autonomous-tool');
-    expect(admission?.state).toMatchObject({ input: { evidence: {
-      boundary: { passed: false, refusedBy: 'surface-authority' },
-      reading: { facts: { mutates: true } },
-      constraints: { allowAct: false },
-    } } });
-    const question = admission?.questions.disposition;
-    expect(question?.type).toBe('choice');
-    if (question?.type === 'choice') expect(Object.hasOwn(question.criteria, 'act')).toBe(false);
+    expect(readings.requests.some(request => request.context?.site === 'engine.gate.autonomous-tool')).toBe(false);
     expect(approvalRequests).toBe(0);
   } finally { session.dispose(); }
 });
@@ -407,69 +376,46 @@ test('two hosted sessions in one workspace keep separate transcripts', async () 
 });
 
 
-test('judgment preflight is inside the turn: no provider spend before it settles, and failure cleans up', async () => {
-  const session = createHostedSessionRuntime({ sessionId: 'preflight-failure', workspaceRoot: workspace, floor: { services, contractRunner: services.contractRunner, dispose: (): void => {} }, systemPrompt: 'hosted' });
-  const base = judgmentPort('test');
-  let readingStarted!: () => void;
-  const started = new Promise<void>((resolve) => { readingStarted = resolve; });
-  let rejectReading!: (error: Error) => void;
-  const delayed = new Promise<never>((_, reject) => { rejectReading = reject; });
-  const seen: string[] = [];
-  const errors: unknown[] = [];
-  runtimeBus.on('TURN_ERROR', (envelope) => { errors.push(envelope.payload); });
-  const previous = installJudgmentPort({ ...base, ask: async (request) => {
-    seen.push(request.context?.battery ?? 'unnamed');
-    if (request.context?.battery === 'engine.core.turn-shape') { readingStarted(); return delayed; }
+test('ordinary turns do not wait for removed turn-shape or request-routing gates', async () => {
+  const session = cancellationSession(); const base = judgmentPort('test'); const seen: string[] = [];
+  const previous = installJudgmentPort({ ...base, ask(request) {
+    const name = request.context?.battery ?? 'unnamed'; seen.push(name);
+    if (name === 'engine.core.turn-shape' || name === 'contract.request-route') throw new Error('Unexpected turn admission gate');
     return base.ask(request);
   } });
   try {
-    const turn = session.submit('keep this request after a failed reading');
-    await started;
-    expect(requests).toHaveLength(0);
-    expect(session.orchestrator.isThinking).toBe(true);
-    rejectReading(new JudgmentError('unavailable', 'synthetic judgment outage'));
-    await turn;
-    expect(requests).toHaveLength(0);
-    expect(errors).toHaveLength(1);
-    expect(session.orchestrator.isThinking).toBe(false);
-    expect(session.conversation.getMessageSnapshot().some((message) => message.role === 'user' && message.content === 'keep this request after a failed reading')).toBe(true);
-    expect(seen).not.toContain('engine.failure-reading');
-    installJudgmentPort(previous);
-    answers.push(textAnswer('the next turn still works'));
-    await session.submit('try again');
+    answers.push(textAnswer('the turn works'));
+    await session.submit('ordinary request');
     expect(requests).toHaveLength(1);
+    expect(session.orchestrator.isThinking).toBe(false);
+    expect(seen).not.toContain('engine.core.turn-shape'); expect(seen).not.toContain('contract.request-route');
   } finally { installJudgmentPort(previous); session.dispose(); }
 });
 
-test('cancelling a slow judgment retains the user turn and queues a newer turn until cleanup', async () => {
+test('cancelling a slow provider retains the user turn and queues a newer turn until cleanup', async () => {
   const session = createHostedSessionRuntime({ sessionId: 'preflight-cancel', workspaceRoot: workspace, floor: { services, contractRunner: services.contractRunner, dispose: (): void => {} }, systemPrompt: 'hosted' });
-  const base = judgmentPort('test');
   let readingStarted!: () => void;
   const started = new Promise<void>((resolve) => { readingStarted = resolve; });
   let release!: () => void;
   const delayed = new Promise<void>((resolve) => { release = resolve; });
-  let once = true;
-  const previous = installJudgmentPort({ ...base, ask: async (request) => {
-    if (request.context?.battery === 'engine.core.turn-shape' && once) { once = false; readingStarted(); await delayed; }
-    return base.ask(request);
-  } });
+  heldChat = async () => { readingStarted(); await delayed; return textAnswer('cancelled response'); };
   try {
     const first = session.submit('first request');
     await started;
     expect(session.cancel()).toBe(true);
     await session.submit('newer request');
     expect(session.orchestrator.listQueuedMessages()).toHaveLength(1);
-    expect(requests).toHaveLength(0);
-    answers.push(textAnswer('answered the newer request'));
+    expect(requests).toHaveLength(1);
+    heldChat = undefined; answers.push(textAnswer('answered the newer request'));
     release();
     await first;
-    expect(requests).toHaveLength(1);
+    expect(requests).toHaveLength(2);
     const transcript = session.conversation.getMessageSnapshot();
     expect(transcript.filter((message) => message.role === 'user').map((message) => message.content)).toEqual(['first request', 'newer request']);
     expect(transcript.some((message) => message.content === '[Response cancelled]')).toBe(true);
     expect(session.orchestrator.listQueuedMessages()).toHaveLength(0);
     expect(session.orchestrator.isThinking).toBe(false);
-  } finally { release(); installJudgmentPort(previous); session.dispose(); }
+  } finally { release(); session.dispose(); }
 });
 
 function cancellationSession() {
@@ -713,10 +659,7 @@ for (const toolName of ['write', 'edit'] as const) {
       }).then(() => { settled = true; });
       try {
         await Promise.race([entered, turn.then(() => { throw new Error(`Turn ended without reaching the expected file hook: ${errors.join('; ')}`); })]);
-        const admission = readings.requests.find((request) => request.context?.site === 'engine.gate.autonomous-tool');
-        expect(admission?.state).toMatchObject({ input: { evidence: {
-          reading: { facts: { mutates: true } }, boundary: { passed: true }, constraints: { allowAct: true },
-        } } });
+        expect(readings.requests.some(request => request.context?.site === 'engine.gate.autonomous-tool')).toBe(false);
         expect(session.liveTurnControls.cancelTurn!(turnId).status).toBe('cancellation-requested');
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(terminal).toEqual([]);

@@ -1,5 +1,6 @@
 import { Dispatch, SetStateAction, useCallback, useEffect, useRef, useState, RefObject } from 'react';
 import { sdk, DEFAULT_SSE_RECONNECT } from '../../lib/goodvibes';
+import { getClientLifetime, isClientLifetimeCurrent } from '../../lib/client-lifetime';
 import { asRecord, firstString } from '../../lib/object';
 import { RELAY_OVERFLOW_EVENT, noteRelayOverflow, readDroppedCount } from '../../lib/relay-stream-overflow';
 import { isSessionNotFoundError, isAuthExpiredError, isMethodUnavailableError, isNoActiveTurnError } from '../../lib/errors';
@@ -144,6 +145,7 @@ export function useChatStream({
   // inert for the rest of this turn. Distinct from the per-effect `cancelled` flag,
   // which handles the CROSS-effect case (session switch / retry / unmount).
   const stoppedRef = useRef(false);
+  const connectionOwner = useRef<object | null>(null);
   // Bumped by retryStream() to force a fresh connect after the SDK's own
   // reconnect loop gives up (it never retries again on its own past onTerminate).
   const [retryNonce, setRetryNonce] = useState(0);
@@ -182,8 +184,11 @@ export function useChatStream({
 
   const stop = useCallback(() => {
     if (!activeSessionId) return;
+    const owner = connectionOwner.current;
+    const lifetime = getClientLifetime();
     setTurnState('stopping');
     void sdk.chat.turns.cancel(activeSessionId).catch((error: unknown) => {
+      if (!owner || connectionOwner.current !== owner || !isClientLifetimeCurrent(lifetime)) return;
       if (isNoActiveTurnError(error)) {
         // Benign: the turn finished before the stop landed. The terminal
         // turn.completed already (or will) settle the state; just don't get
@@ -230,6 +235,8 @@ export function useChatStream({
     // disconnectRef, orphaning the new stream. See the "session switch mid-handshake"
     // tests.
     let cancelled = false;
+    const owner = {};
+    connectionOwner.current = owner;
     stoppedRef.current = false;
     disconnectRef.current = undefined;
     setLiveText('');
@@ -294,6 +301,8 @@ export function useChatStream({
         const type = companionEventType(eventName, payload);
 
         if (type === 'turn.started') {
+          setLiveText('');
+          liveTextRef.current = '';
           // Fresh turn: drop any leftover tool-activity bookkeeping from a turn that
           // never reached a terminal event (should not happen, but never carry a
           // prior turn's tool calls into this one's fold).
@@ -418,6 +427,8 @@ export function useChatStream({
         }
 
         if (type === 'turn.error') {
+          setLiveText('');
+          liveTextRef.current = '';
           // No assistant message was produced, the accumulated tool activity has
           // nothing to attach to and is honestly discarded, not held onto.
           turnToolActivityRef.current = [];
@@ -502,6 +513,7 @@ export function useChatStream({
       // (which has already run its predecessor's cleanup by the time it executes)
       // starts with a fresh `cancelled = false` of its own.
       cancelled = true;
+      if (connectionOwner.current === owner) connectionOwner.current = null;
       stoppedRef.current = true;
       disconnectRef.current?.();
       disconnectRef.current = undefined;

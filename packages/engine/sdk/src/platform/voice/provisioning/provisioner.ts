@@ -1,16 +1,5 @@
-/**
- * provisioner.ts, managed one-act provisioning of the local voice runtime.
- *
- * Installs the piper TTS engine (binary + espeak-ng-data, from the pinned
- * checksummed tarball) and one default voice into a goodvibes-managed directory,
- * using the atomic + checksum-verified download machinery (downloadVerifiedFile).
- * Per-component and resumable: a re-run skips anything already present and
- * verified, and retries only what failed. Every step emits a structured progress
- * event a surface can render, and every terminal state is honest
- * (not-provisioned / download-failed / checksum-mismatch / unsupported-platform).
- *
- * STT (whisper.cpp) has no official prebuilt binary and this never compiles on
- * the user's machine, so STT is reported unsupported with a reason.
+/** Provision pinned local TTS and STT artifacts with checksum verification.
+ * Completed components are reused; failures report their component and reason.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -599,7 +588,7 @@ export function localVoiceRuntimeStatus(options: { managedRoot: string; platform
 
 /**
  * Resolve managed engine binary + model for a config prefix, when the managed
- * install is present. Only TTS (piper) is managed; STT returns null (unsupported).
+ * install is present. Resolves managed piper or whisper installations when their artifacts are present.
  */
 export function resolveManagedEngine(
   prefix: 'stt' | 'tts',

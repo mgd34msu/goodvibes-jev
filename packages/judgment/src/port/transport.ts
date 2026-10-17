@@ -1,4 +1,4 @@
-import { APITimeoutError, type Questions } from '@typesafe-ai/sdk';
+import { APIError, APITimeoutError, type Questions } from '@typesafe-ai/sdk';
 import { checkAnswers, projectAnswers } from './answers.ts';
 import { clientFor, systemOneWithoutDeadline, toJudgmentError } from './client.ts';
 import { validateJudgmentConfig, type JudgmentConfig } from './config.ts';
@@ -8,6 +8,14 @@ import { requiresLongContext, validateContextBudget, validateQuestions } from '.
 import { withRequestId } from './request-id.ts';
 import { delay, interruptible, retryable, retryDelay, retryPolicy } from './retry.ts';
 import type { JudgmentAttempt, JudgmentEndpointHealth, JudgmentPort, JudgmentRequest, JudgmentResult } from './types.ts';
+
+function needsContextUpgrade(error: unknown): boolean {
+  if (!(error instanceof APIError) || error.status !== 400) return false;
+  const body = error.body;
+  if (!body || typeof body !== 'object' || !('detail' in body)) return false;
+  const detail = body.detail;
+  return !!detail && typeof detail === 'object' && 'error_type' in detail && detail.error_type === 'max_tokens_exceeded';
+}
 
 /** One attempt owner: configured failover exhausts once; a primary-only outage retries until cancelled. */
 export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
@@ -58,13 +66,14 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
         const { state, questions } = input;
         validateQuestions(questions);
         validateContextBudget(state, questions);
-        const headers = requiresLongContext(state, questions) ? { 'TypeSafe-Danger-Zone-Long-Context': 'true' } : undefined;
+        let headers = requiresLongContext(state, questions) ? { 'TypeSafe-Danger-Zone-Long-Context': 'true' } : undefined;
         // Exhaust a configured failover chain once; a primary-only outage retries until cancellation.
         const eligible = targets.map((target, endpointIndex) => ({ target, endpointIndex }))
           .filter(({ target, endpointIndex }) => endpointIndex === 0 || target.model === requestedModel);
         let retry = 0;
         for (;;) {
-          for (const { target, endpointIndex } of eligible) {
+          for (let eligibleIndex = 0; eligibleIndex < eligible.length; eligibleIndex++) {
+            const { target, endpointIndex } = eligible[eligibleIndex]!;
             checkCancellation();
             try {
               if (beforeAsyncAttempt) {
@@ -138,6 +147,14 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
                 ...(last.status === undefined ? {} : { status: last.status }), ...(requestId ? { requestId } : {}),
               });
               health[endpointIndex] = { ...health[endpointIndex]!, attempts: health[endpointIndex]!.attempts + 1, consecutiveFailures: health[endpointIndex]!.consecutiveFailures + 1, lastOutcome: last.kind };
+              // Exact server tokenization can exceed the character estimate.
+              // Retry the complete input on the same endpoint in long-context
+              // mode, retaining this refusal and rechecking owner authority.
+              if (headers === undefined && needsContextUpgrade(failure)) {
+                headers = { 'TypeSafe-Danger-Zone-Long-Context': 'true' };
+                eligibleIndex--;
+                continue;
+              }
               if (last.kind !== 'unavailable' || !retryable(failure)) throw last;
             } finally {
               clearTimeout(attemptTimer);

@@ -37,8 +37,8 @@ function auth(extra: Record<string, string> = {}): Record<string, string> {
 }
 
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), 'w5s1-home-'));
-  work = mkdtempSync(join(tmpdir(), 'w5s1-work-'));
+  home = mkdtempSync(join(tmpdir(), 'delete-active-home-'));
+  work = mkdtempSync(join(tmpdir(), 'delete-active-work-'));
   seedBenchmarkCache(home, 'goodvibes');
   daemon = await bootDaemon({
     homeDirectory: home,
@@ -69,7 +69,7 @@ describe('companion.chat.sessions close vs delete', () => {
     const createRes = await fetch(`${daemon.url}/api/companion/chat/sessions`, {
       method: 'POST',
       headers: auth(),
-      body: JSON.stringify({ title: 'w5s1-companion-close', provider: 'test-provider', model: 'test-model' }),
+      body: JSON.stringify({ title: 'delete-active-companion-close', provider: 'test-provider', model: 'test-model' }),
     });
     expect(createRes.status).toBe(201);
     const { sessionId } = await createRes.json() as { sessionId: string };
@@ -93,7 +93,7 @@ describe('companion.chat.sessions close vs delete', () => {
     const createRes = await fetch(`${daemon.url}/api/companion/chat/sessions`, {
       method: 'POST',
       headers: auth(),
-      body: JSON.stringify({ title: 'w5s1-companion-active-delete', provider: 'test-provider', model: 'test-model' }),
+      body: JSON.stringify({ title: 'delete-active-companion-active-delete', provider: 'test-provider', model: 'test-model' }),
     });
     const { sessionId } = await createRes.json() as { sessionId: string };
 
@@ -113,7 +113,7 @@ describe('companion.chat.sessions close vs delete', () => {
     const createRes = await fetch(`${daemon.url}/api/companion/chat/sessions`, {
       method: 'POST',
       headers: auth(),
-      body: JSON.stringify({ title: 'w5s1-companion-hard-delete', provider: 'test-provider', model: 'test-model' }),
+      body: JSON.stringify({ title: 'delete-active-companion-hard-delete', provider: 'test-provider', model: 'test-model' }),
     });
     const { sessionId } = await createRes.json() as { sessionId: string };
     const filePath = companionFilePath(sessionId);
@@ -179,9 +179,9 @@ describe('sessions.delete (spine hard-delete verb)', () => {
   }
 
   test('DELETE on an ACTIVE shared session is rejected 409 SESSION_ACTIVE', async () => {
-    await registerSpineSession('w5s1-spine-active');
+    await registerSpineSession('delete-active-spine-active');
 
-    const res = await fetch(`${daemon.url}/api/sessions/w5s1-spine-active`, {
+    const res = await fetch(`${daemon.url}/api/sessions/delete-active-spine-active`, {
       method: 'DELETE',
       headers: auth(),
     });
@@ -189,37 +189,37 @@ describe('sessions.delete (spine hard-delete verb)', () => {
     const body = await res.json() as { code: string };
     expect(body.code).toBe('SESSION_ACTIVE');
 
-    const getRes = await fetch(`${daemon.url}/api/sessions/w5s1-spine-active`, { headers: auth() });
+    const getRes = await fetch(`${daemon.url}/api/sessions/delete-active-spine-active`, { headers: auth() });
     expect(getRes.status).toBe(200);
   });
 
   test('DELETE on a CLOSED shared session hard-removes it: 404 on get, absent from the list', async () => {
-    await registerSpineSession('w5s1-spine-delete');
-    await fetch(`${daemon.url}/api/sessions/w5s1-spine-delete/close`, { method: 'POST', headers: auth() });
+    await registerSpineSession('delete-active-spine-delete');
+    await fetch(`${daemon.url}/api/sessions/delete-active-spine-delete/close`, { method: 'POST', headers: auth() });
 
-    const deleteRes = await fetch(`${daemon.url}/api/sessions/w5s1-spine-delete`, {
+    const deleteRes = await fetch(`${daemon.url}/api/sessions/delete-active-spine-delete`, {
       method: 'DELETE',
       headers: auth(),
     });
     expect(deleteRes.status).toBe(200);
     const body = await deleteRes.json() as { sessionId: string; deleted: boolean };
-    expect(body).toEqual({ sessionId: 'w5s1-spine-delete', deleted: true });
+    expect(body).toEqual({ sessionId: 'delete-active-spine-delete', deleted: true });
 
-    const getRes = await fetch(`${daemon.url}/api/sessions/w5s1-spine-delete`, { headers: auth() });
+    const getRes = await fetch(`${daemon.url}/api/sessions/delete-active-spine-delete`, { headers: auth() });
     expect(getRes.status).toBe(404);
 
     const listRes = await fetch(`${daemon.url}/api/sessions`, { headers: auth() });
     const listText = await listRes.text();
-    expect(listText.includes('w5s1-spine-delete')).toBe(false);
+    expect(listText.includes('delete-active-spine-delete')).toBe(false);
   });
 
   test('DELETE of an already-deleted / unknown shared session id is an honest 404', async () => {
-    await registerSpineSession('w5s1-spine-delete-twice');
-    await fetch(`${daemon.url}/api/sessions/w5s1-spine-delete-twice/close`, { method: 'POST', headers: auth() });
-    const first = await fetch(`${daemon.url}/api/sessions/w5s1-spine-delete-twice`, { method: 'DELETE', headers: auth() });
+    await registerSpineSession('delete-active-spine-delete-twice');
+    await fetch(`${daemon.url}/api/sessions/delete-active-spine-delete-twice/close`, { method: 'POST', headers: auth() });
+    const first = await fetch(`${daemon.url}/api/sessions/delete-active-spine-delete-twice`, { method: 'DELETE', headers: auth() });
     expect(first.status).toBe(200);
 
-    const second = await fetch(`${daemon.url}/api/sessions/w5s1-spine-delete-twice`, { method: 'DELETE', headers: auth() });
+    const second = await fetch(`${daemon.url}/api/sessions/delete-active-spine-delete-twice`, { method: 'DELETE', headers: auth() });
     expect(second.status).toBe(404);
     const secondBody = await second.json() as { code: string };
     expect(secondBody.code).toBe('SESSION_NOT_FOUND');
@@ -229,8 +229,8 @@ describe('sessions.delete (spine hard-delete verb)', () => {
   });
 
   test('deleting a closed shared session emits session-deleted on the real session-update SSE channel', async () => {
-    await registerSpineSession('w5s1-spine-sse-delete');
-    await fetch(`${daemon.url}/api/sessions/w5s1-spine-sse-delete/close`, { method: 'POST', headers: auth() });
+    await registerSpineSession('delete-active-spine-sse-delete');
+    await fetch(`${daemon.url}/api/sessions/delete-active-spine-sse-delete/close`, { method: 'POST', headers: auth() });
 
     const ac = new AbortController();
     const streamRes = await fetch(`${daemon.url}/api/control-plane/events`, {
@@ -245,7 +245,7 @@ describe('sessions.delete (spine hard-delete verb)', () => {
     const timer = setTimeout(() => ac.abort(), 2000);
     try {
       // Fire the delete once the stream is open.
-      const deletePromise = fetch(`${daemon.url}/api/sessions/w5s1-spine-sse-delete`, {
+      const deletePromise = fetch(`${daemon.url}/api/sessions/delete-active-spine-sse-delete`, {
         method: 'DELETE',
         headers: auth(),
       });
@@ -262,7 +262,7 @@ describe('sessions.delete (spine hard-delete verb)', () => {
           if (!dataLine) continue;
           try {
             const parsed = JSON.parse(dataLine.slice(6)) as { event?: string; payload?: { sessionId?: string } };
-            if (parsed.event === 'session-deleted' && parsed.payload?.sessionId === 'w5s1-spine-sse-delete') {
+            if (parsed.event === 'session-deleted' && parsed.payload?.sessionId === 'delete-active-spine-sse-delete') {
               sawDeleted = true;
             }
           } catch {

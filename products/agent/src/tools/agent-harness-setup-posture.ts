@@ -17,7 +17,7 @@ import { captureHarnessLocalEffect } from './agent-harness-local-effect.ts';
 import type { SetupSmokeNativeEvidence } from './agent-setup-smoke-reference.ts';
 import { DEFAULT_AGENT_SETUP_WIZARD_CLEAR_CHECKPOINT_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_INSPECT_CHECKPOINT_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_MARK_CHECKPOINT_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_REVIEW_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_RERUN_SMOKE_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_SAVE_SMOKE_ROUTE } from '../agent/setup-wizard.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
-import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureCatalogSnapshot, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import { captureAsyncHarnessInput } from './agent-harness-async-input.ts';
 import type { AgentHarnessSetupArgs, SetupResolution } from './agent-harness-setup-posture-types.ts';
 import { buildSetupPlan } from './agent-harness-setup-plan.ts';
@@ -143,7 +143,16 @@ export async function setupPostureSummary(context: CommandContext, rawArgs: Agen
   const setupSmokeEvidence = latestSetupSmokeEvidence(context);
   const setupSmokeHistory = setupSmokeEvidenceHistory(context);
   const setupWizard = buildSetupWizard(plan, context);
-  const rankingContext = { snapshot, servicePosture, setupWizard, capabilities: all, plan, args };
+  // These two capture times are created by the native snapshot collectors.
+  // Keep the complete original observation bound while expressing its clocks
+  // as ISO timestamps; an epoch can coincidentally satisfy the card checksum.
+  const nativeSnapshot = captureCatalogSnapshot(snapshot);
+  caller.options.retainCurrent(() => nativeSnapshot.assertCurrent(snapshot), 'agent.setup.ranking-snapshot');
+  const observed = nativeSnapshot.captured;
+  const rankingSnapshot = { ...observed, capturedAt: new Date(observed.capturedAt).toISOString(),
+    providerAccounts: observed.providerAccounts === null ? null : { ...observed.providerAccounts,
+      capturedAt: new Date(observed.providerAccounts.capturedAt).toISOString() } };
+  const rankingContext = { snapshot: rankingSnapshot, servicePosture, setupWizard, capabilities: all, plan, args };
   const ranked = query ? await rankStatefulCatalog(all, query, item => ({ id: item.id, description: item.label }), 'agent.setup.capabilities', caller.options, rankingContext) : all;
   caller.assertCurrent();
   const rankedPlan = query ? await rankStatefulCatalog(plan, query, item => ({ id: item.id, description: item.label }), 'agent.setup.plan', caller.options, rankingContext) : plan;

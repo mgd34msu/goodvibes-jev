@@ -79,7 +79,7 @@ for (const mode of ['partial', 'none'] as const) {
   test(`captured ${mode} validator exception retains exact-byte undo and redo for both edits`, async () => {
     const f = await fixture(); let validators = 0;
     const result = await f.edit(async () => { validators++; throw new Error('Synthetic validator exception'); }).execute({ edits, validate: { after: ['build'] }, transaction: { mode } });
-    expect(result.success).toBe(false); expect(result.error).toBe('Unexpected error: [REDACTED]'); expect(validators).toBe(1);
+    expect(result.success).toBe(false); expect(result.error).toBe('Unexpected error: Synthetic validator exception'); expect(validators).toBe(1);
     roundTrip(f, edited);
   });
   test(`captured ${mode} terminal repair judgment records an earlier repair and the unhealed sibling`, async () => {
@@ -90,7 +90,7 @@ for (const mode of ['partial', 'none'] as const) {
       return base.ask(request);
     } });
     const result = await f.edit().execute({ edits, validate: { after: ['build'] }, transaction: { mode } });
-    expect(result.success).toBe(false); expect(judgments).toBe(2); expect(result.error).toBe('Unexpected error: [REDACTED]');
+    expect(result.success).toBe(false); expect(judgments).toBe(2); expect(result.error).toContain('Synthetic terminal judgment');
     roundTrip(f, [repaired, edited[1]!]);
   });
 }
@@ -199,7 +199,7 @@ test('captured denied initial admission leaves files and undo/redo unchanged', a
   const f = await fixture(); const historyUnchanged = preserveHistory(f); f.deny();
   let validators = 0;
   const result = await f.edit(async () => { validators++; throw new Error('must not run'); }).execute({ edits, validate: { after: ['build'] }, transaction: { mode: 'partial' } });
-  expect(result.success).toBe(false); expect(result.error).toBe('Unexpected error: [REDACTED]'); expect(result.output).toBeUndefined(); expect(validators).toBe(0); historyUnchanged();
+  expect(result.success).toBe(false); expect(result.error).toBe('Unexpected error: captured input path is access-restricted'); expect(result.output).toBeUndefined(); expect(validators).toBe(0); historyUnchanged();
   for (let index = 0; index < 2; index++) expect(bytes(f.root, index)).toEqual(Buffer.from(originals[index]!));
 });
 

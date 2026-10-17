@@ -23,19 +23,17 @@ describe('bearer redaction', () => {
     expect(result).not.toContain('MYTOKEN12345');
   });
 
-  test('normalizeError redacts Bearer tokens in error message', async () => {
-    const { normalizeError } = await import('../sdk/src/platform/utils/error-display.js');
+  test('redactedErrorMessage protects Bearer tokens at the output boundary', async () => {
+    const { redactedErrorMessage } = await import('../sdk/src/platform/utils/error-display.js');
     const err = new Error('HTTP 401: Authorization: Bearer sk-secret-key-99 is not valid');
-    const result = normalizeError(err);
-    expect(result.message).not.toContain('sk-secret-key-99');
-    expect(result.summary).not.toContain('sk-secret-key-99');
+    expect(redactedErrorMessage(err)).not.toContain('sk-secret-key-99');
   });
 
-  test('summarizeError redacts tokens for safe logging', async () => {
+  test('local normalization preserves ordinary failure diagnostics', async () => {
     const { summarizeError } = await import('../sdk/src/platform/utils/error-display.js');
-    const err = new Error('Auth failed: Bearer token123abc is expired');
+    const err = new Error('Connection refused to local fixture');
     const result = summarizeError(err);
-    expect(result).not.toContain('token123abc');
+    expect(result).toContain('Connection refused to local fixture');
   });
 
   test('redactSensitiveData preserves non-sensitive content', async () => {

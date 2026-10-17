@@ -43,20 +43,20 @@ describe('fatal diagnostics reach actual descriptors', () => {
     expect(run.stdout).toBe('service unit installed\n');
     expect(run.stderr).toBe('');
   });
-  test('default context, reason and actual stack are disclosed', () => {
+  test('default context and reason remain readable while an unclassified stack is withheld', () => {
     const run = runInlineWriter(`reportFatalBootFailure(new Error('settings.json could not be read'));`);
     expect(run.status).toBe(0);
-    expect(run.stderr).toBe('goodvibes daemon host failed: [REDACTED]\n[REDACTED]\n');
+    expect(run.stderr).toBe('goodvibes daemon host failed: settings.json could not be read\n[REDACTED]\n');
     expect(run.stdout).toBe('');
   });
   test('custom context replaces default label', () => {
     const run = runInlineWriter(`reportFatalBootFailure(new Error('boom'), 'goodvibes service install');`);
-    expect(run.stderr).toBe('[REDACTED] failed: [REDACTED]\n[REDACTED]\n');
-    expect(run.stderr).not.toContain('boom');
+    expect(run.stderr).toBe('[REDACTED] failed: boom\n[REDACTED]\n');
+    expect(run.stderr).toContain('boom');
   });
   test('non-Error reason is disclosed without invented stack', () => {
     const run = runInlineWriter(`reportFatalBootFailure('just a string');`);
-    expect(run.stderr).toBe('goodvibes daemon host failed: [REDACTED]\n');
+    expect(run.stderr).toBe('goodvibes daemon host failed: just a string\n');
     expect(run.stderr).not.toContain('at ');
   });
   test('closed descriptor does not turn diagnostic into second failure', () => {
@@ -83,7 +83,7 @@ describe('fatal diagnostics reach actual descriptors', () => {
     `);
     expect(run.status).toBe(0);
     expect(run.stdout).toBe('IDENTITY_PRESERVED\n');
-    expect(run.stderr).toContain('failed: [REDACTED]');
+    expect(run.stderr).toContain('failed: boot refused');
     expect(run.stdout + run.stderr).not.toContain(privateText);
     expect(run.stdout + run.stderr).not.toContain('synthetic-private-token');
     expect(run.stdout + run.stderr).not.toContain('4111 1111 1111 1111');
@@ -100,7 +100,7 @@ describe('fatal diagnostics reach actual descriptors', () => {
     `);
     expect(run.status).toBe(0);
     expect(run.stdout).toBe('STACK_READS=0\n');
-    expect(run.stderr).toBe('goodvibes daemon host failed: [REDACTED]\n');
+    expect(run.stderr).toBe('goodvibes daemon host failed: boot refused\n');
     expect(run.stdout + run.stderr).not.toContain('private accessor material');
   });
 

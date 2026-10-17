@@ -2,7 +2,7 @@
  * inbound-mail-cursor-uid-bounds.test.ts
  *
  * The UPPER bound on an IMAP position, at every point one can enter the system
- * (docs/inbound-email.md §9.1 rule 2, RFC 3501 §2.3.1.1).
+ * (docs/decisions/2026-07-27-inbound-email-design.md §9.1 rule 2, RFC 3501 §2.3.1.1).
  *
  * `uidValidity` and `lastSeenUid` used to be bounded only by SIGN. That is a
  * one-way trap rather than an ordinary validation gap, and the asymmetry is

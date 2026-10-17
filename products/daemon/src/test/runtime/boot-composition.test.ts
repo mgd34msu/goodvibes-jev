@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { BenchmarkStore, ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { Notifier } from '@goodvibes-jev/engine/sdk/platform/integrations';
 import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
+import * as webhookHttp from '@goodvibes-jev/engine/sdk/platform/utils';
 import { MemoryStore } from '@goodvibes-jev/engine/sdk/platform/state';
 import { registerInboxSurface } from '@goodvibes-jev/engine/sdk/platform/intake';
 import { NOTIFICATIONS_METADATA_ONLY_KEY, type NotificationDelivery } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
@@ -42,6 +43,7 @@ async function until(predicate: () => boolean, label: string) {
   }
 }
 function mockFetch(implementation: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>) {
+  keep(spyOn(webhookHttp, 'postToPublicWebhook').mockImplementation((url, init) => implementation(url, init)));
   return keep(spyOn(globalThis, 'fetch').mockImplementation(Object.assign(implementation, { preconnect() {} })));
 }
 async function fixture(configure?: (runtime: RuntimeServices) => void, withBoot = true) {

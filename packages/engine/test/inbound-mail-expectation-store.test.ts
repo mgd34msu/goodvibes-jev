@@ -1,7 +1,7 @@
 /**
  * inbound-mail-expectation-store.test.ts
  *
- * Proves the override docs/inbound-email.md §9.2 makes to
+ * Proves the override docs/decisions/2026-07-27-inbound-email-design.md §9.2 makes to
  * `VerificationExpectationBook`'s in-memory-only design: expectations now
  * persist across a restart, but ONLY with their original absolute expiry, and
  * ONLY when the persisted record passes the exact validation the live

@@ -587,7 +587,7 @@ describe('inbound watcher: capability sufficiency', () => {
 
 // ---------------------------------------------------------------------------
 //
-// `docs/inbound-email.md` §3.4d, "Scope sufficiency applies to both": a
+// `docs/decisions/2026-07-27-inbound-email-design.md` §3.4d, "Scope sufficiency applies to both": a
 // non-empty mailbox gets one BODY.PEEK at connect, answering whether the
 // server will hand over message content before any expectation could be
 // opened, instead of finding out reactively, on the first real fetch, which

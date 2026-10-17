@@ -99,7 +99,7 @@ describe('exec tool: working_dir default fallback', () => {
     const contents = readdirSync(root); const spawn = spyOn(Bun, 'spawn');
     try {
       const result = await tool.execute({ commands: [{ cmd: 'true' }] });
-      expect(result.success).toBe(false); expect(result.error).toBe('[REDACTED]'); expect(result.output).toBeUndefined();
+      expect(result.success).toBe(false); expect(result.error).toBe('exec requires an explicit working_dir'); expect(result.output).toBeUndefined();
       expect(spawn).not.toHaveBeenCalled(); expect(readdirSync(root)).toEqual(contents);
     } finally { spawn.mockRestore(); }
   });

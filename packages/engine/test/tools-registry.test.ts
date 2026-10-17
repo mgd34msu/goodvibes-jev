@@ -101,7 +101,7 @@ describe('ToolRegistry', () => {
       await expect(registry.execute('call-2', 'broken_tool', {})).rejects.toBeInstanceOf(ToolError);
     });
 
-    test('ToolError masks unread display text and retains the exact private cause', async () => {
+    test('ToolError preserves local display text and the exact cause', async () => {
       expect.assertions(5);
       const original = new Error('original message');
       const tool = makeTool('broken_tool'); tool.execute = async () => { throw original; };
@@ -112,7 +112,7 @@ describe('ToolRegistry', () => {
       } catch (err) {
         expect(err).toBeInstanceOf(ToolError);
         if (!(err instanceof ToolError)) throw err;
-        expect(err.message).toBe('[REDACTED]');
+        expect(err.message).toBe('original message');
         expect(err.code).toBe('TOOL_ERROR');
         expect(err.toolName).toBe('broken_tool');
         expect(err.cause).toBe(original);

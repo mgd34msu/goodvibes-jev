@@ -1,11 +1,8 @@
 /**
  * channel-inbox-list-verb.test.ts
  *
- * `channels.inbox.list`, the eighth and last of the channels route-reconcile
- * debt, and the only one whose answer this SDK cannot produce on its own.
- *
- * The other seven were served here (routes/channel-sync.ts). This one is served
- * by the HOST that holds the provider credentials: it attaches a handler over
+ * `channels.inbox.list` is served by the host that holds the provider
+ * credentials: it attaches a handler over
  * the catalog descriptor and answers from its synced provider mirror. So what
  * this file pins is the SEAM, at the level the SDK owns it:
  *
@@ -127,7 +124,7 @@ function helperFor(catalog: GatewayMethodCatalog): DaemonControlPlaneHelper {
   // Only `context.gatewayMethods` is touched on the invoke/scope path, so a
   // minimal stub is sufficient and honest, the same shape
   // runtime-metrics-gateway-verb.test.ts uses for the identical path.
-  return new DaemonControlPlaneHelper({ gatewayMethods: catalog } as unknown as DaemonControlPlaneContext);
+  return new DaemonControlPlaneHelper({ gatewayMethods: catalog, authToken: () => 'fixture-token' } as unknown as DaemonControlPlaneContext);
 }
 
 /**

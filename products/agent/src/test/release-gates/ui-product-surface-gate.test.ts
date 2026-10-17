@@ -170,6 +170,8 @@ describe('UI product surface gate', () => {
 
   test('model-facing catalogs cover current user-facing settings, surfaces, and keybindings', async () => {
     const managers = createTestManagers();
+    await managers.providerRegistry.ready();
+    await managers.providerRegistry.modelDiscoverySettled();
     const context = modelCatalogContext(managers);
 
     const surfaces = await listHarnessUiSurfaces(context, { includeParameters: true, limit: 500 }, { sourceOwner: ordinaryResearchOwner() }) as readonly {
@@ -268,20 +270,20 @@ describe('UI product surface gate', () => {
     expect(MAX_SETTING_LIMIT).toBeGreaterThanOrEqual(visible * 2);
   });
 
-  test('a settings catalog past the page ceiling still reports how many it left out', () => {
+  test('a large settings catalog is returned without an implicit page ceiling', () => {
     // A catalog deliberately larger than the ceiling, so this holds whatever
     // the real schema currently counts.
-    const oversized = MAX_SETTING_LIMIT + 10;
+    const oversized = 2_010;
     const configManager = syntheticConfigManager(oversized);
 
     const page = listHarnessSettings(configManager, {});
     const total = countHarnessSettings(configManager, {});
 
     expect(total).toBe(oversized);
-    expect(page.length).toBe(MAX_SETTING_LIMIT);
+    expect(page.length).toBe(oversized);
     // The page is short; the count that says so must not be the page's own length.
-    expect(total).toBeGreaterThan(page.length);
-    expect(formatHarnessSettingList(page, total)).toContain(`${page.length} of ${total}`);
+    expect(total).toBe(page.length);
+    expect(formatHarnessSettingList(page, total)).toContain(`Settings (${total})`);
   });
 
   test('the settings tool mode serves a catalog larger than the old 500 ceiling whole', async () => {
@@ -294,13 +296,12 @@ describe('UI product surface gate', () => {
     expect(body.note).toBeUndefined();
   });
 
-  test('the settings tool mode names what it left out when the catalog outgrows the ceiling', async () => {
-    const oversized = MAX_SETTING_LIMIT + 10;
+  test('the settings tool mode returns a large catalog without a truncation notice', async () => {
+    const oversized = 2_010;
     const body = await harnessSettingsCatalog(syntheticConfigManager(oversized), {} as never);
-    expect(body.returned).toBe(MAX_SETTING_LIMIT);
+    expect(body.returned).toBe(oversized);
     expect(body.total).toBe(oversized);
-    expect(String(body.note)).toContain(`Showing ${MAX_SETTING_LIMIT} of ${oversized} settings`);
-    expect(String(body.note)).toContain('not the full catalog');
+    expect(body.note).toBeUndefined();
   });
 
   test('a complete settings page does not claim to be short', () => {

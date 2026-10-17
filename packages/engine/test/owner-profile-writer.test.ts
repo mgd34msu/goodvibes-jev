@@ -3,13 +3,11 @@ import type { ProfileProjection } from '../sdk/src/platform/owner-profile/types.
  * owner-profile-writer.test.ts
  *
  * The writer's central promise: a write changes exactly the lines it should and
- * leaves every other byte identical. Design §14 items 4, 5, 7, 8, 14, 15 and 17,
- * plus the directory-level watch that keeps hand edits visible after the file's
+ * leaves every other byte identical. Also covers the directory-level watch that keeps hand edits visible after the file's
  * inode has been replaced by an atomic write.
  *
- * Items 14 and 15 are written first and deliberately: they are the ones a
- * plausible-looking implementation gets wrong, and they are what forced the
- * writer to be index-addressed rather than a re-serialisation of the model.
+ * Addressing individual source lines preserves formatting that would be lost
+ * by re-serializing the entire model.
  */
 import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
 import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';

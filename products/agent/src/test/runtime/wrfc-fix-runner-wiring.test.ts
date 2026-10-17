@@ -18,7 +18,7 @@ describe('Agent composition wires contract correction', () => {
   test('a stalled unit starts an isolated planned-fix unit on this runtime, and cancellation stops the repair after the checked worker retires', async () => {
     let fixCwd: string | undefined;
     const plans: string[] = [];
-    const fixture = contractRuntimeFixture(async (record, services) => {
+    const fixture = await contractRuntimeFixture(async (record, services) => {
       record.status = 'running';
       if (record.contractUnitId?.includes('.f1.')) {
         fixCwd = record.workingDirectory;

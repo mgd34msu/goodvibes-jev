@@ -557,3 +557,19 @@ test('catalog source refuses replacement of a model owner with the same provider
   const old = models[index]!; models[index] = { ...old };
   try { expect(() => source.assertCurrent()).toThrow(); } finally { models[index] = old; }
 });
+
+test('an identity lookup that keeps the same fallback does not retire the catalog', async () => {
+  const fake = fakePort(() => { throw new Error('Synthetic identity service unavailable'); });
+  const previous = installJudgmentPort(fake.port);
+  try {
+    const registry = makeRegistry();
+    const models = registry.listModels();
+    const revision = registry.getModelRegistryRevision();
+    const source = registry.captureProviderCatalogIds();
+    await Bun.sleep(0);
+    expect(fake.requests.length).toBeGreaterThan(0);
+    expect(registry.listModels()).toBe(models);
+    expect(registry.getModelRegistryRevision()).toBe(revision);
+    expect(() => source.assertCurrent()).not.toThrow();
+  } finally { installJudgmentPort(previous); }
+});

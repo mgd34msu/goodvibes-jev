@@ -95,7 +95,7 @@ describe('the line', () => {
     expect(await readUserFacingErrorLine({ status: 429, message: 'slow down' })).toBe('Rate limit reached: the provider is throttling requests. Wait a moment and retry, or switch models with /model.');
     expect(await readUserFacingErrorLine({ status: 401, message: 'Unauthorized' })).toBe('Authentication failed: the provider rejected your API key. Run /login to re-authenticate or check your API key.');
     const generic = await readUserFacingError(new Error('some unknown provider failure'));
-    expect(generic.message).toBe('Provider error: [REDACTED]');
+    expect(generic.message).toBe('Provider error: some unknown provider failure');
     expect(generic.action).toBe('Retry your last message, or switch models with /model.');
   });
 });

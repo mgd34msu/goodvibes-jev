@@ -54,11 +54,11 @@ describe('answer generation uses the inspected evidence snapshot', () => {
     await expect(synthesizeAnswer(llm, 'Question', 'standard', evidence, options())).rejects.toBeInstanceOf(JudgmentInputError);
     expect(calls).toBe(0); expect(requests).toHaveLength(0);
   });
-  test.each([['concise', 700], ['standard', 1400], ['detailed', 2200]] as const)('preserves %s generation budget and evidence', async (mode, maxTokens) => {
+  test.each(['concise', 'standard', 'detailed'] as const)('preserves %s evidence without an implicit generation budget', async mode => {
     const { llm, requests } = capturedLlm();
     const evidence = [{ reference: 'evidence-1', title: 'Manual', text: 'Four ports.', facts: ['HDMI ports: four'] }];
     await synthesizeAnswer(llm, 'How many?', mode, evidence, options());
-    expect(requests).toHaveLength(1); expect(requests[0]!.maxTokens).toBe(maxTokens);
+    expect(requests).toHaveLength(1); expect(requests[0]!.maxTokens).toBeUndefined();
     expect(JSON.parse(requests[0]!.prompt)).toEqual({ query: 'How many?', mode, evidence });
   });
 });

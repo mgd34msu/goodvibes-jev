@@ -345,8 +345,8 @@ export async function runPlanChecks(plan: ContractPlan, ask: string, shape: Requ
 }
 
 /**
- * Only the unit checks (role and scope), for a planned-fix group (design
- * 5.2): its criteria trace to criteria that already trace to the user, so
+ * Only the unit checks (role and scope), for a planned-fix group:
+ * its criteria trace to criteria that already trace to the user, so
  * trace and coverage are not asked again.
  */
 export async function runUnitShapeChecks(

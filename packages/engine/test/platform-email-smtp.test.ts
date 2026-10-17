@@ -474,7 +474,7 @@ describe('SmtpClient protocol', () => {
       timeoutMs: 5000,
     });
 
-    const bodyText = 'This is the expected body content for CRIT-2.';
+    const bodyText = 'This is the expected SMTP message body.';
     await client.sendMail({
       from: 'user@example.test',
       to: 'recipient@example.test',
@@ -487,7 +487,7 @@ describe('SmtpClient protocol', () => {
     expect(dataIdx).toBeGreaterThan(-1);
     const bodyLines = collectedData.slice(dataIdx + 1);
     const bodyText2 = bodyLines.join('\n');
-    expect(bodyText2).toContain('CRIT-2');
+    expect(bodyText2).toContain(bodyText);
   });
 
   test('no AUTH capability: throws descriptive error', async () => {

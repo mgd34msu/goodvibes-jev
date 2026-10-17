@@ -1,6 +1,6 @@
 /**
  * source-cursor.ts, the persisted position, discriminated by source
- * (docs/inbound-email.md §3.4d, §4).
+ * (docs/decisions/2026-07-27-inbound-email-design.md §3.4d, §4).
  *
  * IMAP's position is `UIDVALIDITY` + the highest UID fully processed. Gmail's
  * is a `historyId`, and the two are not the same kind of thing:

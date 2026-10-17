@@ -74,6 +74,9 @@ describe('stale server error-kind docs gate', () => {
     const settled = { verdict: 'no', outcome: 'act', probability: 0.04 } as const;
     expect(staleServerKindFindings(root, [DOC], stored(MIGRATION_NOTE, settled, { decision: 'errors.stale-server-kind@0' }))[0]).toContain('bun run error-kinds:read');
     expect(staleServerKindFindings(root, [DOC], stored(MIGRATION_NOTE, settled, { model: 'jev-0.0.1' }))[0]).toContain('bun run error-kinds:read');
+    const incomplete = stored(MIGRATION_NOTE, settled);
+    Reflect.deleteProperty(incomplete, 'model');
+    expect(staleServerKindFindings(root, [DOC], incomplete)[0]).toContain('bun run error-kinds:read');
     expect(staleServerKindFindings(root, [DOC], null)[0]).toContain('bun run error-kinds:read');
   });
 });

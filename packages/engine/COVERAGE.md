@@ -380,7 +380,7 @@ Regenerate via `bun scripts/print-test-coverage.ts > COVERAGE.md`
 | `test/conversational-reply-style.test.ts` |
 | `test/core-circuit-breaker.test.ts` |
 | `test/core-event-replay.test.ts` |
-| `test/core-qol-f456.test.ts` |
+| `test/provider-error-diagnostics.test.ts` |
 | `test/core-verb-rename-daemon-wire.test.ts` |
 | `test/core-verbs-conformance.test.ts` |
 | `test/correlation-ids.test.ts` |
@@ -1252,7 +1252,7 @@ Regenerate via `bun scripts/print-test-coverage.ts > COVERAGE.md`
 | `test/power-keep-awake-remote.test.ts` |
 | `test/power-sleep-ownership.test.ts` |
 | `test/power-work-signals-envelope.test.ts` |
-| `test/pr57-independent-persisted-races.test.ts` |
+| `test/independent-persisted-state-races.test.ts` |
 | `test/pre-commit-product-gates.test.ts` |
 | `test/pre-split-control-plane-sweep.test.ts` |
 | `test/prepared-scoped-secret-deletion.test.ts` |

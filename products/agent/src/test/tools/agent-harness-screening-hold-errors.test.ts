@@ -13,14 +13,14 @@ beforeEach(() => { previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); });
 afterAll(cleanupResearchScreeningFixtures);
 
-function read(owner: ProtectedSourceOwner) {
+function read(owner: ProtectedSourceOwner, signal?: AbortSignal) {
   return rankHarnessCatalog([candidate], 'build notes', entry => entry, 'agent.screening-error-control', {
-    sourceOwner: owner, requirePreservedSource: true,
+    sourceOwner: owner, requirePreservedSource: true, signal,
   });
 }
 
-async function refused(owner: ProtectedSourceOwner) {
-  try { await read(owner); }
+async function refused(owner: ProtectedSourceOwner, signal?: AbortSignal) {
+  try { await read(owner, signal); }
   catch (error) {
     if (!(error instanceof ToolInputProjectionError)) throw error;
     expect(error.name).toBe('ToolInputProjectionError');
@@ -106,14 +106,16 @@ test('actual local uncertainty preserves unsettled before canonical consumption'
   expect(fake.requests).toHaveLength(0); expect(native.owner.screen).toBe(originalScreen);
 });
 
-test('actual proposal timeout preserves route-unavailable under the original two-second ceiling', async () => {
+test('explicit cancellation stops a pending proposal before canonical consumption', async () => {
   const entered = Promise.withResolvers<void>(), gate = Promise.withResolvers<void>();
   const native = researchScreeningFixture({ beforeProposal: async () => { entered.resolve(); await gate.promise; } });
   const fake = fakePort(() => noulAnswer(0.999)); installJudgmentPort(fake.port);
-  const pending = refused(native.owner); await entered.promise;
+  const controller = new AbortController();
+  const pending = read(native.owner, controller.signal).catch((error: unknown) => error); await entered.promise;
+  controller.abort();
   try {
     const error = await pending;
-    expect(Object.getOwnPropertyDescriptor(error, 'cause')?.value).toEqual({ code: 'source-screening-held', reason: 'route-unavailable' });
+    expect(error).toBe(controller.signal.reason);
     expect(native.calls.map(call => call.path)).toEqual(['/v1/chat/completions']);
     expect(fake.requests).toHaveLength(0);
   } finally { gate.resolve(); }

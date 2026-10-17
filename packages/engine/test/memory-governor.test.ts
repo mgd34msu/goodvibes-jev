@@ -25,7 +25,7 @@ import {
 const MB = 1024 * 1024;
 
 describe('CacheRegistry membership gate (fails loudly)', () => {
-  test('RED: an unregistered cache id fails the membership check', () => {
+  test('an unregistered cache id fails the membership check', () => {
     expect(() => assertMemoryCacheRegistered('mystery-cache', 'test'))
       .toThrow(/unknown memory cache id "mystery-cache".*KNOWN_MEMORY_CACHES/s);
     expect(isMemoryCacheRegistered('mystery-cache')).toBe(false);
@@ -364,7 +364,7 @@ describe('MemoryGovernor budget resolution + snapshot', () => {
   });
 });
 
-describe('fix-round hardening (reviewer scenarios)', () => {
+describe('memory allocation pressure and failure handling', () => {
   const baseConfig = { budgetMb: 100, elevatedPct: 60, highPct: 80, criticalPct: 95, tripwireRateMbPerSec: 25, tripwireSustainSec: 60 };
   const noopDeps = { sampler: () => ({ rssBytes: 0, heapUsedBytes: 0 }) };
 

@@ -358,7 +358,10 @@ test('source windows fit the actual canonical selector without clipping evidence
   for (const captured of inputs) await staticOffendingAnchor.select(port, staticSelectionContext(captured), staticSelectionCandidates(captured));
   expect(fixture.requests).toHaveLength(inputs.length);
   for (const captured of inputs) for (const anchor of captured.anchors) expect(captured.source).toContain(anchor.text);
-  expect(() => captureStaticInputs('internal-identifier', 'huge.ts', `const text = '${'x'.repeat(200_000)}';`)).toThrow('complete source unit and context exceed');
+  const huge = `const text = '${'x'.repeat(200_000)}';`;
+  const captured = captureStaticInputs('internal-identifier', 'huge.ts', huge);
+  expect(captured).toHaveLength(1);
+  expect(captured[0]!.source).toBe(`1| ${huge}`);
 });
 
 test('unchanged deferred policy revalidates through a shared-file internal-only revision', async () => {

@@ -45,7 +45,10 @@
  * pure, and {@link claimSurfaceHome} is the thin filesystem shell around it.
  */
 
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { writeJsonFileAtomic } from '../utils/atomic-json-store.js';
+import { tryAcquireCrossProcessLock } from '../workspace/checkpoint/cross-process-lock.js';
 import { join } from 'node:path';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
@@ -53,6 +56,7 @@ import { summarizeError } from '../utils/error-display.js';
 /** The record written to the claim file. */
 export interface HomeOwnerClaim {
   readonly pid: number;
+  readonly token?: string | undefined;
   /** Epoch millis the claim was written. */
   readonly claimedAt: number;
   /**
@@ -197,6 +201,7 @@ function readClaim(path: string): HomeOwnerClaim | null {
       pid,
       claimedAt: Number.isFinite(Number(parsed.claimedAt)) ? Number(parsed.claimedAt) : 0,
       identity: typeof parsed.identity === 'string' ? parsed.identity : '',
+      token: typeof parsed.token === 'string' ? parsed.token : undefined,
     };
   } catch {
     return null;
@@ -230,7 +235,7 @@ export interface SurfaceHomeClaim {
  * disposed must not delete a claim the others are still standing on. Counted,
  * so the file goes away when the LAST holder in this process releases.
  */
-const heldClaims = new Map<string, number>();
+const heldClaims = new Map<string, { pid: number; token: string; count: number }>();
 
 export interface ClaimSurfaceHomeOptions {
   readonly homeDirectory: string;
@@ -249,66 +254,53 @@ export interface ClaimSurfaceHomeOptions {
  *   names the holding pid and is written to be shown to a person as-is.
  */
 export function claimSurfaceHome(options: ClaimSurfaceHomeOptions): SurfaceHomeClaim {
+  const path = surfaceHomeClaimPath(options.homeDirectory, options.surfaceRoot);
+  const unlock = tryAcquireCrossProcessLock(`${path}.lock`);
+  if (!unlock) {
+    const existing = readClaim(path);
+    throw new SurfaceHomeInUseError(`Another process is claiming or releasing this home: ${path}`, existing?.pid ?? 0);
+  }
+  try { return claimLockedHome(options, path); }
+  finally { unlock(); }
+}
+
+function claimLockedHome(options: ClaimSurfaceHomeOptions, path: string): SurfaceHomeClaim {
   const pid = options.pid ?? process.pid;
   const identity = options.identity ?? currentProcessIdentity();
-  const identityOf = options.identityOf ?? readProcessIdentity;
-  const now = options.now ?? Date.now;
-  const path = surfaceHomeClaimPath(options.homeDirectory, options.surfaceRoot);
-
   const existing = readClaim(path);
-  const decision = decideHomeClaim(
-    {
-      existing,
-      pid,
-      identity,
-      holderIdentityNow: existing && existing.pid !== pid ? identityOf(existing.pid) : null,
-    },
-    { surfaceRoot: options.surfaceRoot, homePath: path },
-  );
+  const decision = decideHomeClaim({
+    existing, pid, identity,
+    holderIdentityNow: existing && existing.pid !== pid ? (options.identityOf ?? readProcessIdentity)(existing.pid) : null,
+  }, { surfaceRoot: options.surfaceRoot, homePath: path });
+  if (decision.outcome === 'refuse') throw new SurfaceHomeInUseError(decision.message, decision.holderPid);
 
-  if (decision.outcome === 'refuse') {
-    throw new SurfaceHomeInUseError(decision.message, decision.holderPid);
+  let held = heldClaims.get(path);
+  if (!held || held.pid !== pid || held.token !== existing?.token) {
+    held = { pid, token: randomUUID(), count: 0 };
+    writeJsonFileAtomic(path, { pid, identity, token: held.token, claimedAt: (options.now ?? Date.now)() });
+    heldClaims.set(path, held);
   }
-
-  heldClaims.set(path, (heldClaims.get(path) ?? 0) + 1);
+  held.count += 1;
+  const owned = held;
   let released = false;
-  const release = (): void => {
-    if (released) return;
-    released = true;
-    const remaining = (heldClaims.get(path) ?? 1) - 1;
-    if (remaining > 0) {
-      heldClaims.set(path, remaining);
-      return; // another graph in this process is still standing on it
-    }
-    heldClaims.delete(path);
-    // Only ever remove a claim this process still owns: a claim that has since
-    // been rewritten by someone else belongs to them.
-    const onDisk = readClaim(path);
-    if (onDisk && onDisk.pid !== pid) return;
-    try {
-      rmSync(path, { force: true });
-    } catch (error) {
-      logger.debug('home-single-writer: releasing the home claim failed (best-effort)', {
-        path,
-        error: summarizeError(error),
-      });
-    }
+  return {
+    path,
+    release() {
+      if (released) return;
+      released = true;
+      if (heldClaims.get(path) !== owned) return;
+      if (--owned.count > 0) return;
+      heldClaims.delete(path);
+      // Acquisition and release use the same mutex; an old handle cannot
+      // remove a later claim, even if the process ID was reused.
+      let unlock: (() => void) | null = null;
+      try {
+        unlock = tryAcquireCrossProcessLock(`${path}.lock`);
+        if (!unlock) throw new Error('home claim is being updated');
+        if (readClaim(path)?.token === owned.token) rmSync(path, { force: true });
+      } catch (error) {
+        logger.debug('home-single-writer: releasing the home claim failed', { path, error: summarizeError(error) });
+      } finally { unlock?.(); }
+    },
   };
-
-  if (decision.outcome === 'already-held') return { path, release };
-
-  const claim: HomeOwnerClaim = { pid, claimedAt: now(), identity };
-  try {
-    mkdirSync(join(options.homeDirectory, '.goodvibes', options.surfaceRoot), { recursive: true });
-    writeFileSync(path, JSON.stringify(claim), 'utf-8');
-  } catch (error) {
-    // An unwritable home is a problem this guard must not turn into a refusal:
-    // the product's own storage layer will report it far better than a boot
-    // guard can, and refusing here would block a boot over a guard's own file.
-    logger.warn('home-single-writer: could not record the home claim, continuing without it', {
-      path,
-      error: summarizeError(error),
-    });
-  }
-  return { path, release };
 }

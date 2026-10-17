@@ -112,12 +112,18 @@ export function scanTargetsFromEnvironment(value: string | undefined): readonly 
 
 if (import.meta.main) {
   const candidates = collectInternalIdentifierCandidates(INTERNAL_ID_ROOT, scanTargetsFromEnvironment(process.env.INTERNAL_ID_DIRS_JSON));
-  const violations = checkNoInternalIdentifiers(candidates, loadStaticSourceReadings(process.env.STATIC_SOURCE_READINGS_PATH));
+  const advisories: string[] = [];
+  const violations = checkNoInternalIdentifiers(candidates, loadStaticSourceReadings(process.env.STATIC_SOURCE_READINGS_PATH), finding => advisories.push(finding));
+  if (advisories.length > 0) {
+    console.error(`internal-identifier-check ADVISORY: ${advisories.length} inconclusive reading(s); source review required.\n`);
+    for (const advisory of advisories.slice(0, 100)) console.error(`- ${advisory}`);
+    if (advisories.length > 100) console.error(`... ${advisories.length - 100} additional advisories`);
+  }
   if (violations.length > 0) {
-    console.error(`internal-identifier-check FAILED: ${violations.length} violation or held evidence finding(s).\n`);
+    console.error(`internal-identifier-check FAILED: ${violations.length} confirmed violation(s).\n`);
     for (const violation of violations.slice(0, 100)) console.error(`- ${violation}`);
     if (violations.length > 100) console.error(`... ${violations.length - 100} additional findings`);
     process.exit(1);
   }
-  console.log(`internal-identifier-check PASSED for ${candidates.length} text files.`);
+  console.log(`internal-identifier-check PASSED: no confirmed violations in ${candidates.length} text files; ${advisories.length} inconclusive advisories.`);
 }

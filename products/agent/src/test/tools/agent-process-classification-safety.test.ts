@@ -330,38 +330,39 @@ describe('protected process lifetime classification', () => {
   }
 
   for (const change of ['abort', 'session', 'owner-revoked'] as const) {
-    test(`the real ProcessManager fences ${change} during environment screening`, async () => {
-      const local = researchScreeningFixture(); const f = fixture(local.owner), pending = latch();
+    test(`the real ProcessManager fences ${change} during the local environment scrub`, async () => {
+      const local = researchScreeningFixture(); const f = fixture(local.owner);
       const manager = new ProcessManager(); (f.context.workspace as { processManager?: ProcessManager }).processManager = manager;
       const controller = new AbortController();
-      const key = `JEV_PROCESS_LIFETIME_${change.replaceAll('-', '_').toUpperCase()}`;
-      const previous = process.env[key]; process.env[key] = 'synthetic';
-      const fake = fakePort((name) => noulAnswer(name === 'long_lived' ? 0.99 : 0.01));
-      installJudgmentPort({ ...fake.port, async ask(request) {
-        if ((request.state as { name?: string }).name === key) { pending.started(); await pending.gate; }
-        return fake.port.ask(request);
-      } });
+      installJudgmentPort(fakePort(name => noulAnswer(name === 'long_lived' ? 0.99 : 0.01)).port);
+      let entered = false;
+      const allowlist = new Set<string>();
+      allowlist.has = () => {
+        if (!entered) {
+          entered = true;
+          if (change === 'abort') controller.abort(new Error('synthetic cancellation'));
+          if (change === 'session') (f.context.session.runtime as { sessionId: string }).sessionId = 'new';
+          if (change === 'owner-revoked') local.lifetime.abort();
+        }
+        return false;
+      };
+      const spawn = manager.spawn.bind(manager);
+      const wrapper = spyOn(manager, 'spawn').mockImplementation((command, cwd, env, options) =>
+        spawn(command, cwd, env, { ...options, credentialEnvScrub: { enabled: true, allowlist } }));
       const launches = spyOn(Bun, 'spawn').mockImplementation(() => { throw new Error('Unexpected synthetic launch'); });
       try {
-        const result = f.run(start, f.options(controller.signal));
-        const settled = result.then(() => undefined, (error: unknown) => error);
-        await pending.first;
-        if (change === 'abort') controller.abort(new Error('synthetic cancellation'));
-        if (change === 'session') (f.context.session.runtime as { sessionId: string }).sessionId = 'new';
-        if (change === 'owner-revoked') local.lifetime.abort();
-        pending.release(); expect(await settled).toBeInstanceOf(Error);
+        await expect(f.run(start, f.options(controller.signal))).rejects.toThrow();
+        expect(entered).toBe(true);
         await manager.close(); expect(launches).not.toHaveBeenCalled(); expect(manager.list()).toEqual([]);
       } finally {
-        pending.release(); await manager.close(); launches.mockRestore();
-        if (previous === undefined) delete process.env[key]; else process.env[key] = previous;
+        await manager.close(); launches.mockRestore(); wrapper.mockRestore();
       }
     });
   }
 
   test('authentic terminal permission revocation during the real environment scrub prevents Bun.spawn', async () => {
-    const f = fixture(), pending = latch(); let revision = 0;
+    const f = fixture(); let revision = 0;
     const processManager = new ProcessManager(); (f.context.workspace as { processManager?: ProcessManager }).processManager = processManager;
-    const key = 'JEV_PROCESS_LIFETIME_PERMISSION'; const previous = process.env[key]; process.env[key] = 'synthetic';
     const config = {
       getAutonomousSnapshot: () => ({ permissions: { mode: revision ? 'allow-all' : 'prompt', tools: {} }, autoApprove: false, directory: f.root, incarnation: revision }),
       isAutoApproveEnabled: () => false, getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }), getWorkingDirectory: () => f.root,
@@ -372,10 +373,13 @@ describe('protected process lifetime classification', () => {
     const fake = fakePort((name, question) => question.type === 'noul' ? noulAnswer(name === 'long_lived' || name === 'mutates' ? 0.99 : 0.01)
       : choiceAnswer(question, name === 'disposition' ? 'act' : name === 'family' || name === 'capability' ? 'generic' : name === 'hazard' ? 'none' : 'other', 0.99));
     using log = new SqliteDecisionLog(':memory:');
-    installJudgmentPort(withDecisionLog({ ...fake.port, async ask(request) {
-      if ((request.state as { name?: string }).name === key) { pending.started(); await pending.gate; }
-      return fake.port.ask(request);
-    } }, log));
+    installJudgmentPort(withDecisionLog(fake.port, log));
+    let entered = false;
+    const allowlist = new Set<string>();
+    allowlist.has = () => { if (!entered) { entered = true; revision++; } return false; };
+    const spawn = processManager.spawn.bind(processManager);
+    const wrapper = spyOn(processManager, 'spawn').mockImplementation((command, cwd, env, options) =>
+      spawn(command, cwd, env, { ...options, credentialEnvScrub: { enabled: true, allowlist } }));
     const launches = spyOn(Bun, 'spawn').mockImplementation(() => { throw new Error('Unexpected synthetic launch'); });
     try {
       const call = await registry.prepareCall('admitted-real', 'terminal', { command: start.command, background: true, confirm: true, explicitUserRequest: start.explicitUserRequest });
@@ -383,12 +387,10 @@ describe('protected process lifetime classification', () => {
         sourceOf: () => ({ goal: 'Open the synthetic browser', criteria: [] }), schemaRevision: call.schemaRevision, preparedCall: { registry, call },
       });
       const result = registry.executePrepared(call, admission); const settled = result.then(() => undefined, (error: unknown) => error);
-      await pending.first; revision++; pending.release();
       expect(await settled).toBeInstanceOf(Error); await processManager.close();
-      expect(launches).not.toHaveBeenCalled(); expect(processManager.list()).toEqual([]);
+      expect(entered).toBe(true); expect(launches).not.toHaveBeenCalled(); expect(processManager.list()).toEqual([]);
     } finally {
-      pending.release(); await processManager.close(); launches.mockRestore();
-      if (previous === undefined) delete process.env[key]; else process.env[key] = previous;
+      await processManager.close(); launches.mockRestore(); wrapper.mockRestore();
     }
   });
 

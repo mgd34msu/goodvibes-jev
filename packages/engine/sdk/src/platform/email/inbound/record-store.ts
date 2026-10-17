@@ -1,5 +1,5 @@
 /**
- * record-store.ts, the durable inbound-mail record store (docs/inbound-email.md §9.3).
+ * record-store.ts, the durable inbound-mail record store (docs/decisions/2026-07-27-inbound-email-design.md §9.3).
  *
  * Every arriving message the watcher looks at is recorded here, structured
  * fields (sender, subject, delivery evidence, link verdicts, outcome, notice
@@ -8,7 +8,7 @@
  * disclose. This is NOT the turn-scoped untrusted-content ledger
  * (`platform/security/untrusted-content.ts`): recording here happens at
  * arrival, has no watermark, and never feeds `evaluateOutwardEffect`. See
- * docs/inbound-email.md §5.1, arrival is not ingest.
+ * docs/decisions/2026-07-27-inbound-email-design.md §5.1, arrival is not ingest.
  *
  * Follows the same five-rule shape as `platform/devices/device-grants.ts`:
  *  1. Reap on recovery, records past their retention window, or past the
@@ -309,7 +309,7 @@ export type InboundMailRecordInput =
 
 /**
  * Durable inbound-mail record store, named to match `InboundMailContext`
- * (docs/inbound-email.md §2.1), which carries it as `records`.
+ * (docs/decisions/2026-07-27-inbound-email-design.md §2.1), which carries it as `records`.
  */
 export class InboundMailStore {
   private readonly store: PersistentStore<InboundMailSnapshot>;

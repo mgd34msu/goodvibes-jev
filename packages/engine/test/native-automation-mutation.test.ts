@@ -22,18 +22,17 @@ import { gateReadingsPort, forgetGateReadings } from './_helpers/gate-readings.j
 const cleanup: Array<() => void | Promise<void>> = [];
 let log: SqliteDecisionLog, port: JudgmentPort, previous: ReturnType<typeof installJudgmentPort>;
 let outcome: 'act' | 'reject', requests: JudgmentRequest<Questions>[];
-let beforeRead: ((request: JudgmentRequest<Questions>) => void | Promise<void>) | undefined;
-async function waitForDisposition(entered: Promise<void>, pending: Promise<{ readonly status: number; readonly ok: boolean; readonly body: unknown }>): Promise<void> {
-  await Promise.race([entered, pending.then(result => { throw new Error(`The actual native request returned before disposition: ${JSON.stringify(result)}`); })]);
+let beforeAdmission: (() => void | Promise<void>) | undefined;
+async function waitForAdmission(entered: Promise<void>, pending: Promise<{ readonly status: number; readonly ok: boolean; readonly body: unknown }>): Promise<void> {
+  await Promise.race([entered, pending.then(result => { throw new Error(`The actual native request returned before admission: ${JSON.stringify(result)}`); })]);
 }
 beforeEach(() => {
-  forgetGateReadings(); outcome = 'act'; beforeRead = undefined; requests = [];
+  forgetGateReadings(); outcome = 'act'; beforeAdmission = undefined; requests = [];
   log = new SqliteDecisionLog(':memory:');
   const gates = gateReadingsPort(), actions = fakePort((_name, question) => choiceAnswer(question,
     outcome === 'act' && question.type === 'choice' && !Object.hasOwn(question.criteria, 'act') ? 'reject' : outcome, 0.99));
   port = withDecisionLog({ model: gates.port.model, async ask(request) {
     request.signal?.throwIfAborted(); request.beforeAttempt?.(); requests.push(request);
-    await beforeRead?.(request); request.signal?.throwIfAborted(); request.beforeAttempt?.();
     return 'disposition' in request.questions ? actions.port.ask(request) : gates.port.ask(request);
   } }, log);
   previous = installJudgmentPort(port);
@@ -50,6 +49,12 @@ async function fixture() {
   const paired = pairing.mint({ name: 'Synthetic scheduling client' }), lifetime = new AbortController();
   let humans = 0;
   const permissionManager = new PermissionManager(async () => { humans++; throw new Error('Unexpected human fallback'); }, createPermissionConfigReader(actual.config), new PolicyRuntimeState());
+  const admit = permissionManager.admitAutonomous.bind(permissionManager);
+  permissionManager.admitAutonomous = async (...args) => {
+    const admission = await admit(...args);
+    await beforeAdmission?.();
+    return admission;
+  };
   const host = { permissionManager, port, config: actual.config, signal: lifetime.signal, workspaceTrust: null, workspaceRoot: directory };
   cleanup.push(registerNativeAutomationGatewayMethods(catalog, { manager: actual.manager, host }));
   const readBody = async (request: Request) => {
@@ -71,34 +76,34 @@ async function fixture() {
   return { ...actual, directory, selected, catalog, pairing, paired, host, helper, call, patch, readBody, lifetime, humans: () => humans };
 }
 
-test('actual paired native update records fresh Jev and durably changes only the selected job', async () => {
+test('actual paired native update durably changes only the selected job without a secondary gate', async () => {
   const f = await fixture(), other = await f.create('Other');
   const result = await f.call(f.patch()); expect(result.status).toBe(200);
   expect(f.manager.getJob(f.selected.id)?.name).toBe('Native durable'); expect(f.manager.getJob(other.id)).toEqual(other);
   const disk = await f.store.load(); expect(disk.jobs.find(job => job.id === f.selected.id)?.name).toBe('Native durable');
-  expect(f.humans()).toBe(0); expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(1);
+  expect(f.humans()).toBe(0); expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
   expect(JSON.stringify(requests)).not.toContain(f.paired.token);
 });
 
-test('native clock meaning is lossless while prompt card material remains refused', async () => {
+test('native clock remains local while protected prompt material is refused', async () => {
   const nativeClock = 1791693573084;
   const time = spyOn(Date, 'now').mockReturnValue(nativeClock);
   let f: Awaited<ReturnType<typeof fixture>>;
   try { f = await fixture(); } finally { time.mockRestore(); }
   expect(f.selected.createdAt).toBe(nativeClock);
   expect((await f.call(f.patch())).status).toBe(200);
-  expect(JSON.stringify(requests)).toContain(new Date(nativeClock).toISOString());
+  expect(requests).toHaveLength(0);
   expect(JSON.stringify(requests)).not.toContain(String(nativeClock));
   const selected = f.manager.getJob(f.selected.id); if (!selected) throw new Error('Missing actual selected job');
-  const before = readFileSync(f.path), dispatched = requests.length;
+  const before = readFileSync(f.path);
   const refused = await f.call({ jobId: selected.id, expectedMutationRevision: selected.mutationRevision, prompt: 'Send card number 4111111111111111', admission: 'autonomous' });
-  expect(refused.ok).toBe(false); expect(requests).toHaveLength(dispatched); expect(readFileSync(f.path)).toEqual(before); expect(f.manager.getJob(selected.id)).toEqual(selected);
+  expect(refused.ok).toBe(false); expect(requests).toHaveLength(0);
+  expect(readFileSync(f.path)).toEqual(before); expect(f.manager.getJob(selected.id)).toEqual(selected);
 });
 
-test.each(['shared', 'missing revision', 'rejected', 'plan'] as const)('native %s cannot manufacture an automation write', async kind => {
+test.each(['shared', 'missing revision', 'plan'] as const)('native %s cannot manufacture an automation write', async kind => {
   const f = await fixture(), before = readFileSync(f.path), body: Record<string, unknown> = f.patch();
   if (kind === 'missing revision') delete body.expectedMutationRevision;
-  if (kind === 'rejected') outcome = 'reject';
   if (kind === 'plan') f.config.set('permissions.mode', 'plan');
   expect((await f.call(body, undefined, kind === 'shared' ? 'synthetic-shared' : f.paired.token)).ok).toBe(false);
   expect(readFileSync(f.path)).toEqual(before); expect(f.manager.getJob(f.selected.id)).toEqual(f.selected); expect(f.humans()).toBe(0);
@@ -107,8 +112,8 @@ test.each(['shared', 'missing revision', 'rejected', 'plan'] as const)('native %
 test.each(['abort', 'revoke', 'stop', 'request', 'replace method', 'physical replacement'] as const)('pending native admission retains %s and commits no job bytes', async kind => {
   const f = await fixture(), bytes = readFileSync(f.path), controller = new AbortController(), body = f.patch();
   const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
-  beforeRead = async request => { if ('disposition' in request.questions) { entered.resolve(); await release.promise; } };
-  const pending = f.call(body, undefined, f.paired.token, controller.signal); await waitForDisposition(entered.promise, pending);
+  beforeAdmission = async () => { entered.resolve(); await release.promise; };
+  const pending = f.call(body, undefined, f.paired.token, controller.signal); await waitForAdmission(entered.promise, pending);
   let restore: (() => void) | undefined;
   if (kind === 'abort') controller.abort();
   if (kind === 'revoke') expect(f.pairing.revoke(f.paired.id)).toBe(true);
@@ -126,15 +131,15 @@ test('pending native selection survives unrelated job update, but rejects its ow
   const f = await fixture(), other = await f.create('Other');
   const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
   let retained = false;
-  beforeRead = async request => { if ('disposition' in request.questions && !retained) { retained = true; entered.resolve(); await release.promise; } };
-  const pending = f.call(f.patch()); await waitForDisposition(entered.promise, pending);
+  beforeAdmission = async () => { if (!retained) { retained = true; entered.resolve(); await release.promise; } };
+  const pending = f.call(f.patch()); await waitForAdmission(entered.promise, pending);
   expect((await f.call({ jobId: other.id, name: 'Other retained', expectedMutationRevision: other.mutationRevision, admission: 'autonomous' })).ok).toBe(true);
   release.resolve(); expect((await pending).ok).toBe(true);
   expect(f.manager.getJob(other.id)?.name).toBe('Other retained');
   const current = f.manager.getJob(f.selected.id); if (!current?.mutationRevision) throw new Error('Missing actual revision');
   const arrived = Promise.withResolvers<void>(), resume = Promise.withResolvers<void>();
-  beforeRead = async request => { if ('disposition' in request.questions) { arrived.resolve(); await resume.promise; } };
-  const stale = f.call({ ...f.patch(), expectedMutationRevision: current.mutationRevision }); await waitForDisposition(arrived.promise, stale);
+  beforeAdmission = async () => { arrived.resolve(); await resume.promise; };
+  const stale = f.call({ ...f.patch(), expectedMutationRevision: current.mutationRevision }); await waitForAdmission(arrived.promise, stale);
   await f.manager.updateJob(current.id, { name: 'Temporary' }); await f.manager.updateJob(current.id, { name: current.name });
   resume.resolve(); expect((await stale).ok).toBe(false); expect(f.manager.getJob(other.id)?.name).toBe('Other retained');
 });
@@ -167,7 +172,7 @@ test.each(['revoke', 'physical replacement'] as const)('prepared native job perm
   expect(prepared).toBe(true);
   if (kind === 'revoke') { expect(revoked).toBe(true); expect(f.pairing.authenticate(f.paired.token)).toBeNull(); }
   expect(readFileSync(f.path)).toEqual(before); expect(f.manager.getJob(f.selected.id)).toEqual(f.selected);
-  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(1);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
 });
 
 test('manual update remains native and does not claim an autonomous Jev admission', async () => {

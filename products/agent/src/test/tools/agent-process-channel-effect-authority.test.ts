@@ -117,8 +117,8 @@ test('recorded admission launches, stops, and sends without JSON confirmation', 
 
 test.each(['plan', 'custom'] as const)('recorded synthetic read does not bypass %s mutation floors', async mode => {
   const process = processScene(), send = sendScene(); const deny = mode === 'custom' ? { write: 'deny' as const } : {};
-  await expect(recordedEffectFixture(createAgentTerminalTool(process.context), mode, deny, process.root).run(terminalArgs)).rejects.toThrow();
-  await expect(recordedEffectFixture(createAgentProcessTool(process.context), mode, deny, process.root).run({ action: 'write', processId: 'fixture-process', data: 'fixture' })).rejects.toThrow();
+  expect((await recordedEffectFixture(createAgentTerminalTool(process.context), mode, deny, process.root).run(terminalArgs).catch(() => ({ success: false }))).success).toBe(false);
+  expect((await recordedEffectFixture(createAgentProcessTool(process.context), mode, deny, process.root).run({ action: 'write', processId: 'fixture-process', data: 'fixture' }).catch(() => ({ success: false }))).success).toBe(false);
   const result = await recordedEffectFixture(createAgentChannelSendTool(send.router), mode, deny).run({ ...sendArgs, confirm: true, explicitUserRequest: 'Caller assertion' });
   expect(result.success).toBe(false); expect(process.launches()).toBe(0); expect(process.writes()).toBe(0); expect(send.requests).toHaveLength(0);
 });
@@ -207,7 +207,7 @@ test('slash dispatch refuses caller flags and preserves exact original facade ad
 
 test('slash dispatch refuses plan effects and changed handler after authority sampling', async () => {
   const planned = commandScene('plan');
-  await expect(planned.fixture.run({ commandName: 'synthetic-effect' })).rejects.toThrow(); expect(planned.effects()).toBe(0);
+  expect(await planned.fixture.run({ commandName: 'synthetic-effect' })).toMatchObject({ success: false, error: 'plan_mode' }); expect(planned.effects()).toBe(0);
   const changed = commandScene(); changed.beforeRun(() => changed.fixture.beforeAuthorityRead(() => {
     const command = changed.commands.get('synthetic-effect');
     if (command) command.handler = () => { throw new Error('Changed handler must never run'); };
@@ -235,7 +235,7 @@ test('onboarding requires actual admission and writes physically owned markers w
 
 test('onboarding refuses read-only mode and physical user-store escape', async () => {
   const planned = workspaceScene('plan');
-  await expect(planned.fixture.run({ actionId: 'onboarding-apply-close' })).rejects.toThrow();
+  expect(await planned.fixture.run({ actionId: 'onboarding-apply-close' })).toMatchObject({ success: false, error: 'plan_mode' });
   expect(existsSync(getOnboardingCompletionMarkerPath(planned.process.workspace.shellPaths))).toBe(false);
   const escaped = workspaceScene(); const outside = mkdtempSync(join(tmpdir(), 'agent-onboarding-outside-')); roots.push(outside);
   symlinkSync(outside, join(escaped.process.root, '.goodvibes'));
@@ -326,7 +326,7 @@ test('draft and routing writes use original admission and cannot be forged with 
     async execute(args, options) { const result = channelRoutingRemoveHandoff(process.context, args, options); return { success: typeof result !== 'string', output: JSON.stringify(result) }; } };
   expect(await recordedEffectFixture(remove, 'prompt', {}, process.root).run({ draftRoute: JSON.parse(route.output!).route.id })).toMatchObject({ success: true });
   expect(listChannelProfileRoutes(process.workspace.shellPaths).routes).toHaveLength(0);
-  await expect(recordedEffectFixture(save, 'plan', {}, process.root).run(args)).rejects.toThrow();
+  expect(await recordedEffectFixture(save, 'plan', {}, process.root).run(args)).toMatchObject({ success: false, error: 'plan_mode' });
 });
 
 test.each(['draft', 'route'] as const)('admitted %s synchronization selects fresh native admission without claiming a human request', async kind => {
@@ -354,7 +354,7 @@ test.each(['draft', 'route'] as const)('admitted %s synchronization selects fres
       : { surfaceKind: 'slack', profileId: 'fixture-native-profile' };
     expect(await tool.execute({ ...args, admission: 'autonomous', confirm: true, explicitUserRequest: 'Caller claim' })).toMatchObject({ success: false });
     expect(requests).toHaveLength(0);
-    await expect(recordedEffectFixture(tool, 'plan', {}, process.root).run(args)).rejects.toThrow();
+    expect(await recordedEffectFixture(tool, 'plan', {}, process.root).run(args)).toMatchObject({ success: false, error: 'plan_mode' });
     expect(requests).toHaveLength(0);
     const result = await recordedEffectFixture(tool, 'prompt', {}, process.root).run(args);
     expect(result.success).toBe(true); expect(requests).toHaveLength(1);

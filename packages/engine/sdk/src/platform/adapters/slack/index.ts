@@ -241,6 +241,7 @@ export async function handleSlackSurfacePayload(
       threadId: event.threadTs ?? event.eventTs,
       workspaceId: event.teamId,
       conversationKind: event.threadTs ? 'thread' : 'channel',
+      parentConversationKind: 'channel',
       text: task,
       mentioned,
       metadata: {

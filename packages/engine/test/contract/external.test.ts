@@ -1,5 +1,5 @@
 /**
- * The external work seam (contract/external.ts, design 8.4): the bridge hands
+ * The external work seam (contract/external.ts): the bridge hands
  * every call to the adapter a surface that does not embed the runner supplied,
  * in order, with the contract's id and status on the request.
  */

@@ -57,8 +57,8 @@ export interface FakeMessage {
    * The `Message-ID` header. Defaults to `<uid-N@example.test>`, which is
    * distinct per UID.
    *
-   * Overridable because the default made §12 gate #14, "a `Message-ID`
-   * collision cannot suppress a message", UNCONSTRUCTIBLE: minting one id per
+   * Overridable to test that a `Message-ID`
+   * collision cannot suppress a message: minting one id per
    * UID meant a collision could not be built, so the gate could never be
    * satisfied and the property it protects went untested. `Message-ID` is
    * sender-controlled, and a harness that cannot forge it cannot exercise the
@@ -175,7 +175,7 @@ export interface FakeMailboxServer {
    * Add a message; announce it with `* n EXISTS` to anyone connected.
    *
    * `messageId` forges the `Message-ID` header, pass the SAME one twice to
-   * build the collision gate #14 demands.
+   * exercise delivery of distinct messages sharing a header value.
    */
   deliver(subject?: string, messageId?: string): FakeMessage;
   /** Add a message WITHOUT announcing it, mail that arrived while down. */

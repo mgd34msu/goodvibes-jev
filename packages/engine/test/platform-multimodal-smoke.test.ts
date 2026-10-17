@@ -1,9 +1,3 @@
-/**
- * Coverage-gap smoke test, platform/multimodal
- * Instantiates MultimodalService with minimal stub dependencies and
- * invokes getStatus() and listProviders() to assert observable return shapes.
- * Closes coverage gap: platform/multimodal
- */
 
 import { describe, expect, test } from 'bun:test';
 import { MultimodalService } from '../sdk/src/platform/multimodal/service.js';

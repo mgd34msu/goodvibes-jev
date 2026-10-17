@@ -35,7 +35,7 @@ function result(records: MemoryRecord[], recallFiltered: boolean): HonestMemoryS
   };
 }
 
-describe('recall-snapshot note: freshness vocabulary (Fix 3)', () => {
+describe('recall-snapshot note: freshness vocabulary', () => {
   test('a fresh snapshot reads lowercase with humanized seconds, never raw ms', () => {
     const snap = buildRecallSnapshot(result([record('a', 70)], true), 'local', 1_000, 30_000, 6_000);
     expect(snap.stale).toBe(false);
@@ -56,7 +56,7 @@ describe('recall-snapshot note: freshness vocabulary (Fix 3)', () => {
   });
 });
 
-describe('recall-snapshot note: honest count label vs the recall flag (Fix 3)', () => {
+describe('recall-snapshot note: honest count label vs the recall flag', () => {
   test('a recall-filtered capture labels its count "recall-eligible"', () => {
     const snap = buildRecallSnapshot(result([record('a', 70)], true), 'local', 0, 30_000, 1_000);
     expect(snap.note).toContain('1 record(s) recall-eligible');
@@ -72,7 +72,7 @@ describe('recall-snapshot note: honest count label vs the recall flag (Fix 3)', 
   });
 });
 
-describe('honest search result carries the recall floor (Fix 4)', () => {
+describe('honest search result carries the recall floor', () => {
   const store = {
     search: (_: unknown) => [record('a', 70), record('b', 30)],
     searchSemantic: (_: unknown) => [],

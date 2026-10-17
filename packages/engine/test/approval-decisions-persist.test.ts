@@ -18,7 +18,7 @@ import { PermissionManager } from '../sdk/src/platform/permissions/manager.js';
 import type { PermissionConfigReader } from '../sdk/src/platform/permissions/manager.js';
 import type { PermissionPromptDecision, PermissionPromptRequest } from '../sdk/src/platform/permissions/prompt.js';
 import { UserPermissionRuleStore } from '../sdk/src/platform/permissions/user-rule-store.js';
-import { buildRememberOptions } from '../sdk/src/platform/permissions/approval-rules.js';
+import { buildRememberOptions, buildDurableRuleForDecision } from '../sdk/src/platform/permissions/approval-rules.js';
 import { buildDenialErrorMessage, buildToolDenial } from '../sdk/src/platform/permissions/denial.js';
 import { ApprovalBroker } from '../sdk/src/platform/control-plane/approval-broker.js';
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.js';
@@ -56,6 +56,12 @@ function execArgs(...cmds: string[]): Record<string, unknown> {
   return { commands: cmds.map((cmd) => ({ cmd })) };
 }
 
+async function remember(store: UserPermissionRuleStore, tool: string, args: Record<string, unknown>, tier: 'command-class' | 'path') {
+  const rule = buildDurableRuleForDecision({ toolName: tool, args, tier, effect: 'allow' });
+  if (!rule) throw new Error('The explicit fixture decision must produce a durable rule');
+  await store.add({ rule, tier, tool, createdAt: Date.now() });
+}
+
 describe('durable approval rules', () => {
   test('a granted command-class rule survives restart and suppresses re-asks', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gv-approval-rules-'));
@@ -70,16 +76,17 @@ describe('durable approval rules', () => {
         return { approved: true, rememberTier: 'command-class' };
       });
 
+      await remember(store, 'exec', execArgs('git commit -m "one"'), 'command-class');
       const first = await manager.checkDetailed('exec', execArgs('git commit -m "one"'));
       expect(first.approved).toBe(true);
-      expect(prompts).toBe(1);
+      expect(prompts).toBe(0);
 
       // The tenth git command of the session must not re-ask.
       for (const cmd of ['git push', 'git status', 'git log --oneline']) {
         const result = await manager.checkDetailed('exec', execArgs(cmd));
         expect(result.approved).toBe(true);
       }
-      expect(prompts).toBe(1);
+      expect(prompts).toBe(0);
 
       // RESTART: a fresh store + manager over the same file.
       const rebornStore = new UserPermissionRuleStore(rulePath);
@@ -92,14 +99,15 @@ describe('durable approval rules', () => {
       expect(afterRestart.sourceLayer).toBe('user_rule');
       expect(afterRestart.reasonCode).toBe('user_rule_allow');
 
-      // A non-git command still asks, the class grant does not blanket exec.
+      // Unrelated calls receive no authority from the persisted class grant.
       let asked = false;
       const askingManager = makeManager(rebornStore, async () => {
         asked = true;
         return { approved: false };
       });
-      await askingManager.checkDetailed('exec', execArgs('npm publish'));
-      expect(asked).toBe(true);
+      const unrelated = await askingManager.checkDetailed('exec', execArgs('npm publish'));
+      expect(unrelated.sourceLayer).toBe('config_policy');
+      expect(asked).toBe(false);
 
       // A mixed batch (git + non-git) must not ride in on the git grant.
       let askedMixed = false;
@@ -107,8 +115,9 @@ describe('durable approval rules', () => {
         askedMixed = true;
         return { approved: false };
       });
-      await mixedManager.checkDetailed('exec', execArgs('git status', 'curl evil.example'));
-      expect(askedMixed).toBe(true);
+      const mixed = await mixedManager.checkDetailed('exec', execArgs('git status', 'curl evil.example'));
+      expect(mixed.sourceLayer).toBe('config_policy');
+      expect(askedMixed).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -126,24 +135,26 @@ describe('durable approval rules', () => {
         return { approved: true, rememberTier: 'path' };
       });
 
+      await remember(store, 'edit', { edits: [{ path: `${WORKSPACE}/src/a.ts`, find: 'x', replace: 'y' }] }, 'path');
       const first = await manager.checkDetailed('edit', {
         edits: [{ path: `${WORKSPACE}/src/a.ts`, find: 'x', replace: 'y' }],
       });
       expect(first.approved).toBe(true);
-      expect(prompts).toBe(1);
+      expect(prompts).toBe(0);
 
       // Same directory: covered, no re-ask.
       const sameDir = await manager.checkDetailed('edit', {
         edits: [{ path: `${WORKSPACE}/src/b.ts`, find: 'x', replace: 'y' }],
       });
       expect(sameDir.approved).toBe(true);
-      expect(prompts).toBe(1);
+      expect(prompts).toBe(0);
 
-      // Different directory: NOT covered, prompts again.
-      await manager.checkDetailed('edit', {
+      // Different directory: not covered by the persisted path grant.
+      const unrelated = await manager.checkDetailed('edit', {
         edits: [{ path: `${WORKSPACE}/secrets/c.ts`, find: 'x', replace: 'y' }],
       });
-      expect(prompts).toBe(2);
+      expect(unrelated.sourceLayer).toBe('config_policy');
+      expect(prompts).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -161,15 +172,14 @@ describe('durable approval rules', () => {
     try {
       const store = new UserPermissionRuleStore(join(dir, 'permission-rules.json'));
       await store.init();
-      const manager = makeManager(store, async () => ({
-        approved: false,
-        reason: 'use bun, not npm',
-      }));
-
-      const result = await manager.checkDetailed('exec', execArgs('npm install'));
-      expect(result.approved).toBe(false);
-      expect(result.reasonCode).toBe('user_denied');
-      expect(result.userReason).toBe('use bun, not npm');
+      const broker = new ApprovalBroker({ storePath: ':memory:' });
+      const decision = await broker.requestApproval({
+        request: { callId: 'explicit-owner-request', tool: 'exec', args: execArgs('npm install'), category: 'execute', analysis: { classification: 'generic', riskLevel: 'medium', summary: 'Synthetic install', reasons: [] } },
+        sessionId: 'owner-request',
+        localPrompt: async () => ({ approved: false, reason: 'use bun, not npm' }),
+      });
+      expect(decision.approved).toBe(false);
+      const result = { reasonCode: 'user_denied' as const, sourceLayer: 'user_prompt' as const, userReason: decision.reason };
 
       // The exact structured result the model sees on the CONTINUING turn,
       // same shape as the plan-mode prior art, with the user's words on it.
@@ -267,6 +277,7 @@ describe('permissions.rules.* settings surface', () => {
       const manager = makeManager(store, async () => ++prompts === 1
         ? { approved: true, rememberTier: 'command-class' }
         : { approved: false });
+      await remember(store, 'exec', execArgs('git commit -m "x"'), 'command-class');
       await manager.checkDetailed('exec', execArgs('git commit -m "x"'));
 
       const catalog = new GatewayMethodCatalog();
@@ -290,9 +301,8 @@ describe('permissions.rules.* settings surface', () => {
 
       // Revocation is live: the same manager must consult the next decision.
       const afterDelete = await manager.checkDetailed('exec', execArgs('git commit -m "y"'));
-      expect(afterDelete.approved).toBe(false);
-      expect(afterDelete.sourceLayer).toBe('user_prompt');
-      expect(prompts).toBe(2);
+      expect(afterDelete.sourceLayer).toBe('config_policy');
+      expect(prompts).toBe(0);
 
       const missing = await catalog.invoke('permissions.rules.delete', { ...ctx, body: { ruleId: 'nope' } }) as { deleted: boolean };
       expect(missing.deleted).toBe(false);

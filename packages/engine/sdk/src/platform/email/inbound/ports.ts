@@ -348,7 +348,7 @@ export interface MailboxConnectionPort {
  * here is IMAP-shaped. Expectation matching, taint labelling, dedup, notice
  * rendering and disclosure are written against this base and never switch on
  * `source` at all, that is the whole point of the seam
- * (docs/inbound-email.md §3.4d, and
+ * (docs/decisions/2026-07-27-inbound-email-design.md §3.4d, and
  * docs/decisions/2026-07-27-inbound-message-is-a-discriminated-union.md).
  */
 export interface InboundMessageCommon {
@@ -576,14 +576,7 @@ export interface InboundMailObserver {
 // Settings
 // ---------------------------------------------------------------------------
 
-/**
- * The watcher's tunables, already resolved from config into milliseconds.
- *
- * Milliseconds rather than the config file's seconds and minutes, so the loop
- * never converts and a test can pass 5 for something the owner configures in
- * minutes. Reading the inbound settings out of daemon config is the
- * integration round's job, and the keys are declared with the config schema.
- */
+/** Watcher settings resolved from config into milliseconds by the host. */
 export interface InboundWatcherSettings {
   /** Config account id, not an address. */
   readonly account: string;

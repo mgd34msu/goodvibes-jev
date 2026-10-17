@@ -8,6 +8,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { DEFAULT_MODEL } from '@goodvibes-jev/judgment';
 import { staleServerKind } from './batteries/stale-server-kind.ts';
 import { isSettledNo, sha256, type FileReading, type WindowSize } from './file-readings.ts';
 
@@ -32,7 +33,7 @@ export const WINDOW: WindowSize = { maxLines: 200, maxChars: 8_000 };
 
 /** The decision and model a stored set of readings must come from to count. */
 export const DECISION = `${staleServerKind.name}@${staleServerKind.version}`;
-export const MODEL = staleServerKind.model!;
+export const MODEL = staleServerKind.model ?? DEFAULT_MODEL;
 
 export interface StoredStaleServerKindReading extends FileReading {
   readonly sha256: string;

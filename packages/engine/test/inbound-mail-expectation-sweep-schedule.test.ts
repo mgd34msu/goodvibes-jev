@@ -1,40 +1,6 @@
 /**
- * The sweep has to RUN, not merely exist.
- *
- * `InboundExpectationRegistry.sweep()` is the only thing that turns an elapsed
- * window into an `onExpired` report, and it had exactly one caller repo-wide:
- * its own test. `onExpired` itself WAS wired, `facade-inbound-mail.ts` passes a
- * handler that logs the expiry with its reason, so the announcement path was
- * built, connected, and unreachable. A signup whose verification mail never
- * arrived was therefore never reported to anybody. That is the silent-death
- * class this whole round exists to close, in the component built to prevent it.
- *
- * Two different claims are checked here and they are not the same claim:
- *
- *  1. the registry can sweep on a schedule at all, and a swept expectation is
- *     reported with its reason (`startSweeping`);
- *  2. the DAEMON arms it, `composeInboundMail`, the real production
- *     composition, leaves a timer running that reaps an expired record with
- *     nothing in the test ever calling `sweep()`.
- *
- * (2) is the one that matters. A method that is reachable in principle is what
- * was already there.
- *
- * WHY THE SECOND TEST WATCHES THE FILE RATHER THAN `list()`. It would be
- * natural to assert that `registry.list()` drops to zero, and it would prove
- * nothing. `list()` answers "what is open at this instant", and an expired
- * record is not open, it is absent from the list whether or not anything has
- * swept, because the list filters on the window. The persisted file has no such
- * behaviour: only a write-through from a real sweep empties it, so it is the
- * one observable that cannot answer correctly by accident.
- *
- * (When this was written, `list()` reached the book's own `list()`, which
- * called `sweepExpired()` and discarded the return value, so the record was
- * not merely absent from the answer, it was destroyed by asking, and with it
- * the report `onExpired` owed the owner. That is fixed; reads filter and only
- * `sweepExpired` reaps. See
- * `test/inbound-mail-expectation-probe-is-a-read.test.ts`. The reason for
- * watching the file is unchanged either way.)
+ * The daemon schedules expiry sweeps and persists their results.
+ * Inspect the stored file: list() filters expired records without proving a sweep ran.
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';

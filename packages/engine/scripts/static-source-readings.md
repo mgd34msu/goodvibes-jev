@@ -1,15 +1,21 @@
 # Static source observations
 
 `internal-id:check` and `todo:check` validate recorded Jev observations offline.
-Neither command contacts a provider. Missing, stale, malformed or unsettled
-evidence fails validation.
+Neither command contacts a provider. Confirmed violations fail validation.
+Missing, stale, malformed or unsettled evidence is reported as an inconclusive
+advisory. It remains unknown in the receipt; source review determines whether
+work is needed. Advisories do not block releases or weaken the required functional,
+type, API, build and startup checks.
 
 The internal identity rule offers complete identifiers, literals, comment units
 and prose to read for repository-development coordination labels. Syntax-only
 punctuation has no textual candidate payload. Product users' tasks, workstreams
 and display labels remain domain data. Versions, protocol tags, key names and
 literal fixtures also remain evidence data. Historical decision records keep
-their existing exemption.
+their existing exemption. The source checker's own implementation, documentation
+and fixtures are excluded by the exact paths in `internal-identifier-rule.ts`;
+their descriptions of prohibited labels are necessary to implement the check.
+This exclusion does not apply to other scripts or tests.
 
 The unfinished-work rule uses TypeScript syntax to offer complete comment
 blocks, direct return strings, error-message strings and runtime strings containing
@@ -42,7 +48,7 @@ or credentials without their existing authorization.
 The canonical receipt uses deterministic, lossless gzip with an epoch timestamp.
 Decompress it to inspect the complete current evidence JSON, including original
 raw answers and capture manifests. The reader validates the same complete schema and evidence;
-invalid compressed data holds the gates. Custom paths ending in `.gz` use gzip;
+invalid compressed data produces inconclusive advisories. Custom paths ending in `.gz` use gzip;
 other custom paths keep plain JSON.
 
 Each observation binds the exact path, complete source hash, offered anchors,
@@ -53,7 +59,7 @@ the artifact until explicit revalidation or new reading.
 
 An unsettled group can be revised through smaller exact candidate subsets.
 Every subset retains the original context and every candidate remains covered.
-A subset that stays unsettled holds validation. This process has a finite
+A subset that stays unsettled remains an advisory. This process has a finite
 candidate tree and never substitutes a token-based verdict.
 Reading plan version 3 gives an unsettled single candidate one exact-identity
 selector request using the named weak-anchor choice and fit questions. Weak-anchor

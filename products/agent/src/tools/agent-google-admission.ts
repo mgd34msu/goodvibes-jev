@@ -85,6 +85,7 @@ export function createGoogleSettingsProjector(owners: GoogleAdmissionOwners, pen
       };
     }
     if (!['connect.client', 'connect.clientfile', 'connect.complete'].includes(action)) return { status: 'projected', args: request.args };
+    if (Object.hasOwn(request.args, 'clientSecret')) throw new ToolInputProjectionError('invalid');
     request.assertCurrent(); request.signal?.throwIfAborted();
     const methods = retainSurfaceMethods(config, ['prepareSettingMutationPlan', 'inspectPreparedMutation', 'assertPreparedMutation', 'assertCompletedMutation', 'get', 'getConfigurationIncarnation']);
     const secretMethods = retainSurfaceMethods(secrets, ['prepareImport', 'inspectPreparedImport', 'assertPreparedImport', 'assertCompletedImport', 'resolveLocalCredentialSnapshot']);

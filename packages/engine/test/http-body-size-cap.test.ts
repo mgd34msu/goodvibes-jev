@@ -24,7 +24,7 @@ const disposables = trackDisposables();
 const MAX_JSON_BYTES = 1 * 1024 * 1024; // 1 MiB
 
 function tempDir(suffix: string): string {
-  const d = join(tmpdir(), `gv-sec05-${suffix}-${Date.now()}`);
+  const d = join(tmpdir(), `gv-http-body-${suffix}-${Date.now()}`);
   mkdirSync(d, { recursive: true });
   return d;
 }

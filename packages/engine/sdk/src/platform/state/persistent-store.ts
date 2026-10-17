@@ -35,7 +35,7 @@ import { captureMutationDescriptors, capturePreparedFilePublication, publishFile
  *     on the failure path, but a process killed between the open and the
  *     rename never runs that path, and nothing else ever looked at those
  *     names, persisted state with no GC, which is the exact rule
- *     docs/inbound-email.md §9 exists for. Writes now sweep their own
+ *     docs/decisions/2026-07-27-inbound-email-design.md §9 exists for. Writes now sweep their own
  *     directory for temp files old enough that nobody could still be writing
  *     them.
  *
@@ -118,11 +118,8 @@ function captureTemporaryDirectory(directory: string, parent: string): () => voi
 /**
  * How many orphaned temp files this process has reclaimed.
  *
- * Counted because reaping without disclosure is the defect this round spent
- * most of its time on. `record()` bounding the record store silently was wrong
- * for exactly one reason, §9.5 says a reap is disclosed, and a temp-file
- * reaper that deletes files with nothing anywhere saying so is that same
- * objection applied to everything except the code that raised it.
+ * Reclamation is reported so a caller can distinguish a cleanup from an
+ * unchanged store.
  * `InboundMailHousekeeper` puts this in its summary sentence.
  *
  * Process-wide rather than per-store, and deliberately not persisted: a tally
@@ -218,7 +215,7 @@ export class PersistentStore<T extends Record<string, unknown>> {
    * Load, treating an unreadable file as ABSENT rather than as an error.
    *
    * For state whose owner already rules that a torn record is discarded and
-   * disclosed (docs/inbound-email.md §9): the same rule applied to the whole
+   * disclosed (docs/decisions/2026-07-27-inbound-email-design.md §9): the same rule applied to the whole
    * file. The bytes are left on disk untouched, the next `persist()` replaces
    * them, so this never destroys evidence, it only stops one unreadable byte
    * from being a permanent hard failure across every reader of every store.

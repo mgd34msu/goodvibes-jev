@@ -566,7 +566,8 @@ export class PermissionManager {
         || preparedCall.call.schemaRevision !== schemaRevision) throw new Error('Autonomous admission prepared call binding changed');
     }
     const admissionEvidence = preparedCall?.registry.readPreparedOwnedAdmissionEvidence(preparedCall.call);
-    const category = admissionEvidence?.kind === 'agent-settings' ? 'write' : this.getCategory(toolName, args);
+    const category = admissionEvidence?.kind === 'agent-settings' ? 'write'
+      : preparedCall?.registry.isPreparedReadOnly(preparedCall.call) ? 'read' : this.getCategory(toolName, args);
     const assertWorkspace = await this.autonomousWorkspaceConstraint(category, signal);
     const settingsMutation = preparedCall?.registry.readPreparedSettingsMutation(preparedCall.call);
     const authority = () => this.autonomousAuthority(sourceId, sourceOf, choiceProjection, 'currentness');

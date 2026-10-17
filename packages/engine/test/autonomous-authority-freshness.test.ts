@@ -71,7 +71,7 @@ async function fixture() {
   const admission = await manager.admitAutonomous('freshness-source', NAME, call.args, {
     sourceOf: () => source, signal: controller.signal, schemaRevision: call.schemaRevision, preparedCall: { registry, call },
   });
-  expect(admission.result.autonomousDecision?.outcome).toBe('act');
+  expect(admission.result.approved).toBe(true);
   return { config, rules, policy, ledger, source, diagnostic, registry, call, admission, entered, release, controller,
     get effects() { return effects; }, get checks() { return checks; } };
 }

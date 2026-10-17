@@ -52,6 +52,7 @@ export interface ResumeSessionOptions {
    * always had.
    */
   readonly selectModel?: (model: string) => Promise<{ readonly registryKey: string; readonly providerId: string }>;
+  readonly isGenerating?: () => boolean;
 }
 
 /**
@@ -67,6 +68,7 @@ export interface ResumeSessionOptions {
 export function createResumeSessionHandler(options: ResumeSessionOptions): (sessionId: string) => Promise<void> {
   return async (sessionId: string): Promise<void> => {
     try {
+      if (options.isGenerating?.()) throw new Error('A turn is still running. Wait before resuming a session.');
       // Multi-instance safety, matching what `/session resume` already does
       // for the text path: never fork a session another terminal is holding
       // open without the operator saying so.
@@ -98,6 +100,7 @@ export function createResumeSessionHandler(options: ResumeSessionOptions): (sess
         surface: options.surface,
         selectModel: options.selectModel,
         hydrateSessionUsage: options.hydrateSessionUsage,
+        canResume: () => !options.isGenerating?.(),
       });
       const { meta } = outcome;
 

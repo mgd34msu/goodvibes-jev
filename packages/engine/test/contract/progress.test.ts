@@ -1,5 +1,5 @@
 /**
- * Regression and stall detection (contract/progress.ts, design 4.8): code over
+ * Regression and stall detection (contract/progress.ts): code over
  * the readings history, with no judgment involved.
  */
 import { describe, expect, test } from 'bun:test';

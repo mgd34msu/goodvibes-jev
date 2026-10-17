@@ -1,6 +1,6 @@
 /**
  * cursor-store.ts, the durable per-mailbox cursor, for both sources
- * (docs/inbound-email.md §4, §3.4d).
+ * (docs/decisions/2026-07-27-inbound-email-design.md §4, §3.4d).
  *
  * `EXAMINE` + `BODY.PEEK` means the daemon never marks anything `\Seen`, so
  * `SEARCH UNSEEN` would return the same messages forever and "have I handled

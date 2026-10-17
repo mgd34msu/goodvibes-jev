@@ -177,14 +177,14 @@ describe('operator gateway uses the shared engine failure contract through the r
   test('before bootstrap and after judgment failure, unknown remains unknown', async () => {
     const original = new Error('auth 404 fetch');
     rejectBody(original);
-    expect(await invoke()).toMatchObject({ kind: 'connected_host_error', error: '[REDACTED]' });
+    expect(await invoke()).toMatchObject({ kind: 'connected_host_error', error: 'auth 404 fetch' });
     expect(original.message).toBe('auth 404 fetch');
     expectOneMutation();
     requests = [];
     installJudgmentPort({ model: 'offline-fixture', ask: async () => { throw new Error('offline'); } });
     const offline = new Error('not found');
     rejectBody(offline);
-    expect(await invoke()).toMatchObject({ kind: 'connected_host_error', error: '[REDACTED]' });
+    expect(await invoke()).toMatchObject({ kind: 'connected_host_error', error: 'not found' });
     expect(offline.message).toBe('not found');
     expectOneMutation();
   });

@@ -42,12 +42,12 @@ test('real gateway policy denies read-only actors and allows session writers bef
   const { controls, aborts } = fixture();
   const catalog = new GatewayMethodCatalog();
   registerSessionRuntimeGatewayMethods(catalog, controls);
-  const helper = new DaemonControlPlaneHelper({ gatewayMethods: catalog } as unknown as DaemonControlPlaneContext);
+  const helper = new DaemonControlPlaneHelper({ gatewayMethods: catalog, authToken: () => 'fixture' } as unknown as DaemonControlPlaneContext);
   const input = { authToken: 'fixture', methodId: 'sessions.turns.cancel', body: { sessionId: 'hosted-1', expectedTurnId: 'turn-1' } };
-  const denied = await helper.invokeGatewayMethodCall({ ...input, context: { principalKind: 'user', scopes: ['read:sessions'] } });
+  const denied = await helper.invokeGatewayMethodCall({ ...input, context: { principalKind: 'token', scopes: ['read:sessions'] } });
   expect(denied.status).toBe(403);
   expect(aborts()).toBe(0);
-  const allowed = await helper.invokeGatewayMethodCall({ ...input, context: { principalKind: 'user', scopes: ['write:sessions'] } });
+  const allowed = await helper.invokeGatewayMethodCall({ ...input, context: { principalKind: 'token', scopes: ['write:sessions'] } });
   expect(allowed.status).toBe(200);
   expect(allowed.body).toEqual({ ...input.body, status: 'cancellation-requested', activeTurnId: 'turn-1' });
   expect(aborts()).toBe(1);

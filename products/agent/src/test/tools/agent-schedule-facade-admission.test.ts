@@ -54,7 +54,7 @@ test.each([
   const result = await f.run({ action, scheduleId: 'synthetic-schedule', task: 'Synthetic task', successCriteria: 'Synthetic criteria',
     message: 'Synthetic reminder', every: '1d' });
   expect(result.success).toBe(true); expect(f.calls).toHaveLength(1); expect(f.calls[0]?.name).toBe(owner);
-  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(2);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
 });
 
 test('raw caller flags cannot dispatch the preferred schedule facade', async () => {
@@ -63,7 +63,7 @@ test('raw caller flags cannot dispatch the preferred schedule facade', async () 
 });
 
 test('read-only parent cannot give a write child authority even under false semantic readings', async () => {
-  const f = fixture('plan'); await expect(f.run({ action: 'pause', scheduleId: 'synthetic-schedule' })).rejects.toThrow();
+  const f = fixture('plan'); expect(await f.run({ action: 'pause', scheduleId: 'synthetic-schedule' })).toMatchObject({ success: false, error: 'plan_mode' });
   expect(f.calls).toHaveLength(0);
 });
 

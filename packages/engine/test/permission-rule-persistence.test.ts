@@ -45,25 +45,20 @@ describe('remembered permission persistence', () => {
       // A directory at the target lets the temp write/fsync succeed and makes
       // the actual atomic rename fail. All files belong to this test.
       mkdirSync(path);
-      let asks = 0;
-      const permissions = manager(store, async () => ++asks === 1
-        ? { approved: true, rememberTier: 'exact' }
-        : { approved: false });
-      const error = await permissions.checkDetailed('exec', args(command)).then(() => null, (cause: unknown) => cause);
+      const permissions = manager(store, async () => { throw new Error('No implicit prompt'); });
+      const error = await store.add(record('first')).then(() => null, (cause: unknown) => cause);
       expect(error).toMatchObject({ code: 'EISDIR', syscall: 'rename' });
-      const repeated = await permissions.checkDetailed('exec', args(command));
-      expect(repeated).toMatchObject({
-        approved: false, persisted: false, sourceLayer: 'user_prompt', reasonCode: 'user_denied',
+      expect(await permissions.checkDetailed('exec', args(command))).toMatchObject({
+        approved: true, persisted: false, sourceLayer: 'config_policy',
       });
-      expect(asks).toBe(2);
       expect(store.list()).toEqual([]);
       expect(store.rules()).toEqual([]);
       expect(readdirSync(dir)).toEqual(['rules.json']);
       rmSync(path, { recursive: true });
 
       // The failed transaction does not poison the queue or reappear on retry.
-      const retry = manager(store, async () => ({ approved: true, rememberTier: 'exact' }));
-      expect(await retry.checkDetailed('exec', args(command))).toMatchObject({ approved: true, persisted: true });
+      await store.add(record('retry'));
+      expect(await permissions.checkDetailed('exec', args(command))).toMatchObject({ approved: true, persisted: true, sourceLayer: 'user_rule' });
       expect(store.list()).toHaveLength(1);
       const reopened = new UserPermissionRuleStore(path);
       await reopened.init();
@@ -81,16 +76,15 @@ describe('remembered permission persistence', () => {
       await store.init();
       fixture.store.delayNextMs = 100;
       fixture.store.failNext = true;
-      const granting = manager(store, async () => ({ approved: true, rememberTier: 'exact' }));
-      const pending = granting.checkDetailed('exec', args(command)).then(() => null, (error: unknown) => error);
+      const pending = store.add(record('pending')).then(() => null, (error: unknown) => error);
       await waitFor(() => fixture.store.started === 1);
       expect(store.list()).toEqual([]);
       let asks = 0;
       const matching = manager(store, async () => { asks++; return { approved: false }; });
       expect(await matching.checkDetailed('exec', args(command))).toMatchObject({
-        approved: false, persisted: false, sourceLayer: 'user_prompt',
+        approved: true, persisted: false, sourceLayer: 'config_policy',
       });
-      expect(asks).toBe(1);
+      expect(asks).toBe(0);
       expect(await pending).toMatchObject({ message: 'store unavailable' });
       expect(store.rules()).toEqual([]);
       expect(readOnDisk<RuleFile>(fixture.path)).toBeNull();

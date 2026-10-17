@@ -82,12 +82,15 @@ describe('concrete semantic extraction value', () => {
     expect(calls).toBe(0); expect(fake.requests).toHaveLength(0);
   });
 
-  test('oversized complete input is held after full privacy admission, never sampled', () => {
-    const fake = readings();
-    expect(() => prepareKnowledgeExtractionValueReading(input('a'.repeat(160_001)), { assertCurrent: current })).toThrow(KnowledgeExtractionValueHeldError);
+  test('large complete input reaches the reader without sampling while privacy admission still applies', async () => {
+    const original = input('a'.repeat(160_001));
+    const fake = readings(.99, original);
+    await prepareKnowledgeExtractionValueReading(original, { assertCurrent: current }).read();
+    expect(fake.requests).toHaveLength(1);
+    expect(JSON.stringify(fake.requests[0]!.state)).toContain(original.text);
     const protectedInput = input('a'.repeat(160_001)); Object.assign(protectedInput.source, { password: 'synthetic-protected' });
     expect(() => prepareKnowledgeExtractionValueReading(protectedInput, { assertCurrent: current })).toThrow(JudgmentInputError);
-    expect(fake.requests).toHaveLength(0);
+    expect(fake.requests).toHaveLength(1);
   });
 
   test.each(['source', 'text', 'extraction', 'options', 'port'] as const)('%s mutation during the request cannot be adopted', async mutation => {

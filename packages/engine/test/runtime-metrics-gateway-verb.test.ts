@@ -26,7 +26,7 @@ afterEach(() => {
   resetMetrics();
 });
 
-// ── descriptor + handler register together (the 501 defect class) ───────────
+// ── descriptor + handler register together (the HTTP 501 response class) ───────────
 
 describe('runtime.metrics.get gateway registration', () => {
   function makeCatalog() {
@@ -52,7 +52,7 @@ describe('runtime.metrics.get gateway registration', () => {
     expect(got.toolFormat).toEqual({ byModel: {}, byClass: {} });
   });
 
-  test('an unregistered catalog (no registerRuntimeMetricsGatewayMethods call) answers the 501 defect', async () => {
+  test('an unregistered catalog (no registerRuntimeMetricsGatewayMethods call) answers the HTTP 501 response', async () => {
     const catalog = new GatewayMethodCatalog();
     expect(catalog.hasHandler('runtime.metrics.get')).toBe(false);
     await expect(catalog.invoke('runtime.metrics.get', { context: {} })).rejects.toThrow(
@@ -76,7 +76,7 @@ describe('runtime.metrics.get scope enforcement (generic invoke gate)', () => {
   function helperWithCatalog(catalog: GatewayMethodCatalog): DaemonControlPlaneHelper {
     // validateGatewayInvocation/invokeGatewayMethodCall's scope-check path only
     // touches context.gatewayMethods, so a minimal stub is sufficient and honest.
-    const context = { gatewayMethods: catalog } as unknown as DaemonControlPlaneContext;
+    const context = { gatewayMethods: catalog, authToken: () => 'irrelevant' } as unknown as DaemonControlPlaneContext;
     return new DaemonControlPlaneHelper(context);
   }
 

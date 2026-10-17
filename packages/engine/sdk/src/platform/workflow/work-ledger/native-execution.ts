@@ -16,7 +16,7 @@ import { criteriaSetIdForWork, durableKeyHash, durablePayloadRevision, freezeDur
 import { captureNativeContractSource } from '../../contract/native-source.js';
 import type { ContractRunner } from '../../contract/runner.js';
 import type { ContractIntegrationInspection } from '../../contract/integration-inspection-wire.js';
-import { isTerminalContractStatus, type ContractView } from '../../contract/types.js';
+import { isTerminalContractStatus, type ContractView, type StartContractInput } from '../../contract/types.js';
 import type { NativeContractCompositionOwner } from '../../runtime/contract-composition.js';
 import { NativeWorkExecutionError, parseNativeWorkExecutionRecord, parseNativeWorkExecutionIntent, type NativeWorkExecutionIntent, type NativeWorkExecutionRecord, type NativeWorkExecutionStorage, type NativeWorkExecutionTarget, type NativeWorkExecutionTransaction } from './native-execution-types.js';
 
@@ -108,6 +108,7 @@ export function createNativeWorkExecutionHost(deps: {
   readonly storage: NativeWorkExecutionStorage; readonly scopes: NativeExecutionScopeOwner; readonly port: JudgmentPort;
   readonly continuationGrants?: NativeCiGrantOwner; readonly continuationPolicy?: NativeCiContinuationPolicy;
   readonly decisionLog: Pick<DecisionLog, 'get'>;
+  readonly getSelectedModel?: () => StartContractInput['selectedModel'];
   readonly verification?: { readonly settings: () => CheckSettings; readonly readAccessFilter: ReadAccessFilter; readonly automatic?: boolean };
   /** Trusted host lifetime, invoked only for this owner's actual admitted receipt. */
   readonly cancelForeground?: (contractId: string) => Promise<void>;
@@ -208,6 +209,7 @@ export function createNativeWorkExecutionHost(deps: {
   }
   function requestFor(current: NativeWorkExecutionTransaction, target: NativeWorkExecutionTarget, expected: NativePairedExecutionSnapshot, expectedScope: NativeExecutionScope, taskEvidence?: string): DurableContractRequest {
     const key = targetKey(target); const work = workFor(current, target, expected.principalId);
+    const selectedModel = deps.getSelectedModel?.();
     const source = captureNativeContractSource({ sourceId: work.source?.sourceId ?? hash({ projectId: deps.projectId, workId: work.id }), sourceRevision: work.source?.sourceRevision ?? hash({ workId: work.id, workRevision: work.revision }),
       inputRevision: hash({ projectId: deps.projectId, target, goal: work.goal, criteria: work.criteria, ...(work.source ? { source: work.source } : {}) }),
       criteriaId: key.criteriaId, criteriaRevision: key.criteriaRevision, goal: work.goal, criteria: work.criteria,
@@ -216,7 +218,7 @@ export function createNativeWorkExecutionHost(deps: {
       actionId: hash({ projectId: deps.projectId, key, operation: 'run-native-work' }),
       actionRevision: hash({ projectRoot, sessionId: deps.sessionId, target, authorityScopes: expected.scopes }),
       ...authorityBinding(expected), ...scopeBinding(expectedScope) };
-    return freezeDurableRequest({ key, binding, input: { ask: work.title, nativeSource: source, projectRoot, sessionId: deps.sessionId, origin: 'external', isolation: 'auto', ...(taskEvidence ? { taskEvidence } : {}) } });
+    return freezeDurableRequest({ key, binding, input: { ask: work.title, nativeSource: source, projectRoot, sessionId: deps.sessionId, origin: 'external', isolation: 'auto', ...(selectedModel === undefined ? {} : { selectedModel: { id: selectedModel.id, provider: selectedModel.provider, registryKey: selectedModel.registryKey, displayName: selectedModel.displayName } }), ...(taskEvidence ? { taskEvidence } : {}) } });
   }
   function assertIntent(current: NativeWorkExecutionTransaction, intent: NativeWorkExecutionIntent): void {
     if (current.intent?.state === 'cancelled') throw new NativeWorkExecutionError('prevented-before-admission');

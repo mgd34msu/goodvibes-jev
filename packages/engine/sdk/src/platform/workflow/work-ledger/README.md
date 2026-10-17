@@ -191,13 +191,12 @@ checks establish old-or-new whole-file recovery only, not power-loss durability.
 
 ## Service graph versus process host
 
-The durable adapter and daemon service-graph composition build directly on the
-merged native core. They do not depend on the separate owned daemon process-host
-change (PR71), and this slice does not introduce its listener/signal lifecycle
-files or facade restart fence. The drain contract here is exercised through
-`RuntimeServices.close()` and the existing acquisition/disposal scopes. A process
-host must await that close before process teardown. Combined process-host proofs
-are separate evidence and are not claimed as main-only integration acceptance.
+The durable adapter and daemon service-graph composition use the native ledger
+core. Their drain contract is exercised through `RuntimeServices.close()` and
+the existing acquisition/disposal scopes. A process host must await that close
+before process teardown. Ledger drainage alone does not establish shutdown of
+listeners, signal handlers, or the facade restart fence; those process-host
+behaviors require their own integration evidence.
 
 
 Remote reads are available through the separate supported

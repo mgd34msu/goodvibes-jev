@@ -1,61 +1,7 @@
-/**
- * schema-domain-voice-wake.ts, wake-word detection settings (`voice.wake.*`).
- *
- * A domain of its own rather than another block inside schema-domain-voice-local.ts
- * because the two configure unrelated things: `voice.local.*` points at local STT/TTS
- * binaries a user installed, while these rows govern an always-listening capture
- * loop. They share only the `voice` namespace.
- *
- * EVERY ROW IS A REAL FEATURE, NOT A SWITCH. Each key below changes behaviour that
- * exists and is reachable, and each carries a written description of what it does and
- * why its default is what it is. `voice.wake.enabled` defaults to `false`: an
- * always-on microphone must be an explicit act.
- *
- * The MODEL is not that act. It ships with the installation, the installer and the
- * npm postinstall provision it, and a daemon retries at boot, so the row above is
- * the only thing between an installed machine and a working wake word. What still
- * never happens is a download triggered by a switch: enabling detection on a host
- * whose artifacts are absent reports which are missing and names the recovery
- * command, exactly as it did when provisioning was the user's job.
- *
- * THESE ROWS ARE LIVE, AND SAY WHERE
- *
- * Capture is wired: the terminal opens a recorder subprocess (voice.wake.captureCommand)
- * and a browser tab opens getUserMedia, both feeding the same engine and both handing
- * the utterance after a wake to the same speech-to-text call. `notOperable` is gone from
- * the `wake-word-detection` registry entry, removed in the change that wired capture up
- * rather than before it.
- *
- * All three delivery surfaces compose a capture host now: the terminal and the agent
- * open a recorder subprocess, the browser tab opens getUserMedia.
- *
- * Where a row cannot take effect it says so IN ITS OWN DESCRIPTION rather than behind a
- * blanket declaration, because the remaining gaps are per-row, not per-surface and not
- * whole-feature: `voice.wake.vadThreshold` has no VAD model pinned to run, and a browser
- * tab has no filesystem for `voice.wake.retainAudio` or a local
- * `voice.wake.activationSoundPath`. Those are refused or reported by
- * resolveWakeRuntimeSettings, which reads every row here and is the one place they become
- * behaviour, a row it does not read is a row that configures nothing, and a test asserts
- * that set against this one.
- *
- * THE 26 ROWS AND THE ONE DELIBERATE DEVIATION
- *
- * These are the rows accepted in the 2026-07-25 wake-word design rulings. Two
- * deliberate differences from that accepted list, both recorded here rather than
- * buried:
- *
- *  - Row 26, `voice.wake.wyomingServer`, is ABSENT. The ruling was that the Wyoming
- *    wake-server is Tier B and "NOT built; needs its own explicit owner go", which
- *    has not been given. Shipping the key without the server behind it would be a
- *    bare toggle wired to nothing, so the key waits for the feature.
- *  - `voice.wake.threshold` defaults to **0.9, not the accepted 0.5**, see that
- *    row's description for the measurement that overrode it.
- *
- * `voice.wake.models` is a comma-separated list rather than the design's `string[]`.
- * Array-valued config (`conversationGate.gatedSurfaces`, `contract.gates`) is not a
- * scalar ConfigKey in this schema and so cannot appear in a settings workspace; a
- * model list the user cannot edit from settings would not be a configurable feature.
- * {@link parseWakeModelList} is the one place the scalar is split.
+/** Wake-word settings shared by terminal, agent and browser capture hosts.
+ * resolveWakeRuntimeSettings validates each setting against the host capabilities.
+ * Wake detection is disabled by default; microphone capture requires opt-in.
+ * Model names use a comma-separated scalar so settings clients can edit them.
  */
 import { type ConfigSettingDefinition, intRange, numRange } from './schema-shared.js';
 

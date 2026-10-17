@@ -166,7 +166,7 @@ export interface MatrixSurfaceConfig {
 }
 
 /**
- * Which mechanism reads the mailbox (docs/inbound-email.md §3.4d).
+ * Which mechanism reads the mailbox (docs/decisions/2026-07-27-inbound-email-design.md §3.4d).
  *
  * `auto` picks Gmail when Google credentials have been adopted and the
  * configured account is a Gmail account, and IMAP otherwise, so connecting
@@ -188,7 +188,7 @@ export type InboundEmailCapabilityPolicy = 'refuse-and-notify' | 'notice-only';
 /**
  * The inbound-mail watcher's own configuration, the `inbound` section of
  * `surfaces.email` (see the individual settings declared below).
- * See `docs/inbound-email.md` §8 for the ruled defaults and §2 for why this
+ * See `docs/decisions/2026-07-27-inbound-email-design.md` §8 for the ruled defaults and §2 for why this
  * capability carries no command authority.
  */
 export interface InboundEmailConfig {

@@ -396,6 +396,7 @@ export interface ChannelIngressPolicyInput {
   readonly threadId?: string | undefined;
   readonly workspaceId?: string | undefined;
   readonly conversationKind?: ChannelConversationKind | undefined;
+  readonly parentConversationKind?: Exclude<ChannelConversationKind, 'thread'> | undefined;
   readonly hasAnyMention?: boolean | undefined;
   readonly text?: string | undefined;
   readonly mentioned?: boolean | undefined;

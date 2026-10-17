@@ -1,6 +1,6 @@
 /**
  * store-write-lock.ts, the cross-process half of "one writer at a time" for
- * the three inbound-mail stores (docs/inbound-email.md §9).
+ * the three inbound-mail stores (docs/decisions/2026-07-27-inbound-email-design.md §9).
  *
  * Each store already has an in-process `writeChain`, and a chain is exactly as
  * wide as the object holding it: two `InboundMailStore` instances over one file

@@ -301,12 +301,12 @@ export function createHostedSessionRuntime(options: HostedSessionRuntimeOptions)
   orchestrator.setCoreServices({
     configManager: services.configManager,
     providerRegistry,
-    // A session-mode contract's unit is this session's own turns (contract runner design 6.6).
+    // A session-mode contract's unit is this session's own turns.
     contractHooks: options.floor.contractRunner.hooks(),
   });
 
   // The contracts this session starts talk back to it: their questions for the
-  // owner and their outcomes are the session's replies (contract runner design 10.2).
+  // owner and their outcomes are the session's replies.
   const contracts = options.contracts;
   const listed = new Set<string>();
   const stopContracts = observeSessionContracts({

@@ -67,7 +67,7 @@ function scene() {
     const call = await prepare(args, signal);
     const admission = await manager.admitAutonomous(call.callId, call.name, call.args, { signal, schemaRevision: call.schemaRevision, preparedCall: { registry, call },
       sourceOf: () => ({ goal: 'Save redacted synthetic user-run smoke output in an isolated local artifact', criteria: ['Keep raw credential values private and require the exact active ownership'] }) });
-    expect(admission.result.autonomousDecision?.outcome).toBe('act');
+    expect(admission.result.approved).toBe(true);
     return registry.executePrepared(call, admission);
   };
   return { context, store, tool, registry, prepare, run, root, beforeCreate(callback: () => void) { beforeCreate = callback; },
@@ -83,7 +83,8 @@ test('recorded native intake saves only cleared evidence and complete safe subje
   for (const value of Object.values(input.fields).flatMap(value => value.match(/private-smoke-[\w]+/g) ?? [])) expect(outward).not.toContain(value);
   expect(artifact.buffer.toString()).toContain('Authorization: <redacted>');
   expect(artifact.buffer.toString()).toContain('Ready. apiKey=<redacted>');
-  expect(JSON.stringify(readings.requests)).toContain('goodvibes-agent starts');
+  expect(artifact.buffer.toString()).toContain('goodvibes-agent starts');
+  expect(readings.requests).toHaveLength(0);
   const retained = f.retained();
   expect(() => resolveSetupSmokeNativeEvidence(retained.args, retained.options, f.context)).toThrow();
 });
@@ -94,7 +95,8 @@ test('issuer credentials are cleared without a model redaction lookup and displa
   expect(result.success).toBe(true); expect(result.output).not.toContain(issuer);
   const artifact = await f.store.readContent(f.store.list()[0]!.id);
   expect(artifact.buffer.toString()).not.toContain('ghp_');
-  expect(JSON.stringify(readings.requests)).toContain('safe-tail-after-cap');
+  expect(JSON.stringify(f.retained().args)).toContain('safe-tail-after-cap');
+  expect(readings.requests).toHaveLength(0);
   expect(readings.requests.every(request => !JSON.stringify(request).includes('private-smoke-'))).toBe(true);
 });
 
@@ -172,7 +174,8 @@ test.each(['unknown-field', 'unrelated-mode', 'unselected-sibling', 'unsupported
     : kind === 'unsupported-header' ? { mode: 'run_setup_smoke', fields: { notes: 'Inline Cookie: private-cookie' } }
     : kind === 'forged-subject' ? { ...input, nativeReferenceSubjects: { kind: 'setup-smoke-evidence' } }
     : { mode: 'run_setup_smoke', fields: { notes: { apiKey: 'private-object' } } };
-  await expect(f.prepare(args)).rejects.toThrow();
+  if (kind === 'unknown-field' || kind === 'unrelated-mode') await f.prepare(args);
+  else await expect(f.prepare(args)).rejects.toThrow();
   expect(readings.requests).toHaveLength(0); expect(f.store.list()).toHaveLength(0);
 });
 

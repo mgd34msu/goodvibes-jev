@@ -2,17 +2,17 @@
  * companion-chat-turn-cancel.test.ts
  *
  * The server-side turn stop (companion.chat.turns.cancel):
- * C1: cancel mid-stream persists the honest partial (deliveryState 'cancelled')
+ * cancel mid-stream persists the honest partial (deliveryState 'cancelled')
  *     and publishes the terminal turn.cancelled, never turn.completed
- * C2: the NEXT turn after a cancel runs normally (per-turn abort controller,
+ * the NEXT turn after a cancel runs normally (per-turn abort controller,
  *     a stop must never poison the session's future turns)
- * C3: refusal semantics, 404 NO_ACTIVE_TURN, 404 SESSION_NOT_FOUND,
+ * refusal semantics, 404 NO_ACTIVE_TURN, 404 SESSION_NOT_FOUND,
  *     409 TURN_MISMATCH; repeat cancel is an idempotent success
- * C4: cancel before any content → partialPersisted false, no phantom message,
+ * cancel before any content → partialPersisted false, no phantom message,
  *     terminal event still emitted
- * C5: a tool call announced but never resolved is closed with a synthetic
+ * a tool call announced but never resolved is closed with a synthetic
  *     error turn.tool_result BEFORE turn.cancelled (no wedged tool blocks)
- * C6: closing the session mid-turn finalizes as stoppedBy 'session-closed'
+ * closing the session mid-turn finalizes as stoppedBy 'session-closed'
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -91,7 +91,7 @@ async function waitForEvent(events: CapturedEvent[], name: string, tries = 50): 
 }
 
 // ---------------------------------------------------------------------------
-// C1: cancel mid-stream, honest partial + terminal turn.cancelled
+// cancel mid-stream, honest partial + terminal turn.cancelled
 // ---------------------------------------------------------------------------
 
 describe('Cancel mid-stream', () => {
@@ -133,7 +133,7 @@ describe('Cancel mid-stream', () => {
 });
 
 // ---------------------------------------------------------------------------
-// C2: the next turn is unaffected (per-turn controller, not session-level)
+// the next turn is unaffected (per-turn controller, not session-level)
 // ---------------------------------------------------------------------------
 
 describe('Next turn after a cancel', () => {
@@ -172,7 +172,7 @@ describe('Next turn after a cancel', () => {
 });
 
 // ---------------------------------------------------------------------------
-// C3: refusal semantics
+// refusal semantics
 // ---------------------------------------------------------------------------
 
 describe('Refusals are honest machine codes', () => {
@@ -238,7 +238,7 @@ describe('Refusals are honest machine codes', () => {
 });
 
 // ---------------------------------------------------------------------------
-// C4: cancel with no content yet
+// cancel with no content yet
 // ---------------------------------------------------------------------------
 
 describe('Cancel before any content', () => {
@@ -267,7 +267,7 @@ describe('Cancel before any content', () => {
 });
 
 // ---------------------------------------------------------------------------
-// C5: dangling tool calls are closed before the terminal event
+// dangling tool calls are closed before the terminal event
 // ---------------------------------------------------------------------------
 
 describe('Announced-but-unresolved tool calls', () => {
@@ -302,7 +302,7 @@ describe('Announced-but-unresolved tool calls', () => {
 });
 
 // ---------------------------------------------------------------------------
-// C6: session close mid-turn
+// session close mid-turn
 // ---------------------------------------------------------------------------
 
 describe('Session close mid-turn', () => {
@@ -325,7 +325,7 @@ describe('Session close mid-turn', () => {
 });
 
 // ---------------------------------------------------------------------------
-// C7: the interrupted partial is visible to the model on later turns
+// the interrupted partial is visible to the model on later turns
 // ---------------------------------------------------------------------------
 
 describe('Partial-in-history', () => {

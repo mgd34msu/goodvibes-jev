@@ -29,6 +29,7 @@ import { currentExternalOperationSource } from '../../permissions/external-opera
 import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { type CommandNeeds } from '../../runtime/permissions/normalization/index.js';
 import { spawnSync } from 'node:child_process';
+import { realpathSync, statSync } from 'node:fs';
 import { normalizeCommand } from '../../runtime/permissions/normalization/index.js';
 import { decideSandboxedExec } from '../../runtime/permissions/sandbox-policy.js';
 import { DEFAULT_CONTROL_PLANE_PORT } from '../../config/control-plane-base-url.js';
@@ -143,25 +144,32 @@ export interface BwrapArgvInput {
   readonly networkEnabled: boolean;
   /** When set, the home directory is masked with a tmpfs (hidden, not just read-only). */
   readonly maskHomeDir?: string | undefined;
+  /** Resolved regular DNS configuration file when /etc/resolv.conf points into /run. */
+  readonly resolverConfigPath?: string | undefined;
 }
 
 /**
  * Construct the bwrap argument vector to PREPEND to `['/bin/sh','-c',cmd]`. Pure.
  *
- * The system root is bound read-only, /tmp and (optionally) $HOME are masked with
- * fresh tmpfs, then the workspace and any writable extras are bound read-write
- * LAST so they win over the read-only root even when nested under it. Network is
+ * System executables, libraries and configuration are bound read-only; host
+ * runtime directories and service sockets are absent. The workspace and any
+ * writable extras are bound read-write. Network is
  * unshared unless explicitly enabled. The env is NOT set here, the caller hands
  * bwrap the already-credential-scrubbed environment, which bwrap passes through.
  */
 export function buildBwrapArgv(input: BwrapArgvInput): string[] {
   const argv: string[] = [input.bwrapPath];
-  // Read-only view of the whole host filesystem …
-  argv.push('--ro-bind', '/', '/');
+  // A read-only root still exposes connectable Unix sockets. Start with bwrap's
+  // empty root and admit the system files needed to execute commands instead.
+  for (const path of ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/etc']) {
+    argv.push('--ro-bind-try', path, path);
+  }
   argv.push('--dev', '/dev');
   argv.push('--proc', '/proc');
   // … isolated /tmp …
   argv.push('--tmpfs', '/tmp');
+  argv.push('--tmpfs', '/run', '--dir', '/var', '--symlink', '/run', '/var/run', '--tmpfs', '/var/tmp');
+  if (input.resolverConfigPath) argv.push('--ro-bind', input.resolverConfigPath, input.resolverConfigPath);
   // … optionally mask $HOME so its contents are hidden, not merely read-only …
   if (input.maskHomeDir) {
     argv.push('--tmpfs', input.maskHomeDir);
@@ -293,12 +301,18 @@ export function resolveExecSandboxPlan(input: ResolveSandboxPlanInput): ExecSand
       ? 'disabled'
       : 'unknown';
 
+  let resolverConfigPath: string | undefined;
+  try {
+    const path = realpathSync('/etc/resolv.conf');
+    if (path.startsWith('/run/') && statSync(path).isFile()) resolverConfigPath = path;
+  } catch { /* Hosts without resolv.conf keep their existing resolver behavior. */ }
   const argvPrefix = buildBwrapArgv({
     bwrapPath: input.availability.bwrapPath,
     workspaceDir: input.workspaceDir,
     cwd: input.cwd,
     writableExtras: input.config.workspaceWritable,
     networkEnabled,
+    resolverConfigPath,
     ...(input.homeDir ? { maskHomeDir: input.homeDir } : {}),
   });
 

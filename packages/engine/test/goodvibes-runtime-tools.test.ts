@@ -91,8 +91,7 @@ describe('GoodVibes runtime tools', () => {
     for (const value of ['midnight', ' NORD ', 'DRACULA', ' VAPORWAVE ', 12, false, null, [], {}]) {
       const result = await tool.execute({ mode: 'set', key: 'display.theme', value, confirm: true });
       expect(result.success).toBe(false);
-      expect(result.error).toContain('[REDACTED]');
-      expect(result.error).not.toContain('Invalid value for display.theme');
+      expect(result.error).toContain('Invalid value for display.theme');
       expect(result.output).toBeUndefined();
       expect(configManager.get('display.theme')).toBe('nord');
       expect(readFileSync(configManager.getConfigPath(), 'utf-8')).toBe(before);

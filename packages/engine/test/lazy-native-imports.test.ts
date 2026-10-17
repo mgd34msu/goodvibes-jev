@@ -37,8 +37,7 @@ describe('lazy native imports', () => {
             const edit = await computeAstPatternEdit('const value = 1;', item, 'sample.ts');
             expect(edit).toMatchObject({ newContent: 'const value = 2;', occurrencesReplaced: 1 });
             expect(edit.warning).toContain('ast_pattern unavailable');
-            expect(edit.warning).toBe('ast_pattern unavailable ([REDACTED]); used exact match instead.');
-            expect(edit.warning).not.toContain('native dependency unavailable in fixture');
+            expect(edit.warning).toBe('ast_pattern unavailable (native dependency unavailable in fixture); used exact match instead.');
           }
           expect(nativeLoads).toBeGreaterThan(0);
         });

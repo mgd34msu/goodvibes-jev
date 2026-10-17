@@ -50,7 +50,26 @@ function openWebStream(gateway: ControlPlaneGateway, opts: { scopes?: readonly s
   });
 }
 
-describe('m1: session-update honors the declared read:sessions scope', () => {
+describe('session-update honors the declared read:sessions scope', () => {
+  test('SSE replay uses the same authorization as live delivery', async () => {
+    const gateway = makeGateway();
+    gateway.publishEvent('session-update', { event: 'session-created' });
+    expect(await sawSessionUpdate(openWebStream(gateway, { scopes: ['read:events'] }))).toBe(false);
+    expect(await sawSessionUpdate(openWebStream(gateway, { scopes: ['read:sessions'] }))).toBe(true);
+  });
+
+  test('WebSocket replay protects both session channels', () => {
+    const gateway = makeGateway();
+    gateway.publishEvent('session-update', { secret: 'session' });
+    gateway.publishEvent('hosted-session-update', { secret: 'hosted' });
+    for (const allowed of [false, true]) {
+      const events: string[] = [];
+      const { clientId } = gateway.openWebSocketClient({ clientKind: 'web', scopes: allowed ? ['read:sessions'] : ['read:events'] }, event => events.push(event));
+      expect(events.includes('session-update')).toBe(allowed);
+      expect(events.includes('hosted-session-update')).toBe(allowed);
+      gateway.closeWebSocketClient(clientId);
+    }
+  });
   test('a web client WITHOUT read:sessions does not receive session-update', async () => {
     const gateway = makeGateway();
     const res = openWebStream(gateway, { scopes: ['read:events'] });

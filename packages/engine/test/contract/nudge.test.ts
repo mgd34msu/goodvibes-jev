@@ -1,5 +1,5 @@
 /**
- * The nudge text (contract/nudge.ts, design 4.7) against golden files: every
+ * The nudge text (contract/nudge.ts) against golden files: every
  * section in its fixed order, empty sections left out, met criteria restated
  * as binding. Also the "Previous checks" section, nudge records and delivery.
  */

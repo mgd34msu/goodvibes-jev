@@ -207,7 +207,7 @@ export class BuiltinChannelRuntime {
   }
 
   // -------------------------------------------------------------------------
-  // Inbound mail (docs/inbound-email.md §3.5)
+  // Inbound mail (docs/decisions/2026-07-27-inbound-email-design.md §3.5)
   //
   // Beside the Telegram ingress methods rather than folded into
   // startIngress()/stopIngress(): each is its OWN cluster surface, and a node

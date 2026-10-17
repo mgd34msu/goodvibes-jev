@@ -1,33 +1,4 @@
-/**
- * capability-route-reconcile.test.ts
- *
- * Capability-advertisement honesty: proves the SDK's
- * advertisement-vs-route reconcile (method-catalog-route-reconcile.ts)
- * against the REAL dispatch chain, dispatchDaemonApiRoutes from
- * @pellux/goodvibes-daemon-sdk, the same function DaemonHttpRouter delegates
- * to for every method-catalog family it doesn't special-case ahead of it,
- * with inert marker-returning handler stubs (no real service ever runs).
- *
- * Covers the brief's three SDK tests:
- *   1. the dogfood repro, now inverted: email.inbox.list resolves to a real
- *      route at the same path it always advertised, and is no longer marked
- *      unavailable. The defect it recorded was never a routing mistake, the
- *      only IMAP/SMTP implementation lived inside one product, so the daemon
- *      had nothing to call. Hoisting it is what let the route exist.
- *   2. the build/boot regression gate: no descriptor in the live catalog
- *      is advertised-but-undispatchable without also being marked
- *      unavailable. KNOWN_PRE_EXISTING_ROUTE_DEBT started as a grandfather
- *      list for calendar.* and channels.inbox/routing/drafts.* (distinct,
- *      out-of-ownership findings this reconcile surfaced incidentally) and
- *      has since been retired to empty. calendar.* left it by being SERVED
- *      (method-catalog-calendar.ts, routes/calendar.ts) rather than by being
- *      marked unavailable; channels.* is marked `invokable: false` at the
- *      source. Either way the exact-set comparison below holds with no
- *      exceptions. A new, unmarked advertise-without-route method
- *      changes the observed violation set and fails this test.
- *   3. a genuinely-served method (control.auth.current) still reconciles
- *      as 'live', the reconcile must not cry wolf on real routes.
- */
+/** Exercises advertised capabilities against the real daemon dispatch chain. */
 
 import { describe, expect, test } from 'bun:test';
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.ts';
@@ -38,29 +9,6 @@ import {
   reconcileCatalogRoutes,
   reconcileHttpDescriptor,
 } from '../sdk/src/platform/control-plane/method-catalog-route-reconcile.ts';
-
-/**
- * Pre-existing advertise-without-route debt discovered incidentally while
- * building this route-reconcile gate (an audit finding): these methods had the identical defect
- * class as email.* (an http path with no router.ts dispatch chain serving
- * it, confirmed by grepping the full path across packages/sdk/src and
- * packages/daemon-sdk/src), but lived in other work items' files,
- * method-catalog-calendar.ts (calendar.*) and method-catalog-channels.ts
- * (channels.drafts.* / channels.inbox.list / channels.routing.*), not
- * method-catalog-email.ts, which was this audit finding's exclusive ownership at the
- * time. Grandfathered explicitly (by id, not by category) so the gate
- * shipped green without hiding the debt or masking a future regression in
- * some OTHER method in those same files that wasn't already on this list.
- *
- * Retired to empty, and it has stayed empty as the debt was actually paid:
- * calendar.*, channels.routing.*, channels.drafts.* and, last of the eight,
- * channels.inbox.list are all SERVED, the inbox one from the host's synced
- * provider mirror through the gateway REST table. Nothing in this file is
- * grandfathered any more; the gate guards every one of them for real. Re-add an
- * entry only if a new, genuinely pre-existing, out-of-ownership case shows up,
- * shrink this list, don't grow it.
- */
-const KNOWN_PRE_EXISTING_ROUTE_DEBT: readonly string[] = [];
 
 function liveCatalogDescriptors() {
   return new GatewayMethodCatalog().list();
@@ -178,20 +126,14 @@ describe('capability-advertisement honesty: route reconcile', () => {
     }
   });
 
-  test('build/boot gate: no advertise-without-route method is unmarked, beyond known pre-existing debt', async () => {
+  test('every advertised unavailable route is marked unavailable', async () => {
     const probe = createDaemonSdkRouteProbe();
     const descriptors = liveCatalogDescriptors();
     const results = await reconcileCatalogRoutes(descriptors, probe);
 
     const violations = findUnreconciledAdvertisements(descriptors, results).sort();
-    const expected = [...KNOWN_PRE_EXISTING_ROUTE_DEBT].sort();
-
-    // Exact-set comparison (not "is empty" / not "is a subset"): a NEW
-    // regression, some other method later advertising a dead route without
-    // invokable:false, changes this set and fails the test loudly, which is
-    // the whole point of the gate. Shrinking the set (fixing calendar.*) is
-    // expected to require updating KNOWN_PRE_EXISTING_ROUTE_DEBT above.
-    expect(violations).toEqual(expected);
+    // Any advertised route without a live handler must disclose its unavailability.
+    expect(violations).toEqual([]);
   });
 
   test('a genuinely-served method still reconciles as live (no false-unavailable)', async () => {

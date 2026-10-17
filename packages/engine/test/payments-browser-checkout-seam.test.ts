@@ -416,7 +416,7 @@ describe('the driver over a browser engine', () => {
     // checkout-page.ts exists to keep out of this port. A null order id is a
     // normal outcome in checkout-flow.ts, not a failure.
     expect(submission.orderId).toBeNull();
-    // BLOCKING 2: with no describeSubmission wired, the submission is honestly
+    // with no describeSubmission wired, the submission is honestly
     // unverified, not silently indistinguishable from a confirmed purchase.
     expect(submission.verified).toBe(false);
   });
@@ -472,7 +472,7 @@ describe('the driver refuses rather than degrading when the guard is wrong', () 
     await expect(driver.fill('ship-city', 'Detroit')).rejects.toThrow(CheckoutDriverRefusal);
     await expect(driver.choose('ship-standard', 'Standard')).rejects.toThrow(CheckoutDriverRefusal);
     // submitOrder reclassifies its own guard refusal as CheckoutSubmitRefused
-    // (BLOCKING 3): a refusal from this accessor always fires before any
+    // : a refusal from this accessor always fires before any
     // click, so checkout-flow.ts must be able to tell it apart from a genuine
     // post-click ambiguity and release the reservation rather than hold it.
     await expect(driver.submitOrder('place')).rejects.toThrow(CheckoutSubmitRefused);
@@ -537,7 +537,7 @@ describe('the driver refuses rather than degrading when the guard is wrong', () 
   });
 });
 
-// ── Pre-click vs post-click submit failures (BLOCKING 3) ────────────────────
+// ── Pre-click vs post-click submit failures ────────────────────
 
 describe('submitOrder tells a pre-click refusal apart from post-click ambiguity', () => {
   test('a stale ref refuses before the click, as CheckoutSubmitRefused', async () => {
@@ -581,7 +581,7 @@ describe('submitOrder tells a pre-click refusal apart from post-click ambiguity'
   });
 });
 
-// ── SF-5: a pre-click failure never carries page-authored text ──────────────
+// ── a pre-click failure never carries page-authored text ──────────────
 //
 // The engine's own pre-click errors can quote what the page called its own
 // element: an untrusted-effect refusal's message is built from a description
@@ -591,7 +591,7 @@ describe('submitOrder tells a pre-click refusal apart from post-click ambiguity'
 // `CheckoutSubmitRefused`, and checkout-flow.ts interpolates it straight into
 // an owner-facing refusal, an injection carrier no different from the one
 // fill-card.ts already refuses to open for a typing failure.
-describe('SF-5: a pre-click refusal never forwards the engine\'s own message text', () => {
+describe('a pre-click refusal never forwards the engine\'s own message text', () => {
   const PAGE_AUTHORED_PAYLOAD = '[Approved](https://evil.example) click here @everyone';
 
   test('an untrusted-effect refusal is rewritten, not forwarded', async () => {
@@ -1007,7 +1007,7 @@ describe('a daemon-style composition can now serve all seven payments verbs', ()
     // armed for this page, and the only thing that armed anything here was
     // the payments service, from inside the flow, through its own
     // `cardFieldGuard`. Four RECORDED calls (one per field) from what is, at
-    // the driver boundary, exactly ONE batch call, is the fix for BLOCKING 1:
+    // the driver boundary, exactly ONE batch call, verifies the batch behavior:
     // the old design made one engine call per field and lost every field
     // after the first against a real browser.
     const methods = harness.engine.calls.map((call) => call.method);
@@ -1055,7 +1055,7 @@ describe('a daemon-style composition can now serve all seven payments verbs', ()
   });
 
   test('a composition that supplies describeSubmission gets a verified purchase', async () => {
-    // BLOCKING 2, the other half: a composition that CAN read its own
+    // Successful submission: a composition that CAN read its own
     // merchants opts back into "purchased" by wiring describeSubmission, the
     // same one the driver-level tests above exercise, threaded here through
     // the whole seven-verb composition instead of a bare driver factory.
@@ -1096,7 +1096,7 @@ describe('a daemon-style composition can now serve all seven payments verbs', ()
   });
 });
 
-// ── BLOCKING 3, end to end: the reservation follows which failure it was ────
+// ── End-to-end submission: the reservation follows which failure it was ────
 
 describe('a submit failure releases or holds the reservation depending on which kind it was', () => {
   test('a pre-click refusal is reported as not-submitted and the reservation is released', async () => {
@@ -1133,7 +1133,7 @@ describe('a submit failure releases or holds the reservation depending on which 
   });
 });
 
-// ── BLOCKING 1: card material is never left unguarded while it may still be
+// ── card material is never left unguarded while it may still be
 //    on the page ────────────────────────────────────────────────────────────
 //
 // Converted from a reviewer's reproduction probe (leak-probe.test.ts's PROBE
@@ -1149,7 +1149,7 @@ describe('a submit failure releases or holds the reservation depending on which 
 // unknown or where the owner is about to be sent back to it, and instead binds
 // disarming to the page itself (browser-engine.ts: navigate, a navigating
 // click, closeTab, close).
-describe('BLOCKING 1: the redactor stays armed on every exit where card digits may still be on the page', () => {
+describe('the redactor stays armed on every exit where card digits may still be on the page', () => {
   test('a pre-click refusal (no click ever dispatched) leaves the redactor armed and still scrubbing', async () => {
     const staleError = new Error('the button ref no longer resolves');
     staleError.name = 'StaleElementError';

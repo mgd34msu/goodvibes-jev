@@ -2,7 +2,7 @@
  * Compile-time pin: "this mailbox was never read from" cannot be read as
  * "the probe came back fine".
  *
- * `docs/inbound-email.md` §3.4d, "Scope sufficiency applies to both": IMAP has
+ * `docs/decisions/2026-07-27-inbound-email-design.md` §3.4d, "Scope sufficiency applies to both": IMAP has
  * no `CAPABILITY` atom that declares body access the way a Gmail scope grant
  * does, so the only way to know whether a mailbox will hand over message
  * content is to ask for some. On an empty mailbox there is nothing to ask for,

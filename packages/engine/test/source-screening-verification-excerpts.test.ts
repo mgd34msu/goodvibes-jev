@@ -169,7 +169,7 @@ test('native malformed ranges still refuse before construction or any judgment r
   expect(requests).toHaveLength(0);
 });
 
-test('complete additive state keeps the original context budget and never clips to fit', async () => {
+test('complete additive state has no implicit context cap and never clips to fit', async () => {
   const text = '\n'.repeat(40_000);
   const original = { parts: [text], spans: [] };
   expect(() => validateContextBudget(original, questions())).not.toThrow();
@@ -177,7 +177,7 @@ test('complete additive state keeps the original context budget and never clips 
     { kind: 'unselected', start: 0, end: 40_000, text },
   ] }] };
   const request = await observe(original.parts, original.spans, expected);
-  expect(() => validateContextBudget(request.state, request.questions)).toThrow('state plus the longest question');
+  expect(() => validateContextBudget(request.state, request.questions)).not.toThrow();
 });
 
 test('policy version separates coverage and precision while retaining model, floor and bands', () => {

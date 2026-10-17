@@ -92,7 +92,7 @@ describe('fleet CLI command', () => {
     }, { modelData: 'skip' });
     const result = await handleFleetCommand(rt);
     expect(result.exitCode).toBe(1);
-    expect(result.output).toBe('[REDACTED]');
+    expect(result.output).toBe('contract missing-contract is not running work');
     expect(result.output).not.toContain('Picked winner');
   }, 15000);
 
@@ -115,7 +115,7 @@ describe('fleet CLI command', () => {
     }, { modelData: 'skip' });
     const result = await handleFleetCommand(rt);
     expect(result.exitCode).toBe(1);
-    expect(result.output).toBe('[REDACTED]');
+    expect(result.output).toBe('contract missing-contract is not running work');
     expect(result.output).not.toContain('Judge proposal');
   }, 15000);
 });

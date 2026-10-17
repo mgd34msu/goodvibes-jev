@@ -8,7 +8,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { SqliteDecisionLog } from '@goodvibes-jev/judgment';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
-import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
 import { APPROVAL_REFUSED_LINE, ASK_AGAIN_LINE, NAME_AN_ATTEMPT_LINE, type EscalationReason, type OwnerReplyOutcome } from '../../sdk/src/platform/contract/index.js';
 import { unsettledReadingsNote } from '../../sdk/src/platform/contract/escalation.js';
 import { QUALITY_EVIDENCE_SENTENCES } from '../../sdk/src/platform/contract/nudge.js';
@@ -52,13 +51,15 @@ function metOnceAmended(amended: { value: boolean }) {
   return (context: AnswerContext): unknown => (amended.value && judgeOf(context) !== null ? noulAnswer(MET) : undefined);
 }
 
-/** The deliverable reads met (these tests are about the owner, not the deliverable). */
-function deliverableMeets(context: AnswerContext): unknown {
-  return judgeOf(context) === 'deliverable' ? noulAnswer(MET) : undefined;
-}
-
 async function reach(options: Omit<HarnessOptions, 'planner'> & { readonly planner: StepPlanner; readonly amended: { value: boolean } }, reason: EscalationReason): Promise<Scenario> {
-  const h = makeHarness({ ...options, planner: options.planner.runner });
+  let h: Harness;
+  const original = options.scripts.u1;
+  h = makeHarness({ ...options, planner: options.planner.runner, ...(reason === 'fix-rounds-exhausted' && original ? {
+    scripts: { ...options.scripts, u1: (record, run) => {
+      h.store.get(record.contractId!)!.units[0]!.fixRounds = 1;
+      return original(record, run);
+    } },
+  } : {}) });
   harness = h;
   const { contract } = startContract(h);
   await waitFor(() => contractOf(h, contract.id).status === 'awaiting-owner' || terminal(h, contract.id), `the ${reason} escalation`, 15_000);
@@ -83,7 +84,7 @@ function amendUnit(amended: { value: boolean }) {
 
 type Setup = (reading: Reading) => Promise<Scenario>;
 
-const SETUPS: Readonly<Record<Exclude<EscalationReason, 'owner-decision-needed'>, Setup>> = {
+const SETUPS: Readonly<Record<Exclude<EscalationReason, 'owner-decision-needed' | 'unsettled' | 'writing-unclear'>, Setup>> = {
   stalled: async (reading) => {
     const amended = { value: false };
     return reach({
@@ -99,59 +100,31 @@ const SETUPS: Readonly<Record<Exclude<EscalationReason, 'owner-decision-needed'>
     const amended = { value: false };
     return reach({
       plan: oneUnitPlan(1),
-      contract: { stallLimit: 2, maxFixRounds: 0 },
+      contract: { stallLimit: 2, maxFixRounds: 1 },
       planner: stepPlanner(oneUnitPlan(1), { amend: amendUnit(amended) }),
       amended,
       scripts: { u1: keepsFailing(3) },
       port: answers(metOnceAmended(amended), replyAnswers([{ reading }])),
     }, 'fix-rounds-exhausted');
   },
-  unsettled: async (reading) => {
-    const amended = { value: false };
-    // A criterion read "no" at 0.8 does not settle: it is not shown, and after one evidence nudge the owner is asked.
-    const unsettled: AgentScript = () => [{ files: { 'src/csv.ts': 'a\n' }, text: 'parsed [p=0.2]' }, { files: { 'src/csv.ts': 'b\n' }, text: 'parsed again [p=0.2]' }];
-    return reach({
-      plan: oneUnitPlan(1),
-      contract: { evidenceNudgeLimit: 1 },
-      planner: stepPlanner(oneUnitPlan(1), { amend: amendUnit(amended) }),
-      amended,
-      scripts: { u1: unsettled },
-      port: answers(metOnceAmended(amended), deliverableMeets, replyAnswers([{ reading }])),
-    }, 'unsettled');
-  },
   'plan-unresolved': async (reading) => {
     const amended = { value: false };
     let shapes = 0;
-    // The first plan narrows its unit, and repairs are not allowed: the owner decides. The re-planned one does not.
+    // The first plan and its one allowed repair narrow the unit; the owner decides before a corrected plan.
     const narrowsOnce = (context: AnswerContext): unknown => {
       if (!context.name.startsWith('narrows_') || unitTitleOf(context.state) === undefined) return undefined;
       shapes += 1;
-      return noulAnswer(shapes === 1 ? 0.97 : 0.03);
+      return noulAnswer(shapes <= 2 ? 0.97 : 0.03);
     };
     const planner = stepPlanner(oneUnitPlan(1));
     return reach({
       plan: oneUnitPlan(1),
-      contract: { planRepairLimit: 0 },
+      contract: { planRepairLimit: 1 },
       planner,
       amended,
       scripts: { u1: finishes('parser written') },
       port: answers(narrowsOnce, replyAnswers([{ reading }])),
     }, 'plan-unresolved');
-  },
-  'writing-unclear': async (reading) => {
-    const amended = { value: false };
-    // The ask does not say whether files may change; a reply that says nothing may change reads yes.
-    const writing = (context: AnswerContext): unknown => {
-      if (context.name !== 'forbids_writing') return undefined;
-      return noulAnswer(context.state['request'] === ASK ? 0.5 : 0.97);
-    };
-    return reach({
-      plan: oneUnitPlan(1),
-      planner: stepPlanner(oneUnitPlan(1)),
-      amended,
-      scripts: { u1: finishes('parser written') },
-      port: answers(writing, replyAnswers([{ reading }])),
-    }, 'writing-unclear');
   },
   'attempts-undecided': async (reading) => {
     const amended = { value: false };
@@ -256,9 +229,9 @@ describe('owner replies (6.3)', () => {
         }
         if (reason === 'plan-unresolved') {
           const replans = s.planner.of('plan');
-          expect(replans).toHaveLength(2);
-          expect(replans[1]!.userPrompt).toContain("## The owner's instruction");
-          expect(replans[1]!.userPrompt).toContain(TEXTS.amend);
+          expect(replans).toHaveLength(3);
+          expect(replans[2]!.userPrompt).toContain("## The owner's instruction");
+          expect(replans[2]!.userPrompt).toContain(TEXTS.amend);
         }
         if (reason === 'writing-unclear') expect(done.shape?.forbids_writing).toMatchObject({ verdict: 'yes', outcome: 'act' });
         if (reason === 'attempts-undecided') expect(done.units[0]!.attemptSelection?.pickedId).toBe('u1#a1');
@@ -312,26 +285,25 @@ describe('owner replies (6.3)', () => {
     expect(question.endsWith(`\n${NAME_AN_ATTEMPT_LINE(['u1#a0', 'u1#a1'])}`)).toBe(true);
   }, 25_000);
 
-  test('a writing reply is read with forbids_writing alone, and the shaped decision records that reading', async () => {
-    const s = await SETUPS['writing-unclear']('amend');
-    // The installed fake port, with each call given a decision id named for its battery (the harness puts its own port back).
-    const inner = judgmentPort('test');
-    const asked: { readonly battery: string | undefined; readonly questions: readonly string[] }[] = [];
-    installJudgmentPort({
-      model: inner.model,
-      async ask(request) {
-        const result = await inner.ask(request);
-        asked.push({ battery: request.context?.battery, questions: Object.keys(request.questions) });
-        return { ...result, decisionId: `d-${request.context?.battery ?? 'none'}` };
-      },
-    });
-    const outcome = await s.reply("Don't change any files, just tell me what you find.");
-    expect(outcome.action).toBe('amended');
-    expect(asked.find((call) => call.battery === 'contract.request-shape')).toEqual({ battery: 'contract.request-shape', questions: ['forbids_writing'] });
-    const shaped = contractOf(s.h, s.contractId).decisions.find((decision) => decision.action === 'shaped' && decision.reason.includes('the owner settled writing'));
-    expect(shaped).toMatchObject({ reason: 'the owner settled writing: files may not change (read from the reply)', decisionIds: ['d-contract.request-shape'] });
-    await settle(s);
-  }, 25_000);
+  test('an uncertain writing observation proceeds without asking for approval', async () => {
+    const h = makeHarness({ plan: oneUnitPlan(1), scripts: { u1: finishes('parser written') },
+      port: context => context.name === 'forbids_writing' ? noulAnswer(0.5) : undefined });
+    harness = h;
+    const { contract } = startContract(h);
+    await waitFor(() => terminal(h, contract.id), 'automatic planning to complete');
+    expect(contractOf(h, contract.id).status).toBe('passed');
+    expect(contractOf(h, contract.id).escalations).toEqual([]);
+  });
+
+  test.each([0.2, 0.5])('a criterion reading of %s does not manufacture an unshown approval question', async probability => {
+    const h = makeHarness({ plan: oneUnitPlan(1), scripts: { u1: finishes(`[p=${probability}] parser written`) } });
+    harness = h;
+    const { contract } = startContract(h);
+    await waitFor(() => terminal(h, contract.id), 'automatic evidence check to complete');
+    expect(contractOf(h, contract.id).status).toBe('passed');
+    expect(contractOf(h, contract.id).units[0]!.criteria[0]!.status).toBe('met');
+    expect(contractOf(h, contract.id).escalations).toEqual([]);
+  });
 
   test('a reply to an escalation that is not open is refused', async () => {
     const s = await SETUPS.stalled('unclear');
@@ -368,11 +340,11 @@ describe('what an owner-approved plan names', () => {
     const narrowsOnce = (context: AnswerContext): unknown => {
       if (!context.name.startsWith('narrows_') || unitTitleOf(context.state) === undefined) return undefined;
       shapes += 1;
-      return noulAnswer(shapes === 1 ? 0.97 : 0.03);
+      return noulAnswer(shapes <= 2 ? 0.97 : 0.03);
     };
     const h = makeHarness({
       plan: oneUnitPlan(1),
-      contract: { planRepairLimit: 0 },
+      contract: { planRepairLimit: 1 },
       planner: stepPlanner(oneUnitPlan(1)).runner,
       scripts: { u1: finishes('parser written') },
       port: answers(narrowsOnce, replyAnswers([{ reading: 'approve' }])),

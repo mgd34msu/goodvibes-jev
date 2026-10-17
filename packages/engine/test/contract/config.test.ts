@@ -1,5 +1,5 @@
 /**
- * The `contract.*` settings (design 9.1): every key is in the schema with the
+ * The `contract.*` settings: every key is in the schema with the
  * default the runner uses, ConfigManager resolves and validates them, and
  * readContractConfig reads each one with its guards. That the retired review
  * loop's keys are gone is held by settings-migration.test.ts, beside the

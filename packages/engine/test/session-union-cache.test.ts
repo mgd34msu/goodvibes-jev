@@ -324,7 +324,7 @@ describe('SessionUnionCache: honest cross-surface read facade', () => {
     });
   });
 
-  describe('self-mirror identity (D-TUI-1): dedup on the TRUE shared identity, not raw id equality', () => {
+  describe('self-mirror identity: dedup on the TRUE shared identity, not raw id equality', () => {
     test('local record + its wire mirror under the SAME id still dedup to exactly one row (no regression)', async () => {
       const local = localReader([record('self-1', { title: 'local-title' })]);
       const wire = wireReader({ rows: [record('other-1'), record('self-1', { title: 'wire-title' })] });

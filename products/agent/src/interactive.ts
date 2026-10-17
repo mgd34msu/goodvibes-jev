@@ -465,7 +465,7 @@ async function main() {
   commandContext.beginPlainInput = (request) => input.beginPlainInput(request);
   commandContext.executeCommand = (name, args) => commandRegistry.execute(name, args, commandContext);
   commandContext.cancelGeneration = cancelGeneration;
-  commandContext.isGenerating = () => orchestrator.isThinking;
+  commandContext.isGenerating = () => orchestrator.isBusy;
   commandContext.jumpToBookmark = jumpToBookmark;
   commandContext.scrollToLine = scrollToLine;
   const commandUi = createCommandContextUi({

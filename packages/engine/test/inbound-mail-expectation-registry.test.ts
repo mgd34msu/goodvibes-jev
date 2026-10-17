@@ -394,7 +394,7 @@ describe('the book is constructed with the real authority probe', () => {
 });
 
 // ---------------------------------------------------------------------------
-// §12 gates #31, #32, #33, an expectation is a promise to WATCH a mailbox
+// An expectation is a promise to watch a mailbox
 // ---------------------------------------------------------------------------
 
 const UNREADABLE: InboundCapabilityVerdict = capabilityVerdict(
@@ -410,7 +410,7 @@ const HEALTHY_VERDICT: InboundCapabilityVerdict = capabilityVerdict(
   'Holding an IDLE connection.',
 );
 
-describe('an expectation is refused against a mailbox that cannot be read (gate #31)', () => {
+describe('an expectation is refused against a mailbox that cannot be read', () => {
   test('opening is refused AT OPEN TIME, not left to expire fifteen minutes later', async () => {
     const { registry } = build({ capability: () => UNREADABLE });
 
@@ -470,7 +470,7 @@ describe('an expectation is refused against a mailbox that cannot be read (gate 
   });
 });
 
-describe('capability lost mid-window fails open expectations by name (gate #32)', () => {
+describe('capability lost mid-window fails open expectations by name', () => {
   test('an insufficient verdict closes them with capability-lost, not window-elapsed', async () => {
     const reports: ExpectationExpiryReport[] = [];
     const { registry } = build({ onExpired: (report) => reports.push(report) });
@@ -525,7 +525,7 @@ describe('capability lost mid-window fails open expectations by name (gate #32)'
   });
 });
 
-describe('a watcher in reconnect backoff does NOT fail expectations (gate #33)', () => {
+describe('a watcher in reconnect backoff does NOT fail expectations', () => {
   test('a reconnecting verdict leaves every open expectation open', async () => {
     const reports: ExpectationExpiryReport[] = [];
     const { registry } = build({ onExpired: (report) => reports.push(report) });

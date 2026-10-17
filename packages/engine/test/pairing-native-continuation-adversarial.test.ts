@@ -16,10 +16,10 @@ const successorA = digest('synthetic successor A');
 const successorB = digest('synthetic successor B');
 const current = () => {};
 function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'gv-continuation-review-')); dirs.push(dir);
+  const dir = mkdtempSync(join(tmpdir(), 'gv-native-continuation-')); dirs.push(dir);
   const file = join(dir, 'pairing.json');
   const manager = new PairingTokenManager(file);
-  const paired = manager.mint({ name: 'Synthetic review device' });
+  const paired = manager.mint({ name: 'Synthetic paired device' });
   const authority: NativeContinuationAuthority = Object.freeze({ ...manager.authenticateNative(paired.token)!, scopes: ['write:synthetic'] });
   const issue = (binding = sourceBinding) => manager.issueNativeContinuation(paired.token, authority, binding, current);
   return { dir, file, manager, paired, authority, issue };

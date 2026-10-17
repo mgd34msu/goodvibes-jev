@@ -1,6 +1,6 @@
 /**
  * source.ts, the seam that makes inbound mail source-agnostic
- * (docs/inbound-email.md §3.4d).
+ * (docs/decisions/2026-07-27-inbound-email-design.md §3.4d).
  *
  * The watcher was IMAP-only, so someone who had already adopted Google
  * credentials was still asked to find an IMAP host, a username and an app

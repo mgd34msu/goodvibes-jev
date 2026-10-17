@@ -126,7 +126,7 @@ describe('the composition states a trust posture, and it is the session\'s works
       const result = await write(join(workspaceA, 'allowed.txt'));
       expect(result[0]?.success).toBe(true);
       expect(readFileSync(join(workspaceA, 'allowed.txt'), 'utf8')).toBe('owned-hosted-trust');
-      expect(readings.requests.some(request => 'disposition' in request.questions)).toBe(true);
+      expect(readings.requests.some(request => 'disposition' in request.questions)).toBe(false);
       expect(trustA.isDecided()).toBe(false);
       expect(existsSync(trustFile)).toBe(false);
       // Only an explicit local policy choice persists trust, never a Jev action.

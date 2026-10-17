@@ -46,38 +46,22 @@ function manager(handler: PermissionRequestHandler, store: UserPermissionRuleSto
   } as PermissionConfigReader, { recordPermissionRequest() {}, recordPermissionDecision() {}, getRegistry: () => ({ getCurrent: () => undefined }) } as never, null, null, store);
 }
 
-test('one coalesced consumer cancels without dismissing the live prompt or its remembered grant', async () => {
+test('one explicit coalesced consumer cancels without dismissing the other consumer', async () => {
   const broker = new ApprovalBroker({ storePath: ':memory:' }); await broker.start();
   const held = deferred<PermissionPromptDecision>();
   const first = new AbortController(); const second = new AbortController();
-  const firstStore = new UserPermissionRuleStore(':memory:'); const secondStore = new UserPermissionRuleStore(':memory:');
-  let promptSignal: AbortSignal | undefined; let prompts = 0; let joined = 0;
-  let next: PermissionPromptDecision | undefined;
-  const handler: PermissionRequestHandler = (input, options) => {
-    joined++;
-    expect(input).not.toHaveProperty('signal');
-    return broker.requestApproval({ request: input, signal: options?.signal, sessionId: 'shared', localPrompt: (_request, execution) => {
-      prompts++; promptSignal = execution?.signal;
-      return next === undefined ? held.promise : Promise.resolve(next);
-    } });
-  };
-  const firstManager = manager(handler, firstStore); const secondManager = manager(handler, secondStore);
-  const abandoned = caught(firstManager.checkDetailed('write', args, undefined, { signal: first.signal }));
+  let promptSignal: AbortSignal | undefined; let prompts = 0;
+  const abandoned = caught(broker.requestApproval({ request: request('first'), signal: first.signal, sessionId: 'shared', localPrompt: (_request, options) => {
+    prompts++; promptSignal = options?.signal; return held.promise;
+  } }));
   await until(() => prompts === 1);
-  const active = secondManager.checkDetailed('write', args, undefined, { signal: second.signal });
-  await until(() => joined === 2); await turn();
+  const active = broker.requestApproval({ request: request('second'), signal: second.signal, sessionId: 'shared' }); await turn();
   first.abort(new Error(PRIVATE_REASON)); cancelled(await abandoned);
-  expect(promptSignal).toBeDefined(); expect(promptSignal!.aborted).toBe(false);
-  expect(second.signal.aborted).toBe(false); expect(prompts).toBe(1);
+  expect(promptSignal!.aborted).toBe(false); expect(second.signal.aborted).toBe(false); expect(prompts).toBe(1);
   expect(broker.listApprovals()).toHaveLength(1); expect(broker.listApprovals()[0]!.status).toBe('pending');
-  expect(broker.listApprovals()[0]!.request).not.toHaveProperty('signal');
   held.resolve({ approved: true, rememberTier: 'tool' });
-  expect((await active).approved).toBe(true); await turn();
-  expect(firstStore.list()).toHaveLength(0); expect(secondStore.list()).toHaveLength(1);
-  expect((await secondManager.checkDetailed('write', args)).sourceLayer).toBe('user_rule');
-  next = { approved: false };
-  expect(await firstManager.checkDetailed('write', args)).toMatchObject({ approved: false, sourceLayer: 'user_prompt' });
-  expect(firstStore.list()).toHaveLength(0); expect(prompts).toBe(2);
+  expect(await active).toMatchObject({ approved: true, rememberTier: 'tool' });
+  expect(broker.listApprovals()[0]!.status).toBe('approved');
 });
 
 test('all coalesced consumers cancel, retire the shared prompt, and reject its late remember reply', async () => {
@@ -100,19 +84,14 @@ test('all coalesced consumers cancel, retire the shared prompt, and reject its l
   expect(approval.decision).toMatchObject({ approved: false, remember: false });
 });
 
-test('an unresponsive permission handler cannot persist a delayed remembered answer after cancellation', async () => {
-  const held = deferred<PermissionPromptDecision>(); const controller = new AbortController();
-  const store = new UserPermissionRuleStore(':memory:'); let asks = 0; let forwarded: AbortSignal | undefined;
-  const permissions = manager((_request, options) => { forwarded = options?.signal; return ++asks === 1 ? held.promise : Promise.resolve({ approved: false }); }, store);
-  const options = { signal: controller.signal };
-  const result = caught(permissions.checkDetailed('write', args, undefined, options));
-  await until(() => asks === 1); options.signal = new AbortController().signal;
-  controller.abort(new Error(PRIVATE_REASON)); cancelled(await result);
-  expect(forwarded).toBe(controller.signal);
-  held.resolve({ approved: true, rememberTier: 'tool' }); await turn();
-  expect(store.list()).toHaveLength(0);
-  expect(await permissions.checkDetailed('write', args)).toMatchObject({ approved: false, sourceLayer: 'user_prompt' });
-  expect(asks).toBe(2);
+test('an unrequested permission handler cannot delay the owner or persist a grant', async () => {
+  const store = new UserPermissionRuleStore(':memory:'); let asks = 0;
+  const permissions = manager(() => { asks++; return new Promise(() => {}); }, store);
+  expect(await permissions.checkDetailed('write', args)).toMatchObject({ approved: true, sourceLayer: 'config_policy', persisted: false });
+  expect(asks).toBe(0); expect(store.list()).toEqual([]);
+  const controller = new AbortController(); controller.abort(new Error(PRIVATE_REASON));
+  cancelled(await caught(permissions.checkDetailed('write', args, undefined, { signal: controller.signal })));
+  expect(asks).toBe(0);
 });
 
 test('broker captures the original signal before its first await even if the input is changed', async () => {
@@ -150,13 +129,13 @@ for (const timed of [false, true]) test(`a restored ${timed ? 'timed' : 'untimed
   } finally { await first.cancelApproval(raised.approval.id, 'synthetic-cleanup'); await raised.decision; rmSync(root, { recursive: true, force: true }); }
 });
 
-test('late rejection from an unresponsive handler is drained without a remembered grant', async () => {
-  const held = deferred<PermissionPromptDecision>(); const controller = new AbortController();
-  const store = new UserPermissionRuleStore(':memory:'); let asked = false;
-  const permissions = manager(() => { asked = true; return held.promise; }, store);
-  const result = caught(permissions.checkDetailed('write', args, undefined, { signal: controller.signal }));
-  await until(() => asked); controller.abort(new Error(PRIVATE_REASON)); cancelled(await result);
-  held.reject(new Error('synthetic late prompt failure')); await turn(); expect(store.list()).toHaveLength(0);
+test('the explicit broker drains late prompt rejection after its consumer cancels', async () => {
+  const broker = new ApprovalBroker({ storePath: ':memory:' }); await broker.start();
+  const held = deferred<PermissionPromptDecision>(); const controller = new AbortController(); let asked = false;
+  const pending = caught(broker.requestApproval({ request: request('late-failure'), signal: controller.signal, localPrompt: () => { asked = true; return held.promise; } }));
+  await until(() => asked); controller.abort(new Error(PRIVATE_REASON)); cancelled(await pending);
+  held.reject(new Error('synthetic late prompt failure')); await turn();
+  expect(broker.listApprovals()[0]!.status).toBe('cancelled');
 });
 
 for (const cancelAll of [false, true]) test(`cancellation during initial persistence preserves ${cancelAll ? 'no abandoned prompt' : 'the other prompt owner'}`, async () => {
@@ -196,16 +175,11 @@ for (const cancelAll of [false, true]) test(`cancellation during initial persist
   }
 });
 
-for (const tier of ['session', 'tool'] as const) test(`a decision getter cannot cancel and then install a ${tier} grant`, async () => {
+test('unrequested callback decision getters cannot install a grant or cancel a check', async () => {
   const controller = new AbortController(); const store = new UserPermissionRuleStore(':memory:'); let asks = 0;
-  const permissions = manager(async () => ++asks === 1 ? {
-    rememberTier: tier,
-    get approved() { controller.abort(new Error(PRIVATE_REASON)); return true; },
-  } : { approved: false }, store);
-  cancelled(await caught(permissions.checkDetailed('write', args, undefined, { signal: controller.signal })));
-  expect(store.list()).toHaveLength(0);
-  expect(await permissions.checkDetailed('write', args)).toMatchObject({ approved: false, sourceLayer: 'user_prompt' });
-  expect(asks).toBe(2);
+  const permissions = manager(async () => { asks++; return { rememberTier: 'tool', get approved() { controller.abort(); return true; } }; }, store);
+  expect(await permissions.checkDetailed('write', args, undefined, { signal: controller.signal })).toMatchObject({ approved: true, persisted: false, sourceLayer: 'config_policy' });
+  expect(controller.signal.aborted).toBe(false); expect(asks).toBe(0); expect(store.list()).toEqual([]);
 });
 
 test('synchronous retirement blocks an approval still awaiting broker start', async () => {

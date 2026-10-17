@@ -1,7 +1,7 @@
 /**
  * terminal-notice.ts, routing a terminal inbound-mail failure to the OWNER.
  *
- * docs/inbound-email.md §3.4b: *"A terminal state is announced, not merely
+ * docs/decisions/2026-07-27-inbound-email-design.md §3.4b: *"A terminal state is announced, not merely
  * recorded... Silent permanent death is the failure this entire round exists to
  * eliminate."*
  *

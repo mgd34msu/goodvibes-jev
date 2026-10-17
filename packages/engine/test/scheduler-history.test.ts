@@ -12,7 +12,7 @@ import { TaskScheduler } from '../sdk/src/platform/scheduler/scheduler.ts';
 import type { TaskRunRecord } from '../sdk/src/platform/scheduler/scheduler.ts';
 
 function tempDir(suffix: string): string {
-  const d = join(tmpdir(), `gv-perf03-${suffix}-${Date.now()}`);
+  const d = join(tmpdir(), `gv-scheduler-history-${suffix}-${Date.now()}`);
   mkdirSync(d, { recursive: true });
   return d;
 }

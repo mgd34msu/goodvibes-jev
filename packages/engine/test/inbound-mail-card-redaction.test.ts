@@ -2,7 +2,7 @@
  * inbound-mail-card-redaction.test.ts
  *
  * Card shapes in inbound mail are REDACTED, not refused
- * (docs/inbound-email.md §11.0).
+ * (docs/decisions/2026-07-27-inbound-email-design.md §11.0).
  *
  * Mail is treated differently from a remote messaging channel on purpose. A
  * channel message carrying card shapes is dropped whole; an email is not,

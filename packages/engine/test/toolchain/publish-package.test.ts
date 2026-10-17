@@ -1,3 +1,7 @@
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
+import { makeProjectTempDir } from '../_helpers/project-temp.ts';
 import { describe, expect, test } from 'bun:test';
 import { getPublishedVersion, runPublishPackage, pollPropagation, captureLogger } from '@goodvibes-jev/engine/toolchain';
 import { scriptedExec } from './_helpers.ts';
@@ -44,6 +48,7 @@ describe('publish-package tarball mode', () => {
       version: '1.12.3',
       tarballPath: 'release-tarball/agent.tgz',
       fileExists: () => true,
+      readTarballManifest: () => ({ name: '@pellux/agent', version: '1.12.3' }),
       exec,
       logger: captureLogger(),
     });
@@ -87,6 +92,7 @@ describe('publish-package tarball mode', () => {
       version: '1.12.3',
       tarballPath: 'release-tarball/agent.zip',
       fileExists: () => true,
+      readTarballManifest: () => ({ name: '@pellux/agent', version: '1.12.3' }),
       exec: scriptedExec(() => ({ status: 0 })),
       logger: captureLogger(),
     });
@@ -107,6 +113,7 @@ describe('publish-package tarball mode', () => {
       tarballPath: 'release-tarball/agent.tgz',
       dryRun: true,
       fileExists: () => true,
+      readTarballManifest: () => ({ name: '@pellux/agent', version: '1.12.3' }),
       exec,
       logger: captureLogger(),
     });
@@ -127,6 +134,7 @@ describe('publish-package tarball mode', () => {
       version: '1.12.3',
       tarballPath: 'release-tarball/agent.tgz',
       fileExists: () => true,
+      readTarballManifest: () => ({ name: '@pellux/agent', version: '1.12.3' }),
       exec,
       logger: captureLogger(),
     });
@@ -150,4 +158,31 @@ describe('publish-package propagation poll', () => {
     expect(result.ok).toBe(false);
     expect(result.attempts).toBe(2);
   });
+});
+
+
+test('real tarball identity is verified before dry runs, registry checks, or publication', () => {
+  const dir = makeProjectTempDir('publish-tarball-identity');
+  const pkg = join(dir, 'package'); mkdirSync(pkg);
+  const archive = join(dir, 'release.tgz');
+  const commands: string[] = [];
+  const exec = scriptedExec((cmd) => { commands.push(cmd); return { status: 0 }; });
+  const options = { cwd: dir, name: '@fixture/intended', version: '1.2.3', tarballPath: archive, exec, logger: captureLogger() };
+  const pack = (name: string, version: string) => {
+    writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name, version }));
+    execFileSync('tar', ['-czf', archive, '-C', dir, 'package']);
+  };
+  try {
+    pack('@fixture/other', '1.2.3');
+    expect(runPublishPackage(options).ok).toBe(false);
+    expect(runPublishPackage({ ...options, dryRun: true }).ok).toBe(false);
+    pack(options.name, '9.9.9');
+    expect(runPublishPackage(options).ok).toBe(false);
+    expect(commands).toEqual([]);
+    pack(options.name, options.version);
+    expect(runPublishPackage({ ...options, dryRun: true }).ok).toBe(true);
+    writeFileSync(archive, 'not an archive');
+    expect(runPublishPackage({ ...options, dryRun: true }).ok).toBe(false);
+    expect(commands).toEqual([]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

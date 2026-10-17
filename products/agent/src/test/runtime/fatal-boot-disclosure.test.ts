@@ -135,7 +135,8 @@ describe('the compiled Agent binary says why it will not start', () => {
     expect(run.stderr.length).toBeGreaterThan(0);
     expect(run.stderr).toContain('goodvibes-agent failed to launch');
     expect(run.stderr).toContain(settingsPath);
-    expect(run.stderr).toContain('could not be read as JSON: [REDACTED]');
+    expect(run.stderr).toContain('could not be read as JSON:');
+    expect(run.stderr).not.toContain('[REDACTED]');
   });
 
   test('the fatal boot failure is reached, not the interactive-terminal refusal', () => {

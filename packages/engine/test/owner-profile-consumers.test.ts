@@ -114,7 +114,7 @@ function freshConfig(): ConfigManager {
   return new ConfigManager({ surfaceRoot: 'daemon', configDir: join(root, 'cfg'), homeDir: root });
 }
 
-describe('§12: the profile config domain is real, editable and daemon-owned', () => {
+describe('the profile config domain is real, editable and daemon-owned', () => {
   test('all eight keys exist with the design\'s defaults and are daemon-owned', () => {
     const expected: Record<string, unknown> = {
       'profile.enabled': true,
@@ -346,7 +346,7 @@ describe('closed-tier value set for redaction', () => {
   });
 });
 
-describe('the two halves of "inert until the payments branch merges", now that it has', () => {
+describe('profile-backed payment defaults and checkout', () => {
   test('daemon.timezone resolves from the profile, as it did before the key existed', async () => {
     const store = await loadedStore();
     const config = freshConfig();

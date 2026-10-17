@@ -1,57 +1,6 @@
 /**
- * notice-text.ts, making attacker-chosen text inert before it reaches a
- * notification the owner reads and acts on.
- *
- * ── The defect class this exists for ──────────────────────────────────────
- *
- * The inbound-mail notice sanitized its delivered-to address for control
- * characters only, on the premise that a sender cannot forge which mailbox
- * received the mail. That premise is true about the MAILBOX and false about the
- * local part in front of the `@`, which under catch-all or plus-addressing is
- * whatever the sender chose to type. So
- * `[Approved](https://evil.example)@ourdomain.com` rendered as a clickable link,
- * and `@everyone@ourdomain.com` formed a real mention, on the one field the
- * notice existed to make trustworthy.
- *
- * The reasoning that produced it is the part worth remembering: **a field is not
- * safe because part of its provenance is verified.** "The sender cannot forge
- * which mailbox this arrived at" is a different claim from "the sender cannot
- * influence this string", and only the second one licenses skipping
- * neutralisation.
- *
- * Payment notices are a strictly worse version of the same surface: a merchant
- * page controls the item title, the seller name and the shipping labels, the
- * owner reads them on their phone under a ten-minute clock, and their reply
- * authorises a charge.
- *
- * ── Where per-channel escaping lives, and why this is not it ──────────────
- *
- * This function does NOT know which channel a notice will fan out to. Telegram
- * MarkdownV2, Slack mrkdwn, Discord markdown, ntfy and a bare terminal each
- * escape differently and have different mention forms, and a trigger set tuned
- * for one lets something through on another.
- *
- * So the split is deliberate:
- *
- *  - **Here (source):** neutralise the UNION of trigger characters, so the value
- *    is inert whatever the route turns out to be. This is the defence that does
- *    not depend on guessing the destination, and it is the one that has to hold.
- *  - **Channel adapter (delivery):** whatever escaping that specific channel's
- *    formatter requires. That is a rendering concern belonging to the code that
- *    knows the wire format.
- *
- * Neutralising the union at the source is not a substitute for correct per-
- * channel escaping; it is what keeps a missing escape from becoming a clickable
- * link in a message about money.
- *
- * ── Convergence note ──────────────────────────────────────────────────────
- *
- * `platform/email/inbound-notice.ts` (branch `inbound-email-config`, commit
- * `140cbcb4`) currently carries its own copy of this logic, written first. This
- * module is deliberately behaviourally identical, same trigger sets, same
- * mention-breaking, same ordering, so the two can be collapsed onto this one
- * when that branch merges. Two copies of a security escaper is the drift class
- * that lets one of them quietly fall behind.
+ * Neutralize untrusted notice text across all supported notification channels.
+ * Channel adapters must also apply the escaping required by their wire format.
  */
 
 /** Control characters and the Unicode line separators, which can forge a line. */

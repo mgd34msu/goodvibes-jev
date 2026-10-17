@@ -1,5 +1,5 @@
 {
-  "provenance": "Recorded complete safe diagnostic subjects from checkpoint 64c9d6d565e2e16641970310d8ca90caaa0008c0 CI run 38113187945 jobs 114393096159 and 114393096195. Only the independently owned temporary root is parameterized. Questions come from the actual registered source contracts because GitHub log masking replaced Bearer in their instructions. Answers classify these exact synthetic diagnostic subjects only; refs remains uncertain. No original native input or withheld value is supplied or inferred. Two complete watchdog process-id subjects were subsequently recorded by the real source headless child run (headless-diagnostic-source-1.log). Nine complete provider fingerprint field subjects were recorded by that same run. Actual native fingerprint source publishes counts, budgets and category/boolean settings only. Message/image collections and reasoningSummary remain uncertain because field names alone do not establish their full role. Twenty-one additional complete envelopes were recorded by fa73eda CI run 38120201253. Native sources connected-host-auth.ts and daemon-verbs.ts identify unknown-pairing and missing-token diagnostics; no hidden span value is inferred from them. Bare dispatch and opaque method-error/memory spans remain uncertain. A declared token span remains credential material even when another span is the target. Setup mode, identifier and confirmation targets are ordinary, but the whole line stays uncertain because explicitUserRequest is opaque content. Fixed residual text contains no credential value after all spans are withheld. Nine further complete protected-span envelopes were observed during the unchanged authenticated fa73eda CI binary replay after the preceding exact roles settled. These preserve the native projection after ordinary outcome metadata and protected token/content spans are removed. Opaque method-error spans remain uncertain. Only the three exact setup projections containing ordinary mode, setupItemId and confirm scalar roles, with the freeform span absent, settle credential-free. The failed 156-entry whole-suite replay is retained as evidence; no derivative request was guessed. Two complete credential-span envelopes were recorded by 59ef0db CI job 114429479698. Their declared outcome targets are ordinary pairing status; complete lines and opaque method-error fields remain uncertain. Only these exact outcome projections receive the added descriptive privacy answers.",
+  "provenance": "Recorded complete safe diagnostic subjects from checkpoint 64c9d6d565e2e16641970310d8ca90caaa0008c0 CI run 38113187945 jobs 114393096159 and 114393096195. Only the independently owned temporary root is parameterized. Questions come from the actual registered source contracts because GitHub log masking replaced Bearer in their instructions. Answers classify these exact synthetic diagnostic subjects only; refs remains uncertain. No original native input or withheld value is supplied or inferred. Two complete watchdog process-id subjects were subsequently recorded by the real source headless child run (headless-diagnostic-source-1.log). Nine complete provider fingerprint field subjects were recorded by that same run. Actual native fingerprint source publishes counts, budgets and category/boolean settings only. Message/image collections and reasoningSummary remain uncertain because field names alone do not establish their full role. Twenty-one additional complete envelopes were recorded by fa73eda CI run 38120201253. Native sources connected-host-auth.ts and daemon-verbs.ts identify unknown-pairing and missing-token diagnostics; no hidden span value is inferred from them. Bare dispatch and opaque method-error/memory spans remain uncertain. A declared token span remains credential material even when another span is the target. Setup mode, identifier and confirmation targets are ordinary, but the whole line stays uncertain because explicitUserRequest is opaque content. Fixed residual text contains no credential value after all spans are withheld. Nine further complete protected-span envelopes were observed during the unchanged authenticated fa73eda CI binary replay after the preceding exact roles settled. These preserve the native projection after ordinary outcome metadata and protected token/content spans are removed. Opaque method-error spans remain uncertain. Only the three exact setup projections containing ordinary mode, setupItemId and confirm scalar roles, with the freeform span absent, settle credential-free. The failed 156-entry whole-suite replay is retained as evidence; no derivative request was guessed. Two complete credential-span envelopes were recorded by 59ef0db CI job 114429479698. Their declared outcome targets are ordinary pairing status; complete lines and opaque method-error fields remain uncertain. Only these exact outcome projections receive the added descriptive privacy answers. The complete operation field envelope was captured by the local full Agent suite; operation names an ordinary action category.",
   "contracts": [
     {
       "kind": "diagnostic-field-kind",
@@ -1147,6 +1147,24 @@
                 "owner_profile": 0.2,
                 "content": 0.3,
                 "other": 0.4
+              }
+            }
+          }
+        },
+        {
+          "state": {
+            "field": "operation"
+          },
+          "answers": {
+            "kind": {
+              "type": "choice",
+              "choice": "other",
+              "confidence": 0.99,
+              "probabilities": {
+                "secret": 0.004,
+                "owner_profile": 0.003,
+                "content": 0.003,
+                "other": 0.99
               }
             }
           }

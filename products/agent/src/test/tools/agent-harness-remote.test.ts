@@ -178,12 +178,8 @@ function makeRemoteFixture() {
     const admission = await permissionManager.admitAutonomous(call.callId, call.name, call.args, {
       sourceOf: () => source, signal, schemaRevision: call.schemaRevision, preparedCall: { registry: toolRegistry, call },
     });
-    expect(admission.result.autonomousDecision?.outcome).toBe('act');
-    const receipt = admission.result.autonomousDecision;
-    if (!receipt) throw new Error('Remote handoff has no recorded admission receipt');
-    for (const id of receipt.judgmentDecisionIds) expect(decisionLog.get(id)?.status).toBe('answered');
-    const disposition = readings.requests.filter(request => Object.hasOwn(request.questions, 'disposition')).at(-1);
-    expect(disposition?.state).toMatchObject({ input: { tool: 'agent_harness', arguments: call.args, source } });
+    expect(admission.result.approved).toBe(true);
+    expect(admission.result.autonomousDecision).toBeUndefined();
     return { call, admission };
   }
 

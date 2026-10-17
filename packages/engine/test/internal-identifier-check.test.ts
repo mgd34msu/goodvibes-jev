@@ -1,12 +1,9 @@
 /**
  * The internal-identifier gate: planning shorthand never lands in tracked
  * text again, while genuine technical tokens stay legal.
- *
- * Every banned token in this file is CONSTRUCTED at runtime (concatenation)
- * so this test file itself never contains one, the checker scans test/.
  */
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { checkNoInternalIdentifiers } from '../scripts/internal-identifier-rule.ts';
@@ -103,6 +100,18 @@ describe('internal-identifier rule', () => {
     expect(await violationsFor(text, 'docs/decisions/2026-07-06-example.md')).toEqual([]);
     expect((await violationsFor(text, 'docs/guide.md')).length).toBeGreaterThan(0);
   });
+
+  test('checker examples are excluded by exact path while ordinary source remains checked', () => {
+    const text = '// Private development wave 7 owns this change.';
+    for (const relPath of ['scripts/batteries/static-source.ts', 'test/internal-identifier-check.test.ts', 'test\\static-source-readings.test.ts']) {
+      expect(checkNoInternalIdentifiers([{ relPath, text }])).toEqual([]);
+    }
+    for (const relPath of ['sdk/src/feature.ts', 'scripts/batteries/other.ts', 'test/internal-identifier-check-extra.test.ts']) {
+      const advisories: string[] = [];
+      expect(checkNoInternalIdentifiers([{ relPath, text }], null, finding => advisories.push(finding))).toEqual([]);
+      expect(advisories).toHaveLength(1);
+    }
+  });
 });
 
 describe('check-internal-identifiers.ts (subprocess)', () => {
@@ -120,6 +129,7 @@ describe('check-internal-identifiers.ts (subprocess)', () => {
           ...process.env,
           INTERNAL_ID_ROOT: root,
           INTERNAL_ID_DIRS_JSON: JSON.stringify(['src']),
+          STATIC_SOURCE_READINGS_PATH: await fixtureReadings(root, 'src/planted.ts', readFileSync(join(root, 'src/planted.ts'), 'utf8')),
         },
         stdout: 'pipe',
         stderr: 'pipe',
@@ -127,7 +137,7 @@ describe('check-internal-identifiers.ts (subprocess)', () => {
       expect(result.exitCode).toBe(1);
       const stderr = result.stderr.toString();
       expect(stderr).toContain('src/planted.ts:1');
-      expect(stderr).toContain('evidence held');
+      expect(stderr).toContain('internal planning identifier');
       expect(stderr).toContain('internal-identifier-check FAILED');
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -143,7 +153,7 @@ describe('check-internal-identifiers.ts (subprocess)', () => {
       );
       const result = Bun.spawnSync({
         cmd: ['bun', join(REPO_ROOT, 'scripts', 'check-internal-identifiers.ts')],
-        env: { ...process.env, INTERNAL_ID_ROOT: root, INTERNAL_ID_DIRS_JSON: JSON.stringify(['budgets.json']) },
+        env: { ...process.env, INTERNAL_ID_ROOT: root, INTERNAL_ID_DIRS_JSON: JSON.stringify(['budgets.json']), STATIC_SOURCE_READINGS_PATH: await fixtureReadings(root, 'budgets.json', readFileSync(join(root, 'budgets.json'), 'utf8')) },
         stdout: 'pipe',
         stderr: 'pipe',
       });
@@ -164,12 +174,12 @@ describe('check-internal-identifiers.ts (subprocess)', () => {
       );
       const result = Bun.spawnSync({
         cmd: ['bun', join(REPO_ROOT, 'scripts', 'check-internal-identifiers.ts')],
-        env: { ...process.env, INTERNAL_ID_ROOT: root, INTERNAL_ID_DIRS_JSON: JSON.stringify(['.githooks']) },
+        env: { ...process.env, INTERNAL_ID_ROOT: root, INTERNAL_ID_DIRS_JSON: JSON.stringify(['.githooks']), STATIC_SOURCE_READINGS_PATH: await fixtureReadings(root, '.githooks/pre-commit', readFileSync(join(root, '.githooks/pre-commit'), 'utf8')) },
         stdout: 'pipe',
         stderr: 'pipe',
       });
       expect(result.exitCode).toBe(1);
-      expect(result.stderr.toString()).toContain('.githooks/pre-commit:1');
+      expect(result.stderr.toString()).toContain('.githooks/pre-commit:2');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -182,12 +192,12 @@ describe('check-internal-identifiers.ts (subprocess)', () => {
       const result = Bun.spawnSync({
         cmd: ['bun', join(REPO_ROOT, 'scripts', 'check-internal-identifiers.ts')],
         // No INTERNAL_ID_DIRS_JSON: the DEFAULT target set must include root markdown.
-        env: { ...process.env, INTERNAL_ID_ROOT: root },
+        env: { ...process.env, INTERNAL_ID_ROOT: root, STATIC_SOURCE_READINGS_PATH: await fixtureReadings(root, 'CHANGELOG.md', readFileSync(join(root, 'CHANGELOG.md'), 'utf8')) },
         stdout: 'pipe',
         stderr: 'pipe',
       });
       expect(result.exitCode).toBe(1);
-      expect(result.stderr.toString()).toContain('CHANGELOG.md:1');
+      expect(result.stderr.toString()).toContain('CHANGELOG.md:3');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -200,7 +210,7 @@ describe('check-internal-identifiers.ts (subprocess)', () => {
       writeFileSync(join(root, 'src', 'planted.ts'), '// tracked as ' + 'WO-' + '0B\n');
       const result = Bun.spawnSync({
         cmd: ['bun', join(REPO_ROOT, 'scripts', 'check-internal-identifiers.ts')],
-        env: { ...process.env, INTERNAL_ID_ROOT: root, INTERNAL_ID_DIRS_JSON: JSON.stringify(['src']) },
+        env: { ...process.env, INTERNAL_ID_ROOT: root, INTERNAL_ID_DIRS_JSON: JSON.stringify(['src']), STATIC_SOURCE_READINGS_PATH: await fixtureReadings(root, 'src/planted.ts', readFileSync(join(root, 'src/planted.ts'), 'utf8')) },
         stdout: 'pipe',
         stderr: 'pipe',
       });
@@ -209,6 +219,27 @@ describe('check-internal-identifiers.ts (subprocess)', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test('unsettled and absent evidence remain visible advisories without failing', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'internal-id-advisory-'));
+    try {
+      mkdirSync(join(root, 'src'));
+      const text = '// A descriptive runtime setting.\n';
+      writeFileSync(join(root, 'src', 'source.ts'), text);
+      const readingsPath = await fixtureReadings(root, 'src/source.ts', text, 0.2);
+      for (const receipt of [readingsPath, join(root, 'missing.json')]) {
+        const result = Bun.spawnSync({
+          cmd: ['bun', join(REPO_ROOT, 'scripts', 'check-internal-identifiers.ts')],
+          env: { ...process.env, INTERNAL_ID_ROOT: root, INTERNAL_ID_DIRS_JSON: '["src"]', STATIC_SOURCE_READINGS_PATH: receipt },
+          stdout: 'pipe', stderr: 'pipe',
+        });
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr.toString()).toContain('ADVISORY');
+        expect(result.stderr.toString()).toContain('src/source.ts:1');
+        expect(result.stdout.toString()).toContain('1 inconclusive advisories');
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
   test('green test: clean text passes', async () => {

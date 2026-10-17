@@ -509,6 +509,27 @@ function refreshLockMtime(fd: number): void {
  */
 const inProcessTails = new Map<string, Promise<void>>();
 
+/** One synchronous attempt for short boot-time transactions. Only proven-dead owners are replaced. */
+export function tryAcquireCrossProcessLock(lockPath: string): (() => void) | null {
+  mkdirSync(dirname(lockPath), { recursive: true });
+  const token = randomBytes(8).toString('hex');
+  const fd = createLockAtomically(lockPath, token, true)
+    ?? tryTakeOverStaleLock(lockPath, Infinity, token, true);
+  if (fd === null) return null;
+  const owned = fstatSync(fd);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    try {
+      const current = statSync(lockPath);
+      if (current.ino === owned.ino && current.dev === owned.dev) unlinkSync(lockPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    } finally { closeSync(fd); }
+  };
+}
+
 /**
  * Acquire the cross-process lock at `lockPath`, retrying with capped
  * exponential backoff while it is held (and not stale) by another process.

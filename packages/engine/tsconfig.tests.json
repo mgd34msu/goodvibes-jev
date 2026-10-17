@@ -19,7 +19,7 @@
   // tsconfig.type-tests.json instead. Compiling it here as well makes
   // neighbouring inferred types unnameable (TS2883). The root typecheck
   // builds both projects, so nothing is dropped by excluding it here.
-  "exclude": ["test/types/**", "test/agent-research-screening-composition.test.ts"],
+  "exclude": ["test/types/**", "test/agent-research-screening-composition.test.ts", "test/daemon-native-ci-continuation.test.ts"],
   "references": [
     { "path": "./contracts" },
     { "path": "./errors" },

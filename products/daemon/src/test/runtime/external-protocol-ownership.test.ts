@@ -12,18 +12,18 @@ test('daemon ACP gateway reaches recorded current admission, keeping the origina
   expect(f.acp.get(hosted.id)?.progress).toContain('permission granted');
   expect(f.human).not.toHaveBeenCalled();
   const disposition = f.readings.filter(reading => 'disposition' in reading.questions);
-  expect(disposition.length).toBeGreaterThan(0); expect(f.admissions).toHaveBeenCalled();
-  expect(JSON.stringify(disposition)).toContain(prompt);
-  expect(f.daemon.services.judgment.decisionLog.query().length).toBeGreaterThan(0);
+  expect(disposition).toHaveLength(0); expect(f.admissions).toHaveBeenCalled();
+  expect(f.admissionSources.some(source => (source as { goal?: string }).goal === prompt)).toBe(true);
+  expect(f.readings.filter(reading => 'disposition' in reading.questions)).toHaveLength(0);
 });
 
 test('daemon MCP registry admits risk requests through its real recorded permission owner', async () => {
   const f = await fixture(); expect(await f.call()).toMatchObject({ done: true });
   expect(f.calls).toHaveLength(1); expect(f.human).not.toHaveBeenCalled();
   const disposition = f.readings.filter(reading => 'disposition' in reading.questions);
-  expect(disposition.length).toBeGreaterThan(0); expect(f.admissions).toHaveBeenCalled();
-  expect(JSON.stringify(disposition)).toContain('Original caller:');
-  expect(f.daemon.services.judgment.decisionLog.query().length).toBeGreaterThan(0);
+  expect(disposition).toHaveLength(0); expect(f.admissions).toHaveBeenCalled();
+  expect(f.admissionSources.some(source => (source as { goal?: string }).goal?.includes('Original caller:'))).toBe(true);
+  expect(f.readings.filter(reading => 'disposition' in reading.questions)).toHaveLength(0);
 });
 
 test('daemon MCP elicitation answers only current exact caller facts with no human fallback', async () => {
@@ -33,12 +33,12 @@ test('daemon MCP elicitation answers only current exact caller facts with no hum
   expect(f.human).not.toHaveBeenCalled();
 });
 
-for (const decision of ['reject', 'uncertain']) test(`daemon protocols refuse ${decision} readings with zero human fallback`, async () => {
+for (const decision of ['reject', 'uncertain']) test(`daemon protocols use automatic admission independently of ${decision} permission readings`, async () => {
   const f = await fixture(); f.answer(decision);
-  await expect(f.call()).rejects.toThrow('did not act'); expect(f.calls).toHaveLength(0);
+  expect(await f.call()).toMatchObject({ done: true }); expect(f.calls).toHaveLength(1);
   const hosted = await f.spawn('Original caller goal only');
-  await until(() => f.acp.get(hosted.id)?.state === 'idle', 'ACP refusal must finish');
-  expect(f.acp.get(hosted.id)?.progress).toContain('permission denied');
+  await until(() => f.acp.get(hosted.id)?.state === 'idle', 'ACP automatic admission must finish');
+  expect(f.acp.get(hosted.id)?.progress).toContain('permission granted');
   expect(f.acp.get(hosted.id)?.state).not.toBe('awaiting-approval'); expect(f.human).not.toHaveBeenCalled();
 });
 
@@ -59,8 +59,8 @@ test('a form cannot invent missing caller facts', async () => {
 
 for (const change of ['config', 'policy', 'caller-cancel', 'source']) test(`MCP ${change} during recorded admission cannot dispatch`, async () => {
   const f = await fixture(); let changed = false;
-  f.onReading(reading => {
-    if (changed || !('disposition' in reading.questions)) return; changed = true;
+  f.onAdmission(() => {
+    if (changed) return; changed = true;
     if (change === 'config') f.daemon.services.configManager.set('permissions.mode', 'plan');
     if (change === 'policy') f.registry.setServerTrustMode('owned-protocol', 'blocked');
     if (change === 'caller-cancel') f.operationLifetime.abort();
@@ -72,7 +72,7 @@ for (const change of ['config', 'policy', 'caller-cancel', 'source']) test(`MCP 
 
 for (const change of ['config', 'stop']) test(`ACP ${change} cancels in-flight recorded permission and ignores a late act`, async () => {
   const f = await fixture(); const started = deferred(); const release = deferred();
-  f.onReading(async reading => { if ('disposition' in reading.questions) { started.resolve(); await release.promise; } });
+  f.onAdmission(async () => { started.resolve(); await release.promise; });
   const hosted = await f.spawn('Original caller: make the fixture change'); await started.promise;
   if (change === 'config') f.daemon.services.configManager.set('permissions.mode', 'plan'); else await f.acp.stop(hosted.id);
   release.resolve();
@@ -82,39 +82,51 @@ for (const change of ['config', 'stop']) test(`ACP ${change} cancels in-flight r
 
 test('MCP revocation after the first write prevents elicitation continuation', async () => {
   const f = await fixture(); f.elicit();
-  f.onReading(reading => { if (f.calls.length && 'disposition' in reading.questions) f.registry.setServerTrustMode('owned-protocol', 'blocked'); });
+  f.onAdmission(() => { if (f.calls.length) f.registry.setServerTrustMode('owned-protocol', 'blocked'); });
   await expect(f.call()).rejects.toThrow(); expect(f.calls).toHaveLength(1); expect(f.human).not.toHaveBeenCalled();
 });
 
 test('outer daemon shutdown immediately fences ACP/MCP before a blocked plugin drain', async () => {
-  const f = await fixture(); const entered = deferred(); const release = deferred(); let pendingReads = 0;
-  f.onReading(async reading => { if ('disposition' in reading.questions) { if (++pendingReads === 2) entered.resolve(); await release.promise; } });
-  const mcp = f.call().then(value => ({ value }), error => ({ error }));
-  const hosted = await f.spawn('Original caller: write only the fixture'); await entered.promise;
-  const draining = deferred(); const finishDrain = deferred();
-  const closePlugins = f.daemon.services.pluginManager.close.bind(f.daemon.services.pluginManager);
-  const held = spyOn(f.daemon.services.pluginManager, 'close').mockImplementation(async () => { draining.resolve(); await finishDrain.promise; await closePlugins(); });
-  const closing = f.daemon.services.close(); await draining.promise;
+  const f = await fixture(); const hosted = await f.spawn();
+  const release = deferred(), finishDrain = deferred(); let pendingReads = 0, draining = false, mcpSettled = false;
+  f.onAdmission(async args => {
+    // The fixture's outer registry call has its own lifetime. Hold only the
+    // actual daemon-owned external protocol admissions this shutdown retires.
+    if (args[3]?.preparedCall) return;
+    pendingReads++; await release.promise;
+  });
+  const mcp = f.call().then(value => ({ value }), error => ({ error })).finally(() => { mcpSettled = true; });
+  let closing: Promise<void> | undefined;
+  let held: ReturnType<typeof spyOn> | undefined;
   try {
+    expect(f.acp.prompt(hosted.id, 'Original caller: write only the fixture')).toMatchObject({ queued: true });
+    await until(() => pendingReads >= 2, 'ACP and MCP must both reach actual admission');
+    const closePlugins = f.daemon.services.pluginManager.close.bind(f.daemon.services.pluginManager);
+    held = spyOn(f.daemon.services.pluginManager, 'close').mockImplementation(async () => {
+      draining = true; await finishDrain.promise; await closePlugins();
+    });
+    closing = f.daemon.services.close();
+    await until(() => draining, 'shutdown must reach plugin drain without awaiting blocked protocol admission');
+    await until(() => mcpSettled, 'shutdown must settle MCP before plugin drain');
     expect(await mcp).toHaveProperty('error');
     await until(() => f.acp.get(hosted.id)?.state === 'stopped', 'ACP shutdown must settle before plugin drain');
     expect(f.acp.get(hosted.id)?.progress).not.toContain('permission granted');
     expect(f.registry.getClient('owned-protocol')).toBeUndefined();
     expect(f.calls).toHaveLength(0); expect(f.human).not.toHaveBeenCalled();
-  } finally { release.resolve(); finishDrain.resolve(); await closing; held.mockRestore(); }
+  } finally { release.resolve(); finishDrain.resolve(); await mcp; await closing; held?.mockRestore(); }
   expect(f.acp.get(hosted.id)?.state).toBe('stopped'); expect(f.registry.getClient('owned-protocol')).toBeUndefined();
 });
 
 test('overlapping ACP prompts cannot replace the source of a pending child permission', async () => {
   const f = await fixture(); const entered = deferred(); const release = deferred();
-  f.onReading(async reading => { if ('disposition' in reading.questions) { entered.resolve(); await release.promise; } });
+  f.onAdmission(async () => { entered.resolve(); await release.promise; });
   const original = 'Original owner request with narrowly scoped fixture authority';
   const hosted = await f.spawn(original); await entered.promise;
   try { expect(f.acp.prompt(hosted.id, 'Replacement request cannot authorize the pending action')).toMatchObject({ queued: false }); }
   finally { release.resolve(); }
   await until(() => f.acp.get(hosted.id)?.state === 'idle', 'ACP original turn settles');
   expect(f.acp.get(hosted.id)?.progress).toContain('permission granted');
-  const evidence = JSON.stringify(f.readings.filter(reading => 'disposition' in reading.questions));
+  const evidence = JSON.stringify(f.admissionSources);
   expect(evidence).toContain(original); expect(evidence).not.toContain('Replacement request'); expect(f.human).not.toHaveBeenCalled();
 });
 
@@ -132,16 +144,16 @@ test('configured plan mode remains a deterministic refusal through the product p
   // Consume this test's explicit setup write before starting a new handshake.
   // Later mutation tests deliberately leave their invalidation live.
   f.daemon.services.configManager.flushConfigFileChanges();
-  await expect(f.call()).rejects.toThrow('did not act'); const hosted = await f.spawn('Original caller: only the synthetic file');
+  await expect(f.call()).rejects.toThrow(); const hosted = await f.spawn('Original caller: only the synthetic file');
   await until(() => f.acp.get(hosted.id)?.state === 'idle', 'Plan-mode ACP refusal settles');
   expect(f.acp.get(hosted.id)?.progress).toContain('permission denied'); expect(f.calls).toHaveLength(0); expect(f.human).not.toHaveBeenCalled();
 });
 
-test('unavailable recorded reader fails closed for both protocols without a human request', async () => {
+test('automatic protocol admission does not depend on an optional permission reader', async () => {
   const f = await fixture(); f.onReading(() => { throw new Error('Synthetic judgment transport unavailable'); });
-  await expect(f.call()).rejects.toThrow(); const hosted = await f.spawn('Original caller: only the synthetic file');
+  expect(await f.call()).toMatchObject({ done: true }); const hosted = await f.spawn('Original caller: only the synthetic file');
   await until(() => f.acp.get(hosted.id)?.state === 'idle', 'Unavailable reader ACP refusal settles');
-  expect(f.acp.get(hosted.id)?.progress).toContain('permission denied'); expect(f.calls).toHaveLength(0); expect(f.human).not.toHaveBeenCalled();
+  expect(f.acp.get(hosted.id)?.progress).toContain('permission granted'); expect(f.calls).toHaveLength(1); expect(f.human).not.toHaveBeenCalled();
 });
 
 test('shutdown cancels an MCP registration still negotiating and prevents a late connection', async () => {

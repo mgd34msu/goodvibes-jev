@@ -28,6 +28,7 @@ export interface UseHostedSessionRealtimeOptions {
   /** Called when a hosted-session-update frame's session id matches
    * `attachedSessionId`, the raw frame payload (`{event, session, ...}`). */
   readonly onLifecycleUpdate?: (payload: unknown) => void;
+  readonly onReconcile?: () => void;
 }
 
 export interface UseHostedSessionRealtimeResult {
@@ -71,12 +72,14 @@ export function useHostedSessionRealtime(options: UseHostedSessionRealtimeOption
           onReady: () => {
             if (!current()) return;
             setState({ connection, connected: true, error: null });
+            optionsRef.current.onReconcile?.();
           },
           onEvent: (eventName: string, payload: unknown) => {
             if (!current()) return;
             const { attachedSessionId, onStreamFrame, onLifecycleUpdate } = optionsRef.current;
             if (eventName === RELAY_OVERFLOW_EVENT) {
               noteRelayOverflow(readDroppedCount(payload));
+              optionsRef.current.onReconcile?.();
               invalidateList();
               return;
             }

@@ -410,7 +410,7 @@ describe('canonical semantic record catalogs', () => {
       sourceOf: () => ({ goal: 'Verify an isolated native watcher read', criteria: ['No external actions or private source uploads'] }),
       schemaRevision: call.schemaRevision, preparedCall: { registry, call },
     });
-    expect(admission.result.autonomousDecision?.outcome).toBe('act');
+    expect(admission.result.approved).toBe(true);
     await expect(registry.executePrepared(call, admission)).rejects.toBeInstanceOf(ToolInputProjectionError);
     expect(entered).toBe(true); expect(revoked).toBe(true); expect(published).toBe(0);
   });

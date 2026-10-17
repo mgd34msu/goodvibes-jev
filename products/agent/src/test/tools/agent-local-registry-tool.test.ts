@@ -67,7 +67,7 @@ function admittedLocalTool(paths: ShellPaths, memoryRegistry: MemoryRegistry) {
         sourceOf: () => ({ goal: 'Exercise isolated Agent-local record behavior', criteria: ['Temporary local stores only'] }),
         schemaRevision: call.schemaRevision, preparedCall: { registry, call }, signal: options?.signal,
       });
-      expect(admission.result.autonomousDecision?.outcome).toBe('act');
+      expect(admission.result.approved).toBe(true);
       beforeExecution?.();
       return await registry.executePrepared(call, admission);
     } catch (error) { return { success: false, error: error instanceof Error ? error.message : String(error) }; }
@@ -264,7 +264,8 @@ describe('agent_local_registry tool', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('inline credential material');
+    expect(result.error).toBe('Tool input projection held.');
+    expect(JSON.stringify(result)).not.toContain('super-secret-value');
     expect(memoryRegistry.getAll()).toHaveLength(0);
   });
 

@@ -1,7 +1,7 @@
 /**
  * notice-health.ts, a refusal to announce arriving mail, made VISIBLE.
  *
- * docs/inbound-email.md §3.4b: *"A terminal state is announced, not merely
+ * docs/decisions/2026-07-27-inbound-email-design.md §3.4b: *"A terminal state is announced, not merely
  * recorded... Silent permanent death is the failure this entire round exists to
  * eliminate."* `terminal-notice.ts` applied that to the watcher dying. This
  * file applies the same rule one seam further along, to the condition that is

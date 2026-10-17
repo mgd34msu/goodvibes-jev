@@ -1,6 +1,6 @@
 /**
  * card-shapes.ts, find card-shaped content in untrusted text WITHOUT ever
- * handing the matched characters back (docs/inbound-email.md §11.0).
+ * handing the matched characters back (docs/decisions/2026-07-27-inbound-email-design.md §11.0).
  *
  * Two consumers, two different answers to the same detection:
  *
@@ -23,7 +23,7 @@
  *
  * ## Why the finding carries no text
  *
- * This is docs/inbound-email.md §7.3 applied to a result type rather than to a
+ * This is docs/decisions/2026-07-27-inbound-email-design.md §7.3 applied to a result type rather than to a
  * constructor: `CardShapeFinding` carries POSITION and KIND, never the matched
  * characters. A refusal message composed from findings is therefore
  * *structurally* incapable of quoting a card number, the digits are not

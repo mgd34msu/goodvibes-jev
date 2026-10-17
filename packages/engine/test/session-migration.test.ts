@@ -190,7 +190,7 @@ describe('session-migration: full legacy layout', () => {
     expect(readLastSessionPointer({ surface })).toBeNull();
   });
 
-  test('R4: a user-saved session whose name looks like an agent journal is NEVER moved out of the session list', () => {
+  test('a user-saved session whose name looks like an agent journal is NEVER moved out of the session list', () => {
     // Reproduction: the journal move matched on filename alone, and
     // SessionManager.sanitizeName keeps the `agent-` prefix, so a
     // conversation the user saved as "agent-deadbeef" was relocated into

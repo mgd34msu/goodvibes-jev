@@ -38,7 +38,7 @@ test('a short complete command retains the gate cache fast path', async () => {
   expect(log.requests).toHaveLength(3);
 });
 
-test.each(['command', 'cmd', 'commands'] as const)('the full %s suffix reaches every battery and the real guard refuses its recorded verdict', async shape => {
+test.each(['command', 'cmd', 'commands'] as const)('the full %s suffix reaches explicit readings without introducing an exec permission gate', async shape => {
   const command = `echo ${'x'.repeat(5000)} ${marker}`;
   const args = shape === 'commands' ? { commands: [{ cmd: command }] } : { [shape]: command };
   const reading = await readToolCall({ toolName: 'exec', args, askObfuscated: true });
@@ -48,7 +48,7 @@ test.each(['command', 'cmd', 'commands'] as const)('the full %s suffix reaches e
   expect(await readCatastrophic(command)).toEqual({ verdict: 'yes', readByGate: true });
   for (const astMode of [false, true]) {
     const guard = await guardExecCommand(command, { isEnabled: key => key === 'shell-ast-normalization' && astMode });
-    expect(guard.allowed).toBe(false);
+    expect(guard.allowed).toBe(true);
     expect(guard.astModeActive).toBe(astMode);
   }
   expect(log.requests).toHaveLength(3);
@@ -59,7 +59,7 @@ test('exec-time reading without an earlier gate also sees the complete command',
   expect(await readCatastrophic(command)).toEqual({ verdict: 'yes', readByGate: false });
   expect(log.requests).toHaveLength(1);
   expect(JSON.stringify(log.requests[0]!.state)).toContain(marker);
-  expect((await guardExecCommand(command)).allowed).toBe(false);
+  expect((await guardExecCommand(command)).allowed).toBe(true);
 });
 
 test('changing borrowed arguments while readings settle cannot acquire the original cache entry', async () => {
@@ -69,7 +69,7 @@ test('changing borrowed arguments while readings settle cannot acquire the origi
   await pending;
   expect(log.requests.every(request => JSON.stringify(request.state).includes(original))).toBe(true);
   expect(await readCatastrophic(changed)).toEqual({ verdict: 'yes', readByGate: false });
-  expect((await guardExecCommand(changed)).allowed).toBe(false);
+  expect((await guardExecCommand(changed)).allowed).toBe(true);
 });
 
 test('the cache remains associated with the owned command that was actually judged', async () => {
@@ -108,10 +108,11 @@ test('cancellation cannot publish a late cache entry even if the borrowed signal
   expect(await readCatastrophic(original)).toEqual({ verdict: 'no', readByGate: false });
 });
 
-test('existing whole-input size bounds refuse explicitly before any request instead of truncating', async () => {
-  await expect(readToolCall({ toolName: 'exec', args: { command: 'x'.repeat(1_000_001) }, askObfuscated: true }))
-    .rejects.toMatchObject({ problem: 'unsupported-input' });
-  expect(log.requests).toHaveLength(0);
+test('large complete inputs reach explicit readings without clipping', async () => {
+  const command = 'x'.repeat(1_000_001);
+  await readToolCall({ toolName: 'exec', args: { command }, askObfuscated: true });
+  expect(log.requests).toHaveLength(3);
+  for (const request of log.requests) expect(request.state).toMatchObject({ arguments: { command } });
 });
 
 test('full privacy admission still refuses protected input before model access', async () => {

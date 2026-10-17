@@ -70,7 +70,7 @@ describe('provider streamed tool argument parsing', () => {
       '',
       'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":1}}',
       '',
-      'data: [DONE]',
+      'data: {"type":"message_stop"}',
       '',
     ].join('\n');
 

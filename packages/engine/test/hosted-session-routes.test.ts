@@ -202,7 +202,7 @@ test('every hosted verb descriptor gets a handler attached', () => {
 test('with no engine the hosted verbs refuse with the catalog\'s own code, on every path', async () => {
   const catalog = new GatewayMethodCatalog();
   refuseHostedSessionGatewayMethods(catalog);
-  const helper = new DaemonControlPlaneHelper({ gatewayMethods: catalog } as unknown as DaemonControlPlaneContext);
+  const helper = new DaemonControlPlaneHelper({ gatewayMethods: catalog, authToken: () => 't' } as unknown as DaemonControlPlaneContext);
 
   for (const id of HOSTED_SESSION_METHOD_IDS) {
     expect(catalog.get(id)?.invokable, `${id} invokable`).toBe(false);

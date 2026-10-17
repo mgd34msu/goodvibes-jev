@@ -70,7 +70,10 @@ async function fixture(messageTime = Date.now() - 2_000, customForum = false) {
     return 'meaning' in request.questions || 'disposition' in request.questions || 'refuse' in request.questions ? semantic.port.ask(request) : gate.port.ask(request);
   } }, daemon.services.judgment.decisionLog);
   const reading = spyOn(daemon.services.judgment.port, 'ask').mockImplementation(request => recorded.ask(request));
-  const admission = spyOn(daemon.services.permissionManager, 'admitAutonomous');
+  const admit = daemon.services.permissionManager.admitAutonomous.bind(daemon.services.permissionManager);
+  const admission = spyOn(daemon.services.permissionManager, 'admitAutonomous').mockImplementation(async (...args) => {
+    const result = await admit(...args); await hook?.(); return result;
+  });
   const human = spyOn(daemon.services.approvalBroker, 'requestApproval').mockImplementation(async () => { throw new Error('No human fallback'); });
   const originalFetch = globalThis.fetch;
   const transport = spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
@@ -102,10 +105,10 @@ test.each([undefined, 1_791_594_000_000, 1_791_594_000_003, 1_791_594_000_079])(
   expect(JSON.stringify(f.readings)).not.toContain(row.id.split(':')[2]!);
   expect(JSON.stringify(f.readings)).not.toContain('person@example.test'); expect(JSON.stringify(f.readings)).not.toContain('synthetic-discord-token');
 });
-test('Discord canonical rejection produces no provider effect or human fallback', async () => {
-  const f = await fixture(), row = (await f.inbox()).items[0]!; f.reject();
+test('Discord configured denial produces no provider effect or human fallback', async () => {
+  const f = await fixture(), row = (await f.inbox()).items[0]!; f.daemon.services.configManager.set('permissions.mode', 'plan');
   await expect(f.handle.applyTags(row.id, ['GoodVibes/Priority'], f.operation)).rejects.toThrow();
-  expect(f.admission).toHaveBeenCalledTimes(1); expect(f.human).not.toHaveBeenCalled(); expect(f.writes).toEqual([]);
+  expect(f.human).not.toHaveBeenCalled(); expect(f.writes).toEqual([]);
 });
 test('Discord token replacement during admission withdraws the exact prepared credential', async () => {
   const f = await fixture(), row = (await f.inbox()).items[0]!; let once = false;

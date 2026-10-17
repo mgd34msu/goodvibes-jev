@@ -1,60 +1,24 @@
 import { useGateReadings } from './_helpers/gate-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import { ApprovalBroker } from '../sdk/src/platform/control-plane/approval-broker.js';
-import { PermissionManager, type PermissionConfigReader } from '../sdk/src/platform/permissions/manager.js';
-import type { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions/policy-runtime.js';
 import { executeToolCalls, type ToolExecutionDeps } from '../sdk/src/platform/core/orchestrator-tool-runtime.js';
 import type { ToolRegistry } from '../sdk/src/platform/tools/registry.js';
 import type { ToolCall, ToolResult } from '../sdk/src/platform/types/tools.js';
 
 useGateReadings();
 
-/**
- * Regression test for the "per-hunk deselect applies everything anyway" bug.
- *
- * test/permission-hunk-modified-args.test.ts already proves that
- * PermissionManager.checkDetailed() threads a `modifiedArgs` field verbatim
- * from whatever `requestPermission` handler it is given. That coverage never
- * caught the real bug because production's `requestPermission` handler is
- * NOT a bare function that returns `{ approved, remember, modifiedArgs }`
- * directly, it is `(request) => approvalBroker.requestApproval({ request,
- * sessionId, localPrompt })` (see the TUI's bootstrap-core.ts). The
- * interactive (TUI-local) path routes the decision through
- * ApprovalBroker.requestApproval()'s `localPrompt(...).then(decision =>
- * this.resolveApproval(...))` bridge before PermissionManager ever sees it,
- * and that bridge silently dropped `decision.modifiedArgs`, so by the time
- * checkDetailed() ran, modifiedArgs was already gone, regardless of what the
- * UI computed.
- *
- * This test exercises the REAL wiring end to end: ApprovalBroker sits between
- * the local prompt and PermissionManager, exactly as it does in the shipped
- * TUI. It proves that when a 2-edit `edit` tool call has one hunk deselected,
- * the args actually handed to tool execution contain exactly the selected
- * hunk, not both.
- */
-
-function makePermissionConfigReader(): PermissionConfigReader {
+/** Explicitly requested broker decisions retain the selected edit hunks through execution. */
+function explicitBrokerPermissions(requestPermission: (request: Parameters<ApprovalBroker['requestApproval']>[0]['request']) => Promise<import('../sdk/src/platform/permissions/prompt.js').PermissionPromptDecision>): ToolExecutionDeps['permissionManager'] {
   return {
-    isAutoApproveEnabled: () => false,
-    getWorkingDirectory: () => '/tmp/wo-hunk-apply-fix-tests',
-    getSnapshot: () => ({
-      permissions: {
-        mode: 'prompt',
-        tools: {},
-      },
-    }),
-  } as unknown as PermissionConfigReader;
+    async checkDetailed(tool: string, args: Record<string, unknown>) {
+      const analysis = { classification: 'write' as const, riskLevel: 'medium' as const, summary: 'Explicit edit review', reasons: [] };
+      const decision = await requestPermission({ callId: 'explicit-edit-review', tool, args, category: 'write', analysis });
+      return { ...decision, persisted: false, sourceLayer: 'user_prompt', reasonCode: decision.approved ? 'user_approved' : 'user_denied', analysis };
+    },
+  } as unknown as ToolExecutionDeps['permissionManager'];
 }
 
-function makePolicyRuntimeState(): Pick<PolicyRuntimeState, 'recordPermissionRequest' | 'recordPermissionDecision' | 'getRegistry'> {
-  return {
-    recordPermissionRequest: () => {},
-    recordPermissionDecision: () => {},
-    getRegistry: () => ({ getCurrent: () => undefined }) as unknown as ReturnType<PolicyRuntimeState['getRegistry']>,
-  };
-}
-
-describe('ApprovalBroker -> PermissionManager -> executeToolCalls (real TUI wiring)', () => {
+describe('Explicit ApprovalBroker -> executeToolCalls edit selection', () => {
   test('deselecting one of two hunks executes only the selected hunk, not both', async () => {
     const approvalBroker = new ApprovalBroker({ storePath: ':memory:' });
 
@@ -72,13 +36,7 @@ describe('ApprovalBroker -> PermissionManager -> executeToolCalls (real TUI wiri
     const requestPermission = (request: Parameters<typeof approvalBroker.requestApproval>[0]['request']) =>
       approvalBroker.requestApproval({ request, sessionId: 'sess-1', localPrompt });
 
-    const permissionManager = new PermissionManager(
-      requestPermission,
-      makePermissionConfigReader(),
-      makePolicyRuntimeState(),
-      null,
-      null,
-    );
+    const permissionManager = explicitBrokerPermissions(requestPermission);
 
     let receivedArgs: Record<string, unknown> | undefined;
     const toolRegistry = {
@@ -123,13 +81,7 @@ describe('ApprovalBroker -> PermissionManager -> executeToolCalls (real TUI wiri
     const requestPermission = (request: Parameters<typeof approvalBroker.requestApproval>[0]['request']) =>
       approvalBroker.requestApproval({ request, sessionId: 'sess-1', localPrompt });
 
-    const permissionManager = new PermissionManager(
-      requestPermission,
-      makePermissionConfigReader(),
-      makePolicyRuntimeState(),
-      null,
-      null,
-    );
+    const permissionManager = explicitBrokerPermissions(requestPermission);
 
     let receivedArgs: Record<string, unknown> | undefined;
     const toolRegistry = {

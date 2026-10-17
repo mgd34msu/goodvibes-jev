@@ -480,24 +480,9 @@ describe('the listening indicator reflects capture truth, not intent', () => {
 
 
 describe('auto means a recorder that captures, not the first one installed', () => {
-  /**
-   * Measured on the owner's machine, with the bootstrap TDZ already fixed and
-   * pw-record installed:
-   *
-   *   pw-record --target <a name `pactl list short sources` prints>
-   *     -> "no target node available", exit 1, 0 bytes
-   *   pw-record  (no target, system default)
-   *     -> 0 bytes
-   *   parecord --device=<the same name>
-   *     -> 448000 bytes
-   *
-   * `auto` takes pw-record because it is first in the probe order and installed,
-   * so capture produced nothing at all, no stream in `pactl list short
-   * source-outputs`, no recorder child, and not one line written anywhere.
-   */
   const installed = (command: string): boolean => command === 'pw-record' || command === 'parecord';
 
-  test('auto picks pw-record first, exactly as the failing host did', () => {
+  test('auto initially selects the first installed recorder', () => {
     const resolved = resolveRecorderCommand('auto', { isInstalled: installed });
     expect(resolved?.backend).toBe('pw-record');
   });

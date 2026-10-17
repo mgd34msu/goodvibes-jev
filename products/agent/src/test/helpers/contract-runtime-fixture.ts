@@ -21,13 +21,17 @@ export async function waitForContract(condition: () => boolean, describe: () => 
   }
 }
 
-export function contractRuntimeFixture(runUnit: (record: AgentRecord, services: ReturnType<typeof getTestRuntimeServices>) => Promise<void>, planner: (record: AgentRecord) => unknown = () => contractPlan, answer?: (name: string, question: Question, state: EntryType) => unknown) {
+export async function contractRuntimeFixture(runUnit: (record: AgentRecord, services: ReturnType<typeof getTestRuntimeServices>) => Promise<void>, planner: (record: AgentRecord) => unknown = () => contractPlan, answer?: (name: string, question: Question, state: EntryType) => unknown) {
   resetTestRuntimeServices();
   const services = getTestRuntimeServices();
+  await services.providerRegistry.ready();
+  await services.providerRegistry.modelDiscoverySettled();
   // The real route planner sees one configured, synthetic provider. It still
   // reads tier/fit and chooses a route; external model discovery stays offline.
-  const model = services.providerRegistry.listModels().find((entry) => entry.registryKey === 'mock:mock-model');
-  if (!model) throw new Error('Missing seeded synthetic model');
+  const seeded = services.providerRegistry.listModels().find((entry) => entry.registryKey === 'mock:mock-model');
+  if (!seeded) throw new Error('Missing seeded synthetic model');
+  const model = { ...seeded, contextWindow: 100_000 };
+  services.providerRegistry.setCurrentModel(model.registryKey);
   services.providerRegistry.listModels = () => [model];
   services.providerRegistry.getConfiguredProviderIds = () => ['mock'];
   services.providerRegistry.benchmarks.readBenchmarks = async () => undefined;

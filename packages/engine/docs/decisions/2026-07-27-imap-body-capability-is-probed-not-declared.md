@@ -4,7 +4,7 @@
 **Status:** Accepted
 **Scope:** `packages/sdk/src/platform/email/imap-body-probe.ts`,
 `inbound/capability.ts`, `inbound/connection.ts`, `inbound/ports.ts`.
-**Implements:** `docs/inbound-email.md` §3.4a, and the "Scope sufficiency
+**Implements:** `docs/decisions/2026-07-27-inbound-email-design.md` §3.4a, and the "Scope sufficiency
 applies to both" subsection of §3.4d.
 
 ## The rule this is the IMAP half of

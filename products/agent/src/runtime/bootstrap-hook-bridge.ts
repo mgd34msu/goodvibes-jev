@@ -13,11 +13,14 @@ import type { SessionSpineClient } from '@goodvibes-jev/engine/sdk/platform/runt
 import type { SessionManager } from '@goodvibes-jev/engine/sdk/platform/sessions';
 import type { ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
-import { readConversationMessageSnapshots } from '../core/conversation-message-snapshot.ts';
+import { restoreLoadedSession } from '../core/session-resume-core.ts';
 import { activeTokens } from '../renderer/theme.ts';
 
 export interface ResumeSessionOptions {
   readonly runtimeBus: RuntimeEventBus;
+  readonly isGenerating?: () => boolean;
+  readonly restoreTurnAnchors: (sessionId: string) => number;
+  readonly surface?: import('@/runtime/index.ts').SessionSurface;
   readonly runtime: MutableRuntimeState;
   readonly conversation: ConversationManager;
   readonly requestRender: () => void;
@@ -35,6 +38,7 @@ export interface ResumeSessionOptions {
 export function createResumeSessionHandler(options: ResumeSessionOptions): (sessionId: string) => void {
   return (sessionId: string): void => {
     try {
+      if (options.isGenerating?.()) throw new Error('A turn is still running. Wait before resuming a session.');
       const { messages, meta } = options.sessionManager.load(sessionId);
       emitSessionResumed(options.runtimeBus, {
         sessionId: options.runtime.sessionId,
@@ -44,15 +48,8 @@ export function createResumeSessionHandler(options: ResumeSessionOptions): (sess
         sessionId,
         turnCount: messages.length,
       });
-      options.conversation.fromJSON({
-        messages: readConversationMessageSnapshots(messages),
-        title: meta.title,
-        titleSource: meta.titleSource,
-      });
-      options.runtime.sessionId = sessionId;
+      restoreLoadedSession(sessionId, { messages, meta }, options);
       options.onSessionIdChanged?.(sessionId);
-      if (meta?.model) options.runtime.model = meta.model;
-      if (meta?.provider) options.runtime.provider = meta.provider;
       options.writeLastSessionPointer(sessionId);
       void options.sharedSessionBroker.reopenSession(sessionId).catch((err) => { logger.debug('session broker reopen session failed', { err }); });
       // Mirror the reopen into the daemon spine, reopen:true is sent ONLY on

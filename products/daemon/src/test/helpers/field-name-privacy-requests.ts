@@ -14,7 +14,7 @@ function record(value: unknown): value is Readonly<Record<string, unknown>> {
 // These exact field names come from native logger metadata. This observer grants
 // no field role and supplies no answer for a source or residual privacy reading.
 const fixtureFields = {
-  battery: 'decision metadata', count: 'model-catalog definition count', sampleIds: 'model-catalog definition IDs',
+  error: 'native runtime error', operation: 'native runtime operation', battery: 'decision metadata', count: 'model-catalog definition count', sampleIds: 'model-catalog definition IDs',
   gitDir: 'checkpoint side repository', dir: 'native archetype/contract storage', path: 'checkpoint/worktree repository path',
   key: 'selected secret-store key', source: 'selected secret-store tier',
   branch: 'native worktree branch', agentId: 'native worktree agent ID', model: 'native agent model',

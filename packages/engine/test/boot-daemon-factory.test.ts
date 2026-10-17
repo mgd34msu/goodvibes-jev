@@ -56,7 +56,7 @@ afterAll(async () => {
   rmSync(work, { recursive: true, force: true });
 });
 
-describe('R4: bootDaemon one-call factory', () => {
+describe('bootDaemon one-call factory', () => {
   test('boots on an ephemeral port and exposes an addressable url', () => {
     expect(daemon.port).toBeGreaterThan(0);
     expect(daemon.url).toBe(`http://127.0.0.1:${daemon.port}`);
@@ -75,7 +75,7 @@ describe('R4: bootDaemon one-call factory', () => {
   });
 });
 
-describe('R1: sessions.register honest validation over HTTP', () => {
+describe('sessions.register honest validation over HTTP', () => {
   test('an unknown session kind is a 400, not a silent coercion to tui', async () => {
     const res = await fetch(`${daemon.url}/api/sessions/register`, {
       method: 'POST',
@@ -116,7 +116,7 @@ describe('R1: sessions.register honest validation over HTTP', () => {
   });
 });
 
-describe('R2: isolated home', () => {
+describe('isolated home', () => {
   test('the daemon persists under the injected home, not the OS home', () => {
     // The control-plane store lives under <home>/.goodvibes/...; nothing is written
     // to a sibling temp dir. We assert the injected home tree exists and is used.
@@ -186,7 +186,7 @@ describe('provider usage snapshot resolves the configured default on a fresh hom
   });
 });
 
-describe('m7: companion SSE requires auth', () => {
+describe('companion SSE requires auth', () => {
   test('companion chat events stream returns 401 without a token (auth gate before lookup)', async () => {
     const res = await fetch(`${daemon.url}/api/companion/chat/sessions/any-id/events`);
     expect(res.status).toBe(401);
@@ -205,7 +205,7 @@ describe('m7: companion SSE requires auth', () => {
 // connects). Domain and scope are AND-ed, so this could only pass with the domain
 // filter in place.
 // ---------------------------------------------------------------------------
-describe('W3-S1: webui SSE compatibility (domain-scoped delivery)', () => {
+describe('webui SSE compatibility (domain-scoped delivery)', () => {
   const WEBUI_DOMAINS = 'tasks,permissions,providers,knowledge,control-plane';
 
   /** Read an operator SSE stream for `windowMs`, firing `onOpen` once the first
@@ -293,7 +293,7 @@ describe('W3-S1: webui SSE compatibility (domain-scoped delivery)', () => {
 // 400 + INVALID_INPUT code before its handler runs, while a well-typed body
 // passes the gate. panels.open (inputSchema requires a string `id`) is the probe.
 // ---------------------------------------------------------------------------
-describe('W3-S1: invoke-layer input validation', () => {
+describe('invoke-layer input validation', () => {
   async function invoke(methodId: string, body: unknown): Promise<{ status: number; json: Record<string, unknown> }> {
     const res = await fetch(`${daemon.url}/api/control-plane/methods/${methodId}/invoke`, {
       method: 'POST',

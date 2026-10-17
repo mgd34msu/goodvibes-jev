@@ -79,10 +79,10 @@ export interface UnitRuntime {
    * not what a sibling merged meanwhile.
    */
   evidencePaths: ReadonlySet<string> | null;
-  /** A session-mode unit (design 6.6): the session's turn that works on it. */
+  /** A session-mode unit: the session's turn that works on it. */
   session: SessionTurnState | null;
   /**
-   * What the unit's phase does before it spawns an agent (design 7.2). Null:
+   * What the unit's phase does before it spawns an agent. Null:
    * it spawns as usual. `wait`: after a restart the unit has no agent and its
    * phase waits until the runner decides (a check, a respawn or the owner).
    * A decision made before the phase asked is kept here until it asks.
@@ -94,7 +94,7 @@ export interface UnitRuntime {
   agentLost: boolean;
 }
 
-/** The session turn a session-mode unit is bound to (design 6.6). */
+/** The session turn a session-mode unit is bound to. */
 export interface SessionTurnState {
   /** The session's stand-in record for the turn: `id` is the turn id, and it carries the contract binding. */
   readonly record: AgentRecord;
@@ -226,7 +226,7 @@ export class ContractRun {
     });
   }
 
-  /** Every unit of the plan and every attempt unit of a best-of-N unit (design 6.2). */
+  /** Every unit of the plan and every attempt unit of a best-of-N unit. */
   allUnits(): ContractUnit[] {
     return this.contract.units.flatMap((unit) => [unit, ...(unit.attemptUnits ?? [])]);
   }
@@ -285,7 +285,7 @@ export class ContractRun {
   }
 
   /**
-   * Decides what a unit's phase does before it spawns (design 7.2): hands the
+   * Decides what a unit's phase does before it spawns: hands the
    * decision to the phase waiting for it, or keeps it until the phase asks.
    */
   decidePreSpawn(unit: ContractUnit, decision: ContractPreSpawn): void {

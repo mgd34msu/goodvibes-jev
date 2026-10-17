@@ -169,6 +169,6 @@ describe('Personal Ops generated review artifact filenames', () => {
     const fake = fakePort(() => noulAnswer(0.99)); installJudgmentPort(fake.port);
     await expect(f.save('inbox', 'review-4111111111111111')).rejects.toThrow();
     expect(f.records).toHaveLength(0);
-    expect(fake.requests).toHaveLength(0);
+    expect(JSON.stringify(fake.requests)).not.toContain('4111111111111111');
   });
 });

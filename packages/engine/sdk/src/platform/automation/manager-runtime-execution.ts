@@ -20,6 +20,8 @@ import { executeCheckinJob, type AutomationCheckinEvaluator } from './checkin-ex
 import { markWorkAuthorized } from '../agents/conversation-continuation.js';
 
 export interface AutomationManagerExecutionContext {
+  /** Transfer a reserved startup slot to the now-visible run record. */
+  readonly onRunRecorded?: () => void;
   readonly configManager: ConfigManager;
   readonly routeBindings: RouteBindingManager;
   readonly sessionBroker: SharedSessionBroker;
@@ -173,6 +175,7 @@ export async function executeAutomationJob(
         updatedAt: now,
       };
       context.runs.set(runningRun.id, runningRun);
+      context.onRunRecorded?.();
       context.jobs.set(updatedJob.id, updatedJob);
       await context.syncExecutionRoute(updatedJob, runningRun);
       context.pruneRunHistory(updatedJob.id);
@@ -213,6 +216,7 @@ export async function executeAutomationJob(
       await context.sessionBroker.bindAgent(resolved.session.id, agentId);
     }
     context.runs.set(runningRun.id, runningRun);
+    context.onRunRecorded?.();
     context.jobs.set(updatedJob.id, updatedJob);
     await context.syncExecutionRoute(updatedJob, runningRun);
     context.pruneRunHistory(updatedJob.id);
@@ -232,6 +236,7 @@ export async function executeAutomationJob(
       error: message,
     };
     context.runs.set(failedRun.id, failedRun);
+    context.onRunRecorded?.();
     const updatedJob = context.applyFailureToJob(effectiveJob, now);
     context.jobs.set(updatedJob.id, updatedJob);
     await context.syncExecutionRoute(updatedJob, failedRun);

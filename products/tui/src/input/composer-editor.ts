@@ -16,6 +16,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { tokenizeCommand } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import {
   ALT_SCREEN_ENTER, ALT_SCREEN_EXIT, CLEAR_SCREEN, CURSOR_HIDE, CURSOR_SHOW,
   MOUSE_ENABLE, MOUSE_DISABLE, KEYBOARD_EXT_ENABLE, KEYBOARD_EXT_DISABLE,
@@ -47,7 +48,8 @@ export interface ComposerEditorDeps {
 export function resolveEditorCommand(env: NodeJS.ProcessEnv): { cmd: string; args: string[] } | null {
   const raw = (env.VISUAL || env.EDITOR || '').trim();
   if (!raw) return null;
-  const parts = raw.split(/\s+/);
+  let parts: string[];
+  try { parts = tokenizeCommand(raw); } catch { return null; }
   const cmd = parts[0];
   if (!cmd) return null;
   return { cmd, args: parts.slice(1) };

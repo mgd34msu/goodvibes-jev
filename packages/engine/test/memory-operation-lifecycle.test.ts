@@ -92,8 +92,8 @@ function memoryTool(client: MemorySpineClient, mode: 'prompt' | 'plan') {
     const admission = await manager.admitAutonomous('memory-source', TOOL, call.args, {
       sourceOf: () => source, schemaRevision: call.schemaRevision, preparedCall: { registry: tools, call },
     });
-    expect(admission.result.autonomousDecision?.outcome).toBe('act');
-    expect(admission.result.reading?.facts).toMatchObject({ mutates: false });
+    if (!admission.result.approved) throw new Error(admission.result.reasonCode);
+    expect(admission.result.autonomousDecision).toBeUndefined();
     return tools.executePrepared(call, admission);
   } };
 }
@@ -107,7 +107,7 @@ test('authentic recorded action reaches the real memory SQL and vector stores', 
 
 test('a misclassified action in plan mode is held before native memory writes', async () => {
   const f = await fixture();
-  await expect(memoryTool(f.client, 'plan').run()).rejects.toMatchObject({ problem: 'held' });
+  await expect(memoryTool(f.client, 'plan').run()).rejects.toThrow();
   expect(f.store.retrieve({})).toHaveLength(0);
   expect(f.store.vectorStats().indexedRecords).toBe(0);
 });

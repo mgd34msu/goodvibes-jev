@@ -355,7 +355,7 @@ describe('sdk.use(): full SDK facade integration', () => {
 });
 
 // ---------------------------------------------------------------------------
-// MINOR 2: HttpStatusError thrown from middleware is wrapped as SDKError{kind:'unknown'}
+// HttpStatusError thrown from middleware is wrapped as SDKError{kind:'unknown'}
 // ---------------------------------------------------------------------------
 
 describe('middleware error wrap: HttpStatusError from middleware', () => {

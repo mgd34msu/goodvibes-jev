@@ -273,12 +273,12 @@ describe('runMemoryConsolidation: pair readings', () => {
     expect(reg.reviewCalls).toEqual([]);
   });
 
-  test('pairs past the per-run budget are not read', async () => {
+  test('all pairs are read without an implicit per-run cap', async () => {
     readings.use({ pair: () => ({ link: 0, restates: false, conflicts: false }) });
     const records = Array.from({ length: 20 }, (_, index) => rec({ id: `r${index}`, summary: `fact ${index}`, updatedAt: NOW - index }));
     await runMemoryConsolidation({ memoryRegistry: new FakeRegistry(records), config: cfg(), now: NOW, trigger: 'idle', idle: true });
-    // 190 possible pairs; the pass reads at most 60, newest pairs first.
-    expect(readings.requests).toHaveLength(60);
+    // Every pair is retained, newest pairs first.
+    expect(readings.requests).toHaveLength(190);
     const first = readings.requests[0]!.state as { entity_a: { summary: string } };
     expect(first.entity_a.summary).toBe('fact 0');
   });

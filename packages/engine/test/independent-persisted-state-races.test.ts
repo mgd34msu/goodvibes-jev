@@ -6,7 +6,7 @@ import { KnowledgeStore, ProjectPlanningService, type ProjectPlanningStateUpsert
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-function path() { const root = mkdtempSync(join(tmpdir(), 'pr57-independent-')); roots.push(root); return join(root, 'knowledge.sqlite'); }
+function path() { const root = mkdtempSync(join(tmpdir(), 'persisted-state-independent-')); roots.push(root); return join(root, 'knowledge.sqlite'); }
 async function seeded() {
   const file = path();
   const store = new KnowledgeStore({ dbPath: file });

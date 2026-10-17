@@ -6,7 +6,7 @@ Status: accepted
 
 ## Context
 
-`docs/inbound-email.md` §3.4d states that `InboundMailboxMessage`,
+`docs/decisions/2026-07-27-inbound-email-design.md` §3.4d states that `InboundMailboxMessage`,
 `InboundMailSink`, `MailboxCursorPort`, `InboundMailObserver` and
 `InboundCapabilityVerdict` "are already source-agnostic, only
 `MailboxConnectionPort`, `MailboxReader` and `MailboxWire` are IMAP-shaped."
@@ -152,7 +152,7 @@ written against `InboundMessageCommon` and never switch on `source` at all.
 (`inbound/ports.ts`) carries one more required field than this decision
 records: `readonly bodyAvailability: 'full' | 'metadata-only'`. It exists
 because a Gmail grant can authorize headers without authorizing bodies (the
-`gmail.metadata` scope, see `docs/inbound-email.md` §13.11), and the pipeline
+`gmail.metadata` scope, see `docs/decisions/2026-07-27-inbound-email-design.md` §13.11), and the pipeline
 needs to know, per message, whether the body it is holding is real or absent
 before it decides whether that message may consult the expectation book.
 There is no IMAP equivalent because IMAP either delivers a readable body per

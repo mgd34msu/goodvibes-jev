@@ -1,8 +1,7 @@
 /**
- * Anthropic/OpenAI/Gemini's own refreshModels(): the model list currency
- * requirement, "model lists can never be stale", proven for the two
- * providers named in the done-when criteria plus Gemini (same empty-array
- * pattern), with a mocked API standing in for the live provider endpoint.
+ * Anthropic, OpenAI and Gemini refreshModels() preserve model-list currency
+ * when the provider endpoint returns an empty array. Mocked APIs supply the
+ * endpoint responses.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { EntryType, Question } from '@goodvibes-jev/judgment';

@@ -22,7 +22,8 @@ test('every window participates, including a target past the first selector batc
   expect('newContent' in result && result.newContent.endsWith(item.replace)).toBe(true);
   const requests = fake.requests.filter(request => request.context?.battery === 'engine.tools.edit-window');
   expect(requests).toHaveLength(2);
-  expect(JSON.stringify(requests[0]!.state)).toContain('const target = row.value;');
+  expect(JSON.stringify(requests[0]!.state)).not.toContain('const target = row.value;');
+  expect(JSON.stringify(requests[1]!.state)).toContain('const target = row.value;');
   expect(JSON.stringify(requests[1]!.state)).toContain('line-71');
 });
 test('an unsettled alternative cannot silently authorize a fuzzy edit', async () => {

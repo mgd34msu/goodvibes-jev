@@ -186,6 +186,7 @@ export interface HarnessOptions {
   readonly recordNative?: boolean;
   readonly nativeDecisions?: NativeContractDecisionHost;
   readonly durableAdmission?: ContractRunnerDeps['durableAdmission'];
+  readonly getSelectedModel?: ContractRunnerDeps['getSelectedModel'];
   readonly createEngine?: ContractRunnerDeps['createEngine'];
   readonly plan?: DraftPlan;
   readonly contract?: Record<string, unknown>;
@@ -310,6 +311,7 @@ export function makeHarness(options: HarnessOptions): Harness {
     run: async () => ({ status: 'completed', output: plannerOutput(plan), elapsedMs: 1, agentId: 'planner-1' }),
   };
   runner = createContractRunner({
+    ...(options.getSelectedModel ? { getSelectedModel: options.getSelectedModel } : {}),
     ...(options.nativeDecisions === undefined && !options.recordNative ? {} : { nativeDecisions: options.nativeDecisions ?? { authorityOf: () => ({ authorityId: 'test-host', authorityRevision: '1', scopeId: 'test-project', scopeRevision: '1' }) } }),
     ...(options.durableAdmission === undefined ? {} : { durableAdmission: options.durableAdmission }),
     agentManager: manager,

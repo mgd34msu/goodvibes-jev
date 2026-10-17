@@ -250,7 +250,7 @@ async function executeToolCalls(
         };
         const result = await toolRegistry.execute(call.id, call.name, effectiveArgs, { signal, assertCurrent: assertEffectiveCurrent });
         assertEffectiveCurrent();
-        // Stage B: schedule a debounced reindex of any touched file(s). Never awaited.
+        // Schedule a debounced reindex of any touched file(s). Never awaited.
         try {
           context.onToolExecuted?.(call.name, effectiveArgs, result.success !== false);
         } catch (hookErr) {

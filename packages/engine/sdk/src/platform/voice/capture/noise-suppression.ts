@@ -1,35 +1,7 @@
-/**
- * noise-suppression.ts, `voice.wake.noiseSuppression`, as a stage that runs.
- *
- * The row shipped with two values and one of them refused: `speex` named a
- * filter nothing applied, so selecting it stopped the detector rather than
- * pretending. This is the filter. It is SpeexDSP's own preprocessor, compiled to
- * WebAssembly and embedded in the source (see ./vendor/speexdsp-wasm.ts and
- * native/speexdsp-wasm/), which is the same posture the wake engine takes for the
- * same reason: one artifact that a daemon child process under Bun and a browser
- * tab both load, because a native binding cannot run in the tab and a setting
- * that means different things on different surfaces is the problem, not the fix.
- *
- * WHERE THE STAGE SITS
- *
- * {@link createNoiseSuppressingOpener} wraps a host's capture opener, so the
- * filter runs between the device and EVERY consumer: the wake engine scores
- * filtered frames, the utterance recorded after a wake is filtered, the pre-roll
- * carried from before the wake is filtered, and push-to-talk voice input is
- * filtered. There is no path that sees one and not the other, which is what makes
- * one row honest for the whole voice stack.
- *
- * `none` is not a stage that does nothing, it is NO stage. The wrapper hands the
- * inner opener's frames straight through, the same objects, so the byte path with
- * suppression off is exactly the path that shipped.
- *
- * WHAT IT DOES NOT DO
- *
- * The module contains the denoiser and nothing else: no echo canceller, no
- * automatic gain control (which would move the loudness the wake classifier was
- * trained against), no voice-activity gate, `voice.wake.vadThreshold` still has
- * no model behind it and still refuses. Those stages are disabled explicitly in
- * the WebAssembly entry points rather than left at upstream defaults.
+/** SpeexDSP noise suppression shared by wake-word and push-to-talk capture.
+ * The bundled WebAssembly preprocessor filters device frames before consumers
+ * receive them. Echo cancellation, automatic gain control and voice gating
+ * are disabled in this stage. Selecting none passes frames through unchanged.
  */
 import { base64ToBytes } from './frames.js';
 import {

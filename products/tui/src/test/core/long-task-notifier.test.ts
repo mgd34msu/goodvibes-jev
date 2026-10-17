@@ -1,4 +1,4 @@
-import { makeTestWebhookNotifier } from '../helpers/notification-transport.ts';
+import { makeTestWebhookNotifier, settleTestWebhookNotifications } from '../helpers/notification-transport.ts';
 /**
  * Tests for src/core/long-task-notifier.ts
  *
@@ -37,7 +37,7 @@ function makeConfigGet(overrides: Record<string, unknown> = {}) {
 // ---------------------------------------------------------------------------
 
 describe('maybeNotifyLongTask: threshold gating', () => {
-  test('returns false when elapsed < threshold (no notification)', () => {
+  test('returns false when elapsed < threshold (no notification)', async () => {
     const result = maybeNotifyLongTask({
       elapsedMs: 30_000, // 30s
       status: 'ok',
@@ -49,7 +49,7 @@ describe('maybeNotifyLongTask: threshold gating', () => {
     expect(result).toBe(false);
   });
 
-  test('returns false when elapsed equals threshold rounded down (< threshold)', () => {
+  test('returns false when elapsed equals threshold rounded down (< threshold)', async () => {
     // 59_999ms floors to 59s, which is < 60s threshold
     const result = maybeNotifyLongTask({
       elapsedMs: 59_999,
@@ -62,7 +62,7 @@ describe('maybeNotifyLongTask: threshold gating', () => {
     expect(result).toBe(false);
   });
 
-  test('returns true when elapsed >= threshold (notification fires)', () => {
+  test('returns true when elapsed >= threshold (notification fires)', async () => {
     const result = maybeNotifyLongTask({
       elapsedMs: 60_000, // exactly 60s
       status: 'ok',
@@ -74,7 +74,7 @@ describe('maybeNotifyLongTask: threshold gating', () => {
     expect(result).toBe(true);
   });
 
-  test('returns true when elapsed far exceeds threshold', () => {
+  test('returns true when elapsed far exceeds threshold', async () => {
     const result = maybeNotifyLongTask({
       elapsedMs: 300_000, // 5 minutes
       status: 'fail',
@@ -92,7 +92,7 @@ describe('maybeNotifyLongTask: threshold gating', () => {
 // ---------------------------------------------------------------------------
 
 describe('maybeNotifyLongTask: off-state', () => {
-  test('returns false when thresholdSeconds is 0 (off)', () => {
+  test('returns false when thresholdSeconds is 0 (off)', async () => {
     const notifier = makeFakeNotifier(['https://ntfy.sh/my-topic']);
     const result = maybeNotifyLongTask({
       elapsedMs: 600_000, // 10 minutes
@@ -113,7 +113,7 @@ describe('maybeNotifyLongTask: off-state', () => {
 // ---------------------------------------------------------------------------
 
 describe('maybeNotifyLongTask: content privacy pin', () => {
-  test('with behavior.notificationsMetadataOnly on, the text carries metadata only', () => {
+  test('with behavior.notificationsMetadataOnly on, the text carries metadata only', async () => {
     // Privacy rule (owner ruling 2026-09-29): notifications name the work by
     // default; the metadata-only setting reduces them to structural metadata.
     // The turn name and failure reason are passed in and must not appear.
@@ -132,6 +132,7 @@ describe('maybeNotifyLongTask: content privacy pin', () => {
     });
 
     // The sent message must contain structural metadata only.
+    await settleTestWebhookNotifications();
     const sentText = notifier._sentMessages[0] ?? '';
     expect(sentText).toContain('turn');
     expect(sentText).toContain('2m');
@@ -143,7 +144,7 @@ describe('maybeNotifyLongTask: content privacy pin', () => {
     expect(sentText).not.toContain(CONVERSATION_SENTINEL);
   });
 
-  test('MaybeNotifyLongTaskOptions compile-time privacy: no message or conversation fields accepted', () => {
+  test('MaybeNotifyLongTaskOptions compile-time privacy: no message or conversation fields accepted', async () => {
     // Compile-time pin: MaybeNotifyLongTaskOptions must not accept
     // message or conversation fields. If this test file compiles with the
     // ts-expect-error suppressions below still doing real work, the type is
@@ -158,7 +159,7 @@ describe('maybeNotifyLongTask: content privacy pin', () => {
     void notifier;
   });
 
-  test('failed status appears in message', () => {
+  test('failed status appears in message', async () => {
     const notifier = makeFakeNotifier(['https://ntfy.sh/topic']);
     maybeNotifyLongTask({
       elapsedMs: 90_000,
@@ -168,6 +169,7 @@ describe('maybeNotifyLongTask: content privacy pin', () => {
       thresholdSeconds: 60,
       webhookNotifier: notifier as unknown as import('@goodvibes-jev/engine/sdk/platform/integrations').WebhookNotifier,
     });
+    await settleTestWebhookNotifications();
     const sentText = notifier._sentMessages[0] ?? '';
     expect(sentText).toContain('fail');
     expect(sentText).toContain('agent');
@@ -200,7 +202,7 @@ describe('maybeNotifyLongTask: webhook delivery', () => {
     expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
   });
 
-  test('does NOT call webhookNotifier.sendNotification() when below threshold', () => {
+  test('does NOT call webhookNotifier.sendNotification() when below threshold', async () => {
     const notifier = makeFakeNotifier(['https://ntfy.sh/my-topic']);
     maybeNotifyLongTask({
       elapsedMs: 30_000,
@@ -213,7 +215,7 @@ describe('maybeNotifyLongTask: webhook delivery', () => {
     expect(notifier.sendNotification).not.toHaveBeenCalled();
   });
 
-  test('does NOT call webhookNotifier.sendNotification() when notifier has no URLs', () => {
+  test('does NOT call webhookNotifier.sendNotification() when notifier has no URLs', async () => {
     const notifier = makeFakeNotifier([]); // no URLs configured
     maybeNotifyLongTask({
       elapsedMs: 120_000,
@@ -240,7 +242,7 @@ describe('maybeNotifyLongTask: webhook delivery', () => {
     ).not.toThrow();
   });
 
-  test('skips webhook delivery entirely when webhookNotifier is null', () => {
+  test('skips webhook delivery entirely when webhookNotifier is null', async () => {
     // Should complete without error when notifier is null
     expect(() =>
       maybeNotifyLongTask({
@@ -260,7 +262,7 @@ describe('maybeNotifyLongTask: webhook delivery', () => {
 // ---------------------------------------------------------------------------
 
 describe('maybeNotifyLongTask: focus gating', () => {
-  test('fires when unfocused and both focusTracker + configGet are supplied', () => {
+  test('fires when unfocused and both focusTracker + configGet are supplied', async () => {
     const tracker = new FocusTracker();
     tracker.setFocused(false);
     const notifier = makeFakeNotifier(['https://ntfy.sh/topic']);
@@ -278,7 +280,7 @@ describe('maybeNotifyLongTask: focus gating', () => {
     expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
   });
 
-  test('fires when focus was never observed (unknown)', () => {
+  test('fires when focus was never observed (unknown)', async () => {
     const tracker = new FocusTracker();
     const notifier = makeFakeNotifier(['https://ntfy.sh/topic']);
     const result = maybeNotifyLongTask({
@@ -294,7 +296,7 @@ describe('maybeNotifyLongTask: focus gating', () => {
     expect(result).toBe(true);
   });
 
-  test('suppressed when focused and notifyOnlyWhenUnfocused defaults on', () => {
+  test('suppressed when focused and notifyOnlyWhenUnfocused defaults on', async () => {
     const tracker = new FocusTracker();
     tracker.setFocused(true);
     const notifier = makeFakeNotifier(['https://ntfy.sh/topic']);
@@ -312,7 +314,7 @@ describe('maybeNotifyLongTask: focus gating', () => {
     expect(notifier.sendNotification).not.toHaveBeenCalled();
   });
 
-  test('fires even when focused, when notifyOnlyWhenUnfocused is off', () => {
+  test('fires even when focused, when notifyOnlyWhenUnfocused is off', async () => {
     const tracker = new FocusTracker();
     tracker.setFocused(true);
     const notifier = makeFakeNotifier(['https://ntfy.sh/topic']);
@@ -330,7 +332,7 @@ describe('maybeNotifyLongTask: focus gating', () => {
     expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
   });
 
-  test('behavior before focus gating existed is preserved: always fires when focusTracker/configGet are both omitted', () => {
+  test('behavior before focus gating existed is preserved: always fires when focusTracker/configGet are both omitted', async () => {
     const notifier = makeFakeNotifier(['https://ntfy.sh/topic']);
     const result = maybeNotifyLongTask({
       elapsedMs: 120_000,
@@ -350,37 +352,37 @@ describe('maybeNotifyLongTask: focus gating', () => {
 // ---------------------------------------------------------------------------
 
 describe('readNotifyAfterSeconds', () => {
-  test('returns NOTIFY_AFTER_SECONDS_DEFAULT when key is absent', () => {
+  test('returns NOTIFY_AFTER_SECONDS_DEFAULT when key is absent', async () => {
     const result = readNotifyAfterSeconds(makeConfigGet({}));
     expect(result).toBe(NOTIFY_AFTER_SECONDS_DEFAULT);
   });
 
-  test('returns 0 when key is explicitly set to 0 (off)', () => {
+  test('returns 0 when key is explicitly set to 0 (off)', async () => {
     const result = readNotifyAfterSeconds(makeConfigGet({ 'behavior.notifyAfterSeconds': 0 }));
     expect(result).toBe(0);
   });
 
-  test('returns the configured value when valid', () => {
+  test('returns the configured value when valid', async () => {
     const result = readNotifyAfterSeconds(makeConfigGet({ 'behavior.notifyAfterSeconds': 120 }));
     expect(result).toBe(120);
   });
 
-  test('returns NOTIFY_AFTER_SECONDS_DEFAULT when value is negative', () => {
+  test('returns NOTIFY_AFTER_SECONDS_DEFAULT when value is negative', async () => {
     const result = readNotifyAfterSeconds(makeConfigGet({ 'behavior.notifyAfterSeconds': -5 }));
     expect(result).toBe(NOTIFY_AFTER_SECONDS_DEFAULT);
   });
 
-  test('returns NOTIFY_AFTER_SECONDS_DEFAULT when value is NaN', () => {
+  test('returns NOTIFY_AFTER_SECONDS_DEFAULT when value is NaN', async () => {
     const result = readNotifyAfterSeconds(makeConfigGet({ 'behavior.notifyAfterSeconds': NaN }));
     expect(result).toBe(NOTIFY_AFTER_SECONDS_DEFAULT);
   });
 
-  test('returns NOTIFY_AFTER_SECONDS_DEFAULT when value is non-numeric string', () => {
+  test('returns NOTIFY_AFTER_SECONDS_DEFAULT when value is non-numeric string', async () => {
     const result = readNotifyAfterSeconds(makeConfigGet({ 'behavior.notifyAfterSeconds': 'auto' }));
     expect(result).toBe(NOTIFY_AFTER_SECONDS_DEFAULT);
   });
 
-  test('coerces numeric string to number', () => {
+  test('coerces numeric string to number', async () => {
     const result = readNotifyAfterSeconds(makeConfigGet({ 'behavior.notifyAfterSeconds': '45' }));
     expect(result).toBe(45);
   });

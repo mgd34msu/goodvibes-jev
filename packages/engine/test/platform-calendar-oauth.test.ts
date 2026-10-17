@@ -618,8 +618,8 @@ describe('token refresh lifecycle', () => {
     expect(await store.connectionState('google')).toBe('connected');
   });
 
-  // F2: a genuinely-dead refresh token (not merely lost a single-flight race) must
-  // still produce an honest reconnect-needed, the fix to (b) below must not make
+  // a genuinely-dead refresh token (not merely lost a single-flight race) must
+  // still produce an honest reconnect-needed, refresh-race handling must not make
   // real failures silently invisible.
   test('a genuinely-dead refresh token still produces reconnect-needed', async () => {
     const state = freshState();
@@ -634,7 +634,7 @@ describe('token refresh lifecycle', () => {
     expect(await store.connectionState('google')).toBe('reconnect-needed');
   });
 
-  // F2(b): markReconnectNeeded must re-read state before writing the marker. If a
+  // markReconnectNeeded must re-read state before writing the marker. If a
   // concurrent process/instance already stored a fresh, valid token set for the
   // same provider (sharing the same secret store) between this refresh's failure
   // and the marker write, the marker must NOT stamp over that working account.

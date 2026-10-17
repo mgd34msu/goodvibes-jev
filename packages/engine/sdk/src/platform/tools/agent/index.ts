@@ -191,7 +191,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
   const archetypeLoader = config.archetypeLoader ?? new ArchetypeLoader();
 
   /**
-   * Starts one contract for work handed to the tool (design 10.3). The unit
+   * Starts one contract for work handed to the tool. The unit
    * leaf refusal runs first, in AgentManager, so it is decided in one place.
    */
   function startContract(input: AgentInput, ask: string, proposedUnits: readonly ProposedUnit[], assertCurrent: () => void, dispatch: ContractRunner['start']): StartedContract {

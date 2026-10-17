@@ -228,7 +228,7 @@ function admittedBrowser(tool: Tool) {
       sourceOf: () => ({ goal: 'Check browser caller lifetime with synthetic admission', criteria: ['No external page effects'] }),
       signal: options.signal, schemaRevision: call.schemaRevision, preparedCall: { registry, call },
     });
-    expect(admission.result.autonomousDecision?.outcome).toBe('act');
+    expect(admission.result.approved).toBe(true);
     return registry.executePrepared(call, admission, options);
   };
 }

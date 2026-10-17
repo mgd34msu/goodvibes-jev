@@ -5,6 +5,8 @@ import { SessionManager } from '@goodvibes-jev/engine/sdk/platform/sessions';
 import { createResumeSessionHandler } from '../../runtime/bootstrap-hook-bridge.ts';
 import { createSessionSurface, readLastSessionPointer, writeLastSessionPointer } from '@/runtime/index.ts';
 import type { SharedSessionRecord } from '@goodvibes-jev/engine/sdk/platform/control-plane';
+import { ConversationManager } from '../../core/conversation.ts';
+import { clearTurnAnchors, getTurnAnchors, recordTurnAnchor, persistTurnAnchors, restoreTurnAnchors } from '@goodvibes-jev/engine/sdk/platform/rewind';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 describe('bootstrap hook bridge session resume', () => {
@@ -38,17 +40,23 @@ describe('bootstrap hook bridge session resume', () => {
       JSON.stringify({ type: 'message', role: 'assistant', content: 'You have approvals waiting.' }),
     ].join('\n') + '\n');
     const sessionManager = new SessionManager(tmpDir, { surfaceRoot: 'agent' });
+    const surface = createSessionSurface({ surfaceRoot: 'agent', workingDirectory: tmpDir, homeDirectory: tmpDir });
+    const conversation = new ConversationManager(() => 100);
+    conversation.addUserMessage('old conversation');
+    conversation.workTree.recordTurnOutcome({ index: 0, fingerprint: '1:x', outcome: 'failed' });
+    conversation.log = (message: string) => { logs.push(message); };
+    recordTurnAnchor('saved-session', { turnId: 'restored', label: 'saved', messageCount: 2, at: 1 });
+    persistTurnAnchors('saved-session', surface);
+    clearTurnAnchors('saved-session');
     const resume = createResumeSessionHandler({
+      restoreTurnAnchors: id => restoreTurnAnchors(id, surface),
       runtimeBus: { emit: () => {} } as never,
       runtime: {
         sessionId: 'current-session',
         model: 'gpt-5.4',
         provider: 'openai',
       } as never,
-      conversation: {
-        fromJSON: mock(() => {}),
-        log: mock((message: string) => { logs.push(message); }),
-      } as never,
+      conversation,
       requestRender: mock(() => {}),
       onSessionIdChanged: mock((_sessionId: string) => null as SharedSessionRecord | null) as never,
       sharedSessionBroker: {
@@ -74,6 +82,10 @@ describe('bootstrap hook bridge session resume', () => {
     await Promise.resolve();
 
     try {
+      expect(conversation.getMessageCount()).toBe(2);
+      expect(conversation.workTree.turnOutcome(0)).toBeUndefined();
+      expect(getTurnAnchors('saved-session')[0]?.turnId).toBe('restored');
+      clearTurnAnchors('saved-session');
       expect(logs).toContain('Resume: Status: ready for next turn');
       expect(logs.join('\n')).not.toMatch(/panel|\bpanes?\b/i);
       const loaded = sessionManager.load('saved-session').meta.returnContext as Record<string, unknown> | undefined;
@@ -109,6 +121,7 @@ describe('bootstrap hook bridge session resume', () => {
       writeLastSessionPointer(sessionId, { surface });
 
     const resume = createResumeSessionHandler({
+      restoreTurnAnchors: mock(() => 0),
       runtimeBus: { emit: () => {} } as never,
       runtime: {
         sessionId: 'current-session',
@@ -116,6 +129,8 @@ describe('bootstrap hook bridge session resume', () => {
         provider: 'openai',
       } as never,
       conversation: {
+        resetAll: mock(() => {}),
+        rebuildHistory: mock(() => {}),
         fromJSON: mock(() => {}),
         log: mock(() => {}),
       } as never,

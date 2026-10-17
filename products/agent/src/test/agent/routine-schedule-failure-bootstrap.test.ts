@@ -8,6 +8,7 @@ import { mockFetch } from '../helpers/typed-fetch-mock.ts';
 import { classifyConnectedHostScheduleError } from '../../agent/routine-schedule-promotion.ts';
 
 test('Agent bootstrap installs the logged engine port consumed by schedule failure classification', async () => {
+  resetTestRuntimeServices();
   const originalFetch = globalThis.fetch;
   const originalKey = process.env.TYPESAFE_API_KEY;
   process.env.TYPESAFE_API_KEY = 'offline-schedule-bootstrap-fixture';
@@ -39,8 +40,11 @@ test('Agent bootstrap installs the logged engine port consumed by schedule failu
   });
   try {
     const services = getTestRuntimeServices();
+    await services.providerRegistry.ready();
+    await services.providerRegistry.modelDiscoverySettled();
     services.configManager.set('judgment.endpoint', 'http://127.0.0.1:39991');
     services.configManager.set('judgment.keySource', 'env');
+    services.configManager.flushConfigFileChanges();
     expect(judgmentPort('bootstrap-fixture')).toBe(services.judgment.port);
     forgetFailureReadings();
     expect(await redactSensitiveDataAsync(message)).toBe(message);

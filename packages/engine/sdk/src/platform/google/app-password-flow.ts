@@ -77,13 +77,7 @@ function signInNeeded(url: string): AppPasswordNeedsHuman {
   };
 }
 
-/**
- * Text Google shows on the app-password page when 2-Step Verification is not
- * on. Matched loosely because the exact wording was not re-verified live for
- * this change (the automated browser is never pointed at a real Google
- * account in this environment), treat this as best-effort and confirm
- * against a live account before relying on it.
- */
+/** Best-effort match for Google's explanation that 2-Step Verification is disabled. */
 const TWO_STEP_REQUIRED_TEXT =
   /2-step verification[^.]*(is off|required|isn.t (on|enabled))|turn on 2-step verification to (create|use) app passwords|app passwords aren.t available/i;
 

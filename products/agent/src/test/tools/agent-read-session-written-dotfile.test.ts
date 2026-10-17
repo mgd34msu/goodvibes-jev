@@ -1,4 +1,4 @@
-/** Standalone read observations use Jev; the write ledger is not read authority. */
+/** Compatibility checks preserve cancellation; actual tool admission owns read authority. */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,53 +20,20 @@ beforeEach(() => {
 });
 afterEach(() => { installJudgmentPort(previous); forgetReadSecrets(); });
 
-describe('read observations do not infer secrecy or authority from a filename or session write', () => {
-  test('an ordinary dotted path is readable before and after this session writes it', async () => {
-    expect(await isBlockedReadPath(SCREENSHOT)).toBe(false);
-    recordAgentSessionWrite(SCREENSHOT);
-    expect(await isBlockedReadPath(SCREENSHOT)).toBe(false);
-  });
-  test('an ordinary secret-looking name is readable when its observation says non-secret', async () => {
-    expect(await isBlockedReadPath('novel/secret.txt')).toBe(false);
-  });
-  test('an ordinary-named secret is refused even if the session wrote it', async () => {
-    const path = 'deployment/ordinary-data.txt';
-    secretSubjects.add(path);
-    expect(await isBlockedReadPath(path)).toBe(true);
-    recordAgentSessionWrite(path);
-    expect(await isBlockedReadPath(path)).toBe(true);
-  });
-  test('one path observation does not classify another subject', async () => {
-    secretSubjects.add('one.txt');
-    expect(await isBlockedReadPath('one.txt')).toBe(true);
-    expect(await isBlockedReadPath('two.txt')).toBe(false);
-  });
-  test('an ordinary dotted directory does not need a session-written waiver', async () => {
-    const path = '/synthetic/home/.cache/report.txt';
-    expect(await isBlockedReadPath(path)).toBe(false);
-    recordAgentSessionWrite(path);
-    expect(await isBlockedReadPath(path)).toBe(false);
-  });
-  test('writing one dotted file does not authorize a different classified secret', async () => {
-    const other = '/synthetic/home/.other-screen.png'; secretSubjects.add(other);
-    recordAgentSessionWrite(SCREENSHOT);
-    expect(await isBlockedReadPath(other)).toBe(true);
-  });
-  for (const path of ['.netrc', '.npmrc', '.env', '.aws/config', '.ssh/notes.txt', '.gnupg/keys.txt',
-    '.secrets/id_rsa', '.keys/service.pem', '.config/credentials.json', '.ssh/known_hosts']) {
-    test(`${path} remains refused when its observation identifies secrets despite a session write`, async () => {
-      secretSubjects.add(path); recordAgentSessionWrite(path);
-      expect(await isBlockedReadPath(path)).toBe(true);
+describe('read compatibility does not add a filename or session-write approval gate', () => {
+  for (const path of [SCREENSHOT, '.netrc', '.npmrc', '.env', '.aws/config', '.ssh/notes.txt',
+    '.gnupg/keys.txt', '.secrets/id_rsa', '.keys/service.pem', '.config/credentials.json',
+    '.ssh/known_hosts', 'deployment/ordinary-data.txt', 'src/main.ts']) {
+    test(`${path} remains subject to the registered read tool admission`, async () => {
+      secretSubjects.add(path);
+      expect(await isBlockedReadPath(path)).toBe(false);
+      recordAgentSessionWrite(path);
+      expect(await isBlockedReadPath(path)).toBe(false);
     });
   }
-  test('an ordinary project file is readable with or without a ledger entry', async () => {
-    expect(await isBlockedReadPath('src/main.ts')).toBe(false);
-    recordAgentSessionWrite('src/main.ts');
-    expect(await isBlockedReadPath('src/main.ts')).toBe(false);
-  });
-  test('a classified undotted secret remains refused after a write', async () => {
-    secretSubjects.add('config/credentials.json'); recordAgentSessionWrite('config/credentials.json');
-    expect(await isBlockedReadPath('config/credentials.json')).toBe(true);
+  test('caller cancellation is retained before a read can proceed', async () => {
+    const controller = new AbortController(); controller.abort(new Error('Read cancelled'));
+    await expect(isBlockedReadPath('src/main.ts', controller.signal)).rejects.toBe(controller.signal.reason);
   });
 });
 

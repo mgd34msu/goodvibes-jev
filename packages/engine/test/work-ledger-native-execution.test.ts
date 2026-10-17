@@ -141,7 +141,7 @@ test('replacement native host inspects exact replay but refuses unreconciled lau
   expect(f.harness.agentsOf('u1')).toHaveLength(1); await replacement.close();
 });
 
-test('bridge preserves PR56 captured planner input and the original owner read filter', async () => {
+test('bridge preserves captured planner input and the original owner read filter', async () => {
   const original = '# original captured input\n'; let f!: Awaited<ReturnType<typeof fixture>>; let captured = false;
   const filter = async (path: string) => !path.endsWith('private.ts');
   f = await fixture({ harness: { contract: { isolation: 'worktree' }, readAccessFilter: filter,

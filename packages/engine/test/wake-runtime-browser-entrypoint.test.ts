@@ -133,7 +133,7 @@ for (const source of [true, false]) {
       expect(detections).toEqual(['working']);
       expect(warnings).toEqual([{
         message: 'wake model inference failed',
-        meta: { modelId: 'broken', error: '[REDACTED]' },
+        meta: { modelId: 'broken', error: 'corrupt custom model' },
       }]);
     }, 40_000);
   });

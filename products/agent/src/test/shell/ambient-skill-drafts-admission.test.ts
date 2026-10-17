@@ -23,6 +23,7 @@ function fixture(settings: { held?: boolean; suspend?: boolean } = {}) {
   const root = makeProjectTempDir('ambient-native-skill-draft');
   const paths = createShellPathService({ workingDirectory: root, homeDirectory: root });
   const config = new ConfigManager({ surfaceRoot: 'agent', workingDir: root, homeDir: root, configDir: join(root, 'config') });
+  if (settings.held) config.setRuntimeOverride('permissions.mode', 'plan');
   const manager = new PermissionManager(undefined, createPermissionConfigReader(config), new PolicyRuntimeState());
   const registry = new ToolRegistry(manager);
   bindAgentResearchSourceOwner(registry, ordinaryResearchOwner());
@@ -39,7 +40,7 @@ function fixture(settings: { held?: boolean; suspend?: boolean } = {}) {
   const scripted = fakePort((name, question) => {
     if (question.type === 'score') return scoreAnswer(question, name === 'link' ? 0 : 3, 0.9999);
     if (question.type === 'noul') return noulAnswer(name === 'mutates' ? 0.999 : 0.001);
-    const value = name === 'target' ? 'skill' : name === 'disposition' ? settings.held ? 'reject' : 'act'
+    const value = name === 'target' ? 'skill' : name === 'disposition' ? 'act'
       : name === 'kind' ? 'write' : name === 'family' || name === 'capability' ? 'generic'
         : name === 'hazard' ? 'none' : undefined;
     if (!value) throw new Error(`Unspecified ambient question: ${name}`);
@@ -76,13 +77,12 @@ test('actual registered ambient route obtains native admission and persists a di
     expect(skill?.enabled).toBe(false); expect(skill?.reviewState).toBe('fresh'); expect(skill?.procedure).toContain(f.body);
     expect(readSkillDraftLedger(f.skills)[0]?.skillId).toBe(skill?.id);
     const request = f.requests.find(value => Object.hasOwn(value.questions, 'disposition'));
-    expect(request).toBeDefined();
-    expect(JSON.stringify(request?.state)).toContain('away digest');
-    expect(JSON.stringify(request?.state)).not.toContain('explicitUserRequest');
+    expect(request).toBeUndefined();
+    expect(JSON.stringify(f.requests)).not.toContain('explicitUserRequest');
   } finally { await f.close(); }
 });
 
-test('native held ambient admission makes no draft or ledger effect', async () => {
+test('configured plan mode ambient admission makes no draft or ledger effect', async () => {
   const f = fixture({ held: true });
   try { expect(await f.propose(f.controller.signal)).toBe(0); expect(f.skills.list()).toEqual([]); expect(readSkillDraftLedger(f.skills)).toEqual([]); }
   finally { await f.close(); }

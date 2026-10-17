@@ -38,6 +38,8 @@ async function fixture(provider: 'slack' | 'email' = 'slack') {
   } }, log);
   const previous = installJudgmentPort(port); cleanups.push(() => { installJudgmentPort(previous); });
   const permissionManager = new PermissionManager(async () => { humans++; throw new Error('No human'); }, createPermissionConfigReader(config), new PolicyRuntimeState());
+  const admit = permissionManager.admitAutonomous.bind(permissionManager);
+  permissionManager.admitAutonomous = async (...args) => { const result = await admit(...args); await hook?.(); return result; };
   const lifetime = new AbortController();
   const listeners = new Set<() => void>();
   const stopConfig = config.onDidInvalidate(() => { for (const listener of listeners) listener(); });
@@ -110,8 +112,8 @@ test('pending managed-alias leaf replacement blocks before post-success notifica
   try { await expect(f.owner.applyTags(f.id, ['GoodVibes/Priority'], f.operation)).rejects.toThrow(); expect(f.writes).toHaveLength(0); }
   finally { release(); await pending; }
 });
-test('Jev reject and missing real source never call a human or provider', async () => {
-  const f = await fixture(); f.setOutcome('reject');
+test('configured denial and missing real source never call a human or provider', async () => {
+  const f = await fixture(); f.config.set('permissions.mode', 'plan');
   await expect(f.owner.applyTags(f.id, ['GoodVibes/Priority'], f.operation)).rejects.toThrow(); expect(f.writes).toHaveLength(0); expect(f.humans).toBe(0);
   await expect(f.owner.applyTags(f.id, ['GoodVibes/Priority'], { ...f.operation, sourceOf: () => ({ goal: '', criteria: [] }) })).rejects.toThrow(); expect(f.writes).toHaveLength(0);
 });

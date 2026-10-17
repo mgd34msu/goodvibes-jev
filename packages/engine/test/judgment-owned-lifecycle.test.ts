@@ -36,6 +36,31 @@ describe('native judgment ownership', () => {
     } finally { await scope.close(); installJudgmentPort(previous); rmSync(root, { recursive: true, force: true }); }
   });
 
+  test('shutdown drains completed readings even while deferred publication is held', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'judgment-publication-drain-'));
+    const previous = installJudgmentPort(undefined); const scope = createAsyncDisposalScope('fixture');
+    const { port } = composeJudgment({ ...source('http://127.0.0.1:1', { get: async () => { throw new Error('synthetic unavailable key'); } }),
+      stateRoot: root, disposal: scope.registry });
+    const callbacks: (() => void)[] = []; const queued = deferred(); const schedule = setImmediate;
+    const publication = spyOn(globalThis, 'setImmediate').mockImplementation(((callback: () => void) => {
+      callbacks.push(() => callback()); queued.resolve(); return schedule(() => {});
+    }) as typeof setImmediate);
+    const readings = Array.from({ length: 3 }, () => port.ask(request).catch((error: unknown) => error));
+    try {
+      await queued.promise;
+      const closing = scope.close();
+      expect(await Promise.race([closing.then(() => true), Bun.sleep(500).then(() => false)])).toBe(true);
+      expect(await Promise.all(readings)).toEqual(Array.from({ length: 3 }, () => expect.objectContaining({ kind: 'aborted' })));
+      using persisted = new SqliteDecisionLog(decisionLogPath(root));
+      expect(persisted.query()).toHaveLength(3);
+      expect(persisted.query().every(entry => entry.status === 'failed')).toBe(true);
+    } finally {
+      publication.mockRestore(); for (const callback of callbacks) callback();
+      await scope.close(); await Promise.all(readings);
+      installJudgmentPort(previous); rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test.each(['sync', 'async'] as const)('%s disposal retires immediately and drains accepted records before log closure', async (mode) => {
     const root = mkdtempSync(join(tmpdir(), 'judgment-owned-'));
     const previous = installJudgmentPort(undefined);

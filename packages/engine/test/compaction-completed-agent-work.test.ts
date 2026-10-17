@@ -178,7 +178,7 @@ describe('buildCompletedAgentWork', () => {
     expect(section!.content).not.toContain('files:');
   });
 
-  test('truncates the files list with a "(+N more)" suffix beyond 5 paths', () => {
+  test('preserves the full file list beyond five paths', () => {
     const files = ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts', 'f.ts', 'g.ts'];
     const agents = [
       makeRecord({
@@ -189,9 +189,8 @@ describe('buildCompletedAgentWork', () => {
       }),
     ];
     const section = buildCompletedAgentWork(agents, []);
-    expect(section!.content).toContain('(+2 more)');
-    expect(section!.content).toContain('a.ts, b.ts, c.ts, d.ts, e.ts');
-    expect(section!.content).not.toContain('f.ts');
+    expect(section!.content).toContain(files.join(', '));
+    expect(section!.content).not.toContain('more)');
   });
 });
 

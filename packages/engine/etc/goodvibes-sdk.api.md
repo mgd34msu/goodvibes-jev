@@ -113,6 +113,8 @@ export interface AdmittedRegex extends AsyncDisposable {
     // (undocumented)
     exec(input: string, lastIndex?: number, maxInputChars?: number): Promise<RegexMatch | null>;
     // (undocumented)
+    matchingLines(input: string, maxInputChars?: number): Promise<readonly number[]>;
+    // (undocumented)
     positions(input: string, maxInputChars?: number): Promise<readonly {
         start: number;
         end: number;
@@ -13187,6 +13189,12 @@ export interface OperatorMethodOutputMap {
         sessionId: string;
         origin: "agent-tool" | "cli" | "external" | "hosted" | "proposal" | "turn";
         ask: string;
+        selectedModel?: {
+            id: string;
+            provider: string;
+            registryKey: string;
+            displayName: string;
+        };
         ownerAgentId: string;
         parentAgentId?: string;
         projectRoot: string;
@@ -14291,6 +14299,12 @@ export interface OperatorMethodOutputMap {
             sessionId: string;
             origin: "agent-tool" | "cli" | "external" | "hosted" | "proposal" | "turn";
             ask: string;
+            selectedModel?: {
+                id: string;
+                provider: string;
+                registryKey: string;
+                displayName: string;
+            };
             ownerAgentId: string;
             parentAgentId?: string;
             projectRoot: string;
@@ -15404,6 +15418,12 @@ export interface OperatorMethodOutputMap {
             sessionId: string;
             origin: "agent-tool" | "cli" | "external" | "hosted" | "proposal" | "turn";
             ask: string;
+            selectedModel?: {
+                id: string;
+                provider: string;
+                registryKey: string;
+                displayName: string;
+            };
             ownerAgentId: string;
             parentAgentId?: string;
             projectRoot: string;

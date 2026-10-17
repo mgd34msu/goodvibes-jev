@@ -12,16 +12,6 @@ import { nativeContractSourceData } from '../native-source.js';
  * Review, test and verification readings describe read-only work. The plan
  * checker maps them to research units so requested reviews can execute.
  *
- * Why one narrows question per requirement: one question per unit against
- * all its requirements at once, with the other units shown by title, never
- * settled on real plans. In the contract proof run every unit of plans whose
- * units did all their criteria asked read 0.17 to 0.5, below the no band, so
- * each plan went through two repairs the planner could not act on. Asked one
- * requirement at a time, with the other units' criteria in view, the same
- * units read 38 of their 42 requirements no at act (calibration,
- * 2026-09-29); the remaining readings require revision before execution. The fixtures below
- * include those units as the planner wrote them.
- *
  * Bands: the role is read at medium stakes. `narrows` is read at medium
  * stakes on both sides: every contract criterion is judged again at the
  * deliverable check at high stakes (section 6.4), so a unit that narrows the
@@ -173,7 +163,7 @@ function questionsFor(input: UnitShapeInput): Record<string, Question> {
 type Label = 'yes' | 'no';
 type Sibling = readonly [title: string, goal: string, criteria: readonly string[]];
 
-/** A written fixture: requirements get ids c1, c2... and `narrows` labels them in order; without it only the role is asked. */
+/** A written fixture: requirements get numbered IDs and `narrows` labels them in order; without it only the role is asked. */
 function fixture(
   name: string,
   goal: string,
@@ -182,7 +172,7 @@ function fixture(
   otherUnits: readonly Sibling[],
   expect: { readonly role?: UnitShapeRole; readonly narrows?: readonly Label[] },
 ): UnitShapeFixture {
-  const ids = requirements.map((_, index) => `c${index + 1}`);
+  const ids = requirements.map((_, index) => `requirement-${index + 1}`);
   const labels = expect.narrows;
   return {
     name,
@@ -236,7 +226,7 @@ const LIMITER_GOAL = 'A token bucket rate limiter for the API gateway';
 const LIMITER_CRITERIA = ['Requests over the configured rate get a 429 response'];
 const LIMITER_UNIT: Sibling = ['Implement the limiter', 'Write the token bucket rate limiter', ['Requests over the configured rate get a 429 response']];
 const EXPORT_UNITS: readonly Sibling[] = [['CSV export', 'Add CSV export', ['Reports export as CSV']], ['JSON export', 'Add JSON export', ['Reports export as JSON']], ['XML export', 'Add XML export', ['Reports export as XML']]];
-const { durations, durationsFirst, version } = PROOF_PLANS;
+const { durations, combinedDurationRequirements, version } = PROOF_PLANS;
 
 const FIXTURES: readonly UnitShapeFixture[] = [
   fixture('full rename', RENAME_GOAL, RENAME_CRITERIA, {
@@ -349,39 +339,39 @@ const FIXTURES: readonly UnitShapeFixture[] = [
     brief: 'Once the limiter unit finishes, confirm that its limiter is correct and complete, and approve it for release.',
     criteria: ['The limiter is confirmed correct and approved'],
   }, [LIMITER_UNIT], { role: 'verify' }),
-  // The proof-run plans as the planner wrote them: every unit does all its requirements asked, with siblings making up shared ones.
-  proofFixture('proof durations u1: parseDuration', durations, 'u1', { c1: 'no', c2: 'no', c3: 'no', c14: 'no' }),
-  proofFixture('proof durations u2: parse tests', durations, 'u2', { c8: 'no', c9: 'no' }),
-  proofFixture('proof durations u3: formatDuration', durations, 'u3', { c4: 'no', c5: 'no', c6: 'no', c7: 'no', c14: 'no' }),
-  proofFixture('proof durations u4: format tests', durations, 'u4', { c8: 'no', c10: 'no' }),
-  proofFixture('proof durations u5: CLI and README', durations, 'u5', { c11: 'no', c12: 'no', c13: 'no', c15: 'no', c16: 'no' }),
-  proofFixture('proof first durations u1: parseDuration', durationsFirst, 'u1', { c1: 'no', c2: 'no', c7: 'no' }),
-  proofFixture('proof first durations u2: parse tests', durationsFirst, 'u2', { c4: 'no' }),
-  proofFixture('proof first durations u3: formatDuration', durationsFirst, 'u3', { c3: 'no', c7: 'no' }),
-  proofFixture('proof first durations u4: format tests', durationsFirst, 'u4', { c4: 'no' }),
-  // c5 is left unasked: "normalize works correctly" states less than c5's exact output, but not clearly so.
-  proofFixture('proof first durations u5: CLI and README', durationsFirst, 'u5', { c6: 'no', c8: 'no' }),
-  proofFixture('proof version u1: the whole task', version, 'u1', { c1: 'no', c2: 'no', c3: 'no', c4: 'no', c5: 'no', c6: 'no' }),
+  // Units satisfy the labelled requirements, including work shared with sibling units.
+  proofFixture('captured planner example: parseDuration', durations, 'duration-parser', { 'parser-export': 'no', 'duration-parsing': 'no', 'malformed-input-error': 'no', 'function-examples': 'no' }),
+  proofFixture('captured planner example: parse tests', durations, 'parser-tests', { 'separate-test-files': 'no', 'parser-test-cases': 'no' }),
+  proofFixture('captured planner example: formatDuration', durations, 'duration-formatter', { 'formatter-export': 'no', 'formatted-duration': 'no', 'omit-zero-components': 'no', 'format-zero': 'no', 'function-examples': 'no' }),
+  proofFixture('captured planner example: format tests', durations, 'formatter-tests', { 'separate-test-files': 'no', 'formatter-test-cases': 'no' }),
+  proofFixture('captured planner example: CLI and README', durations, 'cli-and-readme', { 'normalize-command': 'no', 'cli-error-output': 'no', 'cli-error-exit': 'no', 'readme-usage': 'no', 'readme-command-example': 'no' }),
+  proofFixture('combined requirement example: parseDuration', combinedDurationRequirements, 'duration-parser', { 'duration-parser': 'no', 'malformed-input-error': 'no', 'function-examples': 'no' }),
+  proofFixture('combined requirement example: parse tests', combinedDurationRequirements, 'parser-tests', { 'module-test-cases': 'no' }),
+  proofFixture('combined requirement example: formatDuration', combinedDurationRequirements, 'duration-formatter', { 'duration-formatter': 'no', 'function-examples': 'no' }),
+  proofFixture('combined requirement example: format tests', combinedDurationRequirements, 'formatter-tests', { 'module-test-cases': 'no' }),
+  // The generic CLI success statement has no settled label for the exact-output requirement.
+  proofFixture('combined requirement example: CLI and README', combinedDurationRequirements, 'cli-and-readme', { 'cli-error-handling': 'no', 'readme-usage-example': 'no' }),
+  proofFixture('captured version-label task', version, 'version-label', { 'no-delegation': 'no', 'version-module': 'no', 'version-label-export': 'no', 'version-label-output': 'no', 'version-constant': 'no', 'version-label-test': 'no' }),
   // The same units altered to really narrow.
-  proofFixture('proof durations u2 halves the test count', durations, 'u2', { c8: 'no', c9: 'yes' }, withUnit('u2', (unit) => ({
+  proofFixture('parser example halves the test count', durations, 'parser-tests', { 'separate-test-files': 'no', 'parser-test-cases': 'yes' }, withUnit('parser-tests', (unit) => ({
     ...unit, goal: 'Verify parseDuration with at least 6 test cases', brief: unit.brief.replace('at least 12 test cases', 'at least 6 test cases'),
     criteria: replaceCriterion(unit, 1, 'test/parse.test.ts contains at least 6 test cases for parseDuration'),
   }))),
-  proofFixture('proof durations u3 drops zero handling', durations, 'u3', { c4: 'no', c5: 'no', c6: 'yes', c7: 'yes' }, withUnit('u3', (unit) => ({
+  proofFixture('formatter example drops zero handling', durations, 'duration-formatter', { 'formatter-export': 'no', 'formatted-duration': 'no', 'omit-zero-components': 'yes', 'format-zero': 'yes' }, withUnit('duration-formatter', (unit) => ({
     ...unit, brief: "Create src/format.ts and export formatDuration(seconds). It must render 5405 as '1h 30m 5s'. The function must include a JSDoc comment with at least one @example line.",
     criteria: replaceCriterion(unit, 2, 'formatDuration renders hours, minutes and seconds'),
   }))),
-  proofFixture('proof durations u5 weakens the error path', durations, 'u5', { c11: 'no', c12: 'yes', c13: 'yes', c15: 'no', c16: 'no' }, withUnit('u5', (unit) => ({
+  proofFixture('CLI example weakens the error path', durations, 'cli-and-readme', { 'normalize-command': 'no', 'cli-error-output': 'yes', 'cli-error-exit': 'yes', 'readme-usage': 'no', 'readme-command-example': 'no' }, withUnit('cli-and-readme', (unit) => ({
     ...unit, brief: unit.brief.replace('it must print the RangeError message to stderr and exit with code 2', 'it must print an error and exit with a non-zero code'),
     criteria: replaceCriterion(unit, 1, 'CLI prints an error and exits non-zero on malformed input'),
   }))),
-  proofFixture('proof durations u2 with the format test unit gone', durations, 'u2', { c8: 'yes', c9: 'no' }, (units) => units.filter((unit) => unit.id !== 'u4')),
-  proofFixture('proof version u1 hard-codes the label', version, 'u1', { c4: 'no', c5: 'yes', c6: 'no' }, withUnit('u1', (unit) => ({
+  proofFixture('parser example without sibling formatter tests', durations, 'parser-tests', { 'separate-test-files': 'yes', 'parser-test-cases': 'no' }, (units) => units.filter((unit) => unit.id !== 'formatter-tests')),
+  proofFixture('version example hard-codes the label', version, 'version-label', { 'version-label-output': 'no', 'version-constant': 'yes', 'version-label-test': 'no' }, withUnit('version-label', (unit) => ({
     ...unit, goal: 'Create src/version.ts and test/version.test.ts to export and verify versionLabel().',
     brief: "Create src/version.ts exporting versionLabel() which returns the literal string 'durations 0.1.0'. Create test/version.test.ts using bun:test to import and assert that versionLabel() returns 'durations 0.1.0'. Run the tests to ensure success. All actions must be taken directly by the agent without delegating to any other agent or sub-agent tool.",
     criteria: replaceCriterion(unit, 2, "versionLabel() returns 'durations 0.1.0'."),
   }))),
-  proofFixture('proof first durations u1 handles hours and minutes only', durationsFirst, 'u1', { c1: 'yes', c2: 'no' }, withUnit('u1', (unit) => ({
+  proofFixture('combined parser example handles hours and minutes only', combinedDurationRequirements, 'duration-parser', { 'duration-parser': 'yes', 'malformed-input-error': 'no' }, withUnit('duration-parser', (unit) => ({
     ...unit, brief: "Implement parseDuration in src/parse.ts to convert hour and minute strings like '1h30m' or '2h' to seconds, throwing RangeError on failure.",
     criteria: replaceCriterion(unit, 0, 'parseDuration(text) converts hour and minute strings such as 1h30m and 2h to seconds'),
   }))),

@@ -2,14 +2,8 @@ import type { Orchestrator } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { SpokenTurnRuntime } from '../audio/spoken-turn-wiring.ts';
 
 /**
- * Builds the shared "cancel the active turn" action: stops any in-flight
- * spoken output, then aborts the orchestrator's turn if one is actively
- * streaming. Extracted from main.ts so the file can stay under its 800-line
- * cap while still wiring `commandContext.isGenerating` (see FIX 1).
- *
- * Returns whether SPEECH was actively stopped, a Ctrl+C that silenced live
- * TTS is consumed by that job (an earlier replay fix), same as a press that
- * cleared a non-empty prompt; the quit chord starts from a quiet state.
+ * Stop spoken output and cancel the active turn, including admission and recovery.
+ * Returns whether speech was stopped, so that keypress does not also quit.
  */
 export function createCancelGeneration(
   orchestrator: Orchestrator,
@@ -22,7 +16,7 @@ export function createCancelGeneration(
     // though isThinking is already false and abort() would emit no TURN_CANCEL.
     const cancelledRecovery = cancelPendingRecovery?.() === true;
     const stoppedSpeech = spokenTurns.stop('Spoken output stopped.');
-    if (orchestrator.isThinking || cancelledRecovery) {
+    if (orchestrator.isThinking || orchestrator.isTurnInFlight || cancelledRecovery) {
       orchestrator.abort();
     }
     return stoppedSpeech;

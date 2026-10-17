@@ -437,7 +437,7 @@ describe('owner authority', () => {
     await expect(engine.click({}, { ref: submit.ref })).resolves.toBeDefined();
   });
 
-  test('an owner approval authorizes exactly one submit, not every submit until it expires (SF-7)', async () => {
+  test('an owner approval authorizes exactly one submit, not every submit until it expires', async () => {
     // `armSubmitApproval` (routes/browser-composition.ts) documents itself as
     // arming the owner's approval for ONE outward submit. Before the fix, the
     // approval sat on the engine unconsumed until its TTL expired, so it

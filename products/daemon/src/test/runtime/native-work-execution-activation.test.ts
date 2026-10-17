@@ -360,6 +360,11 @@ test('native foreground tools use the real registry and original autonomous sour
   const benchmarks = spyOn(BenchmarkStore.prototype, 'refreshBenchmarks').mockResolvedValue(undefined);
   const identities = spyOn(BenchmarkStore.prototype, 'readBenchmarks').mockResolvedValue(undefined);
   const f = await fixture(); let calls = 0;
+  const sources: unknown[] = [];
+  const admit = f.services.permissionManager.admitAutonomous.bind(f.services.permissionManager);
+  const admission = spyOn(f.services.permissionManager, 'admitAutonomous').mockImplementation(async (...args) => {
+    const result = await admit(...args); sources.push(args[3]?.sourceOf?.()); return result;
+  });
   f.hold(async () => calls++ === 0 ? { ...answer(''), stopReason: 'tool_call',
     toolCalls: [{ id: 'native-read', name: 'read', arguments: { files: [{ path: 'README.md' }] } }] } : answer('native execution is complete'));
   try {
@@ -369,10 +374,9 @@ test('native foreground tools use the real registry and original autonomous sour
     const requests = f.requests.filter(request => request.systemPrompt?.includes('Execute this existing native work unit yourself'));
     expect(requests).toHaveLength(2); expect(JSON.stringify(requests[1]!.messages)).toContain('Owned native fixture');
     const judgments = f.log.query({ site: 'engine.gate.autonomous-tool' });
-    expect(judgments.length).toBeGreaterThan(0);
-    const inputs = f.readings.requests.filter(request => request.context?.site === 'engine.gate.autonomous-tool');
-    expect(JSON.stringify(inputs)).toContain(f.goal); expect(JSON.stringify(inputs)).toContain(f.criteria[0]!);
-  } finally { await f.close(); identities.mockRestore(); benchmarks.mockRestore(); }
+    expect(judgments).toHaveLength(0);
+    expect(JSON.stringify(sources)).toContain(f.goal); expect(JSON.stringify(sources)).toContain(f.criteria[0]!);
+  } finally { admission.mockRestore(); await f.close(); identities.mockRestore(); benchmarks.mockRestore(); }
 }, 20000);
 
 test('ordinary automatic resume holds native records for inspection without launching them', async () => {

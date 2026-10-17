@@ -10,7 +10,6 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-// The old sdk package is the ./sdk subpath family of the engine package.
 const PACKAGE = '@goodvibes-jev/engine/sdk';
 
 /** subpath -> the export names a consumer composes with. */
@@ -34,9 +33,7 @@ const SUBPATH_SURFACE: Record<string, readonly string[]> = {
  * file-shaped table above). Same manifest-proven contract: each module a
  * consumer composition root needs (the SDK's own cli.ts/services.ts imports
  * are the reference set) must be declared AND resolve through the package
- * name. platform/power and platform/relay were the phantom-export finds of
- * the 2026-07-14 consumer re-link (dist-built, composed in-process by
- * services.ts, absent from the map).
+ * name.
  */
 const DIR_SUBPATH_SURFACE: Record<string, readonly string[]> = {
   // Host-only ledger composition is intentionally a narrow nested subpath,
@@ -49,8 +46,7 @@ const DIR_SUBPATH_SURFACE: Record<string, readonly string[]> = {
   './platform/state': ['MemoryConsolidationScheduler', 'runMemoryConsolidation', 'resolveMemoryConsolidationConfig'],
   // The memory-governance layer: fork-composing consumers (agent, TUI) build
   // their own runtime services and must construct the governor the way
-  // runtime/services.ts does, this was the 2026-07-16 phantom-export find
-  // (dist-built, composed in-process, absent from the map).
+  // runtime/services.ts does.
   './platform/runtime/memory': [
     'CacheRegistry', 'PauseController', 'MemoryGovernor',
     'createMemoryGovernance', 'wireDaemonMemoryGovernance',

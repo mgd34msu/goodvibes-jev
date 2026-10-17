@@ -37,7 +37,7 @@
     "api:extract": "bunx api-extractor run --local --config packages/engine/api-extractor.json && bunx api-extractor run --local --config packages/engine/api-extractor.embed.json && bunx api-extractor run --local --config packages/engine/api-extractor.terminal-shell.json && bun packages/engine/scripts/normalize-api-eol.ts",
     "pretest": "bun packages/engine/scripts/typecheck.ts",
     "test": "bun run test:installer && bun run test:judgment && bun packages/engine/scripts/test.ts && bun run products:test",
-    "test:installer": "bunx tsc -p scripts/tsconfig.json && bun test scripts/installation.test.ts",
+    "test:installer": "bunx tsc -p scripts/tsconfig.json && bun packages/engine/scripts/test.ts --cwd ../.. scripts/installation.test.ts",
     "test:judgment": "bun packages/engine/scripts/test.ts --cwd ../judgment test",
     "products:check": "bun packages/engine/scripts/product-workspaces.ts check",
     "products:build": "bun packages/engine/scripts/product-workspaces.ts build",

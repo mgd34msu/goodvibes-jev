@@ -709,7 +709,7 @@ describe('SpokenTurnController original authority and late synthesis', () => {
     const replacement = failurePort(); installJudgmentPort(replacement.port);
     h.releaseSynth(); await drain();
     expect(replacement.failureRequests).toHaveLength(0); expect(h.requests()).toBe(1);
-    expect(replacement.requests.map(request => request.context?.battery)).toEqual(['engine.redaction.field-kind', 'engine.redaction.residual-credential']);
+    expect(replacement.requests).toHaveLength(0);
     expect(clock.delays).toEqual([]); expect(h.played).toEqual([]);
     expect(h.messages.filter((message) => message.includes('Skipping'))).toHaveLength(1);
   });
@@ -790,12 +790,16 @@ describe('SpokenTurnController complete failure admission', () => {
     new Error(`${'Rate limit. '.repeat(15000)} Correction: credentials are permanently invalid.`),
     Object.assign(new Error(`${'Rate limit. '.repeat(15000)} Correction: the account cannot pay.`), { status: 429 }),
     new Error('Rate limit.', { cause: new Error(`${'ordinary '.repeat(20000)} Permanently invalid.`) }),
-  ])('refuses over-limit evidence instead of reading a misleading prefix %#', async (error) => {
-    const fake = failurePort(); installJudgmentPort(fake.port);
+  ])('reads complete long evidence including its final correction %#', async (error) => {
+    const billing = 'status' in error && error.status === 429;
+    const fake = failurePort(billing ? 'billing' : 'authentication', billing ? ['billing'] : []); installJudgmentPort(fake.port);
     const clock = retryClock();
     const h = makePipelineHarness({ error, failWhen: () => true, ...clock });
     speak(h.controller); await drain();
-    expect(fake.failureRequests).toHaveLength(0); expect(h.requests()).toBe(1);
+    expect(fake.failureRequests).toHaveLength(1);
+    const transmitted = JSON.stringify(fake.failureRequests[0]!.state);
+    expect(transmitted).toContain(error.message);
+    if (error.cause instanceof Error) expect(transmitted).toContain(error.cause.message); expect(h.requests()).toBe(1);
     expect(clock.delays).toEqual([]); expect(h.played).toEqual([]);
     expect(h.messages.filter((message) => message.includes('Skipping'))).toHaveLength(1);
   });

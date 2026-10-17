@@ -2,7 +2,7 @@
  * inbound-email-config-schema.test.ts
  *
  * Gate tests for the `surfaces.email.inbound.*` config keys added for the
- * inbound-mail watcher (docs/inbound-email.md §8, §3.4d). Every one of these
+ * inbound-mail watcher (docs/decisions/2026-07-27-inbound-email-design.md §8, §3.4d). Every one of these
  * keys is the owner's default to confirm, not a foregone conclusion, so this
  * file pins the exact defaults from the design table and the range each
  * numeric key is bounded to.
@@ -71,7 +71,7 @@ function freshManager(): ConfigManager {
 }
 
 /**
- * The twelve keys from docs/inbound-email.md §8, plus the two capability
+ * The twelve keys from docs/decisions/2026-07-27-inbound-email-design.md §8, plus the two capability
  * keys added after the design doc landed (owner ruling relayed mid-round:
  * the daemon must state plainly, and refuse by default, when the mailbox
  * cannot do what inbound mail requires), plus the three source-selection keys

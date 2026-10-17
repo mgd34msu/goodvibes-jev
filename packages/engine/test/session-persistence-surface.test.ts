@@ -210,7 +210,7 @@ describe('session-persistence: removeRecoveryPoint', () => {
 });
 
 describe('session-persistence: one snapshot in, one snapshot out (never a bulk clear)', () => {
-  test('R2: keyless consumeRecovery loads the newest snapshot and deletes ONLY that file', () => {
+  test('keyless consumeRecovery loads the newest snapshot and deletes ONLY that file', () => {
     // Reproduction: consumeRecovery(surface) with no sessionId loaded the
     // newest snapshot and then called the keyless FULL-RESET delete, wiping
     // every other session's never-loaded snapshot along with it.
@@ -230,7 +230,7 @@ describe('session-persistence: one snapshot in, one snapshot out (never a bulk c
     expect(existsSync(olderPath)).toBe(true);
   });
 
-  test('R1: keyless consumeRecovery of a legacy-shared-only snapshot actually retires it', () => {
+  test('keyless consumeRecovery of a legacy-shared-only snapshot actually retires it', () => {
     // Reproduction: a snapshot that lives ONLY in the legacy shared dir was
     // loaded and reported consumed:true, but the keyless delete never looked
     // in that directory, so the file survived and was re-offered forever.

@@ -100,7 +100,7 @@ test.each(['revoke', 'source', 'floor'] as const)('authentic send: %s during rea
   if (kind === 'floor') f.config.set('permissions.mode', 'plan');
   release.resolve('owned-token'); await expect(pending).rejects.toThrow();
   expect(local.received).toHaveLength(0); expect(f.humans()).toBe(0);
-  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(1);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
 });
 
 test('authentic native send holds paired ownership only through actual accepted loopback dispatch', async () => {

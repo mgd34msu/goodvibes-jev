@@ -93,22 +93,35 @@ export function openLog(path: string): Database {
   const db = new Ctor(path, { create: true, strict: true });
   // The daemon and TUI share the project log. Brief concurrent writes must
   // wait for one another instead of discarding an otherwise valid judgment.
-  db.exec('PRAGMA busy_timeout = 1000;');
-  db.exec('PRAGMA journal_mode = WAL;');
-  if (rowsOf(db, 'SELECT 1 FROM sqlite_master').length === 0) {
-    db.exec(SCHEMA);
-    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
-    return db;
-  }
-  let [{ user_version: version }] = rowsOf<{ user_version: number }>(db, 'PRAGMA user_version') as [{ user_version: number }];
-  while (version !== SCHEMA_VERSION && MIGRATIONS[version] !== undefined) {
+  try {
+    db.exec('PRAGMA busy_timeout = 1000;');
+    try { db.exec('PRAGMA journal_mode = WAL;'); }
+    catch (error) {
+      // Journal-mode changes can bypass SQLite's busy handler during a
+      // simultaneous first open. Rollback journaling remains safe; the
+      // immediate schema transaction below still waits for the writer.
+      if ((error as { code?: string }).code !== 'SQLITE_BUSY') throw error;
+    }
     db.transaction(() => {
-      db.exec(MIGRATIONS[version]!);
-      db.exec(`PRAGMA user_version = ${version + 1};`);
-    })();
-    version += 1;
+      // Inspect only after acquiring the writer lock: another process may
+      // have initialized or migrated this database while we were waiting.
+      if (rowsOf(db, 'SELECT 1 FROM sqlite_master').length === 0) {
+        db.exec(SCHEMA);
+        db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+        return;
+      }
+      let [{ user_version: version }] = rowsOf<{ user_version: number }>(db, 'PRAGMA user_version') as [{ user_version: number }];
+      while (version !== SCHEMA_VERSION && MIGRATIONS[version] !== undefined) {
+        db.exec(MIGRATIONS[version]!);
+        db.exec(`PRAGMA user_version = ${++version};`);
+      }
+      if (version !== SCHEMA_VERSION) {
+        throw new RangeError(`decision log ${path} has schema version ${version}; this build writes version ${SCHEMA_VERSION}`);
+      }
+    }).immediate();
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
   }
-  if (version === SCHEMA_VERSION) return db;
-  db.close();
-  throw new RangeError(`decision log ${path} has schema version ${version}; this build writes version ${SCHEMA_VERSION}`);
 }

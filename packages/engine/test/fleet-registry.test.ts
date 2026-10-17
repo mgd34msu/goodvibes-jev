@@ -1,16 +1,16 @@
 /**
  * Live process registry (packages/sdk/src/platform/runtime/fleet/).
  *
- * Covers the brief's test matrix with stub managers:
- *  1. Per-kind adapter mapping (agent/contract/group/unit/workflow/trigger/schedule/watcher/background-process).
- *  2. Fine-grained agent state via REAL runtime-bus emitters (no synthetic event shapes).
- *  3. Stalled derivation with an injected now().
- *  4. awaiting-approval cross-reference via approvalBroker.listApprovals().
- *  5. Cost honesty (unknown model → costUsd null + 'unpriced'; never throws).
- *  6. contract → group → unit → agent edge/nesting integrity (no dangling parentIds).
- *  7. subscribe/tick coalescing, unref, dispose.
- *  8. Control dispatch (interrupt/kill routing incl. contract, group and unit kills).
- * 10. Empty fleet → empty snapshot, no throw.
+ * Exercises process-registry behavior with stub managers:
+ *  - Per-kind adapter mapping (agent/contract/group/unit/workflow/trigger/schedule/watcher/background-process).
+ *  - Fine-grained agent state via REAL runtime-bus emitters (no synthetic event shapes).
+ *  - Stalled derivation with an injected now().
+ *  - awaiting-approval cross-reference via approvalBroker.listApprovals().
+ *  - Cost honesty (unknown model → costUsd null + 'unpriced'; never throws).
+ *  - contract → group → unit → agent edge/nesting integrity (no dangling parentIds).
+ *  - subscribe/tick coalescing, unref, dispose.
+ *  - Control dispatch (interrupt/kill routing incl. contract, group and unit kills).
+ *  - Empty fleet → empty snapshot, no throw.
  */
 import { describe, expect, test } from 'bun:test';
 import { createProcessRegistry } from '../sdk/src/platform/runtime/fleet/index.js';
@@ -187,7 +187,7 @@ function flushBus(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-// ── 10. Empty fleet ───────────────────────────────────────────────────────────
+// ── Empty fleet ───────────────────────────────────────────────────────────
 
 describe('fleet registry: empty fleet', () => {
   test('query() over empty managers returns an empty snapshot, no throw', () => {
@@ -200,7 +200,7 @@ describe('fleet registry: empty fleet', () => {
   });
 });
 
-// ── 1. Adapter mapping ────────────────────────────────────────────────────────
+// ── Adapter mapping ────────────────────────────────────────────────────────
 
 describe('fleet registry: adapter mapping', () => {
   test('agent node: usage passthrough, coarse status mapping, capabilities', () => {
@@ -467,7 +467,7 @@ describe('fleet registry: adapter mapping', () => {
   });
 });
 
-// ── 2. Fine-grained states from REAL bus emitters ─────────────────────────────
+// ── Fine-grained states from REAL bus emitters ─────────────────────────────
 
 describe('fleet registry: activity side-table via runtime bus', () => {
   function busSetup(agent: AgentRecord): { registry: ProcessRegistry; bus: RuntimeEventBus } {
@@ -569,7 +569,7 @@ describe('fleet registry: activity side-table via runtime bus', () => {
   });
 });
 
-// ── 3. Stalled derivation ─────────────────────────────────────────────────────
+// ── Stalled derivation ─────────────────────────────────────────────────────
 
 describe('fleet registry: stalled derivation', () => {
   test('running agent with stale activity flips to stalled, and back on the next event', async () => {
@@ -646,7 +646,7 @@ describe('fleet registry: stalled derivation', () => {
   });
 });
 
-// ── 4. awaiting-approval cross-reference ──────────────────────────────────────
+// ── awaiting-approval cross-reference ──────────────────────────────────────
 
 describe('fleet registry: awaiting-approval', () => {
   test('pending approval with metadata.agentId flips that agent to awaiting-approval', () => {
@@ -702,7 +702,7 @@ describe('fleet registry: awaiting-approval', () => {
   });
 });
 
-// ── 5. Cost honesty ───────────────────────────────────────────────────────────
+// ── Cost honesty ───────────────────────────────────────────────────────────
 
 describe('fleet registry: cost honesty', () => {
   const usage = {
@@ -764,7 +764,7 @@ describe('fleet registry: cost honesty', () => {
   });
 });
 
-// ── 6. Edge/nesting integrity ─────────────────────────────────────────────────
+// ── Edge/nesting integrity ─────────────────────────────────────────────────
 
 describe('fleet registry: edge integrity', () => {
   test('contract with a group, 2 units and 3 agents forms a connected tree (no dangling parentIds)', () => {
@@ -805,7 +805,7 @@ describe('fleet registry: edge integrity', () => {
   });
 });
 
-// ── 7. subscribe / tick / dispose ─────────────────────────────────────────────
+// ── subscribe / tick / dispose ─────────────────────────────────────────────
 
 interface FakeTimerHarness {
   timers: RegistryTimers;
@@ -917,7 +917,7 @@ describe('fleet registry: subscribe/tick/dispose', () => {
   });
 });
 
-// ── 8. Control dispatch ───────────────────────────────────────────────────────
+// ── Control dispatch ───────────────────────────────────────────────────────
 
 describe('fleet registry: control dispatch', () => {
   // Registry routing must pass the termination intent through
@@ -1156,7 +1156,7 @@ describe('fleet registry: control dispatch', () => {
   });
 });
 
-// ── 9. Steer ───────────────────────────────────────────────────────────────
+// ── Steer ───────────────────────────────────────────────────────────────
 
 interface FakeSend {
   send: (fromId: string, toId: string, content: string, opts?: unknown) => boolean;

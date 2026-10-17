@@ -170,13 +170,16 @@ test('credential ABA while the custom reading waits cannot reach provider mutati
   expect(f.transports).toEqual([]);
 });
 
-function ownedFixture(refuse = false, beforeMeaning?: () => void) {
-  const f = fixture('slack', { role: 'normal', refuse, ...(beforeMeaning ? { beforeMeaning } : {}) }); let humans = 0;
+function ownedFixture(deny = false, beforeMeaning?: () => void) {
+  const f = fixture('slack', { role: 'normal', ...(beforeMeaning ? { beforeMeaning } : {}) }); let humans = 0;
   const previous = installJudgmentPort(f.port); cleanups.push(() => { installJudgmentPort(previous); });
   const manager = new PermissionManager(async () => { humans++; throw new Error('No human'); }, {
-    isAutoApproveEnabled: () => false, getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }),
-    getWorkingDirectory: () => '/synthetic', getAutonomousSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} }, autoApprove: false, directory: '/synthetic' }),
+    isAutoApproveEnabled: () => false, getSnapshot: () => ({ permissions: { mode: deny ? 'plan' : 'prompt', tools: {} } }),
+    getWorkingDirectory: () => '/synthetic', getAutonomousSnapshot: () => ({ permissions: { mode: deny ? 'plan' : 'prompt', tools: {} }, autoApprove: false, directory: '/synthetic' }),
   } as PermissionConfigReader, new PolicyRuntimeState());
+  const admissions: unknown[] = [];
+  const admit = manager.admitAutonomous.bind(manager);
+  manager.admitAutonomous = async (...args) => { admissions.push(args); return admit(...args); };
   const row: InboundChannelItem = { id: f.id, provider: 'slack', kind: 'dm', fromDigest: '0123456789abcdef', subjectPreview: 'PRIVATE_SUBJECT_NOT_TAG_MEANING', bodyPreview: 'PRIVATE_BODY_NOT_TAG_MEANING', receivedAt: 1, unread: true };
   const source: OwnedInboxSource = { providerIds: ['slack'], ready: Promise.resolve(), async close() {}, unregister() {}, async acquireRead() {
     return { providerIds: ['slack'], sources: { store: { listItems: () => [structuredClone(row)], countItems: () => 1, countItemsByProvider: () => new Map([['slack', 1]]), maxReceivedAt: () => 1, getImapCheckpoint: () => null }, poller: { snapshotStatuses: () => [], isProviderRunning: () => false } }, async validate() {}, assertCurrent() {}, release() {} };
@@ -184,21 +187,23 @@ function ownedFixture(refuse = false, beforeMeaning?: () => void) {
   const owner = createOwnedInboxTagging({ source, tagger: f.tagger, permissionManager: manager, port: f.port, ...guard(), onInvalidate() { return () => {}; } });
   cleanups.push(() => owner.close());
   const operation = { sourceOf: () => ({ goal: 'Apply my Not spam triage label to the selected message', criteria: ['Only that message and its prepared provider effect'] }), assertCurrent() {} };
-  return { ...f, owner, operation, mutate() { row.bodyPreview = 'Changed current owned row'; }, get humans() { return humans; } };
+  return { ...f, owner, operation, admissions, mutate() { row.bodyPreview = 'Changed current owned row'; }, get humans() { return humans; } };
 }
 
-test('custom meaning and exact interpreted effect flow through real recorded autonomous admission', async () => {
+test('custom meaning and exact interpreted effect flow through current local admission', async () => {
   const f = ownedFixture();
   await f.owner.applyTags(f.id, ['Not spam'], f.operation);
   expect(f.transports).toHaveLength(1); expect(f.humans).toBe(0);
   expect(JSON.parse(String(f.transports[0]!.init.body)).name).toBe('inbox_tray');
   const evidence = JSON.stringify(f.requests);
-  expect(evidence).toContain('Not spam'); expect(evidence).toContain('inbox_tray');
+  expect(evidence).toContain('Not spam');
+  expect(JSON.stringify(f.admissions)).toContain('inbox_tray');
+  expect(f.log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
   expect(evidence).not.toContain('PRIVATE_'); expect(evidence).not.toContain('synthetic-custom-token');
   expect(f.log.query({ battery: triageTagMeaning.name })).toHaveLength(1);
 });
 
-test('settled custom classification cannot override a fresh autonomous rejection', async () => {
+test('settled custom classification cannot override configured plan mode', async () => {
   const f = ownedFixture(true);
   await expect(f.owner.applyTags(f.id, ['Not spam'], f.operation)).rejects.toThrow();
   expect(f.meanings.requests).toHaveLength(1); expect(f.transports).toEqual([]); expect(f.humans).toBe(0);

@@ -255,7 +255,7 @@ describe('Personal Ops exact native inbox contract dependencies', () => {
       sourceOf: () => ({ goal: 'Inspect an isolated synthetic inbox lane', criteria: ['No external effects or real private source'] }),
       schemaRevision: call.schemaRevision, preparedCall: { registry, call },
     });
-    expect(admission.result.autonomousDecision?.outcome).toBe('act');
+    expect(admission.result.approved).toBe(true);
     await expect(registry.executePrepared(call, admission)).rejects.toBeInstanceOf(ToolInputProjectionError);
     expect(entered).toBe(true); expect(revoked).toBe(true); expect(published).toBe(0); expect(source.counters.calls).toBe(0);
   });

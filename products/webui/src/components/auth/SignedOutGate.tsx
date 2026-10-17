@@ -31,7 +31,7 @@
  */
 
 import { Camera, KeyRound, QrCode, Radio, ShieldCheck } from 'lucide-react';
-import { useState, type SyntheticEvent } from 'react';
+import { useState, useSyncExternalStore, type SyntheticEvent } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { GOODVIBES_BASE_URL, login, setExplicitAuthToken } from '../../lib/goodvibes';
 import { formatError } from '../../lib/errors';
@@ -48,6 +48,23 @@ import { Dialog } from '../ui/Dialog';
 import { Field, Input } from '../ui/Field';
 import '../../styles/components/auth-gate.css';
 
+// Credential validation can replace the identity boundary before it rejects.
+// Keep its error outside that private subtree so the new gate can report it.
+let signInError: unknown = null;
+const signInListeners = new Set<() => void>();
+const subscribeSignIn = (listener: () => void) => { signInListeners.add(listener); return () => { signInListeners.delete(listener); }; };
+const readSignInError = () => signInError;
+async function validateSignIn<T>(read: () => Promise<T>): Promise<T> {
+  signInError = null;
+  for (const listener of signInListeners) listener();
+  try { return await read(); }
+  catch (error) {
+    signInError = error;
+    for (const listener of signInListeners) listener();
+    throw error;
+  }
+}
+
 export interface SignedOutGateProps {
   /** Set when a `#pair=…` hand-off token was rejected by the daemon (expired/invalid QR). */
   pairingError?: unknown;
@@ -57,6 +74,7 @@ export interface SignedOutGateProps {
 
 export function SignedOutGate({ pairingError, relayPairingError }: SignedOutGateProps = {}) {
   const queryClient = useQueryClient();
+  const validationError = useSyncExternalStore(subscribeSignIn, readSignInError, readSignInError);
   const [token, setToken] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [username, setUsername] = useState('');
@@ -74,22 +92,26 @@ export function SignedOutGate({ pairingError, relayPairingError }: SignedOutGate
   // state here instead would have forced the scanner to stage its token in the
   // visible input first, which would both render the secret and race the submit.
   const tokenMutation = useMutation({
-    mutationFn: (value: string) => setExplicitAuthToken(value.trim()),
+    mutationFn: (value: string) => validateSignIn(() => setExplicitAuthToken(value.trim())),
     onSuccess: async () => {
       setToken('');
       // Revalidate everything, auth/boot/health flip to signed-in and the shell reveals.
+      await queryClient.cancelQueries();
       await queryClient.invalidateQueries();
     },
   });
 
   const loginMutation = useMutation({
     mutationFn: (credentials: { username: string; password: string }) =>
-      login(credentials.username, credentials.password),
+      validateSignIn(() => login(credentials.username, credentials.password)),
     onSuccess: async () => {
       setPassword('');
+      await queryClient.cancelQueries();
       await queryClient.invalidateQueries();
     },
   });
+
+  const tokenError = tokenMutation.error ?? (!loginMutation.error ? validationError : null);
 
   function submitToken(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -251,9 +273,9 @@ export function SignedOutGate({ pairingError, relayPairingError }: SignedOutGate
           </Button>
         </form>
 
-        {tokenMutation.error && (
+        {tokenError != null && (
           <div className="banner warning" role="alert">
-            {formatError(tokenMutation.error)}: the token was rejected and cleared. Paste a fresh one.
+            {formatError(tokenError)}: sign-in failed. Try fresh credentials.
           </div>
         )}
 

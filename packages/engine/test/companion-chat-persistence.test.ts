@@ -4,10 +4,10 @@
  * Verifies that CompanionChatManager persists sessions to disk and restores
  * them on re-instantiation (simulating daemon restart).
  *
- * P1: Sessions written during one manager lifetime load into a fresh instance.
- * P2: Messages (user + assistant) are restored in order.
+ * Sessions written during one manager lifetime load into a fresh instance.
+ * Messages (user + assistant) are restored in order.
  * Closed sessions SURVIVE restart (closed-skip fix) and stay GC-eligible.
- * P4: Session directory is created if it does not exist.
+ * Session directory is created if it does not exist.
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -76,10 +76,10 @@ function makePersistedSession(id: string): PersistedChatSession {
 }
 
 // ---------------------------------------------------------------------------
-// P1: Sessions restored across manager re-instantiation
+// Sessions restored across manager re-instantiation
 // ---------------------------------------------------------------------------
 
-describe('P1: active sessions restored on re-instantiation', () => {
+describe('active sessions restored on re-instantiation', () => {
   test('session created in instance A is visible in instance B after init()', async () => {
     const sessionsDir = mkdtempSync(join(tmpdir(), 'companion-persist-'));
     try {
@@ -112,10 +112,10 @@ describe('P1: active sessions restored on re-instantiation', () => {
 });
 
 // ---------------------------------------------------------------------------
-// P2: Messages (user + assistant) restored in order
+// Messages (user + assistant) restored in order
 // ---------------------------------------------------------------------------
 
-describe('P2: messages restored in order after restart', () => {
+describe('messages restored in order after restart', () => {
   test('user and assistant messages are available after reload', async () => {
     const sessionsDir = mkdtempSync(join(tmpdir(), 'companion-persist-'));
     try {
@@ -165,7 +165,7 @@ describe('P2: messages restored in order after restart', () => {
 // the persisted file unless an explicit finite retention window is configured.
 // ---------------------------------------------------------------------------
 
-describe('P3: closed sessions survive restart and stay listable', () => {
+describe('closed sessions survive restart and stay listable', () => {
   test('a session closed before shutdown loads after restart (closed-skip fix)', async () => {
     const sessionsDir = mkdtempSync(join(tmpdir(), 'companion-persist-'));
     try {
@@ -301,10 +301,10 @@ describe('P3: closed sessions survive restart and stay listable', () => {
 });
 
 // ---------------------------------------------------------------------------
-// P4: Sessions directory is created if it does not exist
+// Sessions directory is created if it does not exist
 // ---------------------------------------------------------------------------
 
-describe('P4: sessions directory created if missing', () => {
+describe('sessions directory created if missing', () => {
   test('manager creates nested sessions directory automatically', async () => {
     const base = mkdtempSync(join(tmpdir(), 'companion-base-'));
     const sessionsDir = join(base, 'deep', 'nested', 'sessions');
@@ -330,10 +330,10 @@ describe('P4: sessions directory created if missing', () => {
 });
 
 // ---------------------------------------------------------------------------
-// P5: Persistence failures reject instead of pretending success
+// Persistence failures reject instead of pretending success
 // ---------------------------------------------------------------------------
 
-describe('P5: persistence failures are observable', () => {
+describe('persistence failures are observable', () => {
   test('save rejects when the atomic rename target cannot be replaced', async () => {
     const sessionsDir = mkdtempSync(join(tmpdir(), 'companion-persist-'));
     try {
@@ -374,7 +374,7 @@ describe('P5: persistence failures are observable', () => {
 // never gets resurrected after "delete" reports success.
 // ---------------------------------------------------------------------------
 
-describe('P6: deleteSession drains an in-flight close-time save before unlinking', () => {
+describe('deleteSession drains an in-flight close-time save before unlinking', () => {
   test('a gated close-time save cannot resurrect the file after delete, even across a simulated restart', async () => {
     const sessionsDir = mkdtempSync(join(tmpdir(), 'companion-persist-race-'));
     try {

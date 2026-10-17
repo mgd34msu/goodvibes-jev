@@ -17,7 +17,7 @@ channels, **is** an explicit owner ruling, and it stays.
 ## Why this is its own record
 
 These two rules look alike and point in opposite directions, and they are
-currently stated together in one subsection of `docs/inbound-email.md` (§11.0).
+currently stated together in one subsection of `docs/decisions/2026-07-27-inbound-email-design.md` (§11.0).
 A rule that lives only inside a long design document about something else is a
 rule a later reader unifies away without ever seeing the argument against it.
 The argument is short enough to keep whole.

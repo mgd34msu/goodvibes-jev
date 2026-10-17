@@ -6,8 +6,8 @@
  * agent 172 lines, webui 114 lines) into ONE tool that ships FROM the SDK.
  * Each consumer's own scripts/sdk-dev.ts is now a one-line alias that locates
  * this file (via GOODVIBES_SDK_PATH, default ~/Projects/goodvibes-sdk) and
- * forwards to it with the consumer repo as cwd, see the alias template this
- * brief installs in TUI/agent/webui.
+ * forwards to it with the consumer repo as cwd, see the alias template used
+ * by TUI, Agent, and WebUI.
  *
  * `link`    Build the local SDK checkout and overlay what each released package
  *           publishes (its `files`: every old package's dist, the contract

@@ -204,13 +204,7 @@ interface DaemonHttpRouterContext {
   readonly companionChatManager?: CompanionChatManager | null | undefined;
   /** Resolve the current provider/model for companion-chat session creation. */
   readonly resolveDefaultProviderModel?: (() => { provider: string; model: string } | null) | undefined;
-  /**
-   * SecretsManager instance used to resolve provider API keys stored as secrets
-   * rather than env vars. Threaded into ModelRouteContext so that
-   * resolveSecretKeys() can return the correct configuredVia='secrets' tier.
-   * Without this, the production router always passes undefined and the secrets
-   * tier is permanently dead on live code paths.
-   */
+  /** Resolves provider API keys from the configured secret store. */
   readonly secretsManager?: Pick<import('../../config/secrets.js').SecretsManager, 'get' | 'set' | 'getGlobalHome' | 'list' | 'listDetailed'> & Partial<import('./settings-precondition.js').ServingSettingsSecrets & import('./settings-import-precondition.js').ServingSettingsImportSecrets> | null | undefined;
   readonly trySpawnAgent: (
     input: Parameters<AgentManager['spawn']>[0],

@@ -1,5 +1,5 @@
 /**
- * any-runtime-event-property.test.ts, S-ζ Test 3
+ * any-runtime-event-property.test.ts
  *
  * Property-based tests on `AnyRuntimeEvent` discriminants using `fast-check`.
  *

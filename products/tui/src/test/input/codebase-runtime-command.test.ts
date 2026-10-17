@@ -11,7 +11,7 @@
 // (auto-build on/off reflected in status).
 // ---------------------------------------------------------------------------
 
-import { describe, expect, test, afterEach, beforeEach } from 'bun:test';
+import { describe, expect, test, afterEach, beforeEach, spyOn } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment/decisions';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -76,13 +76,13 @@ function makeConfigManager(workingDir: string): ConfigManager {
   return new ConfigManager({ surfaceRoot: 'tui', configDir, workingDir });
 }
 
-async function makeRealStore(): Promise<{ store: CodeIndexStore; configManager: ConfigManager }> {
+async function makeRealStore(): Promise<{ store: CodeIndexStore; configManager: ConfigManager; memoryEmbeddingRegistry: MemoryEmbeddingProviderRegistry }> {
   const workingDirectory = makeScratchWorkingDirectory();
   const configManager = makeConfigManager(workingDirectory);
   const memoryEmbeddingRegistry = new MemoryEmbeddingProviderRegistry({ configManager });
   const { codeIndexStore } = createCodeIndexServices({ workingDirectory, surfaceRoot: 'tui', configManager, memoryEmbeddingRegistry });
   await codeIndexStore.init();
-  return { store: codeIndexStore, configManager };
+  return { store: codeIndexStore, configManager, memoryEmbeddingRegistry };
 }
 
 async function waitUntilNotBuilding(store: CodeIndexStore, timeoutMs = 10_000): Promise<void> {
@@ -143,7 +143,8 @@ describe('/codebase status', () => {
     expect(output).toContain('indexed: 0 file(s), 0 chunk(s)');
     expect(output).toContain('last build: never; run /codebase build');
     expect(output).toContain('auto-build on startup: off');
-    expect(output).toMatch(/bounds: max \d+ files/);
+    expect(output).toContain('limits: no file count or byte limits');
+    expect(output).not.toContain('Infinity');
 
     store.close();
   });
@@ -252,33 +253,19 @@ describe('/codebase build', () => {
     expect(output).toMatch(/last build: \d+ indexed/);
     expect(output).toMatch(/skipped: (none|.+)/);
     expect(store.stats().indexedFiles).toBe(2);
-    expect(directoryJudgment.requests).toHaveLength(1);
-    const request = directoryJudgment.requests[0]!;
-    expect(request.context?.site).toBe('tools.find.gitignore.skip-directory');
-    const directories = (request.state as unknown as DirectoryState).directories;
-    // The real runtime asks only about exact root-relative directory identities,
-    // never the absolute scratch path or the fixture's source contents.
-    expect(request.state).toEqual({ directories: directories.map(({ id, name, relativePath }) => ({ id, name, relativePath })) });
-    expect(directories.map(({ name, relativePath }) => ({ name, relativePath })).sort((a, b) => a.name.localeCompare(b.name))).toEqual([
-      { name: '.goodvibes', relativePath: '.goodvibes' }, { name: 'src', relativePath: 'src' },
-    ]);
-    expect(Object.keys(request.questions).sort()).toEqual(directories.map(({ id }) => id).sort());
-    expect(request.beforeAttempt).toBeFunction();
+    expect(directoryJudgment.requests).toHaveLength(0);
 
     store.close();
   });
 
-  test('an explicit exclusion leaves the command index empty without a source-name fallback', async () => {
-    directoryJudgment = directoryPort(0.99);
-    installJudgmentPort(directoryJudgment.port);
+  test('an explicit gitignore exclusion leaves the command index empty', async () => {
     const { store, configManager } = await makeRealStore();
-    const registry = new CommandRegistry();
-    registerCodebaseRuntimeCommands(registry);
+    writeFileSync(join(configManager.getWorkingDirectory()!, '.gitignore'), 'src/\n');
+    const registry = new CommandRegistry(); registerCodebaseRuntimeCommands(registry);
     const { ctx, printed } = makeCtx(store, configManager);
     try {
-      await registry.get('codebase')!.handler(['build'], ctx);
-      await waitUntilNotBuilding(store);
-      expect(directoryJudgment.requests).toHaveLength(1);
+      await registry.get('codebase')!.handler(['build'], ctx); await waitUntilNotBuilding(store);
+      expect(directoryJudgment.requests).toHaveLength(0);
       expect(store.stats().lastBuild?.filesIndexed).toBe(0);
       expect(store.stats().indexedChunks).toBe(0);
       await registry.get('codebase')!.handler(['search', 'greet'], ctx);
@@ -286,38 +273,28 @@ describe('/codebase build', () => {
     } finally { store.close(); }
   });
 
-  test('a held directory reading does not publish a successful build or bypass the decision', async () => {
-    directoryJudgment = directoryPort(0.5);
-    installJudgmentPort(directoryJudgment.port);
+  test('building the configured source tree does not require a semantic approval reading', async () => {
+    installJudgmentPort(fakePort(() => { throw new Error('No semantic directory gate'); }).port);
     const { store, configManager } = await makeRealStore();
-    const registry = new CommandRegistry();
-    registerCodebaseRuntimeCommands(registry);
-    const { ctx, printed } = makeCtx(store, configManager);
+    const registry = new CommandRegistry(); registerCodebaseRuntimeCommands(registry);
+    const { ctx } = makeCtx(store, configManager);
     try {
-      await registry.get('codebase')!.handler(['build'], ctx);
-      await waitUntilNotBuilding(store);
-      expect(directoryJudgment.requests).toHaveLength(1);
-      expect(store.stats().lastBuild).toBeNull();
-      expect(store.stats().indexedChunks).toBe(0);
-      await registry.get('codebase')!.handler(['status'], ctx);
-      expect(printed.at(-1)).toContain('last build: never; run /codebase build');
+      await registry.get('codebase')!.handler(['build'], ctx); await waitUntilNotBuilding(store);
+      expect(store.stats().lastBuild?.filesIndexed).toBe(2);
+      expect(directoryJudgment.requests).toHaveLength(0);
     } finally { store.close(); }
   });
 
-  test.each(['close', 'reroot'] as const)('%s during a scheduled directory reading invalidates the old build owner', async (change) => {
-    const { store, configManager } = await makeRealStore();
+  test.each(['close', 'reroot'] as const)('%s during a scheduled embedding invalidates the old build owner', async (change) => {
+    const { store, configManager, memoryEmbeddingRegistry } = await makeRealStore();
     const started = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
-    const port = directoryJudgment.port;
+    const embed = memoryEmbeddingRegistry.embedAsync.bind(memoryEmbeddingRegistry);
     let paused = false;
-    installJudgmentPort({ ...port, async ask(request) {
-      if (!paused) {
-        paused = true;
-        started.resolve();
-        await release.promise;
-      }
-      return port.ask(request);
-    } });
+    const embedding = spyOn(memoryEmbeddingRegistry, 'embedAsync').mockImplementation(async request => {
+      if (!paused) { paused = true; started.resolve(); await release.promise; }
+      return embed(request);
+    });
     const registry = new CommandRegistry();
     registerCodebaseRuntimeCommands(registry);
     const { ctx } = makeCtx(store, configManager);
@@ -346,10 +323,11 @@ describe('/codebase build', () => {
         expect(store.isBuilding()).toBe(false);
         expect((await store.search('newRootOnly')).map((result) => result.chunk.symbol)).toEqual(['newRootOnly']);
       }
-      expect(directoryJudgment.requests).toHaveLength(change === 'close' ? 1 : 2);
+      expect(directoryJudgment.requests).toHaveLength(0);
     } finally {
       release.resolve();
       await building;
+      embedding.mockRestore();
       store.close();
     }
   });

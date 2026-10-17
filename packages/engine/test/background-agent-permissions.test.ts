@@ -9,7 +9,7 @@
  * and the allow-all exemption.
  */
 import { EXEC_GATE_TABLE, useGateReadings } from './_helpers/gate-readings.ts';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { PermissionManager, type PermissionConfigReader } from '../sdk/src/platform/permissions/manager.js';
 import type { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions/policy-runtime.js';
 import type { PermissionMode, BackgroundAgentsMode } from '../sdk/src/platform/config/schema.js';
@@ -40,6 +40,7 @@ function makeManager(
   mode: PermissionMode,
   backgroundAgents: BackgroundAgentsMode,
   promptApproves = false,
+  surfaceId?: string,
 ) {
   const asks: PermissionPromptRequest[] = [];
   const manager = new PermissionManager(
@@ -48,6 +49,8 @@ function makeManager(
     makePolicyRuntimeState(),
     null,
     null,
+    null,
+    { surfaceOf: () => surfaceId },
   );
   return { manager, asks };
 }
@@ -66,7 +69,7 @@ describe('background permission gate: inherit applies the session mode', () => {
     expect(asks).toEqual([]);
   });
 
-  test('prompt mode: reads auto-approve, writes/exec broker an ask', async () => {
+  test('prompt mode adds no secondary confirmation after native admission', async () => {
     const { manager, asks } = makeManager('prompt', 'inherit', true);
     const read = await gateBackgroundToolCall({ permissionManager: manager }, record, 'read', { path: 'a.ts' });
     expect(read.approved).toBe(true);
@@ -74,8 +77,7 @@ describe('background permission gate: inherit applies the session mode', () => {
 
     const write = await gateBackgroundToolCall({ permissionManager: manager }, record, 'write', { path: 'a.ts' });
     expect(write.approved).toBe(true); // handler approved
-    expect(asks).toHaveLength(1);
-    expect(asks[0]!.tool).toBe('write');
+    expect(asks).toEqual([]);
   });
 
   test('plan mode: mutating tools are refused with a structured plan-mode denial', async () => {
@@ -88,16 +90,15 @@ describe('background permission gate: inherit applies the session mode', () => {
     expect(outcome.error).toContain('plan mode');
   });
 
-  test('accept-edits mode: write auto-approves, exec still asks', async () => {
+  test('accept-edits mode preserves automatic tool execution', async () => {
     const { manager, asks } = makeManager('accept-edits', 'inherit', false);
     const write = await gateBackgroundToolCall({ permissionManager: manager }, record, 'write', { path: 'a.ts' });
     expect(write.approved).toBe(true);
     expect(asks).toEqual([]);
 
     const exec = await gateBackgroundToolCall({ permissionManager: manager }, record, 'exec', { command: 'rm x' });
-    expect(exec.approved).toBe(false); // handler denied
-    expect(asks).toHaveLength(1);
-    expect(asks[0]!.tool).toBe('exec');
+    expect(exec.approved).toBe(true);
+    expect(asks).toEqual([]);
   });
 });
 
@@ -117,24 +118,25 @@ describe('background permission gate: allow-all escape hatch exempts background 
     expect(outcome.approved).toBe(true);
   });
 
-  test('backgroundAgents=allow-all never bypasses the boundary: a catastrophic command is refused', async () => {
-    const { manager, asks } = makeManager('allow-all', 'allow-all', true);
-    const outcome = await gateBackgroundToolCall({ permissionManager: manager }, record, 'exec', { command: 'rm -rf /' });
+  test('backgroundAgents=allow-all never bypasses an input-only surface boundary', async () => {
+    const { manager, asks } = makeManager('allow-all', 'allow-all', true, 'email');
+    const outcome = await gateBackgroundToolCall({ permissionManager: manager }, record, 'exec', { command: 'echo changed > state.txt' });
     expect(outcome.approved).toBe(false);
     if (outcome.approved) throw new Error('expected refusal');
-    expect(outcome.denial.reason).toBe('boundary_catastrophic');
+    expect(outcome.denial.reason).toBe('boundary_surface_authority');
     expect(asks).toEqual([]);
   });
 });
 
 // ── attribution ────────────────────────────────────────────────────────────────
 
-describe('background permission gate: subagent attribution rides on the ask', () => {
-  test('a brokered background ask carries the subagent id + template', async () => {
+describe('background permission gate: subagent attribution reaches the permission owner', () => {
+  test('a background call carries the subagent id + template', async () => {
     const { manager, asks } = makeManager('prompt', 'inherit', true);
+    const check = spyOn(manager, 'checkDetailed');
     await gateBackgroundToolCall({ permissionManager: manager }, record, 'write', { path: 'a.ts' });
-    expect(asks).toHaveLength(1);
-    expect(asks[0]!.attribution).toEqual({
+    expect(asks).toEqual([]);
+    expect(check.mock.calls[0]?.[2]).toEqual({
       kind: 'background-agent',
       agentId: 'agent-42',
       template: 'engineer',
@@ -143,8 +145,10 @@ describe('background permission gate: subagent attribution rides on the ask', ()
 
   test('template is omitted from attribution when the record has none', async () => {
     const { manager, asks } = makeManager('prompt', 'inherit', true);
+    const check = spyOn(manager, 'checkDetailed');
     await gateBackgroundToolCall({ permissionManager: manager }, { id: 'agent-7', template: '' }, 'write', { path: 'a.ts' });
-    expect(asks[0]!.attribution).toEqual({ kind: 'background-agent', agentId: 'agent-7' });
+    expect(asks).toEqual([]);
+    expect(check.mock.calls[0]?.[2]).toEqual({ kind: 'background-agent', agentId: 'agent-7' });
   });
 });
 

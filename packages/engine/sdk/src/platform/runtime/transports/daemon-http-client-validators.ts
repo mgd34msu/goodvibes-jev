@@ -12,9 +12,7 @@ import type { TelemetryListResponse, TelemetrySnapshot } from '../telemetry/api.
 import type { HttpTransportTelemetryMetricsSnapshot, HttpTransportTelemetryQuery } from './http-types.js';
 import { normalizeTelemetryQuery } from './http-helpers.js';
 
-// ---------------------------------------------------------------------------
-// Runtime validators, replace `as unknown as X` casts with checked coercions
-// ---------------------------------------------------------------------------
+// Runtime response validators.
 
 type SdkTelemetryQuery = {
   readonly limit?: number;

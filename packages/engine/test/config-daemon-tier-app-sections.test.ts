@@ -271,8 +271,9 @@ describe('settings ingestion: the keys that refuse instead of skipping', () => {
     }
     expect(message).toContain(path);
     expect(message).toContain('permissions.tools.exec');
-    expect(message).toBe(`Daemon config load failed for ${path} at permissions.tools.exec: [REDACTED]`);
-    expect(message).not.toContain('sometimes');
+    expect(message).toContain(`Daemon config load failed for ${path} at permissions.tools.exec:`);
+    expect(message).toContain('expects one of allow, prompt, deny');
+    expect(message).toContain('sometimes');
     expect(readFileSync(path, 'utf-8')).toBe(original);
   });
 

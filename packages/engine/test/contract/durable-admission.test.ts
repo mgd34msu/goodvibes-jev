@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import type { OrchestrationEngine } from '../../sdk/src/platform/orchestration/engine.js';
 import type { DurableContractBoundary, DurableContractRequest } from '../../sdk/src/platform/contract/index.js';
 import { contractPath } from '../../sdk/src/platform/contract/index.js';
-import { DurableContractAdmissions } from '../../sdk/src/platform/contract/durable-admission.js';
+import { DurableContractAdmissions, durablePayloadRevision } from '../../sdk/src/platform/contract/durable-admission.js';
 import { makeHarness, makeRepo, oneUnitPlan, waitFor, type Harness } from './runner-support.js';
 
 const roots: string[] = [];
@@ -54,6 +54,25 @@ describe('native durable contract admission', () => {
     expect(first.state).toBe('launch-claimed');
     expect(validations).toBe(1);
     expect(h.manager.list().filter((record) => record.contractRole === 'owner')).toHaveLength(1);
+  });
+
+  test('durable payload and replay remain exact when the host default model changes', async () => {
+    const root = makeRepo(); roots.push(root);
+    let model = { id: 'first', provider: 'synthetic', registryKey: 'synthetic:first', displayName: 'First' };
+    const original = request(root);
+    const h = makeHarness({ root, getSelectedModel: () => model, plan: oneUnitPlan(), scripts: {},
+      contract: { maxActiveContracts: 1 },
+      durableAdmission: { withCurrent: (admission, launch) => {
+        expect(admission.payloadRevision).toBe(durablePayloadRevision(original));
+        launch(() => undefined);
+      } },
+    });
+    harnesses.push(h);
+    const first = await h.runner.startDurable(original);
+    model = { id: 'second', provider: 'synthetic', registryKey: 'synthetic:second', displayName: 'Second' };
+    const replay = await h.runner.startDurable(original);
+    expect(replay.admission).toEqual(first.admission);
+    expect(first.contract.selectedModel).toBeUndefined();
   });
 
   test('final validator runs after borrowed persistence hooks', async () => {

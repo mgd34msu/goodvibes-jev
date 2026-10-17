@@ -302,7 +302,7 @@ export function listDeviceCapabilitiesByFamily(
 }
 
 // ---------------------------------------------------------------------------
-// Node kinds, open by design so Path B slots in without a contract change.
+// Node kinds remain extensible without a contract change.
 // ---------------------------------------------------------------------------
 
 /**

@@ -173,7 +173,7 @@ describe('provider batch failures: whether another attempt could succeed', () =>
     const after = await manager.getJob(job.id);
     expect(after?.status).toBe('queued');
     expect(after?.attempts).toBe(1);
-    expect(after?.error?.message).toBe('[REDACTED]');
+    expect(after?.error?.message).toBe('HTTP 503: overloaded');
     expect(tick.failedJobs).toBe(0);
     expect(readings.requests.filter(request => typeof request.state === 'string')).toHaveLength(0);
   });

@@ -74,7 +74,7 @@ export const daemonMailboxConfigDefaults = {
       secure: true,
     },
     // The inbound-mail watcher's own settings, the inbound section of
-    // surfaces.email. See docs/inbound-email.md §8 for the ruled defaults;
+    // surfaces.email. See docs/decisions/2026-07-27-inbound-email-design.md §8 for the ruled defaults;
     // every one of them is the owner's to confirm or overturn.
     inbound: {
       enabled: false,
@@ -233,7 +233,7 @@ export const daemonMailboxConfigSettings: ConfigSettingDefinition[] = [
   },
 
   // ── Inbound-mail watcher, the inbound section of surfaces.email ──────────
-  // See docs/inbound-email.md §8 for the ruled defaults and the rationale
+  // See docs/decisions/2026-07-27-inbound-email-design.md §8 for the ruled defaults and the rationale
   // behind each one; every default here is the owner's to confirm.
   {
     key: 'surfaces.email.inbound.enabled',

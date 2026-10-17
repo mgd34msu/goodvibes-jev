@@ -106,10 +106,13 @@ test('a genuine admission refuses another prepared call without consuming the ge
   expect(bodies).toBe(1);
 });
 
-test.each(['reject', 'defer_0'])('non-act %s has no executable body proof', async selected => {
-  disposition = selected; let bodies = 0;
-  const { registry, admit } = fixture(async () => { bodies++; return { success: true }; });
+test('a configured denial has no executable body proof', async () => {
+  let bodies = 0;
+  const config = { getAutonomousSnapshot: () => ({ permissions: { mode: 'plan', tools: {} }, autoApprove: false, directory: '/synthetic/project' }),
+    getWorkingDirectory: () => '/synthetic/project', getSnapshot: () => ({ permissions: { mode: 'plan', tools: {} } }), isAutoApproveEnabled: () => false } as PermissionConfigReader;
+  const { registry, admit } = fixture(async () => { bodies++; return { success: true }; }, undefined, config);
   const { call, admission } = await admit();
+  expect(admission.result.approved).toBe(false);
   await expect(registry.executePrepared(call, admission)).rejects.toThrow('does not authenticate');
   expect(bodies).toBe(0);
 });

@@ -9,6 +9,7 @@
   },
   "include": [
     "test/agent-research-screening-composition.test.ts",
+    "test/daemon-native-ci-continuation.test.ts",
     "sdk/src/platform/types/*.d.ts"
   ],
   "exclude": []

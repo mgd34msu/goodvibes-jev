@@ -1,4 +1,4 @@
-import { makeTestWebhookNotifier } from '../helpers/notification-transport.ts';
+import { makeTestWebhookNotifier, settleTestWebhookNotifications } from '../helpers/notification-transport.ts';
 /**
  * Tests for src/core/approval-alert.ts
  *
@@ -120,6 +120,7 @@ describe('wrapRequestPermissionWithAlert', () => {
       webhookNotifier: notifier,
     });
     await wrapped(makeRequest({ tool: 'edit', category: 'write' as PermissionPromptRequest['category'] }));
+    await settleTestWebhookNotifications();
     const sent = notifier._sent[0] ?? '';
     expect(sent).toContain('edit');
     expect(sent).toContain('write');

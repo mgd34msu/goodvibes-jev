@@ -215,7 +215,7 @@ describe('Home Graph sync and generated pages', () => {
     expect(pages.pages.some((page) => page.source.title === 'Returning Display passport')).toBe(true);
   });
 
-  test('bounds snapshot-time automatic page generation for large spaces', async () => {
+  test('completes automatic page generation for large spaces', async () => {
     const { service } = createHomeGraphService();
     const devices = Array.from({ length: 48 }, (_, index) => ({
       id: `device-${index}`,
@@ -232,10 +232,10 @@ describe('Home Graph sync and generated pages', () => {
     const priorityPages = await service.listPages({ installationId: 'house-1', limit: 5 });
 
     expect(synced.generated.devicePassports).toBeGreaterThan(0);
-    expect(synced.generated.devicePassports).toBeLessThanOrEqual(32);
+    expect(synced.generated.devicePassports).toBe(48);
     expect(synced.generated.devicePassports + (synced.generated.deferredDevicePassports ?? 0)).toBe(48);
-    expect(synced.generated.truncated).toBe(true);
-    expect(pages.pages).toHaveLength(synced.generated.devicePassports); // Both the item cap and elapsed-time budget apply.
+    expect(synced.generated.truncated).toBe(false);
+    expect(pages.pages).toHaveLength(synced.generated.devicePassports); // Every supplied device receives a page.
     expect(priorityPages.pages).toHaveLength(5);
     expect(priorityPages.pages.map(page => page.source.id)).toEqual(pages.pages.slice(0, 5).map(page => page.source.id));
   });

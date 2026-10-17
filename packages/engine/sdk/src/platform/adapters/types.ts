@@ -88,6 +88,7 @@ export interface SurfaceAdapterContext {
     threadId?: string | undefined;
     workspaceId?: string | undefined;
     conversationKind?: ChannelConversationKind | undefined;
+    parentConversationKind?: Exclude<ChannelConversationKind, 'thread'> | undefined;
     hasAnyMention?: boolean | undefined;
     text?: string | undefined;
     controlCommand?: string | undefined;
@@ -177,6 +178,7 @@ export interface GenericWebhookAdapterContext {
     threadId?: string | undefined;
     workspaceId?: string | undefined;
     conversationKind?: ChannelConversationKind | undefined;
+    parentConversationKind?: Exclude<ChannelConversationKind, 'thread'> | undefined;
     hasAnyMention?: boolean | undefined;
     text?: string | undefined;
     controlCommand?: string | undefined;

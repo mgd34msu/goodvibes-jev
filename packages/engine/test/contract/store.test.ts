@@ -1,5 +1,5 @@
 /**
- * ContractStore (design 7.1): round trip, atomic write, quarantine of files it
+ * ContractStore: round trip, atomic write, quarantine of files it
  * cannot trust, reaping bounds, and importContract refusing to replace a live
  * contract without force.
  */
@@ -220,14 +220,14 @@ describe('reaping', () => {
     expect(existsSync(contractPath(root, onDisk.id))).toBe(true);
   });
 
-  test('a reaped terminal contract is released from memory', () => {
+  test('an old terminal contract remains available in memory', () => {
     const root = tempRoot();
     const store = storeAt(root, 100 * DAY);
     const contract = terminalContract(0);
     store.put(contract);
     store.write(contract.id);
     store.reap();
-    expect(store.get(contract.id)).toBeNull();
+    expect(store.get(contract.id)).toEqual(contract);
   });
 
   test('quarantine files go after 30 days, and beyond 20 the oldest go', () => {
@@ -262,14 +262,14 @@ describe('reaping', () => {
     expect(existsSync(path)).toBe(true);
   });
 
-  test('listStoredIds reaps first, so a reaped id is never handed back', () => {
+  test('listStoredIds retains old and live contracts while excluding unrelated files', () => {
     const root = tempRoot();
     const old = terminalContract(0);
     const live = makeContract();
     writeRaw(root, old.id, envelope(old));
     writeRaw(root, live.id, envelope(live));
     writeFileSync(join(contractsDir(root), 'notes.json'), '{}', 'utf-8');
-    expect(storeAt(root, 100 * DAY).listStoredIds()).toEqual([live.id]);
+    expect(storeAt(root, 100 * DAY).listStoredIds().sort()).toEqual([live.id, old.id].sort());
   });
 });
 
@@ -306,6 +306,24 @@ describe('importContract', () => {
     expect(store.importContract(serializeContract(again, 1)!)).toBe(true);
     expect(store.get(done.id)?.status).toBe('queued');
     expect(storeAt(root).load(done.id)?.status).toBe('queued');
+  });
+
+  test('failed persistence refuses import and preserves the previous memory and disk state', () => {
+    const root = tempRoot();
+    const store = storeAt(root);
+    const original = makeContract({ status: 'passed', completedAt: 1 });
+    store.hold(original); expect(store.write(original.id)).toBe(true);
+    const path = contractPath(root, original.id);
+    const before = readFileSync(path, 'utf8');
+    chmodSync(contractsDir(root), 0o500);
+    try {
+      expect(store.importContract(serializeContract({ ...original, goal: 'uncommitted import' }, 2)!, true)).toBe(false);
+      expect(store.get(original.id)?.goal).toBe(original.goal);
+      expect(readFileSync(path, 'utf8')).toBe(before);
+      const other = makeContract({ id: 'failed-new-import' });
+      expect(store.importContract(serializeContract(other, 2)!)).toBe(false);
+      expect(store.get(other.id)).toBeNull();
+    } finally { chmodSync(contractsDir(root), 0o700); store.dispose(); }
   });
 
   test('refuses a snapshot it cannot trust', () => {

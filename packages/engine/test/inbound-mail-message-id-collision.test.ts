@@ -1,30 +1,6 @@
 /**
- * §12 gate #14, a `Message-ID` collision cannot suppress a message.
- *
- * `Message-ID` is written by whoever sent the mail. If it were ever the
- * identity a duplicate is judged by, anybody able to send a message could
- * silence a later one by reusing its id: the owner would see one notice where
- * two messages arrived, and the missing one would be whichever the attacker
- * chose. Identity is therefore the SERVER-assigned UID under its UIDVALIDITY
- * generation, and this file is the proof that a collision on the header does
- * nothing.
- *
- * ## Why this gate had no test until now
- *
- * It was **unconstructible**. `fake-imap-mailbox.ts` minted
- * `Message-ID: <uid-N@example.test>` per UID with no way to override it, so a
- * collision could not be built and the gate could never be satisfied as
- * written, an entry on the test plan that no amount of effort could turn
- * green. The harness now takes an override, and this is what it is for.
- *
- * ## Why the mailbox starts empty
- *
- * A message already present when the watcher connects sits at or below the
- * high-water mark the cursor establishes at, and is never offered, that is
- * the no-backfill rule (§4) working correctly. Seeding one of the colliding
- * pair would therefore leave only ONE message actually delivered, and "both
- * were delivered" would be untestable while looking tested. Both arrive after
- * the watcher is watching, so both are genuinely above the cursor.
+ * Deduplicate by server UID and UIDVALIDITY, never by sender-controlled Message-ID.
+ * Both colliding messages arrive after the watcher's initial cursor is established.
  */
 
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
@@ -120,7 +96,7 @@ async function idleRounds(harness: Harness, count: number): Promise<void> {
   );
 }
 
-describe('a forged Message-ID cannot suppress a message (gate #14)', () => {
+describe('a forged Message-ID cannot suppress a message', () => {
   test('two messages sharing one Message-ID are BOTH delivered, under their own UIDs', async () => {
     const harness = await build();
     harness.watcher.start();

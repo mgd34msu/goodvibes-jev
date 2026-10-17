@@ -2,7 +2,7 @@
  * inbound-mail-housekeeping.test.ts
  *
  * The composed recovery-time and periodic housekeeping pass over all three
- * inbound-mail stores (docs/inbound-email.md §9), following the same shape
+ * inbound-mail stores (docs/decisions/2026-07-27-inbound-email-design.md §9), following the same shape
  * as `platform/devices/device-housekeeping.ts`'s `DeviceHousekeeper`:
  *  - every sweep returns an itemised report across all three stores;
  *  - the disclosure log is bounded and persisted beside the stores;

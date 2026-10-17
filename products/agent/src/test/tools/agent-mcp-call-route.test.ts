@@ -38,7 +38,7 @@ function mcpTool(): Tool {
     required: ['mode'], additionalProperties: false,
   } }, execute: async args => ({ success: true, output: JSON.stringify({ passthrough: args.mode }) }) };
 }
-function fixture(options: { readonly caller?: boolean; readonly schemaReader?: boolean; readonly mode?: PermissionMode } = {}) {
+function fixture(options: { readonly caller?: boolean; readonly schemaReader?: boolean; readonly mode?: PermissionMode; readonly applicationError?: boolean } = {}) {
   let mode = options.mode ?? 'prompt', sequence = 0;
   const source = { goal: 'Exercise the isolated synthetic MCP call fixture', criteria: ['Do not contact an external server'] };
   const reader: PermissionConfigReader = {
@@ -59,7 +59,7 @@ function fixture(options: { readonly caller?: boolean; readonly schemaReader?: b
     } }),
     ...(options.caller === false ? {} : { async callTool(name: string, input: Readonly<Record<string, unknown>>, opts?: McpToolCallOptions) {
       await beforeCall?.(); opts?.signal?.throwIfAborted(); opts?.assertCurrent?.(); calls.push({ name, input, options: opts });
-      return { content: [{ type: 'text', text: 'navigated' }] };
+      return { isError: options.applicationError === true, content: [{ type: 'text', text: options.applicationError ? 'synthetic application failure' : 'navigated' }] };
     } }),
   };
   const context = { clients: { mcpApi: api } };
@@ -74,6 +74,7 @@ function fixture(options: { readonly caller?: boolean; readonly schemaReader?: b
       const call = await registry.prepareCall(id, name, args, { signal });
       const admission = await manager.admitAutonomous(id, name, call.args, { sourceOf: () => source,
         signal, schemaRevision: call.schemaRevision, preparedCall: { registry, call } });
+      if (!admission.result.approved) return { success: false, error: admission.result.detail ?? admission.result.reasonCode, output: undefined };
       return registry.executePrepared(call, admission, { signal });
     },
   };
@@ -95,6 +96,13 @@ describe('MCP call route actual admission', () => {
     expect(result.success).toBe(true); expect(result.output).toContain('navigated'); expect(f.calls).toHaveLength(1);
     expect(f.calls[0]?.name).toBe('mcp:browserpilot:browser_navigate'); expect(f.calls[0]?.input).toEqual({ url: 'https://example.com' });
     expect(f.calls[0]?.options?.assertCurrent).toBeFunction();
+  });
+  test('MCP application failures retain content and produce a failed execution', async () => {
+    const f = fixture({ applicationError: true });
+    const result = await f.run(call());
+    expect(result.success).toBe(false);
+    expect(result.output).toContain('synthetic application failure');
+    expect(result.error).toContain('MCP server');
   });
   test('missing input remains the empty object under real admission', async () => {
     const f = fixture(); expect((await f.run(call())).success).toBe(true); expect(f.calls[0]?.input).toEqual({});

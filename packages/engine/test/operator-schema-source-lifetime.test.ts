@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { ContractError, installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort } from '@goodvibes-jev/judgment/testing';
 import { createOperatorRemoteClient, type OperatorRemoteClientOptions } from '../operator-sdk/src/client-core.ts';
 import { createHttpTransport } from '../transport-http/src/http.ts';
 import { firstJsonSchemaFailureAsync } from '../transport-http/src/client-plumbing.ts';
@@ -34,22 +34,6 @@ function recursiveSchema() {
   const schema: Record<string, unknown> = { type: 'object', properties: { first: scalar, second: scalar }, additionalProperties: false };
   schema.$defs = { self: schema };
   return { schema, scalar, properties: schema.properties as Record<string, unknown> };
-}
-
-function heldExactPattern() {
-  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
-  const authored = fakePort((name, _question, state) => {
-    if (name !== 'backtracking' || JSON.stringify(state) !== JSON.stringify({ source: '^native$', flags: '', expression: '/^native$/', maxInputChars: 50_000, deadlineMs: 1_000 })) {
-      throw new Error('Unauthored schema reading.');
-    }
-    return noulAnswer(0.001);
-  });
-  installJudgmentPort({ ...authored.port, async ask(request) {
-    entered.resolve();
-    await release.promise;
-    return authored.port.ask(request);
-  } });
-  return { entered, release, requests: authored.requests };
 }
 
 describe('native recursive response schema source lifetime', () => {
@@ -137,30 +121,24 @@ describe('native recursive response schema source lifetime', () => {
     expect(peer.requests()).toBe(1);
   });
 
-  test('unchanged recursive aliases validate through one actual pattern reading', async () => {
+  test('unchanged recursive aliases validate through the isolated pattern worker', async () => {
     const { schema } = recursiveSchema();
-    const reading = heldExactPattern();
-    const pending = firstJsonSchemaFailureAsync(schema, { first: 'native', second: 'native' });
-    await reading.entered.promise;
-    reading.release.resolve();
-    expect(await pending).toBeUndefined();
-    expect(reading.requests).toHaveLength(1);
+    const readings = fakePort(() => { throw new Error('Worker validation needs no probability reading.'); });
+    installJudgmentPort(readings.port);
+    expect(await firstJsonSchemaFailureAsync(schema, { first: 'native', second: 'native' })).toBeUndefined();
+    expect(readings.requests).toHaveLength(0);
   });
 
-  test.each(['schema descendant', 'equal alias replacement', 'value descendant', 'restriction callback'])('pending pattern reading retains %s', async kind => {
+  test.each(['schema descendant', 'equal alias replacement', 'value descendant', 'restriction callback'])('pending pattern execution retains %s', async kind => {
     const { schema, scalar, properties } = recursiveSchema();
     const value = { first: 'native', second: 'native' };
     const options = { assertCurrent: () => {} };
-    const reading = heldExactPattern();
     const pending = firstJsonSchemaFailureAsync(schema, value, options);
-    await reading.entered.promise;
     if (kind === 'schema descendant') scalar.pattern = '^changed$';
     if (kind === 'equal alias replacement') properties.second = { ...scalar };
     if (kind === 'value descendant') value.second = 'changed';
     if (kind === 'restriction callback') options.assertCurrent = () => { throw new Error('Replacement callback must not run.'); };
-    reading.release.resolve();
     await expect(pending).rejects.toThrow();
-    expect(reading.requests.length).toBeLessThanOrEqual(1);
   });
 
   test('a native recursive schema still refuses an invalid nested response', async () => {

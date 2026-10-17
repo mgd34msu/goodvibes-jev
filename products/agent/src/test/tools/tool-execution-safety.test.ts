@@ -42,7 +42,7 @@ describe('tool execution safety guard', () => {
     expect(result).toMatchObject({
       callId: 'call-broken',
       success: false,
-      error: '[REDACTED]',
+      error: 'broken exploded',
     });
   });
 
@@ -53,7 +53,7 @@ describe('tool execution safety guard', () => {
 
     const result = await registry.execute('call-late', 'late_broken', {});
     expect(result.success).toBe(false);
-    expect(result.error).toBe('[REDACTED]');
+    expect(result.error).toBe('late_broken exploded');
   });
 
   test('leaves successful tool results unchanged', async () => {

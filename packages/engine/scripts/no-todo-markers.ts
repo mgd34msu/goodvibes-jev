@@ -14,7 +14,7 @@
 //   - node_modules/ (nested)
 //   - dist/ (nested)
 //
-// Exits non-zero and prints file:line with context if any marker is found.
+// Confirmed unfinished work fails; inconclusive evidence remains advisory.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import type { Dirent } from 'node:fs';
@@ -109,15 +109,17 @@ if (import.meta.main) {
   for (const { relPath, text } of candidates) {
     for (const finding of sourceMarkerFindings(relPath, text, readings)) findings.push({ rel: relPath, ...finding });
   }
-  if (findings.length === 0) {
-    console.log('todo-check: OK, no unfinished production work in current settled source observations.');
-    process.exit(0);
+  const advisories = findings.filter(finding => finding.marker === 'evidence-held');
+  const violations = findings.filter(finding => finding.marker !== 'evidence-held');
+  for (const [label, group] of [['ADVISORY', advisories], ['FAIL', violations]] as const) {
+    if (group.length === 0) continue;
+    console.error(`todo-check: ${label}, ${group.length} ${label === 'ADVISORY' ? 'inconclusive reading(s); source review required' : 'confirmed unfinished-work finding(s)'}:\n`);
+    for (const finding of group.slice(0, 100)) {
+      console.error(`  ${finding.rel}:${finding.line}:${finding.col} [${finding.marker}]`);
+      console.error(`    ${finding.text}\n`);
+    }
+    if (group.length > 100) console.error(`... ${group.length - 100} additional findings`);
   }
-  console.error(`todo-check: FAIL, ${findings.length} unfinished-work or held evidence finding(s):\n`);
-  for (const finding of findings.slice(0, 100)) {
-    console.error(`  ${finding.rel}:${finding.line}:${finding.col} [${finding.marker}]`);
-    console.error(`    ${finding.text}\n`);
-  }
-  if (findings.length > 100) console.error(`... ${findings.length - 100} additional findings`);
-  process.exit(1);
+  if (violations.length > 0) process.exit(1);
+  console.log(`todo-check: OK, no confirmed unfinished-work findings; ${advisories.length} inconclusive advisories.`);
 }

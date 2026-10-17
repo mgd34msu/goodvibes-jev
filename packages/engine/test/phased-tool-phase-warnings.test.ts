@@ -51,7 +51,7 @@ function runtimeContext(
 }
 
 describe('phased tool phase warnings', () => {
-  test('map-output problems preserve success and surface visible warnings', async () => {
+  test('large output maps completely without an implicit size warning', async () => {
     const executor = createPhasedExecutor({
       enableHooks: false,
       enablePermissions: false,
@@ -66,8 +66,8 @@ describe('phased tool phase warnings', () => {
 
     const mapped = executor.getRecord('call-map')?.phases.find((phase) => phase.phase === 'mapped');
     expect(result.success).toBe(true);
-    expect(result.warnings?.[0]).toMatch(/^Output mapping warning:/);
-    expect(result.output?.startsWith(`[Warning: ${result.warnings?.[0]}]`)).toBe(true);
+    expect(result.warnings ?? []).toEqual([]);
+    expect(result.output).toBe('x'.repeat(205 * 1024));
     expect(mapped?.success).toBe(true);
     expect(mapped?.error).toBeUndefined();
     expect(mapped?.warnings?.[0]).toBe(result.warnings?.[0]);

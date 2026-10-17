@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -104,7 +104,7 @@ async function fixture(message = ORIGINAL_BODY, webhook?: string) {
     return { status: response.status, ok: response.ok, data, text };
   };
   const input = () => ({ ...seed, id: reference, message: 'Complete queued native draft body', status: 'queued', admission: 'autonomous' });
-  return { directory, config, secrets, credentials, cipher, drafts, pairing, paired, reference, seed, input, call, wire, responses, lifetime, invalidations, port: server.port, humans: () => humans };
+  return { directory, config, manager, secrets, credentials, cipher, drafts, pairing, paired, reference, seed, input, call, wire, responses, lifetime, invalidations, port: server.port, humans: () => humans };
 }
 
 function expectNoNativeAdmission(token: string, protectedValue?: string) {
@@ -134,10 +134,8 @@ test('real connected native legacy draft save/get/list/delete keeps private IDs 
   expect(f.drafts.get(LEGACY_ID)).toBeNull();
   expect([saved.text, get.text, list.text, deleted.text, ...f.wire].join('')).not.toContain(LEGACY_ID);
   expect(JSON.stringify(requests)).not.toContain(LEGACY_ID);
-  expect(JSON.stringify(requests)).toContain(ORIGINAL_BODY);
-  expect(JSON.stringify(requests)).toContain('Complete queued native draft body');
   expect(JSON.stringify(requests)).not.toContain(f.paired.token);
-  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(2);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
   expect(f.humans()).toBe(0);
 });
 
@@ -172,7 +170,7 @@ test('actual registered Agent admission publishes its owned legacy draft through
   expect(f.wire.join('')).not.toContain(LEGACY_ID); expect(JSON.stringify(requests)).not.toContain(LEGACY_ID);
   expect(stdout).not.toContain(LEGACY_ID); expect(stdout).not.toContain(f.paired.token);
   expect(JSON.stringify(requests)).not.toContain(f.paired.token);
-  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(1);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
   expect(f.humans()).toBe(0);
 });
 
@@ -210,12 +208,13 @@ test.each(['save', 'delete'] as const)('selected native webhook raw secret is he
 test('selected native webhook secret reference remains complete and admissible', async () => {
   const webhook = 'goodvibes://secrets/fixture.native-webhook';
   const f = await fixture(ORIGINAL_BODY, webhook);
-  const result = await f.call('POST', '/api/channels/drafts', { ...f.input(), webhook: '[redacted]' });
+  const result = await f.call('POST', '/api/channels/drafts', f.input());
   expect(result.status).toBe(200); expect(f.drafts.get(LEGACY_ID)?.status).toBe('queued');
-  expect(JSON.stringify(requests)).toContain(webhook);
-  expect(JSON.stringify(requests)).toContain(ORIGINAL_BODY);
+  expect(f.drafts.get(LEGACY_ID)?.webhook).toBe('[redacted]');
+  const retained = await f.drafts.retainReferenceTarget(f.reference, () => {});
+  expect(retained.target.webhook).toBe(webhook); retained.assertCurrent();
   expect(JSON.stringify(requests)).not.toContain(LEGACY_ID);
-  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(1); expect(f.humans()).toBe(0);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0); expect(f.humans()).toBe(0);
 });
 
 test('raw dense caller ID retains the original card floor instead of acquiring native alias authority', async () => {
@@ -236,7 +235,11 @@ test.each(['revoke', 'selected-row-aba', 'physical-aba', 'key-aba', 'configurati
   'genuine connected pending admission retains %s and writes nothing', async kind => {
     const f = await fixture(), before = readFileSync(f.drafts.dbPath);
     const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
-    beforeRead = async request => { if ('disposition' in request.questions) { entered.resolve(); await release.promise; } };
+    const admit = f.manager.admitAutonomous.bind(f.manager);
+    const paused = spyOn(f.manager, 'admitAutonomous').mockImplementation(async (...args) => {
+      const admission = await admit(...args); entered.resolve(); await release.promise; return admission;
+    });
+    cleanup.push(() => { paused.mockRestore(); });
     const pending = f.call('POST', '/api/channels/drafts', f.input());
     await entered.promise;
     try {

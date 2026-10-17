@@ -410,6 +410,8 @@ describe('complete native read catalogs', () => {
 
   test('provider exact IDs and native clocks are screened without account selection', async () => {
     const managers = createTestManagers(), context = { provider: { providerRegistry: managers.providerRegistry }, platform: managers };
+    await managers.providerRegistry.ready();
+    await managers.providerRegistry.modelDiscoverySettled();
     const fake = fakePort(() => { throw new Error('Native provider ID entered selection'); }); installJudgmentPort(fake.port);
     const result = await describeHarnessProviderAccount(context, { providerId: 'openai' }, options());
     expect(result.status).toBe('found'); expectOnlyProviderDiagnostics(fake.requests);
@@ -417,6 +419,8 @@ describe('complete native read catalogs', () => {
 
   test('provider list and phrase detail read complete native usage and route meaning', async () => {
     const managers = createTestManagers(), context = { provider: { providerRegistry: managers.providerRegistry }, platform: managers };
+    await managers.providerRegistry.ready();
+    await managers.providerRegistry.modelDiscoverySettled();
     const catalog = await providerAccountSummary(context, { includeParameters: true }, options());
     if (!Array.isArray(catalog.providers)) throw new Error('Expected the native provider cohort');
     const ids = catalog.providers.map(raw => nativeId(raw));
@@ -437,6 +441,8 @@ describe('complete native read catalogs', () => {
 
   test('provider configuration mutation during source screening retires the captured account owner', async () => {
     const managers = createTestManagers(), context = { provider: { providerRegistry: managers.providerRegistry }, platform: managers };
+    await managers.providerRegistry.ready();
+    await managers.providerRegistry.modelDiscoverySettled();
     let changed = false;
     const screening = researchScreeningFixture({ async beforeProposal() { if (!changed) { changed = true; managers.configManager.set('tools.llmEnabled', false); } } });
     const fake = fakePort(() => { throw new Error('Changed provider source reached catalog reading'); }); installJudgmentPort(fake.port);
@@ -446,6 +452,8 @@ describe('complete native read catalogs', () => {
 
   test('a first caller restriction cannot adopt in-place native provider model changes', async () => {
     const managers = createTestManagers(), context = { provider: { providerRegistry: managers.providerRegistry }, platform: managers };
+    await managers.providerRegistry.ready();
+    await managers.providerRegistry.modelDiscoverySettled();
     const model = managers.providerRegistry.listModels()[0];
     if (!model) throw new Error('The actual native model catalog is empty');
     const description = model.description;
@@ -495,6 +503,8 @@ describe('complete native read catalogs', () => {
   test('a first caller restriction cannot replace the original provider environment presence baseline', async () => {
     const original = process.env.OPENAI_API_KEY; process.env.OPENAI_API_KEY = '';
     const managers = createTestManagers(), context = { provider: { providerRegistry: managers.providerRegistry }, platform: managers };
+    await managers.providerRegistry.ready();
+    await managers.providerRegistry.modelDiscoverySettled();
     const fake = fakePort(() => { throw new Error('Changed provider environment reached catalog reading'); }); installJudgmentPort(fake.port);
     let changed = false;
     try {
@@ -507,6 +517,8 @@ describe('complete native read catalogs', () => {
 
   test('a first caller restriction cannot replace the native provider expiration clock', async () => {
     const managers = createTestManagers(), context = { provider: { providerRegistry: managers.providerRegistry }, platform: managers };
+    await managers.providerRegistry.ready();
+    await managers.providerRegistry.modelDiscoverySettled();
     const descriptor = Object.getOwnPropertyDescriptor(Date, 'now');
     if (!descriptor || !('value' in descriptor)) throw new Error('Native clock descriptor is unavailable');
     const original = Date.now;
@@ -522,14 +534,17 @@ describe('complete native read catalogs', () => {
 
   test('native credential mutation during source screening retires provider account publication', async () => {
     const managers = createTestManagers(), context = { provider: { providerRegistry: managers.providerRegistry }, platform: managers };
+    await managers.providerRegistry.ready();
+    await managers.providerRegistry.modelDiscoverySettled();
     let changed = false;
     const screening = researchScreeningFixture({ async beforeProposal() {
       if (changed) return; changed = true;
       await managers.secretsManager.set('NATIVE_CATALOG_ACCOUNT_KEY', 'private-runtime-fixture-value');
     } });
     const fake = fakePort(() => { throw new Error('Changed native credential reached catalog reading'); }); installJudgmentPort(fake.port);
-    await expect(providerAccountSummary(context, { query: 'account authentication status' }, { sourceOwner: screening.owner })).rejects.toBeInstanceOf(SecurityReadSourceRetiredError);
-    expect(changed).toBe(true); expectOnlyProviderDiagnostics(fake.requests);
+    const failure = await providerAccountSummary(context, { query: 'account authentication status' }, { sourceOwner: screening.owner }).then(() => null, error => error);
+    expect(changed, failure instanceof Error ? failure.stack : String(failure)).toBe(true);
+    expect(failure).toBeInstanceOf(SecurityReadSourceRetiredError); expectOnlyProviderDiagnostics(fake.requests);
   });
 
   test('connected capability selection includes the complete allowed and blocked native cohort', async () => {

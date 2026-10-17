@@ -59,7 +59,7 @@ test('actual registered six-question reader preserves full originals, provenance
   if (reading.status !== 'settled') throw new Error('Synthetic registered theme read was held');
   // Deliberately counter to legacy keywords: canonical readings alone determine the themes.
   expect(reading.themes).toEqual(['faithfulness']);
-  expect(reading.provenance).toMatchObject({ battery: modelReasonTheme.name, version: 1, model: 'jev-1.13.0' });
+  expect(reading.provenance).toMatchObject({ battery: modelReasonTheme.name, version: 2, model: 'jev-1.13.0' });
   expect(typeof reading.provenance.decisionId).toBe('string');
   expect(fake.requests).toHaveLength(1);
   expect(Object.keys(fake.requests[0]!.questions)).toEqual(['actionable', 'clarity', 'faithfulness', 'context', 'safety', 'efficiency']);
@@ -241,7 +241,7 @@ test('mutating the registered definition while an answer is pending holds the re
   const reading = readComparisonReasonThemes(f.judgment, f.store, f.report, { sourceOwner: ordinaryResearchOwner() });
   await pending.started;
   const descriptor = Object.getOwnPropertyDescriptor(modelReasonTheme, 'version')!;
-  try { Object.defineProperty(modelReasonTheme, 'version', { ...descriptor, value: 2 }); pending.release();
+  try { Object.defineProperty(modelReasonTheme, 'version', { ...descriptor, value: 3 }); pending.release();
     expect(await reading).toEqual({ status: 'held' });
   } finally { Object.defineProperty(modelReasonTheme, 'version', descriptor); }
   expect(routingRegistry.get(modelReasonTheme.name)).toBe(modelReasonTheme);

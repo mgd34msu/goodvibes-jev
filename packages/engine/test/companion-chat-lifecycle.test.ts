@@ -2,12 +2,12 @@
  * companion-chat-lifecycle.test.ts
  *
  * Verifies the session lifecycle:
- * L1: create → message → close, happy path
- * L2: closed sessions reject further messages with 409
- * L3: sessions that were never found return 404
- * L4: idle GC closes empty sessions after idleEmptyMs
- * L5: idle GC closes content sessions after idleActiveMs
- * L6: GC leaves sessions with recent activity alone
+ * create → message → close, happy path
+ * closed sessions reject further messages with 409
+ * sessions that were never found return 404
+ * idle GC closes empty sessions after idleEmptyMs
+ * idle GC closes content sessions after idleActiveMs
+ * GC leaves sessions with recent activity alone
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -47,10 +47,10 @@ function makeManager(overrides: { idleActiveMs?: number; idleEmptyMs?: number } 
 }
 
 // ---------------------------------------------------------------------------
-// L1: Happy path
+// Happy path
 // ---------------------------------------------------------------------------
 
-describe('L1: create → message → close lifecycle', () => {
+describe('create → message → close lifecycle', () => {
   test('full lifecycle completes without error', async () => {
     const manager = makeManager();
 
@@ -103,10 +103,10 @@ describe('L1: create → message → close lifecycle', () => {
 });
 
 // ---------------------------------------------------------------------------
-// L2: Closed sessions reject messages with 409
+// Closed sessions reject messages with 409
 // ---------------------------------------------------------------------------
 
-describe('L2: closed sessions reject further messages', () => {
+describe('closed sessions reject further messages', () => {
   test('postMessage on a closed session throws with status 409', async () => {
     const manager = makeManager();
     const session = manager.createSession();
@@ -129,10 +129,10 @@ describe('L2: closed sessions reject further messages', () => {
 });
 
 // ---------------------------------------------------------------------------
-// L3: Non-existent sessions return 404
+// Non-existent sessions return 404
 // ---------------------------------------------------------------------------
 
-describe('L3: non-existent sessions', () => {
+describe('non-existent sessions', () => {
   test('getSession returns null for unknown id', () => {
     const manager = makeManager();
     expect(manager.getSession('no-such-id')).toBeNull();
@@ -153,10 +153,10 @@ describe('L3: non-existent sessions', () => {
 });
 
 // ---------------------------------------------------------------------------
-// L4: GC closes empty sessions after idleEmptyMs
+// GC closes empty sessions after idleEmptyMs
 // ---------------------------------------------------------------------------
 
-describe('L4: GC closes empty idle sessions', () => {
+describe('GC closes empty idle sessions', () => {
   test('empty session idle beyond idleEmptyMs is closed by _gcSweep()', () => {
     const manager = makeManager({ idleEmptyMs: 100 });
     const session = manager.createSession();
@@ -180,10 +180,10 @@ describe('L4: GC closes empty idle sessions', () => {
 });
 
 // ---------------------------------------------------------------------------
-// L5: GC closes content sessions after idleActiveMs
+// GC closes content sessions after idleActiveMs
 // ---------------------------------------------------------------------------
 
-describe('L5: GC closes active sessions after idleActiveMs', () => {
+describe('GC closes active sessions after idleActiveMs', () => {
   test('session with messages idle beyond idleActiveMs is closed by _gcSweep()', async () => {
     const manager = makeManager({ idleActiveMs: 100 });
     const session = manager.createSession();
@@ -205,10 +205,10 @@ describe('L5: GC closes active sessions after idleActiveMs', () => {
 });
 
 // ---------------------------------------------------------------------------
-// L6: GC leaves recently-active sessions alone
+// GC leaves recently-active sessions alone
 // ---------------------------------------------------------------------------
 
-describe('L6: GC does not close recently-active sessions', () => {
+describe('GC does not close recently-active sessions', () => {
   test('session with recent activity survives _gcSweep()', async () => {
     const manager = makeManager({ idleEmptyMs: 100, idleActiveMs: 100 });
     const session = manager.createSession();

@@ -22,7 +22,6 @@ import type { OccasionsGatewayInvoke } from '../../agent/occasions-gateway.ts';
 import { executeNativeMemoryWork, nativeMemoryWorkAdmission, nativeMemoryWorkRegistry } from '../helpers/native-memory-work-readings.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { AGENT_READ_ADMISSION_DENIAL_MESSAGE } from '@goodvibes-jev/engine/sdk/platform/gate/policy';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { CONVERSATIONAL_TURN_TOOLS } from '@goodvibes-jev/engine/sdk/platform/personal-capture';
 import {
@@ -33,7 +32,6 @@ import {
 } from '../../runtime/agent-conversational-capture.ts';
 import { GOODVIBES_AGENT_OPERATOR_POLICY } from '../../runtime/agent-operator-policy.ts';
 import {
-  AGENT_PLATFORM_BOUNDARY_DENIAL,
   installAgentPlatformBoundaryGuard,
   isGoodVibesPlatformSourcePath,
   ownerAskedAboutPlatformSource,
@@ -292,109 +290,26 @@ describe('did he ask about the platform source this turn', () => {
   });
 });
 
-describe('the boundary guard on a real tool', () => {
-  function guardedRegistry(lastUserMessage: string | null) {
+describe('source paths do not add implicit approval gates', () => {
+  test.each([
+    '/home/x/Projects/goodvibes-sdk/packages/sdk/src/platform/google/oauth-wizard.ts',
+    'node_modules/@goodvibes-jev/engine/sdk/index.ts',
+    'C:\\project\\node_modules\\@goodvibes-jev\\engine\\src\\index.ts',
+    '/home/x/Documents/notes.md',
+  ])('the compatibility guard preserves calls for %s', async path => {
     const registry = new ToolRegistry();
-    const read = stubTool('read');
-    const edit = stubTool('edit');
-    registry.register(read);
-    registry.register(edit);
-    installAgentPlatformBoundaryGuard(registry, () => lastUserMessage);
-    return { registry, read, edit };
-  }
-
-  const PLATFORM_READ = {
-    files: [{ path: '/home/x/Projects/goodvibes-sdk/packages/sdk/src/platform/google/oauth-wizard.ts' }],
-  };
-
-  test('it fires on a self-directed read of the platform source', async () => {
-    // The exact shape of the incident: he asked about email, it reached for the
-    // OAuth wizard's source.
-    const { registry, read } = guardedRegistry('can you see your email?');
-    const tool = registry.list().find((candidate) => candidate.definition.name === 'read');
-    const result = await tool!.execute(PLATFORM_READ as never);
-    expect(result.success).toBe(false);
-    expect(result.error).toBe(AGENT_READ_ADMISSION_DENIAL_MESSAGE);
-    // And the underlying read never ran.
-    expect(read.calls).toHaveLength(0);
+    const read = stubTool('read'), edit = stubTool('edit');
+    registry.register(read); registry.register(edit);
+    installAgentPlatformBoundaryGuard(registry, () => 'Complete the current request');
+    expect((await registry.execute('read-source', 'read', { files: [{ path }] })).success).toBe(true);
+    expect((await registry.execute('edit-source', 'edit', { edits: [{ path, find: 'a', replace: 'b' }] })).success).toBe(true);
+    expect(read.calls).toHaveLength(1); expect(edit.calls).toHaveLength(1);
+    expect(await validatePlatformBoundaryForAgentPolicy({ paths: [path], lastUserMessage: 'Complete the current request' })).toBeNull();
   });
 
-  test('canonical package reads require genuine admission even when request prose names the source', async () => {
-    const path = 'node_modules/@goodvibes-jev/engine/sdk/index.ts';
-    const unrequested = guardedRegistry('check my email');
-    const blocked = await unrequested.registry.execute('canonical-unrequested', 'read', { files: [{ path }] });
-    expect(blocked.success).toBe(false);
-    expect(blocked.error).toBe(AGENT_READ_ADMISSION_DENIAL_MESSAGE);
-    expect(unrequested.read.calls).toHaveLength(0);
-    const requested = guardedRegistry(`read ${path}`);
-    expect((await requested.registry.execute('canonical-requested', 'read', { files: [{ path }] })).success).toBe(false);
-    expect(requested.read.calls).toHaveLength(0);
-  });
-
-  test('an explicitly named Windows path does not substitute for read admission', async () => {
-    const path = 'C:\\project\\node_modules\\@goodvibes-jev\\engine\\src\\index.ts';
-    expect(await ownerAskedAboutPlatformSource(path)).toBe(true);
-    const { registry, read } = guardedRegistry(path);
-    expect((await registry.execute('windows-requested', 'read', { files: [{ path }] })).success).toBe(false);
-    expect(read.calls).toHaveLength(0);
-    expect(await ownerAskedAboutPlatformSource('C:\\Documents\\engine\\notes.txt')).toBe(false);
-  });
-
-  test('the refusal tells it to propose in one line and get back to the real request', async () => {
-    const { registry } = guardedRegistry('can you see your email?');
-    const tool = registry.list().find((candidate) => candidate.definition.name === 'edit');
-    const result = await tool!.execute({ edits: PLATFORM_READ.files } as never);
-    const error = String(result.error).toLowerCase();
-    expect(error).toContain('one line');
-    expect(error).toContain('ask whether he wants you to look into it');
-    expect(error).toContain('go back to his actual request');
-  });
-
-  test('it fires on a self-directed EDIT of the platform source', async () => {
-    const { registry, edit } = guardedRegistry('login to my email');
-    const tool = registry.list().find((candidate) => candidate.definition.name === 'edit');
-    const result = await tool!.execute({
-      edits: [{
-        path: '/home/x/Projects/goodvibes-sdk/packages/sdk/src/platform/google/oauth-wizard.ts',
-        find: 'a',
-        replace: 'b',
-      }],
-    } as never);
-    expect(result.success).toBe(false);
-    expect(edit.calls).toHaveLength(0);
-  });
-
-  test('a raw requested read still needs its genuine prepared admission', async () => {
-    const { registry, read } = guardedRegistry(
-      'read /home/x/Projects/goodvibes-sdk/packages/sdk/src/platform/google/oauth-wizard.ts',
-    );
-    const tool = registry.list().find((candidate) => candidate.definition.name === 'read');
-    const result = await tool!.execute(PLATFORM_READ as never);
-    expect(result.success).toBe(false);
-    expect(read.calls).toHaveLength(0);
-  });
-
-  test('ordinary raw reads cannot bypass the adopted admission surface', async () => {
-    const { registry, read } = guardedRegistry('what is on my calendar tomorrow?');
-    const tool = registry.list().find((candidate) => candidate.definition.name === 'read');
-    const result = await tool!.execute({ files: [{ path: '/home/x/Documents/notes.md' }] } as never);
-    expect(result.success).toBe(false);
-    expect(read.calls).toHaveLength(0);
-  });
-
-  test('the check itself is path-then-permission, in that order', async () => {
-    expect(await validatePlatformBoundaryForAgentPolicy({
-      paths: ['/home/x/Documents/notes.md'],
-      lastUserMessage: 'anything at all',
-    })).toBeNull();
-    expect(await validatePlatformBoundaryForAgentPolicy({
-      paths: ['/home/x/Projects/goodvibes-tui/src/a.ts'],
-      lastUserMessage: 'check my email',
-    })).toBe(AGENT_PLATFORM_BOUNDARY_DENIAL);
-    expect(await validatePlatformBoundaryForAgentPolicy({
-      paths: ['/home/x/Projects/goodvibes-tui/src/a.ts'],
-      lastUserMessage: 'fix the goodvibes tui source',
-    })).toBeNull();
+  test('the compatibility boundary still observes cancellation', async () => {
+    const controller = new AbortController(); const cancelled = new Error('cancel source check'); controller.abort(cancelled);
+    await expect(validatePlatformBoundaryForAgentPolicy({ paths: ['/source.ts'], lastUserMessage: 'read source' }, controller.signal)).rejects.toBe(cancelled);
   });
 });
 

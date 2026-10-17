@@ -4,10 +4,12 @@ import { mapAnthropicStopReason } from './stop-reason-maps.js';
 import { fromAnthropicContent, parseToolCallArguments } from './tool-formats.js';
 import { logger } from '../utils/logger.js';
 import { SseLineBuffer } from './sse-line-buffer.js';
+import { ProviderError } from '../types/errors.js';
 
 /** Anthropic SSE event shape (wire format from both direct API and compat endpoints). */
 export interface AnthropicSSEEvent {
   type: string;
+  error?: { type?: string; message?: string };
   index?: number | undefined;
   delta?: {
     type?: string | undefined;
@@ -46,6 +48,7 @@ export interface AnthropicSSEState {
   cacheWriteTokens: number;
   rawStopReason: string | undefined;
   stopReason: ChatStopReason;
+  messageStopped: boolean;
   toolBlocks: Map<number, { id: string; name: string; args: string }>;
 }
 
@@ -59,6 +62,7 @@ export function createAnthropicSSEState(): AnthropicSSEState {
     cacheWriteTokens: 0,
     rawStopReason: undefined,
     stopReason: 'unknown',
+    messageStopped: false,
     toolBlocks: new Map(),
   };
 }
@@ -71,8 +75,21 @@ export function processAnthropicSSEEvent(
   event: AnthropicSSEEvent,
   state: AnthropicSSEState,
   onDelta: ((delta: StreamDelta) => void) | undefined,
+  providerLabel = 'Anthropic',
 ): void {
-  if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+  if (event.type === 'error') {
+    const statuses: Readonly<Record<string, number>> = {
+      overloaded_error: 529, rate_limit_error: 429, api_error: 500,
+      authentication_error: 401, permission_error: 403, invalid_request_error: 400,
+      not_found_error: 404, request_too_large: 413,
+    };
+    throw new ProviderError(event.error?.message ?? 'Anthropic stream failed', {
+      statusCode: statuses[event.error?.type ?? ''] ?? 502,
+      provider: providerLabel, operation: 'chat', phase: 'response',
+    });
+  } else if (event.type === 'message_stop') {
+    state.messageStopped = true;
+  } else if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
     const idx = event.index ?? 0;
     state.toolBlocks.set(idx, {
       id: event.content_block.id ?? '',
@@ -148,7 +165,7 @@ export async function readAnthropicSSEStream(
           });
           continue;
         }
-        processAnthropicSSEEvent(event, state, onDelta);
+        processAnthropicSSEEvent(event, state, onDelta, providerLabel);
       }
     }
     // Drain any bytes left after the last newline: servers (notably home-grown
@@ -170,8 +187,14 @@ export async function readAnthropicSSEStream(
         });
         continue;
       }
-      processAnthropicSSEEvent(event, state, onDelta);
+      processAnthropicSSEEvent(event, state, onDelta, providerLabel);
     }
+    if (!state.messageStopped) throw new ProviderError(`${providerLabel} stream ended before message_stop`, {
+      statusCode: 502, provider: providerLabel, operation: 'chat', phase: 'response',
+    });
+  } catch (error) {
+    void reader.cancel(error).catch(() => {});
+    throw error;
   } finally {
     reader.releaseLock();
   }

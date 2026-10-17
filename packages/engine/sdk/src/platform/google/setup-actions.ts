@@ -1,27 +1,7 @@
 import { ownGoogleSetupDeps, ownGoogleSetupRunners } from './setup-reading-scope.js';
-/**
- * The runners that make the Google setup flow do something.
- *
- * `google-setup-flow.ts` sequences steps and assembles a report; it is
- * deliberately free of Google specifics and names this module as the place the
- * concrete work lives. That module was written, tested and shipped, and this
- * one never was, so every flow module underneath it (`google-console-flow`,
- * `google-client-intake`, `google-app-password-flow`, `google-client-download`)
- * had no caller outside its own tests. The feature was green and unreachable at
- * the same time, because the tests exercised the modules directly and nothing
- * exercised a path starting from something a user types.
- *
- * So this module is the binding layer, and it is the only place that knows both
- * "step id" and "which function performs it". Everything it needs arrives
- * through ports, so the whole flow stays runnable against fakes.
- *
- * Two rules hold throughout:
- *   - A step reports `needs-human` when Google genuinely requires a person.
- *     That is a clean stop, not a failure, and the spec's own `manualSteps`
- *     are what the report shows.
- *   - Secrets go from the flow into the encrypted store and nowhere else. No
- *     detail string, progress line, warning or error carries a credential
- *     value.
+/** Binds Google setup steps to their implementations through injected ports.
+ * Steps requiring a person report needs-human. Credentials go to the encrypted
+ * store; reports and progress messages never include their values.
  */
 
 import { randomBytes } from 'node:crypto';

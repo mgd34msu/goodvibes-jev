@@ -138,7 +138,7 @@ the mechanical transport layers that the webui and the Home Assistant integratio
 hand-write, generated straight from the same committed operator contract, so a new method
 with a plain-REST `http` binding reaches both without hand-editing their client code.
 
-Mid-MERGE note (second first-cold-run gap): `api:check` diffs the working tree against the
+During a merge: `api:check` diffs the working tree against the
 index. During a merge you must `git add` the regenerated artifacts BEFORE the diff-based
 gates (`api:check`, `refresh:contracts:check`) read true, or they fail on your own
 unstaged regen output.

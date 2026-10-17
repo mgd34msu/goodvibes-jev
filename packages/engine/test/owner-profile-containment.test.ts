@@ -1,8 +1,8 @@
 /**
  * owner-profile-containment.test.ts, docs/owner-profile.md §10, §11.2, §11.3.
  *
- * Covers test-plan items 9 (not in logs), 10 (not in exports), 12 (not injected
- * outbound) and 19 (third-party containment), plus the footgun that makes a
+ * Covers profile containment in logs, exports and outbound context, including
+ * third-party information, plus the short-value hazard that makes a
  * naive version of this feature worse than not having it: a short or common
  * profile value must never become a redaction pattern that blanks unrelated
  * text.
@@ -242,7 +242,7 @@ describe('the footgun: a short or common value must never become a pattern', () 
   });
 });
 
-describe('§14 #10: a session export redacts profile values', () => {
+describe('a session export redacts profile values', () => {
   const messages = [
     {
       role: 'user' as const,
@@ -267,7 +267,7 @@ describe('§14 #10: a session export redacts profile values', () => {
   });
 });
 
-describe('§14 #9: the at-rest journal and error display carry no profile value', () => {
+describe('the at-rest journal and error display carry no profile value', () => {
   test('an at-rest line with a profile value is masked at write time', async () => {
     await installedStore();
     const line = JSON.stringify({
@@ -289,7 +289,7 @@ describe('§14 #9: the at-rest journal and error display carry no profile value'
   });
 });
 
-describe('§11.2 / §14 #12: the open tier is injected, the closed tier never is', () => {
+describe('the open tier is injected, the closed tier never is', () => {
   test('the rendered block carries the open tier and not one closed-tier value', async () => {
     const store = await installedStore();
     const block = renderOpenTierBlock(store);
@@ -351,7 +351,7 @@ describe('§11.2 / §14 #12: the open tier is injected, the closed tier never is
   });
 });
 
-describe('§10 / §14 #19: third-party personal data', () => {
+describe('third-party personal data', () => {
   test('People content is absent from context and from exports, and reachable only by name', async () => {
     const store = await installedStore();
 

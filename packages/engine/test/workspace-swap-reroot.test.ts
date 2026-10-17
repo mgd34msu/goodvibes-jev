@@ -34,7 +34,7 @@ function cleanup(...dirs: string[]): void {
 }
 
 // ---------------------------------------------------------------------------
-// B1, rerootStores is called with the new working directory
+// rerootStores is called with the new working directory
 // ---------------------------------------------------------------------------
 
 describe('WorkspaceSwapManager: rerootStores is called on swap', () => {

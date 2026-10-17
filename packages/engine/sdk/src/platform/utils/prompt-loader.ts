@@ -44,7 +44,7 @@ export function readPromptFile(
   try {
     content = readFileSync(resolved, 'utf-8');
   } catch (err) {
-    // Fix #5: distinguish ENOENT (expected miss) from other errors (unexpected)
+    // Distinguish ENOENT (expected miss) from other errors (unexpected)
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') {
       logger.debug('System prompt file not found', { path: resolved });
@@ -70,7 +70,7 @@ export function readPromptFile(
         if (included) result.push(included);
       }
     } else {
-      // Fix #1: unescape @@ to literal @ (preserving leading whitespace)
+      // Unescape @@ to literal @ (preserving leading whitespace)
       const atIdx = line.indexOf('@@');
       if (trimmed.startsWith('@@') && atIdx >= 0) {
         result.push(line.slice(0, atIdx) + line.slice(atIdx + 1));

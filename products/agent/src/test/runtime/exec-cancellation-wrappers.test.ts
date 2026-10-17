@@ -3,7 +3,7 @@
  * Only judgment answers are scripted; exec still launches and stops a real
  * foreground child. Engine dependencies use public package exports only.
  */
-import { expect, spyOn, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,12 +14,6 @@ import { AGENT_OWNER_TERMINAL_GUARD } from '../../runtime/agent-exec-posture.ts'
 import { installAgentToolPolicyGuard } from '../../tools/agent-tool-policy-guard.ts';
 import { installAgentPlatformBoundaryGuard } from '../../tools/agent-platform-boundary-policy.ts';
 import { installToolExecutionSafetyGuard } from '../../tools/tool-execution-safety.ts';
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => { resolve = done; });
-  return { promise, resolve };
-}
 
 async function within<T>(promise: Promise<T>, label: string, timeoutMs = 2_000): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -123,10 +117,7 @@ for (const progress of [false, true]) {
       expect(JSON.parse(String(result.output)).timed_out).toBeUndefined();
       await waitFor(() => !alive(pid!), 'child termination');
       expect(existsSync(sentinel)).toBe(false);
-      const boundary = answers.requests.find((request) => request.context?.battery === 'engine.gate.boundary');
-      const terminal = answers.requests.find((request) => request.context?.battery === 'engine.tools.owner-terminal');
-      expect(boundary?.signal).toBe(controller.signal);
-      expect(terminal?.signal).toBe(controller.signal);
+      expect(answers.requests.filter(request => ['engine.gate.boundary', 'engine.tools.owner-terminal'].includes(request.context?.battery ?? ''))).toHaveLength(0);
       // Cancellation is per call. The same wrapped registry remains usable.
       const next = await registry.execute('after-cancel', 'exec', {
         commands: [{ cmd: `printf recovered > ${quote(sentinel)}`, timeout_ms: 2_000 }],
@@ -184,102 +175,34 @@ test('Agent-wrapped exec distinguishes a real timeout kill from cancellation', a
   }
 }, 10_000);
 
-for (const battery of ['engine.gate.boundary', 'engine.tools.owner-terminal']) {
-  for (const lateAllows of [true, false]) {
-    test(`Agent wrappers cancel a pending ${battery} read before its late ${lateAllows ? 'allow' : 'deny'}`, async () => {
-      const root = mkdtempSync(join(tmpdir(), 'agent-exec-wrapper-pending-'));
-      const answers = readings(lateAllows ? null : battery === 'engine.gate.boundary' ? 'catastrophic' : 'owner-terminal');
-      const started = deferred();
-      const release = deferred();
-      const readReturned = deferred();
-      const controller = new AbortController();
-      let readingSignal: AbortSignal | undefined;
-      const previous = installJudgmentPort({
-        model: answers.port.model,
-        async ask(request) {
-          if (request.context?.battery !== battery) return answers.port.ask(request);
-          readingSignal = request.signal;
-          started.resolve();
-          await release.promise; // An uncooperative remote reader ignores abort.
-          try { return await answers.port.ask(request); }
-          finally { readReturned.resolve(); }
-        },
-      });
-      const { registry, manager } = pipeline(root);
-      const launches = spyOn(Bun, 'spawn');
-      const marker = join(root, 'must-not-launch');
-      const pending = registry.execute('cancel-pending-policy', 'exec', {
-        commands: [{ cmd: `printf late > ${quote(marker)}`, timeout_ms: 2_000 }],
-      }, { signal: controller.signal });
-      try {
-        await within(started.promise, 'policy reading startup');
-        expect(readingSignal).toBe(controller.signal);
-        controller.abort(new Error('cancel pending Agent admission'));
-        // Must settle BEFORE the held reader is released.
-        const result = await within(pending, 'pending policy cancellation');
-        expect(result).toMatchObject({ callId: 'cancel-pending-policy', success: false, cancelled: true });
-        expect(JSON.parse(String(result.output))).toEqual({ cancelled: true });
-        expect(launches).not.toHaveBeenCalled();
-        release.resolve();
-        await within(readReturned.promise, 'late policy answer');
-        await Bun.sleep(0);
-        expect(launches).not.toHaveBeenCalled();
-        expect(existsSync(marker)).toBe(false);
-      } finally {
-        release.resolve();
-        controller.abort();
-        await within(pending, 'pending policy cleanup').catch(() => undefined);
-        launches.mockRestore();
-        await manager.close();
-        installJudgmentPort(previous);
-        rmSync(root, { recursive: true, force: true });
-      }
-    }, 10_000);
-  }
-}
-
-test('the cancellation-capable Agent chain still enforces foreground, catastrophic and owner-terminal gates', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'agent-exec-wrapper-gates-'));
-  const answers = readings();
-  const previous = installJudgmentPort(answers.port);
-  const { registry, manager } = pipeline(root);
-  const marker = join(root, 'allowed-control');
-  const controller = new AbortController();
+test('a cancelled Agent call cannot start a child through the wrappers', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'agent-exec-wrapper-cancelled-'));
+  const answers = readings(); const previous = installJudgmentPort(answers.port);
+  const { registry, manager } = pipeline(root); const controller = new AbortController();
+  const marker = join(root, 'must-not-launch'); controller.abort(new Error('cancel before dispatch'));
   try {
-    const control = await registry.execute('allowed-control', 'exec', {
-      commands: [{ cmd: `printf allowed > ${quote(marker)}`, timeout_ms: 2_000 }],
-    }, { signal: controller.signal });
-    expect(control.success).toBe(true);
-    expect(readFileSync(marker, 'utf8')).toBe('allowed');
-    const launches = spyOn(Bun, 'spawn');
-    try {
-      const blocked = join(root, 'blocked');
-      const command = { cmd: `printf blocked > ${quote(blocked)}`, timeout_ms: 2_000 };
-      for (const args of [
-        { commands: [{ ...command, background: true }] },
-        { commands: [command], parallel: true },
-        { commands: [command], file_ops: [{ op: 'copy', source: marker, destination: blocked }] },
-      ]) {
-        const denied = await registry.execute('product-denial', 'exec', args, { signal: controller.signal });
-        expect(denied.success).toBe(false);
-        expect(denied.error).toContain('foreground, serial');
-      }
-      for (const denial of ['catastrophic', 'owner-terminal'] as const) {
-        installJudgmentPort(readings(denial).port);
-        const result = await registry.execute(denial, 'exec', {
-          // Distinct commands keep cached boundary readings separate.
-          commands: [{ cmd: `${command.cmd}-${denial}`, timeout_ms: 2_000 }],
-        }, { signal: controller.signal });
-        expect(result.success).toBe(false);
-        expect(JSON.parse(String(result.output))).toMatchObject({ denied: true });
-        expect(String(result.output)).toContain(denial === 'catastrophic' ? 'safety block' : "owner's terminal is untouchable");
-      }
-      expect(launches).not.toHaveBeenCalled();
-      expect(existsSync(blocked)).toBe(false);
-    } finally { launches.mockRestore(); }
-  } finally {
-    await manager.close();
-    installJudgmentPort(previous);
-    rmSync(root, { recursive: true, force: true });
-  }
+    await expect(registry.execute('cancelled', 'exec', { commands: [{ cmd: `printf late > ${quote(marker)}` }] }, { signal: controller.signal })).rejects.toThrow('the judgment call was cancelled');
+     expect(existsSync(marker)).toBe(false); expect(answers.requests).toHaveLength(0);
+  } finally { await manager.close(); installJudgmentPort(previous); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('Agent wrappers preserve supported background, parallel and file operations', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'agent-exec-wrapper-modes-'));
+  const answers = readings('catastrophic'); const previous = installJudgmentPort(answers.port);
+  const { registry, manager } = pipeline(root);
+  try {
+    const source = join(root, 'source'); writeFileSync(source, 'copy contents');
+    for (const [index, mode] of ['background', 'parallel', 'file_ops'].entries()) {
+      const marker = join(root, `completed-${index}`); const copy = join(root, 'copy');
+      const command = { cmd: `printf completed > ${quote(marker)}`, timeout_ms: 2_000 };
+      const args = mode === 'background' ? { commands: [{ ...command, background: true }] }
+        : mode === 'parallel' ? { commands: [command], parallel: true }
+        : { commands: [command], file_ops: [{ op: 'copy', source, destination: copy }] };
+      const result = await registry.execute(`mode-${mode}`, 'exec', args);
+      expect(result.success).toBe(true); await waitFor(() => existsSync(marker), `${mode} completion`);
+      expect(readFileSync(marker, 'utf8')).toBe('completed');
+      if (mode === 'file_ops') expect(readFileSync(copy, 'utf8')).toBe('copy contents');
+    }
+    expect(answers.requests.filter(request => ['engine.gate.boundary', 'engine.tools.owner-terminal'].includes(request.context?.battery ?? ''))).toHaveLength(0);
+  } finally { await manager.close(); installJudgmentPort(previous); rmSync(root, { recursive: true, force: true }); }
 });

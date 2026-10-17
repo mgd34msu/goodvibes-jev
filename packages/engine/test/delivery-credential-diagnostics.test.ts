@@ -38,12 +38,12 @@ for (const mode of ['default', 'structural'] as const) {
       expect(published).not.toContain('owned-reference.json');
       expect(published).toContain('resolution-failed');
     } else {
-      expect(published).not.toContain(sentinel);
+      expect(published).toContain('JSON Parse error');
       expect(published).toContain('owned-reference.json');
-      expect(published).toContain('[REDACTED]');
+      expect(published).toContain(sentinel);
     }
   });
-  test(`registry ${mode} diagnostics preserve null resolution without a raw provider error`, async () => {
+  test(`registry ${mode} diagnostics preserve null resolution with the configured error detail`, async () => {
     const { root, ref, logs } = fixture();
     const file = join(root, 'services.json');
     writeFileSync(file, JSON.stringify({ ntfy: { authType: 'bearer', tokenRef: ref } }));
@@ -53,9 +53,9 @@ for (const mode of ['default', 'structural'] as const) {
     const published = JSON.stringify(logs);
     if (mode === 'structural') { expect(published).not.toContain(sentinel); expect(published).toContain('resolution-failed'); }
     else {
-      expect(published).not.toContain(sentinel);
+      expect(published).toContain('JSON Parse error');
       expect(published).toContain('owned-reference.json');
-      expect(published).toContain('[REDACTED]');
+      expect(published).toContain(sentinel);
     }
   });
   test(`secret store ${mode} diagnostics keep unvalidated envelope text private`, async () => {

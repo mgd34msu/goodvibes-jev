@@ -75,7 +75,7 @@ function buildHealthContext(record: ProviderHealthRecord | undefined): ProviderH
 function buildCapabilityFlags(model: ModelDefinition): CapabilityFlags {
   return {
     reasoning: model.capabilities?.reasoning ?? false,
-    caching: false, // caching capability is provider-level; enriched separately if needed
+    caching: false, // Provider-level cache support is not part of ModelDefinition capabilities.
     toolCalling: model.capabilities?.toolCalling ?? false,
     multimodal: model.capabilities?.multimodal ?? false,
     codeEditing: model.capabilities?.codeEditing ?? false,

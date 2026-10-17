@@ -89,7 +89,7 @@ function fixture(kind: 'config' | 'secret-config' | 'subscription' = 'config') {
 test('two fresh child config plans retain parent currentness through exact own mutations', async () => {
   const f = fixture(); expect(await f.run()).toMatchObject({ success: true });
   expect(f.writes).toBe(2); expect(f.config.get('provider.model')).toBe('openai:synthetic-two');
-  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(3);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
 });
 test('a native completed mutation refuses same-owner ABA and physical store replacement', () => {
   const f = fixture(); const mutation = f.config.prepareSettingMutation({ operation: 'set', key: 'provider.model', value: 'openai:synthetic-completed' });
@@ -125,21 +125,21 @@ test('postcommit cancellation retains the authentic child receipt and dispatches
   const result = await f.run(); expect(result).toMatchObject({ success: false, cancelled: true });
   expect(JSON.parse(result.output ?? '')).toEqual({ status: 'committed', completedPaths: [f.config.getConfigPath()] });
   expect(f.writes).toBe(1); expect(f.config.get('provider.model')).toBe('openai:synthetic-one');
-  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(2);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
 });
 
 test('later parent cancellation preserves its prior private receipt without reviving authority', async () => {
   const f = fixture(); f.setAfterFirst(() => f.controller.abort());
   const result = await f.run(); expect(result).toMatchObject({ success: false, cancelled: true });
   expect(JSON.parse(result.output ?? '')).toEqual({ status: 'committed', completedPaths: [f.config.getConfigPath()] });
-  expect(f.writes).toBe(1); expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(2);
+  expect(f.writes).toBe(1); expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
 });
 
 test('postcommit unrelated owner mutation preserves the receipt and holds remaining child work', async () => {
   const f = fixture(); f.config.subscribe('provider.model', () => f.config.save());
   const result = await f.run(); expect(result.success).toBe(false);
   expect(JSON.parse(result.output ?? '')).toEqual({ status: 'committed', completedPaths: [f.config.getConfigPath()] });
-  expect(f.writes).toBe(1); expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(2);
+  expect(f.writes).toBe(1); expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
 });
 
 test('protected native targets merge unrelated fields while retaining actual consumed keys', () => {

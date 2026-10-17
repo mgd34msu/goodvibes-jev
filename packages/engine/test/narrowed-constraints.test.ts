@@ -207,14 +207,17 @@ describe('Anthropic max_tokens matches what the provider publishes', () => {
     let body: Record<string, unknown> = {};
     globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
       body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      return new Response(
-        JSON.stringify({
-          content: [{ type: 'text', text: 'ok' }],
-          stop_reason: 'end_turn',
-          usage: { input_tokens: 1, output_tokens: 1 },
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      );
+      const events = [
+        { type: 'message_start', message: { id: 'fixture', type: 'message', role: 'assistant', content: [], model,
+          stop_reason: null, usage: { input_tokens: 1, output_tokens: 0 } } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 1 } },
+        { type: 'message_stop' },
+      ];
+      return new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''),
+        { headers: { 'content-type': 'text/event-stream' } });
     }) as typeof globalThis.fetch;
     try {
       await provider.chat({
@@ -270,14 +273,17 @@ describe('Anthropic max_tokens matches what the provider publishes', () => {
         );
       }
       body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      return new Response(
-        JSON.stringify({
-          content: [{ type: 'text', text: 'ok' }],
-          stop_reason: 'end_turn',
-          usage: { input_tokens: 1, output_tokens: 1 },
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      );
+      const events = [
+        { type: 'message_start', message: { id: 'fixture', type: 'message', role: 'assistant', content: [], model: 'claude-future-9',
+          stop_reason: null, usage: { input_tokens: 1, output_tokens: 0 } } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 1 } },
+        { type: 'message_stop' },
+      ];
+      return new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''),
+        { headers: { 'content-type': 'text/event-stream' } });
     }) as typeof globalThis.fetch;
     try {
       const provider = new AnthropicProvider('test-key-not-real');

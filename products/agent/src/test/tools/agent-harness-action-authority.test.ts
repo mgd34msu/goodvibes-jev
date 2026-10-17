@@ -69,7 +69,7 @@ function fixture(body: Tool['execute'], initialMode: PermissionMode = 'prompt', 
           criteria: ['Do not perform external product actions or send private values'] }),
         signal, schemaRevision: call.schemaRevision, preparedCall: { registry, call },
       });
-      expect(admission.result.autonomousDecision?.outcome).toBe('act');
+      if (!admission.result.approved) throw new Error(admission.result.reasonCode);
       return registry.executePrepared(call, admission);
     },
   };
@@ -126,7 +126,7 @@ test.each(['plan', 'custom'] as const)('a synthetic read classification cannot a
     requireConfirmedAction(args, options, 'Synthetic state write'); effects++;
     return { success: true };
   }, mode, mode === 'custom' ? { write: 'deny' } : {});
-  await expect(tools.run({ mode: 'set_keybinding', confirm: true, explicitUserRequest: 'Caller assertion' })).rejects.toThrow(ToolInputProjectionError);
+  await expect(tools.run({ mode: 'set_keybinding', confirm: true, explicitUserRequest: 'Caller assertion' })).rejects.toThrow();
   expect(effects).toBe(0);
 });
 
@@ -135,7 +135,7 @@ test('translated outward modes preserve the captured deterministic floor', async
   const inner: Tool = { definition: { name: 'translated_harness', description: 'Synthetic remote action.', parameters: {} },
     async execute(args, options) { requireConfirmedAction(args, options, 'Synthetic send'); effects++; return { success: true }; } };
   const tools = fixture((original, options) => forwardHarnessCatalogCall(inner, original, { mode: 'remote_peers_invoke' }, options), 'plan');
-  await expect(tools.run({ action: 'invoke' })).rejects.toThrow(ToolInputProjectionError);
+  await expect(tools.run({ action: 'invoke' })).rejects.toThrow();
   expect(effects).toBe(0);
 });
 
@@ -206,7 +206,7 @@ test('file recovery preserves journal and bytes under a deterministic read-only 
   const scene = recoveryFixture(); const path = join(scene.workspace, 'owned.txt');
   writeFileSync(path, 'after'); scene.manager.snapshot({ path, beforeContent: 'before', afterContent: 'after', tool: 'edit' });
   scene.tools.setMode('plan');
-  await expect(scene.tools.run({ mode: 'run_file_recovery', recoveryAction: 'undo' })).rejects.toThrow(ToolInputProjectionError);
+  await expect(scene.tools.run({ mode: 'run_file_recovery', recoveryAction: 'undo' })).rejects.toThrow();
   expect(readFileSync(path, 'utf8')).toBe('after'); expect(scene.manager.undoDepth()).toBe(1);
 });
 

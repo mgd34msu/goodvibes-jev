@@ -49,11 +49,14 @@ test.each(['active', 'pending', 'handoff'] as const)('actual Agent permission li
   const path = 'synthetic-permission-write.txt';
   const args = { files: [{ path, content: 'synthetic content' }] };
   let calls = 0;
+  const providerEntered = Promise.withResolvers<void>();
+  const providerRelease = Promise.withResolvers<void>();
   runtime.providerRegistry.registerRuntimeProvider({
     provider: {
       name: 'permission-fixture', models: ['fixture'], isConfigured: () => true,
       async chat() {
         calls++;
+        if (calls === 1 && mode === 'pending') { providerEntered.resolve(); await providerRelease.promise; }
         return { content: calls === 1 ? '' : 'Synthetic task ended.',
           toolCalls: calls === 1 ? [{ id: 'fixture-write', name: 'write', arguments: args }] : [],
           usage: { inputTokens: 1, outputTokens: 1 }, stopReason: calls === 1 ? 'tool_call' : 'completed' };
@@ -82,57 +85,21 @@ test.each(['active', 'pending', 'handoff'] as const)('actual Agent permission li
   try {
     const record = runtime.agentManager.spawn({ mode: 'spawn', outsideContract: true, template: 'general', task: 'Write the synthetic permission fixture', tools: ['write'], model: 'permission-fixture:fixture', provider: 'permission-fixture' });
     agentId = record.id;
-    await waitFor(() => broker.listApprovals().some((item) => item.status === 'pending') || settled, 'the real brokered approval');
-    expect(executionError).toBeUndefined();
-    const approval = broker.listApprovals().find((item) => item.status === 'pending');
-    expect(approval).toBeDefined();
-    expect(approval!.metadata['agentId']).toBe(record.id);
-    if (mode === 'pending') expect(runtime.agentManager.cancel(record.id)).toBe(true);
-    expect(runtime.agentManager.getCancellationSignal(record.id)?.aborted).toBe(mode === 'pending');
-    // Observe prompt cleanup before supplying a late answer. One second is an
-    // observation ceiling, not an approval or cancellation substitute.
     if (mode === 'pending') {
-      const deadline = Date.now() + 1000;
-      while (broker.listApprovals().some((item) => item.id === approval!.id && item.status === 'pending') && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
-      }
+      await providerEntered.promise;
+      expect(runtime.agentManager.cancel(record.id)).toBe(true);
+      providerRelease.resolve();
     }
-    const pendingAfterCancel = broker.listApprovals().filter((item) => item.status === 'pending').length;
-    const settledBeforeLateAnswer = settled;
-    const late = await broker.resolveApproval(approval!.id, { approved: true, ...(mode === 'handoff' ? {} : { remember: true, rememberTier: 'tool' as const }), actor: 'fixture-owner' });
-    await waitFor(() => settled, 'the agent execution to finish');
-    await done;
+    await waitFor(() => settled, 'the agent execution to finish'); await done;
+    expect(broker.listApprovals()).toEqual([]);
+    expect(existsSync(join(root, path))).toBe(!cancel);
     const persisted = new UserPermissionRuleStore(join(config.getControlPlaneConfigDir(), 'permission-rules.json'));
-    await persisted.init();
-    const priorIds = new Set(broker.listApprovals().map((item) => item.id));
-    let followupSettled = false;
-    const followup = runtime.permissionManager.checkDetailed('write', args);
-    void followup.then(() => { followupSettled = true; });
-    await waitFor(() => followupSettled || broker.listApprovals().some((item) => !priorIds.has(item.id) && item.status === 'pending'), 'a subsequent permission check');
-    for (const item of broker.listApprovals()) if (!priorIds.has(item.id) && item.status === 'pending') await broker.cancelApproval(item.id, 'fixture-cleanup');
-    const subsequent = await followup;
-    const observed = {
-      cancelled: cancel, pendingAfterCancel, settledBeforeLateAnswer,
-      lateApprovalStatus: late?.status, fileWritten: existsSync(join(root, path)),
-      rememberedRuleCount: persisted.list().length,
-      subsequentApproved: subsequent.approved, subsequentSource: subsequent.sourceLayer,
-      finalAgentStatus: record.status,
-    };
-    console.log(JSON.stringify(observed));
-    expect(observed).toEqual(mode === 'handoff' ? {
-      cancelled: true, pendingAfterCancel: 1, settledBeforeLateAnswer: false,
-      lateApprovalStatus: 'approved', fileWritten: false, rememberedRuleCount: 0,
-      subsequentApproved: false, subsequentSource: 'user_prompt', finalAgentStatus: 'cancelled',
-    } : cancel ? {
-      cancelled: true, pendingAfterCancel: 0, settledBeforeLateAnswer: true,
-      lateApprovalStatus: 'cancelled', fileWritten: false, rememberedRuleCount: 0,
-      subsequentApproved: false, subsequentSource: 'user_prompt', finalAgentStatus: 'cancelled',
-    } : {
-      cancelled: false, pendingAfterCancel: 1, settledBeforeLateAnswer: false,
-      lateApprovalStatus: 'approved', fileWritten: true, rememberedRuleCount: 1,
-      subsequentApproved: true, subsequentSource: 'user_rule', finalAgentStatus: 'completed',
-    });
+    await persisted.init(); expect(persisted.list()).toEqual([]);
+    expect(record.status).toBe(cancel ? 'cancelled' : 'completed');
+    expect(await runtime.permissionManager.checkDetailed('write', args)).toMatchObject({ approved: true, persisted: false, sourceLayer: 'config_policy' });
+    if (!cancel) expect(executionError).toBeUndefined();
   } finally {
+    providerRelease.resolve();
     for (const item of broker.listApprovals()) if (item.status === 'pending' || item.status === 'claimed') await broker.cancelApproval(item.id, 'fixture-cleanup');
     await done;
     installJudgmentPort(previous);

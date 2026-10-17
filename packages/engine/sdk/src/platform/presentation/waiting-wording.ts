@@ -1,23 +1,8 @@
 /**
- * waiting-wording.ts, the honest waiting-state WORDING contract, extracted
- * from `goodvibes-tui` src/renderer/ui-factory.ts:554-584 (the phrase-selection
- * branch inside createThinkingFragment; the companion :522-552
- * computeStallInfo/computeRenderStallInfo signal computation stays
- * renderer-local, each renderer has its own stream-metrics shape to derive
- * a WaitingState from).
- *
- * The split this hoists is a DATA/pure-function contract: a renderer decides
- * WHICH state it is in (from its own approval/stall/reconnect signals, in the
- * TUI's precedence order, approval beats reconnect beats pre-first-token
- * beats stalled beats thinking) and calls waitingPhrase(state, ctx) for the
- * exact wording. Neither renderer should carry its own copy of these five
- * strings/rotation, that duplication is exactly what the renderer/input parity audit found
- * (the agent's ui-factory.ts:308-313 was rotating-only, with no honest
- * stall/reconnect/approval split at all).
- *
- * PURE, no fs, no terminal I/O, no timers. Gradient color, spinner glyph,
- * tok/s and elapsed-time suffixes stay renderer-owned (ui-factory.ts's
- * createThinkingFragment composes those around the phrase this returns).
+ * Pure waiting-state wording shared by the TUI and Agent.
+ * Each renderer derives its own state, with approval preceding reconnect,
+ * pre-first-token, stalled, and thinking states, then calls waitingPhrase.
+ * Colors, glyphs, elapsed time and token-rate suffixes remain renderer-owned.
  */
 
 import { THINKING_PHRASES } from './thinking-phrases.js';

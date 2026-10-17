@@ -5,17 +5,17 @@
  * No constructor guard, no request-time Origin check.
  *
  * Opt-in (enforceCors: true, enterprise / multi-user / internet-exposed):
- *   SG-1: Startup guard, hostMode=network + enforceCors=true + allowedOrigins=[] throws SECURITY_UNSAFE_ORIGIN_CONFIG
- *   SG-2: Startup guard, hostMode=network + enforceCors=true + allowedOrigins non-empty constructs OK
- *   RT-1: Request-time, enforceCors=true + loopback + empty allowedOrigins + no Origin header → 200/pass
- *   RT-2: Request-time, enforceCors=true + loopback + empty allowedOrigins + Origin header → 403 CORS_NOT_CONFIGURED
- *   RT-3: Request-time, enforceCors=true + network + allowedOrigins set + wrong Origin → 403 ORIGIN_NOT_ALLOWED
- *   RT-4: Request-time, enforceCors=true + network + allowedOrigins set + correct Origin → 200/pass
+ *   Startup guard, hostMode=network + enforceCors=true + allowedOrigins=[] throws SECURITY_UNSAFE_ORIGIN_CONFIG
+ *   Startup guard, hostMode=network + enforceCors=true + allowedOrigins non-empty constructs OK
+ *   Request-time, enforceCors=true + loopback + empty allowedOrigins + no Origin header → 200/pass
+ *   Request-time, enforceCors=true + loopback + empty allowedOrigins + Origin header → 403 CORS_NOT_CONFIGURED
+ *   Request-time, enforceCors=true + network + allowedOrigins set + wrong Origin → 403 ORIGIN_NOT_ALLOWED
+ *   Request-time, enforceCors=true + network + allowedOrigins set + correct Origin → 200/pass
  *
  * Permissive default (enforceCors unset / false):
- *   PD-1: Default config + network mode + empty allowedOrigins constructs OK (no startup guard)
- *   PD-2: Default config + evil Origin header passes through (no request-time check)
- *   PD-3: enforceCors=false explicit + network + empty allowedOrigins constructs OK
+ *   Default config + network mode + empty allowedOrigins constructs OK (no startup guard)
+ *   Default config + evil Origin header passes through (no request-time check)
+ *   enforceCors=false explicit + network + empty allowedOrigins constructs OK
  */
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
@@ -33,7 +33,7 @@ const disposables = trackDisposables();
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
 
 function tempDir(suffix: string): string {
-  const d = join(tmpdir(), `gv-sec07-${suffix}-${Date.now()}`);
+  const d = join(tmpdir(), `gv-origin-${suffix}-${Date.now()}`);
   mkdirSync(d, { recursive: true });
   return d;
 }
@@ -67,8 +67,8 @@ function makeListener(opts: {
   allowedOrigins?: string[];
   enforceCors?: boolean;
 }): { listener: HttpListener; dispatch: (req: Request) => Promise<Response> } {
-  let capturedFetch: ((req: Request) => Promise<Response>) | null = null;
-  const mockServe = (options: { fetch: (req: Request) => Promise<Response> }) => {
+  let capturedFetch: ((req: Request, server: { requestIP(req: Request): { address: string } }) => Promise<Response>) | null = null;
+  const mockServe = (options: { fetch: (req: Request, server: { requestIP(req: Request): { address: string } }) => Promise<Response> }) => {
     capturedFetch = options.fetch;
     return { stop: () => {} } as ReturnType<typeof Bun.serve>;
   };
@@ -90,13 +90,13 @@ function makeListener(opts: {
     listener,
     dispatch: (req) => {
       if (!capturedFetch) throw new Error('listener not started');
-      return capturedFetch(req);
+      return capturedFetch(req, { requestIP: () => ({ address: '127.0.0.1' }) });
     },
   };
 }
 
 describe('startup guard (opt-in via enforceCors)', () => {
-  test('SG-1: enforceCors=true + hostMode=network + allowedOrigins=[] throws SECURITY_UNSAFE_ORIGIN_CONFIG', () => {
+  test('enforceCors=true + hostMode=network + allowedOrigins=[] throws SECURITY_UNSAFE_ORIGIN_CONFIG', () => {
     const dir = tempDir('sg1');
     try {
       const configManager = makeConfigManager(dir, 'network');
@@ -115,7 +115,7 @@ describe('startup guard (opt-in via enforceCors)', () => {
     }
   });
 
-  test('SG-2: enforceCors=true + hostMode=network + allowedOrigins non-empty constructs OK', () => {
+  test('enforceCors=true + hostMode=network + allowedOrigins non-empty constructs OK', () => {
     const dir = tempDir('sg2');
     try {
       const configManager = makeConfigManager(dir, 'network');
@@ -139,7 +139,7 @@ describe('startup guard (opt-in via enforceCors)', () => {
 });
 
 describe('request-time origin enforcement (enforceCors=true)', () => {
-  test('RT-1: loopback + empty allowedOrigins + no Origin header → request passes', async () => {
+  test('loopback + empty allowedOrigins + no Origin header → request passes', async () => {
     const dir = tempDir('rt1');
     try {
       const configManager = makeConfigManager(dir, 'local');
@@ -156,7 +156,7 @@ describe('request-time origin enforcement (enforceCors=true)', () => {
     }
   });
 
-  test('RT-2: loopback + empty allowedOrigins + Origin header → 403 CORS_NOT_CONFIGURED', async () => {
+  test('loopback + empty allowedOrigins + Origin header → 403 CORS_NOT_CONFIGURED', async () => {
     const dir = tempDir('rt2');
     try {
       const configManager = makeConfigManager(dir, 'local');
@@ -175,7 +175,7 @@ describe('request-time origin enforcement (enforceCors=true)', () => {
     }
   });
 
-  test('RT-3: network + allowedOrigins set + wrong Origin → 403 ORIGIN_NOT_ALLOWED', async () => {
+  test('network + allowedOrigins set + wrong Origin → 403 ORIGIN_NOT_ALLOWED', async () => {
     const dir = tempDir('rt3');
     try {
       const configManager = makeConfigManager(dir, 'network');
@@ -196,7 +196,7 @@ describe('request-time origin enforcement (enforceCors=true)', () => {
     }
   });
 
-  test('RT-4: network + allowedOrigins set + correct Origin → request passes', async () => {
+  test('network + allowedOrigins set + correct Origin → request passes', async () => {
     const dir = tempDir('rt4');
     try {
       const configManager = makeConfigManager(dir, 'network');
@@ -217,7 +217,7 @@ describe('request-time origin enforcement (enforceCors=true)', () => {
 });
 
 describe('permissive default (enforceCors unset)', () => {
-  test('PD-1: default config + hostMode=network + allowedOrigins=[] constructs without throwing', () => {
+  test('default config + hostMode=network + allowedOrigins=[] constructs without throwing', () => {
     const dir = tempDir('pd1');
     try {
       const configManager = makeConfigManager(dir, 'network');
@@ -236,7 +236,7 @@ describe('permissive default (enforceCors unset)', () => {
     }
   });
 
-  test('PD-2: default config + evil Origin header passes through (no request-time check)', async () => {
+  test('default config + evil Origin header passes through (no request-time check)', async () => {
     const dir = tempDir('pd2');
     try {
       const configManager = makeConfigManager(dir, 'local');
@@ -253,7 +253,7 @@ describe('permissive default (enforceCors unset)', () => {
     }
   });
 
-  test('PD-3: enforceCors=false explicit + hostMode=network + allowedOrigins=[] constructs without throwing', () => {
+  test('enforceCors=false explicit + hostMode=network + allowedOrigins=[] constructs without throwing', () => {
     const dir = tempDir('pd3');
     try {
       const configManager = makeConfigManager(dir, 'network');

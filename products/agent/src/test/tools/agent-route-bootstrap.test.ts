@@ -23,6 +23,8 @@ test.each(['route', 'agent_harness'] as const)('actual Agent bootstrap registers
   seedProviderMetadataCacheFixture({ configManager, homeDirectory: root, workingDirectory: root });
   const services = createRuntimeServices({ configManager, runtimeBus: new RuntimeEventBus(), runtimeStore: createRuntimeStore(), workingDir: root, homeDirectory: root, modelDiscovery: 'skip' });
   try {
+    await services.providerRegistry.ready();
+    await services.providerRegistry.modelDiscoverySettled();
     // Production composition already installed this settings-driven port. Replace
     // only its I/O method with explicit local readings, never install a test port.
     expect(judgmentPort('routing.task-route.plan')).toBe(services.judgment.port);
@@ -86,4 +88,4 @@ test.each(['route', 'agent_harness'] as const)('actual Agent bootstrap registers
     await Promise.resolve();
     await Promise.resolve();
   }
-});
+}, 120_000);

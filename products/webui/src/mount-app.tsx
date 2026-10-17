@@ -10,26 +10,16 @@
  */
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { IdentityBoundary } from './components/auth/IdentityBoundary';
 import App from './App';
 import { registerServiceWorker } from './lib/pwa/register-sw';
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: 1,
-      refetchOnWindowFocus: false,
-      staleTime: 10_000,
-    },
-  },
-});
 
 export function mountApp(root: HTMLElement): void {
   createRoot(root).render(
     <StrictMode>
-      <QueryClientProvider client={queryClient}>
+      <IdentityBoundary>
         <App />
-      </QueryClientProvider>
+      </IdentityBoundary>
     </StrictMode>,
   );
 

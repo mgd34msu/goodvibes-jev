@@ -150,7 +150,7 @@ describe('append-only retention sweeps for the life of the process, not only at 
     expect(APPEND_ONLY_SWEEP_INTERVAL_MS).toBeGreaterThanOrEqual(60 * 60 * 1000);
   });
 
-  test('RED: a periodic sweep fires more than once and reclaims on a LATER tick', () => {
+  test('a periodic sweep fires more than once and reclaims on a LATER tick', () => {
     const { roots: sweepRoots, recoveryDir } = recoveryRoots();
     const harness = makeTimerHarness();
     const outcomes: Array<number> = [];
@@ -233,7 +233,7 @@ describe('append-only retention sweeps for the life of the process, not only at 
     expect(captured.lines).toContain('[retention] append-only retention sweep reclaimed files');
   });
 
-  test('RED: the file-COUNT bound reclaims a store that is under both the age and size caps', () => {
+  test('the file-COUNT bound reclaims a store that is under both the age and size caps', () => {
     const { roots: sweepRoots, recoveryDir } = recoveryRoots();
     // Seven small, recent files: well inside the 30-day age cap and nowhere
     // near the 512 MB size cap. Age + size alone would leave every one.
@@ -260,7 +260,7 @@ describe('append-only retention sweeps for the life of the process, not only at 
 });
 
 describe('cross-process lock reclaims abandoned staging files', () => {
-  test('RED: an orphaned .gv-lock.new-* is reaped while an in-flight one survives', async () => {
+  test('an orphaned .gv-lock.new-* is reaped while an in-flight one survives', async () => {
     const dir = tempDir(`gv-lockstaging-${randomUUID()}-`);
     const lockPath = join(dir, '.gv-lock');
     const staleMs = 400;
@@ -326,7 +326,7 @@ describe('daemon receipts are bounded by age as well as count, and disclose a to
     return parsed.map((entry) => entry.id);
   }
 
-  test('RED: receipts past the age bound are retired at load and the reap is persisted', () => {
+  test('receipts past the age bound are retired at load and the reap is persisted', () => {
     const now = 1_700_000_000_000;
     const store = memoryIo(JSON.stringify([
       { id: 'ancient', text: 'updated from 1.0.0 to 1.0.1', at: now - 20 * DAY_MS },
@@ -365,7 +365,7 @@ describe('daemon receipts are bounded by age as well as count, and disclose a to
     expect(store.current()).toBe(before);
   });
 
-  test('RED: a torn receipt file is disclosed rather than silently emptied', () => {
+  test('a torn receipt file is disclosed rather than silently emptied', () => {
     const store = memoryIo('[{"id":"half-written","text":"upda');
     const warnSpy = spyOn(logger, 'warn') as Mock<typeof logger.warn>;
     const warnings: string[] = [];
@@ -435,7 +435,7 @@ describe('the last-session pointer is crash-safe and retires a dangling referent
     };
   }
 
-  test('RED: a torn pointer left by a crash mid-write is rejected, not served', () => {
+  test('a torn pointer left by a crash mid-write is rejected, not served', () => {
     const { surface } = tempSurface();
     mkdirSync(surface.sessionsDir, { recursive: true });
     const pointerPath = join(surface.sessionsDir, 'last-session.json');
@@ -463,7 +463,7 @@ describe('the last-session pointer is crash-safe and retires a dangling referent
     expect(readdirSync(surface.sessionsDir)).toEqual(['last-session.json']);
   });
 
-  test('RED: a pointer at a session that no longer exists is retired on load', () => {
+  test('a pointer at a session that no longer exists is retired on load', () => {
     const { surface } = tempSurface();
     writeLastSessionPointer('ghost-session', { surface });
     expect(readLastSessionPointer({ surface })).toBe('ghost-session');

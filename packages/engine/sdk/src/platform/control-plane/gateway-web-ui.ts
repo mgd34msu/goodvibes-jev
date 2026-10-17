@@ -1,4 +1,3 @@
-import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 function escapeHtmlAttribute(value: string): string {
@@ -551,7 +550,7 @@ export function renderControlPlaneGatewayWebUi(authTokenHint = ''): Response {
       };
       void (async () => {
         try {
-          const res = await instrumentedFetch('/api/control-plane/events?domains=' + encodeURIComponent(domains.join(',')), {
+          const res = await fetch('/api/control-plane/events?domains=' + encodeURIComponent(domains.join(',')), {
             headers: authHeaders(),
             signal: controller.signal,
           });
@@ -582,7 +581,7 @@ export function renderControlPlaneGatewayWebUi(authTokenHint = ''): Response {
     }
 
     async function postJson(url, body) {
-      const res = await instrumentedFetch(url, {
+      const res = await fetch(url, {
         method: 'POST',
         headers: authHeaders(),
         body: body ? JSON.stringify(body) : undefined,
@@ -605,7 +604,7 @@ export function renderControlPlaneGatewayWebUi(authTokenHint = ''): Response {
       const task = els.taskText.value.trim();
       if (!task) return;
       const sessionId = els.taskSession.value.trim();
-      const res = await instrumentedFetch('/task', {
+      const res = await fetch('/task', {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ task, ...(sessionId ? { sessionId, surfaceKind: 'web', surfaceId: 'surface:web' } : {}) }),
@@ -621,7 +620,7 @@ export function renderControlPlaneGatewayWebUi(authTokenHint = ''): Response {
       const sessionId = els.sessionId.value.trim();
       const message = els.sessionText.value.trim();
       if (!sessionId || !message) return;
-      const res = await instrumentedFetch('/api/sessions/' + encodeURIComponent(sessionId) + '/messages', {
+      const res = await fetch('/api/sessions/' + encodeURIComponent(sessionId) + '/messages', {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ body: message, surfaceKind: 'web', surfaceId: 'surface:web' }),
@@ -643,7 +642,7 @@ export function renderControlPlaneGatewayWebUi(authTokenHint = ''): Response {
       if (kind === 'every') payload.every = els.jobSchedule.value.trim();
       if (kind === 'cron') payload.cron = els.jobSchedule.value.trim();
       if (kind === 'at') payload.at = els.jobSchedule.value.trim();
-      const res = await instrumentedFetch('/api/automation/jobs', {
+      const res = await fetch('/api/automation/jobs', {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify(payload),
@@ -671,7 +670,7 @@ export function renderControlPlaneGatewayWebUi(authTokenHint = ''): Response {
       const jobId = target.getAttribute('data-job-id');
       if (!action || !jobId) return;
       if (action === 'delete') {
-        const res = await instrumentedFetch('/api/automation/jobs/' + encodeURIComponent(jobId), {
+        const res = await fetch('/api/automation/jobs/' + encodeURIComponent(jobId), {
           method: 'DELETE',
           headers: authHeaders(),
         });

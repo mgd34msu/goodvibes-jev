@@ -48,9 +48,9 @@ const cases: ReadonlyArray<readonly [string, Record<string, unknown>, Record<str
   ['read', { files: [{ path: 'ordinary.md' }] }], ['goodvibes_settings', { mode: 'set', key: 'display.theme', value: 'system' }],
   ['control', { mode: 'commands' }], ['task', { mode: 'list' }], ['team', { mode: 'list' }],
   ['worklist', { mode: 'list' }], ['packet', { mode: 'list' }], ['query', { mode: 'list' }],
-  ['fetch', { urls: [] }, { urls: [], parallel: false }],
-  ['find', { queries: [] }, { queries: [], parallel: false }],
-  ['web_search', { query: 'fixture' }, { query: 'fixture', safeSearch: 'moderate' }],
+  ['fetch', { urls: [] }],
+  ['find', { queries: [] }],
+  ['web_search', { query: 'fixture' }],
 ];
 
 describe('composed Agent policy execution options', () => {
@@ -83,8 +83,8 @@ describe('composed Agent policy execution options', () => {
     controller.abort(new Error('owner cancelled'));
     const error = await within(settled);
     expect(error).toBeInstanceOf(ToolError);
-    expect(error).toMatchObject({ code: 'TOOL_ERROR', toolName: name, message: '[REDACTED]', cause: controller.signal.reason });
-    expect(String(error)).not.toContain('owner cancelled');
+    expect(error).toMatchObject({ code: 'TOOL_ERROR', toolName: name, message: 'owner cancelled', cause: controller.signal.reason });
+    expect(String(error)).toContain('owner cancelled');
   });
 
   test('an already-aborted call never starts validation or the tool', async () => {
@@ -94,9 +94,9 @@ describe('composed Agent policy execution options', () => {
     const registry = registryWith([tool('read', async () => { calls++; return { success: true }; })]);
     const controller = new AbortController(); controller.abort(new Error('already cancelled'));
     // The registry now observes cancellation before argument repair begins;
-    // Its masked display retains the typed cancellation as private cause.
+    // Its diagnostic retains the typed cancellation as the cause.
     await expect(registry.execute('cancel', 'read', { files: [{ path: 'not-read.md' }] }, { signal: controller.signal })).rejects.toMatchObject({
-      code: 'TOOL_ERROR', toolName: 'read', message: '[REDACTED]', cause: { name: 'JudgmentError', kind: 'aborted' },
+      code: 'TOOL_ERROR', toolName: 'read', message: 'the judgment call was cancelled', cause: { name: 'JudgmentError', kind: 'aborted' },
     });
     expect(calls).toBe(0);
     expect(fake.requests.filter(request => 'hazard' in request.questions || 'secrets' in request.questions)).toHaveLength(0);
@@ -107,31 +107,13 @@ describe('composed Agent policy execution options', () => {
 });
 
 describe('pending policy judgment cancellation', () => {
-  for (const name of ['read', 'goodvibes_settings']) test(`${name} forwards the signal to judgment and discards a late allow`, async () => {
-    const started = deferred<AbortSignal | undefined>();
-    const release = deferred<void>();
-    const base = readings();
-    const port: JudgmentPort = { model: base.port.model, async ask(request) {
-      started.resolve(request.signal);
-      await release.promise;
-      return base.port.ask(request);
-    } };
-    installJudgmentPort(port);
+  for (const name of ['read', 'goodvibes_settings']) test(`${name} does not wait for a secondary semantic permission gate`, async () => {
+    const fake = readings(); installJudgmentPort(fake.port);
     let calls = 0;
     const registry = registryWith([tool(name, async () => { calls++; return { success: true }; })]);
-    const controller = new AbortController();
-    const args = name === 'read' ? { files: [{ path: 'pending.md' }] } : { mode: 'set', key: 'display.theme', value: 'system' };
-    const result = registry.execute('pending', name, args, { signal: controller.signal });
-    const settled = result.then(() => null, (error: unknown) => error);
-    expect(await started.promise).toBe(controller.signal);
-    controller.abort(new Error('cancelled during judgment'));
-    const error = await within(settled);
-    expect(error).toBeInstanceOf(ToolError);
-    expect(error).toMatchObject({ code: 'TOOL_ERROR', toolName: name, message: '[REDACTED]', cause: controller.signal.reason });
-    expect(String(error)).not.toContain('cancelled during judgment');
-    release.resolve();
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(calls).toBe(0);
+    const args = name === 'read' ? { files: [{ path: 'ordinary.md' }] } : { mode: 'set', key: 'display.theme', value: 'system' };
+    expect((await registry.execute('authorized', name, args)).success).toBe(true);
+    expect(calls).toBe(1); expect(fake.requests).toHaveLength(0);
   });
 
   test('an aborted secret reading cannot overwrite an active caller’s cached result', async () => {

@@ -81,7 +81,7 @@ function scene(screening = researchScreeningFixture(), extra: Record<string, unk
       sourceOf: () => ({ goal: 'Deliver the exact stored fixture review.', criteria: ['Use only the captured owned fixture draft and channel'] }),
       preparedCall: { registry, call }, signal, schemaRevision: call.schemaRevision,
     });
-    expect(admission.result.autonomousDecision?.outcome).toBe('act');
+    expect(admission.result.approved).toBe(true);
     return registry.executePrepared(call, admission);
   };
   return { context, root, path, paths, screening, registry, manager, prepare, run, delivery,
@@ -103,7 +103,8 @@ test('actual registered harness delivers an exact legacy native reference withou
   expect(JSON.stringify(readings.requests)).not.toContain(legacyId);
   expect(JSON.stringify(f.screening.calls)).not.toContain(legacyId);
   expect(result.output).not.toContain(legacyId);
-  expect(JSON.stringify(readings.requests)).toContain('Send the completed review to the owned fixture channel.');
+  expect(readings.requests).toHaveLength(0);
+  expect(JSON.stringify(f.screening.calls)).toContain('Send the completed review to the owned fixture channel.');
   const retry = await f.run({ mode: 'channel_draft_send', draftId: publicId });
   expect(retry.success).toBe(false);
   expect(retry.error).toContain('already sent');

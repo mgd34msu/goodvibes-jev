@@ -290,7 +290,7 @@ async function proveAutonomousRead(): Promise<void> {
       expect(results[0]?.success).toBe(true);
       expect(results[0]?.output).toContain('owned autonomous server parity receipt');
       expect(humans).not.toHaveBeenCalled();
-      expect(readings.requests.some(request => 'disposition' in request.questions)).toBe(true);
+      expect(readings.requests.some(request => 'disposition' in request.questions)).toBe(false);
     } finally { humans.mockRestore(); port.mockRestore(); installJudgmentPort(previous); }
   }
 
@@ -2876,6 +2876,7 @@ async function proveAutonomousRead(): Promise<void> {
     const config = makeConfig();
     config.setDynamic('conversationGate.mode', 'off');
     config.setDynamic('surfaces.telegram.enabled', true);
+    config.setDynamic('surfaces.telegram.webhookSecret', 'synthetic-telegram-secret');
     config.setDynamic('surfaces.telegram.botUsername', 'goodvibes_bot');
     config.setDynamic('surfaces.googleChat.enabled', true);
     config.setDynamic('surfaces.googleChat.verificationToken', 'google-chat-token');
@@ -2885,7 +2886,7 @@ async function proveAutonomousRead(): Promise<void> {
 
     const telegram = await fetch(`http://127.0.0.1:${boundPort}/webhook/telegram`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Telegram-Bot-Api-Secret-Token': 'synthetic-telegram-secret' },
       body: JSON.stringify({
         update_id: 10,
         message: {

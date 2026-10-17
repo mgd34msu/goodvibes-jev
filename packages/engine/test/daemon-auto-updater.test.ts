@@ -961,8 +961,8 @@ describe('post-swap service handover', () => {
       expect(failureReading.requests).toHaveLength(1);
       expect(JSON.stringify(failureReading.requests[0]?.state)).toMatch(/timed out before commit|deadline exceeded/);
       // The complete transaction-prefixed wording was classified. Its separate
-      // synchronous display has no settled privacy proof and remains withheld.
-      expect(h.updater.lastCheckFailure).toBe('[REDACTED]');
+      // synchronous local display retains the actionable failure.
+      expect(h.updater.lastCheckFailure).toContain('update timed out before commit; cohort not committed; prior state restored');
       expect(h.updater.snapshot().recoveryRequired).toBe(false);
     } finally { h.updater.stop(); rmSync(h.scratch, { recursive: true, force: true }); }
   });

@@ -10,7 +10,7 @@ import { SAMPLES, ALL_CONTRACT_EVENTS } from './contract/event-samples.js';
 function harness() {
   const lines: string[] = [];
   const bus = new RuntimeEventBus();
-  const record = { id: 'agent-b6834750', template: 'engineer', task: 'Cap the "retry" delay\nand add a test', status: 'completed', startedAt: 0, completedAt: 51_000, toolCallCount: 3 };
+  const record = { id: 'agent-export-report', template: 'engineer', task: 'Export the "quarterly" report\nand send the receipt', status: 'completed', startedAt: 0, completedAt: 51_000, toolCallCount: 3 };
   const { unsubs, agentStatusIntervalRef } = registerHostRuntimeEvents({
     runtimeBus: bus,
     domainDispatch: new Proxy({}, { get: () => () => {} }) as never,
@@ -25,38 +25,38 @@ function harness() {
   } };
 }
 
-const ctx = { sessionId: 't', traceId: 't', source: 't' };
+const eventContext = { sessionId: 'notice-session', traceId: 'notice-trace', source: 'test' };
 
 async function contractNotice(event: ContractEvent) {
-  const h = harness();
+  const fixture = harness();
   try {
-    emitContractEvent(h.bus, 't', event);
+    emitContractEvent(fixture.bus, 'notice-session', event);
     await Promise.resolve();
-    expect(h.lines).toHaveLength(1);
-    const notice = runtimeEventOfNotice(h.lines[0]!);
+    expect(fixture.lines).toHaveLength(1);
+    const notice = runtimeEventOfNotice(fixture.lines[0]!);
     expect(notice?.type).toBe(event.type);
     expect(notice?.detail.startsWith('[')).toBe(false);
     return notice!;
-  } finally { h.stop(); }
+  } finally { fixture.stop(); }
 }
 
 describe('runtime event notices', () => {
   for (const type of ['AGENT_COMPLETED', 'AGENT_FAILED'] as const) {
     test(`${type} keeps its multiline operator line without claiming complete occurrence identity`, async () => {
-      const h = harness();
-      const payload = { type, agentId: 'agent-b6834750', durationMs: 51_000, error: 'quota refused\ntry again' };
+      const fixture = harness();
+      const payload = { type, agentId: 'agent-export-report', durationMs: 51_000, error: 'quota refused\ntry again' };
       try {
-        h.bus.emit('agents', createEventEnvelope(type, payload, ctx));
+        fixture.bus.emit('agents', createEventEnvelope(type, payload, eventContext));
         await Promise.resolve();
-        expect(h.lines).toHaveLength(1);
-        const notice = runtimeEventOfNotice(h.lines[0]!);
+        expect(fixture.lines).toHaveLength(1);
+        const notice = runtimeEventOfNotice(fixture.lines[0]!);
         expect(notice?.type).toBe(type);
         expect(notice?.title).toBe(type === 'AGENT_COMPLETED' ? 'Agent finished' : 'Agent failed');
         expect(notice?.level).toBe(type === 'AGENT_COMPLETED' ? 'info' : 'warning');
         expect(notice?.key).toBeUndefined();
         expect(runtimeEventKey(type, payload)).toBeUndefined();
-        expect(notice?.detail).toContain('"retry" delay\n');
-      } finally { h.stop(); }
+        expect(notice?.detail).toContain('"quarterly" report\n');
+      } finally { fixture.stop(); }
     });
   }
 
@@ -120,12 +120,12 @@ describe('runtime event notices', () => {
   }
 
   test('record-only checks are silent, and unrelated or legacy lines are left alone', async () => {
-    const h = harness();
+    const fixture = harness();
     try {
-      emitContractEvent(h.bus, 't', { ...SAMPLES.CONTRACT_CHECKED, result: 'recorded' });
+      emitContractEvent(fixture.bus, 'notice-session', { ...SAMPLES.CONTRACT_CHECKED, result: 'recorded' });
       await Promise.resolve();
-      expect(h.lines).toHaveLength(0);
-    } finally { h.stop(); }
+      expect(fixture.lines).toHaveLength(0);
+    } finally { fixture.stop(); }
     for (const line of ['', 'Compaction finished', '[Contract] custom prose', '[Contract] ctr-a invented -> imaginary', '[WRFC] ✓ Chain wrfc-1 PASSED — all gates clear', '[Agents] Cohort work complete', '[Agents] 2 running:\nagent-1']) {
       expect(runtimeEventOfNotice(line)).toBeUndefined();
     }

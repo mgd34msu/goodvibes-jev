@@ -38,9 +38,9 @@ const WAKE = voiceWakeConfigDefaults.voice.wake;
 
 describe('the wake-word settings rows', () => {
   test('all 27 built rows are present, and the unbuilt Wyoming row is not', () => {
-    // The design listed 26 rows. Row 26, voice.wake.wyomingServer, is the
-    // Tier-B Wyoming wake-server, ruled "NOT built; needs its own explicit
-    // owner go". Shipping its key would be a switch wired to nothing.
+    // The voice.wake.wyomingServer setting would require a
+    // Wyoming wake server, which is not implemented. No explicit
+    // owner request has authorized that feature. Shipping its key would be a switch wired to nothing.
     // 28 built rows now: the 25 from that design, plus voice.wake.silenceFloorRms
     // (what makes silenceStopMs work in a room that is not quiet),
     // voice.wake.speechRetriggerMs (what makes it work on a close-worn

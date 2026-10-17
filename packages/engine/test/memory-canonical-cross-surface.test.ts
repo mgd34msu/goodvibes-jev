@@ -49,9 +49,9 @@ describe('canonical memory path', () => {
   });
 });
 
-describe('cross-surface recall (E6 core outcome)', () => {
+describe('cross-surface recall', () => {
   test('a record written by one surface recalls from another on the same canonical path', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'gv-e6-xsurface-'));
+    const root = mkdtempSync(join(tmpdir(), 'gv-memory-xsurface-'));
     tmpRoots.push(root);
     const canonicalPath = resolveCanonicalMemoryDbPath(root);
     const registry = embeddingRegistry(root);
@@ -81,7 +81,7 @@ describe('cross-surface recall (E6 core outcome)', () => {
 
 describe('fold/migration into the canonical store (migration honesty)', () => {
   test('folds every legacy store in with no loss, id-keyed, idempotent', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'gv-e6-fold-'));
+    const root = mkdtempSync(join(tmpdir(), 'gv-memory-fold-'));
     tmpRoots.push(root);
     const registry = embeddingRegistry(root);
 
@@ -148,7 +148,7 @@ describe('fold/migration into the canonical store (migration honesty)', () => {
   });
 
   test('a corrupt/unreadable source is skipped per-source, not fatal', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'gv-e6-fold-bad-'));
+    const root = mkdtempSync(join(tmpdir(), 'gv-memory-fold-bad-'));
     tmpRoots.push(root);
     const registry = embeddingRegistry(root);
 

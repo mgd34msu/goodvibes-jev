@@ -236,3 +236,33 @@ test('uses long context for complete evidence and does not reject an approximate
   expect(headers[2]!.get('TypeSafe-Danger-Zone-Long-Context')).toBe('true');
   expect(states[2]).toBe('x'.repeat(800_000));
 });
+
+test.each([0, 1000])('a server context refusal upgrades complete evidence once with timeout %s', async timeoutMs => {
+  const headers: Headers[] = [];
+  const bodies: unknown[] = [];
+  let guards = 0;
+  const port = createSystemOnePort({ endpoint: { kind: 'hosted', baseURL: 'https://judge.test', apiKey: 'test-key' },
+    model: 'jev-latest', timeoutMs, retry: {}, fetch: async (_url, init) => {
+      headers.push(new Headers(init?.headers)); bodies.push(JSON.parse(String(init?.body)));
+      if (headers.length === 1) return json(400, { detail: { error_type: 'max_tokens_exceeded' } });
+      return json(200, { model: 'jev-1.13.0', answers: { urgent: GOOD_ANSWERS.urgent }, usage: { input_tokens: 1, output_tokens: 1 } });
+    } });
+  const result = await port.ask({ state: 'Complete source with unexpectedly dense tokenization.', questions: { urgent: QUESTIONS.urgent }, beforeAttempt: () => { guards++; } });
+  expect(bodies).toHaveLength(2);
+  expect(bodies[1]).toEqual(bodies[0]);
+  expect(headers[0]!.has('TypeSafe-Danger-Zone-Long-Context')).toBe(false);
+  expect(headers[1]!.get('TypeSafe-Danger-Zone-Long-Context')).toBe('true');
+  expect(guards).toBe(2);
+  expect(result.lineage?.attempts.map(attempt => attempt.outcome)).toEqual(['rejected', 'answered']);
+});
+
+test.each(['max_tokens_exceeded', 'invalid_question'])('a persistent %s refusal stays terminal', async errorType => {
+  let calls = 0;
+  const port = createSystemOnePort({ endpoint: { kind: 'hosted', baseURL: 'https://judge.test', apiKey: 'test-key' },
+    model: 'jev-latest', timeoutMs: 0, retry: {}, fetch: async () => {
+      calls++;
+      return json(400, { detail: { error_type: errorType } });
+    } });
+  await expect(port.ask({ state: 'Complete source', questions: { urgent: QUESTIONS.urgent } })).rejects.toMatchObject({ kind: 'rejected', status: 400 });
+  expect(calls).toBe(errorType === 'max_tokens_exceeded' ? 2 : 1);
+});

@@ -21,28 +21,11 @@ import type {
   SessionsHostedAttachResult,
 } from './goodvibes';
 
-const CLIENT_ID_STORAGE_KEY = 'goodvibes.webui.hosted.clientId';
-
 export const HOSTED_SESSION_UPDATE_WIRE_EVENT = 'hosted-session-update';
 
-/**
- * A stable per-browser-profile client id for sessions.hosted.attach/detach,
- * minted once, persisted, and distinct from the push device id (push-client.ts):
- * this one names WHICH ATTACHED CLIENT a hosted session sees, not a push
- * subscription endpoint. Mirrors push-client.ts's ensureDeviceId exactly.
- */
+/** One live attachment owns one id; tabs, reloads and selection retries never share it. */
 export function ensureHostedClientId(): string {
-  try {
-    const existing = window.localStorage.getItem(CLIENT_ID_STORAGE_KEY);
-    if (existing) return existing;
-    const minted = randomUuid();
-    window.localStorage.setItem(CLIENT_ID_STORAGE_KEY, minted);
-    return minted;
-  } catch {
-    // Storage unavailable (private mode): a per-call id still lets attach/detach
-    // work this session; it just cannot recognize itself across a reload.
-    return randomUuid();
-  }
+  return randomUuid();
 }
 
 /**

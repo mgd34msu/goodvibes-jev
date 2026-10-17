@@ -3,9 +3,8 @@
  *
  * The engine-level cancellation tests (test/orchestration-engine.test.ts)
  * prove that engine.kill(itemId) aborts the item's registered AbortSignal
- * and calls AgentManager.cancel. This file proves the OTHER half the brief
- * calls out as the actual point of the original deferral: that an
- * AbortSignal threaded into Tool.execute's new optional `opts` param really
+ * and calls AgentManager.cancel. This file verifies that an
+ * AbortSignal threaded into Tool.execute's optional `opts` parameter
  * does reach a live child process (exec/Bun.spawn) or in-flight request
  * (fetch), instead of leaving it orphaned after the tool call's caller has
  * moved on.

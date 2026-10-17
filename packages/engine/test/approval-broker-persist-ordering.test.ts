@@ -116,7 +116,7 @@ describe('the newest write is the one that survives on disk', () => {
     try {
       const broker = new ApprovalBroker({ store });
       await broker.start();
-      void broker.requestApproval({ request: request('call-isolated') }).catch(() => undefined);
+      const decision = broker.requestApproval({ request: request('call-isolated') });
       await waitFor(() => onDisk(path, 'call-isolated') !== undefined);
       const created = broker.listApprovals().find((entry) => entry.callId === 'call-isolated');
 
@@ -137,9 +137,30 @@ describe('the newest write is the one that survives on disk', () => {
       // failed write never got to disk is on disk after the next successful
       // one. The file converges on the map; it does not stay behind it.
       expect(onDisk(path, 'call-isolated')?.status).toBe('approved');
+      expect((await decision).approved).toBe(true);
     } finally {
       cleanup();
     }
+  });
+
+  test('retrying a failed resolution commits and settles the original waiter', async () => {
+    const { store, path, cleanup } = makeStore();
+    try {
+      const broker = new ApprovalBroker({ store });
+      const decision = broker.requestApproval({ request: request('call-retry') });
+      await waitFor(() => onDisk(path, 'call-retry') !== undefined);
+      const id = broker.listApprovals().find(entry => entry.callId === 'call-retry')!.id;
+      store.failNext = true;
+      await expect(broker.resolveApproval(id, { approved: true, actor: 'tester' })).rejects.toThrow('store unavailable');
+      await broker.resolveApproval(id, { approved: true, actor: 'tester' });
+      expect((await decision).approved).toBe(true);
+      expect(onDisk(path, 'call-retry')?.status).toBe('approved');
+      await broker.stampFixSession('call-retry', { error: 'first attempt failed' });
+      expect(await broker.stampFixSession('call-retry', { sessionId: 'retry-session' }))
+        .toMatchObject({ fixSessionId: 'retry-session', fixSessionError: undefined });
+      expect(await broker.stampFixSession('call-retry', { error: 'replacement failed' }))
+        .toMatchObject({ fixSessionId: undefined, fixSessionError: 'replacement failed' });
+    } finally { cleanup(); }
   });
 
   test('a create whose write fails leaves the record in neither the map nor the file', async () => {

@@ -64,7 +64,7 @@ async function flushMicrotasks(rounds = 8): Promise<void> {
 // Pause <-> resume
 // ---------------------------------------------------------------------------
 
-describe('fleet registry: pause/resume (d2)', () => {
+describe('fleet registry: pause/resume', () => {
   test('trigger: disabled is "paused" (not "killed"), resumable only while paused; resume() re-arms via triggerManager.enable', () => {
     const trigger: TriggerDefinition = { id: 'trg-1', event: 'push', action: 'run tests', enabled: false };
     const enableCalls: string[] = [];

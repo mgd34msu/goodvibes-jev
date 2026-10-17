@@ -73,6 +73,7 @@ mock.module('../lib/goodvibes', () => ({
       turns: { cancel: mock(() => Promise.resolve({})) },
       events: { stream: streamMock },
       messages: {
+        retry: mock(() => Promise.resolve({})),
         list: mock(() => Promise.resolve({ messages: [] })),
         create: mock((sessionId: string) => { messageCalls.push(sessionId); return createMessageImpl(); }),
       },
@@ -363,4 +364,19 @@ describe('ChatView: delayed mutations follow selection generation', () => {
     expect(turnNotice()).toBeNull();
     expect(stopButton()).toBeNull();
   });
+});
+
+
+test('regeneration stays active over cached historical assistant messages', async () => {
+  const history = [{ id: 'question-1', role: 'user', content: 'question', createdAt: 1 }, { id: 'reply-1', role: 'assistant', content: 'old answer', createdAt: 2 }];
+  client.setQueryDefaults(['companion-chat', 'session-a', 'messages'], { staleTime: Infinity });
+  client.setQueryData(['companion-chat', 'session-a', 'messages'], { messages: history });
+  renderChatView(baseProps('session-a'));
+  await waitFor(() => container.textContent?.includes('old answer') === true);
+  const regenerate = container.querySelector<HTMLButtonElement>('button[aria-label="Regenerate response"]')!;
+  expect(regenerate).not.toBeNull();
+  flushSync(() => regenerate.click());
+  await waitFor(() => stopButton() !== null);
+  await new Promise(resolve => setTimeout(resolve, 20)); flushSync(() => {});
+  expect(stopButton()).not.toBeNull();
 });

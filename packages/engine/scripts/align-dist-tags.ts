@@ -9,10 +9,10 @@
 // 2.0.18 after 2.0.19 already shipped. Nothing in the publish loop notices,
 // because each individual publish did exactly what it was asked to.
 //
-// The repair is stated as a convergent property rather than as ordering: for
-// every public package, `latest` must point at the highest version the registry
-// holds. Run at the end of any release, in any interleaving, and the tags end
-// up correct; run it when nothing is wrong and it does nothing.
+// Every public package should point at the highest published version. The
+// release workflow serializes this read/write operation with registry publishing
+// across versions; without that ownership, a stale read can move a tag backward.
+// Running it while no publication overlaps is idempotent.
 //
 // Usage:
 //   bun scripts/align-dist-tags.ts            # correct what is wrong

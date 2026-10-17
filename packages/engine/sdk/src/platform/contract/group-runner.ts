@@ -53,7 +53,7 @@ export interface ContractEngineInput {
   readonly prepareInputAuthority?: ((worktree: { readonly path: string; readonly branch: string }, signal: AbortSignal) => Promise<ContractInputAuthority>) | undefined;
   readonly contractUnitSettlement: ContractUnitSettlement;
   readonly fleetCapacity: FleetCapacityFn;
-  /** The `contract.best-of-n` selector over this contract's attempts, for `fleet.attempts.judge` (design 6.2). */
+  /** The `contract.best-of-n` selector over this contract's attempts, for `fleet.attempts.judge`. */
   readonly judgeAttempts: AttemptJudge;
 }
 
@@ -65,7 +65,7 @@ export interface GroupSteps extends AttemptSteps {
   groupsPassed(run: ContractRun): Promise<void>;
   /** A unit's branch conflicted when it merged into the contract branch (7.4): route it to a planned fix (5.1). */
   unitMergeConflict(run: ContractRun, unitId: string, files: readonly string[]): Promise<void>;
-  /** A planned-fix group passed: check its target (a unit, a group or the deliverable) again (5.2). */
+  /** A planned-fix group passed: check its target (a unit, a group or the deliverable) again. */
   fixGroupPassed(run: ContractRun, groupId: string): Promise<void>;
 }
 
@@ -95,7 +95,7 @@ export interface GroupRunner {
   /** Stops every unit agent still working, and the engine. */
   stopRun(run: ContractRun): void;
   /**
-   * After a restart (design 7.2): creates the contract's engine and reloads
+   * After a restart: creates the contract's engine and reloads
    * its workstreams from their snapshots. Returns how many were resumed.
    */
   resumeEngine(run: ContractRun): number;
@@ -107,7 +107,7 @@ export interface GroupRunner {
   selectAttempts(run: ContractRun, unitId: string): void;
 }
 
-/** A unit's baseline in `cwd`: HEAD and the hashes of paths already dirty (design 4.3). Undefined outside git. */
+/** A unit's baseline in `cwd`: HEAD and the hashes of paths already dirty. Undefined outside git. */
 export function takeBaseline(cwd: string): ContractUnit['baseline'] {
   if (!GitService.isGitRepo(cwd)) return undefined;
   const head = spawnSync('git', ['-C', cwd, 'rev-parse', 'HEAD'], { encoding: 'utf-8' });
@@ -418,7 +418,7 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
     run.moveUnit(unit, 'pending');
     const task = [briefWithPreviousChecks(buildUnitBrief(run.contract, group, unit), unit), firstTurn].filter((part): part is string => part !== undefined && part.length > 0).join('\n\n');
     if (run.spawnWaits(unit)) {
-      // After a restart the unit's phase waits before spawning (design 7.2): it spawns the fresh agent itself.
+      // After a restart the unit's phase waits before spawning: it spawns the fresh agent itself.
       run.decide('resumed', unit.id, reason);
       run.decidePreSpawn(unit, { kind: 'spawn', task, route: unit.route });
       return;

@@ -471,7 +471,7 @@ export function explainAgentToolPolicyInvocation(
   }
   if (toolName === 'exec') {
     const denied = validateExecToolInvocationForAgentPolicy(args as ExecToolArgs);
-    return denied ? deniedByAgentPolicy(denied) : allowedByAgentPolicy('Agent policy allows foreground serial shell execution.');
+    return denied ? deniedByAgentPolicy(denied) : allowedByAgentPolicy('Agent policy preserves the shared shell execution options.');
   }
   if (toolName === 'read') {
     const denied = validateAgentReadMechanics(args);
@@ -498,7 +498,7 @@ export function explainAgentToolPolicyInvocation(
   }
   if (toolName === 'fetch') {
     const denied = validateFetchToolInvocationForAgentPolicy(args as FetchToolArgs);
-    return denied ? deniedByAgentPolicy(denied, READ_ONLY_FETCH_METHODS) : allowedByAgentPolicy('Agent policy allows serial sanitized read-only HTTP fetches.', READ_ONLY_FETCH_METHODS);
+    return denied ? deniedByAgentPolicy(denied, READ_ONLY_FETCH_METHODS) : allowedByAgentPolicy('Agent policy allows sanitized read-only HTTP fetches.', READ_ONLY_FETCH_METHODS);
   }
   if (toolName === 'state') {
     const denied = validateStateToolInvocationForAgentPolicy(args as StateToolArgs);

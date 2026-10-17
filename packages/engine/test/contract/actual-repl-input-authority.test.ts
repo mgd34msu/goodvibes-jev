@@ -97,11 +97,16 @@ for (const scenario of ['allowed', 'allowed-node-runtime', 'revoke-after-eval', 
       opened.push(String(args[0]));
       return read(...args);
     }) as typeof read);
+    const copy = asyncFs.copyFile;
+    const copyTap = spyOn(asyncFs, 'copyFile').mockImplementation((...args) => {
+      opened.push(String(args[0]));
+      return copy(...args);
+    });
     const writes = spyOn(asyncFs, 'writeFile');
     const processes = spyOn(childProcess, 'spawn');
     const evalProcessCount = (): number => processes.mock.calls.filter(([command, args]) =>
       command === '/usr/bin/bwrap' && Array.isArray(args) && args.some((argument) =>
-        argument.includes('--print') && argument.includes('fs.readFileSync("input.txt", "utf8").trim()'))).length;
+        argument.startsWith('bun --no-env-file ./.goodvibes-repl-'))).length;
     let plannerCalls = 0;
     let memberCalls = 0;
     let revoked = false;
@@ -231,7 +236,7 @@ for (const scenario of ['allowed', 'allowed-node-runtime', 'revoke-after-eval', 
       expect(member!.workingDirectory).not.toBe(root);
       expect(plannerCalls).toBe(1);
       expect(executed[0], JSON.stringify({ status: result.status, error: result.error, memberError: member?.error, memberCalls, toolMessages: requests.at(-1)?.messages.filter((message) => message.role === 'tool') })).toEqual({ name: 'repl', success: true });
-      // A real byte-open tap must see allowed projection reads, but no denied source read.
+      // Real file-operation taps must see allowed projection reads, but no denied source read.
       expect(opened).toContain(join(member!.workingDirectory!, 'input.txt'));
       expect(opened).toContain(join(member!.workingDirectory!, 'allowed.mjs'));
       expect(opened).toContain(join(member!.workingDirectory!, 'allowed.ts'));
@@ -303,7 +308,7 @@ for (const scenario of ['allowed', 'allowed-node-runtime', 'revoke-after-eval', 
       expect(memberHistoryPath).toBeDefined();
       expect(memberHistoryAfterRepl).toEqual(replExecutions.map(() => hostHistory));
     } finally {
-      tap.mockRestore();
+      tap.mockRestore(); copyTap.mockRestore();
       writes.mockRestore();
       processes.mockRestore();
       if (id) runner.cancel(id, 'fixture cleanup');

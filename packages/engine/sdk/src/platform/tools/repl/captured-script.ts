@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { ts, type SgNode } from '@ast-grep/napi';
+import type { SgNode } from '@ast-grep/napi';
 
 /** File-backed equivalent of Bun's printed evaluation, including statement
  * completions, imports, TypeScript and top-level await. Function/class bodies
  * belong to their own execution and must not change the snippet's completion. */
-export function capturedReplScript(source: string, bindings: string): string {
+export async function capturedReplScript(source: string, bindings: string): Promise<string> {
+  const { ts } = await import('@ast-grep/napi');
   const prefix = `__gv_${randomUUID().replaceAll('-', '')}`;
   const value = `${prefix}_value`, print = `${prefix}_print`;
   const edits: { start: number; end: number; text: string }[] = [];

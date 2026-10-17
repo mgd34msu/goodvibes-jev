@@ -1,3 +1,4 @@
+import { withFileWriteLockSync } from '../checkpoint/sync-write-lock.js';
 /**
  * workspace/registration/store.ts
  *
@@ -36,8 +37,8 @@
 
 import { PersistentStore } from '../../state/persistent-store.js';
 import { confirmFileDurable } from '../../utils/atomic-json-store.js';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { linkSync, mkdirSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { acquireCrossProcessLock } from '../checkpoint/cross-process-lock.js';
 import { broadRootReason } from '../checkpoint/root-guard.js';
@@ -140,20 +141,9 @@ function canonicalDirectory(root: string): string | null {
  * reading. The fully-written owner is published atomically; no age takeover.
  */
 export function withWorkspaceRegistrationWriteLockSync<T>(path: string, write: () => T): T {
-  const lockPath = `${path}.lock`;
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${lockPath}.owner-${randomUUID()}`;
-  writeFileSync(temporary, JSON.stringify({ pid: process.pid, token: randomBytes(8).toString('hex'), acquiredAt: Date.now() }), { mode: 0o600, flag: 'wx' });
-  const identity = statSync(temporary);
-  try {
-    linkSync(temporary, lockPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  try { return withFileWriteLockSync(path, write); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'FILE_WRITER_BUSY') throw error;
     throw Object.assign(new Error('Workspace registry writer lock is already owned.'), { code: 'WORKSPACE_REGISTRY_BUSY' });
-  } finally { unlinkSync(temporary); }
-  try { return write(); } finally {
-    const current = statSync(lockPath);
-    if (current.dev === identity.dev && current.ino === identity.ino) unlinkSync(lockPath);
   }
 }
 

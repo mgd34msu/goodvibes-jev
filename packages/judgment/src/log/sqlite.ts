@@ -56,7 +56,7 @@ const SQL = {
 };
 
 const OUTCOME_FILTER =
-  `EXISTS (SELECT 1 FROM json_each(${TABLE}.readings) WHERE json_extract(json_each.value, '$.outcome') = $outcome)`;
+  `EXISTS (SELECT 1 FROM json_tree(${TABLE}.readings) WHERE json_tree.key = 'outcome' AND json_tree.type = 'text' AND json_tree.atom = $outcome)`;
 
 /** The condition each query filter puts on a row; the filter's value is bound under the filter's own name. */
 const FILTERS: Readonly<Record<Exclude<keyof DecisionQuery, 'limit'>, string>> = {

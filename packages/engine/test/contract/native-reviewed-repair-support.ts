@@ -1,4 +1,4 @@
-/** Successor to the retired main → WRFC review topology. Real native admission,
+/** Exercises real native admission,
  * checks, bounded correction, re-review, durable decisions and git integration;
  * only the planner, executor and Jev answers are deterministic fixtures. */
 import { spawnSync } from 'node:child_process';

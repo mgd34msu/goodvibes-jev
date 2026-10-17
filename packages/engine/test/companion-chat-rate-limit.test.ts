@@ -3,11 +3,11 @@
  *
  * Verifies the rate-limiting behaviour of CompanionChatManager.
  *
- * RL1: (N+1)-th message in 1 minute throws GoodVibesSdkError{kind:'rate-limit'} (per-session).
- * RL2: Per-client limit is enforced across sessions.
- * RL3: Error includes retryAfterMs inside the configured window.
- * RL4: Rate limiter can be disabled via `rateLimiter: false`.
- * RL5: Different sessions share client-level limit.
+ * (N+1)-th message in 1 minute throws GoodVibesSdkError{kind:'rate-limit'} (per-session).
+ * Per-client limit is enforced across sessions.
+ * Error includes retryAfterMs inside the configured window.
+ * Rate limiter can be disabled via `rateLimiter: false`.
+ * Different sessions share client-level limit.
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -57,10 +57,10 @@ function makeManager(opts: ManagerOptions = {}): CompanionChatManager {
 }
 
 // ---------------------------------------------------------------------------
-// RL1: Per-session limit, (N+1)-th message throws
+// Per-session limit, (N+1)-th message throws
 // ---------------------------------------------------------------------------
 
-describe('RL1: per-session rate limit: (N+1)-th message throws', () => {
+describe('per-session rate limit: (N+1)-th message throws', () => {
   test('sends exactly perSessionLimit messages then throws on the next', async () => {
     const PER_SESSION = 3;
     const manager = makeManager({ perSessionLimit: PER_SESSION, perClientLimit: 100 });
@@ -90,10 +90,10 @@ describe('RL1: per-session rate limit: (N+1)-th message throws', () => {
 });
 
 // ---------------------------------------------------------------------------
-// RL6: Runtime config manager overrides per-session limit
+// Runtime config manager overrides per-session limit
 // ---------------------------------------------------------------------------
 
-describe('RL6: runtime configManager overrides per-session limit', () => {
+describe('runtime configManager overrides per-session limit', () => {
   test('uses configManager value when it returns a positive integer', () => {
     let configValue: number | undefined = 5;
     const configManager = { get: (_key: string) => configValue } as unknown as Pick<ConfigManager, 'get'>;
@@ -139,10 +139,10 @@ describe('RL6: runtime configManager overrides per-session limit', () => {
 });
 
 // ---------------------------------------------------------------------------
-// RL2: Per-client limit enforced
+// Per-client limit enforced
 // ---------------------------------------------------------------------------
 
-describe('RL2: per-client rate limit: enforced across messages', () => {
+describe('per-client rate limit: enforced across messages', () => {
   test('throws GoodVibesSdkError after perClientLimit messages from same client', async () => {
     const PER_CLIENT = 4;
     // Set per-session high so client limit triggers first
@@ -171,10 +171,10 @@ describe('RL2: per-client rate limit: enforced across messages', () => {
 });
 
 // ---------------------------------------------------------------------------
-// RL3: Error includes retryAfterMs inside the rate-limit window
+// Error includes retryAfterMs inside the rate-limit window
 // ---------------------------------------------------------------------------
 
-describe('RL3: rate-limit error includes retryAfterMs inside the rate-limit window', () => {
+describe('rate-limit error includes retryAfterMs inside the rate-limit window', () => {
   test('retryAfterMs is bounded by the configured window on session limit breach', async () => {
     const manager = makeManager({ perSessionLimit: 1, perClientLimit: 100 });
     const session = manager.createSession();
@@ -192,10 +192,10 @@ describe('RL3: rate-limit error includes retryAfterMs inside the rate-limit wind
 });
 
 // ---------------------------------------------------------------------------
-// RL4: Rate limiter can be disabled
+// Rate limiter can be disabled
 // ---------------------------------------------------------------------------
 
-describe('RL4: rate limiter can be disabled entirely', () => {
+describe('rate limiter can be disabled entirely', () => {
   test('many messages succeed when rateLimiter: false', async () => {
     const manager = new CompanionChatManager({
       provider: makeMockProvider(),
@@ -217,10 +217,10 @@ describe('RL4: rate limiter can be disabled entirely', () => {
 });
 
 // ---------------------------------------------------------------------------
-// RL5: Per-client limit spans multiple sessions
+// Per-client limit spans multiple sessions
 // ---------------------------------------------------------------------------
 
-describe('RL5: client limit spans multiple sessions', () => {
+describe('client limit spans multiple sessions', () => {
   test('client limit is shared across different sessions', async () => {
     const PER_CLIENT = 3;
     const manager = makeManager({ perSessionLimit: 100, perClientLimit: PER_CLIENT });

@@ -457,7 +457,7 @@ export class ApprovalBroker {
     }
     const updated: SharedApprovalRecord = {
       ...existing,
-      ...('sessionId' in outcome ? { fixSessionId: outcome.sessionId } : { fixSessionError: outcome.error }),
+      ...patch,
       updatedAt: Date.now(),
     };
     this.approvals.set(updated.id, updated);
@@ -489,6 +489,8 @@ export class ApprovalBroker {
       if (this.approvals.get(approvalId) !== approval) throw new Error('Owner approval changed while resolving.');
     } : undefined;
     if (approval.status === 'approved' || approval.status === 'denied' || approval.status === 'cancelled' || approval.status === 'expired') {
+      // A failed write leaves the decision retryable until a snapshot commits.
+      if (!approval.requiresOwnerDecision && this.pendingResolvers.has(approvalId)) await this.persist();
       return approval;
     }
     // Per-hunk selection is only meaningful on approve; a deny is always a
@@ -734,6 +736,15 @@ export class ApprovalBroker {
       approvals: sortApprovals(this.approvals.values()).map((approval) => ownerDecision?.id === approval.id ? ownerDecision : approval),
     };
     await this.writes.run(() => this.store.persist(snapshot));
+    // A successful later write can commit a decision whose original write
+    // failed. Settle its waiting consumers as well as the current writer.
+    // Owner decisions retain their separate post-write currentness check.
+    for (const approval of snapshot.approvals) {
+      if (!approval.requiresOwnerDecision && approval.decision
+        && approval.status !== 'pending' && approval.status !== 'claimed') {
+        this.resolvePending(approval.id, approval.decision);
+      }
+    }
   }
 
   private publish(approval: SharedApprovalRecord): void {

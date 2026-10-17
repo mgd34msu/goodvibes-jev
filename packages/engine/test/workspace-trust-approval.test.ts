@@ -1,20 +1,3 @@
-// Component assertions retained from the pinned daemon trust suite. Its two
-// full-composition assertions remain pending the actual daemon services port.
-/**
- * Workspace trust, for the process that hosts the runs.
- *
- * The trust decision is written per-workspace by whoever asked the question,
- * and the daemon executes tool calls in that same workspace. Before this seam
- * existed the daemon carried the gate, pointed it at the same trust.json the
- * terminal app writes, and then never loaded it and never consulted it: a
- * hosted run's tool calls reached the background permission gate with no
- * manager at all, which that gate reads as approved. An explicit decision of
- * "restricted" changed nothing about what a daemon-hosted run could do.
- *
- * These tests pin the three answers a hosted run can get, asked, honoured,
- * refused, and that the composition actually hands the manager to the
- * orchestrator, because nothing fails if that one line goes missing again.
- */
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

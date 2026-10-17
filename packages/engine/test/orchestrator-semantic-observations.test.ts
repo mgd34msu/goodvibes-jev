@@ -64,7 +64,7 @@ function setup(rounds = 0, output: (n: number) => string = () => 'same result') 
 function project(root: string, value: unknown) { writeFileSync(join(root, 'package.json'), JSON.stringify(value)); }
 function history(outputs = ['same', 'same']): RetainedToolObservation[] { return outputs.map((output, i) => ({ signature: 'probe::{"job":"a"}', requested: { id: `call-${i}`, name: 'probe', arguments: { job: 'a' } }, executed: { name: 'probe', arguments: '{"job":"a"}' }, result: { callId: `call-${i}`, success: true, output } })); }
 
-describe('B08 canonical spawn framework', () => {
+describe('canonical spawn framework', () => {
   test('registered batteries and contradictory scripts override first dependency match', async () => {
     expect(registry.get('engine.agents.project-test-framework')).toBeDefined(); expect(registry.get('engine.agents.repeat-stuck')).toBeDefined();
     const f = setup(); project(f.root, { dependencies: { vitest: '1', jest: '1' }, scripts: { test: 'jest', late: 'full evidence' } });
@@ -118,7 +118,7 @@ describe('B08 canonical spawn framework', () => {
   });
 });
 
-describe('B09 canonical repeated-call observation and actual runner', () => {
+describe('canonical repeated-call observation and actual runner', () => {
   test('complete changing results yield no nudge despite exact repeated calls', async () => {
     const f = setup(5, n => `progress ${n}`), fake = semanticPort((_n, _q, state) => { expect(JSON.stringify(state)).toContain('progress'); return noulAnswer(.01); }); installJudgmentPort(fake.port);
     await runAgentTask(f.context, f.record); expect(f.record.status).toBe('completed'); expect(f.executions).toBe(5); const feature = assertReadingPartition(fake.requests, Array<string>(4).fill('engine.agents.repeat-stuck'), ['agentId', 'model', 'provider', 'toolCallCount']);

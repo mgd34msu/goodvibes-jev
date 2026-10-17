@@ -460,10 +460,10 @@ export function buildCliDoctorFindings(options: CliStatusOptions): readonly CliD
       id: 'allow-all-permissions',
       area: 'security',
       severity: 'risk',
-      summary: 'Automatic below-critical-stakes permission preset is active.',
+      summary: 'Automatic permission mode is active.',
       cause: 'permissions.mode is allow-all.',
       impact: describeConfiguredPermissions(config).detail,
-      action: 'Use Ask before powerful actions or Custom rules unless this is an intentionally trusted environment.',
+      action: 'Use Plan only for read-only work or Custom rules to restrict particular tools.',
     });
   }
 

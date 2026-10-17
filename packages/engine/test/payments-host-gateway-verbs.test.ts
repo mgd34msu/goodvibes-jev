@@ -160,8 +160,8 @@ async function composePayments(input: {
   });
   await registration.ready;
 
-  // The dispatcher only touches `gatewayMethods` on the paths used here.
-  const helper = new DaemonControlPlaneHelper({ gatewayMethods: catalog } as unknown as DaemonControlPlaneContext);
+  // Authenticate the same operator token used by both transport fixtures.
+  const helper = new DaemonControlPlaneHelper({ gatewayMethods: catalog, authToken: () => 'test-operator-token' } as unknown as DaemonControlPlaneContext);
 
   const routeFetch: ComposedPayments['fetch'] = async (path, init = {}) => {
     const url = new URL(path, 'http://daemon.local');
@@ -184,7 +184,7 @@ async function composePayments(input: {
         query,
         body: init.body === undefined ? undefined : JSON.parse(init.body) as unknown,
         context: {
-          principalId: 'test-operator',
+          principalId: 'shared-token',
           principalKind: 'token',
           admin: true,
           scopes: ['read:payments', 'write:payments'],
@@ -317,7 +317,7 @@ describe('payments.* is attached to this daemon, not a cataloged 501 facade', ()
     // composition's persisted store under this fixture's root.
     const approved = await fixture.catalog.invoke('payments.checkout.approve', {
       body: { confirm: true, merchantDomain: 'example.invalid', item: 'nothing at all', amount: '20.00' },
-      context: { principalId: 'test-operator', metadata: { explicitUserRequest: true } },
+      context: { principalId: 'shared-token', metadata: { explicitUserRequest: true } },
     } as never) as Record<string, unknown>;
     expect(approved['approved']).toBe(true);
 

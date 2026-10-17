@@ -14,6 +14,14 @@ import { activeTheme } from './theme.ts';
 /** Module-level set of inline markdown special characters (hoisted out of hot loop). */
 const INLINE_SPECIAL_CHARS = new Set(['[', '`', '*', '_', '~']);
 
+/** Candidate matching leaves sentence punctuation outside the clickable target. */
+function bareLinkAt(text: string, index: number): string | undefined {
+  if (index > 0 && !/[\s(<"']/.test(text[index - 1])) return;
+  if (text[index] !== '/' && !text.startsWith('http', index)) return;
+  const match = /^(?:https?:\/\/[^\s,)<>"'`]+|\/[^\s,)<>"'`]+\/[^\s,)<>"'`]+)/.exec(text.slice(index));
+  return match?.[0].replace(/[.;:!?]+$/, '') || undefined;
+}
+
 /**
  * Inline markdown token types.
  */
@@ -31,6 +39,12 @@ export function renderInlineMarkdown(text: string): InlineToken[] {
   let i = 0;
 
   while (i < text.length) {
+    const bare = bareLinkAt(text, i);
+    if (bare) {
+      tokens.push({ type: 'link', text: bare, url: bare.startsWith('/') ? `file://${bare}` : bare });
+      i += bare.length;
+      continue;
+    }
     // Link: [text](url)
     if (text[i] === '[') {
       const closeB = text.indexOf(']', i);
@@ -111,30 +125,11 @@ export function renderInlineMarkdown(text: string): InlineToken[] {
 
     // Plain text, accumulate until next special char, detect bare URLs and file paths
     let end = i + 1;
-    while (end < text.length && !INLINE_SPECIAL_CHARS.has(text[end])) {
+    while (end < text.length && !INLINE_SPECIAL_CHARS.has(text[end]) && !bareLinkAt(text, end)) {
       const code = text.charCodeAt(end);
       end += (code >= 0xD800 && code <= 0xDBFF) ? 2 : 1;
     }
     const plainText = text.slice(i, end);
-
-    // Detect http/https URLs in plain text
-    const urlMatch = plainText.match(/^(https?:\/\/[^\s,)>"]+)/);
-    if (urlMatch) {
-      const url = urlMatch[1];
-      tokens.push({ type: 'link', text: url, url });
-      i += url.length;
-      continue;
-    }
-
-    // Detect absolute file paths in plain text (require at least one directory separator)
-    const fileMatch = plainText.match(/^(\/[^\s,)>"]+\/[^\s,)>"]+(?:\.[a-zA-Z0-9]+)?)/);
-    if (fileMatch) {
-      const filePath = fileMatch[1];
-      const fileUrl = `file://${filePath}`;
-      tokens.push({ type: 'link', text: filePath, url: fileUrl });
-      i += filePath.length;
-      continue;
-    }
 
     tokens.push({ type: 'text', text: plainText, style: {} });
     i = end;

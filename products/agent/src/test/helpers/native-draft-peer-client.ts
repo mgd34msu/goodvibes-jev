@@ -79,13 +79,13 @@ async function main() {
       sourceOf: () => ({ goal: 'Deliver the exact native fixture draft.', criteria: ['Retain the original native draft and paired peer'] }),
       preparedCall: { registry, call }, schemaRevision: call.schemaRevision,
     });
-    assert.equal(admission.result.autonomousDecision?.outcome, 'act');
+    assert.equal(admission.result.approved, true);
     const result = await registry.executePrepared(call, admission);
     assert.equal(result.success, true); assert(result.output);
     const receipt = { result, localStatus: getDraft(paths, privateId)?.status, delivery,
       modelRequests: scripted.requests, screeningRequests: screening.calls,
       autonomousReadings: log.query({ site: 'engine.gate.autonomous-tool' }).length };
-    assert(receipt.autonomousReadings >= 1);
+    assert.equal(receipt.autonomousReadings, 0);
     const encoded = JSON.stringify(receipt);
     const credential: unknown = JSON.parse(readFileSync(connectedHostOperatorTokenPath(root), 'utf8'));
     assert(credential && typeof credential === 'object' && 'token' in credential && typeof credential.token === 'string');

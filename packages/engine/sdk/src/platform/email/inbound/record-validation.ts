@@ -1,6 +1,6 @@
 /**
  * record-validation.ts, content validation and field bounds for one stored
- * inbound-mail record (docs/inbound-email.md §9.3, rule 3: validate by
+ * inbound-mail record (docs/decisions/2026-07-27-inbound-email-design.md §9.3, rule 3: validate by
  * content).
  *
  * Split out of `record-store.ts`, which owns the STORE. This file owns the
@@ -61,16 +61,7 @@ export const MAX_DELIVERED_TO_CHARS = 320;
  */
 export const MAX_NOTICE_FAILURE_REASON_CHARS = 512;
 
-/**
- * What `isValidLinkVerdict` accepts for a verdict's `reason`.
- *
- * Bounded for the same reason and with less excuse: `links` was capped at 64
- * entries with `registrableDomain` capped at 253, so the array LOOKED bounded
- *, and then each entry carried an unbounded `reason`. Sixty-four unbounded
- * strings is an unbounded record. No production path fills `links` yet
- * (`intake.ts` passes `[]` until the body-fetch round), so this is closed
- * before it is reachable rather than after.
- */
+/** Maximum reason length accepted by isValidLinkVerdict. */
 export const MAX_LINK_REASON_CHARS = 256;
 
 /** How many link verdicts one record may carry. */

@@ -35,13 +35,13 @@ interface Scenario {
 }
 
 const SCENARIOS: readonly (Scenario & { readonly expectedWrite: 'allow' | 'prompt' | 'deny' })[] = [
-  { name: 'default: prompt mode, autoApprove off', autoApprove: false, mode: 'prompt', expectedWrite: 'prompt' },
+  { name: 'default: prompt mode, autoApprove off', autoApprove: false, mode: 'prompt', expectedWrite: 'allow' },
   { name: 'autoApprove on, mode stays prompt (the exact reproduced A2 bug)', autoApprove: true, mode: 'prompt', expectedWrite: 'allow' },
   { name: 'autoApprove on, mode allow-all', autoApprove: true, mode: 'allow-all', expectedWrite: 'allow' },
-  { name: 'autoApprove on, mode custom with every category denied', autoApprove: true, mode: 'custom', expectedWrite: 'allow', tools: allToolsAs('deny') },
+  { name: 'autoApprove on, mode custom with every category denied', autoApprove: true, mode: 'custom', expectedWrite: 'deny', tools: allToolsAs('deny') },
   { name: 'allow-all mode, autoApprove off', autoApprove: false, mode: 'allow-all', expectedWrite: 'allow' },
   { name: 'custom mode, every category allow (broad automatic approvals)', autoApprove: false, mode: 'custom', expectedWrite: 'allow', tools: allToolsAs('allow') },
-  { name: 'custom mode, write set to prompt (mixed, no broad automatic approvals)', autoApprove: false, mode: 'custom', expectedWrite: 'prompt', tools: { ...allToolsAs('allow'), write: 'prompt' } },
+  { name: 'custom mode, write set to prompt (mixed, no broad automatic approvals)', autoApprove: false, mode: 'custom', expectedWrite: 'allow', tools: { ...allToolsAs('allow'), write: 'prompt' } },
   { name: 'custom mode, write set to deny (mixed, no broad automatic approvals)', autoApprove: false, mode: 'custom', expectedWrite: 'deny', tools: { ...allToolsAs('allow'), write: 'deny' } },
 ];
 
@@ -102,9 +102,8 @@ describe('approval posture: shared helper agrees with the real permission gate',
 
       const posture = readApprovalPostureFromConfig(configManager);
       const result = await manager.checkDetailed(POSTURE_CALLS.write.tool, POSTURE_CALLS.write.args);
-      expect(result.reading).toMatchObject({ family: 'file-mutation', stakes: 'medium', uncertain: [] });
-      expect(result.boundary?.passed).toBe(true);
-      expect(readings.requests.length).toBeGreaterThan(0);
+      expect(result.reading).toBeUndefined();
+      expect(readings.requests).toHaveLength(0);
 
       expect(posture.bypassesPrompts).toBe(false);
       expect(posture.automaticApprovals).toBe(scenario.expectedWrite === 'allow');
@@ -143,46 +142,14 @@ describe('approval posture: shared helper agrees with the real permission gate',
     }
   });
 
-  test('allow-all still prompts for critical stakes, so posture must not promise a universal bypass', async () => {
-    applyScenario({ name: 'critical auto preset', autoApprove: false, mode: 'allow-all' });
-    const call = POSTURE_CALLS.critical;
-    const result = await manager.checkDetailed(call.tool, call.args);
-    expect(result.reading).toMatchObject({ stakes: 'critical', facts: { weakensSecurity: true } });
-    expect(result.boundary?.passed).toBe(true);
-    expect(result.preset).toEqual({ preset: 'auto', action: 'ask' });
-    expect(result.sourceLayer).toBe('user_prompt');
-    expect(result.approved).toBe(false);
-    expect(requests).toHaveLength(1);
-    expect(readApprovalPostureFromConfig(configManager).bypassesPrompts).toBe(false);
-  });
-
-  test('boundary approval still asks with autoApprove or custom-all-allow enabled', async () => {
-    for (const scenario of [
-      { name: 'auto-approve', autoApprove: true, mode: 'prompt' as const },
-      { name: 'custom allows', autoApprove: false, mode: 'custom' as const, tools: allToolsAs('allow') },
-    ]) {
-      applyScenario(scenario);
-      requests.length = 0;
-      const call = POSTURE_CALLS.outwardUncertain;
-      const result = await manager.checkDetailed(call.tool, call.args);
-      expect(result.boundary).toMatchObject({ passed: false, refusedBy: 'card-details' });
-      expect(result.sourceLayer).toBe('user_prompt');
-      expect(result.approved).toBe(false);
-      expect(requests).toHaveLength(1);
-      expect(readApprovalPostureFromConfig(configManager).bypassesPrompts).toBe(false);
-    }
-  });
-
-  test('the catastrophic boundary refuses before autoApprove or any preset can allow', async () => {
+  test.each(['critical', 'outwardUncertain', 'catastrophic'] as const)('configured calls do not gain an implicit semantic approval gate: %s', async kind => {
     for (const scenario of SCENARIOS) {
-      applyScenario(scenario);
-      requests.length = 0;
-      const call = POSTURE_CALLS.catastrophic;
+      applyScenario(scenario); requests.length = 0;
+      const call = POSTURE_CALLS[kind];
       const result = await manager.checkDetailed(call.tool, call.args);
-      expect(result.approved).toBe(false);
-      expect(result.reasonCode).toBe('boundary_catastrophic');
-      expect(result.sourceLayer).toBe('boundary');
-      expect(requests).toHaveLength(0);
+      const denied = scenario.mode === 'custom' && scenario.tools?.[call.tool as (typeof PERMISSION_TOOL_KEYS)[number]] === 'deny';
+      expect(result.approved).toBe(!denied);
+      expect(requests).toHaveLength(0); expect(readings.requests).toHaveLength(0);
     }
   });
 
@@ -204,7 +171,7 @@ describe('approval posture: shared helper agrees with the real permission gate',
     for (const mode of ['prompt', 'allow-all', 'custom'] as const) {
       const posture = computeApprovalPosture({ autoApprove: true, mode, customTools: allToolsAs('deny') });
       expect(posture.kind).toBe('auto-approve');
-      expect(posture.automaticApprovals).toBe(true);
+      expect(posture.automaticApprovals).toBe(mode !== 'custom');
       expect(posture.bypassesPrompts).toBe(false);
       expect(posture.label.toLowerCase()).toContain('auto-approve');
     }
@@ -233,7 +200,7 @@ describe('approval posture: shared helper agrees with the real permission gate',
     for (const mode of ['prompt', 'allow-all', 'custom', 'plan', 'accept-edits'] as const) {
       const posture = computeApprovalPosture({ autoApprove: false, mode });
       expect(posture.detail).toContain(presetForMode(mode).summary);
-      expect(posture.detail).toContain('Boundary checks still apply');
+      expect(posture.detail).toContain('Configured denials');
       expect(posture.bypassesPrompts).toBe(false);
     }
   });
@@ -273,7 +240,7 @@ describe('approval posture: shared helper agrees with the real permission gate',
     }
   });
 
-  test('accept-edits mode: ordinary reads and file writes auto-approve; a mutating shell command still asks', async () => {
+  test('accept-edits mode permits configured reads, writes and commands automatically', async () => {
     configManager.set('behavior.autoApprove', false);
     configManager.set('permissions.mode', 'accept-edits');
 
@@ -293,10 +260,8 @@ describe('approval posture: shared helper agrees with the real permission gate',
 
     requests.length = 0;
     const execResult = await manager.checkDetailed(POSTURE_CALLS.exec.tool, POSTURE_CALLS.exec.args);
-    // The mock requestPermission (beforeEach) always denies, proving this
-    // reached the ask rather than silently auto-approving.
-    expect(requests).toHaveLength(1);
-    expect(execResult.sourceLayer).toBe('user_prompt');
-    expect(execResult.approved).toBe(false);
+    expect(requests).toHaveLength(0);
+    expect(execResult.sourceLayer).toBe('config_policy');
+    expect(execResult.approved).toBe(true);
   });
 });

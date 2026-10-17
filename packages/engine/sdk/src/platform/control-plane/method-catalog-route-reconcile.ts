@@ -223,8 +223,8 @@ export async function reconcileCatalogRoutes(
  * silently 404ing a caller who trusted it. Returns the ids that violate
  * that rule. A non-empty result means some descriptor is advertised as
  * live but isn't backed by a route, and isn't marked unavailable either,
- * an email.inbox.list-shaped regression. Wire this into a test (or a boot
- * self-check, once one exists) and fail loudly on a non-empty result.
+ * an email.inbox.list-shaped regression. The capability route reconciliation
+ * tests assert that the result is empty.
  */
 export function findUnreconciledAdvertisements(
   descriptors: readonly GatewayMethodDescriptor[],

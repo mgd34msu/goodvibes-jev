@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -114,7 +114,7 @@ function fixture(policy: 'plaintext_allowed' | 'require_secure' = 'plaintext_all
   const capture = (settings: readonly { key: string; value: unknown }[] = [{ key, value: privateValue }], token?: string) => post({ action: 'capture', settings }, token);
   const apply = (reference: string, token?: string) => post({ action: 'apply', reference }, token);
   return { root, home, project, daemon, config, secrets, pairing, paired, helper, authority, context, capture, apply, post,
-    hostLifetime, humans: () => humans, restart: () => { lifetime = {}; } };
+    manager, hostLifetime, humans: () => humans, restart: () => { lifetime = {}; } };
 }
 test.each(['plaintext_allowed', 'require_secure'] as const)('real HTTP %s bulk import records one complete native plan and durable private bytes', async policy => {
   const f = fixture(policy);
@@ -136,7 +136,7 @@ test.each(['plaintext_allowed', 'require_secure'] as const)('real HTTP %s bulk i
     Buffer.from(readFileSync(facts.credential!.destinations.find((destination: { tier: string }) => destination.tier === 'keyfile')!.path, 'utf8').trim(), 'hex')));
   expect(values[secretKey]).toBe(privateValue); expect(f.config.get(key)).toBe(`goodvibes://secrets/goodvibes/${secretKey}`);
   for (const setting of settings) expect(f.config.get(setting.key)).toBe(setting.value);
-  expect(f.humans()).toBe(0); expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(1);
+  expect(f.humans()).toBe(0); expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
   expect(JSON.stringify(requests)).not.toContain(privateValue); expect(JSON.stringify(requests)).not.toContain(f.paired.token);
   expect(JSON.stringify(log.query({}))).not.toContain(privateValue); expect(JSON.stringify(applied.body)).not.toContain(privateValue);
   expect((await f.apply(captured.capture().reference)).response.status).toBe(409);
@@ -148,16 +148,21 @@ test('shared tokens, copied authority fields and undeclared local keys cannot ca
   expect((await f.capture([{ key: 'permissions.mode', value: 'auto' }])).response.status).toBe(409);
   expect(requests).toHaveLength(0); expect(existsSync(join(f.daemon, 'secrets.json'))).toBe(false); expect(f.config.get(key)).toBe('');
 });
-test.each(['reject', 'confirm', 'plan'] as const)('native %s import holds every config and credential effect', async decision => {
-  const f = fixture(); if (decision === 'plan') f.config.set('permissions.mode', 'plan'); else outcome = decision;
+test.each(['plan', 'custom'] as const)('native %s import holds every config and credential effect', async decision => {
+  const f = fixture(); f.config.set('permissions.mode', decision);
+  if (decision === 'custom') f.config.set('permissions.tools.write', 'deny');
   const captured = await f.capture(); expect(captured.response.status).toBe(200);
   expect((await f.apply(captured.capture().reference)).response.status).toBe(409);
   expect(existsSync(join(f.daemon, 'secrets.json'))).toBe(false); expect(f.config.get(key)).toBe(''); expect(f.humans()).toBe(0);
 });
-test.each(['cancel', 'revoke', 'config', 'restart', 'owner'] as const)('pending real native reading retains %s and publishes nothing', async kind => {
+test.each(['cancel', 'revoke', 'config', 'restart', 'owner'] as const)('pending real native admission retains %s and publishes nothing', async kind => {
   const f = fixture(), captured = await f.capture();
   const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
-  beforeRead = async request => { if ('disposition' in request.questions) { entered.resolve(); await release.promise; } };
+  const admit = f.manager.admitAutonomous.bind(f.manager);
+  const observer = spyOn(f.manager, 'admitAutonomous').mockImplementation(async (...args) => {
+    const result = await admit(...args); entered.resolve(); await release.promise; return result;
+  });
+  cleanup.push(() => { release.resolve(); observer.mockRestore(); });
   const pending = f.apply(captured.capture().reference); await entered.promise;
   if (kind === 'cancel') f.hostLifetime.abort();
   if (kind === 'revoke') expect(f.pairing.revoke(f.paired.id)).toBe(true);

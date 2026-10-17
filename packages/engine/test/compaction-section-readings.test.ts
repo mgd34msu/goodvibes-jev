@@ -25,7 +25,7 @@ function installed(answer: (battery: string, state: unknown) => unknown) {
   const wrapped: JudgmentPort = { ...port, async ask(request) {
     const result = await port.ask(request);
     if (!request.context?.battery?.startsWith('engine.compaction.')) return result;
-    return { ...result, answers: { selected: answer(request.context?.battery ?? '', request.state) } as never };
+    return { ...result, answers: Object.fromEntries(Object.keys(request.questions).map(key => [key, answer(request.context?.battery ?? '', request.state)])) as never };
   } };
   installJudgmentPort(wrapped);
   return { requests, port: wrapped };
@@ -98,10 +98,18 @@ describe('structured compaction canonical source selection', () => {
       for (const message of messages) expect(source).toContain(message.content);
     }
   });
-  test('oversized individual source fails explicitly rather than clipping a later contradiction', async () => {
+  test('large source and its later contradiction reach every reading in full', async () => {
     const { requests } = installed(() => noulAnswer(0.99));
-    await expect(compactMessages(context({ messages: [{ role: 'user', content: 'x'.repeat(100_000) }, { role: 'assistant', content: 'The fix is not complete.' }] }), providers)).rejects.toThrow('selection budget');
-    assertReadingPartition(requests, [], compactionStartFields);
+    const text = 'x'.repeat(100_000);
+    const correction = 'The fix is not complete.';
+    const result = await compactMessages(context({ messages: [{ role: 'user', content: text }, { role: 'assistant', content: correction }] }), providers);
+    const selected = requests.filter(request => request.context?.battery?.startsWith('engine.compaction.'));
+    expect(selected.length).toBeGreaterThan(0);
+    for (const request of selected) {
+      const source = (request.state as { conversation: string }).conversation;
+      expect(source).toContain(text); expect(source).toContain(correction);
+    }
+    expect(result.sections.find(section => section.id === 'recent-conversation')?.content).toContain(correction);
   });
   test('transport failure propagates without source-bearing logging', async () => {
     const { port } = fakePort(() => { throw new Error('synthetic unavailable'); });

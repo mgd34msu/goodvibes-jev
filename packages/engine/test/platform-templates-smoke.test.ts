@@ -1,8 +1,3 @@
-/**
- * Coverage-gap smoke test, platform/templates
- * Verifies that the templates manager module loads correctly.
- * Closes coverage gap: platform/templates
- */
 
 import { describe, expect, test } from 'bun:test';
 import { TemplateManager, parseTemplateArgs } from '../sdk/src/platform/templates/manager.js';

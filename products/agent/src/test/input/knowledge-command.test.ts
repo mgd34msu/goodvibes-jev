@@ -370,7 +370,7 @@ describe('knowledgeCommand', () => {
     const sources = knowledgeStore.listSources(10);
     expect(sources).toHaveLength(1);
     expect(sources[0]).toMatchObject({ status: 'failed', sourceUri: `${baseUrl}/docs`, tags: ['example', 'docs'] });
-    expect(sources[0]?.crawlError).toBe('[REDACTED]');
+    expect(sources[0]?.crawlError).toContain('Artifact URI blocked by SSRF policy');
     expect(servedRequests).toBe(requestsBefore);
     expect(sources[0]?.title).toBeUndefined();
     expect(sources[0]?.summary).toBeUndefined();

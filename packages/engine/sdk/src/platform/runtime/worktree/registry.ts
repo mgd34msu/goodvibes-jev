@@ -1,3 +1,5 @@
+import { acquireCrossProcessLock } from '../../workspace/checkpoint/cross-process-lock.js';
+import { withFileWriteLockSync } from '../../workspace/checkpoint/sync-write-lock.js';
 import { mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { GitService } from '../../git/service.js';
@@ -325,7 +327,7 @@ function removeFile(path: string): boolean {
  * asked for stay recoverable) before an empty register is returned, the old
  * behaviour discarded them silently.
  */
-function readStore(storePath: string): WorktreeStore {
+function readStore(storePath: string, preserveUnreadable = true): WorktreeStore {
   let text: string;
   try {
     text = readFileSync(storePath, 'utf-8');
@@ -339,7 +341,7 @@ function readStore(storePath: string): WorktreeStore {
 
   const verdict = parseStore(text);
   if (verdict.kind === 'unreadable') {
-    preserveUnreadableStore(storePath, verdict.detail, verdict.bytes);
+    if (preserveUnreadable) preserveUnreadableStore(storePath, verdict.detail, verdict.bytes);
     return defaultStore();
   }
   if (verdict.droppedRecords > 0) {
@@ -419,17 +421,7 @@ export function summarizeWorktreeOwnership(records: readonly ManagedWorktreeMeta
   });
 }
 
-/**
- * Write the register atomically: temp file, then rename.
- *
- * HONEST SCOPE, this makes each write ALL-OR-NOTHING, so a crash mid-write
- * can no longer leave a torn register (it leaves at most a stray temp file,
- * which the next write of that pid replaces and which is never read). It does
- * NOT make the read-modify-write cycle cross-process safe: two processes that
- * read, mutate and write concurrently still resolve last-writer-wins, and the
- * loser's update is lost. Cross-process safety would need a lock file around
- * the whole cycle, which lives outside this module. Improved, not achieved.
- */
+/** Atomically publish the registry while its writer lock is held. */
 function writeStore(store: WorktreeStore, storePath: string): void {
   mkdirSync(dirname(storePath), { recursive: true });
   const tempPath = `${storePath}.${process.pid}.tmp`;
@@ -474,118 +466,130 @@ export class WorktreeRegistry {
    * preserved-aside register files, disclosing every count.
    */
   public async list(): Promise<WorktreeStatusRecord[]> {
-    const store = readStore(getStorePath(this.workingDirectory, this.surfaceRoot));
+    const beforeScan = readStore(getStorePath(this.workingDirectory, this.surfaceRoot), false);
     const listed = await this.git.worktreeList();
-    const present = new Set(listed.map((entry) => normalizePath(entry.path, this.workingDirectory)));
-    const records: WorktreeStatusRecord[] = listed.map((entry) => {
-      const path = normalizePath(entry.path, this.workingDirectory);
-      const meta = store.records[path]!;
-      const classified = classifyWorktreePath(path, this.workingDirectory);
-      return {
-        path,
-        branch: entry.branch,
-        head: entry.head,
-        kind: meta?.kind ?? classified.kind,
-        state: meta?.state ?? 'active',
-        ...(meta?.ownerId ?? classified.ownerId ? { ownerId: meta?.ownerId ?? classified.ownerId } : {}),
-        ...(meta?.sessionId ? { sessionId: meta.sessionId } : {}),
-        ...(meta?.taskId ? { taskId: meta.taskId } : {}),
-        ...(meta?.setup ? { setup: meta.setup } : {}),
-        updatedAt: meta?.updatedAt ?? Date.now(),
-      };
-    });
-    const nextRecords: Record<string, ManagedWorktreeMeta> = {};
-    for (const record of records) {
-      nextRecords[record.path] = {
-        path: record.path,
-        kind: record.kind,
-        state: record.state,
-        ...(record.ownerId ? { ownerId: record.ownerId } : {}),
-        ...(record.sessionId ? { sessionId: record.sessionId } : {}),
-        ...(record.taskId ? { taskId: record.taskId } : {}),
-        ...(record.setup ? { setup: record.setup } : {}),
-        updatedAt: record.updatedAt,
-      };
-    }
-    // REAP: a record whose worktree is no longer on disk has lost its owner.
-    // `kept` records are exempt, they are deliberate tombstones, but they get
-    // their own age TTL and count cap below so they are bounded rather than
-    // immortal. Everything reclaimed here is disclosed.
-    let vanished = 0;
-    let tombstonesExpired = 0;
-    const tombstones: ManagedWorktreeMeta[] = [];
-    const now = Date.now();
-    for (const [path, meta] of Object.entries(store.records)) {
-      if (present.has(path)) continue;
-      if (meta.state !== 'kept') {
-        vanished += 1;
-        continue;
-      }
-      if (now - meta.updatedAt > TOMBSTONE_MAX_AGE_MS) {
-        tombstonesExpired += 1;
-        continue;
-      }
-      tombstones.push(meta);
-    }
-
-    let tombstonesOverCap = 0;
-    let retainedTombstones = tombstones;
-    if (tombstones.length > MAX_TOMBSTONES) {
-      retainedTombstones = [...tombstones].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_TOMBSTONES);
-      tombstonesOverCap = tombstones.length - retainedTombstones.length;
-    }
-    for (const meta of retainedTombstones) nextRecords[meta.path] = meta;
-
-    writeStore({ version: 1, records: nextRecords }, getStorePath(this.workingDirectory, this.surfaceRoot));
-
-    const reclaimed = vanished + tombstonesExpired + tombstonesOverCap;
-    if (reclaimed > 0) {
-      logger.info('worktree registry: reclaimed stale register records', {
-        workingDirectory: this.workingDirectory,
-        vanished,
-        tombstonesExpired,
-        tombstonesOverCap,
-        total: reclaimed,
+    const release = await acquireCrossProcessLock(`${getStorePath(this.workingDirectory, this.surfaceRoot)}.lock`, { strictOwnership: true });
+    try {
+      const store = readStore(getStorePath(this.workingDirectory, this.surfaceRoot));
+      const present = new Set(listed.map((entry) => normalizePath(entry.path, this.workingDirectory)));
+      const records: WorktreeStatusRecord[] = listed.map((entry) => {
+        const path = normalizePath(entry.path, this.workingDirectory);
+        const meta = store.records[path]!;
+        const classified = classifyWorktreePath(path, this.workingDirectory);
+        return {
+          path,
+          branch: entry.branch,
+          head: entry.head,
+          kind: meta?.kind ?? classified.kind,
+          state: meta?.state ?? 'active',
+          ...(meta?.ownerId ?? classified.ownerId ? { ownerId: meta?.ownerId ?? classified.ownerId } : {}),
+          ...(meta?.sessionId ? { sessionId: meta.sessionId } : {}),
+          ...(meta?.taskId ? { taskId: meta.taskId } : {}),
+          ...(meta?.setup ? { setup: meta.setup } : {}),
+          updatedAt: meta?.updatedAt ?? Date.now(),
+        };
       });
-    }
-    reapPreservedStores(getStorePath(this.workingDirectory, this.surfaceRoot), now);
-    return records.sort((a, b) => a.path.localeCompare(b.path));
+      const nextRecords: Record<string, ManagedWorktreeMeta> = {};
+      for (const record of records) {
+        nextRecords[record.path] = {
+          path: record.path,
+          kind: record.kind,
+          state: record.state,
+          ...(record.ownerId ? { ownerId: record.ownerId } : {}),
+          ...(record.sessionId ? { sessionId: record.sessionId } : {}),
+          ...(record.taskId ? { taskId: record.taskId } : {}),
+          ...(record.setup ? { setup: record.setup } : {}),
+          updatedAt: record.updatedAt,
+        };
+      }
+      // REAP: a record whose worktree is no longer on disk has lost its owner.
+      // `kept` records are exempt, they are deliberate tombstones, but they get
+      // their own age TTL and count cap below so they are bounded rather than
+      // immortal. Everything reclaimed here is disclosed.
+      let vanished = 0;
+      let tombstonesExpired = 0;
+      const tombstones: ManagedWorktreeMeta[] = [];
+      const now = Date.now();
+      for (const [path, meta] of Object.entries(store.records)) {
+        if (present.has(path)) continue;
+        if (JSON.stringify(meta) !== JSON.stringify(beforeScan.records[path])) {
+          nextRecords[path] = meta;
+          continue;
+        }
+        if (meta.state !== 'kept') {
+          vanished += 1;
+          continue;
+        }
+        if (now - meta.updatedAt > TOMBSTONE_MAX_AGE_MS) {
+          tombstonesExpired += 1;
+          continue;
+        }
+        tombstones.push(meta);
+      }
+
+      let tombstonesOverCap = 0;
+      let retainedTombstones = tombstones;
+      if (tombstones.length > MAX_TOMBSTONES) {
+        retainedTombstones = [...tombstones].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_TOMBSTONES);
+        tombstonesOverCap = tombstones.length - retainedTombstones.length;
+      }
+      for (const meta of retainedTombstones) nextRecords[meta.path] = meta;
+
+      writeStore({ version: 1, records: nextRecords }, getStorePath(this.workingDirectory, this.surfaceRoot));
+
+      const reclaimed = vanished + tombstonesExpired + tombstonesOverCap;
+      if (reclaimed > 0) {
+        logger.info('worktree registry: reclaimed stale register records', {
+          workingDirectory: this.workingDirectory,
+          vanished,
+          tombstonesExpired,
+          tombstonesOverCap,
+          total: reclaimed,
+        });
+      }
+      reapPreservedStores(getStorePath(this.workingDirectory, this.surfaceRoot), now);
+      return records.sort((a, b) => a.path.localeCompare(b.path));
+    } finally { release(); }
   }
 
   public attach(path: string, target: { sessionId?: string; taskId?: string }): void {
-    const store = readStore(getStorePath(this.workingDirectory, this.surfaceRoot));
-    const normalized = normalizePath(path, this.workingDirectory);
-    const existing = store.records[normalized]!;
-    const classified = classifyWorktreePath(normalized, this.workingDirectory);
-    store.records[normalized] = {
-      path: normalized,
-      kind: existing?.kind ?? classified.kind,
-      state: existing?.state ?? 'active',
-      ...(existing?.ownerId ?? classified.ownerId ? { ownerId: existing?.ownerId ?? classified.ownerId } : {}),
-      ...(target.sessionId ? { sessionId: target.sessionId } : {}),
-      ...(target.taskId ? { taskId: target.taskId } : {}),
-      ...(existing?.setup ? { setup: existing.setup } : {}),
-      updatedAt: Date.now(),
-    };
-    writeStore(store, getStorePath(this.workingDirectory, this.surfaceRoot));
+    withFileWriteLockSync(getStorePath(this.workingDirectory, this.surfaceRoot), () => {
+      const store = readStore(getStorePath(this.workingDirectory, this.surfaceRoot));
+      const normalized = normalizePath(path, this.workingDirectory);
+      const existing = store.records[normalized]!;
+      const classified = classifyWorktreePath(normalized, this.workingDirectory);
+      store.records[normalized] = {
+        path: normalized,
+        kind: existing?.kind ?? classified.kind,
+        state: existing?.state ?? 'active',
+        ...(existing?.ownerId ?? classified.ownerId ? { ownerId: existing?.ownerId ?? classified.ownerId } : {}),
+        ...(target.sessionId ? { sessionId: target.sessionId } : {}),
+        ...(target.taskId ? { taskId: target.taskId } : {}),
+        ...(existing?.setup ? { setup: existing.setup } : {}),
+        updatedAt: Date.now(),
+      };
+      writeStore(store, getStorePath(this.workingDirectory, this.surfaceRoot));
+    });
   }
 
   public setState(path: string, state: ManagedWorktreeState): void {
-    const store = readStore(getStorePath(this.workingDirectory, this.surfaceRoot));
-    const normalized = normalizePath(path, this.workingDirectory);
-    const existing = store.records[normalized]!;
-    const classified = classifyWorktreePath(normalized, this.workingDirectory);
-    store.records[normalized] = {
-      path: normalized,
-      kind: existing?.kind ?? classified.kind,
-      state,
-      ...(existing?.ownerId ?? classified.ownerId ? { ownerId: existing?.ownerId ?? classified.ownerId } : {}),
-      ...(existing?.sessionId ? { sessionId: existing.sessionId } : {}),
-      ...(existing?.taskId ? { taskId: existing.taskId } : {}),
-      ...(existing?.setup ? { setup: existing.setup } : {}),
-      updatedAt: Date.now(),
-    };
-    writeStore(store, getStorePath(this.workingDirectory, this.surfaceRoot));
+    withFileWriteLockSync(getStorePath(this.workingDirectory, this.surfaceRoot), () => {
+      const store = readStore(getStorePath(this.workingDirectory, this.surfaceRoot));
+      const normalized = normalizePath(path, this.workingDirectory);
+      const existing = store.records[normalized]!;
+      const classified = classifyWorktreePath(normalized, this.workingDirectory);
+      store.records[normalized] = {
+        path: normalized,
+        kind: existing?.kind ?? classified.kind,
+        state,
+        ...(existing?.ownerId ?? classified.ownerId ? { ownerId: existing?.ownerId ?? classified.ownerId } : {}),
+        ...(existing?.sessionId ? { sessionId: existing.sessionId } : {}),
+        ...(existing?.taskId ? { taskId: existing.taskId } : {}),
+        ...(existing?.setup ? { setup: existing.setup } : {}),
+        updatedAt: Date.now(),
+      };
+      writeStore(store, getStorePath(this.workingDirectory, this.surfaceRoot));
+    });
   }
 
   /**
@@ -595,29 +599,33 @@ export class WorktreeRegistry {
    * worktree was otherwise registered.
    */
   public recordSetup(path: string, setup: WorktreeSetupResult): void {
-    const store = readStore(getStorePath(this.workingDirectory, this.surfaceRoot));
-    const normalized = normalizePath(path, this.workingDirectory);
-    const existing = store.records[normalized];
-    const classified = classifyWorktreePath(normalized, this.workingDirectory);
-    store.records[normalized] = {
-      path: normalized,
-      kind: existing?.kind ?? classified.kind,
-      state: existing?.state ?? 'active',
-      ...(existing?.ownerId ?? classified.ownerId ? { ownerId: existing?.ownerId ?? classified.ownerId } : {}),
-      ...(existing?.sessionId ? { sessionId: existing.sessionId } : {}),
-      ...(existing?.taskId ? { taskId: existing.taskId } : {}),
-      setup,
-      updatedAt: Date.now(),
-    };
-    writeStore(store, getStorePath(this.workingDirectory, this.surfaceRoot));
+    withFileWriteLockSync(getStorePath(this.workingDirectory, this.surfaceRoot), () => {
+      const store = readStore(getStorePath(this.workingDirectory, this.surfaceRoot));
+      const normalized = normalizePath(path, this.workingDirectory);
+      const existing = store.records[normalized];
+      const classified = classifyWorktreePath(normalized, this.workingDirectory);
+      store.records[normalized] = {
+        path: normalized,
+        kind: existing?.kind ?? classified.kind,
+        state: existing?.state ?? 'active',
+        ...(existing?.ownerId ?? classified.ownerId ? { ownerId: existing?.ownerId ?? classified.ownerId } : {}),
+        ...(existing?.sessionId ? { sessionId: existing.sessionId } : {}),
+        ...(existing?.taskId ? { taskId: existing.taskId } : {}),
+        setup,
+        updatedAt: Date.now(),
+      };
+      writeStore(store, getStorePath(this.workingDirectory, this.surfaceRoot));
+    });
   }
 
   public async cleanup(path: string): Promise<void> {
     const normalized = isAbsolute(path) ? path : normalizePath(path, this.workingDirectory);
     await this.git.worktreeRemove(normalized);
-    const store = readStore(getStorePath(this.workingDirectory, this.surfaceRoot));
-    delete store.records[normalized];
-    writeStore(store, getStorePath(this.workingDirectory, this.surfaceRoot));
+    withFileWriteLockSync(getStorePath(this.workingDirectory, this.surfaceRoot), () => {
+      const store = readStore(getStorePath(this.workingDirectory, this.surfaceRoot));
+      delete store.records[normalized];
+      writeStore(store, getStorePath(this.workingDirectory, this.surfaceRoot));
+    });
   }
 
   /**
@@ -670,9 +678,11 @@ export class WorktreeRegistry {
         detail: `discard failed: worktree removal did not complete (${String(error instanceof Error ? error.message : error)})`,
       };
     }
-    const store = readStore(getStorePath(this.workingDirectory, this.surfaceRoot));
-    delete store.records[normalized];
-    writeStore(store, getStorePath(this.workingDirectory, this.surfaceRoot));
+    withFileWriteLockSync(getStorePath(this.workingDirectory, this.surfaceRoot), () => {
+      const store = readStore(getStorePath(this.workingDirectory, this.surfaceRoot));
+      delete store.records[normalized];
+      writeStore(store, getStorePath(this.workingDirectory, this.surfaceRoot));
+    });
     return {
       path: normalized,
       ok: true,

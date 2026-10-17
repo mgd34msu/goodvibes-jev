@@ -2,18 +2,8 @@ import type { Tool, ToolCall } from '../../../types/tools.js';
 import type { ToolRuntimeContext } from '../context.js';
 import type { PhaseResult, ToolExecutionRecord } from '../types.js';
 
-/**
- * validate, Phase 1 of the tool execution pipeline.
- *
- * Performs lightweight pre-flight checks:
- * - The call has a non-empty id
- * - The call has a non-empty tool name
- * - Args is a plain object (not null)
- * - The tool object is present
- *
- * Heavy schema validation (JSON Schema against parameters) is intentionally
- * left to a future tier, this phase acts as a guard against programmer
- * errors and malformed LLM payloads.
+/** Validate call identity, argument shape and executable tool presence.
+ * Each tool validates its own parameter values before performing effects.
  */
 export async function validatePhase(
   call: ToolCall,

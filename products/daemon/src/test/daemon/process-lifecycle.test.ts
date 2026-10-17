@@ -356,7 +356,7 @@ describe('real Bun process signal ownership', () => {
       fx.release('close');
       expect(await fx.done).toEqual({ code: 1, signal: null });
       expect(fx.output().stdout).toContain('CLOSED\nEXIT:1:0:0');
-      expect(fx.output().stderr).toContain('goodvibes daemon host failed: [REDACTED]\n');
+      expect(fx.output().stderr).toContain('goodvibes daemon host failed: Daemon startup failed\n');
       expect(fx.output().stderr).not.toContain('PRIVATE_PROCESS_FAILURE_SENTINEL');
       expect(fx.output().stderr).not.toContain('process-lifecycle-child');
     } finally { await fx.cleanup(); }
@@ -369,7 +369,7 @@ describe('real Bun process signal ownership', () => {
         if (mode !== 'factory-failure') { await fx.waitFor('READY'); fx.child.kill('SIGTERM'); }
         expect(await fx.done).toEqual({ code: 1, signal: null });
         expect(fx.output().stdout).toContain('EXIT:1:0:0');
-        expect(fx.output().stderr).toContain('goodvibes daemon host failed: [REDACTED]\n');
+        expect(fx.output().stderr).toContain(`goodvibes daemon host failed: ${mode === 'factory-failure' ? 'Daemon startup failed' : mode === 'close-failure' ? 'Daemon shutdown failed' : 'Daemon shutdown deadline exceeded'}\n`);
         expect(fx.output().stderr).not.toContain('PRIVATE_PROCESS_FAILURE_SENTINEL');
         expect(fx.output().stderr).not.toContain('process-lifecycle-child');
       } finally { await fx.cleanup(); }

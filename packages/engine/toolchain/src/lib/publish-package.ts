@@ -8,6 +8,7 @@
  */
 
 import { existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import type { Exec, Logger, Sleep } from './effects.js';
 import { realExec, consoleLogger, realSleep } from './effects.js';
@@ -38,6 +39,8 @@ export interface PublishOptions {
   readonly exec?: Exec;
   /** File-existence seam (defaults to node `existsSync`) so tarball validation is testable. */
   readonly fileExists?: (path: string) => boolean;
+  /** Read only the archive manifest; tests may substitute archive I/O. */
+  readonly readTarballManifest?: (path: string) => unknown;
   readonly logger?: Logger;
 }
 
@@ -66,8 +69,22 @@ export function runPublishPackage(options: PublishOptions): PublishResult {
     if (!tarball.endsWith('.tgz') || !fileExists(tarball)) {
       return { ok: false, skipped: false, detail: `tarball not found or not a .tgz: ${tarball}` };
     }
+    try {
+      const manifest = options.readTarballManifest
+        ? options.readTarballManifest(tarball)
+        : JSON.parse(execFileSync('tar', ['-xOzf', tarball, 'package/package.json'], {
+          encoding: 'utf8', maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+        }));
+      if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)
+        || !('name' in manifest) || manifest.name !== options.name
+        || !('version' in manifest) || manifest.version !== options.version) {
+        return { ok: false, skipped: false, detail: `tarball identity does not match ${options.name}@${options.version}` };
+      }
+    } catch {
+      return { ok: false, skipped: false, detail: `tarball has no readable package/package.json: ${tarball}` };
+    }
     if (options.dryRun) {
-      return { ok: true, skipped: false, detail: `dry-run: tarball present (${tarball})` };
+      return { ok: true, skipped: false, detail: `dry-run: tarball identity verified (${tarball})` };
     }
     const alreadyTarball = getPublishedVersion(exec, options.name, options.version, registry);
     if (alreadyTarball === options.version) {

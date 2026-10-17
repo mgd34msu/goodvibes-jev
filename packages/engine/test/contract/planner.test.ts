@@ -1,6 +1,5 @@
 /**
- * Planning end to end with a fake port and a fake planner runner (design
- * sections 3.1, 3.2 and 3.5): shaping, acceptance into the contract tree, the
+ * Planning end to end with a fake port and a fake planner runner: shaping, acceptance into the contract tree, the
  * repair loop sending every problem and stopping at its limit, the owner
  * escalation, dispositions, the tool contract under forbids_writing, and
  * planner failure failing the contract with `planning`, with no single-item

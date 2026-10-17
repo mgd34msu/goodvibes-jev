@@ -50,7 +50,7 @@ const fixture = useGatewayFixture({ hostSessions: false, configure(config) {
 afterAll(() => sandboxHost?.restore());
 
 
-test('daemon root child registry receives canonical exact-plan sandbox admission', async () => {
+test('daemon child registry preserves sandbox containment and cancels before dispatch', async () => {
   const daemon = fixture(); const services = daemon.services;
   if (!sandboxHost) throw new Error('Native sandbox fixture did not start');
   const { bwrap, dispatchArgs, hostProbes } = sandboxHost;
@@ -80,6 +80,7 @@ test('daemon root child registry receives canonical exact-plan sandbox admission
     if (sandbox) cancelAtSandbox?.abort();
     return answer;
   });
+  let admission: ReturnType<typeof spyOn<typeof services.permissionManager, 'admitAutonomous'>> | undefined;
   const human = spyOn(services.approvalBroker, 'requestApproval').mockImplementation(async () => { throw new Error('Human fallback forbidden'); });
   try {
     expect(services.configManager.getCategory('sandbox').enabled).toBe(true);
@@ -94,36 +95,39 @@ test('daemon root child registry receives canonical exact-plan sandbox admission
     const command = 'printf owned-daemon-sandbox';
     const call = { id: 'daemon-sandbox-call', name: 'exec', arguments: { commands: [{ cmd: command, timeout_ms: 1000 }] } };
     const result = await executeToolCalls(deps, 'daemon-sandbox', [call]);
-    expect(sandboxAdmissions).toBe(1); expect(human).not.toHaveBeenCalled();
+    expect(sandboxAdmissions).toBe(0); expect(human).not.toHaveBeenCalled();
     expect(result).toHaveLength(1);
     expect(result[0]?.success).toBe(false);
     const output: unknown = JSON.parse(result[0]?.output ?? '{}');
     expect(output).toMatchObject({ cmd: command, sandboxed: true, sandbox_network: 'disabled', exit_code: 73,
       success: false, stdout: '', stderr: 'owned-sandbox-adapter-refused' });
-    const argvPrefix = [bwrap, '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp',
-      '--tmpfs', daemon.homeDirectory, '--bind', daemon.workingDirectory, daemon.workingDirectory, '--unshare-net',
-      '--unshare-pid', '--unshare-uts', '--unshare-ipc', '--die-with-parent', '--new-session', '--chdir', daemon.workingDirectory, '--'];
-    const boundary = `bubblewrap: workspace ${daemon.workingDirectory} writable, system read-only, /tmp isolated, network disabled`;
-    const escalation = 'wants network (not on egress allowlist, denied inside the boundary unless approved)';
-    const exactRequest = { command, escalations: [escalation], boundary,
-      policyReasons: [`runs inside the sandbox boundary but needs host access: ${escalation}`], workingDirectory: daemon.workingDirectory,
-      plan: { sandboxed: true, argvPrefix, boundary, network: 'disabled', escalationsGranted: [], homeMasked: true } };
-    expect(sandboxRequests).toEqual([exactRequest]);
-    const dispatched = [...argvPrefix.slice(1), '/bin/sh', '-c', command].join('\n') + '\n';
-    expect(readFileSync(dispatchArgs, 'utf8')).toBe(dispatched);
+    expect(sandboxRequests).toEqual([]);
+    const dispatched = readFileSync(dispatchArgs, 'utf8');
+    const argv = dispatched.trimEnd().split('\n');
+    expect(argv).toContain('--unshare-net');
+    expect(argv).toContain('--unshare-pid');
+    expect(argv).toContain('--new-session');
+    expect(argv.slice(-4)).toEqual(['--', '/bin/sh', '-c', command]);
+    expect(dispatched).toContain(`--bind\n${daemon.workingDirectory}\n${daemon.workingDirectory}\n`);
+    expect(dispatched).toContain('--tmpfs\n/run\n');
+    expect(dispatched).not.toContain('--ro-bind\n/\n/\n');
 
-    // Abort the original turn after its recorded exact-plan answer, before
-    // admission can be claimed. The native adapter must receive no second call.
+    // Revoke the turn after its real admission, before that admission can be
+    // claimed. The native adapter must receive no second call.
     cancelAtSandbox = new AbortController();
+    const admit = services.permissionManager.admitAutonomous.bind(services.permissionManager);
+    admission = spyOn(services.permissionManager, 'admitAutonomous').mockImplementation(async (...args) => {
+      const result = await admit(...args); cancelAtSandbox?.abort(); return result;
+    });
     const cancelled = executeToolCalls({ ...deps, turnSignal: cancelAtSandbox.signal }, 'daemon-sandbox-cancelled',
       [{ ...call, id: 'daemon-sandbox-cancelled-call' }]);
     await expect(cancelled).rejects.toMatchObject({ name: 'AbortError', message: 'The operation was aborted.' });
     expect(cancelAtSandbox.signal.aborted).toBe(true);
-    expect(sandboxAdmissions).toBe(2);
-    expect(sandboxRequests).toEqual([exactRequest, exactRequest]);
+    expect(sandboxAdmissions).toBe(0);
+    expect(sandboxRequests).toEqual([]);
     expect(readFileSync(dispatchArgs, 'utf8')).toBe(dispatched);
     expect(human).not.toHaveBeenCalled();
   } finally {
-    port.mockRestore(); human.mockRestore();
+    admission?.mockRestore(); port.mockRestore(); human.mockRestore();
   }
 });

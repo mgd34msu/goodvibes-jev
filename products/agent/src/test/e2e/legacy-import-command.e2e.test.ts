@@ -29,7 +29,7 @@ async function run(product: 'agent', fixture: LegacyImportHostFixture, args: str
   const timer = setTimeout(() => child.kill('SIGKILL'), 20_000);
   try {
     const [out, error, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-    expect(code).toBe(0); expect(error).toBe(''); expect(out).not.toContain(IMPORT_FIXTURE_TOKEN);
+    expect(code, error.replaceAll(IMPORT_FIXTURE_TOKEN, '[token]')).toBe(0); expect(error).toBe(''); expect(out).not.toContain(IMPORT_FIXTURE_TOKEN);
     const result = JSON.parse(out) as { product: string; output: string }; expect(result.product).toBe(product); return result.output;
   } finally { clearTimeout(timer); if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await child.exited; } }
 }

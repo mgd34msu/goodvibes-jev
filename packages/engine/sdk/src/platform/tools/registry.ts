@@ -786,6 +786,12 @@ export class ToolRegistry {
     return this.prepared.get(call)!.projection.admissionEvidence;
   }
 
+  /** Read-only status belongs to the captured registration, never to caller arguments. */
+  isPreparedReadOnly(call: PreparedToolCall): boolean {
+    this.assertPrepared(call);
+    return this.prepared.get(call)!.projection.resultPublication === 'read-only';
+  }
+
   /** Opaque backend binding, never part of the serializable permission evidence. */
   readPreparedSettingsMutation(call: PreparedToolCall): ToolPreparedSettingsMutation | undefined {
     this.assertPrepared(call);

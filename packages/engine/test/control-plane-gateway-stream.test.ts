@@ -26,7 +26,7 @@ async function readStreamText(
 
 describe('ControlPlaneGateway event streams', () => {
   test('replays recent events with ids and resumes after Last-Event-ID', async () => {
-    // OBS-14: bus.emit now async; give stream subscriptions and replay buffer time to settle.
+    // bus.emit now async; give stream subscriptions and replay buffer time to settle.
     await flushMicrotasks();
     const gateway = new ControlPlaneGateway({
       runtimeBus: new RuntimeEventBus(),

@@ -1,5 +1,5 @@
 import { projectGeneratedFactRecordAdmission } from './generated-fact-record-references.js';
-import { projectKnowledgeSourceReferences } from './source-structural-references.js';
+import { captureKnowledgeSourceReferences, projectKnowledgeSourceReferences, projectKnowledgeNodeActivationMetadata } from './source-structural-references.js';
 import { createHash } from 'node:crypto';
 import { assertJudgmentInput, captureOwnedJson } from '../gate/judgment-input.js';
 import type { PersistedKnowledgeRecordSelector, SQLiteStore } from '../state/sqlite-store.js';
@@ -75,6 +75,13 @@ export function prepareKnowledgeRecordAdmission(store: KnowledgeStore, kind: Rec
   const originalRaw = captureOwnedJson(snapshot.raw) as Record<string, unknown>;
   const generated = kind === 'node' ? projectGeneratedFactRecordAdmission(store, record as KnowledgeNodeRecord, originalRaw) : undefined;
   const raw = generated?.raw ?? { ...originalRaw };
+  // A node's foreign key may contain card-shaped digits in a generated digest.
+  // Only the existing producer proof for the exact live source can represent it.
+  const nodeSource = kind === 'node' && 'sourceId' in record && record.sourceId ? store.getSource(record.sourceId) : null;
+  const nodeExtraction = nodeSource ? store.getExtractionBySourceId(nodeSource.id) : null;
+  const nodeSourceProof = nodeSource ? captureKnowledgeSourceReferences(store, nodeSource, nodeExtraction) : undefined;
+  const nodeSourceReference = nodeSource ? projectKnowledgeSourceReferences(nodeSource, nodeExtraction, nodeSourceProof) : undefined;
+  if (nodeSourceReference && raw.source_id === nodeSource?.id) raw.source_id = nodeSourceReference.sourceId;
   // Reuse only the existing in-process producer proof for structural references.
   if (structural && kind === 'source') {
     raw.id = structural.sourceId;
@@ -87,6 +94,14 @@ export function prepareKnowledgeRecordAdmission(store: KnowledgeStore, kind: Rec
     if (typeof raw[column] !== 'string') continue;
     try { decoded[column] = JSON.parse(raw[column] as string); } catch { throw new KnowledgeRecordAdmissionHeldError('malformed'); }
   }
+  // Native activation receipts can also contain generated source and hash
+  // references. Reuse the same exact-record proof that page ranking consumes.
+  const activationMetadata = kind === 'node'
+    ? projectKnowledgeNodeActivationMetadata(store, record as KnowledgeNodeRecord, decoded.metadata) : decoded.metadata;
+  if (activationMetadata !== decoded.metadata) {
+    decoded.metadata = activationMetadata;
+    raw.metadata = JSON.stringify(activationMetadata);
+  }
   assertJudgmentInput(raw);
   assertJudgmentInput(decoded);
   for (const column of ['created_at', 'updated_at', ...(kind === 'source' && snapshot.raw.last_crawled_at !== null ? ['last_crawled_at'] : [])]) {
@@ -94,6 +109,8 @@ export function prepareKnowledgeRecordAdmission(store: KnowledgeStore, kind: Rec
   }
   const assertGeneration = (generation: string | null) => {
     generated?.assertCurrent();
+    if (kind === 'node') projectKnowledgeNodeActivationMetadata(store, record as KnowledgeNodeRecord, decoded.metadata);
+    if (nodeSourceReference && nodeSource) projectKnowledgeSourceReferences(nodeSource, nodeExtraction, nodeSourceProof);
     if (generation !== snapshot.generation || !sameKnowledgeRecord(original, record) || current() !== record) throw new KnowledgeRecordAdmissionHeldError('stale');
   };
   if (captureMetadata) {

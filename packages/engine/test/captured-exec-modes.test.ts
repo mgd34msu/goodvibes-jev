@@ -152,10 +152,15 @@ test.skipIf(!supported)('cancelled PTY cannot accept a late prompt answer or pub
   expect(existsSync(join(f.root, 'late.txt'))).toBe(false);
 });
 
-test.skipIf(!supported)('noisy until input fails inside its owned runner instead of throwing from a stream listener', async () => {
+test.skipIf(!supported)('noisy until no-match completion retains full output in its overflow file', async () => {
   const f = await fixture();
   const result = await f.tool.execute({ commands: [{ cmd: 'bun -e "process.stdout.write(\'x\'.repeat(600000))"', until: { pattern: 'NEVER', kill_after: true } }] });
-  expect(result.success).toBe(false); expect(output(result).stdout ?? '').toBe('');
+  expect(result.success).toBe(false);
+  const stdout = output(result).stdout ?? '';
+  expect(stdout.startsWith('x')).toBe(true);
+  const overflow = /Full output: ([^\]\n]+)/.exec(stdout)?.[1];
+  expect(overflow).toBeDefined();
+  expect(readFileSync(join(f.root, overflow!), 'utf8')).toBe('x'.repeat(600000));
 });
 
 test.skipIf(!supported)('until no-match completion retains authorized diagnostics and exit status', async () => {

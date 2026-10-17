@@ -1,7 +1,7 @@
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 /**
- * elastic-pool.ts, the elastic-fleet muscles of the ONE workstream engine
+ * elastic-pool.ts, the elastic-fleet muscles of the shared workstream engine
  * : a ready task with no available agent SPAWNS one (the phase-runner's
  * fresh per-task agent), up to `fleet.maxSize`; at-cap is a VISIBLE state
  * ("N ready, M running, at cap"), never a silent stall; a spawn refusal
@@ -15,7 +15,7 @@
 import type { OrchestrationEvent, WorkItem, Workstream } from './types.js';
 import type { PoolStateSnapshot } from './graph-dynamics.js';
 
-/** Live probe of the ONE fleet ceiling (fleet.maxSize), injected by the composition root. */
+/** Live probe of the configured fleet ceiling (fleet.maxSize), injected by the composition root. */
 export interface FleetCapacityProbe {
   /** Agents the daemon is responsible for right now (native + ACP-hosted + elastic fixers). */
   readonly active: number;
@@ -50,7 +50,7 @@ export interface PoolGateDecision {
 }
 
 /**
- * Gate ONE claim against the fleet ceiling. Allowing the claim IS the spawn,
+ * Gate one claim against the fleet ceiling. Allowing the claim IS the spawn,
  * the phase-runner spawns a fresh per-task agent for it. Refusals leave the
  * item in its ready state with the honest reason; the at-cap event fires once
  * per transition (the caller tracks the edge).

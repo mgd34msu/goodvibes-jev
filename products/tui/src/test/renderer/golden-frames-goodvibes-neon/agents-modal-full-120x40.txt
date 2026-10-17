@@ -7,11 +7,11 @@
 |                                                                                                                        |
 |            agent · executing-tool                                                                                      |
 |                                                                                                                        |
+|                                                                                                                        |
 |                   On it, reading the fixture first.                                                                    |
 |                                                                                                                        |
 |                   The fixture pins now, so the elapsed column is stable. Updating the expected rows                    |
 |                   next.                                                                                                |
-|                                                                                                                        |
 |                                                                                                                        |
 |                                                                                                                        |
 |                                                                                                                        |
@@ -1844,11 +1844,8 @@
 10 33 bg=#161a22
 10 34 bg=#161a22
 10 35 bg=#161a22
-10 36 fg=#ffcc00
 10 36 bg=#161a22
-10 37 fg=#ffcc00
 10 37 bg=#161a22
-10 38 fg=#ffcc00
 10 38 bg=#161a22
 10 39 bg=#161a22
 10 40 bg=#161a22
@@ -1984,8 +1981,11 @@
 11 33 bg=#161a22
 11 34 bg=#161a22
 11 35 bg=#161a22
+11 36 fg=#ffcc00
 11 36 bg=#161a22
+11 37 fg=#ffcc00
 11 37 bg=#161a22
+11 38 fg=#ffcc00
 11 38 bg=#161a22
 11 39 bg=#161a22
 11 40 bg=#161a22

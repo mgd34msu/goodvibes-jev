@@ -65,7 +65,7 @@ on:
       toolchain-spec:
         required: false
         type: string
-        default: "@goodvibes-jev/engine/toolchain"
+        default: "@goodvibes-jev/engine"
 
 permissions:
   contents: read
@@ -90,7 +90,7 @@ jobs:
         env:
           TOOLCHAIN_SPEC: ${{ inputs.toolchain-spec }}
           TARGET_KEY: ${{ matrix.target.key }}
-        run: bunx "$TOOLCHAIN_SPEC" goodvibes-build-binaries --target "$TARGET_KEY"
+        run: bunx --package "$TOOLCHAIN_SPEC" goodvibes-build-binaries --target "$TARGET_KEY"
       - name: Post-build smoke (the leg's own binary)
         if: matrix.target.smoke
         env:
@@ -106,7 +106,7 @@ jobs:
             echo "targets[].binary is required when smoke is true (the leg's own built artifact, e.g. dist/goodvibes-${TARGET_KEY})." >&2
             exit 1
           fi
-          bunx "$TOOLCHAIN_SPEC" goodvibes-post-build-smoke --binary "$LEG_BINARY"
+          bunx --package "$TOOLCHAIN_SPEC" goodvibes-post-build-smoke --binary "$LEG_BINARY"
       - name: Normalize artifact globs (spaces -> newlines)
         id: globs
         env:

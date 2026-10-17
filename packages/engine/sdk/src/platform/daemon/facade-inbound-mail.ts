@@ -309,12 +309,12 @@ export function composeInboundMail(
   const expectations = new InboundExpectationRegistry({
     store: expectationStore,
     defaultWindowMs: expectationWindowMs,
-    // §12 gate #31: an expectation opened against a mailbox already known
+    // An expectation opened against a mailbox already known
     // unreadable is refused at open time, so the workstream learns now rather
     // than from a fifteen-minute silence it cannot tell from "nothing came".
     capability: () => supervisor?.capability ?? null,
     onExpired: (report) => {
-      // §2.3: an expectation that ends without its message fails with a named
+      // An expectation that ends without its message fails with a named
       // reason and is REPORTED, rather than lapsing into silence.
       logger.warn(
         report.reason === 'capability-lost'
@@ -347,7 +347,7 @@ export function composeInboundMail(
   // the one the status verb read would be the one nothing wrote to.
   const noticeHealth = createInboundNoticeHealth();
 
-  // §3.4b, §12 gates #32 and #33. The announcer tells the owner about terminal
+  // The announcer tells the owner about terminal
   // failures; the registry has to know about them too, because an expectation
   // is a promise to watch a mailbox and a mailbox that cannot be read makes
   // that promise unkeepable. Composed here rather than folded into the

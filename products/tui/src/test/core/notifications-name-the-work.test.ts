@@ -1,4 +1,4 @@
-import { makeTestWebhookNotifier } from '../helpers/notification-transport.ts';
+import { makeTestWebhookNotifier, settleTestWebhookNotifications } from '../helpers/notification-transport.ts';
 /**
  * Notifications name the work (owner ruling 2026-09-29).
  *
@@ -111,7 +111,7 @@ function runTurn(h: ReturnType<typeof harness>, end: () => void): void {
  * A failed turn's notice waits one microtask for the failover path's decision
  * (turn-event-wiring.ts onTurnError); the other endings are told at once.
  */
-const settled = (): Promise<void> => Promise.resolve();
+const settled = settleTestWebhookNotifications;
 
 const ENDINGS = {
   completed: (h: ReturnType<typeof harness>) => h.turn('TURN_COMPLETED', { turnId: 't1', response: 'ok', stopReason: 'completed' }),
@@ -154,28 +154,30 @@ describe('a finished turn is named on every channel (privacy explicitly off)', (
         const h = harness();
         runTurn(h, () => ENDINGS[outcome](h));
       await settled();
+        await settleTestWebhookNotifications();
         expect(h.captured.webhook).toEqual([`${NAME_60}\n${EXPECTED_BODY[outcome]}`]);
       });
     });
   }
 
-  test('a user-set conversation title names the turn instead of the message', () => {
+  test('a user-set conversation title names the turn instead of the message', async () => {
     const h = harness({}, 'Login redirect work', 'user');
     runTurn(h, () => ENDINGS.completed(h));
     expect(h.captured.desktop[0]!.title).toBe('Login redirect work');
   });
 
-  test('a preflight failure is told as failed with its reason', () => {
+  test('a preflight failure is told as failed with its reason', async () => {
     const h = harness();
     runTurn(h, () => h.turn('PREFLIGHT_FAIL', { turnId: 't1', reason: 'context window preflight failed', stopReason: 'context_overflow' }));
     expect(h.captured.desktop[0]!.body.startsWith('Failed after 1m 23s')).toBe(true);
     expect(h.captured.desktop[0]!.body.endsWith(': context window preflight failed')).toBe(true);
   });
 
-  test('one notice per turn even when two terminal events arrive for it', () => {
+  test('one notice per turn even when two terminal events arrive for it', async () => {
     const h = harness();
     runTurn(h, () => { ENDINGS.failed(h); ENDINGS.completed(h); });
     expect(h.captured.desktop).toHaveLength(1);
+    await settleTestWebhookNotifications();
     expect(h.captured.webhook).toHaveLength(1);
   });
 });
@@ -191,6 +193,7 @@ describe('behavior.notificationsMetadataOnly on: every channel is metadata only'
       const body = `${lead}, 2 files changed, 1 tool call, 1 agent started`;
       expect(h.captured.desktop).toEqual([{ title: `GoodVibes: turn ${word}`, body }]);
       expect(h.captured.terminal.map((c) => c.message)).toEqual([`GoodVibes: turn ${word}: ${body}`]);
+      await settleTestWebhookNotifications();
       expect(h.captured.webhook).toEqual([`GoodVibes: turn ${word}\n${body}`]);
       const all = JSON.stringify(h.captured);
       expect(all).not.toContain('Refactor');
@@ -232,6 +235,7 @@ describe('approval notices name the command and the turn', () => {
     expect(captured.terminal[0]!.signal).toBe('approval-wait');
     expect(captured.terminal[0]!.message).toContain('bun test src/auth/middleware.test.ts');
     expect(captured.terminal[0]!.message).toContain('Approval needed: Refactor');
+    await settleTestWebhookNotifications();
     expect(captured.webhook[0]).toBe(`${title}\nexec is waiting for approval: bun test src/auth/middleware.test.ts`);
   });
 
@@ -239,6 +243,7 @@ describe('approval notices name the command and the turn', () => {
     const captured = await run({ 'behavior.notificationsMetadataOnly': true });
     expect(captured.desktop).toEqual([{ title: 'GoodVibes: approval needed', body: 'exec (execute) is waiting for approval' }]);
     expect(captured.terminal[0]!.message).toBe('GoodVibes: approval needed: exec (execute) is waiting for approval');
+    await settleTestWebhookNotifications();
     expect(captured.webhook).toEqual(['GoodVibes: approval needed\nexec (execute) is waiting for approval']);
   });
 });
@@ -251,7 +256,7 @@ describe('budget, agent and workstream notices name the work', () => {
     return { h, captured };
   }
 
-  test('budget: names the budget that tripped and the turn it tripped in', () => {
+  test('budget: names the budget that tripped and the turn it tripped in', async () => {
     // A separate harness: the budget needs a priced model and a real cost.
     const captured: Captured = { desktop: [], terminal: [], webhook: [] };
     const turns = bus(); const tools = bus(); const agents = bus(); const contracts = bus();
@@ -288,15 +293,17 @@ describe('budget, agent and workstream notices name the work', () => {
         expect(captured.desktop[0]!.title.startsWith('Budget passed: Refactor the authentication')).toBe(true);
         expect(captured.desktop[0]!.title.length).toBeLessThanOrEqual(60);
         expect(captured.desktop[0]!.body).toBe('Session cost $30.00 passed the $1.00 session budget during this turn');
+        await settleTestWebhookNotifications();
         expect(captured.webhook[0]).toBe(`${captured.desktop[0]!.title}\n${captured.desktop[0]!.body}`);
       } else {
         expect(captured.desktop).toEqual([{ title: 'GoodVibes: budget passed', body: 'Session cost $30.00 passed the $1.00 budget' }]);
+        await settleTestWebhookNotifications();
         expect(captured.webhook).toEqual(['GoodVibes: budget passed\nSession cost $30.00 passed the $1.00 budget']);
       }
     }
   });
 
-  test('agent failure and agent-blocked name the agent task; privacy on omits arbitrary identifiers', () => {
+  test('agent failure and agent-blocked name the agent task; privacy on omits arbitrary identifiers', async () => {
     for (const metadataOnly of [false, true]) {
       const { h } = budgetHarness({ 'behavior.notificationsMetadataOnly': metadataOnly });
       h.agent('AGENT_SPAWNING', { agentId: 'agent-12345678', task: 'Audit the retry backoff in the HTTP client' });
@@ -312,7 +319,7 @@ describe('budget, agent and workstream notices name the work', () => {
     }
   });
 
-  test('contract failure names the task; privacy on drops it', () => {
+  test('contract failure names the task; privacy on drops it', async () => {
     for (const metadataOnly of [false, true]) {
       const { h } = budgetHarness({ 'behavior.notificationsMetadataOnly': metadataOnly });
       h.contract('CONTRACT_CREATED', { contractId: 'contract-abc', ask: 'Rewrite the retry backoff so it honors Retry-After headers from every provider' });

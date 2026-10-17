@@ -17,6 +17,7 @@ import { TranscriptSourceChangedError } from '@goodvibes-jev/engine/sdk/platform
 import { captureJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { requireYesFlag, stripYesFlag } from './confirmation.ts';
 import { readConversationMessageSnapshots } from '../../core/conversation-message-snapshot.ts';
+import { copySessionSidecars, restoreLoadedSession } from '../../core/session-resume-core.ts';
 
 function parseTranscriptKind(raw: string | undefined): TranscriptEventKind | 'all' {
   const normalized = (raw ?? 'all').toLowerCase().replace(/-/g, '_');
@@ -220,6 +221,10 @@ function conversationMessageContentText(message: ConversationMessageSnapshot): s
 export async function handleSessionWorkflowCommand(args: string[], ctx: CommandContext): Promise<boolean> {
   const sm = requireSessionManager(ctx);
   const sub = args[0];
+  if (['resume', 'save', 'fork'].includes(sub ?? '') && ctx.isGenerating?.()) {
+    ctx.print('A turn is still running. Stop it with Esc or let it finish before changing sessions.');
+    return true;
+  }
 
   if (!sub) {
     const id = ctx.session.runtime.sessionId;
@@ -318,30 +323,28 @@ export async function handleSessionWorkflowCommand(args: string[], ctx: CommandC
     try {
       const { meta, messages } = sm.load(found.name);
       const providerApi = requireProviderApi(ctx);
-      ctx.session.conversationManager.resetAll();
-      ctx.session.conversationManager.fromJSON({ messages: readConversationMessageSnapshots(messages), title: meta.title, titleSource: meta.titleSource });
-      ctx.session.conversationManager.rebuildHistory();
-      ctx.session.runtime.sessionId = found.name;
-      // The live session is now homed on the resumed id, write the
-      // last-session pointer through the surface-bound closure so the next
-      // launch's "resume last session" reads this session, not a stale one.
-      ctx.session.writeLastSessionPointer?.(found.name);
-      // Reload the resumed session's rewind anchors so a message-anchored
-      // /rewind can still reach turns from before this run. The message
-      // boundaries stay valid because the resume above rehydrated the same
-      // history the anchors were recorded against.
-      const restoredAnchorCount = ctx.session.restoreTurnAnchors?.(found.name) ?? 0;
-      if (meta.provider) ctx.session.runtime.provider = meta.provider;
-      if (meta.model) {
+      const sourceSessionId = ctx.session.runtime.sessionId;
+      let model = meta.model;
+      let provider = meta.provider;
+      if (model) {
         try {
-          const selected = await providerApi.selectModel(meta.model);
-          ctx.session.runtime.model = selected.registryKey;
-          ctx.session.runtime.provider = selected.providerId;
-        } catch {
-          ctx.session.runtime.model = meta.model;
-          // model may not exist locally
-        }
+          const selected = await providerApi.selectModel(model);
+          model = selected.registryKey;
+          provider = selected.providerId;
+        } catch { /* The saved model may no longer exist locally. */ }
       }
+      if (ctx.isGenerating?.() || ctx.session.runtime.sessionId !== sourceSessionId) {
+        throw new Error('The active session changed or a turn started while resuming. Try again when idle.');
+      }
+      const restoredAnchorCount = restoreLoadedSession(found.name, { meta, messages }, {
+        conversation: ctx.session.conversationManager,
+        runtime: ctx.session.runtime,
+        restoreTurnAnchors: ctx.session.restoreTurnAnchors,
+        surface: ctx.session.surface,
+      });
+      if (model) ctx.session.runtime.model = model;
+      if (provider) ctx.session.runtime.provider = provider;
+      ctx.session.writeLastSessionPointer?.(found.name);
       ctx.renderRequest();
       ctx.print([
         'Resumed session',
@@ -397,6 +400,7 @@ export async function handleSessionWorkflowCommand(args: string[], ctx: CommandC
     };
     try {
       sm.save(newId, messages, meta);
+      copySessionSidecars(sourceSessionId, newId, ctx.session.conversationManager, ctx.session.surface);
       ctx.session.runtime.sessionId = newId;
       // Fork re-homes the live session onto the new id, write the
       // last-session pointer through the surface-bound closure, same as
@@ -432,6 +436,7 @@ export async function handleSessionWorkflowCommand(args: string[], ctx: CommandC
     };
     try {
       const { filePath, sanitizedName } = sm.save(rawName, messages, meta);
+      copySessionSidecars(ctx.session.runtime.sessionId, sanitizedName, ctx.session.conversationManager, ctx.session.surface);
       ctx.session.runtime.sessionId = sanitizedName;
       ctx.print([
         'Session saved',

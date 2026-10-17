@@ -17,15 +17,15 @@ import { executeNestedSetupSmoke, resolveSetupSmokeNativeEvidence } from '../../
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 let prior: ReturnType<typeof installJudgmentPort>, log: SqliteDecisionLog, readings: ReturnType<typeof fakePort>;
-let onDisposition: ((tool: string) => 'act' | 'reject' | undefined) | undefined;
+let afterAdmission: ((tool: string) => void) | undefined;
 const roots: string[] = [];
 beforeEach(() => {
-  onDisposition = undefined;
+  afterAdmission = undefined;
   readings = fakePort((name, question, state) => {
     if (question.type === 'noul') return noulAnswer(0.001);
     const owner = state && typeof state === 'object' && !Array.isArray(state) ? state.input : undefined;
     const tool = owner && typeof owner === 'object' && !Array.isArray(owner) && typeof owner.tool === 'string' ? owner.tool : '';
-    const label = name === 'disposition' ? onDisposition?.(tool) ?? 'act' : name === 'kind' ? 'read'
+    const label = name === 'disposition' ? 'act' : name === 'kind' ? 'read'
       : name === 'family' || name === 'capability' ? 'generic' : undefined;
     if (!label) throw new Error(`Unexpected recorded setup fixture question ${name}`);
     return choiceAnswer(question, label, 0.999);
@@ -49,6 +49,8 @@ function fixture() {
   const reader: PermissionConfigReader = { getAutonomousSnapshot: () => ({ permissions: permissions(), autoApprove: false, directory: root }),
     getSnapshot: () => ({ permissions: permissions() }), isAutoApproveEnabled: () => false, getWorkingDirectory: () => root };
   const manager = new PermissionManager(undefined, reader, new PolicyRuntimeState()), registry = new ToolRegistry(manager);
+  const admit = manager.admitAutonomous.bind(manager);
+  manager.admitAutonomous = async (...args) => { const result = await admit(...args); afterAdmission?.(args[1]); return result; };
   const calls: Record<string, unknown>[] = [], executed: { name: string; args: Record<string, unknown>; options: Parameters<Tool['execute']>[1] }[] = [];
   let retainedParent: { args: Record<string, unknown>; options: Parameters<Tool['execute']>[1] } | undefined;
   let inspectParent: ((args: Record<string, unknown>, options: Parameters<Tool['execute']>[1]) => Promise<void>) | undefined;
@@ -173,11 +175,7 @@ describe('setup adapter', () => {
     expect(outward).not.toContain('cHJpdmF0ZS1mYWNhZGU='); expect(outward).not.toContain('4111111111111111');
     expect(artifact).toBe('safe-before\nAuthorization: <redacted>\nsafe-after');
     const sourceReadings = readings.requests.filter(request => request.context?.battery === 'engine.gate.autonomous-disposition');
-    expect(sourceReadings.length).toBeGreaterThanOrEqual(2);
-    for (const request of sourceReadings) {
-      expect(JSON.stringify(request)).toContain(f.source.goal);
-      for (const criterion of f.source.criteria) expect(JSON.stringify(request)).toContain(criterion);
-    }
+    expect(sourceReadings).toHaveLength(0);
     const before = readings.requests.length;
     await expect(executeNestedSetupSmoke(f.registry, 'expired-smoke-parent', parent.args, parent.options,
       { mode: 'run_setup_smoke', setupItemId: 'install-smoke', fields: parent.args.fields }, f.context)).rejects.toThrow();
@@ -192,20 +190,22 @@ describe('setup adapter', () => {
       : kind === 'unselected-field' ? { action: 'smoke', fields: { notes: 'ready', extra: 'password=private-facade' } }
       : kind === 'unrelated-action' ? { action: 'status', fields: { notes: 'apiKey=private-facade' } }
       : { action: 'smoke', itemId: 'other-item', fields: { notes: 'apiKey=private-facade' } };
-    await expect(f.run(args)).rejects.toThrow();
-    expect(readings.requests).toHaveLength(0); expect(f.executed).toHaveLength(0); expect(f.store.list()).toHaveLength(0);
+    if (kind === 'unrelated-action') expect((await f.run(args)).success).toBe(true);
+    else await expect(f.run(args)).rejects.toThrow();
+    expect(readings.requests).toHaveLength(0);
+    expect(f.executed).toHaveLength(kind === 'other-item' || kind === 'unrelated-action' ? 1 : 0);
+    expect(f.store.list()).toHaveLength(0);
   });
 
   test('fresh child refusal prevents effects under a genuinely admitted parent', async () => {
-    const f = fixture(); onDisposition = tool => tool === 'agent_harness' ? 'reject' : 'act';
-    const result = await f.run({ action: 'smoke', fields: { notes: 'ready' } });
-    expect(result.success).toBe(false); expect(result.error).toContain('Nested tool admission reject');
+    const f = fixture(); f.inspectParent(async () => { f.setMode('plan'); });
+    await expect(f.run({ action: 'smoke', fields: { notes: 'ready' } })).rejects.toThrow('Autonomous execution authority, source or scope changed');
     expect(f.executed).toHaveLength(0); expect(f.store.list()).toHaveLength(0);
   });
 
   test.each(['plan', 'cancel', 'store', 'workspace', 'config', 'executor', 'schema', 'source'] as const)('late %s change prevents the freshly admitted smoke child from publishing', async kind => {
     const f = fixture(), controller = new AbortController(); let changed = false, readingsAtChange = -1;
-    onDisposition = tool => {
+    afterAdmission = tool => {
       if (tool === 'agent_harness' && !changed) {
         changed = true;
         if (kind === 'plan') f.setMode('plan');
@@ -218,7 +218,6 @@ describe('setup adapter', () => {
         if (kind === 'source') f.source.goal = 'Changed original host goal.';
         readingsAtChange = readings.requests.length;
       }
-      return 'act';
     };
     await expect(f.run({ action: 'smoke', fields: { notes: 'ready' } }, controller.signal)).rejects.toThrow();
     expect(changed).toBe(true); expect(f.executed).toHaveLength(0); expect(f.store.list()).toHaveLength(0);

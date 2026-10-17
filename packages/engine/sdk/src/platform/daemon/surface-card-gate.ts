@@ -1,7 +1,7 @@
 /**
  * surface-card-gate.ts, refuse card-shaped and protected credential content
  * arriving on a remote messaging channel before judgment or persistence
- * (docs/inbound-email.md §11.0).
+ * (docs/decisions/2026-07-27-inbound-email-design.md §11.0).
  *
  * **Provenance, stated plainly: §11.0 is a coordinator ruling, not an owner
  * quote.** Design rule it enforces: card details are entered only at a local

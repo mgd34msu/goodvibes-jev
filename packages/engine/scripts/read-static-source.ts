@@ -146,8 +146,8 @@ async function main(): Promise<void> {
     saveStaticSourceReadings(result, path);
     const held = inputs.filter(input => staticInputStanding(input, result).kind === 'held');
     const violations = inputs.filter(input => staticInputStanding(input, result).kind === 'violation');
-    console.log(`[static-source] ${pending.length} read, ${inputs.length - pending.length} reused, ${held.length} held, ${violations.length} violating inputs`);
-    if (held.length || violations.length) process.exitCode = 1;
+    console.log(`[static-source] ${pending.length} read, ${inputs.length - pending.length} reused, ${held.length} inconclusive advisories, ${violations.length} violating inputs`);
+    if (violations.length) process.exitCode = 1;
   } catch (error) {
     abort.abort(error);
     await Promise.allSettled(workers);

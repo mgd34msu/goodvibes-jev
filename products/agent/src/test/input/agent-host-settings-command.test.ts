@@ -48,14 +48,14 @@ describe('exact notification privacy literals at the text command boundary', () 
     const { config, out, run } = fixture();
     await run(['set', KEY, value, '--yes']);
     expect(config.getHostBooleanSetting(KEY).get()).toBe(true);
-    expect(out.at(-1)).toBe('[REDACTED]');
+    expect(out.at(-1)).toBe(`${KEY} requires a literal boolean.`);
   });
 
   test('extra positional arguments and absent confirmation do not authorize details; ordinary coercion remains', async () => {
     const { config, out, run } = fixture();
     await run(['set', KEY, 'false', 'extra', '--yes']);
     expect(config.getHostBooleanSetting(KEY).get()).toBe(true);
-    expect(out.at(-1)).toBe('[REDACTED]');
+    expect(out.at(-1)).toBe(`${KEY} requires a literal boolean.`);
     await run(['set', KEY, 'false']);
     expect(config.getHostBooleanSetting(KEY).get()).toBe(true);
     expect(out.at(-1)).toContain('without --yes');

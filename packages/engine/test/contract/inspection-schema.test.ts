@@ -58,8 +58,8 @@ async function inspectOverHttp(h: Harness, id: string, label: string): Promise<C
   const service = createContractOperatorService({ runner: h.runner, workingDirectory: h.root });
   const catalog = new GatewayMethodCatalog();
   registerContractGatewayMethods(catalog, service);
-  // The invocation path reads only gatewayMethods from the daemon context.
-  const helper = new DaemonControlPlaneHelper({ gatewayMethods: catalog } as unknown as DaemonControlPlaneContext);
+  // Invocation authenticates against the current host credential before reading the catalog.
+  const helper = new DaemonControlPlaneHelper({ gatewayMethods: catalog, authToken: () => 'fixture-token', userAuth: { validateSession: () => null } } as unknown as DaemonControlPlaneContext);
   // The router delegates these two GET routes solely to invokeGatewayRestVerb.
   const handlers = {
     invokeGatewayRestVerb: async ({ methodId, req, params }: GatewayRestVerbInvocation) => {
@@ -160,7 +160,7 @@ test.each([
     expect(unit.lastReport).toEqual(report);
     expect(unit.checks.find(check => check.trigger === 'completion')?.claims?.kind).toBe('files_verified');
     expect(Object.hasOwn(unit.lastReport!, 'gatheredContext')).toBe(false);
-    if (archetype === 'engineer') expect(unit.lastOutput!.length).toBeLessThan(output.length);
+    expect(unit.lastOutput).toBe(output);
     rejectsInspection({ ...record, units: [{ ...unit, lastReport: { ...report, filesModified: 'src/csv.ts' } }] });
     rejectsInspection({ ...record, units: [{ ...unit, lastReport: { ...report, unrecognizedClaim: true } }] });
   } finally {

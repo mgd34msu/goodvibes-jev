@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { unlinkSync, writeFileSync } from 'node:fs';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 
@@ -63,11 +63,8 @@ export class FileUndoManager {
 
     try {
       if (op.beforeContent === null) {
-        // File was created by this op, restoring means deleting it,
-        // but we do a safe approach: write empty string + push to redo.
-        // Full deletion would be destructive; leave as empty file instead.
-        writeFileSync(op.path, '', 'utf-8');
-        logger.debug('file-undo: reverted new file to empty', { path: op.path });
+        unlinkSync(op.path);
+        logger.debug('file-undo: removed newly created file', { path: op.path });
       } else {
         writeFileSync(op.path, op.beforeContent, 'utf-8');
         logger.debug('file-undo: restored previous content', { path: op.path });

@@ -43,7 +43,7 @@ test('actual tui graph public terminal control preserves Jev ownership and lifet
     if ('disposition' in request.questions && JSON.stringify(request.state).includes('sandboxEscalation')) sawSandbox = true;
     if ('disposition' in request.questions && JSON.stringify(request.state).includes('localhostAdmission')) sawLocalhost = true;
     const answer = await recorded.ask(request);
-    if (!intercepted && phase !== 'allow' && 'disposition' in request.questions && JSON.stringify(request.state).includes('terminalControl')) {
+    if (!intercepted && phase !== 'allow' && 'disposition' in request.questions && request.context?.site === 'engine.exec.prompt-control') {
       intercepted = true;
       if (phase === 'aba') { await services.workspaceTrustManager.setLevel('restricted'); await services.workspaceTrustManager.setLevel('trusted'); }
       if (phase === 'dispose') services.dispose();
@@ -65,7 +65,7 @@ test('actual tui graph public terminal control preserves Jev ownership and lifet
     expect(allowed[0]!.output).toContain('owned-terminal-receipt');
     const fetched = await executeToolCalls(deps, 'owned-fetch', [{ id: 'owned-fetch-call', name: 'fetch', arguments: { urls: [{ url: `http://127.0.0.1:${server.port}/owned-preview` }] } }]);
     expect(fetched[0]!.success, fetched[0]!.error ?? fetched[0]!.output).toBe(true);
-    expect(fetched[0]!.output).toContain('owned-local-preview'); expect(sawLocalhost).toBe(true); expect(localRequests).toBe(1);
+    expect(fetched[0]!.output).toContain('owned-local-preview'); expect(sawLocalhost).toBe(false); expect(localRequests).toBe(1);
     configManager.set('sandbox.enabled', true);
     configManager.flushConfigFileChanges();
     // A refusing OS adapter exercises the complete product composition on
@@ -93,7 +93,7 @@ test('actual tui graph public terminal control preserves Jev ownership and lifet
       const sandboxRegistry = new ToolRegistry(permissionManager);
       registerTuiTurnTools(sandboxRegistry, services, { resolveSessionId: () => 'owned-terminal' });
       const sandboxed = await executeToolCalls({ ...deps, toolRegistry: sandboxRegistry }, 'owned-sandbox', [{ id: 'owned-sandbox-call', name: 'exec', arguments: { commands: [{ cmd: 'printf owned-sandbox-control', interactive: false, timeout_ms: 1000 }] } }]);
-      expect(sawSandbox).toBe(true);
+      expect(sawSandbox).toBe(false);
       expect(JSON.parse(sandboxed[0]!.output ?? '{}')).toMatchObject({ sandboxed: true, exit_code: 73, stdout: '' });
       expect(sandboxed[0]!.output).toContain('owned-sandbox-adapter-refused');
     } finally {

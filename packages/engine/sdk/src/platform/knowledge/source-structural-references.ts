@@ -47,7 +47,7 @@ export function retainKnowledgeNodeActivationReferences(store: KnowledgeStore, r
     evidence: evidence.map((entry, index) => ({ ...entry, proof: proofs[index] })) });
 }
 
-function pageActivationRepresentation(store: KnowledgeStore, node: KnowledgeNodeRecord, metadata: unknown): unknown {
+export function projectKnowledgeNodeActivationMetadata(store: KnowledgeStore, node: KnowledgeNodeRecord, metadata: unknown): unknown {
   const known = activationReferences.get(node);
   if (!known) return metadata;
   if (known.store !== store || store.getNode(node.id) !== node || !sameKnowledgeRecord(known.original, node)) throw new KnowledgeGeneratedFactSupportHeldError('stale');
@@ -92,7 +92,7 @@ export function knowledgePageCandidateRepresentation(store: KnowledgeStore | und
     // Persisted native rows have plain JSON slots. A newly attached hidden
     // subtree cannot inherit their stored representation or reference proof.
     try { captureStrictJudgmentJson(node); } catch { throw new KnowledgeGeneratedFactSupportHeldError('malformed'); }
-    replacements.set('metadata', pageActivationRepresentation(store, node, slots.metadata?.value));
+    replacements.set('metadata', projectKnowledgeNodeActivationMetadata(store, node, slots.metadata?.value));
     const sourceId: unknown = slots.sourceId?.value;
     if (typeof sourceId === 'string') {
       const origin = store.getSource(sourceId);

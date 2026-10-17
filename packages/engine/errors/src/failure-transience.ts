@@ -45,7 +45,7 @@ export interface TransienceOptions {
 }
 
 /** HTTP statuses a retry can clear: request timeout, rate limit, server failures. */
-export const TRANSIENT_STATUS_CODES: readonly number[] = [408, 429, 500, 502, 503, 504];
+export const TRANSIENT_STATUS_CODES: readonly number[] = [408, 429, 500, 502, 503, 504, 529];
 const TRANSIENT_STATUSES: ReadonlySet<number> = new Set(TRANSIENT_STATUS_CODES);
 
 /** Error class names that only a timeout or an abort produces (AbortSignal.timeout, fetch aborts). */

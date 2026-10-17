@@ -21,14 +21,14 @@ const cases = [
   { name: 'edit', factory: createAgentScheduleEditTool, args: { jobId: 'synthetic-schedule', name: 'Synthetic renamed schedule' } },
 ] satisfies ReadonlyArray<{ name: string; factory: (paths: ShellPathService, config: ConfigManager, registry: ReturnType<typeof scheduleEffectAdmission>['registry']) => Tool; args: Record<string, unknown> }>;
 
-function setup(mode: Parameters<typeof scheduleEffectAdmission>[1] = 'prompt', onDisposition?: (index: number) => void) {
+function setup(mode: Parameters<typeof scheduleEffectAdmission>[1] = 'prompt', onAdmission?: (index: number) => void) {
   const root = makeProjectTempDir('agent-schedule-authority');
   const tokenPath = join(root, '.goodvibes', 'daemon', 'operator-tokens.json');
   mkdirSync(join(root, '.goodvibes', 'daemon'), { recursive: true });
   writeFileSync(tokenPath, JSON.stringify({ token: 'synthetic-schedule-token' }));
   const paths = createShellPathService({ workingDirectory: root, homeDirectory: root });
   const config = new ConfigManager({ surfaceRoot: GOODVIBES_AGENT_SURFACE_ROOT, configDir: paths.resolveUserPath(GOODVIBES_AGENT_SURFACE_ROOT), workingDir: root, homeDir: root });
-  const fixture = scheduleEffectAdmission(root, mode, onDisposition);
+  const fixture = scheduleEffectAdmission(root, mode, onAdmission);
   registerAgentOperatorMethodTool(fixture.registry, paths, config);
   function admitted(factory: (paths: ShellPathService, config: ConfigManager, registry: typeof fixture.registry) => Tool) {
     const tool = factory(paths, config, fixture.registry);
@@ -90,7 +90,7 @@ describe('concrete schedule effect admission', () => {
   }
 
   for (const change of ['revoke', 'cancel', 'config ABA', 'credential ABA', 'workspace replacement'] as const) {
-    test(`a ${change} during child judgment prevents HTTP dispatch`, async () => {
+    test(`a ${change} during child admission prevents HTTP dispatch`, async () => {
       const abort = new AbortController();
       let state: ReturnType<typeof setup>;
       state = setup('prompt', index => {
@@ -109,7 +109,7 @@ describe('concrete schedule effect admission', () => {
     });
   }
 
-  test('selected credential ABA during parent judgment is held before any child or HTTP', async () => {
+  test('selected credential ABA during parent admission is held before any child or HTTP', async () => {
     let state: ReturnType<typeof setup>;
     state = setup('prompt', index => {
       if (index !== 1) return;
@@ -124,7 +124,7 @@ describe('concrete schedule effect admission', () => {
   });
 
   for (const change of ['ingest', 'turn ABA', 'getter replacement'] as const) {
-    test(`a ledger ${change} during parent judgment prevents a fresh child from adopting new sources`, async () => {
+    test(`a ledger ${change} during parent admission prevents a fresh child from adopting new sources`, async () => {
       resetSessionUntrustedContentLedgerForTests();
       const ledger = getSessionUntrustedContentLedger();
       let changed = false;
@@ -167,7 +167,7 @@ describe('concrete schedule effect admission', () => {
     } finally { globalThis.fetch = previous; }
   });
 
-  test('selected schedule ABA during parent judgment cannot adopt the replacement target', async () => {
+  test('selected schedule ABA during parent admission cannot adopt the replacement target', async () => {
     let revision = 'synthetic-schedule-generation-1', reads = 0, writes = 0;
     const state = setup('prompt', index => { if (index === 1) revision = 'synthetic-schedule-generation-3'; });
     const previous = globalThis.fetch;

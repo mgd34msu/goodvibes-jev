@@ -1,6 +1,6 @@
 import { defineBattery, oneOf, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 
-/** Synthetic fixtures document the decision; live calibration remains required. */
+
 export const extractionReadability = defineBattery({
   name: 'engine.knowledge.extraction-readability',
   version: 2,

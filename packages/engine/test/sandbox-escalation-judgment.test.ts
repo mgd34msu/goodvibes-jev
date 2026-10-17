@@ -64,7 +64,7 @@ const flagsRisk = () => readRisk(0.96);
 const uncertain = () => readRisk(0.5);
 afterEach(() => { installJudgmentPort(undefined); });
 
-// ── 3a: broker routing + attribution ─────────────────────────────────────────
+// ── Broker routing + attribution ─────────────────────────────────────────
 
 describe('sandbox escalation → approval broker', () => {
   test('builds a broker request attributed to the sandbox + escalations', async () => {
@@ -89,7 +89,7 @@ describe('sandbox escalation → approval broker', () => {
   });
 });
 
-// ── 3b: judgment tier, annotate-only default ────────────────────────────────
+// ── Judgment tier, annotate-only default ────────────────────────────────
 
 describe('sandbox judgment tier', () => {
   test('annotate-only default: looks-safe still asks the human, ask carries the annotation', async () => {
@@ -180,10 +180,10 @@ describe('exec runtime raises the escalation through the injected seam', () => {
     platform: 'linux', bwrapPath: '/usr/bin/bwrap', bwrapWorks: true, netUnshareWorks: true,
   });
 
-  test('a command that wants network is denied when requestEscalation refuses', async () => {
+  test('an explicit network grant is denied when requestEscalation refuses', async () => {
     let asked: { command: string; escalations: readonly string[] } | null = null;
     const sandbox: ExecSandboxRuntime = {
-      config: { enabled: true, egressAllowlist: [], workspaceWritable: [] },
+      config: { enabled: true, egressAllowlist: ['curl'], workspaceWritable: [] },
       availability,
       featureEnabled: true,
       requestEscalation: async (input) => { asked = { command: input.command, escalations: input.escalations }; return false; },

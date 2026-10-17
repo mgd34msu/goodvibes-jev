@@ -301,7 +301,7 @@ describe('WorkspaceSwapManager', () => {
 });
 
 // ---------------------------------------------------------------------------
-// B9, path traversal behaviour
+// Path traversal behaviour
 // ---------------------------------------------------------------------------
 
 describe('WorkspaceSwapManager: path traversal', () => {

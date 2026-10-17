@@ -2,6 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import { extractOpenAIStreamTextDelta } from '@goodvibes-jev/engine/sdk/platform/providers';
 
 describe('extractOpenAIStreamTextDelta', () => {
+  test('untyped content array entries remain answer content', () => {
+    expect(extractOpenAIStreamTextDelta({ choices: [{ delta: { content: [{ text: 'hello' }] } }] }))
+      .toEqual({ content: ['hello'], reasoning: [] });
+  });
   test('extracts plain string content deltas', () => {
     expect(extractOpenAIStreamTextDelta({
       choices: [{ delta: { content: 'hello' } }],

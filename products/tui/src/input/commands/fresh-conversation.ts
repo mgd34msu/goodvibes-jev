@@ -20,6 +20,7 @@ import type { SessionMeta } from '@goodvibes-jev/engine/sdk/platform/sessions';
 import { clearTurnAnchors, getTurnAnchors, persistTurnAnchors, recordTurnAnchor } from '@goodvibes-jev/engine/sdk/platform/rewind';
 import type { CommandContext } from '../command-registry.ts';
 import { saveWorkTreeFolds } from '../../core/work-tree-fold-store.ts';
+import { journalPathFor, openTranscriptJournal, removeRecoveryPoint } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 
 export interface FreshConversationResult {
   /** Session id the previous conversation was saved under, or null when there was nothing to keep. */
@@ -64,6 +65,17 @@ export function startFreshConversation(ctx: CommandContext): FreshConversationRe
   }
 
   const liveId = ctx.session.runtime.sessionId;
+  // Close the durable snapshot boundary before changing memory. A crash or
+  // immediate resume must see the same empty conversation as the screen.
+  ctx.session.sessionManager?.save(liveId, [], {
+    title: '', model: ctx.session.runtime.model, provider: ctx.session.runtime.provider,
+    timestamp: Date.now(), saveSource: 'auto',
+  });
+  ctx.cancelPendingRecovery?.();
+  if (surface) {
+    openTranscriptJournal(journalPathFor(surface, liveId), liveId).rotate();
+    removeRecoveryPoint(surface, liveId);
+  }
   conversation.resetAll();
   if (ctx.reloadSystemPrompt) ctx.session.runtime.systemPrompt = ctx.reloadSystemPrompt();
   // Rewind anchors and the view sidecar point into the old transcript.

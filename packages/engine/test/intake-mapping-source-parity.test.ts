@@ -1,5 +1,4 @@
 import { screeningAnswers } from './_helpers/screening-answers.js';
-/** Pinned254699bf mapping assertions, with explicit autonomous/privacy-floor adaptations. */
 import { afterEach, expect, test } from 'bun:test';
 import { createProtectedSourceOwner } from '../sdk/src/platform/security/source-screening/owner.ts';
 import { createProtectedInboxMapper } from '../sdk/src/platform/intake/protected-preview.ts';

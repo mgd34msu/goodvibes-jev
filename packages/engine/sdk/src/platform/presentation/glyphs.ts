@@ -1,22 +1,8 @@
 /**
- * glyphs.ts, the canonical glyph registry for status/frame/navigation/meter
- * rendering, hoisted from `goodvibes-tui` src/renderer/ui-primitives.ts (GLYPHS)
- * and src/renderer/status-glyphs.ts (STATE_GLYPHS).
- *
- * This is one of the four genuinely-duplicated presentation tables named by the
- * renderer/input parity audit (see CHANGELOG 1.0.0; both the TUI and the agent shipped a near-twin
- * copy). The TUI is the reference: it is the more-complete, more-recently-fixed
- * copy, and per the presentation-contract decision record its `status` group is
- * the one both renderers converge on.
- *
- * Reconciliation (the one real content choice this hoist makes): the TUI and
- * agent status groups disagreed,
- *   - TUI:   idle = '◌' (U+25CC), info = '○' (U+25CB), warn = '⚠' present
- *   - agent: idle = '○' (U+25CB), info = '•' (U+2022), no `warn` key
- * GLYPHS.status below is the TUI's values verbatim. Consumers that previously
- * carried the agent's values will see idle/info visibly change when they adopt
- * this module, an intentional convergence, not a regression (see the decision
- * record's divergence ruling).
+ * Shared glyph registry for status, frames, navigation and meters.
+ * Status uses idle '◌', info '○', and warn '⚠', matching the TUI values.
+ * See docs/decisions/2026-07-05-presentation-contract-sdk-extraction.md
+ * for the compatibility decision when Agent adopted these values.
  */
 
 /** The full glyph registry, frame/surface/navigation/status/meter groups. */

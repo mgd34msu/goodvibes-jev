@@ -16,7 +16,7 @@ import type { TelegramSourceAccountOwner } from '../telegram/source-account.js';
 
 /**
  * What the channel runtime needs from the inbound-mail supervisor, projected
- * off the real class rather than restated (docs/inbound-email.md §7.3).
+ * off the real class rather than restated (docs/decisions/2026-07-27-inbound-email-design.md §7.3).
  *
  * `health` and `recheckNow` are methods on the supervisor; picking them keeps
  * the shape and the semantics tied to one declaration, so a change to what
@@ -89,7 +89,7 @@ export interface BuiltinChannelRuntimeDeps {
    * The inbound-mail supervisor, when the composition built one.
    *
    * Owned here for the same reason the Telegram ingress supervisor is
-   * (docs/inbound-email.md §3.5): inbound mail is a poll/socket lifecycle that
+   * (docs/decisions/2026-07-27-inbound-email-design.md §3.5): inbound mail is a poll/socket lifecycle that
    * must be armed at boot and torn down with the daemon, not a webhook that
    * arrives on its own. Absent in embedders that watch no mailbox, the
    * cluster registration then reports why nothing is watched rather than

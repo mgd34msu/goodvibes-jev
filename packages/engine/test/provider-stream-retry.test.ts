@@ -20,6 +20,8 @@ const SSE_BODY = [
   '',
   'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}',
   '',
+  'data: {"type":"message_stop"}',
+  '',
   '',
 ].join('\n');
 

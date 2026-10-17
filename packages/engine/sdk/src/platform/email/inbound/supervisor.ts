@@ -1,5 +1,5 @@
 /**
- * supervisor.ts, inbound mail's lifecycle owner (docs/inbound-email.md §3.5).
+ * supervisor.ts, inbound mail's lifecycle owner (docs/decisions/2026-07-27-inbound-email-design.md §3.5).
  *
  * IMAP has no inbound HTTP request, so email is the second of the two adapter
  * lifecycle shapes: a stateful supervisor with `start()` / `stop()` / `status`,

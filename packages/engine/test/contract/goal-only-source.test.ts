@@ -12,7 +12,7 @@ for (const scenario of ['complete', 'empty', 'changed-goal', 'log-quote', 'trace
     if (scenario === 'log-quote') plan.criteria[0]!.quote = evidence;
     let source = ORIGINAL; let units = 0; let deliverable = 0;
     const lifetime = new AbortController();
-    const h = makeHarness({ plan, contract: { autoCommit: false, planRepairLimit: 0 }, scripts: { u1: () => {
+    const h = makeHarness({ plan, contract: { autoCommit: false, planRepairLimit: 1, maxFixRounds: 1 }, scripts: { u1: () => {
       units++;
       if (scenario === 'checks-removed-at-completion') h.store.get(h.runner.list()[0]!.id)!.criteria.splice(0);
       return [{ text: 'Synthetic work completed.', files: { 'src/csv.ts': 'export const parse = (text: string) => text.split(",");\n' } }];

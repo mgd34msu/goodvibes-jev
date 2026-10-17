@@ -123,7 +123,7 @@ describe('an advertised binding that routes back to its own methodId cannot loop
         // which are the ones that matter for a loop.
         context: {
           admin: true,
-          principalKind: 'user',
+          principalKind: 'token',
           scopes: catalog.get(methodId)?.scopes ?? [],
         },
       });
@@ -152,7 +152,7 @@ describe('an advertised binding that routes back to its own methodId cannot loop
         // is what answers, the whole point of these three.
         context: {
           admin: true,
-          principalKind: 'user',
+          principalKind: 'token',
           scopes: catalog.get(methodId)?.scopes ?? [],
         },
       });

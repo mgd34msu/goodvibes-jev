@@ -280,7 +280,7 @@ export function composeContractRunner(options: ContractRunnerCompositionOptions)
 const resumedRoots = new Map<string, Promise<ResumeReport | null>>();
 
 /**
- * Resumes the contracts left on disk under `projectRoot` (design 7.2), once
+ * Resumes the contracts left on disk under `projectRoot`, once
  * per root in this process. Every call for a root returns the same promise: it
  * resolves to the report of what was resumed, queued or reaped (also logged),
  * or to null when resuming failed (logged, not thrown into startup). A host

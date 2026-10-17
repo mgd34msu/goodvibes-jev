@@ -328,16 +328,8 @@ function checkOutputPolicy(phased: Partial<PhasedTool>, toolName: string): Contr
   return violations;
 }
 
-/**
- * Check 5, Idempotency declaration.
- *
- * Side-effecting tools (write/execute/network/delegate) must explicitly declare
- * their idempotency posture. This is surfaced as a contract property on the tool
- * definition's metadata or via a dedicated `idempotent` field on PhasedTool.
- *
- * For now, we check for the presence of an `idempotent` boolean field on the
- * tool object (duck-typed). If strict mode is on and the field is absent for
- * a side-effecting tool, it is flagged as an error.
+/** Check idempotency declarations on side-effecting tools.
+ * Strict mode requires an explicit idempotent boolean on the tool object.
  */
 function checkIdempotency(phased: Partial<PhasedTool> & { idempotent?: unknown }, toolName: string, strict: boolean): ContractViolation[] {
   const violations: ContractViolation[] = [];

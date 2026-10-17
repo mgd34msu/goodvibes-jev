@@ -1,23 +1,4 @@
-/**
- * Fleet-plane adoption: proves that an orchestrator-spawned agent surfaces on
- * the SDK's fleet ProcessRegistry (runtime/fleet/*), and that a background
- * permission ask brokered through the permission manager flips that agent's
- * ProcessNode to needs-input attention, clearing again once the ask is
- * resolved. This is the behavior a user watching the webui's FleetView relies
- * on to see this agent's sub-agents and their blocked-on-input asks.
- *
- * Two tests:
- *  1. `agentManager.spawn()` (the real orchestrator-spawning path, the same
- *     AgentManager instance the production fleet ProcessRegistry is built
- *     over, see runtime/services.ts's createArchivableFleetRegistry call)
- *     registers a node the registry can query.
- *  2. A `write`-tool call under permissions.mode:'prompt' brokers its ask
- *     through the real ApprovalBroker with `metadata.agentId` attached (the
- *     bootstrap-core.ts `approvalMetadataForRequest` wiring this round adds)
- *    , the fleet registry attributes the pending approval to that agent's
- *     node (`state:'awaiting-approval'`, `needsAttention:{reason:'approval'}`)
- *     while it's pending, and clears once the approval resolves.
- */
+/** Fleet registration and automatic configured background writes. */
 import { describe, test, expect, mock } from 'bun:test';
 import { existsSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -89,14 +70,6 @@ const MOCK_MODEL = {
   selectable: true,
 };
 
-async function waitFor(predicate: () => boolean, timeoutMs = 2000, intervalMs = 10): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
-    if (Date.now() > deadline) throw new Error('waitFor: condition never became true');
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-}
-
 describe('fleet plane adoption', () => {
   test('an orchestrator-spawned agent appears on the fleet surface', () => {
     resetTestRuntimeServices();
@@ -117,7 +90,7 @@ describe('fleet plane adoption', () => {
     expect(node?.task).toBe('Stuck task');
   });
 
-  test('an ask-mode permission ask flips the spawned agent to needs-input attention and clears on resolution', async () => {
+  test('a configured background write finishes without manufacturing approval attention', async () => {
     resetTestRuntimeServices();
     const runtime = getTestRuntimeServices();
 
@@ -131,8 +104,7 @@ describe('fleet plane adoption', () => {
     const projectIndex = new ProjectIndex(projectIndexRoot);
     await Promise.all([memoryStore.init(), projectIndex.load()]);
 
-    // Install after runtime construction: the real gate sees an ordinary
-    // state-changing write and therefore brokers the normal preset's ask.
+    // Install after runtime construction; ordinary configured writes stay automatic.
     forgetCatastrophicReadings();
     const previousJudgmentPort = installJudgmentPort(fakePort((name, question) => {
       if (name === 'family') return choiceAnswer(question, 'file-mutation', 0.97);
@@ -250,29 +222,9 @@ describe('fleet plane adoption', () => {
       runtime.providerRegistry.getForModel = mock(() => provider);
       runtime.providerRegistry.getCurrentModel = mock(() => MOCK_MODEL);
 
-      let runPromise: Promise<void>;
       try {
-        // Not awaited yet: the tool call inside runAgent blocks on the
-        // permission ask, which stays genuinely pending (no localPrompt is
-        // wired) until this test resolves it below.
-        runPromise = orchestrator.runAgent(record);
-
-        await waitFor(() => runtime.approvalBroker.listApprovals()
-          .some((approval) => approval.status === 'pending' && approval.metadata['agentId'] === record.id));
-
-        const pendingSnapshot = fleetRegistry.query({ kinds: ['agent'] });
-        const pendingNode = pendingSnapshot.nodes.find((n) => n.id === record.id);
-        expect(pendingNode?.state).toBe('awaiting-approval');
-        expect(pendingNode?.needsAttention).toEqual({ reason: 'approval' });
-        expect(existsSync(approvedWritePath)).toBe(false);
-
-        const pendingApproval = runtime.approvalBroker.listApprovals()
-          .find((approval) => approval.status === 'pending' && approval.metadata['agentId'] === record.id);
-        expect(pendingApproval).toBeDefined();
-        await runtime.approvalBroker.resolveApproval(pendingApproval!.id, { approved: true, actor: 'test' });
-
-        await runPromise;
-
+        await orchestrator.runAgent(record);
+        expect(runtime.approvalBroker.listApprovals().filter(approval => approval.metadata['agentId'] === record.id)).toHaveLength(0);
         expect(record.status).toBe('completed');
         expect(readFileSync(approvedWritePath, 'utf8')).toBe('hi');
         const resolvedSnapshot = fleetRegistry.query({ kinds: ['agent'] });

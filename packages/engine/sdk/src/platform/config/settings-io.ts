@@ -27,23 +27,19 @@ const ATOMIC_ARRAY_SETTINGS = new Set<string>(CONFIG_SCHEMA.filter(setting => Ar
  * the previous file survives for inspection.
  */
 export function readRawSettingsFile(path: string): Record<string, unknown> {
-  try {
-    return (
-      readJsonFileOrQuarantine<Record<string, unknown>>(path, {
-        label: 'config/settings',
-        recovery:
-          'The setting being written is persisted into a fresh file; any other settings the quarantined file held are not applied and can be recovered from the quarantined copy by hand.',
-        validate: (parsed) => {
-          if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-            throw new Error('settings file is not a JSON object');
-          }
-          return parsed as Record<string, unknown>;
-        },
-      }) ?? {}
-    );
-  } catch {
-    return {};
-  }
+  return (
+    readJsonFileOrQuarantine<Record<string, unknown>>(path, {
+      label: 'config/settings',
+      recovery:
+        'The setting being written is persisted into a fresh file; any other settings the quarantined file held are not applied and can be recovered from the quarantined copy by hand.',
+      validate: (parsed) => {
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('settings file is not a JSON object');
+        }
+        return parsed as Record<string, unknown>;
+      },
+    }) ?? {}
+  );
 }
 
 /** Set a dot-path within a raw settings object, creating intermediate objects. */

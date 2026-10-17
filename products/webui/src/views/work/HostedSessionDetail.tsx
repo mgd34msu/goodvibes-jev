@@ -4,11 +4,11 @@
  * when the tab that started it goes away.
  *
  * useHostedAttachment keeps the old Hosted sessions view's rules exactly:
- *   - Selecting a hosted row attaches with this browser's stable client id and
+ *   - Selecting a hosted row attaches with a unique attachment id and
  *     renders the returned history, then the live stream (turn and tool frames
  *     filtered to the session).
- *   - Switching rows, leaving the view, closing or backgrounding the tab
- *     detaches passively (fetch keepalive beacon on pagehide / hidden), and a
+ *   - Switching rows, leaving the view, closing the tab
+ *     detaches passively (fetch keepalive beacon on pagehide), and a
  *     failed passive detach is reported, not swallowed.
  *   - "Leave" confirms first, naming what the session's own detach policy will
  *     do; "End session" kills it for every client, confirmed as a danger.
@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { LogOut, OctagonX } from 'lucide-react';
+import { getClientLifetime, isClientLifetimeCurrent } from '../../lib/client-lifetime';
 import { hostedSessionDetachBeacon, sdk } from '../../lib/goodvibes';
 import type { HostedSessionHistoryMessage, HostedSessionRecord } from '../../lib/goodvibes';
 import { queryKeys } from '../../lib/queries';
@@ -76,7 +77,11 @@ export function useHostedAttachment(
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const confirm = useConfirm();
-  const [clientId] = useState(() => ensureHostedClientId());
+  const [attaching, setAttaching] = useState(false);
+  const detachRef = useRef<{ sessionId: string; clientId: string } | null>(null);
+  const refreshRef = useRef<(() => void) | null>(null);
+  const streamRevision = useRef(0);
+  const reconcileHistory = useCallback(() => { refreshRef.current?.(); }, []);
 
   const [attachedSession, setAttachedSession] = useState<HostedSessionRecord | null>(null);
   const [attachHistory, setAttachHistory] = useState<HostedSessionHistoryMessage[]>([]);
@@ -86,6 +91,7 @@ export function useHostedAttachment(
   const [attachError, setAttachError] = useState<string | null>(null);
 
   const onStreamFrame = useCallback((frame: HostedStreamFrame) => {
+    streamRevision.current++;
     const delta = streamDeltaAccumulated(frame);
     if (delta !== null) {
       setLiveText(delta);
@@ -98,6 +104,7 @@ export function useHostedAttachment(
     }
     if (isTerminalTurnFrame(frame)) {
       setActiveToolCalls([]);
+      refreshRef.current?.();
       void queryClient.invalidateQueries({ queryKey: queryKeys.hostedSessionsAll });
       return;
     }
@@ -120,6 +127,7 @@ export function useHostedAttachment(
     attachedSessionId: selectedId,
     onStreamFrame,
     onLifecycleUpdate,
+    onReconcile: reconcileHistory,
   });
 
   // Move the attached record forward only, to a strictly newer row for the same id.
@@ -128,24 +136,6 @@ export function useHostedAttachment(
     const fresher = listSessions.find((session) => session.id === attachedSession.id);
     if (fresher && fresher.updatedAt > attachedSession.updatedAt) setAttachedSession(fresher);
   }, [listSessions, attachedSession]);
-
-  const attach = useMutation({
-    mutationFn: (sessionId: string) => sdk.operator.sessions.hosted.attach(sessionId, clientId),
-    onSuccess: (result) => {
-      const { session, history } = hostedAttachResultFrom(result);
-      if (!session) {
-        setAttachError('The daemon did not return a hosted session in a shape this client understands.');
-        return;
-      }
-      setAttachError(null);
-      setAttachedSession(session);
-      setAttachHistory(history);
-      setLiveMessages([]);
-      setLiveText('');
-      setActiveToolCalls([]);
-    },
-    onError: (error: unknown) => setAttachError(formatError(error)),
-  });
 
   const killMutation = useMutation({
     mutationFn: (sessionId: string) => sdk.operator.sessions.hosted.kill(sessionId),
@@ -160,11 +150,6 @@ export function useHostedAttachment(
     },
   });
 
-  const detachRef = useRef<{ sessionId: string; clientId: string } | null>(null);
-  useEffect(() => {
-    detachRef.current = attachedSession ? { sessionId: attachedSession.id, clientId } : null;
-  }, [attachedSession, clientId]);
-
   const passiveDetach = useCallback((sessionId: string, detachClientId: string) => {
     void sdk.operator.sessions.hosted.detach(sessionId, detachClientId).catch((error: unknown) => {
       console.warn(`[hosted-sessions] passive detach failed for session ${sessionId}`, error);
@@ -176,51 +161,86 @@ export function useHostedAttachment(
     passiveDetachRef.current = passiveDetach;
   }, [passiveDetach]);
 
-  // Once more on unmount.
-  useEffect(() => () => {
-    const pending = detachRef.current;
-    if (pending) passiveDetachRef.current(pending.sessionId, pending.clientId);
-  }, []);
-
-  // A closed or backgrounded tab never reaches the unmount cleanup.
+  // A hidden page is still attached. Only actual page departure sends a beacon.
   useEffect(() => {
-    function beaconDetach(): void {
+    const beaconDetach = (event: PageTransitionEvent) => {
+      if (event.persisted) return; // BFCache restores the same live page.
       const pending = detachRef.current;
       if (pending) hostedSessionDetachBeacon(pending.sessionId, pending.clientId);
-    }
-    function onVisibilityChange(): void {
-      if (document.visibilityState === 'hidden') beaconDetach();
-    }
-    window.addEventListener('pagehide', beaconDetach);
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    return () => {
-      window.removeEventListener('pagehide', beaconDetach);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
+    window.addEventListener('pagehide', beaconDetach);
+    return () => window.removeEventListener('pagehide', beaconDetach);
   }, []);
 
-  // Attach on selection; detach the previous one when the selection moves.
-  const attachMutate = attach.mutate;
-  const lastSelectedRef = useRef<string | null>(null);
+  // Every selection owns a distinct attachment, even A -> B -> A. A late
+  // success can therefore detach its obsolete owner without touching the new one.
   useEffect(() => {
-    if (selectedId === lastSelectedRef.current) return;
-    lastSelectedRef.current = selectedId;
-    const previous = detachRef.current;
-    if (previous && previous.sessionId !== selectedId) {
-      passiveDetachRef.current(previous.sessionId, previous.clientId);
-      detachRef.current = null;
-    }
     setAttachedSession(null);
     setAttachHistory([]);
     setLiveMessages([]);
     setLiveText('');
     setActiveToolCalls([]);
     setAttachError(null);
-    if (selectedId) attachMutate(selectedId);
-  }, [selectedId, attachMutate]);
+    setAttaching(Boolean(selectedId));
+    if (!selectedId) return;
+    const owner = { sessionId: selectedId, clientId: ensureHostedClientId() };
+    const lifetime = getClientLifetime();
+    let disposed = false;
+    let pending = false;
+    let refreshAgain = false;
+    const current = () => !disposed && isClientLifetimeCurrent(lifetime);
+    const refresh = async () => {
+      if (!current()) return;
+      if (pending) { refreshAgain = true; return; }
+      pending = true;
+      const revision = streamRevision.current;
+      try {
+        const result = await sdk.operator.sessions.hosted.attach(owner.sessionId, owner.clientId);
+        if (!current()) {
+          // Never send a previous owner's cleanup with a replacement credential.
+          if (isClientLifetimeCurrent(lifetime)) passiveDetachRef.current(owner.sessionId, owner.clientId);
+          return;
+        }
+        detachRef.current = owner;
+        const { session, history } = hostedAttachResultFrom(result);
+        if (session?.id !== owner.sessionId) throw new Error('The daemon returned an unexpected hosted session.');
+        setAttachError(null);
+        setAttachedSession(session);
+        if (revision === streamRevision.current) {
+          // The authoritative snapshot replaces the full history. If frames
+          // arrived during this read, read again before discarding live output.
+          setAttachHistory(history);
+          setLiveMessages([]);
+          if (session.status !== 'running') {
+            setLiveText('');
+            setActiveToolCalls([]);
+          }
+        } else refreshAgain = true;
+      } catch (error) {
+        if (current()) setAttachError(formatError(error));
+      } finally {
+        pending = false;
+        if (current()) {
+          setAttaching(false);
+          if (refreshAgain) { refreshAgain = false; void refresh(); }
+        }
+      }
+    };
+    refreshRef.current = () => { void refresh(); };
+    void refresh();
+    return () => {
+      disposed = true;
+      refreshRef.current = null;
+      if (detachRef.current === owner) {
+        detachRef.current = null;
+        if (isClientLifetimeCurrent(lifetime)) passiveDetachRef.current(owner.sessionId, owner.clientId);
+      }
+    };
+  }, [selectedId]);
 
   async function leave(): Promise<void> {
-    if (!attachedSession) return;
+    if (!attachedSession || !detachRef.current) return;
+    const owner = detachRef.current;
     const policy = attachedSession.effectiveDetachPolicy;
     const confirmed = await confirm.ask({
       title: 'Leave this hosted session?',
@@ -229,12 +249,14 @@ export function useHostedAttachment(
       confirmLabel: 'Leave',
       tone: policy === 'kill' ? 'danger' : 'default',
     });
-    if (!confirmed) return;
+    if (!confirmed || detachRef.current !== owner) return;
     try {
-      const result = await sdk.operator.sessions.hosted.detach(attachedSession.id, clientId);
+      const result = await sdk.operator.sessions.hosted.detach(owner.sessionId, owner.clientId);
+      if (detachRef.current !== owner) return;
       const updated = hostedSessionFromResult(result);
       toast({ title: updated?.status === 'terminated' ? 'Session ended' : 'Left the session', tone: 'info' });
     } catch (error) {
+      if (detachRef.current !== owner) return;
       toast({ title: 'Detach failed', description: formatError(error), tone: 'danger' });
     }
     detachRef.current = null;
@@ -263,7 +285,7 @@ export function useHostedAttachment(
     liveMessages,
     liveText,
     activeToolCalls,
-    attaching: attach.isPending,
+    attaching,
     attachError,
     killPending: killMutation.isPending,
     leave: () => void leave(),

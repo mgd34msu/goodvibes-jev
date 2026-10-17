@@ -1,7 +1,7 @@
 /**
  * contracts-testing-kit.test.ts
  *
- * Proves the shipped @pellux/goodvibes-contracts/testing surface (Stage B): the
+ * Proves the shipped @pellux/goodvibes-contracts/testing surface: the
  * descriptor/handler conformance kit and the mock-daemon fixture generator, plus
  * the checked-in generated fixture artifact.
  *

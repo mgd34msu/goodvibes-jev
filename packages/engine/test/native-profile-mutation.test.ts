@@ -22,16 +22,17 @@ import { runDeliveryPublication } from '../sdk/src/platform/utils/delivery-lifet
 
 const cleanup: Array<() => void | Promise<void>> = [];
 let log: SqliteDecisionLog, port: JudgmentPort, prior: ReturnType<typeof installJudgmentPort>;
-let beforeRead: ((request: JudgmentRequest<Questions>) => void | Promise<void>) | undefined;
+let beforeAdmission: ((args: Record<string, unknown>) => void | Promise<void>) | undefined;
+let admissions: Record<string, unknown>[];
 let requests: JudgmentRequest<Questions>[];
 beforeEach(() => {
-  forgetGateReadings(); beforeRead = undefined; requests = []; log = new SqliteDecisionLog(':memory:');
+  forgetGateReadings(); beforeAdmission = undefined; requests = []; admissions = []; log = new SqliteDecisionLog(':memory:');
   const gate = gateReadingsPort(), semantic = fakePort((_name, question) => choiceAnswer(question,
     question.type === 'choice' && !Object.hasOwn(question.criteria, 'act') ? 'reject' : 'act', 0.99));
   const occasionPort = fakePort((name, question) => name === 'subject' ? choiceAnswer(question, 'other', 0.99)
     : name === 'pick' ? choiceAnswer(question, 'line_0', 0.99) : noulAnswer(name === 'fits_0' ? 0.99 : 0.01));
   port = withDecisionLog({ model: gate.port.model, async ask(request) {
-    request.signal?.throwIfAborted(); request.beforeAttempt?.(); requests.push(request); await beforeRead?.(request);
+    request.signal?.throwIfAborted(); request.beforeAttempt?.(); requests.push(request);
     request.signal?.throwIfAborted(); request.beforeAttempt?.();
     return 'disposition' in request.questions ? semantic.port.ask(request)
       : request.context?.battery?.startsWith('engine.occasions.') ? occasionPort.port.ask(request) : gate.port.ask(request);
@@ -50,6 +51,13 @@ function fixture(channelDeliveryRouter?: Parameters<typeof composeOccasions>[1][
   const lifetime = new AbortController(), invalidations = new Set<() => void>();
   let humans = 0;
   const manager = new PermissionManager(async () => { humans++; throw new Error('No human fallback'); }, createPermissionConfigReader(config), new PolicyRuntimeState());
+  const admit = manager.admitAutonomous.bind(manager);
+  manager.admitAutonomous = async (...args) => {
+    const admission = await admit(...args);
+    admissions.push(structuredClone(args[2]));
+    await beforeAdmission?.(args[2]);
+    return admission;
+  };
   const host = { permissionManager: manager, port, workspaceTrust: null, workspaceRoot: directory, signal: lifetime.signal,
     config: { onDidInvalidate(listener: () => void) { invalidations.add(listener); return () => { invalidations.delete(listener); }; } } };
   const profile = new OwnerProfileStore({ path: profilePath }); profile.loadSync();
@@ -75,7 +83,7 @@ async function prepareDueNudge(f: ReturnType<typeof fixture>): Promise<void> {
   expect(result.body).toMatchObject({ ok: true });
 }
 
-test('native sweep records a separate complete send decision before guarded actual delivery', async () => {
+test('native sweep captures a separate complete send request before guarded actual delivery', async () => {
   let sends = 0, received: unknown;
   const sink = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
     received = await request.json(); sends++; return Response.json({ responseId: 'synthetic-landed' });
@@ -98,8 +106,9 @@ test('native sweep records a separate complete send decision before guarded actu
     isAuthorized: scopes => Boolean(f.helper.describeAuthenticatedPrincipal(f.paired.token)?.admin && scopes?.every(scope => principal.scopes.includes(scope))) });
   expect(result).toMatchObject({ delivered: true }); expect(sends).toBe(1); expect(f.humans()).toBe(0);
   expect(JSON.stringify(received)).toContain('Synthetic anniversary');
-  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(3);
-  const delivery = requests.find(request => JSON.stringify(request).includes('occasions.sweep.deliver'));
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
+  expect(admissions).toHaveLength(3);
+  const delivery = admissions.find(args => args.method === 'occasions.sweep.deliver');
   expect(delivery).toBeDefined();
   expect(JSON.stringify(delivery)).toContain('synthetic-native-destination');
   expect(JSON.stringify(delivery)).toContain('Synthetic anniversary');
@@ -121,13 +130,13 @@ test('accepted native delivery followed by source retirement returns only an exa
   expect(JSON.stringify(result.body)).not.toContain('first-native-destination');
 });
 
-test('owner revocation during the fresh native sweep send reading commits no delivery', async () => {
+test('owner revocation during the fresh native sweep send admission commits no delivery', async () => {
   let sends = 0, entered = false;
   const router = new ChannelDeliveryRouter({ strategies: [{ id: 'synthetic-native-nudge', supportsGuardedDelivery: true,
     canHandle: () => true, async deliver(request) { request.assertCurrent?.(); sends++; return {}; } }] });
   const f = fixture(router); await prepareDueNudge(f);
-  beforeRead = request => {
-    if ('disposition' in request.questions && JSON.stringify(request).includes('occasions.sweep.deliver')) {
+  beforeAdmission = args => {
+    if (args.method === 'occasions.sweep.deliver') {
       entered = true;
       expect(f.pairing.revoke(f.paired.id)).toBe(true);
     }
@@ -154,7 +163,7 @@ test('actual native profile and occasion writes record autonomous origin without
   expect(f.profile.get('identity.name')?.provenance).toMatchObject({ origin: 'autonomous', said: '', surface: 'agent' });
   const recorded = await f.call('occasions.confirm', occasion()); expect(recorded.ok).toBe(true);
   expect(readFileSync(f.profilePath, 'utf8')).toContain('Synthetic anniversary');
-  expect(f.humans()).toBe(0); expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(2);
+  expect(f.humans()).toBe(0); expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
   expect(JSON.stringify(requests)).not.toContain(f.paired.token);
 });
 
@@ -177,13 +186,13 @@ test('native occasion state effects and removal retain their actual durable targ
   const removed = await f.call('occasions.remove', { occasionId, confirmed: true, authority: 'autonomous', admission: 'autonomous' });
   expect(removed.body).toMatchObject({ ok: true }); expect(await f.occasions.state.acknowledgements()).toHaveLength(0);
   expect(readFileSync(f.profilePath, 'utf8')).not.toContain('Synthetic anniversary');
-  expect(f.humans()).toBe(0); expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(3);
+  expect(f.humans()).toBe(0); expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
 });
 
 for (const kind of ['abort', 'revoke', 'request', 'physical', 'parent ABA', 'ABA', 'plan'] as const) test(`native profile ${kind} before grant preserves exact owner file`, async () => {
   const f = fixture(), body = set(), controller = new AbortController(), before = readFileSync(f.profilePath);
   const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
-  beforeRead = async request => { if ('disposition' in request.questions) { entered.resolve(); await release.promise; } };
+  beforeAdmission = async () => { entered.resolve(); await release.promise; };
   const pending = f.call('profile.set', body, f.paired.token, controller.signal); await entered.promise;
   if (kind === 'abort') controller.abort();
   if (kind === 'revoke') expect(f.pairing.revoke(f.paired.id)).toBe(true);

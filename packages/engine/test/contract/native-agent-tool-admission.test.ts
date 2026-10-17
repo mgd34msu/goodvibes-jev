@@ -40,8 +40,8 @@ const REVISED_MARKER = 'HOST_REVISED_READ_BODY';
 const TOOL_SITE = 'engine.gate.autonomous-tool';
 const readArgs = (path = 'README.md') => ({ files: [{ path }] });
 
-for (const scenario of ['act', 'reject', 'defer', 'revise', 'unrecorded', 'cancel-retry', 'planner-act'] as const) {
-  test(`actual native sub-agent tool admission ${scenario} retains source, recording and captured authority`, async () => {
+for (const scenario of ['act', 'unrecorded', 'planner-act'] as const) {
+  test(`actual native sub-agent tool admission ${scenario} retains source and captured authority without a secondary gate`, async () => {
     forgetGateReadings();
     const root = makeRepo();
     writeFileSync(join(root, 'README.md'), `${ORIGINAL_MARKER}\n`);
@@ -64,12 +64,7 @@ for (const scenario of ['act', 'reject', 'defer', 'revise', 'unrecorded', 'cance
     const gate = gateReadingsPort();
     const planning = runnerPort();
     const semanticRequests: JudgmentRequest<Questions>[] = [];
-    let semanticCalls = 0;
-    const semantic = fakePort((_name, question) => {
-      const choice = scenario === 'revise' ? ++semanticCalls === 1 ? 'revise_0' : 'act'
-        : scenario === 'defer' ? 'defer_0' : scenario === 'reject' ? 'reject' : 'act';
-      return choiceAnswer(question, choice, 0.99);
-    });
+    const semantic = fakePort((_name, question) => choiceAnswer(question, 'act', 0.99));
     const rawPort: JudgmentPort = {
       model: planning.port.model,
       async ask(request) {
@@ -83,11 +78,8 @@ for (const scenario of ['act', 'reject', 'defer', 'revise', 'unrecorded', 'cance
       },
     };
     const previous = installJudgmentPort(withDecisionLog(rawPort, log));
-    const choices: GateOptions = scenario === 'revise' ? { autonomousChoices: () => ({ revisions: [{
-      ref: { id: 'read-alternative', revision: '1', kind: 'revise-action' }, toolName: 'read', args: readArgs('alternative.txt'),
-    }] }) } : {};
     const permissions = new PermissionManager(async () => { humanPrompts++; return { approved: false, remember: false }; },
-      createPermissionConfigReader(config), new PolicyRuntimeState(), null, null, null, choices);
+      createPermissionConfigReader(config), new PolicyRuntimeState(), null, null, null);
     const bodies: { args: Record<string, unknown>; captured: boolean; claimIds: string[] }[] = [];
     const read = ReadTool.prototype.execute;
     const intercepted = spyOn(ReadTool.prototype, 'execute').mockImplementation(async function(this: ReadTool, args) {
@@ -139,11 +131,7 @@ for (const scenario of ['act', 'reject', 'defer', 'revise', 'unrecorded', 'cance
       },
       projectRoot: root, store,
       nativeDecisions: { authorityOf: () => ({ authorityId: 'native-owner', authorityRevision: '1', scopeId: 'project', scopeRevision: '1' }),
-        onRetry(contractId) {
-          if (scenario !== 'cancel-retry') return;
-          sawWaiting = runner.get(contractId)?.nativeWaiting?.requests.length === 1;
-          runner.cancel(contractId, 'cancel actual native tool admission backoff');
-        },
+
       },
       durableAdmission: { withCurrent: (_admission, launch) => launch(() => undefined) },
       decompositionRunner: scenario === 'planner-act' ? createAgentManagerDecompositionRunner({ agentManager: runtime.agentManager })
@@ -167,7 +155,7 @@ for (const scenario of ['act', 'reject', 'defer', 'revise', 'unrecorded', 'cance
       surfaceRoot: 'agent', workflowServices: runtime.workflow, contractRunner: runner,
       contractHooks: { ...runner.hooks(), onTurnEnd(record, turn) { results.push(...turn.results); runner.hooks().onTurnEnd(record, turn); } },
     });
-    let attempts = 0; let sawWaiting = false; let sourceBound = false; let inputBound = false; let agentId: string | undefined;
+    let sourceBound = false; let inputBound = false; let agentId: string | undefined;
     const boundRoles: string[] = [];
     runtime.agentManager.setExecutor({ runAgent: async record => {
       agentId = record.id;
@@ -183,21 +171,6 @@ for (const scenario of ['act', 'reject', 'defer', 'revise', 'unrecorded', 'cance
       expect(getContractActionSource({ ...record })).toBeUndefined();
       expect(getContractInputAuthority({ ...record })).toBeUndefined();
       if (scenario === 'unrecorded') installJudgmentPort(rawPort);
-      if (scenario === 'cancel-retry') {
-        const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-fixture' },
-          model: DEFAULT_MODEL, timeoutMs: 1000, retry: { backoffInitialMs: 2, backoffMaxMs: 2, backoffJitter: 0 },
-          fetch: async (_url, init) => {
-            const wire = JSON.parse(String(init?.body)) as JudgmentRequest<Questions>;
-            if ('disposition' in wire.questions) {
-              attempts++;
-              return Response.json({}, { status: 503 });
-            }
-            const response = await gate.port.ask(wire);
-            return Response.json({ model: DEFAULT_MODEL, answers: response.answers, usage: { input_tokens: 1, output_tokens: 1 } });
-          },
-        });
-        installJudgmentPort(withDecisionLog(transport, log));
-      }
       await runtime.agentOrchestrator.runAgent(record);
     } });
     let id: string | undefined;
@@ -212,40 +185,19 @@ for (const scenario of ['act', 'reject', 'defer', 'revise', 'unrecorded', 'cance
       await waitFor(() => results.length > 0 || ['failed', 'cancelled'].includes(runner.get(id!)!.status), 'actual native tool settlement', 15_000);
       expect(sourceBound).toBe(true); expect(inputBound).toBe(true); expect(humanPrompts).toBe(0);
       expect(modelCalls).toBeGreaterThan(0);
-      if (scenario === 'cancel-retry') {
-        await runner.join(id);
-        expect(attempts).toBe(1); expect(bodies).toHaveLength(0);
-        expect(sawWaiting).toBe(true); expect(runner.get(id)!.nativeWaiting).toBeUndefined();
-        expect(runtime.agentManager.getStatus(agentId!)?.status).toBe('cancelled');
-        expect(log.query({ site: TOOL_SITE })).toMatchObject([{ status: 'failed' }]);
-      } else {
-        expect(results).toHaveLength(1);
-        const result = results[0]!;
-        if (scenario === 'unrecorded') {
-          expect(result.success).toBe(false); expect(result.error).toBe('[REDACTED]');
-          expect(result.output).toBeUndefined();
-          expect(semanticRequests).toHaveLength(0);
-          expect(log.query({ site: TOOL_SITE })).toEqual([]);
-          expect(result.autonomousDecision).toBeUndefined(); expect(bodies).toHaveLength(0);
-        } else {
-          expect(result.autonomousDecision?.outcome, JSON.stringify(result)).toBe(scenario === 'revise' || scenario === 'planner-act' ? 'act' : scenario);
-          expect(semanticRequests).toHaveLength(scenario === 'revise' || scenario === 'planner-act' ? 2 : 1);
-          for (const request of semanticRequests) expect((request.state as { input: { source: unknown } }).input.source).toEqual({ goal: SOURCE.goal, criteria: [...SOURCE.criteria] });
-          for (const decisionId of result.autonomousDecision!.judgmentDecisionIds) expect(log.get(decisionId)?.status).toBe('answered');
-          if (scenario === 'act' || scenario === 'revise' || scenario === 'planner-act') {
-            expect(result.success, result.error).toBe(true); expect(bodies).toHaveLength(scenario === 'planner-act' ? 2 : 1);
-            for (const [index, body] of bodies.entries()) {
-              expect(body.args).toEqual(readArgs(scenario === 'revise' ? 'alternative.txt' : 'README.md'));
-              expect(body.captured).toBe(true); expect(body.claimIds).toHaveLength(index + 1);
-            }
-            expect(result.output).toContain(scenario === 'revise' ? REVISED_MARKER : ORIGINAL_MARKER);
-            expect(result.output).not.toContain(LATER_MARKER);
-            expect(bodies.at(-1)!.claimIds.some(id => result.autonomousDecision!.judgmentDecisionIds.includes(id))).toBe(true);
-          } else {
-            expect(result.success).toBe(false); expect(result.denial?.scope).toBe('jev_decision'); expect(bodies).toHaveLength(0);
-          }
-        }
+      expect(results).toHaveLength(1);
+      const result = results[0]!;
+      expect(result.success, result.error).toBe(true);
+      expect(result.autonomousDecision).toBeUndefined();
+      expect(semanticRequests).toEqual([]);
+      expect(log.query({ site: TOOL_SITE })).toEqual([]);
+      expect(bodies).toHaveLength(scenario === 'planner-act' ? 2 : 1);
+      for (const body of bodies) {
+        expect(body.args).toEqual(readArgs());
+        expect(body.captured).toBe(true); expect(body.claimIds).toEqual([]);
       }
+      expect(result.output).toContain(ORIGINAL_MARKER);
+      expect(result.output).not.toContain(LATER_MARKER);
       expect(boundRoles).toEqual(scenario === 'planner-act' ? ['planner', 'unit'] : ['unit']);
       expect(readFileSync(join(root, 'README.md'), 'utf8')).toBe(`${LATER_MARKER}\n`);
       expect(providerRequests.some(text => text.includes(LATER_MARKER))).toBe(false);

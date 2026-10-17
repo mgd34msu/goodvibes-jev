@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -15,6 +15,20 @@ function tempDir(label: string): string {
 }
 
 describe('ConfigManager persistence', () => {
+  test('an unreadable existing file is never replaced by a partial settings update', () => {
+    const configDir = tempDir('unreadable-config');
+    mkdirSync(configDir, { recursive: true });
+    const file = join(configDir, 'settings.json');
+    const original = JSON.stringify({ display: { theme: 'dracula' } });
+    writeFileSync(file, original);
+    const manager = new ConfigManager({ configDir });
+    chmodSync(file, 0);
+    try {
+      expect(() => manager.set('provider.model', 'openai:gpt-test')).toThrow();
+      expect(manager.get('provider.model')).not.toBe('openai:gpt-test');
+    } finally { chmodSync(file, 0o600); }
+    expect(readFileSync(file, 'utf8')).toBe(original);
+  });
   test('rejects invalid persisted global config instead of using defaults', () => {
     const configDir = tempDir('bad-config');
     mkdirSync(configDir, { recursive: true });

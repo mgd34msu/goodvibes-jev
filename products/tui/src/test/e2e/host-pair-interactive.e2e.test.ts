@@ -528,14 +528,14 @@ describe(`compiled interactive TUI native ${command === '/workstream start' ? 'w
       const session = await f.launch();
       const original = '  Repair  界 e\u0301 😀 @source.ts  ';
       const since = session.command(`${command} ${original}`);
-      await session.find('native capture uncertainty', text => text.includes('Native intake outcome is unknown'), since);
+      await session.find('native capture uncertainty', text => text.includes('Prompt preparation failed (capture): Owned fixture lost capture acknowledgement'), since);
       expect(f.nativeCaptures).toHaveLength(1);
       expect(f.nativeCaptures[0]).toMatchObject({ status: 200, body: {
         text: original, unsupportedSources: [{ kind: 'context', label: '@source.ts' }],
       } });
       const retained = readFileSync(join(f.home.home, '.goodvibes/tui/native-work-submission.json.intake'), 'utf8');
       expect(retained).toContain(JSON.stringify(original));
-      const again = session.command(`${command} replacement must not become source`);
+      const again = session.command(`${command} Repair the second fixture without replacing retained original input`);
       await session.find('original source remains unresolved', text => text.includes('An original input is unresolved'), again);
       expect(f.nativeCaptures).toHaveLength(1);
       expect(readFileSync(join(f.home.home, '.goodvibes/tui/native-work-submission.json.intake'), 'utf8')).toBe(retained);

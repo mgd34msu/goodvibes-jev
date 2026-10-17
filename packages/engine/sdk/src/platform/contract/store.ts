@@ -353,7 +353,13 @@ export class ContractStore {
       return false;
     }
     this.contracts.set(contract.id, contract);
-    this.write(contract.id);
+    if (!this.write(contract.id)) {
+      if (existing) {
+        this.contracts.set(contract.id, existing);
+        this.scheduleWrite(contract.id);
+      } else this.contracts.delete(contract.id);
+      return false;
+    }
     logger.info('contract store: contract imported', {
       contractId: contract.id,
       status: contract.status,

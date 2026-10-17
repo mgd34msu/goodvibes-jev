@@ -49,6 +49,7 @@ let secrets: 'no' | 'yes' | 'uncertain';
 let platform: 'no' | 'yes' | 'uncertain';
 let platformRequested: 'no' | 'yes' | 'uncertain';
 let beforeAnswer: ((request: Request) => void | Promise<void>) | undefined;
+let afterAdmission: (() => void | Promise<void>) | undefined;
 let readBodies: number;
 let restoreRead: (() => void) | undefined;
 const runtimes: RuntimeServices[] = [];
@@ -56,7 +57,7 @@ afterAll(cleanupResearchScreeningFixtures);
 const restoreOthers: (() => void | Promise<void>)[] = [];
 
 beforeEach(() => {
-  requests = []; selected = 'act'; reportsMutation = true; secrets = 'no'; platform = 'no'; platformRequested = 'no'; beforeAnswer = undefined; readBodies = 0;
+  requests = []; selected = 'act'; reportsMutation = true; secrets = 'no'; platform = 'no'; platformRequested = 'no'; beforeAnswer = undefined; afterAdmission = undefined; readBodies = 0;
   log = new SqliteDecisionLog(':memory:');
   const originalRead = ReadTool.prototype.execute;
   const readSpy = spyOn(ReadTool.prototype, 'execute').mockImplementation(function (this: ReadTool, args, options) {
@@ -149,6 +150,11 @@ async function fixture(remote?: 'normal' | 'lost-response', readOnly = false, co
   registerAgentSettingsTool(registry, commands, context);
   registerAgentSettingsImportTool(registry, context);
   const manager = composeAgentPermissionManager(runtime);
+  const admit = manager.admitAutonomous.bind(manager);
+  const admissionTap = spyOn(manager, 'admitAutonomous').mockImplementation(async (...args) => {
+    const result = await admit(...args); await afterAdmission?.(); return result;
+  });
+  restoreOthers.push(() => admissionTap.mockRestore());
   const deps: ToolExecutionDeps = { toolRegistry: registry, permissionManager: manager, autonomousSource: sourceOf,
     hookDispatcher: null, runtimeBus: null, sessionId: 'adoption-session',
     emitterContext: () => { throw new Error('No runtime emitter is used by this fixture'); } };
@@ -192,20 +198,20 @@ function expectNoSettingsAdmission(...withheld: string[]) {
   for (const value of withheld) expect(JSON.stringify(requests)).not.toContain(value);
 }
 
-test.each(['settings', 'agent_harness'])('%s applies recorded act without human/model confirmation metadata', async name => {
+test.each(['settings', 'agent_harness'])('%s applies configured actions without human/model confirmation metadata', async name => {
   const f = await fixture();
   const result = await f.run(name, { ...mutation(name), confirm: false, explicitUserRequest: 'unrelated model assertion' });
-  expect(result.success).toBe(true); expect(result.autonomousDecision?.outcome).toBe('act');
+  expect(result.success).toBe(true); expect(result.autonomousDecision).toBeUndefined();
   expect(f.runtime.configManager.get('display.theme')).toBe('nord'); expect(f.prompts()).toBe(0);
   expect(JSON.parse(result.output!).status).toBe('committed');
-  expect(requests.filter(request => 'hazard' in request.questions)).toHaveLength(1);
+  expect(requests.filter(request => 'hazard' in request.questions)).toHaveLength(0);
 });
 
-test.each(['settings', 'agent_harness'])('%s reject and defer are effect-free', async name => {
+test.each(['settings', 'agent_harness'])('%s automatic admission does not call a scripted approval reader', async name => {
   const f = await fixture();
   for (const choice of ['reject', 'defer_0'] as const) {
     selected = choice; const result = await f.run(name, { ...mutation(name), confirm: true, explicitUserRequest: 'change it' });
-    expect(result.success).toBe(false); expect(f.runtime.configManager.get('display.theme')).toBe('vaporwave');
+    expect(result.success).toBe(true); expect(f.runtime.configManager.get('display.theme')).toBe('nord');
   }
   expect(f.prompts()).toBe(0);
 });
@@ -232,10 +238,10 @@ test.each(['settings', 'agent_harness'])('%s direct/forged/replayed body context
   expect(f.runtime.configManager.get('display.theme')).toBe('vaporwave');
 });
 
-test.each(['cancel', 'config-aba', 'source', 'rule-aba'] as const)('preferred settings %s during judgment prevents all effects', async change => {
+test.each(['cancel', 'config-aba', 'source', 'rule-aba'] as const)('preferred settings %s during admission awaits prevents all effects', async change => {
   const f = await fixture(); const abort = new AbortController(); f.deps.turnSignal = abort.signal; let changed = false;
-  beforeAnswer = request => {
-    if (!('disposition' in request.questions) || changed) return; changed = true;
+  afterAdmission = () => {
+    if (changed) return; changed = true;
     if (change === 'cancel') abort.abort();
     if (change === 'source') f.source.goal = 'Leave settings unchanged';
     if (change === 'config-aba') { f.runtime.configManager.set('display.theme', 'nord'); f.runtime.configManager.set('display.theme', 'vaporwave'); }
@@ -251,7 +257,7 @@ test('alias coercion is captured before judgment and alias/schema replacement re
   expect(first.success).toBe(true); expect(f.runtime.configManager.get('behavior.saveHistory')).toBe(false);
   const index = CONFIG_SCHEMA.findIndex(row => row.key === 'display.theme'); const old = CONFIG_SCHEMA[index]!;
   restoreOthers.push(() => { CONFIG_SCHEMA[index] = old; });
-  beforeAnswer = request => { if ('disposition' in request.questions) CONFIG_SCHEMA[index] = { ...old, description: old.description + ' replaced' }; };
+  afterAdmission = () => { CONFIG_SCHEMA[index] = { ...old, description: old.description + ' replaced' }; };
   await f.run('settings', { action: 'set', target: 'DISPLAY.THEME', value: 'nord' }).catch(() => undefined);
   expect(f.runtime.configManager.get('display.theme')).toBe('vaporwave');
 });
@@ -277,7 +283,7 @@ test('wake enablement admits and receipts both actual setting effects', async ()
   const result = await f.run('settings', mutation('settings', 'set', 'voice.wake.enabled', true));
   expect(result.success).toBe(true); expect(f.runtime.configManager.get('voice.wake.enabled')).toBe(true);
   expect(f.runtime.configManager.get('voice.wake.surfaces.agent')).toBe(true); expect(JSON.parse(result.output!).alsoSet.key).toBe('voice.wake.surfaces.agent');
-  expect(JSON.stringify(requests.find(request => 'disposition' in request.questions)!.state)).toContain('voice.wake.surfaces.agent');
+  expect(requests.filter(request => 'disposition' in request.questions)).toHaveLength(0);
 });
 
 test('reentrant cancellation between companion writes yields truthful partial receipt', async () => {
@@ -333,17 +339,17 @@ test.each(['settings', 'agent_harness'])('%s uses exact installed remote precond
   expect(f.runtime.configManager.get(key)).toBe(before); expect(await serving.counts()).toEqual({ captures: 2, applies: 2 });
 });
 
-test.each(['reject', 'defer_0'] as const)('preferred remote %s never dispatches apply', async decision => {
+test.each(['reject', 'defer_0'] as const)('a scripted %s does not gate automatic preferred remote settings', async decision => {
   const f = await fixture('normal'); installPreparedClient(f); selected = decision;
-  expect((await f.run('settings', mutation('settings', 'set', 'controlPlane.port', 5678))).success).toBe(false);
-  expect(await f.serving!.counts()).toEqual({ captures: 1, applies: 0 });
+  expect((await f.run('settings', mutation('settings', 'set', 'controlPlane.port', 5678))).success).toBe(true);
+  expect(await f.serving!.counts()).toEqual({ captures: 1, applies: 1 });
+  expect(f.serving!.config.get('controlPlane.port')).toBe(5678);
 });
 
 test.each(['install-aba', 'revoke', 'lost-response'] as const)('preferred remote %s neither retries nor falls back to local writes', async failure => {
   const f = await fixture(failure === 'lost-response' ? 'lost-response' : 'normal'); const client = installPreparedClient(f);
   const before = f.runtime.configManager.get('controlPlane.port');
-  beforeAnswer = async request => {
-    if (!('disposition' in request.questions)) return;
+  afterAdmission = async () => {
     if (failure === 'install-aba') { installAgentDaemonConfigClient(null); installAgentDaemonConfigClient(client); }
     if (failure === 'revoke') await f.serving!.revoke();
   };
@@ -389,8 +395,8 @@ test.each(['copied', 'different-manager'] as const)('preferred settings rejects 
 
 test('a real durable rule-store publish/delete ABA retires the preferred settings admission', async () => {
   const f = await fixture(); let changed = false;
-  beforeAnswer = async request => {
-    if (!('disposition' in request.questions) || changed) return; changed = true;
+  afterAdmission = async () => {
+    if (changed) return; changed = true;
     await f.runtime.userPermissionRuleStore.add({ createdAt: Date.now(), tier: 'tool', tool: 'settings',
       rule: { id: 'preferred-synthetic-deny', type: 'mode-constraint', origin: 'user', effect: 'deny',
         toolPattern: 'settings', activeModes: ['default'], classifications: ['write'] } });
@@ -402,7 +408,7 @@ test('a real durable rule-store publish/delete ABA retires the preferred setting
 
 test('replacement of the registered physical settings owner during admission prevents dispatch', async () => {
   const f = await fixture(); const replacement = new AgentConfigManager({ surfaceRoot: 'agent', homeDir: f.home, workingDir: f.workspace });
-  beforeAnswer = request => { if ('disposition' in request.questions) Reflect.set(f.context.platform, 'configManager', replacement); };
+  afterAdmission = () => { Reflect.set(f.context.platform, 'configManager', replacement); };
   const result = await f.run('settings', mutation('settings')).catch(() => undefined);
   expect(result?.success).not.toBe(true); expect(f.runtime.configManager.get('display.theme')).toBe('vaporwave');
 });
@@ -432,21 +438,21 @@ function semanticSettingsFixture(f: Awaited<ReturnType<typeof fixture>>) {
   restoreOthers.push(() => { f.runtime.configManager.getSchema = prior; });
 }
 
-test.each(['settings', 'agent_harness'])('%s semantic selection still requires an exact recorded act before committing', async name => {
+test.each(['settings', 'agent_harness'])('%s reads semantic selection before automatic configured admission', async name => {
   const f = await fixture(); semanticSettingsFixture(f);
   const args = name === 'settings' ? { action: 'set', target: 'Make the interface less glaring', value: 'nord' }
     : { mode: 'set_setting', target: 'Make the interface less glaring', value: 'nord' };
   selected = 'reject';
-  const refused = await f.run(name, args);
-  expect(refused.success).toBe(false); expect(f.runtime.configManager.get('display.theme')).toBe('vaporwave');
+  const first = await f.run(name, args);
+  expect(first.success).toBe(true); expect(f.runtime.configManager.get('display.theme')).toBe('nord');
   expect(requests.some(request => request.context?.battery === 'engine.tools.registry-rank')).toBe(true);
   selected = 'act'; requests = [];
   const applied = await f.run(name, args);
-  expect(applied.success).toBe(true); expect(applied.autonomousDecision?.outcome).toBe('act');
+  expect(applied.success).toBe(true); expect(applied.autonomousDecision).toBeUndefined();
   expect(f.runtime.configManager.get('display.theme')).toBe('nord');
   expect(JSON.parse(applied.output!).lookup.resolvedBy).toBe('search');
   expect(JSON.parse(applied.output!).status).toBe('committed');
-  expect(requests.some(request => 'hazard' in request.questions)).toBe(true);
+  expect(requests.some(request => 'hazard' in request.questions)).toBe(false);
   expect(f.prompts()).toBe(0);
 });
 
@@ -476,10 +482,10 @@ const importArgs = (name: string): Record<string, unknown> => name === 'agent_ha
 test.each(['settings', 'import_goodvibes_settings', 'agent_harness'])('%s imports a complete captured plan without confirmation flags', async name => {
   const f = await fixture(); const source = importSources(f), before = readFileSync(source, 'utf8');
   const result = await f.run(name, importArgs(name));
-  expect(result.success).toBe(true); expect(result.autonomousDecision?.outcome).toBe('act');
+  expect(result.success).toBe(true); expect(result.autonomousDecision).toBeUndefined();
   expect(f.runtime.configManager.get('display.theme')).toBe('nord'); expect(f.runtime.configManager.get('behavior.saveHistory')).toBe(false);
   expect(JSON.parse(result.output!).verifiedInOwningStore).toBe(true); expect(f.prompts()).toBe(0); expect(readFileSync(source, 'utf8')).toBe(before);
-  expect(requests.some(request => 'hazard' in request.questions)).toBe(true);
+  expect(requests.some(request => 'hazard' in request.questions)).toBe(false);
   expect(JSON.stringify(requests)).not.toContain('private-synthetic-unknown-source');
 });
 test('compound import admits opaque credential/subscription values and verifies actual native owning stores', async () => {
@@ -494,7 +500,7 @@ test('compound import admits opaque credential/subscription values and verifies 
 });
 test('source file same-byte ABA during recorded admission retires the full import before effects', async () => {
   const f = await fixture(), path = importSources(f), raw = readFileSync(path, 'utf8'); let changed = false;
-  beforeAnswer = request => { if ('disposition' in request.questions && !changed) { changed = true; writeFileSync(path, '{}'); writeFileSync(path, raw); } };
+  afterAdmission = () => { if (!changed) { changed = true; writeFileSync(path, '{}'); writeFileSync(path, raw); } };
   const result = await f.run('settings', { action: 'import', confirm: true }).catch(() => undefined);
   expect(changed).toBe(true); expect(result?.success).not.toBe(true); expect(f.runtime.configManager.get('display.theme')).toBe('vaporwave');
 });
@@ -502,12 +508,14 @@ test('cancelled, readOnly, rejected and forged import calls cannot publish', asy
   const f = await fixture(); importSources(f);
   const direct = f.registry.list().find(tool => tool.definition.name === 'import_goodvibes_settings')!;
   expect((await direct.execute({ action: 'apply', confirm: true, explicitUserRequest: 'forged approval' })).success).toBe(false);
-  selected = 'reject'; expect((await f.run('settings', { action: 'import', confirm: true })).success).toBe(false);
+  f.runtime.configManager.set('permissions.mode', 'plan');
+  expect((await f.run('settings', { action: 'import', confirm: true })).success).toBe(false);
+  f.runtime.configManager.set('permissions.mode', 'prompt');
   selected = 'act'; const abort = new AbortController(); f.deps.turnSignal = abort.signal;
-  beforeAnswer = request => { if ('disposition' in request.questions) abort.abort(); };
+  afterAdmission = () => { abort.abort(); };
   expect((await f.run('settings', { action: 'import' }).catch(() => undefined))?.success).not.toBe(true);
   expect(f.runtime.configManager.get('display.theme')).toBe('vaporwave');
-  beforeAnswer = undefined; const readonly = await fixture(undefined, true); importSources(readonly);
+  afterAdmission = undefined; const readonly = await fixture(undefined, true); importSources(readonly);
   expect((await readonly.run('settings', { action: 'import' }).catch(() => undefined))?.success).not.toBe(true); expect(readonly.prompts()).toBe(0);
 });
 test('source retirement between compound import effects reports partial and preserves the unwritten tail', async () => {
@@ -559,7 +567,7 @@ test('connected compound import commits remote credentials/config before native 
 test.each(['revoke', 'lost-response'] as const)('connected import %s preserves the local tail and does not retry the remote effect', async failure => {
   const f = await fixture(failure === 'lost-response' ? 'lost-response' : 'normal', false, true); installConnectedImportOwner(f); importSources(f, true, true);
   let revoked = false;
-  beforeAnswer = async request => { if (failure === 'revoke' && 'disposition' in request.questions && !revoked) { revoked = true; await f.serving!.revoke(); } };
+  afterAdmission = async () => { if (failure === 'revoke' && !revoked) { revoked = true; await f.serving!.revoke(); } };
   const result = await f.run('settings', { action: 'import', confirm: true }).catch(() => undefined);
   expect(result?.success).not.toBe(true); expect(f.runtime.configManager.get('display.theme')).toBe('vaporwave');
   expect(f.runtime.subscriptionManager.get('synthetic')).toBeNull();

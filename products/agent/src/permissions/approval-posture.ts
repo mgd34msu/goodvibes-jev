@@ -2,16 +2,9 @@ import { isAutoApproveEnabled } from '@goodvibes-jev/engine/sdk/platform/config'
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { presetForMode } from '@goodvibes-jev/engine/sdk/platform/gate';
 
-/**
- * The configured approval posture shared by status, doctor, policy-explain and
- * the footer. This is configuration observability, not a per-call decision:
- * PermissionManager reads each call and enforces the boundary before applying
- * autoApprove, explicit rules or the selected stakes preset.
- *
- * automaticApprovals preserves the broad-autonomy warning for autoApprove,
- * allow-all and custom-all-allow. None guarantees that every call avoids a
- * prompt: critical stakes still ask in allow-all, unknown tools need readings,
- * and boundary approval can be required before any configured allowance.
+/** Configuration descriptions shared by status, doctor, policy explanation and the footer.
+ * Ordinary permitted calls proceed automatically; configured denials, read-only
+ * modes, surface authority and invocation lifetime still constrain execution.
  */
 
 export type ApprovalPostureKind = 'auto-approve' | 'allow-all' | 'custom' | 'prompt' | 'plan' | 'accept-edits';
@@ -23,8 +16,7 @@ export interface ApprovalPostureInput {
   readonly mode: unknown;
   /**
    * permissions.tools, only consulted when mode === 'custom'. Values are the
-   * per-tool-category actions ('allow' | 'prompt' | 'deny'); anything else
-   * (missing/unrecognized) counts as NOT allow for the autonomy warning.
+   * per-tool-category actions ('allow' | 'prompt' | 'deny'); explicit denials constrain the automatic posture.
    */
   readonly customTools?: Readonly<Record<string, unknown>>;
 }
@@ -37,12 +29,11 @@ export interface ApprovalPosture {
   /** The raw behavior.autoApprove value that drove this posture. */
   readonly autoApprove: boolean;
   /**
-   * Broad automatic approvals are configured (autoApprove, allow-all, or every
-   * configured custom category allows). Drives the footer's autonomy warning;
-   * does not describe the ordinary read or scoped accept-edits allowances.
+   * Configured actions proceed automatically without a read-only mode or custom denial.
+   * Describes the configured posture, not authority for an individual call.
    */
   readonly automaticApprovals: boolean;
-  /** No configuration guarantees a universal prompt bypass; boundaries still apply. */
+  /** Compatibility flag: configuration alone never grants universal invocation authority. */
   readonly bypassesPrompts: false;
   /** A short, honest, human-facing label, always names auto-approve explicitly when it is what is actually gating tool calls. */
   readonly label: string;
@@ -63,80 +54,21 @@ function normalizeMode(mode: unknown): 'prompt' | 'allow-all' | 'custom' | 'plan
 export function computeApprovalPosture(input: ApprovalPostureInput): ApprovalPosture {
   const mode = normalizeMode(input.mode);
   const preset = presetForMode(mode);
-  const boundaryCaveat = 'Boundary checks still apply and can refuse a call or require approval.';
-
-  if (input.autoApprove) {
-    return {
-      kind: 'auto-approve',
-      mode,
-      autoApprove: true,
-      automaticApprovals: true,
-      bypassesPrompts: false,
-      label: 'Auto-approve ON, boundary checks still apply',
-      detail: `behavior.autoApprove is enabled: calls that pass the boundary are approved automatically, regardless of permissions.mode or custom per-tool rules. ${boundaryCaveat}`,
-    };
-  }
-
-  if (mode === 'allow-all') {
-    return {
-      kind: 'allow-all',
-      mode,
-      autoApprove: false,
-      automaticApprovals: true,
-      bypassesPrompts: false,
-      label: 'Automatic below critical stakes',
-      detail: `permissions.mode is allow-all (${preset.name}): ${preset.summary} ${boundaryCaveat}`,
-    };
-  }
-
-  if (mode === 'plan') {
-    return {
-      kind: 'plan',
-      mode,
-      autoApprove: false,
-      bypassesPrompts: false,
-      automaticApprovals: false,
-      label: 'Plan mode, read-only',
-      detail: `permissions.mode is plan: ${preset.summary} ${boundaryCaveat}`,
-    };
-  }
-
-  if (mode === 'accept-edits') {
-    return {
-      kind: 'accept-edits',
-      mode,
-      autoApprove: false,
-      bypassesPrompts: false,
-      automaticApprovals: false,
-      label: 'Accept edits, other actions follow stakes',
-      detail: `permissions.mode is accept-edits: ${preset.summary} ${boundaryCaveat}`,
-    };
-  }
-
-  if (mode === 'custom') {
-    const values = Object.values(input.customTools ?? {});
-    const allAllow = values.length > 0 && values.every((value) => value === 'allow');
-    return {
-      kind: 'custom',
-      mode,
-      autoApprove: false,
-      automaticApprovals: allAllow,
-      bypassesPrompts: false,
-      label: allAllow ? 'Custom rules (all configured categories allow)' : 'Custom rules',
-      detail: allAllow
-        ? `permissions.mode is custom and every configured tool category is set to allow. ${preset.summary} ${boundaryCaveat}`
-        : `permissions.mode is custom: ${preset.summary} ${boundaryCaveat}`,
-    };
-  }
-
+  const configuredDenial = mode === 'custom' && Object.values(input.customTools ?? {}).some(value => value === 'deny');
+  const labels = {
+    prompt: 'Automatic configured actions',
+    'allow-all': 'Allow all configured actions',
+    custom: 'Custom rules',
+    plan: 'Plan mode, read-only',
+    'accept-edits': 'Accept edits, automatic configured actions',
+  };
   return {
-    kind: 'prompt',
-    mode: 'prompt',
-    autoApprove: false,
-    automaticApprovals: false,
+    kind: input.autoApprove ? 'auto-approve' : mode,
+    mode, autoApprove: input.autoApprove,
+    automaticApprovals: mode !== 'plan' && !configuredDenial,
     bypassesPrompts: false,
-    label: 'Ask before powerful actions',
-    detail: `permissions.mode is prompt (${preset.name}): ${preset.summary} ${boundaryCaveat}`,
+    label: `${input.autoApprove ? 'Auto-approve ON, ' : ''}${labels[mode]}`,
+    detail: `permissions.mode is ${mode}: ${preset.summary} Configured denials, read-only modes and surface authority still apply. Calls require current invocation authority.`,
   };
 }
 

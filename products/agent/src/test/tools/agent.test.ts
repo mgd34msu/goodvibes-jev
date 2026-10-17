@@ -8,27 +8,19 @@ import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { join } from 'node:path';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../../config/surface.ts';
 import {
-  AGENT_ANALYZE_NETWORK_DENIAL_MESSAGE,
   AGENT_BLOCKED_MAIN_CONVERSATION_TOOL_NAMES,
   AGENT_CHANNEL_ACTION_DENIAL_MESSAGE,
   AGENT_CONTROL_MUTATION_DENIAL_MESSAGE,
   AGENT_CONTEXT_TOOL_COMPATIBILITY_MODES,
   AGENT_DURABLE_WORKFLOW_MUTATION_DENIAL_MESSAGE,
-  AGENT_EXEC_BACKGROUND_DENIAL_MESSAGE,
   AGENT_FETCH_NETWORK_MUTATION_DENIAL_MESSAGE,
-  AGENT_FIND_POLICY_DENIAL_MESSAGE,
   AGENT_INSPECT_WRITE_DENIAL_MESSAGE,
-  AGENT_MAX_READ_FILES,
-  AGENT_MAX_READ_IMAGE_SIZE_BYTES,
   AGENT_MCP_SECURITY_MUTATION_DENIAL_MESSAGE,
   AGENT_MAIN_CONVERSATION_TOOL_DENIAL_MESSAGE,
   AGENT_LOCAL_SPAWN_DENIAL_MESSAGE,
-  AGENT_READ_IMAGE_MODES,
-  AGENT_READ_ONLY_ANALYZE_TOOL_MODES,
   AGENT_READ_ONLY_CHANNEL_TOOL_MODES,
   AGENT_READ_ONLY_CONTROL_TOOL_MODES,
   AGENT_READ_ONLY_FETCH_METHODS,
-  AGENT_READ_ONLY_FIND_OUTPUT_FORMATS,
   AGENT_READ_ONLY_MCP_TOOL_MODES,
   AGENT_READ_ONLY_PACKET_TOOL_MODES,
   AGENT_READ_ONLY_QUERY_TOOL_MODES,
@@ -42,15 +34,11 @@ import {
   AGENT_READ_ONLY_TASK_TOOL_MODES,
   AGENT_READ_ONLY_TEAM_TOOL_MODES,
   AGENT_READ_ONLY_TOOL_MODES,
-  AGENT_READ_ONLY_WEB_SEARCH_EVIDENCE_EXTRACTS,
-  AGENT_READ_ONLY_WEB_SEARCH_VERBOSITIES,
   AGENT_READ_ONLY_WORKLIST_TOOL_MODES,
-  AGENT_READ_POLICY_DENIAL_MESSAGE,
   AGENT_REMOTE_MUTATION_DENIAL_MESSAGE,
   AGENT_REGISTRY_CONTENT_DENIAL_MESSAGE,
   AGENT_SETTINGS_CONFIRMATION_PROPERTY,
   AGENT_STATE_MUTATION_DENIAL_MESSAGE,
-  AGENT_WEB_SEARCH_POLICY_DENIAL_MESSAGE,
   installAgentToolPolicyGuard,
   normalizeAgentToolInvocationForAgentPolicy,
   wrapAgentToolForAgentPolicy,
@@ -651,43 +639,24 @@ describe('spawn mode', () => {
     }
   });
 
-  test('Agent runtime guard narrows exec to foreground serial commands', async () => {
+  test('Agent runtime guard preserves shared execution capabilities', async () => {
     const registry = new ToolRegistry();
-    const guarded = makeAgentHarness();
-    registry.register(guarded.agentTool);
     registry.register(makeNoopTool('exec'));
-
+    const definition = structuredClone(registry.getToolDefinitions()[0]);
+    registry.register(makeAgentHarness().agentTool);
     installAgentToolPolicyGuard(registry);
-
-    const execDefinition = registry.getToolDefinitions().find((tool) => tool.name === 'exec');
-    expect(execDefinition?.description).toContain('foreground shell commands serially');
-    const properties = execDefinition?.parameters.properties as Record<string, unknown>;
-    expect(properties.parallel).toBeUndefined();
-    expect(properties.file_ops).toBeUndefined();
-    const commandsProperty = getRecordProperty(properties, 'commands');
-    const itemSchema = commandsProperty ? getRecordProperty(commandsProperty, 'items') : undefined;
-    const commandProperties = itemSchema ? getRecordProperty(itemSchema, 'properties') : undefined;
-    expect(commandProperties?.background).toBeUndefined();
-
-    const foreground = await registry.execute('call-exec-foreground', 'exec', {
-      commands: [{ cmd: 'echo hello' }],
-    });
-    expect(foreground.success).toBe(true);
-    expect(foreground.output).toBe('exec executed');
-
-    const blockedInputs: ReadonlyArray<Record<string, unknown>> = [
+    expect(registry.getToolDefinitions()[0]).toEqual(definition);
+    for (const input of [
+      { commands: [{ cmd: 'echo hello' }] },
       { commands: [{ cmd: 'sleep 100', background: true }] },
       { commands: [{ cmd: 'bg_list' }] },
       { commands: [{ cmd: 'bg_status process-1' }] },
       { commands: [{ cmd: 'long setup', until: { pattern: 'ready' } }] },
       { commands: [{ cmd: 'echo ok' }], parallel: true },
       { commands: [{ cmd: 'echo ok' }], file_ops: [{ op: 'delete', source: 'tmp.txt' }] },
-    ];
-
-    for (const [index, input] of blockedInputs.entries()) {
-      const result = await registry.execute(`call-exec-blocked-${index}`, 'exec', input);
-      expect(result.success).toBe(false);
-      expect(result.error).toBe(AGENT_EXEC_BACKGROUND_DENIAL_MESSAGE);
+    ]) {
+      const result = await registry.execute('shared-exec', 'exec', input);
+      expect(result.success).toBe(true); expect(result.output).toBe('exec executed');
     }
   });
 
@@ -805,7 +774,7 @@ describe('spawn mode', () => {
     }
   });
 
-  test('Agent runtime guard narrows fetch to serial unauthenticated read-only HTTP', async () => {
+  test('Agent runtime guard narrows fetch to unauthenticated read-only HTTP', async () => {
     const registry = new ToolRegistry();
     const guarded = makeAgentHarness();
     registry.register(guarded.agentTool);
@@ -817,9 +786,9 @@ describe('spawn mode', () => {
       registry.getToolDefinitions().find((tool) => tool.name === 'fetch'),
       'fetch tool definition',
     );
-    expect(fetchDefinition.description).toContain('serial, read-only HTTP requests');
+    expect(fetchDefinition.description).toContain('read-only HTTP requests');
     const properties = fetchDefinition.parameters.properties as Record<string, unknown>;
-    expect(properties.parallel).toBeUndefined();
+    expect(properties.parallel).toBeDefined();
     expect(properties.trusted_hosts).toBeUndefined();
     const sanitizeModeProperty = getRecordProperty(properties, 'sanitize_mode');
     expect(sanitizeModeProperty?.enum).toEqual(['safe-text', 'strict']);
@@ -841,7 +810,7 @@ describe('spawn mode', () => {
       });
       expect(result.success).toBe(true);
       const normalized = JSON.parse(result.output ?? '{}') as { readonly parallel?: boolean };
-      expect(normalized.parallel).toBe(false);
+      expect(normalized.parallel).toBeUndefined();
     }
 
     const blockedInputs: ReadonlyArray<Record<string, unknown>> = [
@@ -855,7 +824,6 @@ describe('spawn mode', () => {
       { urls: [{ url: 'https://example.com/', service: 'private-api' }] },
       { urls: [{ url: 'https://example.com/' }], sanitize_mode: 'none' },
       { urls: [{ url: 'https://example.com/' }], trusted_hosts: ['example.com'] },
-      { urls: [{ url: 'https://example.com/' }], parallel: true },
     ];
 
     for (const [index, input] of blockedInputs.entries()) {
@@ -865,58 +833,23 @@ describe('spawn mode', () => {
     }
   });
 
-  test('Agent runtime guard narrows read to bounded non-secret project files', async () => {
+  test('Agent runtime guard preserves shared read options and requires a bound admission', async () => {
     const registry = new ToolRegistry();
-    const guarded = makeAgentHarness();
-    registry.register(guarded.agentTool);
     registry.register(makeReadTool());
-
+    const definition = structuredClone(registry.getToolDefinitions()[0]);
+    registry.register(makeAgentHarness().agentTool);
     installAgentToolPolicyGuard(registry);
-
-    const readDefinition = registry.getToolDefinitions().find((tool) => tool.name === 'read');
-    expect(readDefinition?.description).toContain('ordinary non-secret project files');
-    expect(readDefinition?.sideEffects).toEqual(['read_fs']);
-    expect(readDefinition?.concurrency).toBe('serial');
-
-    const properties = readDefinition?.parameters.properties as Record<string, unknown>;
-    const files = getRecordProperty(properties, 'files');
-    expect(files?.maxItems).toBe(AGENT_MAX_READ_FILES);
-    const itemSchema = files ? getRecordProperty(files, 'items') : undefined;
-    const fileProperties = itemSchema ? getRecordProperty(itemSchema, 'properties') : undefined;
-    const fileImageMode = fileProperties ? getRecordProperty(fileProperties, 'image_mode') : undefined;
-    const globalImageMode = getRecordProperty(properties, 'image_mode');
-    const maxImageSize = getRecordProperty(properties, 'max_image_size');
-    expect(fileImageMode?.enum).toEqual([...AGENT_READ_IMAGE_MODES]);
-    expect(globalImageMode?.enum).toEqual([...AGENT_READ_IMAGE_MODES]);
-    expect(maxImageSize?.maximum).toBe(AGENT_MAX_READ_IMAGE_SIZE_BYTES);
-
-    const allowed = await registry.execute('call-read-source', 'read', {
-      files: [{ path: 'src/main.ts', extract: 'outline' }],
-      image_mode: 'metadata-only',
-      max_image_size: AGENT_MAX_READ_IMAGE_SIZE_BYTES,
-    });
-    expect(allowed.success).toBe(false);
-    expect(allowed.error).toBe(AGENT_READ_ADMISSION_DENIAL_MESSAGE);
-
-    const tooManyFiles = Array.from({ length: AGENT_MAX_READ_FILES + 1 }, (_, index) => ({
-      path: `src/example-${index}.ts`,
-    }));
-    const blockedInputs: ReadonlyArray<Record<string, unknown>> = [
+    expect(registry.getToolDefinitions()[0]).toEqual(definition);
+    for (const args of [
+      { files: [{ path: 'src/main.ts', extract: 'outline' }] },
       { files: [{ path: '.env' }] },
       { files: [{ path: 'src/.hidden/config.ts' }] },
       { files: [{ path: 'secrets/api-token.txt' }] },
-      { files: [{ path: 'config/credentials.json' }] },
-      { files: [{ path: 'keys/service.pem' }] },
-      { files: [{ path: 'assets/diagram.png', image_mode: 'unoptimized' }] },
-      { files: [{ path: 'assets/diagram.png' }], image_mode: 'unoptimized' },
-      { files: [{ path: 'assets/diagram.png' }], max_image_size: AGENT_MAX_READ_IMAGE_SIZE_BYTES + 1 },
-      { files: tooManyFiles },
-    ];
-
-    for (const [index, input] of blockedInputs.entries()) {
-      const result = await registry.execute(`call-read-blocked-${index}`, 'read', input);
+      { files: [{ path: 'assets/diagram.png', image_mode: 'unoptimized' }], max_image_size: 20_000_000 },
+    ]) {
+      const result = await registry.execute('unadmitted-read', 'read', args);
       expect(result.success).toBe(false);
-      expect(result.error).toBe(index < 5 ? AGENT_READ_ADMISSION_DENIAL_MESSAGE : AGENT_READ_POLICY_DENIAL_MESSAGE);
+      expect(result.error).toBe(AGENT_READ_ADMISSION_DENIAL_MESSAGE);
     }
   });
 
@@ -996,8 +929,8 @@ describe('spawn mode', () => {
     installAgentToolPolicyGuard(registry);
 
     const settingsDefinition = registry.getToolDefinitions().find((tool) => tool.name === 'goodvibes_settings');
-    expect(settingsDefinition?.description).toContain('original host request');
-    expect(settingsDefinition?.description).toContain('recorded autonomous decision');
+    expect(settingsDefinition?.description).toContain('actual owning runtime');
+    expect(settingsDefinition?.description).toContain('configured tool permissions');
     expect(settingsDefinition?.sideEffects).toEqual(['state']);
     // The old guard stripped every parameter, which left the model unable to see
     // that a settings write was something it could attempt at all.
@@ -1016,7 +949,7 @@ describe('spawn mode', () => {
       const direct = await f.registry.execute('call-settings-direct', 'goodvibes_settings', args);
       expect(direct.success).toBe(false); expect(f.config.get('display.theme')).toBe(before);
       const result = await f.run(args);
-      expect(result.success).toBe(true); expect(result.autonomousDecision?.outcome).toBe('act');
+      expect(result.success).toBe(true); expect(result.autonomousDecision).toBeUndefined();
       expect(f.config.get('display.theme')).toBe(value); expect(f.prompts()).toBe(0);
     } finally { f.close(); }
   });
@@ -1027,7 +960,7 @@ describe('spawn mode', () => {
     const value = before === 'nord' ? 'vaporwave' : 'nord';
     const args = { mode: 'set', key: 'display.theme', value, confirm: true };
     try {
-      expect((await first.run(args)).autonomousDecision?.outcome).toBe('act');
+      expect((await first.run(args)).success).toBe(true);
       expect(first.config.get('display.theme')).toBe(value);
     } finally { first.close(); }
 
@@ -1036,7 +969,7 @@ describe('spawn mode', () => {
       // run() starts at the same turn/call IDs in each fixture. A reused owner
       // must retain its consumed-source refusal, so only a fresh owner can act.
       const result = await second.run(args);
-      expect(result.success).toBe(true); expect(result.autonomousDecision?.outcome).toBe('act');
+      expect(result.success).toBe(true); expect(result.autonomousDecision).toBeUndefined();
       expect(second.config).not.toBe(first.config);
       expect(second.config.getConfigPath()).not.toBe(first.config.getConfigPath());
       expect(second.config.get('display.theme')).toBe(value);
@@ -1045,22 +978,21 @@ describe('spawn mode', () => {
     } finally { second.close(); }
   });
 
-  test('Agent runtime guard preserves recorded settings denial despite caller request text', async () => {
+  test('Agent runtime guard preserves configured settings denial despite caller request text', async () => {
     const f = settingsGuardRuntime();
     try {
       const before = f.config.get('behavior.autoApprove');
       const args = { mode: 'set', key: 'behavior.autoApprove', value: !before, confirm: true,
         [AGENT_SETTINGS_CONFIRMATION_PROPERTY]: 'turn on auto approve for me' };
-      f.choose('reject');
+      f.config.set('permissions.mode', 'plan');
       const denied = await f.run(args);
-      expect(denied.success).toBe(false); expect(denied.autonomousDecision?.outcome).toBe('reject');
+      expect(denied.success).toBe(false); expect(denied.autonomousDecision).toBeUndefined();
       expect(denied.error).toBeTruthy(); expect(f.config.get('behavior.autoApprove')).toBe(before);
-      expect(JSON.stringify(f.answers.requests.filter(request => request.context?.site === 'engine.gate.settings-write')))
-        .toContain('behavior.autoApprove');
-      f.choose('act');
+      expect(f.answers.requests.filter(request => request.context?.site === 'engine.gate.settings-write')).toHaveLength(0);
+      f.config.set('permissions.mode', 'prompt');
       const allowed = await f.run(args);
       // Changing auto-approval retires the admission after the recorded write.
-      expect(allowed.success).toBe(false); expect(allowed.autonomousDecision?.outcome).toBe('act');
+      expect(allowed.success).toBe(false); expect(allowed.autonomousDecision).toBeUndefined();
       expect(allowed.error).toBe('Settings invocation retired after its recorded effects; no remaining work was dispatched.');
       expect(JSON.parse(allowed.output ?? '{}').status).toBe('committed');
       expect(f.config.get('behavior.autoApprove')).toBe(!before); expect(f.prompts()).toBe(0);
@@ -1175,33 +1107,20 @@ describe('spawn mode', () => {
     expect(mutation.error).toBe(AGENT_CONTROL_MUTATION_DENIAL_MESSAGE);
   });
 
-  test('Agent runtime guard narrows analyze to local static analysis modes', async () => {
-    const registry = new ToolRegistry();
-    const guarded = makeAgentHarness();
-    registry.register(guarded.agentTool);
-    registry.register(makeAnalyzeTool());
-
+  test('Agent runtime guard preserves shared analysis modes and provider options', async () => {
+    const registry = new ToolRegistry(); registry.register(makeAnalyzeTool());
+    const definition = structuredClone(registry.getToolDefinitions()[0]);
+    registry.register(makeAgentHarness().agentTool);
     installAgentToolPolicyGuard(registry);
-
-    const analyzeDefinition = registry.getToolDefinitions().find((tool) => tool.name === 'analyze');
-    expect(analyzeDefinition?.description).toContain('local, static project analysis');
-    expect(analyzeDefinition?.sideEffects).toEqual(['read_fs']);
-    const properties = analyzeDefinition?.parameters.properties as Record<string, unknown>;
-    const modeProperty = getRecordProperty(properties, 'mode');
-    expect(modeProperty?.enum).toEqual([...AGENT_READ_ONLY_ANALYZE_TOOL_MODES]);
-    expect(properties.packages).toBeUndefined();
-
-    const security = await registry.execute('call-analyze-security', 'analyze', { mode: 'security' });
-    expect(security.success).toBe(true);
-
-    for (const mode of ['upgrade', 'semantic_diff'] as const) {
-      const blocked = await registry.execute(`call-analyze-${mode}`, 'analyze', { mode });
-      expect(blocked.success).toBe(false);
-      expect(blocked.error).toBe(AGENT_ANALYZE_NETWORK_DENIAL_MESSAGE);
+    expect(registry.getToolDefinitions()[0]).toEqual(definition);
+    for (const mode of ['security', 'upgrade', 'semantic_diff']) {
+      const args = { mode, packages: ['fixture-package'] };
+      const result = await registry.execute(`analyze-${mode}`, 'analyze', args);
+      expect(result.success).toBe(true); expect(JSON.parse(result.output!)).toEqual(args);
     }
   });
 
-  test('Agent runtime guard narrows registry to discovery and bounded previews', async () => {
+  test('Agent runtime guard preserves registry content within registry-owned paths', async () => {
     const registry = new ToolRegistry();
     const guarded = makeAgentHarness();
     registry.register(guarded.agentTool);
@@ -1210,7 +1129,7 @@ describe('spawn mode', () => {
     installAgentToolPolicyGuard(registry);
 
     const registryDefinition = registry.getToolDefinitions().find((tool) => tool.name === 'registry');
-    expect(registryDefinition?.description).toContain('Discover and preview GoodVibes Agent registry entries');
+    expect(registryDefinition?.description).toBe('registry test tool');
     expect(registryDefinition?.sideEffects).toEqual(['read_fs']);
     const properties = registryDefinition?.parameters.properties as Record<string, unknown>;
     const modeProperty = getRecordProperty(properties, 'mode');
@@ -1235,8 +1154,7 @@ describe('spawn mode', () => {
       mode: 'content',
       path: '.goodvibes/skills/setup/SKILL.md',
     });
-    expect(content.success).toBe(false);
-    expect(content.error).toBe(AGENT_REGISTRY_CONTENT_DENIAL_MESSAGE);
+    expect(content.success).toBe(true);
 
     const arbitraryPreview = await registry.execute('call-registry-arbitrary-preview', 'registry', {
       mode: 'preview',
@@ -1246,42 +1164,12 @@ describe('spawn mode', () => {
     expect(arbitraryPreview.error).toBe(AGENT_REGISTRY_CONTENT_DENIAL_MESSAGE);
   });
 
-  test('Agent runtime guard narrows find to serial gitignore-respecting project search', async () => {
-    const registry = new ToolRegistry();
-    const guarded = makeAgentHarness();
-    registry.register(guarded.agentTool);
-    registry.register(makeFindTool());
-
+  test('Agent runtime guard preserves shared search options', async () => {
+    const registry = new ToolRegistry(); registry.register(makeFindTool());
+    const definition = structuredClone(registry.getToolDefinitions()[0]);
+    registry.register(makeAgentHarness().agentTool);
     installAgentToolPolicyGuard(registry);
-
-    const findDefinition = registry.getToolDefinitions().find((tool) => tool.name === 'find');
-    expect(findDefinition?.description).toContain('serial, gitignore-respecting');
-    expect(findDefinition?.sideEffects).toEqual(['read_fs']);
-    expect(findDefinition?.concurrency).toBe('serial');
-
-    const properties = findDefinition?.parameters.properties as Record<string, unknown>;
-    expect(properties.parallel).toBeUndefined();
-    const queries = getRecordProperty(properties, 'queries');
-    const itemSchema = queries ? getRecordProperty(queries, 'items') : undefined;
-    const queryProperties = itemSchema ? getRecordProperty(itemSchema, 'properties') : undefined;
-    expect(queryProperties?.follow_symlinks).toBeUndefined();
-    expect(queryProperties?.include_hidden).toBeUndefined();
-    expect(queryProperties?.respect_gitignore).toBeUndefined();
-
-    const output = getRecordProperty(properties, 'output');
-    const outputProperties = output ? getRecordProperty(output, 'properties') : undefined;
-    const format = outputProperties ? getRecordProperty(outputProperties, 'format') : undefined;
-    expect(format?.enum).toEqual([...AGENT_READ_ONLY_FIND_OUTPUT_FORMATS]);
-    expect(outputProperties?.preview_lines).toBeUndefined();
-
-    const allowed = await registry.execute('call-find-content', 'find', {
-      queries: [{ id: 'source', mode: 'content', pattern: 'GoodVibes', path: 'src' }],
-      output: { format: 'context', max_results: 10 },
-    });
-    expect(allowed.success).toBe(true);
-    const normalized = JSON.parse(allowed.output ?? '{}') as { readonly parallel?: boolean };
-    expect(normalized.parallel).toBe(false);
-
+    expect(registry.getToolDefinitions()[0]).toEqual(definition);
     for (const args of [
       { queries: [{ id: 'hidden', mode: 'files', patterns: ['**/*'], include_hidden: true }] },
       { queries: [{ id: 'symlink', mode: 'files', patterns: ['**/*'], follow_symlinks: true }] },
@@ -1289,52 +1177,20 @@ describe('spawn mode', () => {
       { queries: [{ id: 'preview', mode: 'files', patterns: ['**/*'] }], output: { format: 'with_preview' } },
       { queries: [{ id: 'full', mode: 'symbols', query: 'Agent' }], output: { format: 'full' } },
       { queries: [{ id: 'parallel', mode: 'content', pattern: 'Agent' }], parallel: true },
-    ] satisfies ReadonlyArray<Record<string, unknown>>) {
-      const blocked = await registry.execute(`call-find-blocked-${JSON.stringify(args)}`, 'find', args);
-      expect(blocked.success).toBe(false);
-      expect(blocked.error).toBe(AGENT_FIND_POLICY_DENIAL_MESSAGE);
+    ]) {
+      const result = await registry.execute('shared-find', 'find', args);
+      expect(result.success).toBe(true); expect(JSON.parse(result.output!)).toEqual(args);
     }
   });
 
-  test('Agent runtime guard narrows web search to bounded read-only research', async () => {
-    const registry = new ToolRegistry();
-    const guarded = makeAgentHarness();
-    registry.register(guarded.agentTool);
-    registry.register(makeWebSearchTool());
-
+  test('Agent runtime guard preserves caller-selected web research options', async () => {
+    const registry = new ToolRegistry(); registry.register(makeWebSearchTool());
+    const definition = structuredClone(registry.getToolDefinitions()[0]);
+    registry.register(makeAgentHarness().agentTool);
     installAgentToolPolicyGuard(registry);
-
-    const webSearchDefinition = registry.getToolDefinitions().find((tool) => tool.name === 'web_search');
-    expect(webSearchDefinition?.description).toContain('bounded, read-only web research');
-    expect(webSearchDefinition?.sideEffects).toEqual(['network']);
-    const properties = webSearchDefinition?.parameters.properties as Record<string, unknown>;
-    const verbosity = getRecordProperty(properties, 'verbosity');
-    const evidenceExtract = getRecordProperty(properties, 'evidenceExtract');
-    const maxResults = getRecordProperty(properties, 'maxResults');
-    const evidenceTopN = getRecordProperty(properties, 'evidenceTopN');
-    expect(verbosity?.enum).toEqual([...AGENT_READ_ONLY_WEB_SEARCH_VERBOSITIES]);
-    expect(evidenceExtract?.enum).toEqual([...AGENT_READ_ONLY_WEB_SEARCH_EVIDENCE_EXTRACTS]);
-    expect(maxResults?.maximum).toBe(10);
-    expect(evidenceTopN?.maximum).toBe(3);
-
-    const allowed = await registry.execute('call-web-search-snippets', 'web_search', {
-      query: 'goodvibes agent',
-      maxResults: 5,
-      verbosity: 'evidence',
-      safeSearch: 'moderate',
-      includeEvidence: true,
-      evidenceTopN: 3,
-      evidenceExtract: 'readable',
-    });
-    expect(allowed.success).toBe(true);
-
-    const defaultSafeSearch = await registry.execute('call-web-search-default-safe', 'web_search', {
-      query: 'goodvibes agent',
-    });
-    expect(defaultSafeSearch.success).toBe(true);
-    expect(defaultSafeSearch.output).toContain('"safeSearch":"moderate"');
-
+    expect(registry.getToolDefinitions()[0]).toEqual(definition);
     for (const args of [
+      { query: 'goodvibes agent' },
       { query: 'x', verbosity: 'full' },
       { query: 'x', safeSearch: 'off' },
       { query: 'x', maxResults: 25 },
@@ -1342,9 +1198,8 @@ describe('spawn mode', () => {
       { query: 'x', includeEvidence: true, evidenceExtract: 'raw' },
       { query: 'x', includeEvidence: true, evidenceExtract: 'summary' },
     ]) {
-      const blocked = await registry.execute(`call-web-search-blocked-${JSON.stringify(args)}`, 'web_search', args);
-      expect(blocked.success).toBe(false);
-      expect(blocked.error).toBe(AGENT_WEB_SEARCH_POLICY_DENIAL_MESSAGE);
+      const result = await registry.execute('shared-web-search', 'web_search', args);
+      expect(result.success).toBe(true); expect(JSON.parse(result.output!)).toEqual(args);
     }
   });
 

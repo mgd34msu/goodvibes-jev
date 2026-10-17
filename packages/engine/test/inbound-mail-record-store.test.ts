@@ -1,7 +1,7 @@
 /**
  * inbound-mail-record-store.test.ts
  *
- * The custody rules for the inbound-mail record store (docs/inbound-email.md
+ * The custody rules for the inbound-mail record store (docs/decisions/2026-07-27-inbound-email-design.md
  * §9.3): structured fields plus a bounded body excerpt, bounded by BOTH a
  * retention age and a max record count (whichever binds first), validated by
  * content on load, and every sweep itemised.

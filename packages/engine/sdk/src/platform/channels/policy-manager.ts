@@ -65,6 +65,14 @@ function normalizeConversationKind(input: ChannelIngressPolicyInput): ChannelCon
   return 'service';
 }
 
+function selectGroupPolicy(policy: ChannelPolicyRecord, input: ChannelIngressPolicyInput): ChannelGroupPolicyRecord | undefined {
+  const selectors = ['groupId', 'channelId', 'workspaceId'] as const;
+  const specificity = (entry: ChannelGroupPolicyRecord) => selectors.filter(key => Boolean(entry[key])).length;
+  return policy.groupPolicies.filter(entry => specificity(entry) > 0
+    && selectors.every(key => !entry[key] || entry[key] === input[key]))
+    .sort((a, b) => specificity(b) - specificity(a))[0];
+}
+
 function firstCommand(text: string | undefined, explicit?: string): string {
   if (explicit && explicit.trim().length > 0) return explicit.trim().toLowerCase();
   if (!text) return '';
@@ -189,6 +197,7 @@ export class ChannelPolicyManager {
   private readonly policies = new Map<ChannelSurface, ChannelPolicyRecord>();
   private readonly audit: ChannelPolicyAuditRecord[] = [];
   private loaded = false;
+  private starting: Promise<void> | undefined;
   private auditFlushTimer: ReturnType<typeof setTimeout> | null = null;
   /** Whole-store writes run one at a time, in call order. See StoreWriteQueue. */
   private readonly writes = new StoreWriteQueue();
@@ -211,6 +220,12 @@ export class ChannelPolicyManager {
 
   async start(): Promise<void> {
     if (this.loaded) return;
+    this.starting ??= this.load();
+    try { await this.starting; }
+    finally { this.starting = undefined; }
+  }
+
+  private async load(): Promise<void> {
     const snapshot = validateChannelPolicySnapshot(await this.store.load());
     this.policies.clear();
     this.audit.length = 0;
@@ -250,6 +265,12 @@ export class ChannelPolicyManager {
     patch: Partial<Omit<ChannelPolicyRecord, 'surface' | 'updatedAt'>>,
   ): Promise<ChannelPolicyRecord> {
     await this.start();
+    const next = this.updatePolicy(surface, patch);
+    await this.persist();
+    return next;
+  }
+
+  private updatePolicy(surface: ChannelSurface, patch: Partial<Omit<ChannelPolicyRecord, 'surface' | 'updatedAt'>>): ChannelPolicyRecord {
     const existing = this.getPolicy(surface);
     const next: ChannelPolicyRecord = {
       ...existing,
@@ -270,7 +291,6 @@ export class ChannelPolicyManager {
       metadata: patch.metadata ?? existing.metadata,
     };
     this.policies.set(surface, next);
-    await this.persist();
     return next;
   }
 
@@ -283,11 +303,10 @@ export class ChannelPolicyManager {
   private decideIngress(input: ChannelIngressPolicyInput): ChannelPolicyDecision {
     const policy = this.getPolicy(input.surface);
     const conversationKind = normalizeConversationKind(input);
-    const matchedGroupPolicy = policy.groupPolicies.find((entry) => (
-      (entry.groupId && input.groupId && entry.groupId === input.groupId)
-      || (entry.channelId && input.channelId && entry.channelId === input.channelId)
-      || (entry.workspaceId && input.workspaceId && entry.workspaceId === input.workspaceId)
-    ));
+    const parentKind = conversationKind === 'thread'
+      ? input.parentConversationKind ?? (input.groupId ? 'group' : input.channelId ? 'channel' : 'service')
+      : conversationKind;
+    const matchedGroupPolicy = selectGroupPolicy(policy, input);
     const requireMention = matchedGroupPolicy?.requireMention ?? policy.requireMention;
     const allowTextCommandsWithoutMention = matchedGroupPolicy?.allowTextCommandsWithoutMention
       ?? policy.allowTextCommandsWithoutMention;
@@ -312,10 +331,10 @@ export class ChannelPolicyManager {
     if (!policy.enabled) {
       allowed = false;
       reason = 'surface-disabled';
-    } else if (conversationKind === 'direct' && (policy.dmPolicy === 'deny' || !policy.allowDirectMessages)) {
+    } else if (parentKind === 'direct' && (policy.dmPolicy === 'deny' || !policy.allowDirectMessages)) {
       allowed = false;
       reason = 'direct-messages-disabled';
-    } else if ((conversationKind === 'group' || conversationKind === 'channel') && (policy.groupPolicy === 'deny' || !allowGroupMessages)) {
+    } else if ((parentKind === 'group' || parentKind === 'channel') && (policy.groupPolicy === 'deny' || !allowGroupMessages)) {
       allowed = false;
       reason = 'group-messages-disabled';
     } else if (conversationKind === 'thread' && !allowThreadMessages) {
@@ -370,7 +389,12 @@ export class ChannelPolicyManager {
     // add-yourself step exists. From then on unknown senders are ignored.
     let effectivePolicy = policy;
     if (allowed && allowlistUserIds.length === 0 && input.userId) {
-      effectivePolicy = await this.upsertPolicy(input.surface, { allowlistUserIds: [input.userId] });
+      // Publish ownership before awaiting disk so another ingress cannot also
+      // seed the empty scope. An explicit group override owns its own seed.
+      effectivePolicy = this.updatePolicy(input.surface, matchedGroupPolicy?.allowlistUserIds !== undefined
+        ? { groupPolicies: policy.groupPolicies.map(entry => entry === matchedGroupPolicy ? { ...entry, allowlistUserIds: [input.userId!] } : entry) }
+        : { allowlistUserIds: [input.userId] });
+      await this.persist();
       reason = 'owner-allowlist-seeded';
       logger.info('Channel owner allowlist seeded from the first identified sender', {
         surface: input.surface,
@@ -380,7 +404,9 @@ export class ChannelPolicyManager {
 
     this.recordIngressAudit(input, { ...decision, reason, policy: effectivePolicy }, true);
 
-    return { ...decision, reason, policy: effectivePolicy };
+    return { ...decision, reason, policy: effectivePolicy,
+      ...(matchedGroupPolicy ? { matchedGroupPolicy: effectivePolicy.groupPolicies.find(entry => entry.id === matchedGroupPolicy.id) } : {}),
+    };
   }
 
   /** Preserve a denied source's bookkeeping without retaining its text or arbitrary metadata. */

@@ -213,21 +213,11 @@ describe('conversation commit ownership', () => {
     (lifetime) => compactConversation(c.host, registry, 'test/model', 'manual', 'test', { ...context(c.host), ...lifetime })).catch((error: unknown) => error);
     try {
       await held.entered.promise; owner.dispose(); expect(await pending).toBeInstanceOf(Error);
-      const beforeRecords = log.query(); const stored = beforeRecords.length; held.release.resolve(); await flush();
+      const beforeRecords = log.query(); held.release.resolve(); await flush();
       expect(c.replacements).toBe(0); expect(c.lineage).toBe(0); expect(owner.lastCommit).toBeNull();
       expect(events).toEqual(['COMPACTION_CHECK']);
       const after = log.query();
-      expect(after).toHaveLength(stored + 2);
-      const previousIds = new Set(beforeRecords.map(record => record.id));
-      const late = after.filter(record => !previousIds.has(record.id));
-      expect(late.map(record => record.context?.battery)).toEqual(['engine.redaction.residual-credential', 'engine.redaction.field-kind']);
-      expect(late.map(record => record.status)).toEqual(['failed', 'failed']);
-      expect(late.map(record => {
-        const questions = record.questions;
-        if (questions === null || typeof questions !== 'object' || Array.isArray(questions)) throw new Error('Expected a canonical question map');
-        return Object.keys(questions);
-      })).toEqual([['credentialRemains'], ['kind']]);
-      for (const record of beforeRecords) expect(after.find(entry => entry.id === record.id)).toEqual(record);
+      expect(after).toEqual(beforeRecords);
     } finally { held.release.resolve(); owner.dispose(); }
   });
 

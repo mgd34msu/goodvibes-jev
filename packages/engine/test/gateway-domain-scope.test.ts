@@ -76,6 +76,23 @@ describe('clientMayReceiveEventDomain: the migration-safe default', () => {
 // Fan-out behavior
 // ---------------------------------------------------------------------------
 describe('publishEvent: domain-scoped delivery', () => {
+  test.each([{ domains: undefined }, { domains: ['session', 'gate'] as const }])('explicit unsubscribe narrows initial domains %j', ({ domains }) => {
+    const gateway = makeGateway();
+    const client = connect(gateway, { clientKind: 'web', domains });
+    gateway.unsubscribeWebSocketClient(client.clientId, ['session']);
+    gateway.publishEvent('session-update', {});
+    expect(client.received).not.toContain('session-update');
+    gateway.subscribeWebSocketClient(client.clientId, ['session']);
+    gateway.publishEvent('session-update', {});
+    expect(client.received).toContain('session-update');
+    client.received.length = 0;
+    gateway.unsubscribeWebSocketClient(client.clientId);
+    gateway.publishEvent('session-update', {});
+    gateway.publishEvent('approval-update', {});
+    expect(client.received).not.toContain('session-update');
+    expect(client.received).not.toContain('approval-update');
+    gateway.closeWebSocketClient(client.clientId);
+  });
   test('(1) session-update reaches only the session subscriber, not the tasks subscriber', () => {
     const gateway = makeGateway();
     const sessionSub = connect(gateway, { clientKind: 'web', domains: ['session'] });
@@ -131,7 +148,7 @@ describe('publishEvent: domain-scoped delivery', () => {
     expect(scopedDown.received).not.toContain('session-update');
   });
 
-  test('(W3-S3) a session-detached update reaches only the session subscriber: detach rides the session-update channel', () => {
+  test('a session-detached update reaches only the session subscriber: detach rides the session-update channel', () => {
     const gateway = makeGateway();
     const sessionSub = connect(gateway, { clientKind: 'web', domains: ['session'] });
     const tasksSub = connect(gateway, { clientKind: 'web', domains: ['tasks'] });

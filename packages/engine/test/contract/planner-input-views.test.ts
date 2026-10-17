@@ -55,10 +55,10 @@ for (const mode of ['normal', 'stale', 'stale-check', 'cancel'] as const) {
     else {
       expect(done.status).toBe(mode === 'cancel' ? 'cancelled' : 'failed'); expect(h.agentsOf('u1.f1.u1')).toEqual([]);
       if (mode === 'stale' || mode === 'stale-check') {
-        // The nested source-error assignments are protected independently.
-        expect(done.error).toBe("unit u1's stall could not be routed: [REDACTED] [REDACTED]");
+        // The nested local error preserves the original input-owner failure.
+        expect(done.error).toBe("unit u1's stall could not be routed: contract result changed during fix planning: contract input owner changed: src/csv.ts");
         expect(done.failureKind).toBe('other');
-        expect(done.error).not.toContain(h.root); expect(done.error).not.toContain('src/csv.ts');
+        expect(done.error).not.toContain(h.root); expect(done.error).toContain('src/csv.ts');
         expect(readFileSync(join(view, 'src/csv.ts'), 'utf8')).toBe('attempt 2\n');
         expect(readFileSync(join(done.worktreePath!, 'src/csv.ts'), 'utf8')).toBe(mode === 'stale'
           ? 'concurrent contract writer\n' : 'contract changed during plan checking\n');

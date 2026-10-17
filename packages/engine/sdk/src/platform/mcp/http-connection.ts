@@ -332,41 +332,54 @@ export class McpHttpConnection {
   ): Promise<unknown> {
     const id = this.nextId++;
     const body = { jsonrpc: '2.0', id, method, params };
-    const response = await applyNative(McpHttpConnection.#post, this, [body, { ...options, method, params }]);
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, this.lifetime.signal, ...(options.operation?.signal ? [options.operation.signal] : [])]);
+    const timer = this.options.timeoutMs > 0 ? setTimeout(() => controller.abort(new Error(`MCP request '${method}' timed out`)), this.options.timeoutMs) : undefined;
+    timer?.unref?.();
+    let response: Response | undefined;
+    try {
+      response = await applyNative(McpHttpConnection.#post, this, [body, { ...options, method, params, signal }]);
 
-    if (response.status === 202) {
-      throw new Error(`MCP server '${this.options.serverName}': request '${method}' was accepted as a notification (202) instead of answered`);
-    }
-    if (!response.ok) {
-      const errorBody = await response.json().catch(() => null);
-      const rpcError = parseJsonRpcError(errorBody);
-      if (rpcError) throw new McpRpcError(rpcError.code, rpcError.message, rpcError.data);
-      throw new Error(`MCP server '${this.options.serverName}': HTTP ${response.status} for '${method}'`);
-    }
+      if (response.status === 202) {
+        throw new Error(`MCP server '${this.options.serverName}': request '${method}' was accepted as a notification (202) instead of answered`);
+      }
+      if (!response.ok) {
+        const errorBody = await awaitPermission(() => response!.json(), signal).catch(() => { signal.throwIfAborted(); return null; });
+        const rpcError = parseJsonRpcError(errorBody);
+        if (rpcError) throw new McpRpcError(rpcError.code, rpcError.message, rpcError.data);
+        throw new Error(`MCP server '${this.options.serverName}': HTTP ${response.status} for '${method}'`);
+      }
 
-    this.lifetime.signal.throwIfAborted();
-    applyNative(McpHttpConnection.#captureSessionId, this, [response]);
-    const contentType = response.headers.get('content-type') ?? '';
-    if (contentType.includes('text/event-stream')) {
-      return applyNative(McpHttpConnection.#readSseResponse, this, [response, id, method, options.operation]);
+      this.lifetime.signal.throwIfAborted();
+      applyNative(McpHttpConnection.#captureSessionId, this, [response]);
+      const contentType = response.headers.get('content-type') ?? '';
+      if (contentType.includes('text/event-stream')) {
+        return await applyNative(McpHttpConnection.#readSseResponse, this, [response, id, method, options.operation, signal]);
+      }
+      const parsed: unknown = await awaitPermission(() => response!.json(), signal);
+      options.operation?.assertCurrent();
+      return applyNative(McpHttpConnection.#resolveJsonRpcResponse, this, [parsed, method]);
+    } catch (error) {
+      signal.throwIfAborted();
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+      void response?.body?.cancel().catch(() => {});
     }
-    const signal = AbortSignal.any([this.lifetime.signal, ...(options.operation?.signal ? [options.operation.signal] : [])]);
-    const parsed: unknown = await awaitPermission(() => response.json(), signal);
-    options.operation?.assertCurrent();
-    return applyNative(McpHttpConnection.#resolveJsonRpcResponse, this, [parsed, method]);
   }
 
   private async post(
     body: unknown,
-    options: { era: 'modern' | 'legacy'; version: string; method: string; params: unknown; initialize?: boolean; extraHeaders?: Record<string, string>; operation?: ExternalOperationSource; beforeSend?: () => void },
+    options: { era: 'modern' | 'legacy'; version: string; method: string; params: unknown; initialize?: boolean; extraHeaders?: Record<string, string>; operation?: ExternalOperationSource; beforeSend?: () => void; signal?: AbortSignal },
   ): Promise<Response> {
     const controller = new AbortController();
-    const timer = this.options.timeoutMs > 0 ? setTimeout(() => controller.abort(), this.options.timeoutMs) : undefined;
+    const timer = !options.signal && this.options.timeoutMs > 0 ? setTimeout(() => controller.abort(), this.options.timeoutMs) : undefined;
     timer?.unref?.();
     try {
       const headers = this.buildHeaders(options);
       const serialized = JSON.stringify(body);
-      const signal = AbortSignal.any([controller.signal, this.lifetime.signal, ...(options.operation?.signal ? [options.operation.signal] : [])]);
+      const signal = AbortSignal.any([controller.signal, this.lifetime.signal, ...(options.signal ? [options.signal] : []), ...(options.operation?.signal ? [options.operation.signal] : [])]);
       signal.throwIfAborted();
       options.operation?.assertCurrent();
       options.beforeSend?.();
@@ -392,12 +405,12 @@ export class McpHttpConnection {
     return message.result;
   }
 
-  private async readSseResponse(response: Response, requestId: number, method: string, operation?: ExternalOperationSource): Promise<unknown> {
+  private async readSseResponse(response: Response, requestId: number, method: string, operation?: ExternalOperationSource, requestSignal?: AbortSignal): Promise<unknown> {
     const bodyStream = response.body;
     if (!bodyStream) throw new Error(`MCP server '${this.options.serverName}': empty SSE body for '${method}'`);
     const streamLife = new AbortController();
     const epoch = this.sessionEpoch;
-    const signal = AbortSignal.any([this.lifetime.signal, streamLife.signal, ...(operation?.signal ? [operation.signal] : [])]);
+    const signal = AbortSignal.any([this.lifetime.signal, streamLife.signal, ...(requestSignal ? [requestSignal] : []), ...(operation?.signal ? [operation.signal] : [])]);
     const assertCurrent = () => { signal.throwIfAborted(); operation?.assertCurrent(); if (this.sessionEpoch !== epoch) throw new Error('MCP HTTP session changed'); };
     const boundOperation = operation ? { ...operation, signal, assertCurrent } : undefined;
     const reader = bodyStream.getReader();

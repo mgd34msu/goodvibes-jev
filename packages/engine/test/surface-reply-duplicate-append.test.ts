@@ -194,7 +194,7 @@ describe('a throwing surface delivery is not allowed to duplicate the stored ans
       expect(errors[0]?.data.agentId).toBe('agent-1');
       expect(errors[0]?.data.sessionId).toBe('session-1');
       expect(errors[0]?.data.bindingId).toBe('route-telegram-1');
-      expect(errors[0]?.data.reason).toBe('[REDACTED]');
+      expect(errors[0]?.data.reason).toBe('telegram 429: too many requests');
     } finally {
       harness.pipeline.dispose();
     }
@@ -344,7 +344,7 @@ describe('surface replies land in the deliveries ledger', () => {
     }
   });
 
-  test('an undelivered reply is queued then failed, withholding unproved error wording', async () => {
+  test('an undelivered reply is queued then failed, preserving the delivery error', async () => {
     const harness = makeHarness({ deliverReplyThrows: true });
     try {
       harness.helper.queueSurfaceReplyFromBinding(telegramBinding(), {
@@ -358,7 +358,7 @@ describe('surface replies land in the deliveries ledger', () => {
 
       const mine = harness.ledger.filter((entry) => entry.agentId === 'agent-led-bad');
       expect(mine.map((entry) => entry.phase)).toEqual(['queued', 'failed']);
-      expect(mine[1]?.error).toBe('[REDACTED]');
+      expect(mine[1]?.error).toBe('telegram 429: too many requests');
       expect(mine[1]?.sessionId).toBe('session-led-bad');
       expect(mine[1]?.surfaceKind).toBe('telegram');
     } finally {

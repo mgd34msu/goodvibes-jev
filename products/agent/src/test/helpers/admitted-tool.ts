@@ -3,7 +3,7 @@ import { DEFAULT_CONFIG, type ConfigManager, type PermissionMode } from '@goodvi
 import { PermissionManager, createPermissionConfigReader, type PermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { PolicyRuntimeState } from '@goodvibes-jev/engine/sdk/platform/runtime/security';
 import { ToolRegistry, type ToolExecuteOptions, type ToolRegistrationOptions } from '@goodvibes-jev/engine/sdk/platform/tools';
-import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
+import type { Tool, ToolResult } from '@goodvibes-jev/engine/sdk/platform/types';
 import { SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 
@@ -19,7 +19,7 @@ export async function executeAdmitted(tool: Tool, args: Record<string, unknown>,
   readonly beforeEffect?: (effectiveArgs?: Record<string, unknown>) => void;
   readonly registration?: ToolRegistrationOptions;
   readonly configManager?: ConfigManager;
-} = {}) {
+} = {}): Promise<ToolResult> {
   if (!['agent_artifacts', 'agent_documents', 'agent_review_packet_presets', 'agent_review_packet_share', 'google', 'agent_notify', 'agent_media_generate'].includes(tool.definition.name)) throw new Error('This synthetic admission fixture is restricted to the named document and external delivery tools under test.');
   const directory = options.directory ?? workspaces.get(tool) ?? process.cwd();
   const permissions = () => ({ ...DEFAULT_CONFIG.permissions, mode: options.currentMode?.() ?? options.mode ?? 'prompt' });
@@ -60,6 +60,7 @@ export async function executeAdmitted(tool: Tool, args: Record<string, unknown>,
       sourceOf: () => ({ goal: 'Verify isolated local artifact and document effects with synthetic admission', criteria: ['No external account actions'] }),
       signal: options.signal, schemaRevision: call.schemaRevision, preparedCall: { registry, call },
     });
+    if (!admission.result.approved) return { callId: id, success: false, error: admission.result.reasonCode };
     const execution: ToolExecuteOptions = { signal: options.signal, assertCurrent: options.beforeEffect };
     return await registry.executePrepared(call, admission, execution);
   } finally {

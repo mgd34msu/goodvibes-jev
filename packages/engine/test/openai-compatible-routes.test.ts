@@ -161,7 +161,8 @@ describe('OpenAI-compatible daemon routes', () => {
     }), context);
     expect(ambiguous?.status).toBe(400);
     const body = await ambiguous!.json() as { error: { message: string } };
-    expect(body.error.message).toMatch(/^\[REDACTED\](?: \[REDACTED\])*$/);
+    expect(body.error.message).toContain("Model id 'gpt-test' is ambiguous");
+    expect(body.error.message).toContain('anthropic:gpt-test, openai:gpt-test');
     expect(provider.requests).toEqual([]);
     const listing = await dispatchOpenAICompatibleRoutes(request('/v1/models'), context);
     expect(listing?.status).toBe(200);

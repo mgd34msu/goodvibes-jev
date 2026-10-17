@@ -2,8 +2,7 @@
 
 /**
  * graph-dynamics.ts, the runtime-dynamic dependency-graph muscles added to
- * the ONE workstream engine (the fix-phase rework; never a sibling
- * scheduler):
+ * the shared workstream engine (used by the workstream scheduler):
  *
  * - live edge addition with cycle refusal (a discovered missed dependency adds
  *   an edge; a cycle surfaces IMMEDIATELY as a structured outcome, never a

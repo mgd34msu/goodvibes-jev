@@ -1,7 +1,7 @@
 /**
  * inbound-mail-supervisor.test.ts
  *
- * The lifecycle owner from docs/inbound-email.md §3.5, and the three things it
+ * The lifecycle owner from docs/decisions/2026-07-27-inbound-email-design.md §3.5, and the three things it
  * is responsible for that nothing else can be:
  *
  *  - it starts with the daemon, reports what it is ACTUALLY doing, and stops

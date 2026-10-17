@@ -17,7 +17,7 @@ for (const host of ['user:private-password@127.0.0.1', 'http://user:private-pass
       const { stdout, stderr } = child.output();
       expect(stdout).toContain('intended-host=[withheld]');
       expect(stdout).not.toContain(' bound:'); expect(stdout).not.toContain('host started');
-      expect(stderr).toContain('goodvibes daemon host failed: [REDACTED]\n');
+      expect(stderr).toContain('goodvibes daemon host failed: Daemon startup failed\n');
       const token = (JSON.parse(readFileSync(join(f.daemonHome, 'operator-tokens.json'), 'utf8')) as { token: string }).token;
       for (const secret of ['private-password', 'private-query', 'private-fragment', token]) expect(stdout + stderr).not.toContain(secret);
     } finally { await child.close(); }

@@ -3,7 +3,7 @@
  *
  * Four ways the inbound-mail watcher used to die permanently while reporting
  * healthy, the exact defect the whole capability exists to eliminate
- * (docs/inbound-email.md §3.4b). Each one is a gate:
+ * (docs/decisions/2026-07-27-inbound-email-design.md §3.4b). Each one is a gate:
  *
  *  1. A throw out of the run loop (a cursor-store write that fails) is caught,
  *     classified, reported through the observer, and reflected in status. It
@@ -423,9 +423,9 @@ describe('a run loop that dies is observed, never swallowed', () => {
     const terminal = rig.supervisor.terminalFailure;
     expect(terminal).not.toBeNull();
     if (terminal === null) throw new Error('Expected the original mail run-loop terminal failure');
-    expect(rig.supervisor.status.reason).toBe(`[REDACTED] ${terminal.fix}`);
-    expect(rig.supervisor.status.reason).not.toContain('ENOSPC');
-    expect(terminal).toMatchObject({ reason: 'watcher-stopped-unexpectedly', detail: '[REDACTED]' });
+    expect(rig.supervisor.status.reason).toBe(`ENOSPC: no space left on device, write ${terminal.fix}`);
+    expect(rig.supervisor.status.reason).toContain('ENOSPC');
+    expect(terminal).toMatchObject({ reason: 'watcher-stopped-unexpectedly', detail: 'ENOSPC: no space left on device, write' });
     expect(observer.terminals.length).toBe(1);
     expect(observer.terminals[0]).toEqual(terminal);
     expect(rig.supervisor.health().state).toBe('degraded');

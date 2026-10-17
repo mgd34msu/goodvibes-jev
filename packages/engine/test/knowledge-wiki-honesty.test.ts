@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { KnowledgeService } from '../sdk/src/platform/knowledge/service.js';
 import { KnowledgeSemanticService } from '../sdk/src/platform/knowledge/semantic/service.js';
@@ -107,7 +107,7 @@ function reviewState(node: KnowledgeNodeRecord | undefined): string | undefined 
   return provenance && typeof provenance === 'object' ? (provenance as Record<string, unknown>).state as string : undefined;
 }
 
-describe('knowledge wiki honesty: revision history (Defect 1)', () => {
+describe('knowledge wiki honesty: revision history', () => {
   test('every content-changing upsert preserves prior content and records what changed', async () => {
     const store = createStore();
     await store.upsertNode({ kind: 'topic', slug: 'widget', title: 'Widget', summary: 'First summary', confidence: 90 });
@@ -160,14 +160,12 @@ describe('knowledge wiki honesty: revision history (Defect 1)', () => {
   });
 });
 
-describe('knowledge wiki honesty: confidence scale + non-finite guard (Findings 4 & 5)', () => {
-  test('a non-finite producer confidence is descriptive zero and cannot activate a node', async () => {
+describe('knowledge wiki honesty: confidence scale + non-finite guard ', () => {
+  test('a non-finite producer confidence is refused before creating a node', async () => {
     const store = createStore();
     // Invalid producer scores cannot substitute for evidence or serving authority.
-    const node = await store.upsertNode({ kind: 'topic', slug: 'nanconf', title: 'NaN conf', confidence: Number.NaN });
-    expect(Number.isFinite(node.confidence)).toBe(true);
-    expect(node.confidence).toBe(0);
-    expect(node.status).toBe('draft');
+    await expect(store.upsertNode({ kind: 'topic', slug: 'nanconf', title: 'NaN conf', confidence: Number.NaN })).rejects.toThrow('plain JSON data');
+    expect(store.getNodeByKindAndSlug('topic', 'nanconf')).toBeNull();
   });
 
   test('an LLM fractional score stays on its declared scale while a supported node activates by judgment', async () => {
@@ -213,7 +211,7 @@ describe('knowledge wiki honesty: confidence scale + non-finite guard (Findings 
   });
 });
 
-describe('knowledge wiki honesty: review gate (Defect 2)', () => {
+describe('knowledge wiki honesty: review gate', () => {
   test('a low-confidence synthesized node is held as draft with pending-review provenance', async () => {
     const store = createStore('knowledge-wiki.sqlite', { family: 'wiki' });
     const node = await store.upsertNode({ kind: 'topic', slug: 'weak', title: 'Weak', confidence: 20 });
@@ -279,7 +277,7 @@ describe('knowledge wiki honesty: review gate (Defect 2)', () => {
   });
 });
 
-describe('knowledge wiki honesty: fabricated answer-gap evidence (Defect 3)', () => {
+describe('knowledge wiki honesty: fabricated answer-gap evidence', () => {
   const base: KnowledgeNodeRecord = {
     id: 'gap-1', kind: 'knowledge_gap', slug: 'g', title: 'g', aliases: [], status: 'active',
     confidence: 70, metadata: {}, createdAt: 1, updatedAt: 1,
@@ -300,7 +298,7 @@ describe('knowledge wiki honesty: fabricated answer-gap evidence (Defect 3)', ()
   });
 });
 
-describe('knowledge wiki honesty: mergeNodes re-points edges (Defect 5)', () => {
+describe('knowledge wiki honesty: mergeNodes re-points edges', () => {
   test('merging re-points cross-reference edges onto the survivor and marks the loser', async () => {
     const store = createStore();
     const winner = await store.upsertNode({ kind: 'topic', slug: 'winner', title: 'Winner', confidence: 90 });
@@ -322,7 +320,7 @@ describe('knowledge wiki honesty: mergeNodes re-points edges (Defect 5)', () => 
   });
 });
 
-describe('knowledge wiki honesty: honest hard delete and forget filter (Defect 6)', () => {
+describe('knowledge wiki honesty: honest hard delete and forget filter', () => {
   test('queryNodes hides forgotten (stale) nodes by default but returns them on request', async () => {
     const { store, artifactStore } = createStores();
     const service = disposables.add(new KnowledgeService(store, artifactStore, undefined, { memoryRegistry: fakeMemoryRegistry() }), disposeKnowledgeService);
@@ -348,7 +346,7 @@ describe('knowledge wiki honesty: honest hard delete and forget filter (Defect 6
   });
 });
 
-describe('knowledge wiki honesty: delete cascades refinement tasks (Defect 7)', () => {
+describe('knowledge wiki honesty: delete cascades refinement tasks', () => {
   test('deleting a node removes refinement tasks that reference it', async () => {
     const store = createStore();
     const node = await store.upsertNode({ kind: 'topic', slug: 'subject', title: 'Subject', confidence: 90 });
@@ -361,7 +359,7 @@ describe('knowledge wiki honesty: delete cascades refinement tasks (Defect 7)', 
   });
 });
 
-describe('knowledge wiki honesty: packet truncation disclosure (Defect 9)', () => {
+describe('knowledge wiki honesty: packet truncation disclosure', () => {
   test('a packet that drops candidates over the limit reports it honestly', async () => {
     const { store, artifactStore } = createStores();
     const service = disposables.add(new KnowledgeService(store, artifactStore, undefined, { memoryRegistry: fakeMemoryRegistry() }), disposeKnowledgeService);
@@ -429,7 +427,7 @@ describe('knowledge wiki honesty: packet truncation disclosure (Defect 9)', () =
 });
 
 describe('knowledge wiki honesty: unlink is a real reversal (unlink sub-defect)', () => {
-  test('unlinking a never-linked target creates no phantom node or edge', async () => {
+  test('unlinking a never-linked target works with a card-shaped generated source ID and creates no phantom node or edge', async () => {
     const { store, artifactStore } = createStores();
     const service = disposables.add(new HomeGraphService(store, artifactStore));
     const priority = fakePort((_name, question, state) => {
@@ -438,8 +436,10 @@ describe('knowledge wiki honesty: unlink is a real reversal (unlink sub-defect)'
       return reading;
     });
     const previousPriority = installJudgmentPort(priority.port);
+    // This producer clock hashes to hg-src-b02b9422441828552f2b7695.
+    const clock = spyOn(Date, 'now').mockReturnValue(4_222_222_222_668);
     try { await service.syncSnapshot({ installationId: 'house', devices: [{ id: 'tv', name: 'TV' }] }); }
-    finally { installJudgmentPort(previousPriority); }
+    finally { clock.mockRestore(); installJudgmentPort(previousPriority); }
     // This exact generic note is unrelated to the sole TV candidate. Keep the
     // automatic-link reading real so unlink still exercises persisted state.
     const body = 'A note body long enough to index.';
@@ -487,7 +487,7 @@ describe('knowledge wiki honesty: unlink is a real reversal (unlink sub-defect)'
   });
 });
 
-describe('knowledge wiki honesty: shared artifact reset does not orphan foreign blobs (Hazard H1)', () => {
+describe('knowledge wiki honesty: shared artifact reset does not orphan foreign blobs', () => {
   test('home-graph reset preserves a blob owned by another knowledge family', async () => {
     const { store, artifactStore } = createStores();
     const spaceId = homeAssistantKnowledgeSpaceId('house');
@@ -511,7 +511,7 @@ describe('knowledge wiki honesty: shared artifact reset does not orphan foreign 
   });
 });
 
-describe('knowledge wiki honesty: forgotten nodes are not served over the wire (Defect 6)', () => {
+describe('knowledge wiki honesty: forgotten nodes are not served over the wire', () => {
   test('the GET /api/knowledge/nodes route excludes a forgotten (stale) node by default', async () => {
     const { store, artifactStore } = createStores();
     const service = disposables.add(new KnowledgeService(store, artifactStore, undefined, { memoryRegistry: fakeMemoryRegistry() }), disposeKnowledgeService);

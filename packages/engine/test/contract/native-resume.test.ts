@@ -84,23 +84,21 @@ test('historical native plan-owner wait is inspected and freshly refused without
   expect(done.escalations).toEqual(contract.escalations); expect(h.events.some(event => event.type === 'CONTRACT_OWNER_REPLIED' || event.type === 'CONTRACT_ESCALATED')).toBe(false);
 }, 20_000);
 
-test('historical native unshown wait cannot become met by repeating the same evidence or approving it', async () => {
-  const directory = root(); using log = new SqliteDecisionLog(':memory:'); let waiting = false;
-  const host: NativeContractDecisionHost = { authorityOf: authority, conditions: (_contract, stage) => stage !== 'evidence' ? [] : [{ ref: { id: 'external', revision: '1' }, description: 'External evidence', current: () => ({ id: 'external', revision: '1' }),
-    wait: signal => new Promise<void>((_resolve, reject) => { waiting = true; signal.addEventListener('abort', () => reject(signal.reason), { once: true }); }) }] };
-  const first = add(makeHarness({ root: directory, recordNative: true, decisionLog: log, nativeDecisions: host, plan: plan(), contract: { evidenceNudgeLimit: 0, maxFixRounds: 0 },
-    scripts: { u1: () => [{ files: { 'src/csv.ts': 'unchanged evidence' }, text: '[p=0.2] unshown parser' }] },
-    port: context => context.name === 'disposition' && String((context.state['binding'] as { actionId?: string })?.actionId).includes(':evidence:') ? choiceAnswer(context.question, 'defer_0', 0.99) : undefined }));
-  const id = startContract(first, { nativeSource: source }).contract.id; await waitFor(() => waiting, 'evidence deferral');
-  first.dispose(); await first.runner.join(id); harnesses.splice(harnesses.indexOf(first), 1);
+test('historical native unshown wait rechecks evidence without an owner approval', async () => {
+  const directory = root(); using log = new SqliteDecisionLog(':memory:');
+  const first = add(makeHarness({ root: directory, recordNative: true, decisionLog: log, plan: plan(),
+    scripts: { u1: finishes('parser complete') } }));
+  const id = startContract(first, { nativeSource: source }).contract.id;
+  await waitFor(() => terminal(first, id), 'original native execution'); await first.runner.join(id);
+  first.dispose(); harnesses.splice(harnesses.indexOf(first), 1);
   const path = contractPath(directory, id); const saved = (JSON.parse(readFileSync(path, 'utf8')) as { contract: Contract }).contract;
-  delete saved.nativeDecisions; delete saved.nativeProgress; delete saved.nativeWaiting; saved.status = 'awaiting-owner'; saved.statusBeforeOwner = 'running'; saved.units[0]!.status = 'awaiting-owner';
+  delete saved.nativeDecisions; delete saved.nativeProgress; delete saved.nativeWaiting; saved.status = 'awaiting-owner'; saved.statusBeforeOwner = 'running'; saved.units[0]!.status = 'awaiting-owner'; saved.units[0]!.criteria[0]!.status = 'unshown';
   saved.escalations = [{ id: `${id}.old`, at: 10, scope: 'unit', targetId: 'u1', reason: 'unsettled', question: 'Historical request for approval', unmetCriterionIds: [] }];
   writeSnapshot(path, { ...saved, schemaVersion: 3 }, 3);
-  const h = add(makeHarness({ root: directory, recordNative: true, decisionLog: log, contract: { maxFixRounds: 0 }, scripts: {}, port: context => context.name.startsWith('criterion_') ? noulAnswer(0.01) : undefined }));
+  const h = add(makeHarness({ root: directory, recordNative: true, decisionLog: log, contract: { maxFixRounds: 0 }, scripts: {}, port: context => context.name === 'disposition' ? choiceAnswer(context.question, 'reject', 0.99) : context.name.startsWith('criterion_') ? noulAnswer(0.99) : undefined }));
   await h.runner.resumeAll(); await waitFor(() => terminal(h, id), 'fresh refusal of unchanged evidence'); await h.runner.join(id);
-  const done = h.store.get(id)!; expect(done.status).toBe('failed'); expect(done.units[0]!.criteria[0]!.status).toBe('unshown'); expect(h.agentsOf('u1')).toHaveLength(0);
-  expect(done.nativeDecisions!.history.at(-1)!.decision.outcome).toBe('reject'); expect(done.escalations[0]!.reply).toBeUndefined();
+  const done = h.store.get(id)!; expect(done.status).toBe('failed'); expect(done.units[0]!.criteria[0]!.status).toBe('unmet'); expect(h.agentsOf('u1')).toHaveLength(0);
+  expect(done.nativeDecisions?.history ?? []).toHaveLength(0); expect(done.escalations[0]!.reply).toBeUndefined();
   expect(h.events.some(event => event.type === 'CONTRACT_OWNER_REPLIED' || event.type === 'CONTRACT_ESCALATED')).toBe(false);
 }, 20_000);
 

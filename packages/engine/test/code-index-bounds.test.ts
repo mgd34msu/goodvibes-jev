@@ -52,6 +52,26 @@ describe('CodeIndexStore: bounds honesty', () => {
     expect(results.some((r) => r.chunk.path === 'kept.ts')).toBe(true);
   });
 
+  test('directory rules exclude descendants and cannot be undone by child-only negation', async () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'hidden', 'nested'), { recursive: true });
+    mkdirSync(join(root, 'sub', 'root-only'), { recursive: true });
+    mkdirSync(join(root, 'root-only'), { recursive: true });
+    writeFileSync(join(root, '.gitignore'), 'hidden/\n!hidden/nested/secret.ts\n/root-only/\n');
+    writeFileSync(join(root, 'hidden', 'nested', 'secret.ts'), 'export const secret = 1;\n');
+    writeFileSync(join(root, 'root-only', 'excluded.ts'), 'export const excluded = 1;\n');
+    writeFileSync(join(root, 'sub', 'root-only', 'kept.ts'), 'export const kept = 1;\n');
+    const store = new CodeIndexStore(root, ':memory:', makeRegistry(root));
+    await store.init();
+    try {
+      const stats = await store.buildFull();
+      expect(stats.skip.ignoredByGitignore).toBe(2);
+      expect(stats.filesIndexed).toBe(1);
+      expect((await store.search('kept secret excluded', { limit: 10 })).map(row => row.chunk.path))
+        .toEqual(['sub/root-only/kept.ts']);
+    } finally { store.close(); }
+  });
+
   test('files over maxFileBytes are skipped and counted as tooLarge', async () => {
     const root = makeRoot();
     writeFileSync(join(root, 'big.ts'), `export const big = '${'x'.repeat(2000)}';\n`);

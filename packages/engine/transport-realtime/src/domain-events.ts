@@ -148,7 +148,7 @@ function createRemoteDomainEventFeed<
       const payload = envelope.payload;
       const typedEnvelope = toEventEnvelope(envelope);
       // snapshot Sets before iterating to prevent skipped listeners
-      // from concurrent subscribe/unsubscribe during dispatch (project pattern: event-bus-snapshot).
+      // from concurrent subscribe/unsubscribe during dispatch.
       for (const listener of [...(payloadListeners.get(eventType) ?? [])]) {
         dispatchToListener(listener, payload, domain, options);
       }

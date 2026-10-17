@@ -200,7 +200,7 @@ function makeContext(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// Part D Tests
+// Conversation command routing
 // ---------------------------------------------------------------------------
 
 describe('message routing: kind=message default keeps normal chat out of agent and contract routing', () => {
@@ -611,7 +611,7 @@ describe('body size handling', () => {
   });
 });
 
-describe('envelope shape consistency: chat-mode vs Problem-2', () => {
+describe('envelope shape consistency: chat-mode vs follow-up mode', () => {
   /**
    * Cross-cutting test: asserts that CompanionChatTurnStartedEvent.envelope and
    * ConversationMessageEnvelope share the same structural shape. TypeScript ensures
@@ -666,7 +666,7 @@ describe('envelope shape consistency: chat-mode vs Problem-2', () => {
     expect(turnCompletedPayload.envelope.body).toBe('Hello from assistant');
   });
 
-  test('Problem-2 follow-up envelope is structurally identical to chat-mode envelope', () => {
+  test('follow-up mode follow-up envelope is structurally identical to chat-mode envelope', () => {
     // Both must satisfy ConversationMessageEnvelope, confirmed by TypeScript.
     // At runtime: verify that a companion-message envelope and a chat-mode envelope
     // have exactly the same required keys.

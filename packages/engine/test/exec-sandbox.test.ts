@@ -87,7 +87,7 @@ describe('detectSandboxAvailability', () => {
 // ── bwrap argv construction (pure) ───────────────────────────────────────────
 
 describe('buildBwrapArgv', () => {
-  test('binds workspace rw, root ro, isolates /tmp, unshares net when disabled, chdirs', () => {
+  test('binds workspace rw and system directories ro, isolates runtime directories and networking', () => {
     const argv = buildBwrapArgv({
       bwrapPath: '/usr/bin/bwrap',
       workspaceDir: '/home/u/proj',
@@ -97,7 +97,9 @@ describe('buildBwrapArgv', () => {
     });
     expect(argv[0]).toBe('/usr/bin/bwrap');
     const joined = argv.join(' ');
-    expect(joined).toContain('--ro-bind / /');
+    expect(joined).not.toContain('--ro-bind / /');
+    expect(joined).toContain('--ro-bind-try /usr /usr');
+    expect(joined).toContain('--tmpfs /run');
     expect(joined).toContain('--tmpfs /tmp');
     expect(joined).toContain('--bind /home/u/proj /home/u/proj');
     expect(joined).toContain('--unshare-net');

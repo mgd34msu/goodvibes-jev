@@ -2,7 +2,7 @@
  * inbound-mail-notice.test.ts
  *
  * Gate tests for `renderInboundMailNotice` and the escaping architecture that
- * replaced it (docs/inbound-email.md §7.1, §7.2). The earlier version of this
+ * replaced it (docs/decisions/2026-07-27-inbound-email-design.md §7.1, §7.2). The earlier version of this
  * renderer returned one STRING for every channel, stripped by one shared
  * trigger-character set, an architectural defect, because a set tuned for
  * one channel (Telegram MarkdownV2) is silently wrong on another (Slack has

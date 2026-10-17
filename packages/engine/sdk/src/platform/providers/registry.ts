@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { LLMProvider, ProviderRuntimeMetadata, ProviderRuntimeMetadataDeps } from './interface.js';
 import { ProviderNotFoundError } from './provider-not-found-error.js';
 import { join } from 'node:path';
@@ -108,11 +109,20 @@ export class ProviderRegistry {
       // One completed reading changes one window, not the entire registry.
       // Rebuilding every model here made the next keystroke repeat catalog work.
       if (this._cachedModelRegistry === null) return;
-      this._cachedModelRegistry = this._cachedModelRegistry.map((model) =>
-        model.provider === providerId && model.id === modelId
-          ? this.contextWindowOverrideStore().apply(this.catalogWindows.apply(model))
-          : model);
-      this._modelRegistryRevision++;
+      let changed = false;
+      const updated = this._cachedModelRegistry.map((model) => {
+        if (model.provider !== providerId || model.id !== modelId) return model;
+        const resolved = this.contextWindowOverrideStore().apply(this.catalogWindows.apply(model));
+        // A completed identity lookup may leave the same fallback window.
+        // Keep the catalog incarnation when no published model fact changed.
+        if (isDeepStrictEqual(model, resolved)) return model;
+        changed = true;
+        return resolved;
+      });
+      if (changed) {
+        this._cachedModelRegistry = updated;
+        this._modelRegistryRevision++;
+      }
     },
   );
 

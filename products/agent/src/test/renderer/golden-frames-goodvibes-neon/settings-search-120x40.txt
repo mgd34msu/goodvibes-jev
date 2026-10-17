@@ -5,7 +5,7 @@
 |                                                                                                                        |
 |            ✦ Settings › Search                                                                        esc              |
 |                                                                                                                        |
-|            theme▏                                                                              414 results             |
+|            theme▏                                                                              411 results             |
 |                                                                                                                        |
 |                                                                                                                        |
 |              theme  Display                                                                    goodvibes               |
@@ -34,7 +34,7 @@
 |              contractMessages  UI                                                                   both               |
 |                                                                                                                        |
 |                                                                                                                        |
-|             ↑↓  move    ⏎  change    ⌫  edit search    ctrl+r  reset                            406 more ↓             |
+|             ↑↓  move    ⏎  change    ⌫  edit search    ctrl+r  reset                            403 more ↓             |
 |                                                                                                                        |
 |        ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀         |
 |                                                                                                                        |

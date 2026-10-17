@@ -69,7 +69,7 @@ afterAll(async () => {
   rmSync(work, { recursive: true, force: true });
 });
 
-describe('W6-C1: credentials.get admin-scoped secret-free read', () => {
+describe('credentials.get admin-scoped secret-free read', () => {
   test('cross-surface provider visibility: config.get carries provider config', async () => {
     const res = await fetch(`${daemon.url}/config`, { headers: auth() });
     expect(res.status).toBe(200);

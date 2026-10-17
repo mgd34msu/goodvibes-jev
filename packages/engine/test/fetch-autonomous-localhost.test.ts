@@ -34,12 +34,15 @@ let log: SqliteDecisionLog;
 let restore: ReturnType<typeof installJudgmentPort>;
 let host: AutonomousToolPromptHost;
 let selected: string;
+let denyFetch: boolean;
+let admittedArgs: Record<string, unknown>[];
 let invalidations: Set<() => void>;
 let judgments: string[];
 let humans: number;
 let writes: number;
 let admissions: number;
 beforeEach(() => {
+  denyFetch = false; admittedArgs = [];
   selected = 'act'; humans = 0; writes = 0; admissions = 0; invalidations = new Set(); judgments = [];
   forgetGateReadings(); log = new SqliteDecisionLog(':memory:');
   const gate = gateReadingsPort();
@@ -51,12 +54,12 @@ beforeEach(() => {
   restore = installJudgmentPort(port);
   const config = {
     isAutoApproveEnabled: () => false, getWorkingDirectory: () => '/synthetic/project',
-    getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }),
-    getAutonomousSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} }, autoApprove: false, directory: '/synthetic/project' }),
+    getSnapshot: () => ({ permissions: { mode: denyFetch ? 'custom' : 'prompt', tools: denyFetch ? { fetch: 'deny' } : {} } }),
+    getAutonomousSnapshot: () => ({ permissions: { mode: denyFetch ? 'custom' : 'prompt', tools: denyFetch ? { fetch: 'deny' } : {} }, autoApprove: false, directory: '/synthetic/project' }),
   } as PermissionConfigReader;
   const manager = new PermissionManager(async () => { humans++; throw new Error('No human'); }, config, new PolicyRuntimeState());
   host = { port, workspaceTrust: null,
-    permissionManager: { admitAutonomous(...args) { admissions++; return manager.admitAutonomous(...args); } },
+    permissionManager: { admitAutonomous(...args) { admissions++; admittedArgs.push(structuredClone(args[2])); return manager.admitAutonomous(...args); } },
     signal: new AbortController().signal,
     config: { onDidInvalidate(listener) { invalidations.add(listener); return () => { invalidations.delete(listener); }; } },
   };
@@ -96,8 +99,8 @@ test('canonical admission records every redirect hop without human or persistent
   expect(humans).toBe(0); expect(writes).toBe(0); expect(invalidations.size).toBe(0);
 });
 
-test('typed reject refuses despite stored allow and never prompts', async () => {
-  selected = 'reject'; let sends = 0;
+test('configured fetch denial refuses despite stored allow and never prompts', async () => {
+  denyFetch = true; let sends = 0;
   globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => { sends++; return new Response('unsafe'); }) as typeof fetch;
   const output = await fetchLocal();
   expect(output.results?.[0]?.error).toBeDefined(); expect(sends).toBe(0); expect(admissions).toBe(1);
@@ -159,7 +162,8 @@ test('stored service credentials reach only the wire, not the judgment', async (
     resolveHost: async () => [{ address: '127.0.0.1', family: 4 }],
   }));
   expect(output.results?.[0]?.error).toBeUndefined(); expect(String(authorization)).toBe('Bearer stored-secret-value');
-  expect(judgments.join('\n')).not.toContain('stored-secret-value'); expect(judgments.join('\n')).toContain('credentialHeaderNames');
+  expect(judgments.join('\n')).not.toContain('stored-secret-value'); expect(admittedArgs[0]?.credentialHeaderNames).toEqual(['authorization']);
+  expect(JSON.stringify(admittedArgs)).not.toContain('stored-secret-value');
 });
 
 test('inline model credentials fail closed before judgment or socket', async () => {
@@ -207,13 +211,21 @@ test('public redirect into loopback and public names rebinding to loopback remai
   expect(rebound.results?.[0]?.error).toContain('loopback'); expect(sends).toBe(1); expect(admissions).toBe(0);
 });
 
-test('missing workspace capability, originating source, context, or recorder fails closed', async () => {
+test('missing workspace capability, originating source or context fails closed', async () => {
   const input = request();
   expect(await admitLocalhostFetch(host, input, { assertCurrent() {} })).toBe(false);
   expect(await withExternalOperationSource(source, () => admitLocalhostFetch(host, input))).toBe(false);
   expect(await withExternalOperationSource(source, () => admitLocalhostFetch({ ...host, workspaceTrust: undefined }, input, { assertCurrent() {} }))).toBe(false);
-  expect(await withExternalOperationSource(source, () => admitLocalhostFetch({ ...host, port: { ask: host.port.ask, model: host.port.model } }, input, { assertCurrent() {} }))).toBe(false);
   expect(admissions).toBe(0); expect(invalidations.size).toBe(0);
+});
+
+test('localhost permission does not require a semantic decision recorder', async () => {
+  const result = await withExternalOperationSource(source, () => admitLocalhostFetch(
+    { ...host, port: { ask: host.port.ask, model: host.port.model } }, request(), { assertCurrent() {} }));
+  expect(result).not.toBe(false);
+  if (result === false) throw new Error('Expected native permission');
+  result.claim(); result.close();
+  expect(admissions).toBe(1); expect(invalidations.size).toBe(0);
 });
 
 test('revocation during response consumption remains live until permit close', async () => {

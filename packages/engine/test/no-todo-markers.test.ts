@@ -91,11 +91,11 @@ test('ordinary marker prose needs a settled no, and absent or stale observations
 
 test('the original unfinished-code fixture retains its source and exact literal exemption', () => {
   const source = readFileSync(new URL('../sdk/src/platform/contract/batteries/unit-quality.ts', import.meta.url), 'utf8');
-  expect(source).toContain('+  // TODO: read from the store again once it is wired up');
-  expect(texts(source).some(text => text.includes('+  // TODO: read from the store again once it is wired up'))).toBe(false);
+  expect(source).toContain('+  // Reading from the store is not implemented.');
+  expect(texts(source).some(text => text.includes('+  // Reading from the store is not implemented.'))).toBe(false);
 });
 
-test('actual offline todo entry point consumes current receipts and refuses a source mutation', async () => {
+test('offline todo entry point distinguishes clear, inconclusive and confirmed unfinished work', async () => {
   const root = mkdtempSync(join(tmpdir(), 'source-comment-gate-'));
   try {
     mkdirSync(join(root, 'src'));
@@ -108,10 +108,18 @@ test('actual offline todo entry point consumes current receipts and refuses a so
     const command = ['bun', resolve(import.meta.dir, '../scripts/no-todo-markers.ts')];
     const accepted = Bun.spawnSync(command, { env });
     expect(accepted.exitCode).toBe(0);
-    writeFileSync(join(root, 'src', 'source.ts'), '// Persistence is unfinished.\n');
+    const unfinished = '// Persistence is unfinished.\n';
+    writeFileSync(join(root, 'src', 'source.ts'), unfinished);
     const held = Bun.spawnSync(command, { env });
-    expect(held.exitCode).toBe(1);
+    expect(held.exitCode).toBe(0);
+    expect(held.stderr.toString()).toContain('ADVISORY');
     expect(held.stderr.toString()).toContain('evidence-held');
     expect(held.stderr.toString()).toContain('src/source.ts:1');
+    const changedInputs = captureStaticInputs('deferred-work', 'src/source.ts', unfinished, sourceMarkerAnchors('src/source.ts', unfinished));
+    saveStaticSourceReadings(await preparedStaticReadings(changedInputs, 0.99, changedInputs[0]!.anchors[0]!.id), receiptPath);
+    const rejected = Bun.spawnSync(command, { env });
+    expect(rejected.exitCode).toBe(1);
+    expect(rejected.stderr.toString()).toContain('[deferred-work]');
+    expect(rejected.stderr.toString()).toContain('src/source.ts:1');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

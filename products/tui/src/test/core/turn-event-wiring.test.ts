@@ -1,4 +1,4 @@
-import { makeTestWebhookNotifier } from '../helpers/notification-transport.ts';
+import { makeTestWebhookNotifier, settleTestWebhookNotifications } from '../helpers/notification-transport.ts';
 /**
  * Tests for src/core/turn-event-wiring.ts
  *
@@ -138,7 +138,7 @@ function makeMinimalOptions(
 // ---------------------------------------------------------------------------
 
 describe('wireTurnEventHandlers: TURN_COMPLETED notification integration', () => {
-  test('maybeNotifyLongTask fires exactly once on TURN_COMPLETED with correct elapsedMs', () => {
+  test('maybeNotifyLongTask fires exactly once on TURN_COMPLETED with correct elapsedMs', async () => {
     // Controlled clock: TURN_SUBMITTED at t=1000, TURN_COMPLETED at t=62000 → elapsed = 61000ms
     let clockValue = 1000;
     const { notifier, sentMessages } = makeSpyNotifier();
@@ -163,11 +163,12 @@ describe('wireTurnEventHandlers: TURN_COMPLETED notification integration', () =>
     // Notification fires exactly once (fire-and-forget send call)
     expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
     // Sent message names the turn (its prompt) and says it finished in 61s
+    await settleTestWebhookNotifications();
     const sentText = sentMessages[0] ?? '';
     expect(sentText).toBe('hello\nDone in 1m 1s');
   });
 
-  test('stopReason non-completed maps to fail status', () => {
+  test('stopReason non-completed maps to fail status', async () => {
     let clockValue = 5000;
     const { notifier, sentMessages } = makeSpyNotifier();
 
@@ -185,11 +186,12 @@ describe('wireTurnEventHandlers: TURN_COMPLETED notification integration', () =>
     opts.emitTurn('TURN_COMPLETED', { type: 'TURN_COMPLETED', turnId: 'turn-fail-1', response: '', stopReason: 'empty_response' });
 
     expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
+    await settleTestWebhookNotifications();
     const sentText = sentMessages[0] ?? '';
     expect(sentText).toBe('test\nFailed after 1m 30s: The model returned an empty response');
   });
 
-  test('no notification when elapsed is below threshold', () => {
+  test('no notification when elapsed is below threshold', async () => {
     let clockValue = 1000;
     const { notifier } = makeSpyNotifier();
 
@@ -209,7 +211,7 @@ describe('wireTurnEventHandlers: TURN_COMPLETED notification integration', () =>
     expect(notifier.sendNotification).not.toHaveBeenCalled();
   });
 
-  test('no double-fire across persist/rotate branches: exactly one notification per TURN_COMPLETED', () => {
+  test('no double-fire across persist/rotate branches: exactly one notification per TURN_COMPLETED', async () => {
     // The notification fires before the persist try/catch. Even when the persist
     // block throws (simulated by conversation.toJSON throwing), the notification
     // must fire exactly once, never again in the journal catch branch.
@@ -238,7 +240,7 @@ describe('wireTurnEventHandlers: TURN_COMPLETED notification integration', () =>
     expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
   });
 
-  test('no notification when TURN_COMPLETED fires without prior TURN_SUBMITTED (elapsed=0)', () => {
+  test('no notification when TURN_COMPLETED fires without prior TURN_SUBMITTED (elapsed=0)', async () => {
     // When turnStartTime is null, elapsedMs defaults to 0, below any threshold.
     const { notifier } = makeSpyNotifier();
 
@@ -286,7 +288,7 @@ describe('wireTurnEventHandlers: budget-breach alert', () => {
     });
   }
 
-  test('fires once when session cost crosses the configured budget', () => {
+  test('fires once when session cost crosses the configured budget', async () => {
     const { notifier, sentMessages } = makeSpyNotifier();
     const opts = makeBudgetOptions({
       webhookNotifier: notifier,
@@ -295,10 +297,11 @@ describe('wireTurnEventHandlers: budget-breach alert', () => {
     wireTurnEventHandlers(opts);
     opts.emitTurn('TURN_COMPLETED', { type: 'TURN_COMPLETED', turnId: 't1', response: 'hi', stopReason: 'completed' });
     expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
+    await settleTestWebhookNotifications();
     expect(sentMessages[0]).toContain('budget');
   });
 
-  test('does not fire again on a second TURN_COMPLETED while still over budget', () => {
+  test('does not fire again on a second TURN_COMPLETED while still over budget', async () => {
     const { notifier } = makeSpyNotifier();
     const opts = makeBudgetOptions({
       webhookNotifier: notifier,
@@ -310,7 +313,7 @@ describe('wireTurnEventHandlers: budget-breach alert', () => {
     expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
   });
 
-  test('does not fire when under budget', () => {
+  test('does not fire when under budget', async () => {
     const { notifier } = makeSpyNotifier();
     const opts = makeBudgetOptions({
       webhookNotifier: notifier,
@@ -321,7 +324,7 @@ describe('wireTurnEventHandlers: budget-breach alert', () => {
     expect(notifier.sendNotification).not.toHaveBeenCalled();
   });
 
-  test('does not fire when no focusTracker is supplied (feature inert without one)', () => {
+  test('does not fire when no focusTracker is supplied (feature inert without one)', async () => {
     const { notifier } = makeSpyNotifier();
     const opts = makeBudgetOptions({
       webhookNotifier: notifier,
@@ -345,7 +348,7 @@ describe('wireTurnEventHandlers: agent/chain-failure alerts', () => {
   // (process-global module mocking is disallowed by this repo's test
   // discipline rules). Same technique as src/test/utils/notify.test.ts.
 
-  test('AGENT_FAILED rings the bell when unfocused and notifyOnAgentFailure is on', () => {
+  test('AGENT_FAILED rings the bell when unfocused and notifyOnAgentFailure is on', async () => {
     const spy = spyOnStdoutWrite();
     const tracker = new FocusTracker();
     tracker.setFocused(false);
@@ -359,7 +362,7 @@ describe('wireTurnEventHandlers: agent/chain-failure alerts', () => {
     spy.mockRestore();
   });
 
-  test('AGENT_FAILED is suppressed when focused (default gating)', () => {
+  test('AGENT_FAILED is suppressed when focused (default gating)', async () => {
     const spy = spyOnStdoutWrite();
     const tracker = new FocusTracker();
     tracker.setFocused(true);
@@ -373,7 +376,7 @@ describe('wireTurnEventHandlers: agent/chain-failure alerts', () => {
     spy.mockRestore();
   });
 
-  test('AGENT_FAILED never fires when notifyOnAgentFailure is off', () => {
+  test('AGENT_FAILED never fires when notifyOnAgentFailure is off', async () => {
     const spy = spyOnStdoutWrite();
     const tracker = new FocusTracker();
     tracker.setFocused(false);
@@ -387,7 +390,7 @@ describe('wireTurnEventHandlers: agent/chain-failure alerts', () => {
     spy.mockRestore();
   });
 
-  test('no agent/chain-failure listeners are registered when focusTracker is absent', () => {
+  test('no agent/chain-failure listeners are registered when focusTracker is absent', async () => {
     const spy = spyOnStdoutWrite();
     const opts = makeMinimalOptions({ focusTracker: undefined });
     wireTurnEventHandlers(opts);
@@ -396,7 +399,7 @@ describe('wireTurnEventHandlers: agent/chain-failure alerts', () => {
     spy.mockRestore();
   });
 
-  test('CONTRACT_FAILED (failure state) rings the bell when unfocused', () => {
+  test('CONTRACT_FAILED (failure state) rings the bell when unfocused', async () => {
     const spy = spyOnStdoutWrite();
     const tracker = new FocusTracker();
     tracker.setFocused(false);
@@ -410,7 +413,7 @@ describe('wireTurnEventHandlers: agent/chain-failure alerts', () => {
     spy.mockRestore();
   });
 
-  test('CONTRACT_CANCELLED still alerts (operator-cancel branch, WO item 2)', () => {
+  test('CONTRACT_CANCELLED still alerts (operator-cancel branch, WO item 2)', async () => {
     // The cancelled branch narrates a cancellation rather than a failure but must
     // still ring the bell when unfocused, the operator asked to stop and wants to
     // know it stopped. (The distinct title is asserted at the SDK narration level;
@@ -425,7 +428,7 @@ describe('wireTurnEventHandlers: agent/chain-failure alerts', () => {
     spy.mockRestore();
   });
 
-  test('CONTRACT_FAILED never fires when notifyOnChainFailure is off', () => {
+  test('CONTRACT_FAILED never fires when notifyOnChainFailure is off', async () => {
     const spy = spyOnStdoutWrite();
     const tracker = new FocusTracker();
     tracker.setFocused(false);
@@ -439,7 +442,7 @@ describe('wireTurnEventHandlers: agent/chain-failure alerts', () => {
     spy.mockRestore();
   });
 
-  test('CONTRACT_FAILED with failureKind=max_turns alerts via the budget branch (limit + source from the event)', () => {
+  test('CONTRACT_FAILED with failureKind=max_turns alerts via the budget branch (limit + source from the event)', async () => {
     const spy = spyOnStdoutWrite();
     const tracker = new FocusTracker();
     tracker.setFocused(false);
@@ -500,7 +503,7 @@ describe('wireTurnEventHandlers: transcript journal rebinds on session switch', 
     };
   }
 
-  test('switching runtime.sessionId rebinds the journal: each file only ever contains its own session', () => {
+  test('switching runtime.sessionId rebinds the journal: each file only ever contains its own session', async () => {
     // `runtime` is mutated in place the same way /session resume and
     // /session fork reassign sessionId on the shared MutableRuntimeState object.
     const runtime = { sessionId: 'sess-A', model: 'm', provider: 'p' };
@@ -538,7 +541,7 @@ describe('wireTurnEventHandlers: transcript journal rebinds on session switch', 
     expect(contentAAfterSwitch).not.toContain('marker-second');
   });
 
-  test('a second switch back to a previously-seen session rebinds again (no stale binding)', () => {
+  test('a second switch back to a previously-seen session rebinds again (no stale binding)', async () => {
     const runtime = { sessionId: 'sess-X', model: 'm', provider: 'p' };
     const { conversation, setMarker } = makeMarkedConversation();
     const opts = makeMinimalOptions({ surface: makeTestSurface(tmpHome), runtime, conversation });

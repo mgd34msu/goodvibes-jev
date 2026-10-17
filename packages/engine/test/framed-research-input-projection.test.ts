@@ -126,7 +126,8 @@ function expectDrained(f: Fixture) {
 test('real Jev role HTTP, admission, event and executor preserve positions without disclosing any URL bytes', async () => {
   const f = fixture();
   const [result] = await run(f);
-  expect(result).toMatchObject({ success: true, autonomousDecision: { outcome: 'act' } });
+  expect(result).toMatchObject({ success: true });
+  expect(result?.autonomousDecision).toBeUndefined();
   expect(f.calls.map(call => call.path)).toEqual(['/v1/systemone', '/v1/systemone', '/v1/systemone']);
   expect(f.calls.map(call => call.body.state)).toEqual([{ parameter: 'id' }, { parameter: 'q' }, { parameter: 'auth' }]);
   expectNoOriginal(f.calls); expectNoOriginal(requests); expectNoOriginal(log.query({})); expectNoOriginal(f.events);
@@ -134,8 +135,7 @@ test('real Jev role HTTP, admission, event and executor preserve positions witho
   expect(f.executed[0]!.args.references).toEqual(LABELS);
   expect(f.executed[0]!.references).toEqual([{ status: 'preserved', url: BENIGN }, { status: 'omitted' }, { status: 'preserved', url: LAST }]);
   expect(f.events.find(event => event.type === 'TOOL_RECEIVED')).toMatchObject({ args: { references: LABELS } });
-  expect(requests.some(request => 'disposition' in request.questions)).toBe(true);
-  for (const id of result!.autonomousDecision!.judgmentDecisionIds) expect(log.get(id)?.status).toBe('answered');
+  expect(requests.some(request => 'disposition' in request.questions)).toBe(false);
   expect(f.released).toHaveLength(3); await expectDrained(f);
   await expect(run(f)).rejects.toBeDefined(); expect(f.executed).toHaveLength(1);
 });
@@ -147,26 +147,19 @@ test('missing string and boolean repair operate on projected references before r
   expect(f.executed[0]!.args).toEqual({ references: LABELS, query: 'ordinary research topic', enabled: true });
   expect(requests.some(request => 'pick' in request.questions)).toBe(true);
   expect(requests.some(request => 'boolean_value' in request.questions)).toBe(true);
-  expect(JSON.stringify(requests)).toContain('[source reference S1]');
   expectNoOriginal(requests); expectNoOriginal(log.query({})); expectNoOriginal(f.events);
 });
 
-test.each([false, true])('all offered references are screened before admission; selected revision = %s', async selected => {
-  const f = fixture(); let admissions = 0;
+test('offered alternatives are screened but do not create a secondary disposition gate', async () => {
+  const f = fixture();
   f.revisions.push({ ref: { id: 'alternative', revision: 'host-v1', kind: 'revise-action' },
     toolName: f.tool.definition.name, args: { ...input(), enabled: 'enabled' } });
-  select = () => ++admissions === 1 && selected ? 'revise_0' : 'act';
-  onRequest = () => { expect(f.calls.map(call => call.body.state)).toEqual([{ parameter: 'id' }, { parameter: 'q' }, { parameter: 'auth' }]); };
   const [result] = await run(f, { references: refs('https://initial.test/no-query') });
-  expect(result?.success).toBe(true); expect(f.calls).toHaveLength(3);
-  expect(requests.filter(request => 'disposition' in request.questions)).toHaveLength(selected ? 2 : 1);
-  expect(requests.filter(request => 'boolean_value' in request.questions)).toHaveLength(selected ? 1 : 0);
-  expect(f.executed[0]!.args).toEqual(selected ? { references: LABELS, enabled: true } : { references: [{ id: 'S1', url: '[source reference S1]' }] });
-  expect(f.executed[0]!.references).toEqual(selected
-    ? [{ status: 'preserved', url: BENIGN }, { status: 'omitted' }, { status: 'preserved', url: LAST }]
-    : [{ status: 'preserved', url: 'https://initial.test/no-query' }]);
-  const repairIds = log.query({}).filter(record => JSON.stringify(record.questions).includes('boolean_value')).map(record => record.id);
-  if (selected) { expect(repairIds).toHaveLength(1); expect(result!.autonomousDecision!.judgmentDecisionIds).toContain(repairIds[0]!); }
+  expect(result?.success).toBe(true);
+  expect(f.calls.map(call => call.body.state)).toEqual([{ parameter: 'id' }, { parameter: 'q' }, { parameter: 'auth' }]);
+  expect(requests.filter(request => 'disposition' in request.questions)).toEqual([]);
+  expect(f.executed[0]!.args).toEqual({ references: [{ id: 'S1', url: '[source reference S1]' }] });
+  expect(f.executed[0]!.references).toEqual([{ status: 'preserved', url: 'https://initial.test/no-query' }]);
   expectNoOriginal(requests); expectNoOriginal(log.query({})); expectNoOriginal(f.events);
   expect(f.released).toHaveLength(4); await expectDrained(f);
 });

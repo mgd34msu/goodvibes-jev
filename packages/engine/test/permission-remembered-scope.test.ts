@@ -1,7 +1,6 @@
 /**
  * Remembered authority keeps its chosen scope and follows live revocation.
- * Current callback behavior is exercised with synthetic decisions and Jev
- * readings; this is regression coverage, not a human-wait product contract.
+ * Explicit owner rules are exercised through live permission and registry consumers.
  * No command is executed: the real registry/admission path ends at a counter.
  */
 import { describe, expect, test } from 'bun:test';
@@ -32,12 +31,12 @@ const execArgs = (...commands: string[]): Record<string, unknown> => ({
 const commit = execArgs('git commit -m one');
 const push = execArgs('git push');
 
-function manager(handler: PermissionRequestHandler, store: UserPermissionRuleStore | null): PermissionManager {
+function manager(handler: PermissionRequestHandler, store: UserPermissionRuleStore | null, surfaceId?: string): PermissionManager {
   return new PermissionManager(handler, {
     isAutoApproveEnabled: () => false,
     getWorkingDirectory: () => '/synthetic/remembered-scope',
     getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }),
-  } as PermissionConfigReader, new PolicyRuntimeState(), null, null, store);
+  } as PermissionConfigReader, new PolicyRuntimeState(), null, null, store, { surfaceOf: () => surfaceId });
 }
 
 /** These callback-era fixtures exercise the retained API; autonomous negatives live in autonomous-tool-admission.test.ts. */
@@ -57,151 +56,45 @@ async function revoke(store: UserPermissionRuleStore): Promise<void> {
   expect(store.rules()).toHaveLength(0);
 }
 
+async function remember(store: UserPermissionRuleStore, args: Record<string, unknown>, tier: 'exact' | 'command-class', effect: 'allow' | 'deny' = 'allow') {
+  const rule = buildDurableRuleForDecision({ toolName: 'exec', args, tier, effect });
+  if (!rule) throw new Error('Expected a durable rule');
+  await store.add({ rule, tier, createdAt: 1, tool: 'exec' });
+}
+
 describe('remembered exec scope', () => {
-  test('an exact grant covers the same command but not another command in the class or a mixed batch', async () => {
+  test.each(['allow', 'deny'] as const)('an exact %s rule applies only to its literal command and live deletion removes it', async effect => {
     const store = new UserPermissionRuleStore(':memory:');
-    let asks = 0;
-    const permissions = manager(async () => ++asks === 1
-      ? { approved: true, rememberTier: 'exact' }
-      : { approved: false, reason: 'outside the exact grant' }, store);
-
-    expect(await permissions.checkDetailed('exec', commit)).toMatchObject({ approved: true, persisted: true });
-    expect((await permissions.checkDetailed('exec', commit)).approved).toBe(true);
-    expect(asks).toBe(1);
-    expect(await permissions.checkDetailed('exec', push)).toMatchObject({
-      approved: false, sourceLayer: 'user_prompt', reasonCode: 'user_denied', userReason: 'outside the exact grant',
-    });
-    expect((await permissions.checkDetailed('exec', execArgs('git commit -m one', 'git push'))).approved).toBe(false);
-    expect(asks).toBe(3);
-  });
-
-  test('a loaded exact rule is never widened by matching it in the current manager', async () => {
-    const store = new UserPermissionRuleStore(':memory:');
-    const rule = buildDurableRuleForDecision({ toolName: 'exec', args: commit, tier: 'exact', effect: 'allow' })!;
-    await store.add({ rule, createdAt: 1, tier: 'exact', tool: 'exec' });
+    await remember(store, commit, 'exact', effect);
     let asks = 0;
     const permissions = manager(async () => { asks++; return { approved: false }; }, store);
-    expect(await permissions.checkDetailed('exec', commit)).toMatchObject({ approved: true, sourceLayer: 'user_rule' });
-    expect((await permissions.checkDetailed('exec', push)).approved).toBe(false);
-    expect(asks).toBe(1);
-  });
-
-  test('an exact denial does not become a command-class denial', async () => {
-    const store = new UserPermissionRuleStore(':memory:');
-    let asks = 0;
-    const permissions = manager(async () => ++asks === 1
-      ? { approved: false, rememberTier: 'exact' }
-      : { approved: true }, store);
-    expect((await permissions.checkDetailed('exec', commit)).approved).toBe(false);
-    expect((await permissions.checkDetailed('exec', commit)).approved).toBe(false);
-    expect((await permissions.checkDetailed('exec', push)).approved).toBe(true);
-    expect(asks).toBe(2);
-  });
-
-  test.each(['exact', 'command-class'] as const)('deleting the %s grant takes effect in both the granting and matching managers', async (tier) => {
-    const store = new UserPermissionRuleStore(':memory:');
-    let asks = 0;
-    const granting = manager(async () => ++asks === 1
-      ? { approved: true, rememberTier: tier }
-      : { approved: false }, store);
-    const matching = manager(async () => { asks++; return { approved: false }; }, store);
-    expect((await granting.checkDetailed('exec', commit)).approved).toBe(true);
-    expect((await matching.checkDetailed('exec', commit)).approved).toBe(true);
-    expect(asks).toBe(1);
-    await revoke(store);
-    for (const permissions of [granting, matching]) {
-      expect(await permissions.checkDetailed('exec', commit)).toMatchObject({
-        approved: false, sourceLayer: 'user_prompt', reasonCode: 'user_denied',
-      });
+    const otherConsumer = manager(async () => { asks++; return { approved: false }; }, store);
+    for (const consumer of [permissions, otherConsumer]) {
+      expect(await consumer.checkDetailed('exec', commit)).toMatchObject({ approved: effect === 'allow', persisted: true, sourceLayer: 'user_rule' });
+      expect(await consumer.checkDetailed('exec', push)).toMatchObject({ approved: true, persisted: false, sourceLayer: 'config_policy' });
     }
-    expect(asks).toBe(3);
-  });
-
-  test('deleting an exact denial also removes it from the current manager', async () => {
-    const store = new UserPermissionRuleStore(':memory:');
-    let asks = 0;
-    const permissions = manager(async () => ++asks === 1
-      ? { approved: false, rememberTier: 'exact' }
-      : { approved: true }, store);
-    expect((await permissions.checkDetailed('exec', commit)).approved).toBe(false);
-    expect((await permissions.checkDetailed('exec', commit)).approved).toBe(false);
-    expect(asks).toBe(1);
     await revoke(store);
-    expect(await permissions.checkDetailed('exec', commit)).toMatchObject({ approved: true, sourceLayer: 'user_prompt' });
-    expect(asks).toBe(2);
+    for (const consumer of [permissions, otherConsumer]) expect(await consumer.checkDetailed('exec', commit)).toMatchObject({ approved: true, persisted: false, sourceLayer: 'config_policy' });
+    expect(asks).toBe(0);
   });
-
-  test('a durable tier without a store never becomes a broader session grant', async () => {
-    let asks = 0;
-    const permissions = manager(async () => ++asks === 1
-      ? { approved: true, rememberTier: 'exact' }
-      : { approved: false }, null);
-    expect(await permissions.checkDetailed('exec', commit)).toMatchObject({ approved: true, persisted: false });
-    expect((await permissions.checkDetailed('exec', push)).approved).toBe(false);
-    expect(asks).toBe(2);
+  test('a command-class grant covers the class and deletion takes effect for both consumers', async () => {
+    const store = new UserPermissionRuleStore(':memory:'); await remember(store, commit, 'command-class');
+    const consumers = [manager(async () => ({ approved: false }), store), manager(async () => ({ approved: false }), store)];
+    for (const consumer of consumers) expect(await consumer.checkDetailed('exec', push)).toMatchObject({ sourceLayer: 'user_rule', approved: true });
+    await revoke(store);
+    for (const consumer of consumers) expect(await consumer.checkDetailed('exec', push)).toMatchObject({ sourceLayer: 'config_policy', persisted: false });
   });
-
-  test('an inapplicable durable tier is not reported or remembered as a session decision', async () => {
-    const store = new UserPermissionRuleStore(':memory:');
-    let asks = 0;
-    const permissions = manager(async () => ++asks === 1
-      ? { approved: true, rememberTier: 'path' }
-      : { approved: false }, store);
-    expect(await permissions.checkDetailed('exec', commit)).toMatchObject({ approved: true, persisted: false });
-    expect(store.rules()).toHaveLength(0);
-    expect((await permissions.checkDetailed('exec', push)).approved).toBe(false);
-    expect(asks).toBe(2);
+  test('unrequested callback decisions never install session or durable grants', async () => {
+    const store = new UserPermissionRuleStore(':memory:'); let asks = 0;
+    const permissions = manager(async () => { asks++; return { approved: true, rememberTier: 'session' }; }, store);
+    for (const args of [commit, push]) expect(await permissions.checkDetailed('exec', args)).toMatchObject({ sourceLayer: 'config_policy', persisted: false });
+    expect(store.list()).toEqual([]); expect(asks).toBe(0);
   });
-
-  test('an explicit session decision retains its session command-class scope', async () => {
-    let asks = 0;
-    const permissions = manager(async () => { asks++; return { approved: true, remember: true }; }, null);
-    expect((await permissions.checkDetailed('exec', commit)).approved).toBe(true);
-    expect(await permissions.checkDetailed('exec', push)).toMatchObject({
-      approved: true, sourceLayer: 'session_override', reasonCode: 'session_cached_allow',
-    });
-    expect(asks).toBe(1);
+  test('declared input-only surfaces refuse effects even with a stored grant', async () => {
+    const store = new UserPermissionRuleStore(':memory:'); await remember(store, commit, 'command-class');
+    const permissions = manager(async () => ({ approved: true }), store, 'email');
+    expect(await permissions.checkDetailed('exec', commit)).toMatchObject({ approved: false, sourceLayer: 'boundary', reasonCode: 'boundary_surface_authority' });
   });
-});
-
-test('legacy callback admission and registry never reach the intercepted executor outside an exact grant or after revocation', async () => {
-  const store = new UserPermissionRuleStore(':memory:');
-  let asks = 0;
-  const permissions = manager(async () => ++asks === 1
-    ? { approved: true, rememberTier: 'exact' }
-    : { approved: false }, store);
-  const admitted: Record<string, unknown>[] = [];
-  const registry = new ToolRegistry();
-  registry.register({
-    definition: { name: 'exec', description: 'Synthetic exec admission probe', parameters: EXEC_TOOL_SCHEMA },
-    execute: async (args) => { admitted.push(args); return { success: true, output: 'intercepted' }; },
-  });
-  const deps: ToolExecutionDeps = {
-    toolRegistry: registry, permissionManager: legacyPermissionConsumer(permissions), hookDispatcher: null, runtimeBus: null,
-    sessionId: 'synthetic-scope',
-    emitterContext: () => ({ sessionId: 'synthetic-scope', traceId: 'synthetic-trace', source: 'orchestrator' }),
-  };
-  const run = async (id: string, args: Record<string, unknown>) => (await executeToolCalls(deps, 'synthetic-turn', [
-    { id, name: 'exec', arguments: args },
-  ]))[0]!;
-  expect((await run('grant', commit)).success).toBe(true);
-  expect((await run('same', commit)).success).toBe(true);
-  expect(await run('different', push)).toMatchObject({ success: false, denial: { reason: 'user_denied' } });
-  await revoke(store);
-  expect(await run('revoked', commit)).toMatchObject({ success: false, denial: { reason: 'user_denied' } });
-  expect(admitted).toEqual([commit, commit]);
-  expect(asks).toBe(3);
-});
-
-test('the gate boundary still runs before any remembered authorization', async () => {
-  const store = new UserPermissionRuleStore(':memory:');
-  let asks = 0;
-  const permissions = manager(async () => { asks++; return { approved: true, rememberTier: 'command-class' }; }, store);
-  expect((await permissions.checkDetailed('exec', commit)).approved).toBe(true);
-  expect(await permissions.checkDetailed('exec', execArgs('git wipe-fixture'))).toMatchObject({
-    approved: false, sourceLayer: 'boundary', reasonCode: 'boundary_catastrophic',
-  });
-  expect(asks).toBe(1);
 });
 
 describe('literal exact command authority', () => {
@@ -213,50 +106,32 @@ describe('literal exact command authority', () => {
     ['trailing newline', 'git add src/README.md\n'],
   ] as const;
 
-  test.each(mismatches)('%s mismatch cannot reach the legacy callback registry executor through an exact grant', async (_label, changed) => {
-    const store = new UserPermissionRuleStore(':memory:');
-    let asks = 0;
-    const permissions = manager(async () => ++asks === 1
-      ? { approved: true, rememberTier: 'exact' }
-      : { approved: false }, store);
+  test.each(mismatches)('%s mismatch does not inherit an exact deny through the registry', async (_label, changed) => {
+    const store = new UserPermissionRuleStore(':memory:'); await remember(store, execArgs(original), 'exact', 'deny');
+    let asks = 0; const permissions = manager(async () => { asks++; return { approved: true }; }, store);
     const admitted: Record<string, unknown>[] = [];
     const registry = new ToolRegistry();
-    registry.register({
-      definition: { name: 'exec', description: 'Synthetic literal-scope probe', parameters: EXEC_TOOL_SCHEMA },
-      execute: async (args) => { admitted.push(args); return { success: true, output: 'intercepted' }; },
-    });
-    const deps: ToolExecutionDeps = {
-      toolRegistry: registry, permissionManager: legacyPermissionConsumer(permissions), hookDispatcher: null, runtimeBus: null,
-      sessionId: 'synthetic-literal',
-      emitterContext: () => ({ sessionId: 'synthetic-literal', traceId: 'synthetic-trace', source: 'orchestrator' }),
-    };
-    const run = async (id: string, command: string) => (await executeToolCalls(deps, 'synthetic-turn', [
-      { id, name: 'exec', arguments: execArgs(command) },
-    ]))[0]!;
-    expect((await run('grant', original)).success).toBe(true);
-    expect((await run('identical', original)).success).toBe(true);
-    const mismatch = await run('changed', changed);
-    expect(admitted).toEqual([execArgs(original), execArgs(original)]);
-    expect(mismatch).toMatchObject({ success: false, denial: { reason: 'user_denied' } });
-    expect(asks).toBe(2);
+    registry.register({ definition: { name: 'exec', description: 'Synthetic literal-scope probe', parameters: EXEC_TOOL_SCHEMA },
+      execute: async args => { admitted.push(args); return { success: true, output: 'intercepted' }; } });
+    const deps: ToolExecutionDeps = { toolRegistry: registry, permissionManager: legacyPermissionConsumer(permissions), hookDispatcher: null, runtimeBus: null,
+      sessionId: 'synthetic-literal', emitterContext: () => ({ sessionId: 'synthetic-literal', traceId: 'synthetic', source: 'orchestrator' }) };
+    const run = async (id: string, command: string) => (await executeToolCalls(deps, 'synthetic-turn', [{ id, name: 'exec', arguments: execArgs(command) }]))[0]!;
+    expect((await run('denied', original)).success).toBe(false);
+    expect(admitted).toEqual([]);
+    expect((await run('neighbor', changed)).success).toBe(true);
     await revoke(store);
-    expect((await run('revoked', original)).success).toBe(false);
-    expect(admitted).toHaveLength(2);
+    expect((await run('revoked', original)).success).toBe(true);
+    expect(admitted).toEqual([execArgs(changed), execArgs(original)]); expect(asks).toBe(0);
   });
 
   test('building an exact rule preserves whitespace and denies only that literal string', async () => {
-    const command = ' git add src/README.md\n';
-    const store = new UserPermissionRuleStore(':memory:');
-    let asks = 0;
-    const permissions = manager(async () => ++asks === 1
-      ? { approved: false, rememberTier: 'exact' }
-      : { approved: true }, store);
-    expect((await permissions.checkDetailed('exec', execArgs(command))).approved).toBe(false);
+    const command = ' git add src/README.md\n'; const store = new UserPermissionRuleStore(':memory:');
+    await remember(store, execArgs(command), 'exact', 'deny');
+    const permissions = manager(async () => { throw new Error('Unexpected prompt'); }, store);
     expect(store.rules()[0]).toMatchObject({ exactCommands: [command] });
     expect((await permissions.checkDetailed('exec', execArgs(command))).approved).toBe(false);
     expect((await permissions.checkDetailed('exec', execArgs(command.trim()))).approved).toBe(true);
     expect((await permissions.checkDetailed('exec', execArgs(' git add src/readme.md\n'))).approved).toBe(true);
-    expect(asks).toBe(3);
   });
 
   test.each(['allow', 'deny'] as const)('the shared matcher and layered evaluator keep %s exact rules literal', (effect) => {
@@ -295,18 +170,12 @@ describe('literal exact command authority', () => {
   });
 
   test('an explicit command-class grant keeps its broad case and whitespace behavior', async () => {
-    const store = new UserPermissionRuleStore(':memory:');
-    let asks = 0;
-    const permissions = manager(async () => ++asks === 1
-      ? { approved: true, rememberTier: 'command-class' }
-      : { approved: false }, store);
-    expect((await permissions.checkDetailed('exec', execArgs(original))).approved).toBe(true);
-    for (const command of ['git', ' GIT ', ' GIT ADD src/readme.md ', 'git push']) {
-      expect((await permissions.checkDetailed('exec', execArgs(command))).approved).toBe(true);
+    const store = new UserPermissionRuleStore(':memory:'); await remember(store, execArgs(original), 'command-class');
+    const permissions = manager(async () => { throw new Error('Unexpected prompt'); }, store);
+    for (const command of [original, 'git', ' GIT ', ' GIT ADD src/readme.md ', 'git push']) {
+      expect(await permissions.checkDetailed('exec', execArgs(command))).toMatchObject({ approved: true, sourceLayer: 'user_rule' });
     }
-    expect(asks).toBe(1);
-    expect((await permissions.checkDetailed('exec', execArgs('gitfoo push'))).approved).toBe(false);
-    expect(asks).toBe(2);
+    expect(await permissions.checkDetailed('exec', execArgs('gitfoo push'))).toMatchObject({ sourceLayer: 'config_policy', persisted: false });
   });
 
   test.each([undefined, 'literal', 'unknown', null, true, { mode: 'command-class' }])('absent or invalid exact match metadata stays literal: %j', (option) => {
@@ -347,10 +216,10 @@ describe('literal exact command authority', () => {
         expect(await permissions.checkDetailed('exec', execArgs(command))).toMatchObject({ approved: true, sourceLayer: 'user_rule' });
       }
       expect(asks).toBe(0);
-      expect((await permissions.checkDetailed('exec', execArgs('gitfoo push'))).approved).toBe(false);
+      expect((await permissions.checkDetailed('exec', execArgs('gitfoo push'))).sourceLayer).toBe('config_policy');
       await revoke(reopened);
-      expect((await permissions.checkDetailed('exec', execArgs(' GIT '))).approved).toBe(false);
-      expect(asks).toBe(2);
+      expect((await permissions.checkDetailed('exec', execArgs(' GIT '))).sourceLayer).toBe('config_policy');
+      expect(asks).toBe(0);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
@@ -369,9 +238,9 @@ describe('literal exact command authority', () => {
       const permissions = manager(async () => { asks++; return { approved: false }; }, reopened);
       expect((await permissions.checkDetailed('exec', execArgs(command))).approved).toBe(true);
       for (const changed of [command.trim(), command.toLowerCase(), command.toUpperCase()]) {
-        expect((await permissions.checkDetailed('exec', execArgs(changed))).approved).toBe(false);
+        expect((await permissions.checkDetailed('exec', execArgs(changed))).sourceLayer).toBe('config_policy');
       }
-      expect(asks).toBe(3);
+      expect(asks).toBe(0);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 

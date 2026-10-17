@@ -53,10 +53,10 @@ export interface EffectHandlerContext {
  * Dispatches the appropriate runtime action for a given CascadeEffect.
  *
  * Handles all six CascadeEffect variants:
- * - `CANCEL_INFLIGHT`, cancels in-flight operations in the given scope
+ * - `CANCEL_INFLIGHT`, signals cancellation of in-flight operations in the given scope
  * - `BLOCK_DISPATCH`, blocks new dispatch in the given scope (optionally queues)
  * - `MARK_CHILDREN`, marks child tasks/agents as failed or blocked
- * - `DEREGISTER_TOOLS`, deregisters tools, scoped by pluginId from sourceContext
+ * - `DEREGISTER_TOOLS`, signals deregistration, scoped by pluginId from sourceContext
  * - `EMIT_EVENT`, emits a domain event of the given eventType on the bus
  * - `BLOCK_NEW`, blocks new operations of the given scope
  *
@@ -76,12 +76,10 @@ export function handleCascadeEffect(
 
   switch (effect.type) {
     case 'CANCEL_INFLIGHT': {
-      // Mark the target domain as degraded to signal in-flight cancellation.
-      // Actual cancellation of network/async operations is domain-specific;
-      // subscribers observing CASCADE_APPLIED will perform the real cancellation.
+      // Publish the request for the host that owns the operation's cancellation signal.
       if (result.target !== 'ALL') {
         aggregator.updateDomainHealth(result.target, 'degraded', {
-          failureReason: `In-flight operations cancelled (scope: ${effect.scope})`,
+          failureReason: `In-flight cancellation requested (scope: ${effect.scope})`,
         });
       }
       break;
@@ -118,15 +116,13 @@ export function handleCascadeEffect(
     }
 
     case 'DEREGISTER_TOOLS': {
-      // Signal tool deregistration by marking the toolExecution domain degraded.
-      // Subscribers (tool registry) observe CASCADE_APPLIED to perform actual deregistration.
-      // If pluginId is in sourceContext, the scope is limited to that plugin's tools.
+      // Publish the request for the host that owns the tool registry.
       const pluginId = result.sourceContext?.['pluginId'];
       const scope = pluginId ? `plugin:${pluginId}` : 'all-plugins';
 
       if (result.target !== 'ALL') {
         aggregator.updateDomainHealth(result.target, 'degraded', {
-          failureReason: `Tools deregistered (${scope})`,
+          failureReason: `Tool deregistration requested (${scope})`,
           degradedCapabilities: [`tool-dispatch:${scope}`],
         });
       }

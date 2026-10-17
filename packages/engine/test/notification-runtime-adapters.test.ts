@@ -14,7 +14,8 @@ type Adapter = 'notifier' | 'webhook';
 const GENERIC = 'GoodVibes: notification available';
 const SLACK_URL = 'https://example.com/runtime-slack';
 const DISCORD_URL = 'https://example.com/runtime-discord';
-const WEBHOOK_URL = 'https://example.com/runtime-webhook';
+// A public literal keeps DNS pinning deterministic; fetch itself is intercepted.
+const WEBHOOK_URL = 'https://93.184.216.34/runtime-webhook';
 
 const fixtures: ReadonlyArray<{
   readonly payload: AdapterEvent;

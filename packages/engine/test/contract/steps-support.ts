@@ -1,5 +1,5 @@
 /**
- * Shared pieces for the correction and finishing tests (R.6): a planner that
+ * Shared pieces for the correction and finishing tests: a planner that
  * answers the contract plan, fix plans and amendments by the prompt it is
  * given, the answers the fake port gives the stall route, the owner reply and
  * the group and deliverable judges, and small helpers over the harness.

@@ -1,10 +1,7 @@
 import { completeJudgmentView } from './complete-view.js';
 /**
  * `engine.tools.content-rank`: orders the files a find content search matched
- * when the caller asks for ranked results. Read by Jev in place of the
- * hand-weighted score find/content.ts used to sort by (+10 per line holding
- * the exact pattern, +5 per line starting with `export`, +3 for a recently
- * modified file).
+ * when the caller asks for ranked results.
  *
  * The re-ranking cookbook: the regular expression builds the shortlist (code),
  * then one yes/no per pattern-file pair, each in its own request, orders it
@@ -15,12 +12,6 @@ import { completeJudgmentView } from './complete-view.js';
  */
 import { defineRerank, STAKES_BANDS } from '@goodvibes-jev/judgment';
 
-/**
- * The work-note marker word, assembled at run time: this fixture data needs
- * the word to mean what it tests, and the source scan (todo:check) forbids
- * the literal in published source, where it would read as a deferred-work note.
- */
-const WORK_MARKER = ['TO', 'DO'].join('');
 
 /** Most characters of one matched line the reading carries. */
 export const MAX_JUDGED_LINE_CHARS = Number.POSITIVE_INFINITY;
@@ -96,7 +87,7 @@ const FETCH_USER_LOG = file('src/app/profile.ts', [
   [40, "  logger.debug('fetchUser took', elapsed);"],
 ]);
 const FETCH_USER_COMMENT = file('src/app/cache.ts', [
-  [12, `// ${WORK_MARKER}: once fetchUser supports ETags, drop this cache.`],
+  [12, '// Remove this cache after fetchUser supports ETags.'],
 ]);
 const FETCH_USER_CHANGELOG = file('CHANGELOG.md', [
   [301, '- fetchUser was removed; use the users client instead.'],

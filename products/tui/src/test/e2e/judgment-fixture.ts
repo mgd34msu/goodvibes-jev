@@ -5,6 +5,7 @@ import modelIdentity from '../fixtures/e2e-judgments/model-identity.json';
 import modelTier from '../fixtures/e2e-judgments/model-tier.json';
 import unavailableModelRoutes from '../fixtures/e2e-judgments/unavailable-model-routes.json';
 import unavailableNotices from '../fixtures/e2e-judgments/unavailable-notices.json';
+import planningGoals from '../fixtures/e2e-judgments/planning-goals.json';
 
 const prompts = ['please answer the e2e marmot question', 'describe the lighthouse keeper routine', 'summarize the heron migration notes'] as const;
 const stable = (value: unknown): string => JSON.stringify(value, (_key, entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
@@ -28,6 +29,12 @@ type PrivacyKind = 'privacy-field' | 'privacy-source' | 'privacy-residual';
 // Explicit authored roles for these native diagnostic fields. Unknown names
 // still fail; names that do not establish a value role remain uncertain.
 const privacyFieldRoles = {
+  "reason": "content",
+  "refs": "uncertain",
+  "handoffs": "uncertain",
+  "edges": "uncertain",
+  "locationsScanned": "other",
+  "suggestions": "content",
   "count": "other",
   "sampleIds": "other",
   "path": "other",
@@ -213,10 +220,13 @@ function nativeRequest(template: typeof nativeRoute | typeof nativeTurn, prompt:
 }
 
 /** Exact captured synthetic requests, never an approval/classification shortcut. */
-export function e2eJudgmentAnswers(body: unknown, ordinaryMissingFiles: readonly string[] = []): { kind: 'tier' | 'identity' | 'native-route' | 'native-turn' | PrivacyKind; answers: unknown } | undefined {
+export function e2eJudgmentAnswers(body: unknown, ordinaryMissingFiles: readonly string[] = []): { kind: 'tier' | 'identity' | 'native-route' | 'native-turn' | 'planning-goal' | PrivacyKind; answers: unknown } | undefined {
   const privacy = privacyAnswers(body, ordinaryMissingFiles);
   if (privacy) return privacy;
   const serialized = stable(body);
+  if (planningGoals.some(request => serialized === stable(request))) return { kind: 'planning-goal', answers: {
+    goal: { type: 'noul', noul: 0.99 },
+  } };
   if (serialized === stable(modelTier)) return { kind: 'tier', answers: {
     frontier: { type: 'noul', noul: 0 }, small: { type: 'noul', noul: 1 },
   } };

@@ -153,7 +153,7 @@ describe('routine schedule public failure contract', () => {
   });
   test('pre-bootstrap and failed judgment preserve original failure without heuristic fallback', async () => {
     const original = new Error('auth 404 fetch connect');
-    expect(await classify(original)).toMatchObject({ kind: 'connected_host_error', error: '[REDACTED]' });
+    expect(await classify(original)).toMatchObject({ kind: 'connected_host_error', error: 'auth 404 fetch connect' });
     expect(original.message).toBe('auth 404 fetch connect');
     installJudgmentPort({ model: 'offline-fixture', ask: async () => { throw new Error('judgment unavailable'); } });
     expect((await classify(new Error('not found'))).kind).toBe('connected_host_error');

@@ -1,6 +1,8 @@
 import { findSessionCandidates } from '@goodvibes-jev/engine/sdk/platform/sessions';
 import { captureTranscriptSource, readTranscriptIndex, transcriptReadingCanceled, TRANSCRIPT_UNAVAILABLE } from './transcript-reading.ts';
 import { randomBytes } from 'node:crypto';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 
 import type { CommandContext } from '../command-registry.ts';
 import { type SessionMeta } from '@goodvibes-jev/engine/sdk/platform/sessions';
@@ -12,6 +14,22 @@ import { requireProviderApi, requireSessionManager, requireSurface } from './run
 import { resumeSessionCore } from '../../core/session-resume-core.ts';
 import { checkSessionLiveness } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { clearTurnAnchors, getTurnAnchors, persistTurnAnchors, recordTurnAnchor } from '@goodvibes-jev/engine/sdk/platform/rewind';
+import { saveWorkTreeFolds } from '../../core/work-tree-fold-store.ts';
+
+function copySessionSidecars(ctx: CommandContext, destination: string): void {
+  const source = ctx.session.runtime.sessionId;
+  if (source === destination) return;
+  clearTurnAnchors(destination);
+  for (const anchor of getTurnAnchors(source)) recordTurnAnchor(destination, anchor);
+  const surface = requireSurface(ctx);
+  if (getTurnAnchors(destination).length === 0) {
+    rmSync(join(surface.sessionsDir, `${destination}.anchors.json`), { force: true });
+  }
+  persistTurnAnchors(destination, surface);
+  const tree = ctx.session.conversationManager.workTree;
+  saveWorkTreeFolds(surface.sessionsDir, destination, tree.foldState(), tree.turnOutcomes());
+}
 
 function parseTranscriptKind(raw: string | undefined): TranscriptEventKind | 'all' {
   const normalized = (raw ?? 'all').toLowerCase().replace(/-/g, '_');
@@ -136,6 +154,10 @@ function printSessionExport(
 export async function handleSessionWorkflowCommand(args: string[], ctx: CommandContext): Promise<boolean> {
   const sm = requireSessionManager(ctx);
   const sub = args[0];
+  if (['resume', 'save', 'fork'].includes(sub ?? '') && ctx.isGenerating?.()) {
+    ctx.print('A turn is still running. Stop it with Esc or let it finish before changing sessions.');
+    return true;
+  }
 
   if (!sub) {
     const id = ctx.session.runtime.sessionId;
@@ -257,6 +279,7 @@ export async function handleSessionWorkflowCommand(args: string[], ctx: CommandC
         surface: requireSurface(ctx),
         selectModel: (model) => providerApi.selectModel(model),
         hydrateSessionUsage: ctx.session.hydrateSessionUsage,
+        canResume: () => !ctx.isGenerating?.(),
       });
       const { meta, journalReplay, restoredAnchorCount, resumedMessageCount } = outcome;
 
@@ -321,6 +344,7 @@ export async function handleSessionWorkflowCommand(args: string[], ctx: CommandC
     };
     try {
       sm.save(newId, messages, meta);
+      copySessionSidecars(ctx, newId);
       ctx.cancelPendingRecovery?.();
       ctx.session.runtime.sessionId = newId;
       ctx.session.conversationManager.title = forkName;
@@ -352,6 +376,7 @@ export async function handleSessionWorkflowCommand(args: string[], ctx: CommandC
     };
     try {
       const { filePath, sanitizedName } = sm.save(rawName, messages, meta);
+      copySessionSidecars(ctx, sanitizedName);
       if (sanitizedName !== ctx.session.runtime.sessionId) ctx.cancelPendingRecovery?.();
       ctx.session.runtime.sessionId = sanitizedName;
       const nameNote = sanitizedName !== rawName ? ` (saved as "${sanitizedName}")` : '';

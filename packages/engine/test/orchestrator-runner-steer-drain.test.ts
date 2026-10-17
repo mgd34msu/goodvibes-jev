@@ -227,8 +227,8 @@ describe('orchestrator-runner: steer drain', () => {
     registry.dispose();
   });
 
-  test('wo/chain-state-honesty: a steer drained into a turn whose chat call then fails never emits consumed', async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'wo-chain-state-honesty-steer-fail-'));
+  test('a steer drained into a turn whose chat call then fails never emits consumed', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'chain-state-steer-fail-'));
     const messageBus = new AgentMessageBus();
     const runtimeBus = new RuntimeEventBus();
     const consumedEvents: unknown[] = [];

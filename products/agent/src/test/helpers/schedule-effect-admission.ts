@@ -19,14 +19,18 @@ const syntheticNoFacts = new Set(['mutates', 'outward', 'secrets', 'obfuscated',
   'weakensSecurity', 'catastrophic', 'cardDetails', 'lineHasCredential', 'spanIsCredential', 'credentialRemains']);
 
 /** Named synthetic schedules, recorded through the real manager and child registry. */
-export function scheduleEffectAdmission(directory: string, mode: PermissionMode = 'prompt', onDisposition?: (index: number) => void) {
-  let incarnation = 0, disposition = 0;
+export function scheduleEffectAdmission(directory: string, mode: PermissionMode = 'prompt', onAdmission?: (index: number) => void) {
+  let incarnation = 0, admissions = 0;
   const permissions = () => ({ ...DEFAULT_CONFIG.permissions, mode });
   const reader: PermissionConfigReader = {
     getAutonomousSnapshot: () => ({ permissions: permissions(), autoApprove: false, directory, incarnation }),
     getSnapshot: () => ({ permissions: permissions() }), getWorkingDirectory: () => directory, isAutoApproveEnabled: () => false,
   };
   const manager = new PermissionManager(undefined, reader, new PolicyRuntimeState());
+  const admit = manager.admitAutonomous.bind(manager);
+  manager.admitAutonomous = async (...args) => {
+    const admission = await admit(...args); onAdmission?.(++admissions); return admission;
+  };
   const registry = new ToolRegistry(manager);
   const answers = fakePort((name, question, state) => {
     if (question.type === 'noul') {
@@ -46,7 +50,6 @@ export function scheduleEffectAdmission(directory: string, mode: PermissionMode 
     const label = name === 'disposition' ? 'act' : name === 'kind' ? 'read'
       : name === 'family' || name === 'capability' ? 'generic' : undefined;
     if (!label || !Object.hasOwn(question.criteria, label)) throw new Error(`Unexpected synthetic schedule choice ${name}`);
-    if (name === 'disposition') onDisposition?.(++disposition);
     return choiceAnswer(question, label, 0.999);
   });
   return {

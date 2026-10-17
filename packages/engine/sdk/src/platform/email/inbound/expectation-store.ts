@@ -1,6 +1,6 @@
 /**
  * expectation-store.ts, persistence for `VerificationExpectationBook`
- * (docs/inbound-email.md §9.2).
+ * (docs/decisions/2026-07-27-inbound-email-design.md §9.2).
  *
  * `VerificationExpectationBook` (`platform/google/verification-expectations.ts`)
  * is deliberately in-memory: "an expectation is a 15-minute grant, and a

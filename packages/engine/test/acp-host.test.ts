@@ -135,7 +135,7 @@ describe('AcpHostService: handshake-failure honesty', () => {
     expect(hosted.state).toBe('failed');
     expect(hosted.error?.binary).toBe(process.execPath);
     expect(hosted.error?.stage).toBe('initialize');
-    expect(hosted.error?.message).toBe('[REDACTED]');
+    expect(hosted.error?.message).toBe('ACP initialize timed out after 1500ms');
     expect(hosted.sessionId).toBeUndefined();
     expect(hosted.promptCount).toBe(0);
     expect(registeredSessions).toBe(0);

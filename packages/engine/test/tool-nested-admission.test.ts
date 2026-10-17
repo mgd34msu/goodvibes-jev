@@ -1,3 +1,4 @@
+import { assertJudgmentInput } from '../sdk/src/platform/gate/judgment-input.js';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { SqliteDecisionLog, withDecisionLog, type JudgmentPort, type EntryType } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
@@ -5,13 +6,13 @@ import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { ToolRegistry, assertCurrentToolEffect, currentToolAutonomySource, type CurrentToolAutonomySource } from '../sdk/src/platform/tools/registry.ts';
 import { ToolInputProjectionError, type ToolInputProjector } from '../sdk/src/platform/tools/input-projection.ts';
 import { PermissionManager, claimExternalAdmission, assertCurrentExternalAdmission, closeExternalAdmission, type PermissionConfigReader } from '../sdk/src/platform/permissions/manager.ts';
-import { DEFAULT_CONFIG, type PermissionMode } from '../sdk/src/platform/config/index.ts';
+import { DEFAULT_CONFIG, type PermissionMode, type PermissionsToolConfig } from '../sdk/src/platform/config/index.ts';
 import { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions/policy-runtime.ts';
 import type { Tool, ToolExecuteOptions } from '../sdk/src/platform/types/tools.ts';
 import { forgetGateReadings, gateReadingsPort, READ_ONLY } from './_helpers/gate-readings.ts';
 
 const PARENT = 'nested_parent_fixture';
-const CHILD = 'nested_child_fixture';
+const CHILD = 'write';
 let previous: ReturnType<typeof installJudgmentPort>;
 let log: SqliteDecisionLog;
 let disposition: (state: EntryType) => 'act' | 'reject';
@@ -35,10 +36,10 @@ beforeEach(() => {
 });
 afterEach(() => { installJudgmentPort(previous); log[Symbol.dispose](); forgetGateReadings(); });
 
-function fixture(parentBody?: Tool['execute'], projection?: ToolInputProjector, initialMode: PermissionMode = 'prompt') {
+function fixture(parentBody?: Tool['execute'], projection?: ToolInputProjector, initialMode: PermissionMode = 'prompt', tools: PermissionsToolConfig = {}) {
   let mode = initialMode, incarnation = 0, sequence = 0;
   let source = { goal: 'Perform the exact synthetic parent request', criteria: ['Write only the captured synthetic child target'] };
-  const permissions = () => ({ ...DEFAULT_CONFIG.permissions, mode });
+  const permissions = () => ({ ...DEFAULT_CONFIG.permissions, mode, tools });
   const reader: PermissionConfigReader = {
     getAutonomousSnapshot: () => ({ permissions: permissions(), autoApprove: false, directory: '/synthetic/nested', incarnation }),
     getSnapshot: () => ({ permissions: permissions() }), getWorkingDirectory: () => '/synthetic/nested', isAutoApproveEnabled: () => false,
@@ -47,10 +48,11 @@ function fixture(parentBody?: Tool['execute'], projection?: ToolInputProjector, 
   const registry = new ToolRegistry(manager);
   let effects = 0;
   let childOptions: ToolExecuteOptions | undefined;
+  let childSource: CurrentToolAutonomySource | undefined;
   const child: Tool = { definition: { name: CHILD, description: 'Synthetic child write intercepted in memory.',
     parameters: { type: 'object', properties: { target: { type: 'string' } }, required: ['target'], additionalProperties: false } },
     async execute(args, options) {
-      childOptions = options;
+      childOptions = options; childSource = currentToolAutonomySource(args, options);
       if (!assertCurrentToolEffect(args, options, 'write')) return { success: false, error: 'No recorded child effect admission' };
       effects++; return { success: true, output: String(args.target) };
     } };
@@ -60,7 +62,7 @@ function fixture(parentBody?: Tool['execute'], projection?: ToolInputProjector, 
     execute: parentBody ?? ((_args, options) => registry.executeNested('child-call', CHILD, { target: 'captured-target' }, options)),
   };
   registry.register(parent);
-  return { manager, registry, child, parent, get effects() { return effects; }, get childOptions() { return childOptions; },
+  return { manager, registry, child, parent, get effects() { return effects; }, get childOptions() { return childOptions; }, get childSource() { return childSource; },
     setMode(next: PermissionMode) { mode = next; incarnation++; },
     setSource(goal: string) { source = { ...source, goal }; },
     async run(signal?: AbortSignal) {
@@ -68,7 +70,7 @@ function fixture(parentBody?: Tool['execute'], projection?: ToolInputProjector, 
       const call = await registry.prepareCall(id, PARENT, {}, { signal });
       const admission = await manager.admitAutonomous(id, PARENT, call.args, { sourceOf: () => source, signal,
         schemaRevision: call.schemaRevision, preparedCall: { registry, call } });
-      expect(admission.result.approved).toBe(true);
+      if (!admission.result.approved) throw new Error(admission.result.reasonCode);
       return registry.executePrepared(call, admission);
     },
   };
@@ -76,11 +78,9 @@ function fixture(parentBody?: Tool['execute'], projection?: ToolInputProjector, 
 
 test('a child has a separate recorded act, exact arguments, and original parent source', async () => {
   const f = fixture(); expect(await f.run()).toMatchObject({ success: true, output: 'captured-target' });
-  expect(f.effects).toBe(1); expect(states).toHaveLength(2);
-  expect(states[1]).toMatchObject({ input: { arguments: { target: 'captured-target' }, source: {
-    goal: 'Perform the exact synthetic parent request', criteria: ['Write only the captured synthetic child target'],
-  } } });
-  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(2);
+  expect(f.effects).toBe(1); expect(states).toHaveLength(0);
+  expect(f.childSource).toMatchObject({ goal: 'Perform the exact synthetic parent request', criteria: ['Write only the captured synthetic child target'] });
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
 });
 
 test('a nested restriction checks its exact parent proof while the child keeps its own context', async () => {
@@ -111,7 +111,7 @@ test('a nested restriction checks its exact parent proof while the child keeps i
   };
   expect(await f.run()).toMatchObject({ success: true, output: 'captured-target' });
   expect(checkedDuringChild).toBe(true); expect(f.effects).toBe(1);
-  expect(states).toHaveLength(2); expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(2);
+  expect(states).toHaveLength(0); expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
   expect(() => retained?.assertCurrent()).toThrow();
 });
 
@@ -133,7 +133,7 @@ test.each(['cancel', 'revoke', 'source'] as const)('a parent %s during its neste
   f.child.execute = async (args, options) => { childEntered = true; return execute.call(f.child, args, options); };
   await expect(f.run(controller.signal)).rejects.toThrow();
   expect(retired).toBe(true); expect(f.effects).toBe(0);
-  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(2);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
 });
 
 test('raw callbacks and copied parent options cannot admit or dispatch a child', async () => {
@@ -144,7 +144,7 @@ test('raw callbacks and copied parent options cannot admit or dispatch a child',
   }, { async project(request) { projects++; return { status: 'projected', args: request.args }; } });
   await expect(f.registry.executeNested('raw', CHILD, { target: 'raw' }, { assertCurrent() {} })).rejects.toBeInstanceOf(ToolInputProjectionError);
   await f.run(); expect(projects).toBe(0); expect(f.effects).toBe(0);
-  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(1);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
 });
 
 test('a different registry cannot inherit the authentic parent proof', async () => {
@@ -166,16 +166,15 @@ test('retained options cannot create a new child after parent completion', async
   expect(f.effects).toBe(0);
 });
 
-test('a parent act does not override a recorded child rejection', async () => {
-  disposition = state => typeof state === 'object' && state !== null && !Array.isArray(state)
-    && typeof state.input === 'object' && state.input !== null && !Array.isArray(state.input) && state.input.tool === CHILD ? 'reject' : 'act';
-  const f = fixture(); expect(await f.run()).toMatchObject({ success: false, error: expect.stringContaining('reject') });
-  expect(f.effects).toBe(0); expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(2);
+test('a parent admission does not override an explicit child denial', async () => {
+  const f = fixture(undefined, undefined, 'custom', { write: 'deny' });
+  expect(await f.run()).toMatchObject({ success: false, error: expect.stringContaining('config_deny') });
+  expect(f.effects).toBe(0); expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
 });
 
 test('read-only owner restrictions remain a separate child effect floor', async () => {
   const f = fixture(undefined, undefined, 'plan');
-  await expect(f.run()).rejects.toMatchObject({ problem: 'held' }); expect(f.effects).toBe(0);
+  await expect(f.run()).rejects.toThrow('plan_mode'); expect(f.effects).toBe(0);
 });
 
 test.each(['cancel', 'revoke', 'source'] as const)('parent %s during child projection drains it and prevents child readings/effects', async kind => {
@@ -190,12 +189,17 @@ test.each(['cancel', 'revoke', 'source'] as const)('parent %s during child proje
   await entered;
   if (kind === 'cancel') controller.abort(); else if (kind === 'revoke') f.setMode('plan'); else f.setSource('Changed parent intent');
   resume?.(); expect(await settled).toBeInstanceOf(Error); expect(release).toBe(1); expect(f.effects).toBe(0);
-  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(1);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
 });
 
-test('source revocation after a child provider ignores cancellation prevents its effect', async () => {
+test('source revocation after actual child admission prevents its effect', async () => {
   const f = fixture();
-  beforeReading = async () => { if (states.length === 2) f.setSource('Changed while child admission was pending'); };
+  const admit = f.manager.admitAutonomous.bind(f.manager);
+  f.manager.admitAutonomous = async (...args) => {
+    const result = await admit(...args);
+    if (args[1] === CHILD) f.setSource('Changed while child admission was pending');
+    return result;
+  };
   await expect(f.run()).rejects.toThrow(); expect(f.effects).toBe(0);
 });
 
@@ -256,7 +260,7 @@ test('only a recorded nonregistry act retains issuer-owned native write authorit
 
 test('external read admission in read-only mode cannot acquire a write floor', async () => {
   const f = fixture(undefined, undefined, 'plan');
-  const admission = await f.manager.admitAutonomous('external-read', CHILD, { target: 'inspect' }, { sourceOf: () => ({
+  const admission = await f.manager.admitAutonomous('external-read', 'read', { target: 'inspect' }, { sourceOf: () => ({
     goal: 'Inspect the original synthetic native target', criteria: ['Perform no writes'] }) });
   expect(admission.result.approved).toBe(true); claimExternalAdmission(admission, f.manager, 'read');
   expect(() => assertCurrentExternalAdmission(admission, f.manager, 'read')).not.toThrow();
@@ -287,7 +291,7 @@ test('registered admissions cannot be claimed by the external issuer lane', asyn
 });
 
 test('registered native reference lookup protects a complete payload without transmitting its private ID', async () => {
-  const nativeId = 'draft-20261011123456', context = Object.freeze({}); let sourceCurrent = true, released = 0;
+  const nativeId = 'draft-20261011123456', context = Object.freeze({}); let sourceCurrent = true, released = 0, executions = 0;
   const f = fixture(undefined, {
     captureNativeReferences(request) {
       if (request.args.draftId !== nativeId) return undefined;
@@ -299,13 +303,14 @@ test('registered native reference lookup protects a complete payload without tra
   f.child.definition.parameters = { type: 'object', properties: { draftId: { type: 'string' } }, required: ['draftId'], maxProperties: 1, additionalProperties: false };
   f.parent.execute = (_args, options) => f.registry.executeNested('native-ref', CHILD, { draftId: nativeId }, options);
   f.child.execute = async (args, options) => {
+    executions++;
     expect(options?.inputProjectionContext).toBe(context); expect(args.draftId).toBe('native-draft:one');
     expect(assertCurrentToolEffect(args, options)).toBe(true); sourceCurrent = false;
     expect(() => assertCurrentToolEffect(args, options)).toThrow();
     return { success: true };
   };
   expect(await f.run()).toMatchObject({ success: true }); expect(released).toBe(1);
-  expect(JSON.stringify(states)).not.toContain(nativeId); expect(JSON.stringify(states)).toContain('Exact synthetic draft text');
+  expect(JSON.stringify(states)).not.toContain(nativeId); expect(executions).toBe(1);
   expect(f.registry.getToolDefinitions().find(definition => definition.name === CHILD)?.parameters).toEqual({
     type: 'object', properties: { draftId: { type: 'string' } }, required: ['draftId'], maxProperties: 1, additionalProperties: false,
   });
@@ -326,7 +331,7 @@ test.each(['caller-subject', 'extra-action', 'invalid-action'] as const)('native
     ...(kind === 'extra-action' ? { fabricated: true } : {}),
   }, options);
   await expect(f.run()).rejects.toThrow(); expect(f.effects).toBe(0); expect(released).toBe(1);
-  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(1);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
 });
 
 test.each(['unknown', 'unlisted', 'payload'] as const)('native reference %s privacy failure reaches no child reading or effect', async kind => {
@@ -337,12 +342,16 @@ test.each(['unknown', 'unlisted', 'payload'] as const)('native reference %s priv
       return { fields: ['draftId'], args: { ...request.args, draftId: 'native-draft:one', nativeReferenceSubjects: { body: kind === 'payload' ? 'Authorization: Bearer inline-private-material' : 'Safe body' } },
         assertCurrent() {}, async release() { released++; } };
     },
-    async project(request) { projects++; return { status: 'projected', args: request.args }; },
+    async project(request) {
+      // This reader owns the outbound privacy check; automatic admission does not read content.
+      assertJudgmentInput(request.args); projects++;
+      return { status: 'projected', args: request.args };
+    },
   });
   f.parent.execute = (_args, options) => f.registry.executeNested('bad-native-ref', CHILD,
     { draftId: nativeId, ...(kind === 'unlisted' ? { body: 'Authorization: Bearer inline-private-material' } : {}) }, options);
   await expect(f.run()).rejects.toThrow(); expect(f.effects).toBe(0); expect(projects).toBe(0);
-  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(1); expect(released).toBe(kind === 'unknown' ? 0 : 1);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0); expect(released).toBe(kind === 'unknown' ? 0 : 1);
 });
 
 test('native reference captures are synchronous and cannot alter unlisted action content', async () => {
@@ -358,7 +367,11 @@ test('native reference captures are synchronous and cannot alter unlisted action
   changedRegistry.register({ definition: { name: CHILD, description: 'Synthetic native reference action binding.', parameters: {} }, async execute() { return { success: true }; } }, {
     inputProjection: {
       captureNativeReferences(request) { return { fields: ['draftId'], args: { ...request.args, draftId: 'native-draft:one', body: 'Changed action content', nativeReferenceSubjects: { body: 'Complete selected payload' } }, assertCurrent() {} }; },
-      async project(request) { projects++; return { status: 'projected', args: request.args }; },
+      async project(request) {
+      // This reader owns the outbound privacy check; automatic admission does not read content.
+      assertJudgmentInput(request.args); projects++;
+      return { status: 'projected', args: request.args };
+    },
     },
   });
   await expect(changedRegistry.projectCall('changed-native-ref', CHILD, { draftId: 'draft-20261011123456', body: 'Original action content' })).rejects.toThrow();
@@ -390,9 +403,9 @@ test('nested native string references keep their exact schema, private source, a
     return { success: true };
   };
   expect(await f.run()).toMatchObject({ success: true });
-  expect(released).toBe(1); expect(states).toHaveLength(2);
+  expect(released).toBe(1); expect(states).toHaveLength(0);
   expect(JSON.stringify(states)).not.toContain(privateValue);
-  expect(JSON.stringify(states)).toContain('Complete cleared smoke output.');
+  expect(states).toHaveLength(0);
   expect(f.registry.getToolDefinitions().find(definition => definition.name === CHILD)?.parameters).toEqual(schema);
 });
 
@@ -414,12 +427,16 @@ test.each(['non-string', 'missing', 'overlap', 'duplicate', 'capacity', 'sibling
           nativeReferenceSubjects: { text: kind === 'subject-credential' ? 'Authorization: Bearer private' : 'Cleared output.' } },
           assertCurrent() {}, async release() { released++; } };
       },
-      async project(request) { projects++; return { status: 'projected', args: request.args }; },
+      async project(request) {
+      // This reader owns the outbound privacy check; automatic admission does not read content.
+      assertJudgmentInput(request.args); projects++;
+      return { status: 'projected', args: request.args };
+    },
     });
     f.parent.execute = (_args, options) => f.registry.executeNested('bad-nested-evidence', CHILD,
       { fields: originalFields, ...(kind === 'unlisted-credential' ? { unrelated: 'Authorization: Bearer unselected' } : {}) }, options);
     await expect(f.run()).rejects.toThrow(); expect(projects).toBe(0); expect(f.effects).toBe(0); expect(released).toBe(1);
-    expect(states).toHaveLength(1);
+    expect(states).toHaveLength(0);
   });
 
 test('nested native references cannot inspect source accessors or proxies', async () => {

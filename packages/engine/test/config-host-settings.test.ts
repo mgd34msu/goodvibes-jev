@@ -132,7 +132,7 @@ describe('public instance-owned boolean host settings', () => {
     expect(config.getHostBooleanSetting(KEY).get()).toBe(true);
     writeFileSync(config.getConfigPath(), '{invalid');
     expect(() => config.getHostBooleanSetting(KEY).setProjectValue(true))
-      .toThrow(`Host config load failed for ${config.getConfigPath()}: [REDACTED]`);
+      .toThrow(`Host config load failed for ${config.getConfigPath()}: Host settings could not be`);
     expect(config.getHostBooleanSetting(KEY).get()).toBe(true);
     expect(readFileSync(config.getConfigPath(), 'utf8')).toBe('{invalid');
     // The native project write precedes the failed cross-tier refresh. Its
@@ -146,7 +146,7 @@ describe('public instance-owned boolean host settings', () => {
     const directory = join(options.workingDir, '.goodvibes', 'agent');
     chmodSync(directory, 0);
     try {
-      expect(() => config.load()).toThrow(`Host config load failed for ${config.getProjectConfigPath()!}: [REDACTED]`);
+      expect(() => config.load()).toThrow(`Host config load failed for ${config.getProjectConfigPath()!}: Host settings could not be`);
       expect(config.getHostBooleanSetting(KEY).get()).toBe(true);
       expect(() => config.getHostBooleanSetting(KEY).set(false)).toThrow('could not be read');
       expect(config.getHostBooleanSetting(KEY).get()).toBe(true);

@@ -7,14 +7,14 @@
  * `platform/devices/device-grants.ts`'s header and composed by
  * `platform/devices/device-housekeeping.ts`: reap on recovery, bound
  * everything, validate by content, reap periodically, disclose what was
- * reaped. See docs/inbound-email.md §9 for the design of record.
+ * reaped. See docs/decisions/2026-07-27-inbound-email-design.md §9 for the design of record.
  */
 
 /** Why a sweep ran. Shared across every store's `sweep()` and the housekeeper. */
 export type HousekeepingTrigger = 'recovery' | 'periodic' | 'manual';
 
 /**
- * The cursor shape settled by docs/inbound-email.md §4, verbatim, not
+ * The cursor shape settled by docs/decisions/2026-07-27-inbound-email-design.md §4, verbatim, not
  * re-decided here. Keyed by (account, mailbox) so the store cannot grow with
  * traffic: one record per watched mailbox, not one per message.
  */
@@ -60,9 +60,7 @@ export function isParsableIsoDate(value: unknown, maxLength = 64): value is stri
 /**
  * Longest inbound-mail body excerpt retained, mirroring
  * `MAX_RETAINED_CONTENT_CHARS` in `platform/security/untrusted-content.ts`.
- * Not imported from there: that constant is module-private in a file this
- * round does not touch (platform/security/ is owned by the parallel taint
- * round, see docs/inbound-email.md §10). Keep this value in lockstep with
+ * That constant is module-private. Keep this value in lockstep with
  * that file if it ever changes; both cap the same failure mode, an unbounded
  * copy of untrusted body text living forever in a daemon that never restarts.
  */

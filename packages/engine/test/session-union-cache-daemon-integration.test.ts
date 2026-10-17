@@ -156,7 +156,7 @@ function makeNoopRouteBindings(): RouteBindingManager {
   } as unknown as RouteBindingManager;
 }
 
-describe('D-TUI-1: adopting surface self-mirror identity against a real bootDaemon', () => {
+describe('adopting surface self-mirror identity against a real bootDaemon', () => {
   let harness: Harness | null = null;
   afterEach(async () => { if (harness) await stopHarness(harness); harness = null; });
 

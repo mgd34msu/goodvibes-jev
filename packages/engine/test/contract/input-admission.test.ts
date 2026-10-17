@@ -31,7 +31,7 @@ for (const stale of [false, true]) {
     const done = h.store.get(contract.id)!;
     expect(done.status).toBe('passed');
     expect(done.commit?.status).toBe(stale ? 'failed' : 'applied');
-    if (stale) expect(done.commit?.note).toBe(`not applied: [REDACTED]; the work stays on branch ${done.branch}`);
+    if (stale) expect(done.commit?.note).toBe(`not applied: contract input owner changed: README.md; the work stays on branch ${done.branch}`);
     else expect(done.commit?.note).toContain('uncommitted changes');
     expect(done.commit?.hash).toBeUndefined();
     expect(done.statusLine).toContain(stale ? '; not applied:' : '; applied');
@@ -117,7 +117,7 @@ for (const marker of ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-m
     await waitFor(() => terminal(h, contract.id), 'held admission');
     const done = h.store.get(contract.id)!;
     expect(done.status).toBe('failed');
-    expect(done.error).toBe(`contract ${contract.id} could not start: [REDACTED]`);
+    expect(done.error).toBe(`contract ${contract.id} could not start: active owner Git operation ${marker}; inspect owner Git state before retrying`);
     expect(done.inputSnapshot).toBeUndefined();
     expect(h.agentsOf('u1')).toEqual([]);
     expect(calls).toBe(0); expect(readFileSync(path, 'utf8')).toBe('synthetic owner operation\n');
@@ -142,7 +142,7 @@ test('a real pending empty owner merge after capture is held without aborting th
   await waitFor(() => terminal(h, contract.id), 'held apply', 15_000);
   const done = h.store.get(contract.id)!;
   expect(readFileSync(join(h.root, '.git/MERGE_HEAD'), 'utf8').trim()).toBe(mergeHead);
-  expect(done.commit?.status).toBe('failed'); expect(done.commit?.note).toBe(`not applied: [REDACTED]; the work stays on branch ${done.branch}`);
+  expect(done.commit?.status).toBe('failed'); expect(done.commit?.note).toBe(`not applied: active owner Git operation MERGE_HEAD; inspect owner Git state before retrying; the work stays on branch ${done.branch}`);
   expect(done.commit?.hash).toBeUndefined();
   expect(readFileSync(join(h.root, '.git/index'))).toEqual(index!); expect(git(h.root, 'rev-parse', 'HEAD')).toBe(head);
   expect(existsSync(done.worktreePath!)).toBe(true); expect(existsSync(join(h.root, 'src/csv.ts'))).toBe(false);
@@ -180,7 +180,7 @@ test('an owner index lock created after capture holds apply without deleting the
   await waitFor(() => terminal(h, contract.id), 'held apply', 15_000);
   const done = h.store.get(contract.id)!;
   expect(done.commit?.status).toBe('failed');
-  expect(done.commit?.note).toBe(`not applied: [REDACTED]; the work stays on branch ${done.branch}`);
+  expect(done.commit?.note).toBe(`not applied: active owner Git operation index.lock; inspect owner Git state before retrying; the work stays on branch ${done.branch}`);
   expect(done.commit?.hash).toBeUndefined();
   expect(readFileSync(join(h.root, '.git/index.lock'), 'utf8')).toBe('owner lock\n');
   expect(readFileSync(join(h.root, '.git/index'))).toEqual(index!);

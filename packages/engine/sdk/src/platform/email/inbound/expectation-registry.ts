@@ -299,8 +299,8 @@ export class InboundExpectationRegistry {
    * The probe the book was built with, exposed so the boot wiring can be
    * asserted rather than assumed.
    *
-   * §12 gate #25 is "the expectation book is instantiated in production with a
-   * REAL authority probe". Nothing observable distinguished the genuine
+   * The expectation book uses the production authority probe. Its identity
+   * distinguishes the genuine
    * predicate from a permissive stub, because both answer `false` for email,
    * the difference only shows on a surface that DOES hold command authority.
    * This getter is what lets a test ask.
@@ -402,7 +402,7 @@ export class InboundExpectationRegistry {
    * when email holds command authority, is the book's, deliberately not
    * re-checked here.
    *
-   * The ONE check this file adds is the capability one (§12 gate #31), and it
+   * This adapter adds a mailbox capability check, which
    * belongs here rather than in the book: the book knows about authority and
    * windows, and knows nothing about whether a mailbox opens. Refusing now is
    * the whole point, a workstream that learns at open time can pick another
@@ -562,7 +562,7 @@ export class InboundExpectationRegistry {
 
   /**
    * The watcher's capability changed. Fail what can no longer be honoured, and
-   * nothing else (§12 gates #32 and #33).
+   * nothing else.
    *
    * Three answers, and the middle one is the one that must not be got wrong:
    *

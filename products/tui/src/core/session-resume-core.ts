@@ -58,6 +58,7 @@ export interface SessionResumeDeps {
    */
   readonly selectModel?: (model: string) => Promise<{ readonly registryKey: string; readonly providerId: string }>;
   readonly hydrateSessionUsage?: () => void;
+  readonly canResume?: () => boolean;
 }
 
 export interface SessionResumeOutcome {
@@ -79,7 +80,24 @@ export interface SessionResumeOutcome {
  * below writes the session back without them.
  */
 export async function resumeSessionCore(sessionId: string, deps: SessionResumeDeps): Promise<SessionResumeOutcome> {
+  const sourceSessionId = deps.runtime.sessionId;
+  if (deps.canResume?.() === false) throw new Error('A turn is still running. Wait before resuming a session.');
   const { meta, messages } = deps.sessionManager.load(sessionId);
+
+  let model = meta.model;
+  let provider = meta.provider;
+  if (model && deps.selectModel) {
+    try {
+      const selected = await deps.selectModel(model);
+      model = selected.registryKey;
+      provider = selected.providerId;
+    } catch { /* A saved model may no longer exist locally. */ }
+  }
+  // Model lookup may yield to a new turn or another resume. Commit the
+  // transcript and its identity together only while the source is still idle.
+  if (deps.runtime.sessionId !== sourceSessionId || deps.canResume?.() === false) {
+    throw new Error('The active session changed or a turn started while resuming. Try again when idle.');
+  }
 
   deps.conversation.resetAll();
   deps.conversation.fromJSON({
@@ -124,20 +142,8 @@ export async function resumeSessionCore(sessionId: string, deps: SessionResumeDe
   // history now, before the caller renders.
   deps.hydrateSessionUsage?.();
 
-  if (meta.provider) deps.runtime.provider = meta.provider;
-  if (meta.model) {
-    if (deps.selectModel) {
-      try {
-        const selected = await deps.selectModel(meta.model);
-        deps.runtime.model = selected.registryKey;
-        deps.runtime.provider = selected.providerId;
-      } catch {
-        deps.runtime.model = meta.model; // model may not exist locally
-      }
-    } else {
-      deps.runtime.model = meta.model;
-    }
-  }
+  if (provider) deps.runtime.provider = provider;
+  if (model) deps.runtime.model = model;
 
   return {
     meta,

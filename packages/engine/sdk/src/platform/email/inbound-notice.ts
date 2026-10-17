@@ -13,7 +13,7 @@
  * convention documented somewhere, owns turning one arriving message into
  * that string.
  *
- * ── Escaping belongs to the channel, not the producer (docs/inbound-email.md §7.2) ──
+ * ── Escaping belongs to the channel, not the producer (docs/decisions/2026-07-27-inbound-email-design.md §7.2) ──
  *
  * An earlier version of this module returned one STRING for every channel,
  * sanitized by one shared trigger-character set. That is an architectural

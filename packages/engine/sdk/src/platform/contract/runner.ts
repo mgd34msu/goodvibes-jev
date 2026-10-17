@@ -24,7 +24,7 @@ import type { ContractIntegrationInspection } from './integration-inspection-wir
  * commit are the correction and completion steps (steps.ts). The owner's
  * replies to escalations arrive through `reply`.
  *
- * Session mode (design 6.6): when the user forbids delegation, the contract's
+ * Session mode: when the user forbids delegation, the contract's
  * one unit is done by the session's own turns (the core turn loop binds its
  * turn to the unit and is held and nudged exactly as a sub-agent is); no
  * engine runs and no sub-agent is spawned.
@@ -109,9 +109,9 @@ export interface ContractRunnerDeps {
    * runner's own (steps.ts).
    */
   readonly steps?: Partial<ContractSteps> | undefined;
-  /** The project work plan: each contract and unit as a task (design 6.5). Absent where the host has no project planning. */
+  /** The project work plan: each contract and unit as a task. Absent where the host has no project planning. */
   readonly workPlanService?: WorkPlanService | undefined;
-  /** The execution plan: items a unit's agents worked on complete when the unit passes (design 6.5). */
+  /** The execution plan: items a unit's agents worked on complete when the unit passes. */
   readonly planManager?: ExecutionPlans | undefined;
   /** The repository summary the planner starts from; defaults to the repo_map tool. */
   readonly readAccessFilter?: import('../tools/shared/read-access.js').ReadAccessFilter | undefined;
@@ -123,7 +123,7 @@ export interface StartedContract {
   /** Actual admitted work and cleanup, independent of terminal record status. */
   readonly settled?: Promise<void> | undefined;
   readonly contract: ContractView;
-  /** The owner record parents wait on (design 6.5). */
+  /** The owner record parents wait on. */
   readonly owner: AgentRecord;
 }
 
@@ -151,13 +151,13 @@ export interface ContractRunner {
   start(input: StartContractInput): StartedContract;
   /**
    * Starts a contract from a plan drafted before it (a launched plan proposal
-   * or workstream draft, design 10.4): the planner keeps the drafted units and
+   * or workstream draft): the planner keeps the drafted units and
    * writes their criteria, and every plan check runs.
    */
   startFromPlan(input: StartFromPlanInput): StartedContract;
   /**
-   * AgentManager.spawn's seam for a spawn that is not outside every contract
-   * (design 10.3): the spawned record becomes the owner of a new contract whose
+   * AgentManager.spawn's seam for a spawn that is not outside every contract:
+   * the spawned record becomes the owner of a new contract whose
    * ask is its task. No executor runs for it.
    */
   startForOwner(ownerRecord: AgentRecord): StartedContract;
@@ -175,10 +175,10 @@ export interface ContractRunner {
     readonly includeInputSnapshot?: boolean | undefined }): ContractView[];
   /** Stops a contract and everything it runs. False when it is unknown or already ended. */
   cancel(contractId: string, reason: string): boolean;
-  /** An owner's free-text reply to an open escalation, read with the reply pattern (design 6.3). */
+  /** An owner's free-text reply to an open escalation, read with the reply pattern. */
   reply(contractId: string, escalationId: string, text: string): Promise<OwnerReplyOutcome>;
   /**
-   * At startup (design 7.2): every contract on disk that had not ended
+   * At startup: every contract on disk that had not ended
    * resumes at the step it was on, or is reaped as a zombie when what it needs
    * to resume is gone. The active-contract cap applies.
    */
@@ -187,7 +187,7 @@ export interface ContractRunner {
   serializeContract(contractId: string): string | null;
   /** Installed into AgentOrchestrator's tool dependencies and the core turn loop. */
   hooks(): ContractSessionHooks;
-  /** The fleet operator verbs' controller over every running contract's engine, with contract-qualified ids (design 8.3). */
+  /** The fleet operator verbs' controller over every running contract's engine, with contract-qualified ids. */
   fleetControls(): ContractFleetControls;
   on(listener: (event: ContractEvent) => void): () => void;
   dispose(): void;
@@ -360,7 +360,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
         runtime.preSpawn = null;
         return Promise.resolve(decided);
       }
-      // After a restart: the phase waits until a check, a respawn or the owner decides (design 7.2).
+      // After a restart: the phase waits until a check, a respawn or the owner decides.
       return new Promise<ContractPreSpawn>((resolve) => {
         const entry = {
           resolve: (decision: ContractPreSpawn) => {
@@ -464,7 +464,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
     requeueUnit: (run, unit, reason, purpose, firstTurn) => groups.requeueUnit(run, unit, reason, purpose, firstTurn),
   });
 
-  // ── The cap and queue (design 7.3) ──────────────────────────────────────────
+  // ── The cap and queue ──────────────────────────────────────────
 
   /** Takes a slot for the contract and starts it, or, for a resumed contract that waited, takes up its step. */
   function admit(run: ContractRun): void {
@@ -498,10 +498,10 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
       branch: `contract/${short}`, worktreePath: join(input.projectRoot, '.goodvibes', '.worktrees', 'contract', short), baseBranch: currentBase(input.projectRoot) };
   }
 
-  function captureStartInput(input: StartContractInput): StartContractInput {
+  function captureStartInput(input: StartContractInput, captureModel = true): StartContractInput {
     if (input.nativeSource === undefined && deps.nativeDecisions !== undefined) throw new Error('Native admission requires the complete original source snapshot');
     if (input.nativeSource !== undefined && deps.nativeDecisions === undefined) throw new Error('Native contract requires its authenticated semantic owner');
-    const selectedModel = input.selectedModel ?? deps.getSelectedModel?.();
+    const selectedModel = input.selectedModel ?? (captureModel ? deps.getSelectedModel?.() : undefined);
     return { ...input,
       ...(selectedModel === undefined ? {} : { selectedModel: { id: selectedModel.id, provider: selectedModel.provider, registryKey: selectedModel.registryKey, displayName: selectedModel.displayName } }),
       ...(input.nativeSource === undefined ? {} : { nativeSource: captureNativeContractSource(input.nativeSource) }),
@@ -575,7 +575,8 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
   }
 
   async function startDurable(request: DurableContractRequest): Promise<DurableStartedContract> {
-    const frozen = freezeDurableRequest({ ...request, input: captureStartInput(request.input) });
+    // The caller has already bound this payload; defaults must not change its revision.
+    const frozen = freezeDurableRequest({ ...request, input: captureStartInput(request.input, false) });
     assertOwnedExecution();
     if (disposed) throw new Error('Contract runner is disposed');
     if (deps.durableAdmission === undefined) throw new DurableContractAdmissionError('boundary');
@@ -728,7 +729,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
     };
   }
 
-  /** The owner record parents and surfaces wait on (design 6.5); it runs no executor. */
+  /** The owner record parents and surfaces wait on; it runs no executor. */
   function spawnOwner(input: Omit<StartContractInput, 'proposedUnits'>, id: string): AgentRecord {
     return deps.agentManager.spawn(
       {
@@ -950,7 +951,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
     updateOwnerProgress(run);
   }
 
-  // ── Session mode (design 6.6) ───────────────────────────────────────────────
+  // ── Session mode ───────────────────────────────────────────────
 
   /** A session-mode contract runs: its one unit waits for the session's next turn. */
   function startSession(run: ContractRun): void {
@@ -1103,7 +1104,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
     settleEnded(run);
   }
 
-  // ── Resume (design 7.2) ─────────────────────────────────────────────────────
+  // ── Resume ─────────────────────────────────────────────────────
 
   const resume = createContractResume({
     nativeOnly: deps.nativeDecisions !== undefined,

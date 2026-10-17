@@ -1,5 +1,5 @@
 /**
- * Worktree isolation (wo/worktree-isolation), stage (a): the REAL
+ * Worktree isolation: the REAL
  * IsolatedWorktree lifecycle + the engine's sequential integration lane,
  * driven end to end through createOrchestrationEngine with a FAKE agentManager
  * whose "agent" writes real files into item.worktreePath. No AgentOrchestrator

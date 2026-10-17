@@ -28,6 +28,7 @@ export async function createDaemonNativeWorkExecutionServices(options: Omit<Daem
 }) {
   const storage = await options.knowledgeStore.openNativeWorkExecutionStorage(options.projectId);
   const execution = createNativeWorkExecutionHost({ projectId: options.projectId, projectRoot: options.projectRoot,
+    getSelectedModel: () => options.providerRegistry.getCurrentModel(),
     sessionId: options.sessionId, storage, scopes: options.nativeScopes, port: options.judgmentPort, decisionLog: options.decisionLog,
     ...(options.continuationGrants ? { continuationGrants: options.continuationGrants } : {}),
     ...(options.continuationScopeOwner ? { continuationPolicy: {

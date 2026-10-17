@@ -1,7 +1,7 @@
 /**
  * throbber.ts, the one row above the input area that says what the main
  * session is doing right now. It shows only while main is working (a turn
- * runs, or the conversation is being compacted) and is gone at rest.
+ * runs, agents are running, or the conversation is being compacted) and is gone at rest.
  *
  *   col 3        the spinner (brand gradient on the glyph only)
  *   col 5..w-4   what is happening, then its elapsed time
@@ -40,6 +40,7 @@ export type ThrobberActivity =
   | { readonly kind: 'approval'; readonly tool: string; readonly argument: string; readonly elapsedMs?: number }
   | { readonly kind: 'compacting'; readonly elapsedMs?: number }
   | { readonly kind: 'tool'; readonly tool: string; readonly argument: string; readonly elapsedMs?: number }
+  | { readonly kind: 'agents'; readonly count: number }
   | { readonly kind: 'model'; readonly phrase: string; readonly elapsedMs?: number; readonly ttftMs?: number; readonly tokenSpeed?: number };
 
 /** One frame of the throbber. */
@@ -62,6 +63,8 @@ export interface ThrobberToolCall {
 export interface ThrobberActivityInput {
   /** A main turn is running. */
   readonly turnActive: boolean;
+  /** Active agents, including the interval before their results resume main. */
+  readonly runningAgentCount?: number;
   /** A compaction of the main conversation is running (inside a turn or not). */
   readonly compacting: boolean;
   /** When the running compaction started (epoch ms), once known. */
@@ -89,13 +92,15 @@ function describeToolCall(call: ThrobberToolCall): { tool: string; argument: str
 
 /** What main is doing now, or null at rest (the throbber is not drawn). */
 export function resolveThrobberActivity(input: ThrobberActivityInput): ThrobberActivity | null {
-  if (!input.turnActive && !input.compacting) return null;
+  const runningAgentCount = input.runningAgentCount ?? 0;
+  if (!input.turnActive && !input.compacting && runningAgentCount === 0) return null;
   const since = (start: number | undefined): number | undefined => (start !== undefined && start > 0 ? Math.max(0, input.now - start) : undefined);
   const turnElapsed = since(input.turnStartMs);
   if (input.turnActive && input.pendingApproval) {
     return { kind: 'approval', ...describeToolCall(input.pendingApproval), elapsedMs: turnElapsed };
   }
   if (input.compacting) return { kind: 'compacting', elapsedMs: since(input.compactingSinceMs) };
+  if (!input.turnActive && runningAgentCount > 0) return { kind: 'agents', count: runningAgentCount };
   if (input.activeTool) {
     return { kind: 'tool', ...describeToolCall(input.activeTool), elapsedMs: since(input.activeTool.startedAtMs) ?? turnElapsed };
   }
@@ -115,8 +120,10 @@ interface ThrobberText {
 }
 
 function textOf(activity: ThrobberActivity): ThrobberText {
-  const elapsed = activity.elapsedMs !== undefined ? [formatElapsed(activity.elapsedMs)] : [];
+  const elapsed = 'elapsedMs' in activity && activity.elapsedMs !== undefined ? [formatElapsed(activity.elapsedMs)] : [];
   switch (activity.kind) {
+    case 'agents':
+      return { label: `Waiting for ${activity.count} ${activity.count === 1 ? 'agent' : 'agents'}...`, subject: '', tail: [] };
     case 'approval':
       return { label: 'Waiting for your approval', subject: [activity.tool, activity.argument].filter(Boolean).join(SEP), tail: elapsed };
     case 'compacting':

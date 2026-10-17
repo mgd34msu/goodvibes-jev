@@ -32,7 +32,7 @@ import { executeAdmittedAgentSettings } from './settings-admission.js';
 
 type JsonRecord = Record<string, unknown>;
 
-/** Settings redacted at once; a value a key does not settle is a Jev reading (credential-redaction.ts). */
+/** Redact known secret keys and classify ambiguous values through credential-redaction.ts. */
 const REDACTION_CONCURRENCY = 8;
 
 export const GOODVIBES_RUNTIME_AWARENESS_PROMPT = [

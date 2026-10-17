@@ -1,7 +1,7 @@
 /**
  * inbound-mail-cursor-store.test.ts
  *
- * The custody rules for the per-mailbox cursor (docs/inbound-email.md §4,
+ * The custody rules for the per-mailbox cursor (docs/decisions/2026-07-27-inbound-email-design.md §4,
  * §3.4d, §9.1), proven against the real store on a real temp directory:
  *
  *  - The cursor survives a restart and resumes above `lastSeenUid`.

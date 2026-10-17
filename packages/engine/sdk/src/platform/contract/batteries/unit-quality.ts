@@ -282,7 +282,7 @@ export const unitQuality = defineBattery({
           '+++ b/src/commands/orders-list.ts',
           "+  .option('--limit <n>', 'print at most n orders', (value) => Number.parseInt(value, 10))",
           '-  const orders = await store.readOrders();',
-          '+  // TODO: read from the store again once it is wired up',
+          '+  // Reading from the store is not implemented.',
           "+  const orders = [{ id: 'o1', total: 10 }, { id: 'o2', total: 20 }, { id: 'o3', total: 30 }];",
           '+  const shown = options.limit === undefined ? orders : orders.slice(0, options.limit);',
         ].join('\n'),

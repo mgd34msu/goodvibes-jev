@@ -229,7 +229,7 @@ describe('core-verbs conformance', () => {
 
   // ── Regression guards for the specific worst-class collision fixes ──
 
-  test('SCHEDULE: no bare top-level "schedules.*" family remains (collision #1)', () => {
+  test('SCHEDULE: no bare top-level "schedules.*" family remains', () => {
     const bareSchedules = OPERATOR_METHOD_IDS.filter((id) => id.startsWith('schedules.'));
     expect(
       bareSchedules,

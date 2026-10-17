@@ -77,14 +77,14 @@ interface LiveControlPlaneClient {
   readonly surfaceId?: string | undefined;
   readonly routeId?: string | undefined;
   /** Principal scopes (SSE/WS); `admin` collapses scopes (sees every channel). */
-  readonly scopes?: readonly string[] | undefined;
-  readonly admin?: boolean | undefined;
+  scopes?: readonly string[] | undefined;
+  admin?: boolean | undefined;
   /**
    * Subscribed domains for the broadcast (`publishEvent`) fan-out. `null` =
    * deliver-all (client did not opt into narrowing); a non-null set narrows to
    * tagged events in the set. For WS this is a live ref to the subscription set.
    */
-  readonly domains: ReadonlySet<RuntimeEventDomain> | null;
+  domains: ReadonlySet<RuntimeEventDomain> | null;
   readonly send: (event: string, payload: unknown, id?: string) => void;
 }
 
@@ -436,6 +436,9 @@ export class ControlPlaneGateway {
     }
 
     this.subscribeWebSocketClient(clientId, selectedDomains);
+    // Initial default subscriptions retain the historical broadcast-all mode.
+    // Later explicit subscription changes narrow to the live subscription set.
+    if (!explicitDomains) this.liveClients.get(clientId)!.domains = null;
     send('ready', { clientId, domains: selectedDomains, transport: 'websocket' });
     replayRecentTraffic(this.recentEvents, send, { ...options, clientId, domains: selectedDomains }, explicitDomains ? wsDomains : null);
     return { clientId, domains: selectedDomains };
@@ -461,12 +464,18 @@ export class ControlPlaneGateway {
     readonly principalId: string;
     readonly principalKind?: 'user' | 'bot' | 'service' | 'token' | undefined;
     readonly scopes?: readonly string[] | undefined;
+    readonly admin?: boolean | undefined;
     readonly label?: string | undefined;
     readonly capabilities?: readonly string[] | undefined;
   }): void {
     if (!this.isEnabled()) return;
     const existing = this.clients.get(clientId);
     if (!existing || !this.runtimeBus) return;
+    const liveClient = this.liveClients.get(clientId);
+    if (liveClient) {
+      liveClient.scopes = input.scopes ?? [];
+      liveClient.admin = input.admin === true;
+    }
     const updated: ControlPlaneClientRecord = {
       ...existing,
       label: input.label ?? existing.label,
@@ -498,6 +507,7 @@ export class ControlPlaneGateway {
     if (!wsClient || !this.runtimeBus) return;
     const liveClient = this.liveClients.get(clientId);
     if (!liveClient) return;
+    liveClient.domains = wsClient.domains;
     const nextDomains = [...new Set(domains)];
     for (const domain of nextDomains) {
       if (wsClient.unsubscribers.has(domain)) continue;
@@ -516,6 +526,8 @@ export class ControlPlaneGateway {
     if (!this.isEnabled()) return;
     const wsClient = this.websocketClients.get(clientId);
     if (!wsClient) return;
+    const liveClient = this.liveClients.get(clientId);
+    if (liveClient) liveClient.domains = wsClient.domains;
     const targetDomains = domains?.length ? [...new Set(domains)] : [...wsClient.domains];
     for (const domain of targetDomains) {
       const unsubscribe = wsClient.unsubscribers.get(domain);

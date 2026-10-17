@@ -33210,6 +33210,30 @@
                     "ask": {
                       "type": "string"
                     },
+                    "selectedModel": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "provider": {
+                          "type": "string"
+                        },
+                        "registryKey": {
+                          "type": "string"
+                        },
+                        "displayName": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "provider",
+                        "registryKey",
+                        "displayName"
+                      ],
+                      "additionalProperties": false
+                    },
                     "ownerAgentId": {
                       "type": "string"
                     },
@@ -39851,6 +39875,30 @@
                           },
                           "ask": {
                             "type": "string"
+                          },
+                          "selectedModel": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "provider": {
+                                "type": "string"
+                              },
+                              "registryKey": {
+                                "type": "string"
+                              },
+                              "displayName": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "provider",
+                              "registryKey",
+                              "displayName"
+                            ],
+                            "additionalProperties": false
                           },
                           "ownerAgentId": {
                             "type": "string"
@@ -46504,6 +46552,30 @@
                         },
                         "ask": {
                           "type": "string"
+                        },
+                        "selectedModel": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "provider": {
+                              "type": "string"
+                            },
+                            "registryKey": {
+                              "type": "string"
+                            },
+                            "displayName": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "provider",
+                            "registryKey",
+                            "displayName"
+                          ],
+                          "additionalProperties": false
                         },
                         "ownerAgentId": {
                           "type": "string"
@@ -132448,7 +132520,6 @@
                                   ]
                                 },
                                 "units": {
-                                  "maxItems": 256,
                                   "type": "array",
                                   "items": {
                                     "type": "object",
@@ -132577,22 +132648,18 @@
                                                 "maxLength": 200
                                               },
                                               "worktreePath": {
-                                                "type": "string",
-                                                "maxLength": 12288
+                                                "type": "string"
                                               },
                                               "worktreeBranch": {
-                                                "type": "string",
-                                                "maxLength": 12288
+                                                "type": "string"
                                               },
                                               "worktreeKept": {
                                                 "type": "boolean"
                                               },
                                               "conflictFiles": {
-                                                "maxItems": 256,
                                                 "type": "array",
                                                 "items": {
-                                                  "type": "string",
-                                                  "maxLength": 12288
+                                                  "type": "string"
                                                 }
                                               }
                                             },
@@ -133398,7 +133465,6 @@
                                   ]
                                 },
                                 "units": {
-                                  "maxItems": 256,
                                   "type": "array",
                                   "items": {
                                     "type": "object",
@@ -133527,22 +133593,18 @@
                                                 "maxLength": 200
                                               },
                                               "worktreePath": {
-                                                "type": "string",
-                                                "maxLength": 12288
+                                                "type": "string"
                                               },
                                               "worktreeBranch": {
-                                                "type": "string",
-                                                "maxLength": 12288
+                                                "type": "string"
                                               },
                                               "worktreeKept": {
                                                 "type": "boolean"
                                               },
                                               "conflictFiles": {
-                                                "maxItems": 256,
                                                 "type": "array",
                                                 "items": {
-                                                  "type": "string",
-                                                  "maxLength": 12288
+                                                  "type": "string"
                                                 }
                                               }
                                             },
@@ -134348,7 +134410,6 @@
                                   ]
                                 },
                                 "units": {
-                                  "maxItems": 256,
                                   "type": "array",
                                   "items": {
                                     "type": "object",
@@ -134477,22 +134538,18 @@
                                                 "maxLength": 200
                                               },
                                               "worktreePath": {
-                                                "type": "string",
-                                                "maxLength": 12288
+                                                "type": "string"
                                               },
                                               "worktreeBranch": {
-                                                "type": "string",
-                                                "maxLength": 12288
+                                                "type": "string"
                                               },
                                               "worktreeKept": {
                                                 "type": "boolean"
                                               },
                                               "conflictFiles": {
-                                                "maxItems": 256,
                                                 "type": "array",
                                                 "items": {
-                                                  "type": "string",
-                                                  "maxLength": 12288
+                                                  "type": "string"
                                                 }
                                               }
                                             },
@@ -135298,7 +135355,6 @@
                                   ]
                                 },
                                 "units": {
-                                  "maxItems": 256,
                                   "type": "array",
                                   "items": {
                                     "type": "object",
@@ -135427,22 +135483,18 @@
                                                 "maxLength": 200
                                               },
                                               "worktreePath": {
-                                                "type": "string",
-                                                "maxLength": 12288
+                                                "type": "string"
                                               },
                                               "worktreeBranch": {
-                                                "type": "string",
-                                                "maxLength": 12288
+                                                "type": "string"
                                               },
                                               "worktreeKept": {
                                                 "type": "boolean"
                                               },
                                               "conflictFiles": {
-                                                "maxItems": 256,
                                                 "type": "array",
                                                 "items": {
-                                                  "type": "string",
-                                                  "maxLength": 12288
+                                                  "type": "string"
                                                 }
                                               }
                                             },

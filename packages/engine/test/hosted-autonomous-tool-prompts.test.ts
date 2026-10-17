@@ -26,15 +26,15 @@ const availability = detectSandboxAvailability(probeSandboxHost());
 let root: string; let workspaceTrust: WorkspaceTrustManager; let services: ClientRuntimeServices; let runtime: HostedSessionRuntime;
 let restore: () => void; let deps: ToolExecutionDeps;
 let denyEscalation: boolean; let revokeBeforeSpawn: (() => void | Promise<void>) | undefined; let sawEscalation: boolean;
-let control: 'revise_0' | 'reject';
+let terminalControlChoice: 'revise_0' | 'reject';
 let humanAsks: string[]; let requests: JudgmentRequest<Questions>[];
 
 beforeEach(() => {
-  control = 'revise_0';
+  terminalControlChoice = 'revise_0';
   forgetGateReadings(); forgetCredentialEnvReadings(); humanAsks = []; requests = []; denyEscalation = false; sawEscalation = false; revokeBeforeSpawn = undefined;
   root = mkdtempSync(join(tmpdir(), 'hosted-autonomous-prompts-'));
   const configManager = new ConfigManager({ surfaceRoot: 'tui', configDir: join(root, 'config'), workingDir: root, homeDir: root });
-  configManager.set('sandbox.enabled', false); // Explicit temporary workstream fixture only.
+  configManager.set('sandbox.enabled', false);
   workspaceTrust = new WorkspaceTrustManager({ shellPaths: createShellPathService({ workingDirectory: root, homeDirectory: root }), surfaceRoot: 'tui' });
   services = createClientRuntimeServices({ configManager, runtimeBus: new RuntimeEventBus(), runtimeStore: createRuntimeStore(), surfaceRoot: 'tui',
     workingDir: root, homeDirectory: root, modelDiscovery: 'skip', workspaceTrust,
@@ -43,7 +43,7 @@ beforeEach(() => {
   // Synthetic semantic readings exercise the exact escalation branch. The command
   // itself only prints a fixture string; no external network operation is needed.
   const readings = toolReadingsPort([['Continue?', { awaitingInput: true }]]);
-  const semantic = fakePort((_name, question, state) => choiceAnswer(question, question.type === 'choice' && 'revise_0' in question.criteria && !('act' in question.criteria) ? control : 'act', 0.97));
+  const semantic = fakePort((_name, question, state) => choiceAnswer(question, question.type === 'choice' && 'revise_0' in question.criteria && !('act' in question.criteria) ? terminalControlChoice : 'act', 0.97));
   const recorded = withDecisionLog({ model: readings.port.model, async ask(request) {
     request.signal?.throwIfAborted(); request.beforeAttempt?.(); requests.push(request as JudgmentRequest<Questions>);
     if ('disposition' in request.questions && JSON.stringify(request.state).includes('sandboxEscalation')) sawEscalation = true;
@@ -113,7 +113,7 @@ test('unsupported and protected terminal evidence refuses before a hosted readin
 });
 
 test('Jev may refuse fixed terminal controls without a human fallback', async () => {
-  control = 'reject';
+  terminalControlChoice = 'reject';
   const result = await withExternalOperationSource({ sourceOf: () => ({ goal: 'Owned fixture', criteria: [] }), assertCurrent() {} },
     () => answerExecPrompt(controlHost(new AbortController().signal), safePrompt(), { assertCurrent() {} }));
   expect(result).toEqual({ answered: false }); expect(humanAsks).toEqual([]);

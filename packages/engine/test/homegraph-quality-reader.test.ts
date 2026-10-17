@@ -85,12 +85,17 @@ describe('Home Graph registered applicability and completeness', () => {
     installJudgmentPort(fakePort((name) => noulAnswer(name === 'manualApplicable__manualApplicable' ? 0.5 : 0.99)).port); await held(readHomeGraphQuality([input()]), 'unsettled');
     installJudgmentPort({ ...fake.port, async ask(request) { return { ...await fake.port.ask(request), model: '' } as JudgmentResult<typeof request.questions>; } }); await held(readHomeGraphQuality([input()]), 'malformed');
   });
-  test('malformed and over-budget sets cannot issue a partial or silently truncated pass', async () => {
+  test('malformed sets cannot issue a partial pass', async () => {
     const fake = good();
     await held(readHomeGraphQuality([input(), input()]), 'malformed');
     await held(readHomeGraphQuality([{ ...input(), questions: ['batteryApplicable', 'batteryApplicable'] }]), 'malformed');
-    await held(readHomeGraphQuality([{ ...input(), facts: Array.from({ length: 501 }, (_, index) => ({ reference: `fact-${index + 1}`, title: 'Synthetic fact' })) }]), 'budget');
     expect(fake.requests).toHaveLength(0);
+  });
+  test('large fact sets are preserved without an implicit cap', async () => {
+    const fake = good();
+    const facts = Array.from({ length: 501 }, (_, index) => ({ reference: `fact-${index + 1}`, title: 'Synthetic fact' }));
+    expect(await readHomeGraphQuality([{ ...input(), facts }])).toHaveLength(1);
+    expect(fake.requests[0]!.state).toMatchObject({ facts });
   });
   test('whole-pass deadline/cancellation stop ports that ignore their signal', async () => {
     const fake = good(); installJudgmentPort({ ...fake.port, ask: async () => new Promise(() => {}) });

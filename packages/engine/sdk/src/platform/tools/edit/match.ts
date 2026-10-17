@@ -570,6 +570,9 @@ export function buildFailedEditResult(item: EditItem, error: string, status: Edi
 
 /** All structurally possible windows participate; similarity never hides a target. */
 async function selectEditWindow(file: string, find: string) {
+  // Check every byte before any batch is sent, including protected material
+  // beyond the first candidate window. Exact local edits need no remote read.
+  assertJudgmentInput({ source: file, find });
   const lines = file.split('\n'), size = find.split('\n').length;
   // Each reading sees the complete candidate and its neighboring lines. Do not
   // send the whole file with every candidate or reject files by line count.

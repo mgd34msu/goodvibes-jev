@@ -4,7 +4,7 @@
  * The two halves of "a grant is spent exactly once", which used to fail in
  * opposite directions at the same time.
  *
- * 1. A CONSUMING MATCH REACHES DISK (docs/inbound-email.md §9.2).
+ * 1. A CONSUMING MATCH REACHES DISK (docs/decisions/2026-07-27-inbound-email-design.md §9.2).
  *    `expectation-store.ts`'s header names the three book mutations that must
  *    be mirrored, "open, close, **consuming match**". The registry wrote
  *    through on open, cancel, sweep and hydrate, and on nothing at all on the

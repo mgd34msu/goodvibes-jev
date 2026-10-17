@@ -1602,7 +1602,7 @@ describe('ImapSession line retention', () => {
   // probeBodyReadable(), the connect-time body probe
   // ---------------------------------------------------------------------
   //
-  // `docs/inbound-email.md` §3.4d, "Scope sufficiency applies to both": IMAP
+  // `docs/decisions/2026-07-27-inbound-email-design.md` §3.4d, "Scope sufficiency applies to both": IMAP
   // has no declaration of body access the way a Gmail scope grant has, so the
   // only way to know whether the server will hand over message content is to
   // ask for some, at connect time, before an expectation for a real message

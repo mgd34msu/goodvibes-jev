@@ -44,7 +44,7 @@ async function composed(body: (context: { registry: ReturnType<typeof composeAge
           sourceOf: () => ({ goal: 'Verify account memory boundaries with isolated synthetic sources', criteria: ['Record only the authored synthetic account in this temporary home'] }),
           signal, schemaRevision: call.schemaRevision, preparedCall: { registry: toolRegistry, call },
         });
-        expect(admission.result.autonomousDecision?.outcome).toBe('act');
+        expect(admission.result).toMatchObject({ approved: true });
         return await toolRegistry.executePrepared(call, admission);
       } finally { await toolRegistry.releaseProjected(projected); }
     };

@@ -37,7 +37,7 @@ name: Reusable release verification
 #
 #   toolchain-source:
 #   - `registry` (default, consumer repos): bunx the PUBLISHED
-#     @goodvibes-jev/engine/toolchain from npm. Correct once the SDK has published
+#     @goodvibes-jev/engine from npm. Correct once the SDK has published
 #     the package.
 #   - `workspace` (the SDK repo itself): check out the verified commit, install,
 #     build the workspace toolchain, and invoke its local dist bin. The SDK
@@ -84,7 +84,7 @@ on:
         description: npm spec of the toolchain CLI package (registry mode only).
         required: false
         type: string
-        default: "@goodvibes-jev/engine/toolchain"
+        default: "@goodvibes-jev/engine"
     outputs:
       run_id:
         description: The resolved Actions run id (for the artifact-integrity handoff).
@@ -177,7 +177,7 @@ jobs:
           # --deadline-ms 17m, sized under this job's 20m timeout-minutes cap so
           # an exhausted wait yields the tool's honest deadline-exceeded verdict
           # instead of a raw job kill.
-          bunx "$TOOLCHAIN_SPEC" goodvibes-per-job-green \
+          bunx --package "$TOOLCHAIN_SPEC" goodvibes-per-job-green \
             --repo "$TARGET_REPO" \
             --sha "$TARGET_SHA" \
             --workflow "$TARGET_WORKFLOW" \

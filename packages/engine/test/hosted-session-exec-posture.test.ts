@@ -1,22 +1,5 @@
-/**
- * hosted-session-exec-posture.test.ts, the posture reaches the tool a hosted
- * turn actually calls.
- *
- * `decideExecContainment` being correct and `createHostedSessionRuntime`
- * consulting it are two different claims, and the incident was the second one:
- * every piece of the sandbox was wired, the fallback was simply silent, and a
- * conversational turn ran on the host. So this drives the REAL exec tool out of
- * the registry a real hosted session composed, no stubs between the posture
- * and the command, with the boundary switched off, which is exactly the state
- * the daemon was in.
- *
- * The default is the load-bearing half. A hosted session composed with no
- * posture stated at all must be contained: that is the shape every session
- * created over `sessions.hosted.*` has.
- */
-
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -42,6 +25,7 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'hosted-posture-'));
   workspace = join(root, 'workspace');
   mkdirSync(workspace, { recursive: true });
+  writeFileSync(join(workspace, 'tmux'), '#!/bin/sh\nprintf \"fixture-tmux:%s\\n\" \"$*\"\n', { mode: 0o700 });
 
   const configManager = new ConfigManager({
     surfaceRoot: 'goodvibes',
@@ -100,7 +84,7 @@ async function runExec(
   session: ReturnType<typeof hostedSession>,
   cmd: string,
 ): Promise<{ success: boolean; stderr: string; stdout: string }> {
-  const result = await session.toolRegistry.execute('call-1', 'exec', { commands: [{ cmd }] });
+  const result = await session.toolRegistry.execute('call-1', 'exec', { commands: [{ cmd: cmd.replaceAll('tmux ', './tmux ') }] });
   const payload = JSON.parse(String(result.output ?? '{}')) as Record<string, unknown>;
   return {
     success: result.success,
@@ -116,11 +100,7 @@ test('a hosted session with NO posture stated is contained: an uncontained comma
   expect(outcome.stderr).toContain('requires commands to run inside the exec boundary');
   expect(outcome.stderr).toContain('daemon-hosted conversational turn');
   expect(outcome.stdout).not.toContain('reached-the-host');
-  expect(readings.requests.filter((request) => request.context?.battery === 'engine.tools.owner-terminal')
-    .map((request) => request.state)).toEqual([{
-    command: 'echo reached-the-host',
-    owned_sessions: 'every session whose name begins with "goodvibes-" (such as goodvibes-build)',
-  }]);
+  expect(readings.requests.filter(request => request.context?.battery === 'engine.tools.owner-terminal')).toEqual([]);
   session.dispose();
 });
 
@@ -150,20 +130,15 @@ test('a per-session grant works too, and a per-session grant does not leak to th
   next.dispose();
 });
 
-test("the owner's terminal is denied in BOTH postures, boundary or not", async () => {
+test('terminal commands follow the explicit containment posture without another Jev gate', async () => {
   for (const posture of ['conversational', 'workstream'] as const) {
     const session = hostedSession(posture);
-    const outcome = await runExec(session, 'tmux send-keys -t main "goodvibes-agent" Enter');
-    expect(outcome.success).toBe(false);
-    expect(outcome.stderr).toContain("owner's terminal is untouchable");
-    session.dispose();
+    try {
+      const outcome = await runExec(session, 'tmux send-keys -t fixture echo probe');
+      expect(outcome.success).toBe(posture === 'workstream');
+      if (posture === 'workstream') expect(outcome.stdout).toContain('fixture-tmux:');
+      else expect(outcome.stderr).toContain('requires commands to run inside the exec boundary');
+      expect(readings.requests.some(request => request.context?.battery === 'engine.tools.owner-terminal')).toBe(false);
+    } finally { session.dispose(); }
   }
-});
-
-test("reading tmux state is not touching it: a workstream may still look", async () => {
-  const session = hostedSession('workstream');
-  const outcome = await runExec(session, 'tmux list-sessions');
-  expect(outcome.stderr).not.toContain("owner's terminal is untouchable");
-  expect(readings.requests.some((request) => request.context?.battery === 'engine.tools.owner-terminal')).toBe(true);
-  session.dispose();
 });

@@ -1,3 +1,4 @@
+import * as webhookHttp from '@goodvibes-jev/engine/sdk/platform/utils';
 import { afterEach, expect, spyOn, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -94,20 +95,20 @@ for (const replacement of ['deleted', 'invalid-json', 'malformed-leaf']) test(`a
   const { config, modal, open } = fixture();
   const url = 'https://example.com/tui-host-setting-fixture';
   const sent: string[] = [];
-  const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+  const fetchSpy = spyOn(webhookHttp, 'postToPublicWebhook').mockImplementation(async (input, init) => {
     if (String(input) !== url || init?.method !== 'POST') throw new Error('Unexpected synthetic notification request');
     sent.push(String(init.body)); return new Response('ok');
-  }, { preconnect() {} }));
+  });
   try {
     const notifier = new WebhookNotifier([url], { force: true, metadataOnly: () => config.getHostBooleanSetting(KEY).get() });
     const send = () => notifier.sendNotification({ kind: 'turn', facts: { outcome: 'completed', subject: 'turn', elapsedMs: 1000, name: 'synthetic-private-host-notice' } });
-    await send(); expect(sent.at(-1)).not.toContain('synthetic-private-host-notice');
-    modal.activateSelected(); await send(); expect(sent.at(-1)).toContain('synthetic-private-host-notice');
+    expect((await send()).delivered).toBe(1); expect(sent.at(-1)).not.toContain('synthetic-private-host-notice');
+    modal.activateSelected(); expect((await send()).delivered).toBe(1); expect(sent.at(-1)).toContain('synthetic-private-host-notice');
     if (replacement === 'deleted') rmSync(config.getConfigPath());
     else writeFileSync(config.getConfigPath(), replacement === 'invalid-json' ? '{' : JSON.stringify({ behavior: { notificationsMetadataOnly: 'false' } }));
     if (replacement === 'invalid-json') expect(() => config.load()).toThrow();
     else config.load();
-    await send(); expect(sent.at(-1)).not.toContain('synthetic-private-host-notice');
+    expect((await send()).delivered).toBe(1); expect(sent.at(-1)).not.toContain('synthetic-private-host-notice');
     expect(sent).toHaveLength(3);
     open(); expect(modal.getSelected()?.currentValue).toBe(true);
   } finally { fetchSpy.mockRestore(); }

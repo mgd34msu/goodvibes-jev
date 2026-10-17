@@ -1,9 +1,8 @@
-import { expect } from 'bun:test';
 import { DEFAULT_CONFIG, type PermissionMode, type PermissionsToolConfig } from '@goodvibes-jev/engine/sdk/platform/config';
 import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { PolicyRuntimeState } from '@goodvibes-jev/engine/sdk/platform/runtime/security';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
-import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
+import type { Tool, ToolResult } from '@goodvibes-jev/engine/sdk/platform/types';
 
 /** Real manager/registry admission; callers install recorded synthetic readings. */
 export function recordedEffectFixture(tool: Tool, initialMode: PermissionMode = 'prompt', tools: PermissionsToolConfig = {}, directory = '/synthetic/effect-fixture') {
@@ -21,7 +20,7 @@ export function recordedEffectFixture(tool: Tool, initialMode: PermissionMode = 
     registry,
     setMode(next: PermissionMode) { mode = next; },
     beforeAuthorityRead(callback: () => void) { onAuthorityRead = callback; },
-    async run(args: Record<string, unknown>, signal?: AbortSignal) {
+    async run(args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
       const id = `recorded-effect-${++sequence}`;
       const call = await registry.prepareCall(id, tool.definition.name, args, { signal });
       const admission = await manager.admitAutonomous(id, tool.definition.name, call.args, {
@@ -29,7 +28,7 @@ export function recordedEffectFixture(tool: Tool, initialMode: PermissionMode = 
           criteria: ['Use isolated temporary files and intercepted effects only'] }),
         signal, schemaRevision: call.schemaRevision, preparedCall: { registry, call },
       });
-      expect(admission.result.autonomousDecision?.outcome).toBe('act');
+      if (!admission.result.approved) return { callId: id, success: false, error: admission.result.reasonCode };
       return registry.executePrepared(call, admission);
     },
   };

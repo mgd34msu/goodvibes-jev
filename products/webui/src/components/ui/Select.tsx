@@ -1,7 +1,7 @@
 import { Check, ChevronDown } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { useFloatingPosition, useOutsidePress, type Placement } from './overlay';
+import { getFocusable, useFloatingPosition, useOutsidePress, type Placement } from './overlay';
 import '../../styles/components/ui.css';
 
 export interface SelectOption<V extends string = string> {
@@ -128,7 +128,20 @@ export function Select<V extends string = string>({
         close(true);
         break;
       case 'Tab':
-        close(false);
+        {
+          const trigger = triggerRef.current;
+          const modal = trigger?.closest<HTMLElement>('[aria-modal="true"]');
+          const focusable = getFocusable(modal ?? document.body);
+          const index = trigger ? focusable.indexOf(trigger) : -1;
+          const next = index + (event.shiftKey ? -1 : 1);
+          const target = focusable[next] ?? (modal ? focusable[event.shiftKey ? focusable.length - 1 : 0] : undefined);
+          close(true);
+          if (target) {
+            event.preventDefault();
+            event.stopPropagation();
+            target.focus();
+          }
+        }
         break;
       default:
         if (event.key.length === 1 && /\S/.test(event.key)) {

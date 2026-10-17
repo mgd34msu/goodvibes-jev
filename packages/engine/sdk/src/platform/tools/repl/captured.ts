@@ -163,7 +163,7 @@ export function createCapturedReplTool(
           return await finish({ success: false, error: 'Captured REPL requires the trusted Bun runtime. Host evaluation is unavailable as a fallback.' });
         if (args.bindings !== undefined && (args.bindings === null || typeof args.bindings !== 'object' || Array.isArray(args.bindings)))
           return { success: false, error: 'Captured REPL bindings must be an object of JSON values.' };
-        const script = capturedReplScript(args.expression, JSON.stringify(args.bindings ?? {}));
+        const script = await capturedReplScript(args.expression, JSON.stringify(args.bindings ?? {}));
         const scriptName = `.goodvibes-repl-${randomUUID()}.ts`;
         const command = `bun --no-env-file ./${scriptName}`;
         const guard = await guardExecCommand(command, featureFlags, signal);

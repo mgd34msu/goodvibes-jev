@@ -63,7 +63,7 @@ export async function executeNativeMemoryWork(registry: ToolRegistry, manager: P
       sourceOf: () => ({ goal: 'Verify native Agent memory and work capture with isolated authored sources', criteria: ['Only the disposable local store and intercepted gateway under test'] }),
       signal, schemaRevision: call.schemaRevision, preparedCall: { registry, call },
     });
-    expect(admission.result.autonomousDecision?.outcome).toBe('act');
+    expect(admission.result).toMatchObject({ approved: true });
     return await registry.executePrepared(call, admission);
   } finally { await registry.releaseProjected(projected); }
 }

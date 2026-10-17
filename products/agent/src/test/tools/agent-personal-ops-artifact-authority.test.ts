@@ -86,7 +86,7 @@ test('current recorded admission publishes real review bytes without caller flag
 
 test('read-only policy vetoes publication despite a synthetic read classification', async () => {
   const f = fixture('plan');
-  await expect(f.admitted.run({ confirm: true, explicitUserRequest: 'Caller annotation' })).rejects.toThrow(ToolInputProjectionError);
+  expect(await f.admitted.run({ confirm: true, explicitUserRequest: 'Caller annotation' })).toMatchObject({ success: false, error: 'plan_mode' });
   expect(f.store.list()).toHaveLength(0); expect(readdirSync(f.store.storagePath)).toEqual([]);
 });
 

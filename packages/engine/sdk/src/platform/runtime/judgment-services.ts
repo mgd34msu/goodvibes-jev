@@ -179,11 +179,12 @@ export function composeJudgment(input: JudgmentServicesInput): JudgmentServices 
   // its decision, readings and action synchronously; a burst of responses must
   // not keep terminal input waiting behind all of those durable writes.
   const completions: (() => void)[] = [];
+  let closing = false;
   const publish = (): void => {
     completions.shift()?.();
     if (completions.length > 0) setImmediate(publish);
   };
-  const yieldCompletion = (): Promise<void> => new Promise(resolve => {
+  const yieldCompletion = (): Promise<void> => closing ? Promise.resolve() : new Promise(resolve => {
     completions.push(resolve);
     if (completions.length === 1) setImmediate(publish);
   });
@@ -224,6 +225,10 @@ export function composeJudgment(input: JudgmentServicesInput): JudgmentServices 
   void input.config.announceUnknownSettingForms?.();
   input.disposal.add('judgment port and decision log', () => {
     retired.add(port);
+    closing = true;
+    // Interactive fairness no longer applies after retirement. Drain queued
+    // completions directly; shutdown must not depend on a later event-loop turn.
+    while (completions.length > 0) completions.shift()!();
     sourceLifetime.dispose();
     restoreJudgmentPort(port, previous !== undefined && !retired.has(previous) ? previous : undefined);
     lifetime.abort(new JudgmentError('aborted', 'the judgment runtime is shutting down'));

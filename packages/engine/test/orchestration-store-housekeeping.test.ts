@@ -23,6 +23,8 @@ import {
 } from '../sdk/src/platform/orchestration/persistence.js';
 import { emptyWorkItemUsage, type WorkItem, type Workstream } from '../sdk/src/platform/orchestration/types.js';
 import { WorktreeRegistry } from '../sdk/src/platform/runtime/worktree/registry.js';
+import { GitService } from '../sdk/src/platform/git/service.js';
+import { withFileWriteLockSync } from '../sdk/src/platform/workspace/checkpoint/sync-write-lock.js';
 import { logger } from '../sdk/src/platform/utils/logger.js';
 
 const NOW = 1_800_000_000_000; // fixed clock for every age assertion
@@ -636,12 +638,12 @@ describe('orchestration snapshot housekeeping', () => {
     expect(existsSync(stale)).toBe(false);
   });
 
-  test('listSnapshotWorkstreamIds reaps before it enumerates, so no reclaimed id is handed back', () => {
+  test('listSnapshotWorkstreamIds retains terminal work without an implicit age cap', () => {
     const root = scratch('ws-list-');
     writeSnapshotFile(root, 'ws-old-done', ['passed'], NOW - 30 * DAY_MS);
     writeSnapshotFile(root, 'ws-running', ['in-phase'], NOW - 30 * DAY_MS);
 
-    expect(listSnapshotWorkstreamIds(root, { now: NOW })).toEqual(['ws-running']);
+    expect(listSnapshotWorkstreamIds(root, { now: NOW }).sort()).toEqual(['ws-old-done', 'ws-running']);
   });
 
   test('nothing is disclosed when a housekeeping pass reclaims nothing', () => {
@@ -693,6 +695,39 @@ function preservedFiles(root: string): string[] {
 }
 
 describe('worktree register housekeeping', () => {
+  test('a refresh preserves attachments made while Git is listing worktrees', async () => {
+    const root = makeRepo('wt-refresh-attachment-');
+    const registry = new WorktreeRegistry(root);
+    registry.attach(root, { sessionId: 'original-session' });
+    let finish!: () => void;
+    const listing = new Promise<void>(resolve => { finish = resolve; });
+    const original = GitService.prototype.worktreeList;
+    const spy = spyOn(GitService.prototype, 'worktreeList').mockImplementation(async function (this: GitService) {
+      await listing;
+      return original.call(this);
+    });
+    spies.push(spy);
+    const refresh = registry.list();
+    registry.attach(root, { sessionId: 'current-session' });
+    registry.attach(join(root, 'new-worktree'), { taskId: 'new-task' });
+    finish();
+    await refresh;
+    expect(readRegisterRecords(root)[root]).toMatchObject({ sessionId: 'current-session' });
+    expect(readRegisterRecords(root)[join(root, 'new-worktree')]).toMatchObject({ taskId: 'new-task' });
+  });
+
+  test('a competing writer cannot overwrite the registry while its lock is held', () => {
+    const root = makeRepo('wt-locked-');
+    const registry = new WorktreeRegistry(root);
+    registry.attach(root, { sessionId: 'original-session' });
+    withFileWriteLockSync(storePath(root), () => {
+      expect(() => registry.attach(root, { sessionId: 'competing-session' })).toThrow('already owned');
+      expect(readRegisterRecords(root)[root]).toMatchObject({ sessionId: 'original-session' });
+    });
+    registry.attach(root, { sessionId: 'current-session' });
+    expect(readRegisterRecords(root)[root]).toMatchObject({ sessionId: 'current-session' });
+  });
+
   test('a corrupt register is preserved aside and disclosed instead of silently emptied', async () => {
     const root = makeRepo('wt-corrupt-');
     mkdirSync(join(root, '.goodvibes'), { recursive: true });

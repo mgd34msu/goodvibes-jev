@@ -29,7 +29,7 @@ test('MCP deterministic allow needs genuine original source and recorded admissi
     expect(f.calls).toHaveLength(0);
     expect(await f.call()).toMatchObject({ done: true });
     expect(f.calls).toHaveLength(1); expect(f.admissions).toHaveBeenCalled();
-    expect(JSON.stringify(f.readings.filter(reading => 'disposition' in reading.questions))).toContain('Original caller:');
+    expect(JSON.stringify(f.admissionSources)).toContain('Original caller:');
     expect(f.daemon.services.workspaceTrustManager.isDecided()).toBe(false);
     expect(f.human).not.toHaveBeenCalled();
   } finally { await f.close(); }
@@ -84,14 +84,18 @@ for (const protocol of ['MCP', 'ACP']) test(`${protocol} trust ABA during record
   const trust = f.daemon.services.workspaceTrustManager;
   await trust.setLevel('trusted');
   let changed = false;
-  f.onReading(async reading => {
-    if (changed || !('disposition' in reading.questions)) return;
+  f.onAdmission(async () => {
+    if (changed) return;
     changed = true; await trust.setLevel('restricted'); await trust.setLevel('trusted');
   });
   try {
     if (protocol === 'MCP') { await expect(f.call()).rejects.toThrow(); expect(f.calls).toHaveLength(0); }
     else {
-      const hosted = await f.spawn('Original owner goal');
+      const hook = async () => { if (!changed) { changed = true; await trust.setLevel('restricted'); await trust.setLevel('trusted'); } };
+      f.onAdmission(undefined);
+      const hosted = await f.spawn();
+      f.onAdmission(hook);
+      f.acp.prompt(hosted.id, 'Original owner goal');
       await until(() => f.acp.get(hosted.id)?.state === 'idle', 'ACP refusal settles');
       expect(f.acp.get(hosted.id)?.progress).not.toContain('permission granted');
     }
@@ -162,8 +166,8 @@ test('MCP post-dispatch trust ABA prevents an elicitation continuation', async (
   const trust = f.daemon.services.workspaceTrustManager;
   await trust.setLevel('trusted'); f.elicit();
   let changed = false;
-  f.onReading(async reading => {
-    if (changed || !f.calls.length || !('disposition' in reading.questions)) return;
+  f.onAdmission(async () => {
+    if (changed || !f.calls.length) return;
     changed = true; await trust.setLevel('restricted'); await trust.setLevel('trusted');
   });
   try { await expect(f.call()).rejects.toThrow(); expect(changed).toBe(true); expect(f.calls).toHaveLength(1); }

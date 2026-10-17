@@ -5,12 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ArtifactStore, type ArtifactCreateInput, type ArtifactRecord } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { PermissionMode } from '@goodvibes-jev/engine/sdk/platform/config';
-import type { LLMProvider } from '@goodvibes-jev/engine/sdk/platform/providers';
+import type { ChatRequest, LLMProvider } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { createAgentResearchRunsTool } from '../../tools/agent-research-runs-tool.ts';
 import { createAgentResearchSourcesTool } from '../../tools/agent-research-sources-tool.ts';
 import { createAgentResearchReportTool } from '../../tools/agent-research-report-tool.ts';
 import { createAgentResearchTool } from '../../tools/agent-research-tool.ts';
-import { createAgentModelCompareTool } from '../../tools/agent-model-compare-tool.ts';
+import { createAgentModelCompareTool, createModelCompareInputProjector } from '../../tools/agent-model-compare-tool.ts';
 import type { AgentModelCompareArtifactStore } from '../../tools/agent-model-compare-types.ts';
 import { AgentResearchRunRegistry } from '../../agent/research-run-registry.ts';
 import { AgentResearchSourceRegistry } from '../../agent/research-source-registry.ts';
@@ -55,15 +55,16 @@ function compareFixture(options: { mode?: PermissionMode; artifactText?: string;
     list: () => [current], get: id => id === current.id ? current : null,
     async readContent() { return { record: current, buffer: Buffer.from(content) }; },
   };
-  const provider: LLMProvider = { name: 'synthetic', models: ['a', 'b'], async chat(request) { chats++; await options.beforeChat?.(); drained++; return { content: `${request.model} synthetic response`, toolCalls: [], usage: { inputTokens: 11, outputTokens: 7 }, stopReason: 'completed' }; } };
+  const chatRequests: ChatRequest[] = [];
+  const provider: LLMProvider = { name: 'synthetic', models: ['a', 'b'], async chat(request) { chatRequests.push(request); chats++; await options.beforeChat?.(); drained++; return { content: `${request.model} synthetic response`, toolCalls: [], usage: { inputTokens: 11, outputTokens: 7 }, stopReason: 'completed' }; } };
   let currentProvider = provider;
   const providerRegistry = { getForModel: () => currentProvider };
   const raw = createAgentModelCompareTool({ toolRegistry: owner.registry, artifactStore: store,
     modelCatalog: { async listModels() { await options.beforeModels?.(); return ['a', 'b'].map(modelId => ({ modelId, providerId: 'synthetic', registryKey: `synthetic:${modelId}`, selectable: true })); } },
     providerRegistry,
   });
-  const tool = owner.tool(raw);
-  return { owner, tool, raw, inputs, attemptedInputs, replaceArtifact() { current = { ...record, metadata: { purpose: 'replacement' } }; },
+  const tool = owner.tool(raw, { inputProjection: createModelCompareInputProjector() });
+  return { owner, tool, raw, inputs, attemptedInputs, chatRequests, replaceArtifact() { current = { ...record, metadata: { purpose: 'replacement' } }; },
     replaceProvider() { currentProvider = { ...provider }; },
     replaceProviderMethod() { provider.chat = async () => ({ content: 'Replacement provider response', toolCalls: [], usage: { inputTokens: 11, outputTokens: 7 }, stopReason: 'completed' }); },
     replaceBackendWithGetter(backend: 'provider' | 'artifact') {
@@ -166,15 +167,17 @@ test('an existing planned run without a note starts and checkpoints under record
   expect(AgentResearchSourceRegistry.fromShellPaths(shell).list()).toHaveLength(1);
 });
 
-test('metered candidate admission records its actual full model, prompt and token request', async () => {
+test('metered candidates receive the full admitted model, prompt and token request', async () => {
   const f = compareFixture();
   expect(await f.tool.execute({ mode: 'run', artifactId: 'source-1', prompt: 'Compare this synthetic evidence.', maxTokens: 23 })).toMatchObject({ success: true });
   expect(f.chats).toBe(2); expect(f.writes).toBe(1);
-  const candidateReadings = f.owner.port.requests.filter(request => JSON.stringify(request.state).includes('agent_model_compare_candidate'));
-  expect(candidateReadings.length).toBeGreaterThan(0);
-  const states = candidateReadings.map(request => JSON.stringify(request.state)).join('\n');
-  expect(states).toContain('Synthetic source content.'); expect(states).toContain('metered'); expect(states).toContain('23');
-  expect(states).toContain('synthetic:a'); expect(states).toContain('synthetic:b');
+  expect(f.owner.port.requests.filter(request => JSON.stringify(request.state).includes('agent_model_compare_candidate'))).toHaveLength(0);
+  expect(f.chatRequests.map(request => request.model)).toEqual(['a', 'b']);
+  for (const request of f.chatRequests) {
+    expect(request.maxTokens).toBe(23);
+    expect(JSON.stringify(request.messages)).toContain('Synthetic source content.');
+    expect(JSON.stringify(request.messages)).toContain('Compare this synthetic evidence.');
+  }
 });
 
 test('admitted comparison preview stays available without metered sends or writes, including read-only mode', async () => {
@@ -305,6 +308,7 @@ test.each(['overwrite', 'symlink'] as const)('native artifact %s during provider
   const record = store.getRecord(source.id)!;
   const entered = deferred(); const release = deferred(); const owner = effectAdmissionFixture();
   bindAgentResearchSourceOwner(owner.registry, ordinaryResearchOwner());
+  const chatRequests: ChatRequest[] = [];
   const provider: LLMProvider = { name: 'synthetic', models: ['a', 'b'], async chat() { entered.resolve(); await release.promise; return { content: 'Synthetic response', toolCalls: [], usage: { inputTokens: 11, outputTokens: 7 }, stopReason: 'completed' }; } };
   const tool = owner.tool(createAgentModelCompareTool({ toolRegistry: owner.registry, artifactStore: store,
     modelCatalog: { listModels: () => ['a', 'b'].map(modelId => ({ modelId, providerId: 'synthetic', registryKey: `synthetic:${modelId}`, selectable: true })) },
@@ -322,6 +326,7 @@ test('replacement of a native artifact storage root during prompt-only provider 
   const root = mkdtempSync(join(tmpdir(), 'native-comparison-root-')); roots.push(root);
   const store = new ArtifactStore({ rootDir: join(root, 'artifacts') }); const entered = deferred(); const release = deferred();
   const owner = effectAdmissionFixture(); bindAgentResearchSourceOwner(owner.registry, ordinaryResearchOwner());
+  const chatRequests: ChatRequest[] = [];
   const provider: LLMProvider = { name: 'synthetic', models: ['a', 'b'], async chat() { entered.resolve(); await release.promise; return { content: 'Synthetic response', toolCalls: [], usage: { inputTokens: 11, outputTokens: 7 }, stopReason: 'completed' }; } };
   const tool = owner.tool(createAgentModelCompareTool({ toolRegistry: owner.registry, artifactStore: store,
     modelCatalog: { listModels: () => ['a', 'b'].map(modelId => ({ modelId, providerId: 'synthetic', registryKey: `synthetic:${modelId}`, selectable: true })) },

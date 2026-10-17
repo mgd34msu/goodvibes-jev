@@ -85,10 +85,15 @@ function renderCodeIndexStatus(stats: CodeIndexStats, configManager: Pick<Config
   // Passive code auto-injection state (flag + setting) and the last tool-site reindex.
   lines.push(renderAutoInjectionState(extras.flagEnabled, autoStart));
   lines.push(renderReindexActivity(extras.reindexActivity, extras.now ?? Date.now()));
-  lines.push(
-    `  bounds: max ${CODE_INDEX_MAX_FILES} files (maxFiles), ${formatBytes(CODE_INDEX_MAX_FILE_BYTES)} per file (maxFileBytes),`
-    + ` ${formatBytes(CODE_INDEX_MAX_TOTAL_BYTES)} total per build (maxTotalBytes)`,
-  );
+  if ([CODE_INDEX_MAX_FILES, CODE_INDEX_MAX_FILE_BYTES, CODE_INDEX_MAX_TOTAL_BYTES].every(limit => limit === Infinity)) {
+    lines.push('  limits: no file count or byte limits');
+  } else {
+    lines.push(
+      `  bounds: max ${CODE_INDEX_MAX_FILES} files (maxFiles), ${formatBytes(CODE_INDEX_MAX_FILE_BYTES)} per file (maxFileBytes),`
+      + ` ${formatBytes(CODE_INDEX_MAX_TOTAL_BYTES)} total per build (maxTotalBytes)`,
+    );
+  }
+
   // Provider-space honesty (SDK finding): vectors embedded under a different
   // provider than the current default disable the vector search path until a
   // rebuild re-embeds, say so, in the store's own words.

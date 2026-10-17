@@ -18,16 +18,9 @@
  * about which providers are actually configured as one built from a real
  * environment with those keys absent.
  *
- * ── Hoist provenance (2026-07-30 daemon/TUI split) ───────────────────────────
- *
- * This existed only in the agent (`runtime/services.ts`), which needed it
- * because it is itself a daemon-grade host process. The parity gap the
- * daemon/TUI split checklist calls out is that the *standalone* daemon has
- * the identical must-boot property, a real deployment will not always have
- * every provider's API key set, so this is hoisted here rather than staying
- * agent-only, unchanged from the agent's implementation (it has no
- * agent-specific dependency: only `ProviderRegistry`, its constructor
- * options, and `process.env`).
+ * Both Agent and standalone daemon hosts need to start when only some
+ * providers are configured. This shared construction uses `ProviderRegistry`,
+ * its constructor options, and `process.env`; it has no product dependency.
  */
 import { ProviderRegistry } from './registry.js';
 

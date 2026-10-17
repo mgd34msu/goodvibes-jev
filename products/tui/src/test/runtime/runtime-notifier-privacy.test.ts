@@ -1,3 +1,4 @@
+import * as webhookHttp from '@goodvibes-jev/engine/sdk/platform/utils';
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { Notifier, WebhookNotifier, SlackIntegration, DiscordIntegration } from '@goodvibes-jev/engine/sdk/platform/integrations';
 import { RuntimeEventBus, createEventEnvelope } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
@@ -14,8 +15,13 @@ const URL_A = 'https://example.com/tui-a';
 const URL_B = 'https://example.com/tui-b';
 const ctx = { sessionId: 'fixture-session', source: 'tui-notification-test' };
 let fetchSpy: ReturnType<typeof spyOn<typeof globalThis, 'fetch'>> | undefined;
-afterEach(() => { fetchSpy?.mockRestore(); fetchSpy = undefined; });
+let webhookSpy: ReturnType<typeof spyOn<typeof webhookHttp, 'postToPublicWebhook'>> | undefined;
+afterEach(() => { fetchSpy?.mockRestore(); fetchSpy = undefined; webhookSpy?.mockRestore(); webhookSpy = undefined; });
 function transport(send: (url: string, body: string) => Promise<Response>) {
+  webhookSpy = spyOn(webhookHttp, 'postToPublicWebhook').mockImplementation(async (url, init) => {
+    if (url !== URL_A && url !== URL_B) throw new Error('Unexpected synthetic destination');
+    return send(url, String(init.body));
+  });
   fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const url = String(input);
     if (url !== URL_A && url !== URL_B) throw new Error('Unexpected synthetic destination');
@@ -166,7 +172,7 @@ test('a typed runtime delivery queued in the dead-letter store restricts replay 
   } finally { unsubscribe(); await notifier.close(); }
 });
 
-test('a cached explicit false cannot override the current restrictive privacy reader', () => {
+test('a cached explicit false cannot override the current restrictive privacy reader', async () => {
   let reads = 0;
   const sent: string[] = [];
   transport(async (_, body) => { sent.push(body); return new Response('ok'); });
@@ -177,6 +183,7 @@ test('a cached explicit false cannot override the current restrictive privacy re
     get name(): string { reads++; throw new Error(PRIVATE); }, get reason(): string { reads++; throw new Error(PRIVATE); },
   });
   expect(reads).toBe(0);
+  await waitFor(() => sent.length === 1);
   expect(sent).toEqual(['GoodVibes: turn failed\nFailed after 1m']);
 });
 

@@ -297,7 +297,7 @@ export class DaemonSurfaceActionHelper {
       if (!denial.allowed) return denial;
     }
     // Before anything below can store, log or transcribe the message
-    // (docs/inbound-email.md §11.0). evaluateIngress writes input.text into the
+    // (docs/decisions/2026-07-27-inbound-email-design.md §11.0). evaluateIngress writes input.text into the
     // channel policy audit trail and schedules it to disk, and an approval
     // reply's full text becomes a stored steering note, so a card number
     // typed here reaches disk by two routes unless this runs ahead of both.

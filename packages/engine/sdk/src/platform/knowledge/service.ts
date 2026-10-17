@@ -334,22 +334,22 @@ export class KnowledgeService {
     return this.store.listNodeRevisions(nodeId);
   }
 
-  /** Honest hard delete of a single node, removes the row and its history. (Defect 6.) */
+  /** Honest hard delete of a single node, removes the row and its history. */
   async deleteNode(id: string): Promise<{ deleted: boolean }> {
     return { deleted: await this.store.deleteNode(id) };
   }
 
-  /** Honest hard delete of a single source and its derived records. (Defect 6.) */
+  /** Honest hard delete of a single source and its derived records. */
   async deleteSource(id: string): Promise<{ deleted: boolean }> {
     return { deleted: await this.store.deleteSource(id) };
   }
 
-  /** Merge one node into another, re-pointing cross-reference edges. (Defect 5.) */
+  /** Merge one node into another, re-pointing cross-reference edges. */
   async mergeNodes(loserId: string, winnerId: string): Promise<{ merged: boolean; repointedEdges: number }> {
     return this.store.mergeNodes(loserId, winnerId);
   }
 
-  /** Accept/reject a pending node, the decide step that governs activation. (Defect 2.) */
+  /** Accept/reject a pending node, the decide step that governs activation. */
   async reviewNode(input: KnowledgeNodeReviewDecisionInput): Promise<{ ok: boolean; node?: KnowledgeNodeRecord | undefined }> {
     return reviewKnowledgeNodeRecord(this.store, input);
   }

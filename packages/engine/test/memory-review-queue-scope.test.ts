@@ -165,7 +165,7 @@ describe('MemoryRegistry.reviewQueue scope filter', () => {
   });
 });
 
-describe('HTTP handler: GET /api/memory/review-queue (Item 7)', () => {
+describe('HTTP handler: GET /api/memory/review-queue', () => {
   async function makeHandlers(root: string) {
     const { createDaemonIntegrationRouteHandlers } = await import('../daemon-sdk/src/integration-routes.js');
     const configManager = new ConfigManager({ configDir: join(root, 'config') });

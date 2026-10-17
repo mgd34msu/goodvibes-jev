@@ -225,7 +225,11 @@ export function installAgentMcpCallRoute(registry: ToolRegistry, context: McpCal
         { signal, assertCurrent: assertEffect, expectedSchema: selectedSchema }]), signal);
       if (result === CANCELLED) return { success: false, error: 'MCP call was cancelled.' };
       assertEffect();
-      return { success: true, output: stringifyResult(result) };
+      const output = stringifyResult(result);
+      if (result && typeof result === 'object' && !Array.isArray(result) && 'isError' in result && result.isError === true) {
+        return { success: false, output, error: 'The MCP server reported a tool error.' };
+      }
+      return { success: true, output };
     } catch (error) {
       if (error instanceof ToolInputProjectionError || signal?.aborted) return { success: false, error: 'MCP call held: its recorded source or execution authority is unavailable.' };
       return { success: false, error: 'MCP call failed at the connected server boundary.' };

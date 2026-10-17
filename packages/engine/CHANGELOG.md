@@ -2818,7 +2818,7 @@ endpoints (6) are unchanged.
   history-delta source preferred when Google is adopted, per-source cursor,
   record and expectation stores, a probed body-access capability check, health
   reporting on the daemon's own health surface, and an owner-notice path.
-  Design of record: `docs/inbound-email.md`; read §5 first.
+  Design of record: `docs/decisions/2026-07-27-inbound-email-design.md`; read §5 first.
 
 - **`mcp.servers.reveal`**, reads back a configured MCP server entry.
 
@@ -5854,7 +5854,7 @@ knowledge injection for both turn loops, and a repo code index.
   token cost) in bounded rings, `AgentRecord.turnInjections` and
   `Orchestrator.getTurnInjections()`; `OrchestratorCoreServices.memoryRegistry`
   seam via `setCoreServices`.
-- `@goodvibes-jev/engine/sdk`: **repo code index** (`CodeIndexStore`, Stage A), tree-sitter chunking, bounded gitignore-aware walk (nested .gitignore honored),
+- `@goodvibes-jev/engine/sdk`: **repo code index** (`CodeIndexStore`), tree-sitter chunking, bounded gitignore-aware walk (nested .gitignore honored),
   hash-gated incremental rebuilds, honest lexical/semantic labeling with
   embedding-provider identity pinned per build (mismatch degrades to lexical with
   a rebuild hint), sqlite-vec backend, fleet `code-index` node; auto-start off by
@@ -5902,8 +5902,8 @@ knowledge injection for both turn loops, and a repo code index.
 ### Notes
 - `ProcessState` gains `'paused'` and `'interrupted'` (additive; stale consumers
   render unknown-state fallbacks).
-- Stage B of the code index (auto-injection into turns + tool-site reindex
-  hooks) is deliberately deferred.
+- Automatic code-index injection into turns and tool-site reindex
+  hooks are deliberately deferred in this release.
 
 ## [0.37.2] - 2026-07-04
 
@@ -5948,7 +5948,7 @@ An early "trust repairs" round from the goodvibes-tui live-dogfooding effort: ev
 - `@goodvibes-jev/engine/sdk`: the exec phase timeout now honors a caller-supplied `timeout_ms` larger than the phase default, so long full-suite runs are not killed at the generic deadline.
 
 ### Notes
-- Known follow-ups (documented, non-blocking): scoped-commit deletion paths must be repo-relative (absolute/'./'-prefixed self-reports are dropped, failing safe); the transport-retry budget is chain-global; `isTransportFailureMessage` deliberately matches broad substrings and can over-retry (bounded). Cooperative cancellation (AbortSignal through `Tool.execute`) remains unwired for all phased tools, an orphaned-child-process risk tracked for the orchestration wave.
+- Known follow-ups (documented, non-blocking): scoped-commit deletion paths must be repo-relative (absolute/'./'-prefixed self-reports are dropped, failing safe); the transport-retry budget is chain-global; `isTransportFailureMessage` deliberately matches broad substrings and can over-retry (bounded). Cooperative cancellation (AbortSignal through `Tool.execute`) remains unwired for all phased tools, an orphaned-child-process risk recorded for that release.
 
 ## [0.35.0] - 2026-06-30
 

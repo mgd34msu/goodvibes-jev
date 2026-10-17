@@ -89,13 +89,49 @@ describe('claimSurfaceHome', () => {
     return root;
   };
 
+  test('simultaneous processes cannot both acquire an empty home', async () => {
+    const home = newHome();
+    const module = new URL('../sdk/src/platform/runtime/home-single-writer.ts', import.meta.url).href;
+    const children = Array.from({ length: 6 }, () => Bun.spawn([process.execPath, '-e', `
+      const { claimSurfaceHome, readProcessIdentity } = await import(process.argv[1]);
+      console.log('ready');
+      await new Promise(resolve => process.stdin.once('data', resolve));
+      try {
+        claimSurfaceHome({ homeDirectory: process.argv[2], surfaceRoot: 'agent', identity: readProcessIdentity(process.pid) });
+        console.log('acquired');
+        setInterval(() => {}, 1000);
+      } catch { console.log('refused'); }
+    `, module, home], { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' }));
+    const readers = children.map(child => child.stdout.getReader());
+    try {
+      await Promise.all(readers.map(async reader => expect(new TextDecoder().decode((await reader.read()).value)).toContain('ready')));
+      for (const child of children) child.stdin.write('start\n');
+      const results = await Promise.all(readers.map(async reader => new TextDecoder().decode((await reader.read()).value).trim()));
+      expect(results.filter(value => value === 'acquired')).toHaveLength(1);
+      expect(results.filter(value => value === 'refused')).toHaveLength(5);
+    } finally {
+      for (const child of children) child.kill();
+      await Promise.all(children.map(child => child.exited));
+      for (const reader of readers) reader.releaseLock();
+    }
+  });
+
+  test('a replaced claim survives release of its older handle', () => {
+    const home = newHome();
+    const first = claimSurfaceHome({ homeDirectory: home, surfaceRoot: 'agent', pid: 500, identity: AGENT });
+    writeFileSync(first.path, JSON.stringify({ pid: 500, identity: AGENT, claimedAt: 123, token: 'replacement' }));
+    first.release();
+    expect(JSON.parse(readFileSync(first.path, 'utf8')).token).toBe('replacement');
+  });
+
   test('claiming an empty home writes an owner record', () => {
     const home = newHome();
     const held = claimSurfaceHome({
       homeDirectory: home, surfaceRoot: 'agent', pid: 500, identity: AGENT, now: () => 123,
     });
     const onDisk = JSON.parse(readFileSync(held.path, 'utf-8')) as HomeOwnerClaim;
-    expect(onDisk).toEqual({ pid: 500, claimedAt: 123, identity: AGENT });
+    expect(onDisk).toMatchObject({ pid: 500, claimedAt: 123, identity: AGENT });
+    expect(onDisk.token).toBeString();
     held.release();
     expect(existsSync(held.path)).toBe(false);
   });

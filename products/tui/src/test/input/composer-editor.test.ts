@@ -66,3 +66,12 @@ describe('openComposerInEditor', () => {
     expect(h.messages.some((m) => m.includes('Failed to launch'))).toBe(true);
   });
 });
+
+
+test('quoted editor paths and arguments are parsed without shell expansion', () => {
+  expect(resolveEditorCommand({ VISUAL: '\"/opt/My Editor/bin/editor\" --profile \"Work Profile\" --wait' })).toEqual({
+    cmd: '/opt/My Editor/bin/editor', args: ['--profile', 'Work Profile', '--wait'],
+  });
+  expect(resolveEditorCommand({ EDITOR: "editor '$HOME' '`whoami`' ''" })).toEqual({ cmd: 'editor', args: ['$HOME', '`whoami`', ''] });
+  expect(resolveEditorCommand({ EDITOR: 'editor "unterminated' })).toBeNull();
+});

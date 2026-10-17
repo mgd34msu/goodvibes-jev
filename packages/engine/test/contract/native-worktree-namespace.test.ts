@@ -100,8 +100,8 @@ test('actual native materialization failure cannot grant member authority after 
     if (contract === null) throw new Error('Native contract snapshot failed restore');
     const item = engine.getWorkstream('g1')!.items[0]!;
     expect(contract.status).toBe('failed');
-    expect(contract.error).toBe("unit u1's work item failed: worktree isolation setup failed: [REDACTED]");
-    expect(item.failureReason).toBe('worktree isolation setup failed: [REDACTED]');
+    expect(contract.error).toContain("unit u1's work item failed: worktree isolation setup failed:");
+    expect(item.failureReason).toContain('EEXIST');
     expect(h.agentsOf('u1')).toHaveLength(0);
     const path = item.worktreePath!; const branch = item.worktreeBranch!;
     expect(materializationFailure).toMatchObject({ code: 'EEXIST', syscall: 'open', path: join(path, 'README.md') });

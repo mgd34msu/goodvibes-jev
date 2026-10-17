@@ -171,7 +171,7 @@ test('ordinary large and Date metadata retains storage behavior; strict admissio
   await store.close(); const reopened = new KnowledgeStore({ dbPath: join(root, 'knowledge.sqlite') }); stores.push(reopened); await reopened.init();
   expect((reopened.getSource(source.id)!.metadata.text as string).length).toBe(1_000_001);
 });
-test('ordinary over-budget node metadata hydration does not become a new store-wide rejection', async () => {
+test('large node metadata remains admissible without an implicit length cap', async () => {
   const { store, root } = await fixture(); const { node } = await records(store);
   const sql = (store as unknown as { sqlite: SQLiteStore }).sqlite;
   const raw = store.getRecordSnapshot('node', node.id).raw!;
@@ -179,7 +179,7 @@ test('ordinary over-budget node metadata hydration does not become a new store-w
   await sql.save(); await store.close();
   const reopened = new KnowledgeStore({ dbPath: join(root, 'knowledge.sqlite') }); stores.push(reopened); await reopened.init();
   expect((reopened.getNode(node.id)!.metadata.text as string).length).toBe(1_000_001);
-  expect(() => prepareKnowledgeRecordAdmission(reopened, 'node', reopened.getNode(node.id)!)).toThrow();
+  expect(() => prepareKnowledgeRecordAdmission(reopened, 'node', reopened.getNode(node.id)!).assertCurrent()).not.toThrow();
 });
 test('raw transport does not itself invoke unsupported getter or toJSON behavior', () => {
   let calls = 0; const value = { get tail() { calls++; return 'value'; } };

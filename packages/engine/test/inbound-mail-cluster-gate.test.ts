@@ -1,7 +1,7 @@
 /**
  * inbound-mail-cluster-gate.test.ts
  *
- * Inbound mail as a leadership gate (docs/inbound-email.md §3.5), and the
+ * Inbound mail as a leadership gate (docs/decisions/2026-07-27-inbound-email-design.md §3.5), and the
  * registration hazard that sat directly above it.
  *
  * Why the gate exists: clustering defaults off, but when the owner opts in,

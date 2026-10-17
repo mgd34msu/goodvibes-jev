@@ -20,12 +20,6 @@
  */
 import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 
-/**
- * The work-note marker word, assembled at run time: this fixture data needs
- * the word to mean what it tests, and the source scan (todo:check) forbids
- * the literal in published source, where it would read as a deferred-work note.
- */
-const WORK_MARKER = ['TO', 'DO'].join('');
 
 const cmd = (command: string) => ({ command, workspace: '/home/dev/projects/shop-api (a TypeScript web service)' });
 
@@ -51,7 +45,7 @@ export const sandboxNeeds = defineBattery({
     { name: 'deploy script', state: cmd('bun run deploy:production'), expect: { needsNetwork: 'yes' } },
     { name: 'run tests', state: cmd('bun test test/orders.test.ts'), expect: { needsNetwork: 'no', needsPrivilege: 'no' } },
     { name: 'typecheck', state: cmd('bunx tsc --noEmit'), expect: { needsNetwork: 'no' } },
-    { name: 'grep the source', state: cmd(`grep -rn "${WORK_MARKER}" src`), expect: { needsNetwork: 'no', needsPrivilege: 'no' } },
+    { name: 'grep the source', state: cmd('grep -rn "fetchUser" src'), expect: { needsNetwork: 'no', needsPrivilege: 'no' } },
     { name: 'restart a service', state: cmd('sudo systemctl restart nginx'), expect: { needsPrivilege: 'yes' } },
     { name: 'apt install', state: cmd('apt-get install -y libpq-dev'), expect: { needsPrivilege: 'yes', needsNetwork: 'yes' } },
     { name: 'chown system dir', state: cmd('chown -R dev:dev /var/log/shop-api'), expect: { needsPrivilege: 'yes' } },

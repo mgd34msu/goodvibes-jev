@@ -20,6 +20,7 @@ import {
 import type { ControlPlaneGateway, SharedSessionBroker } from '../control-plane/index.js';
 import type { GatewayMethodCatalog, GatewayMethodDescriptor } from '../control-plane/index.js';
 import { grantedGatewayScopes } from '../control-plane/method-catalog.js';
+import { CHANNEL_REQUIRED_SCOPE } from '../control-plane/gateway-scope-enforcement.js';
 import type { RuntimeEventDomain } from '../runtime/events/index.js';
 import { isRuntimeEventDomain } from '../runtime/events/index.js';
 import type { DistributedRuntimeManager } from '../runtime/remote/index.js';
@@ -504,9 +505,15 @@ export class DaemonControlPlaneHelper {
       domains: ws.data.authenticated ? ws.data.domains : [],
       ...(ws.data.principalId ? { principalId: ws.data.principalId } : {}),
       ...(ws.data.principalKind ? { principalKind: ws.data.principalKind } : {}),
-      ...(ws.data.scopes.length > 0 ? { scopes: ws.data.scopes } : {}),
+      scopes: ws.data.scopes,
+      admin: ws.data.admin,
       remoteAddress: ws.data.remoteAddress,
     }, (event, payload) => {
+      const principal = this.describeAuthenticatedPrincipal(ws.data.authToken);
+      if (!principal || principal.principalId !== ws.data.principalId || principal.principalKind !== ws.data.principalKind) return;
+      const requiredScope = CHANNEL_REQUIRED_SCOPE[event];
+      if (requiredScope && (!(principal.scopes.includes('*') || principal.scopes.includes(requiredScope))
+        || !(ws.data.scopes.includes('*') || ws.data.scopes.includes(requiredScope)))) return;
       this.sendFrame(ws, JSON.stringify({ type: 'event', event, payload }));
     });
     ws.data.clientId = connection.clientId;
@@ -559,23 +566,10 @@ export class DaemonControlPlaneHelper {
         this.sendFrame(ws, JSON.stringify({ type: 'auth', ok: false, error: 'Unauthorized' }));
         return;
       }
-      this.context.controlPlaneGateway.authenticateClient(clientId, {
-        principalId: principal.principalId,
-        principalKind: principal.principalKind,
-        scopes: principal.scopes,
-        ...(typeof frame.label === 'string' ? { label: frame.label } : {}),
-        ...(Array.isArray(frame.capabilities) ? { capabilities: frame.capabilities.filter((value): value is string => typeof value === 'string') } : {}),
-      });
-      if (Array.isArray(frame.domains)) {
-        const domains = normalizeFrameDomains(frame.domains);
-        if (domains instanceof Response) {
-          this.sendFrame(ws, JSON.stringify({ type: 'auth', ok: false, error: 'Invalid runtime event domain' }));
-          return;
-        }
-        this.context.controlPlaneGateway.subscribeWebSocketClient(
-          clientId,
-          domains,
-        );
+      const domains = Array.isArray(frame.domains) ? normalizeFrameDomains(frame.domains) : undefined;
+      if (domains instanceof Response) {
+        this.sendFrame(ws, JSON.stringify({ type: 'auth', ok: false, error: 'Invalid runtime event domain' }));
+        return;
       }
       ws.data.authToken = token;
       ws.data.principalId = principal.principalId;
@@ -583,6 +577,20 @@ export class DaemonControlPlaneHelper {
       ws.data.scopes = principal.scopes;
       ws.data.admin = principal.admin;
       ws.data.authenticated = true;
+      this.context.controlPlaneGateway.authenticateClient(clientId, {
+        principalId: principal.principalId,
+        principalKind: principal.principalKind,
+        scopes: principal.scopes,
+        admin: principal.admin,
+        ...(typeof frame.label === 'string' ? { label: frame.label } : {}),
+        ...(Array.isArray(frame.capabilities) ? { capabilities: frame.capabilities.filter((value): value is string => typeof value === 'string') } : {}),
+      });
+      if (domains) {
+        this.context.controlPlaneGateway.subscribeWebSocketClient(
+          clientId,
+          domains,
+        );
+      }
       this.sendFrame(ws, JSON.stringify({ type: 'auth', ok: true, clientId, principalId: principal.principalId }));
       return;
     }
@@ -821,22 +829,22 @@ export class DaemonControlPlaneHelper {
         body: refusalBody(`Unknown gateway method: ${input.methodId}`, SDKErrorCodes.METHOD_NOT_FOUND, 404),
       };
     }
-    // Native ledger reads require current authority even on an already-open WS.
-    // Other verbs retain their existing policy; no cached context can re-grant
-    // a revoked token or widen a scope/role narrowed since authentication.
+    // Open connections do not preserve revoked credentials or old roles.
+    // Remote peers have a separate credential verifier on their HTTP routes.
     let context = input.context;
-    if (descriptor.metadata?.requiresFreshOperatorAuth === true) {
+    if (descriptor.access !== 'public' && descriptor.access !== 'remote-peer') {
       const principal = this.describeAuthenticatedPrincipal(input.authToken);
-      if (!principal) {
+      if (!principal || (context?.principalId !== undefined && context.principalId !== principal.principalId)
+        || (context?.principalKind !== undefined && context.principalKind !== principal.principalKind)) {
         return { status: 401, ok: false, body: refusalBody('Operator authentication is no longer valid', 'UNAUTHORIZED', 401) };
       }
-      const cachedScopes = new Set(context?.scopes ?? []);
+      const cachedScopes = new Set(context?.scopes ?? principal.scopes);
       const scopes = cachedScopes.has('*') ? principal.scopes
         : principal.scopes.includes('*') ? [...cachedScopes]
         : principal.scopes.filter(scope => cachedScopes.has(scope));
       context = {
         ...context, principalId: principal.principalId, principalKind: principal.principalKind,
-        admin: context?.admin === true && principal.admin, scopes,
+        admin: (context === undefined || context.admin === true) && principal.admin, scopes,
       };
     }
     const denied = this.validateGatewayInvocation(descriptor, context);
@@ -881,7 +889,7 @@ export class DaemonControlPlaneHelper {
           signal: input.signal,
           nativeExecutionAuthority: this.createNativeExecutionAuthority(input.authToken, context?.scopes ?? []) ?? undefined,
           isAuthorized: (requiredScopes = []) => {
-            if (descriptor.metadata?.requiresFreshOperatorAuth !== true) return true;
+            if (descriptor.access === 'public' || descriptor.access === 'remote-peer') return true;
             const fresh = this.describeAuthenticatedPrincipal(input.authToken);
             return fresh !== null && fresh.principalId === context?.principalId && fresh.principalKind === context?.principalKind
               && requiredScopes.every(scope => (fresh.scopes.includes('*') || fresh.scopes.includes(scope))

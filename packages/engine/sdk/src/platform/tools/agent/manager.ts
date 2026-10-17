@@ -51,7 +51,7 @@ function reserveSharedFleet<T>(reserve: () => T): T {
 export interface AgentManagerDependencies {
   readonly archetypeLoader?: Pick<ArchetypeLoader, 'loadArchetype'> | undefined;
   readonly messageBus?: Pick<AgentMessageBus, 'registerAgent'> | undefined;
-  /** Starts the contract a spawn that is not outside every contract becomes the owner of (design 10.3). */
+  /** Starts the contract a spawn that is not outside every contract becomes the owner of. */
   readonly contractRunner?: AgentContractRunner | null | undefined;
   readonly executor?: AgentExecutor | null | undefined;
   readonly configManager?: Pick<ConfigManager, 'get'> | undefined;
@@ -277,7 +277,7 @@ export class AgentManager {
   }
 
   /**
-   * Refuses a spawn requested by a contract leaf (design 10.3): a unit's
+   * Refuses a spawn requested by a contract leaf: a unit's
    * sub-agent or the contract planner never spawns agents of its own; the
    * contract plans sub-work. Emits CONTRACT_SPAWN_GUARD_TRIGGERED and throws.
    * AgentManager.spawn and the agent tool both call it before anything starts,
@@ -1002,7 +1002,7 @@ export class AgentManager {
     this.executor = executor;
   }
 
-  /** Composes the contract runner that spawns not outside every contract start through (design 10.3). */
+  /** Composes the contract runner that spawns not outside every contract start through. */
   setContractRunner(runner: AgentContractRunner | null): void {
     this.contractRunner = runner;
   }

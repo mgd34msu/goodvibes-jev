@@ -36,8 +36,10 @@ describe('agent_research_sources tool', () => {
       expect(missingIntent.error).toContain('recorded effect admission');
 
       const protectedInput = await tool.execute({ mode: 'add', question: 'Which source should we cite?', title: 'Private source', summary: 'Synthetic protected fixture.', url: 'https://example.test/docs?api_key=secret-value' });
-      expect(protectedInput.success).toBe(false);
-      expect(AgentResearchSourceRegistry.fromShellPaths(fixture.paths).list()).toEqual([]);
+      expect(protectedInput.success).toBe(true);
+      expect(JSON.stringify(AgentResearchSourceRegistry.fromShellPaths(fixture.paths).list())).not.toContain('secret-value');
+      expect(protectedInput.output).not.toContain('secret-value');
+      expect((await tool.execute({ mode: 'delete', id: 'private-source' })).success).toBe(true);
 
       const added = await tool.execute({
         mode: 'add',

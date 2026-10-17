@@ -54,9 +54,9 @@ test('source stale/conflict/recovery errors remain explicit and get does not fab
     await expect(f.catalog.invoke('workLedger.intake.get', f.invocation('get'))).rejects.toMatchObject({ status, code: `NATIVE_INTAKE_${code.replaceAll('-', '_').toUpperCase()}` });
   }
 });
-test('body limit, pre-abort, invalid host responses and post-host abort all fail closed', async () => {
+test('source schema, pre-abort, invalid host responses and post-host abort all fail closed', async () => {
   const f = fixture(); const invocation = f.invocation('capture');
-  await expect(f.catalog.invoke('workLedger.intake.capture', { ...invocation, body: { ...request('capture'), text: 'x'.repeat(300_000) } })).rejects.toMatchObject({ status: 413 });
+  await expect(f.catalog.invoke('workLedger.intake.capture', { ...invocation, body: { ...request('capture'), text: 'x'.repeat(300_000) } })).rejects.toMatchObject({ status: 400, code: 'INVALID_ARGUMENT' });
   const pre = new AbortController(); pre.abort();
   await expect(f.catalog.invoke('workLedger.intake.capture', { ...invocation, signal: pre.signal })).rejects.toMatchObject({ status: 503 }); expect(f.calls).toHaveLength(0);
   const invalid = fixture(() => Object.assign(captured(), { execution: {} }));

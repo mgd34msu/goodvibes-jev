@@ -74,10 +74,12 @@ describe('complete-candidate bounded relevance batches', () => {
       { ...candidate(2), extra: 'not part of this DTO' } as AnswerEvidenceCandidate] }), 'malformed');
     expect(fake.requests).toHaveLength(0);
   });
-  test('one oversized complete candidate holds without clipping or raising the reader limit', async () => {
+  test('a large complete candidate is read without clipping', async () => {
     const fake = readings();
-    await held(prepareAnswerEvidenceRelevanceBatches({ query, candidates: [candidate(1), { ...candidate(2), text: 'x'.repeat(160_000) }] }), 'budget');
-    expect(fake.requests).toHaveLength(0);
+    const text = 'x'.repeat(160_000);
+    const plan = await prepareAnswerEvidenceRelevanceBatches({ query, candidates: [candidate(1), { ...candidate(2), text }] });
+    expect(plan.accepted).toHaveLength(2);
+    expect(fake.requests.map(request => (request.state as { candidate: { text: string } }).candidate.text)).toContain(text);
   });
   test('candidate and envelope accessors never execute during corpus preparation', async () => {
     const fake = readings(); let invoked = 0;

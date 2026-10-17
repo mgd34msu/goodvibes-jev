@@ -228,10 +228,10 @@ export interface OrchestratorTurnLoopContext {
   readonly recordTurnKnowledgeInjection: (record: TurnInjectionRecord) => void;
   /** Monotonic per-Orchestrator-lifetime sequence number for TurnInjectionRecord.turn. */
   readonly nextTurnKnowledgeSequence: () => number;
-  /** The contract runner's hooks: a session-mode contract's unit is worked, held and nudged in this session's turns (design 6.6). */
+  /** The contract runner's hooks: a session-mode contract's unit is worked, held and nudged in this session's turns. */
   readonly contractHooks?: ContractSessionHooks | undefined;
   /**
-   * Turn intake (contract runner design 10.3): read once per user turn before
+   * Turn intake: read once per user turn before
    * the first model call. A reply to an open escalation goes to the contract,
    * and work routed to a contract starts one; either way the turn ends there.
    */

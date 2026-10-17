@@ -1,14 +1,5 @@
-// Ported from goodvibes-agent src/test/tools/owner-terminal-guard.test.ts.
-//
-// The Agent's local turns state the owner-terminal rule with the value in
-// gate/policy/exec-posture.ts. hosted-exec-containment.test.ts already pins
-// the guard itself and that the platform's own session stays drivable; these
-// are the agent test's remaining claims, through a real exec tool given the
-// Agent's value: typing into a session the platform did not name is refused,
-// naming the rule, and reading tmux state still runs. (The agent test's check
-// that its bootstrap passes this value stays with the agent product.)
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createExecTool } from '../sdk/src/platform/tools/exec/index.ts';
@@ -32,6 +23,8 @@ const roots: string[] = [];
 function agentExecTool() {
   const root = mkdtempSync(join(tmpdir(), 'gv-agent-owner-terminal-'));
   roots.push(root);
+  // Exercise the actual exec path without contacting the owner's tmux server.
+  writeFileSync(join(root, 'tmux'), '#!/bin/sh\nprintf \"fixture-tmux:%s\\n\" \"$*\"\n', { mode: 0o700 });
   return createExecTool(new ProcessManager(), {
     overflowHandler: new OverflowHandler({ baseDir: root }),
     defaultWorkingDirectory: root,
@@ -40,7 +33,7 @@ function agentExecTool() {
 }
 
 async function run(cmd: string) {
-  const result = await agentExecTool().execute({ commands: [{ cmd }] });
+  const result = await agentExecTool().execute({ commands: [{ cmd: cmd.replaceAll('tmux ', './tmux ') }] });
   const output = JSON.parse(String(result.output ?? '{}')) as Record<string, unknown>;
   return {
     success: result.success,
@@ -53,25 +46,14 @@ afterAll(() => {
   for (const root of roots) rmSync(root, { recursive: true, force: true });
 });
 
-describe('the Agent\'s exec posture and the owner\'s tmux', () => {
-  test('the Agent states the rule as enforced', () => {
-    expect(AGENT_OWNER_TERMINAL_GUARD).toEqual({ posture: 'enforced' });
+describe('the Agent exec posture', () => {
+  test('uses the configured permissions without an extra terminal prompt', () => {
+    expect(AGENT_OWNER_TERMINAL_GUARD).toEqual({ posture: 'off' });
   });
-
-  test('typing into a session this platform did not name is refused, naming the rule', async () => {
-    const outcome = await run('tmux send-keys -t main "echo owned" Enter');
-    expect(outcome.success).toBe(false);
-    expect(outcome.stderr).toContain(RULE);
-    // The command must not have run on the way to being reported.
-    expect(outcome.stdout).not.toContain('owned');
-  });
-
-  test('reading tmux state is not touching it, and still runs', async () => {
-    // The trailing echo proves the command reached the shell: `tmux
-    // list-sessions` fails on a host with no tmux server, and that is not the
-    // thing under test.
-    const outcome = await run('tmux list-sessions; echo probe-ran');
+  test.each(['tmux send-keys -t fixture echo owned', 'tmux list-sessions'])('runs authorized terminal command %s through the fixture', async command => {
+    const outcome = await run(command);
+    expect(outcome.success).toBe(true);
+    expect(outcome.stdout).toContain('fixture-tmux:');
     expect(outcome.stderr).not.toContain(RULE);
-    expect(outcome.stdout).toContain('probe-ran');
   });
 });

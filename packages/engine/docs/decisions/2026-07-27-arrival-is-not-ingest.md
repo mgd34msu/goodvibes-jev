@@ -6,7 +6,7 @@ Status: accepted
 
 ## Context
 
-The daemon is gaining a listener for incoming mail (`docs/inbound-email.md`).
+The daemon is gaining a listener for incoming mail (`docs/decisions/2026-07-27-inbound-email-design.md`).
 That listener runs continuously, in the background, with nobody watching.
 
 The untrusted-content ledger it would feed is **one instance per process**

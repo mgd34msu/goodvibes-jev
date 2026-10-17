@@ -69,6 +69,9 @@ const capture: { done: boolean; token: string | null; offers: PairingOfferKind[]
   token: null,
   offers: [],
 };
+// Identity replacement remounts private UI. A captured QR is still a one-shot
+// credential handoff; remounting (especially after sign-out) must never replay it.
+let validation: Promise<unknown> | null = null;
 
 function capturePairingHandoff(): { token: string | null; offers: readonly PairingOfferKind[] } {
   if (!capture.done) {
@@ -83,6 +86,7 @@ function capturePairingHandoff(): { token: string | null; offers: readonly Pairi
 
 /** Test-only: reset the module-level capture between cases. */
 export function resetPairingCaptureForTest(): void {
+  validation = null;
   capture.done = false;
   capture.token = null;
   capture.offers = [];
@@ -105,7 +109,8 @@ export function usePairingHandoff(): PairingHandoff {
     if (token === null) return;
     void (async () => {
       try {
-        await setExplicitAuthToken(token);
+        validation ??= setExplicitAuthToken(token);
+        await validation;
         // First-load auth/boot/health requests may still carry the old token.
         // Invalidation alone joins an in-flight query when it has no cached data,
         // leaving a late anonymous 401 authoritative after successful pairing.

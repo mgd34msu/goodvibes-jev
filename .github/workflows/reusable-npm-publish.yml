@@ -44,7 +44,7 @@ name: Reusable npm publish
 #       with:
 #         tarball-artifact: agent-npm-tarball
 #         publish-command: >-
-#           bunx @goodvibes-jev/engine/toolchain goodvibes-publish-package --poll
+#           bunx --package @goodvibes-jev/engine goodvibes-publish-package --poll
 #           --tarball "./$(ls release-tarball/*.tgz)"   # ./ prefix required: npm parses a bare a/b path as a GitHub spec
 #     Glob resolution is the consumer command's problem (the `ls` above). With
 #     no tarball-artifact the download step is skipped and behavior is
@@ -69,7 +69,7 @@ on:
           empty-or-complete precheck. Default uses the toolchain CLI.
         required: false
         type: string
-        default: "bunx @goodvibes-jev/engine/toolchain goodvibes-publish-package --poll"
+        default: "bunx --package @goodvibes-jev/engine goodvibes-publish-package --poll"
       tarball-artifact:
         description: Optional upload-artifact name of a prebuilt .tgz to publish.
           When non-empty it is downloaded into ./release-tarball/ before the
@@ -125,4 +125,6 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.npm-token }}
           GOODVIBES_PUBLISH_REGISTRY: ${{ inputs.registry }}
+          # npmjs supports attestations; custom registries may not.
+          NPM_CONFIG_PROVENANCE: ${{ inputs.registry == 'https://registry.npmjs.org' || inputs.registry == 'https://registry.npmjs.org/' }}
         run: ${{ inputs.publish-command }}

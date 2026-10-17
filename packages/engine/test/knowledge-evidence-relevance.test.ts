@@ -57,9 +57,8 @@ describe('initial evidence relevance reading foundation', () => {
     expect(answerEvidenceRelevance.version).toBe(2);
     expect(answerEvidenceRelevance.fixtures.some(fixture => fixture.name.includes('regional variant'))).toBe(true);
   });
-  test('subject shape, bounds and protected late identity are checked before the first request', async () => {
+  test('subject shape and protected late identity are checked before the first request', async () => {
     const fake = readings(); const subject = { title: 'AC-7', kind: 'device', aliases: [] };
-    await held(prepareAnswerEvidenceRelevance({ ...input(), subjects: Array.from({ length: 25 }, () => subject) }), 'budget');
     await held(prepareAnswerEvidenceRelevance({ ...input(), subjects: [{ ...subject, identity: { arbitraryAdminData: 'not a subject field' } }] }), 'malformed');
     await expect(prepareAnswerEvidenceRelevance({ ...input(), subjects: [subject, { ...subject, identity: { variant: { note: 'Card 4111111111111111' } } }] }))
       .rejects.toBeInstanceOf(JudgmentInputError);
@@ -97,12 +96,19 @@ describe('initial evidence relevance reading foundation', () => {
     await expect(prepareAnswerEvidenceRelevance(input([candidate('candidate-4111111111111111')]))).rejects.toBeInstanceOf(JudgmentInputError);
     expect(fake.requests).toHaveLength(0);
   });
-  test('duplicate references, extra record fields and oversized complete input are held without clipping', async () => {
+  test('duplicate references and extra record fields are refused before transmission', async () => {
     const fake = readings();
     await held(prepareAnswerEvidenceRelevance(input([candidate(), candidate()])), 'malformed');
     await held(prepareAnswerEvidenceRelevance(input([{ ...candidate(), metadata: { ignored: 'not part of the DTO' } } as AnswerEvidenceCandidate])), 'malformed');
-    await held(prepareAnswerEvidenceRelevance(input([{ ...candidate(), text: 'x'.repeat(161_000) }])), 'budget');
     expect(fake.requests).toHaveLength(0);
+  });
+  test('large subject sets and complete evidence have no implicit clipping or request cap', async () => {
+    const fake = readings();
+    const subjects = Array.from({ length: 25 }, (_, index) => ({ title: `Device ${index}`, kind: 'device', aliases: [] }));
+    const text = 'x'.repeat(161_000);
+    const result = await prepareAnswerEvidenceRelevance({ ...input([{ ...candidate(), text }]), subjects });
+    expect(result.accepted).toHaveLength(1);
+    expect(fake.requests[0]!.state).toMatchObject({ subjects, candidate: { text } });
   });
   test('request state is deeply immutable and input mutation cannot change later reads', async () => {
     const first = candidate(), second = candidate('candidate-2'); const candidates = [first, second];

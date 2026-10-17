@@ -3,7 +3,7 @@ import type { AnyRuntimeEvent, RuntimeEventDomain, RuntimeEventEnvelope } from '
 import { isRuntimeEventDomain } from '../runtime/events/index.js';
 import type { ControlPlaneClientDescriptor } from './types.js';
 import type { ControlPlaneServerConfig } from './types.js';
-import { clientMayReceiveEventDomain } from './gateway-scope-enforcement.js';
+import { CHANNEL_REQUIRED_SCOPE, clientMayReceiveEventDomain, clientMaySeeScopedChannel } from './gateway-scope-enforcement.js';
 
 export const DEFAULT_SERVER_CONFIG: ControlPlaneServerConfig = {
   enabled: false,
@@ -126,6 +126,8 @@ export interface ControlPlaneReplayClientOptions {
   readonly domains?: readonly RuntimeEventDomain[] | undefined;
   readonly routeId?: string | undefined;
   readonly surfaceId?: string | undefined;
+  readonly scopes?: readonly string[] | undefined;
+  readonly admin?: boolean | undefined;
 }
 
 const DISCONNECTED_CLIENT_TTL_MS = 30 * 60 * 1000;
@@ -238,6 +240,8 @@ export function replayRecentTraffic(
   for (const recentEvent of resolution.window) {
     if (!canReplayEventToClient(recentEvent, options)) continue;
     if (!clientMayReceiveEventDomain(replayDomains, recentEvent.event)) continue;
+    const requiredScope = CHANNEL_REQUIRED_SCOPE[recentEvent.event];
+    if (requiredScope && !clientMaySeeScopedChannel({ kind: options.clientKind ?? 'web', scopes: options.scopes, admin: options.admin }, requiredScope)) continue;
     send(recentEvent.event, recentEvent.payload, recentEvent.id);
   }
   return resolution.outcome;

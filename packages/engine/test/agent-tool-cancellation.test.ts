@@ -275,7 +275,7 @@ test('a terminal free-text reading that ignores cancellation cannot keep the wai
     expect((await within(result)).kind).toBe('refused');
     expect(h.log.query({ site: CHILD_FAILURE_SITE })).toHaveLength(0);
     expect(h.admissions()).toBe(1);
-    expect(h.log.query().length).toBeGreaterThan(0);
+    expect(h.log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
     h.readReleased.release();
     await within(h.readExited.promise);
     await new Promise<void>(resolve => setTimeout(resolve, 0));

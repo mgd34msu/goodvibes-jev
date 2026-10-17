@@ -634,7 +634,7 @@ async function runPhaseWithSignal(
   }
 
   if (outcome.status === 'failed') {
-    // A contract unit's failures are the runner's to read and retry (design 4.9).
+    // A contract unit's failures are the runner's to read and retry.
     const retryLimit = unitSpawn ? 0 : getContractTransportRetryLimit(deps.configManager);
     if (item.transportRetryCount < retryLimit && await isTransportFailure(outcome.record?.error ?? '')) {
       item.transportRetryCount += 1;

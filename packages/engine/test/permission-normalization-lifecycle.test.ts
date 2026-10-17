@@ -5,7 +5,6 @@ import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { createJudgmentSourceLifetime } from '../sdk/src/platform/runtime/judgment-source-lifetime.js';
 import {
   brokerSandboxEscalation,
-  resolveExecSandboxPlan,
   resolveRuntimeSandboxPlan,
   type ExecSandboxRuntime,
 } from '../sdk/src/platform/tools/exec/sandbox.js';
@@ -203,26 +202,27 @@ describe('sandbox command reading lifetime', () => {
     expect(fake.requests).toHaveLength(2);
   });
 
-  for (const stage of ['plan', 'escalation'] as const) {
-    test(`${stage} forwards execution cancellation into the command reading`, async () => {
-      const held = heldReading();
-      const canceled = new AbortController();
-      installJudgmentPort(held.port);
-      const execution = { signal: canceled.signal, assertCurrent() { canceled.signal.throwIfAborted(); } };
-      const plan = resolveExecSandboxPlan({ ...sandbox, command: 'fixture-command', workspaceDir: '/fixture', cwd: '/fixture', needs: { needsNetwork: true, needsPrivilege: false } });
-      const running = stage === 'plan'
-        ? resolveRuntimeSandboxPlan(sandbox, 'fixture-command', '/fixture', '/fixture', execution)
-        : brokerSandboxEscalation({ ...sandbox, requestEscalation: async () => { throw new Error('canceled reading must not escalate'); } }, plan, 'fixture-command', '/fixture', execution);
-      const refused = running.then(() => null, error => error);
-      try {
-        await held.entered.promise;
-        canceled.abort();
-        expect(await promptly(refused)).toBeInstanceOf(Error);
-        expect(held.signal?.aborted).toBe(true);
-        held.release.resolve();
-        await held.finished.promise;
-        expect(held.records).toEqual([]);
-      } finally { held.release.resolve(); await refused; }
-    });
-  }
+  test('runtime planning uses explicit egress policy without a command reading', async () => {
+    const fake = fakePort(() => noulAnswer(0.99)); installJudgmentPort(fake.port);
+    const plan = await resolveRuntimeSandboxPlan(sandbox, 'fixture-command', '/fixture', '/fixture');
+    expect(plan?.network).toBe('disabled'); expect(fake.requests).toHaveLength(0);
+    const canceled = new AbortController(); canceled.abort(new Error('owner cancelled'));
+    await expect(resolveRuntimeSandboxPlan(sandbox, 'fixture-command', '/fixture', '/fixture', { signal: canceled.signal })).rejects.toThrow('owner cancelled');
+  });
+
+  test('an explicitly installed escalation handler receives cancellation and cannot grant late', async () => {
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    const canceled = new AbortController();
+    let received: AbortSignal | undefined;
+    const configured: ExecSandboxRuntime = { ...sandbox, config: { ...sandbox.config, egressAllowlist: ['fixture-command'] },
+      requestEscalation: async (_input, execution) => { received = execution?.signal; entered.resolve(); await release.promise; return true; } };
+    const plan = await resolveRuntimeSandboxPlan(configured, 'fixture-command', '/fixture', '/fixture');
+    const pending = brokerSandboxEscalation(configured, plan, 'fixture-command', '/fixture', { signal: canceled.signal, assertCurrent() {} });
+    const observed = pending.catch(error => error);
+    try {
+      await entered.promise; expect(received).toBe(canceled.signal);
+      canceled.abort(new Error('owner cancelled')); release.resolve();
+      expect(await observed).toMatchObject({ message: 'owner cancelled' });
+    } finally { release.resolve(); await observed; }
+  });
 });

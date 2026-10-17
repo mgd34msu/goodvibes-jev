@@ -1,5 +1,5 @@
 /**
- * Real Agent AND TUI entrypoints; native routes and persistence are never mocked.
+ * Real Agent native intake and TUI direct conversation entrypoints.
  * Defaults to source. Set both GOODVIBES_HEADLESS_{AGENT,TUI}_BINARY and
  * GOODVIBES_HEADLESS_REQUIRE_BINARIES=1 to run the identical proof on artifacts.
  */
@@ -15,7 +15,7 @@ async function fixture(product: HeadlessProduct, reply = HEADLESS_REPLY) {
 const json = ['--output-format', 'json'];
 const literal = '  Keep CRLF\r\n😀 !@source.md @context [IMAGE: attached]  ';
 
-for (const product of ['agent', 'tui'] as const) describe(`${product} real native headless entrypoint`, () => {
+for (const product of ['agent'] as const) describe(`${product} real native headless entrypoint`, () => {
   test('run, exec and -p preserve exact original capture and source authority', async () => {
     const f = await fixture(product);
     for (const args of [['run', literal], ['exec', literal], ['-p', literal]]) {
@@ -240,5 +240,67 @@ for (const product of ['agent', 'tui'] as const) describe(`${product} real nativ
     expect(f.model.requests).toHaveLength(0);
     expect(f.home.judgments.accepted).toHaveLength(0);
     expect(existsSync(f.journalPath)).toBe(false);
+  }, 30000);
+});
+
+
+describe('tui real direct headless entrypoint', () => {
+  test('malformed or conflicting recovery controls exit before daemon/source IO', async () => {
+    const f = await fixture('tui');
+    for (const args of [
+      ['run', '--intake-status', '--intake-retry'],
+      ['run', '--intake-status=anything'],
+      ['run', '--intake-status', 'new source'],
+      ['run', '--intake-cancel', '--prompt', 'new source'],
+    ]) {
+      const output = await f.run([...args, ...json]);
+      expect(output.code).toBe(2);
+    }
+    expect(f.door.requests).toHaveLength(0);
+    expect(existsSync(f.journalPath)).toBe(false);
+    expect(f.model.requests).toHaveLength(0);
+  }, 30000);
+
+  test('large final JSON is fully flushed before the process exits', async () => {
+    const reply = 'exact 😀 response\n'.repeat(16_384);
+    const f = await fixture('tui', reply);
+    const output = await f.run(['run', HEADLESS_PROMPT, ...json]);
+    expect(output.code).toBe(0);
+    expect(readEnvelope(output).response).toBe(reply);
+  }, 30000);
+
+  test('run, exec and -p reach the conversation model without an intake capture', async () => {
+    const f = await fixture('tui');
+    for (const args of [['run', HEADLESS_PROMPT], ['exec', HEADLESS_PROMPT], ['-p', HEADLESS_PROMPT]]) {
+      const output = await f.run([...args, ...json]);
+      expect(output.code, output.stderr).toBe(0);
+      expect(readEnvelope(output).response).toBe(HEADLESS_REPLY);
+    }
+    expect(f.captures()).toHaveLength(0); expect(f.model.requests).toHaveLength(3);
+  }, 30000);
+
+  test('text and stream-json preserve the response and keep runtime notices off stdout', async () => {
+    const f = await fixture('tui');
+    const plain = await f.run(['run', HEADLESS_PROMPT, '--output', 'text']);
+    expect(plain.code, plain.stderr).toBe(0); expect(plain.stdout.trim()).toBe(HEADLESS_REPLY);
+    const streamed = await f.run(['run', HEADLESS_PROMPT, '--output', 'stream-json']);
+    expect(streamed.code, streamed.stderr).toBe(0);
+    const lines = streamed.stdout.trim().split('\n').map(line => JSON.parse(line) as { type: string; response?: string });
+    expect(lines.at(-1)?.response).toBe(HEADLESS_REPLY);
+    expect(lines.some(line => line.type === 'STREAM_DELTA')).toBe(true);
+    expect(streamed.stdout).not.toContain(f.pairedToken); expect(f.captures()).toHaveLength(0);
+  }, 30000);
+
+  test.each(['SIGINT', 'SIGTERM'] as const)('%s during the model call flushes a final cancellation result', async signal => {
+    const f = await fixture('tui'); const gate = f.holdAdmittedModelRequest();
+    const child = f.start(['run', HEADLESS_PROMPT, ...json]);
+    try {
+      await Promise.race([gate.entered, child.output.then(output => { throw new Error(`Run exited before its model request: ${output.stdout} ${output.stderr}`); })]);
+      child.interrupt(signal);
+      const output = await child.output;
+      expect(output.code, output.stderr).toBe(130);
+      expect(readEnvelope(output).ok).toBe(false);
+      expect(output.stdout).not.toContain(f.pairedToken); expect(f.captures()).toHaveLength(0);
+    } finally { gate.release(); }
   }, 30000);
 });

@@ -89,9 +89,13 @@ test('function bodies do not make every enclosing class or call a literal data d
   expect(input?.source).not.toContain('1| register(() => {');
 });
 
-test('complete oversized data declaration fails before dispatch without dropping source or anchors', () => {
+test('complete large data declaration retains source and anchors without an implicit budget', () => {
   const text = declaration('examples', '// Exact large source declaration.', 3000);
   const anchor = internalSourceAnchors('src/ordinary.ts', text).find(value => value.text.includes("id: 'row2500'"));
   if (!anchor) throw new Error('Missing late actual row');
-  expect(() => captureStaticInputs('internal-identifier', 'src/ordinary.ts', text, [anchor])).toThrow('complete source unit and context exceed the canonical request budget');
+  const [input] = captureStaticInputs('internal-identifier', 'src/ordinary.ts', text, [anchor]);
+  expect(input?.anchors).toEqual([anchor]);
+  expect(input?.source).toContain('5| export const examples = register({');
+  expect(input?.source).toContain(`${text.split('\n').length}| });`);
+  expect(input?.source).toContain("id: 'row2999'");
 });

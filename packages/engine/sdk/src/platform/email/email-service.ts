@@ -479,10 +479,8 @@ export class EmailService {
     return result;
   }
 
-  /**
-   * Strict complete-source snapshot for a future owned inbox adapter. No cursor
-   * advances here. Partial/gone/unsupported content withholds the entire batch.
-   * The caller still needs fresh account authorization and protected screening.
+  /** Complete-source inbox snapshot. No cursor advances here; incomplete content
+   * withholds the batch. The caller needs current account authorization and screening.
    */
   async readInboxBatch(input: EmailInboxBatchInput = {}): Promise<EmailInboxBatchRead> {
     const { signal, limit } = input;

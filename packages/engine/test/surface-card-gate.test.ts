@@ -1,7 +1,7 @@
 /**
  * surface-card-gate.test.ts
  *
- * The remote-channel card gate (docs/inbound-email.md §11.0), asserted at the
+ * The remote-channel card gate (docs/decisions/2026-07-27-inbound-email-design.md §11.0), asserted at the
  * one shared hook every remote adapter passes through:
  * `SurfaceActions.authorizeSurfaceIngress`.
  *

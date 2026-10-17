@@ -2,13 +2,13 @@
  * companion-chat-queue-steer.test.ts
  *
  * Queue-when-busy sends + the steer verb (companion.chat.messages.steer):
- * Q1: a send during an active turn QUEUES, transcript-visible immediately
+ * a send during an active turn QUEUES, transcript-visible immediately
  *     with deliveryState 'queued', answered after the current turn, marker
  *     cleared when its turn starts
- * Q2: steer jumps the queue AND cancels the active turn through the honest
+ * steer jumps the queue AND cancels the active turn through the honest
  *     stop path; previously queued messages keep their places behind it
- * Q3: steer with no turn running is an ordinary send
- * Q4: turns are strictly sequential, never concurrent against one
+ * steer with no turn running is an ordinary send
+ * turns are strictly sequential, never concurrent against one
  *     conversation, no matter how fast sends arrive
  */
 
@@ -83,7 +83,7 @@ async function waitForCount(events: CapturedEvent[], name: string, count: number
   throw new Error(`never saw ${count}x ${name}; saw: ${events.map((e) => e.name).join(', ')}`);
 }
 
-describe('Q1: queue-when-busy', () => {
+describe('queue-when-busy', () => {
   test('a send during an active turn queues, is marked honestly, and runs after', async () => {
     const events: CapturedEvent[] = [];
     const gate0 = makeGate();
@@ -121,7 +121,7 @@ describe('Q1: queue-when-busy', () => {
   });
 });
 
-describe('Q2: steer jumps the queue and interrupts', () => {
+describe('steer jumps the queue and interrupts', () => {
   test('steer cancels the active turn honestly and runs before queued sends', async () => {
     const events: CapturedEvent[] = [];
     const gate0 = makeGate();
@@ -161,7 +161,7 @@ describe('Q2: steer jumps the queue and interrupts', () => {
   });
 });
 
-describe('Q3: steer with no active turn', () => {
+describe('steer with no active turn', () => {
   test('behaves as an ordinary send', async () => {
     const events: CapturedEvent[] = [];
     const { provider } = makeSequencedProvider({});
@@ -176,7 +176,7 @@ describe('Q3: steer with no active turn', () => {
   });
 });
 
-describe('Q4: turns never run concurrently', () => {
+describe('turns never run concurrently', () => {
   test('rapid-fire sends serialize', async () => {
     const events: CapturedEvent[] = [];
     const { provider, stats } = makeSequencedProvider({});

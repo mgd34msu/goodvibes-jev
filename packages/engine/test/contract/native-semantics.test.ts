@@ -81,19 +81,23 @@ describe('native semantic callers', () => {
     expect(result.status).toBe('failed'); expect(decisions).toBe(2); expect(h.agentsOf('u1')).toHaveLength(0); noOwner(h, contract.id);
   });
 
-  test('evidence exhaustion uses a bounded correction and only real new verification can pass', async () => {
+  test('unmet work uses a bounded correction and only real new verification can pass', async () => {
     const scripted = stepPlanner(plan(), { fix: () => plannerOutput(fixPlan([{ serves: ['u1.c1'] }])) });
-    const h = use({ planner: scripted.runner, contract: { evidenceNudgeLimit: 0, maxFixRounds: 1 }, scripts: { u1: () => [{ files: { 'src/csv.ts': 'incomplete' }, text: '[p=0.2] unshown parser' }], 'u1.f1.u1': finishes('real repair evidence') },
+    const h = use({ planner: scripted.runner, contract: { stallLimit: 1, maxNudgesPerUnit: 1, maxFixRounds: 1 }, scripts: { u1: () => Array.from({ length: 2 }, () => ({ files: { 'src/csv.ts': 'incomplete' }, text: '[p=0.9] incomplete parser' })), 'u1.f1.u1': finishes('real repair evidence') },
       port: context => { const output = context.state['output']; if (judgeOf(context) !== null && typeof output === 'string' && output.includes('Planned fix')) return noulAnswer(0.03); return undefined; } });
     const { contract } = startContract(h, { nativeSource: source }); const result = await done(h, contract.id);
     expect(result.status).toBe('passed'); expect(result.units.find(u => u.id === 'u1')!.fixRounds).toBe(1);
-    expect(result.nativeDecisions!.history.some(item => item.stage === 'evidence')).toBe(true); noOwner(h, contract.id);
+    expect(result.nativeDecisions!.history.some(item => item.stage === 'stall')).toBe(true); noOwner(h, contract.id);
   });
 
   test('spent correction budget cannot be reset by semantic act or human text', async () => {
-    const h = use({ contract: { stallLimit: 1, maxFixRounds: 0 }, scripts: { u1: keepsFailing(2) } });
+    let h: Harness;
+    h = use({ contract: { stallLimit: 1, maxFixRounds: 1 }, scripts: { u1: (record, run) => {
+      h.store.get(record.contractId!)!.units[0]!.fixRounds = 1;
+      return keepsFailing(2)(record, run);
+    } } });
     const { contract } = startContract(h, { nativeSource: source }); const result = await done(h, contract.id);
-    expect(result.status).toBe('failed'); expect(result.units[0]!.criteria[0]!.status).toBe('unmet'); expect(result.units[0]!.fixRounds).toBe(0);
+    expect(result.status).toBe('failed'); expect(result.units[0]!.criteria[0]!.status).toBe('unmet'); expect(result.units[0]!.fixRounds).toBe(1);
     expect(result.nativeDecisions!.history.at(-1)!.decision.outcome).toBe('reject'); noOwner(h, contract.id);
   });
   test('native best-of-N revises the candidate then obtains fresh act before integration', async () => {
@@ -162,9 +166,9 @@ describe('native semantic callers', () => {
   test('an invalid fix plan exhausts its persisted attempts without an owner fallback or budget reset', async () => {
     const invalid = fixPlan([{ serves: ['missing-criterion'] }]);
     const scripted = stepPlanner(plan(), { fix: () => plannerOutput(invalid) });
-    const h = use({ planner: scripted.runner, contract: { stallLimit: 1, maxFixRounds: 1, planRepairLimit: 0 }, scripts: { u1: keepsFailing(2) } });
+    const h = use({ planner: scripted.runner, contract: { stallLimit: 1, maxFixRounds: 1, planRepairLimit: 1 }, scripts: { u1: keepsFailing(2) } });
     const { contract } = startContract(h, { nativeSource: source }); const result = await done(h, contract.id);
-    expect(result.status).toBe('failed'); expect(result.units[0]!.fixRounds).toBe(1); expect(result.nativeDecisions!.spent['fix:u1:1']).toBe(1); expect(scripted.of('fix')).toHaveLength(1);
+    expect(result.status).toBe('failed'); expect(result.units[0]!.fixRounds).toBe(1); expect(result.nativeDecisions!.spent['fix:u1:1']).toBe(2); expect(scripted.of('fix')).toHaveLength(2);
     expect(result.nativeDecisions!.history.at(-1)!.decision.outcome).toBe('reject'); noOwner(h, contract.id);
   });
 
@@ -174,7 +178,7 @@ describe('native semantic callers', () => {
     const blocked = spyOn(h.store, 'write').mockReturnValue(false);
     try {
       const { contract } = startContract(h, { nativeSource: source }); const result = await done(h, contract.id); await h.runner.join(contract.id);
-      expect(result.status).toBe('failed'); expect(result.error).toBe(`contract ${contract.id} could not start: [REDACTED]`);
+      expect(result.status).toBe('failed'); expect(result.error).toBe(`contract ${contract.id} could not start: Native semantic checkpoint failed`);
       expect(blocked).toHaveBeenCalled(); expect(plannerCalls).toBe(0); expect(h.agentsOf('u1')).toHaveLength(0); noOwner(h, contract.id);
     } finally { blocked.mockRestore(); }
   });

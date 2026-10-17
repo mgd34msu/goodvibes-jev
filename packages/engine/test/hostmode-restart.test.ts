@@ -5,17 +5,17 @@
  *
  * Coverage:
  *
- * CM1: ConfigManager.subscribe(), keyed listener map, fires on set(), returns unsubscribe
- * CM2: ConfigManager.subscribe() fires with correct (newValue, oldValue) arguments
+ * ConfigManager.subscribe(), keyed listener map, fires on set(), returns unsubscribe
+ * ConfigManager.subscribe() fires with correct (newValue, oldValue) arguments
  * Unsubscribe stops receiving further notifications
- * CM4: Unrelated key change does not trigger a listener for a different key
+ * Unrelated key change does not trigger a listener for a different key
  *
- * HL1: HttpListener restarts when httpListener.port changes while running
- * HL2: HttpListener does NOT restart when stopped (watcher not attached)
- * HL3: HttpListener does NOT restart for unrelated config key change
- * HL4: stop() unsubscribes, subsequent config changes do not trigger another start
- * HL5: Re-entrancy guard prevents overlapping restart cycles
- * HL6: hostMode change triggers rebind (local -> custom with explicit host)
+ * HttpListener restarts when httpListener.port changes while running
+ * HttpListener does NOT restart when stopped (watcher not attached)
+ * HttpListener does NOT restart for unrelated config key change
+ * stop() unsubscribes, subsequent config changes do not trigger another start
+ * Re-entrancy guard prevents overlapping restart cycles
+ * hostMode change triggers rebind (local -> custom with explicit host)
  */
 
 import { describe, expect, test, mock } from 'bun:test';
@@ -98,7 +98,7 @@ async function startListener(listener: HttpListener) {
 // CM: ConfigManager.subscribe() unit tests
 // ---------------------------------------------------------------------------
 
-describe('CM1: ConfigManager.subscribe: basic notification', () => {
+describe('ConfigManager.subscribe: basic notification', () => {
   test('listener fires when subscribed key is set', () => {
     const cm = makeConfigManager();
     const received: number[] = [];
@@ -119,7 +119,7 @@ describe('CM1: ConfigManager.subscribe: basic notification', () => {
   });
 });
 
-describe('CM2: ConfigManager.subscribe: correct argument shape', () => {
+describe('ConfigManager.subscribe: correct argument shape', () => {
   test('callback receives (newValue, oldValue)', () => {
     const cm = makeConfigManager({ port: 3422 });
     const captured: { value: [number, number] | null } = { value: null };
@@ -147,7 +147,7 @@ describe('ConfigManager.subscribe: unsubscribe stops notifications', () => {
   });
 });
 
-describe('CM4: ConfigManager.subscribe: key isolation', () => {
+describe('ConfigManager.subscribe: key isolation', () => {
   test('changing an unrelated key does not trigger listener', () => {
     const cm = makeConfigManager();
     const received: unknown[] = [];
@@ -162,7 +162,7 @@ describe('CM4: ConfigManager.subscribe: key isolation', () => {
 // HL: HttpListener restart tests
 // ---------------------------------------------------------------------------
 
-describe('HL1: HttpListener restarts when httpListener.port changes while running', () => {
+describe('HttpListener restarts when httpListener.port changes while running', () => {
   test('port change while running triggers stop + restart with new port', async () => {
     const port1 = nextTestPort();
     const port2 = nextTestPort();
@@ -186,7 +186,7 @@ describe('HL1: HttpListener restarts when httpListener.port changes while runnin
   });
 });
 
-describe('HL2: HttpListener does NOT restart when stopped before start', () => {
+describe('HttpListener does NOT restart when stopped before start', () => {
   test('config change on a never-started listener does nothing', async () => {
     const cm = makeConfigManager();
     const mock = makeServeMock();
@@ -199,7 +199,7 @@ describe('HL2: HttpListener does NOT restart when stopped before start', () => {
   });
 });
 
-describe('HL3: HttpListener ignores unrelated config key changes', () => {
+describe('HttpListener ignores unrelated config key changes', () => {
   test('controlPlane.port change does not restart HttpListener', async () => {
     const cm = makeConfigManager();
     // Ensure controlPlane keys are also set
@@ -218,7 +218,7 @@ describe('HL3: HttpListener ignores unrelated config key changes', () => {
   });
 });
 
-describe('HL4: stop() unsubscribes: no restart after explicit stop', () => {
+describe('stop() unsubscribes: no restart after explicit stop', () => {
   test('config change after stop() does not restart the listener', async () => {
     const cm = makeConfigManager();
     const mock = makeServeMock();
@@ -236,7 +236,7 @@ describe('HL4: stop() unsubscribes: no restart after explicit stop', () => {
   });
 });
 
-describe('HL5: Re-entrancy guard: dirty-flag ensures both changes are applied', () => {
+describe('Re-entrancy guard: dirty-flag ensures both changes are applied', () => {
   test('simultaneous port + host change fires two restart cycles, not zero or one', async () => {
     const cm = makeConfigManager();
     const serveMock = makeServeMock();
@@ -259,7 +259,7 @@ describe('HL5: Re-entrancy guard: dirty-flag ensures both changes are applied', 
   });
 });
 
-describe('HL6: hostMode change triggers rebind', () => {
+describe('hostMode change triggers rebind', () => {
   test('local -> custom with explicit host rebinds to custom host', async () => {
     const cm = makeConfigManager();
     const serveMock = makeServeMock();
@@ -281,7 +281,7 @@ describe('HL6: hostMode change triggers rebind', () => {
 });
 
 // ---------------------------------------------------------------------------
-// HW: createHostModeRestartWatcher unit tests
+// createHostModeRestartWatcher unit tests
 // ---------------------------------------------------------------------------
 
 describe('createHostModeRestartWatcher: fires onRestart when key changes and running', () => {
@@ -321,7 +321,7 @@ describe('createHostModeRestartWatcher: does NOT fire when isRunning=false', () 
   });
 });
 
-describe('HW3: createHostModeRestartWatcher: unsubscribe prevents further callbacks', () => {
+describe('createHostModeRestartWatcher: unsubscribe prevents further callbacks', () => {
   test('onRestart is not called after unsubscribe()', () => {
     const cm = makeConfigManager();
     const onRestart = mock(() => {});
@@ -352,7 +352,7 @@ describe('createHostModeRestartWatcher: unsubscribe is idempotent', () => {
   });
 });
 
-describe('HW5: createHostModeRestartWatcher: getIsRunning gate and multi-key subscription', () => {
+describe('createHostModeRestartWatcher: getIsRunning gate and multi-key subscription', () => {
   test('fires onRestart for each watched key independently', () => {
     const cm = makeConfigManager();
     const restartCalls: string[] = [];

@@ -44,7 +44,7 @@ for (const status of ['completed', 'running'] as const) {
     expect(m.list()).toHaveLength(0);
     const result = await run(hook, event, m, {});
     expect(result.ok).toBe(false);
-    expect(result.error).toBe('agent hook failed: [REDACTED]');
+    expect(result.error).toContain('Owned agent spawn requires a contract runner with owned execution settlement');
     expect(result.code).toBe('OWNED_AGENT_EXECUTION_UNSUPPORTED');
     expect(starts).toBe(0);
     expect(m.list()).toHaveLength(0);

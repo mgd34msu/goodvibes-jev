@@ -12,7 +12,7 @@ function git(cwd: string, args: string[]): string {
 describe('Agent contracts isolate delegated work and cancellation', () => {
   test('the real composed runner starts units in worktrees and cancelling preserves the owner edit', async () => {
     let unitCwd: string | undefined;
-    const fixture = contractRuntimeFixture(async (record, services) => {
+    const fixture = await contractRuntimeFixture(async (record, services) => {
       unitCwd = record.workingDirectory;
       const signal = services.agentManager.getCancellationSignal(record.id);
       await new Promise<void>((resolve) => {

@@ -19,7 +19,7 @@ import { HttpListener } from '../sdk/src/platform/daemon/http-listener.js';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
 
 function tempDir(suffix: string): string {
-  const d = join(tmpdir(), `gv-sec03-${suffix}-${Date.now()}`);
+  const d = join(tmpdir(), `gv-login-rate-${suffix}-${Date.now()}`);
   mkdirSync(d, { recursive: true });
   return d;
 }
@@ -49,8 +49,8 @@ function makeListener(opts: {
 
   const configManager = new ConfigManager({ configDir: opts.dir });
 
-  let capturedFetch: ((req: Request) => Promise<Response>) | null = null;
-  const mockServe = (options: { fetch: (req: Request) => Promise<Response> }) => {
+  let capturedFetch: ((req: Request, server: { requestIP(req: Request): { address: string } }) => Promise<Response>) | null = null;
+  const mockServe = (options: { fetch: (req: Request, server: { requestIP(req: Request): { address: string } }) => Promise<Response> }) => {
     capturedFetch = options.fetch;
     return { stop: () => {} } as ReturnType<typeof Bun.serve>;
   };
@@ -72,7 +72,7 @@ function makeListener(opts: {
     listener,
     dispatch: (req) => {
       if (!capturedFetch) throw new Error('listener not started');
-      return capturedFetch(req);
+      return capturedFetch(req, { requestIP: () => ({ address: '127.0.0.1' }) });
     },
   };
 }

@@ -1,27 +1,3 @@
-/**
- * occasions-nudge-cadence.test.ts
- *
- * The round that followed the owner being told about his own birthday five
- * times in one day and counting, by a sweep running every hour.
- *
- * Four defects, all in the same family, all pinned here:
- *
- *  1. The sweep raised any open item whose due date had arrived, on EVERY pass.
- *     A nudge's due date is clamped to the occurrence, so on the day itself it
- *     was due forever and an hourly sweep meant an hourly reminder.
- *  2. An acknowledgement could not be written by anything he could actually
- *     reach. The state file has held the array since day one; the only writer
- *     was a CLI/webui verb, and the nudge lands on Telegram and in the agent's
- *     conversation, where the reply to it is a sentence.
- *  3. Nothing knew an occasion could be about HIM. He does not need to be told
- *     when his own birthday is.
- *  4. Asked to stop, the conversational turn switched the entire feature off,
- *     silencing his wife's gift-giving occasion along with his own birthday.
- *
- * And one delivery defect found alongside them: the nudge was landed in the
- * agent's conversation as a bare sentence, which the model then wove into
- * unrelated troubleshooting as though it were a thought of its own.
- */
 import { useOccasionReadings } from './helpers/occasion-readings.ts';
 useOccasionReadings();
 import { afterEach, describe, expect, test, beforeEach } from 'bun:test';

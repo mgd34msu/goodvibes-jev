@@ -300,7 +300,7 @@ describe('prompt rendering is immune to page text', () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// 6-8. The two windows, and the undeliverable ruling
+// The two windows, and the undeliverable ruling
 // ───────────────────────────────────────────────────────────────────────────
 
 describe('the two windows must never agree', () => {
@@ -416,7 +416,7 @@ describe('email can never carry a payment prompt', () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// 9-10. The shipping ladder, and never adding filler items
+// The shipping ladder, and never adding filler items
 // ───────────────────────────────────────────────────────────────────────────
 
 describe('the shipping ladder steps down one rung at a time', () => {
@@ -631,7 +631,7 @@ describe('no filler item is ever added', () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// 11-12. The day boundary, including the midnight split
+// The day boundary, including the midnight split
 // ───────────────────────────────────────────────────────────────────────────
 
 describe('the day boundary behaves as ruled', () => {

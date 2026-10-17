@@ -8018,6 +8018,12 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "sessionId": "sample",
       "origin": "turn",
       "ask": "sample",
+      "selectedModel": {
+        "id": "sample",
+        "provider": "sample",
+        "registryKey": "sample",
+        "displayName": "sample"
+      },
       "ownerAgentId": "sample",
       "parentAgentId": "sample",
       "projectRoot": "sample",
@@ -9026,6 +9032,12 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sessionId": "sample",
           "origin": "turn",
           "ask": "sample",
+          "selectedModel": {
+            "id": "sample",
+            "provider": "sample",
+            "registryKey": "sample",
+            "displayName": "sample"
+          },
           "ownerAgentId": "sample",
           "parentAgentId": "sample",
           "projectRoot": "sample",
@@ -10051,6 +10063,12 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "sessionId": "sample",
         "origin": "turn",
         "ask": "sample",
+        "selectedModel": {
+          "id": "sample",
+          "provider": "sample",
+          "registryKey": "sample",
+          "displayName": "sample"
+        },
         "ownerAgentId": "sample",
         "parentAgentId": "sample",
         "projectRoot": "sample",

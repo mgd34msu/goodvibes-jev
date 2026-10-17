@@ -1,6 +1,6 @@
 /**
  * source-selection.ts, which source reads the mailbox
- * (docs/inbound-email.md §3.4d, "Selection is automatic").
+ * (docs/decisions/2026-07-27-inbound-email-design.md §3.4d, "Selection is automatic").
  *
  * The whole point of this file is that adopting Google is the ENTIRE setup for
  * the common case. Google adopted and the configured mail account is a Gmail

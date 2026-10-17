@@ -1,6 +1,6 @@
 /**
  * gmail-source.ts, Gmail as a first-class inbound source
- * (docs/inbound-email.md §3.4d).
+ * (docs/decisions/2026-07-27-inbound-email-design.md §3.4d).
  *
  * A user who has already adopted Google credentials should not have to find an
  * IMAP host, a username and an app password to get inbound mail for a mailbox

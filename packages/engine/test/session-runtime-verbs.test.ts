@@ -203,7 +203,7 @@ describe('sessions.contextUsage.get', () => {
   });
 });
 
-// ── descriptor + handler register together (the 501 defect class) ────────────
+// ── descriptor + handler register together (the HTTP 501 response class) ────────────
 
 describe('session-runtime gateway registration', () => {
   const IDS = ['sessions.permissionMode.get', 'sessions.permissionMode.set', 'sessions.contextUsage.get'];

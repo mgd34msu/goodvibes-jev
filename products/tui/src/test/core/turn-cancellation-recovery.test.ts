@@ -10,7 +10,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-for (const cause of ['grace expiry', 'real cancel action'] as const) {
+for (const cause of ['grace expiry', 'real cancel action', 'cancel during admission'] as const) {
   test(`${cause} aborts real native SDK admission after memory preparation and before TURN_SUBMITTED`, async () => {
     const gate = deferred(); const entered = deferred();
     const text = 'Explain the recorded change';
@@ -39,6 +39,9 @@ for (const cause of ['grace expiry', 'real cancel action'] as const) {
       expect(prepared).toBe(true); expect(orchestrator.isThinking).toBe(false);
       if (cause === 'real cancel action') {
         createCancelGeneration(orchestrator, { stop: () => false }, () => { authority.abort(); return true; })();
+      } else if (cause === 'cancel during admission') {
+        expect(orchestrator.isTurnInFlight).toBe(true);
+        createCancelGeneration(orchestrator, { stop: () => false })();
       } else authority.abort();
       gate.resolve();
       expect(await outcome).toMatchObject({ name: 'AbortError' });

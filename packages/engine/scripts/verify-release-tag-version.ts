@@ -1,7 +1,5 @@
 import sdkPackage from '../package.json' with { type: 'json' };
 
-// Workspace package versions are kept equal by version-consistency-check and
-// sync:version, so the public SDK package version is the release tag source.
 const tagName = process.env.GITHUB_REF_NAME;
 if (!tagName) {
   console.error('ERROR: GITHUB_REF_NAME is required for release tag verification.');

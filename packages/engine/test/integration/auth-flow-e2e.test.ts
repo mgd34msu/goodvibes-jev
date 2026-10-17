@@ -1,5 +1,5 @@
 /**
- * auth-flow-e2e.test.ts, S-ζ Test 1
+ * auth-flow-e2e.test.ts
  *
  * End-to-end auth flow fixture: boots a fake Bun.serve HTTP server that emulates
  * the operator endpoint's auth flow, then drives the real `createGoodVibesAuthClient`

@@ -359,7 +359,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
     expect(updated?.metadata.repairStatus).toBe('not_applicable');
   });
 
-  test('self-improvement caps broad refinement runs and reports truncation metadata', async () => {
+  test('self-improvement processes the complete requested refinement set', async () => {
     const { store } = createStores();
     const spaceId = homeAssistantKnowledgeSpaceId('house');
     const semantic = new KnowledgeSemanticService(store);
@@ -383,11 +383,11 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
 
     expect(result.candidateGaps).toBe(60);
     expect(result.requestedLimit).toBe(500);
-    expect(result.effectiveLimit).toBe(24);
-    expect(result.scannedGaps).toBe(24);
-    expect(result.processedGaps).toBe(24);
-    expect(result.truncated).toBe(true);
-    expect(result.blockedGaps).toBe(24);
+    expect(result.effectiveLimit).toBe(60);
+    expect(result.scannedGaps).toBe(60);
+    expect(result.processedGaps).toBe(60);
+    expect(result.truncated).toBe(false);
+    expect(result.blockedGaps).toBe(60);
   });
 
   test('overlapping broad self-improvement reports the requested limit in coalesced metadata', async () => {

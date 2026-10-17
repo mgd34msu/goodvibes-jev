@@ -266,7 +266,7 @@ test.each(['none', 'source', 'conversation', 'diff-provenance', 'unselected', 'c
     const admission = await f.manager.admitAutonomous('component-source', NAME, call.args, {
       sourceOf: f.sourceOf, signal: controller.signal, schemaRevision: call.schemaRevision, preparedCall: { registry: f.registry, call },
     });
-    expect(admission.result.autonomousDecision?.outcome).toBe('act');
+    expect(admission.result.approved).toBe(true);
     const originalTransmissions = transmissions;
     let accessed = 0;
     if (change === 'source') f.original.criteria.reverse();
@@ -289,11 +289,11 @@ test.each(['none', 'source', 'conversation', 'diff-provenance', 'unselected', 'c
 );
 
 
-test.each(['source', 'unselected'] as const)('native preparation initially refuses private %s before any reading', part => {
+test.each(['source', 'unselected'] as const)('native preparation retains local %s without transmitting it', part => {
   const f = nativeFixture();
   if (part === 'source') f.original.goal = 'password=synthetic-initial-source';
   else f.revisions[0]!.args.operation = 'password=synthetic-initial-alternative';
-  expect(() => f.manager.autonomousPreparation('initial-private-component', f.sourceOf)).toThrow();
+  f.manager.autonomousPreparation('initial-private-component', f.sourceOf).assertCurrent();
   expect(transmissions).toBe(0); expect(log.query()).toHaveLength(0); expect(f.effects).toBe(0);
 });
 
@@ -340,7 +340,7 @@ test.each(['unselected', 'condition'] as const)('authentic execution refuses a l
   const admission = await f.manager.admitAutonomous('private-component-source', NAME, call.args, {
     sourceOf: f.sourceOf, schemaRevision: call.schemaRevision, preparedCall: { registry: f.registry, call },
   });
-  expect(admission.result.autonomousDecision?.outcome).toBe('act');
+  expect(admission.result.approved).toBe(true);
   const originalTransmissions = transmissions;
   if (part === 'unselected') f.revisions[0]!.args.operation = 'password=synthetic-late-alternative';
   else f.conditions[0]!.revision = 'password=synthetic-late-condition';

@@ -44,7 +44,7 @@ function withPreconnect(
 }
 
 // ---------------------------------------------------------------------------
-// S01: configured_cap is authoritative over a fuzzy OpenRouter match
+// configured_cap is authoritative over a fuzzy OpenRouter match
 // ---------------------------------------------------------------------------
 
 function makeModel(overrides: Partial<ModelDefinition> = {}): ModelDefinition {
@@ -91,7 +91,7 @@ function makeServiceWithFuzzyCache(tmp: string): ModelLimitsService {
   return service;
 }
 
-describe('S01: getContextWindowForModel honors configured_cap over an OpenRouter identity match', () => {
+describe('getContextWindowForModel honors configured_cap over an OpenRouter identity match', () => {
   test('configured_cap is NOT widened by a larger fuzzy OpenRouter entry', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'gv-ctx-cap-'));
     try {
@@ -143,7 +143,7 @@ describe('S01: getContextWindowForModel honors configured_cap over an OpenRouter
 });
 
 // ---------------------------------------------------------------------------
-// S05: self-declared capabilities participate in the cache key
+// self-declared capabilities participate in the cache key
 // ---------------------------------------------------------------------------
 
 describe('getCapability cache is not poisoned across provider-instance presence', () => {

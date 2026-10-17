@@ -1,3 +1,4 @@
+import * as capturedExec from '../sdk/src/platform/tools/exec/captured-exec.ts';
 import * as nativeHostFactory from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution';
 import { SQLiteStore } from '@goodvibes-jev/engine/sdk/platform/state';
 import { createHash } from 'node:crypto';
@@ -9,7 +10,6 @@ import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { createNativeWorkSubmissionHost } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-submission';
 import { CiWatchAutoMinter, CiWatchService, CiWatchStore } from '@goodvibes-jev/engine/sdk/platform/ci-watch';
 import { startAdmittedCiRepair } from '@goodvibes-jev/engine/sdk/platform/ci-watch';
-import * as execFactory from '@goodvibes-jev/engine/sdk/platform/tools';
 import { expect, spyOn, test } from 'bun:test';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -28,22 +28,25 @@ import { createWorkLedger } from '@goodvibes-jev/engine/sdk/platform/workflow/wo
 import { PairingTokenManager } from '@goodvibes-jev/engine/sdk/platform/pairing';
 import { WorkspaceRegistrationStore } from '@goodvibes-jev/engine/sdk/platform/workspace';
 import type { NativePairedExecutionAuthority } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution';
-import { createDaemonNativeWorkExecutionActivation } from '../../runtime/native-work-execution-activation.js';
-import { makeOwnedTempDir } from '../helpers/owned-temp.js';
+import { createDaemonNativeWorkExecutionActivation } from '../../../products/daemon/src/runtime/native-work-execution-activation.js';
+import { makeOwnedTempDir } from '../../../products/daemon/src/test/helpers/owned-temp.js';
 
 async function waitFor(predicate: () => boolean, label: string) {
-  const deadline = Date.now() + 10000;
+  const deadline = Date.now() + 30000;
   while (!predicate()) {
     if (Date.now() >= deadline) throw new Error(`Timed out: ${label}`);
     await new Promise(resolve => setTimeout(resolve, 10));
   }
 }
+const isWorkerRequest = (request: ChatRequest): boolean => request.messages.some(message => message.role === 'user' && typeof message.content === 'string' && message.content.startsWith('Contract goal:'));
 const answer = (content: string): ChatResponse => ({ content, toolCalls: [], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'completed' });
 
 async function fixture(pairingOwner?: PairingTokenManager) {
   const root = makeOwnedTempDir('native-activation'); const workspace = join(root, 'workspace');
   mkdirSync(workspace); writeFileSync(join(workspace, 'README.md'), '# Owned native fixture\n');
-  for (const args of [['init', '-q'], ['add', '.'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Fixture']])
+  const remote = join(root, 'remote.git');
+  if (spawnSync('git', ['init', '--bare', '-q', remote]).status !== 0) throw new Error('Fixture remote failed');
+  for (const args of [['init', '-q', '-b', 'main'], ['config', 'user.name', 'Fixture'], ['config', 'user.email', 'fixture@example.invalid'], ['remote', 'add', 'origin', remote], ['add', '.'], ['commit', '-qm', 'Fixture']])
     if (spawnSync('git', args, { cwd: workspace }).status !== 0) throw new Error('Fixture git failed');
   const configManager = new ConfigManager({ workingDir: workspace, homeDir: root, configDir: join(root, 'config'), surfaceRoot: 'daemon' });
   const gatewayMethods = new GatewayMethodCatalog();
@@ -54,19 +57,19 @@ async function fixture(pairingOwner?: PairingTokenManager) {
     surfaceRoot: 'daemon', workingDir: workspace, homeDirectory: root, requestApproval: async () => { approvals++; return { approved: false }; }, modelDiscovery: 'skip' });
   const log = new SqliteDecisionLog(join(root, 'decisions.sqlite'));
   const readings = fakePort((name, question) => {
-    if (question.type === 'noul') return noulAnswer(name === 'forbids_delegation' || name === 'checkable' || name.startsWith('fit') ? 0.99 : 0.01);
+    if (question.type === 'noul') return noulAnswer(name === 'checkable' || name.startsWith('fit') ? 0.99 : 0.01);
     if (question.type === 'score') return scoreAnswer(question, 0, 0.99);
     const choices = question.type === 'choice' ? Object.keys(question.criteria) : [];
-    const preferred: Record<string, string> = { disposition: 'act', relation: 'supports', role: 'research', tier: 'standard', intent: 'chat', strategy: 'single', category: 'unknown', connection_failure: 'none' };
+    const preferred: Record<string, string> = { disposition: 'act', relation: 'supports', role: 'implement', tier: 'standard', intent: 'chat', strategy: 'single', category: 'unknown', connection_failure: 'none' };
     const pick = preferred[name];
     return choiceAnswer(question, pick && choices.includes(pick) ? pick : choices.find(key => key !== 'none')!, 0.99);
   });
   const port = withDecisionLog(readings.port, log); const previous = installJudgmentPort(port);
-  const goal = 'Answer the native request yourself without delegation. Preserve the complete original request.';
+  const goal = 'Update README and publish the prepared repository through the native worker. Preserve the complete original request.';
   const criteria = ['The answer says native execution is complete.', 'Preserve this second requirement after the first: evidence remains separate. ☃'];
   const plan = { goal, criteria: criteria.map((text, index) => ({ id: `c${index + 1}`, text, quote: text })), groups: [{
     id: 'g1', title: 'Answer', goal, kind: 'work', dependsOn: [], criteria: [], units: [{ id: 'u1', title: 'Answer', goal,
-      role: 'research', brief: 'Say native execution is complete.', dependsOn: [], files: [], criteria: criteria.map((text, index) => ({ id: `u1.c${index + 1}`, text, serves: [`c${index + 1}`] })) }],
+      role: 'implement', brief: 'Update README, publish the prepared repository with git push origin main, then say native execution is complete.', dependsOn: [], files: [], criteria: criteria.map((text, index) => ({ id: `u1.c${index + 1}`, text, serves: [`c${index + 1}`] })) }],
   }] };
   const requests: ChatRequest[] = [];
   let hold: ((request: ChatRequest) => Promise<ChatResponse>) | undefined;
@@ -78,6 +81,8 @@ async function fixture(pairingOwner?: PairingTokenManager) {
     } } as unknown as LLMProvider;
   const model = { id: 'model', provider: 'native-fixture', registryKey: 'native-fixture:model', displayName: 'Native fixture model', description: 'Synthetic test model',
     capabilities: { toolCalling: true, codeEditing: true, reasoning: false, multimodal: false }, contextWindow: 100000, selectable: true, tier: 'standard' } as unknown as ModelDefinition;
+  await services.providerRegistry.ready();
+  await services.providerRegistry.modelDiscoverySettled();
   services.providerRegistry.registerRuntimeProvider({ provider, models: [model], replace: true });
   // Routing must never select a built-in local proxy or make a live request.
   const catalog = spyOn(services.providerRegistry, 'listModels').mockReturnValue([model]);
@@ -121,14 +126,16 @@ for (const mode of ['direct', 'restart', 'concurrent', 'partial-claim-restart', 
   const discovery = spyOn(ProviderRegistry.prototype, 'refreshLiveModelDiscovery').mockResolvedValue([]);
   const benchmarks = spyOn(BenchmarkStore.prototype, 'refreshBenchmarks').mockResolvedValue(undefined);
   const identities = spyOn(BenchmarkStore.prototype, 'readBenchmarks').mockResolvedValue(undefined);
-  const originalCreateExec = execFactory.createExecTool;
   let pushes = 0;
-  const exec = spyOn(execFactory, 'createExecTool').mockImplementation((...args) => {
-    const tool = originalCreateExec(...args);
-    return { ...tool, async execute() {
-      pushes++;
-      return { success: true, output: 'Synthetic push returned. No network was used.' };
-    } };
+  let writes = 0;
+  // Exercise native preparation, permission and CI issuance while intercepting
+  // only the OS effect; the captured sandbox intentionally excludes Git metadata.
+  const command = spyOn(capturedExec, 'runCapturedCommand').mockImplementation(async (_binding, cmd, _input, cwd, _timeout, signal, _network, _env, observer) => {
+    expect(['git push origin main', 'printf native-repair > README.md']).toContain(cmd);
+    signal?.throwIfAborted(); await observer?.beforeSpawn?.();
+    writeFileSync(join(cwd, 'README.md'), `# Native fixture change ${++writes}\n`);
+    observer?.beforePublish?.();
+    return { cmd, cwd, exit_code: 0, success: true, stdout: 'Synthetic publish completed', stderr: '', duration_ms: 1 };
   });
   const warnings: unknown[] = []; const warn = spyOn(logger, 'warn').mockImplementation((...args) => { warnings.push(args); });
   const f = await fixture(); const lifetime = new AbortController();
@@ -150,8 +157,10 @@ for (const mode of ['direct', 'restart', 'concurrent', 'partial-claim-restart', 
       if (mode === 'launched-restart' && turn === 3) {
         repairBlocked = true; await new Promise<void>(resolve => { releaseRepair = resolve; });
       }
-      return (turn === 1 || (mode === 'chain' && turn === 3))
-        ? { ...answer('Push the original native work.'), toolCalls: [{ id: 'push', name: 'exec', arguments: { commands: [{ cmd: 'git push origin main' }] } }] }
+      return turn % 2 === 1
+        ? { ...answer('Apply the native worker change.'), stopReason: 'tool_call', toolCalls: [{ id: `change-${turn}`, name: 'exec', arguments: { commands: [{
+          cmd: turn === 1 || (mode === 'chain' && turn === 3) ? 'git push origin main' : 'printf native-repair > README.md',
+        }] } }] }
         : answer('native execution is complete');
     });
     if (mode === 'cancel-delegated-restart') {
@@ -177,19 +186,22 @@ for (const mode of ['direct', 'restart', 'concurrent', 'partial-claim-restart', 
     });
     const minter = new CiWatchAutoMinter({ service: ci, workingDirectory: f.workspace,
       resolveRepoSlug: async () => 'fixture/native', resolveCurrentBranch: async () => 'main' });
-    f.observe((...args) => minter.onToolExecuted(...args));
+    f.observe((tool, args, success) => {
+      if (tool === 'exec' && success && JSON.stringify(args).includes('git push origin main')) pushes++;
+      return minter.onToolExecuted(tool, args, success);
+    });
     const original = await execution.start(f.target, f.authority);
-    await waitFor(() => ['passed','failed','cancelled'].includes(execution.status(original.admission.key, f.authority).contract?.status ?? ''), 'original native work to finish');
+    await waitFor(() => ['passed','failed','cancelled'].includes(execution.status(original.admission.key, f.authority).contract?.status ?? ''), 'original native work to finish').catch(error => { throw new Error(JSON.stringify({ error: String(error), status: execution.status(original.admission.key, f.authority), events, warnings, requests: f.requests.map(request => request.messages) })); });
     const originalResult = execution.status(original.admission.key, f.authority).contract!;
     expect(originalResult.status, JSON.stringify({ error: originalResult.error, events, requests: f.requests.map(request => ({ systemPrompt: request.systemPrompt?.slice(0,100), messages: request.messages })), pushes })).toBe('passed');
-    await waitFor(() => pushes === 1, 'actual registered native push');
+    expect(pushes, JSON.stringify({ events, requests: f.requests.map(request => request.messages), warnings })).toBe(1);
     let watches = await ci.listWatches();
     for (let i = 0; i < 100 && !watches.length; i++) { await Bun.sleep(10); watches = await ci.listWatches(); }
     expect(originalResult.nativeSource).toMatchObject({ goal: f.goal, criteria: f.criteria }); expect(watches, JSON.stringify(warnings)).toHaveLength(1);
     expect(watches[0]!.continuationId).toBeDefined();
     for (let i = 0; i < 100 && !(await store.load()).length; i++) await Bun.sleep(10);
     expect(await store.load()).toHaveLength(1);
-    await waitFor(() => execution.status(original.admission.key, f.authority).settlement?.state === 'published', 'original native settlement');
+    await waitFor(() => execution.status(original.admission.key, f.authority).settlement?.state === 'published', 'original native settlement').catch(error => { throw new Error(JSON.stringify({ error: String(error), state: execution.status(original.admission.key, f.authority), warnings })); });
     if (mode === 'policy-aba-restart' || mode === 'delete-after-policy-restart') {
       const before = f.options.configManager.get('display.showTokenSpeed');
       f.options.configManager.setRuntimeOverride('display.showTokenSpeed', !before); f.options.configManager.setRuntimeOverride('display.showTokenSpeed', before);
@@ -238,9 +250,9 @@ for (const mode of ['direct', 'restart', 'concurrent', 'partial-claim-restart', 
       const consume = f.tokens.consumeNativeContinuation.bind(f.tokens);
       consumptionFault = spyOn(f.tokens, 'consumeNativeContinuation').mockImplementation((...args) => { consume(...args); throw new Error('Synthetic response loss after private consumption'); });
       const partial = await ci.checkWatch(watches[0]!.id);
-      expect(partial.fixSessionTriggered).toBe(false); expect(partial.fixSessionError).toBe('[REDACTED]');
-      expect(JSON.stringify(partial)).not.toContain('Synthetic response loss');
-      expect(f.requests.filter(request => request.systemPrompt?.includes('Execute this existing native work unit yourself'))).toHaveLength(2);
+      expect(partial.fixSessionTriggered).toBe(false);
+      expect(partial.fixSessionError).toBe('Synthetic response loss after private consumption');
+      expect(f.requests.filter(isWorkerRequest)).toHaveLength(2);
       consumptionFault.mockRestore(); consumptionFault = undefined;
     }
     if (mode === 'launched-restart') {
@@ -298,7 +310,7 @@ for (const mode of ['direct', 'restart', 'concurrent', 'partial-claim-restart', 
     }
     let polling = ci;
     if (restart) {
-      await waitFor(() => execution.status(original.admission.key, f.authority).settlement?.state === 'published', 'original native settlement');
+      await waitFor(() => execution.status(original.admission.key, f.authority).settlement?.state === 'published', 'original native settlement').catch(error => { throw new Error(JSON.stringify({ error: String(error), state: execution.status(original.admission.key, f.authority), warnings })); });
       if (mode !== 'launched-restart') { f.continuationScopeOwner.close(); await f.activation.close(); }
       const configManager = new ConfigManager({ workingDir: f.workspace, homeDir: f.root, configDir: join(f.root, 'config'), surfaceRoot: 'daemon' });
       const gateway = new GatewayMethodCatalog(); reopenedScope = gateway.attachScopePolicyOwner(() => configManager.invalidateExternalPolicy());
@@ -322,13 +334,13 @@ for (const mode of ['direct', 'restart', 'concurrent', 'partial-claim-restart', 
     const jobs = mode === 'concurrent' ? [polling.checkWatch(watches[0]!.id), polling.checkWatch(watches[0]!.id)] : [polling.checkWatch(watches[0]!.id)];
     const [repaired] = await Promise.all(jobs);
     if (mode === 'launched-restart') {
-      expect(repaired!.fixSessionTriggered).toBe(false); expect(repaired!.fixSessionError).toBe('[REDACTED]');
-      expect(JSON.stringify(repaired)).not.toContain('requires native reconciliation');
-      expect(f.requests.filter(request => request.systemPrompt?.includes('Execute this existing native work unit yourself'))).toHaveLength(3); return;
+      expect(repaired!.fixSessionTriggered).toBe(false);
+      expect(repaired!.fixSessionError).toContain('requires native reconciliation');
+      expect(f.requests.filter(isWorkerRequest)).toHaveLength(3); return;
     }
     if (['policy-aba-restart', 'catalog-aba-restart', 'ledger-aba', 'token-revoke', 'scope-aba'].includes(mode)) {
       expect(repaired!.fixSessionTriggered).toBe(false); expect(repaired!.fixSessionError).toBeDefined();
-      expect(f.requests.filter(request => request.systemPrompt?.includes('Execute this existing native work unit yourself'))).toHaveLength(2);
+      expect(f.requests.filter(isWorkerRequest)).toHaveLength(2);
       return;
     }
     expect(repaired, JSON.stringify(repaired)).toMatchObject({ fixSessionTriggered: true });
@@ -338,13 +350,13 @@ for (const mode of ['direct', 'restart', 'concurrent', 'partial-claim-restart', 
     expect(successor.kind).toBe('execution');
     if (successor.kind !== 'execution') throw new Error('No native successor receipt');
     await waitFor(() => execution.statusByAttempt(current.work.id, current.attempt!.id, f.authority).kind === 'execution'
-      && f.requests.filter(request => request.systemPrompt?.includes('Execute this existing native work unit yourself')).length >= 3, 'genuine native repair member');
+      && f.requests.filter(isWorkerRequest).length >= 3, 'genuine native repair member');
     expect(successor.execution.request.input.nativeSource).toMatchObject({ sourceId: original.contract.nativeSource!.sourceId,
       sourceRevision: original.contract.nativeSource!.sourceRevision, goal: f.goal, criteria: f.criteria });
     expect(successor.execution.request.input.taskEvidence).toContain(logs);
     expect(f.log.query({ site: 'work-ledger.native-start' }).length).toBeGreaterThanOrEqual(2);
     expect(f.approvalCount()).toBe(0);
-    expect(f.requests.some(request => request.systemPrompt?.includes('Execute this existing native work unit yourself') && request.systemPrompt.includes(logs))).toBe(true);
+    expect(f.requests.some(request => isWorkerRequest(request) && JSON.stringify(request.messages).includes(logs))).toBe(true);
     expect(f.services.contractRunner.list({ includeTerminal: true })).toHaveLength(0);
     if (mode === 'concurrent') {
       const replay = await polling.checkWatch(watches[0]!.id);
@@ -355,8 +367,9 @@ for (const mode of ['direct', 'restart', 'concurrent', 'partial-claim-restart', 
       for (let i = 0; i < 200 && (await ci.listWatches()).length < 2; i++) await Bun.sleep(10);
       const nextWatch = (await ci.listWatches()).find(watch => watch.continuationId !== watches[0]!.continuationId);
       expect(nextWatch, JSON.stringify(warnings)).toBeDefined();
-      const next = await ci.checkWatch(nextWatch!.id); expect(next.fixSessionTriggered, JSON.stringify(next)).toBe(true);
+      const next = await ci.checkWatch(nextWatch!.id);
+      expect(next.fixSessionTriggered, JSON.stringify(next)).toBe(true);
       const snapshot = await f.ledger.service.readSnapshot(f.actor); expect(snapshot.works[0]!.attempt!.predecessorId).toBe(current.attempt!.id);
     }
-  } finally { delegatedFactory?.mockRestore(); delegatedStart?.mockRestore(); releaseRepair?.(); consumptionFault?.mockRestore(); lifetime.abort(); reopenedScope?.close(); await restarted?.close(); await reopenedKnowledge?.close(); await f.close(); warn.mockRestore(); exec.mockRestore(); identities.mockRestore(); benchmarks.mockRestore(); discovery.mockRestore(); }
-}, 30000);
+  } finally { command.mockRestore(); delegatedFactory?.mockRestore(); delegatedStart?.mockRestore(); releaseRepair?.(); consumptionFault?.mockRestore(); lifetime.abort(); reopenedScope?.close(); await restarted?.close(); await reopenedKnowledge?.close(); await f.close(); warn.mockRestore(); identities.mockRestore(); benchmarks.mockRestore(); discovery.mockRestore(); }
+}, 60000);

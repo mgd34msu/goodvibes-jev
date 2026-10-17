@@ -190,7 +190,8 @@ test('selected native diff stays exact host evidence through capture, changed wo
       provenance: { kind: 'workspace', baselineId: workspaceBaselineId, to: 'WORKING' } });
     const workIdentity = { projectId: work.result.projectId, workId: work.result.receipt.workId, attemptId: work.result.receipt.attemptId, expectedRevision: work.result.receipt.expectedRevision };
     const workAbsent = await wire('workLedger.execution.status', workIdentity); expect(workAbsent.status).toBe(404);
-    const workStart = await wire('workLedger.execution.start', workIdentity); body(workStart);
+    const workStart = await wire('workLedger.execution.start', workIdentity);
+    body(workStart);
     const workStatus = await waitFor(() => wire('workLedger.execution.status', workIdentity), value => {
       const snapshot = nativeWorkExecutionSnapshotSchema.parse(body(value));
       if (snapshot.kind === 'execution' && ['failed', 'cancelled'].includes(snapshot.progress?.status ?? '')) throw new Error(`${value.body}; contracts: ${JSON.stringify(f.contracts().map(contract => ({ status: contract.status, error: contract.error, failureKind: contract.failureKind })))}; judgments: ${JSON.stringify(f.judgmentRequests.map(request => request.context?.site))}; judgmentErrors: ${JSON.stringify(f.judgmentErrors.map(error => error instanceof Error ? error.stack : error))}; requests: ${JSON.stringify(f.requests.map(request => ({ model: request.model, systemPrefix: request.systemPrompt?.slice(0, 100) })))}`);

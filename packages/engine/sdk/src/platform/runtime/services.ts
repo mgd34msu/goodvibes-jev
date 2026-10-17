@@ -248,7 +248,7 @@ export interface RuntimeServices {
   readonly browserJudgment?: BrowserJudgmentCapability | undefined;
   /** Repo code index: schema-initialized eagerly; the build is never auto-triggered here (would walk arbitrary workingDirectories incl. test fixtures). */
   readonly codeIndexStore: CodeIndexStore;
-  /** Stage B tool-site incremental reindex scheduler (bound to codeIndexStore). */
+  /** Tool-site incremental reindex scheduler (bound to codeIndexStore). */
   readonly codeIndexReindexScheduler: CodeIndexReindexScheduler;
   /** Daily snapshots of every SQLite store this runtime writes, with bounded retention; unref'd timers (same lifecycle posture as processRegistry, hosts that tear down a runtime stop() it themselves). */
   readonly storeSnapshotScheduler: StoreSnapshotScheduler;
@@ -319,9 +319,9 @@ export interface RuntimeServices {
   readonly sessionLiveTurnControls: SessionLiveTurnControlsHolder;
   /** The contract runner (contract-composition.ts): every spawn that is not outside a contract, every turn routed to work, and the fleet's contract tree go through it. */
   readonly contractRunner: ContractRunner;
-  /** The contracts operator surface (contract runner design 10.2) over this runner and, once attached, the hosted-session floors' runners. */
+  /** The contracts operator surface over this runner and, once attached, the hosted-session floors' runners. */
   readonly contractOperator: ContractOperatorService;
-  /** A session's snapshot for saving, with the trees of the contracts started in the session filled from the runner (contract runner design 7.1). */
+  /** A session's snapshot for saving, with the trees of the contracts started in the session filled from the runner. */
   sessionSnapshot(sessionId: string, conversation: Omit<SessionSnapshot, 'contracts'>): SessionSnapshot;
   readonly processManager: ProcessManager;
   /** Live process registry (fleet aggregation). RuntimeServices.dispose() stops its tick; hosts own their process lifetimes. */
@@ -1080,7 +1080,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     knowledgeService, agentKnowledgeService, contractRunner: contracts, homeGraphService,
     processRegistry, memoryGovernor, triggerManager, agentOrchestrator, cancelHostedAgentRuns: () => cancelAllAgentRuns(agentManager),
   });
-  // Contracts left on disk resume once the services are up (contract runner design 7.2).
+  // Contracts left on disk resume once the services are up.
   void resumeContracts(contractRunner, workingDirectory);
   return {
     workingDirectory,

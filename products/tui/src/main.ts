@@ -12,6 +12,8 @@ import { Compositor } from './renderer/compositor.ts';
 import { type Line } from '@goodvibes-jev/engine/sdk/platform/types';
 import { UIFactory } from './renderer/ui-factory.ts';
 import { resolveThrobberActivity } from './renderer/throbber.ts';
+import { SPINNER_FRAMES } from './renderer/ui-primitives.ts';
+import { ActivityAnimation } from './core/activity-animation.ts';
 import { Orchestrator } from '@goodvibes-jev/engine/sdk/platform/core';
 import { InputHandler } from './input/handler.ts';
 import { SelectionManager } from '@goodvibes-jev/engine/terminal-shell';
@@ -239,6 +241,8 @@ async function main() {
   const scrollToEnd = (vHeight: number) => transcript.followTail(conversation.history.getLineCount(), vHeight);
 
   const unsubs: Array<() => void> = [];
+  const activityAnimation = new ActivityAnimation(() => render());
+  unsubs.push(() => activityAnimation.dispose());
   // Consume the registry's change feed. Querying here used to clone every
   // historical contract and inspect host processes on each frame/keystroke.
   // Controls still act through the registry and revalidate their live targets.
@@ -406,7 +410,7 @@ async function main() {
     orchestrator, powerManager: ctx.services.powerManager, readPowerSurface: () => powerChipSource.get(), render: () => render(), notify: (m) => systemMessageRouter.high(m),
     getActiveToolCallId: () => streamMetrics.activeToolCallId, toggleMemoryProvenance: () => memoryProvenanceUi.toggle(),
   });
-  commandContext.isGenerating = () => orchestrator.isThinking;
+  commandContext.isGenerating = () => orchestrator.isBusy;
   commandContext.jumpToBookmark = jumpToBookmark; commandContext.scrollToLine = scrollToLine;
   commandContext.clearScreen = () => {
     compositor.resetDiff();
@@ -482,7 +486,7 @@ async function main() {
     contractRunner: ctx.services.contractRunner,
     conversation, agentManager, processManager, fleetNodes,
     steer: (id, text) => ctx.views.fleet.actions.steer(id, text), killAgent: (id) => ctx.views.fleet.actions.kill(id, { cascade: true }),
-    mainBusy: () => orchestrator.isThinking, mainModel: () => lastHeaderModel, promptText: () => input.prompt, requestRender: () => render(),
+    mainBusy: () => orchestrator.isThinking || orchestrator.isTurnInFlight, mainModel: () => lastHeaderModel, promptText: () => input.prompt, requestRender: () => render(),
   });
   sessionViews = views; input.sessionView = views; unsubs.push(() => views.dispose());
   // Esc while the main transcript is scrolled back returns to the live bottom and never interrupts the turn (handler-modal-stack.ts).
@@ -569,8 +573,10 @@ async function main() {
     const activeToolCallId = streamMetrics.activeToolCallId;
     // An ask brokered for a background agent carries an attribution; only main's own ask is main's activity.
     const mainApproval = pendingPermission && pendingPermission.attribution === undefined ? pendingPermission : null;
+    const turnActive = orchestrator.isThinking || orchestrator.isTurnInFlight;
     const throbberActivity = resolveThrobberActivity({
-      turnActive: orchestrator.isThinking,
+      turnActive,
+      runningAgentCount,
       compacting,
       compactingSinceMs,
       pendingApproval: mainApproval ? { name: mainApproval.tool, args: mainApproval.args } : null,
@@ -583,7 +589,9 @@ async function main() {
       tokenSpeed: (configManager.get('display.showTokenSpeed') as boolean) ? streamMetrics.tokenSpeed : undefined,
       now: throbberNow,
     });
-    const throbber = throbberActivity ? { spinner: orchestrator.getSpinner(), frame: orchestrator.thinkingFrame, activity: throbberActivity } : null;
+    activityAnimation.setActive(throbberActivity !== null && !orchestrator.isThinking);
+    const activityFrame = orchestrator.isThinking ? orchestrator.thinkingFrame : activityAnimation.frame;
+    const throbber = throbberActivity ? { spinner: SPINNER_FRAMES[activityFrame % SPINNER_FRAMES.length]!, frame: activityFrame, activity: throbberActivity } : null;
     const footerLines = buildShellFooter({
       width,
       promptText: promptInfo.visibleLines.join('\n'),
@@ -616,7 +624,7 @@ async function main() {
       runningAgentProgress: runningAgentSummary.progress,
       composerFlags: composerState.flags,
       composerPendingRisk: composerState.pendingRisk, permissionMode: configManager.get('permissions.mode') as string, voiceCapture: voiceCaptureStatus(),
-      throbber, turnRunning: orchestrator.isThinking, backToBottom,
+      throbber, turnRunning: turnActive, backToBottom,
     }).lines;
 
     const onboardingOwnsScreen = input.onboardingWizard.active;

@@ -158,9 +158,9 @@ describe('bootstrap shutdown preserves durable persistence after owner failures'
     expect(originalFailure).toBeInstanceOf(AggregateError);
     expect((originalFailure as AggregateError).errors).toEqual([...failures.values()]);
     for (const [index, failure] of [...failures.values()].entries()) expect((originalFailure as AggregateError).errors[index]).toBe(failure);
-    expect(exit.diagnostics).toEqual(ownedPhases.map(() => ({
+    expect(exit.diagnostics).toEqual(ownedPhases.map(phase => ({
       phase: 'ctx.shutdown error during process cleanup (non-fatal)',
-      error: '[REDACTED]',
+      error: `${phase} failed`,
     })));
   });
 
@@ -177,7 +177,7 @@ describe('bootstrap shutdown preserves durable persistence after owner failures'
     expect(h.order).toContain('orchestration dispose');
     expect(exit.diagnostics).toEqual([{
       phase: 'ctx.shutdown error during process cleanup (non-fatal)',
-      error: '[REDACTED]',
+      error: expect.stringContaining('shutdownRuntime failed to persist session: EEXIST:'),
     }]);
     expect(exit.exitSpy).toHaveBeenCalledTimes(1);
   });

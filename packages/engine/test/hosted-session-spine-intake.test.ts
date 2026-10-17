@@ -187,7 +187,7 @@ describe('a delivery that failed is not a delivery that happened', () => {
     expect(spine.log.consumed).toEqual([]);
     expect(spine.log.failed).toHaveLength(1);
     expect(spine.log.failed[0]?.inputId).toBe('input-1');
-    expect(spine.log.failed[0]?.error).toBe('[REDACTED]');
+    expect(spine.log.failed[0]?.error).toBe('this session is terminated');
     expect(alerts).toHaveLength(1);
     expect(alerts[0]).toContain('hosted-1');
     expect(alerts[0]).toContain('could not be delivered');
@@ -368,7 +368,7 @@ describe('hosted delivery transience uses the actual failure', () => {
   }
   test('terminal wording fails at the first delivery even with attempts remaining', async () => {
     const f = fixture(); await f.intake.tick(); await f.intake.drainDeliveries();
-    expect(f.spine.log.failed).toEqual([{ inputId: 'input-1', error: '[REDACTED]' }]);
+    expect(f.spine.log.failed).toEqual([{ inputId: 'input-1', error: 'same wording' }]);
     await f.intake.tick(); await f.intake.drainDeliveries(); expect(f.deliveries).toHaveLength(1);
     expect(f.spine.log.consumed).toEqual([]); expect(f.alerts).toHaveLength(1);
   });
@@ -406,7 +406,7 @@ describe('hosted delivery transience uses the actual failure', () => {
   });
 });
 
-test('A-F1540 retained error cannot mutate between failed reading attempts', async () => {
+test('retained error cannot mutate between failed reading attempts', async () => {
   const base = failureReadingsPort([['original authorization failure', { category: 'authorization' }], ['new transient failure', { category: 'network' }]]);
   const failure = new Error('original authorization failure');
   let reads = 0, deliveries = 0;
@@ -417,12 +417,12 @@ test('A-F1540 retained error cannot mutate between failed reading attempts', asy
   });
   await intake.tick(); await intake.drainDeliveries(); failure.message = 'new transient failure';
   await intake.tick(); await intake.drainDeliveries();
-  expect(deliveries).toBe(1); expect(spine.log.failed).toEqual([{ inputId: 'one', error: '[REDACTED]' }]);
+  expect(deliveries).toBe(1); expect(spine.log.failed).toEqual([{ inputId: 'one', error: 'original authorization failure' }]);
   expect(base.requests).toHaveLength(1);
   expect(base.requests[0]?.state).toBe('Message: original authorization failure');
   expect(JSON.stringify(base.requests)).not.toContain('new transient failure');
 });
-test('A-F1540 executable/protected failure evidence never reaches a reader or a redelivery', async () => {
+test('executable/protected failure evidence never reaches a reader or a redelivery', async () => {
   for (const failure of [Object.defineProperty(new Error('synthetic'), 'message', { get() { throw new Error('getter must not run'); } }),
     Object.assign(new Error('synthetic'), { code: 'Authorization: Bearer synthetic-private-provider-key' })]) {
     const reader = failureReadingsPort([]); let deliveries = 0;
@@ -434,7 +434,7 @@ test('A-F1540 executable/protected failure evidence never reaches a reader or a 
   }
 });
 
-test('A-F1540 structured fast paths obey cancellation before effects', async () => {
+test('structured fast paths obey cancellation before effects', async () => {
   const port = failureReadingsPort([]); let deliveries = 0;
   const spine = buildSpine(new Map([['hosted-1', [{ id: 'one', body: 'body' }]]]));
   const intake = new HostedSessionSpineIntake({ spine, liveSessions: () => [record()], now: () => 1,
@@ -443,7 +443,7 @@ test('A-F1540 structured fast paths obey cancellation before effects', async () 
   await intake.tick(); await intake.drainDeliveries();
   expect(deliveries).toBe(1); expect(port.requests).toHaveLength(0); expect(spine.log.failed).toEqual([]);
 });
-test('A-F1540 reader exceptions never echo raw secret-bearing wording', async () => {
+test('reader exceptions never echo raw secret-bearing wording', async () => {
   const secret = 'Authorization: Bearer synthetic-private-reader-secret';
   const port = failureReadingsPort([]).port;
   const warns: unknown[][] = [];
@@ -458,7 +458,7 @@ test('A-F1540 reader exceptions never echo raw secret-bearing wording', async ()
   } finally { warn.mockRestore(); }
 });
 
-test('A-F1540 an async authority guard cannot be hidden by the caller wrapper', async () => {
+test('an async authority guard cannot be hidden by the caller wrapper', async () => {
   const port = failureReadingsPort([]); let deliveries = 0;
   const spine = buildSpine(new Map([['hosted-1', [{ id: 'one', body: 'body' }]]]));
   const intake = new HostedSessionSpineIntake({ spine, liveSessions: () => [record()], now: () => 1,
@@ -467,7 +467,7 @@ test('A-F1540 an async authority guard cannot be hidden by the caller wrapper', 
   await intake.tick(); await intake.drainDeliveries(); await Promise.resolve();
   expect(deliveries).toBe(1); expect(port.requests).toHaveLength(0); expect(spine.log.failed).toEqual([]);
 });
-for (const action of ['stop', 'fence'] as const) test(`A-F1540 rejected async guard that synchronously ${action}s is drained without effects`, async () => {
+for (const action of ['stop', 'fence'] as const) test(`rejected async guard that synchronously ${action}s is drained without effects`, async () => {
   const port = failureReadingsPort([]);
   const spine = buildSpine(new Map([['hosted-1', [{ id: 'one', body: 'body' }]]]));
   const intake = new HostedSessionSpineIntake({ spine, liveSessions: () => [record()], now: () => 1,

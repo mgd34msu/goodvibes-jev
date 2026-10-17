@@ -1,15 +1,3 @@
-/**
- * inbound-mail-persistence-hygiene.test.ts, the four persistence-hygiene
- * findings in
- * docs/reviews/2026-07-27-inbound-email-medium-findings.md.
- *
- * EVERY ASSERTION HERE IS AGAINST THE FILE ON DISK, not against a store's own
- * read method. That is the whole lesson of the disk-state regression: `list()` filters by age
- * and by count, so it reported two records where the file held ten, and a test
- * written against `list()` would have passed against the defect. Where a test
- * must read through the store (the write-reap tally has no on-disk form) it
- * says so.
- */
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { promises as fs, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

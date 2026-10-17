@@ -1,3 +1,4 @@
+import { prepareKnowledgeRecordAdmission } from '../sdk/src/platform/knowledge/store-record-snapshot.js';
 import { extractionValueFixtureFor, extractionValueFixtureReading, type ExtractionValueFixtures } from './_helpers/knowledge-extraction-value-readings.js';
 import * as crypto from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -55,6 +56,24 @@ function candidate(source: GeneratedFactSupportInput['source'], extraction: Gene
 }
 
 describe('fresh generated source and extraction references', () => {
+  test('node admission represents only an exact current generated source reference', async () => {
+    readings(); const { store, source, dbPath } = await fixture();
+    const node = await store.upsertNode({ kind: 'ha_device', slug: 'node-source-reference', title: 'AC-7 ports',
+      summary: 'AC-7 has four HDMI ports.', sourceId: source.id, metadata: { knowledgeSpaceId: spaceId } });
+    expect(judgmentInputProblem(source.id)).toBe('card-material');
+    const admission = prepareKnowledgeRecordAdmission(store, 'node', node);
+    admission.assertCurrent();
+    expect(store.getRecordSnapshot('node', node.id).raw?.source_id).toBe(source.id);
+    expect(() => prepareKnowledgeRecordAdmission(store, 'node', structuredClone(node))).toThrow(JudgmentInputError);
+    const reopened = new KnowledgeStore({ dbPath }); await reopened.init();
+    expect(() => prepareKnowledgeRecordAdmission(reopened, 'node', reopened.getNode(node.id)!)).toThrow(JudgmentInputError);
+    expect(Reflect.set(node, 'summary', 'Private caller content 4111111111111111')).toBe(false);
+    expect(() => prepareKnowledgeRecordAdmission(store, 'node', { ...node, summary: 'Private caller content 4111111111111111' })).toThrow(JudgmentInputError);
+    admission.assertCurrent();
+    await store.upsertSource({ ...source, title: 'Changed source identity' });
+    expect(() => admission.assertCurrent()).toThrow(KnowledgeGeneratedFactSupportHeldError);
+  });
+
   test('page ranking admits exact native source references and rejects copied, reopened and private tails', async () => {
     readings(); const { store, source, dbPath } = await fixture();
     const node = await store.upsertNode({ kind: 'ha_device', slug: 'page-reference', title: 'AC-7 ports',

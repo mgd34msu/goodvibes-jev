@@ -6,7 +6,7 @@ test('daemon readiness consumes boot config generation before the first admitted
   // dependent on how quickly this machine builds the product graph.
   const f = await externalProtocolFixture({ watchIntervalMs: 60_000 });
   const entered = deferred(), release = deferred();
-  f.onReading(async reading => { if ('disposition' in reading.questions) { entered.resolve(); await release.promise; } });
+  f.onAdmission(async () => { entered.resolve(); await release.promise; });
   const pending = f.call().then(value => ({ value }), error => ({ error }));
   try {
     await entered.promise;

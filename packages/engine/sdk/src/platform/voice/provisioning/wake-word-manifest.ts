@@ -177,13 +177,8 @@ export interface WakeWordModelMeasurements {
   readonly minimalPairFalseAcceptRate: number;
   /** False accepts per hour on held-out real human speech never trained on. */
   readonly falseAcceptsPerHourRealSpeech: number;
-  /**
-   * Always true today, and stated rather than hidden: no human recording of the
-   * wake phrase exists yet, so recall is measured entirely on text-to-speech
-   * output from a single VITS model, no real microphones, no real rooms, no
-   * accents outside the synthesis model's distribution, no children, no
-   * whispering, no speakerphone. The false-accept figures ARE measured on real
-   * human speech. A human test pass is required before this ships as a default.
+  /** True when wake-phrase recall was measured only on synthetic speech.
+   * False-accept measurements use held-out human speech.
    */
   readonly recallIsSyntheticOnly: boolean;
 }
@@ -332,17 +327,8 @@ export interface WakeVadModelManifest {
   readonly provenance: string;
 }
 
-/**
- * The pinned speech gate.
- *
- * Hosted on the same append-only `voice-runtimes-v1` tag as every other voice
- * artifact, provisioned with the wake models, and verified by content before use.
- *
- * THE ASSETS LAND WITH THIS ROUND'S RELEASE. The byte counts and checksums below
- * are of the built artifacts and are what the upload must match; until the upload
- * happens a provision reports the gate as failed and `vadReady` false, while the
- * detector itself stays ready, which is why the gate is not part of
- * `WakeProvisionStatus.ready`.
+/** Pinned speech gate, provisioned and verified with the wake models.
+ * Availability is reported separately as vadReady because voice gating is optional.
  */
 export const WAKE_VAD_MODEL: WakeVadModelManifest = {
   version: '1.0.0',

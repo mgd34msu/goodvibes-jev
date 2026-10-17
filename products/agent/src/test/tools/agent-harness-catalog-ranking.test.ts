@@ -105,7 +105,7 @@ function admittedFixture() {
         sourceOf: () => ({ goal: 'Verify isolated slash command effects', criteria: ['Only execute registered synthetic command handlers'] }),
         signal, schemaRevision: call.schemaRevision, preparedCall: { registry: f.registry, call },
       });
-      expect(admission.result.autonomousDecision?.outcome).toBe('act');
+      expect(admission.result.approved).toBe(true);
       return await f.registry.executePrepared(call, admission);
     } finally { installJudgmentPort(prior); }
   } };

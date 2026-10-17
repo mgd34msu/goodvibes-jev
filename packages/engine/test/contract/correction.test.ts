@@ -40,7 +40,7 @@ function use(h: Harness): Harness {
 
 const unitFix = (): string => plannerOutput(fixPlan([{ serves: ['u1.c1'], files: ['src/csv.ts'] }]));
 
-describe('routing a stalled unit (5.1)', () => {
+describe('routing a stalled unit', () => {
   test('split: a planned-fix group runs, and the unit passes when its re-check reads the fix', async () => {
     const asked: Record<string, unknown>[] = [];
     const planner = stepPlanner(oneUnitPlan(1), { fix: unitFix });
@@ -119,19 +119,20 @@ describe('routing a stalled unit (5.1)', () => {
     expect(eventsOf(h, 'CONTRACT_ESCALATED').map((event) => event.reason)).toEqual(['stalled']);
   }, 20_000);
 
-  test('the route reading sees the unmet and the unshown criteria as separate fields', async () => {
+  test('the route preserves the current verdict without treating weak confidence as unshown work', async () => {
     const asked: Record<string, unknown>[] = [];
-    // u1.c1 reads unmet; u1.c2 reads no at confirm, so it is not shown.
-    const failsAndUnshown: AgentScript = () => Array.from({ length: 3 }, (_, index) => ({ files: { 'src/csv.ts': `attempt ${index}\n` }, text: `[unmet] attempt ${index} [p=0.9,0.2]` }));
+    // u1.c1 reads unmet; a tie for u1.c2 does not invent unmet or unshown work.
+    const failsAndUnshown: AgentScript = () => Array.from({ length: 3 }, (_, index) => ({ files: { 'src/csv.ts': `attempt ${index}\n` }, text: `[unmet] attempt ${index} [p=0.9,0.5]` }));
     const h = use(makeHarness({ plan: oneUnitPlan(2), contract: { stallLimit: 2 }, scripts: { u1: failsAndUnshown }, port: routeAnswer('owner', asked) }));
     const { contract } = startContract(h);
     await waitFor(() => contractOf(h, contract.id).status === 'awaiting-owner', 'the owner to be asked', 15_000);
     expect(asked).toHaveLength(1);
     expect(asked[0]!['unmet']).toEqual(['u1.c1']);
-    expect(asked[0]!['unshown']).toEqual(['u1.c2']);
+    expect(asked[0]!['unshown']).toEqual([]);
     const escalation = contractOf(h, contract.id).escalations[0]!;
     expect(escalation.unmetCriterionIds).toEqual(['u1.c1']);
-    expect(escalation.question).toContain('Not shown:\n- [u1.c2] parser property 2');
+    expect(escalation.question).not.toContain('Not shown:');
+    expect(contractOf(h, contract.id).units[0]!.criteria[1]!.status).toBe('met');
   }, 20_000);
 
   test('a route read below act goes to the owner', async () => {
@@ -145,7 +146,11 @@ describe('routing a stalled unit (5.1)', () => {
 
   test('when the fix rounds are spent the owner decides, without a route reading', async () => {
     const asked: Record<string, unknown>[] = [];
-    const h = use(makeHarness({ plan: oneUnitPlan(1), contract: { stallLimit: 2, maxFixRounds: 0 }, scripts: { u1: keepsFailing(3) }, port: routeAnswer('split', asked) }));
+    let h: Harness;
+    h = use(makeHarness({ plan: oneUnitPlan(1), contract: { stallLimit: 2, maxFixRounds: 1 }, scripts: { u1: (record, run) => {
+      h.store.get(record.contractId!)!.units[0]!.fixRounds = 1;
+      return keepsFailing(3)(record, run);
+    } }, port: routeAnswer('split', asked) }));
     const { contract } = startContract(h);
     await waitFor(() => contractOf(h, contract.id).status === 'awaiting-owner', 'the owner to be asked', 15_000);
     expect(asked).toHaveLength(0);
@@ -292,8 +297,9 @@ describe('groups and the deliverable (6.4)', () => {
   }, 20_000);
 
   test('a deliverable that fails with its fix rounds spent goes to the owner', async () => {
-    const h = use(makeHarness({ plan: oneUnitPlan(1), contract: { maxFixRounds: 0 }, scripts: { u1: finishes('parser written') }, port: failsFirst('deliverable') }));
+    const h = use(makeHarness({ plan: oneUnitPlan(1), contract: { maxFixRounds: 1 }, scripts: { u1: finishes('parser written') }, port: failsFirst('deliverable') }));
     const { contract } = startContract(h);
+    h.store.get(contract.id)!.fixRounds = 1;
     await waitFor(() => contractOf(h, contract.id).status === 'awaiting-owner', 'the owner to be asked', 15_000);
     const escalation = contractOf(h, contract.id).escalations[0]!;
     expect(escalation).toMatchObject({ scope: 'deliverable', targetId: contract.id, reason: 'fix-rounds-exhausted', unmetCriterionIds: ['c1'] });

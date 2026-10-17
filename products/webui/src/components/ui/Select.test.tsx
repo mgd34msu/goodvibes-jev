@@ -83,3 +83,18 @@ describe('Select: a styled listbox, no native select', () => {
     expect(value).toBe('project');
   });
 });
+
+
+test('Tab and Shift+Tab follow the trigger position within a modal', () => {
+  flushSync(() => root.render(<div role="dialog" aria-modal="true">
+    <button id="before">before</button>
+    <Select aria-label="Scope" value={value} options={OPTIONS} onChange={() => {}} />
+    <button id="after">after</button>
+  </div>));
+  const select = container.querySelector('[role="combobox"]')!;
+  key(select, 'Enter'); key(listbox()!, 'Tab');
+  expect(document.activeElement?.id).toBe('after');
+  key(select, 'Enter');
+  flushSync(() => listbox()!.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true })));
+  expect(document.activeElement?.id).toBe('before');
+});

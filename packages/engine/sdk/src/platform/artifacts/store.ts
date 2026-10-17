@@ -176,15 +176,19 @@ function isAsyncIterable(
   return typeof (stream as AsyncIterable<Uint8Array | Buffer | string>)[Symbol.asyncIterator] === 'function';
 }
 
-async function* iterateWebStream(stream: ReadableStream<Uint8Array>): AsyncIterable<Uint8Array> {
+async function* iterateWebStream(stream: ReadableStream<Uint8Array>, signal: AbortSignal): AsyncIterable<Uint8Array> {
   const reader = stream.getReader();
+  const abort = () => { void reader.cancel(signal.reason).catch(() => {}); };
+  signal.addEventListener('abort', abort, { once: true });
   try {
+    signal.throwIfAborted();
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       if (value) yield value;
     }
   } finally {
+    signal.removeEventListener('abort', abort);
     try {
       reader.releaseLock();
     } catch (error) {
@@ -197,8 +201,9 @@ async function* iterateWebStream(stream: ReadableStream<Uint8Array>): AsyncItera
 
 function streamToAsyncIterable(
   stream: ArtifactStreamCreateInput['stream'],
+  signal: AbortSignal,
 ): AsyncIterable<Uint8Array | Buffer | string> {
-  if (isWebReadableStream(stream)) return iterateWebStream(stream);
+  if (isWebReadableStream(stream)) return iterateWebStream(stream, signal);
   if (isAsyncIterable(stream)) return stream;
   return (async function* iterateSyncIterable(): AsyncIterable<Uint8Array | Buffer | string> {
     for (const chunk of stream) yield chunk;
@@ -437,11 +442,24 @@ export class ArtifactStore {
 
     const hash = createHash('sha256');
     const writer = createWriteStream(contentPath, { flags: 'wx' });
+    // Observe errors for the writer's whole lifetime, including while the
+    // producer has no chunk ready. An EventEmitter error is not caught by try.
+    const settled = finished(writer, { cleanup: true });
+    void settled.catch(() => {});
+    let onWriterError!: (error: Error) => void;
+    const writerFailure = new Promise<never>((_, reject) => { onWriterError = reject; });
+    void writerFailure.catch(() => {});
+    writer.on('error', onWriterError);
+    const producer = new AbortController();
+    let iterator: AsyncIterator<Uint8Array | Buffer | string> | undefined;
     let sizeBytes = 0;
     try {
-      for await (const chunk of streamToAsyncIterable(input.stream)) {
+      iterator = streamToAsyncIterable(input.stream, producer.signal)[Symbol.asyncIterator]();
+      for (;;) {
+        const next = await Promise.race([iterator.next(), writerFailure]);
+        if (next.done) break;
         input.assertCurrent?.();
-        const buffer = chunkToBuffer(chunk);
+        const buffer = chunkToBuffer(next.value);
         sizeBytes += buffer.byteLength;
         if (sizeBytes > this.maxBytes) {
           writer.destroy();
@@ -449,20 +467,26 @@ export class ArtifactStore {
         }
         hash.update(buffer);
         if (!writer.write(buffer)) {
-          await waitForDrain(writer);
+          await Promise.race([waitForDrain(writer), writerFailure]);
         }
       }
-      await finishWriter(writer);
+      await Promise.race([finishWriter(writer), writerFailure]);
+      await settled;
       input.assertCurrent?.();
       return { sizeBytes, sha256: hash.digest('hex') };
     } catch (error) {
       // Destruction can race the asynchronous open. Wait for actual closure
       // before unlinking this operation's spool or allowing owner cleanup.
-      const settled = finished(writer, { cleanup: true });
+      producer.abort(error);
       writer.destroy();
       try { await settled; } catch { /* Preserve the initiating failure. */ }
       rmSync(contentPath, { force: true });
       throw error;
+    } finally {
+      writer.off('error', onWriterError);
+      // A generic async producer may be awaiting its own external source;
+      // request its cleanup without delaying the spool error indefinitely.
+      try { void iterator?.return?.().catch(() => {}); } catch { /* Preserve the writer failure. */ }
     }
   }
 

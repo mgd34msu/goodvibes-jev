@@ -1,6 +1,6 @@
 /**
  * imap-source.ts, the existing IMAP watcher, presented as an
- * `InboundMailSource` (docs/inbound-email.md §3.4d).
+ * `InboundMailSource` (docs/decisions/2026-07-27-inbound-email-design.md §3.4d).
  *
  * This file is an ADAPTER and deliberately nothing else. IDLE, the poll
  * fallback, capability classification, the single credential retry, the

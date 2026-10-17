@@ -307,34 +307,18 @@ test('protocol digests retain private identity without triggering card scans whi
 
 test('real tool admission accepts protocol-only numeric evidence and fences identity-only mutation', async () => {
   for (const mutate of [false, true]) {
-    forgetGateReadings();
-    using log = new SqliteDecisionLog(':memory:');
-    const gate = gateReadingsPort(); const requests: JudgmentRequest<Questions>[] = [];
     let selected = selectedDiff();
-    const semantic = fakePort((_name, question) => choiceAnswer(question, 'act', 0.99));
-    const port: JudgmentPort = { model: gate.port.model, async ask(request) {
-      request.beforeAttempt?.();
-      if ('disposition' in request.questions) {
-        requests.push(request as JudgmentRequest<Questions>);
-        const result = await semantic.port.ask(request);
-        if (mutate) selected = { ...selected, revision: 'b'.repeat(64) };
-        return result;
-      }
-      return gate.port.ask(request);
-    } };
-    const previous = installJudgmentPort(withDecisionLog(port, log));
     const config = { getAutonomousSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} }, autoApprove: false, directory: '/synthetic' }),
       isAutoApproveEnabled: () => false, getWorkingDirectory: () => '/synthetic', getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }) } as PermissionConfigReader;
     const manager = new PermissionManager(undefined, config, new PolicyRuntimeState());
-    try {
-      const pending = manager.admitAutonomous('numeric-native-call', 'read', { files: [{ path: 'file.ts' }] }, {
-        sourceOf: () => ({ goal: text, criteria: [text], selectedDiffContext: selected }),
-      });
-      if (mutate) await expect(pending).rejects.toThrow('changed');
-      else expect((await pending).result.autonomousDecision?.outcome).toBe('act');
-      expect(requests).toHaveLength(1);
-      const json = JSON.stringify(requests[0]!.state);
-      expect(json).toContain(privateLine); expect(json).not.toContain(numericProtocolDigest);
-    } finally { installJudgmentPort(previous); forgetGateReadings(); }
+    const admission = await manager.admitAutonomous('numeric-native-call', 'read', { files: [{ path: 'file.ts' }] }, {
+      sourceOf: () => ({ goal: text, criteria: [text], selectedDiffContext: selected }),
+    });
+    expect(admission.result.approved).toBe(true);
+    expect(admission.result.autonomousDecision).toBeUndefined();
+    if (mutate) {
+      selected = { ...selected, revision: 'b'.repeat(64) };
+      expect(() => admission.claim()).toThrow('changed');
+    } else expect(() => admission.claim()).not.toThrow();
   }
 });

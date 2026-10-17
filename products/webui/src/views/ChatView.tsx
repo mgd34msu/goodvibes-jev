@@ -70,6 +70,8 @@ export function ChatView({
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const liveTextRef = useRef('');
+  const assistantIdsRef = useRef<Set<string>>(new Set());
+  const responseBaselineRef = useRef<Set<string> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Auto-title bookkeeping: sessions we have already client-side auto-titled (fire once),
   // and sessions the operator renamed by hand (never overwrite a manual title).
@@ -95,6 +97,9 @@ export function ChatView({
   }, [onActiveSessionChange, chatSelection]);
   const { state: turnState, error: turnError } = turn;
   const setTurnState = useCallback<Dispatch<SetStateAction<string>>>((next) => {
+    if (next === 'sending' || next === 'submitted' || next === 'sending while reconnecting') {
+      responseBaselineRef.current = new Set(assistantIdsRef.current);
+    }
     setTurn((current) => ({
       ...current,
       state: (typeof next === 'function' ? (next as (prev: string) => string)(current.state) : next) as TurnPhase['state'],
@@ -273,6 +278,7 @@ export function ChatView({
       return;
     }
     setTurn(IDLE_TURN_PHASE);
+    responseBaselineRef.current = null;
     setPendingUserMessageId('');
   }, [activeSessionId, selectedChat]);
 
@@ -342,6 +348,10 @@ export function ChatView({
     });
   }, [activeSessionId, localMessages, messageItems, toolActivityByMessageId]);
 
+  useEffect(() => {
+    assistantIdsRef.current = new Set(renderedMessageItems.filter(message => messageTone(message) === 'assistant').map(bestId));
+  }, [renderedMessageItems]);
+
   // The honest-lineage render model: active messages as nodes, with any superseded
   // (retained) history attached to the node that heads its fork. Derived purely from
   // the server-authoritative list, so it survives reloads and never drops history.
@@ -389,20 +399,21 @@ export function ChatView({
   useEffect(() => {
     if ((!ACTIVE_TURN_STATES.includes(turnState) && turnState !== 'syncing') || liveText) return;
     const lastMessage = renderedMessageItems.at(-1);
-    if (lastMessage && messageTone(lastMessage) === 'assistant') {
+    if (lastMessage && messageTone(lastMessage) === 'assistant' && !responseBaselineRef.current?.has(bestId(lastMessage))) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- guarded by condition; resolves syncing state after DB messages load
       setPendingUserMessageId('');
 
       setTurnState('completed');
     }
-  }, [liveText, renderedMessageItems, turnState]);
+  }, [liveText, renderedMessageItems, turnState, setTurnState]);
 
   useEffect(() => {
     if (!pendingUserMessageId || turnError) return;
     const pendingUser = renderedMessageItems.find((message) => bestId(message) === pendingUserMessageId);
+    if (!pendingUser) return;
     const pendingCreatedAt = messageCreatedAt(pendingUser);
     const hasAssistantReply = renderedMessageItems.some((message) => (
-      messageTone(message) === 'assistant' && messageCreatedAt(message) >= pendingCreatedAt
+      messageTone(message) === 'assistant' && !responseBaselineRef.current?.has(bestId(message)) && messageCreatedAt(message) >= pendingCreatedAt
     ));
     if (hasAssistantReply) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- guarded by hasAssistantReply; resolves pending turn when message confirmed in DB
@@ -410,7 +421,7 @@ export function ChatView({
 
       setTurnState('completed');
     }
-  }, [pendingUserMessageId, renderedMessageItems, turnError]);
+  }, [pendingUserMessageId, renderedMessageItems, turnError, setTurnState]);
 
   // Client-side auto-title: once a fresh chat has its first user message AND a first
   // assistant reply, replace the crude create-time title (a raw slice of the first

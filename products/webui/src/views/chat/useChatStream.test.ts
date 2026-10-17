@@ -51,6 +51,7 @@ interface StreamControl {
   openOptions: StreamOpenOptions | undefined;
 }
 
+let renderedLiveText = '';
 let activeStreamControl: StreamControl | null = null;
 // Every stream() opened this test, in order, the epoch/handshake-race tests need to
 // hold BOTH the superseded stream and its successor at once (activeStreamControl only
@@ -132,7 +133,7 @@ function HookOwner({ activeSessionId, turnState, setTurnState, setTurnError, onA
     (liveTextRef as any).current = '';
     return {
       liveTextRef,
-      setLiveText: mock(() => {}),
+      setLiveText: mock((next: SetStateAction<string>) => { renderedLiveText = typeof next === 'function' ? next(renderedLiveText) : next; }),
       setLocalMessages: mock((_fn: SetStateAction<LocalCompanionMessage[]>) => {}),
       setPendingUserMessageId: mock(() => {}),
       invalidateChatState: mock(() => Promise.resolve()),
@@ -784,6 +785,22 @@ describe('useChatStream: session switch / retry mid-handshake is inert (epoch gu
     };
   }
 
+  test('a rejected Stop from the previous session cannot disconnect the new stream', async () => {
+    let reject!: (error: unknown) => void;
+    turnsCancelBehavior = () => new Promise((_, no) => { reject = no; });
+    const h = renderForSwitch('session-A');
+    h.result.stop();
+    h.renderWith('session-B');
+    const stream = allStreamControls.at(-1)!;
+    stream.resolveFn(stream.disconnect); await Promise.resolve(); await Promise.resolve();
+    const writes = h.turnStates.length;
+    reject(Object.assign(new Error('Method unavailable'), { code: 'METHOD_NOT_FOUND' }));
+    await Promise.resolve(); await Promise.resolve();
+    expect(h.turnStates).toHaveLength(writes);
+    expect(stream.disconnect).not.toHaveBeenCalled();
+    h.unmount();
+  });
+
   test('switching sessions mid-handshake: the old stream is inert, its late handle is disconnected and never stored, the new session is untouched', async () => {
     const h = renderForSwitch('session-A');
     const ctrlA = allStreamControls[0];
@@ -1299,4 +1316,19 @@ describe('useChatStream: toolActivityByMessageId', () => {
 
     ctx.unmount();
   });
+});
+
+
+test('failed partial output never becomes the next turn response', async () => {
+  const ctx = renderHookHelper({ activeSessionId: 'partial-session' });
+  const stream = activeStreamControl!;
+  const event = (type: string, extra = {}) => flushSync(() => stream.options.onEvent(`companion-chat.${type}`, { sessionId: 'partial-session', type, ...extra }));
+  event('turn.delta', { delta: 'old partial' });
+  expect(renderedLiveText).toBe('old partial');
+  event('turn.error', { error: 'failed' });
+  expect(renderedLiveText).toBe('');
+  event('turn.started');
+  event('turn.delta', { delta: 'new reply' });
+  expect(renderedLiveText).toBe('new reply');
+  ctx.unmount();
 });

@@ -414,9 +414,7 @@ export const builtinGatewayEmailMethodDescriptors: readonly GatewayMethodDescrip
       cursors: arraySchema(EMAIL_INBOUND_CURSOR_SCHEMA),
       expectations: arraySchema(EMAIL_INBOUND_EXPECTATION_SCHEMA),
       retention: EMAIL_INBOUND_RETENTION_SCHEMA,
-      // Both were served by the handler and undeclared here, which is the same
-      // fault the descriptor's own comment names for transports: a disclosure
-      // the consumer cannot see the shape of is one it will not read.
+
       stores: arraySchema(EMAIL_INBOUND_STORE_SCHEMA),
       noticeDelivery: EMAIL_INBOUND_NOTICE_DELIVERY_SCHEMA,
       health: EMAIL_INBOUND_HEALTH_SCHEMA,

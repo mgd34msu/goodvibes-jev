@@ -289,11 +289,11 @@ test('captured validator command names cannot select arbitrary commands or fall 
   const nativeSpawn = spyOn(childProcess, 'spawn'); const hostSpawn = spyOn(Bun, 'spawn');
   try {
     const result = await write.execute({ files: [{ path: 'source.txt', content: 'new', mode: 'overwrite' }], validate: { after: ['bun -e "throw Error(123)"'] } });
-    expect(result.success).toBe(true); expect(JSON.parse(result.output!).validation_error).toBe('[REDACTED]');
+    expect(result.success).toBe(true); expect(JSON.parse(result.output!).validation_error).toBe('Unsupported validator');
     expect(JSON.parse(result.output!).validation_passed).toBeUndefined();
     expect(readFileSync(join(f.root, 'source.txt'), 'utf8')).toBe('new');
     const held = await unbound.execute({ files: [{ path: 'source.txt', content: 'newer', mode: 'overwrite' }], validate: { after: ['build'] } });
-    expect(held.success).toBe(true); expect(JSON.parse(held.output!).validation_error).toBe('[REDACTED]');
+    expect(held.success).toBe(true); expect(JSON.parse(held.output!).validation_error).toBe('Captured validators require a construction-owned contained runner');
     expect(JSON.parse(held.output!).validation_passed).toBeUndefined();
     expect(readFileSync(join(f.root, 'source.txt'), 'utf8')).toBe('newer');
     expect(readFileSync(join(f.owner, 'source.txt'), 'utf8')).toBe('original source');
@@ -353,7 +353,7 @@ test.skipIf(!supported)('captured validator consumes its escalation at final spa
   const signal = new AbortController().signal;
   const filter: ReadAccessFilter = async () => true;
   const validatorRunner = createCapturedValidatorRunner({ authority: f.authority, root: f.root, readAccessFilter: filter }, { sandbox: {
-    config: { enabled: true, egressAllowlist: [], workspaceWritable: [] }, featureEnabled: true,
+    config: { enabled: true, egressAllowlist: ['bun'], workspaceWritable: [] }, featureEnabled: true,
     availability: { available: true, backend: 'bubblewrap', bwrapPath: '/usr/bin/bwrap', networkIsolationGuaranteed: true, reason: 'test host' },
     requestEscalation: async () => Object.freeze({ signal, assertCurrent() {}, claim() { claims++; throw new Error('Synthetic final validator admission revoked'); }, close() { closes++; } }),
   } });

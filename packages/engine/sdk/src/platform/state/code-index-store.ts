@@ -2,7 +2,7 @@ import { DirectoryWalk } from '../utils/walk-dir.js';
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 /**
  * CodeIndexStore, an incremental, tree-sitter-chunked, embedding-backed index
- * of a repo's source tree (Stage A; see CHANGELOG 0.38.0).
+ * of a repo's source tree (see CHANGELOG 0.38.0).
  *
  * Deliberately MIRRORS MemoryStore + SqliteVecMemoryIndex (state/memory-store.ts,
  * state/memory-vector-store.ts) rather than reusing them: those classes are
@@ -508,13 +508,8 @@ export class CodeIndexStore {
     return this.buildPromise;
   }
 
-  /**
-   * Reindex a single file on demand. Intended to be called from the file
-   * read/write tool paths and from an explicit reindex command, wiring
-   * those call sites is out of scope for this module (see module doc).
-   * A no-op (chunks removed) if the path is gitignored or no longer exists.
-   * Scheduler-owned automatic updates also honor directory-selection/no-follow
-   * policy. Explicit single-file calls keep their existing requested-file scope.
+  /** Reindex one file. Missing or gitignored paths have their chunks removed.
+   * Scheduler updates also honor directory selection and no-follow policy.
    */
   async reindexFile(absPath: string, options: { automatic?: boolean } = {}): Promise<{ indexed: boolean; mode: CodeChunkMode }> {
     if (this.authorizedRunUsed) throw new Error('Live-tree operations are disabled on an authorized code index');

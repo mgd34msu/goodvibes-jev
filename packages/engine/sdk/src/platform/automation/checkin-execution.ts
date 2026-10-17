@@ -78,6 +78,7 @@ export async function executeCheckinJob(
     updatedAt: now,
   };
   context.runs.set(baseRun.id, baseRun);
+  context.onRunRecorded?.();
   context.jobs.set(runningJob.id, runningJob);
   context.emitRunQueued(runningJob, baseRun);
   context.emitRunStarted(runningJob, baseRun);

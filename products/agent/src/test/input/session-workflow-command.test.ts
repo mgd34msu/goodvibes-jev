@@ -351,3 +351,16 @@ describe('session workflow command', () => {
     });
   });
 });
+
+
+test.each(['resume', 'save', 'fork'])('%s preserves the active session during a turn', async sub => {
+  const printed: string[] = [];
+  const { ctx, tmpDir, sm } = makeRealSessionManagerContext({ printed });
+  try {
+    ctx.isGenerating = () => true;
+    await handleSessionWorkflowCommand([sub, 'target'], ctx);
+    expect(ctx.session.runtime.sessionId).toBe('active-session');
+    expect(sm.list()).toEqual([]);
+    expect(printed.join(' ')).toContain('still running');
+  } finally { rmSync(tmpDir, { recursive: true, force: true }); }
+});

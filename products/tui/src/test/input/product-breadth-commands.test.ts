@@ -1,3 +1,4 @@
+import { makeTestSurface } from '../helpers/session-surface.ts';
 import { seedBenchmarkCacheFixture } from '../helpers/benchmark-cache-fixture.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
@@ -508,6 +509,7 @@ describe('product breadth commands', () => {
         benchmarkStore: runtimeServices.benchmarkStore,
       },
       workspace: {
+        surface: makeTestSurface(runtimeServices.workingDirectory, runtimeServices.homeDirectory),
         shellPaths: runtimeServices.shellPaths,
         profileManager: runtimeServices.profileManager,
         bookmarkManager: runtimeServices.bookmarkManager,
@@ -1848,6 +1850,7 @@ describe('product breadth commands', () => {
     ctx.session.runtime.sessionId = 'sess-demo';
     (ctx.session as { conversationManager: CommandContext['session']['conversationManager'] }).conversationManager = {
       title: 'Resume Me',
+      workTree: { foldState: () => new Map(), turnOutcomes: () => new Map() },
       toJSON: () => ({
         messages: [{ role: 'user', content: 'hello' }],
         title: 'Resume Me',

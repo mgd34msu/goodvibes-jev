@@ -36,16 +36,16 @@ async function seedWithOpenQuestion(service: ProjectPlanningService): Promise<vo
   await service.upsertState({
     projectId: 'alpha',
     state: {
-      goal: 'Ship the answer path end-to-end',
+      goal: 'Record answers to project questions',
       scope: 'SDK service only',
       tasks: [{
-        id: 't1', title: 'Implement answerQuestion',
+        id: 'answer-project-question', title: 'Implement answerQuestion',
         verification: ['bun test test/project-planning-answer.test.ts'],
       }],
-      verificationGates: [{ id: 'g1', description: 'answer tests pass', required: true }],
+      verificationGates: [{ id: 'planning-answer-tests', description: 'answer tests pass', required: true }],
       openQuestions: [
-        { id: 'q-scope', prompt: 'What is the first-pass scope?', status: 'open' },
-        { id: 'q-owner', prompt: 'Who owns rollout?', status: 'open' },
+        { id: 'project-scope', prompt: 'What is the project scope?', status: 'open' },
+        { id: 'rollout-owner', prompt: 'Who owns rollout?', status: 'open' },
       ],
       executionApproved: true,
     },
@@ -59,23 +59,23 @@ describe('ProjectPlanningService.answerQuestion', () => {
 
     const result = await service.answerQuestion({
       projectId: 'alpha',
-      questionId: 'q-scope',
-      answer: 'A focused first-pass scope covering the SDK service only.',
+      questionId: 'project-scope',
+      answer: 'A focused project scope covering the SDK service only.',
     });
 
     expect(result.answered).toBe(true);
-    expect(result.question?.id).toBe('q-scope');
+    expect(result.question?.id).toBe('project-scope');
     expect(result.question?.status).toBe('answered');
-    expect(result.question?.answer).toBe('A focused first-pass scope covering the SDK service only.');
+    expect(result.question?.answer).toBe('A focused project scope covering the SDK service only.');
     expect(typeof result.question?.answeredAt).toBe('number');
 
     // Open questions no longer include the answered one; the other remains.
-    expect(result.openQuestions.map((q) => q.id)).toEqual(['q-owner']);
+    expect(result.openQuestions.map((q) => q.id)).toEqual(['rollout-owner']);
 
     // Persisted: a fresh read reflects the move.
     const reread = await service.getState({ projectId: 'alpha' });
-    expect(reread.state?.openQuestions.map((q) => q.id)).toEqual(['q-owner']);
-    expect(reread.state?.answeredQuestions.map((q) => q.id)).toContain('q-scope');
+    expect(reread.state?.openQuestions.map((q) => q.id)).toEqual(['rollout-owner']);
+    expect(reread.state?.answeredQuestions.map((q) => q.id)).toContain('project-scope');
   });
 
   test('answers by zero-based questionIndex', async () => {
@@ -89,8 +89,8 @@ describe('ProjectPlanningService.answerQuestion', () => {
     });
 
     expect(result.answered).toBe(true);
-    expect(result.question?.id).toBe('q-owner');
-    expect(result.openQuestions.map((q) => q.id)).toEqual(['q-scope']);
+    expect(result.question?.id).toBe('rollout-owner');
+    expect(result.openQuestions.map((q) => q.id)).toEqual(['project-scope']);
   });
 
   test('recorded answer is consumed: its open-question gap clears', async () => {
@@ -98,16 +98,16 @@ describe('ProjectPlanningService.answerQuestion', () => {
     await seedWithOpenQuestion(service);
 
     const before = await service.evaluate({ projectId: 'alpha' });
-    const scopeGapBefore = before.gaps.some((g) => g.id === 'open-question:q-scope');
+    const scopeGapBefore = before.gaps.some((g) => g.id === 'open-question:project-scope');
     expect(scopeGapBefore).toBe(true);
 
     const result = await service.answerQuestion({
-      projectId: 'alpha', questionId: 'q-scope', answer: 'Focused first pass.',
+      projectId: 'alpha', questionId: 'project-scope', answer: 'The SDK service.',
     });
-    const scopeGapAfter = result.evaluation.gaps.some((g) => g.id === 'open-question:q-scope');
+    const scopeGapAfter = result.evaluation.gaps.some((g) => g.id === 'open-question:project-scope');
     expect(scopeGapAfter).toBe(false);
     // The other open question still gates.
-    expect(result.evaluation.gaps.some((g) => g.id === 'open-question:q-owner')).toBe(true);
+    expect(result.evaluation.gaps.some((g) => g.id === 'open-question:rollout-owner')).toBe(true);
   });
 
   test('honest failure: unknown question id → answered:false, no mutation', async () => {
@@ -119,13 +119,13 @@ describe('ProjectPlanningService.answerQuestion', () => {
     });
     expect(result.answered).toBe(false);
     expect(result.reason).toBe('question-not-found');
-    expect(result.openQuestions.map((q) => q.id)).toEqual(['q-scope', 'q-owner']);
+    expect(result.openQuestions.map((q) => q.id)).toEqual(['project-scope', 'rollout-owner']);
   });
 
   test('honest failure: empty answer → answered:false, no mutation', async () => {
     const service = createService();
     await seedWithOpenQuestion(service);
-    const result = await service.answerQuestion({ projectId: 'alpha', questionId: 'q-scope', answer: '   ' });
+    const result = await service.answerQuestion({ projectId: 'alpha', questionId: 'project-scope', answer: '   ' });
     expect(result.answered).toBe(false);
     expect(result.reason).toBe('empty-answer');
   });

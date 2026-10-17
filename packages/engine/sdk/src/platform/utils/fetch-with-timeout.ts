@@ -36,6 +36,7 @@ function diagnosticPath(url: URL): string {
 export function sanitizeUrlForLog(url: string | URL | Request): string {
   try {
     const raw = url instanceof Request ? url.url : String(url);
+    if (raw === '[redacted-url]') return raw;
     const parsed = new URL(raw);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '[non-http-url]';
     return `${parsed.origin}${diagnosticPath(parsed)}${parsed.search ? '?[redacted]' : ''}`;

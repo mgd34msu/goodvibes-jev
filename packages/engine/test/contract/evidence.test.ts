@@ -1,5 +1,5 @@
 /**
- * A unit's evidence (contract/evidence.ts, design 4.3): commands and written
+ * A unit's evidence (contract/evidence.ts): commands and written
  * paths from the agent's turns, changed paths from each isolation mode, what
  * each trigger collects, and trimming that keeps every check request inside
  * the Jev context budget, proven with validateContextBudget on the requests

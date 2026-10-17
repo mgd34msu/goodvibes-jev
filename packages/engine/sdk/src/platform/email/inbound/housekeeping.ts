@@ -1,7 +1,7 @@
 /**
  * housekeeping.ts, recovery-time and periodic garbage collection for
  * everything inbound mail persists: the cursor store, the record store, and
- * the expectation store (docs/inbound-email.md §9). Composes the three the
+ * the expectation store (docs/decisions/2026-07-27-inbound-email-design.md §9). Composes the three the
  * same way `platform/devices/device-housekeeping.ts`'s `DeviceHousekeeper`
  * composes the device grant and capture-artifact stores.
  *

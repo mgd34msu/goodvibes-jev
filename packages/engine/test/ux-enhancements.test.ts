@@ -21,6 +21,7 @@ import type {
   KnowledgeEvent,
   TransportEvent,
 } from '../sdk/dist/index.js';
+import { WebSocketMessageAssembler } from '../transport-core/src/websocket-messages.ts';
 import { settleEvents } from './_helpers/test-timeout.js';
 
 // ---------------------------------------------------------------------------
@@ -115,7 +116,7 @@ function stopOrThrow(stop: (() => void) | void): void {
 }
 
 // ---------------------------------------------------------------------------
-// Task 1, Typed connection-state events
+// Typed connection-state events
 // ---------------------------------------------------------------------------
 describe('typed connection-state events', () => {
   test('ConnectionState type is exported and covers all expected literals', () => {
@@ -271,7 +272,7 @@ describe('typed connection-state events', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 2, Backpressure visibility
+// Backpressure visibility
 // ---------------------------------------------------------------------------
 describe('backpressure visibility', () => {
   test('BackpressureInfo type carries all required fields', () => {
@@ -285,94 +286,85 @@ describe('backpressure visibility', () => {
     expect(info.reason).toBe('queue_full');
   });
 
-  test('onBackpressure fires with queue_full reason when queue saturates', async () => {
+  test('a disconnected queue retains every message without an implicit count limit', async () => {
     const { MockWebSocket, instances } = createMockWebSocketClass();
     const bpEvents: BackpressureInfo[] = [];
-
-    // Note: MAX_OUTBOUND_QUEUE = 1024 in the implementation.
-    // We keep the socket disconnected so all sends queue up.
-    const opts: RuntimeEventConnectorOptions = {
-      onBackpressure: (info) => bpEvents.push(info),
-      onEmitter: (emitLocal) => {
-        // Flood the queue: 1025 small messages to trigger the cap
-        const smallMsg = JSON.stringify({ type: 'x', data: 'a'.repeat(10) });
-        for (let i = 0; i < 1025; i++) {
-          emitLocal(smallMsg);
-        }
-      },
-    };
-    const connector = createWebSocketConnector('http://127.0.0.1:3210', 'tok', MockWebSocket, opts);
-    void connector('agents', () => {});
+    const messages = Array.from({ length: 1025 }, (_, index) => JSON.stringify({ type: 'x', index }));
+    const connector = createWebSocketConnector('http://127.0.0.1:3210', 'tok', MockWebSocket, {
+      onBackpressure: info => bpEvents.push(info),
+      onEmitter: emit => { for (const message of messages) emit(message); },
+    });
+    const pending = connector('agents', () => {});
     await settleEvents(10);
-
-    // onEmitter fires synchronously (before socket open) so backpressure callbacks fire
-    // before any WebSocket is instantiated, only the queue saturation matters here.
-    // The first overflow fires at item 1025
-    expect(bpEvents.length).toBeGreaterThanOrEqual(1);
-    const bp = bpEvents[0]!;
-    expect(bp.reason).toBe('queue_full');
-    expect(bp.droppedCount).toBeGreaterThanOrEqual(1);
-  });
-
-  test('onBackpressure fires with message_too_large reason for oversized single message', async () => {
-    const { MockWebSocket } = createMockWebSocketClass();
-    const bpEvents: BackpressureInfo[] = [];
-
-    const opts: RuntimeEventConnectorOptions = {
-      onBackpressure: (info) => bpEvents.push(info),
-      onEmitter: (emitLocal) => {
-        // MAX_OUTBOUND_MESSAGE_BYTES = 1 MiB = 1048576
-        const hugeMsg = 'x'.repeat(1048577);
-        emitLocal(hugeMsg);
-      },
-    };
-    const connector = createWebSocketConnector('http://127.0.0.1:3210', 'tok', MockWebSocket, opts);
-    void connector('agents', () => {});
-    await settleEvents(10);
-
-    expect(bpEvents.length).toBeGreaterThanOrEqual(1);
-    expect(bpEvents[0]!.reason).toBe('message_too_large');
-  });
-
-  test('overflow notification resets after successful reconnect flush', async () => {
-    const { MockWebSocket, instances } = createMockWebSocketClass();
-    const bpEvents: BackpressureInfo[] = [];
-
-    let emitter!: (data: string) => void;
-    const opts: RuntimeEventConnectorOptions = {
-      reconnect: { enabled: true, baseDelayMs: 0, maxDelayMs: 0, maxAttempts: 3 },
-      onBackpressure: (info) => bpEvents.push(info),
-      onEmitter: (fn) => { emitter = fn; },
-    };
-    const connector = createWebSocketConnector('http://127.0.0.1:3210', 'tok', MockWebSocket, opts);
-    void connector('agents', () => {});
-    await settleEvents(10);
-
-    // Flood queue while disconnected
-    const smallMsg = JSON.stringify({ t: 'x' });
-    for (let i = 0; i < 1025; i++) emitter(smallMsg);
-    expect(bpEvents.length).toBeGreaterThanOrEqual(1);
-    const beforeReconnect = bpEvents.length;
-
-    // Connect (flushOutboundQueue resets the overflow counter + drains the queue)
+    expect(bpEvents).toEqual([]);
     firstInstance(instances).simulateOpen();
     await settleEvents(10);
+    firstInstance(instances).simulateMessage(JSON.stringify({ type: 'auth', ok: true }));
+    await settleEvents(10);
+    const stop = await pending;
+    expect(firstInstance(instances).sentMessages.slice(-messages.length)).toEqual(messages);
+    stopOrThrow(stop);
+  });
 
-    // Disconnect again so the next messages go to the queue (not the open socket)
+  test('a large queued message is delivered in full without an implicit byte limit', async () => {
+    const { MockWebSocket, instances } = createMockWebSocketClass();
+    const bpEvents: BackpressureInfo[] = [];
+    const payload = { type: 'large-fixture', text: 'x'.repeat(1048577) };
+    const message = JSON.stringify(payload);
+    const connector = createWebSocketConnector('http://127.0.0.1:3210', 'tok', MockWebSocket, {
+      onBackpressure: info => bpEvents.push(info), onEmitter: emit => emit(message),
+    });
+    const pending = connector('agents', () => {});
+    await settleEvents(10);
+    firstInstance(instances).simulateOpen();
+    await settleEvents(10);
+    firstInstance(instances).simulateMessage(JSON.stringify({ type: 'auth', ok: true }));
+    await settleEvents(10);
+    const stop = await pending;
+    expect(bpEvents).toEqual([]);
+    const assembler = new WebSocketMessageAssembler();
+    const received = firstInstance(instances).sentMessages.map(frame => assembler.accept(JSON.parse(frame))).filter(value => value !== undefined);
+    expect(received).toEqual([{ type: 'auth', token: 'tok', domains: ['agents'] }, payload]);
+    stopOrThrow(stop);
+  });
+
+  test('reconnection flushes the entire queued batch in order each time', async () => {
+    const { MockWebSocket, instances } = createMockWebSocketClass();
+    const bpEvents: BackpressureInfo[] = [];
+    let emit!: (data: string) => void;
+    const connector = createWebSocketConnector('http://127.0.0.1:3210', 'tok', MockWebSocket, {
+      reconnect: { enabled: true, baseDelayMs: 0, maxDelayMs: 0, maxAttempts: 3 },
+      onBackpressure: info => bpEvents.push(info), onEmitter: fn => { emit = fn; },
+    });
+    const pending = connector('agents', () => {});
+    await settleEvents(10);
+    const first = Array.from({ length: 1025 }, (_, i) => `first-${i}`);
+    first.forEach(emit);
+    firstInstance(instances).simulateOpen();
+    await settleEvents(10);
+    firstInstance(instances).simulateMessage(JSON.stringify({ type: 'auth', ok: true }));
+    await settleEvents(10);
+    const stop = await pending;
+    expect(firstInstance(instances).sentMessages.slice(-first.length)).toEqual(first);
     firstInstance(instances).simulateClose(1006);
     await settleEvents(10);
-
-    // Flood again, the overflow counter was reset on the previous flush, so the
-    // first overflow in this disconnected session should fire a new backpressure event.
-    for (let i = 0; i < 1025; i++) emitter(smallMsg);
-    expect(bpEvents.length).toBeGreaterThan(beforeReconnect);
+    const second = Array.from({ length: 1025 }, (_, i) => `second-${i}`);
+    second.forEach(emit);
+    expect(instances).toHaveLength(2);
+    instances[1]!.simulateOpen();
+    await settleEvents(10);
+    instances[1]!.simulateMessage(JSON.stringify({ type: 'auth', ok: true }));
+    await settleEvents(10);
+    expect(instances[1]!.sentMessages.slice(-second.length)).toEqual(second);
+    expect(bpEvents).toEqual([]);
+    stopOrThrow(stop);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Task 3, WS error envelope parity
+// WS error envelope parity
 // ---------------------------------------------------------------------------
-describe('Task 3: WS error envelope parity', () => {
+describe('WS error envelope parity', () => {
   test('createWebSocketRemoteError falls back to fallbackMessage for non-structured body', () => {
     const err = createWebSocketRemoteError('Something went wrong', { some: 'object' });
     expect(err).toBeInstanceOf(WebSocketTransportError);
@@ -436,9 +428,9 @@ describe('Task 3: WS error envelope parity', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 4, Granular progress event contracts
+// Granular progress event contracts
 // ---------------------------------------------------------------------------
-describe('Task 4: granular progress event contracts', () => {
+describe('granular progress event contracts', () => {
   test('BATCH_JOB_PROGRESS event shape satisfies TaskEvent union', () => {
     const event: TaskEvent = {
       type: 'BATCH_JOB_PROGRESS',
@@ -563,7 +555,7 @@ describe('Task 4: granular progress event contracts', () => {
 // ---------------------------------------------------------------------------
 // onTransportEvent: typed events dispatched by connector
 // ---------------------------------------------------------------------------
-describe('Task 5: onTransportEvent typed event dispatch', () => {
+describe('onTransportEvent typed event dispatch', () => {
   test('onTransportEvent receives TRANSPORT_CONNECTION_STATE on each state transition', async () => {
     const { MockWebSocket, instances } = createMockWebSocketClass();
     const events: ConnectorTransportEvent[] = [];
@@ -633,30 +625,23 @@ describe('Task 5: onTransportEvent typed event dispatch', () => {
     stopOrThrow(stop);
   });
 
-  test('onTransportEvent receives TRANSPORT_BACKPRESSURE when queue overflows', async () => {
-    const { MockWebSocket } = createMockWebSocketClass();
+  test('onTransportEvent does not report backpressure for a fully retained queue', async () => {
+    const { MockWebSocket, instances } = createMockWebSocketClass();
     const events: ConnectorTransportEvent[] = [];
-
-    const opts: RuntimeEventConnectorOptions = {
-      onTransportEvent: (e) => events.push(e),
-      onEmitter: (emitLocal) => {
-        const smallMsg = JSON.stringify({ type: 'x', data: 'a'.repeat(10) });
-        for (let i = 0; i < 1025; i++) emitLocal(smallMsg);
-      },
-    };
-    const connector = createWebSocketConnector('http://127.0.0.1:3210', 'tok', MockWebSocket, opts);
-    void connector('agents', () => {});
+    const connector = createWebSocketConnector('http://127.0.0.1:3210', 'tok', MockWebSocket, {
+      onTransportEvent: event => events.push(event),
+      onEmitter: emit => { for (let i = 0; i < 1025; i++) emit(`message-${i}`); },
+    });
+    const pending = connector('agents', () => {});
     await settleEvents(10);
-
-    const bpEvents = events.filter(
-      (e): e is ConnectorTransportEvent & { type: 'TRANSPORT_BACKPRESSURE' } =>
-        e.type === 'TRANSPORT_BACKPRESSURE',
-    );
-    expect(bpEvents.length).toBeGreaterThanOrEqual(1);
-    expect(bpEvents[0]!.reason).toBe('queue_full');
-    expect(bpEvents[0]!.droppedCount).toBeGreaterThanOrEqual(1);
-    expect(typeof bpEvents[0]!.transportId).toBe('string');
-    expect(bpEvents[0]!.transportId.length).toBeGreaterThan(0);
+    firstInstance(instances).simulateOpen();
+    await settleEvents(10);
+    firstInstance(instances).simulateMessage(JSON.stringify({ type: 'auth', ok: true }));
+    await settleEvents(10);
+    const stop = await pending;
+    expect(events.filter(event => event.type === 'TRANSPORT_BACKPRESSURE')).toEqual([]);
+    expect(firstInstance(instances).sentMessages.filter(message => message.startsWith('message-'))).toHaveLength(1025);
+    stopOrThrow(stop);
   });
 
   test('code 1005 (No Status Received) schedules reconnect: not a clean close per RFC 6455 §7.4.1', async () => {

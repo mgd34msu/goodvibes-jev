@@ -157,7 +157,7 @@ export interface OrchestratorOptions {
   services: {
     readonly agentManager: Pick<AgentManager, 'list' | 'spawn'>;
     readonly contractRunner: Pick<ContractRunner, 'list'>;
-    /** Reads each user turn before the model is called (contract runner design 10.3); built with createContractIntake. */
+    /** Reads each user turn before the model is called; built with createContractIntake. */
     readonly contractIntake: ContractIntake;
   };
 }
@@ -674,6 +674,8 @@ export class Orchestrator {
 
   /** Actual execution ownership, including cancellation and hook drainage. */
   public get isTurnInFlight(): boolean { return this.turnInFlight || this.activeNativeConversationTurn; }
+  /** Session replacement must wait for admission, streaming, compaction and queued input. */
+  public get isBusy(): boolean { return this.isTurnInFlight || this.isThinking || this.isCompacting || this.messageQueue.length > 0; }
 
   private startThinking(estimatedInputTokens?: number): void {
     this.postTurnPlanOwner = {};
@@ -1154,7 +1156,7 @@ export class Orchestrator {
   }
 
   /**
-   * Returns `true` when the GC-ORCH-015 reconciliation feature is active.
+   * Returns `true` when context reconciliation is enabled.
    *
    * Defaults to `true` (flag `defaultState: 'enabled'`) when no flag manager
    * has been wired in, safe for tests that omit the optional constructor arg.

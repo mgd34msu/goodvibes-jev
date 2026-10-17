@@ -1,43 +1,6 @@
 /**
- * The probe that finds the lost-wake race is itself kept honest here.
- *
- * ## What the race is
- *
- * `runIdleRound` opens its untagged COLLECTOR before it sends `IDLE`, but the
- * waiter that actually ends the round, `waitForUntagged(isIdleWakeLine, …)`
- * inside `waitForWake`, is not registered until the server's `+ idling`
- * continuation has come back. The fake server records `IDLE` in `commands` when
- * it RECEIVES the command, one round trip earlier. So a test that decides the
- * watcher is listening by reading `commands` and then pushes a one-shot wake
- * edge is aiming at a listener that may not exist yet, and the edge is seen
- * only by the collector, which cannot end the round.
- *
- * The recovery is the 27-minute IDLE re-issue, which these suites run on a
- * `FakeClock` they never advance. So a lost wake is not slow, it never
- * completes at all, and presents as a hard timeout at whatever deadline the
- * test set. Raising the deadline does nothing. `nudgeUntil` is the fix: it
- * re-sends the stimulus if, and only if, the predicate is still false after an
- * interval.
- *
- * ## Why this file exists
- *
- * The race has now been swept twice and both sweeps were incomplete. The first
- * (83318208) covered three suites and missed a fourth that arrived from another
- * lane, plus two tests inside a suite it did sweep; those four surfaced only
- * when CI lost the race on a 2-vCPU runner and blocked a release.
- *
- * Both sweeps were run by hand-patching a sleep into `idle-watcher.ts`, which
- * is why neither was repeatable. The patch now lives in the harness as
- * `watcherConnectionPort`, and `scripts/sweep-wake-race.ts` runs it over every
- * suite that drives the fake mailbox, so "is this race present anywhere" is a
- * command rather than a technique somebody has to already know.
- *
- * A sweep is worth exactly what its probe is worth. These two tests assert, on
- * every ordinary run, that the widening still produces a lost wake and that
- * `nudgeUntil` still recovers one. If the watcher is ever restructured so that
- * the waiter registers before the round is observable, closing the window for
- * real, the first test here fails, and that failure is the notice that the
- * sweep has become a no-op and this file should go.
+ * Delay the IDLE continuation to reproduce a wake arriving before listener registration.
+ * Verify repeated stimuli recover it when the completion predicate remains false.
  */
 
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';

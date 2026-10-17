@@ -148,17 +148,18 @@ describe('knowledge entity alias readings', () => {
     expect(await readKnowledgeEntityAliases([{ kind: 'project', title: 'AR' }], { title: 'AR', summary: '', extractionSummary: '', sections: [] })).toEqual([[]]);
   });
 
-  test('request and text budgets do not change exact entity identity or permit frequency fallback', async () => {
+  test('all candidate aliases retain complete evidence and exact entity identities without implicit caps', async () => {
     const fake = answers(() => 0.99);
     const entities = Array.from({ length: 56 }, (_, index) => ({ kind: 'project', title: `Exact Entity ${index}` }));
-    const result = await readKnowledgeEntityAliases(entities, { ...evidence, title: Array.from({ length: 100 }, (_, index) => `word${index}`).join(' '), summary: 'bounded '.repeat(1000) });
-    expect(fake.requests.length).toBeLessThanOrEqual(MAX_ENTITY_ALIAS_REQUESTS);
-    expect(fake.requests).toHaveLength(112);
-    expect(result.every((aliases) => aliases.length <= 4)).toBe(true);
-    expect(fake.requests.every((request) => (request.state as { evidence: string }).evidence.length <= MAX_ENTITY_ALIAS_EVIDENCE_CHARS)).toBe(true);
-    const before = fake.requests.length;
-    await expect(readKnowledgeEntityAliases(Array.from({ length: 129 }, () => entity), evidence)).rejects.toBeInstanceOf(KnowledgeEntityAliasHoldError);
-    await expect(readKnowledgeEntityAliases([{ kind: 'project', title: 'x'.repeat(513) }], evidence)).rejects.toBeInstanceOf(KnowledgeEntityAliasHoldError);
-    expect(fake.requests).toHaveLength(before);
+    const fullEvidence = { title: 'alpha beta gamma delta epsilon', summary: 'complete '.repeat(1000), extractionSummary: '', sections: [] };
+    const result = await readKnowledgeEntityAliases(entities, fullEvidence);
+    expect(fake.requests).toHaveLength(56 * 6);
+    expect(result.every(aliases => aliases.length === 6)).toBe(true);
+    expect(fake.requests.every(request => (request.state as { evidence: string }).evidence === [fullEvidence.title, fullEvidence.summary, ''].join('\n'))).toBe(true);
+    const many = Array.from({ length: 129 }, (_, index) => ({ kind: 'project', title: `Entity ${index}` }));
+    expect(await readKnowledgeEntityAliases(many, { title: 'alias', summary: '', extractionSummary: '', sections: [] })).toHaveLength(129);
+    const long = { kind: 'project', title: 'x'.repeat(513) };
+    await readKnowledgeEntityAliases([long], { title: 'alias', summary: '', extractionSummary: '', sections: [] });
+    expect(fake.requests.at(-1)!.state).toMatchObject({ entity: long });
   });
 });

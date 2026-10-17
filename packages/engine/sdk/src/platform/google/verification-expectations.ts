@@ -304,7 +304,7 @@ function hasElapsed(expectation: VerificationExpectation, now: Date): boolean {
 /**
  * Validate a PERSISTED expectation record by content, using the exact rules
  * `openExpectation` enforces. Added for
- * `platform/email/inbound/expectation-store.ts` (docs/inbound-email.md §9.2),
+ * `platform/email/inbound/expectation-store.ts` (docs/decisions/2026-07-27-inbound-email-design.md §9.2),
  * which persists expectations across a restart with their original absolute
  * `expiresAt` rather than keeping them in memory only.
  *
@@ -510,7 +510,7 @@ export class VerificationExpectationBook {
   /**
    * Restore a persisted expectation into the live book, the ONLY entry point
    * that inserts an expectation without minting a fresh window. Added for the
-   * boot-time hydration path described in docs/inbound-email.md §9.2: the
+   * boot-time hydration path described in docs/decisions/2026-07-27-inbound-email-design.md §9.2: the
    * daemon auto-restarts, so an expectation opened moments before a restart
    * must survive it, but "restarting cannot extend a grant" is the property
    * that override exists to protect.

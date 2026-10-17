@@ -1,11 +1,10 @@
 # Cancel one hosted turn without ending its session
 
-## Review status and ownership boundary
+## Ownership boundary
 
-The broader ownership implementation is local review work. PR #75 remains held
-until source review and consumer agreement; the earlier published partial head
-still demonstrated an async command-hook mutation after `TURN_CANCEL`. Retained
-negative evidence is not replaced by a claim of full clearance from green CI.
+A terminal `TURN_CANCEL` event must follow settlement of the turn’s owned work.
+An owned async command hook that mutates state after that event violates this
+contract. Successful CI alone does not establish settlement of every adapter.
 
 The intended settlement boundary is **this turn's owned execution**, including
 its provider calls, tools, hook runners and hook-owned Agent contracts. Hooks

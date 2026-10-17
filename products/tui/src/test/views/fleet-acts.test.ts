@@ -266,15 +266,14 @@ describe('conflict act: resolve -> stamped session -> jump', () => {
     expect(notes.some((n) => n.includes('press j to jump'))).toBe(true);
   });
 
-  test('a failed resolution reports the operation, withholds private detail and arms no jump', async () => {
+  test('a failed resolution reports the operation, retains the failure detail and arms no jump', async () => {
     const { gateway, log } = makeGateway({ resolveThrows: new Error('worktree gone') });
     const { surface } = makeDiffSurface();
     const { acts, notes } = makeActs(gateway, surface);
     await acts.resolveConflict(conflictNode('it-x', ['a.ts']));
     expect(log.armed).toEqual([]);
     expect(log.resolveConflict).toEqual(['ctr:it-x']);
-    expect(notes).toEqual(['Conflict resolution failed: [REDACTED]']);
-    expect(notes.join('\n')).not.toContain('worktree gone');
+    expect(notes).toEqual(['Conflict resolution failed: worktree gone']);
   });
 });
 

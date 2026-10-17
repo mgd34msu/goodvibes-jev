@@ -1,5 +1,5 @@
 /**
- * Compile-time pin for §12 gate #35's type half: the inbound path cannot
+ * Compile-time authority assertion: the inbound path cannot
  * register or hydrate an expectation.
  *
  * The runtime half lives in `inbound-mail-expectation-registry.test.ts`, the

@@ -1,8 +1,10 @@
+import { isDeepStrictEqual } from 'node:util';
+import { captureStrictJudgmentJson } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { randomUUID } from 'node:crypto';
 import type { ArtifactDescriptor, ArtifactRecord, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { ChatRequest, ChatResponse, LLMProvider } from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import { assertCurrentToolEffect, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolEffect, ToolInputProjectionError, type ToolInputProjector, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { registerComparisonCandidate, runAdmittedComparisonCandidate } from './agent-model-compare-candidate.ts';
 import { createComparisonOperation } from './agent-model-compare-operation.ts';
 import { createZipArchive } from './artifact-archive.ts';
@@ -678,9 +680,24 @@ export function createAgentModelCompareTool(sourceDeps: AgentModelCompareToolDep
   };
 }
 
+/** A run preview renders the request without a provider send or persisted mutation. */
+export function createModelCompareInputProjector(): ToolInputProjector {
+  return { async project(request) {
+    request.assertCurrent();
+    const original = captureStrictJudgmentJson(request.args);
+    return { status: 'projected', args: request.args,
+      ...(parseMode(request.args.mode) === MODE_RUN && request.args.preview === true ? { resultPublication: 'read-only' as const } : {}),
+      assertRepairedArgs(args) {
+        if (!isDeepStrictEqual(captureStrictJudgmentJson(args), original)) throw new ToolInputProjectionError('binding-changed');
+        request.assertCurrent();
+      },
+    };
+  } };
+}
+
 export function registerAgentModelCompareTool(
   registry: ToolRegistry,
   deps: AgentModelCompareToolDeps,
 ): void {
-  registry.register(createAgentModelCompareTool({ ...deps, toolRegistry: registry }));
+  registry.register(createAgentModelCompareTool({ ...deps, toolRegistry: registry }), { inputProjection: createModelCompareInputProjector() });
 }

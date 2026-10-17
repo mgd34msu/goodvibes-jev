@@ -39,6 +39,37 @@ const input = (patch: Partial<ChannelIngressPolicyInput> = {}): ChannelIngressPo
   text: 'Meet the synthetic visitor in room 872', metadata: { rawBody: 'private inbound body' }, ...patch,
 });
 
+test('composite group selectors all match, with the most specific matching policy winning', async () => {
+  const h = await fixture({ groupPolicies: [
+    { id: 'workspace', workspaceId: 'W1', allowlistUserIds: ['workspace-owner'] },
+    { id: 'channel', workspaceId: 'W1', channelId: 'C1', allowlistUserIds: ['channel-owner'] },
+    { id: 'empty', allowlistUserIds: ['anyone'] },
+  ] });
+  expect(await h.manager.preflightIngress(input({ workspaceId: 'W1', channelId: 'C2', userId: 'channel-owner' })))
+    .toMatchObject({ allowed: false, matchedGroupPolicy: { id: 'workspace' } });
+  expect(await h.manager.preflightIngress(input({ workspaceId: 'W1', channelId: 'C1', userId: 'channel-owner' })))
+    .toMatchObject({ allowed: true, matchedGroupPolicy: { id: 'channel' } });
+  expect((await h.manager.preflightIngress(input({ workspaceId: 'W2', channelId: 'C1', userId: 'channel-owner' }))).matchedScope).toBe('surface');
+});
+
+test('concurrent first senders seed only the effective group allowlist', async () => {
+  const h = await fixture({ groupPolicies: [{ id: 'group', groupId: 'G', allowlistUserIds: [] }] });
+  const results = await Promise.all(['first', 'second'].map(userId => h.manager.evaluateIngress(input({ groupId: 'G', userId }))));
+  expect(results.map(r => r.allowed)).toEqual([true, false]);
+  expect(h.manager.getPolicy('homeassistant').allowlistUserIds).toEqual(['owner']);
+  expect(h.manager.getPolicy('homeassistant').groupPolicies[0]?.allowlistUserIds).toEqual(['first']);
+});
+
+test('thread permission cannot override a disabled parent group or direct conversation', async () => {
+  const h = await fixture({ allowGroupMessages: false, allowThreadMessages: true });
+  expect(await h.manager.preflightIngress(input({ conversationKind: 'thread', groupId: 'G' })))
+    .toMatchObject({ allowed: false, reason: 'group-messages-disabled' });
+  expect((await h.manager.preflightIngress(input({ conversationKind: 'thread', channelId: 'DM', parentConversationKind: 'direct' }))).allowed).toBe(true);
+  await h.manager.upsertPolicy('homeassistant', { dmPolicy: 'deny' });
+  expect(await h.manager.preflightIngress(input({ conversationKind: 'thread', channelId: 'DM', parentConversationKind: 'direct' })))
+    .toMatchObject({ allowed: false, reason: 'direct-messages-disabled' });
+});
+
 for (const [patch, source, reason] of [
   [{ enabled: false }, {}, 'surface-disabled'],
   [{ allowlistUserIds: ['another-owner'] }, {}, 'user-not-allowlisted'],

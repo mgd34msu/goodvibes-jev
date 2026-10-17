@@ -11,7 +11,7 @@ export interface CodeIndexProcessSource {
   stats(): CodeIndexStats;
 }
 
-/** Single well-known id: one code index per working directory (no per-workspace fan-out in Stage A). */
+/** Single well-known id: one code index per working directory (no per-workspace fan-out). */
 export function codeIndexNodeId(): string {
   return 'code-index:main';
 }

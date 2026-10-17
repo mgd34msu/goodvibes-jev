@@ -146,6 +146,8 @@ function makeContext(opts: {
           metadata: { ...(input.metadata ?? {}), source: input.source, messageId: input.messageId },
         });
         persistedMessages.set(sessionId, bucket);
+        const session = sessions.get(sessionId);
+        if (session) session.messageCount = bucket.length;
         return null;
       },
     },

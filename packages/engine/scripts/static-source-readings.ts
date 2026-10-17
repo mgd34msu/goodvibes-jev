@@ -216,7 +216,10 @@ export class CheckpointValueReader {
     }
     if (token.count > STATIC_CHECKPOINT_MAX_SCALAR_CHARS) throw new Error('Checkpoint scalar exceeds supported context capacity');
     token.pending += text;
-    if (token.pending.length >= 4096) { token.parts.push(token.pending); token.pending = ''; }
+    // Flatten each chunk before retaining it. Concatenating one character at a
+    // time otherwise keeps large ropes alive throughout checkpoint loading.
+    // UTF-16 preserves lone surrogate code units as well as ordinary text.
+    if (token.pending.length >= 4096) { token.parts.push(Buffer.from(token.pending, 'utf16le').toString('utf16le')); token.pending = ''; }
   }
 
   private complete(value: unknown): void {
@@ -284,7 +287,7 @@ export class CheckpointValueReader {
           }
         } else if (c === '\\') token.escape = true;
         else if (c === '"') {
-          const value = token.retain ? [...token.parts, token.pending].join('') : null;
+          const value = token.retain ? Buffer.from([...token.parts, token.pending].join(''), 'utf16le').toString('utf16le') : null;
           this.token = null;
           if (token.role === 'key') { const frame = this.frames.at(-1)!; frame.key = value; frame.phase = 'colon'; }
           else this.complete(value);

@@ -23,7 +23,7 @@ beforeEach(() => {
 });
 afterEach(() => { installJudgmentPort(previous); forgetFailureReadings(); });
 
-describe('F6 - ProviderError semantics', () => {
+describe('ProviderError semantics', () => {
   it('keeps rate-limit retries recoverable and carries the explicit retry-after', () => {
     // A wait stated only in the message is read by Jev (readRetryWait,
     // provider-retry-wait.test.ts); the constructor keeps the explicit value.
@@ -54,7 +54,7 @@ describe('F6 - ProviderError semantics', () => {
     // With no status the error's own category stays open, and Jev reads a
     // refused connection in the wording.
     const refused = new ProviderError('connect ECONNREFUSED 127.0.0.1:11434');
-    expect((await readNormalizedError(refused, { site: 'test.f6' })).category).toBe('network');
+    expect((await readNormalizedError(refused, { site: 'test.provider-errors' })).category).toBe('network');
   });
 
   it('preserves structured provider metadata', () => {
@@ -76,7 +76,7 @@ describe('F6 - ProviderError semantics', () => {
   });
 });
 
-describe('F6 - error normalization and display', () => {
+describe('error normalization and display', () => {
   it('formats provider errors with preserved metadata and broad hints', () => {
     const err = new ProviderError('inceptionlabs chat request failed 401: token rejected by upstream', {
       statusCode: 401,
@@ -102,7 +102,7 @@ describe('F6 - error normalization and display', () => {
 
   it('normalizes network errors into a descriptive summary and category where the wording is read', async () => {
     const error = new Error('connect ECONNREFUSED 127.0.0.1:11434');
-    const read = await readNormalizedError(error, { provider: 'ollama', site: 'test.f6' });
+    const read = await readNormalizedError(error, { provider: 'ollama', site: 'test.provider-errors' });
     expect(read.category).toBe('network');
     expect(read.summary).toBe('connect ECONNREFUSED 127.0.0.1:11434');
     // The synchronous path can reuse the still-current settled privacy proof.

@@ -493,7 +493,7 @@ export type ConfigKey =
   | 'surfaces.email.smtp.port'
   | 'surfaces.email.smtp.password'
   | 'surfaces.email.smtp.secure'
-  // The inbound-mail watcher (schema-domain-daemon-mailbox.ts, docs/inbound-email.md §8)
+  // The inbound-mail watcher (schema-domain-daemon-mailbox.ts, docs/decisions/2026-07-27-inbound-email-design.md §8)
   | 'surfaces.email.inbound.enabled'
   | 'surfaces.email.inbound.accounts'
   | 'surfaces.email.inbound.source'

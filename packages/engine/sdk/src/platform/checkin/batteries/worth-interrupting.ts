@@ -1,6 +1,6 @@
 import { defineBattery, defineFidelityChecker, yesNo, STAKES_BANDS } from '@goodvibes-jev/judgment';
 
-/** Synthetic fixtures specify the contract; real calibration remains a separate task. */
+
 export const worthInterrupting = defineBattery({
   name: 'engine.checkin.worth-interrupting', version: 1, accuracyFloor: 0.95,
   description: 'Whether the complete current work briefing warrants interrupting the owner now. Silence is the default.',

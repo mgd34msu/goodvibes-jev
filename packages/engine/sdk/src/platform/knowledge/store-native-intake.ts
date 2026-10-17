@@ -37,7 +37,7 @@ export function validateNativeConversationCaptureTable(db: SqlReader): void {
     }
   }
 }
-/** Validate all DB5 authorities before adding the new table and schema epoch. */
+/** Validate all schema-5 authorities before adding the new table and schema epoch. */
 export function migrateNativeConversationCaptureTable(db: Pick<SqlDatabase, 'exec' | 'run'>): void {
   for (const row of db.exec('SELECT project_id, format_version, revision, state_json FROM work_ledgers')[0]?.values ?? []) {
     if (typeof row[0] !== 'string' || row[1] !== 2 || typeof row[3] !== 'string') throw new NativeConversationStorageError('invalid');

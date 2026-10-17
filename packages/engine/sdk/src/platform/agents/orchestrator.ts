@@ -265,8 +265,7 @@ export class AgentOrchestrator {
   }
 
   /**
-   * Wire the conversation-snapshot bridge (Part C6; see
-   * AgentConversationSink). Pass null to detach, createRunContext() then
+   * Wire the conversation-snapshot bridge through AgentConversationSink. Pass null to detach, createRunContext() then
    * omits the register/release callbacks entirely and orchestrator-runner's
    * `?.()` calls become no-ops.
    */

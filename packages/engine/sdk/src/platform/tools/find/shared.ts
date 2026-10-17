@@ -385,6 +385,7 @@ export function buildGitignoreMatcher(
 
   interface GitignoreRule {
     negate: boolean;
+    directoryOnly: boolean;
     glob: InstanceType<typeof Bun.Glob>;
   }
   const rules: GitignoreRule[] = [];
@@ -399,12 +400,13 @@ export function buildGitignoreMatcher(
       negate = true;
       pat = pat.slice(1);
     }
-    if (pat.endsWith('/')) pat = pat.slice(0, -1);
-    if (!pat.includes('/')) pat = `**/${pat}`;
-    else if (pat.startsWith('/')) pat = pat.slice(1);
+    const directoryOnly = pat.endsWith('/');
+    if (directoryOnly) pat = pat.slice(0, -1);
+    if (pat.startsWith('/')) pat = pat.slice(1);
+    else if (!pat.includes('/')) pat = `**/${pat}`;
 
     try {
-      rules.push({ negate, glob: new Bun.Glob(pat) });
+      rules.push({ negate, directoryOnly, glob: new Bun.Glob(pat) });
     } catch (err) {
       addFindWarning(diagnostics, `Skipped malformed .gitignore pattern '${line}': ${summarizeError(err)}`);
     }
@@ -413,13 +415,21 @@ export function buildGitignoreMatcher(
   if (rules.length === 0) return null;
 
   return (rel: string): boolean => {
-    let ignored = false;
-    for (const rule of rules) {
-      if (rule.glob.match(rel)) {
-        ignored = !rule.negate;
+    // An excluded parent directory excludes its descendants too. A file
+    // negation cannot reinclude a child until its parent is included again.
+    const segments = rel.split('/');
+    for (let length = 1; length <= segments.length; length++) {
+      const directory = length < segments.length;
+      const candidate = segments.slice(0, length).join('/');
+      let ignored = false;
+      for (const rule of rules) {
+        if ((!rule.directoryOnly || directory) && rule.glob.match(candidate)) {
+          ignored = !rule.negate;
+        }
       }
+      if (ignored) return true;
     }
-    return ignored;
+    return false;
   };
 }
 

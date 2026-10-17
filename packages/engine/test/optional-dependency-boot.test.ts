@@ -226,7 +226,7 @@ describe('an absent optional client package does not take the process down', () 
     expect(lazyRun.stdout).toContain('OPENAI_EMBED_NATIVE_OPERATION=embed');
     expect(lazyRun.stdout).toContain('OPENAI_EMBED_NATIVE_PHASE=request');
     expect(lazyRun.stdout).toContain('OPENAI_EMBED_NATIVE_RECOVERABLE=false');
-    expect(lazyRun.stdout).toContain('OPENAI_EMBED_NATIVE_MESSAGE=[REDACTED]');
+    expect(lazyRun.stdout).toContain('OPENAI_EMBED_NATIVE_MESSAGE=openai is not installed');
     expect(lazyRun.stdout).toContain('OPENAI_EMBED_NATIVE_HINT=Install the optional openai package to enable this feature.');
   });
 

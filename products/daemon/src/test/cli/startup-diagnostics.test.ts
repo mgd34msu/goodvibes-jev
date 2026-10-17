@@ -232,7 +232,7 @@ test('a starting writer failure fails startup before token or graph acquisition 
   await expect(handle.ready).rejects.toThrow('Daemon startup failed');
   expect(await handle.finished).toBe(1);
   expect(f.target.exits).toEqual([1]); expect(f.acquired()).toBe(0); expect(existsSync(f.tokenPath)).toBe(false);
-  expect(f.fatal.join('')).toContain('goodvibes daemon host failed: [REDACTED]\n');
+  expect(f.fatal.join('')).toContain('goodvibes daemon host failed: Daemon startup failed\n');
   expect(f.fatal.join('')).not.toContain('private-starting-writer');
 });
 
@@ -333,7 +333,7 @@ for (const phase of ['bound', 'mismatch', 'ready', 'binding getter'] as const) {
     await expect(handle.ready).rejects.toThrow('Daemon startup failed');
     await closing.promise; await tick();
     expect(f.target.exits).toEqual([]); expect(f.host!.daemon!.isRunning).toBe(false);
-    expect(f.fatal.join('')).toContain('goodvibes daemon host failed: [REDACTED]\n'); expect(f.fatal.join('')).not.toContain('private-');
+    expect(f.fatal.join('')).toContain('goodvibes daemon host failed: Daemon startup failed\n'); expect(f.fatal.join('')).not.toContain('private-');
     release.resolve(); expect(await handle.finished).toBe(1); expect(f.target.exits).toEqual([1]);
   });
 }

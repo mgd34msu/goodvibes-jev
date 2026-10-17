@@ -6,7 +6,7 @@ import { afterEach, describe, expect, mock, test } from 'bun:test';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query';
 
 const tokenCalls: string[] = [];
 const loginCalls: { username: string; password: string }[] = [];
@@ -82,8 +82,7 @@ function buttonLabelled(el: HTMLElement, label: string): HTMLButtonElement {
   return found;
 }
 
-function render(): { el: HTMLElement; unmount: () => void } {
-  const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+function render(client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })): { el: HTMLElement; unmount: () => void } {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -238,4 +237,24 @@ describe('SignedOutGate token flow', () => {
     expect(alert).not.toBeNull();
     unmount();
   });
+});
+
+
+test('successful credentials retire the anonymous request before reloading auth', async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  let reject!: (error: unknown) => void;
+  let reads = 0;
+  const observer = new QueryObserver(client, { queryKey: ['auth'], queryFn: () => {
+    reads++;
+    return reads === 1 ? new Promise((_, no) => { reject = no; }) : Promise.resolve({ authenticated: true });
+  } });
+  const unsubscribe = observer.subscribe(() => {});
+  const { el, unmount } = render(client);
+  flushSync(() => buttonLabelled(el, 'Scan with this device').click());
+  flushSync(() => buttonLabelled(document.body, 'stub scan token').click());
+  await until(() => reads === 2);
+  reject(new Error('late anonymous rejection'));
+  await until(() => observer.getCurrentResult().isSuccess);
+  expect(observer.getCurrentResult().data).toEqual({ authenticated: true });
+  unmount(); unsubscribe(); client.clear();
 });

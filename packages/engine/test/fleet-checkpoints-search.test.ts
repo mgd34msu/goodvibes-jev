@@ -1,25 +1,3 @@
-/**
- * fleet-checkpoints-search.test.ts
- *
- * bootDaemon parity proof for fleet.snapshot / fleet.list / checkpoints.* /
- * sessions.search, each proven over a REAL live daemon (bootDaemon, port 0,
- * isolated home) via the generic gateway-method invoke endpoint
- * `POST /api/control-plane/methods/{methodId}/invoke`, mirrors the
- * pattern in test/boot-daemon-factory.test.ts (real HTTP, honest
- * failure/validation shape, no mocked daemon internals).
- *
- * NOTE on fleet.* coverage: proving "a live process appears in fleet.snapshot"
- * end-to-end would need a real agent/watcher/schedule registered through the
- * daemon's HTTP surface. Every one of those sources is feature-flag-gated
- * (e.g. `watcher-framework`, default disabled) or requires a real provider,
- * and there is no HTTP route to toggle a feature flag on a black-box
- * bootDaemon instance. This suite therefore proves fleet.snapshot/fleet.list
- * over the real (here: empty) ProcessRegistry, correct shape, filtering,
- * pagination, and honest 400s, which is the full surface this brief owns;
- * ProcessRegistry's own aggregation from live sources is pre-existing,
- * already-tested machinery from an earlier wave, not part of this
- * verb-registration brief.
- */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';

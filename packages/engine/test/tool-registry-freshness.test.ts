@@ -441,7 +441,7 @@ test('mutation while the projector awaits is rejected before returned metadata c
 });
 
 test.each(['unchanged-control', 'source-revoked', 'schema-revoked'] as const)(
-  'real recorded autonomous admission retains %s at the final hook', async mode => {
+  'automatic configured admission retains %s at the final hook', async mode => {
     forgetGateReadings();
     using log = new SqliteDecisionLog(':memory:');
     const gate = gateReadingsPort();
@@ -478,8 +478,8 @@ test.each(['unchanged-control', 'source-revoked', 'schema-revoked'] as const)(
     try {
       const results = await executeToolCalls(deps, 'turn-freshness', [{ id: 'admitted-call', name: TOOL_NAME, arguments: args() }]);
       expect(hooks).toBe(1);
-      expect(reads).toBeGreaterThan(0);
-      expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(1);
+      expect(reads).toBe(0);
+      expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
       expect(results[0]?.success).toBe(mode === 'unchanged-control');
       expect(f.counts.bodies).toBe(mode === 'unchanged-control' ? 1 : 0);
       expect(f.counts.releases).toBe(1);

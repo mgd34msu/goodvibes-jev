@@ -57,7 +57,24 @@ export async function externalProtocolFixture(options: { watchIntervalMs?: numbe
   } }, daemon.services.judgment.decisionLog);
   keep(spyOn(daemon.services.judgment.port, 'ask').mockImplementation(request => recorded.ask(request)));
   const human = keep(spyOn(daemon.services.approvalBroker, 'requestApproval').mockImplementation(async () => { throw new Error('Human fallback must not run'); }));
-  const admissions = keep(spyOn(daemon.services.permissionManager, 'admitAutonomous'));
+  type AdmissionArgs = Parameters<typeof daemon.services.permissionManager.admitAutonomous>;
+  let admissionHook: ((args: AdmissionArgs) => void | Promise<void>) | undefined;
+  const admissionSources: unknown[] = [];
+  const admit = daemon.services.permissionManager.admitAutonomous.bind(daemon.services.permissionManager);
+  const admissions = keep(spyOn(daemon.services.permissionManager, 'admitAutonomous').mockImplementation(async (...args) => {
+    const result = await admit(...args);
+    admissionSources.push(args[3]?.sourceOf?.());
+    const signal = args[3]?.signal;
+    let abort: (() => void) | undefined;
+    try {
+      await Promise.race([Promise.resolve(admissionHook?.(args)), new Promise<never>((_, reject) => {
+        if (!signal) return;
+        abort = () => reject(signal.reason);
+        if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+      })]);
+      signal?.throwIfAborted(); return result;
+    } finally { if (abort) signal?.removeEventListener('abort', abort); }
+  }));
   let acp: AcpHostService | undefined;
   const spawn = AcpHostService.prototype.spawnAgent;
   keep(spyOn(AcpHostService.prototype, 'spawnAgent').mockImplementation(function (this: AcpHostService, input) { acp = this; return spawn.call(this, input); }));
@@ -88,10 +105,11 @@ export async function externalProtocolFixture(options: { watchIntervalMs?: numbe
   await daemon.daemon.registerMcpServer({ name: 'owned-protocol', url: `http://127.0.0.1:${server.port}/mcp` });
   const operationLifetime = new AbortController();
   let goal = 'Original caller: write the synthetic record using the supplied name Alice.';
-  return { daemon, registry, calls, readings, human, admissions, operationLifetime,
+  return { daemon, registry, calls, readings, human, admissions, admissionSources, operationLifetime,
     get acp() { if (!acp) throw new Error('ACP host not reached'); return acp; },
     answer(value: string) { selection = value; },
     onReading(value: typeof hook) { hook = value; },
+    onAdmission(value: typeof admissionHook) { admissionHook = value; },
     elicit(field = 'name') { elicit = true; formField = field; },
     changeGoal(value: string) { goal = value; },
     async call(args: Record<string, unknown> = { name: 'Alice' }, signal?: AbortSignal) {

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import type { ConfigWriteRoute } from '../../config/daemon-config-route.js';
 import type { ConfigManager, PreparedConfigMutationFacts } from '../../config/manager.js';
 import { isValidConfigKey } from '../../config/schema.js';
-import { isSecretBearingConfigKey } from '../../config/secret-bearing-config-keys.js';
+import { isSecretBearingConfigKey, isSecretReferenceValue } from '../../config/secret-bearing-config-keys.js';
 import { configKeyScope, describeConfigOwnership } from '../../config/config-ownership.js';
 import { readHostSettingsFile } from '../../config/manager-host-settings.js';
 import { captureOwnedJson } from '../../gate/judgment-input.js';
@@ -49,6 +49,9 @@ export function createAgentSettingsInputProjector(configManager: ConfigManager, 
       if (args.confirm !== true || (args.mode !== 'set' && args.mode !== 'reset') || typeof args.key !== 'string') throw new ToolInputProjectionError('invalid');
       const key = args.key.trim();
       if (!isValidConfigKey(key)) throw new ToolInputProjectionError('invalid');
+      // Validate the declared credential storage format before preparing any local or remote write.
+      if (args.mode === 'set' && isSecretBearingConfigKey(key) && typeof args.value === 'string'
+        && args.value.trim() && !isSecretReferenceValue(args.value)) throw new ToolInputProjectionError('held');
       // Hosted originating-surface files have a separate owner contract. The
       // main Agent composition never supplies this override; never borrow the
       // hosting manager's authority for a distinct file.

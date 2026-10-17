@@ -3,13 +3,13 @@
  *
  * Verifies ToolRegistry DI in CompanionChatManager.
  *
- * TR1: When toolRegistry is injected and LLM emits a tool_call chunk,
+ * When toolRegistry is injected and LLM emits a tool_call chunk,
  *      the registry.execute() is called with the expected arguments.
- * TR2: A turn.tool_result event is published after the tool executes.
- * TR3: Tool execution errors are published as isError=true tool_results.
- * TR4: When no toolRegistry is provided, tool_call chunks are published
+ * A turn.tool_result event is published after the tool executes.
+ * Tool execution errors are published as isError=true tool_results.
+ * When no toolRegistry is provided, tool_call chunks are published
  *      as events but the registry is not called (graceful degradation).
- * TR5: Remote chat forwards daemon tool definitions to the provider and feeds
+ * Remote chat forwards daemon tool definitions to the provider and feeds
  *      tool results back into a follow-up provider call before completing.
  */
 
@@ -109,10 +109,10 @@ function allowToolPermission() {
 }
 
 // ---------------------------------------------------------------------------
-// TR1: Registry.execute() called with expected args
+// Registry.execute() called with expected args
 // ---------------------------------------------------------------------------
 
-describe('TR1: ToolRegistry.execute() called when LLM emits tool_call', () => {
+describe('ToolRegistry.execute() called when LLM emits tool_call', () => {
   test('registry receives the correct toolName and toolInput', async () => {
     const { registry, calls } = makeMockRegistry('result-output');
     const { publisher } = makeRecordingPublisher();
@@ -141,10 +141,10 @@ describe('TR1: ToolRegistry.execute() called when LLM emits tool_call', () => {
 });
 
 // ---------------------------------------------------------------------------
-// TR2: turn.tool_result event published after execution
+// turn.tool_result event published after execution
 // ---------------------------------------------------------------------------
 
-describe('TR2: turn.tool_result event published after tool executes', () => {
+describe('turn.tool_result event published after tool executes', () => {
   test('tool_result event contains the registry output and isError=false', async () => {
     const { registry } = makeMockRegistry('my-tool-output');
     const { publisher, events } = makeRecordingPublisher();
@@ -186,10 +186,10 @@ describe('TR2: turn.tool_result event published after tool executes', () => {
 });
 
 // ---------------------------------------------------------------------------
-// TR3: Tool execution errors published as isError=true
+// Tool execution errors published as isError=true
 // ---------------------------------------------------------------------------
 
-describe('TR3: tool execution error published as isError=true', () => {
+describe('tool execution error published as isError=true', () => {
   test('when tool throws, turn.tool_result event has isError=true', async () => {
     const { registry } = makeMockRegistry('unused', /* shouldThrow */ true);
     const { publisher, events } = makeRecordingPublisher();
@@ -221,10 +221,10 @@ describe('TR3: tool execution error published as isError=true', () => {
 });
 
 // ---------------------------------------------------------------------------
-// TR4: No registry, tool_call event published, registry not invoked
+// No registry, tool_call event published, registry not invoked
 // ---------------------------------------------------------------------------
 
-describe('TR4: no toolRegistry: tool_call event published, graceful degradation', () => {
+describe('no toolRegistry: tool_call event published, graceful degradation', () => {
   test('turn.tool_call event emitted even without toolRegistry', async () => {
     const { publisher, events } = makeRecordingPublisher();
 
@@ -257,7 +257,7 @@ describe('TR4: no toolRegistry: tool_call event published, graceful degradation'
   });
 });
 
-describe('TR5: companion remote chat advertises tools and loops over tool results', () => {
+describe('companion remote chat advertises tools and loops over tool results', () => {
   test('provider receives tool definitions, tool result history, and returns final answer', async () => {
     const { registry } = makeMockRegistry('tool-result-value');
     const { publisher, events } = makeRecordingPublisher();

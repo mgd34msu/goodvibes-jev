@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   actionOf,
   defineBattery,
+  fanOut,
   hashState,
   readingsOf,
   JudgmentError,
@@ -52,6 +53,47 @@ let clock = Date.parse('2026-09-26T00:00:00Z');
 const tick = () => new Date((clock += 60_000));
 
 describe('withDecisionLog + SqliteDecisionLog', () => {
+  test('outcome queries include readings nested under fan-out parts', async () => {
+    using log = new SqliteDecisionLog(':memory:');
+    const port = withDecisionLog(answering(0.93), log, tick);
+    await fanOut(port, 'urgent', { part: battery });
+    expect(log.query({ outcome: 'act' })).toHaveLength(1);
+    expect(log.query({ outcome: 'escalate' })).toHaveLength(0);
+  });
+
+  test.each(['new', 'migration'])('concurrent %s log initialization shares one committed schema', async mode => {
+    const dir = mkdtempSync(join(tmpdir(), 'jev-open-race-'));
+    const path = join(dir, 'decisions.sqlite');
+    if (mode === 'migration') {
+      using db = new Database(path);
+      db.exec("CREATE TABLE decisions (id TEXT PRIMARY KEY, entry TEXT NOT NULL, readings TEXT, action TEXT); PRAGMA user_version = 2");
+    }
+    const module = new URL('../src/log/sqlite-schema.ts', import.meta.url).href;
+    const children = Array.from({ length: 8 }, () => Bun.spawn([process.execPath, '-e', `
+      const { openLog } = await import(process.argv[1]);
+      process.stdout.write('ready\\n');
+      for await (const _ of Bun.stdin.stream()) break;
+      const db = openLog(process.argv[2]);
+      if (db.query('PRAGMA user_version').get().user_version !== 3) throw new Error('wrong schema');
+      db.close();
+    `, module, path], { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' }));
+    try {
+      await Promise.all(children.map(async child => {
+        const reader = child.stdout.getReader();
+        expect(new TextDecoder().decode((await reader.read()).value)).toContain('ready');
+        reader.releaseLock();
+      }));
+      for (const child of children) { child.stdin.write('start\n'); child.stdin.end(); }
+      for (const child of children) {
+        const error = await new Response(child.stderr).text();
+        expect({ code: await child.exited, error }).toEqual({ code: 0, error: '' });
+      }
+    } finally {
+      for (const child of children) child.kill();
+      await Promise.all(children.map(child => child.exited));
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   test('retains a judgment while another process briefly holds the shared log writer', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'jev-log-contention-'));
     const path = join(directory, 'decisions.sqlite');

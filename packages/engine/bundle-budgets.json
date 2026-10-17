@@ -575,7 +575,7 @@
   },
   "./platform/state": {
     "gzip_bytes": 1437,
-    "rationale": "re-measured 1197 B gzip after MemoryConsolidationScheduler joined the barrel (the daemon-side consolidation driver, exported so consumers stop fork-mirroring it, 2026-07-14 phantom-export find); headroom max(ceil(1197*1.2)=1437, 1197+50=1247) -> 1437 (1.2x dominates)"
+    "rationale": "re-measured 1197 B gzip after MemoryConsolidationScheduler joined the barrel (the daemon-side consolidation driver, exported so consumers stop fork-mirroring it); headroom max(ceil(1197*1.2)=1437, 1197+50=1247) -> 1437 (1.2x dominates)"
   },
   "./platform/state/store-snapshots": {
     "gzip_bytes": 4304,
@@ -599,7 +599,7 @@
   },
   "./platform/types": {
     "gzip_bytes": 287,
-    "rationale": "re-anchored after the failure-reading re-exports (error meaning read by Jev: the failure reading and judgment port joined the types barrel); measured 237 B gzip @ goodvibes-jev 2f03c8c; headroom max(ceil(237*1.2)=285, 237+50=287) -> 287 (+50 B floor dominates). Previously: measured 175 B gzip @ v0.33.0 release verification; headroom max(ceil(175*1.2)=210, 175+50=225) -> 225"
+    "rationale": "Measured 237 B gzip; headroom max(ceil(237*1.2)=285, 237+50=287) -> 287 (+50 B floor dominates)."
   },
   "./platform/utils": {
     "gzip_bytes": 277,
@@ -607,7 +607,7 @@
   },
   "./platform/version": {
     "gzip_bytes": 368,
-    "rationale": "single-file SDK VERSION constant (cli/acp/mcp compose it), exported for consumer composition roots after the 2026-07-14 phantom-export find; re-anchored when the fallback read moved to the engine manifest (packages/engine/package.json, three levels above sdk/dist/platform): measured 306 B gzip @ goodvibes-jev 1d25e5d; headroom max(ceil(306*1.2)=368, 306+50=356) -> 368 (1.2x dominates). Previously measured 245 B gzip; headroom max(ceil(245*1.2)=294, 245+50=295) -> 295"
+    "rationale": "single-file SDK VERSION constant (cli/acp/mcp compose it), exported for consumer composition roots for SDK consumers; re-anchored when the fallback read moved to the engine manifest (packages/engine/package.json, three levels above sdk/dist/platform): measured 306 B gzip @ goodvibes-jev 1d25e5d; headroom max(ceil(306*1.2)=368, 306+50=356) -> 368 (1.2x dominates). Previously measured 245 B gzip; headroom max(ceil(245*1.2)=294, 245+50=295) -> 295"
   },
   "./platform/voice": {
     "gzip_bytes": 1090,

@@ -23,7 +23,7 @@ const availability = await probeCapturedExecAvailability();
 if (process.env.GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT === '1' && !availability.available)
   throw new Error('required captured REPL containment backend is unavailable');
 
-test('file-backed completion matches native printed evaluation for statements and async TypeScript', () => {
+test('file-backed completion matches native printed evaluation for statements and async TypeScript', async () => {
   const root = mkdtempSync(join(tmpdir(), 'repl-completion-')); roots.push(root);
   for (const source of [
     '1; const a = 2', 'if (true) { 42 }', '1; if (false) 2',
@@ -36,7 +36,7 @@ test('file-backed completion matches native printed evaluation for statements an
     'const console = null; 42', 'if(true) 42', '1; {const a=2}',
   ]) {
     const original = childProcess.spawnSync(process.execPath, ['--print', source], { encoding: 'utf8' });
-    const path = join(root, 'snippet.ts'); writeFileSync(path, capturedReplScript(source, '{}'));
+    const path = join(root, 'snippet.ts'); writeFileSync(path, await capturedReplScript(source, '{}'));
     const actual = childProcess.spawnSync(process.execPath, [path], { encoding: 'utf8' });
     expect({ source, code: actual.status, stdout: actual.stdout, stderr: actual.stderr })
       .toEqual({ source, code: original.status, stdout: original.stdout, stderr: original.stderr });

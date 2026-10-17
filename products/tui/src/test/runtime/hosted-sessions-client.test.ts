@@ -184,7 +184,7 @@ describe('hosted session roster', () => {
     expect(roster.snapshot().sessions).toHaveLength(1);
     expect(roster.snapshot().sessions).toBe(previous.sessions);
     expect(roster.snapshot().capturedAt).toBe(previous.capturedAt);
-    expect(roster.snapshot().note).toBe('the daemon did not answer: [REDACTED]');
+    expect(roster.snapshot().note).toBe('the daemon did not answer: daemon is down');
   });
 
   test('with no client bound it says so instead of claiming an empty daemon', async () => {

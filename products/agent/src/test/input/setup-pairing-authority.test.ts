@@ -67,11 +67,11 @@ async function withRuntime(run: (runtime: {
       { port: preparation.port, assertCurrent: preparation.assertCurrent });
     const admission = await manager.admitAutonomous(callId, call.name, call.args, { sourceOf,
       schemaRevision: call.schemaRevision, preparedCall: { registry: tools, call } });
-    expect(admission.result.autonomousDecision?.outcome).toBe('act');
+    expect(admission.result.approved).toBe(true);
     const result = await tools.executePrepared(call, admission);
     fixture.assertPrivateOutput(JSON.stringify(scripted.requests));
     fixture.assertPrivateOutput(result.output ?? '');
-    expect(log.query({ site: 'engine.gate.autonomous-tool' }).length).toBe(sequence);
+    expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
     return result;
   };
   try { await run({ fixture, registry, context, controller, starts, printed, runHarness }); fixture.assertPrivateOutput(printed.join('\n')); }

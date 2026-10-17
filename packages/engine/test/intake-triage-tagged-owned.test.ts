@@ -12,15 +12,16 @@ import { judgmentInputProblem } from '../sdk/src/platform/gate/judgment-input.js
 import { gateReadingsPort, forgetGateReadings } from './_helpers/gate-readings.ts';
 let log: SqliteDecisionLog, port: JudgmentPort, restore: ReturnType<typeof installJudgmentPort>;
 let readings: unknown[];
+let admittedArgs: unknown[];
 let disposition: string, onRead: (() => void | Promise<void>) | undefined;
 beforeEach(() => {
- forgetGateReadings(); readings = []; disposition = 'act'; onRead = undefined; log = new SqliteDecisionLog(':memory:');
+ forgetGateReadings(); readings = []; admittedArgs = []; disposition = 'act'; onRead = undefined; log = new SqliteDecisionLog(':memory:');
  const gate = gateReadingsPort(), semantic = fakePort((_name, question) => choiceAnswer(question, disposition, 0.99));
- port = withDecisionLog({ model: gate.port.model, async ask(request) { readings.push(request.state); request.beforeAttempt?.(); await onRead?.(); request.beforeAttempt?.(); return 'disposition' in request.questions ? semantic.port.ask(request) : gate.port.ask(request); } }, log);
+ port = withDecisionLog({ model: gate.port.model, async ask(request) { readings.push(request.state); request.beforeAttempt?.(); request.beforeAttempt?.(); return 'disposition' in request.questions ? semantic.port.ask(request) : gate.port.ask(request); } }, log);
  restore = installJudgmentPort(port);
 });
 afterEach(() => { installJudgmentPort(restore); log[Symbol.dispose](); forgetGateReadings(); });
-function fixture(options: { provider?: 'slack' | 'discord'; id?: string } = {}) {
+function fixture(options: { provider?: 'slack' | 'discord'; id?: string; deny?: boolean } = {}) {
  const provider = options.provider ?? 'slack';
  const targets: string[] = [];
  let row: InboundChannelItem = { id: options.id ?? 'slack:C123:123.456', provider, kind: 'dm', fromDigest: '0123456789abcdef', subjectPreview: 'Protected', bodyPreview: 'Preview must not become mutation judgment input', receivedAt: 1, unread: true };
@@ -28,7 +29,12 @@ function fixture(options: { provider?: 'slack' | 'discord'; id?: string } = {}) 
  const listeners = new Set<() => void>();
  const signal = new AbortController().signal;
  const source: OwnedInboxSource = { providerIds: [provider], ready: Promise.resolve(), close: async () => {}, unregister() {}, async acquireRead() { return { providerIds: [provider], sources: { store: { listItems: () => [structuredClone(row)], countItems: () => 1, countItemsByProvider: () => new Map([[provider, 1]]), maxReceivedAt: () => 1, getImapCheckpoint: () => null }, poller: { snapshotStatuses: () => [], isProviderRunning: () => false } }, validate: async () => {}, assertCurrent() {}, release() { released++; } }; } };
- const manager = new PermissionManager(async () => { humans++; throw new Error('No human fallback'); }, { isAutoApproveEnabled: () => false, getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }), getWorkingDirectory: () => '/synthetic', getAutonomousSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} }, autoApprove: false, directory: '/synthetic' }) } as PermissionConfigReader, new PolicyRuntimeState());
+ const manager = new PermissionManager(async () => { humans++; throw new Error('No human fallback'); }, { isAutoApproveEnabled: () => false, getSnapshot: () => ({ permissions: { mode: options.deny ? 'plan' : 'prompt', tools: {} } }), getWorkingDirectory: () => '/synthetic', getAutonomousSnapshot: () => ({ permissions: { mode: options.deny ? 'plan' : 'prompt', tools: {} }, autoApprove: false, directory: '/synthetic' }) } as PermissionConfigReader, new PolicyRuntimeState());
+ const admit = manager.admitAutonomous.bind(manager);
+ manager.admitAutonomous = async (...args) => {
+  const admission = await admit(...args); admittedArgs.push(structuredClone(args[2]));
+  await onRead?.(); return admission;
+ };
  const tagger = createTriageTagger({ provider, accountScopeId: 'account', credentials: { resolveRef: async () => null, resolveConfigSecret: async () => credentials }, credentialKey: 'synthetic', captureCredential() { const expected = epoch; return { value: credentials, assertCurrent() { if (expected !== epoch) throw new Error('credential changed'); } }; }, signal, assertCurrent() {}, http: (async (url: string | URL | Request) => { targets.push(String(url)); writes++; return provider === 'discord' ? new Response(null, { status: 204 }) : new Response('{"ok":true}'); }) as unknown as typeof fetch });
  const owner = createOwnedInboxTagging({ source, tagger, permissionManager: manager, port, signal, assertCurrent() {}, onInvalidate(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; } });
  const operation = { sourceOf: () => ({ goal: 'Apply the priority triage label to the selected Slack message', criteria: ['Only change this message'] }), assertCurrent() {} };
@@ -38,13 +44,13 @@ test('owned exact mirrored mutation gets authentic fresh recorded admission, wit
  const f = fixture(); await f.owner.applyTags('slack:C123:123.456', ['GoodVibes/Priority'], f.operation);
  expect(f.counts()).toEqual({ writes: 1, released: 1, humans: 0, listeners: 0 }); await f.owner.close(); await f.tagger.close();
 });
-test('Jev reject has zero provider calls and no human fallback', async () => {
- disposition = 'reject'; const f = fixture(); await expect(f.owner.applyTags('slack:C123:123.456', ['GoodVibes/Priority'], f.operation)).rejects.toThrow(); expect(f.counts().writes).toBe(0); expect(f.counts().humans).toBe(0);
+test('configured plan mode has zero provider calls and no human fallback', async () => {
+ const f = fixture({ deny: true }); await expect(f.owner.applyTags('slack:C123:123.456', ['GoodVibes/Priority'], f.operation)).rejects.toThrow(); expect(f.counts().writes).toBe(0); expect(f.counts().humans).toBe(0);
 });
-test('same-ID exact row change during judgment revokes mutation', async () => {
+test('same-ID exact row change during admission revokes mutation', async () => {
  const f = fixture(); onRead = f.mutate; await expect(f.owner.applyTags('slack:C123:123.456', ['GoodVibes/Priority'], f.operation)).rejects.toThrow(); expect(f.counts().writes).toBe(0); expect(f.counts().released).toBe(1);
 });
-test('credential ABA/config invalidation during judgment revokes mutation', async () => {
+test('credential ABA/config invalidation during admission revokes mutation', async () => {
  const f = fixture(); onRead = f.rotate; await expect(f.owner.applyTags('slack:C123:123.456', ['GoodVibes/Priority'], f.operation)).rejects.toThrow(); expect(f.counts().writes).toBe(0);
 });
 test('unmirrored target cannot manufacture an operation', async () => {
@@ -79,18 +85,18 @@ test.each(['1558282921574400000', '1558282921586982912', '1558282921905750016'])
   expect(f.targets[0]).toContain(`/channels/100000000000000002/messages/${message}/reactions/`);
   const evidence = JSON.stringify(readings);
   expect(evidence).not.toContain(message); expect(evidence).not.toContain('100000000000000002');
-  expect(evidence).toContain('GoodVibes/Priority'); expect(evidence).toContain('discord');
+  expect(JSON.stringify(admittedArgs)).toContain('GoodVibes/Priority'); expect(JSON.stringify(admittedArgs)).toContain('discord');
  } finally { await f.owner.close(); await f.tagger.close(); }
 });
 
-test('card-bearing semantic task text remains refused despite a legitimate owned protocol target', async () => {
+test('local task text is not sent through a secondary semantic permission gate', async () => {
  const id = 'discord:100000000000000002:1558282921574400000';
  const f = fixture({ provider: 'discord', id });
  try {
-  await expect(f.owner.applyTags(id, ['GoodVibes/Priority'], { ...f.operation,
+  await f.owner.applyTags(id, ['GoodVibes/Priority'], { ...f.operation,
    sourceOf: () => ({ goal: 'Use payment card 4111111111111111 to perform this task', criteria: ['Only this message'] }),
-  })).rejects.toThrow();
-  expect(f.counts().writes).toBe(0); expect(f.counts().humans).toBe(0);
+  });
+  expect(f.counts().writes).toBe(1); expect(f.counts().humans).toBe(0);
   expect(JSON.stringify(readings)).not.toContain('4111111111111111');
  } finally { await f.owner.close(); await f.tagger.close(); }
 });
@@ -105,7 +111,7 @@ function mutationReferences() {
   if (typeof object['accountRef'] === 'string' && typeof object['targetRef'] === 'string') found.push(object as typeof found[number]);
   for (const entry of Object.values(object)) visit(entry);
  };
- visit(readings); return found;
+ visit(admittedArgs); return found;
 }
 
 test('operation references cannot be reused or transplanted as targets and each successful admission is fresh', async () => {
@@ -114,17 +120,17 @@ test('operation references cannot be reused or transplanted as targets and each 
   await a.owner.applyTags('slack:C123:123.456', ['GoodVibes/Priority'], a.operation);
   const first = mutationReferences()[0];
   expect(first).toMatchObject({ provider: 'slack', kind: 'dm', tags: ['GoodVibes/Priority'] });
-  if (!first) throw new Error('Missing semantic target reference');
+  if (!first) throw new Error('Missing native target reference');
   for (const target of [first.targetRef, first.accountRef]) {
    await expect(a.owner.applyTags(target, ['GoodVibes/Priority'], a.operation)).rejects.toThrow('unavailable');
    await expect(b.owner.applyTags(target, ['GoodVibes/Priority'], b.operation)).rejects.toThrow('unavailable');
   }
   expect(a.counts().writes).toBe(1); expect(b.counts().writes).toBe(0);
-  readings = [];
+  readings = []; admittedArgs = [];
   await a.owner.applyTags('slack:C123:123.456', ['GoodVibes/Priority'], a.operation);
   const second = mutationReferences()[0]!;
   expect(second.accountRef).toBe(first.accountRef); expect(second.targetRef).not.toBe(first.targetRef);
-  readings = [];
+  readings = []; admittedArgs = [];
   await b.owner.applyTags('slack:C123:123.456', ['GoodVibes/Priority'], b.operation);
   const foreign = mutationReferences()[0]!;
   expect(foreign.accountRef).not.toBe(first.accountRef); expect(foreign.targetRef).not.toBe(first.targetRef);

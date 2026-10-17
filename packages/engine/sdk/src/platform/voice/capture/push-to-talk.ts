@@ -1,20 +1,5 @@
-/**
- * push-to-talk.ts, the voice-input session both surfaces drive.
- *
- * This is the OTHER consumer of the capture primitive, and the one that has been
- * missing outright on the terminal: whisper is provisioned there and transcribes
- * on request, but nothing ever handed it audio, because nothing captured any.
- *
- * The state machine is small and identical on both surfaces, which is exactly why
- * it belongs here rather than in each of them: start (asking for the device is
- * its own visible phase, because a permission prompt takes real time), record,
- * stop, transcribe, done, with a device release on every path out, including the
- * failing ones. A microphone left open after a failed transcription is the bug
- * users notice and never report precisely.
- *
- * Transcription itself is injected. On both surfaces the audio goes to the
- * daemon's `voice.stt` verb rather than to a local library, so the SDK holds the
- * policy and the surface holds the call.
+/** Shared push-to-talk capture lifecycle: acquire, record, stop and transcribe.
+ * Every exit releases the device. Hosts inject transcription through voice.stt.
  */
 import {
   createNoiseSuppressingOpener,

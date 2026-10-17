@@ -19,7 +19,7 @@
  *  3. chunksIndexed accounting: unchanged files' pre-existing chunks are
  *     reported as chunksUnchanged, not silently folded into chunksIndexed.
  */
-import { beforeEach, describe, expect, test, afterEach } from 'bun:test';
+import { beforeEach, describe, expect, test, afterEach, spyOn } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,7 +32,7 @@ import {
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { authoredPrivacyAnswer } from './_helpers/authored-error-readings.ts';
+import * as findFiles from '../sdk/src/platform/tools/find/shared.js';
 
 const roots: string[] = [];
 
@@ -211,7 +211,7 @@ beforeEach(() => { previousDirectoryPort = installJudgmentPort(fakePort(() => no
 afterEach(() => { installJudgmentPort(previousDirectoryPort); });
 
 
-test('reroot during a directory reading aborts before descent, indexing or stale result publication', async () => {
+test('reroot during ignore discovery aborts before indexing or stale result publication', async () => {
   const rootA = makeRoot('gv-code-index-directory-a-');
   const rootB = makeRoot('gv-code-index-directory-b-');
   mkdirSync(join(rootA, 'src'));
@@ -225,48 +225,30 @@ test('reroot during a directory reading aborts before descent, indexing or stale
   let started!: () => void;
   const waiting = new Promise<void>(resolve => { started = resolve; });
   const gate = new Promise<void>(resolve => { release = resolve; });
-  const fake = fakePort((name, _question, state) => {
-    expect(state).toEqual({ directories: [
-      { id: 'directory_0', name: '.config', relativePath: '.config' },
-      { id: 'directory_1', name: 'src', relativePath: 'src' },
-    ] });
-    expect(['directory_0', 'directory_1']).toContain(name);
-    return noulAnswer(0.01);
+  const original = findFiles.findNestedGitignoreFiles;
+  const discovery = spyOn(findFiles, 'findNestedGitignoreFiles').mockImplementation(async (...args) => {
+    const result = await original(...args);
+    started(); await gate; return result;
   });
-  const countPrivacy = authoredPrivacyAnswer({ parts: [], fields: { filesScanned: 'other' } });
-  const diagnostic = fakePort((name, question, state) => {
-    const answer = countPrivacy(name, question, state);
-    if (answer === undefined) throw new Error('Unexpected reroot diagnostic question');
-    return answer;
-  });
-  installJudgmentPort({ ...fake.port, async ask(request) {
-    if (request.context?.battery === 'engine.redaction.field-kind') return diagnostic.port.ask(request);
-    expect(request.context?.battery).toBe('engine.walk.skip-directory');
-    started(); await gate; return fake.port.ask(request);
-  } });
   try {
     const building = store.buildFull();
     await waiting;
     await store.reroot(rootB, ':memory:');
     release();
     expect((await building).abortReason).toBe('build aborted by reroot');
-    expect(fake.requests).toHaveLength(1);
+    expect(discovery).toHaveBeenCalledTimes(1);
     expect(calls()).toBe(0);
     expect(store.stats().lastBuild).toBeNull();
     expect(store.stats().indexedChunks).toBe(0);
-  } finally { release(); store.close(); }
+  } finally { release(); discovery.mockRestore(); store.close(); }
 });
 
-test('automatic reindex honors excluded ancestors while explicit single-file indexing retains its contract', async () => {
+test('automatic reindex skips hidden ancestors while explicit single-file indexing retains its contract', async () => {
   const root = makeRoot('gv-code-index-directory-selection-');
-  mkdirSync(join(root, 'target'));
+  mkdirSync(join(root, '.generated'));
   writeFileSync(join(root, 'authored.ts'), 'export const authored = 1;');
-  const generated = join(root, 'target/generated.ts');
+  const generated = join(root, '.generated/generated.ts');
   writeFileSync(generated, 'export const generated = 1;');
-  installJudgmentPort(fakePort((key, _question, state) => {
-    const candidate = (state as { directories: { id: string; relativePath: string }[] }).directories.find(value => value.id === key)!;
-    return noulAnswer(candidate.relativePath === 'target' ? 0.99 : 0.01);
-  }).port);
   const registry = makeRegistry(root); const { provider } = makeProvider('directory-selection');
   registry.register(provider, { makeDefault: true });
   const store = new CodeIndexStore(root, ':memory:', registry); await store.init();
@@ -282,7 +264,7 @@ test('automatic reindex honors excluded ancestors while explicit single-file ind
   } finally { store.close(); }
 });
 
-test('automatic reindex rechecks its target after later ignore-discovery judgments', async () => {
+test('automatic reindex rechecks its target after asynchronous ignore discovery', async () => {
   const root = makeRoot('gv-code-index-ignore-race-'); const outside = makeRoot('gv-code-index-outside-');
   mkdirSync(join(root, 'src')); mkdirSync(join(root, 'other'));
   writeFileSync(join(root, 'src/a.ts'), 'export const owned = 1;');
@@ -291,11 +273,11 @@ test('automatic reindex rechecks its target after later ignore-discovery judgmen
   registry.register(provider, { makeDefault: true });
   const store = new CodeIndexStore(root, ':memory:', registry); await store.init();
   const started = Promise.withResolvers<void>(); const release = Promise.withResolvers<void>();
-  const fake = fakePort(() => noulAnswer(0.01)); let requests = 0;
-  installJudgmentPort({ ...fake.port, async ask(request) {
-    if (++requests === 2) { started.resolve(); await release.promise; }
-    return fake.port.ask(request);
-  } });
+  const original = findFiles.findNestedGitignoreFiles;
+  const discovery = spyOn(findFiles, 'findNestedGitignoreFiles').mockImplementation(async (...args) => {
+    const result = await original(...args);
+    started.resolve(); await release.promise; return result;
+  });
   try {
     const pending = store.reindexFile(join(root, 'src/a.ts'), { automatic: true });
     await started.promise;
@@ -303,5 +285,5 @@ test('automatic reindex rechecks its target after later ignore-discovery judgmen
     release.resolve();
     expect(await pending).toEqual({ indexed: false, mode: 'empty' });
     expect(calls()).toBe(0); expect(store.stats().indexedChunks).toBe(0);
-  } finally { release.resolve(); store.close(); }
+  } finally { release.resolve(); discovery.mockRestore(); store.close(); }
 });

@@ -281,7 +281,7 @@ test('two unrecorded namespace spellings remain ambiguous and are never adopted 
   expect(existsSync(old.path)).toBe(true); expect(existsSync(next.path)).toBe(true);
 });
 
-test('actual read owner allows encoded namespace but still denies card material and owner path rules', async () => {
+test('read access follows explicit owner path rules without classifying file names', async () => {
   const root = repo(); const config = new ConfigManager({ surfaceRoot: 'agent', configDir: join(root, '.goodvibes', 'cfg'), workingDir: root, homeDir: root });
   config.set('permissions.mode', 'custom'); config.set('permissions.tools.read', 'allow');
   const store = new UserPermissionRuleStore(':memory:');
@@ -290,7 +290,7 @@ test('actual read owner allows encoded namespace but still denies card material 
   const path = join(root, '.goodvibes', '.worktrees', itemWorktreeBranch('g1', 'u1', 'ctr-797d133b'), 'src', 'csv.ts');
   expect(await permission.readAccess(path)).toBe('allow');
   const syntheticCard = ['4111', '1111', '1111', '1111'].join('');
-  expect(await permission.readAccess(join(path, '..', `${syntheticCard}.txt`))).toBe('restricted');
+  expect(await permission.readAccess(join(path, '..', `${syntheticCard}.txt`))).toBe('allow');
   await store.add({ rule: { id: 'deny-encoded-member-source', type: 'path-scope', origin: 'user', effect: 'deny', toolPattern: 'read', pathPatterns: [path] },
     createdAt: Date.now(), tier: 'path', tool: 'read' });
   expect(await permission.readAccess(path)).toBe('restricted');

@@ -85,9 +85,9 @@ export async function runRecordedImportProof(deps: AgentHarnessToolDeps, input: 
         sourceOf: () => ({ goal: 'Exercise exactly the selected legacy import command', criteria: ['Only the owned loopback fixture and temporary journal may be changed'] }),
         schemaRevision: call.schemaRevision, preparedCall: { registry, call },
       });
-      assert.equal(admission.result.autonomousDecision?.outcome, 'act');
+      assert.equal(admission.result.approved, true);
       const result = await registry.executePrepared(call, admission);
-      assert.ok(answers.requests.some(request => Object.hasOwn(request.questions, 'disposition')));
+      assert.ok(!answers.requests.some(request => Object.hasOwn(request.questions, 'disposition')));
       assert.ok(!JSON.stringify(answers.requests).includes(IMPORT_FIXTURE_TOKEN));
       return result;
     } finally { await registry.releaseProjected(projected); }

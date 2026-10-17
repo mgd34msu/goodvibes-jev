@@ -753,7 +753,7 @@ describe('AgentOrchestrator', () => {
   // -------------------------------------------------------------------------
 
   describe('background agent permission gating', () => {
-    test('ask-mode background tool call brokers the ask instead of silently proceeding', async () => {
+    test('automatic background tool calls apply configured permissions without a human wait', async () => {
       const requestPermission = mock(async (_request: Parameters<PermissionRequestHandler>[0]) => (
         { approved: false, remember: false }
       ));
@@ -809,23 +809,15 @@ describe('AgentOrchestrator', () => {
           content: '',
           toolCalls: [{ id: 'call-write-1', name: 'write', arguments: { files: [{ path: deniedWritePath, content: 'x' }] } }],
         },
-        { content: 'Understood, the write was not approved.' },
+        { content: 'The configured write completed.' },
       ]);
 
       const record = makeRecord({ tools: ['write'] });
       await withMockProvider(provider, () => orchestrator.runAgent(record));
 
-      // The gate brokered the ask, it did not silently approve or silently
-      // skip the permission layer.
-      expect(requestPermission).toHaveBeenCalledTimes(1);
-      const askedRequest = requestPermission.mock.calls[0]![0];
-      expect(askedRequest.tool).toBe('write');
-      // Subagent attribution rides on the brokered ask (background-permission-gate.js).
-      expect(askedRequest.attribution).toEqual({ kind: 'background-agent', agentId: record.id, template: record.template });
-      expect(existsSync(deniedWritePath)).toBe(false);
+      expect(requestPermission).not.toHaveBeenCalled();
+      expect(existsSync(deniedWritePath)).toBe(true);
 
-      // The denial was honored, the tool did not run, and the agent still
-      // completes cleanly (denial becomes a tool result fed back to the model).
       expect(record.status).toBe('completed');
       expect(record.toolCallCount).toBe(1);
     });

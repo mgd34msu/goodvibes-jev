@@ -1,5 +1,8 @@
+import type { Socket } from 'node:net';
+import { nodeEmailTransport } from '@goodvibes-jev/engine/sdk/platform/email/node';
+import { SnapshotSocket } from '../helpers/email-snapshot-socket.js';
 /** Real owner/source constructors; no polling, judgment or provider mutation is started by activation. */
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
 import { ConfigManager, createDaemonCredentialStore } from '@goodvibes-jev/engine/sdk/platform/config';
 import { GatewayMethodCatalog } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 import { createSlackInboxOwner, createEmailInboxOwner, createOwnedInboxSource, type OwnedInboxTagging, type OwnedInboxSource } from '@goodvibes-jev/engine/sdk/platform/intake';
@@ -43,6 +46,10 @@ test('configured Slack source opt-in adopts the real owner scope; activation its
  await surface.close(); expect(f.tagCloses).toBe(1);
 });
 test('configured email opt-in derives exact TLS mailbox target from the real owner account', async () => {
+ const transport = spyOn(nodeEmailTransport, 'connectImapTls').mockImplementation(async () => {
+   const socket = new SnapshotSocket({ validity: 7, uids: [] }); setImmediate(() => socket.greet()); return socket as unknown as Socket;
+ });
+ cleanups.push(() => transport.mockRestore());
  const f = fixture(); f.config.set('surfaces.email.host', 'mail.synthetic.invalid'); f.config.set('surfaces.email.user', 'owner@synthetic.invalid');
  const account = { host: 'mail.synthetic.invalid', port: 993, username: 'owner@synthetic.invalid', mailbox: 'INBOX', security: 'tls' as const };
  let delivered: OwnedInboxTagging | undefined, scope = '';

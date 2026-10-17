@@ -205,7 +205,7 @@ function companionSessionWithMessages(id: string, messageCount: number): Persist
   };
 }
 
-describe('MAJOR 1: per-session message cap: no silent transcript loss on migration', () => {
+describe('legacy migration preserves full transcripts', () => {
   test('299 closed sessions × 10 messages fold in with ZERO loss and honest counts', async () => {
     const root = mkdtempSync(join(tmpdir(), 'importer-cap-'));
     try {
@@ -243,12 +243,12 @@ describe('MAJOR 1: per-session message cap: no silent transcript loss on migrati
     }
   });
 
-  test('a session that DOES exceed the per-session cap is truncated HONESTLY (retainedMessageCount marker)', async () => {
+  test('a large session retains every message without an implicit cap', async () => {
     const root = mkdtempSync(join(tmpdir(), 'importer-cap-trunc-'));
     try {
       const companionDir = join(root, 'home', '.goodvibes', 'companion-chat', 'sessions');
       const homeStorePath = join(root, 'home', '.goodvibes', 'control-plane', 'sessions.json');
-      // 2 500 messages > the 2 000 per-session cap.
+      // This transcript exceeds the historical 2 000-message default.
       await new CompanionChatPersistence(companionDir).save(companionSessionWithMessages('huge', 2_500));
 
       const sources = discoverLegacySessionSources({ projectRoot: join(root, 'projX'), companionSessionsDir: companionDir });
@@ -257,10 +257,10 @@ describe('MAJOR 1: per-session message cap: no silent transcript loss on migrati
       const home = makeBroker(homeStorePath);
       await home.start();
       const rec = home.getSession('huge') as { messageCount: number; retainedMessageCount?: number };
-      // Logical total stays honest; the marker records how many bodies survived.
+      // All message bodies survive, so no truncation marker is needed.
       expect(rec.messageCount).toBe(2_500);
-      expect(rec.retainedMessageCount).toBe(2_000);
-      expect(home.getMessages('huge', 5_000)).toHaveLength(2_000);
+      expect(rec.retainedMessageCount).toBeUndefined();
+      expect(home.getMessages('huge', 5_000)).toHaveLength(2_500);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

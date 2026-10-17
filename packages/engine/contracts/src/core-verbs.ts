@@ -482,12 +482,9 @@ export const SCOPED_EXEMPT_VERB_CATEGORIES: Readonly<Record<string, ScopedVerbEx
   'mcp-server-registry-alias': {
     namespaces: ['mcp.servers'],
     verbs: ['remove'],
-    // KNOWN, OUT-OF-SCOPE minor inconsistency (not one of the ranked
-    // worst-class collisions): mcp.servers.remove means exactly what `delete`
-    // means everywhere else in the catalog. Flagged rather than fixed, per the
-    // scope discipline of fixing only the ranked worst-class items
-    // (schedule/memory/tasks/session-orphan/sessions-visibility). A future pass
-    // can fold it into `delete`; until then the grant stops at this namespace.
+    // The existing mcp.servers.remove API deletes a server registration.
+    // Retain this public verb for compatibility; its alias grant applies only
+    // to the MCP server registry and does not authorize removal elsewhere.
   },
   'occasion-erasure': {
     namespaces: ['occasions'],

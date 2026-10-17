@@ -1,6 +1,6 @@
 {
-  "decision": "errors.stale-server-kind@1",
-  "model": "jev-1.13.0",
+  "decision": "errors.stale-server-kind@2",
+  "model": "jev-latest",
   "readings": {
     "docs/browser-integration.md": {
       "sha256": "2f5c8f34c4d2c61814ce79e1607e121b9d6db7786f69757a5386562ef33807cf",
@@ -30,7 +30,7 @@
       "sha256": "afb4b44525e31959bd7dafa1b2462b1607c5312f2fe1c075802edbb33ac75a66",
       "verdict": "no",
       "outcome": "act",
-      "probability": 0.02
+      "probability": 0.03
     },
     "docs/web-ui-integration.md": {
       "sha256": "dbc8263cf34f288faf675ed52c52a80b4b363bbc90344a4109c5bd26e77efee2",

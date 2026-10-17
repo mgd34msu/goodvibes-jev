@@ -43,7 +43,7 @@ async function within<T>(promise: Promise<T>): Promise<T> {
 const turn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 const settledError = (work: Promise<unknown>): Promise<unknown> => work.then(() => null, (error: unknown) => error);
 function expectCancelled(error: unknown): void {
-  expect(error).toMatchObject({ message: error instanceof ToolError ? '[REDACTED]' : 'the judgment call was cancelled' });
+  expect(error).toMatchObject({ message: 'the judgment call was cancelled' });
   if (error instanceof ToolError) expect(error).toMatchObject({ code: 'TOOL_ERROR', toolName: 'exec' });
   const cause = (error as Error).cause;
   expect(cause ?? error).toMatchObject({ name: 'JudgmentError', kind: 'aborted' });

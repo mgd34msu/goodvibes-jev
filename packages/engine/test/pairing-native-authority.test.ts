@@ -246,7 +246,7 @@ describe('persisted paired native authority', () => {
       source: 'builtin', access: 'admin', transport: ['http'], scopes: ['write:synthetic'],
       inputSchema: { type: 'object' } }, invocation => { received = invocation.nativeExecutionAuthority; return { kind: received?.current()?.kind }; });
     const call = (token: string) => item.helper.invokeGatewayMethodCall({ authToken: token, methodId: 'synthetic.native',
-      context: { principalId: `pairing:${item.paired.id}`, principalKind: 'token', admin: true, scopes: ['write:synthetic'] },
+      context: { ...item.helper.describeAuthenticatedPrincipal(token)!, scopes: ['write:synthetic'] },
       body: { nativeExecutionAuthority: { current: 'forged' } } });
     expect((await call(item.paired.token)).body).toEqual({ kind: 'pairing-token' });
     expect(JSON.stringify(received)).toBe('{}');

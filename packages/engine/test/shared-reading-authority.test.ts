@@ -61,9 +61,9 @@ const changes: readonly { name: string; mutate: (config: ConfigManager) => void 
   { name: 'endpoint ABA', mutate: config => { config.set('judgment.endpoint', 'https://other.example.test'); config.set('judgment.endpoint', 'https://synthetic.example.test'); } },
   { name: 'model ABA', mutate: config => { config.set('judgment.model', 'synthetic-model'); config.set('judgment.model', ''); } },
   { name: 'key source ABA', mutate: config => { config.set('judgment.keySource', 'secret'); config.set('judgment.keySource', 'env'); } },
-  { name: 'timeout ABA', mutate: config => { config.set('judgment.timeoutMs', 11000); config.set('judgment.timeoutMs', 10000); } },
+  { name: 'timeout ABA', mutate: config => { config.set('judgment.timeoutMs', 11000); config.set('judgment.timeoutMs', 0); } },
   { name: 'no-op setting', mutate: config => { config.set('judgment.endpoint', 'https://synthetic.example.test'); } },
-  { name: 'failed mutation', mutate: config => { expect(() => config.set('judgment.timeoutMs', 0)).toThrow(); } },
+  { name: 'failed mutation', mutate: config => { expect(() => config.set('judgment.timeoutMs', -1)).toThrow(); } },
   { name: 'global save', mutate: config => { config.save(); } },
   { name: 'project save', mutate: config => { config.saveProject(); } },
 ];

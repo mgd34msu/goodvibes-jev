@@ -513,7 +513,7 @@ describe('feature flag safe-default gates', () => {
     })).toThrow(/Unknown flag in config/);
   });
 
-  test('shell-ast-normalization parses into per-segment verdicts; the catastrophic reading applies in both modes', async () => {
+  test('shell-ast-normalization reports command structure without adding semantic permission gates', async () => {
     const command = 'echo "$(echo cm0K | base64 -d)"';
     const baseline = await guardExecCommand(command, flags([]));
     const ast = await guardExecCommand(command, flags(['shell-ast-normalization']));
@@ -523,9 +523,8 @@ describe('feature flag safe-default gates', () => {
     // Obfuscation is the gate's reading (critical stakes), not an exec-time refusal.
     expect(baseline.allowed).toBe(true);
     expect(ast.allowed).toBe(true);
-    for (const active of [[], ['shell-ast-normalization']]) {
-      expect((await guardExecCommand('ls; rm -rf /', flags(active))).allowed).toBe(false);
-    }
+    expect((await guardExecCommand('ls; rm -rf /', flags([]))).allowed).toBe(true);
+    expect((await guardExecCommand('ls; rm -rf /', flags(['shell-ast-normalization']))).allowed).toBe(true);
   });
 
   test('runtime-tools-budget-enforcement enables phased executor budget checks', async () => {

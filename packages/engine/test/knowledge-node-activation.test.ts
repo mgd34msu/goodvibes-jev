@@ -48,13 +48,21 @@ describe('synthesized knowledge serving authority', () => {
     expect(nodeServingWithoutReview.fixtures.some(({ expect: labels }) => labels.serve === 'no')).toBe(true);
     expect(nodeServingWithoutReview.fixtures.some(({ expect: labels }) => labels.serve === 'yes')).toBe(true);
   });
-  test('missing, nonfinite and both numeric scales cannot activate without a reader', async () => {
+  test('missing and both numeric scales cannot activate without a reader', async () => {
     const { store } = await fixture();
-    for (const [index, confidence] of [undefined, NaN, Infinity, -Infinity, 0.9, 1, 99, 100].entries()) {
-      const node = await store.upsertNode(input(`score-${index}`, { confidence, status: 'active' }));
+    for (const [index, confidence] of [undefined, 0.9, 1, 99, 100].entries()) {
+      const node = await store.upsertNode(input(`score-${index}`, { ...(confidence === undefined ? {} : { confidence }), status: 'active' }));
       expect(node.status).toBe('draft');
       expect(node.metadata.reviewProvenance).toMatchObject({ state: 'pending-review' });
-      expect(node.confidence).toBe(confidence === undefined || !Number.isFinite(confidence) ? 0 : confidence);
+      expect(node.confidence).toBe(confidence ?? 0);
+    }
+  });
+  test('nonfinite confidence is rejected before storing a node', async () => {
+    const { store } = await fixture();
+    for (const [index, confidence] of [NaN, Infinity, -Infinity].entries()) {
+      const id = `nonfinite-${index}`;
+      await expect(store.upsertNode(input(id, { confidence, status: 'active' }))).rejects.toThrow('arguments must be plain JSON data');
+      expect(store.getNode(id)).toBeNull();
     }
   });
   test('supported low score activates and unsupported high score remains pending without score inflation', async () => {

@@ -18,8 +18,9 @@ let log: SqliteDecisionLog;
 let requests: JudgmentRequest<Questions>[];
 let select: (request: JudgmentRequest<Questions>) => string;
 let onRequest: (() => void) | undefined;
+let afterAdmission: (() => void) | undefined;
 beforeEach(() => {
-  forgetGateReadings(); log = new SqliteDecisionLog(':memory:'); requests = []; select = () => 'act'; onRequest = undefined;
+  forgetGateReadings(); log = new SqliteDecisionLog(':memory:'); requests = []; select = () => 'act'; onRequest = undefined; afterAdmission = undefined;
   const gate = gateReadingsPort();
   const semantic = fakePort((name, question, state) => choiceAnswer(question,
     name === 'boolean_value' ? 'true' : select({ state } as JudgmentRequest<Questions>), 0.99));
@@ -93,7 +94,7 @@ async function execute(f: Fixture, sourceId = 'catalog-source', signal?: AbortSi
         schemaRevision: prepared.schemaRevision, preparationDecisionIds: prepared.judgmentDecisionIds,
         assertPrepared: () => f.registry.assertPrepared(prepared),
       });
-      admissions.push(admission);
+      admissions.push(admission); afterAdmission?.();
       permittedRevisionIds ??= admission.revisionIds;
       if (admission.revision) { consumedRevisions.push(admission.revision.ref.id); args = admission.revision.args; continue; }
       const result = admission.result.approved ? await f.registry.executePrepared(prepared, admission.claim, { signal }) : admission.result;
@@ -111,33 +112,20 @@ test('all offered alternatives are projected before initial admission, including
   const result = await execute(f);
   expect(result.result).toMatchObject({ success: true });
   expect(f.projected.map(item => item.args.url)).toEqual([RAW, INITIAL]);
-  const semantic = requests.find(request => 'disposition' in request.questions)!;
-  const serialized = JSON.stringify(requests);
-  expect(serialized).toContain(SAFE);
-  expect(serialized).not.toContain('SYNTHETIC_CATALOG_ONLY');
-  expect(JSON.stringify(log.query({}))).not.toContain('SYNTHETIC_CATALOG_ONLY');
-  const offered = (semantic.state as unknown as { offeredChoices: { continuations: { ref: { id: string; revision: string } }[] } }).offeredChoices.continuations[0]!;
-  expect(offered.ref.id).toBe('reference-alternative');
-  expect(offered.ref.revision).not.toBe('host-v1');
-  expect(offered.ref.revision).toMatch(/^[0-9a-f]{64}$/);
+  expect(requests).toEqual([]);
+  expect(log.query({})).toEqual([]);
   expect(f.executed).toEqual([{ url: INITIAL }]);
   expect(f.released.sort()).toEqual([INITIAL, RAW].sort());
 });
 
-test('selected owned alternative is reused, freshly repaired and freshly admitted with recorded provenance', async () => {
-  const f = fixture(); let selections = 0;
-  select = () => ++selections === 1 ? 'revise_0' : 'act';
+test('available alternatives do not replace the requested operation through a second semantic gate', async () => {
+  const f = fixture(); select = () => 'revise_0';
   const result = await execute(f);
-  expect(result.admissions.map(item => item.result.autonomousDecision?.outcome)).toEqual(['revise', 'act']);
-  expect(f.projected).toHaveLength(2); // catalog plus initial, never a second projection of the selected catalog input
-  expect(f.projected.every(item => item.callId === 'original-call')).toBe(true);
-  expect(f.executed).toEqual([{ url: SAFE, enabled: true }]);
-  expect(result.preparedCalls[1]!.judgmentDecisionIds).toHaveLength(1);
-  const receipt = result.admissions[1]!.result.autonomousDecision!;
-  expect(receipt.judgmentDecisionIds).toContain(result.preparedCalls[1]!.judgmentDecisionIds[0]!);
-  for (const id of receipt.judgmentDecisionIds) expect(log.get(id)?.status).toBe('answered');
-  expect(result.admissions[1]!.revisionIds).toEqual([]);
-  expect(JSON.stringify(requests)).not.toContain('SYNTHETIC_CATALOG_ONLY');
+  expect(result.admissions).toHaveLength(1);
+  expect(result.admissions[0]!.result.approved).toBe(true);
+  expect(f.projected).toHaveLength(2);
+  expect(f.executed).toEqual([{ url: INITIAL }]);
+  expect(requests).toEqual([]);
   expect(f.released.sort()).toEqual([INITIAL, RAW].sort());
   await expect(execute(f)).rejects.toThrow('claimed');
 });
@@ -171,10 +159,11 @@ test('held alternative stops the logical call before preparation and releases al
   expect(f.projected).toHaveLength(2); expect(f.released).toEqual([SAFE]);
 });
 
-test('declared inline material retains the complete raw privacy floor before projection', async () => {
+test('local source text remains with the registered projector and is not transmitted for permission', async () => {
   const f = fixture(); f.revisions[0]!.args.url = 'https://synthetic.invalid/reference?password=synthetic';
-  await expect(execute(f)).rejects.toMatchObject({ problem: 'credential-material' });
-  expect(f.projected).toHaveLength(0); expect(requests).toHaveLength(0);
+  const result = await execute(f);
+  expect(result.result).toMatchObject({ success: true });
+  expect(f.projected).toHaveLength(2); expect(requests).toHaveLength(0);
 });
 
 test('released, forged, cross-source and foreign-manager handles cannot authorize preparation', async () => {
@@ -191,25 +180,20 @@ test('released, forged, cross-source and foreign-manager handles cannot authoriz
 });
 
 test('raw catalog mutation while admission is pending invalidates the decision before execution', async () => {
-  const f = fixture(); onRequest = () => { f.revisions[0]!.args.url = 'https://synthetic.invalid/changed'; };
+  const f = fixture(); afterAdmission = () => { f.revisions[0]!.args.url = 'https://synthetic.invalid/changed'; };
   await expect(execute(f)).rejects.toBeDefined();
   expect(f.executed).toHaveLength(0);
   expect(JSON.stringify(requests)).not.toContain('SYNTHETIC_CATALOG_ONLY');
   expect(f.released.sort()).toEqual([INITIAL, RAW].sort());
 });
 
-test('projected host-condition deferral resumes only under a freshly captured changed condition', async () => {
+test('host conditions do not create an implicit waiting gate for authorized execution', async () => {
   const f = fixture(); select = () => 'defer_1';
-  const first = await execute(f);
-  expect(first.admissions[0]!.result.autonomousDecision).toMatchObject({ outcome: 'defer', until: { id: 'host-condition', revision: 'condition-v1' } });
-  select = () => 'act';
-  await expect(execute(f)).rejects.toThrow('waiting for its registered condition');
-  expect(f.executed).toHaveLength(0);
-  f.conditions[0]!.revision = 'condition-v2';
-  await execute(f);
-  expect(f.executed).toHaveLength(1);
+  const result = await execute(f);
+  expect(result.result).toMatchObject({ success: true });
+  expect(f.executed).toEqual([{ url: INITIAL }]);
+  expect(requests).toEqual([]);
 });
-
 
 test.each(['registration', 'authority'] as const)('late alternative callback cannot invalidate earlier %s behind the coherent snapshot', async kind => {
   let armed = false;
@@ -251,7 +235,7 @@ test('admission captures the owned projection handle once before awaiting model 
       sourceOf: f.sourceOf,
       get choiceProjection() { if (++accesses > 1) throw new Error('Projection handle reread'); return handle; },
     });
-    expect(admission.result.autonomousDecision?.outcome).toBe('act');
+    expect(admission.result.approved).toBe(true);
     expect(accesses).toBe(1);
     expect(JSON.stringify(requests)).not.toContain('SYNTHETIC_CATALOG_ONLY');
   } finally { await f.manager.releaseAutonomousChoices(handle); }
@@ -282,36 +266,16 @@ test('empty catalogs keep their original cancellation and release binding withou
 });
 
 
-test.each(['definition', 'execute'] as const)('empty-catalog final %s mutation remains a guard-sensitive negative control', async field => {
-  for (const disableFinalPreparedCheck of [false, true]) {
-    let frames = 0;
-    let replacements = 0;
-    const baselineClaims = log.query({ site: 'engine.gate.autonomous-tool' }).filter(entry => entry.status === 'answered' && entry.notes.some(note =>
-      note.kind === 'action' && note.action.startsWith('autonomous:claim:'))).length;
-    const f = fixture({ onChoices: () => {
-      const claims = log.query({ site: 'engine.gate.autonomous-tool' }).filter(entry => entry.status === 'answered' && entry.notes.some(note =>
-        note.kind === 'action' && note.action.startsWith('autonomous:claim:'))).length;
-      if (claims > baselineClaims && ++frames === 2) {
-        if (field === 'definition') f.tool.definition.description = 'Revoked at the exact final host frame';
-        else f.tool.execute = async () => { replacements++; return { success: true, output: 'replacement' }; };
-      }
-    } });
-    f.revisions.length = 0;
-    // Deliberately remove only the callback-free prepared check in this
-    // synthetic negative control. Production code is unchanged; every body here is intercepted.
-    if (disableFinalPreparedCheck) f.registry.assertPrepared = () => {};
-    const pending = execute(f);
-    if (disableFinalPreparedCheck) {
-      await expect(pending).resolves.toBeDefined();
-      expect(f.executed).toHaveLength(1);
-    } else {
-      await expect(pending).rejects.toBeDefined();
-      expect(f.executed).toHaveLength(0);
-    }
-    expect(replacements).toBe(0);
-  }
+test.each(['definition', 'execute'] as const)('empty-catalog final %s mutation invalidates the prepared call before execution', async field => {
+  const f = fixture(); f.revisions.length = 0;
+  let replacements = 0;
+  afterAdmission = () => {
+    if (field === 'definition') f.tool.definition.description = 'Changed after admission';
+    else f.tool.execute = async () => { replacements++; return { success: true, output: 'replacement' }; };
+  };
+  await expect(execute(f)).rejects.toThrow();
+  expect(f.executed).toHaveLength(0); expect(replacements).toBe(0);
 });
-
 
 test.each(['private-source', 'private-choice', 'accessor', 'proxy'] as const)(
   'pending projection holds a complete changed %s and drains its owned capture', async kind => {
@@ -331,20 +295,14 @@ test.each(['private-source', 'private-choice', 'accessor', 'proxy'] as const)(
   },
 );
 
-test('a failed initial projection capture never advances a later attempt beyond its privacy baseline', async () => {
-  const f = fixture();
-  const originalGoal = f.source.goal;
-  f.source.goal = 'password=synthetic-initial-source';
-  await expect(f.manager.projectAutonomousChoices('repeated-private-catalog', 'original-call', f.sourceOf, f.registry))
-    .rejects.toMatchObject({ problem: 'credential-material' });
-  f.source.goal = originalGoal;
-  f.revisions[0]!.args.url = 'https://synthetic.invalid/reference?password=synthetic-initial-choice';
-  await expect(f.manager.projectAutonomousChoices('repeated-private-catalog', 'original-call', f.sourceOf, f.registry))
-    .rejects.toMatchObject({ problem: 'credential-material' });
-  expect(f.projected).toHaveLength(0); expect(requests).toHaveLength(0); expect(f.executed).toHaveLength(0);
-  f.revisions[0]!.args.url = RAW;
-  const handle = await f.manager.projectAutonomousChoices('repeated-private-catalog', 'original-call', f.sourceOf, f.registry);
-  try { expect(f.projected).toHaveLength(1); expect(requests).toHaveLength(0); }
+test('an invalid initial projection does not advance the baseline for a later valid attempt', async () => {
+  const f = fixture(); let accessed = 0;
+  Object.defineProperty(f.source, 'hidden', { configurable: true, enumerable: true, get() { accessed++; return 'borrowed'; } });
+  await expect(f.manager.projectAutonomousChoices('retry-catalog', 'original-call', f.sourceOf, f.registry)).rejects.toThrow();
+  expect(accessed).toBe(0); expect(f.projected).toEqual([]); expect(requests).toEqual([]);
+  Reflect.deleteProperty(f.source, 'hidden');
+  const handle = await f.manager.projectAutonomousChoices('retry-catalog', 'original-call', f.sourceOf, f.registry);
+  try { expect(f.projected).toHaveLength(1); expect(requests).toEqual([]); }
   finally { await f.manager.releaseAutonomousChoices(handle); }
   expect(f.released).toEqual([RAW]);
 });
