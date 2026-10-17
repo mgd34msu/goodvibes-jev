@@ -36,7 +36,7 @@ function scoreColumns(name: string, probabilities: readonly (readonly number[])[
  * earn a place is decided by the downstream model's error, not here.
  */
 export function encodeColumns(questions: Questions, rows: readonly Readonly<Record<string, Answer>>[], encoding: ScoreEncoding): Column[] {
-  return Object.entries(questions).flatMap(([name, question]: [string, Question]) => {
+  const columns = Object.entries(questions).flatMap(([name, question]: [string, Question]) => {
     const answers = rows.map((row) => row[name]!);
     if (question.type === 'noul') return [{ name, values: answers.map(yesOf) }];
     if (question.type === 'score') {
@@ -45,6 +45,8 @@ export function encodeColumns(questions: Questions, rows: readonly Readonly<Reco
     }
     return Object.keys(question.criteria).map((option) => ({ name: `${name}=${option}`, values: answers.map((answer) => probabilityOf(answer, option)) }));
   });
+  if (new Set(columns.map(column => column.name)).size !== columns.length) throw new RangeError('Feature questions produce ambiguous column names');
+  return columns;
 }
 
 /** One row of column values, by column name. */
@@ -66,6 +68,7 @@ export async function featurize(
   options: { readonly encoding?: ScoreEncoding; readonly concurrency?: number; readonly label?: string } = {},
 ): Promise<Column[]> {
   const encoding = options.encoding ?? 'mean_spread';
+  encodeColumns(questions, [], encoding);
   const context = { pattern: 'features', ...(options.label === undefined ? {} : { battery: options.label }) };
   const rows = await mapLimit(states, options.concurrency ?? 8, async (state) => {
     const result = await port.ask({ state, questions, context });

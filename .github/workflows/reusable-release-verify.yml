@@ -132,7 +132,7 @@ jobs:
           ref: ${{ inputs.sha }}
       - name: Setup Bun + deps (cached, workspace toolchain)
         if: inputs.toolchain-source == 'workspace'
-        uses: ./.github/actions/setup
+        uses: mgd34msu/goodvibes-jev/.github/actions/setup@d8fa6304e093b42e318dfb24024d7bcaf82b08f9
         with:
           bun-version: ${{ inputs.bun-version }}
       - name: Build workspace toolchain

@@ -262,30 +262,30 @@ export class CalendarOAuthService {
     const config = await this.resolveConfig(provider);
     const guard = this.guardConfigured(config);
     if (guard) return guard;
+    let begun: Awaited<ReturnType<typeof this.connector.beginConnectAuthCode>>;
     try {
-      // Probe: beginning the loopback flow binds the port; a bind failure throws here.
-      const begun = await this.connector.beginConnectAuthCode(config);
-      hooks.openUrl?.(begun.start.authorizationUrl);
+      begun = await this.connector.beginConnectAuthCode(config);
+    } catch {
+      return this.connectDeviceCode(provider, hooks);
+    }
+    try {
       let code: string;
       try {
+        hooks.openUrl?.(begun.start.authorizationUrl);
         code = (await begun.waiter.waitForCode()).code;
       } catch (error) {
-        begun.waiter.close();
         return { ok: false, stage: 'authorize', error: `The browser sign-in did not complete: ${describe(error)}` };
       }
       try {
         const account = await this.connector.completeConnectAuthCode(config, {
-          code,
-          verifier: begun.start.verifier,
-          redirectUri: begun.start.redirectUri,
+          code, verifier: begun.start.verifier, redirectUri: begun.start.redirectUri,
         });
         return { ok: true, account, transport: 'loopback' };
-      } finally {
-        begun.waiter.close();
+      } catch (error) {
+        return { ok: false, stage: 'token', error: `Browser sign-in token exchange failed: ${describe(error)}` };
       }
-    } catch {
-      // No loopback available, fall back to the headless device-code flow.
-      return this.connectDeviceCode(provider, hooks);
+    } finally {
+      begun.waiter.close();
     }
   }
 

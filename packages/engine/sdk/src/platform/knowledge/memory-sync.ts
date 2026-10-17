@@ -9,9 +9,16 @@ export async function syncKnowledgeMemoryNodes(
   registry: Pick<MemoryRegistry, 'getAll' | 'getStore'>,
 ): Promise<void> {
   await registry.getStore().init();
+  await store.init();
+  for (const node of store.iterateNodes()) {
+    const memoryId = node.metadata.memoryId;
+    if (node.kind !== 'memory' || typeof memoryId !== 'string' || node.id !== `memory-${memoryId}`) continue;
+    const current = registry.getStore().get(memoryId);
+    if (!current || current.reviewState === 'contradicted') await store.deleteNode(node.id);
+  }
   const memoryRecords = registry.getAll().filter((record) => record.reviewState !== 'contradicted');
   for (const record of memoryRecords) {
-    await upsertKnowledgeMemoryNode(store, record, () => registry.getAll().find((current) => current.id === record.id));
+    await upsertKnowledgeMemoryNode(store, record, () => registry.getStore().get(record.id) ?? undefined);
   }
 }
 
@@ -34,6 +41,16 @@ async function upsertKnowledgeMemoryNode(store: KnowledgeStore, record: MemoryRe
         reviewState: record.reviewState,
       },
     }, 'memory-mirror', record, readCurrent);
+
+    const wantedTags = new Set(record.tags.map(slugify));
+    const wantedSessions = new Set(record.provenance.filter(item => item.kind === 'session').map(item => item.ref));
+    for (const edge of store.listEdges()) {
+      if (edge.fromKind !== 'node' || edge.fromId !== node.id) continue;
+      if ((edge.relation === 'memory_tagged_with' && edge.toKind === 'node' && !wantedTags.has(store.getNode(edge.toId)?.slug ?? ''))
+        || (edge.relation === 'derived_from_session' && edge.toKind === 'session' && !wantedSessions.has(edge.toId))) {
+        await store.deleteEdge(edge.id);
+      }
+    }
 
     for (const tag of record.tags) {
       const topicNode = await upsertObservedKnowledgeNode(store, {

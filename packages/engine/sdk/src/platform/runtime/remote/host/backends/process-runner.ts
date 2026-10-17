@@ -67,13 +67,19 @@ function captureStream(stream: ReadableStream<Uint8Array> | null): CapturedStrea
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let text = '';
+  let bytes = 0;
+  const maxBytes = 8 * 1024 * 1024;
   let cancelled = false;
   const result = (async () => {
     try {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        if (value) text += decoder.decode(value, { stream: true });
+        if (value) {
+          bytes += value.byteLength;
+          if (bytes > maxBytes) throw new Error(`Process output exceeded the ${maxBytes}-byte per-stream capture limit; command stopped.`);
+          text += decoder.decode(value, { stream: true });
+        }
       }
       text += decoder.decode();
       return text;

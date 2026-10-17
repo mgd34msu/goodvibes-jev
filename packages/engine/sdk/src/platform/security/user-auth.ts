@@ -440,7 +440,7 @@ export class UserAuthManager {
     // Always verify something with constant-time cost so unknown usernames
     // have the same timing profile as known usernames with wrong password.
     const hashToCheck = user?.passwordHash ?? 'dGVzdHNhbHQ=:16384:8:1:dGVzdGhhc2h0ZXN0aGFzaHRlc3RoYXNodGVzdGhhc2g=';
-    const passwordOk = user !== undefined && verifyPassword(password, hashToCheck);
+    const passwordOk = verifyPassword(password, hashToCheck) && user !== undefined;
 
     if (!passwordOk) {
       this._recordLoginFailure(username, now);

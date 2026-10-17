@@ -88,3 +88,18 @@ test('clears a rejected pasted token even when the status endpoint returns HTTP 
   await expect(setExplicitAuthToken('synthetic-invalid-token')).rejects.toThrow('not authenticated');
   expect(await tokenStore.getToken()).toBeFalsy();
 });
+
+
+for (const replacement of ['new-token', 'old-token']) test(`failed validation cannot clear a later identity (${replacement})`, async () => {
+  let reject!: (error: Error) => void;
+  let started!: () => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  globalThis.fetch = Object.assign(() => { started(); return new Promise<Response>((_, fail) => { reject = fail; }); }, { preconnect: realFetch.preconnect }) as typeof fetch;
+  const validating = setExplicitAuthToken('old-token').catch(error => error);
+  await ready;
+  await tokenStore.setToken('new-token');
+  if (replacement === 'old-token') await tokenStore.setToken('old-token');
+  reject(new Error('validation failed'));
+  await validating;
+  expect(await tokenStore.getToken()).toBe(replacement);
+});

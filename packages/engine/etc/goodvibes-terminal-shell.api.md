@@ -1291,6 +1291,9 @@ export type RuntimeEndpointId = 'controlPlane' | 'httpListener' | 'web';
 export type RuntimeHostMode = 'local' | 'network' | 'custom';
 
 // @public
+export function safeTerminalLink(value: string | undefined): string | undefined;
+
+// @public
 export class SelectionManager {
     // (undocumented)
     anchor: SelectionPoint | null;

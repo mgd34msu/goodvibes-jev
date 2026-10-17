@@ -209,9 +209,10 @@ describe('transcript-journal', () => {
     expect(result.records[1]!.seq).toBe(1);
     expect(result.hadCorruptTail).toBe(true);
 
-    // Corrupt tail should be quarantined (file renamed to .unrecognized).
-    expect(existsSync(journalPath)).toBe(false);
+    // Quarantine keeps the corrupt bytes while the valid prefix stays replayable.
+    expect(existsSync(journalPath)).toBe(true);
     expect(existsSync(`${journalPath}.unrecognized`)).toBe(true);
+    expect(replayJournal(journalPath, 0).records).toHaveLength(2);
   });
 
   test('truncated journal (zero bytes after header) recovers cleanly', () => {

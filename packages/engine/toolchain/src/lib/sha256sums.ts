@@ -59,9 +59,13 @@ export interface VerifyResult {
 export function parseSha256Manifest(manifest: string): Map<string, string> {
   const map = new Map<string, string>();
   for (const line of manifest.split('\n')) {
-    const match = /^([0-9a-f]{64})\s+(.+)$/.exec(line.trim());
-    if (match?.[1] && match[2]) map.set(match[2], match[1]);
+    if (!line.trim()) continue;
+    const match = /^([0-9a-fA-F]{64}) [ *](.+)$/.exec(line.replace(/\r$/, ''));
+    if (!match?.[1] || !match[2]) throw new Error('Malformed SHA256SUMS record');
+    if (map.has(match[2])) throw new Error(`Duplicate SHA256SUMS asset: ${match[2]}`);
+    map.set(match[2], match[1].toLowerCase());
   }
+  if (map.size === 0) throw new Error('SHA256SUMS manifest contains no assets');
   return map;
 }
 

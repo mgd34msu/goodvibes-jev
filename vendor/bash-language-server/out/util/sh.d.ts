@@ -1,7 +1,7 @@
 /**
  * Execute the following sh program.
  */
-export declare function execShellScript(body: string, cmd?: string): Promise<string>;
+export declare function execShellScript(body: string, cmd?: string, scriptArgs?: string[]): Promise<string>;
 /**
  * Get documentation for the given word by using help and man.
  */

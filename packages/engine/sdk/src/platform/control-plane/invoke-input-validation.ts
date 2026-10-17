@@ -100,19 +100,32 @@ function validateBase(value: unknown, schema: Record<string, unknown>, path: str
   if (typeof type !== 'string') return null; // no type constraint → accept
 
   switch (type) {
-    case 'string':
-      return typeof value === 'string' ? null : `${schemaLabel(path)} must be a string`;
+    case 'string': {
+      if (typeof value !== 'string') return `${schemaLabel(path)} must be a string`;
+      const length = [...value].length;
+      if (typeof schema.minLength === 'number' && length < schema.minLength) return `${schemaLabel(path)} is too short`;
+      if (typeof schema.maxLength === 'number' && length > schema.maxLength) return `${schemaLabel(path)} is too long`;
+      if (typeof schema.pattern === 'string' && !new RegExp(schema.pattern, 'u').test(value)) return `${schemaLabel(path)} does not match the required pattern`;
+      return null;
+    }
     case 'number':
-    case 'integer':
-      return typeof value === 'number' && !Number.isNaN(value)
-        ? null
-        : `${schemaLabel(path)} must be a number`;
+    case 'integer': {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return `${schemaLabel(path)} must be a finite number`;
+      if (type === 'integer' && !Number.isInteger(value)) return `${schemaLabel(path)} must be an integer`;
+      if ((typeof schema.minimum === 'number' && value < schema.minimum)
+        || (typeof schema.maximum === 'number' && value > schema.maximum)
+        || (typeof schema.exclusiveMinimum === 'number' && value <= schema.exclusiveMinimum)
+        || (typeof schema.exclusiveMaximum === 'number' && value >= schema.exclusiveMaximum)) return `${schemaLabel(path)} is outside the permitted range`;
+      return null;
+    }
     case 'boolean':
       return typeof value === 'boolean' ? null : `${schemaLabel(path)} must be a boolean`;
     case 'null':
       return value === null ? null : `${schemaLabel(path)} must be null`;
     case 'array': {
       if (!Array.isArray(value)) return `${schemaLabel(path)} must be an array`;
+      if (typeof schema.minItems === 'number' && value.length < schema.minItems) return `${schemaLabel(path)} has too few items`;
+      if (typeof schema.maxItems === 'number' && value.length > schema.maxItems) return `${schemaLabel(path)} has too many items`;
       const items = schema.items;
       if (items && typeof items === 'object' && !Array.isArray(items)) {
         for (let i = 0; i < value.length; i++) {

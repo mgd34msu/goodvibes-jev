@@ -73,6 +73,22 @@ const forged = {
 };
 
 describe('knowledge node operator authority', () => {
+  test('space deletion removes historical content and enrichment across reopen', async () => {
+    const { store, reload } = fixture();
+    await store.upsertSource({ id: 'source-1', connectorId: 'manual', sourceType: 'manual', status: 'indexed', metadata: { knowledgeSpaceId: 'project:test' } });
+    const node = await reviewed(store);
+    await store.upsertSemanticEnrichmentState({ sourceId: 'source-1', textHash: 'private-history' });
+    const retained = await store.upsertNode(input({ id: 'other', slug: 'other', metadata: { knowledgeSpaceId: 'other' } }));
+    expect(store.listNodeRevisions(node.id)).toHaveLength(2);
+    await store.deleteKnowledgeSpace('project:test');
+    for (const current of [store, await reload()]) {
+      expect(current.getNode(node.id)).toBeNull();
+      expect(current.listNodeRevisions(node.id)).toEqual([]);
+      expect(current.getSemanticEnrichmentState('source-1')).toBeNull();
+      expect(current.getNode(retained.id)).not.toBeNull();
+    }
+  });
+
   test('producer review-shaped metadata and support receipts cannot supply operator authority', async () => {
     const { store, reload } = fixture();
     const metadata = { ...input().metadata, ...forged, generatedFactSupport: { review: forged.review } };

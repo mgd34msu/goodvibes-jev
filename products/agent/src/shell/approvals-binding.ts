@@ -48,13 +48,21 @@ export interface ApprovalsBinding {
 export function bindApprovals(options: ApprovalsBindingOptions): ApprovalsBinding {
   // Clears our own resolved card and opens one for a broker-originated ask no
   // local prompt is handling, see permissions/broker-approval.ts.
-  options.broker.subscribe((approval) => handleBrokerApprovalChange({
-    approval,
-    broker: options.broker,
-    render: options.render,
-    getPending: options.getPending,
-    setPending: options.setPending,
-  }));
+  options.broker.subscribe((approval) => {
+    handleBrokerApprovalChange({
+      approval,
+      broker: options.broker,
+      render: options.render,
+      getPending: options.getPending,
+      setPending: options.setPending,
+    });
+    queueMicrotask(() => {
+      for (const waiting of options.broker.listApprovals(Number.MAX_SAFE_INTEGER)) {
+        handleBrokerApprovalChange({ approval: waiting, broker: options.broker,
+          render: options.render, getPending: options.getPending, setPending: options.setPending });
+      }
+    });
+  });
   // Keep the list current against the daemon's record for as long as this
   // session is on screen. The refresh is unref'd and single-flighted; the
   // runtime graph's dispose() stops it.

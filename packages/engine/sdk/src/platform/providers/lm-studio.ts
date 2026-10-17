@@ -59,11 +59,13 @@ export class LMStudioProvider implements LLMProvider {
   private readonly defaultModel: string;
   private readonly nativeChatUrl: string;
   private readonly nativeFetch: NativeFetch;
+  private readonly nativeHeaders: Record<string, string>;
   private readonly responsesClient: LMStudioResponsesClient;
   private readonly compatProvider: LLMProvider;
   private readonly nativeResponseIds = new Map<string, string>();
 
   constructor(opts: LMStudioProviderOptions) {
+    this.nativeHeaders = { ...(opts.apiKey ? { Authorization: `Bearer ${opts.apiKey}` } : {}), ...opts.defaultHeaders };
     this.name = opts.name;
     this.models = opts.models;
     this.capabilities = opts.capabilities;
@@ -230,6 +232,7 @@ export class LMStudioProvider implements LLMProvider {
         headers: {
           accept: 'text/event-stream',
           'content-type': 'application/json',
+          ...this.nativeHeaders,
         },
         body: JSON.stringify(body),
         ...(params.signal !== undefined ? { signal: params.signal } : {}),

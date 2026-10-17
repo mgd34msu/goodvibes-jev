@@ -73,6 +73,7 @@ export function useWorkData({ contractScope, subscriptionActive, archived, inclu
     queryKey: queryKeys.sessionList(contractScope.revision),
     queryFn: ({ signal }) => readSessionList(contractScope, signal),
     gcTime: 0,
+    refetchInterval: pollInterval,
   });
 
   const hosted = useQuery({
@@ -84,12 +85,14 @@ export function useWorkData({ contractScope, subscriptionActive, archived, inclu
 
   const tasks = useQuery({
     queryKey: queryKeys.tasks,
+    refetchInterval: pollInterval,
     queryFn: () => sdk.operator.tasks.list(),
     retry: false,
   });
 
   const ciWatches = useQuery({
     queryKey: queryKeys.ciWatches,
+    refetchInterval: pollInterval,
     queryFn: () => sdk.operator.ci.watches.list(),
     retry: false,
   });

@@ -113,9 +113,9 @@ export async function runSelection(port: JudgmentPort, request: SelectionRequest
       if (winner) winners.push(winner);
     }
     const final = winners.length ? await runSelection(port, { ...request, candidates: winners }) : rounds.at(-1)!;
-    // A low-confidence NONE in any group must not disappear behind a later
-    // group's settled answer. Preserve the weakest unresolved group reading.
-    const unresolved = rounds.filter(round => round.pick.choice === NONE && round.outcome !== 'act');
+    // Every group participates in elimination; unresolved evidence cannot be
+    // upgraded by the final comparison between its surviving candidates.
+    const unresolved = rounds.filter(round => round.outcome !== 'act');
     const outcome = [final, ...unresolved].some(round => round.outcome === 'escalate') ? 'escalate'
       : [final, ...unresolved].some(round => round.outcome === 'confirm') ? 'confirm' : 'act';
     return { ...final, outcome, fits: Object.assign({}, ...rounds.map(round => round.fits), final.fits),

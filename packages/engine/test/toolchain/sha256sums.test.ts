@@ -37,6 +37,12 @@ const readBytes = (p: string): Uint8Array | null => files[p] ?? null;
 const fakeHash = (b: Uint8Array): string => `${b.length}`.padStart(64, '0');
 
 describe('sha256sums', () => {
+  test('empty, malformed, mixed and duplicate manifests cannot report successful verification', () => {
+    const valid = `${fakeHash(files['goodvibes-linux-x64']!)}  goodvibes-linux-x64\n`;
+    for (const manifest of ['', '  \n', 'damaged', `${valid}damaged\n`, valid + valid]) {
+      expect(() => verifySha256Sums(manifest, readBytes, fakeHash)).toThrow();
+    }
+  });
   test('generates a two-space manifest for present assets', () => {
     const result = generateSha256Sums(
       [{ name: 'goodvibes-linux-x64', path: 'goodvibes-linux-x64' }, { name: 'goodvibes-daemon-linux-x64', path: 'goodvibes-daemon-linux-x64' }],

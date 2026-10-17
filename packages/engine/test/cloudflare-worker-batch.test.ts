@@ -65,6 +65,20 @@ describe('Cloudflare Worker batch bridge', () => {
     expect(typeof message.enqueuedAt).toBe('number');
   });
 
+  test.each(['/batch/tick/enqueue', '/batch/jobs/enqueue'])('honors the body limit before queue publication at %s', async path => {
+    let sends = 0;
+    const worker = createGoodVibesCloudflareWorker({ maxRequestBodyBytes: 8, queueJobPayloads: true });
+    const response = await worker.fetch(new Request(`https://worker.example${path}`, {
+      method: 'POST', headers: { Authorization: 'Bearer worker-token' }, body: '{"force":true}',
+    }), { GOODVIBES_WORKER_TOKEN: 'worker-token', GOODVIBES_BATCH_QUEUE: { async send() { sends++; } } }, { waitUntil() {} });
+    expect(response.status).toBe(413);
+    expect(sends).toBe(0);
+  });
+
+  test.each([0, -1, NaN, Infinity, 1.5])('rejects an invalid body limit %s', maxRequestBodyBytes => {
+    expect(() => createGoodVibesCloudflareWorker({ maxRequestBodyBytes })).toThrow();
+  });
+
   test('requires a worker token for non-health endpoints by default', async () => {
     const worker = createGoodVibesCloudflareWorker();
     const res = await worker.fetch(

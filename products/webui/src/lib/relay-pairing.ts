@@ -149,7 +149,9 @@ export function getStoredRelayPairing(): RelayPairingPayload | null {
 /** Persist a relay pairing payload for this device. */
 export function storeRelayPairing(payload: RelayPairingPayload): void {
   if (!hasStorage()) return;
-  window.localStorage.setItem(RELAY_PAIRING_STORAGE_KEY, JSON.stringify(payload));
+  const serialized = JSON.stringify(payload);
+  if (window.localStorage.getItem(RELAY_PAIRING_STORAGE_KEY) === serialized) return;
+  window.localStorage.setItem(RELAY_PAIRING_STORAGE_KEY, serialized);
   invalidateClientLifetime();
 }
 

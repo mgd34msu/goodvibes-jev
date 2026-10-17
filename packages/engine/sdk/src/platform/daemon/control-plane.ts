@@ -87,6 +87,7 @@ export interface DaemonControlPlaneContext {
   readonly host: string;
   readonly port: number;
   readonly trustProxyEnabled: () => boolean;
+  readonly allowedBrowserOrigins?: (() => readonly string[]) | undefined;
   readonly dispatchApiRoutes: (req: Request) => Promise<Response | null>;
   readonly parseJsonBody: (req: Request) => Promise<Record<string, unknown> | Response>;
   readonly requireAuthenticatedSession: (req: Request) => { username: string; roles: readonly string[] } | null;
@@ -463,6 +464,12 @@ export class DaemonControlPlaneHelper {
         + 'session login). The in-band auth frame is only read after an authenticated upgrade.';
       return Response.json({ error }, { status: 401 });
     }
+    const origin = req.headers.get('origin');
+    const bearer = /^Bearer\s+\S+/i.test(req.headers.get('authorization') ?? '');
+    const originAllowed = origin === null
+      ? bearer
+      : origin === url.origin || (origin !== 'null' && (this.context.allowedBrowserOrigins?.() ?? []).includes(origin));
+    if (!originAllowed) return Response.json({ error: 'ORIGIN_NOT_ALLOWED' }, { status: 403 });
     const rawDomains = url.searchParams.get('domains');
     const domains = parseRuntimeDomains(rawDomains);
     if (domains instanceof Response) return domains;

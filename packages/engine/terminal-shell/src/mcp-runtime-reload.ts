@@ -52,6 +52,7 @@ export function startMcpConfigAutoReload(options: McpRuntimeReloadOptions): McpR
     reloading = true;
     try {
       await options.registry.reload(options.roots);
+      if (stopped) return;
       const servers = options.registry.listServerSecurity();
       // The signature is committed only once the reload it describes actually
       // succeeded. Committing it up front meant a reload that failed for a
@@ -64,7 +65,7 @@ export function startMcpConfigAutoReload(options: McpRuntimeReloadOptions): McpR
         total: servers.length,
       });
     } catch (error) {
-      options.onError?.(error);
+      if (!stopped) options.onError?.(error);
     } finally {
       reloading = false;
     }

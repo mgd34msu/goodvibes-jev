@@ -615,6 +615,7 @@ export function createDaemonFacadeCollaborators(
     port: runtime.port,
     distributedRuntime: runtime.distributedRuntime,
     trustProxyEnabled: options.trustProxyEnabled,
+    allowedBrowserOrigins: () => String(runtime.configManager.get('controlPlane.cors.allowedOrigins') ?? '').split(',').map(origin => origin.trim()).filter(Boolean),
     dispatchApiRoutes: options.dispatchApiRoutes,
     parseJsonBody: options.parseJsonBody,
     requireAuthenticatedSession: options.requireAuthenticatedSession,

@@ -32,6 +32,9 @@ tar -xzf "$TMPDIR"/bash-language-server-5.6.0.tgz -C "$TMPDIR"
 
 Patch:
 
+- Documentation lookup uses constant Bash scripts with positional parameters;
+  completion labels never enter executable shell text. Malformed resolve metadata
+  is ignored. Keep the documentation-injection regression when refreshing.
 - `dependencies.editorconfig` is changed from `2.0.1` to `3.0.2`.
 - `out/util/fs.js` imports the checked-in fast-glob source by relative path.
   Its discovery implementation and matching options remain unchanged.

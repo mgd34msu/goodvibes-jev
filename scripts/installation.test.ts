@@ -213,3 +213,33 @@ describe('suite install and uninstall', () => {
     expect(script).toContain("'\\''");
   });
 });
+
+
+test('failed publication restores the owner of adopted data and removes a new environment', async () => {
+  await install(options, hooks);
+  await uninstall(options.prefix, false, execute);
+  const originalOwner = readFileSync(dataOwner(options), 'utf8');
+  rmSync(join(options.dataDir, 'environment'));
+  options.prefix = join(home, 'replacement');
+  await expect(install(options, { ...hooks, stage: async (...args) => {
+    await hooks.stage!(...args);
+    mkdirSync(join(options.prefix, 'current'));
+  } })).rejects.toThrow();
+  expect(readFileSync(dataOwner(options), 'utf8')).toBe(originalOwner);
+  expect(existsSync(join(options.dataDir, 'environment'))).toBe(false);
+});
+
+test('a stop followed by a failed state query restarts the previous running service', async () => {
+  options.service = true; await install(options, hooks);
+  const receipt = readInstallation(options.prefix);
+  let stopped = false;
+  const failing: Run = (command, args, opts) => {
+    const result = execute(command, args, opts);
+    if (args.includes('stop')) stopped = true;
+    if (stopped && args.includes('--property=ActiveState')) { stopped = false; throw new Error('state query failed'); }
+    return result;
+  };
+  await expect(install(options, { ...hooks, execute: failing })).rejects.toThrow('state query failed');
+  expect(state).toBe('active');
+  expect(readInstallation(options.prefix)).toEqual(receipt);
+});

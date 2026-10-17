@@ -141,6 +141,18 @@ describe('recipients: exact containment first', () => {
 });
 
 describe('end to end: the wiring the check depends on', () => {
+  test.each(['missing', 'whitespace', 'truncated', 'evicted'])('incomplete %s exposure cannot be cleared by benign retained text', async kind => {
+    const ledger = new UntrustedContentLedger();
+    ledger.record({ surface: 'email', origin: 'incomplete', at: new Date().toISOString(),
+      content: kind === 'missing' ? undefined : kind === 'whitespace' ? '   ' : kind === 'truncated' ? 'x'.repeat(20_001) : INJECTION });
+    for (let i = 0; i < (kind === 'evicted' ? 1000 : 1); i++) {
+      ledger.record({ surface: 'email', origin: 'benign', at: new Date().toISOString(), content: 'unrelated weather report' });
+    }
+    const result = await evaluateOutwardEffect({ ledger, request: { toolName: 'email', action: 'email.send', description: 'sending mail' }, content: { body: 'Weekly summary: 142 orders.' } });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('missing, empty, truncated, or no longer retained');
+    expect(readings.requests).toHaveLength(0);
+  });
   test('a real port records text, so the ledger has something to compare', async () => {
     // The regression that made all of this inert: content was dropped between
     // the port and the ledger, so every send was checked against nothing.

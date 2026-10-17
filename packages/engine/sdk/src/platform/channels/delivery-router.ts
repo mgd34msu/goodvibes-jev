@@ -116,7 +116,7 @@ export function createDefaultChannelDeliveryStrategies(
     createGoogleChatDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
     createSignalDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
     createWhatsAppDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
-    createTelephonyDeliveryStrategy(configManager, serviceRegistry, artifactStore),
+    createTelephonyDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
     createIMessageDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
     createMSTeamsDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
     createBlueBubblesDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),

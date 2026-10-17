@@ -1296,6 +1296,8 @@ export class KnowledgeStore {
 
   private knowledgeSpaceRowStores(): Parameters<typeof planKnowledgeSpaceDeleteRows>[0] {
     return {
+      nodeRevisions: this.nodeRevisions,
+      semanticEnrichmentStates: this.semanticEnrichmentStates,
       sources: this.sources,
       nodes: this.nodes,
       edges: this.edges,

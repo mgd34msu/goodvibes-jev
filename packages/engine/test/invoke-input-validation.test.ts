@@ -165,3 +165,16 @@ describe('summarizeInvokeValidationCoverage', () => {
     expect(cov.skippedUntyped).toBe(1);
   });
 });
+
+
+test('published numeric, string and array constraints reject invalid invocations', () => {
+  for (const [schema, invalid, valid] of [
+    [{ type: 'integer', minimum: 1, maximum: 3 }, [1.5, Infinity, NaN, 0, 4], 2],
+    [{ type: 'string', minLength: 2, maxLength: 3, pattern: '^a' }, ['', 'abcd', 'bc'], 'ab'],
+    [{ type: 'array', minItems: 1, maxItems: 2, uniqueItems: true }, [[], [1, 2, 3], [1, 1]], [1, 2]],
+  ] as const) {
+    const method = verb({ type: 'object', properties: { value: schema }, required: ['value'] });
+    for (const value of invalid) expect(validateInvocationInput(method, { value })?.code).toBe('INVALID_INPUT');
+    expect(validateInvocationInput(method, { value: valid })).toBeNull();
+  }
+});

@@ -131,13 +131,11 @@ describe('useRealtimeInvalidation', () => {
     unmount();
   });
 
-  test('a `knowledge` frame invalidates all three knowledge query keys', () => {
+  test('a `knowledge` frame invalidates every knowledge query through its prefix', () => {
     const { invalidate, unmount } = renderHook();
     capturedHandlers?.onEvent?.('knowledge', {});
     expect(invalidatedKeys(invalidate)).toEqual([
-      ['knowledge', 'status'],
-      ['knowledge', 'sources'],
-      ['knowledge', 'refinement'],
+      ['knowledge'],
     ]);
     unmount();
   });

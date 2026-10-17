@@ -571,3 +571,30 @@ describe('GitHubCopilotProvider.refreshModels', () => {
         expect(provider.models).toEqual([...COPILOT_DATED_STATIC_MODELS]);
       })));
 });
+
+
+test('Copilot exchanges credentials again after the source GitHub identity changes', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'copilot-rotation-'));
+  const exchanges: string[] = [];
+  const modelAuth: string[] = [];
+  const env = { COPILOT_GITHUB_TOKEN: 'github-account-a' };
+  const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const auth = new Headers(init?.headers).get('authorization') ?? '';
+    if (String(input).includes('/copilot_internal/v2/token')) {
+      exchanges.push(auth);
+      return Response.json({ token: `session-${exchanges.length}`, expires_at: Math.floor(Date.now() / 1000) + 3600 });
+    }
+    modelAuth.push(auth);
+    return Response.json({ data: [{ id: 'gpt-4o', capabilities: { type: 'chat' } }] });
+  }) as typeof fetch;
+  try {
+    const provider = new GitHubCopilotProvider({ tokenCachePath: join(dir, 'token.json'), env, fetchFn });
+    expect((await provider.refreshModels(true)).source).toBe('live');
+    env.COPILOT_GITHUB_TOKEN = 'github-account-b';
+    expect((await provider.refreshModels(true)).source).toBe('live');
+    expect(exchanges).toHaveLength(2);
+    expect(exchanges[0]).toContain('github-account-a');
+    expect(exchanges[1]).toContain('github-account-b');
+    expect(modelAuth).toEqual(['Bearer session-1', 'Bearer session-2']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

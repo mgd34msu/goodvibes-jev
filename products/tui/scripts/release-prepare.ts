@@ -168,7 +168,14 @@ function main(argv: readonly string[]): void {
   const args = parseArgs(argv);
   const pkgPath = join(ROOT, 'package.json');
   const pkgText = readFileSync(pkgPath, 'utf8');
-  const current = (JSON.parse(pkgText) as { version: string }).version;
+  const manifest = JSON.parse(pkgText) as Record<string, unknown> & { version: string };
+  const workspace = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'].some(group => {
+    const dependencies = manifest[group];
+    return dependencies !== null && typeof dependencies === 'object'
+      && Object.values(dependencies).some(pin => typeof pin === 'string' && pin.startsWith('workspace:'));
+  });
+  if (manifest.private === true || workspace) throw new Error('release:prepare refuses a private/workspace package; use the workspace release process.');
+  const current = manifest.version;
 
   let version = current;
   if (args.bump !== null) {

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { finished } from 'node:stream/promises';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
@@ -281,7 +281,9 @@ export class ArtifactStore {
     this.blockedHosts = [...(config.blockedHosts ?? [])];
     this.allowPrivateHostFetches = config.allowPrivateHostFetches
       ?? Boolean(config.configManager?.get?.('network.remoteFetch.allowPrivateHosts'));
-    mkdirSync(this.rootDir, { recursive: true });
+    mkdirSync(this.rootDir, { recursive: true, mode: 0o700 });
+    // Existing stores receive the same directory boundary as new stores.
+    chmodSync(this.rootDir, 0o700);
     this.loadExisting();
   }
 
@@ -344,7 +346,7 @@ export class ArtifactStore {
   async create(input: ArtifactCreateInput, ownership: ArtifactWriteOwnership = {}): Promise<ArtifactDescriptor> {
     ownership.signal?.throwIfAborted(); ownership.assertCurrent?.();
     const intent = resolveArtifactIntent(input);
-    const resolved = await this.resolveInput(input, intent);
+    const resolved = await this.resolveInput(input, intent, ownership.signal);
     return this.writeResolvedArtifact(input, intent, resolved, ownership);
   }
 
@@ -356,13 +358,14 @@ export class ArtifactStore {
     const contentPath = assertWithinArtifactRoot(this.rootDir, join(this.rootDir, `${id}.data`), 'Artifact content path');
     const metadataPath = assertWithinArtifactRoot(this.rootDir, join(this.rootDir, `${id}.json`), 'Artifact metadata path');
     const retentionMs = sanitizeRetentionMs(input.retentionMs, this.defaultRetentionMs, this.maxRetentionMs);
-    await mkdir(this.rootDir, { recursive: true });
+    await mkdir(this.rootDir, { recursive: true, mode: 0o700 });
     check();
     const { sizeBytes, sha256 } = await this.writeStreamContent({
       contentPath,
       stream: input.stream,
       expectedSizeBytes: input.sizeBytes,
       assertCurrent: check,
+      signal: ownership.signal,
     });
     let record: ArtifactRecord;
     try {
@@ -386,7 +389,7 @@ export class ArtifactStore {
         metadataPath,
       };
       check();
-      await writeFile(metadataPath, `${JSON.stringify(record, null, 2)}\n`, 'utf-8');
+      await writeFile(metadataPath, `${JSON.stringify(record, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 });
       check();
     } catch (error) {
       rmSync(contentPath, { force: true });
@@ -434,6 +437,7 @@ export class ArtifactStore {
     readonly stream: ArtifactStreamCreateInput['stream'];
     readonly expectedSizeBytes?: number | undefined;
     readonly assertCurrent?: (() => void) | undefined;
+    readonly signal?: AbortSignal | undefined;
   }): Promise<{ sizeBytes: number; sha256: string }> {
     if (typeof input.expectedSizeBytes === 'number' && input.expectedSizeBytes > this.maxBytes) {
       throw new Error(`Artifact exceeds the ${this.maxBytes}-byte limit.`);
@@ -441,7 +445,7 @@ export class ArtifactStore {
     const contentPath = assertWithinArtifactRoot(this.rootDir, input.contentPath, 'Artifact cleanup path');
 
     const hash = createHash('sha256');
-    const writer = createWriteStream(contentPath, { flags: 'wx' });
+    const writer = createWriteStream(contentPath, { flags: 'wx', mode: 0o600 });
     // Observe errors for the writer's whole lifetime, including while the
     // producer has no chunk ready. An EventEmitter error is not caught by try.
     const settled = finished(writer, { cleanup: true });
@@ -451,6 +455,13 @@ export class ArtifactStore {
     void writerFailure.catch(() => {});
     writer.on('error', onWriterError);
     const producer = new AbortController();
+    const onAbort = () => {
+      const error = input.signal?.reason ?? new DOMException('Artifact write cancelled', 'AbortError');
+      producer.abort(error);
+      onWriterError(error);
+    };
+    input.signal?.addEventListener('abort', onAbort, { once: true });
+    if (input.signal?.aborted) onAbort();
     let iterator: AsyncIterator<Uint8Array | Buffer | string> | undefined;
     let sizeBytes = 0;
     try {
@@ -483,6 +494,7 @@ export class ArtifactStore {
       rmSync(contentPath, { force: true });
       throw error;
     } finally {
+      input.signal?.removeEventListener('abort', onAbort);
       writer.off('error', onWriterError);
       // A generic async producer may be awaiting its own external source;
       // request its cleanup without delaying the spool error indefinitely.
@@ -603,7 +615,9 @@ export class ArtifactStore {
       fetchMode: ArtifactFetchMode;
       allowPrivateHosts: boolean;
     },
+    signal?: AbortSignal,
   ): Promise<ResolvedArtifactInput> {
+    signal?.throwIfAborted();
     if (typeof input.dataBase64 === 'string') {
       const filename = sanitizeArtifactFilename(input.filename, 'artifact');
       return {
@@ -643,7 +657,7 @@ export class ArtifactStore {
       };
     }
     if (typeof input.uri === 'string' && input.uri.trim().length > 0) {
-      return this.resolveRemoteInput(input.uri.trim(), input.mimeType, input.filename, intent.fetchMode, intent.allowPrivateHosts);
+      return this.resolveRemoteInput(input.uri.trim(), input.mimeType, input.filename, intent.fetchMode, intent.allowPrivateHosts, signal);
     }
     throw new Error('Artifact input requires dataBase64, text, path, or uri');
   }
@@ -654,6 +668,7 @@ export class ArtifactStore {
     filenameOverride?: string,
     fetchMode: ArtifactFetchMode = 'public-only',
     allowPrivateHosts = false,
+    signal?: AbortSignal,
   ): Promise<ResolvedArtifactInput> {
     const parsed = new URL(uri);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
@@ -669,18 +684,22 @@ export class ArtifactStore {
       const response = await instrumentedFetch(current, {
         method: 'GET',
         redirect: 'manual',
+        ...(signal ? { signal } : {}),
       });
       if ([301, 302, 303, 307, 308].includes(response.status)) {
+        await response.body?.cancel();
         const location = response.headers.get('location');
         if (!location) throw new Error(`Artifact URI redirect missing location header: ${current}`);
         current = new URL(location, current).toString();
         continue;
       }
       if (!response.ok) {
+        await response.body?.cancel();
         throw new Error(`Artifact URI fetch failed (${response.status}) for ${current}`);
       }
       const contentLength = Number(response.headers.get('content-length') ?? NaN);
       if (Number.isFinite(contentLength) && contentLength > this.maxBytes) {
+        await response.body?.cancel();
         throw new Error(`Remote artifact exceeds the ${this.maxBytes}-byte limit.`);
       }
       const filename = sanitizeArtifactFilename(

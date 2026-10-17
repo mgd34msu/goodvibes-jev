@@ -345,6 +345,13 @@ describe('shell/blocking-input', () => {
       return { result, resolved, aborted };
     }
 
+    test('Ctrl+C immediately aborts a newly opened prompt', () => {
+      const { result, resolved, aborted } = run('\x03', 1000, 1000);
+      expect(result.pendingPermission).toBeNull();
+      expect(resolved).toEqual([[false, false]]);
+      expect(aborted).toBe(1);
+    });
+
     test('a keystroke within 350ms of the prompt appearing is swallowed, not treated as approval', () => {
       const { result, resolved } = run('y', 1_000, 1_200); // 200ms later
       expect(result.handled).toBe(true);

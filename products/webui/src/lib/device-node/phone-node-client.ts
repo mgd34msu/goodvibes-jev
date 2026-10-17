@@ -289,82 +289,90 @@ export class PhoneNodeClient {
     this.stop();
     this.lifetime = new AbortController();
     const lifetime = this.lifetime;
-    this.setState({ status: 'pairing', message: 'Asking the daemon to pair…' });
-    const announced = announcedCapabilities(this.bindings);
-    const { status, json } = await this.post('/api/remote/pair/request', {
-      peerKind: 'device',
-      label: this.options.label,
-      platform: typeof navigator === 'undefined' ? 'web' : navigator.platform || 'web',
-      deviceFamily: 'phone',
-      clientMode: 'device-node',
-      capabilities: announced,
-      commands: announced,
-      metadata: {
-        deviceNode: {
-          nodeKind: WEB_NODE_KIND,
-          contractVersion: WEB_NODE_CONTRACT_VERSION,
-          capabilities: announced,
-          secureContext: this.bindings.isSecureContext,
+    try {
+      this.setState({ status: 'pairing', message: 'Asking the daemon to pair…' });
+      const announced = announcedCapabilities(this.bindings);
+      const { status, json } = await this.post('/api/remote/pair/request', {
+        peerKind: 'device',
+        label: this.options.label,
+        platform: typeof navigator === 'undefined' ? 'web' : navigator.platform || 'web',
+        deviceFamily: 'phone',
+        clientMode: 'device-node',
+        capabilities: announced,
+        commands: announced,
+        metadata: {
+          deviceNode: {
+            nodeKind: WEB_NODE_KIND,
+            contractVersion: WEB_NODE_CONTRACT_VERSION,
+            capabilities: announced,
+            secureContext: this.bindings.isSecureContext,
+          },
         },
-      },
-    });
-    if (!this.isCurrent(lifetime)) return;
-    if (status >= 400) {
-      this.setState({ status: 'error', message: `The daemon refused the pairing request (HTTP ${status}).` });
-      return;
+      });
+      if (!this.isCurrent(lifetime)) return;
+      if (status >= 400) {
+        this.setState({ status: 'error', message: `The daemon refused the pairing request (HTTP ${status}).` });
+        return;
+      }
+      const parsed = (json ?? {}) as PairRequestResponse;
+      const requestId = typeof parsed.request?.id === 'string' ? parsed.request.id : '';
+      this.pendingChallenge = typeof parsed.challenge === 'string' ? parsed.challenge : '';
+      if (!requestId || !this.pendingChallenge) {
+        this.setState({ status: 'error', message: 'The daemon answered without a pairing challenge.' });
+        return;
+      }
+      this.setState({
+        status: 'awaiting-approval',
+        pendingRequestId: requestId,
+        announced,
+        message: 'Waiting for approval on the desktop. Approve this device there, then press Finish pairing.',
+      });
+    } catch {
+      if (this.isCurrent(lifetime)) this.setState({ status: 'error', message: 'Could not reach the daemon. Ask to pair again.' });
     }
-    const parsed = json as PairRequestResponse;
-    const requestId = parsed.request?.id ?? '';
-    this.pendingChallenge = parsed.challenge ?? '';
-    if (!requestId || !this.pendingChallenge) {
-      this.setState({ status: 'error', message: 'The daemon answered without a pairing challenge.' });
-      return;
-    }
-    this.setState({
-      status: 'awaiting-approval',
-      pendingRequestId: requestId,
-      announced,
-      message: 'Waiting for approval on the desktop. Approve this device there, then press Finish pairing.',
-    });
   }
 
   /** Complete pairing once the operator has approved the request. */
   async verifyPairing(): Promise<void> {
     const lifetime = this.lifetime;
-    if (!this.state.pendingRequestId || !this.pendingChallenge) {
-      this.setState({ status: 'error', message: 'There is no pairing request to finish. Ask to pair again.' });
-      return;
-    }
-    const { status, json } = await this.post('/api/remote/pair/verify', {
-      requestId: this.state.pendingRequestId,
-      challenge: this.pendingChallenge,
-    });
-    if (!this.isCurrent(lifetime)) return;
-    if (status >= 400) {
-      this.setState({
-        status: 'awaiting-approval',
-        message: status === 409 || status === 403
-          ? 'Not approved yet. Approve this device on the desktop, then press Finish pairing again.'
-          : `Pairing could not be finished (HTTP ${status}).`,
+    try {
+      if (!this.state.pendingRequestId || !this.pendingChallenge) {
+        this.setState({ status: 'error', message: 'There is no pairing request to finish. Ask to pair again.' });
+        return;
+      }
+      const { status, json } = await this.post('/api/remote/pair/verify', {
+        requestId: this.state.pendingRequestId,
+        challenge: this.pendingChallenge,
       });
-      return;
+      if (!this.isCurrent(lifetime)) return;
+      if (status >= 400) {
+        this.setState({
+          status: 'awaiting-approval',
+          message: status === 409 || status === 403
+            ? 'Not approved yet. Approve this device on the desktop, then press Finish pairing again.'
+            : `Pairing could not be finished (HTTP ${status}).`,
+        });
+        return;
+      }
+      const parsed = (json ?? {}) as PairVerifyResponse;
+      const nodeId = parsed.peer?.id ?? '';
+      const token = parsed.token?.value ?? '';
+      if (!nodeId || !token) {
+        this.setState({ status: 'error', message: 'The daemon approved pairing but returned no device token.' });
+        return;
+      }
+      this.identity = { nodeId, token, label: this.options.label };
+      this.options.storage.write(this.identity);
+      this.pendingChallenge = '';
+      this.setState({
+        status: 'connected',
+        nodeId,
+        pendingRequestId: '',
+        message: 'Paired. Waiting for requests.',
+      });
+    } catch {
+      if (this.isCurrent(lifetime)) this.setState({ status: 'awaiting-approval', message: 'Could not finish pairing. Check the connection and retry.' });
     }
-    const parsed = json as PairVerifyResponse;
-    const nodeId = parsed.peer?.id ?? '';
-    const token = parsed.token?.value ?? '';
-    if (!nodeId || !token) {
-      this.setState({ status: 'error', message: 'The daemon approved pairing but returned no device token.' });
-      return;
-    }
-    this.identity = { nodeId, token, label: this.options.label };
-    this.options.storage.write(this.identity);
-    this.pendingChallenge = '';
-    this.setState({
-      status: 'connected',
-      nodeId,
-      pendingRequestId: '',
-      message: 'Paired. Waiting for requests.',
-    });
   }
 
   /** Forget this device's pairing locally. */

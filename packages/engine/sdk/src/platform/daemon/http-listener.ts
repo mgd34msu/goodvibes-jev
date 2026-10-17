@@ -11,6 +11,7 @@ import type { HookEvent } from '../hooks/types.js';
 import {
   authenticateOperatorRequest,
   buildOperatorSessionCookie,
+  type PairingTokenAuthenticator,
 } from '../security/http-auth.js';
 import { UserAuthManager } from '../security/user-auth.js';
 import { ConfigManager } from '../config/manager.js';
@@ -197,6 +198,7 @@ interface HttpListenerConfig {
   trustCloudflare?: boolean | undefined;
   /** Pre-configured UserAuthManager owned by the runtime service graph. */
   userAuth: UserAuthManager;
+  pairingTokens?: PairingTokenAuthenticator | undefined;
 }
 
 interface HttpDangerConfig {
@@ -505,6 +507,7 @@ export class HttpListener {
     return authenticateOperatorRequest(req, {
       sharedToken: this.authToken,
       userAuth: this.userAuth,
+      pairingTokens: this.config.pairingTokens,
     }) !== null;
   }
 

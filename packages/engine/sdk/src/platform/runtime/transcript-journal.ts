@@ -34,8 +34,8 @@
  * ──────────────────
  * 1. Read the header line. Gate on version, quarantine if unrecognised.
  * 2. Read subsequent lines until EOF. Stop at the first line that is not
- *    valid JSON or lacks the expected shape. Quarantine the remainder of
- *    the file from that point onward (rename to .unrecognized). Never crash.
+ *    valid JSON or lacks the expected shape. Preserve the original file in
+ *    .unrecognized and durably repair the journal to its valid prefix.
  * 3. Return only records whose `ts` is strictly greater than the provided
  *    `snapshotTimestamp` (i.e. events that occurred after the last snapshot).
  * 4. Caller replays the returned records in `seq` order atop the snapshot
@@ -71,6 +71,7 @@ import { dirname, join } from 'node:path';
 import type { ConversationMessageSnapshot } from '../core/conversation.js';
 import { UNRECOGNIZED_SUFFIX } from '../config/read-versioned.js';
 import type { SessionSurface } from './session-surface.js';
+import { writeFileAtomic } from '../utils/atomic-json-store.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -251,10 +252,13 @@ export function replayJournal(
   let hadCorruptTail = false;
   if (firstBadLine !== -1) {
     hadCorruptTail = true;
-    // Quarantine the remainder: rename the file. Caller will rotate after
-    // replay anyway, but we quarantine now so the original file is not
-    // accidentally replayed again if the process is killed during recovery.
-    quarantineJournal(journalPath);
+    // Publish the quarantine copy first, then repair the live journal atomically.
+    // Until a snapshot succeeds, its valid prefix must survive another crash and
+    // remain appendable; renaming the only copy would lose that recovery path.
+    try {
+      writeFileAtomic(`${journalPath}${UNRECOGNIZED_SUFFIX}`, raw, { durable: true });
+      writeFileAtomic(journalPath, lines.slice(0, firstBadLine).join('\n') + '\n', { durable: true });
+    } catch { /* The original journal remains replayable when repair cannot publish. */ }
   }
 
   // Sort by seq to guarantee ordering in case lines were reordered (they

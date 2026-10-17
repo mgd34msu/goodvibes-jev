@@ -881,3 +881,14 @@ describe('getAutomationRuns: mid-walk deletion recovery', () => {
     expect(page2.items.every((x) => x.id !== 'r8' && x.id !== 'r7')).toBe(true);
   });
 });
+
+
+for (const descending of [false, true]) test(`deleted cursors preserve equal-time peers (descending=${descending})`, () => {
+  const items = ['a', 'b', 'c', 'd'].map(id => ({ id, createdAt: 100 }));
+  const first = paginateItems(items, 2, null, item => item.id, item => item.createdAt, { descending });
+  if ('error' in first) throw new Error(first.error);
+  const deleted = first.items[1]!.id;
+  const second = paginateItems(items.filter(item => item.id !== deleted), 2, first.nextCursor!, item => item.id, item => item.createdAt, { descending });
+  if ('error' in second) throw new Error(second.error);
+  expect([...first.items, ...second.items].map(item => item.id)).toEqual(descending ? ['d', 'c', 'b', 'a'] : ['a', 'b', 'c', 'd']);
+});

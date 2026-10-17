@@ -353,7 +353,7 @@ export function createHttpJsonTransport(options: HttpJsonTransportOptions): Http
   const middlewareChain: TransportMiddleware[] = [...(options.middleware ?? [])];
 
   const requestJsonForTransport = async <T>(pathOrUrl: string, requestOptions: HttpJsonRequestOptions = {}): Promise<T> => {
-    const url = pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')
+    const url = /^https?:\/\//i.test(pathOrUrl)
       ? assertSameOriginAbsoluteUrl(pathOrUrl, baseUrl)
       : buildUrl(baseUrl, pathOrUrl);
     const method = requestOptions.method ?? (requestOptions.body === undefined ? 'GET' : 'POST');
@@ -451,7 +451,7 @@ export function createHttpJsonTransport(options: HttpJsonTransportOptions): Http
         // Also expose on ctx so middleware callers can read parsedBody directly.
         ctx.parsedBody = body;
         // Return synthetic Response carrying parsed body so callers (middleware) can .json().
-        return new Response(JSON.stringify(body), {
+        return new Response(response.status === 204 || response.status === 205 ? null : JSON.stringify(body), {
           status: response.status,
           statusText: response.statusText,
           headers: response.headers,

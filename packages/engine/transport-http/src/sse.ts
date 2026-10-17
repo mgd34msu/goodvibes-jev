@@ -11,7 +11,7 @@ export async function openServerSentEventStream(
   handlers: ServerSentEventHandlers,
   options: ServerSentEventOptions = {},
 ): Promise<ServerSentEventStreamHandle> {
-  const url = pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')
+  const url = /^https?:\/\//i.test(pathOrUrl)
     ? assertSameOriginAbsoluteUrl(pathOrUrl, transport.buildUrl('/'))
     : transport.buildUrl(pathOrUrl);
   return await openRawServerSentEventStream(transport.fetchImpl, url, handlers, {

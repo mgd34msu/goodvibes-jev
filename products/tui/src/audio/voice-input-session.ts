@@ -40,6 +40,7 @@ export interface VoiceInputRuntimeDeps {
   readonly resolveTranscriber: () => { readonly available: true; readonly gateway: VoiceSttGateway } | { readonly available: false; readonly reason: string };
   /** Writes the recognised text into the composer draft. */
   readonly writeDraft: (text: string) => void;
+  readonly readDraftRevision?: () => unknown;
   readonly notify: (message: string) => void;
   readonly render: () => void;
 }
@@ -69,6 +70,11 @@ export function wireVoiceInputRuntime(deps: VoiceInputRuntimeDeps): VoiceInputRu
   let session: PushToTalkSession | null = null;
   let phase: PushToTalkPhase = 'idle';
   let transcribing = false;
+  let generation = 0;
+  let released = false;
+  let stopping: Promise<void> | null = null;
+  let transcription: AbortController | null = null;
+  const current = (owner: number) => !released && generation === owner;
 
   const status = (): VoiceCaptureIndicatorState | null => {
     const kind = PHASE_INDICATOR[phase];
@@ -87,7 +93,10 @@ export function wireVoiceInputRuntime(deps: VoiceInputRuntimeDeps): VoiceInputRu
     };
   };
 
-  const transcribe = async (utterance: CapturedUtterance): Promise<void> => {
+  const transcribe = async (utterance: CapturedUtterance, owner: number, draftRevision: unknown): Promise<void> => {
+    if (!current(owner)) return;
+    const controller = new AbortController();
+    transcription = controller;
     if (utterance.silent) {
       deps.notify('[Voice] Nothing above the silence floor was captured, so nothing was transcribed.');
       deps.render();
@@ -102,23 +111,26 @@ export function wireVoiceInputRuntime(deps: VoiceInputRuntimeDeps): VoiceInputRu
     transcribing = true;
     deps.render();
     try {
-      const text = (await resolution.gateway.transcribe(utteranceToAudioArtifact(utterance))).trim();
+      const text = (await resolution.gateway.transcribe(utteranceToAudioArtifact(utterance), { signal: controller.signal })).trim();
+      if (!current(owner) || deps.readDraftRevision?.() !== draftRevision) return;
       if (text.length === 0) {
         deps.notify('[Voice] Speech-to-text returned no words for that recording.');
       } else {
         deps.writeDraft(text);
       }
     } catch (error) {
+      if (!current(owner)) return;
       deps.notify(`[Voice] Transcription failed: ${describeTranscriptionFailure(error)}`);
     } finally {
       // The device is already released by the session's stop(); this only clears
       // the indicator so a failed transcription cannot leave a "recording" row up.
-      transcribing = false;
-      deps.render();
+      if (current(owner)) { transcribing = false; transcription = null; deps.render(); }
     }
   };
 
   const start = (): void => {
+    const owner = ++generation;
+    const draftRevision = deps.readDraftRevision?.();
     const settings = deps.readSettings();
     const active = new PushToTalkSession({
       openCapture: deps.openCapture,
@@ -127,18 +139,20 @@ export function wireVoiceInputRuntime(deps: VoiceInputRuntimeDeps): VoiceInputRu
       // 0 disables silence-stop: someone who pressed the key and paused has not
       // finished talking, so the second press is what ends the recording.
       silenceStopMs: 0,
-      onPhaseChange: (next) => { phase = next; deps.render(); },
+      onPhaseChange: (next) => { if (current(owner)) { phase = next; deps.render(); } },
       onAutoStop: (utterance) => {
+        if (!current(owner)) return;
         // The ceiling fired instead of a second keypress. The audio is still what
         // the user said, so it is transcribed rather than discarded.
         session = null;
         deps.notify(`[Voice] Recording reached the ${settings.captureMaxSeconds}s ceiling (voice.wake.captureMaxSeconds) and stopped on its own.`);
-        void transcribe(utterance);
+        void transcribe(utterance, owner, draftRevision);
       },
-      onError: (error) => { deps.notify(`[Voice] Capture stopped: ${error.message}`); deps.render(); },
+      onError: (error) => { if (!current(owner)) return; deps.notify(`[Voice] Capture stopped: ${error.message}`); deps.render(); },
     });
     session = active;
     void active.start().catch((error: unknown) => {
+      if (!current(owner)) return;
       session = null;
       phase = 'idle';
       const message = error instanceof AudioCaptureError
@@ -152,18 +166,22 @@ export function wireVoiceInputRuntime(deps: VoiceInputRuntimeDeps): VoiceInputRu
   const stop = (): void => {
     const active = session;
     if (active === null) return;
+    const owner = generation;
+    const draftRevision = deps.readDraftRevision?.();
     session = null;
-    void active.stop().then(
-      (utterance) => { if (utterance !== null) void transcribe(utterance); else deps.render(); },
+    stopping = active.stop().then(
+      (utterance) => { if (!current(owner)) return; if (utterance !== null) void transcribe(utterance, owner, draftRevision); else deps.render(); },
       (error: unknown) => {
+        if (!current(owner)) return;
         deps.notify(`[Voice] Recording could not be stopped cleanly: ${error instanceof Error ? error.message : String(error)}`);
         deps.render();
       },
-    );
+    ).finally(() => { stopping = null; });
   };
 
   return {
     toggle: () => {
+      if (released || stopping) return;
       if (transcribing) {
         deps.notify('[Voice] Still transcribing the previous recording.');
         return;
@@ -173,10 +191,12 @@ export function wireVoiceInputRuntime(deps: VoiceInputRuntimeDeps): VoiceInputRu
     },
     status,
     release: async () => {
+      released = true; generation++; transcription?.abort(); transcribing = false;
       const active = session;
       session = null;
       phase = 'idle';
       if (active !== null) await active.cancel();
+      await stopping;
     },
   };
 }

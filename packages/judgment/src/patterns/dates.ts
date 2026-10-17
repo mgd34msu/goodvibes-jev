@@ -137,12 +137,14 @@ export function resolveWeekday(today: Date, weekday: (typeof WEEKDAYS)[number], 
 /** A date the parts produced, or why they produced none. */
 type Assembled = { readonly date: Date } | { readonly note: string };
 
-/** The date an unstated year points to: this year's, or next year's when this year's is well past. */
+/** Infer the next valid occurrence, allowing the recent-date grace window. */
 function withInferredYear(today: Date, month: number, day: number, label: string): Assembled {
-  const thisYear = calendarDate(today.getUTCFullYear(), month, day);
-  if (thisYear === null) return { note: `impossible date: ${label}` };
-  const longPast = thisYear.getTime() < today.getTime() - YEAR_ROLLOVER_GRACE_DAYS * DAY_MS;
-  return { date: longPast ? calendarDate(today.getUTCFullYear() + 1, month, day)! : thisYear };
+  // Eight years covers leap-day recurrence even across a non-leap century.
+  for (let offset = 0; offset <= 8; offset++) {
+    const date = calendarDate(today.getUTCFullYear() + offset, month, day);
+    if (date && date.getTime() >= today.getTime() - YEAR_ROLLOVER_GRACE_DAYS * DAY_MS) return { date };
+  }
+  return { note: `impossible date: ${label}` };
 }
 
 function assembleAbsolute(parts: Parts, today: Date): Assembled {

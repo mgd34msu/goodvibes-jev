@@ -8,6 +8,8 @@ import type {
   KnowledgeIssueRecord,
   KnowledgeJobRunRecord,
   KnowledgeNodeRecord,
+  KnowledgeNodeRevisionRecord,
+  KnowledgeSemanticEnrichmentStateRecord,
   KnowledgeRefinementTaskRecord,
   KnowledgeScheduleRecord,
   KnowledgeSourceRecord,
@@ -40,6 +42,8 @@ export interface KnowledgeSpaceDeleteStores {
   readonly consolidationCandidates: Map<string, KnowledgeConsolidationCandidateRecord>;
   readonly consolidationReports: Map<string, KnowledgeConsolidationReportRecord>;
   readonly schedules: Map<string, KnowledgeScheduleRecord>;
+  readonly nodeRevisions: Map<string, KnowledgeNodeRevisionRecord[]>;
+  readonly semanticEnrichmentStates: Map<string, KnowledgeSemanticEnrichmentStateRecord>;
 }
 
 interface KnowledgeSpaceDeleteIds {
@@ -69,18 +73,36 @@ export function deleteKnowledgeSpaceRows(
   spaceId: string,
 ): KnowledgeSpaceDeleteResult {
   const ids = collectKnowledgeSpaceDeleteIds(stores, spaceId);
+  const commit: Array<() => void> = [];
+  sqlite.run('SAVEPOINT knowledge_space_delete');
+  try {
+    for (const id of ids.nodes) {
+      sqlite.run('DELETE FROM knowledge_node_revisions WHERE node_id = ?', [id]);
+      commit.push(() => { stores.nodeRevisions.delete(id); });
+    }
+    for (const id of ids.sources) {
+      sqlite.run('DELETE FROM knowledge_semantic_enrichment_state WHERE source_id = ?', [id]);
+      commit.push(() => { stores.semanticEnrichmentStates.delete(id); });
+    }
 
-  deleteRows(sqlite, 'knowledge_usage_records', ids.usageRecords, stores.usageRecords);
-  deleteRows(sqlite, 'knowledge_consolidation_candidates', ids.consolidationCandidates, stores.consolidationCandidates);
-  deleteRows(sqlite, 'knowledge_consolidation_reports', ids.consolidationReports, stores.consolidationReports);
-  deleteRows(sqlite, 'knowledge_refinement_tasks', ids.refinementTasks, stores.refinementTasks);
-  deleteRows(sqlite, 'knowledge_job_runs', ids.jobRuns, stores.jobRuns);
-  deleteRows(sqlite, 'knowledge_edges', ids.edges, stores.edges);
-  deleteRows(sqlite, 'knowledge_issues', ids.issues, stores.issues);
-  deleteRows(sqlite, 'knowledge_extractions', ids.extractions, stores.extractions);
-  deleteRows(sqlite, 'knowledge_nodes', ids.nodes, stores.nodes);
-  deleteRows(sqlite, 'knowledge_sources', ids.sources, stores.sources);
-  deleteRows(sqlite, 'knowledge_schedules', ids.schedules, stores.schedules);
+    deleteRows(sqlite, 'knowledge_usage_records', ids.usageRecords, stores.usageRecords, commit);
+    deleteRows(sqlite, 'knowledge_consolidation_candidates', ids.consolidationCandidates, stores.consolidationCandidates, commit);
+    deleteRows(sqlite, 'knowledge_consolidation_reports', ids.consolidationReports, stores.consolidationReports, commit);
+    deleteRows(sqlite, 'knowledge_refinement_tasks', ids.refinementTasks, stores.refinementTasks, commit);
+    deleteRows(sqlite, 'knowledge_job_runs', ids.jobRuns, stores.jobRuns, commit);
+    deleteRows(sqlite, 'knowledge_edges', ids.edges, stores.edges, commit);
+    deleteRows(sqlite, 'knowledge_issues', ids.issues, stores.issues, commit);
+    deleteRows(sqlite, 'knowledge_extractions', ids.extractions, stores.extractions, commit);
+    deleteRows(sqlite, 'knowledge_nodes', ids.nodes, stores.nodes, commit);
+    deleteRows(sqlite, 'knowledge_sources', ids.sources, stores.sources, commit);
+    deleteRows(sqlite, 'knowledge_schedules', ids.schedules, stores.schedules, commit);
+    sqlite.run('RELEASE SAVEPOINT knowledge_space_delete');
+  } catch (error) {
+    sqlite.run('ROLLBACK TO SAVEPOINT knowledge_space_delete');
+    sqlite.run('RELEASE SAVEPOINT knowledge_space_delete');
+    throw error;
+  }
+  for (const publish of commit) publish();
 
   return summarizeDeleteIds(ids);
 }
@@ -174,9 +196,10 @@ function deleteRows<T>(
   table: string,
   ids: ReadonlySet<string>,
   records: Map<string, T>,
+  commit: Array<() => void>,
 ): void {
   for (const id of ids) {
     sqlite.run(`DELETE FROM ${table} WHERE id = ?`, [id]);
-    records.delete(id);
+    commit.push(() => { records.delete(id); });
   }
 }

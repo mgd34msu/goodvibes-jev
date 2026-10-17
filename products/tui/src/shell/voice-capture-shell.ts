@@ -29,9 +29,9 @@ export interface VoiceCaptureShellDeps {
   /** The Alt+V seam is hung here (commandContext.toggleVoiceInput). */
   readonly commandContext: CommandContext;
   /** The shell's teardown registry; the device release is appended to it. */
-  readonly unsubs: Array<() => void>;
+  readonly unsubs: Array<() => void | Promise<void>>;
   /** The live composer buffer, InputHandler exposes public `prompt`/`cursorPos`. */
-  readonly buffer: { prompt: string; cursorPos: number; hostPairing?: { cancelForTakeover(): boolean } | null };
+  readonly buffer: { draftRevision?: number; prompt: string; cursorPos: number; hostPairing?: { cancelForTakeover(): boolean } | null };
   readonly submitInput: (text: string) => void;
   readonly notify: (message: string) => void;
   readonly render: () => void;
@@ -54,6 +54,7 @@ export function installVoiceCapture(deps: VoiceCaptureShellDeps): () => VoiceCap
     assetDirectory: deps.shellPaths.resolveUserPath('tui', 'onnxruntime'),
     homeDirectory: deps.homeDirectory,
     sessionId: deps.sessionId,
+    readDraftRevision: () => deps.buffer.draftRevision ?? deps.buffer.prompt,
     writeDraft: (text) => {
       deps.buffer.hostPairing?.cancelForTakeover();
       deps.buffer.prompt = text;

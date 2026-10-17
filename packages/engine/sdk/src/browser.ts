@@ -62,6 +62,7 @@ export function createBrowserGoodVibesSdk(
   options: BrowserGoodVibesSdkOptions = {},
 ): GoodVibesSdk {
   return createGoodVibesSdk({
+    ...options,
     baseUrl: resolveBrowserBaseUrl(options.baseUrl),
     authToken: options.authToken ?? null,
     ...(options.retry ? { retry: options.retry } : {

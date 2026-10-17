@@ -238,7 +238,7 @@ export {
   type TermColorCaps,
 } from './term-caps.js';
 
-export { stripDangerousAnsi } from './ansi-sanitize.js';
+export { stripDangerousAnsi, safeTerminalLink } from './ansi-sanitize.js';
 
 export {
   createShellLayout,

@@ -1,3 +1,5 @@
+import { bindApprovals } from '../../shell/approvals-binding.ts';
+import type { ApprovalsView } from '../../runtime/client/approvals-view.ts';
 import { describe, expect, test } from 'bun:test';
 import { ApprovalBroker } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 import type { PermissionPromptDecision } from '@goodvibes-jev/engine/sdk/platform/permissions';
@@ -354,4 +356,23 @@ describe('permissions/broker-approval: real ApprovalBroker (in-memory)', () => {
     const decision = await decisionPromise;
     expect(decision.approved).toBe(true);
   });
+});
+
+
+test('binding advances from the resolved card to another waiting broker approval', async () => {
+  const broker = new ApprovalBroker({ storePath: ':memory:' });
+  const pending = makePendingRef();
+  bindApprovals({ broker, getPending: () => pending.current, setPending: next => { pending.current = next; }, render() {},
+    approvalsView: { start() {}, snapshot: () => ({ approvals: [] }) } as unknown as ApprovalsView });
+  const first = broker.requestApproval({ request: makeRequest('first'), sessionId: 'session' });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const second = broker.requestApproval({ request: makeRequest('second', 'fetch'), sessionId: 'session' });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  expect(pending.current?.callId).toBe('first');
+  pending.current!.resolve(true);
+  await first;
+  await new Promise(resolve => setTimeout(resolve, 10));
+  expect(pending.current?.callId).toBe('second');
+  pending.current!.resolve(false);
+  await second;
 });

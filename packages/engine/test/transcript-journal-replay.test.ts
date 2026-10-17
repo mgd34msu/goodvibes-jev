@@ -15,7 +15,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeProjectTempDir } from './_helpers/project-temp.ts';
 import {
@@ -63,6 +63,24 @@ afterEach(() => {
 });
 
 describe('replayJournalIntoConversation', () => {
+  test.each([false, true])('failed snapshot publication preserves recovery across repeated restarts (corrupt tail=%s)', (corrupt) => {
+    const journalPath = join(tmpDir, 'repeated.journal');
+    writeJournalWithRecords(journalPath, 'repeated', 2);
+    if (corrupt) appendFileSync(journalPath, '{"partial":');
+    for (let restart = 0; restart < 2; restart++) {
+      const conversation = new ConversationManager();
+      const result = replayJournalIntoConversation({ journalPath, sessionId: 'repeated', snapshotTimestamp: 0, conversation,
+        persistSnapshot: () => { throw new Error('snapshot storage unavailable'); } });
+      expect(result.replayed).toBe(2);
+      expect(conversation.getMessageCount()).toBe(3);
+      expect(existsSync(journalPath)).toBe(true);
+    }
+    const conversation = new ConversationManager();
+    const result = replayJournalIntoConversation({ journalPath, sessionId: 'repeated', snapshotTimestamp: 0, conversation, persistSnapshot: () => {} });
+    expect(result.replayed).toBe(2);
+    expect(existsSync(journalPath)).toBe(false);
+  });
+
   test('e2e: replays journal records onto conversation, writes snapshot, rotates journal', () => {
     const journalPath = join(tmpDir, 'transcript-e2e.journal');
     const sessionId = 'ses-e2e-test';

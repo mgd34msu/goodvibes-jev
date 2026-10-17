@@ -357,3 +357,14 @@ describe('a revoked session is never shown as healthy', () => {
     expect(subscriptionRoute!.repairHints?.join(' ')).toMatch(/sign in again/i);
   });
 });
+
+
+for (const terminal of ['missing', 'incomplete']) test(`Codex ${terminal} stream cannot report completion`, async () => {
+  const { manager } = makeManager(liveRecord());
+  stubFetch({ responses: () => new Response('data: {"type":"response.output_text.delta","delta":"partial"}\n\n' +
+    (terminal === 'incomplete' ? 'data: {"type":"response.incomplete","response":{"status":"incomplete"}}\n\n' : ''),
+    { headers: { 'content-type': 'text/event-stream' } }), tokenExchange: sseSuccess });
+  const result = new OpenAICodexProvider(manager).chat(CHAT_PARAMS);
+  if (terminal === 'missing') await expect(result).rejects.toThrow('terminal response');
+  else expect((await result).stopReason).not.toBe('completed');
+});

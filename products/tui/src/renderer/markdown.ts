@@ -1,4 +1,5 @@
 import { type Line, type Cell, createStyledCell } from '@goodvibes-jev/engine/sdk/platform/types';
+import { safeTerminalLink } from '@goodvibes-jev/engine/terminal-shell';
 import { UIFactory } from './ui-factory.ts';
 import { renderCodeBlock } from './code-block.ts';
 import { getDisplayWidth } from '../utils/terminal-width.ts';
@@ -281,10 +282,7 @@ function compositeInlineLine(
       for (const ch of token.text) chars.push({ char: ch, style: { fg: tk.markdownCode } });
     } else if (token.type === 'link') {
       // Resolve URL: if url is empty or relative, treat as text; if it's a file path, use file:// protocol
-      let resolvedUrl = token.url;
-      if (resolvedUrl && !resolvedUrl.startsWith('http') && !resolvedUrl.startsWith('file://') && resolvedUrl.startsWith('/')) {
-        resolvedUrl = `file://${resolvedUrl}`;
-      }
+      const resolvedUrl = safeTerminalLink(token.url);
       for (const ch of token.text) chars.push({ char: ch, style: { fg: T.link, underline: true, link: resolvedUrl || undefined } });
     }
   }

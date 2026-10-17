@@ -153,9 +153,13 @@ export async function install(options: Options, hooks: InstallHooks = {}): Promi
     const release = join(options.prefix, 'releases', releaseName);
     mkdirSync(release, { recursive: true, mode: 0o700 });
     let published = false;
-    let stopped = false;
+    let stopAttempted = false;
+    let wasRunning = false;
     let serviceAttempted = false;
     const settingsPaths = ['daemon', 'tui', 'shared'].map(surface => join(options.dataDir, '.goodvibes', surface, 'settings.json'));
+    const metadataPaths = [dataOwner(options), join(options.dataDir, 'environment')];
+    const previousMetadata = new Map(metadataPaths.map(path => { plainPath(path); return [path, present(path) ? readFileSync(path, 'utf8') : undefined] as const; }));
+    let metadataTouched = false;
     const previousSettings = new Map<string, string | undefined>();
     const previousUnit = present(unitPath(options)) ? readFileSync(unitPath(options), 'utf8') : undefined;
     const previousWrappers = new Map(COMMANDS.map(name => [name, old && present(join(options.prefix, 'commands', name)) ? readFileSync(join(options.prefix, 'commands', name), 'utf8') : undefined]));
@@ -167,12 +171,18 @@ export async function install(options: Options, hooks: InstallHooks = {}): Promi
           name: 'goodvibes-jev', description: 'GoodVibes Jev daemon and WebUI', workingDirectory: options.workspace ?? ROOT,
           command: join(options.prefix, 'commands/goodvibes-daemon'), args: ['serve', '--hostname', '127.0.0.1', '--port', String(options.port)], env: {}, restartOnFailure: true });
       }
-      if (old?.service) { stopService(old, execute); stopped = true; }
+      if (old?.service) {
+        const state = execute('systemctl', ['--user', 'show', SERVICE, '--property=ActiveState', '--value'], { capture: true });
+        wasRunning = !['inactive', 'failed'].includes(state);
+        stopAttempted = true;
+        stopService(old, execute);
+      }
       if (options.service) await assertPortFree(options.port);
       for (const path of settingsPaths) {
         plainPath(path); previousSettings.set(path, present(path) ? readFileSync(path, 'utf8') : undefined);
       }
       mkdirSync(options.dataDir, { recursive: true, mode: 0o700 }); chmodSync(options.dataDir, 0o700);
+      metadataTouched = true;
       atomicWrite(dataOwner(options), JSON.stringify({ package: PACKAGE, id, dataDir: options.dataDir, prefix: options.prefix }) + '\n');
       const environment = join(options.dataDir, 'environment'); plainPath(environment);
       if (!present(environment)) {
@@ -255,11 +265,20 @@ export async function install(options: Options, hooks: InstallHooks = {}): Promi
             else rmSync(path, { force: true });
           }
         }
+        if (metadataTouched) {
+          for (const [path, contents] of previousMetadata) {
+            // A failed first launch can already have created user data. Preserve
+            // its new ownership so a retry can adopt it; restore existing owners.
+            if (published && previousMetadata.get(dataOwner(options)) === undefined && contents === undefined) continue;
+            if (contents !== undefined) atomicWrite(path, contents);
+            else rmSync(path, { force: true });
+          }
+        }
         if (options.service || old?.service) {
           if (previousUnit !== undefined) atomicWrite(unitPath(options), previousUnit, 0o644);
           else rmSync(unitPath(options), { force: true });
           execute('systemctl', ['--user', 'daemon-reload']);
-          if (stopped && old?.service) { execute('systemctl', ['--user', 'enable', SERVICE]); execute('systemctl', ['--user', 'start', SERVICE]); }
+          if (stopAttempted && wasRunning && old?.service) { execute('systemctl', ['--user', 'enable', SERVICE]); execute('systemctl', ['--user', 'start', SERVICE]); }
         }
         if (old) rmSync(release, { recursive: true, force: true });
         else rmSync(options.prefix, { recursive: true, force: true });

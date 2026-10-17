@@ -22,7 +22,7 @@ export interface CascadeAttempt<O extends JsonValue> {
 }
 
 export interface CascadeResult<O extends JsonValue> {
-  /** The first output that passed, or the last one tried when none did. */
+  /** The first actionable pass, a pass awaiting confirmation, or the last output tried. */
   readonly output: O;
   readonly tier: string;
   readonly accepted: boolean;
@@ -56,8 +56,9 @@ export async function verifyThenEscalate<O extends JsonValue>(
     );
     attempts.push({ tier: tier.name, output, judgment });
     if (judgment.verdict === 'pass') {
-      judgment.recordAction(`accept:${tier.name}`);
-      return { output, tier: tier.name, accepted: true, judgment, attempts };
+      const accepted = judgment.outcome === 'act';
+      judgment.recordAction(`${accepted ? 'accept' : 'confirm'}:${tier.name}`);
+      return { output, tier: tier.name, accepted, judgment, attempts };
     }
     judgment.recordAction(attempts.length < tiers.length ? `escalate-from:${tier.name}` : `exhausted:${tier.name}`);
   }

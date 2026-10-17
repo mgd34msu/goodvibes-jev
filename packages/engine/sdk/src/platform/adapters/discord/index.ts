@@ -1,8 +1,12 @@
+import { InboundMessageDedup, inboundDedupKey } from '../inbound-dedup.js';
 import { logger } from '../../utils/logger.js';
 import { DiscordIntegration, DiscordInteractionResponseType, DiscordInteractionType } from '../../integrations/index.js';
 import type { SurfaceAdapterContext } from '../types.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { readTextBodyWithinLimit } from '../helpers.js';
+
+const completedInteractions = new InboundMessageDedup();
+const pendingInteractions = new Set<string>();
 
 export async function handleDiscordSurfaceWebhook(req: Request, context: SurfaceAdapterContext): Promise<Response> {
   const publicKey =
@@ -15,6 +19,9 @@ export async function handleDiscordSurfaceWebhook(req: Request, context: Surface
 
   const signature = req.headers.get('x-signature-ed25519') ?? '';
   const timestamp = req.headers.get('x-signature-timestamp') ?? '';
+  if (!/^\d+$/.test(timestamp) || Math.abs(Date.now() - Number(timestamp) * 1000) > 5 * 60_000) {
+    return new Response('Expired request signature', { status: 401 });
+  }
   const rawBody = await readTextBodyWithinLimit(req);
   if (rawBody instanceof Response) return rawBody;
 
@@ -44,6 +51,29 @@ export async function handleDiscordInteractionPayload(
   context: SurfaceAdapterContext,
   discord = new DiscordIntegration(),
   req: Request = new Request('http://goodvibes.local/webhook/discord', { method: 'POST' }),
+): Promise<Response> {
+  const id = typeof bodyRecord.id === 'string' ? bodyRecord.id : '';
+  const key = inboundDedupKey('discord', String(bodyRecord.application_id ?? ''), id);
+  if (bodyRecord.type !== DiscordInteractionType.Ping && !key) return new Response('Missing interaction id', { status: 400 });
+  if (key && (pendingInteractions.has(key) || completedInteractions.has(key))) {
+    return Response.json({ type: DiscordInteractionResponseType.DeferredChannelMessageWithSource });
+  }
+  if (key) pendingInteractions.add(key);
+  let delivered = false;
+  const committed = () => { delivered = true; completedInteractions.claim(key); };
+  const failed = () => { if (!delivered) completedInteractions.release(key); pendingInteractions.delete(key); };
+  try {
+    const response = await dispatchDiscordInteraction(bodyRecord, context, discord, req, committed, failed);
+    // Deferred command processing owns the pending claim until it settles.
+    if (response.status >= 400) failed();
+    else if (bodyRecord.type !== DiscordInteractionType.ApplicationCommand) { committed(); pendingInteractions.delete(key); }
+    return response;
+  } catch (error) { failed(); throw error; }
+}
+
+async function dispatchDiscordInteraction(
+  bodyRecord: Record<string, unknown>, context: SurfaceAdapterContext, discord: DiscordIntegration, req: Request,
+  committed: () => void, finished: () => void,
 ): Promise<Response> {
   const interaction = discord.parseInteraction(bodyRecord);
   if (interaction.type === DiscordInteractionType.Ping) {
@@ -91,12 +121,14 @@ export async function handleDiscordInteractionPayload(
       type: DiscordInteractionResponseType.DeferredChannelMessageWithSource,
     });
     if (!task) {
+      committed(); finished();
       return deferredResponse;
     }
 
     const controlCommand = await context.parseSurfaceControlCommand(task, { signal: req.signal });
     if (controlCommand) {
       const message = await context.performSurfaceControlCommand(controlCommand);
+      committed(); finished();
       return Response.json({
         type: DiscordInteractionResponseType.ChannelMessageWithSource,
         data: { content: message },
@@ -124,6 +156,7 @@ export async function handleDiscordInteractionPayload(
           },
         });
         if (submission.mode === 'continued-live') {
+          committed();
           await discord
             .editOriginalResponse(appId, token, `Continuing session ${submission.session.id} via agent ${submission.activeAgentId}.`)
             .catch((error) => logger.warn('handleDiscordSurfaceWebhook: failed to edit continuation response', {
@@ -149,6 +182,7 @@ export async function handleDiscordInteractionPayload(
           return;
         }
 
+        committed();
         await context.sessionBroker.bindAgent(submission.session.id, spawnResult.id);
         context.queueSurfaceReplyFromBinding(submission.routeBinding ?? binding, {
           agentId: spawnResult.id,
@@ -179,7 +213,7 @@ export async function handleDiscordInteractionPayload(
           error: detail,
         });
         context.reportIngressFailure?.('discord', detail);
-      });
+      }).finally(finished);
     });
 
     return deferredResponse;

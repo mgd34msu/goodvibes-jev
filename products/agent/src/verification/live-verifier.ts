@@ -166,7 +166,7 @@ function redactLocalPaths(text: string, context: LiveVerificationRedactionContex
 }
 
 function redactPrivateNetworkAddresses(text: string): string {
-  return text.replace(/\b(?:10|192\.168|172\.(?:1[6-9]|2[0-9]|3[0-1]))(?:\.[0-9]{1,3}){2}\b/g, '[private-ip]');
+  return text.replace(/\b(?:10(?:\.[0-9]{1,3}){3}|(?:192\.168|172\.(?:1[6-9]|2[0-9]|3[0-1]))(?:\.[0-9]{1,3}){2})\b/g, '[private-ip]');
 }
 
 function redactForReleaseArtifact(text: string, context: LiveVerificationRedactionContext): string {

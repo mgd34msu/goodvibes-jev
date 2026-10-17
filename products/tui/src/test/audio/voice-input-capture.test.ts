@@ -103,6 +103,8 @@ interface VoiceInputHarness {
 
 function makeVoiceInputHarness(options: {
   readonly transcript?: string;
+  readonly deferredTranscript?: Promise<string>;
+  readonly readDraftRevision?: () => unknown;
   readonly transcribeError?: string;
   readonly noTranscriber?: string;
   readonly backend?: WakeRuntimeSettings['capture']['backend'];
@@ -131,11 +133,12 @@ function makeVoiceInputHarness(options: {
           transcribe: async (audio: UtteranceAudioArtifact) => {
             transcribed.push(audio);
             if (options.transcribeError !== undefined) throw new Error(options.transcribeError);
-            return options.transcript ?? 'deploy the staging build';
+            return options.deferredTranscript ?? options.transcript ?? 'deploy the staging build';
           },
         },
       }),
     writeDraft: (text) => { drafts.push(text); },
+    readDraftRevision: options.readDraftRevision,
     notify: (message) => { notices.push(message); },
     render: () => { /* no renderer under test */ },
   });
@@ -358,4 +361,22 @@ describe('recorder discovery uses the same PATH scan as playback', () => {
   test('a directory with no matching executable finds nothing', () => {
     expect(isExecutableOnPath('definitely-not-a-recorder', { PATH: '/usr/bin' })).toBe(false);
   });
+});
+
+
+for (const retire of ['edit', 'release']) test(`pending transcription respects ${retire}`, async () => {
+  let finish!: (text: string) => void;
+  let revision = 0;
+  const deferredTranscript = new Promise<string>(resolve => { finish = resolve; });
+  const harness = makeVoiceInputHarness({ deferredTranscript, readDraftRevision: () => revision });
+  harness.runtime.toggle(); await flush();
+  harness.spawns.processes[0]!.emitBytes(pcmBytes(loudSamples(SAMPLES_PER_FRAME * 3)));
+  harness.runtime.toggle(); await flush();
+  expect(harness.transcribed).toHaveLength(1);
+  if (retire === 'release') await harness.runtime.release(); else revision++;
+  const notices = [...harness.notices];
+  finish('late transcript'); await flush();
+  expect(harness.drafts).toEqual([]);
+  expect(harness.notices).toEqual(notices);
+  await harness.runtime.release();
 });

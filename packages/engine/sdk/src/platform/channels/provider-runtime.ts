@@ -414,11 +414,15 @@ export class ChannelProviderRuntimeManager {
       messageId: message.id ?? '(none)',
     });
     await handleNtfySurfacePayload(message, this.deps.buildSurfaceAdapterContext())
-      .then(() => { this.deps.ingressAlarm?.recordSuccess('ntfy'); })
+      .then((response) => {
+        if (!response.ok) throw new Error(`ntfy dispatch failed (HTTP ${response.status})`);
+        this.deps.ingressAlarm?.recordSuccess('ntfy');
+      })
       .catch((error: unknown) => {
         const detail = summarizeError(error);
         logger.error('ChannelProviderRuntimeManager: ntfy message dispatch failed', { error: detail });
         this.deps.ingressAlarm?.recordFailure('ntfy', detail);
+        throw error;
       });
   }
 

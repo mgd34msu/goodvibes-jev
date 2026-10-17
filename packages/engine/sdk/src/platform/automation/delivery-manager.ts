@@ -227,7 +227,11 @@ export class AutomationDeliveryManager {
         try {
           const responseId = await this.sendTarget(resolved, body, job, run);
           if (resolved.binding?.id && responseId) {
-            await this.routeBindings.captureReplyTarget(resolved.binding.id, responseId, resolved.binding.threadId);
+            try {
+              await this.routeBindings.captureReplyTarget(resolved.binding.id, responseId, resolved.binding.threadId);
+            } catch (error) {
+              logger.warn('Delivery succeeded but reply routing could not be saved', { deliveryId, error: summarizeError(error) });
+            }
           }
           attempt = {
             ...attempt,
@@ -236,7 +240,8 @@ export class AutomationDeliveryManager {
             responseId: responseId ?? target.address ?? target.routeId ?? target.label ?? target.surfaceKind ?? 'delivered',
           };
           attempts[attempts.length - 1] = attempt;
-          this.syncAttempt(attempt, run, 'succeeded');
+          try { this.syncAttempt(attempt, run, 'succeeded'); }
+          catch (error) { logger.warn('Delivery succeeded but its receipt could not be saved', { deliveryId, error: summarizeError(error) }); }
           lastError = '';
           break;
         } catch (error) {

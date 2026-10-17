@@ -172,3 +172,19 @@ describe('OllamaProvider', () => {
     expect(response.content).toBe('continued via compat');
   });
 });
+
+
+test('native Ollama chat and embeddings forward configured credentials and headers', async () => {
+  const calls: Headers[] = [];
+  const provider = new OllamaProvider({ name: 'private-ollama', baseURL: 'https://models.example/v1', apiKey: 'synthetic-token', defaultHeaders: { 'x-tenant': 'private' }, defaultModel: 'qwen3', models: ['qwen3'],
+    nativeFetch: async (url, init) => {
+      calls.push(new Headers(init?.headers));
+      return String(url).endsWith('/embed') ? Response.json({ embeddings: [[1, 2]], prompt_eval_count: 1 })
+        : new Response(ndjson([{ message: { content: 'ok' }, done: true, done_reason: 'stop' }]));
+    },
+  });
+  await provider.chat({ model: 'qwen3', messages: [{ role: 'user', content: 'hi' }] });
+  await provider.embed({ text: 'hi', dimensions: 2, usage: 'query' });
+  expect(calls).toHaveLength(2);
+  for (const headers of calls) { expect(headers.get('authorization')).toBe('Bearer synthetic-token'); expect(headers.get('x-tenant')).toBe('private'); }
+});

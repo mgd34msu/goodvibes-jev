@@ -26,6 +26,7 @@ function successHtml(message: string): string {
 }
 
 function errorHtml(message: string): string {
+  message = message.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
   return `<!doctype html><html><body><h1>Authentication failed</h1><p>${message}</p></body></html>`;
 }
 
@@ -45,6 +46,8 @@ export async function createOAuthLocalListener(config: OAuthLocalListenerConfig)
     resolveWait = resolve;
     rejectWait = reject;
   });
+
+  void waitForCodePromise.catch(() => {});
 
   const settleSuccess = (value: OAuthLocalListenerResult): void => {
     if (settled) return;
@@ -77,6 +80,8 @@ export async function createOAuthLocalListener(config: OAuthLocalListenerConfig)
   };
 
   server.on('request', (req, res) => {
+    res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     try {
       const url = new URL(req.url ?? '', `http://${req.headers.host ?? host}`);
       if (url.pathname !== path) {
@@ -89,6 +94,12 @@ export async function createOAuthLocalListener(config: OAuthLocalListenerConfig)
       const code = url.searchParams.get('code');
       const error = url.searchParams.get('error');
 
+      if (state !== expectedState) {
+        res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(errorHtml('State mismatch.'));
+        return;
+      }
+
       if (error) {
         res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(errorHtml(`Provider returned error: ${error}`));
@@ -97,19 +108,9 @@ export async function createOAuthLocalListener(config: OAuthLocalListenerConfig)
         return;
       }
 
-      if (state !== expectedState) {
-        res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(errorHtml('State mismatch.'));
-        settleFailure(new Error('OAuth state mismatch.'));
-        close();
-        return;
-      }
-
       if (!code) {
         res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(errorHtml('Authorization code missing.'));
-        settleFailure(new Error('OAuth callback did not include an authorization code.'));
-        close();
         return;
       }
 
@@ -120,8 +121,6 @@ export async function createOAuthLocalListener(config: OAuthLocalListenerConfig)
     } catch (error) {
       res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(errorHtml('Internal callback error.'));
-      settleFailure(error instanceof Error ? error : new Error(summarizeError(error)));
-      close();
     }
   });
 
@@ -154,6 +153,6 @@ export async function createOAuthLocalListener(config: OAuthLocalListenerConfig)
       expectedState = state;
     },
     waitForCode: () => waitForCodePromise,
-    close,
+    close: () => { settleFailure(new Error('OAuth listener closed.')); close(); },
   };
 }

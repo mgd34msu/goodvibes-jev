@@ -1,6 +1,6 @@
 import { lstat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type { SshBackendConfig } from '../peer-registry.js';
 import { type Backend, type BackendContext, BackendDispatchError, resolveTimeout, buildRemoteShellCommand } from './types.js';
 import { runProcess } from './process-runner.js';
@@ -33,17 +33,8 @@ export function createSshBackend(ctx: BackendContext): Backend {
   const slots = new Set<Slot>();
   let cleanupFailed = false;
 
-  async function createIdentity(peerId: string, config: SshBackendConfig): Promise<Identity> {
+  async function createIdentity(config: SshBackendConfig, key: string): Promise<Identity> {
     await scratch.prepare();
-    let key: string | null;
-    try { key = await lifetime.waitFor(() => ctx.credentials.resolveRef(config.identityRef)); }
-    catch {
-      lifetime.assertOpen();
-      throw new BackendDispatchError(`Could not read SSH identity for peer '${peerId}'.`, 'REMOTE_BACKEND_CREDENTIAL_FAILED');
-    }
-    if (typeof key !== 'string' || key.length === 0) {
-      throw new BackendDispatchError(`Could not resolve SSH identity for peer '${peerId}'.`, 'REMOTE_BACKEND_CREDENTIAL_MISSING');
-    }
     const keyPath = await scratch.write(key.endsWith('\n') ? key : `${key}\n`, 'key');
     const proposedControlPath = join(dirname(keyPath), `m${randomBytes(4).toString('hex')}`);
     // An explicit conservative Unix-socket path budget. Long configured homes
@@ -88,11 +79,22 @@ export function createSshBackend(ctx: BackendContext): Backend {
   }
 
   async function acquire(peerId: string, config: SshBackendConfig): Promise<{ identity: Identity; release(): void }> {
-    const binding = JSON.stringify([config.identityRef, config.sshHost, config.sshUser, config.sshPort ?? 22]);
+    let key: string | null;
+    try { key = await lifetime.waitFor(() => ctx.credentials.resolveRef(config.identityRef)); }
+    catch {
+      const old = pool.get(peerId); if (old) { pool.delete(peerId); retire(old); }
+      lifetime.assertOpen();
+      throw new BackendDispatchError(`Could not read SSH identity for peer '${peerId}'.`, 'REMOTE_BACKEND_CREDENTIAL_FAILED');
+    }
+    if (typeof key !== 'string' || key.length === 0) {
+      const old = pool.get(peerId); if (old) { pool.delete(peerId); retire(old); }
+      throw new BackendDispatchError(`Could not resolve SSH identity for peer '${peerId}'.`, 'REMOTE_BACKEND_CREDENTIAL_MISSING');
+    }
+    const binding = JSON.stringify([config.identityRef, config.sshHost, config.sshUser, config.sshPort ?? 22, createHash('sha256').update(key).digest('hex')]);
     let slot = pool.get(peerId);
     if (!slot || slot.binding !== binding) {
       const previous = slot;
-      slot = { binding, identity: createIdentity(peerId, config), users: 0, retired: false };
+      slot = { binding, identity: createIdentity(config, key), users: 0, retired: false };
       pool.set(peerId, slot);
       slots.add(slot);
       if (previous) retire(previous);

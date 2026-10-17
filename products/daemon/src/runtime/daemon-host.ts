@@ -183,6 +183,7 @@ export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHo
         listener = (factories.createListener ?? ((config) => new HttpListener(config)))({
           host: http.host, port: http.port, configManager: runtime.configManager,
           userAuth: runtime.localUserAuthManager, hookDispatcher: runtime.hookDispatcher,
+          pairingTokens: runtime.pairingTokens,
           serveFactory: createSafeHostServeFactory('Configured HTTP listener', http.serveFactory),
         });
         ownListener('HTTP listener', listener);

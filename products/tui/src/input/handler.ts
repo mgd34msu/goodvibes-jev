@@ -128,7 +128,13 @@ type SelectionModalCallback = (result: SelectionResult | null) => void;
  */
 export class InputHandler implements InputHandlerLike {
   public hostPairing: { handleToken(token: InputToken): boolean; cancelForTakeover(): boolean; dispose(): void } | null = null;
-  public prompt = '';
+  private draft = '';
+  public draftRevision = 0;
+  public get prompt(): string { return this.draft; }
+  public set prompt(value: string) {
+    if (value !== this.draft) this.draftRevision++;
+    this.draft = value;
+  }
   public cursorPos = 0;
   public showExitNotice = false;
   /**

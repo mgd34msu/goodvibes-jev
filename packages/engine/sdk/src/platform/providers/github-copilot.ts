@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readJsonFileOrQuarantine, writeJsonFileAtomicSafe } from '../utils/atomic-json-store.js';
 import { join } from 'node:path';
 import type { ChatRequest, ChatResponse, LLMProvider, ProviderModelSource, ProviderRuntimeMetadata, ProviderRuntimeMetadataDeps } from './interface.js';
@@ -47,6 +48,7 @@ export const COPILOT_DATED_STATIC_MODELS: readonly string[] = [
 export const COPILOT_DATED_STATIC_MODELS_AS_OF = '2026-07-13';
 
 interface CachedCopilotToken {
+  readonly sourceFingerprint?: string;
   readonly token: string;
   readonly expiresAt: number;
   readonly updatedAt: number;
@@ -150,6 +152,7 @@ function parseCachedCopilotToken(value: unknown): CachedCopilotToken | null {
     token: record.token,
     expiresAt: record.expiresAt,
     updatedAt: record.updatedAt,
+    ...(typeof record.sourceFingerprint === 'string' ? { sourceFingerprint: record.sourceFingerprint } : {}),
   };
 }
 
@@ -161,6 +164,7 @@ async function resolveCopilotToken(options: GitHubCopilotProviderOptions): Promi
     throw new Error('GitHub Copilot requires COPILOT_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN.');
   }
 
+  const sourceFingerprint = createHash('sha256').update(githubToken).digest('hex');
   const cachePath = options.tokenCachePath;
   try {
     const cached = readJsonFileOrQuarantine<CachedCopilotToken>(cachePath, {
@@ -172,7 +176,7 @@ async function resolveCopilotToken(options: GitHubCopilotProviderOptions): Promi
         return parsed;
       },
     });
-    if (cached && isTokenUsable(cached)) {
+    if (cached && cached.sourceFingerprint === sourceFingerprint && isTokenUsable(cached)) {
       return {
         token: cached.token,
         baseUrl: deriveCopilotApiBaseUrlFromToken(cached.token) ?? DEFAULT_COPILOT_API_BASE_URL,
@@ -202,6 +206,7 @@ async function resolveCopilotToken(options: GitHubCopilotProviderOptions): Promi
     token: parsed.token,
     expiresAt: parsed.expiresAt,
     updatedAt: Date.now(),
+    sourceFingerprint,
   };
   // The token in hand is already valid; caching it only saves the next call an
   // exchange. A cache the filesystem refused must not turn a successful token

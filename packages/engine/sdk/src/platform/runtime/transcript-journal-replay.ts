@@ -128,7 +128,8 @@ export function replayJournalIntoConversation(
     try {
       persistSnapshot(replayedMessages);
     } catch {
-      // Best-effort, never hard-fail recovery due to snapshot write failure.
+      // Keep the durable journal available to the next resume if publication fails.
+      return { replayed: records.length, hadCorruptTail };
     }
 
     // Rotate the journal, it is no longer needed as a gap-filler.

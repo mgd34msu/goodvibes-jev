@@ -8,6 +8,8 @@ import {
   resolveGoodVibesNtfyTopics,
 } from '../../integrations/ntfy.js';
 
+const inFlight = new Set<string>();
+
 export async function handleNtfySurfaceWebhook(req: Request, context: SurfaceAdapterContext): Promise<Response> {
   const enabled = Boolean(context.configManager.get('surfaces.ntfy.enabled'));
   const credential = await resolveSurfaceCredential(
@@ -72,7 +74,7 @@ export async function handleNtfySurfacePayload(
   // pipeline ran twice and two agents worked the same message.
   const messageId = typeof body.id === 'string' ? body.id : undefined;
   const dedupKey = inboundDedupKey('ntfy', topic, messageId);
-  if (dedupKey && !ntfyInboundDedup.claim(dedupKey)) {
+  if (dedupKey && (inFlight.has(dedupKey) || !ntfyInboundDedup.claim(dedupKey))) {
     return Response.json({
       acknowledged: true,
       queued: false,
@@ -83,24 +85,24 @@ export async function handleNtfySurfacePayload(
     });
   }
 
-  const topics = resolveConfiguredNtfyTopics(context);
-  if (topic === topics.chatTopic) {
-    return handleNtfyChatPayload(body, context, topic, message);
+  if (dedupKey) inFlight.add(dedupKey);
+  let delivered = false;
+  const committed = () => { delivered = true; };
+  try {
+    const topics = resolveConfiguredNtfyTopics(context);
+    const response = topic === topics.chatTopic
+      ? await handleNtfyChatPayload(body, context, topic, message, committed)
+      : topic === topics.remoteTopic
+        ? await handleNtfyRemoteChatPayload(body, context, topic, message)
+        : topic === topics.agentTopic
+          ? await handleNtfyAgentPayload(body, context, topic, message, committed)
+          : Response.json({ acknowledged: true, queued: false, outcome: 'ignored', reason: 'unknown-ntfy-topic', ignored: 'unknown-ntfy-topic', topic });
+    if (response.ok) delivered = true;
+    return response;
+  } finally {
+    if (!delivered) ntfyInboundDedup.release(dedupKey);
+    if (dedupKey) inFlight.delete(dedupKey);
   }
-  if (topic === topics.remoteTopic) {
-    return handleNtfyRemoteChatPayload(body, context, topic, message);
-  }
-  if (topic !== topics.agentTopic) {
-    return Response.json({
-      acknowledged: true,
-      queued: false,
-      outcome: 'ignored',
-      reason: 'unknown-ntfy-topic',
-      ignored: 'unknown-ntfy-topic',
-      topic,
-    });
-  }
-  return handleNtfyAgentPayload(body, context, topic, message);
 }
 
 function resolveConfiguredNtfyTopics(context: SurfaceAdapterContext) {
@@ -142,6 +144,7 @@ async function handleNtfyChatPayload(
   context: SurfaceAdapterContext,
   topic: string,
   message: string,
+  committed: () => void,
 ): Promise<Response> {
   const denied = await authorizeNtfyPayload(body, context, topic, message);
   if (denied) return denied;
@@ -169,6 +172,7 @@ async function handleNtfyChatPayload(
     source: 'ntfy-chat',
     timestamp,
   });
+  committed();
   context.queueNtfyChatReply?.({
     sessionId: session.id,
     topic,
@@ -232,6 +236,7 @@ async function handleNtfyAgentPayload(
   context: SurfaceAdapterContext,
   topic: string,
   message: string,
+  committed: () => void,
 ): Promise<Response> {
   const denied = await authorizeNtfyPayload(body, context, topic, message);
   if (denied) return denied;
@@ -270,6 +275,7 @@ async function handleNtfyAgentPayload(
     metadata: body,
   });
   if (submission.mode === 'continued-live') {
+    committed();
     return Response.json({
       acknowledged: true,
       queued: true,
@@ -286,6 +292,7 @@ async function handleNtfyAgentPayload(
     submission.session.id,
   );
   if (spawnResult instanceof Response) return spawnResult;
+  committed();
   await context.sessionBroker.bindAgent(submission.session.id, spawnResult.id);
   context.queueSurfaceReplyFromBinding(submission.routeBinding ?? binding, {
     agentId: spawnResult.id,

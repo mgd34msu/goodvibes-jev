@@ -64,10 +64,12 @@ export class OllamaProvider implements LLMProvider {
   private readonly nativeChatUrl: string;
   private readonly nativeEmbedUrl: string;
   private readonly nativeFetch: NativeFetch;
+  private readonly nativeHeaders: Record<string, string>;
   private readonly compatProvider: LLMProvider;
   private readonly embeddingModel = 'embeddinggemma';
 
   constructor(opts: OllamaProviderOptions) {
+    this.nativeHeaders = { ...(opts.apiKey ? { Authorization: `Bearer ${opts.apiKey}` } : {}), ...opts.defaultHeaders };
     this.name = opts.name;
     this.models = opts.models;
     this.capabilities = opts.capabilities;
@@ -110,6 +112,7 @@ export class OllamaProvider implements LLMProvider {
         headers: {
           accept: 'application/json',
           'content-type': 'application/json',
+          ...this.nativeHeaders,
         },
         body: JSON.stringify({
           model: request.model ?? this.embeddingModel,
@@ -213,6 +216,7 @@ export class OllamaProvider implements LLMProvider {
         headers: {
           accept: 'application/x-ndjson, application/json',
           'content-type': 'application/json',
+          ...this.nativeHeaders,
         },
         body: JSON.stringify(body),
         ...(params.signal !== undefined ? { signal: params.signal } : {}),

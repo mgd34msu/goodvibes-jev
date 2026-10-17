@@ -47,6 +47,16 @@ export function useSessionRealtime(enabled: boolean): SessionRealtimeState {
   const [state, setState] = useState({ connection, error: null as string | null, connected: false });
 
   useEffect(() => {
+    if (!enabled || (state.connection === connection && state.connected)) return;
+    const interval = setInterval(() => {
+      if (!isClientLifetimeCurrent(lifetime) || route !== getActiveRoute()) return;
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.hostedSessionsAll });
+    }, 15_000);
+    return () => clearInterval(interval);
+  }, [enabled, state, connection, queryClient, lifetime, route]);
+
+  useEffect(() => {
     if (!enabled) return undefined;
     const controller = new AbortController();
     let disposed = false;

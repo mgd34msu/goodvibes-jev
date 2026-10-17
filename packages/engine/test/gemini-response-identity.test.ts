@@ -211,3 +211,15 @@ test('cancellation after partial identity returns no response and does not conta
   expect(result.responseIdentity?.modelVersion).toEqual({ status: 'missing' });
   expect(result.responseIdentity?.responseId).toEqual({ status: 'missing' });
 });
+
+
+test('embedding dimensions use the REST embedContentConfig field', async () => {
+  let body: Record<string, unknown> | undefined;
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    body = JSON.parse(String(init?.body));
+    return Response.json({ embedding: { values: [0.1, 0.2, 0.3] } });
+  }) as typeof fetch;
+  const result = await new GeminiProvider('fixture-key').embed({ text: 'fixture', dimensions: 3, usage: 'query' });
+  expect(body).toEqual({ content: { parts: [{ text: 'fixture' }] }, embedContentConfig: { outputDimensionality: 3 } });
+  expect(result.dimensions).toBe(3);
+});

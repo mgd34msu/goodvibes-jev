@@ -228,12 +228,9 @@ const MAX_RETAINED_CONTENT_CHARS = 20_000;
 /**
  * How many ingests one ledger keeps.
  *
- * A daemon runs for weeks, so an unbounded array here is a slow leak in a
- * process that never restarts. The cap discards the OLDEST entries, which is
- * safe for the decision this ledger drives: `originsThisTurn` reads from a
- * watermark forward, and a turn that has read more than this many distinct
- * pages has already established exposure many times over. The watermark is
- * moved with the discard so it can never point past the end.
+ * Bound retained source text for long-lived daemons. Evicting a source from
+ * the active turn marks its evidence incomplete, so outward-effect decisions
+ * require approval instead of evaluating only the surviving text.
  */
 const MAX_RETAINED_INGESTS = 1_000;
 
@@ -247,6 +244,7 @@ export class UntrustedContentLedger {
   #publicationRevision = 0;
   private readonly ingests: UntrustedIngest[] = [];
   private turnStartIndex = 0;
+  private incompleteTurnEvidence = false;
   /**
    * Where the CURRENT turn's predecessor began.
    *
@@ -264,6 +262,9 @@ export class UntrustedContentLedger {
 
   record(ingest: UntrustedIngest): void {
     this.#publicationRevision++;
+    if (ingest.content === undefined || !ingest.content.trim() || ingest.content.length > MAX_RETAINED_CONTENT_CHARS) {
+      this.incompleteTurnEvidence = true;
+    }
     this.ingests.push(
       ingest.content === undefined
         ? ingest
@@ -271,6 +272,7 @@ export class UntrustedContentLedger {
     );
     if (this.ingests.length > MAX_RETAINED_INGESTS) {
       const discarded = this.ingests.length - MAX_RETAINED_INGESTS;
+      if (discarded > this.turnStartIndex) this.incompleteTurnEvidence = true;
       this.ingests.splice(0, discarded);
       this.turnStartIndex = Math.max(0, this.turnStartIndex - discarded);
       this.previousTurnStartIndex = Math.max(0, this.previousTurnStartIndex - discarded);
@@ -282,6 +284,7 @@ export class UntrustedContentLedger {
     this.#publicationRevision++;
     this.previousTurnStartIndex = this.turnStartIndex;
     this.turnStartIndex = this.ingests.length;
+    this.incompleteTurnEvidence = false;
   }
 
   /** Native turn/source incarnation, including an empty turn or same-value ingest. */
@@ -330,6 +333,11 @@ export class UntrustedContentLedger {
   /** True when any ingest this turn carried its text, so derivation is checkable. */
   hasTaintSourcesThisTurn(): boolean {
     return this.taintSourcesThisTurn().length > 0;
+  }
+
+  /** Every exposure must still have its complete text before a clean comparison can clear an effect. */
+  hasCompleteTaintSourcesThisTurn(): boolean {
+    return !this.incompleteTurnEvidence && this.hasTaintSourcesThisTurn();
   }
 
   /**
@@ -492,7 +500,7 @@ export async function evaluateOutwardEffect(input: {
   // retained the text. This is the check that lets a scheduled report which
   // composed nothing from a stranger proceed, while refusing a send whose body
   // repeats what was just read.
-  if (input.content !== undefined && input.ledger.hasTaintSourcesThisTurn()) {
+  if (input.content !== undefined && input.ledger.hasCompleteTaintSourcesThisTurn()) {
     const taint = await findContentTaint(input.content, input.ledger.taintSourcesThisTurn(), input.taintOptions);
     if (input.taintOptions?.signal?.aborted) throw new JudgmentError('aborted', 'the judgment call was cancelled');
     if (taint.length === 0) {
@@ -541,7 +549,8 @@ export async function evaluateOutwardEffect(input: {
   const approved = checkOwnerApproval({
     approval: input.approval,
     action: input.request.action,
-    clearingContentTaint: false,
+    clearingContentTaint: input.content !== undefined,
+    contentInQuestion: input.content,
     ...(input.now === undefined ? {} : { now: input.now }),
   });
   if (approved.authorized) {
@@ -550,7 +559,7 @@ export async function evaluateOutwardEffect(input: {
   const mismatch = describeApprovalMismatch(approved.mismatch);
   const unanswerable = input.content === undefined
     ? 'this action did not say which of its fields are about to leave'
-    : 'nothing read this turn kept its text';
+    : 'some source text is missing, empty, truncated, or no longer retained';
   return {
     allowed: false,
     untrustedOrigins: origins,

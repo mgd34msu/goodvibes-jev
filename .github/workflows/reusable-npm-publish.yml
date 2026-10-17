@@ -107,7 +107,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Setup Bun + deps (cached)
-        uses: ./.github/actions/setup
+        uses: mgd34msu/goodvibes-jev/.github/actions/setup@d8fa6304e093b42e318dfb24024d7bcaf82b08f9
         with:
           bun-version: ${{ inputs.bun-version }}
       - name: Setup Node

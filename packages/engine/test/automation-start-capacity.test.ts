@@ -3,6 +3,23 @@ import { rmSync } from 'node:fs';
 import { automationMutationFixture } from './_helpers/automation-mutation-fixture.ts';
 import { makeProjectTempDir } from './_helpers/project-temp.ts';
 
+test('terminal history quota never prunes running jobs or frees their capacity', async () => {
+  const dir = makeProjectTempDir('automation-active-history');
+  const f = automationMutationFixture(dir);
+  try {
+    f.config.set('automation.maxConcurrentRuns', 2);
+    f.config.set('automation.runHistoryLimit', 1);
+    const job = await f.create();
+    await f.manager.start();
+    const first = await f.manager.runNow(job.id);
+    const second = await f.manager.runNow(job.id);
+    expect(first.status).toBe('running');
+    expect(second.status).toBe('running');
+    expect(f.manager.getSchedulerCapacity().slotsInUse).toBe(2);
+    await expect(f.manager.runNow(job.id)).rejects.toThrow('concurrency limit');
+  } finally { await f.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('asynchronous startup reserves the configured slot and transfers it to the running record', async () => {
   const dir = makeProjectTempDir('automation-start-capacity');
   const f = automationMutationFixture(dir);

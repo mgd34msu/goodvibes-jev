@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import type { ShellPathService } from '@/runtime/index.ts';
-import { writeStoreFile } from '@/utils/store-file.ts';
+import { writeStoreFile, runStoreFileUpdateSync } from '@/utils/store-file.ts';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../config/surface.ts';
 import { assertNoSecretLikeText } from './persona-registry.ts';
 
@@ -182,105 +182,115 @@ export class AgentNoteRegistry {
   }
 
   public create(input: AgentNoteCreateInput): AgentNoteRecord {
-    const store = this.readStore();
-    const title = normalizeTitle(input.title);
-    const body = input.body.trim();
-    this.validateRequired(title, body);
-    const sourceUrl = input.sourceUrl?.trim() || undefined;
-    assertNoSecretLikeText([title, body, sourceUrl ?? '', ...(input.tags ?? [])], 'Notes');
-    const duplicate = store.notes.find((note) => note.title.toLowerCase() === title.toLowerCase());
-    if (duplicate) throw new Error(`Note already exists ${duplicate.id}`);
-    const timestamp = nowIso();
-    const note: AgentNoteRecord = {
-      id: this.nextId(title, store.notes),
-      title,
-      body,
-      tags: normalizeList(input.tags),
-      sourceUrl,
-      source: input.source ?? 'user',
-      provenance: input.provenance?.trim() || input.source || 'user',
-      reviewState: 'fresh',
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-    this.writeStore({ ...store, notes: [...store.notes, note] });
-    return note;
+    return runStoreFileUpdateSync(this.storePath, () => {
+      const store = this.readStore();
+      const title = normalizeTitle(input.title);
+      const body = input.body.trim();
+      this.validateRequired(title, body);
+      const sourceUrl = input.sourceUrl?.trim() || undefined;
+      assertNoSecretLikeText([title, body, sourceUrl ?? '', ...(input.tags ?? [])], 'Notes');
+      const duplicate = store.notes.find((note) => note.title.toLowerCase() === title.toLowerCase());
+      if (duplicate) throw new Error(`Note already exists ${duplicate.id}`);
+      const timestamp = nowIso();
+      const note: AgentNoteRecord = {
+        id: this.nextId(title, store.notes),
+        title,
+        body,
+        tags: normalizeList(input.tags),
+        sourceUrl,
+        source: input.source ?? 'user',
+        provenance: input.provenance?.trim() || input.source || 'user',
+        reviewState: 'fresh',
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      this.writeStore({ ...store, notes: [...store.notes, note] });
+      return note;
+    });
   }
 
   public update(idOrTitle: string, input: AgentNoteUpdateInput): AgentNoteRecord {
-    const store = this.readStore();
-    const existing = this.findInStore(store, idOrTitle);
-    if (!existing) throw new Error(`Unknown note ${idOrTitle}`);
-    const title = input.title === undefined ? existing.title : normalizeTitle(input.title);
-    const body = input.body === undefined ? existing.body : input.body.trim();
-    this.validateRequired(title, body);
-    const sourceUrl = input.sourceUrl === undefined ? existing.sourceUrl : input.sourceUrl.trim() || undefined;
-    assertNoSecretLikeText([title, body, sourceUrl ?? '', ...(input.tags ?? [])], 'Notes');
-    const duplicate = store.notes.find((note) => note.id !== existing.id && note.title.toLowerCase() === title.toLowerCase());
-    if (duplicate) throw new Error(`Note already exists ${duplicate.id}`);
-    const updated: AgentNoteRecord = {
-      ...existing,
-      title,
-      body,
-      tags: input.tags === undefined ? existing.tags : normalizeList(input.tags),
-      sourceUrl,
-      provenance: input.provenance === undefined ? existing.provenance : input.provenance.trim() || existing.provenance,
-      reviewState: 'fresh',
-      staleReason: undefined,
-      reviewedAt: undefined,
-      updatedAt: nowIso(),
-    };
-    this.writeStore({
-      ...store,
-      notes: store.notes.map((note) => note.id === existing.id ? updated : note),
+    return runStoreFileUpdateSync(this.storePath, () => {
+      const store = this.readStore();
+      const existing = this.findInStore(store, idOrTitle);
+      if (!existing) throw new Error(`Unknown note ${idOrTitle}`);
+      const title = input.title === undefined ? existing.title : normalizeTitle(input.title);
+      const body = input.body === undefined ? existing.body : input.body.trim();
+      this.validateRequired(title, body);
+      const sourceUrl = input.sourceUrl === undefined ? existing.sourceUrl : input.sourceUrl.trim() || undefined;
+      assertNoSecretLikeText([title, body, sourceUrl ?? '', ...(input.tags ?? [])], 'Notes');
+      const duplicate = store.notes.find((note) => note.id !== existing.id && note.title.toLowerCase() === title.toLowerCase());
+      if (duplicate) throw new Error(`Note already exists ${duplicate.id}`);
+      const updated: AgentNoteRecord = {
+        ...existing,
+        title,
+        body,
+        tags: input.tags === undefined ? existing.tags : normalizeList(input.tags),
+        sourceUrl,
+        provenance: input.provenance === undefined ? existing.provenance : input.provenance.trim() || existing.provenance,
+        reviewState: 'fresh',
+        staleReason: undefined,
+        reviewedAt: undefined,
+        updatedAt: nowIso(),
+      };
+      this.writeStore({
+        ...store,
+        notes: store.notes.map((note) => note.id === existing.id ? updated : note),
+      });
+      return updated;
     });
-    return updated;
   }
 
   public markReviewed(idOrTitle: string): AgentNoteRecord {
-    const store = this.readStore();
-    const existing = this.findInStore(store, idOrTitle);
-    if (!existing) throw new Error(`Unknown note ${idOrTitle}`);
-    const updated: AgentNoteRecord = {
-      ...existing,
-      reviewState: 'reviewed',
-      staleReason: undefined,
-      reviewedAt: nowIso(),
-      updatedAt: nowIso(),
-    };
-    this.writeStore({
-      ...store,
-      notes: store.notes.map((note) => note.id === existing.id ? updated : note),
+    return runStoreFileUpdateSync(this.storePath, () => {
+      const store = this.readStore();
+      const existing = this.findInStore(store, idOrTitle);
+      if (!existing) throw new Error(`Unknown note ${idOrTitle}`);
+      const updated: AgentNoteRecord = {
+        ...existing,
+        reviewState: 'reviewed',
+        staleReason: undefined,
+        reviewedAt: nowIso(),
+        updatedAt: nowIso(),
+      };
+      this.writeStore({
+        ...store,
+        notes: store.notes.map((note) => note.id === existing.id ? updated : note),
+      });
+      return updated;
     });
-    return updated;
   }
 
   public markStale(idOrTitle: string, reason: string): AgentNoteRecord {
-    const store = this.readStore();
-    const existing = this.findInStore(store, idOrTitle);
-    if (!existing) throw new Error(`Unknown note ${idOrTitle}`);
-    const updated: AgentNoteRecord = {
-      ...existing,
-      reviewState: 'stale',
-      staleReason: reason.trim() || 'Marked stale by user.',
-      updatedAt: nowIso(),
-    };
-    this.writeStore({
-      ...store,
-      notes: store.notes.map((note) => note.id === existing.id ? updated : note),
+    return runStoreFileUpdateSync(this.storePath, () => {
+      const store = this.readStore();
+      const existing = this.findInStore(store, idOrTitle);
+      if (!existing) throw new Error(`Unknown note ${idOrTitle}`);
+      const updated: AgentNoteRecord = {
+        ...existing,
+        reviewState: 'stale',
+        staleReason: reason.trim() || 'Marked stale by user.',
+        updatedAt: nowIso(),
+      };
+      this.writeStore({
+        ...store,
+        notes: store.notes.map((note) => note.id === existing.id ? updated : note),
+      });
+      return updated;
     });
-    return updated;
   }
 
   public deleteNote(idOrTitle: string): AgentNoteRecord {
-    const store = this.readStore();
-    const existing = this.findInStore(store, idOrTitle);
-    if (!existing) throw new Error(`Unknown note ${idOrTitle}`);
-    this.writeStore({
-      ...store,
-      notes: store.notes.filter((note) => note.id !== existing.id),
+    return runStoreFileUpdateSync(this.storePath, () => {
+      const store = this.readStore();
+      const existing = this.findInStore(store, idOrTitle);
+      if (!existing) throw new Error(`Unknown note ${idOrTitle}`);
+      this.writeStore({
+        ...store,
+        notes: store.notes.filter((note) => note.id !== existing.id),
+      });
+      return existing;
     });
-    return existing;
   }
 
   private validateRequired(title: string, body: string): void {

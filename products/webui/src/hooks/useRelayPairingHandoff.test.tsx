@@ -2,13 +2,14 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
+import { IdentityBoundary } from '../components/auth/IdentityBoundary';
 import { useUrlState } from './useUrlState';
 import { resetRelayPairingCaptureForTest, useRelayPairingHandoff } from './useRelayPairingHandoff';
 import {
   encodeRelayPairingString, getStoredRelayPairing, RELAY_PAIRING_STORAGE_KEY,
   type RelayPairingPayload,
 } from '../lib/relay-pairing';
-import { subscribeClientLifetime, WEBUI_TOKEN_STORE_KEY } from '../lib/client-lifetime';
+import { getClientLifetime, subscribeClientLifetime, WEBUI_TOKEN_STORE_KEY } from '../lib/client-lifetime';
 
 const payload: RelayPairingPayload = {
   protocol: 1, relayUrl: 'wss://relay.example.test', rid: 'synthetic-rid',
@@ -107,4 +108,20 @@ describe('relay handoff alongside the actual URL hook', () => {
     expect(window.localStorage.getItem(WEBUI_TOKEN_STORE_KEY)).toBeNull();
     expect(window.location.search).toBe('?view=chat');
   });
+});
+
+
+test('identity-driven remount consumes a handoff only once', async () => {
+  window.history.replaceState(null, '', '/#relay=' + encodeURIComponent(code));
+  getClientLifetime();
+  let changes = 0;
+  cleanups.push(subscribeClientLifetime(() => { changes++; }));
+  const container = document.createElement('div'); document.body.appendChild(container);
+  const root = createRoot(container);
+  cleanups.push(() => { flushSync(() => root.unmount()); container.remove(); });
+  flushSync(() => root.render(<IdentityBoundary><Probe /></IdentityBoundary>));
+  await new Promise<void>(resolve => setImmediate(resolve));
+  flushSync(() => {});
+  expect(changes).toBe(1);
+  expect(getStoredRelayPairing()).toEqual(payload);
 });

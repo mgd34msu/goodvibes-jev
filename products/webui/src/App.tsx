@@ -220,36 +220,38 @@ export default function App() {
     },
   });
 
-  // Both auto-select effects act only on the chat view: the list now loads in every
-  // view (for "Recent"), and choosing a session elsewhere would rewrite that view's URL.
-  useEffect(() => {
-    if (view !== 'chat') return;
-    if (!activeChatSessionId && !draftChatRequested && chatSessionItems.length) {
-      setSession(bestId(chatSessionItems[0]), { replace: true });
-    }
-  }, [view, activeChatSessionId, chatSessionItems, draftChatRequested, setSession]);
-
-  useEffect(() => {
-    if (view !== 'chat') return;
-    if (!chatSessions.isSuccess || !activeChatSessionId) return;
-    if (chatSessionItems.some((s) => bestId(s) === activeChatSessionId)) return;
-    const nextSessionId = bestId(chatSessionItems[0]);
-    setSession(nextSessionId, { replace: true });
-    setDraftChatRequested(!nextSessionId);
-  }, [view, activeChatSessionId, chatSessionItems, chatSessions.isSuccess, setSession]);
-
-  useEffect(() => {
-    writeStoredActiveCompanionSessionId(activeChatSessionId);
-  }, [activeChatSessionId]);
-
   // Seed local session state from localStorage on first mount if URL has no session.
+  const [sessionRestored, setSessionRestored] = useState(false);
   useEffect(() => {
     if (!activeChatSessionId) {
       const stored = readStoredActiveCompanionSessionId();
       if (stored) setSession(stored, { replace: true });
     }
+    setSessionRestored(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Both auto-select effects act only on the chat view: the list now loads in every
+  // view (for "Recent"), and choosing a session elsewhere would rewrite that view's URL.
+  useEffect(() => {
+    if (!sessionRestored || view !== 'chat') return;
+    if (!activeChatSessionId && !draftChatRequested && chatSessionItems.length) {
+      setSession(bestId(chatSessionItems[0]), { replace: true });
+    }
+  }, [sessionRestored, view, activeChatSessionId, chatSessionItems, draftChatRequested, setSession]);
+
+  useEffect(() => {
+    if (!sessionRestored || view !== 'chat') return;
+    if (!chatSessions.isSuccess || !activeChatSessionId) return;
+    if (chatSessionItems.some((s) => bestId(s) === activeChatSessionId)) return;
+    const nextSessionId = bestId(chatSessionItems[0]);
+    setSession(nextSessionId, { replace: true });
+    setDraftChatRequested(!nextSessionId);
+  }, [sessionRestored, view, activeChatSessionId, chatSessionItems, chatSessions.isSuccess, setSession]);
+
+  useEffect(() => {
+    if (sessionRestored) writeStoredActiveCompanionSessionId(activeChatSessionId);
+  }, [activeChatSessionId, sessionRestored]);
 
   useEffect(() => {
     if (chatSessions.isSuccess || chatSessionItems.length) writeStoredCompanionSessions(chatSessionItems);

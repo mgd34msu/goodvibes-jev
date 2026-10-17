@@ -33,10 +33,13 @@ export function createMSTeamsDeliveryStrategy(
     },
     async deliver(request) {
       const attachments = await resolveAttachments(request, artifactStore, configManager, 128 * 1024);
-      const serviceUrl = firstNonEmpty(
-        typeof request.binding?.metadata.serviceUrl === 'string' ? request.binding.metadata.serviceUrl : undefined,
+      const configuredServiceUrl = firstNonEmpty(
         String(configManager.get('surfaces.msteams.serviceUrl') ?? ''),
         process.env.MSTEAMS_SERVICE_URL,
+      );
+      const serviceUrl = firstNonEmpty(
+        typeof request.binding?.metadata.serviceUrl === 'string' ? request.binding.metadata.serviceUrl : undefined,
+        configuredServiceUrl,
       );
       const rawConversationId = firstNonEmpty(
         request.target.address,
@@ -46,6 +49,12 @@ export function createMSTeamsDeliveryStrategy(
         String(configManager.get('surfaces.msteams.defaultConversationId') ?? ''),
       );
       if (!serviceUrl) throw new Error('Missing Microsoft Teams service URL');
+      const destination = new URL(serviceUrl);
+      const configuredOrigin = configuredServiceUrl ? new URL(configuredServiceUrl).origin : undefined;
+      if (destination.protocol !== 'https:' || destination.username || destination.password
+        || (destination.origin !== 'https://smba.trafficmanager.net' && destination.origin !== configuredOrigin)) {
+        throw new Error('Untrusted Microsoft Teams service URL');
+      }
       if (!rawConversationId) throw new Error('Missing Microsoft Teams conversation id');
       const threadId = firstNonEmpty(
         request.binding?.threadId,
@@ -57,6 +66,7 @@ export function createMSTeamsDeliveryStrategy(
       const accessToken = await resolveMSTeamsAccessToken(configManager, serviceRegistry, secretsManager, request);
       const response = await deliveryFetch(request, `${normalizeBaseUrl(serviceUrl)}/v3/conversations/${encodeURIComponent(conversationId)}/activities`, {
         method: 'POST',
+        redirect: 'error',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${accessToken}`,

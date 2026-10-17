@@ -79,6 +79,15 @@ export function createReactNativeGoodVibesSdk(
   // Normalize baseUrl once, trimmed and validated, so both HTTP and WebSocket
   // connectors use the same value regardless of how the caller passed it.
   const baseUrl = options.baseUrl.trim();
+  const realtime = {
+      ...(options.realtime ?? {}),
+      webSocketReconnect: {
+        enabled: true,
+        baseDelayMs: 500,
+        maxDelayMs: 5_000,
+        ...(options.realtime?.webSocketReconnect ?? {}),
+      },
+  };
   const base = createGoodVibesSdk({
     ...options,
     // Default retry: 3 attempts with exponential back-off capped at 2 s.
@@ -89,15 +98,7 @@ export function createReactNativeGoodVibesSdk(
       baseDelayMs: 250,
       maxDelayMs: 2_000,
     },
-    realtime: {
-      ...(options.realtime ?? {}),
-      webSocketReconnect: {
-        enabled: true,
-        baseDelayMs: 500,
-        maxDelayMs: 5_000,
-        ...(options.realtime?.webSocketReconnect ?? {}),
-      },
-    },
+    realtime,
     WebSocketImpl: options.WebSocketImpl ?? globalThis.WebSocket,
   });
   const getAuthToken = () => base.auth.getToken();
@@ -112,7 +113,7 @@ export function createReactNativeGoodVibesSdk(
             getAuthToken,
             requireReactNativeWebSocket(options.WebSocketImpl),
             {
-              reconnect: options.realtime?.webSocketReconnect,
+              reconnect: realtime.webSocketReconnect,
               onError: options.realtime?.onError,
             },
           ),
@@ -128,7 +129,7 @@ export function createReactNativeGoodVibesSdk(
             getAuthToken,
             requireReactNativeWebSocket(webSocketImpl ?? options.WebSocketImpl),
             {
-              reconnect: options.realtime?.webSocketReconnect,
+              reconnect: realtime.webSocketReconnect,
               onError: options.realtime?.onError,
             },
           ),

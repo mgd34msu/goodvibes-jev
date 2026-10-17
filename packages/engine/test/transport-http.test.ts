@@ -36,6 +36,32 @@ function createSseResponse(chunks: readonly string[], status = 200): Response {
   });
 }
 
+test('authenticated JSON and SSE requests reject resolved cross-origin paths before fetching', async () => {
+  let requests = 0;
+  const transport = createHttpTransport({ baseUrl: 'https://daemon.example', authToken: 'synthetic-token', fetch: createFetchStub(async () => {
+    requests++;
+    return createJsonResponse({ ok: true });
+  }) });
+  for (const path of ['//other.example/path', '\\\\other.example/path', '/\\other.example/path', 'HTTPS://other.example/path']) {
+    await expect(transport.requestJson(path)).rejects.toThrow();
+    await expect(openServerSentEventStream(transport, path, {})).rejects.toThrow();
+  }
+  expect(requests).toBe(0);
+  await expect(transport.requestJson('/api/status')).resolves.toEqual({ ok: true });
+  await expect(transport.requestJson('HTTPS://daemon.example/api/status')).resolves.toEqual({ ok: true });
+  expect(requests).toBe(2);
+});
+
+test('204 and 205 mutations preserve empty response bodies through middleware', async () => {
+  for (const status of [204, 205]) {
+    for (const middleware of [false, true]) {
+      const transport = createHttpTransport({ baseUrl: 'https://daemon.example', fetch: createFetchStub(async () => new Response(null, { status })) });
+      if (middleware) transport.use(async (_context, next) => { await next(); });
+      await expect(transport.requestJson('/api/item', { method: 'DELETE' })).resolves.toBeNull();
+    }
+  }
+});
+
 describe('normalizeTransportError passes typed errors through and matches no message text', () => {
   test('the typed configuration and path-parameter errors http-core throws come back as they are', () => {
     const configuration = new SourceConfigurationError('Transport baseUrl is required. Pass a non-empty baseUrl string.');

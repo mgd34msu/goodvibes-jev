@@ -94,6 +94,7 @@ function distFiles(): string[] {
     if (!entry.isDirectory()) continue;
     walk(resolve(PACKAGES_ROOT, entry.name, 'dist'));
   }
+  walk(resolve(REPO_ROOT, 'packages/judgment/dist'));
   return found;
 }
 

@@ -1,4 +1,5 @@
 import { TerminalBuffer } from './buffer.ts';
+import { safeTerminalLink } from '@goodvibes-jev/engine/terminal-shell';
 import { type Cell } from '@goodvibes-jev/engine/sdk/platform/types';
 import {
   type TermColorCaps,
@@ -124,7 +125,7 @@ export class DiffEngine {
     // Normalize hex → r;g;b (for change-detection against lastFg/lastBg)
     const fg = this.sanitizeColor(cell.fg);
     const bg = this.sanitizeColor(cell.bg);
-    const link = cell.link ?? '';
+    const link = safeTerminalLink(cell.link) ?? '';
 
     const changed = fg !== this.lastFg || bg !== this.lastBg ||
       cell.bold !== this.lastBold || cell.dim !== this.lastDim ||

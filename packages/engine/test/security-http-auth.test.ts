@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import * as crypto from 'node:crypto';
 import { join } from 'node:path';
 import {
   authenticateOperatorRequest,
@@ -41,6 +42,16 @@ describe('http auth helpers', () => {
       },
     });
     expect(extractOperatorAuthToken(request)).toBe('shared-secret');
+  });
+
+  test('unknown usernames still perform password hashing before refusal', () => {
+    const hash = spyOn(crypto, 'scryptSync');
+    try {
+      expect(userAuth.authenticate('missing-user', 'wrong').ok).toBe(false);
+      expect(hash).toHaveBeenCalledTimes(1);
+      expect(userAuth.authenticate('admin', 'wrong').ok).toBe(false);
+      expect(hash).toHaveBeenCalledTimes(2);
+    } finally { hash.mockRestore(); }
   });
 
   test('authenticates shared tokens and treats them as admin', () => {

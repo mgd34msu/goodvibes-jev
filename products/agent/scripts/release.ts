@@ -1,3 +1,4 @@
+import { assertStandaloneReleaseAllowed } from './standalone-release-policy.ts';
 import { execSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
@@ -242,6 +243,7 @@ export function formatLocalReleaseDate(date = new Date()): string {
 }
 
 export function main(argv = process.argv.slice(2), root = process.cwd()): void {
+  assertStandaloneReleaseAllowed(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')), 'release');
   const options = parseReleaseOptions(argv);
 
   // --- Pre-flight checks ---

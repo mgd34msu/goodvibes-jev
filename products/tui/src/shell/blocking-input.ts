@@ -84,6 +84,15 @@ export function handleBlockingShellInput(
   if (pendingPermission) {
     const req = pendingPermission;
 
+    // Ctrl+C is ALWAYS the hard abort: deny and kill the turn, in every mode.
+    if (data === '\x03') {
+      req.resolve(false, false);
+      abortTurn();
+      render();
+      return { handled: true, pendingPermission: null };
+    }
+
+
     // Input debounce: swallow any key that arrives within the settle window
     // after the prompt appeared, so type-ahead text from before the user saw
     // the prompt cannot answer it (neither approve, deny, nor navigate). The
@@ -120,14 +129,6 @@ export function handleBlockingShellInput(
       }
       render();
       return { handled: true, pendingPermission: { ...req, hunkState: state } };
-    }
-
-    // Ctrl+C is ALWAYS the hard abort: deny and kill the turn, in every mode.
-    if (data === '\x03') {
-      req.resolve(false, false);
-      abortTurn();
-      render();
-      return { handled: true, pendingPermission: null };
     }
 
     // Typed-reply mode: deny-with-reason (started by typing on any card) or

@@ -20,13 +20,13 @@ const platform_1 = require("./platform");
 /**
  * Execute the following sh program.
  */
-function execShellScript(body, cmd = (0, platform_1.isWindows)() ? 'cmd.exe' : 'bash') {
+function execShellScript(body, cmd = (0, platform_1.isWindows)() ? 'cmd.exe' : 'bash', scriptArgs = []) {
     const args = [];
     if (cmd === 'cmd.exe') {
         args.push('/c', body);
     }
     else {
-        args.push('--noprofile', '--norc', '-c', body);
+        args.push('--noprofile', '--norc', '-c', body, 'bash-documentation', ...scriptArgs);
     }
     const process = ChildProcess.spawn(cmd, args);
     return new Promise((resolve, reject) => {
@@ -62,22 +62,22 @@ const WORDS_WITHOUT_DOCUMENTATION = new Set([
  */
 function getShellDocumentationWithoutCache(_a) {
     return __awaiter(this, arguments, void 0, function* ({ word, }) {
-        if (word.split(' ').length > 1) {
+        if (typeof word !== 'string' || word.length === 0 || /[\x00-\x1f\x7f]/.test(word)) {
             throw new Error(`lookupDocumentation should be given a word, received "${word}"`);
         }
         if (WORDS_WITHOUT_DOCUMENTATION.has(word)) {
             return null;
         }
         const DOCUMENTATION_COMMANDS = [
-            { type: 'help', command: `help ${word} | col -bx` },
+            { type: 'help', command: 'help -- "$1" | col -bx' },
             // We have experimented with setting MANWIDTH to different values for reformatting.
             // The default line width of the terminal works fine for hover, but could be better
             // for completions.
-            { type: 'man', command: `man -P cat ${word} | col -bx` },
+            { type: 'man', command: 'man -P cat -- "$1" | col -bx' },
         ];
         for (const { type, command } of DOCUMENTATION_COMMANDS) {
             try {
-                const documentation = yield execShellScript(command);
+                const documentation = yield execShellScript(command, 'bash', [word]);
                 if (documentation) {
                     let formattedDocumentation = documentation.trim();
                     if (type === 'man') {

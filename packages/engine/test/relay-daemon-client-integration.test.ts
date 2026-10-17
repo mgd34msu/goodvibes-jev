@@ -92,6 +92,17 @@ describe('typed operator client over the relay', () => {
     reg.stop();
   });
 
+  test('binary request bytes survive the encrypted tunnel unchanged', async () => {
+    const bytes = new Uint8Array([0, 255, 254, 128, 195, 40, 13, 10]);
+    const reg = await standUpDaemon('rid-binary-body', async req => new Response(await req.arrayBuffer()));
+    const client = createRelayClient({ pairing: await reg.mintPairing('test-daemon') });
+    try {
+      await client.connect();
+      const response = await client.fetch('https://relay.invalid/binary', { method: 'POST', body: bytes });
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+    } finally { client.close(); reg.stop(); }
+  });
+
   test('dialing an offline daemon surfaces an honest error', async () => {
     const identity = await generateRelayIdentity();
     const daemonPublicKey = await relayIdentityPublicKeyBase64Url(identity);

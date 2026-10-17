@@ -270,7 +270,7 @@ export async function chatWithOpenAICodex(
         let inputTokens = 0;
         let outputTokens = 0;
         let cacheReadTokens = 0;
-        let status = 'completed';
+        let status = 'in_progress';
 
         const handleDataPayload = (payload: string): void => {
           const fragments = payload
@@ -357,11 +357,11 @@ export async function chatWithOpenAICodex(
           return;
         }
 
-        if (type === 'response.completed') {
+        if (type === 'response.completed' || type === 'response.incomplete') {
           const completed = event['response'];
           if (!completed || typeof completed !== 'object') return;
           const record = completed as Record<string, unknown>;
-          status = typeof record['status'] === 'string' ? record['status'] : status;
+          status = type === 'response.incomplete' ? 'incomplete' : 'completed';
           const usage = record['usage'];
           if (usage && typeof usage === 'object') {
             const usageRecord = usage as Record<string, unknown>;
@@ -425,6 +425,9 @@ export async function chatWithOpenAICodex(
           }
         }
 
+        if (status === 'in_progress') throw new ProviderError('OpenAI Codex stream ended without a terminal response.', {
+          provider: OPENAI_CODEX_PROVIDER_NAME, operation: 'chat', phase: 'stream',
+        });
         const resolvedToolCalls = [...toolCalls.values()];
         return {
           content: text,

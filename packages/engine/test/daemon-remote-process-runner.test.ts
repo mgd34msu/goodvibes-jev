@@ -124,3 +124,8 @@ describe('remote process deadline and failure ownership', () => {
   }
 
 });
+
+
+test('excessive command output fails explicitly instead of retaining an unbounded buffer', async () => {
+  await expect(runProcess({ args: code("process.stdout.write('x'.repeat(9 * 1024 * 1024)); setTimeout(() => {}, 30000)"), timeoutMs: 3000 })).rejects.toThrow('capture limit');
+});

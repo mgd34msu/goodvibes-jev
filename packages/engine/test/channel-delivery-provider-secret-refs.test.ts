@@ -175,8 +175,40 @@ function fixture(provider: ProviderCase, configured: unknown, options: {
     target: { kind: 'surface', surfaceKind: provider.surface, address: 'owned-recipient' },
     body: BODY, title: 'Owned delivery', jobId: 'owned-job', runId: 'owned-run', includeLinks: false,
   };
-  return { send: () => delivery.deliver(request), reads, secretReads, serviceReads };
+  return { send: () => delivery.deliver(request), request, reads, secretReads, serviceReads };
 }
+
+test('Teams rejects reply metadata that redirects credentials away from Connector or configured authority', async () => {
+  const provider = providers.find(provider => provider.surface === 'msteams')!;
+  for (const serviceUrl of ['https://other.example.invalid', 'http://teams.example.invalid', 'https://smba.trafficmanager.net.other.invalid']) {
+    const delivery = fixture(provider, SECRET_REF);
+    Object.assign(delivery.request, { binding: { metadata: { serviceUrl } } });
+    await expect(delivery.send()).rejects.toThrow('Untrusted Microsoft Teams service URL');
+    expect(calls).toHaveLength(0);
+  }
+  const delivery = fixture(provider, SECRET_REF);
+  Object.assign(delivery.request, { binding: { metadata: { serviceUrl: 'https://smba.trafficmanager.net/amer' } } });
+  await delivery.send();
+  expect(calls.at(-1)?.url).toStartWith('https://smba.trafficmanager.net/amer/');
+});
+
+test.each(['bridge', 'twilio'])('telephony %s resolves secret references before transmission', async mode => {
+  const provider: ProviderCase = {
+    name: 'Telephony', surface: 'telephony',
+    configKey: mode === 'bridge' ? 'surfaces.telephony.token' : 'surfaces.telephony.authToken',
+    environmentKey: mode === 'bridge' ? 'TELEPHONY_BRIDGE_TOKEN' : 'TWILIO_AUTH_TOKEN',
+    serviceField: mode === 'bridge' ? 'primary' : 'authToken',
+    config: { 'surfaces.telephony.provider': mode, 'surfaces.telephony.mode': mode === 'bridge' ? 'bridge' : 'sms',
+      'surfaces.telephony.bridgeUrl': 'https://telephony.example.invalid/send',
+      'surfaces.telephony.accountSid': 'owned-account', 'surfaces.telephony.fromNumber': '+15550001111' },
+  };
+  const delivery = fixture(provider, SECRET_REF);
+  await delivery.send();
+  expect(delivery.secretReads).toEqual([SECRET_KEY]);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.headers.get('authorization')).toBe(mode === 'bridge' ? `Bearer ${RESOLVED}` : `Basic ${Buffer.from(`owned-account:${RESOLVED}`).toString('base64')}`);
+  expect(JSON.stringify(calls)).not.toContain(SECRET_REF);
+});
 
 function expectWireCredential(provider: ProviderCase, credential: string | undefined): void {
   expect(calls).toHaveLength(provider.surface === 'msteams' ? 2 : 1);

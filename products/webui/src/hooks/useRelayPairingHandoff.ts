@@ -20,7 +20,7 @@
  * a toast), or 'error' when the fragment was malformed.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   decodeRelayPairingCode,
   parseRelayPairingFromHash,
@@ -37,7 +37,7 @@ export interface RelayPairingHandoff {
   pairing: RelayPairingPayload | null;
 }
 
-const capture: { done: boolean; code: string | null } = { done: false, code: null };
+const capture: { done: boolean; consumed: boolean; code: string | null } = { done: false, consumed: false, code: null };
 
 function captureRelayPairingCode(): string | null {
   if (!capture.done) {
@@ -53,19 +53,19 @@ function captureRelayPairingCode(): string | null {
 /** Test-only: reset the module-level capture between cases. */
 export function resetRelayPairingCaptureForTest(): void {
   capture.done = false;
+  capture.consumed = false;
   capture.code = null;
 }
 
 export function useRelayPairingHandoff(): RelayPairingHandoff {
   const [code] = useState(captureRelayPairingCode);
-  const consumed = useRef(false);
   const [status, setStatus] = useState<RelayPairingHandoffStatus>('idle');
   const [error, setError] = useState<unknown>(null);
   const [pairing, setPairing] = useState<RelayPairingPayload | null>(null);
 
   useEffect(() => {
-    if (code === null || consumed.current) return;
-    consumed.current = true;
+    if (code === null || capture.consumed) return;
+    capture.consumed = true;
     try {
       const decoded = decodeRelayPairingCode(code);
       storeRelayPairing(decoded);

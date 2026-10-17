@@ -294,3 +294,18 @@ describe('model listing', () => {
     expect(models.map((m) => m.name)).toEqual(['local-s1']);
   });
 });
+
+
+test('function callers reject ambiguous question IDs before asking', () => {
+  const flag = { kind: 'flag' as const, question: 'Flag?' };
+  for (const functions of [
+    { 'a.b': { description: 'one', args: { c: flag } }, a: { description: 'two', args: { 'b.c': flag } } },
+    { a: { description: 'one', args: { x: { ...flag, stated: 'Stated?' }, 'x?': flag } } },
+    { a: { description: 'one', args: { x: { kind: 'set' as const, question: '{}?', members: ['one'] }, 'x[0]': flag } } },
+  ]) expect(() => defineFunctionCaller({ ...header, name: 'test.collisions', instructions: 'Choose', functions, band: { actAt: 0.8, confirmAt: 0.5 }, fixtures: [{ name: 'example', state: 'example', expect: { fn: 'a' } }] })).toThrow('ambiguous question keys');
+});
+
+test('feature encoding refuses colliding column names', () => {
+  expect(() => encodeColumns({ risk: score('Risk', ['low', 'high']), risk_sd: noul('Other') }, [], 'mean_spread')).toThrow('ambiguous');
+  expect(() => encodeColumns({ risk: choice('Risk', { high: null }), 'risk=high': noul('Other') }, [], 'mean')).toThrow('ambiguous');
+});

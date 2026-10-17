@@ -16,7 +16,11 @@ import type { SemanticDiff } from '../semantic-diff.ts';
 
 const MAX_ENTRIES = 200;
 
-const memo = new Map<string, SemanticDiff | null | 'pending'>();
+interface Entry { result: SemanticDiff | null | undefined }
+const memo = new Map<string, Entry>();
+function trimMemo(): void {
+  while (memo.size > MAX_ENTRIES) memo.delete(memo.keys().next().value!);
+}
 const listeners = new Set<() => void>();
 let generation = 0;
 
@@ -51,20 +55,17 @@ export function semanticSummaryFor(diff: string, path: string | undefined): Sema
   if (!path) return null;
   const key = `${path}\u0000${diff}`;
   const known = memo.get(key);
-  if (known === 'pending') return undefined;
-  if (known !== undefined) return known;
-  memo.set(key, 'pending');
-  while (memo.size > MAX_ENTRIES) {
-    const oldest = memo.keys().next();
-    if (oldest.done) break;
-    memo.delete(oldest.value);
-  }
+  if (known !== undefined) return known.result;
+  const pending: Entry = { result: undefined };
+  memo.set(key, pending);
+  trimMemo();
   const { before, after } = beforeAfter(diff);
   void import('../semantic-diff.ts')
     .then(({ computeSemanticDiff }) => computeSemanticDiff(path, before, after))
     .catch(() => null)
     .then((result) => {
-      memo.set(key, result);
+      if (memo.get(key) !== pending) return;
+      pending.result = result;
       generation++;
       for (const listener of listeners) listener();
     });
@@ -73,5 +74,6 @@ export function semanticSummaryFor(diff: string, path: string | undefined): Sema
 
 /** Seed a summary directly (tests and golden frames, which must not wait on tree-sitter). */
 export function primeSemanticSummary(diff: string, path: string, summary: SemanticDiff | null): void {
-  memo.set(`${path}\u0000${diff}`, summary);
+  memo.set(`${path}\u0000${diff}`, { result: summary });
+  trimMemo();
 }

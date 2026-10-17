@@ -2876,10 +2876,11 @@ export async function setExplicitAuthToken(rawToken: string): Promise<unknown> {
   const token = rawToken.replace(/^Bearer\s+/i, '').trim();
   if (!token) throw new Error('Token is required');
   await sdk.auth.setToken(token);
+  const validationLifetime = getClientLifetime();
   try {
     return await getCurrentAuth();
   } catch (error) {
-    await sdk.auth.clearToken();
+    if (getClientLifetime() === validationLifetime) await sdk.auth.clearToken();
     throw error;
   }
 }

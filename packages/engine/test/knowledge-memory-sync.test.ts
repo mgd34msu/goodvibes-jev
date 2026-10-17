@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { ArtifactStore } from '../sdk/src/platform/artifacts/index.js';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
 import { KnowledgeService } from '../sdk/src/platform/knowledge/service.js';
+import { syncKnowledgeMemoryNodes } from '../sdk/src/platform/knowledge/memory-sync.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { trackDisposables } from './_helpers/disposables.ts';
 import { MemoryEmbeddingProviderRegistry, MemoryRegistry, MemoryStore } from '../sdk/src/platform/state/index.js';
@@ -45,7 +46,7 @@ describe('knowledge memory sync', () => {
     });
     await memoryStore.init();
     const memoryRegistry = new MemoryRegistry(memoryStore);
-    await memoryRegistry.add({
+    const memory = await memoryRegistry.add({
       scope: 'project',
       cls: 'fact',
       summary: 'Use sqlite-vec for semantic recall',
@@ -73,5 +74,21 @@ describe('knowledge memory sync', () => {
     expect(memoryNode?.metadata.knowledgeSpaceId).toBe('default');
     expect(memoryNode?.metadata.namespace).toBe('default');
     expect((await service.queryNodes({ limit: 100, includeAllSpaces: true })).items.length).toBeGreaterThanOrEqual(3);
+    memoryRegistry.update(memory.id, { tags: [] });
+    await syncKnowledgeMemoryNodes(store, memoryRegistry);
+    expect(store.listEdges().filter(edge => edge.fromId === `memory-${memory.id}` && edge.relation === 'memory_tagged_with')).toEqual([]);
+    memoryRegistry.review(memory.id, { state: 'contradicted' });
+    await syncKnowledgeMemoryNodes(store, memoryRegistry);
+    expect(store.getNode(`memory-${memory.id}`)).toBeNull();
+    memoryRegistry.review(memory.id, { state: 'reviewed' });
+    await syncKnowledgeMemoryNodes(store, memoryRegistry);
+    expect(store.getNode(`memory-${memory.id}`)).not.toBeNull();
+    memoryRegistry.delete(memory.id);
+    await syncKnowledgeMemoryNodes(store, memoryRegistry);
+    const reopened = new KnowledgeStore({ dbPath: join(root, 'knowledge.sqlite') });
+    await reopened.init();
+    expect(reopened.getNode(`memory-${memory.id}`)).toBeNull();
+    expect(reopened.listNodeRevisions(`memory-${memory.id}`)).toEqual([]);
+    expect(reopened.listNodes().some(node => node.kind === 'topic')).toBe(true);
   });
 });

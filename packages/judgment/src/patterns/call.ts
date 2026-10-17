@@ -180,7 +180,11 @@ function callQuestions(spec: CallerSpec): Record<string, Question> {
   const functions = Object.entries(spec.functions);
   const route = choice(spec.instructions, Object.fromEntries(functions.map(([fn, { description }]) => [fn, description])));
   const args = functions.flatMap(([fn, { args }]) => Object.entries(args).flatMap(([arg, argSpec]) => argQuestions(fn, arg, argSpec)));
-  return Object.fromEntries([[ROUTE, route], ...args]);
+  const entries: [string, Question][] = [[ROUTE, route], ...args];
+  if (new Set(entries.map(([key]) => key)).size !== entries.length) {
+    throw new RangeError(`caller ${spec.name}: function and argument names produce ambiguous question keys`);
+  }
+  return Object.fromEntries(entries);
 }
 
 /** Compares the filled call with the fixture's, showing only the arguments the fixture names. */

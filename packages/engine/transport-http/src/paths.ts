@@ -113,11 +113,13 @@ export function buildUrl(baseUrl: string, path: string): string {
   if (/^[a-z][a-z0-9+\-.]*:/i.test(path)) {
     throw new ConfigurationError(`Absolute path not allowed: ${path}`, { code: 'SDK_TRANSPORT_PATH_ABSOLUTE' });
   }
+  let resolved: string;
   try {
-    return new URL(path, `${normalized}/`).toString();
+    resolved = new URL(path, `${normalized}/`).toString();
   } catch (cause) {
     throw new ConfigurationError(`Invalid transport path: ${path}`, { code: 'SDK_TRANSPORT_PATH_INVALID', cause });
   }
+  return assertSameOriginAbsoluteUrl(resolved, normalized);
 }
 
 /**

@@ -37,6 +37,7 @@ export interface VoiceCaptureWiringDeps {
   readonly sessionId: string;
   /** Writes recognised text into the composer draft. */
   readonly writeDraft: (text: string) => void;
+  readonly readDraftRevision?: () => unknown;
   /** Submits recognised text as a turn (`voice.wake.autoSubmit` on). */
   readonly submitTurn: (text: string) => void;
   readonly notify: (message: string) => void;
@@ -55,7 +56,7 @@ export interface VoiceCaptureWiring {
    */
   readonly status: () => VoiceCaptureIndicatorState | null;
   /** Teardown, for the shell's `unsubs` registry, releases any open device. */
-  readonly unsubs: readonly (() => void)[];
+  readonly unsubs: readonly (() => void | Promise<void>)[];
 }
 
 /** Compose voice input and wake detection. Opens no device by itself. */
@@ -89,6 +90,7 @@ export function wireVoiceCapture(deps: VoiceCaptureWiringDeps): VoiceCaptureWiri
     readSettings,
     resolveTranscriber,
     writeDraft: deps.writeDraft,
+    readDraftRevision: deps.readDraftRevision,
     notify: deps.notify,
     render: deps.render,
   });
@@ -112,6 +114,6 @@ export function wireVoiceCapture(deps: VoiceCaptureWiringDeps): VoiceCaptureWiri
   return {
     toggleVoiceInput: voiceInput.toggle,
     status: () => voiceInput.status() ?? wake.status(),
-    unsubs: [...startWakeRuntime(wake, { subscribeConfig }), () => { void voiceInput.release(); }],
+    unsubs: [...startWakeRuntime(wake, { subscribeConfig }), () => voiceInput.release()],
   };
 }

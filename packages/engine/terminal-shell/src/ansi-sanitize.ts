@@ -35,6 +35,17 @@ const ESC_OTHER = /\x1b[^\[\]]/g;
 // Matches standalone BEL
 const BEL = /\x07/g;
 
+/** A terminal hyperlink is metadata: reject controls instead of stripping them into a different target. */
+export function safeTerminalLink(value: string | undefined): string | undefined {
+  if (!value || /[\x00-\x20\x7f-\x9f]/.test(value)) return undefined;
+  const target = value.startsWith('/') && !value.startsWith('//') ? `file://${value}` : value;
+  try {
+    const url = new URL(target);
+    if (!['http:', 'https:', 'file:', 'mailto:'].includes(url.protocol)) return undefined;
+    return target;
+  } catch { return undefined; }
+}
+
 /**
  * Strip dangerous ANSI escape sequences from untrusted content.
  *

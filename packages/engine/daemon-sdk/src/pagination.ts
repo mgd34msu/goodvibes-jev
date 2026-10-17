@@ -133,6 +133,11 @@ export function paginateItems<T>(
   getCreatedAt?: (item: T) => number | undefined,
   options?: PaginateItemsOptions,
 ): PaginatedResponse<T> | { readonly error: string } {
+  if (getCreatedAt) {
+    const direction = options?.descending ? -1 : 1;
+    items = [...items].sort((a, b) => direction * ((getCreatedAt(a) ?? 0) - (getCreatedAt(b) ?? 0)
+      || (getId(a) < getId(b) ? -1 : getId(a) > getId(b) ? 1 : 0)));
+  }
   let startIndex = 0;
 
   if (rawCursor !== null) {
@@ -142,19 +147,15 @@ export function paginateItems<T>(
     }
     const afterIndex = items.findIndex((item) => getId(item) === decoded.id);
     if (afterIndex === -1) {
-      // Cursor id not found, item was deleted mid-walk.
-      // Use createdAt from the cursor to locate the insertion point.
-      // For ascending sequences: first item with createdAt > cursor's createdAt.
-      // For descending sequences: first item with createdAt < cursor's createdAt.
-      // Without createdAt, restart from index 0.
+      // Recover the cursor's insertion point using the same timestamp/id order.
       if (decoded.createdAt !== undefined && getCreatedAt !== undefined) {
         const descending = options?.descending === true;
         const insertionIndex = items.findIndex(
           (item) => {
             const ts = getCreatedAt(item);
-            return descending
-              ? ts !== undefined && ts < decoded.createdAt!
-              : ts !== undefined && ts > decoded.createdAt!;
+            if (ts === undefined) return false;
+            const comparison = ts - decoded.createdAt! || (getId(item) < decoded.id ? -1 : getId(item) > decoded.id ? 1 : 0);
+            return descending ? comparison < 0 : comparison > 0;
           },
         );
         startIndex = insertionIndex === -1 ? items.length : insertionIndex;

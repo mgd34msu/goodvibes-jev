@@ -399,12 +399,12 @@ export function createRelayClient(options: RelayClientOptions): RelayClient {
     if (request.method === 'GET' && accept.includes('text/event-stream')) {
       return openStream(`${url.pathname}${url.search}`, headers, activeChannel, activeSocket, request.signal);
     }
-    const bodyText = request.method === 'GET' || request.method === 'HEAD' ? '' : await whileActive(request.text(), request.signal);
+    const body = request.method === 'GET' || request.method === 'HEAD' ? new Uint8Array(0) : new Uint8Array(await whileActive(request.arrayBuffer(), request.signal));
     request.signal.throwIfAborted();
     const id = createUuidV4();
     const frame = encodeTunnelFrame(
       { id, kind: 'request', method: request.method, path: `${url.pathname}${url.search}`, headers },
-      bodyText ? encodeUtf8(bodyText) : new Uint8Array(0),
+      body,
     );
     if (channel !== activeChannel || socket !== activeSocket) throw new GoodVibesSdkError('Relay connection changed.', { category: 'network', source: 'transport', recoverable: true });
     return new Promise<Response>((resolve, reject) => {

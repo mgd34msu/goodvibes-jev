@@ -892,8 +892,9 @@ export class AutomationManager {
 
   private pruneRunHistory(jobId?: string): void {
     const limit = Math.max(1, Number(this.configManager.get('automation.runHistoryLimit') ?? 100));
-    const runs = sortRuns(this.runs.values());
-    const keep = new Set<string>();
+    const allRuns = sortRuns(this.runs.values());
+    const keep = new Set(allRuns.filter((run) => run.status === 'running').map((run) => run.id));
+    const runs = allRuns.filter((run) => run.status !== 'running');
     if (jobId) {
       const scoped = runs.filter((run) => run.jobId === jobId).slice(0, limit);
       for (const run of scoped) keep.add(run.id);

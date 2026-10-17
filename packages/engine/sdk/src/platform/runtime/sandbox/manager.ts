@@ -46,10 +46,10 @@ export function getSandboxConfigSnapshot(
 export function detectSandboxHostStatus(): SandboxHostStatus {
   const runningInWsl = isRunningInWsl();
   const windows = process.platform === 'win32';
-  const secureSandboxReady = !windows || runningInWsl;
-  const warnings: string[] = [];
+  const secureSandboxReady = false;
+  const warnings: string[] = ['The local backend executes host processes and provides no isolation boundary.'];
   if (windows && !runningInWsl) {
-    warnings.push('Virtualized sandboxing on Windows requires running GoodVibes inside WSL.');
+    warnings.push('WSL alone does not add isolation to the local backend.');
   }
   return Object.freeze({
     platform: process.platform,
@@ -112,7 +112,7 @@ export function listSandboxProfiles(
       kind: 'mcp',
       isolation: 'shared',
       requiresVm: config.mcpIsolation !== 'disabled',
-      notes: ['lower overhead', 'weaker cross-server isolation'],
+      notes: ['requested policy; local backend provides no isolation'],
     },
     {
       id: 'mcp-per-server',
@@ -120,7 +120,7 @@ export function listSandboxProfiles(
       kind: 'mcp',
       isolation: 'dedicated',
       requiresVm: config.mcpIsolation === 'per-server-vm' || config.mcpIsolation === 'hybrid',
-      notes: ['strongest isolation', 'higher memory and startup cost'],
+      notes: ['requested policy; local backend provides no isolation'],
     },
   ];
   return profiles.map((profile) => Object.freeze(profile));
@@ -131,43 +131,43 @@ export function listSandboxPresets(): readonly SandboxPreset[] {
     Object.freeze({
       id: 'secure-balanced',
       label: 'Secure Balanced',
-      summary: 'Dedicated REPL VMs with hybrid MCP isolation and WSL-gated Windows secure mode.',
+      summary: 'Requests dedicated REPL and hybrid MCP isolation; unavailable with the local host-process backend.',
       config: {
         replIsolation: 'per-runtime-vm',
         mcpIsolation: 'hybrid',
         windowsMode: 'require-wsl',
         vmBackend: 'local',
       },
-      notes: ['recommended default', 'strong isolation without forcing per-server MCP for every case'],
+      notes: ['requires an isolating backend'],
     } satisfies SandboxPreset),
     Object.freeze({
       id: 'secure-isolated',
       label: 'Secure Isolated',
-      summary: 'Dedicated REPL VMs and per-server MCP VMs with the strongest local isolation posture.',
+      summary: 'Requests dedicated isolation; the local host-process backend cannot provide it.',
       config: {
         replIsolation: 'per-runtime-vm',
         mcpIsolation: 'per-server-vm',
         windowsMode: 'require-wsl',
         vmBackend: 'local',
       },
-      notes: ['strongest isolation', 'higher startup and memory cost'],
+      notes: ['requires an isolating backend'],
     } satisfies SandboxPreset),
     Object.freeze({
       id: 'shared-performance',
       label: 'Shared Performance',
-      summary: 'Shared REPL VM and shared MCP VM for lower overhead while preserving a sandbox boundary.',
+      summary: 'Requests shared execution; the local backend provides no sandbox boundary.',
       config: {
         replIsolation: 'shared-vm',
         mcpIsolation: 'shared-vm',
         windowsMode: 'native-basic',
         vmBackend: 'local',
       },
-      notes: ['best latency', 'weaker cross-runtime isolation than dedicated profiles'],
+      notes: ['host-process execution is not isolation'],
     } satisfies SandboxPreset),
     Object.freeze({
       id: 'windows-basic',
       label: 'Windows Basic',
-      summary: 'Native Windows Bun/TUI with secure sandbox mode disabled until WSL is available.',
+      summary: 'Native Windows host-process execution with isolation unavailable.',
       config: {
         replIsolation: 'shared-vm',
         mcpIsolation: 'disabled',
@@ -221,12 +221,7 @@ export function renderSandboxRecommendation(
     `  current repl isolation: ${review.config.replIsolation}`,
     `  current mcp isolation: ${review.config.mcpIsolation}`,
   ];
-  if (review.host.windows && !review.host.runningInWsl) {
-    lines.push('  recommendation: run GoodVibes inside WSL before enabling secure sandbox mode');
-  } else {
-    lines.push('  recommendation: keep REPLs in per-runtime-vm mode');
-    lines.push('  recommendation: use hybrid or per-server-vm for MCP isolation');
-  }
+  lines.push('  isolation is unavailable with the local backend; requested VM settings cannot create a sandbox boundary.');
   return lines.join('\n');
 }
 
@@ -235,7 +230,7 @@ export function renderSandboxProfiles(
 ): string {
   const profiles = listSandboxProfiles(manager);
   return [
-    'Sandbox Profiles',
+    'Requested Sandbox Profiles (local backend does not provide isolation)',
     ...profiles.map((profile) => (
       `  ${profile.id}  [${profile.kind}/${profile.isolation}]  vm=${profile.requiresVm ? 'yes' : 'no'}  ${profile.label}`
     )),

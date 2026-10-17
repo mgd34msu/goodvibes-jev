@@ -92,10 +92,10 @@ describe('SSH identity binding and command contract', () => {
     expect(captures[0]?.args.join(' ')).not.toContain(KEY);
   });
 
-  test('same binding shares one pending identity and reuses its key', async () => {
+  test('same binding rechecks credentials and shares one pending identity', async () => {
     const item = backend();
     await Promise.all([item.dispatch(peer(), 'one'), item.dispatch(peer(), 'two')]);
-    expect(lookups).toBe(1);
+    expect(lookups).toBe(2);
     expect(captures[0]?.file).toBe(captures[1]?.file);
   });
 
@@ -107,6 +107,19 @@ describe('SSH identity binding and command contract', () => {
     await item.dispatch(peer(change), 'two');
     expect(lookups).toBe(2);
     expect(captures[0]?.file).not.toBe(captures[1]?.file);
+  });
+
+  test('rotating or deleting a secret under the same reference retires its identity', async () => {
+    let credential: string | null = KEY;
+    const item = backend(async () => credential);
+    await item.dispatch(peer(), 'one');
+    credential = `${KEY}-rotated`;
+    await item.dispatch(peer(), 'two');
+    expect(captures[0]?.file).not.toBe(captures[1]?.file);
+    expect(captures[1]?.contents).toBe(`${credential}\n`);
+    credential = null;
+    await expect(item.dispatch(peer(), 'three')).rejects.toMatchObject({ code: 'REMOTE_BACKEND_CREDENTIAL_MISSING' });
+    expect(captures).toHaveLength(2);
   });
 
   test('rotation retains the prior key while a dispatch still holds its lease', async () => {

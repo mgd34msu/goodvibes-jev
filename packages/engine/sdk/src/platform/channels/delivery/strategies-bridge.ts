@@ -174,6 +174,7 @@ export function createTelephonyDeliveryStrategy(
   configManager: ConfigManager,
   serviceRegistry: ServiceRegistry,
   artifactStore: ArtifactStore,
+  secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>,
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:telephony',
@@ -205,11 +206,10 @@ export function createTelephonyDeliveryStrategy(
           process.env.TELEPHONY_BRIDGE_URL,
         );
         if (!bridgeUrl) throw new Error('Missing telephony bridge URL');
-        const token = firstNonEmpty(
-          await serviceRegistry.resolveSecret('telephony', 'primary'),
-          String(configManager.get('surfaces.telephony.token') ?? ''),
-          process.env.TELEPHONY_BRIDGE_TOKEN,
-        );
+        const token = await resolveDeliveryCredential(configManager, serviceRegistry, secretsManager, {
+          serviceName: 'telephony', serviceField: 'primary', configKey: 'surfaces.telephony.token',
+          environmentValue: process.env.TELEPHONY_BRIDGE_TOKEN,
+        });
         const responseId = await postBridgePayload(bridgeUrl, {
           surface: 'telephony',
           mode,
@@ -231,11 +231,10 @@ export function createTelephonyDeliveryStrategy(
       }
 
       const accountSid = firstNonEmpty(String(configManager.get('surfaces.telephony.accountSid') ?? ''), process.env.TWILIO_ACCOUNT_SID);
-      const authToken = firstNonEmpty(
-        await serviceRegistry.resolveSecret('telephony', 'authToken'),
-        String(configManager.get('surfaces.telephony.authToken') ?? ''),
-        process.env.TWILIO_AUTH_TOKEN,
-      );
+      const authToken = await resolveDeliveryCredential(configManager, serviceRegistry, secretsManager, {
+        serviceName: 'telephony', serviceField: 'authToken', configKey: 'surfaces.telephony.authToken',
+        environmentValue: process.env.TWILIO_AUTH_TOKEN,
+      });
       const fromNumber = firstNonEmpty(String(configManager.get('surfaces.telephony.fromNumber') ?? ''), process.env.TWILIO_FROM_NUMBER, process.env.TELEPHONY_FROM_NUMBER);
       if (!accountSid) throw new Error('Missing Twilio account SID');
       if (!authToken) throw new Error('Missing Twilio auth token');

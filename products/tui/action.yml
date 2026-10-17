@@ -51,13 +51,14 @@ runs:
       shell: bash
       env:
         GOODVIBES_VERSION: ${{ inputs.version }}
+        GOODVIBES_REQUESTED_INSTALL_DIR: ${{ inputs.install-dir }}
         GOODVIBES_AGENT: ${{ inputs.install-agent }}
         # CI installs binaries only — never register a persistent user service.
         GOODVIBES_DAEMON_SERVICE: '0'
       run: |
         set -eu
         # Resolve the install directory (default to a stable, PATH-able dir).
-        INSTALL_DIR="${{ inputs.install-dir }}"
+        INSTALL_DIR="$GOODVIBES_REQUESTED_INSTALL_DIR"
         if [ -z "$INSTALL_DIR" ]; then
           INSTALL_DIR="$HOME/.goodvibes-bin"
         fi

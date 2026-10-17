@@ -448,7 +448,9 @@ class BashServer {
     }
     onCompletionResolve(item) {
         return __awaiter(this, void 0, void 0, function* () {
-            const { label, data: { type }, } = item;
+            const label = item.label;
+            const type = item.data?.type;
+            if (typeof label !== 'string') return item;
             logger_1.logger.debug(`onCompletionResolve label=${label} type=${type}`);
             try {
                 let documentation = null;

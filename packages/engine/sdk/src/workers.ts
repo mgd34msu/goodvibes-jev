@@ -58,6 +58,9 @@ export interface GoodVibesCloudflareWorker {
 export function createGoodVibesCloudflareWorker(
   options: GoodVibesCloudflareWorkerOptions = {},
 ): GoodVibesCloudflareWorker {
+  if (options.maxRequestBodyBytes !== undefined && (!Number.isSafeInteger(options.maxRequestBodyBytes) || options.maxRequestBodyBytes <= 0)) {
+    throw new RangeError('maxRequestBodyBytes must be a positive safe integer');
+  }
   return {
     async fetch(request, env, _ctx) {
       const url = new URL(request.url);
@@ -71,7 +74,7 @@ export function createGoodVibesCloudflareWorker(
       if (url.pathname === '/batch/tick/enqueue' && request.method === 'POST') {
         const queue = env.GOODVIBES_BATCH_QUEUE;
         if (!queue) return json({ error: 'GOODVIBES_BATCH_QUEUE is not bound', code: 'QUEUE_NOT_CONFIGURED' }, 503);
-        const body = await optionalJson(request);
+        const body = await optionalJson(request, options.maxRequestBodyBytes);
         if (body instanceof Response) return body;
         await queue.send({
           type: 'batch.tick',
@@ -93,7 +96,7 @@ export function createGoodVibesCloudflareWorker(
         }
         const queue = env.GOODVIBES_BATCH_QUEUE;
         if (!queue) return json({ error: 'GOODVIBES_BATCH_QUEUE is not bound', code: 'QUEUE_NOT_CONFIGURED' }, 503);
-        const body = await optionalJson(request);
+        const body = await optionalJson(request, options.maxRequestBodyBytes);
         if (body instanceof Response) return body;
         await queue.send({
           type: 'batch.job.create',
@@ -247,8 +250,8 @@ function resolveDaemonUrl(
   return raw.replace(/\/+$/, '');
 }
 
-async function optionalJson(request: Request): Promise<unknown | Response> {
-  const text = await readTextBodyWithinLimit(request);
+async function optionalJson(request: Request, maxBytes?: number): Promise<unknown | Response> {
+  const text = await readTextBodyWithinLimit(request, maxBytes);
   if (text instanceof Response) return text;
   if (!text.trim()) return {};
   try {

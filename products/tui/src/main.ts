@@ -240,7 +240,7 @@ async function main() {
   // Respect a manual scroll-up: only follow the tail while parked at the bottom (submitInput re-locks on new input).
   const scrollToEnd = (vHeight: number) => transcript.followTail(conversation.history.getLineCount(), vHeight);
 
-  const unsubs: Array<() => void> = [];
+  const unsubs: Array<() => void | Promise<void>> = [];
   const activityAnimation = new ActivityAnimation(() => render());
   unsubs.push(() => activityAnimation.dispose());
   // Consume the registry's change feed. Querying here used to clone every

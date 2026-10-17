@@ -236,14 +236,8 @@ export class GeminiProvider implements LLMProvider {
       return null;
     }
 
-    // Delete the previous cache if the prompt hash changed.
-    if (this.cachedContentName && this.cachedContentHash !== hash) {
-      const oldName = this.cachedContentName;
-      fetchWithTimeout(`${GEMINI_API_BASE}/${oldName}`, {
-        method: 'DELETE',
-        headers: { 'x-goog-api-key': this.apiKey },
-      }).catch(err => logger.warn('[Gemini] Failed to delete previous cache', { error: summarizeError(err) }));
-    }
+    // Other requests can still be using the previous resource. Its server TTL
+    // owns retirement; replacing this reuse hint must not delete their cache.
 
     let rejection: { status: number; text: string };
     try {
@@ -509,7 +503,7 @@ export class GeminiProvider implements LLMProvider {
       content: { parts: [{ text: request.text }] },
     };
     if (request.dimensions) {
-      body['config'] = { outputDimensionality: request.dimensions };
+      body['embedContentConfig'] = { outputDimensionality: request.dimensions };
     }
 
     let res: Response;

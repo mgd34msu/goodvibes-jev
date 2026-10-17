@@ -257,6 +257,24 @@ function deliveryManagerThrowing(error: () => Error): { manager: AutomationDeliv
 }
 
 describe('automation delivery attempts', () => {
+  test('a sent message is not retried when saving its reply target fails', async () => {
+    let sends = 0;
+    const manager = new AutomationDeliveryManager({
+      routeBindings: {
+        ...routeBindings,
+        getBinding: () => ({ id: 'route', surfaceKind: 'webhook', metadata: {}, channelId: 'https://fixture.invalid' }),
+        captureReplyTarget: async () => { throw new Error('disk unavailable'); },
+      } as unknown as RouteBindingManager,
+      featureFlags: allFlags,
+      deliveryRouter: { deliver: async () => { sends++; return 'delivered-message'; } } as never,
+    });
+    const baseJob = makeJob();
+    const job = makeJob({ delivery: { ...baseJob.delivery, targets: [{ kind: 'surface', routeId: 'route' }] } });
+    const attempts = await manager.deliverJobRun(job, makeRun({ status: 'completed' }));
+    expect(sends).toBe(1);
+    expect(attempts.map(attempt => attempt.status)).toEqual(['sent']);
+  });
+
   test('a 404 fails after one send', async () => {
     const { manager, sends } = deliveryManagerThrowing(() => new HttpStatusError('Webhook delivery failed HTTP 404', { status: 404 }));
     const attempts = await manager.deliverJobRun(makeJob(), makeRun({ status: 'completed' }));

@@ -51,7 +51,7 @@ const DOMAIN_INVALIDATIONS: Record<string, readonly (readonly unknown[])[]> = {
   // window with an unknown one. Re-read the mounted session usage from the same
   // stream; a provider frame is only an invalidation, never a capacity claim.
   providers: [queryKeys.providers, queryKeys.sessions],
-  knowledge: [queryKeys.knowledgeStatus, queryKeys.knowledgeSources, queryKeys.knowledgeRefinement],
+  knowledge: [['knowledge']],
   'control-plane': [queryKeys.control],
   // fleet: the SDK now emits per-node lifecycle deltas (FLEET_NODE_STARTED /
   // _STATE_CHANGED / _FINISHED / _BLOCKED_ON_USER / _UNBLOCKED) on the runtime
@@ -97,6 +97,14 @@ export function useRealtimeInvalidation(enabled: boolean) {
   const queryClient = useQueryClient();
   const lifetime = useSyncExternalStore(subscribeClientLifetime, getClientLifetime, getClientLifetime);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled || !error) return;
+    const interval = setInterval(() => {
+      if (getClientLifetime() === lifetime) void queryClient.invalidateQueries({ type: 'active' });
+    }, 15_000);
+    return () => clearInterval(interval);
+  }, [enabled, error, queryClient, lifetime]);
 
   useEffect(() => {
     if (!enabled) return undefined;

@@ -80,7 +80,7 @@ describe('agent stores under concurrent processes', () => {
     }
   }, 60_000);
 
-  test('a note store survives four writers without a torn or orphaned file', async () => {
+  test('all 80 successful notes survive four concurrent writers', async () => {
     const root = makeProjectTempDir('gv-store-concurrent-notes');
     try {
       const paths = createShellPathService({ workingDirectory: root, homeDirectory: root });
@@ -114,7 +114,8 @@ describe('agent stores under concurrent processes', () => {
 
       expect(() => AgentNoteRegistry.fromShellPaths(paths).list()).not.toThrow();
       const notes = AgentNoteRegistry.fromShellPaths(paths).list();
-      expect(notes.length).toBeGreaterThan(0);
+      expect(notes).toHaveLength(80);
+      expect(new Set(notes.map(note => note.title)).size).toBe(80);
       for (const note of notes) {
         expect(note.body).toHaveLength(4000);
       }
@@ -123,6 +124,29 @@ describe('agent stores under concurrent processes', () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 60_000);
+
+  test('a terminated writer does not leave future note writes locked out', async () => {
+    const root = makeProjectTempDir('gv-note-writer-crash');
+    const storePath = join(root, 'notes.json');
+    const script = join(root, 'lock-holder.ts');
+    writeFileSync(script, [
+      `import { runStoreFileUpdateSync } from ${JSON.stringify(join(SRC_ROOT, 'utils', 'store-file.ts'))};`,
+      'runStoreFileUpdateSync(process.argv[2]!, () => {',
+      '  process.stdout.write("locked\\n");',
+      '  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);',
+      '});',
+    ].join('\n'));
+    const child = Bun.spawn(['bun', script, storePath], { stdout: 'pipe', stderr: 'pipe' });
+    try {
+      const reader = child.stdout.getReader();
+      expect(new TextDecoder().decode((await reader.read()).value)).toContain('locked');
+      child.kill('SIGKILL');
+      await child.exited;
+      const registry = new AgentNoteRegistry(storePath);
+      registry.create({ title: 'After crash', body: 'Still writable', source: 'user', provenance: 'recovery test' });
+      expect(registry.list()).toHaveLength(1);
+    } finally { child.kill(); await child.exited; rmSync(root, { recursive: true, force: true }); }
+  });
 
   test('onboarding settings writes are atomic: concurrent writers leave a parseable settings.json', async () => {
     const root = makeProjectTempDir('gv-store-concurrent-onboarding');

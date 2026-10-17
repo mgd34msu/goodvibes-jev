@@ -47,18 +47,20 @@ export function startMcpConfigAutoReload(options: McpRuntimeReloadOptions): McpR
   let reloading = false;
   let last = paths.map(signatureFor);
 
-  const reload = async (): Promise<void> => {
+  const reload = async (next: FileSignature[]): Promise<void> => {
     if (stopped || reloading) return;
     reloading = true;
     try {
       await options.registry.reload(options.roots);
+      if (stopped) return;
+      last = next;
       const servers = options.registry.listServerSecurity();
       options.onReload?.({
         connected: servers.filter((server) => server.connected).length,
         total: servers.length,
       });
     } catch (error) {
-      options.onError?.(error);
+      if (!stopped) options.onError?.(error);
     } finally {
       reloading = false;
     }
@@ -67,8 +69,7 @@ export function startMcpConfigAutoReload(options: McpRuntimeReloadOptions): McpR
   const interval = setInterval(() => {
     const next = paths.map(signatureFor);
     if (!signaturesDiffer(last, next)) return;
-    last = next;
-    void reload();
+    void reload(next);
   }, intervalMs);
   interval.unref?.();
 

@@ -408,3 +408,19 @@ test('unpairing during a capability prevents stale completion and state publicat
   expect(requests).toBe(1); expect(store.executed).toHaveLength(0); expect(store.current).toBeNull();
   expect(client.getState().activity).toHaveLength(0);
 });
+
+
+test('pairing recovers from network and malformed response failures', async () => {
+  let attempt = 0;
+  const client = new PhoneNodeClient({ baseUrl: 'http://daemon.test', label: 'Phone', storage: memoryStorage(), bindings: bindings(),
+    fetchImpl: (async () => {
+      attempt++;
+      if (attempt === 1) throw new Error('network down');
+      return Response.json(attempt === 2 ? null : { request: { id: 'request' }, challenge: 'challenge' });
+    }),
+  });
+  await client.requestPairing(); expect(client.getState().status).toBe('error');
+  await client.requestPairing(); expect(client.getState().status).toBe('error');
+  await client.requestPairing(); expect(client.getState().status).toBe('awaiting-approval');
+  client.stop();
+});

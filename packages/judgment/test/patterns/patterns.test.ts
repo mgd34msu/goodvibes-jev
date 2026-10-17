@@ -335,6 +335,18 @@ describe('selector', () => {
     }
   });
 
+  test('later confident selection cannot erase an unresolved group winner', async () => {
+    let picks = 0;
+    const { port } = fakePort((name, question) => {
+      if (name !== 'pick') return noulAnswer(0.99);
+      if (question.type !== 'choice') throw new Error('Expected choice');
+      const ids = Object.keys(question.criteria).filter(id => id !== 'none');
+      return choiceAnswer(question, ids[0]!, ++picks === 1 ? 0.6 : 0.99);
+    });
+    const result = await selector.select(port, 'choose', Array.from({ length: 255 }, (_, i) => ({ id: `c${i}`, content: i })));
+    expect(result.outcome).not.toBe('act');
+  });
+
   test("a 'none' pick selects nothing", async () => {
     const { port } = fakePort((name, q) => (name === 'pick' ? choiceAnswer(q, 'none', 0.95) : noulAnswer(0.9)));
     expect((await selector.select(port, 'q', candidates)).chosen).toBeUndefined();
@@ -401,6 +413,13 @@ describe('date parts', () => {
   });
 
   const stagedReader = () => defineDatePartsReader({ ...header, name: 'test.staged-dates', band, fixtures: [{ name: 'no callback', document: 'No callback is planned.', role: 'the callback date', today: '2026-07-30', expect: 'none' }] });
+
+  for (const today of ['2024-07-30', '2025-07-30']) test(`unstated leap-day year advances from ${today}`, async () => {
+    const { port } = fakePort((name, question) => choiceAnswer(question,
+      ({ mode: 'absolute', month: 'February', day: '29', year: 'none' } as Record<string, string>)[name]!, 0.99));
+    const result = await stagedReader().extract(port, 'February 29', 'date', today);
+    expect(result.date).toBe('2028-02-29');
+  });
 
   test('an absolute date asks only its calendar parts, with years around today', async () => {
     const expected: Record<string, string> = { mode: 'absolute', month: 'August', day: '14', year: 'none' };

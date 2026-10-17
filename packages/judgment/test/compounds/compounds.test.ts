@@ -165,6 +165,19 @@ describe('verifyThenEscalate', () => {
   });
   const task = { goal: 'Return the registration open date', criteria: ['The date is stated in the source'] };
 
+  test('a passing critical-stakes judgment remains unaccepted until confirmation', async () => {
+    const critical = defineJudge({ ...header, name: 'test.critical', band: STAKES_BANDS.critical.yesNo,
+      fixtures: [{ name: 'f', goal: 'g', criteria: ['c'], output: 'o', expect: { verdict: 'pass' } }] });
+    const { port } = fakePort(() => noulAnswer(0.01));
+    const result = await verifyThenEscalate(port, critical, [
+      { name: 'first', produce: async () => 'answer' },
+      { name: 'unused', produce: async () => { throw new Error('confirmation must not be bypassed by another tier'); } },
+    ], task);
+    expect(result.accepted).toBe(false);
+    expect(result.judgment).toMatchObject({ verdict: 'pass', outcome: 'confirm' });
+    expect(result.attempts).toHaveLength(1);
+  });
+
   test('escalates past a failing cheap tier and accepts the first pass', async () => {
     const { port, requests } = fakePort((_name, _q, state) => noulAnswer((state as { output: string }).output === 'invented' ? 0.95 : 0.05));
     const got = await verifyThenEscalate(port, judge, [

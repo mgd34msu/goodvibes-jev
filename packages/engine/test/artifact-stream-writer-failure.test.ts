@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { chmodSync, readdirSync, rmSync } from 'node:fs';
+import { chmodSync, statSync, chmodSync, readdirSync, rmSync } from 'node:fs';
 import { ArtifactStore } from '../sdk/src/platform/artifacts/store.ts';
 import { makeProjectTempDir } from './_helpers/project-temp.ts';
 
@@ -16,4 +16,25 @@ test('a spool open failure rejects and cancels a producer waiting for its next c
     expect(cancelled).toBe(true);
     expect(readdirSync(root)).toEqual([]);
   } finally { chmodSync(root, 0o700); rmSync(root, { recursive: true, force: true }); }
+});
+
+
+test('owner cancellation promptly releases a stalled producer and removes its spool', async () => {
+  const root = makeProjectTempDir('artifact-owner-cancel');
+  const controller = new AbortController();
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({ cancel() { cancelled = true; } });
+  chmodSync(root, 0o755);
+  const store = new ArtifactStore({ rootDir: root });
+  try {
+    const writing = store.createFromStream({ stream, kind: 'image', filename: 'image.png', mimeType: 'image/png' }, { signal: controller.signal });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    controller.abort(new Error('owner cancelled'));
+    await expect(writing).rejects.toThrow('owner cancelled');
+    expect(cancelled).toBe(true);
+    expect(readdirSync(root)).toEqual([]);
+    await store.create({ text: 'private content', kind: 'document', filename: 'private.txt' });
+    expect(statSync(root).mode & 0o077).toBe(0);
+    for (const file of readdirSync(root)) expect(statSync(root + '/' + file).mode & 0o077).toBe(0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

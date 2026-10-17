@@ -9,6 +9,7 @@
  */
 
 import type { Cell } from '@goodvibes-jev/engine/sdk/platform/types';
+import { safeTerminalLink } from '@goodvibes-jev/engine/terminal-shell';
 import { activeTheme } from './theme.ts';
 
 /** Module-level set of inline markdown special characters (hoisted out of hot loop). */
@@ -53,7 +54,8 @@ export function renderInlineMarkdown(text: string): InlineToken[] {
         if (closeP !== -1) {
           const linkText = text.slice(i + 1, closeB);
           const url = text.slice(closeB + 2, closeP);
-          tokens.push({ type: 'link', text: linkText, url });
+          const target = safeTerminalLink(url);
+          tokens.push(target ? { type: 'link', text: linkText, url: target } : { type: 'text', text: linkText, style: {} });
           i = closeP + 1;
           continue;
         }
