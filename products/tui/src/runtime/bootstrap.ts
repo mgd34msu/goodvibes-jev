@@ -316,18 +316,22 @@ export async function bootstrapRuntime(
   });
   const systemMessageRouter = shell.systemMessageRouter;
   systemMessageRouterRef.value = systemMessageRouter;
-  await resumeContracts(services.contractRunner, services.workingDirectory);
+  // Recovery can await a planner or executor. Let the shell render while it
+  // runs, and stop/drain recovery before shutdown releases its dependencies.
+  const contractRecovery = resumeContracts(services.contractRunner, services.workingDirectory);
+  bootstrapUnsubs.unshift(async () => {
+    services.contractRunner.dispose();
+    await contractRecovery;
+  });
   const commandRegistry = shell.commandRegistry;
   const commandContext = shell.commandContext;
-  // Boot resume notice (item 1): after contract recovery so persisted work history is ready, before
-  // the operator can type anything. Fire-and-forget, same as main.ts's non-blocking
-  // `void workspaceCheckpointManager.init().catch(() => {})`, local file I/O only,
-  // resolves well before a human can react to the first rendered frame.
+  // Recovery loads persisted history before continuing its work. Announce
+  // that history without waiting for the resumed work to finish.
   void announceResumeState({
     surface: services.surface,
     sessionManager: services.sessionManager,
     checkpointManager: services.workspaceCheckpointManager,
-    contractHistory: services.contractRunner.list({ includeTerminal: true }),
+    contractHistory: services.contractRunner.list({ includeTerminal: true, includeInputSnapshot: false }),
     memoryAvailable: Boolean(commandContext.clients?.knowledgeApi?.memory),
     router: systemMessageRouter,
   }).catch(() => {
