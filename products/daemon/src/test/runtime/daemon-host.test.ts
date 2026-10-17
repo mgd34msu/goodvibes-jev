@@ -11,6 +11,7 @@ import { registerInboxSurface } from '@goodvibes-jev/engine/sdk/platform/intake'
 import { Notifier } from '@goodvibes-jev/engine/sdk/platform/integrations';
 import { BenchmarkStore, ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { createRuntimeStore } from '@goodvibes-jev/engine/sdk/platform/runtime/store';
+import * as contractRuntime from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { UserAuthManager } from '@goodvibes-jev/engine/sdk/platform/security';
 import { createFeatureFlagManager, deriveFeatureStates, RuntimeEventBus } from '../../runtime/index.js';
 import { createDaemonHost, type DaemonHost, type DaemonHostFactories, type DaemonHostOptions } from '../../runtime/daemon-host.js';
@@ -127,6 +128,33 @@ test('actual configured host initializes memory, starts real boot, serves persis
   expect(fx.host.services?.channelPlugins.get('owned-host')).toBeNull();
   expect(JSON.parse(readFileSync(plugin.preferences, 'utf8')).enabled['owned-host']).toBe(true);
   await expect(fx.host.start()).rejects.toThrow('closed');
+});
+
+test('the host serves during contract recovery and shutdown aborts then drains recovery', async () => {
+  const recovery = gate();
+  const stopped = gate();
+  keep(spyOn(contractRuntime, 'resumeContracts').mockImplementation(async () => {
+    await recovery.promise;
+    return { resumed: [], queued: [], reaped: [], skipped: [] };
+  }));
+  const fx = fixture(runtime => {
+    const dispose = runtime.contractRunner.dispose;
+    keep(spyOn(runtime.contractRunner, 'dispose').mockImplementation(() => {
+      dispose();
+      stopped.resolve();
+    }));
+  });
+  expect((await fx.host.start()).state).toBe('ready');
+  const response = await fetch(`${fx.baseUrl}/api/health`, { headers: { Authorization: 'Bearer synthetic-host-token' } });
+  expect(response.ok).toBe(true);
+  const closing = fx.host.close();
+  const closed = settled(closing);
+  await stopped.promise;
+  await tick();
+  expect(closed()).toBe(false);
+  recovery.resolve();
+  await closing;
+  expect(fx.host.snapshot().state).toBe('closed');
 });
 
 test('late runtime acquisition is owned and drained without starting any later phase', async () => {

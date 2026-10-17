@@ -44,7 +44,13 @@ export async function createRuntimeServices(options: RuntimeServicesOptions): Pr
     const daemonHandlers = await createDaemonHandlerComposition({ ...handlerOptions, distributedRuntimeReady });
     scope.registry.add('daemon handler surfaces', daemonHandlers.close);
     observeNativeStartupPhase('contract-recovery');
-    await resumeContracts(services.contractRunner, services.workingDirectory);
+    // Legacy recovery can await planning or execution. Serve the host while
+    // that work runs, and abort/drain it before releasing its dependencies.
+    const contractRecovery = resumeContracts(services.contractRunner, services.workingDirectory);
+    scope.registry.add('contract recovery', async () => {
+      services.contractRunner.dispose();
+      await contractRecovery;
+    });
     let bootTasks: DaemonBootController | undefined;
     const runtime: RuntimeServices = { ...services, daemonHandlers, get bootTasks() { return bootTasks; }, close, dispose };
     if (options.createBootOperations) {
