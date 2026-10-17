@@ -56,6 +56,8 @@ export interface TurnRenderOptions {
 
 export interface TurnRender {
   readonly lines: Line[];
+  /** Prose needs paragraph spacing below it; task rows end at their last drawn row. */
+  readonly trailingSeparator: boolean;
   /** Block metas with startLine relative to the turn and blockIndex relative to the turn's first block. */
   readonly blocks: BlockMeta[];
   readonly errorLines: number[];
@@ -342,7 +344,7 @@ export function renderTurn(model: TurnModel, options: TurnRenderOptions): TurnRe
         break;
       }
     }
-    // The transcript supplies the separator after the turn's final row.
+    // The transcript supplies paragraph spacing after the turn's final response.
     responseSpaced = response && i < rows.length - 1;
     if (responseSpaced) spacer(cont);
   });
@@ -350,6 +352,7 @@ export function renderTurn(model: TurnModel, options: TurnRenderOptions): TurnRe
   blocks.forEach((b, k) => { b.blockIndex = k; });
   return {
     lines,
+    trailingSeparator: rows.at(-1)?.kind === 'answer' || rows.at(-1)?.kind === 'prose',
     blocks,
     errorLines,
     messageLines,
@@ -368,7 +371,7 @@ export function renderStreamingContinuation(
   tail: TurnRender['tail'],
   glyphSet: TreeGlyphSetName,
 ): Line[] {
-  if (content.length === 0) return [];
+  if (content.trim().length === 0) return [];
   const p: GraphPaint = { width, gutterWidth: tail.gutterWidth, glyphs: laneGlyphs(glyphSet), frame: 0 };
   const shift = Math.max(0, textColumn(p) - MARKDOWN_TEXT_COL);
   const spacer = (): Line => {
@@ -396,5 +399,5 @@ export function renderSingleBead(bead: BeadModel, options: TurnRenderOptions): T
     capped = drawn.capped;
     for (const line of drawn.lines) lines.push(line);
   }
-  return { lines, blocks: [beadMeta(bead, 0, lines.length, capped, undefined)], errorLines: [], messageLines: new Map(), focusIds, tail: { gutter: [], gutterWidth: 6 } };
+  return { lines, trailingSeparator: false, blocks: [beadMeta(bead, 0, lines.length, capped, undefined)], errorLines: [], messageLines: new Map(), focusIds, tail: { gutter: [], gutterWidth: 6 } };
 }

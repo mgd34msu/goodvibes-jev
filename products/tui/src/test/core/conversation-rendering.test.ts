@@ -59,6 +59,42 @@ describe.each([true, false])('thinking block collapse (unicode=%s)', (unicodeCap
 });
 
 describe('bead blocks count the rows they draw', () => {
+  test.each([true, false])('task rows keep their height through completion and the next empty stream (success=%s)', (success) => {
+    const cm = new ConversationManager(() => 80);
+    cm.setWorkTreeSources({ turnActive: () => true });
+    cm.addUserMessage('check the project');
+    cm.addAssistantMessage('I will check it.', { toolCalls: [{ id: 'check', name: 'exec', arguments: { command: 'check' } }] });
+    const running = cm.getDisplayBlocks().length;
+    const task = cm.getBlockRegistry().find((block) => block.type === 'tool')!;
+
+    cm.addToolResults([{ callId: 'check', success, output: success ? 'checked' : 'check failed' }]);
+    expect(cm.getDisplayBlocks()).toHaveLength(running);
+    cm.startStreamingBlock();
+    expect(cm.getDisplayBlocks()).toHaveLength(running);
+    cm.updateStreamingBlock('\n');
+    expect(cm.getDisplayBlocks()).toHaveLength(running);
+    cm.clearLineCache();
+    expect(cm.getDisplayBlocks()).toHaveLength(running);
+    cm.finalizeStreamingBlock();
+    expect(cm.getDisplayBlocks()).toHaveLength(running);
+
+    // The collapsed task ends the transcript itself, without an extra blank row.
+    expect(running).toBe(task.startLine + task.lineCount);
+
+    cm.addAssistantMessage('', { toolCalls: [{ id: 'next', name: 'exec', arguments: { command: 'next' } }] });
+    expect(cm.getDisplayBlocks()).toHaveLength(running + 1);
+    cm.addToolResults([{ callId: 'next', success: true, output: 'done' }]);
+    cm.startStreamingBlock();
+    cm.updateStreamingBlock('Checks finished.');
+    const streamed = cm.getDisplayBlocks();
+    const text = streamed.map((line) => line.map((cell) => cell.char).join('').replace(/^[│ ]*/, '').trimEnd());
+    // Real response text keeps one gap on either side as it streams and settles.
+    expect(text.slice(-3)).toEqual(['', 'Checks finished.', '']);
+    cm.finalizeStreamingBlock();
+    cm.addAssistantMessage('Checks finished.');
+    expect(cm.getDisplayBlocks()).toHaveLength(streamed.length);
+  });
+
   test.each([true, false])('a closed bead is one row; opened, its block spans the row and its whole body, never raw JSON (unicode=%s)', (unicodeCapable) => {
     const cm = new ConversationManager(() => 80);
     cm.setUnicodeCapable(unicodeCapable);
@@ -91,8 +127,8 @@ describe('bead blocks count the rows they draw', () => {
     const expanded = cm.getBlockRegistry().find((b) => b.collapseKey === block!.collapseKey)!;
     expect(expanded.lineCount).toBe(1 + 1 + 22 + 1);
     expect(textOfBlock(all, expanded)).toContain('field_19  19');
-    // The line after the block is the next thing, not more of this body.
-    expect(all[expanded.startLine + expanded.lineCount]!.every((c) => c.bg === '')).toBe(true);
+    // The transcript ends with the opened body, without another separator underneath.
+    expect(all).toHaveLength(expanded.startLine + expanded.lineCount);
   });
 
   test('the turn header block reveals each result through its own bead key', () => {

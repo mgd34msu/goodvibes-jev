@@ -1,4 +1,4 @@
-# GV_GOLDEN surface=work-tree-states width=120 height=19
+# GV_GOLDEN surface=work-tree-states width=120 height=18
 |  ┃                                                                                                                     |
 |  ┃  The build is broken, can you fix it?                                                                               |
 |  ┃                                                                                                                     |
@@ -17,7 +17,6 @@
 |   ○ │       exec bun test --watch                                                                 cancelled            |
 |   │ ◐       find fetchJson callers                                                                              3.0s   |
 |   │ ◐       exec bun test test/api                                                                              1.0s   |
-|                                                                                                                        |
 @STYLES
 0 2 fg=#d000ff
 0 3 fg=#e2e8f0

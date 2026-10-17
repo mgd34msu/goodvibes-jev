@@ -138,7 +138,7 @@ export function drawConversationTurn(context: ConversationRenderContext, model: 
     if (isNavigableSystemMessage(context, notice.messageIndex)) errorLines.push(lines.length);
     lines.push(...renderSystemMessage(notice.content, width));
   }
-  return { ...render, lines, errorLines, messageLines };
+  return { ...render, lines, errorLines, messageLines, trailingSeparator: true };
 }
 
 function drawTurnRows(context: ConversationRenderContext, model: TurnModel, width: number): TurnRender {
@@ -180,7 +180,7 @@ export function renderConversationTurn(
 
 /**
  * Render a message slice: user and system messages as themselves, every
- * assistant turn as its work tree, a blank row after each unit.
+ * assistant turn as its work tree. Paragraphs get a trailing separator; task rows do not.
  */
 export function appendConversationMessages(
   context: ConversationRenderContext,
@@ -197,15 +197,19 @@ export function appendConversationMessages(
 ): void {
   for (const unit of transcriptUnits(messages, msgIndexOffset)) {
     const before = context.history.getLineCount();
+    let trailingSeparator: boolean;
     if (unit.kind === 'turn') {
       const render = renderConversationTurn(context, messages, msgIndexOffset, unit, width);
+      trailingSeparator = render.trailingSeparator;
       for (const [index, line] of render.messageLines) messageLineRegistry[index] = before + line;
       for (let index = unit.start; index <= unit.end; index++) messageLineRegistry[index] ??= before;
     } else {
       messageLineRegistry[unit.index] = before;
-      renderConversationMessageUnit(context, messages[unit.index - msgIndexOffset]!, width, unit.index);
+      const message = messages[unit.index - msgIndexOffset]!;
+      renderConversationMessageUnit(context, message, width, unit.index);
+      trailingSeparator = message.role !== 'tool';
     }
-    if (context.history.getLineCount() > before) context.history.addLine(createEmptyLine(width));
+    if (trailingSeparator && context.history.getLineCount() > before) context.history.addLine(createEmptyLine(width));
   }
 }
 

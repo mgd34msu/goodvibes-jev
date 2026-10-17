@@ -1,4 +1,4 @@
-# GV_GOLDEN surface=work-tree-lanes width=120 height=30
+# GV_GOLDEN surface=work-tree-lanes width=120 height=29
 |  ┃                                                                                                                     |
 |  ┃  Add a maxDelayMs cap, get it reviewed, and document retry.                                                         |
 |  ┃                                                                                                                     |
@@ -28,7 +28,6 @@
 |         │                                                                                                              |
 |         ◐   exec markdownlint docs/                                                                             4.0s   |
 |         ◐ ▸ edit docs/retry.md                                                                                  1.0s   |
-|                                                                                                                        |
 @STYLES
 0 2 fg=#d000ff
 0 3 fg=#e2e8f0

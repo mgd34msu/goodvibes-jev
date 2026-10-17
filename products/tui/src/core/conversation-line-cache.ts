@@ -71,7 +71,7 @@ interface CacheEntry {
   readonly focusIds: ReadonlySet<string>;
   /** The focus id this entry was drawn with, when it is one of its own rows. */
   readonly focusDrawn: string | null;
-  /** Rendered lines, INCLUDING the trailing blank line. */
+  /** Rendered lines, including paragraph spacing when the unit ends with prose. */
   readonly lines: Line[];
   /** Block metas with startLine relative to the unit. */
   readonly blocks: BlockMeta[];
@@ -278,6 +278,7 @@ export class MessageLineCache {
     const messageLines = new Map<number, number>();
     let focusIds: ReadonlySet<string> = new Set();
     let tail: TurnTail | null = null;
+    let trailingSeparator = false;
 
     if (unit.kind === 'turn' && turnModel) {
       const render = drawConversationTurn(context, turnModel, width);
@@ -288,6 +289,7 @@ export class MessageLineCache {
       for (let index = unit.start; index <= unit.end; index++) if (!messageLines.has(index)) messageLines.set(index, 0);
       focusIds = render.focusIds;
       tail = render.tail;
+      trailingSeparator = render.trailingSeparator;
     } else if (unit.kind === 'message') {
       const scratch: ConversationRenderContext = {
         ...context,
@@ -299,10 +301,12 @@ export class MessageLineCache {
         blockRegistry: blocks,
         errorLineRegistry: errors,
       };
-      renderConversationMessageUnit(scratch, messages[unit.index - offset]!, width, unit.index);
+      const message = messages[unit.index - offset]!;
+      renderConversationMessageUnit(scratch, message, width, unit.index);
+      trailingSeparator = message.role !== 'tool';
       messageLines.set(unit.index, 0);
     }
-    if (lines.length > 0 && !streaming) lines.push(createEmptyLine(width));
+    if (lines.length > 0 && trailingSeparator && !streaming) lines.push(createEmptyLine(width));
 
     const collapseDeps: Array<readonly [string, boolean | undefined]> = [];
     for (const k of readKeys) collapseDeps.push([k, context.collapseState.get(k)]);
