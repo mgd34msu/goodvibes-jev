@@ -549,7 +549,8 @@ async function main() {
       : (transcript.scrolledBack && !conversation.isSplashShowing() ? { escKey: promptEmpty && !conversation.workTree.focused && !input.indicatorFocused } : null);
     const managerAgents = agentManager.list().filter((a) => a.status === 'running' || a.status === 'pending');
     const runtimeAgents = agentSnapshot.active;
-    const runningAgentSummary = summarizeRunningAgents(managerAgents, runtimeAgents, ctx.services.contractRunner.list({ sessionId: runtime.sessionId, includeTerminal: true, includeInputSnapshot: false }));
+    const sessionContracts = ctx.services.contractRunner.list({ sessionId: runtime.sessionId, includeTerminal: true, includeInputSnapshot: false });
+    const runningAgentSummary = summarizeRunningAgents(managerAgents, runtimeAgents, sessionContracts);
     const runningAgentCount = runningAgentSummary.count;
     const runningProcessCount = processManager.list().filter((p) => processManager.getStatus(p.id)?.done === false).length;
     const cw = getPromptContentWidth();
@@ -565,7 +566,7 @@ async function main() {
       evaluate: (args) => evaluateSessionMaintenance({ configManager, ...args, sessionMemoryCount: ctx.services.sessionMemoryStore.list().length }),
       currentTokens: orchestrator.lastInputTokens, contextWindow,
     });
-    // What main is doing while it works (a turn, a compaction): the throbber row above the input area.
+    // Main's turn, contracts and agents share the activity row above the input.
     const compacting = ctx.services.contextAccountingHolder.getSource()?.getCompactionState().isCompacting === true;
     if (compacting && compactingSinceMs === undefined) compactingSinceMs = Date.now();
     else if (!compacting) compactingSinceMs = undefined;
@@ -577,6 +578,7 @@ async function main() {
     const throbberActivity = resolveThrobberActivity({
       turnActive,
       runningAgentCount,
+      contracts: sessionContracts,
       compacting,
       compactingSinceMs,
       pendingApproval: mainApproval ? { name: mainApproval.tool, args: mainApproval.args } : null,

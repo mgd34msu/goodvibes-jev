@@ -53,7 +53,7 @@ export interface SessionViewsDeps {
   /** Stop an agent and the agents it started. */
   readonly killAgent: (agentId: string) => readonly string[];
   /** Owner views stop/reply through the contract runner, never by killing a synthetic owner agent. */
-  readonly contractRunner?: Pick<ContractRunner, 'get' | 'cancel' | 'reply'> | undefined;
+  readonly contractRunner?: Pick<ContractRunner, 'cancel' | 'reply'> | undefined;
   readonly mainBusy: () => boolean;
   /** The model main is serving (an agent with no model of its own runs on it). */
   readonly mainModel: () => string;
@@ -330,9 +330,8 @@ export class SessionViews implements SessionViewControls {
   }
 
   private contractOf(agentId: string): ContractView | undefined {
-    const record = this.deps.agentManager.getStatus(agentId);
-    const current = record?.contractRole === 'owner' && record.contractId ? this.deps.contractRunner?.get(record.contractId) : null;
-    if (current) return current;
+    // Chips, breadcrumbs and tab cycling call this repeatedly. The work-tree
+    // source omits the repository input snapshot; runner.get clones it in full.
     const sources = this.deps.conversation.getWorkTreeSources();
     return sources.contract ? sources.contract(agentId) : sources.agent?.(agentId)?.contract;
   }

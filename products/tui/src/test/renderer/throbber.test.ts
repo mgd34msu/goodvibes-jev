@@ -10,6 +10,8 @@ import { buildShellFooter, type ShellFooterBuildOptions } from '../../renderer/s
 import { renderThrobberLine, resolveThrobberActivity, type ThrobberActivity, type ThrobberActivityInput, type ThrobberState } from '../../renderer/throbber.ts';
 import { renderToasts } from '../../renderer/surface-kit-parts.ts';
 import { activeTokens } from '../../renderer/theme.ts';
+import { summarizeRunningAgents } from '../../renderer/process-summary.ts';
+import { contractFixture } from '../helpers/contract-work-tree-fixtures.ts';
 
 const NOW = 1_800_000_000_000;
 
@@ -88,6 +90,45 @@ describe('throbber: what it names', () => {
   test('a running tool: its name, its key argument and its own elapsed time', () => {
     const activity = resolveThrobberActivity(input({ activeTool: { name: 'exec', args: { command: 'bun test src/net/retry.test.ts' }, startedAtMs: NOW - 3_000 } }))!;
     expect(throbberText({ activity })).toBe('Running exec · bun test src/net/retry.test.ts · 3s');
+  });
+
+  test('contract activity stays above the input before workers start and between workers', () => {
+    const stages = [
+      ['queued', 'Waiting to start...'],
+      ['shaping', 'Shaping the request...'],
+      ['planning', 'Planning the work...'],
+      ['checking-plan', 'Checking the plan...'],
+      ['running', 'Executing the plan...'],
+      ['judging', 'Checking results...'],
+      ['fixing', 'Revising the work...'],
+      ['committing', 'Saving results...'],
+      ['awaiting-owner', 'Waiting for your reply...'],
+      ['passed', null], ['failed', null], ['cancelled', null],
+    ] as const;
+    for (const [status, phrase] of stages) {
+      const contracts = [contractFixture({ status, units: [], groups: [] })];
+      const summary = summarizeRunningAgents([{ id: 'owner', contractRole: 'owner' }], [{ id: 'owner' }], contracts);
+      expect(summary.count).toBe(0);
+      const throbber = throbberFor({ turnActive: false, runningAgentCount: summary.count, contracts,
+        activeTool: { name: 'contract' }, modelPhrase: 'Stalled 60s', ttftMs: 800, tokenSpeed: 42 });
+      const rows = footer({ throbber, turnRunning: false }).map(text);
+      if (phrase === null) {
+        expect(throbber).toBeNull();
+        expect(rows.some(row => row.startsWith('   ⠋ '))).toBe(false);
+      } else {
+        expect(rows[1]).toContain(`⠋ ${phrase}`);
+        expect(rows[1]).not.toMatch(/Stalled|tok\/s|first token|12s/);
+      }
+    }
+  });
+
+  test('contract stages take over worker waiting; main activity and compaction retain priority', () => {
+    const contracts = [{ status: 'passed' }, { status: 'awaiting-owner' }, { status: 'queued' }, { status: 'planning' }] as const;
+    expect(throbberText(throbberFor({ turnActive: false, runningAgentCount: 1, contracts })!)).toBe('Planning the work...');
+    expect(throbberText(throbberFor({ contracts })!)).toBe('Thinking... · 12s');
+    expect(throbberFor({ contracts, activeTool: { name: 'read' } })?.activity.kind).toBe('tool');
+    expect(throbberFor({ contracts, pendingApproval: { name: 'write' } })?.activity.kind).toBe('approval');
+    expect(throbberFor({ turnActive: false, compacting: true, contracts })?.activity.kind).toBe('compacting');
   });
 
   test('an MCP tool is named by its last segment, like its bead', () => {

@@ -12,26 +12,58 @@ function setup(initial: ContractView, replyResult: Promise<OwnerReplyOutcome> = 
   const cancelled: string[] = [];
   const replies: string[][] = [];
   let renders = 0;
+  let fullSnapshotReads = 0;
   const record: NonNullable<ReturnType<AgentManager['getStatus']>> = { id: 'owner', template: 'engineer', task: initial.ask, status: 'completed', startedAt: 1000, completedAt: 2000, tools: [], toolCallCount: 0,
     contractId: initial.id, contractRole: 'owner', orchestrationDepth: 0, executionProtocol: 'direct', reviewMode: 'contract', communicationLane: 'parent-only' };
+  const records = [record];
   const runner: Pick<ContractRunner, 'get' | 'cancel' | 'reply'> = {
-    get: () => contract,
+    get: () => { fullSnapshotReads++; return contract; },
     cancel: (id, reason) => { cancelled.push(id, reason); contract = { ...contract, status: 'cancelled' }; return true; },
     reply: (id, escalationId, body) => { replies.push([id, escalationId, body]); return replyResult; },
   };
   const views = new SessionViews({
-    conversation: { laneColorOf: () => 1, getWorkTreeSources: () => ({}), getTreeGlyphSet: () => 'rounded' },
-    agentManager: { list: () => [record], getStatus: () => record, getConversationSnapshot: () => [] },
+    conversation: { laneColorOf: () => 1, getWorkTreeSources: () => ({ contract: id => id === record.id ? { ...contract, inputSnapshot: undefined } : undefined }), getTreeGlyphSet: () => 'rounded' },
+    agentManager: { list: () => records, getStatus: id => records.find(record => record.id === id) ?? null, getConversationSnapshot: () => [] },
     processManager: { list: () => [], getStatus: () => undefined, stop: () => false }, fleetNodes: () => [], contractRunner: runner,
     steer: () => { genericSteers++; return { queued: true, messageId: 'steer1' }; }, killAgent: () => { genericKills++; return ['owner']; },
     mainBusy: () => false, mainModel: () => 'synthetic', promptText: () => '', requestRender: () => { renders++; }, now: () => 3000, pollMs: 0,
   });
   views.open({ kind: 'agent', id: 'owner' });
-  return { views, cancelled, replies, calls: () => ({ genericKills, genericSteers, renders }), update: (next: ContractView) => { contract = next; } };
+  return { views, cancelled, replies, calls: () => ({ genericKills, genericSteers, renders, fullSnapshotReads }), update: (next: ContractView) => { contract = next; },
+    startPlanner: () => records.push({ ...record, id: 'planner', template: 'planner', status: 'running', completedAt: undefined, contractRole: 'planner' }),
+  };
 }
 const question = { id: 'e1', at: 1500, scope: 'unit', targetId: 'u1', reason: 'unsettled', question: 'Apply the repair?', unmetCriterionIds: ['c1'] } as const;
 
 describe('contract owner session controls', () => {
+  test('tab switches use display snapshots and show live shaping, planning and completion', () => {
+    const contract = contractFixture({ status: 'shaping', completedAt: undefined, units: [], groups: [] });
+    const s = setup(contract);
+    try {
+      s.views.open({ kind: 'main' });
+      s.views.cycle(1);
+      expect(s.views.focus.current).toEqual({ kind: 'agent', id: 'owner' });
+      expect(text([s.views.chips(120)!])).toContain('Contract');
+      expect(text(s.views.frame(120)!.body(40))).toContain('shaping');
+
+      s.startPlanner();
+      s.update({ ...contract, status: 'planning', plannerAgentIds: ['planner'] });
+      expect(text(s.views.frame(120)!.body(40))).toContain('planning');
+      for (const target of [{ kind: 'agent', id: 'planner' }, { kind: 'main' }, { kind: 'agent', id: 'owner' }] as const) {
+        s.views.chipsVisible();
+        s.views.cycle(1);
+        expect(s.views.focus.current).toEqual(target);
+        s.views.headerRows();
+        s.views.chips(120);
+        s.views.frame(120)?.body(40);
+      }
+      s.update({ ...contract, status: 'passed', completedAt: 3000 });
+      expect(text(s.views.frame(120)!.body(40))).toContain('passed');
+      expect(s.views.frame(120)!.footer.keys.some(([key]) => key === 'ctrl+x')).toBe(false);
+      expect(s.calls().fullSnapshotReads).toBe(0);
+    } finally { s.views.dispose(); }
+  });
+
   test('stop confirmation cancels the real contract even while its owner record is completed', () => {
     const s = setup(contractFixture({ status: 'running', completedAt: undefined }));
     expect(s.views.frame(120)?.footer.keys).toContainEqual(['ctrl+x', 'stop contract']);

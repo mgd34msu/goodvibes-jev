@@ -1,7 +1,7 @@
 /**
  * throbber.ts, the one row above the input area that says what the main
  * session is doing right now. It shows only while main is working (a turn
- * runs, agents are running, or the conversation is being compacted) and is gone at rest.
+ * runs, a contract or agents are active, or the conversation is being compacted) and is gone at rest.
  *
  *   col 3        the spinner (brand gradient on the glyph only)
  *   col 5..w-4   what is happening, then its elapsed time
@@ -22,6 +22,7 @@
 
 import { type Line, createEmptyLine } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolCall } from '@goodvibes-jev/engine/sdk/platform/types';
+import type { ContractStatus } from '@goodvibes-jev/engine/sdk/platform/contract';
 import { getDisplayWidth, interpolateColor, truncateDisplay } from '../utils/terminal-width.ts';
 import { formatElapsed } from '../utils/format-elapsed.ts';
 import { beadArgument, beadName } from './lane-graph/bead.ts';
@@ -35,12 +36,28 @@ const THROBBER_TEXT_X = 5;
 const ARGUMENT_MAX = 60;
 const SEP = ' · ';
 
+const CONTRACT_ACTIVITY: Record<ContractStatus, string | null> = {
+  queued: 'Waiting to start...',
+  shaping: 'Shaping the request...',
+  planning: 'Planning the work...',
+  'checking-plan': 'Checking the plan...',
+  running: 'Executing the plan...',
+  judging: 'Checking results...',
+  fixing: 'Revising the work...',
+  committing: 'Saving results...',
+  'awaiting-owner': 'Waiting for your reply...',
+  passed: null,
+  failed: null,
+  cancelled: null,
+};
+
 /** What the main session is doing, as the throbber names it. */
 export type ThrobberActivity =
   | { readonly kind: 'approval'; readonly tool: string; readonly argument: string; readonly elapsedMs?: number }
   | { readonly kind: 'compacting'; readonly elapsedMs?: number }
   | { readonly kind: 'tool'; readonly tool: string; readonly argument: string; readonly elapsedMs?: number }
   | { readonly kind: 'agents'; readonly count: number }
+  | { readonly kind: 'contract'; readonly phrase: string }
   | { readonly kind: 'model'; readonly phrase: string; readonly elapsedMs?: number; readonly ttftMs?: number; readonly tokenSpeed?: number };
 
 /** One frame of the throbber. */
@@ -65,6 +82,8 @@ export interface ThrobberActivityInput {
   readonly turnActive: boolean;
   /** Active agents, including the interval before their results resume main. */
   readonly runningAgentCount?: number;
+  /** This session's contracts, including shaping and gaps between workers. */
+  readonly contracts?: readonly { readonly status: ContractStatus }[];
   /** A compaction of the main conversation is running (inside a turn or not). */
   readonly compacting: boolean;
   /** When the running compaction started (epoch ms), once known. */
@@ -93,14 +112,20 @@ function describeToolCall(call: ThrobberToolCall): { tool: string; argument: str
 /** What main is doing now, or null at rest (the throbber is not drawn). */
 export function resolveThrobberActivity(input: ThrobberActivityInput): ThrobberActivity | null {
   const runningAgentCount = input.runningAgentCount ?? 0;
-  if (!input.turnActive && !input.compacting && runningAgentCount === 0) return null;
   const since = (start: number | undefined): number | undefined => (start !== undefined && start > 0 ? Math.max(0, input.now - start) : undefined);
   const turnElapsed = since(input.turnStartMs);
   if (input.turnActive && input.pendingApproval) {
     return { kind: 'approval', ...describeToolCall(input.pendingApproval), elapsedMs: turnElapsed };
   }
   if (input.compacting) return { kind: 'compacting', elapsedMs: since(input.compactingSinceMs) };
-  if (!input.turnActive && runningAgentCount > 0) return { kind: 'agents', count: runningAgentCount };
+  if (!input.turnActive) {
+    const activeContracts = input.contracts?.filter(contract => CONTRACT_ACTIVITY[contract.status] !== null) ?? [];
+    // Ongoing work takes precedence over a queued contract or an owner question.
+    const contract = activeContracts.find(contract => contract.status !== 'queued' && contract.status !== 'awaiting-owner') ?? activeContracts[0];
+    if (contract) return { kind: 'contract', phrase: CONTRACT_ACTIVITY[contract.status]! };
+    if (runningAgentCount > 0) return { kind: 'agents', count: runningAgentCount };
+    return null;
+  }
   if (input.activeTool) {
     return { kind: 'tool', ...describeToolCall(input.activeTool), elapsedMs: since(input.activeTool.startedAtMs) ?? turnElapsed };
   }
@@ -122,6 +147,8 @@ interface ThrobberText {
 function textOf(activity: ThrobberActivity): ThrobberText {
   const elapsed = 'elapsedMs' in activity && activity.elapsedMs !== undefined ? [formatElapsed(activity.elapsedMs)] : [];
   switch (activity.kind) {
+    case 'contract':
+      return { label: activity.phrase, subject: '', tail: [] };
     case 'agents':
       return { label: `Waiting for ${activity.count} ${activity.count === 1 ? 'agent' : 'agents'}...`, subject: '', tail: [] };
     case 'approval':
