@@ -15,6 +15,7 @@ export interface CoreReadings {
 
 export function coreReadingsPort(readings: CoreReadings = {}) {
   return fakePort((name, question) => {
+    if (['false_blocker', 'unfinished', 'unsupported', 'unanswered', 'unnecessary_permission', 'implementation_presented', 'verification_claimed', 'criteria_altered', 'ineffective_fix', 'irrelevant_verification', 'weakened_criteria', 'missing_results', 'unresolved_conflict'].includes(name)) return noulAnswer(.01);
     const confidence = readings.confidence ?? 0.97;
     if (name === 'intent') return choiceAnswer(question, readings.intent ?? 'task', confidence);
     if (name === 'needs_plan') return noulAnswer(readings.needsPlan === 'uncertain' ? 0.5 : readings.needsPlan ? 0.97 : 0.03);
