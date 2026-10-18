@@ -1,32 +1,16 @@
-import { resolveSystemPrompt } from './orchestrator-system-prompt.js';
-import type { ConversationManager } from './conversation.js';
-import type { ModelDefinition, ProviderRegistry } from '../providers/registry.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
-import {
-  buildConversationFollowUpPrompt,
-  normalizeConversationFollowUpItems,
-  type ConversationFollowUpItem,
-} from './conversation-follow-ups.js';
-import { normalizeUsage } from './orchestrator-runtime.js';
+import { normalizeConversationFollowUpItems, type ConversationFollowUpItem } from './conversation-follow-ups.js';
 
 const FOLLOW_UP_DEDUP_TTL_MS = 60_000;
-const FOLLOW_UP_MAX_OUTPUT_TOKENS = 160;
 const FOLLOW_UP_RETRY_DELAY_MS = 250;
 
 export interface OrchestratorFollowUpRuntimeOptions {
-  readonly conversation: ConversationManager;
-  readonly getViewportHeight: () => number;
-  readonly scrollToEnd: (height: number) => void;
-  readonly getSystemPrompt: (signal?: AbortSignal) => string | Promise<string>;
-  readonly requestRender: () => void;
   readonly getThinkingState: () => { readonly isThinking: boolean; readonly isCompacting: boolean };
   readonly getQueuedUserMessageCount: () => number;
-  readonly getProviderRegistry: () => ProviderRegistry;
-  readonly getCurrentModel: () => ModelDefinition;
+  /** Resume the original authorized work through the ordinary tool loop and its completion gate. */
+  readonly resumeWork: (items: readonly ConversationFollowUpItem[], signal: AbortSignal) => Promise<void>;
   readonly routeLowPriorityMessage: (message: string) => void;
-  /** Add billed usage to totals without replacing the main turn's context size. */
-  readonly applyUsage: (usage: ReturnType<typeof normalizeUsage>) => void;
 }
 
 export class OrchestratorFollowUpRuntime {
@@ -66,7 +50,7 @@ export class OrchestratorFollowUpRuntime {
     });
   }
 
-  /** Interrupt an acknowledgement when a user turn takes priority or the session stops. */
+  /** Interrupt a pending recovery when a user turn takes priority or the session stops. */
   public cancel(requeue = false): void {
     if (requeue && this.activeAbortController && !this.activeAbortController.signal.aborted) {
       this.queue.unshift(...this.activeBatch);
@@ -108,80 +92,33 @@ export class OrchestratorFollowUpRuntime {
       return;
     }
 
-    const model = this.options.getCurrentModel();
     const batch = this.takeBatch();
     if (batch.length === 0) return;
-    const results = batch.flatMap(item => item.result ? [item.result] : []);
-    if (results.length > 0) {
-      // The agents already produced the answer. An acknowledgement request
-      // would discard their findings, add latency, and charge for a rewrite.
-      this.options.conversation.addAssistantMessage(results.join('\n\n'), {
-        model: model.displayName,
-        provider: model.provider,
-        followUp: true,
-      });
-      this.options.scrollToEnd(this.options.getViewportHeight());
-      this.options.requestRender();
-      if (this.queue.length > 0) this.scheduleFlush();
-      return;
-    }
-    const providerRegistry = this.options.getProviderRegistry();
-    const provider = providerRegistry.getForModel(model.registryKey, model.provider);
-    const reportedLimit = providerRegistry.getTokenLimitsForModel(model).maxOutputTokens ?? 0;
-    const tokenLimit = reportedLimit > 0 ? Math.min(FOLLOW_UP_MAX_OUTPUT_TOKENS, reportedLimit) : FOLLOW_UP_MAX_OUTPUT_TOKENS;
     this.isRunning = true;
     const controller = new AbortController();
     this.activeAbortController = controller;
     this.activeBatch = batch;
     const { signal } = controller;
     try {
-      const systemPrompt = await resolveSystemPrompt(this.options.getSystemPrompt, signal);
-      const currentState = this.options.getThinkingState();
-      const currentModel = this.options.getCurrentModel();
-      if (currentState.isThinking || currentState.isCompacting || this.options.getQueuedUserMessageCount() > 0
-        || currentModel.registryKey !== model.registryKey || currentModel.provider !== model.provider) {
-        this.cancel(true);
-      }
       signal.throwIfAborted();
-      const response = await provider.chat({
-        model: model.id,
-        messages: [
-          ...this.options.conversation.getMessagesForLLM(),
-          { role: 'user', content: buildConversationFollowUpPrompt(batch) },
-        ],
-        systemPrompt,
-        signal,
-        maxTokens: tokenLimit,
-        reasoningEffort: model.capabilities.reasoning ? 'low' : undefined,
-      });
-      signal.throwIfAborted();
-
-      const content = response.content.trim();
-      if (content.length > 0) {
-        const normalizedUsage = normalizeUsage(response.usage);
-        this.options.conversation.addAssistantMessage(content, {
-          usage: normalizedUsage,
-          model: model.displayName,
-          provider: model.provider,
-          followUp: true,
-        });
-        this.options.applyUsage(normalizedUsage);
-        this.options.scrollToEnd(this.options.getViewportHeight());
-        this.options.requestRender();
-      }
+      // Neither completed results nor failure notices may publish an unchecked
+      // assistant message. Both are evidence for the same checked execution path.
+      await this.options.resumeWork(batch, signal);
     } catch (error) {
       if (signal.aborted) return;
-      logger.warn('Orchestrator follow-up acknowledgement failed', {
+      this.queue.unshift(...batch);
+      logger.warn('Orchestrator follow-up recovery failed', {
         error: summarizeError(error),
         updates: batch.map((item) => item.summary),
       });
-      this.options.routeLowPriorityMessage(`[Follow-up] Acknowledgement update failed: ${summarizeError(error)}`);
+      this.options.routeLowPriorityMessage(`[Follow-up] Recovery remains pending: ${summarizeError(error)}`);
     } finally {
       this.activeAbortController = null;
       this.activeBatch = [];
       this.isRunning = false;
       if (this.queue.length > 0) {
-        this.scheduleFlush();
+        const timer = setTimeout(() => this.scheduleFlush(), FOLLOW_UP_RETRY_DELAY_MS);
+        timer.unref?.();
       }
     }
   }

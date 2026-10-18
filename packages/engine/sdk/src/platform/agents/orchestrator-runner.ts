@@ -1,3 +1,4 @@
+import { hasContractPlanConsumer } from '../tools/agent/contract-binding.js';
 import { setTimeout as waitForRetry } from 'node:timers/promises';
 import { prepareProjectFramework, readRepeatedCalls, captureOrchestratorObservationOwner, OrchestratorObservationHeldError, type RetainedToolObservation } from './orchestrator-observations.js';
 import { captureAutonomousSource } from '../permissions/autonomous.js';
@@ -288,7 +289,7 @@ async function finalizeAgentRun(
   terminal.assertCurrent();
   const statusAfterLoop = (record as { status: string }).status;
   if (statusAfterLoop !== 'failed' && statusAfterLoop !== 'cancelled') {
-    if (!record.contractUnitId || !context.contractHooks) {
+    if ((!record.contractUnitId || !context.contractHooks) && !hasContractPlanConsumer(record)) {
       if (!assertCompletionCurrent) throw new ResponseCompletionError('unavailable');
       assertCompletionCurrent();
     }
@@ -1102,10 +1103,11 @@ export async function runAgentTask(
         }
         setAgentProgress(record, `Turn ${turn} · Thinking…`, 'operator');
       } else {
-        if (!record.contractUnitId || !context.contractHooks) {
-          const correction = await completionGuard.check({ request: record.task, response: response.content, conversation,
+        if ((!record.contractUnitId || !context.contractHooks) && !hasContractPlanConsumer(record)) {
+          const completionConversation = conversation, finalResponse = response;
+          const correction = await completionGuard.checkUntilAvailable(() => ({ request: record.task, response: finalResponse.content, conversation: completionConversation,
             tools: toolDefinitions.map(tool => tool.name),
-            delegated: context.agentManager ? collectResponseDelegates(conversation, context.agentManager) : [] },
+            delegated: context.agentManager ? collectResponseDelegates(completionConversation, context.agentManager) : [] }),
           { signal: context.getCancellationSignal?.(record.id), assertCurrent: terminal.assertCurrent });
           terminal.assertCurrent();
           if (correction !== null) {

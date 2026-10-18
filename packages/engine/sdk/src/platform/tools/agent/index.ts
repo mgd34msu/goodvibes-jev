@@ -190,6 +190,9 @@ function retainContractProperty(object: object, key: 'contractRunner' | 'start' 
 
 export function createAgentTool(config: AgentToolConfig): Tool {
   const archetypeLoader = config.archetypeLoader ?? new ArchetypeLoader();
+  // A refused batch remains a pending proposal, including when the model changes spawn modes.
+  // Keyed by host-stamped source request and session, never a model-supplied parent ID.
+  const heldBatches = new Map<string, { readonly request: string; readonly assignments: readonly { readonly task: string }[]; readonly reason: string }>();
 
   /**
    * Starts one contract for work handed to the tool. The unit
@@ -333,6 +336,19 @@ export function createAgentTool(config: AgentToolConfig): Tool {
     }
 
     const manager = config.manager;
+    const delegationKey = JSON.stringify([config.resolveSessionId(), input.authoritativeTask ?? '']);
+    const heldBatch = heldBatches.get(delegationKey);
+    const holdBatch = (assignments: readonly { readonly task: string }[], error: unknown) => {
+      const reason = summarizeError(error);
+      const proposal = { request: input.authoritativeTask!, assignments, reason };
+      heldBatches.set(delegationKey, proposal);
+      return publish({ success: false, error: reason,
+        output: JSON.stringify({ recovery: { kind: 'revise-delegation', ...proposal,
+          instruction: 'Revise these assignments and resubmit mode=batch-spawn for Jev revalidation. Do not abandon the held plan by starting another agent or contract. Continue the original request after validation.' } }) });
+    };
+    if (input.mode === 'spawn' && heldBatch) return publish({ success: false,
+      error: 'Delegation remains held. Repair and revalidate the pending batch before switching execution modes.',
+      output: JSON.stringify({ recovery: { kind: 'revise-delegation', ...heldBatch, requiredMode: 'batch-spawn' } }) });
 
     switch (input.mode) {
       case 'spawn': {
@@ -734,11 +750,12 @@ export function createAgentTool(config: AgentToolConfig): Tool {
         }
         const outsideInputs = spawnInputs.filter((spawnInput) => spawnInput.outsideContract === true);
         const contractTasks = input.tasks.filter((_, index) => spawnInputs[index]!.outsideContract !== true);
-        if (outsideInputs.length > 0 && input.authoritativeTask) {
+        if ((outsideInputs.length > 0 || heldBatch) && input.authoritativeTask) {
           try {
             await assertAgentBriefFidelity({ request: input.authoritativeTask, assignments: input.tasks.map(task => ({ task: task.task })) }, { signal, assertCurrent });
             assertCurrent();
-          } catch (error) { return publish({ success: false, error: summarizeError(error) }); }
+          } catch (error) { return holdBatch(input.tasks.map(task => ({ task: task.task })), error); }
+          heldBatches.delete(delegationKey);
         }
 
         const batchOutput: Record<string, unknown> = { cohort: input.cohort };

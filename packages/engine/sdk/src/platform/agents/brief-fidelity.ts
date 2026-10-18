@@ -31,5 +31,8 @@ export async function assertAgentBriefFidelity(input: { readonly request: string
   const accepted = Object.values(run.readings).every(reading => reading.verdict === 'no' && reading.outcome === 'act');
   run.recordAction(accepted ? 'Allow the assignments to reach normal agent admission.' : 'Hold delegation: preserve the original scope and applicable constraints.');
   owner.assertCurrent(); current();
-  if (!accepted) throw new Error('Delegation held: the assignments have not established that they preserve the original request and its applicable constraints. Revise the briefs before starting agents.');
+  if (!accepted) throw new Error('Delegation held: revise and resubmit this plan before starting any agents or replacing it with a contract. '
+    + 'The coordinator retains responsibility for the complete original request and final deliverables. Unresolved checks: '
+    + Object.entries(run.readings).filter(([, reading]) => reading.verdict !== 'no' || reading.outcome !== 'act')
+      .map(([aspect, reading]) => `${aspect}: ${reading.verdict} (${reading.outcome})`).join('; ') + '.');
 }

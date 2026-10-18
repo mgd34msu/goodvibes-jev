@@ -8,10 +8,10 @@ import { executionAssurance } from './batteries/execution-assurance.js';
 import type { AgentManager } from '../tools/agent/manager.js';
 
 export class ResponseCompletionError extends Error {
-  constructor(readonly problem: 'rejected' | 'unavailable' = 'rejected') {
+  constructor(readonly problem: 'rejected' | 'unavailable' = 'rejected', options?: ErrorOptions) {
     super(problem === 'rejected'
-      ? 'The assistant repeatedly tried to end with unfinished or unsupported work. The run was stopped without marking it complete.'
-      : 'The response completion check could not be established. The run was stopped without marking it complete.');
+      ? 'The response has not established completion of the authorized work.'
+      : 'The response completion check could not be established. Completion remains held.', options);
     this.name = 'ResponseCompletionError';
   }
 }
@@ -22,7 +22,7 @@ export interface ResponseCompletionInput {
   readonly conversation: ConversationManager;
   readonly tools: readonly string[];
   readonly requirements?: unknown;
-  readonly delegated?: readonly { readonly id: string; readonly task: string; readonly status: string; readonly output: string; readonly evidence?: readonly ConversationMessageSnapshot[] }[];
+  readonly delegated?: readonly { readonly id: string; readonly task: string; readonly status: string; readonly output: string; readonly error?: string; readonly evidence?: readonly ConversationMessageSnapshot[] }[];
 }
 
 function completionTranscript(messages: readonly ConversationMessageSnapshot[]) {
@@ -37,12 +37,12 @@ function completionTranscript(messages: readonly ConversationMessageSnapshot[]) 
 
 /** Include only agent IDs actually returned by this conversation's agent tool, never the entire shared fleet. */
 export function collectResponseDelegates(conversation: ConversationManager,
-  manager: Pick<AgentManager, 'list'> & Partial<Pick<AgentManager, 'getConversationSnapshot'>>): NonNullable<ResponseCompletionInput['delegated']> {
+  manager: Pick<AgentManager, 'list'> & Partial<Pick<AgentManager, 'getConversationSnapshot'>>, knownAgentIds: readonly string[] = []): NonNullable<ResponseCompletionInput['delegated']> {
   const messages = conversation.getMessageSnapshot();
   const agentCalls = new Set(messages.flatMap(message => message.role === 'assistant'
     ? (message.toolCalls ?? []).filter(call => call.name === 'agent').map(call => call.id) : []));
   const records = new Map(manager.list().map(record => [record.id, record]));
-  const selected = new Set<string>();
+  const selected = new Set(knownAgentIds.filter(id => records.has(id)));
   for (const message of messages) {
     if (message.role !== 'tool' || !agentCalls.has(message.callId)) continue;
     let value: unknown;
@@ -56,13 +56,12 @@ export function collectResponseDelegates(conversation: ConversationManager,
   }
   return [...selected].map(id => {
     const record = records.get(id)!;
-    return { id, task: record.task, status: record.status, output: record.fullOutput ?? '', evidence: manager.getConversationSnapshot?.(id) ?? [] };
+    return { id, task: record.task, status: record.status, output: record.fullOutput ?? '', ...(record.error ? { error: record.error } : {}), evidence: manager.getConversationSnapshot?.(id) ?? [] };
   });
 }
 
 /** One guard per run. Rejected final drafts return to the model, never to a successful terminal event. */
 export class ResponseCompletionGuard {
-  private corrections = 0;
   private readonly initial: unknown;
   private accepted: ((response: { readonly content: string }) => (() => void)) | undefined;
   private hasToolEvidence = false;
@@ -76,7 +75,6 @@ export class ResponseCompletionGuard {
 
   noteToolResults(results: readonly { readonly success: boolean }[]): void {
     if (results.length) this.hasToolEvidence = true;
-    if (results.some(result => result.success)) this.corrections = 0;
   }
 
   /** Consume the accepted observation before appending its final message; keep its lifetime fence through terminal publication. */
@@ -94,7 +92,22 @@ export class ResponseCompletionGuard {
     catch (error) {
       options.signal?.throwIfAborted(); options.assertCurrent?.();
       if (error instanceof ResponseCompletionError) throw error;
-      throw new ResponseCompletionError('unavailable');
+      throw new ResponseCompletionError('unavailable', { cause: error });
+    }
+  }
+
+  /** An unavailable checker cannot release the task or exhaust a hidden attempt budget. */
+  async checkUntilAvailable(input: () => ResponseCompletionInput, options: JudgmentReadingOptions = {}, onWaiting?: () => void): Promise<string | null> {
+    let delay = 1_000;
+    for (;;) {
+      try { return await this.check(input(), options); }
+      catch (error) {
+        options.signal?.throwIfAborted(); options.assertCurrent?.();
+        if (!(error instanceof ResponseCompletionError) || error.problem !== 'unavailable') throw error;
+        onWaiting?.();
+        await waitForTaskRecovery(delay, options.signal);
+        delay = Math.min(delay * 2, 10_000);
+      }
     }
   }
 
@@ -106,7 +119,7 @@ export class ResponseCompletionGuard {
     // Validate all retained text before touching the port. Never trim away an earlier request or late secret.
     const source = retainStrictJudgmentJson({ request: input.request, response: input.response, transcript,
       tools: input.tools, delegated: (input.delegated ?? []).map(agent => ({ id: agent.id, task: agent.task, status: agent.status,
-        output: agent.output, evidence: completionTranscript(agent.evidence ?? []) })), requirements: input.requirements ?? null, initial: this.initial });
+        output: agent.output, ...(agent.error ? { error: agent.error } : {}), evidence: completionTranscript(agent.evidence ?? []) })), requirements: input.requirements ?? null, initial: this.initial });
     const state = snapshotJudgmentEvidence(source.snapshot);
     const conversationSource = JSON.stringify(transcript);
     const current = () => {
@@ -165,8 +178,11 @@ export class ResponseCompletionGuard {
     consolidation?.recordAction('Hold completion until relevant delegated work is incorporated and contradictions are resolved.');
     execution?.recordAction('Hold completion until the fix, verification and success criteria support the requested result.');
     owner.assertCurrent(); current();
-    if (this.corrections++ >= 3) throw new ResponseCompletionError();
+    const unsettled = [...Object.entries(run.readings), ...Object.entries(consolidation?.readings ?? {}),
+      ...Object.entries(execution?.readings ?? {})].filter(([, reading]) => reading.outcome !== 'act')
+      .map(([aspect, reading]) => `${aspect}: ${reading.verdict} (${reading.outcome})`);
     return '[Response completion check] This draft has not established that the complete user request is fulfilled and its completion claims are supported. '
+      + (unsettled.length ? `Unsettled checks: ${unsettled.join('; ')}. Gather relevant evidence or correct the draft; uncertainty does not establish completion. ` : '')
       + (false_blocker.verdict === 'yes' ? 'The claimed blocker does not establish that further authorized progress is impossible. ' : '')
       + (unfinished.verdict === 'yes' ? 'The requested work remains unfinished. ' : '')
       + (unsupported.verdict === 'yes' ? 'Claims about completed work lack observed evidence. ' : '')
@@ -182,4 +198,34 @@ export class ResponseCompletionGuard {
       + 'Do not ask for permission already granted. If a real external blocker prevents further progress, explain it accurately with evidence. '
       + 'End only after the work is done, the user explicitly stops it, or a necessary user decision or genuine blocker prevents further authorized progress. Do not invent work, results, or test requirements.';
   }
+}
+
+/** Back off without blocking the UI, and release timers immediately on cancellation. */
+export function waitForTaskRecovery(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(signal?.reason); };
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, milliseconds);
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+  });
+}
+
+/** Delegation is a step inside a turn. Failed children return to its coordinator for repair. */
+export async function waitForResponseDelegates(conversation: ConversationManager,
+  manager: Parameters<typeof collectResponseDelegates>[1], options: JudgmentReadingOptions = {}, knownAgentIds: readonly string[] = [],
+  canWait: (agentId: string) => boolean = () => true): Promise<string | null> {
+  let delegates = collectResponseDelegates(conversation, { list: () => manager.list() }, knownAgentIds);
+  if (!delegates.length) return null;
+  const ids = new Set(delegates.map(agent => agent.id));
+  while (manager.list().some(agent => ids.has(agent.id) && (agent.status === 'pending' || agent.status === 'running') && canWait(agent.id))) {
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    await waitForTaskRecovery(50, options.signal);
+  }
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  delegates = collectResponseDelegates(conversation, { list: () => manager.list() }, knownAgentIds);
+  const evidence = '[Delegated work state] ' + JSON.stringify(delegates.map(({ evidence: _evidence, ...agent }) => agent))
+    + '\nReview these results against the original request. Recover failed or incomplete work, consolidate findings, and produce every requested deliverable. Delegation itself does not complete the task.';
+  conversation.addSystemMessage(evidence);
+  return evidence;
 }

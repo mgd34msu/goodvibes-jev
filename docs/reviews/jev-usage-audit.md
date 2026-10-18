@@ -248,6 +248,25 @@ Functionality verification for this follow-up: **553 engine tests, 12 daemon tes
 
 The repository-wide type check, final SDK and cross-product incremental type checks, all four product builds, API extraction and subpath surface check, browser compatibility and whitespace checks pass. The guard submits complete textual evidence; private or unsupported evidence is withheld and cannot establish completion. It does not silently truncate evidence to obtain a passing judgment.
 
+## Recovery and terminal-path correction (2026-10-18)
+
+The earlier completion follow-up missed successful tool handoffs and background acknowledgement replies. Session `user-e65d9966` exposed the result: an uncertain batch-fidelity reading was abandoned for a contract; the contract's planner was incorrectly checked as a finished user deliverable; its oversized check received HTTP 400; and two unchecked background replies then admitted that neither the review nor its artifact had been completed. The earlier functionality checks did not establish enforcement at those boundaries.
+
+The corrected ownership and recovery paths are:
+
+- A refused batch remains a pending proposal. Changing to single-spawn or contract mode cannot bypass it. Revised briefs must be resubmitted and Jev-validated before effects.
+- A host-bound contract planner produces a proposal for the contract's existing structural and Jev plan checks. The binding is private construction metadata, absent from model arguments and persisted records. A model-selected `planner` label cannot bypass ordinary completion checks. Failed planner attempts and invalid proposals return through the repair loop; configured explicit budgets and user cancellation retain their own meanings.
+- A successful handoff keeps the coordinator's original turn active. An asynchronous, scoped wait returns the delegate's output or failure for consolidation or repair. Polling reads statuses rather than copying running transcripts. Intake handoffs also continue to final validation.
+- Both background results and failure notices enter the ordinary tool-capable execution loop. The separate 160-token, tool-free acknowledgement path and direct unchecked assistant-result publication are removed. Background evidence cannot manufacture native execution permits or restart explicitly cancelled work.
+- Rejected final drafts have no hidden three-attempt stop. Unavailable final checks wait with cancellable backoff; plan checks also retry after Jev recovers. Unsettled dimensions are returned as repair feedback. Repeated tool failures require reassessment and backoff rather than ending the task. A failed helper may be superseded by observed work that fulfills the same requirement.
+- Final responses and tool handoffs cannot secretly auto-spawn plan tasks or schedule agent work after completion validation. Further assignments use normal checked tool admission and appear in the retained evidence.
+
+The actual main-loop regression exercises contract handoff, a failed planner, rejection of the unfinished reply, recovery through a file write, and a single accepted terminal publication after the artifact exists. Separate tests cover held-batch revalidation, failed/invalid planner repair, trusted proposal construction, both former background bypasses, checker recovery, cancellation, privacy and stale authority. Legacy acknowledgement usage remains readable in saved sessions.
+
+Live `jev-1.13.0` checks hold both literal failed replies from the actual session. A bounded recovery after a failed writer is accepted after an actual write and separate read-back observation. The first version of that valid recovery remained conservatively held because implementation applicability and effectiveness were inconclusive; it was not treated as approval. Both earlier observations are preserved with the final [recovery calibration](../../.goodvibes/artifacts/jev-usage/turn-recovery-calibration.json). This is evidence for these scenarios, not a guarantee that probabilistic judgment can never err or that infrastructure cannot fail.
+
+Validation for this correction: **263 engine tests across 19 files, 12 daemon tests across two files, and one TUI test: 276 tests across 22 files passed**. The repository-wide type check passed, followed by final SDK, engine-test and TUI-test checks after the last changes. All four products build; API extraction, refreshed subpath surfaces, browser compatibility and whitespace checks pass. Installation rebuilds and records the committed source revision.
+
 ## Source paths behind the main findings
 
 - Model repository: [snapshot ingestion](../../packages/engine/sdk/src/platform/providers/model-catalog-repository.ts), [normalization and cache](../../packages/engine/sdk/src/platform/providers/model-catalog-cache.ts), and [shared capability and identity facts](../../packages/engine/sdk/src/platform/providers/model-catalog-facts.ts).

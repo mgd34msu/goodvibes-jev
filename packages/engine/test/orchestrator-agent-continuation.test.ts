@@ -71,10 +71,10 @@ describe('the turn loop after an agent tool call', () => {
       userText: '',
       result: { contractStarted: true, contractId: 'ctr-1a2b3c4d', ownerAgentId: 'agent-owner' },
     });
-    expect(systemMessages.some((message) => message.includes('continue spawning agents now'))).toBe(false);
-    expect(systemMessages.some((message) => message.startsWith('A contract now owns this work'))).toBe(true);
-    expect(outcome.continueLoop).toBe(false);
-    expect(completions).toEqual(['completed']);
+    expect(systemMessages.some((message) => message.includes('You retain responsibility'))).toBe(false);
+    expect(systemMessages.some((message) => message.startsWith('A contract is carrying out delegated work'))).toBe(true);
+    expect(outcome.continueLoop).toBe(true);
+    expect(completions).toEqual([]);
   });
 
   test('a failed batch spawn stays in the model loop so it can handle the tool error', async () => {
@@ -93,8 +93,8 @@ describe('the turn loop after an agent tool call', () => {
       userText: '',
       result: { agentId: 'agent-worker', status: 'spawned' },
     });
-    expect(systemMessages.some((message) => message.includes('continue spawning agents now'))).toBe(true);
-    expect(systemMessages.some((message) => message.startsWith('A contract now owns this work'))).toBe(false);
+    expect(systemMessages.some((message) => message.includes('You retain responsibility'))).toBe(true);
+    expect(systemMessages.some((message) => message.startsWith('A contract is carrying out delegated work'))).toBe(false);
   });
 
   test('the user\'s turn text rides every root agent call as its authoritative task', async () => {

@@ -1,5 +1,5 @@
 import { getContractInputAuthority, assertContractInputAuthority } from '../contract/input-authority.js';
-import { getContractActionSource, getContractActionPort } from '../tools/agent/contract-binding.js';
+import { getContractActionSource, getContractActionPort, hasContractPlanConsumer } from '../tools/agent/contract-binding.js';
 /**
  * Production `DecompositionRunner` backed by the real `AgentManager`.
  *
@@ -118,8 +118,10 @@ export function createAgentManagerDecompositionRunner(
         if (authority) await assertContractInputAuthority(authority, request.workingDir, request.signal);
         request.signal?.throwIfAborted();
         autonomousSource?.();
-        const binding = autonomousSource ? { autonomousSource, autonomousPort: getContractActionPort(request), ...(authority ? { inputReadAuthority: authority } : {}) }
+        const sourceBinding = autonomousSource ? { autonomousSource, autonomousPort: getContractActionPort(request), ...(authority ? { inputReadAuthority: authority } : {}) }
           : authority ? { inputReadAuthority: authority } : undefined;
+        const binding = hasContractPlanConsumer(request)
+          ? { ...sourceBinding, proposalConsumer: 'contract-plan' as const, autonomousSignal: request.signal } : sourceBinding;
         const record = deps.agentManager.spawn(spawnInput, binding);
         agentId = record.id;
       } catch (err) {

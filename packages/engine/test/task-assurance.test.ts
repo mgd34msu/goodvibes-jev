@@ -121,3 +121,30 @@ test('only agent identities returned by this conversation contribute delegated e
   expect(evidence.map(agent => agent.id)).toEqual(['owned']);
   expect(JSON.stringify(evidence)).not.toContain('Unrelated');
 });
+
+
+test('a held batch cannot be abandoned for a contract, and revised assignments are revalidated before effects', async () => {
+  let spawns = 0, contracts = 0;
+  const records: unknown[] = [];
+  const tool = createAgentTool({ manager: { guardContractLeafSpawn() {}, list: () => [], spawn(input: { task: string }) {
+    spawns++;
+    const record = { id: `reviewer-${spawns}`, task: input.task, template: 'reviewer', status: 'running', tools: [], executionProtocol: 'direct', reviewMode: 'none', communicationLane: 'parent-only' };
+    records.push(record); return record;
+  } } as never, messageBus: {} as never, configManager: { get: () => 20 } as never,
+    contractRunner: { start() { contracts++; throw new Error('Held delegation must never start a contract'); } } as never,
+    projectRoot: '/synthetic', resolveSessionId: () => 'session' });
+  const request = 'Review the whole repository and write a consolidated artifact.';
+  const tasks = [{ task: 'Review engine sources and report to coordinator.', outsideContract: true }, { task: 'Review products and report to coordinator.', outsideContract: true }];
+  const uncertain = fakePort(name => noulAnswer(name === 'constraint_conflict' ? .45 : .01)); installJudgmentPort(uncertain.port);
+  expect((await tool.execute({ mode: 'batch-spawn', authoritativeTask: request, tasks })).success).toBe(false);
+  const bypass = await tool.execute({ mode: 'spawn', authoritativeTask: request, task: request });
+  expect(bypass.success).toBe(false);
+  expect(bypass.error).toContain('Repair and revalidate');
+  expect(spawns).toBe(0); expect(contracts).toBe(0);
+  expect(uncertain.requests).toHaveLength(1);
+  const accepted = fakePort(() => noulAnswer(.01)); installJudgmentPort(accepted.port);
+  const revised = await tool.execute({ mode: 'batch-spawn', authoritativeTask: request, tasks: tasks.map(task => ({ ...task,
+    task: task.task + ' The coordinator retains all remaining scope and writes the final consolidated artifact.' })) });
+  expect(revised.success).toBe(true); expect(spawns).toBe(2); expect(contracts).toBe(0);
+  expect(accepted.requests).toHaveLength(1);
+});

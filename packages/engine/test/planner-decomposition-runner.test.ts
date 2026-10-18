@@ -1,3 +1,5 @@
+import { AgentManager } from '../sdk/src/platform/tools/agent/manager.js';
+import { bindContractPlanConsumer, hasContractPlanConsumer } from '../sdk/src/platform/tools/agent/contract-binding.js';
 /**
  * Production DecompositionRunner backed by AgentManager
  * (agents/planner-decomposition-runner.ts).
@@ -151,4 +153,19 @@ test('planner receives the requested frozen working directory and pre-aborted re
   expect(inputs.map((input) => input.workingDirectory)).toEqual(['/recorded/input/generation-one']);
   const result = await runner.run({ ...REQ, signal: AbortSignal.abort() });
   expect(result.status).toBe('cancelled'); expect(inputs).toHaveLength(1);
+});
+
+
+test('the real planner driver and manager carry only host-owned contract proposal bindings', async () => {
+  const manager = new AgentManager({ configManager: { get: (key: string) => key === 'fleet.maxSize' ? 20 : undefined } as never,
+    archetypeLoader: { loadArchetype: () => null }, executor: { async runAgent(record) {
+    record.fullOutput = '{"goal":"proposal","groups":[]}'; record.status = 'completed'; record.completedAt = Date.now();
+  } } });
+  const runner = createAgentManagerDecompositionRunner({ agentManager: manager, pollIntervalMs: 1 });
+  const ordinary = await runner.run({ ...REQ, bounds: { maxTurns: 0, tokenCeiling: 0, wallTimeoutMs: 0 } });
+  const contract = await runner.run(bindContractPlanConsumer({ ...REQ, bounds: { maxTurns: 0, tokenCeiling: 0, wallTimeoutMs: 0 } }));
+  expect(ordinary.status).toBe('completed'); expect(contract.status).toBe('completed');
+  expect(hasContractPlanConsumer(manager.getStatus(ordinary.agentId!)!)).toBe(false);
+  expect(hasContractPlanConsumer(manager.getStatus(contract.agentId!)!)).toBe(true);
+  expect(JSON.stringify(manager.getStatus(contract.agentId!))).not.toContain('proposalConsumer');
 });

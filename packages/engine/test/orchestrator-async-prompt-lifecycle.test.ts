@@ -1,3 +1,7 @@
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { waitFor } from './_helpers/test-timeout.js';
+import type { ChatResponse } from '../sdk/src/platform/providers/interface.js';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Orchestrator, type OrchestratorOptions } from '../sdk/src/platform/core/orchestrator.js';
 import { ConversationManager } from '../sdk/src/platform/core/conversation.js';
@@ -20,7 +24,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function fixture(getSystemPrompt: NonNullable<OrchestratorOptions['getSystemPrompt']>) {
+function fixture(getSystemPrompt: NonNullable<OrchestratorOptions['getSystemPrompt']>, replies?: ChatResponse[]) {
   const conversation = new ConversationManager();
   const requests: ChatRequest[] = [];
   const signals: Array<AbortSignal | undefined> = [];
@@ -33,6 +37,7 @@ function fixture(getSystemPrompt: NonNullable<OrchestratorOptions['getSystemProm
     name: 'test', models: ['test'],
     chat: async (request) => {
       requests.push(request);
+      if (replies) { const reply = replies.shift(); if (!reply) throw new Error('Unexpected extra provider call'); return reply; }
       return { content: 'done', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
     },
   };
@@ -107,21 +112,59 @@ describe('Orchestrator async prompt lifecycle wiring', () => {
     expect(f.requests).toHaveLength(0);
   });
 
-  test('a user turn interrupts a pending follow-up and its batch resumes with fresh memory', async () => {
-    const pending = deferred<string>();
-    const entered = deferred<void>();
+  test('a user message queued during background recovery is delivered after its checked turn', async () => {
+    const pending = deferred<string>(), entered = deferred<void>();
     let reads = 0;
     const f = fixture(() => { reads++; entered.resolve(); return reads === 1 ? pending.promise : `fresh memory ${reads}`; });
+    f.conversation.addUserMessage('Build the project.');
     f.orchestrator.enqueueConversationFollowUp({ key: 'build', summary: 'Build completed' });
     await entered.promise;
     await f.orchestrator.handleUserInput('new user turn');
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    pending.resolve('stale follow-up memory');
-    expect(f.requests).toHaveLength(2);
-    expect(f.requests[0]?.systemPrompt).toContain('fresh memory 2');
-    expect(f.requests[1]?.systemPrompt).toContain('fresh memory 3');
-    expect(JSON.stringify(f.requests[1]?.messages)).toContain('Build completed');
-    expect(f.signals[0]?.aborted).toBe(true);
-    expect(new Set(f.signals).size).toBe(3);
+    expect(f.orchestrator.listQueuedMessages()).toHaveLength(1);
+    pending.resolve('first recovery memory');
+    await waitFor(() => f.requests.length === 2 && !f.orchestrator.isBusy);
+    expect(f.requests[0]?.systemPrompt).toContain('first recovery memory');
+    expect(f.requests[1]?.systemPrompt).toContain('fresh memory 2');
+    expect(JSON.stringify(f.requests[0]?.messages)).toContain('Build completed');
+    expect(new Set(f.signals).size).toBe(2);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    expect(f.requests).toHaveLength(2); // The retired background batch must not replay after the queued user turn.
   });
+});
+
+
+for (const directResult of [false, true]) {
+  test(`background ${directResult ? 'completed result' : 'failure notice'} resumes the original request and cannot bypass final validation`, async () => {
+    const rejected = 'The requested review did not finish. No completed artifact was produced.';
+    const fake = fakePort((name, _question, state) => noulAnswer(name === 'unfinished' && (state as { response?: string }).response === rejected ? .99 : .01));
+    installJudgmentPort(fake.port);
+    const f = fixture(() => 'current memory', [
+      { content: rejected, toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' },
+      { content: 'Recovered and finished the original request.', toolCalls: [], usage: { inputTokens: 2, outputTokens: 2 }, stopReason: 'completed' },
+    ]);
+    f.conversation.addUserMessage('Review the full repository and produce the findings artifact.');
+    f.orchestrator.enqueueConversationFollowUp({ key: 'failed-contract', summary: 'Contract planning failed.', ...(directResult ? { result: rejected } : {}) });
+    await waitFor(() => f.requests.length === 2 && !f.orchestrator.isBusy);
+    const checked = fake.requests.filter(request => request.context?.battery === 'engine.core.response-completion');
+    expect(checked).toHaveLength(2);
+    expect(JSON.stringify(checked[0]?.state)).toContain('Review the full repository');
+    expect(f.requests[1]?.systemPrompt).toContain('[Response completion check]');
+    expect(JSON.stringify(f.requests[0]?.messages)).toContain('Contract planning failed');
+    expect(f.conversation.getMessageSnapshot().filter(message => message.role === 'user')).toHaveLength(1);
+    expect(f.conversation.getMessageSnapshot().at(-1)).toMatchObject({ role: 'assistant', content: 'Recovered and finished the original request.' });
+    expect(f.requests[0]?.maxTokens).not.toBe(160);
+  });
+}
+
+test('background evidence cannot restart explicitly cancelled work or mint a native permit', async () => {
+  for (const native of [false, true]) {
+    const f = fixture(() => 'current memory');
+    f.conversation.addUserMessage('Review the repository.');
+    if (native) f.orchestrator.bindNativeConversationProject('project');
+    else f.conversation.markLastUserMessageCancelled();
+    f.orchestrator.enqueueConversationFollowUp({ key: 'failed-contract', summary: 'Contract failed.' });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(f.requests).toHaveLength(0);
+    expect(f.conversation.getMessageSnapshot().filter(message => message.role === 'assistant')).toHaveLength(0);
+  }
 });

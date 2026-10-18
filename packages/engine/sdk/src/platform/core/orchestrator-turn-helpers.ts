@@ -12,7 +12,6 @@ import type { ExecutionPlanManager } from './execution-plan.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
 import { emitCommunicationConsumed, emitPlanStrategySelected, emitToolReconciled, emitTurnCompleted } from '../runtime/emitters/index.js';
 import { buildSyntheticResult } from './tool-reconciliation.js';
-import { autoSpawnPendingItems } from './orchestrator-tool-runtime.js';
 import type { ToolCall, ToolResult } from '../types/tools.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { ToolInputProjectionOptions } from '../tools/input-projection.js';
@@ -233,7 +232,7 @@ export function holdSessionFinalResponse(
 }
 
 /** Said to the conversation model after its agent tool call started a contract. */
-const CONTRACT_STARTED_NOTE = 'A contract now owns this work: its units are checked against the acceptance criteria while they work, and its answer arrives when every criterion is met. Do not start other agents for the same work; read the contract with the agent tool\'s contracts mode instead.';
+const CONTRACT_STARTED_NOTE = 'A contract is carrying out delegated work for this request. Its plan and units are checked against the acceptance criteria. You remain responsible for the original request: inspect its outcome, recover failures, consolidate the results, and produce all requested deliverables before ending. Do not duplicate work while it is running.';
 
 function attachAuthoritativeTaskToAgentCalls(toolCalls: readonly ToolCall[], userText: string): ToolCall[] {
   const authoritativeTask = userText.trim();
@@ -323,67 +322,13 @@ async function handleOwnedToolResponseOutcome(args: ToolResponseOutcomeArgs): Pr
   });
   const startedContract = spawnedAgents && results.some(toolResultStartedContract);
 
-  if (spawnedAgents || args.messageQueueLength > 0) {
-    if (spawnedAgents) {
-      const planManager = args.planManager;
-      const activePlan = planManager?.getActive(args.sessionId) ?? null;
-      if (activePlan) {
-        const summary = planManager?.getSummary(activePlan) ?? '';
-        if (startedContract) {
-          args.conversation.addSystemMessage(`${CONTRACT_STARTED_NOTE} Plan progress: ${summary}.`);
-        } else {
-          const nextItems = planManager?.getNextItems(activePlan) ?? [];
-          if (nextItems.length > 0) {
-            const autoSpawnedDescs = autoSpawnPendingItems(
-              args.conversation,
-              activePlan,
-              nextItems,
-              args.agentManager,
-              args.configManager,
-              args.providerRegistry,
-              args.runtimeBus,
-              args.emitterContext(args.turnId),
-              planManager,
-            );
-            if (autoSpawnedDescs.length > 0) {
-              args.conversation.addSystemMessage(
-                `[Plan] Auto-spawned ${autoSpawnedDescs.length} agent(s) for remaining plan items: ${autoSpawnedDescs.join(', ')}. Plan progress: ${summary}.`
-              );
-            } else {
-              const nextDesc = nextItems.map(i => i.description).join(', ');
-              args.conversation.addSystemMessage(
-                `Plan progress: ${summary}. Next items ready: ${nextDesc}. Continue spawning agents for remaining work.`
-              );
-            }
-          } else {
-            args.conversation.addSystemMessage(`Plan progress: ${summary}. All items are accounted for.`);
-          }
-        }
-      } else {
-        if (startedContract) {
-          args.conversation.addSystemMessage(CONTRACT_STARTED_NOTE);
-        } else {
-          args.conversation.addSystemMessage(
-            'You spawned an agent for part of the task. If there are remaining tasks, continue spawning agents now.'
-          );
-        }
-      }
-    }
-    // A session-mode unit's turn is held where it would complete, like a sub-agent (contract runner design 6.6).
-    if (args.contractSession && await holdSessionCompletion(args, args.contractSession, args.response.content)) {
-      return { continueLoop: true, results };
-    }
-    if (args.runtimeBus) {
-      publishTurnTerminal(() => emitTurnCompleted(args.runtimeBus!, args.emitterContext(args.turnId), {
-        turnId: args.turnId,
-        response: args.response.content,
-        // A successful handoff is a response even when the tool call carries
-        // no accompanying prose. The contract/agent reports its own outcome.
-        stopReason: spawnedAgents || args.response.content.trim().length > 0 ? 'completed' : 'empty_response',
-        memoryRecordIds: args.memoryRecordIds,
-      }), args.onTurnTerminal);
-    }
-    return { continueLoop: false, results };
+  if (spawnedAgents) {
+    args.conversation.addSystemMessage(startedContract ? CONTRACT_STARTED_NOTE
+      : 'You spawned agents for part of the task. You retain responsibility for the complete request. Incorporate their results, recover failures, and continue any remaining work.');
+    // Every additional assignment must pass normal tool admission and appear
+    // in the retained delegation evidence; no hidden plan-based spawns here.
+    args.requestRender();
+    return { continueLoop: true, results };
   }
 
   if (!isNativeConversationTurn() && args.planManager?.getActive(args.sessionId)) {
@@ -487,78 +432,14 @@ async function handleFinalPlanOutcome(args: FinalResponseOutcomeArgs): Promise<f
           `[Plan] Parsed ${parsed.items.length} item(s) with ${parsed.parseIssues.length} formatting warning(s); unrecognized item statuses were marked pending.`
         );
       }
-      const updatedPlan = planManager.getActive(args.sessionId);
-      if (updatedPlan) {
-        const nextItems = planManager.getNextItems(updatedPlan);
-        if (nextItems.length > 0) {
-          const spawned = autoSpawnPendingItems(
-            args.conversation,
-            updatedPlan,
-            nextItems,
-            args.agentManager,
-            args.configManager,
-            args.providerRegistry,
-            args.runtimeBus,
-            args.emitterContext(args.turnId),
-            planManager,
-          );
-          if (spawned.length > 0) {
-            args.conversation.addSystemMessage(
-              `[Plan] Parsed ${parsed.items.length} item(s) from your plan. Auto-spawned ${spawned.length} agent(s) for items with no blockers: ${spawned.join(', ')}.`
-            );
-            args.requestRender();
-          } else {
-            args.conversation.addSystemMessage(
-              `[Plan] Parsed ${parsed.items.length} item(s) from your plan. Spawn agents for the items with no blockers to begin execution.`
-            );
-          }
-        } else {
-          args.conversation.addSystemMessage(
-            `[Plan] Parsed ${parsed.items.length} item(s) from your plan. No items are ready to start - check dependencies.`
-          );
-        }
-        return false;
-      }
+      args.conversation.addSystemMessage(
+        `[Plan] Parsed ${parsed.items.length} item(s). Execution remains subject to the original request and normal checked agent admission.`
+      );
+      args.requestRender();
     }
   }
-
-  const pendingPlan = planManager?.getActive(args.sessionId) ?? null;
-  if (pendingPlan) {
-    const pendingItems = planManager?.getNextItems(pendingPlan) ?? [];
-    if (pendingItems.length > 0) {
-      const pendingIncarnation = planManager!.getIncarnation();
-      const pendingSnapshot = JSON.stringify(pendingPlan);
-      const timeout = setTimeout(() => {
-        try { args.signal?.throwIfAborted(); (args.assertPostTurnCurrent ?? args.assertCurrent)?.(); } catch { return; }
-        if (planManager!.getIncarnation() !== pendingIncarnation) return;
-        const stillActivePlan = planManager?.getActive(args.sessionId) ?? null;
-        if (!stillActivePlan || JSON.stringify(stillActivePlan) !== pendingSnapshot) return;
-        args.setAutoSpawnTimeout(null);
-        const stillPending = planManager?.getNextItems(stillActivePlan) ?? [];
-        if (stillPending.length === 0) return;
-
-        const spawned = autoSpawnPendingItems(
-          args.conversation,
-          stillActivePlan,
-          stillPending,
-          args.agentManager,
-          args.configManager,
-          args.providerRegistry,
-          args.runtimeBus,
-          args.emitterContext(args.turnId),
-          planManager,
-        );
-        if (spawned.length > 0) {
-          args.conversation.addSystemMessage(
-            `[Plan] Timeout fallback auto-spawned ${spawned.length} agent(s) for plan items the model did not address: ${spawned.join(', ')}.`
-          );
-          args.requestRender();
-        }
-      }, args.autoSpawnTimeoutMs);
-      timeout.unref?.();
-      args.setAutoSpawnTimeout(timeout);
-    }
-  }
+  // A checked final may save a requested plan. It cannot secretly start work
+  // after its completion observation or schedule an unchecked timer handoff.
 
   return false;
 }

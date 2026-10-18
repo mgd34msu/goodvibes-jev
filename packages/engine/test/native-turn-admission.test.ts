@@ -113,7 +113,12 @@ function orchestrator(chat: LLMProvider['chat'] = async () => finalResponse(), f
 
 test('user prompts are visible immediately and reach the model, including queued follow-ups and attachments, without Jev admission', async () => {
   let judgments = 0, completionJudgments = 0;
-  const previous = installJudgmentPort({ model: 'test', ask: async request => { judgments++; if (request.context?.battery === 'engine.core.response-completion') completionJudgments++; throw new Error('Jev unavailable'); } });
+  const completed = fakePort(() => noulAnswer(.01));
+  const previous = installJudgmentPort({ model: 'test', ask: async request => {
+    judgments++;
+    if (request.context?.battery === 'engine.core.response-completion') { completionJudgments++; return completed.port.ask(request); }
+    throw new Error('Optional relevance unavailable');
+  } });
   const arrived = deferred<void>(); const release = deferred<void>();
   const received: unknown[] = [];
   const h = orchestrator(async request => {

@@ -11,6 +11,10 @@ import type { AutonomousToolSource } from '../../permissions/autonomous.js';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 
 const actionSignals = new WeakMap<object, AbortSignal>();
+const checkedPlanConsumers = new WeakSet<object>();
+/** Host-only handoff to contract/planner.ts, which parses and Jev-validates the exact proposal before execution. */
+export function bindContractPlanConsumer<T extends object>(target: T): T { checkedPlanConsumers.add(target); return target; }
+export function hasContractPlanConsumer(target: object): boolean { return checkedPlanConsumers.has(target); }
 export function bindContractActionSignal<T extends object>(target: T, signal: AbortSignal | undefined): T { if (signal) actionSignals.set(target, signal); return target; }
 export function getContractActionSignal(target: object): AbortSignal | undefined { return actionSignals.get(target); }
 const actionSources = new WeakMap<object, () => AutonomousToolSource>();
@@ -41,7 +45,15 @@ export interface NativePlannerBinding {
   readonly inputReadAuthority?: ContractInputAuthority | undefined;
 }
 
-export type AgentConstructionBinding = ContractUnitBinding | ContractOwnerBinding | ContractPlannerBinding | NativePlannerBinding;
+export interface ContractPlanProposalBinding {
+  readonly proposalConsumer: 'contract-plan';
+  readonly autonomousSignal?: AbortSignal | undefined;
+  readonly autonomousPort?: ContractActionPort | undefined;
+  readonly autonomousSource?: (() => AutonomousToolSource) | undefined;
+  readonly inputReadAuthority?: ContractInputAuthority | undefined;
+}
+
+export type AgentConstructionBinding = ContractUnitBinding | ContractOwnerBinding | ContractPlannerBinding | NativePlannerBinding | ContractPlanProposalBinding;
 
 export interface ContractUnitBinding {
   readonly autonomousPort?: ContractActionPort | undefined;

@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- Keep the original turn active across delegation and contract failures. Require
+  held batches to be repaired and revalidated, validate host-owned planner
+  proposals through contract plan checks, and retry failed planning attempts.
+  Route background results and failures through the ordinary tool-capable
+  completion gate. Hold rejected finals without a hidden retry cutoff, wait for
+  unavailable checkers, and remove unchecked plan spawns after final validation.
+
 - Check ordinary main and standalone-agent final responses with Jev before
   reporting completion. Return unfinished work, unsupported claims, false
   blockers and unnecessary approval requests to the model with a correction.

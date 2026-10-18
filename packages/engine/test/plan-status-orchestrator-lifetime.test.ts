@@ -40,39 +40,21 @@ function fixture() {
   return { instance, planManager, spawned, disable: () => { enabled = false; } };
 }
 
-for (const change of ['none', 'new-turn', 'abort', 'replacement', 'policy', 'dispose', 'session'] as const) {
-  test(`real orchestrator post-finalization timer: ${change}`, async () => {
-    const previous = installJudgmentPort(coreReadingsPort().port), f = fixture();
-    const realSetTimeout = globalThis.setTimeout;
-    const callbacks: Array<() => void> = [];
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    const spy = spyOn(globalThis, 'setTimeout').mockImplementation(((fn: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
-      if (delay === 5_000) {
-        callbacks.push(() => fn(...args));
-        const timer = realSetTimeout(() => {}, 60_000); timers.push(timer); return timer;
-      }
-      return realSetTimeout(fn, delay, ...args);
-    }) as typeof setTimeout);
-    try {
-      await f.instance.handleUserInput('Give a plain answer');
-      expect((f.instance as unknown as { abortController: unknown }).abortController).toBeNull();
-      expect(f.instance.isTurnInFlight).toBe(false);
-      expect(callbacks).toHaveLength(1); expect(f.spawned).toEqual([]);
-      if (change === 'new-turn') await f.instance.handleUserInput('Give another plain answer');
-      if (change === 'abort') f.instance.abort();
-      if (change === 'replacement') f.planManager.create('New plan', [{ description: 'New task', phase: 'Phase 1' }], 'session');
-      if (change === 'policy') f.disable();
-      if (change === 'dispose') f.instance.dispose();
-      if (change === 'session') (f.instance as unknown as { sessionId: string }).sessionId = 'other';
-      // Even a callback already queued before timer cancellation cannot bypass ownership.
-      callbacks[0]!();
-      expect(f.spawned).toEqual(change === 'none' ? ['Pending task'] : []);
-      if (change === 'new-turn') {
-        expect(callbacks).toHaveLength(2); callbacks[1]!();
-        expect(f.spawned).toEqual(['Pending task']);
-      }
-    } finally {
-      spy.mockRestore(); for (const timer of timers) clearTimeout(timer); f.instance.dispose(); installJudgmentPort(previous);
-    }
-  });
-}
+test('a checked final response cannot start unreviewed plan work through a later timer', async () => {
+  const previous = installJudgmentPort(coreReadingsPort().port), f = fixture();
+  const realSetTimeout = globalThis.setTimeout;
+  let autoSpawnTimers = 0;
+  const spy = spyOn(globalThis, 'setTimeout').mockImplementation(((fn: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+    if (delay === 5_000) autoSpawnTimers++;
+    return realSetTimeout(fn, delay, ...args);
+  }) as typeof setTimeout);
+  try {
+    await f.instance.handleUserInput('Give a plain answer');
+    expect(f.instance.isTurnInFlight).toBe(false);
+    expect(autoSpawnTimers).toBe(0);
+    expect(f.spawned).toEqual([]);
+    await f.instance.handleUserInput('Give another plain answer');
+    expect(autoSpawnTimers).toBe(0);
+    expect(f.spawned).toEqual([]);
+  } finally { spy.mockRestore(); f.instance.dispose(); installJudgmentPort(previous); }
+});

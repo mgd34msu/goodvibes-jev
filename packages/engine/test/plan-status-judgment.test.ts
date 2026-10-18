@@ -72,8 +72,8 @@ describe('canonical plan status boundary', () => {
   test('real caller preserves complete, failed, skipped and dependency gates; proposals remain pending', async () => {
     const f = caller('# Plan\n## Phase 1\n- [ ] A -- COMPLETE\n- [ ] B -- FAILED\n- [ ] C -- SKIPPED\n- [ ] D -- PENDING (depends: B)\n- [ ] E -- PENDING (depends: A)');
     await handleFinalResponseOutcome(f.args);
-    expect(f.spawned).toEqual(['E']);
-    expect(f.planManager.getActive('session')?.items.map(item => item.status)).toEqual(['complete', 'failed', 'skipped', 'pending', 'in_progress']);
+    expect(f.spawned).toEqual([]); expect(f.timers).toBe(0);
+    expect(f.planManager.getActive('session')?.items.map(item => item.status)).toEqual(['complete', 'failed', 'skipped', 'pending', 'pending']);
     f.planManager.replaceItems(f.plan.id, [{ description: 'Proposal', phase: 'Phase 1', status: 'complete' }]);
     expect(f.planManager.load(f.plan.id)?.items[0]?.status).toBe('pending');
   });

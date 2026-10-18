@@ -1,3 +1,4 @@
+import { bindContractPlanConsumer } from '../sdk/src/platform/tools/agent/contract-binding.js';
 import { afterEach, beforeEach, describe, expect, test, spyOn } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -107,8 +108,12 @@ describe('canonical spawn framework', () => {
       f.controls.beforeTool = async () => { if (++count === fixtures.length) entered.resolve(); await release.promise; };
     }
     const pending = Promise.all(fixtures.map(f => runAgentTask(f.context, f.record)));
-    await entered.promise; installJudgmentPort(undefined); release.resolve(); await pending;
-    for (const f of fixtures) { expect(f.executions).toBe(1); expect(f.record.status).toBe('failed'); expect(f.completed).toHaveLength(0); }
+    await entered.promise; installJudgmentPort(undefined); release.resolve();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    for (const f of fixtures) { expect(f.executions).toBe(1); expect(f.record.status).toBe('running'); expect(f.completed).toHaveLength(0); }
+    installJudgmentPort(semanticPort(() => noulAnswer(.01)).port);
+    await pending;
+    for (const f of fixtures) expect(f.record.status).toBe('completed');
   });
   test('one spawn reading across multiple turns and real prompt use', async () => {
     const f = setup(4, n => String(n)); project(f.root, { dependencies: { vitest: '1' }, scripts: { test: 'node scripts/check-suite.js' } });
@@ -145,18 +150,24 @@ describe('canonical repeated-call observation and actual runner', () => {
   });
   test('unavailable, uncertain and malformed advisory readings do not stop the agent', async () => {
     for (const port of [undefined, semanticPort(() => noulAnswer(.5)).port, semanticPort(() => ({ type: 'noul', noul: NaN })).port]) {
-      const f = setup(5); installJudgmentPort(port); await runAgentTask(f.context, f.record);
-      expect(f.executions).toBe(5); expect(f.requests).toHaveLength(6); expect(f.record.status).toBe(port ? 'completed' : 'failed');
+      const f = setup(5); installJudgmentPort(port);
+      const restored = !port ? setTimeout(() => installJudgmentPort(semanticPort(() => noulAnswer(.01)).port), 20) : undefined;
+      await runAgentTask(f.context, f.record);
+      if (restored) clearTimeout(restored);
+      expect(f.executions).toBe(5); expect(f.requests).toHaveLength(6); expect(f.record.status).toBe('completed');
       expect(JSON.stringify(f.requests)).not.toContain('You are repeating');
     }
   });
-  test('private result tails are withheld and unchecked completion fails visibly', async () => {
+  test('private result tails are withheld and completion stays held until cancelled', async () => {
     const f = setup(5, () => 'x'.repeat(200_000) + ' password=private-value'), fake = semanticPort(() => noulAnswer(.01)); installJudgmentPort(fake.port);
-    await runAgentTask(f.context, f.record);
+    const pending = runAgentTask(f.context, f.record);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(f.completed).toHaveLength(0);
+    f.record.status = 'cancelled'; f.controller.abort(); await pending;
     expect(JSON.stringify(fake.requests)).not.toContain('private-value');
     expect(JSON.stringify(fake.requests)).not.toContain('x'.repeat(200_000));
     expect(fake.requests.filter(r => r.context?.battery === 'engine.agents.repeat-stuck')).toHaveLength(0);
-    expect(f.executions).toBe(5); expect(f.record.status).toBe('failed'); expect(f.completed).toHaveLength(0);
+    expect(f.executions).toBe(5); expect(f.record.status).toBe('cancelled'); expect(f.completed).toHaveLength(0);
   });
   test('run cancellation interrupts a non-cooperating judgment without stale messages', async () => {
     const f = setup(5), start = deferred(), release = deferred(), fake = semanticPort(() => noulAnswer(.99));
@@ -302,7 +313,11 @@ describe('review regressions: complete observation through tool effects', () => 
     const f = setup(4), fake = semanticPort(() => noulAnswer(.01)); let current = true, permissions = 0;
     bindJudgmentPortAuthority(fake.port, () => ({ identity: f.context, assertCurrent() { if (!current) throw new Error('retired'); } })); installJudgmentPort(fake.port);
     (f.context as { permissionManager?: unknown }).permissionManager = { getBackgroundAgentsMode: () => 'inherit', async checkDetailed() { if (++permissions === 3) current = false; return { approved: true }; } };
-    await runAgentTask(f.context, f.record); expect(f.executions).toBe(4); expect(f.completed).toHaveLength(0); expect(f.record.status).toBe('failed');
+    const pending = runAgentTask(f.context, f.record);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(f.executions).toBe(4); expect(f.completed).toHaveLength(0);
+    f.record.status = 'cancelled'; f.controller.abort(); await pending;
+    expect(f.record.status).toBe('cancelled');
   });
 });
 
@@ -360,10 +375,16 @@ describe('cancelled batch mechanical transcript closure', () => {
       let maxTurns = 50;
       (f.context as { configManager?: AgentOrchestratorRunContext['configManager'] }).configManager = { get: (key: string) => key === 'agents.maxTurns' ? maxTurns : undefined } as NonNullable<AgentOrchestratorRunContext['configManager']>;
       f.controls.beforeTool = async () => { if (kind === 'config') maxTurns++; else installJudgmentPort(undefined); };
-      await runAgentTask(f.context, f.record);
+      const pending = runAgentTask(f.context, f.record);
+      if (kind === 'port') {
+        await new Promise(resolve => setTimeout(resolve, 20));
+        expect(f.completed).toHaveLength(0);
+        installJudgmentPort(semanticPort(() => noulAnswer(.01)).port);
+      }
+      await pending;
       expect(f.controller.signal.aborted).toBe(false);
       if (kind === 'config') expect(f.record.failureReason).toBe('semantic_observation_held');
-      else expect(f.record.status).toBe('failed');
+      else expect(f.record.status).toBe('completed');
       expect(JSON.stringify(f.snapshot)).not.toContain('Tool invocation cancelled');
     }
   });
@@ -549,4 +570,19 @@ describe('standalone completion enforcement', () => {
     expect(f.completed).toHaveLength(0);
     expect(f.record.status).toBe('failed');
   });
+});
+
+
+test('only a host-owned contract proposal defers fulfillment to the contract plan validator; a planner label cannot bypass completion', async () => {
+  const fake = semanticPort(() => noulAnswer(.01)); installJudgmentPort(fake.port);
+  const owned = setup(); owned.record.template = 'planner'; owned.record.task = 'Propose a plan. Repository map: ' + 'x'.repeat(1_722_884);
+  bindContractPlanConsumer(owned.record);
+  owned.controls.finalReplies = ['{"goal":"review","groups":[]}'];
+  await runAgentTask(owned.context, owned.record);
+  expect(owned.record.status).toBe('completed');
+  expect(fake.requests.filter(request => request.context?.battery === 'engine.core.response-completion')).toHaveLength(0);
+  const ordinary = setup(); ordinary.record.template = 'planner';
+  await runAgentTask(ordinary.context, ordinary.record);
+  expect(ordinary.record.status).toBe('completed');
+  expect(fake.requests.filter(request => request.context?.battery === 'engine.core.response-completion')).toHaveLength(1);
 });

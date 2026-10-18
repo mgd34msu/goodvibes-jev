@@ -1,8 +1,13 @@
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { ChatRequest, ChatResponse } from '../sdk/src/platform/providers/interface.js';
+import type { AgentRecord } from '../sdk/src/platform/tools/agent/record.js';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { ConversationManager } from '../sdk/src/platform/core/conversation.js';
-import { ResponseCompletionGuard, ResponseCompletionError } from '../sdk/src/platform/core/response-completion.js';
+import { ResponseCompletionGuard, waitForResponseDelegates } from '../sdk/src/platform/core/response-completion.js';
 import { registry } from '../sdk/src/platform/core/judgment-registry.js';
 import { executeOrchestratorTurnLoop, type OrchestratorTurnLoopContext } from '../sdk/src/platform/core/orchestrator-turn-loop.js';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
@@ -47,11 +52,15 @@ test('every dimension and weak positive readings can hold completion', async () 
   expect(await new ResponseCompletionGuard().check(source('The requested review is complete.'))).toBeNull();
 });
 
-test('repeated failure ends in an error and never silently accepts the last rejected draft', async () => {
+test('rejected drafts keep returning to execution until Jev accepts without a hidden retry limit', async () => {
   installJudgmentPort(answered('unfinished').port);
   const guard = new ResponseCompletionGuard();
-  for (let i = 0; i < 3; i++) expect(await guard.check(source())).toBeString();
-  await expect(guard.check(source())).rejects.toBeInstanceOf(ResponseCompletionError);
+  for (let i = 0; i < 8; i++) expect(await guard.check(source())).toBeString();
+  expect(() => guard.beginFinalization({ content: unfinished })).toThrow();
+  installJudgmentPort(answered().port);
+  const input = source('Review and artifact complete.');
+  expect(await guard.check(input)).toBeNull();
+  expect(guard.beginFinalization({ content: input.response })).not.toThrow();
 });
 
 test('missing Jev and malformed results cannot approve a response', async () => {
@@ -134,10 +143,10 @@ test('the real direct-input main loop resumes rejected finals and emits completi
   } finally { f.unsubscribe(); }
 });
 
-test('the real main loop cannot emit success after repeated unfinished responses or unavailable Jev', async () => {
-  for (const available of [true, false]) {
-    installJudgmentPort(available ? answered('unfinished').port : undefined);
-    const f = loop(Array.from({ length: 4 }, () => unfinished));
+test('the real main loop cannot emit success after repeated unfinished responses', async () => {
+  for (const attempts of [4, 8]) {
+    installJudgmentPort(answered('unfinished').port);
+    const f = loop(Array.from({ length: attempts }, () => unfinished));
     try {
       await expect(executeOrchestratorTurnLoop(f.context)).rejects.toThrow();
       expect(f.events).toEqual([]);
@@ -188,4 +197,110 @@ test('retirement during post-turn work cannot publish an already checked termina
     expect(() => terminal!()).toThrow();
     expect(f.events).toEqual([]);
   } finally { f.unsubscribe(); }
+});
+
+
+test('an unavailable final checker holds the task, retries, and remains cancellable', async () => {
+  const controller = new AbortController(), input = source('Finished.'), guard = new ResponseCompletionGuard();
+  const waiting = Promise.withResolvers<void>();
+  const pending = guard.checkUntilAvailable(() => input, { signal: controller.signal }, () => waiting.resolve());
+  const outcome = pending.then(value => ({ value }), error => ({ error }));
+  await waiting.promise;
+  expect(() => guard.beginFinalization({ content: input.response })).toThrow();
+  controller.abort();
+  expect(await outcome).toHaveProperty('error');
+});
+
+test('a restored final checker can approve the same held draft without a fresh model call', async () => {
+  const input = source('Finished.'), guard = new ResponseCompletionGuard();
+  let waiting = 0;
+  const pending = guard.checkUntilAvailable(() => input, {}, () => { waiting++; installJudgmentPort(answered().port); });
+  expect(await pending).toBeNull();
+  expect(waiting).toBe(1);
+  expect(guard.beginFinalization({ content: input.response })).not.toThrow();
+});
+
+
+test('a contract handoff stays in the actual main loop, recovers a failed planner, and cannot finish before the artifact exists', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'jev-turn-recovery-')), report = join(root, 'review.md');
+  const f = loop([]), requests: ChatRequest[] = [], controller = new AbortController();
+  const owner: AgentRecord = { id: 'contract-owner', task: 'Review the full repository and write review.md.', status: 'running', template: 'orchestrator',
+    tools: [], startedAt: Date.now(), toolCallCount: 0, orchestrationDepth: 0, executionProtocol: 'direct', reviewMode: 'none', communicationLane: 'direct' };
+  const handoff = Promise.withResolvers<void>();
+  let wroteArtifact = false;
+  const fake = fakePort((name, _question, state) => {
+    const draft = (state as { response?: string }).response;
+    if (name === 'unfinished' && draft?.includes('did not finish')) return noulAnswer(.99);
+    if (name === 'unfinished' && draft?.startsWith('FINISHED')) expect(wroteArtifact).toBe(true);
+    return noulAnswer(.01);
+  }); installJudgmentPort(fake.port);
+  const responses: ChatResponse[] = [
+    { content: 'Delegating the review.', toolCalls: [{ id: 'spawn', name: 'agent', arguments: { mode: 'spawn', task: owner.task } }], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'tool_call' },
+    { content: 'The comprehensive review did not finish, and no findings artifact was produced.', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' },
+    { content: 'Recovering the review and writing its findings.', toolCalls: [{ id: 'write', name: 'write', arguments: { path: report, content: 'Completed repository review findings.' } }], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'tool_call' },
+    { content: 'FINISHED: reviewed the repository and wrote review.md.', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' },
+  ];
+  const provider = { name: 'test', models: ['test'], chat: async (request: ChatRequest) => {
+    requests.push(request);
+    if (requests.length === 2) expect(JSON.stringify(request.messages)).toContain('planner failed');
+    if (requests.length === 3) expect(request.systemPrompt).toContain('[Response completion check]');
+    const response = responses.shift(); if (!response) throw new Error('Unexpected provider call'); return response;
+  } };
+  f.context.toolRegistry.register({ definition: { name: 'agent', description: 'Start contract work', parameters: { type: 'object' } },
+    execute: async () => ({ success: true, output: '{}' }) });
+  f.context.toolRegistry.register({ definition: { name: 'write', description: 'Write the report', parameters: { type: 'object' } },
+    execute: async () => ({ success: true }) });
+  const pending = executeOrchestratorTurnLoop({ ...f.context, text: owner.task, getAbortSignal: () => controller.signal,
+    providerRegistry: { ...f.context.providerRegistry, getForModel: () => provider },
+    agentManager: { list: () => [owner], spawn: () => { throw new Error('Unexpected automatic spawn'); } },
+    executeToolCalls: async (_turn, calls) => calls.map(call => {
+      if (call.name === 'agent') { handoff.resolve(); return { callId: call.id, success: true,
+        output: JSON.stringify({ contractStarted: true, agentId: owner.id, contractId: 'contract' }) }; }
+      writeFileSync(String(call.arguments.path), String(call.arguments.content)); wroteArtifact = true;
+      return { callId: call.id, success: true, output: 'Wrote review.md.' };
+    }),
+  });
+  try {
+    await handoff.promise;
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(f.events).toEqual([]); expect(requests).toHaveLength(1);
+    owner.status = 'failed'; owner.error = 'planner failed: completion check HTTP 400';
+    await pending;
+    expect(f.events).toEqual(['TURN_COMPLETED']);
+    expect(requests).toHaveLength(4);
+    expect(readFileSync(report, 'utf8')).toContain('Completed repository review');
+    const checkedDrafts = fake.requests.filter(request => request.context?.battery === 'engine.core.response-completion').map(request => (request.state as { response: string }).response);
+    expect(checkedDrafts).toEqual(['The comprehensive review did not finish, and no findings artifact was produced.', 'FINISHED: reviewed the repository and wrote review.md.']);
+  } finally { controller.abort(); await pending.catch(() => {}); f.unsubscribe(); rmSync(root, { recursive: true, force: true }); }
+});
+
+
+test('repeated tool errors trigger recovery instead of terminating the original request', async () => {
+  installJudgmentPort(answered().port);
+  const f = loop([]); let rounds = 0;
+  const errors: string[] = []; f.bus.on('TURN_ERROR', event => { errors.push(event.type); });
+  f.context.toolRegistry.register({ definition: { name: 'probe', description: 'Inspect work', parameters: { type: 'object' } }, execute: async () => ({ success: false }) });
+  const provider = { name: 'test', models: ['test'], chat: async (request: ChatRequest): Promise<ChatResponse> => {
+    rounds++;
+    if (rounds === 11) expect(request.systemPrompt).toContain('[Tool recovery]');
+    return { content: rounds > 10 ? 'FINISHED' : '', usage: { inputTokens: 1, outputTokens: 1 },
+      stopReason: rounds > 10 ? 'completed' : 'tool_call',
+      toolCalls: rounds > 10 ? [] : [{ id: `call-${rounds}`, name: 'probe', arguments: { attempt: rounds } }] };
+  } };
+  try {
+    await executeOrchestratorTurnLoop({ ...f.context, providerRegistry: { ...f.context.providerRegistry, getForModel: () => provider },
+      executeToolCalls: async (_turn, calls) => calls.map(call => ({ callId: call.id, success: false, error: 'The proposed plan requires repair.' })) });
+    expect(rounds).toBe(11); expect(errors).toEqual([]); expect(f.events).toEqual(['TURN_COMPLETED']);
+  } finally { f.unsubscribe(); }
+});
+
+
+test('a contract waiting for a necessary user decision returns control to its coordinator', async () => {
+  const input = source();
+  input.conversation.addAssistantMessage('', { toolCalls: [{ id: 'agent', name: 'agent', arguments: { mode: 'spawn' } }] });
+  input.conversation.addToolResults([{ callId: 'agent', success: true, output: '{"agentId":"owner"}' }]);
+  const manager = { list: () => [{ id: 'owner', task: 'Review the repository', status: 'running', fullOutput: '' }] } as never;
+  const evidence = await waitForResponseDelegates(input.conversation, manager, {}, [], () => false);
+  expect(evidence).toContain('"status":"running"');
+  expect(evidence).toContain('original request');
 });

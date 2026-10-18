@@ -1,3 +1,5 @@
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -123,6 +125,11 @@ import { createFleetReadModel } from '../../views/fleet-read-model.ts';
 import { reconcileSteerBadges, STEER_BADGE_LINGER_MS } from '../../views/fleet-steer.ts';
 
 test('a steer already present in an in-flight native chat remains unknown until its late consumed acknowledgement', async () => {
+  const completion = fakePort(name => {
+    if (['false_blocker', 'unfinished', 'unsupported', 'unanswered', 'unnecessary_permission', 'implementation_presented', 'verification_claimed', 'criteria_altered', 'ineffective_fix', 'irrelevant_verification', 'weakened_criteria'].includes(name)) return noulAnswer(.01);
+    throw new Error(`Unexpected judgment in steer fixture: ${name}`);
+  });
+  const previous = installJudgmentPort(completion.port);
   const tmp = mkdtempSync(join(tmpdir(), 'independent-native-ttl-'));
   const messageBus = new AgentMessageBus(); const bus = new RuntimeEventBus();
   const record = makeRecord({id:'synthetic-native-ttl'});
@@ -152,9 +159,9 @@ test('a steer already present in an in-flight native chat remains unknown until 
   }};
   try {
     await runAgentTask(makeContext({workingDirectory:tmp,runtimeBus:bus,messageBus,provider}),record); await flushMicrotasks();
-    expect(calls).toBe(2); expect(consumed).toHaveLength(1);
+    expect(calls).toBe(2); expect(consumed).toHaveLength(1); expect(record.status).toBe('completed');
     expect(observed.map(value => value.status)).toEqual(['unknown', 'unknown']);
     expect(observed[0]?.note).toBe('no consumption acknowledgement before the tracking deadline');
     expect(observed[0]?.messageId).toBeDefined(); expect(observed[1]?.messageId).toBe(observed[0]?.messageId); expect(modal.tabs.tabs[0]?.steerBadge?.status).toBe('consumed');
-  }finally{host.clear();registry.dispose();off();rmSync(tmp,{recursive:true,force:true});}
+  }finally{installJudgmentPort(previous);host.clear();registry.dispose();off();rmSync(tmp,{recursive:true,force:true});}
 });

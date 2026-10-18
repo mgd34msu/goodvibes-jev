@@ -322,25 +322,13 @@ export class Orchestrator {
     this.compactionManager = createSessionCompactionManager(this.sessionId, runtimeBus, flagManager, () => this.coreServices.providerRegistry);
     this.agentManager = services.agentManager; this.contractRunner = services.contractRunner; this.contractIntake = services.contractIntake;
     this.followUpRuntime = new OrchestratorFollowUpRuntime({
-      conversation: this.conversation,
-      getViewportHeight: () => this.getViewportHeight(),
-      scrollToEnd: (height) => this.scrollToEnd(height),
-      getSystemPrompt: (signal) => this.getSystemPrompt(signal),
-      requestRender: () => this.requestRender(),
       getThinkingState: () => ({ isThinking: this.isThinking || this.turnInFlight || this.activeNativeConversationTurn, isCompacting: this.isCompacting }),
       getQueuedUserMessageCount: () => this.messageQueue.length,
-      getProviderRegistry: () => requireProviderRegistry(this.coreServices),
-      getCurrentModel: () => requireProviderRegistry(this.coreServices).getCurrentModel(),
       routeLowPriorityMessage: (message) => {
         if (this.systemMessageRouter) this.systemMessageRouter.low(message);
         else this.conversation.addSystemMessage(message);
       },
-      applyUsage: (usage) => {
-        this.usage.input += usage.inputTokens;
-        this.usage.output += usage.outputTokens;
-        this.usage.cacheRead += usage.cacheReadTokens ?? 0;
-        this.usage.cacheWrite += usage.cacheWriteTokens ?? 0;
-      },
+      resumeWork: (items, signal) => this.resumeBackgroundWork(items, signal),
     });
   }
 
@@ -450,7 +438,34 @@ export class Orchestrator {
   }
 
   public enqueueConversationFollowUp(item: ConversationFollowUpItem): void {
+    // The live coordinator already observes the typed event and waits for its
+    // own delegates. Do not schedule a second reply after its checked final.
+    if (this.turnInFlight || this.activeNativeConversationTurn) return;
     this.followUpRuntime.enqueue(item);
+  }
+
+  private async resumeBackgroundWork(items: readonly ConversationFollowUpItem[], signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    if (this.disposed) return;
+    const lastUser = this.conversation.getMessageSnapshot().findLast(message => message.role === 'user');
+    if (!lastUser || lastUser.role !== 'user' || lastUser.cancelled) return;
+    const content = typeof lastUser.content === 'string' ? undefined : lastUser.content;
+    const text = typeof lastUser.content === 'string' ? lastUser.content
+      : lastUser.content.filter(part => part.type === 'text').map(part => part.text).join('\n');
+    const evidence = '[Background work evidence] ' + JSON.stringify(items)
+      + '\nReconcile these outcomes with the original request. Recover unfinished authorized work using tools and deliver all requested output. An internal failure does not cancel the request.';
+    this.conversation.addSystemMessage(evidence);
+    // Native execution still requires its owning host's live permit; a background
+    // notice can never manufacture a fresh native grant.
+    if (this.nativeConversationProjectId) { this.requestRender(); return; }
+    try { await this.runTurn(text, content, undefined, undefined, evidence); }
+    finally {
+      // Retire the background batch before the queued user's startThinking()
+      // cancels pending background work; otherwise it requeues this finished batch.
+      if (this.messageQueue.length) setImmediate(() => {
+        void this.drainMessageQueue().catch(error => logger.warn('Queued turn failed after background recovery', { error: summarizeError(error) }));
+      });
+    }
   }
 
   /**
@@ -678,9 +693,9 @@ export class Orchestrator {
   /** Session replacement must wait for admission, streaming, compaction and queued input. */
   public get isBusy(): boolean { return this.isTurnInFlight || this.isThinking || this.isCompacting || this.messageQueue.length > 0; }
 
-  private startThinking(estimatedInputTokens?: number): void {
+  private startThinking(estimatedInputTokens?: number, resume = false): void {
     this.postTurnPlanOwner = {};
-    this.followUpRuntime.cancel(true);
+    if (!resume) this.followUpRuntime.cancel(true);
     this.isThinking = true;
     this.thinkingFrame = 0; // Reset each turn so gradient starts clean and frame never grows unbounded
     this.streamingInputTokens = estimatedInputTokens ?? this.lastRequestInputTokens;
@@ -717,6 +732,7 @@ export class Orchestrator {
     content?: ContentPart[],
     options?: OrchestratorUserInputOptions | undefined,
     nativeTurn?: NativeConversationTurnAdmission,
+    resume?: string,
   ): Promise<void> {
     const execute = async () => {
       try {
@@ -731,7 +747,7 @@ export class Orchestrator {
           admissionAbort.signal.throwIfAborted();
           if (this.disposed) throw new NativeConversationTurnAdmissionError('recovery_required');
         }
-        await this.runTurnBody(text, content, options, nativeTurn);
+        await this.runTurnBody(text, content, options, nativeTurn, resume);
       }
       catch (error) { if (nativeTurn) failNativeConversationTurn(nativeTurn, false); throw error; }
       finally { if (nativeTurn) { settleNativeConversationTurn(nativeTurn); this.activeNativeConversationTurn = false; this.activeNativeConversationPermit = undefined; this.nativeAdmissionAbort = null; } }
@@ -745,6 +761,7 @@ export class Orchestrator {
     content?: ContentPart[],
     options?: OrchestratorUserInputOptions,
     nativeTurn?: NativeConversationTurnAdmission,
+    resume?: string,
   ): Promise<void> {
     // Where "this turn" acquires a beginning: an owner-started turn ends the
     // previous untrusted-content window, a channel- or schedule-started one
@@ -754,14 +771,14 @@ export class Orchestrator {
     // this runtime can resolve a model for it, a boundary that depends on
     // unrelated resolution succeeding silently stops moving when it fails.
     // Reasoning and classification: security/turn-boundary.ts.
-    startTurnForOwnerInput(options?.origin);
+    if (!resume) startTurnForOwnerInput(options?.origin);
 
     const turnStartTime = Date.now();
     const configManager = requireConfigManager(this.coreServices);
     const providerRegistry = requireProviderRegistry(this.coreServices);
 
     // --- Phase 1: Preflight, idempotency, event emission, plan injection ---
-    const preflight = this.runTurnPreflight(text, content, options, providerRegistry);
+    const preflight = this.runTurnPreflight(text, content, options, providerRegistry, !!resume);
     if (!preflight) return; // duplicate in-flight turn was rejected and reported
     const { submissionKey, turnId } = preflight;
     const hookOwner = this.turnHookOwner!;
@@ -773,7 +790,7 @@ export class Orchestrator {
       // Hooks may run external commands. A later provider error cannot prove
       // replay safe once that extensibility boundary has been entered.
       if (nativeTurn && this.hookDispatcher) markNativeConversationTurnEffectsPossible();
-      const preTurnPlan = await prepareConversationForTurn(
+      const preTurnPlan = resume ? this.coreServices.planManager?.getActive(this.sessionId) ?? null : await prepareConversationForTurn(
         this.conversation, providerRegistry, text, content, this.sessionId, this.coreServices.planManager ?? null,
         { ...(signal ? { signal } : {}), directUserInput: true, onMessageAdded: () => { this.turnStartMessageCount = this.conversation.getMessageCount(); } },
       );
@@ -781,7 +798,7 @@ export class Orchestrator {
       this.turnStartMessageCount = this.conversation.getMessageCount();
       this.scrollToEnd(this.getViewportHeight());
       this.streamingInputTokens = estimateFreshTurnInputTokens(this.lastInputTokens, estimateConversationTokens(this.conversation.getMessagesForLLM()), text, content);
-      await this.runTurnStream(text, content, turnId, preTurnPlan, configManager, providerRegistry, (publish) => { terminal.publish = publish; });
+      await this.runTurnStream(text, content, turnId, preTurnPlan, configManager, providerRegistry, (publish) => { terminal.publish = publish; }, resume);
 
       signal?.throwIfAborted();
       // --- Phase 3: Post-turn reconciliation ---
@@ -811,6 +828,7 @@ export class Orchestrator {
     content: ContentPart[] | undefined,
     options: OrchestratorUserInputOptions | undefined,
     providerRegistry: ReturnType<typeof requireProviderRegistry>,
+    resume = false,
   ): { submissionKey: string; turnId: string } | null {
     // Session, transcript position and prompt prefix identify one in-flight submission.
     const submissionIdentity = options?.nativeConversationTurnPermit ? randomUUID() : createHash('sha256')
@@ -856,7 +874,7 @@ export class Orchestrator {
 
     // Reserve and bind before notifying synchronous submitted-event observers.
     this.turnInFlight = true;
-    this.startThinking();
+    this.startThinking(undefined, resume);
     this.turnHookOwner = new TurnHookOwner(this.sessionId, turnId, this.abortController!.signal);
     this.turnCancellation.begin(turnId, () => this.abort());
 
@@ -880,12 +898,14 @@ export class Orchestrator {
     configManager: ReturnType<typeof requireConfigManager>,
     providerRegistry: ReturnType<typeof requireProviderRegistry>,
     onTurnTerminal?: (publish: () => void) => void,
+    continuationEvidence?: string,
   ): Promise<void> {
     // A successful finalization releases the in-flight controller but does not
     // retire this plan continuation. New turns, abort/dispose and failures do.
     const planOwner = this.postTurnPlanOwner;
     const sessionId = this.sessionId;
     const signal = this.abortController?.signal;
+    let blockedContracts = new Set<string>(), blockedContractsReadAt = 0;
     await executeOrchestratorTurnLoop({
       assertPostTurnCurrent: () => {
         signal?.throwIfAborted();
@@ -948,6 +968,16 @@ export class Orchestrator {
       nextTurnKnowledgeSequence: () => this.nextTurnKnowledgeSequence(), contractHooks: this.coreServices.contractHooks,
       contractIntake: this.contractIntake,
       directUserInput: true,
+      continuationEvidence,
+      canWaitForDelegate: (id) => {
+        const record = this.agentManager.list().find(agent => agent.id === id);
+        if (!record?.contractId) return true;
+        if (Date.now() - blockedContractsReadAt >= 250) {
+          blockedContracts = new Set(this.contractRunner.list({ sessionId }).filter(contract => contract.status === 'awaiting-owner').map(contract => contract.id));
+          blockedContractsReadAt = Date.now();
+        }
+        return !blockedContracts.has(record.contractId);
+      },
       getCompletionRequirements: () => {
         const lineage = getSessionLineageTracker(this.coreServices, this.ownedSessionLineageTracker);
         const plan = isNativeConversationTurn() ? null : this.coreServices.planManager?.getActive(this.sessionId);

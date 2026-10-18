@@ -329,13 +329,15 @@ describe('planContract: failure, with no single-item fallback', () => {
     ['a spawn failure', { status: 'failed', detail: 'spawn refused' }],
     ['a cancelled or bounded-out planner', { status: 'cancelled', detail: 'wall-timeout 120000ms' }],
   ] as const) {
-    test(`${label} fails the contract with planning`, async () => {
+    test(`${label} is repaired before an explicit planning budget can end the contract`, async () => {
       install();
       const contract = shapedContract();
-      const { deps, events, requests } = harness([result]);
+      const { deps, events, requests } = harness([result], { planRepairLimit: 1 });
       const outcome = await planContract(contract, deps);
       expect(outcome.kind).toBe('failed');
-      expect(requests).toHaveLength(1);
+      expect(requests).toHaveLength(2);
+      expect(requests[1]?.attempt).toBe('repair');
+      expect(requests[1]?.userPrompt).toContain(result.detail);
       expect(contract.status).toBe('failed');
       expect(contract.failureKind).toBe('planning');
       expect(contract.error).toContain(result.detail);
@@ -344,6 +346,19 @@ describe('planContract: failure, with no single-item fallback', () => {
       expect(ofType(events, 'CONTRACT_FAILED')[0]).toMatchObject({ failureKind: 'planning' });
     });
   }
+
+  test('a failed planner and then an invalid proposal recover to a Jev-checked plan', async () => {
+    const fake = install();
+    const contract = shapedContract();
+    const { deps, events, requests } = harness([{ status: 'failed', detail: 'completion check HTTP 400' }, 'not a plan', plannerOutput(validPlan())]);
+    const outcome = await planContract(contract, deps);
+    expect(outcome.kind).toBe('accepted');
+    expect(requests.map(request => request.attempt)).toEqual(['initial', 'repair', 'repair']);
+    expect(requests[1]?.userPrompt).toContain('HTTP 400');
+    expect(ofType(events, 'CONTRACT_FAILED')).toHaveLength(0);
+    expect(ofType(events, 'CONTRACT_PLAN_CHECKED').some(event => event.check !== 'structure' && event.passed)).toBe(true);
+    expect(fake.requests.length).toBeGreaterThan(0);
+  });
 
   test('a planner that never writes a readable plan fails with planning after the repair budget', async () => {
     install();
@@ -381,18 +396,26 @@ describe('planContract: failure, with no single-item fallback', () => {
     expect(requests).toHaveLength(0);
   });
 
-  test('a Jev outage during the checks fails the contract as judgment-unavailable', async () => {
-    install(() => { throw new JudgmentError('unavailable', 'endpoint down'); });
-    const contract = shapedContract();
-    const outcome = await planContract(contract, harness([plannerOutput(validPlan())]).deps);
-    expect(outcome).toMatchObject({ kind: 'failed', failureKind: 'judgment-unavailable' });
+  test('a Jev outage during plan checks waits for recovery and validates the same proposal', async () => {
+    const entered = Promise.withResolvers<void>();
+    install(() => { entered.resolve(); throw new JudgmentError('unavailable', 'endpoint down'); });
+    const contract = shapedContract(), h = harness([plannerOutput(validPlan())]);
+    const pending = planContract(contract, h.deps);
+    await entered.promise;
+    expect(contract.status).not.toBe('failed');
+    install();
+    expect((await pending).kind).toBe('accepted');
+    expect(h.requests).toHaveLength(1);
+    expect(ofType(h.events, 'CONTRACT_FAILED')).toHaveLength(0);
   });
 
-  test('no port during the checks fails the contract as judgment-unavailable', async () => {
-    const contract = shapedContract();
-    const outcome = await planContract(contract, harness([plannerOutput(validPlan())]).deps);
-    expect(outcome).toMatchObject({ kind: 'failed', failureKind: 'judgment-unavailable' });
-    expect(contract.error).toContain('No judgment port');
+  test('no port during plan checks holds completion and honors caller cancellation', async () => {
+    const contract = shapedContract(), controller = new AbortController();
+    const pending = planContract(contract, harness([plannerOutput(validPlan())]).deps, { signal: controller.signal });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(contract.status).not.toBe('failed');
+    controller.abort();
+    expect((await pending).kind).toBe('cancelled');
   });
 
   test('an aborted signal ends planning as cancelled without failing the contract', async () => {

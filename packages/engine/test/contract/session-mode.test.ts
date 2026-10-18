@@ -230,7 +230,7 @@ describe('session mode (6.6)', () => {
     expect(h.runner.hooks().sessionTurn('session-1', 'turn-10')).toBeNull();
   });
 
-  test('a turn that intake hands to a contract ends before any model call, with the contract line in the conversation', async () => {
+  test('an intake handoff continues through the final-response validator instead of ending the turn', async () => {
     const h = makeHarness({ plan: oneUnitPlan(1), scripts: {} });
     harness = h;
     const seen = { requests: 0 };
@@ -240,7 +240,7 @@ describe('session mode (6.6)', () => {
       ...context,
       contractIntake: { intake: async (turn) => { intakes.push(turn.text); return { kind: 'started', contractId: 'ctr-0000abcd', ownerAgentId: 'agent-owner' }; } },
     });
-    expect(seen.requests).toBe(0);
+    expect(seen.requests).toBe(1);
     expect(intakes).toEqual([context.text]);
     expect(conversation.getMessageSnapshot().some((message) => message.role === 'system' && typeof message.content === 'string' && message.content.includes('[Contract] Contract ctr-0000abcd took this request'))).toBe(true);
   });
