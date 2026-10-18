@@ -32,7 +32,7 @@ export {
   type RequestIntent,
   type RequestLanguage,
 } from './batteries/request.js';
-export { modelChoice, modelIdentity, modelTier } from './batteries/model.js';
+export { modelChoice, modelTier } from './batteries/model.js';
 export { catalogProviderAccess, type ProviderAccess } from './batteries/catalog.js';
 export {
   REASONING_FAMILY_ROUTES,
@@ -62,10 +62,7 @@ export {
 } from './route-planner.js';
 export { ModelTierStore, modelFactsState, modelTierFrom, type ModelFacts, type TierRecord } from './model-tiers.js';
 export {
-  IDENTITY_SHORTLIST,
   ModelIdentityResolver,
-  identityShortlist,
-  identityTokens,
   type IdentityCandidate,
   type IdentityQuery,
   type ModelIdentityResolverOptions,
@@ -131,3 +128,5 @@ export { remotePublisherOutcomeKind, remotePublisherSchemaStatus } from './batte
 export { atRestCredential, memoryRouteRole, memoryCredentialState, memoryLiveStatus, memoryReceiptMember, memorySchemaCertified, memoryProviderSelect } from './batteries/memory-provider.js';
 
 export { localBenchmarkPrompt, localBenchmarkPromptPolicy } from './batteries/local-benchmark-prompt.js';
+
+export { readCommandDiscovery, type CommandDiscoveryEntry, type CommandDiscoveryRequest, type CommandDiscoveryReading } from './command-discovery.js';

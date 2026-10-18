@@ -502,8 +502,22 @@ export function wireShellUiOpeners(options: WireShellUiOpenersOptions): void {
     if (!registry) return;
     const top = input.surfaceModals.top();
     if (top instanceof CommandPalette) return;
+    const commands = registry.getAll();
+    const bindings = commands.map(command => ({ handler: command.handler, name: command.name, description: command.description, argsHint: command.argsHint, usage: command.usage, aliases: JSON.stringify(command.aliases) }));
     const palette = new CommandPalette({
-      entries: buildPaletteEntries(registry.getAll(), getCommandCategoryMap()),
+      entries: buildPaletteEntries(commands, getCommandCategoryMap()),
+      onChanged: render,
+      assertCurrent: () => {
+        const current = registry.getAll();
+        if (current.length !== commands.length || current.some((command, index) => {
+          const binding = bindings[index]!;
+          return command !== commands[index] || command.handler !== binding.handler || command.name !== binding.name
+            || command.description !== binding.description || command.argsHint !== binding.argsHint || command.usage !== binding.usage
+            || JSON.stringify(command.aliases) !== binding.aliases;
+        })) {
+          throw new Error('Command registry changed.');
+        }
+      },
       describe: (id) => (id === 'model' ? commandContext.session.runtime.model || undefined : undefined),
       onRun: (entry, mode) => {
         if (mode === 'run' && commandContext.executeCommand) {

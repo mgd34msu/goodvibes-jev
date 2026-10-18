@@ -437,7 +437,8 @@ function redactLogData(value: unknown, reader: FieldKindReader, seen = new WeakS
     catch { out['[REDACTED_FIELD]'] = REDACTED; continue; }
     const kind = reader.read(key);
     out[key] = kind === undefined || kind === 'secret' ? REDACTED
-      : kind === 'owner_profile' ? '[REDACTED_PROFILE]' : redactLogData(nested, reader, seen);
+      : kind === 'owner_profile' ? '[REDACTED_PROFILE]'
+        : kind === 'content' && (nested === null || typeof nested !== 'object') ? '[REDACTED_TEXT]' : redactLogData(nested, reader, seen);
   }
   return out;
 }

@@ -1,18 +1,4 @@
-/**
- * `engine.runtime.model-family`: which maker's model family a model belongs
- * to, for the model picker's family filter. Read by the picker
- * (providers/model-family.ts) in place of twelve regexes over
- * the model id and display name (claude, gpt or o1/o3/o4, gemini, llama,
- * qwen, glm, minimax, deepseek, mistral, command or cohere, grok, kimi),
- * which filed any model with "command" in its name under Cohere and a
- * gpt-oss derivative served under another name under Other.
- *
- * One choice per model, read once per exact model evidence and installed source
- * incarnation; state: `{ id, displayName, provider }`.
- *
- * Band: low stakes. The family only files the model under a filter in the
- * picker; nothing is selected or routed on it.
- */
+/** Explicit compatibility definition; automatic picker groups use published catalog families. */
 import { defineBattery, oneOf, STAKES_BANDS } from '@goodvibes-jev/judgment';
 
 export const MODEL_FAMILY_OPTIONS = {

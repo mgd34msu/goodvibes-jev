@@ -1,8 +1,6 @@
 import type { ToolResult } from '../../types/tools.js';
 import { OverflowHandler } from '../../tools/shared/overflow.js';
 import type { SpillBackendType } from '../../tools/shared/overflow.js';
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { outputKind } from './batteries/output-kind.js';
 
 // ─── Tool Class ─────────────────────────────────────────────────────────────
 
@@ -225,7 +223,7 @@ async function summarizeOutput(content: string, maxBytes: number, byteLen: numbe
   const encoder = new TextEncoder();
   const lineCount = content.length === 0 ? 0 : content.split(/\r\n|\r|\n/).length;
   const trimmed = content.trim();
-  const type = await classifyOutput(trimmed);
+  const type = trimmed.length === 0 ? 'empty' : parsesAsJson(trimmed) ? 'json' : 'text';
   const summary = [
     '[output summarized by policy]',
     `type: ${type}`,
@@ -248,31 +246,6 @@ async function summarizeOutput(content: string, maxBytes: number, byteLen: numbe
     return '.'.repeat(Math.max(0, maxBytes));
   }
   return compact.slice(0, maxBytes - 3) + '...';
-}
-
-const OUTPUT_KIND_SITE = 'runtime.tools.output-kind';
-
-/** Characters of the output's beginning and end shown to the kind reading. */
-const KIND_SAMPLE_HEAD = 1500;
-const KIND_SAMPLE_TAIL = 500;
-
-/**
- * The kind named in an output summary. Empty output and output that parses
- * as JSON are facts; any other kind is read by `engine.runtime.output-kind`
- * from the output's beginning and end, and a reading that does not settle is
- * named `unknown`.
- */
-async function classifyOutput(trimmed: string): Promise<string> {
-  if (trimmed.length === 0) return 'empty';
-  if (parsesAsJson(trimmed)) return 'json';
-  const sample = trimmed.length <= KIND_SAMPLE_HEAD + KIND_SAMPLE_TAIL
-    ? trimmed
-    : `${trimmed.slice(0, KIND_SAMPLE_HEAD)}\n...\n${trimmed.slice(-KIND_SAMPLE_TAIL)}`;
-  const run = await outputKind.run(judgmentPort(OUTPUT_KIND_SITE), { sample, characters: trimmed.length }, { site: OUTPUT_KIND_SITE });
-  const reading = run.readings.kind;
-  const kind = reading.outcome === 'act' ? reading.choice : 'unknown';
-  run.recordAction(kind);
-  return kind;
 }
 
 function parsesAsJson(trimmed: string): boolean {
@@ -302,8 +275,7 @@ function parsesAsJson(trimmed: string): boolean {
  * @param call - The tool call that produced the result (name and arguments);
  * a spilled output shows the parts `engine.tools.output-keep` ranks highest
  * against it.
- * Under a `summary` truncation mode the output's kind is read by
- * `engine.runtime.output-kind`; a missing judgment port propagates.
+ * Summary mode reports local size facts and the string or parsed JSON format.
  *
  * @returns The mutated result with `_policyAudit` attached, plus a standalone
  *          `OutputPolicyResult` audit record.

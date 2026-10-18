@@ -27,6 +27,12 @@ export interface CatalogModelPricing {
 
 export interface CatalogModel {
   id: string;
+  /** Published identity of the underlying model; prices and limits remain provider-specific. */
+  canonicalModelId?: string | undefined;
+  /** Published purpose. The upstream repository treats omitted type as chat. */
+  modelType?: string | undefined;
+  toolCalling?: boolean | undefined;
+  outputModalities?: readonly string[] | undefined;
   name: string;
   family?: string | undefined;
   provider: string;
@@ -58,14 +64,14 @@ export interface PricingCatalog {
   models: CatalogModel[];
 }
 
-/** Identity readings per catalog array, so a refreshed catalog is read afresh. */
+/** Identity indexes are rebuilt only when the catalog snapshot changes. */
 const catalogIdentities = new WeakMap<readonly CatalogModel[], ModelIdentityResolver>();
 
 function identityFor(models: readonly CatalogModel[]): ModelIdentityResolver {
   let resolver = catalogIdentities.get(models);
   if (!resolver) {
-    const candidates = models.map((model) => ({ key: model.id, id: model.id, name: model.name, provider: model.providerId }));
-    resolver = new ModelIdentityResolver({ universe: 'catalog', candidates: () => candidates });
+    const candidates = models.map((model) => ({ key: model.id, id: model.id, name: model.name, provider: model.providerId, canonicalModelId: model.canonicalModelId }));
+    resolver = new ModelIdentityResolver({ candidates: () => candidates });
     catalogIdentities.set(models, resolver);
   }
   return resolver;
@@ -73,8 +79,7 @@ function identityFor(models: readonly CatalogModel[]): ModelIdentityResolver {
 
 /**
  * Legacy string-keyed catalog price lookup. An id with no exact entry is
- * matched only to the entry Jev read as the same model (routing.model-identity);
- * until that reading lands the model is unpriced. Returns null when the model is
+ * matched through published canonical identities; an unresolved identity remains unpriced. Returns null when the model is
  * absent from the catalog or its entry carries no cost, absent must never
  * look free. Prefer ProviderRegistry.resolveModelPricing (model-pricing.ts),
  * which resolves per (provider, model) with manual/provider/catalog
@@ -207,7 +212,7 @@ function paidTierLabel(tiers: Pick<ModelTierStore, 'lastReading'> | undefined, r
 }
 
 export function getCatalogModelDefinitionsFrom(models: readonly CatalogModel[], tiers?: Pick<ModelTierStore, 'lastReading'>): MinimalModelDefinition[] {
-  return models.map((model): MinimalModelDefinition => {
+  return models.filter(model => model.modelType === undefined || model.modelType === 'chat').map((model): MinimalModelDefinition => {
     const isFree = model.tier === 'free';
     // Same principle as `reasoning` below, applied to image input: the
     // catalog's own per-model answer decides. This used to read
@@ -231,7 +236,7 @@ export function getCatalogModelDefinitionsFrom(models: readonly CatalogModel[], 
       || (catalogSpec !== undefined && catalogSpec.kind !== 'unavailable');
     const reasoningEffort = hasReasoning
       ? resolveReasoningEffortSpec({
-        modelId: model.id,
+        provider: model.providerId, modelId: model.id,
         ...(catalogSpec ? { spec: catalogSpec } : {}),
       })
       : undefined;
@@ -243,8 +248,8 @@ export function getCatalogModelDefinitionsFrom(models: readonly CatalogModel[], 
       displayName: model.name,
       description: `${model.name}, sourced from model catalog.`,
       capabilities: {
-        toolCalling: true,
-        codeEditing: true,
+        toolCalling: model.toolCalling ?? true,
+        codeEditing: model.toolCalling ?? true,
         reasoning: hasReasoning,
         multimodal: isMultimodal,
       },

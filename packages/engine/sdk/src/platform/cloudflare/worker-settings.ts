@@ -203,20 +203,13 @@ function isMatchingWorkerScript(
   return script.id === workerName || script.name === workerName;
 }
 
+/** Cloudflare SDK APIError.errors carries machine codes independently of diagnostic prose. */
 function isDurableObjectAlreadyMigratedError(error: unknown): boolean {
-  const message = `${summarizeError(error)} ${error instanceof Error ? error.message : ''} ${stringifyError(error)}`.toLowerCase();
-  return message.includes('10074') ||
-    (message.includes('new-sqlite-class') && message.includes('already depended')) ||
-    (message.includes('new_sqlite_classes') && message.includes('existing class'));
-}
-
-function stringifyError(error: unknown): string {
-  try {
-    return JSON.stringify(error) ?? '';
-  } catch (err) {
-    logger.warn('worker-settings: failed to stringify error object', { error: String(err) });
-    return '';
-  }
+  if (!error || typeof error !== 'object') return false;
+  const errors = Object.getOwnPropertyDescriptor(error, 'errors');
+  return !!errors && 'value' in errors && Array.isArray(errors.value)
+    && errors.value.some((entry: unknown) => entry !== null && typeof entry === 'object'
+      && Object.getOwnPropertyDescriptor(entry, 'code')?.value === 10074);
 }
 
 export async function configureWorkerSubdomain(

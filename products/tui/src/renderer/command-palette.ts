@@ -38,7 +38,7 @@ function rowsFor(palette: PaletteView): KitRow[] {
       });
     }
   }
-  if (rows.length === 0) rows.push({ label: `Nothing matches "${palette.query}".`, muted: true });
+  if (rows.length === 0) rows.push({ label: palette.searching ? 'Finding commands…' : `Nothing matches "${palette.query}".`, muted: true });
   return rows;
 }
 

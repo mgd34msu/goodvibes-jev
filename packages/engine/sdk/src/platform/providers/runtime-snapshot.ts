@@ -13,7 +13,7 @@ export interface ProviderModelSnapshot {
   readonly displayName: string;
   readonly selectable: boolean;
   readonly contextWindow: number;
-  /** Settled picker family; omitted when the canonical reading is unavailable. */
+  /** Published picker family; omitted when repository metadata is unavailable. */
   readonly family?: ModelFamily | undefined;
   readonly tier?: string | undefined;
   readonly pricing?: {
@@ -120,10 +120,6 @@ async function buildSnapshotForProvider(
   const catalog = providerRegistry.listModels()
     .filter((model) => model.provider === providerId)
     .map((model) => ({ ...model }));
-  // Optional display enrichment never delays catalog, auth or usage responses.
-  // Judgment transport may keep retrying an outage; later snapshots pick up
-  // settled readings for this exact evidence and current installed port.
-  if (enrichFamilies) void modelFamilyReadings.read(catalog).catch(() => {});
   const models = catalog.map((model) => toModelSnapshot(model, providerRegistry, enrichFamilies));
   return {
     providerId,

@@ -1,13 +1,7 @@
 /**
- * Fill missing/legacy remote windows from the catalog without inventing
- * identity. Exact provider IDs (or explicit aliases) and model IDs stay code;
- * a non-exact model ID is resolved only by routing.model-identity. Until that
- * reading settles it stays an estimate, never an authoritative window.
- *
- * An own-provider catalog entry is a stated ceiling. Other providers' most
- * common value (ties smaller, one vote per provider) is only a budget/display
- * estimate: endpoints serving the same model can impose different limits.
- * User caps and learned endpoint observations are overlaid after this step.
+ * Resolve endpoint windows from exact provider IDs, published canonical links
+ * and declared aliases. Other providers' figures remain labelled estimates;
+ * user caps and learned endpoint observations are applied afterward.
  */
 import { knownFallbackContextWindow } from './context-window-fallback.js';
 import { ModelIdentityResolver } from '../routing/model-identity.js';
@@ -22,16 +16,16 @@ interface CatalogListing {
   readonly tokens: number;
 }
 
-/** Lookup tables and identity readings for one immutable catalog snapshot. */
+/** Lookup tables for one immutable catalog snapshot. */
 export interface CatalogContextWindowIndex {
   readonly byProvider: ReadonlyMap<string, ReadonlyMap<string, number>>;
   /** One vote per provider for each exact catalog model ID. */
   readonly byModelId: ReadonlyMap<string, readonly CatalogListing[]>;
-  /** Exact ID, a previously read identity, or null while unknown. */
+  /** Exact or published identity, or null when unknown. */
   readonly resolveModelId: (providerId: string, modelId: string) => string | null;
 }
 
-/** A numeric budget value and its source; consensus/family values are guesses. */
+/** A numeric budget value and its source; consensus and fallback values are estimates. */
 export interface CatalogContextWindowResolution {
   readonly tokens: number;
   readonly provenance: 'catalog' | 'fallback';
@@ -62,8 +56,8 @@ export function buildCatalogContextWindowIndex(
     }
   }
   const candidates = models.filter((model) => byModelId.has(model.id))
-    .map((model) => ({ key: model.id, id: model.id, name: model.name, provider: model.providerId }));
-  const identities = new ModelIdentityResolver({ universe: 'context-window-catalog', candidates: () => candidates });
+    .map((model) => ({ key: model.id, id: model.id, name: model.name, provider: model.providerId, canonicalModelId: model.canonicalModelId }));
+  const identities = new ModelIdentityResolver({ candidates: () => candidates });
   return {
     byProvider,
     byModelId,
@@ -96,7 +90,7 @@ function consensusOf(listings: readonly CatalogListing[]): { tokens: number; agr
   return best;
 }
 
-/** Own-provider evidence first; cross-provider consensus and family fallback are estimates. */
+/** Own-provider evidence first; cross-provider consensus and the default budget are estimates. */
 export function resolveCatalogContextWindow(
   providerId: string,
   modelId: string,
@@ -185,8 +179,8 @@ export function applyCatalogContextWindow(
 
 /**
  * A short label naming where a model's window came from, for /context window
- * and /status: 'catalog: abacus', 'consensus of 4 providers', 'family
- * default', 'user override', and so on.
+ * and /status: 'catalog: abacus', 'consensus of 4 providers', 'default
+ * budget (estimate)', 'user override', and so on.
  */
 export function describeContextWindowSource(model: ModelDefinition): string {
   const origin = model.contextWindowOrigin;
@@ -211,7 +205,7 @@ export function describeContextWindowSource(model: ModelDefinition): string {
       }
       return 'model catalog';
     case 'fallback':
-      return origin?.kind === 'family_default' ? 'family default (estimate)' : 'default (nothing states it)';
+      return origin?.kind === 'family_default' ? 'default budget (estimate)' : 'default (nothing states it)';
     default:
       return 'model catalog';
   }

@@ -12,15 +12,9 @@
 //      setModelPricingResolver()/wireCostPricing(): manual `pricing.modelPrices`
 //      -> registration -> provider-served -> catalog -> honest unknown.
 //   3. The live model catalog, when a source has been wired via
-//      setPricingSource(): an exact id match, else the catalog entry Jev read
-//      as the same model (routing.model-identity, see routing/model-identity.ts).
+//      setPricingSource(): an exact ID or published canonical identity.
 //   4. STATIC_FALLBACK_PRICING, a small hand-maintained safety net for common
-//      frontier models, used when nothing above has a source wired (e.g. tests)
-//      or nothing above matched (catalog not yet loaded, or a model this net
-//      covers that the catalog happens to miss): an exact key, else the key
-//      Jev read as the same model.
-//   An identity that has not been read yet is requested and the model is
-//   unpriced until the reading lands; nothing is matched by a guess.
+//      frontier models: exact keys only. Unmatched IDs remain unpriced.
 //   5. Unpriced: the model is genuinely unknown to every source above. This is
 //      reported explicitly via `priced: false` so consumers can render an
 //      honest "unpriced" state instead of a silent $0.
@@ -146,15 +140,15 @@ function currentCatalogCandidates(): readonly IdentityCandidate[] {
   const models = pricingSource?.() ?? [];
   if (models !== catalogCandidatesFrom) {
     catalogCandidatesFrom = models;
-    catalogCandidates = models.map((m) => ({ key: m.id, id: m.id, name: m.name, provider: m.providerId }));
+    catalogCandidates = models.map((m) => ({ key: m.id, id: m.id, name: m.name, provider: m.providerId, canonicalModelId: m.canonicalModelId }));
   }
   return catalogCandidates;
 }
 
 const STATIC_CANDIDATES: readonly IdentityCandidate[] = Object.keys(STATIC_FALLBACK_PRICING).map((key) => ({ key, id: key }));
 
-const catalogIdentity = new ModelIdentityResolver({ universe: 'catalog', candidates: currentCatalogCandidates });
-const staticIdentity = new ModelIdentityResolver({ universe: 'static-pricing', candidates: () => STATIC_CANDIDATES });
+const catalogIdentity = new ModelIdentityResolver({ candidates: currentCatalogCandidates });
+const staticIdentity = new ModelIdentityResolver({ candidates: () => STATIC_CANDIDATES });
 
 function catalogPricing(model: CatalogModel): ModelPricing | null {
   return model.tier === 'free' ? { input: 0, output: 0 } : model.pricing;

@@ -52,8 +52,8 @@ export function getProviderCachePaths(cacheDir: string): ProviderCachePaths {
 export function writeModelCatalogCache(models: CatalogModel[], cacheDir: string, fetchedAt = Date.now(), ttlMs = 86_400_000): void {
   const { catalogPath } = getProviderCachePaths(cacheDir);
   mkdirSync(cacheDir, { recursive: true });
-  // Version 5 carries provider-access-derived tiers. Readers reject legacy v4.
-  const payload = { version: 5 as const, fetchedAt, ttlMs, models };
+  // The repository-backed cache retains identity and capability metadata.
+  const payload = { version: 6 as const, fetchedAt, ttlMs, models };
   writeFileSync(catalogPath, JSON.stringify(payload, null, 2), 'utf-8');
 }
 

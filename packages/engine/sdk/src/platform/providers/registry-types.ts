@@ -102,6 +102,7 @@ export interface RuntimeProviderRegistration {
   readonly replace?: boolean | undefined;
 }
 
+/** Catalog limits now resolve locally; the former enrichment switch is retained for SDK compatibility. */
 export interface ProviderCatalogOptions {
   readonly contextWindowEnrichment?: 'background' | 'none';
 }

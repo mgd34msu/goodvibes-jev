@@ -554,7 +554,7 @@ export class OpenAICodexProvider implements LLMProvider {
         streamProtocol: 'openai-codex-responses-sse',
         reasoningMode: 'responses-reasoning',
         supportedReasoningEfforts: reasoningEffortLevels(
-          resolveReasoningEffortSpec({ modelId: this.models[0] ?? '' }),
+          resolveReasoningEffortSpec({ provider: this.name, modelId: this.models[0] ?? '' }),
         ),
         cacheStrategy: 'subscription-session-cache-key',
       },

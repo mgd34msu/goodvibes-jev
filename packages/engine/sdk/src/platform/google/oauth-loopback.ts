@@ -239,6 +239,7 @@ export interface TokenResponseOk {
   readonly tokenType: string;
 }
 export interface TokenResponseFailed {
+  readonly reason?: 'invalid-grant';
   readonly ok: false;
   readonly problem: string;
   readonly fix: string;
@@ -326,6 +327,7 @@ async function postToken(
       isRecord(payload) && typeof payload['error_description'] === 'string' ? payload['error_description'] : '';
     return {
       ok: false,
+      ...(errorField === 'invalid_grant' ? { reason: 'invalid-grant' as const } : {}),
       problem: redactSecretsFromMessage(
         `Google rejected the token request (${errorField}).${errorDescription ? ` ${errorDescription}` : ''}`,
         secretsToRedact,

@@ -17,6 +17,8 @@
  * for any command) fills the composer instead so the arguments can be typed.
  */
 
+import { readCommandDiscovery, type CommandDiscoveryReading } from '@goodvibes-jev/engine/sdk/platform/routing';
+import { retainStrictJudgmentJson, assertJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import type { InputToken } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { SlashCommand } from './command-registry.ts';
 import type { SurfaceModal, SurfaceModalHost } from './surface-modal-host.ts';
@@ -167,6 +169,9 @@ export function paletteScore(entry: PaletteEntry, query: string): number {
 
 export interface CommandPaletteOptions {
   readonly entries: readonly PaletteEntry[];
+  readonly onChanged?: () => void;
+  /** Bind suggestions to the same registered commands and handlers. */
+  readonly assertCurrent?: () => void;
   /** Run or fill the composer with a command; the palette has already closed. */
   readonly onRun: (entry: PaletteEntry, mode: PaletteRunMode) => void;
   /** Optional live note for a row (e.g. the current model), shown muted after its title. */
@@ -175,7 +180,15 @@ export interface CommandPaletteOptions {
 
 export class CommandPalette implements SurfaceModal, PaletteView {
   readonly name = 'command-palette';
-  query = '';
+  private queryValue = '';
+  private closed = false;
+  private searchTimer: ReturnType<typeof setTimeout> | undefined;
+  private searchController: AbortController | undefined;
+  private semantic: CommandDiscoveryReading | undefined;
+  searching = false;
+
+  get query(): string { return this.queryValue; }
+  set query(value: string) { this.setQuery(value); }
   selectedIndex = 0;
   private sectionsCache: { query: string; sections: PaletteSection[] } | null = null;
 
@@ -191,6 +204,7 @@ export class CommandPalette implements SurfaceModal, PaletteView {
 
   /** The groups shown for the current query. */
   sections(): PaletteSection[] {
+    try { this.semantic?.assertCurrent(); } catch { this.semantic = undefined; this.sectionsCache = null; }
     if (this.sectionsCache?.query === this.query) return this.sectionsCache.sections;
     const sections: PaletteSection[] = [];
     if (this.query.trim().length === 0) {
@@ -213,7 +227,8 @@ export class CommandPalette implements SurfaceModal, PaletteView {
         .filter((r) => r.score > 0)
         .sort((a, b) => b.score - a.score || a.index - b.index)
         .map((r) => r.entry);
-      if (ranked.length > 0) sections.push({ group: 'Commands', entries: ranked });
+      const entries = ranked.length ? ranked : this.semantic?.ids.flatMap(id => this.entries.filter(entry => entry.id === id)) ?? [];
+      if (entries.length > 0) sections.push({ group: 'Commands', entries });
     }
     this.sectionsCache = { query: this.query, sections };
     return sections;
@@ -230,8 +245,58 @@ export class CommandPalette implements SurfaceModal, PaletteView {
   }
 
   setQuery(query: string): void {
-    this.query = query;
+    if (query === this.queryValue || this.closed) return;
+    this.cancelSearch();
+    this.queryValue = query;
     this.selectedIndex = 0;
+    this.sectionsCache = null;
+    this.semantic = undefined;
+    if (!query.trim() || this.entries.some(entry => paletteScore(entry, query) > 0)) return;
+    this.searching = true;
+    const controller = new AbortController();
+    this.searchController = controller;
+    this.searchTimer = setTimeout(() => {
+      this.searchTimer = undefined;
+      void this.findSemanticCommands(query, controller);
+    }, 250);
+  }
+
+  private async findSemanticCommands(query: string, controller: AbortController): Promise<void> {
+    const current = () => {
+      controller.signal.throwIfAborted();
+      if (this.closed || this.query !== query || this.searchController !== controller) throw new Error('Command search changed.');
+      this.options.assertCurrent?.();
+    };
+    try {
+      const source = retainStrictJudgmentJson(this.entries);
+      assertJudgmentInput(source.snapshot);
+      const request = { query, commands: source.snapshot.map(({ id, title, description, aliases, keywords }) => ({ id, title, description, aliases, keywords })) };
+      const reading = await readCommandDiscovery(request, { signal: controller.signal, assertCurrent: () => { current(); source.assertCurrent(); } });
+      current();
+      this.semantic = reading;
+      this.sectionsCache = null;
+    } catch { /* Literal results remain available when semantic search is unavailable. */ }
+    finally {
+      if (this.searchController === controller) {
+        this.searching = false;
+        this.options.onChanged?.();
+      }
+    }
+  }
+
+  private cancelSearch(): void {
+    if (this.searchTimer !== undefined) clearTimeout(this.searchTimer);
+    this.searchTimer = undefined;
+    this.searchController?.abort();
+    this.searchController = undefined;
+    this.searching = false;
+  }
+
+  onClose(): void {
+    this.closed = true;
+    this.cancelSearch();
+    this.semantic = undefined;
+    this.sectionsCache = null;
   }
 
   move(delta: number): void {

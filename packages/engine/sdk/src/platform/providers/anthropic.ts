@@ -22,6 +22,7 @@ import {
 import { applyAnthropicReasoning, isAnthropicThinkingEnabled } from './anthropic-stream.js';
 import { prepareReasoningEffort } from './reasoning-effort-families.js';
 import { knownAnthropicOutputCapRow, readAnthropicOutputCapRow } from '../routing/model-limit-readings.js';
+import { knownCatalogMaxOutput } from './model-catalog-facts.js';
 import type { AnthropicOutputCapRow } from '../routing/batteries/model-limits.js';
 import { describeReasoningRejection } from './reasoning-effort.js';
 import { getCacheCapability } from './cache-capability.js';
@@ -111,8 +112,10 @@ const NOOP_CACHE_HIT_TRACKER: Pick<CacheHitTracker, 'getHitRate' | 'recordTurn'>
   recordTurn: () => {},
 };
 
-/** This model's max output tokens per its documented row as read so far. Live limits win, see `clampMaxTokens`. */
+/** Repository output limit, then an interpreted documented row. Live endpoint limits win in `clampMaxTokens`. */
 export function documentedMaxOutput(model: string): number {
+  const published = knownCatalogMaxOutput('anthropic', model);
+  if (published !== undefined) return published;
   const row = knownAnthropicOutputCapRow(model);
   return row ? ANTHROPIC_OUTPUT_CAPS[row] : ANTHROPIC_SMALLEST_OUTPUT_CAP;
 }
@@ -314,10 +317,10 @@ export class AnthropicProvider implements LLMProvider {
 
       body['messages'] = anthropicMessages;
 
-      await prepareReasoningEffort(reasoningEffort, { modelId: resolvedModel, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.anthropic.reasoning-family');
+      await prepareReasoningEffort(reasoningEffort, { provider: this.name, modelId: resolvedModel, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.anthropic.reasoning-family');
       const resolvedEffort = applyAnthropicReasoning(
         body,
-        { model: resolvedModel, reasoningEffort, ...(params.reasoningEffortSpec ? { reasoningEffortSpec: params.reasoningEffortSpec } : {}) },
+        { provider: this.name, model: resolvedModel, reasoningEffort, ...(params.reasoningEffortSpec ? { reasoningEffortSpec: params.reasoningEffortSpec } : {}) },
         this.clampMaxTokens(resolvedModel, Infinity),
       );
 
@@ -503,7 +506,7 @@ export class AnthropicProvider implements LLMProvider {
   /**
    * Clamp a requested max_tokens to what this model actually allows.
    *
-   * Live limit first (what the provider says), documented row second. A
+   * Live endpoint limit first, repository output limit second, interpreted documented row last. A
    * model the live call did not cover, because there is no API key, or
    * because the call failed, still gets its row's cap once
    * `prepareMaxOutput` has read it, and the smallest documented cap when the
@@ -514,9 +517,9 @@ export class AnthropicProvider implements LLMProvider {
     return Math.min(requested, this._liveMaxOutput.get(model) ?? documentedMaxOutput(model));
   }
 
-  /** Reads the model's output-cap row before a request is built, unless the provider has reported its cap. */
+  /** Interpret a documented cap only when live and repository limits are both absent. */
   private async prepareMaxOutput(model: string): Promise<void> {
-    if (this._liveMaxOutput.has(model)) return;
+    if (this._liveMaxOutput.has(model) || knownCatalogMaxOutput(this.name, model) !== undefined) return;
     try { await readAnthropicOutputCapRow(model, OUTPUT_CAP_SITE); }
     catch (error) {
       // clampMaxTokens uses the smallest documented cap while unresolved;
@@ -528,7 +531,7 @@ export class AnthropicProvider implements LLMProvider {
   private async createChatBatch(input: ProviderBatchCreateInput): Promise<ProviderBatchCreateResult> {
     await Promise.all(input.requests.map((request) => this.prepareMaxOutput(normalizeAnthropicModel(request.params.model))));
     await Promise.all(input.requests.map((request) => prepareReasoningEffort(request.params.reasoningEffort, {
-      modelId: normalizeAnthropicModel(request.params.model),
+      provider: this.name, modelId: normalizeAnthropicModel(request.params.model),
       ...(request.params.reasoningEffortSpec ? { spec: request.params.reasoningEffortSpec } : {}),
     }, 'providers.anthropic.reasoning-family')));
     const res = await instrumentedFetch(`${ANTHROPIC_API_BASE}/messages/batches`, {
@@ -640,7 +643,7 @@ export class AnthropicProvider implements LLMProvider {
     }
     applyAnthropicReasoning(
       body,
-      { model: resolvedModel, reasoningEffort: params.reasoningEffort, ...(params.reasoningEffortSpec ? { reasoningEffortSpec: params.reasoningEffortSpec } : {}) },
+      { provider: this.name, model: resolvedModel, reasoningEffort: params.reasoningEffort, ...(params.reasoningEffortSpec ? { reasoningEffortSpec: params.reasoningEffortSpec } : {}) },
       this.clampMaxTokens(resolvedModel, Infinity),
     );
     return body;

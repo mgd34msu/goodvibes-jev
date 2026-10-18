@@ -140,7 +140,7 @@ function buildFallbackPositionMap(modelState: ModelDomainState): Map<string, num
  * @param healthState - Current provider health domain state.
  * @param modelState - Current model domain state.
  * @param pinnedIds - Set of pinned/favorited model registry keys.
- * @param familyOf - A model's family as read by `engine.runtime.model-family` (undefined until read).
+ * @param familyOf - A model's published repository family (undefined when unknown).
  * @returns Sorted, enriched ModelPickerEntry array.
  */
 export function enrichModelEntries(

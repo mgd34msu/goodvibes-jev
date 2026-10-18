@@ -105,3 +105,16 @@ for (const wrapper of ['index', 'manager']) test(`${wrapper} rejects port retire
   const result = wrapper === 'index' ? buildTranscriptEventIndex([system('[Approval] Waiting')], { lifetime }) : manager.getTranscriptEventIndex({ lifetime });
   await expect(result).rejects.toBeDefined(); expect(checks).toBe(retireAfterCheck);
 });
+
+test('a declared runtime occurrence keeps its producer presentation without Jev; matching words alone do not', async () => {
+  const text = '[Agents] ✓ reviewer agent-1: "Fix the error" — completed in 2s (3 tool calls)';
+  const conversation = new ConversationManager();
+  conversation.addSystemMessage(text, { type: 'AGENT_COMPLETED', occurrenceId: 'occurrence-1' });
+  const index = await conversation.getTranscriptEventIndex();
+  expect(index.events[0]?.kind).toBe('task_transition');
+  expect(conversation.getMessageSnapshot()[0]).toMatchObject({ presentation: { severity: 'info', event: 'task_transition', activity: 'agent' } });
+  expect(calls).toHaveLength(0);
+  event = 'policy_warning';
+  const unstructured = await classifyTranscriptMessages([system(text)]);
+  expect(unstructured[0]?.kind).toBe('policy_warning'); expect(calls).toHaveLength(1);
+});

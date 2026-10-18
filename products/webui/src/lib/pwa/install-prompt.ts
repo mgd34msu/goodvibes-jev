@@ -14,7 +14,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { readInstallPlatform, type InstallPlatform, type PlatformResult } from './platform-judgment';
-import { subscribeClientLifetime } from '../client-lifetime';
 
 /** The Chromium beforeinstallprompt event (not in the DOM lib types). */
 export interface BeforeInstallPromptEvent extends Event {
@@ -57,17 +56,15 @@ export function useInstallPrompt(): UseInstallPrompt {
   const [standalone, setStandalone] = useState<boolean>(() => readStandalone());
 
   const [platform, setPlatform] = useState<PlatformResult>({ status: 'held' });
-  const [identityRevision, setIdentityRevision] = useState(0);
   const currentPrompt = useRef<BeforeInstallPromptEvent | null>(null);
   const prompting = useRef(false);
-  useEffect(() => subscribeClientLifetime(() => { setPlatform({ status: 'held' }); setIdentityRevision(value => value + 1); }), []);
   useEffect(() => {
     if (standalone || promptEvent) return;
     const abort = new AbortController();
     void readInstallPlatform({ userAgent: navigator.userAgent, platform: navigator.platform, maxTouchPoints: navigator.maxTouchPoints ?? 0 }, abort.signal)
       .then(result => { if (!abort.signal.aborted) setPlatform(result); });
     return () => abort.abort();
-  }, [standalone, promptEvent, identityRevision]);
+  }, [standalone, promptEvent]);
 
   useEffect(() => {
     const onBeforeInstall = (event: Event) => {

@@ -1,27 +1,15 @@
-/**
- * FileWatcher.start reads which project-root files are configuration or
- * environment files (engine.state.watched-config, one yes/no per root entry)
- * and watches the ones read yes with an act outcome. The fake port answers
- * each entry with the probability the test gives its name.
- */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
-import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
+import { fakePort } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { FileWatcher } from '../sdk/src/platform/state/file-watcher.ts';
 import type { FileStateCache } from '../sdk/src/platform/state/file-cache.ts';
 import type { ProjectIndex } from '../sdk/src/platform/state/project-index.ts';
-import { WATCHED_CONFIG_QUERY } from '../sdk/src/platform/state/batteries/watched-config.ts';
 
-const ANSWERS: Record<string, number> = {
-  'package.json': 0.97,
-  '.env.staging': 0.97,
-  'pyproject.toml': 0.58,
-  'README.md': 0.03,
-};
+const ROOT_FILES = ['package.json', '.env.staging', 'pyproject.toml', 'README.md'];
 
 let root: string;
 let requests: ReturnType<typeof fakePort>['requests'] = [];
@@ -38,17 +26,9 @@ function makeWatcher(): FileWatcher {
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'gv-file-watcher-'));
-  for (const name of Object.keys(ANSWERS)) writeFileSync(join(root, name), '{}\n');
+  for (const name of ROOT_FILES) writeFileSync(join(root, name), '{}\n');
   mkdirSync(join(root, 'src'));
-  const fake = fakePort((name, _question, state) => {
-    if (name !== 'match') throw new Error(`unexpected question ${name}`);
-    if (state === null || typeof state !== 'object' || Array.isArray(state) || state.query !== WATCHED_CONFIG_QUERY) throw new Error('Unexpected watched configuration query');
-    const candidate = state.candidate;
-    if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate) || typeof candidate.name !== 'string') throw new Error('Unexpected watched configuration candidate');
-    const probability = ANSWERS[candidate.name];
-    if (probability === undefined) throw new Error('Unrecorded watched configuration candidate');
-    return noulAnswer(probability);
-  });
+  const fake = fakePort(() => { throw new Error('Filename watching must stay local'); });
   requests = fake.requests;
   previous = installJudgmentPort(fake.port);
 });
@@ -60,16 +40,11 @@ afterEach(() => {
 });
 
 describe('FileWatcher root configuration reading', () => {
-  test('reads each regular root file by name and watches only a confident yes', async () => {
+  test('watches regular root files without interpreting names or reading their contents', async () => {
     const watcher = makeWatcher();
     await watcher.start();
-    const watched = [...watcher.getWatchedPaths()].sort();
-    expect(watched).toEqual([join(root, '.env.staging'), join(root, '.goodvibes'), join(root, 'package.json')].sort());
-    // One request per regular file (the src directory is not read), names only.
-    const states = requests.filter(request => request.context?.battery === 'engine.state.watched-config')
-      .map((request) => request.state);
-    expect(states).toHaveLength(4);
-    expect(states).toEqual(Object.keys(ANSWERS).sort().map(name => ({ query: WATCHED_CONFIG_QUERY, candidate: { name } })));
+    expect([...watcher.getWatchedPaths()].sort()).toEqual([...ROOT_FILES, '.goodvibes'].map(name => join(root, name)).sort());
+    expect(requests).toHaveLength(0);
   });
 
   test('a stop while the root is being read leaves nothing watched', async () => {
@@ -81,10 +56,11 @@ describe('FileWatcher root configuration reading', () => {
     expect(watcher.isWatching()).toBe(false);
   });
 
-  test('with no judgment port, start rejects and the watcher is not left started', async () => {
+  test('watching is available without a judgment port', async () => {
     installJudgmentPort(undefined);
     const watcher = makeWatcher();
-    await expect(watcher.start()).rejects.toBeInstanceOf(JudgmentPortMissingError);
-    expect(watcher.isWatching()).toBe(false);
+    await watcher.start();
+    expect(watcher.isWatching()).toBe(true);
+    expect(watcher.getWatchedPaths().has(join(root, 'pyproject.toml'))).toBe(true);
   });
 });

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { chmodSync, statSync, chmodSync, readdirSync, rmSync } from 'node:fs';
+import { chmodSync, statSync, readdirSync, rmSync } from 'node:fs';
 import { ArtifactStore } from '../sdk/src/platform/artifacts/store.ts';
 import { makeProjectTempDir } from './_helpers/project-temp.ts';
 

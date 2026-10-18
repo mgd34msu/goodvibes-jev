@@ -122,10 +122,10 @@ export class AnthropicSdkProvider implements LLMProvider {
         body['tools'] = toAnthropicTools(params.tools);
       }
 
-      await prepareReasoningEffort(params.reasoningEffort, { modelId: params.model, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.anthropic-sdk.reasoning-family');
+      await prepareReasoningEffort(params.reasoningEffort, { provider: this.name, modelId: params.model, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.anthropic-sdk.reasoning-family');
       applyAnthropicReasoning(
         body,
-        { model: params.model, reasoningEffort: params.reasoningEffort, ...(params.reasoningEffortSpec ? { reasoningEffortSpec: params.reasoningEffortSpec } : {}) },
+        { provider: this.name, model: params.model, reasoningEffort: params.reasoningEffort, ...(params.reasoningEffortSpec ? { reasoningEffortSpec: params.reasoningEffortSpec } : {}) },
         Infinity,
       );
 

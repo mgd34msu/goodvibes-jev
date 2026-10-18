@@ -7,7 +7,6 @@ import type { ContextWindowProvenance } from './registry-types.js';
 import { type ReasoningEffortSpec, parseReasoningOptions } from './reasoning-effort.js';
 import { resolveReasoningEffortSpec } from './reasoning-effort-families.js';
 import type { SyntheticBackend, CanonicalModel, SyntheticTier } from './synthetic.js';
-import { mapLimit } from '@goodvibes-jev/judgment';
 import { ModelIdentityResolver, type IdentityCandidate, type IdentityQuery } from '../routing/model-identity.js';
 
 export interface MinimalModelDefinition {
@@ -54,29 +53,22 @@ function isKeyed(model: CatalogModel): boolean {
 
 const registryKeyOf = (model: CatalogModel): string => `${model.providerId}:${model.id}`;
 
-/**
- * Which catalog entries from different callable providers serve the same
- * model: routing.model-identity readings over the entries of one catalog
- * family (a catalog fact) from the other callable providers. Replaces the
- * normalized-name slug grouping. `known` answers from what has been read;
- * `readAll` reads what has not, so the next build groups it.
- */
+/** Join callable provider offerings only through their published canonical model IDs. */
 export class SyntheticIdentities {
   readonly #resolver: ModelIdentityResolver;
   #candidatesFrom: readonly CatalogModel[] | undefined;
   #candidates: readonly IdentityCandidate[] = [];
 
-  constructor(options: { readonly path?: string | undefined; readonly models: () => readonly CatalogModel[] }) {
+  constructor(options: { readonly models: () => readonly CatalogModel[] }) {
     this.#resolver = new ModelIdentityResolver({
-      universe: 'synthetic-backends',
-      path: options.path,
       candidates: () => {
         const models = options.models();
         if (models !== this.#candidatesFrom) {
           this.#candidatesFrom = models;
           this.#candidates = models
-            .filter((model) => model.family && isKeyed(model))
-            .map((model) => ({ key: registryKeyOf(model), id: model.id, name: model.name, provider: model.providerId, family: model.family }));
+            .filter((model) => model.canonicalModelId && isKeyed(model))
+            .map((model) => ({ key: registryKeyOf(model), id: model.id, name: model.name, provider: model.providerId,
+              canonicalModelId: model.canonicalModelId }));
         }
         return this.#candidates;
       },
@@ -84,43 +76,34 @@ export class SyntheticIdentities {
   }
 
   static query(model: CatalogModel): IdentityQuery {
-    return { id: model.id, name: model.name, provider: model.providerId, family: model.family, otherProviderThan: model.providerId };
+    return { id: model.id, name: model.name, provider: model.providerId, canonicalModelId: model.canonicalModelId, otherProviderThan: model.providerId };
   }
 
-  /** The registry key of another provider's entry read as the same model, null for none, undefined when not read. */
-  known(model: CatalogModel): string | null | undefined {
+  /** The registry key of another offering of the published model, or null. */
+  known(model: CatalogModel): string | null {
+    if (!model.canonicalModelId) return null;
     return this.#resolver.known(SyntheticIdentities.query(model));
   }
 
-  /** Reads every callable family member that has not been read; returns how many readings were asked. */
-  async readAll(models: readonly CatalogModel[], site = 'providers.synthetic.identity'): Promise<number> {
-    const pending = syntheticCandidatesOf(models).filter((model) => this.known(model) === undefined);
-    await mapLimit(pending, SYNTHETIC_IDENTITY_CONCURRENCY, (model) => this.#resolver.resolve(SyntheticIdentities.query(model), site));
-    return pending.length;
+  /** Compatibility entrypoint: canonical joins require no asynchronous readings. */
+  async readAll(_models: readonly CatalogModel[], _site = 'providers.synthetic.identity'): Promise<number> {
+    return 0;
   }
 }
 
-/** Identity readings in flight at once while grouping. */
-const SYNTHETIC_IDENTITY_CONCURRENCY = 8;
-
-/** Callable catalog models whose family has callable entries from at least two providers: the only ones a failover group can hold. */
+/** Published models available from at least two callable providers. */
 function syntheticCandidatesOf(models: readonly CatalogModel[]): CatalogModel[] {
-  const providersByFamily = new Map<string, Set<string>>();
+  const providersByIdentity = new Map<string, Set<string>>();
   for (const model of models) {
-    if (!model.family || !isKeyed(model)) continue;
-    const providers = providersByFamily.get(model.family) ?? new Set<string>();
+    if (!model.canonicalModelId || !isKeyed(model)) continue;
+    const providers = providersByIdentity.get(model.canonicalModelId) ?? new Set<string>();
     providers.add(model.providerId);
-    providersByFamily.set(model.family, providers);
+    providersByIdentity.set(model.canonicalModelId, providers);
   }
-  return models.filter((model) => model.family && isKeyed(model) && (providersByFamily.get(model.family)?.size ?? 0) >= 2);
+  return models.filter((model) => model.canonicalModelId && isKeyed(model) && (providersByIdentity.get(model.canonicalModelId)?.size ?? 0) >= 2);
 }
 
-/**
- * Canonical failover models: callable catalog entries from different
- * providers that the identity readings say are the same model, joined into
- * one group per model. A group needs at least two providers. Entries not yet
- * read join no group until their reading lands.
- */
+/** Group provider offerings with the same published model identity. */
 export function buildSyntheticCanonicalModels(models: readonly CatalogModel[], identities: Pick<SyntheticIdentities, 'known'>): CanonicalModel[] {
   const candidates = syntheticCandidatesOf(models);
   const byKey = new Map(candidates.map((model) => [registryKeyOf(model), model]));
@@ -154,7 +137,7 @@ export function buildSyntheticCanonicalModels(models: readonly CatalogModel[], i
     const ordered = [...group].sort((a, b) => registryKeyOf(a).localeCompare(registryKeyOf(b)));
     const representative = ordered[0]!;
     const slug = nameToSlug(representative.name) || nameToSlug(representative.id);
-    const canonicalId = usedIds.has(slug) ? `${representative.family}-${slug}` : slug;
+    const canonicalId = usedIds.has(slug) ? `${nameToSlug(representative.canonicalModelId ?? representative.id)}-${slug}` : slug;
     usedIds.add(canonicalId);
     const backends: SyntheticBackend[] = ordered.map((model) => ({
       providerName: model.providerId,
@@ -236,7 +219,7 @@ export function getSyntheticModelDefinitions(
       ...(hasReasoning
         ? {
           reasoningEffort: resolveReasoningEffortSpec({
-            modelId: bestBackend?.modelId ?? canonical.id,
+            provider: bestBackend?.providerName, modelId: bestBackend?.modelId ?? canonical.id,
             ...(catalogSpec ? { spec: catalogSpec } : {}),
           }),
         }

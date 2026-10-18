@@ -7,6 +7,7 @@ import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
 import { JudgmentInputError, snapshotJudgmentInput } from '../sdk/src/platform/gate/judgment-input.ts';
 import { loadCustomProviders } from '../sdk/src/platform/providers/custom-loader.ts';
 import { ModelFamilyReadings, modelFamilyReadings, type ModelFamilyInput } from '../sdk/src/platform/providers/model-family.ts';
+import { installCatalogModelFacts } from '../sdk/src/platform/providers/model-catalog-facts.ts';
 import { getProviderRuntimeSnapshot } from '../sdk/src/platform/providers/runtime-snapshot.ts';
 import { createAsyncDisposalScope } from '../sdk/src/platform/runtime/disposal.ts';
 import { composeJudgment } from '../sdk/src/platform/runtime/judgment-services.ts';
@@ -14,8 +15,10 @@ import { composeJudgment } from '../sdk/src/platform/runtime/judgment-services.t
 const CANARY = 'Authorization: Bearer SYNTHETIC_ONLY_MODEL_METADATA_CANARY';
 const clean = (): ModelFamilyInput => ({ registryKey: 'local:alias', id: 'alias', displayName: 'Alias', provider: 'local' });
 let previous: ReturnType<typeof installJudgmentPort>;
-beforeEach(() => { previous = installJudgmentPort(undefined); });
-afterEach(() => { installJudgmentPort(previous); });
+beforeEach(() => { previous = installJudgmentPort(undefined); installCatalogModelFacts(['alias', 'clean-sibling'].map(id => ({
+  id, name: id, family: 'llama', provider: 'Local', providerId: 'local', providerEnvVars: [], pricing: null, tier: 'paid',
+}))); });
+afterEach(() => { installJudgmentPort(previous); installCatalogModelFacts([]); });
 
 test.each(['id', 'displayName', 'provider', 'description'] as const)(
   'automatic custom-provider snapshots screen complete %s before the composed transport and log', async (field) => {
@@ -67,16 +70,14 @@ test.each(['id', 'displayName', 'provider', 'description'] as const)(
       expect(bodies).toEqual([]);
       expect(decisionLog.query()).toEqual([]);
 
-      // A refused model does not disable ordinary classification or strand a
-      // valid sibling; the real composition still records its settled reading.
+      // Refused metadata leaves valid siblings available through local facts.
       const sibling = { ...clean(), id: 'clean-sibling', registryKey: 'local:clean-sibling' };
       await expect(modelFamilyReadings.read([model, sibling])).rejects.toBeInstanceOf(JudgmentInputError);
       expect(modelFamilyReadings.known(sibling)).toBe('Llama');
-      expect(bodies).toHaveLength(1);
+      expect(bodies).toHaveLength(0);
       expect(bodies.some((body) => body.includes(CANARY))).toBe(false);
       const entries = decisionLog.query();
-      expect(entries).toHaveLength(1);
-      expect(entries[0]?.status).toBe('answered');
+      expect(entries).toHaveLength(0);
       expect(JSON.stringify(entries)).not.toContain(CANARY);
       expect((await getProviderRuntimeSnapshot(registry, providerName))?.models[0]).not.toHaveProperty('family');
     } finally {
@@ -95,7 +96,7 @@ test('full original is screened before a cached family can be reused', async () 
   const contaminated = { ...clean(), description: CANARY };
   expect(readings.known(contaminated)).toBeUndefined();
   await expect(readings.read([contaminated])).rejects.toBeInstanceOf(JudgmentInputError);
-  expect(fixture.requests).toHaveLength(1);
+  expect(fixture.requests).toHaveLength(0);
   expect(readings.known(clean())).toBe('Llama');
 });
 

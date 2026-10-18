@@ -111,6 +111,13 @@ describe('session write ledger wiring', () => {
     expect(wasWrittenInAgentSession(TARGET)).toBe(false);
   });
 
+  test.each(['readonly_edit_preview', 'rewrite_summary', 'apply_patch_preview'])('a successful %s cannot grant a read waiver', async tool => {
+    emit(received(tool, { path: TARGET }));
+    emit(outcome('TOOL_SUCCEEDED'));
+    await settle();
+    expect(wasWrittenInAgentSession(TARGET)).toBe(false);
+  });
+
   test('detaching stops recording', async () => {
     detach();
     emit(received('write', { path: TARGET }));

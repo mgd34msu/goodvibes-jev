@@ -310,6 +310,8 @@ export interface CompanionReplyWait {
   readonly assistantMessageId?: string | undefined;
   readonly response?: string | undefined;
   readonly error?: string | undefined;
+  /** Set only by the local reply deadline, never inferred from failure prose. */
+  readonly timedOut?: true | undefined;
 }
 
 /**
@@ -331,7 +333,7 @@ export function awaitCompanionReply(
   return new Promise<CompanionReplyWait>((resolve) => {
     const timeout = timeoutMs > 0 ? setTimeout(() => {
       if (messageId) onTimeout(messageId);
-      resolve({ messageId, error: 'Timed out waiting for companion chat reply' });
+      resolve({ messageId, timedOut: true, error: 'Timed out waiting for companion chat reply' });
     }, timeoutMs) : undefined;
     timeout?.unref?.();
     void post({ resolve, timeout })

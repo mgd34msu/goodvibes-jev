@@ -162,6 +162,8 @@ export interface CompanionChatReplyResult {
   readonly assistantMessageId?: string | undefined;
   readonly response?: string | undefined;
   readonly error?: string | undefined;
+  /** Set only by the local reply deadline, never inferred from failure prose. */
+  readonly timedOut?: true | undefined;
 }
 
 interface PendingReply {

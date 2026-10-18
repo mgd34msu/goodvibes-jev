@@ -23,7 +23,6 @@ import { join } from 'node:path';
 import { bootDaemon, type BootedDaemon } from '../sdk/src/platform/daemon/boot.ts';
 import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { ConfigManager } from '../sdk/src/platform/config/manager.ts';
-import { artifactKind } from '../sdk/src/platform/artifacts/batteries/artifact-kind.ts';
 import { useArtifactKindReadings } from './helpers/artifact-kind-readings.ts';
 
 // beforeEach runs after bootDaemon's beforeAll composition installed its live
@@ -83,10 +82,8 @@ describe('raw and multipart artifact uploads round-trip over a real daemon', () 
     expect(created.artifact.sizeBytes).toBe(bytes.byteLength);
     expect(created.artifact.mimeType).toBe('application/octet-stream');
     expect(created.artifact.filename).toBe('fixture.bin');
-    const kindRequests = readings.requests.filter((request) => request.context?.battery === artifactKind.name);
-    expect(kindRequests).toHaveLength(1);
-    expect(kindRequests[0]?.questions).toEqual({ kind: artifactKind.items.kind.question });
-    expect(kindRequests[0]?.state).toEqual({ mimeType: 'application/octet-stream', filename: 'fixture.bin' });
+    const kindRequests = readings.requests.filter((request) => request.context?.battery === 'engine.artifacts.kind');
+    expect(kindRequests).toHaveLength(0);
     const digest = createHash('sha256').update(bytes).digest('hex');
     expect(created).toMatchObject({ artifact: { sha256: digest } });
 
@@ -165,7 +162,7 @@ describe('raw and multipart artifact uploads round-trip over a real daemon', () 
     expect(afterResponse.status).toBe(200);
     const after: unknown = await afterResponse.json();
     expect(after).toEqual(before);
-    expect(readings.requests.filter((request) => request.context?.battery === artifactKind.name)).toHaveLength(0);
+    expect(readings.requests.filter((request) => request.context?.battery === 'engine.artifacts.kind')).toHaveLength(0);
   });
 });
 

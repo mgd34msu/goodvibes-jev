@@ -1,3 +1,4 @@
+import { declaredProviderCatalogId } from '@goodvibes-jev/engine/contracts';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { bestId } from './object';
 import { readCredentialProvider, type CredentialProviderResult } from './credential-provider-judgment';
@@ -27,6 +28,7 @@ export function useProviderModelOptions(provider: unknown, catalog: unknown[], c
   useEffect(() => {
     if (!enabled || !provider) return;
     const providerId = bestId(provider);
+    if (declaredProviderCatalogId(providerId) !== undefined) return;
     const explicit = new Set([providerId, ...providerModelSourceIds(provider)]);
     const keys = [...new Set(catalog.map(bestId))].filter(id => id && !explicit.has(id));
     if (!providerId || !keys.length || keys.length > 64) return;

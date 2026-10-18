@@ -26,37 +26,10 @@ function fixture(options: { confidence?: number; authorized?: boolean; beforeAns
     close: async () => { await service.close(); log[Symbol.dispose](); } };
 }
 
-test('actual runtime returns a typed platform reading with complete metadata and real recorded evidence', async () => {
+test('browser platform classification is retired from the runtime and never reaches Jev', async () => {
   const f = fixture();
   try {
-    const result = await f.run();
-    expect(result).toMatchObject({ status: 'settled', value: { platform: 'ios-share-menu' }, outcome: 'act', readings: { platform: { kind: 'choice' } } });
-    expect(f.calls).toEqual([request().input]);
-    expect(f.log.query()).toHaveLength(1);
-    expect(JSON.stringify(f.log.query())).not.toContain('Mozilla/5.0');
-  } finally { await f.close(); }
-});
-test('uncertainty has no installation value', async () => {
-  const f = fixture({ confidence: 0.5 });
-  try { const result = await f.run(); expect(result).toMatchObject({ status: 'held' }); expect(result).not.toHaveProperty('value'); }
-  finally { await f.close(); }
-});
-test.each(['protected', 'permission', 'shape'] as const)('%s holds before provider and retention', async kind => {
-  const f = fixture({ authorized: kind !== 'permission' });
-  try {
-    const input = request(kind === 'protected' ? 'Authorization: Bearer synthetic-inline-credential' : undefined);
-    if (kind === 'shape') Object.assign(input.input, { secretValue: 'not-a-supported-field' });
-    await expect(f.run(input)).rejects.toBeDefined();
+    await expect(f.run()).rejects.toBeDefined();
     expect(f.calls).toHaveLength(0); expect(f.log.query()).toHaveLength(0);
   } finally { await f.close(); }
-});
-test.each(['abort', 'identity'] as const)('%s prevents late platform adoption', async kind => {
-  const started = Promise.withResolvers<void>(); const finish = Promise.withResolvers<void>();
-  const f = fixture({ beforeAnswer: async () => { started.resolve(); await finish.promise; } });
-  const abort = new AbortController();
-  try {
-    const pending = f.run(request(), abort.signal); await started.promise;
-    if (kind === 'abort') abort.abort(); else f.changeActor();
-    finish.resolve(); await expect(pending).rejects.toBeDefined();
-  } finally { finish.resolve(); await f.close(); }
 });

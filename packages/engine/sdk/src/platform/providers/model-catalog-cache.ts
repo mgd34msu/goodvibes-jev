@@ -3,8 +3,8 @@ import { dirname, join } from 'node:path';
 import { logger } from '../utils/logger.js';
 import type { CatalogModel } from './model-catalog.js';
 import { summarizeError } from '../utils/error-display.js';
-import { TTL_24H_MS, isTtlCacheStale, validateTtlCacheEnvelope } from './json-ttl-cache.js';
-import { instrumentedFetch, fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { isTtlCacheStale, validateTtlCacheEnvelope } from './json-ttl-cache.js';
+import { fetchModelCatalogRepository } from './model-catalog-repository.js';
 import type { ModelsDevReasoningOption } from './reasoning-effort.js';
 import { ProviderAccessReadings, type ProviderAccess, type ProviderFacts } from '../routing/catalog-access.js';
 
@@ -38,6 +38,8 @@ interface ModelsDevModelLimit {
 
 interface ModelsDevModel {
   id?: string | undefined;
+  canonical_model_id?: string | undefined;
+  type?: string | undefined;
   name?: string | undefined;
   family?: string | undefined;
   cost?: ModelsDevModelCost | undefined;
@@ -52,28 +54,9 @@ interface ModelsDevModel {
 
 type ModelsDevResponse = Record<string, CatalogProviderShape>;
 
-const MODELS_DEV_URL = 'https://models.dev/api.json';
-const CATALOG_FETCH_TIMEOUT_MS = 30_000;
-/**
- * Version 2: `pricing` became nullable, a model whose catalog entry carries
- * no cost is honestly unpriced instead of coerced to $0. Version-1 caches
- * (which baked in the $0 coercion) are discarded and refetched.
- *
- * Version 3: `reasoningOptions` carries the feed's per-model `reasoning_options`
- * array, which decides what reasoning levels each model really accepts.
- * Version-2 caches predate the field, so they are discarded and refetched
- * rather than left to fall through to the curated family table for a day.
- *
- * Version 4: `inputModalities` carries the feed's per-model `modalities.input`
- * list, which decides `multimodal` per model instead of by vendor. Version-3
- * caches predate the field; left in place they would report every model as
- * text-only for a day, so they are discarded and refetched.
- *
- * Version 5: `tier` comes from each provider's access reading
- * (routing.catalog-provider-access) instead of hardcoded provider-id lists.
- * Version-4 caches carry tiers the lists decided, so they are refetched.
- */
-const CATALOG_CACHE_VERSION = 5;
+const CATALOG_TTL_MS = 60 * 60 * 1000;
+/** Repository-backed cache with canonical identities, model types and capability facts. */
+const CATALOG_CACHE_VERSION = 6;
 
 export function getCatalogCachePath(cacheDir: string): string {
   return join(cacheDir, 'model-catalog.json');
@@ -157,7 +140,9 @@ function getReasoningOptions(value: unknown): ModelsDevReasoningOption[] | undef
   return options;
 }
 
-function transformModelsDevResponse(json: ModelsDevResponse, access: ReadonlyMap<string, ProviderAccess | undefined>): CatalogModel[] {
+function transformModelsDevResponse(input: unknown, access: ReadonlyMap<string, ProviderAccess | undefined>): CatalogModel[] {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error('Model catalog root is not a provider map');
+  const json = input as ModelsDevResponse;
   const models: CatalogModel[] = [];
   let skippedProviders = 0;
   let skippedProviderModelLists = 0;
@@ -190,7 +175,6 @@ function transformModelsDevResponse(json: ModelsDevResponse, access: ReadonlyMap
       const modelFamily = typeof modelData.family === 'string' ? modelData.family : undefined;
       const cost = modelData.cost;
       const limit = modelData.limit;
-      const supportsReasoning = modelData.reasoning === true;
       const reasoningOptions = getReasoningOptions(modelData.reasoning_options);
       // The feed's own answer to what this model accepts as input. Undefined
       // when the entry carried no modality block, which is distinct from an
@@ -217,6 +201,11 @@ function transformModelsDevResponse(json: ModelsDevResponse, access: ReadonlyMap
 
       models.push({
         id: modelId,
+        modelType: typeof modelData.type === 'string' ? modelData.type : 'chat',
+        ...(typeof modelData.tool_call === 'boolean' ? { toolCalling: modelData.tool_call } : {}),
+        ...(Array.isArray(modelData.modalities?.output) ? { outputModalities: getStringArray(modelData.modalities.output) } : {}),
+        ...(typeof modelData.canonical_model_id === 'string' && modelData.canonical_model_id.trim()
+          ? { canonicalModelId: modelData.canonical_model_id } : {}),
         name: modelName,
         ...(modelFamily ? { family: modelFamily } : {}),
         provider: providerName,
@@ -226,7 +215,7 @@ function transformModelsDevResponse(json: ModelsDevResponse, access: ReadonlyMap
         tier,
         contextWindow,
         maxOutputTokens,
-        ...(supportsReasoning ? { reasoning: true } : {}),
+        ...(typeof modelData.reasoning === 'boolean' ? { reasoning: modelData.reasoning } : {}),
         ...(reasoningOptions !== undefined ? { reasoningOptions } : {}),
         ...(inputModalities !== undefined ? { inputModalities } : {}),
       });
@@ -245,7 +234,11 @@ function transformModelsDevResponse(json: ModelsDevResponse, access: ReadonlyMap
 }
 
 function validateCatalogCache(value: unknown): { cache: CatalogCacheFile | null; reason?: string } {
-  return validateTtlCacheEnvelope<CatalogCacheFile>(value, 'models', 'array', CATALOG_CACHE_VERSION);
+  const current = validateTtlCacheEnvelope<CatalogCacheFile>(value, 'models', 'array', CATALOG_CACHE_VERSION);
+  if (current.cache) return current;
+  const legacy = validateTtlCacheEnvelope<CatalogCacheFile>(value, 'models', 'array', 5);
+  // Keep the previous catalog usable offline, while requesting repository metadata now.
+  return legacy.cache ? { cache: { ...legacy.cache, version: CATALOG_CACHE_VERSION, ttlMs: 0 } } : current;
 }
 
 function loadCatalogCache(cachePath: string): CatalogCacheFile | null {
@@ -275,7 +268,7 @@ function saveCatalogCache(models: CatalogModel[], cachePath: string, tmpPath: st
     const payload: CatalogCacheFile = {
       version: CATALOG_CACHE_VERSION,
       fetchedAt: Date.now(),
-      ttlMs: TTL_24H_MS,
+      ttlMs: CATALOG_TTL_MS,
       models,
     };
     fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), 'utf-8');
@@ -286,27 +279,19 @@ function saveCatalogCache(models: CatalogModel[], cachePath: string, tmpPath: st
 }
 
 function isCatalogCacheStale(cache: CatalogCacheFile): boolean {
-  return isTtlCacheStale(cache);
+  return cache.ttlMs <= 0 || isTtlCacheStale(cache);
 }
 
 /**
- * Fetch models.dev/api.json and parse into CatalogModel[], reading each
+ * Read the models.dev GitHub repository and normalize its records, reading each
  * provider's access (remembered in `accessPath` when given) before the tiers
  * are set. Uses a 30-second timeout for the fetch.
  */
 export async function fetchCatalog(options: { readonly accessPath?: string | undefined } = {}): Promise<CatalogModel[]> {
-  const response = await fetchWithTimeout(MODELS_DEV_URL, {
-    headers: { Accept: 'application/json' },
-  }, CATALOG_FETCH_TIMEOUT_MS, instrumentedFetch);
-
-  if (!response.ok) {
-    throw new Error(`models.dev API returned ${response.status} ${response.statusText}`);
-  }
-
-  const json = await response.json() as ModelsDevResponse;
+  const json = await fetchModelCatalogRepository() as unknown as ModelsDevResponse;
   const access = await new ProviderAccessReadings({ path: options.accessPath }).readAll(providerFactsOf(json));
   const models = transformModelsDevResponse(json, access);
-  logger.debug('[model-catalog] Fetched models from models.dev', { count: models.length });
+  logger.debug('[model-catalog] Loaded models from the models.dev GitHub repository', { count: models.length });
   return models;
 }
 

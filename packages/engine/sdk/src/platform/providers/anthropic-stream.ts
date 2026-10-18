@@ -43,7 +43,7 @@ const ANTHROPIC_EFFORT_VALUES = new Set(['low', 'medium', 'high', 'xhigh', 'max'
 export type AnthropicReasoningParams = Pick<
   ChatRequest,
   'model' | 'reasoningEffort' | 'reasoningEffortSpec'
->;
+> & { readonly provider?: string | undefined };
 
 /**
  * Apply Anthropic extended-thinking parameters to a mutable request body.
@@ -89,7 +89,7 @@ export function applyAnthropicReasoning(
   modelOutputCap: number,
 ): ResolvedReasoningEffort {
   const resolved = resolveEffortForRequest(params.reasoningEffort, {
-    modelId: params.model,
+    modelId: params.model, provider: params.provider,
     ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}),
   });
   const { value, spec } = resolved;

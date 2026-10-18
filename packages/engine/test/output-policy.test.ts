@@ -2,9 +2,7 @@
  * output-policy.test.ts
  *
  * A `summary` output policy replaces oversized output with a size and kind
- * summary. Empty and JSON output are named in code; any other kind is read by
- * `engine.runtime.output-kind`, and a reading that does not settle is named
- * `unknown`.
+ * summary using local string/JSON format and byte/line facts.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
@@ -12,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { EntryType, Question } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
-import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { OverflowHandler } from '../sdk/src/platform/tools/shared/overflow.js';
 import { applyOutputPolicy, type ToolOutputPolicy } from '../sdk/src/platform/runtime/tools/output-policy.js';
 
@@ -61,27 +59,15 @@ describe('output policy', () => {
     expect(result._policyAudit).toEqual(audit);
   });
 
-  test('other output is named by the kind reading, from its beginning and end', async () => {
+  test('ordinary output remains bounded and needs no semantic label or installed port', async () => {
     const samples: string[] = [];
     installJudgmentPort(kindPort('xml', 0.95, samples));
     const original = `<html><body>${'<p>row</p>'.repeat(1000)}</body></html>`;
-    const { result } = await applyOutputPolicy({ callId: 'call-2', success: true, output: original }, policy, makeOverflowHandler(), 'read {}');
-    expect(result.output).toContain('xml');
-    expect(samples).toHaveLength(1);
-    expect(samples[0]!.startsWith('<html><body>')).toBe(true);
-    expect(samples[0]!.endsWith('</body></html>')).toBe(true);
-    expect(samples[0]!.length).toBeLessThan(original.length);
-  });
-
-  test('a reading that does not settle names the kind unknown', async () => {
-    installJudgmentPort(kindPort('text', 0.3, []));
-    const { result } = await applyOutputPolicy({ callId: 'call-3', success: true, output: 'line\n'.repeat(500) }, policy, makeOverflowHandler(), 'read {}');
-    expect(result.output).toContain('unknown');
-  });
-
-  test('a summary with no judgment port throws', async () => {
-    await expect(
-      applyOutputPolicy({ callId: 'call-4', success: true, output: 'line\n'.repeat(500) }, policy, makeOverflowHandler(), 'read {}'),
-    ).rejects.toBeInstanceOf(JudgmentPortMissingError);
+    const { result, audit } = await applyOutputPolicy({ callId: 'call-2', success: true, output: original }, policy, makeOverflowHandler(), 'read {}');
+    expect(result.output).toContain('text'); expect(audit.resultSize).toBeLessThanOrEqual(policy.maxBytes);
+    expect(samples).toHaveLength(0);
+    installJudgmentPort(undefined);
+    const next = await applyOutputPolicy({ callId: 'call-3', success: true, output: 'line\n'.repeat(500) }, policy, makeOverflowHandler(), 'read {}');
+    expect(next.result.output).toContain('text'); expect(next.audit.resultSize).toBeLessThanOrEqual(policy.maxBytes);
   });
 });

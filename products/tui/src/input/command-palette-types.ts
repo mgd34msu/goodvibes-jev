@@ -32,6 +32,7 @@ export interface PaletteSection {
 
 /** What the palette renderer reads from the palette. */
 export interface PaletteView {
+  readonly searching?: boolean;
   readonly query: string;
   readonly entries: readonly PaletteEntry[];
   sections(): PaletteSection[];

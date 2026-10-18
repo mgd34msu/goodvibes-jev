@@ -19,7 +19,7 @@
  * to run on every connection and on demand.
  */
 
-import type { GoogleApiClient } from './api-client.js';
+import type { GoogleApiClient, GoogleApiFailure } from './api-client.js';
 
 /** One capability, proven or not, with the reason when not. */
 export interface GoogleProofResult {
@@ -42,27 +42,10 @@ export interface GoogleConnectionProof {
   readonly summary: string;
 }
 
-/**
- * A scope refusal has a distinctive shape and a distinctive remedy, so it is
- * separated from every other failure. Google answers a missing scope with 403
- * and the phrase "insufficient authentication scopes", the exact failure the
- * owner hit on calendar after a Gmail-only consent.
- */
-function isScopeRefusal(status: number | null, problem: string): boolean {
-  return status === 403 && /insufficient (authentication )?scopes?|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(problem);
-}
-
-/** A disabled API is the other confusable 403, and its remedy is different. */
-function isServiceDisabled(problem: string): boolean {
-  return /has not been used in project|is disabled|SERVICE_DISABLED|accessNotConfigured/i.test(problem);
-}
-
-function classify(
-  capability: 'mail' | 'calendar',
-  status: number | null,
-  problem: string,
-): GoogleProofResult {
-  if (isScopeRefusal(status, problem)) {
+/** Reuse the client's structured reading rather than judging its explanation again. */
+function classify(capability: 'mail' | 'calendar', failure: GoogleApiFailure): GoogleProofResult {
+  const { problem } = failure;
+  if (failure.reason === 'missing-scopes') {
     return {
       ok: false,
       detail: `${capability === 'mail' ? 'Mail' : 'Calendar'} refused the credential.`,
@@ -72,7 +55,7 @@ function classify(
       fix: 'Say the word and I will re-authorize, asking for mail and calendar together in one consent so this cannot happen again.',
     };
   }
-  if (isServiceDisabled(problem)) {
+  if (failure.reason === 'api-disabled') {
     return {
       ok: false,
       detail: `${capability === 'mail' ? 'Mail' : 'Calendar'} is not enabled on the Cloud project.`,
@@ -84,7 +67,7 @@ function classify(
     ok: false,
     detail: `${capability === 'mail' ? 'Mail' : 'Calendar'} could not be read.`,
     problem,
-    fix: 'Ask me what is stored and I will read it back, then start a fresh consent if it needs one.',
+    fix: failure.fix,
   };
 }
 
@@ -103,7 +86,7 @@ export async function proveGoogleConnection(client: GoogleApiClient): Promise<Go
       ok: true,
       detail: `Read the mailbox for ${profile.value.emailAddress} (${profile.value.messagesTotal} messages).`,
     }
-    : classify('mail', profile.status, profile.problem);
+    : classify('mail', profile);
 
   const calendar: GoogleProofResult = events.ok
     ? {
@@ -113,7 +96,7 @@ export async function proveGoogleConnection(client: GoogleApiClient): Promise<Go
           ? 'Read the primary calendar, it has no upcoming events.'
           : `Read the primary calendar (next event: ${events.value[0]?.summary ?? 'untitled'}).`,
     }
-    : classify('calendar', events.status, events.problem);
+    : classify('calendar', events);
 
   const account = profile.ok ? profile.value.emailAddress : null;
   const ok = mail.ok && calendar.ok;

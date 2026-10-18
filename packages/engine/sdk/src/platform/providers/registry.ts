@@ -1,3 +1,4 @@
+import { installCatalogModelFacts } from './model-catalog-facts.js';
 import { isDeepStrictEqual } from 'node:util';
 import type { LLMProvider, ProviderRuntimeMetadata, ProviderRuntimeMetadataDeps } from './interface.js';
 import { ProviderNotFoundError } from './provider-not-found-error.js';
@@ -199,6 +200,7 @@ export class ProviderRegistry {
 
   private updateCatalogState(models: readonly CatalogModel[], fetchedAt = Date.now()): void {
     this.catalogModels = [...models];
+    installCatalogModelFacts(this.catalogModels);
     this.pricingCatalog = { fetchedAt, models: this.catalogModels };
     this.syntheticCanonicalModels = buildSyntheticCanonicalModels(this.catalogModels, this.routingReadings.synthetic);
     this.capabilityRegistry.setModelFactsSource(modelCapabilityFactsFromCatalog(this.catalogModels));
@@ -260,13 +262,8 @@ export class ProviderRegistry {
       options,
     );
     this.providerNativeModels = providerNativeModels;
-    if (reports.length > 0) { this._invalidateModelRegistry(); this.readContextWindows(); }
+    if (reports.length > 0) { this._invalidateModelRegistry(); }
     return reports;
-  }
-
-  /** Reads the window row of each unsized catalog, failover-group and provider-listed model in the background (registry-routing.ts). */
-  private readContextWindows(): void {
-    this.routingReadings.readContextWindowsInBackground([...this.getCatalogBuiltins(), ...this.getSyntheticBuiltins()], this.providerNativeModels, (model) => this.modelLimitsService.reportedContextWindow(model), (resize) => { this.providerNativeModels = resize(this.providerNativeModels); this._invalidateModelRegistry(); });
   }
 
   /** Register a runtime/plugin-owned provider + optional models; returns an unregister callback. */
@@ -957,10 +954,7 @@ export class ProviderRegistry {
       favoritesStore: this.favoritesStore,
       benchmarkStore: this.benchmarkStore,
       refreshCatalog: () => this.refreshCatalog({ contextWindowEnrichment }),
-      afterCatalogApplied: () => {
-        this.routingReadings.readInBackground(() => this.updateCatalogState(this.catalogModels, this.pricingCatalog?.fetchedAt));
-        if (contextWindowEnrichment !== 'none') this.readContextWindows();
-      },
+      afterCatalogApplied: () => {},
     };
   }
 }

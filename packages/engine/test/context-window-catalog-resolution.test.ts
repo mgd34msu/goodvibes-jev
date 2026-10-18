@@ -68,22 +68,14 @@ describe('catalog windows preserve evidence and identity authority', () => {
     expect(resolveCatalogContextWindow('remote', 'model-one', tie).tokens).toBe(16000);
   });
 
-  test('non-exact model identity stays a guess until Jev reads it, then invalidates the owner', async () => {
-    const { requests } = identityPort('vendor/model-one');
-    let invalidations = 0;
-    const resolver = new CatalogContextWindowResolver(
-      () => rows, () => false, () => undefined, {}, () => { invalidations++; },
-    );
-    const rows = [catalog('remote', 'vendor/model-one', 64000)];
-    const pending = resolver.apply(model());
-    expect(pending.contextWindowProvenance).toBe('fallback');
-    expect(limits.getKnownContextWindowForModel(pending)).toBeNull();
-    resolver.apply(model()); // coalesced while reading
-    await Bun.sleep(0);
-    expect(invalidations).toBe(1);
-    expect(requests).toHaveLength(1);
-    expect(resolver.apply(model()).contextWindowOrigin).toEqual({ kind: 'catalog', catalogProviderId: 'remote' });
-    expect(limits.getKnownContextWindowForModel(resolver.apply(model()))).toBe(64000);
+  test('a published canonical identity resolves the own-provider window locally', () => {
+    const { requests } = identityPort('none');
+    const rows = [{ ...catalog('remote', 'vendor/model-one', 64000), canonicalModelId: 'model-one' }];
+    const resolver = new CatalogContextWindowResolver(() => rows, () => false, () => undefined);
+    const resolved = resolver.apply(model());
+    expect(resolved.contextWindowOrigin).toEqual({ kind: 'catalog', catalogProviderId: 'remote' });
+    expect(limits.getKnownContextWindowForModel(resolved)).toBe(64000);
+    expect(requests).toHaveLength(0);
   });
 
   test.each([['none', 0.95], ['vendor/model-one', 0.3]] as const)('a denied or weak identity (%s) is never promoted', async (pick, confidence) => {
@@ -107,11 +99,11 @@ describe('catalog windows preserve evidence and identity authority', () => {
 
   test('refreshing the catalog replaces the index and does not reuse an obsolete identity', async () => {
     identityPort('vendor/model-one');
-    let rows = [catalog('remote', 'vendor/model-one', 64000)];
+    let rows = [{ ...catalog('remote', 'vendor/model-one', 64000), canonicalModelId: 'model-one' as string | undefined }];
     const resolver = new CatalogContextWindowResolver(() => rows, () => false, () => undefined);
     resolver.apply(model()); await Bun.sleep(0);
     expect(resolver.apply(model()).contextWindow).toBe(64000);
-    rows = [catalog('remote', 'unrelated', 32000)];
+    rows = [{ ...catalog('remote', 'unrelated', 32000), canonicalModelId: undefined }];
     const refreshed = resolver.apply(model());
     expect(refreshed.contextWindowProvenance).toBe('fallback');
     expect(limits.getKnownContextWindowForModel(refreshed)).toBeNull();

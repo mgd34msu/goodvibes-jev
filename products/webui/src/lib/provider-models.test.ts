@@ -175,11 +175,13 @@ describe('reasoningOptionsForModel', () => {
   });
 });
 
-test('provider spelling and subscription suffix cannot infer catalog models synchronously', () => {
+test('declared aliases resolve locally while undeclared spellings do not invent catalog relationships', () => {
   const catalog = [{ providerId: 'openai', models: ['model-a'] }, { providerId: 'inceptionlabs', models: ['model-b'] }];
-  for (const providerId of ['openai-subscriber', 'inception', 'azure-openai']) {
-    expect(providerModelSourceIds({ providerId })).toEqual([]);
-    expect(modelOptionsForProvider({ providerId }, catalog)).toEqual([]);
-  }
-  expect(modelOptionsForProvider({ providerId: 'openai-subscriber', catalogProviderId: 'openai' }, catalog).map(model => model.registryKey)).toEqual(['openai:model-a']);
+  expect(providerModelSourceIds({ providerId: 'openai-subscriber' })).toEqual(['openai']);
+  expect(providerModelSourceIds({ providerId: 'inception' })).toEqual(['inceptionlabs']);
+  expect(providerModelSourceIds({ providerId: 'azure-openai' })).toEqual(['microsoft-foundry']);
+  expect(modelOptionsForProvider({ providerId: 'inception' }, catalog).map(model => model.registryKey)).toEqual(['inceptionlabs:model-b']);
+  expect(modelOptionsForProvider({ providerId: 'openai' }, catalog).map(model => model.registryKey)).toEqual(['openai:model-a']);
+  expect(providerModelSourceIds({ providerId: 'unlisted-subscriber' })).toEqual([]);
+  expect(modelOptionsForProvider({ providerId: 'unlisted-subscriber' }, catalog)).toEqual([]);
 });

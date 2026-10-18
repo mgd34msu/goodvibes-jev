@@ -412,7 +412,7 @@ async function handleListProviderModels(context: ModelRouteContext): Promise<Res
     // spec actually offers and which source said so.
     const reasoningSpec = model.capabilities.reasoning
       ? resolveReasoningEffortSpec({
-          modelId: model.id,
+          provider: model.provider, modelId: model.id,
           ...(model.reasoningEffort ? { spec: model.reasoningEffort } : {}),
         })
       : undefined;

@@ -4,7 +4,9 @@
 
 ```ts
 
+import { Battery } from '@goodvibes-jev/judgment';
 import { CallOptions } from '@goodvibes-jev/judgment';
+import { ChoiceItem } from '@goodvibes-jev/judgment';
 import { JevContinuation } from '@goodvibes-jev/judgment/decisions';
 import { JevDecision } from '@goodvibes-jev/judgment/decisions';
 import type { JevDecisionBinding } from '@goodvibes-jev/judgment/decisions';

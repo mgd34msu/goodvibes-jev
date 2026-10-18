@@ -15,7 +15,7 @@ export function seedProviderMetadataCacheFixture(options: {
   const root = options.configManager.getControlPlaneConfigDir();
   mkdirSync(root, { recursive: true });
   const envelope = { fetchedAt: Date.now(), ttlMs: 86_400_000 };
-  writeFileSync(join(root, 'model-catalog.json'), JSON.stringify({ version: 5, ...envelope, models: [] }));
+  writeFileSync(join(root, 'model-catalog.json'), JSON.stringify({ version: 6, ...envelope, models: [] }));
   writeFileSync(join(dirname(benchmarkPath), 'model-limits.json'), JSON.stringify({ version: 1, ...envelope, models: {} }));
   for (const providerId of ['aihubmix', 'vercel-ai-gateway']) {
     writeFileSync(join(root, `gateway-pricing-${providerId}.json`), JSON.stringify({ version: 1, ...envelope, models: {} }));

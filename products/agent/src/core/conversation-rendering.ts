@@ -128,7 +128,7 @@ export function renderConversationSystemMessage(
   width: number,
 ): void {
   const sysStartLine = context.history.getLineCount();
-  context.history.addLines(renderSystemMessage(message.content, width));
+  context.history.addLines(renderSystemMessage(message.content, width, message.presentation?.severity));
   if (isNavigableSystemContent(message.content)) context.errorLineRegistry.push(sysStartLine);
 }
 

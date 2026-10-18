@@ -91,7 +91,7 @@ function resolveTurnReasoning(
     return {};
   }
   const spec = resolveReasoningEffortSpec({
-    modelId: model.id,
+    provider: model.provider, modelId: model.id,
     ...(model.reasoningEffort ? { spec: model.reasoningEffort } : {}),
   });
   setActiveReasoningEffortOptions(spec.values, sessionId);

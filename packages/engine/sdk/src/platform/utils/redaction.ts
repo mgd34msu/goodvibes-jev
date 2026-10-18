@@ -1,6 +1,6 @@
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 import { FieldKindReader } from './field-kind-reading.js';
-import { fieldKind, type FieldKind } from './batteries/field-kind.js';
+import type { FieldKind } from './batteries/field-kind.js';
 import { assertRedactionCurrent, ProfileDistinctiveReader, readCredentialProjection, readResidualProjection, type ProfileRedactionRole } from './redaction-reading.js';
 import { captureJudgmentPort, type JudgmentPortCapture, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { assertJudgmentInput, captureOwnedJson, retainOwnedJson, judgmentInputProblem, snapshotJudgmentEvidence, snapshotJudgmentInput } from '../gate/judgment-input.js';
@@ -492,54 +492,18 @@ interface OperationFieldReadings {
   dispose(): void;
 }
 
-/** Reuse only equal field requests within this complete, still-owned source. */
+/** Local declared roles stay bound to the complete redaction operation's lifetime. */
 function operationFieldReadings(options: JudgmentReadingOptions): OperationFieldReadings {
-  const contractKeys = ['name', 'version', 'model', 'items', 'run'] as const;
-  const contractDescriptors = contractKeys.map(key => Object.getOwnPropertyDescriptor(fieldKind, key));
-  if (contractDescriptors.some(descriptor => descriptor && !('value' in descriptor))) throw new Error('Field reading source is unavailable');
-  const contract = retainOwnedJson({ name: fieldKind.name, version: fieldKind.version,
-    model: fieldKind.model, items: fieldKind.items });
-  const contractPrototype = Object.getPrototypeOf(fieldKind);
   const callerCurrent = options.assertCurrent, signal = options.signal;
-  const assertSource = () => {
+  const assertCurrent = () => {
     assertRedactionCurrent(callerCurrent);
-    if (options.signal !== signal || options.assertCurrent !== callerCurrent || signal?.aborted
-      || Object.getPrototypeOf(fieldKind) !== contractPrototype) throw new Error('Field reading source is no longer current');
-    for (const [index, key] of contractKeys.entries()) {
-      const original = contractDescriptors[index], current = Object.getOwnPropertyDescriptor(fieldKind, key);
-      if (original === undefined ? current !== undefined : current === undefined || !('value' in current)
-        || !Object.is(current.value, original.value) || current.writable !== original.writable
-        || current.enumerable !== original.enumerable || current.configurable !== original.configurable)
-        throw new Error('Field reading source is no longer current');
-    }
-    contract.assertCurrent();
+    if (options.signal !== signal || options.assertCurrent !== callerCurrent || signal?.aborted) throw new Error('Field policy source is no longer current');
   };
-  let owner: JudgmentPortCapture | undefined;
-  const assertCurrent = () => { if (owner) owner.assertCurrent(); else assertSource(); };
   const reader = new FieldKindReader({ ...options, assertCurrent });
-  const results = new Map<string, Promise<FieldKind | undefined>>();
   return {
     assertCurrent,
-    async read(field) {
-      assertCurrent();
-      try { owner ??= captureJudgmentPort(fieldKind.name, { ...options, assertCurrent: assertSource }); }
-      catch { assertSource(); return undefined; }
-      owner.assertCurrent();
-      let result = results.get(field);
-      if (result === undefined) {
-        if (results.size >= 256) {
-          const oldest = results.keys().next();
-          if (!oldest.done) results.delete(oldest.value);
-        }
-        result = reader.readAsync(field);
-        results.set(field, result);
-      }
-      const kind = await result;
-      assertCurrent();
-      // An unavailable or uncertain equal reading continues to withhold.
-      return kind;
-    },
-    dispose() { reader.dispose(); results.clear(); },
+    async read(field) { assertCurrent(); const kind = await reader.readAsync(field); assertCurrent(); return kind; },
+    dispose() { reader.dispose(); },
   };
 }
 
@@ -617,7 +581,7 @@ async function redactTextSource(text: string, options: RedactionOptions,
           if (kind === 'secret') replacement = (span.value.match(/^Bearer\s+/i)?.[0] ?? '') + span.marker;
           else if (kind === 'owner_profile') replacement = '[REDACTED_PROFILE]';
           else if (kind === 'content') replacement = '[REDACTED_TEXT]';
-          else if (field === undefined || kind === 'other') {
+          else if (kind === undefined || kind === 'other') {
             const reading = await readCredentialProjection({ phase: 'source', parts, target: `span-${index + 1}` }, purpose,
               { ...(signal ? { signal } : {}), assertCurrent });
             lineHasCredential ||= reading?.line === true;
@@ -846,14 +810,14 @@ export async function redactStructuredDataAsync(value: unknown, options: Redacti
         const childPath = [...path, key];
         if (nativeReferences.has(JSON.stringify(childPath))) continue;
         // Candidate values embedded in a name stay local until visit protects
-        // them. They must never enter the initial field-name admission.
+        // them. Keep those names out of the initial input validation.
         if (protectKey(key) === key && outgoingSpans(key).length === 0) names.push(key);
         collect(child, childPath);
       }
     }
     collect(snapshot); assertJudgmentInput({ fields: names }); assertCurrent();
-    try { readingOwner = captureJudgmentPort('engine.redaction.field-kind', { ...options, assertCurrent: assertSource }); }
-    catch { /* Unavailable field readings withhold each value while preserving structure. */ }
+    try { readingOwner = captureJudgmentPort('engine.redaction.credential', { ...options, assertCurrent: assertSource }); }
+    catch { /* Local field policy still applies; semantic credential readers withhold when unavailable. */ }
     const result = await visit(snapshot); assertCurrent(); fields.assertCurrent(); assertTextContracts(); return result;
   }
   catch { return '[REDACTED]'; }

@@ -42,7 +42,7 @@ export interface LiveModelDiscoveryResult {
   readonly error?: string | undefined;
   /** Set when `source === 'dated-static'`: the date the packaged list was last verified. */
   readonly asOf?: string | undefined;
-  /** Listed models whose chat capability is still awaiting a settled Jev reading. */
+  /** Listed models whose chat capability is still missing capability metadata. */
   readonly unclassifiedModels?: readonly string[] | undefined;
   readonly skippedReason?: 'local-endpoint-unavailable' | undefined;
 }
@@ -120,14 +120,14 @@ export function formatModelDiscoveryReport(providerName: string, result: LiveMod
     const parts: string[] = [];
     if (result.added.length > 0) parts.push(`${result.added.length} new`);
     if (result.removed.length > 0) parts.push(`${result.removed.length} retired`);
-    if (pending > 0) parts.push(`${pending} awaiting Jev classification`);
+    if (pending > 0) parts.push(`${pending} awaiting capability metadata`);
     return `${providerName}: ${parts.join(', ')}`;
   }
   if (result.error) {
     const fallback = result.source === 'cache' ? 'last known list' : `dated static list (as of ${result.asOf ?? 'unknown'})`;
     return `${providerName}: live model refresh failed (${result.error}), using ${fallback}`;
   }
-  if (result.unclassifiedModels?.length) return `${providerName}: ${result.unclassifiedModels.length} awaiting Jev classification, keeping the previous list`;
+  if (result.unclassifiedModels?.length) return `${providerName}: ${result.unclassifiedModels.length} awaiting capability metadata, keeping the previous list`;
   if (result.source === 'cache') return `${providerName}: using cached list (${result.models.length} models)`;
   return `${providerName}: using bundled list (as of ${result.asOf ?? 'unknown'})`;
 }
@@ -233,29 +233,18 @@ interface ListedModelEntry {
   readonly capabilities?: unknown;
 }
 
-/**
- * What the listing entry itself says about chat, when it says anything:
- * Mistral's GET /v1/models reports `capabilities.completion_chat`
- * (docs.mistral.ai/api, ModelCapabilities), and Together's GET /v1/models
- * reports `type: "chat"` for its chat models (docs.together.ai/reference/models-1).
- * Undefined when the entry carries neither, and for any other Together type,
- * which routing.chat-model reads instead.
- */
+/** Explicit capabilities and published model types supplied by the endpoint. */
 function listedChatCapability(entry: ListedModelEntry): boolean | undefined {
   const capabilities = entry.capabilities;
   if (capabilities && typeof capabilities === 'object') {
     const completionChat = (capabilities as { readonly completion_chat?: unknown }).completion_chat;
     if (typeof completionChat === 'boolean') return completionChat;
   }
-  return entry.type === 'chat' ? true : undefined;
+  if (typeof entry.type === 'string' && ['chat', 'embedding', 'reranking', 'image', 'video', 'speech', 'transcription', 'decision', 'realtime'].includes(entry.type)) return entry.type === 'chat';
+  return undefined;
 }
 
-/**
- * The chat models of a listing, in listing order: an entry's own chat field
- * decides where it has one, and routing.chat-model reads each other id
- * (routing/model-limit-readings.ts). A reading that does not settle keeps the
- * model listed.
- */
+/** Endpoint facts take precedence; repository facts resolve otherwise unstated capabilities. */
 async function chatModelIds(providerName: string, entries: readonly { readonly id: string; readonly entry: ListedModelEntry }[],
   onUnclassifiedModel?: (modelId: string) => void): Promise<string[]> {
   const unstated = entries.filter(({ entry }) => listedChatCapability(entry) === undefined).map(({ id }) => id);
@@ -448,9 +437,7 @@ export function buildProviderNativeModelDefinition(providerId: string, modelId: 
     // fixed id convention. Any other model carries no capability label until
     // routing.model-tier reads it.
     ...(modelId.endsWith(':free') ? { tier: 'free' as const } : {}),
-    // Gateways expose whatever upstream models they proxy, so the levels come
-    // from the curated family table keyed on the model id rather than a fixed
-    // list that was wrong for most of them.
-    reasoningEffort: resolveReasoningEffortSpec({ modelId }),
+    // Endpoint catalog facts take precedence over interpreted family fallbacks.
+    reasoningEffort: resolveReasoningEffortSpec({ provider: providerId, modelId }),
   };
 }

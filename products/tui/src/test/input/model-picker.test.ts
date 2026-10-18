@@ -1,5 +1,4 @@
-import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { installCatalogModelFacts } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { modelFamilyReadings } from '@goodvibes-jev/engine/sdk/platform/providers';
 /**
  * Tests for ModelPickerModal state class.
@@ -801,20 +800,18 @@ describe('ModelPickerModal', () => {
 
   // ── Stage 5: Family grouping ──────────────────────────────────────────────
 
-  describe('family grouping (Stage 5)', () => {
-    let previousPort: ReturnType<typeof installJudgmentPort>;
+  describe('family grouping from repository metadata', () => {
     beforeEach(() => {
-      const answers: Record<string, string> = {
-        'claude-3-sonnet': 'Claude', 'claude-opus': 'Claude', 'gpt-4o': 'GPT',
-        'gemini-2.5-pro': 'Gemini', 'deepseek-v3': 'DeepSeek',
-        'some-random-model': 'Other', 'commandline-helper': 'Other',
+      const families: Record<string, string> = {
+        'claude-3-sonnet': 'claude-sonnet', 'claude-opus': 'claude-opus', 'gpt-4o': 'gpt',
+        'gemini-2.5-pro': 'gemini-pro', 'deepseek-v3': 'deepseek',
+        'some-random-model': 'granite', 'commandline-helper': 'granite',
       };
-      previousPort = installJudgmentPort(fakePort((_name, question, state) => {
-        const id = (state as unknown as { id: string }).id;
-        return choiceAnswer(question, answers[id] ?? 'Other', id === 'unsettled' ? 0.1 : 0.99);
-      }).port);
+      installCatalogModelFacts(['test-provider', 'anthropic', 'openai', 'deepseek'].flatMap(providerId =>
+        Object.entries(families).map(([id, family]) => ({ id, family, name: id, providerId, provider: providerId,
+          providerEnvVars: [], pricing: null, tier: 'paid' }))));
     });
-    afterEach(() => { installJudgmentPort(previousPort); });
+    afterEach(() => { installCatalogModelFacts([]); });
 
     test('detectFamily identifies Claude family', async () => {
       const m = makeModel({ id: 'claude-3-sonnet', displayName: 'Claude 3 Sonnet' });
@@ -859,7 +856,7 @@ describe('ModelPickerModal', () => {
       expect(headers).toContain('GPT');
       expect(headers).toContain('DeepSeek');
     });
-    test('unsettled and unread names remain ungrouped, while an explicit Other stays Other', async () => {
+    test('missing families remain ungrouped, while published other families stay Other', async () => {
       const unread = makeModel({ id: 'claude-unread' });
       const unsettled = makeModel({ id: 'unsettled' });
       const other = makeModel({ id: 'commandline-helper' });

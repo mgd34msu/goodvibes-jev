@@ -246,7 +246,7 @@ describe('Cloudflare Worker settings provisioning', () => {
       updateWorker: async (_scriptName, body) => {
         metadata.push(body.metadata);
         if (metadata.length === 1) {
-          throw new Error("400 {\"errors\":[{\"code\":10074,\"message\":\"Cannot apply new-sqlite-class migration to class 'GoodVibesCoordinator' that is already depended on by existing Durable Objects\"}]}");
+          throw Object.assign(new Error('La clase ya tiene objetos existentes.'), { errors: [{ code: 10074 }] });
         }
         return { id: 'goodvibes-batch-worker' };
       },
@@ -268,6 +268,14 @@ describe('Cloudflare Worker settings provisioning', () => {
     expect(metadata[0]?.['migrations']).not.toBeUndefined(); // presence-only: migrations field
     expect(metadata[1]?.['migrations']).toBeUndefined();
   });
+  test('migration-related prose and an incidental 10074 cannot authorize a retry', async () => {
+    let attempts = 0;
+    const error = Object.assign(new Error('Incident 10074: new_sqlite_classes mentions an existing class, but authentication failed.'), { errors: [{ code: 10000 }] });
+    const client = workerSettingsClient({ updateWorker: async () => { attempts++; throw error; } });
+    await expect(uploadWorker(client, { accountId: 'acct-1', workerName: 'worker', queueName: '', daemonBaseUrl: 'https://daemon.example.com', queueJobPayloads: false, kvNamespaceId: '', r2BucketName: '', durableObject: true })).rejects.toBe(error);
+    expect(attempts).toBe(1);
+  });
+
 });
 
 function workerSettingsClient(overrides: {

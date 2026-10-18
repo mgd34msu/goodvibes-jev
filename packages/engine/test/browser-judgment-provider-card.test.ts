@@ -6,7 +6,7 @@ import { createWebuiBrowserJudgment } from '../sdk/src/platform/judgment-browser
 import { withWebuiAnswerBoundary } from '../sdk/src/platform/judgment-browser/batteries/webui-answers.ts';
 const CARD = 'webui.settings.card-material-key';
 const PROVIDER = 'webui.models.catalog-provider-match';
-function fixture(battery: typeof CARD | typeof PROVIDER, options: { probability?: number; barrier?: Promise<void>; hidden?: string; names?: readonly { key: string; description: string }[] } = {}) {
+function fixture(battery: typeof CARD | typeof PROVIDER, options: { providerId?: string; probability?: number; barrier?: Promise<void>; hidden?: string; names?: readonly { key: string; description: string }[] } = {}) {
   const owner: AuthenticatedPrincipal = { principalId: 'fixture-owner', principalKind: 'user', admin: true, scopes: ['write:judgment'] };
   const calls: unknown[] = [];
   const log = new SqliteDecisionLog(':memory:');
@@ -19,12 +19,12 @@ function fixture(battery: typeof CARD | typeof PROVIDER, options: { probability?
   const sourceLifetime = () => { const captured = epoch; return { signal: lifetime.signal, assertCurrent() { if (captured !== epoch) throw new BrowserJudgmentError('JUDGMENT_REFERENCE_HELD'); } }; };
   const service = createWebuiBrowserJudgment({ methods: new GatewayMethodCatalog(),
     configNames: { async list() { return options.names ?? [{ key: 'custom.label', description: 'An ordinary label' }, ...(options.hidden ? [{ key: 'custom.other', description: options.hidden }] : [])]; }, lifetime: sourceLifetime },
-    providerCatalog: { capture: () => ({ ...sourceLifetime(), snapshot: { providerIds: ['inception'], catalogProviderIds: ['inceptionlabs', ...(options.hidden ? [options.hidden] : [])] } }) },
+    providerCatalog: { capture: () => ({ ...sourceLifetime(), snapshot: { providerIds: [options.providerId ?? 'custom-adapter'], catalogProviderIds: ['inceptionlabs', ...(options.hidden ? [options.hidden] : [])] } }) },
     currentRoute: () => ({ revision: 'fixture', kind: 'local', port: withDecisionLog(withWebuiAnswerBoundary(port), log), assertCurrent() {} }),
     authorize: () => allowed,
   });
   const request = (keys = [battery === CARD ? 'custom.label' : 'inceptionlabs']) => ({ protocolVersion: 1, requestId: crypto.randomUUID(), battery, batteryVersion: 1,
-    input: { keys, ...(battery === PROVIDER ? { providerId: 'inception' } : {}) } });
+    input: { keys, ...(battery === PROVIDER ? { providerId: options.providerId ?? 'custom-adapter' } : {}) } });
   return { calls, owner, lifetime, request, change() { epoch++; }, deny() { allowed = false; },
     run: (input: unknown = request(), signal = new AbortController().signal) => service.execute(input, owner, signal, () => owner),
     async close() { await service.close(); log[Symbol.dispose](); },
@@ -34,7 +34,7 @@ for (const battery of [CARD, PROVIDER] as const) {
   test(`${battery}: canonical metadata produces a current settled result without values`, async () => {
     const f = fixture(battery); try {
       expect(await f.run()).toMatchObject({ status: 'settled', value: { matches: [battery === PROVIDER] } });
-      expect(f.calls).toEqual([battery === CARD ? { key: 'custom.label', description: 'An ordinary label' } : { providerId: 'inception', key: 'inceptionlabs' }]);
+      expect(f.calls).toEqual([battery === CARD ? { key: 'custom.label', description: 'An ordinary label' } : { providerId: 'custom-adapter', key: 'inceptionlabs' }]);
     } finally { await f.close(); }
   });
   test(`${battery}: uncertainty cannot publish a usable value`, async () => {
@@ -81,4 +81,10 @@ for (const battery of [CARD, PROVIDER] as const) test(`${battery}: direct servic
     const pending = f.run(); Object.assign(f.owner, { principalId: 'replacement-before-resolve' });
     await expect(pending).rejects.toMatchObject({ code: 'JUDGMENT_AUTH_REQUIRED' }); expect(f.calls).toEqual([]);
   } finally { await f.close(); }
+});
+
+test('declared registry aliases are refused by the semantic endpoint before Jev', async () => {
+  const f = fixture(PROVIDER, { providerId: 'inception' });
+  try { await expect(f.run()).rejects.toMatchObject({ code: 'JUDGMENT_INPUT_HELD' }); expect(f.calls).toHaveLength(0); }
+  finally { await f.close(); }
 });

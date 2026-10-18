@@ -1,3 +1,4 @@
+import { declaredProviderCatalogId } from '@goodvibes-jev/engine/contracts';
 import { credentialKey } from '../../config/batteries/credential-key.js';
 import type { BatteryRun, Outcome, Reading, YesNoReading } from '@goodvibes-jev/judgment/decisions';
 import { BrowserJudgmentError, type BrowserJudgmentInputMap } from '@goodvibes-jev/engine/daemon-sdk';
@@ -127,6 +128,7 @@ export function createWebuiCatalogProviderAdapter(resolve: BrowserJudgmentBatter
     id: 'webui.models.catalog-provider-match', version: 1, maxCalls: 64, questions: WEBUI_BATTERY_QUESTIONS['webui.models.catalog-provider-match']!, resolve,
     async run(port, input, { signal }) {
       checkAbort(signal); const source = preflight(() => snapshotWebuiCredentialNames(input));
+      if (declaredProviderCatalogId(source.providerId) !== undefined) return inputHeld();
       const runs: BatteryRun<typeof catalogProviderMatchBattery.items>[] = [];
       // One browser request, bounded server fan-out. The service owns shared budgets and retries.
       let next = 0; let failure: unknown;

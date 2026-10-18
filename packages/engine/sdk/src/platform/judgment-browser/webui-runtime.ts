@@ -12,9 +12,9 @@ import { BrowserJudgmentReferences } from './references.js';
 import { BrowserJudgmentRegistry } from './registry.js';
 import { BrowserJudgmentService } from './service.js';
 import type { BrowserJudgmentAuthorization, BrowserJudgmentRoute } from './types.js';
-import { createWebuiCatalogProviderAdapter, createWebuiCardMaterialKeyAdapter, createWebuiConfigKeyAdapter, createWebuiCodeLanguageAdapter, createWebuiCredentialProviderAdapter, createWebuiInstallPlatformAdapter, createWebuiCommandRankAdapter, webuiDaemonRefusalAdapter, webuiMailReplySubjectAdapter } from './batteries/webui-adapters.js';
+import { createWebuiCatalogProviderAdapter, createWebuiCardMaterialKeyAdapter, createWebuiConfigKeyAdapter, createWebuiCodeLanguageAdapter, createWebuiCredentialProviderAdapter, createWebuiCommandRankAdapter, webuiDaemonRefusalAdapter, webuiMailReplySubjectAdapter } from './batteries/webui-adapters.js';
 import { WEBUI_BUILTIN_COMMANDS, WEBUI_COMMAND_CATALOG_VERSION } from './batteries/webui-command-catalog.js';
-import { readStructuredDaemonRefusal, snapshotWebuiCommandRank, snapshotWebuiDaemonRefusal, snapshotWebuiMailSubject, snapshotWebuiInstallPlatform, snapshotWebuiCredentialNames, snapshotWebuiCode, snapshotWebuiConfigKeys } from './batteries/webui-readers.js';
+import { readStructuredDaemonRefusal, snapshotWebuiCommandRank, snapshotWebuiDaemonRefusal, snapshotWebuiMailSubject, snapshotWebuiCredentialNames, snapshotWebuiCode, snapshotWebuiConfigKeys } from './batteries/webui-readers.js';
 import type { ResolvedCommandCandidate } from './batteries/webui-types.js';
 import { granted, requireSynchronousAssertion } from './guards.js';
 
@@ -355,26 +355,6 @@ export function createWebuiBrowserJudgment(options: WebuiBrowserJudgmentOptions)
       assertCurrent();
       return { ...lease, dispose: revoke };
     } catch (error) { captured.signal.removeEventListener('abort', revoke); revoke(); throw error; }
-  }));
-  registry.register(createWebuiInstallPlatformAdapter(async (input, context) => {
-    const battery = 'webui.pwa.install-platform';
-    const principal = context.currentPrincipal();
-    const { principalId, principalKind } = principal;
-    const assertCurrent = () => {
-      context.signal.throwIfAborted();
-      const current = context.currentPrincipal();
-      if (current.principalId !== principalId || current.principalKind !== principalKind) return held();
-    };
-    assertCurrent();
-    let snapshot;
-    try { snapshot = snapshotWebuiInstallPlatform(input); }
-    catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
-    const id = remember(references.issue({ principalId, battery, revision: crypto.randomUUID(),
-      expiresAt: Date.now() + 300_000, snapshot, assertCurrent,
-      mayRead: (actor) => actor.principalId === principalId && actor.principalKind === principalKind,
-    }), principal, battery, ['browser-platform']);
-    try { return { ...references.resolve(id, context.currentPrincipal, battery, snapshotWebuiInstallPlatform), dispose: () => references.revoke(id) }; }
-    catch (error) { references.revoke(id); throw error; }
   }));
   registry.register(webuiDaemonRefusalAdapter);
   registry.register(webuiMailReplySubjectAdapter);

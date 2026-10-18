@@ -29,17 +29,25 @@ test.each(['request', 'value', 'distribution', 'reading', 'evidence'])('rejects 
   if (kind === 'evidence') raw.evidence = [];
   expect(readPlatformResponse(input, raw)).toBeUndefined();
 });
-test.each(['cancel', 'client-change'])('%s aborts pending interpretation and rejects late answers', async kind => {
-  const barrier = Promise.withResolvers<unknown>(); transport = () => barrier.promise;
-  const abort = new AbortController(); const pending = readInstallPlatform(request().input, abort.signal);
-  await Promise.resolve(); if (kind === 'cancel') abort.abort(); else invalidateClientLifetime();
-  expect(calls[0]!.signal.aborted).toBe(true); barrier.resolve(response(calls[0]!.input));
-  expect(await pending).toEqual({ status: 'unavailable' });
-});
-test('the adopted interpretation expires with its selected host identity', async () => {
+test('platform instructions need no transport and survive an unrelated host replacement', async () => {
   const result = await readInstallPlatform(request().input, new AbortController().signal);
-  expect(result.status).toBe('ready'); if (result.status !== 'ready') throw new Error('Missing fixture reading');
-  expect(result.isCurrent()).toBe(true); invalidateClientLifetime(); expect(result.isCurrent()).toBe(false);
+  expect(result.status).toBe('ready'); if (result.status !== 'ready') throw new Error('Missing local platform');
+  expect(result.platform).toBe('ios-share-menu'); expect(calls).toHaveLength(0);
+  invalidateClientLifetime(); expect(result.isCurrent()).toBe(true);
+});
+test('cancellation and changed browser metadata expire local platform facts', async () => {
+  const input = request().input; const abort = new AbortController();
+  const result = await readInstallPlatform(input, abort.signal);
+  if (result.status !== 'ready') throw new Error('Missing local platform');
+  Object.assign(input, { platform: 'Linux x86_64' }); expect(result.isCurrent()).toBe(false);
+  abort.abort(); expect(await readInstallPlatform(request().input, abort.signal)).toEqual({ status: 'held' });
+});
+test('desktop Mac and Android do not get iOS instructions', async () => {
+  for (const input of [{ userAgent: 'Macintosh', platform: 'MacIntel', maxTouchPoints: 0 }, { userAgent: 'Android', platform: 'Linux aarch64', maxTouchPoints: 5 }]) {
+    const result = await readInstallPlatform(input, new AbortController().signal);
+    expect(result.status === 'ready' && result.platform).toBe('other');
+  }
+  expect(calls).toHaveLength(0);
 });
 
 test('array-coerced choices and outcomes are never accepted', () => {

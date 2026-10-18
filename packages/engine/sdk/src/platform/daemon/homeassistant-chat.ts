@@ -70,6 +70,8 @@ export interface HomeAssistantChatPostResult extends HomeAssistantChatResolution
   readonly assistantMessageId?: string | undefined;
   readonly response?: string | undefined;
   readonly error?: string | undefined;
+  /** Set only by the local reply deadline, never inferred from failure prose. */
+  readonly timedOut?: true | undefined;
 }
 
 export interface HomeAssistantChatRuntime {
@@ -117,6 +119,7 @@ export async function postHomeAssistantChatMessage(
     ...(reply.assistantMessageId ? { assistantMessageId: reply.assistantMessageId } : {}),
     ...(reply.response ? { response: reply.response } : {}),
     ...(reply.error ? { error: reply.error } : {}),
+    ...(reply.timedOut ? { timedOut: true as const } : {}),
   };
 }
 

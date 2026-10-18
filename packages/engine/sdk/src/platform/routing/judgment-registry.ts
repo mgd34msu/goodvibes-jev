@@ -16,11 +16,10 @@ registry.register(requestRisk);
 registry.register(requestDomain);
 registry.register(requestLanguage);
 
-// Models: tier, choice and identity across the whole catalog.
-import { modelChoice, modelIdentity, modelTier } from './batteries/model.js';
+// Models: capability tiers and task-specific selection.
+import { modelChoice, modelTier } from './batteries/model.js';
 registry.register(modelTier);
 registry.register(modelChoice);
-registry.register(modelIdentity);
 import { sameFamily } from './route-scope.js';
 registry.register(sameFamily);
 
@@ -46,10 +45,8 @@ import { registry as taskRouteRegistry } from './task-routes/judgment-registry.j
 for (const decision of taskRouteRegistry.list()) registry.register(decision);
 
 // Providers: model limits and listings.
-import { anthropicOutputCap, chatModel, contextWindowFamily } from './batteries/model-limits.js';
-registry.register(contextWindowFamily);
+import { anthropicOutputCap } from './batteries/model-limits.js';
 registry.register(anthropicOutputCap);
-registry.register(chatModel);
 
 // Providers: transports and prompt caching.
 import { cacheMinimum, copilotClaudeModel } from './batteries/provider-cache.js';
@@ -83,3 +80,6 @@ registry.register(atRestCredential);
 
 import { localBenchmarkPrompt } from './batteries/local-benchmark-prompt.js';
 registry.register(localBenchmarkPrompt);
+
+import { commandDiscovery } from './command-discovery.js';
+registry.register(commandDiscovery);

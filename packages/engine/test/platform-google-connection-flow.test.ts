@@ -10,11 +10,13 @@
  * explicit yes.
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { planGoogleConnection } from '../sdk/src/platform/google/discovery.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { diagnoseInvalidGrant } from '../sdk/src/platform/google/grant-diagnosis.ts';
 import { commandRoots, namedCommandsAndKeys } from './_helpers/setup-vocabulary.ts';
 import { removeGoogleCredentials } from '../sdk/src/platform/google/credential-removal.ts';
@@ -36,6 +38,13 @@ import type {
   GoogleSecretPort,
 } from '../sdk/src/platform/google/types.ts';
 import type { GoogleOAuthCredentials } from '../sdk/src/platform/google/credential-adoption.ts';
+
+let previousGrantPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousGrantPort = installJudgmentPort(fakePort((name, _question, state) => {
+  const error = (state as { googleError?: string }).googleError;
+  return noulAnswer(name === 'revoked' && error === 'Token has been expired or revoked.' ? 0.99 : 0.01);
+}).port); });
+afterEach(() => { installJudgmentPort(previousGrantPort); });
 
 /** Whether a string names a Google-flow command or a config key (see _helpers/setup-vocabulary.ts). */
 function namesCommandOrKey(text: string): boolean {
@@ -424,8 +433,8 @@ describe('the consent request', () => {
 // ---------------------------------------------------------------------------
 
 describe('a dead grant is diagnosed, not retried', () => {
-  test('an account mismatch names both accounts and which one to pick', () => {
-    const diagnosis = diagnoseInvalidGrant({
+  test('an account mismatch names both accounts and which one to pick', async () => {
+    const diagnosis = await diagnoseInvalidGrant({
       googleError: 'invalid_grant',
       intendedAccount: 'agent@example.com',
       signedInAccount: 'personal@gmail.com',
@@ -440,8 +449,8 @@ describe('a dead grant is diagnosed, not retried', () => {
     expect(diagnosis.fix).toContain('Use another account');
   });
 
-  test('a revoked grant is named as revoked and points at the permissions page', () => {
-    const diagnosis = diagnoseInvalidGrant({
+  test('a revoked grant is named as revoked and points at the permissions page', async () => {
+    const diagnosis = await diagnoseInvalidGrant({
       googleError: 'Token has been expired or revoked.',
       intendedAccount: 'agent@example.com',
       signedInAccount: 'agent@example.com',
@@ -452,20 +461,21 @@ describe('a dead grant is diagnosed, not retried', () => {
     expect(diagnosis.problem).toContain('myaccount.google.com/permissions');
   });
 
-  test('a Testing app is told about its seven-day fuse', () => {
-    const diagnosis = diagnoseInvalidGrant({
+  test('a Testing app is told about its seven-day fuse', async () => {
+    const diagnosis = await diagnoseInvalidGrant({
       googleError: 'invalid_grant',
       intendedAccount: null,
       signedInAccount: null,
       publishingStatus: 'testing',
       credentialOrigin: 'secret-store',
     });
-    expect(diagnosis.cause).toBe('testing-expiry');
+    expect(diagnosis.cause).toBe('unknown');
+    expect(diagnosis.problem).toContain('status alone does not establish');
     expect(diagnosis.problem).toContain('seven days');
   });
 
-  test('an unexplained rejection still states the three real candidates', () => {
-    const diagnosis = diagnoseInvalidGrant({
+  test('an unexplained rejection still states the three real candidates', async () => {
+    const diagnosis = await diagnoseInvalidGrant({
       googleError: 'invalid_grant',
       intendedAccount: null,
       signedInAccount: null,
@@ -478,14 +488,14 @@ describe('a dead grant is diagnosed, not retried', () => {
     expect(diagnosis.problem).toContain('client id');
   });
 
-  test('every diagnosis offers to do the work rather than naming a command', () => {
+  test('every diagnosis offers to do the work rather than naming a command', async () => {
     const inputs = [
       { intendedAccount: 'a@x.com', signedInAccount: 'b@x.com', publishingStatus: 'unknown' as const },
       { intendedAccount: null, signedInAccount: null, publishingStatus: 'testing' as const },
       { intendedAccount: null, signedInAccount: null, publishingStatus: 'unknown' as const },
     ];
     for (const input of inputs) {
-      const diagnosis = diagnoseInvalidGrant({
+      const diagnosis = await diagnoseInvalidGrant({
         googleError: 'invalid_grant',
         credentialOrigin: 'secret-store',
         ...input,
@@ -620,7 +630,7 @@ describe('a connection is proven by using it', () => {
     const proof = await proveGoogleConnection(
       client(
         { ok: true, value: { emailAddress: 'agent@example.com', messagesTotal: 1, threadsTotal: 1, historyId: '1' } },
-        { ok: false, status: 403, problem: 'Request had insufficient authentication scopes.', fix: '' },
+        { ok: false, status: 403, reason: 'missing-scopes', problem: 'Request had insufficient authentication scopes.', fix: '' },
       ),
     );
 
@@ -634,7 +644,7 @@ describe('a connection is proven by using it', () => {
   test('a disabled API is told apart from a missing scope', async () => {
     const proof = await proveGoogleConnection(
       client(
-        { ok: false, status: 403, problem: 'Gmail API has not been used in project 123 before or it is disabled.', fix: '' },
+        { ok: false, status: 403, reason: 'api-disabled', problem: 'Gmail API has not been used in project 123 before or it is disabled.', fix: '' },
         { ok: true, value: [] },
       ),
     );
@@ -769,9 +779,9 @@ describe('no setup string tells the user to type anything', () => {
     expect(source).not.toContain('/google client-file <path-to-client.json>');
   });
 
-  test('a dead grant offers a fresh consent rather than naming a command', () => {
+  test('a dead grant offers a fresh consent rather than naming a command', async () => {
     for (const status of ['testing', 'in-production', 'unknown'] as const) {
-      const diagnosis = diagnoseInvalidGrant({
+      const diagnosis = await diagnoseInvalidGrant({
         googleError: 'invalid_grant',
         intendedAccount: 'agent@example.com',
         signedInAccount: 'personal@gmail.com',
@@ -789,7 +799,7 @@ describe('no setup string tells the user to type anything', () => {
     );
     const proof = await prove({
       getProfile: async () => ({ ok: true, value: { emailAddress: 'a@b.c', messagesTotal: 1, threadsTotal: 1, historyId: '1' } }),
-      listEvents: async () => ({ ok: false, status: 403, problem: 'Request had insufficient authentication scopes.', fix: '' }),
+      listEvents: async () => ({ ok: false, status: 403, reason: 'missing-scopes', problem: 'Request had insufficient authentication scopes.', fix: '' }),
     } as never);
     expect(proof.calendar.fix).toBeDefined();
     expect(namesCommandOrKey(proof.calendar.fix ?? '')).toBe(false);

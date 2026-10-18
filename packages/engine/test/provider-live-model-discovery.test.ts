@@ -79,7 +79,7 @@ describe('AnthropicProvider.refreshModels', () => {
         (url) => {
           expect(url).toContain('api.anthropic.com/v1/models');
           return new Response(
-            JSON.stringify({ data: [{ id: 'claude-sonnet-5' }, { id: 'claude-brand-new-model' }] }),
+            JSON.stringify({ data: [{ id: 'claude-sonnet-5', type: 'chat' }, { id: 'claude-brand-new-model', type: 'chat' }] }),
             { status: 200, headers: { 'content-type': 'application/json' } },
           );
         },
@@ -114,7 +114,7 @@ describe('OpenAIProvider.refreshModels', () => {
     expect(provider.models).toEqual([...OPENAI_DATED_STATIC_MODELS]);
   });
 
-  test('a mocked live /v1/models response drops the models that read as non-chat (embeddings, whisper, dall-e)', async () => {
+  test('a mocked live /v1/models response excludes explicitly non-chat models', async () => {
     await withTempDir(async (dir) => {
       await withMockedFetch(
         (url) => {
@@ -122,11 +122,11 @@ describe('OpenAIProvider.refreshModels', () => {
           return new Response(
             JSON.stringify({
               data: [
-                { id: 'gpt-5.6' },
-                { id: 'gpt-5.7-brand-new' },
-                { id: 'text-embedding-3-small' },
-                { id: 'whisper-1' },
-                { id: 'dall-e-3' },
+                { id: 'gpt-5.6', type: 'chat' },
+                { id: 'gpt-5.7-brand-new', type: 'chat' },
+                { id: 'text-embedding-3-small', type: 'embedding' },
+                { id: 'whisper-1', type: 'transcription' },
+                { id: 'dall-e-3', type: 'image' },
               ],
             }),
             { status: 200 },
@@ -140,7 +140,7 @@ describe('OpenAIProvider.refreshModels', () => {
           expect(provider.models).not.toContain('text-embedding-3-small');
           expect(provider.models).not.toContain('whisper-1');
           expect(provider.models).not.toContain('dall-e-3');
-          expect(chat.requests.filter((request) => 'chat' in request.questions)).toHaveLength(5);
+          expect(chat.requests.filter((request) => 'chat' in request.questions)).toHaveLength(0);
         },
       );
     });

@@ -1,3 +1,6 @@
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import type { ProtectedSourceOwner } from '@goodvibes-jev/engine/sdk/platform/security';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { GOOGLE_CONFIG_KEYS, GOOGLE_SECRET_KEYS } from '@goodvibes-jev/engine/sdk/platform/google';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -76,8 +79,20 @@ function gmailMessage(headers: readonly { name: string; value: string }[], body:
   };
 }
 
+// Synthetic source admission; these adapter tests do not validate the privacy model.
+function sourceOwner(): ProtectedSourceOwner {
+  const parts = new Map<object, readonly string[]>();
+  return { capture(value: readonly string[]) { const source = {}; parts.set(source, value); return source; },
+    async screen(source: object) { return { status: 'settled', receipt: source }; },
+    project(receipt: object) { const value = parts.get(receipt); if (!value) throw new Error('released'); return value; },
+    async release(source: object) { parts.delete(source); }, async close() {},
+  } as unknown as ProtectedSourceOwner;
+}
+let previousPort: ReturnType<typeof installJudgmentPort>;
 function toolWith(headers: readonly { name: string; value: string }[], body: string = VERIFICATION_BODY) {
+  const owner = sourceOwner();
   return createAgentGoogleTool({
+    getSourceOwner: () => owner,
     homeDirectory: home,
     configGet: (key: string) => STORED_CONFIG[key],
     secretGet: storedSecretGet,
@@ -95,6 +110,7 @@ function run(tool: ReturnType<typeof createAgentGoogleTool>, args: Record<string
 
 describe('reading a verification mail', () => {
   beforeEach(() => {
+    previousPort = installJudgmentPort(fakePort((name, question) => name === 'pick' ? choiceAnswer(question, 'artifact_0', 0.99) : noulAnswer(name === 'fits_0' ? 0.99 : 0.01)).port);
     home = makeProjectTempDir('google-verify');
     writeCredentials(home);
     resetSessionExpectationBookForTests();
@@ -107,6 +123,7 @@ describe('reading a verification mail', () => {
   });
 
   afterEach(() => {
+    installJudgmentPort(previousPort);
     rmSync(home, { recursive: true, force: true });
     resetSessionExpectationBookForTests();
     resetSessionUntrustedContentLedgerForTests();

@@ -1,70 +1,36 @@
-import { captureJudgmentPort, type JudgmentPortCapture, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
-import { assertJudgmentInput } from '../gate/judgment-input.js';
-import { fieldKind, type FieldKind } from './batteries/field-kind.js';
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import type { FieldKind } from './batteries/field-kind.js';
+import { assertRedactionCurrent } from './redaction-reading.js';
 
-type Entry = { readonly status: 'pending'; readonly owner: JudgmentPortCapture; readonly controller: AbortController; readonly promise: Promise<FieldKind | undefined> }
-  | { readonly status: 'settled'; readonly owner: JudgmentPortCapture; readonly controller: AbortController; readonly kind: FieldKind };
-const MAX_FIELDS = 256;
+/** Declared field roles. Unlisted names remain withheld; no name-based inference. */
+const fields: Readonly<Record<FieldKind, ReadonlySet<string>>> = {
+  secret: new Set(['password', 'passwd', 'loginpassword', 'apikey', 'accesstoken', 'refreshtoken', 'authorization', 'cookie',
+    'credential', 'credentials', 'credentialref', 'token', 'privatekey', 'signingkey', 'secret', 'unlockpassphrase', 'privatesigningmaterial']),
+  owner_profile: new Set(['shippingaddress', 'billingaddress', 'homeaddress', 'emailaddress', 'phonenumber', 'privateaddress']),
+  content: new Set(['message', 'body', 'text', 'content', 'prompt', 'response', 'stdout', 'stderr', 'output', 'error', 'stack',
+    'summary', 'hint', 'name', 'description', 'reasoningcontent', 'reasoningsummary', 'instructions', 'document', 'transcript', 'title',
+    'data', 'details', 'payload', 'attributes', 'arguments', 'result', 'results', 'records', 'items', 'nested', 'self', 'metadata', 'judgment', 'config', 'extension', 'surfaces', 'diagnostics']),
+  other: new Set(['id', 'requestid', 'sessionid', 'agentid', 'taskid', 'documentid', 'traceid', 'spanid', 'workstreamid',
+    'domain', 'eventtype', 'source', 'turnid', 'stopreason', 'model', 'modelid', 'provider', 'providerid', 'registrykey', 'site', 'universe', 'kind', 'type', 'category', 'code', 'status', 'state',
+    'count', 'tokencount', 'maxtokens', 'maxoutputtokens', 'totaltokens', 'inputtokens', 'outputtokens', 'cachereadtokens', 'cachewritetokens',
+    'durationms', 'latencyms', 'elapsedms', 'timestamp', 'at', 'attempt', 'attempts', 'retryafterms', 'size', 'bytes', 'limit', 'total',
+    'active', 'enabled', 'success', 'valid', 'complete', 'cached', 'recoverable', 'stable', 'found']),
+};
 
-/** Synchronous consumers withhold values while a field-name reading is pending. */
 export class FieldKindReader {
-  private readonly controller = new AbortController();
-  private readonly entries = new Map<string, Entry>();
-
+  private disposed = false;
   constructor(private readonly options: JudgmentReadingOptions = {}) {}
 
   read(field: string): FieldKind | undefined {
-    let owner: JudgmentPortCapture;
     try {
-      assertJudgmentInput({ field });
-      owner = captureJudgmentPort('engine.redaction.field-kind', { ...this.options,
-        signal: this.options.signal ? AbortSignal.any([this.controller.signal, this.options.signal]) : this.controller.signal });
-      owner.assertCurrent();
+      if (this.disposed || this.options.signal?.aborted) return undefined;
+      assertRedactionCurrent(this.options.assertCurrent);
+      const name = field.replace(/[_-]/g, '').toLowerCase();
+      for (const kind of ['secret', 'owner_profile', 'content', 'other'] as const) if (fields[kind].has(name)) return kind;
     } catch { return undefined; }
-    const cached = this.entries.get(field);
-    if (cached?.owner.identity === owner.identity) {
-      try { cached.owner.assertCurrent(); }
-      catch { this.entries.delete(field); return undefined; }
-      return cached.status === 'settled' ? cached.kind : undefined;
-    }
-    if (cached) { cached.controller.abort(); this.entries.delete(field); }
-    if (this.entries.size >= MAX_FIELDS) {
-      const oldest = this.entries.keys().next();
-      if (!oldest.done) { this.entries.get(oldest.value)?.controller.abort(); this.entries.delete(oldest.value); }
-    }
-    const controller = new AbortController();
-    try { owner = captureJudgmentPort('engine.redaction.field-kind', { ...this.options,
-      signal: AbortSignal.any([this.controller.signal, controller.signal, ...(this.options.signal ? [this.options.signal] : [])]) }); }
-    catch { return undefined; }
-    const completion = Promise.withResolvers<FieldKind | undefined>();
-    const pending: Entry = { status: 'pending', owner, controller, promise: completion.promise };
-    this.entries.set(field, pending);
-    void fieldKind.run(owner.port, { field }, { site: 'engine.redaction.field-kind', signal: owner.signal, beforeAttempt: owner.assertCurrent })
-      .then((result) => {
-        owner.assertCurrent();
-        if (this.entries.get(field) !== pending) { completion.resolve(undefined); return; }
-        const reading = result.readings.kind;
-        if (reading.outcome === 'act') {
-          this.entries.set(field, { status: 'settled', owner, controller, kind: reading.choice });
-          completion.resolve(reading.choice);
-        } else { this.entries.delete(field); completion.resolve(undefined); }
-      })
-      .catch(() => { if (this.entries.get(field) === pending) this.entries.delete(field); completion.resolve(undefined); });
     return undefined;
   }
 
-  async readAsync(field: string): Promise<FieldKind | undefined> {
-    const settled = this.read(field);
-    if (settled !== undefined) return settled;
-    const pending = this.entries.get(field);
-    if (pending?.status !== 'pending') return undefined;
-    const kind = await pending.promise;
-    try { pending.owner.assertCurrent(); } catch { return undefined; }
-    return this.entries.get(field)?.owner.identity === pending.owner.identity ? kind : undefined;
-  }
-
-  dispose(): void {
-    this.controller.abort();
-    this.entries.clear();
-  }
+  async readAsync(field: string): Promise<FieldKind | undefined> { return this.read(field); }
+  dispose(): void { this.disposed = true; }
 }

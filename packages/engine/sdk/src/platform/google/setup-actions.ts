@@ -34,7 +34,7 @@ import {
   exchangeCodeForTokens,
   generatePkcePair,
 } from './oauth-loopback.js';
-import { looksLikeGoogleSignIn } from './browser-elements.js';
+import { looksLikeGoogleSignIn, readGoogleTwoStepState } from './browser-elements.js';
 import { safeConfigGet, safeConfigString } from './config-access.js';
 
 /** How long to wait for the person to finish Google's consent screen. */
@@ -122,11 +122,11 @@ function twoStepRunner(deps: GoogleSetupActionDeps): GoogleStepRunner {
   return async (spec) => {
     const browser = await deps.browser();
     if (spec.url !== undefined) await browser.navigate(spec.url);
-    const text = await browser.readText({ maxChars: 4000 });
-    if (/2-step verification is on|2-step verification\s*:?\s*on\b/i.test(text)) {
+    const state = await readGoogleTwoStepState(browser, { signal: deps.signal, assertCurrent: deps.assertCurrent });
+    if (state === 'on') {
       return alreadyDone('2-Step Verification is already on, which is what makes app passwords available.');
     }
-    if (/turn on 2-step verification/i.test(text)) {
+    if (state === 'off') {
       return needsHuman(
         '2-Step Verification is off.',
         'Google only offers app passwords on accounts with 2-Step Verification enabled, and this account has it off.',

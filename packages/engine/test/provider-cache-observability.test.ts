@@ -1,3 +1,4 @@
+import { transformModelsDevResponse } from '../sdk/src/platform/providers/model-catalog-cache.js';
 import { afterEach, describe, expect, spyOn, test, type Mock } from 'bun:test';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
@@ -7,7 +8,7 @@ import { basename, dirname, join } from 'node:path';
 import { FavoritesStore } from '../sdk/src/platform/providers/favorites.js';
 import { GitHubCopilotProvider, getGitHubCopilotTokenCachePath } from '../sdk/src/platform/providers/github-copilot.js';
 import { BenchmarkStore } from '../sdk/src/platform/providers/model-benchmarks.js';
-import { fetchCatalog, getCatalogModelDefinitionsFrom, loadCatalogCache, type CatalogModel } from '../sdk/src/platform/providers/model-catalog.js';
+import { getCatalogModelDefinitionsFrom, loadCatalogCache, type CatalogModel } from '../sdk/src/platform/providers/model-catalog.js';
 import { ModelLimitsService } from '../sdk/src/platform/providers/model-limits.js';
 import { ProviderRegistry } from '../sdk/src/platform/providers/registry.js';
 import type { DiscoveredServer } from '../sdk/src/platform/discovery/scanner.js';
@@ -192,9 +193,10 @@ describe('provider cache observability', () => {
     }
   });
 
-  test('remote provider catalog fetch warns about malformed provider entries while keeping valid models', async () => {
+  test('catalog normalization warns about malformed records while keeping valid models', () => {
     const warnSpy = spyOn(logger, 'warn') as Mock<typeof logger.warn>;
-    globalThis.fetch = (async () => new Response(JSON.stringify({
+    try {
+      const models = transformModelsDevResponse({
       good: {
         name: 'Good Provider',
         env: [],
@@ -210,18 +212,10 @@ describe('provider cache observability', () => {
       badProvider: null,
       badModels: { name: 'Bad Models', models: [] },
       badModelEntry: { name: 'Bad Model Entry', models: { broken: null } },
-    }), { status: 200 })) as unknown as typeof fetch;
-    // Every provider's access is read before tiers are set; this port reads each as metered.
-    const previousPort = installJudgmentPort(fakePort(() => noulAnswer(0.05)).port);
-    try {
-      const models = await fetchCatalog();
-
-      expect(models.map((model) => model.id)).toEqual(['good-model']);
+    }, new Map([['good', 'metered']]));
+      expect(models.map(model => model.id)).toEqual(['good-model']);
       expect(warningMessages(warnSpy)).toContain('[model-catalog] Ignored malformed catalog entries');
-    } finally {
-      installJudgmentPort(previousPort);
-      warnSpy.mockRestore();
-    }
+    } finally { warnSpy.mockRestore(); }
   });
 });
 

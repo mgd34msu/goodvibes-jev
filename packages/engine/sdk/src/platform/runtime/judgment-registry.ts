@@ -51,8 +51,6 @@ registry.register(codeSearchRerank);
 // State: file watching, the sqlite-vec loader, VIBE.md import.
 import { sqliteVecRefusal } from '../state/batteries/sqlite-vec-refusal.js';
 import { vibePersonaLine } from '../state/batteries/vibe-persona-line.js';
-import { watchedConfig } from '../state/batteries/watched-config.js';
-registry.register(watchedConfig);
 registry.register(sqliteVecRefusal);
 registry.register(vibePersonaLine);
 
@@ -65,20 +63,14 @@ registry.register(trustNoteCaution);
 // Utils: error display.
 import { displayPayload } from '../utils/batteries/display-payload.js';
 registry.register(displayPayload);
-import { fieldKind } from '../utils/batteries/field-kind.js';
-registry.register(fieldKind);
 
 // Types: the wait a provider error's message states before retrying.
 import { retryWait } from '../types/batteries/retry-wait.js';
 registry.register(retryWait);
 
 // Runtime: model picker.
-import { modelFamily } from './ui/model-picker/batteries/model-family.js';
-registry.register(modelFamily);
 
 // Runtime: tool output policy.
-import { outputKind } from './tools/batteries/output-kind.js';
-registry.register(outputKind);
 
 // Runtime: settings control plane.
 import { settingsRisk } from './settings/batteries/settings-risk.js';
@@ -123,9 +115,11 @@ import { browserControlIdentity, browserCredentialPage } from '../browser/browse
 registry.register(browserControlIdentity);
 registry.register(browserCredentialPage);
 // Google setup control purposes and authentication page state.
-import { googleSetupControl, googleSignInPage } from '../google/browser-readings.js';
+import { googleSetupControl, googleSignInPage, googleTwoStepPage, googleAppPasswordPage } from '../google/browser-readings.js';
 registry.register(googleSetupControl);
 registry.register(googleSignInPage);
+registry.register(googleTwoStepPage);
+registry.register(googleAppPasswordPage);
 
 // Managed local voice round-trip semantic proof.
 import { voiceRoundTripReading } from '../voice/provisioning/round-trip-reading.js';

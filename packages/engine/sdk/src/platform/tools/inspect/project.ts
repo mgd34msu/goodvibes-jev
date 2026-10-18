@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'nod
 import { dirname, extname, join, relative } from 'node:path';
 import { walk, safeRead, resolvePath } from './shared.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { declaredTestRunner } from '../../utils/project-test-runner.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { entryPointView, projectTooling } from '../batteries/project-tooling.js';
 import { inspectApi } from './project-routes.js';
@@ -218,12 +219,13 @@ export async function detectProject(root: string): Promise<ProjectInfo> {
   const asked: Array<'project_type' | 'package_manager' | 'test_framework'> = [];
   if (settledType === undefined) asked.push('project_type');
   if (mayBeNode && settledManager === undefined) asked.push('package_manager');
-  if (mayBeNode) asked.push('test_framework');
+  const declaredFramework = mayBeNode ? declaredTestRunner({ scripts }) : undefined;
+  if (mayBeNode && declaredFramework === undefined) asked.push('test_framework');
 
   let type: ProjectInfo['type'] = settledType ?? 'unknown';
   let packageManager: ProjectInfo['packageManager'] =
     settledType === 'nodejs' && settledManager ? settledManager : 'none';
-  let testFramework: string | undefined;
+  let testFramework: string | undefined = settledType === 'nodejs' ? declaredFramework : undefined;
 
   if (asked.length > 0) {
     await assertCapturedToolAccessCurrent();
@@ -241,6 +243,7 @@ export async function detectProject(root: string): Promise<ProjectInfo> {
     const r = run.readings;
     if (r.project_type?.outcome === 'act') type = r.project_type.choice;
     if (type === 'nodejs') {
+      testFramework = declaredFramework;
       if (settledManager) packageManager = settledManager;
       else if (r.package_manager?.outcome === 'act') packageManager = r.package_manager.choice;
       if (r.test_framework?.outcome === 'act') {

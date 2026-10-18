@@ -1,4 +1,5 @@
-import { prepareSystemMessagePresentation } from '../runtime/system-message-presentation.js';
+import { declaredNoticePresentation } from '../runtime/runtime-event-notices.js';
+import { prepareSystemMessagePresentation, type SystemMessagePresentation } from '../runtime/system-message-presentation.js';
 import type { RuntimeEventProvenance } from '../../events/occurrence.js';
 import type { ProviderMessage, ContentPart } from '../providers/interface.js';
 import type { ToolCall, ToolResult } from '../types/tools.js';
@@ -42,7 +43,7 @@ type AssistantMessage = {
 export type ConversationMessageSnapshot =
   | { role: 'user'; content: string | ContentPart[]; cancelled?: boolean }
   | AssistantMessage
-  | { role: 'system'; content: string; runtimeEvent?: RuntimeEventProvenance | undefined }
+  | { role: 'system'; content: string; runtimeEvent?: RuntimeEventProvenance | undefined; presentation?: SystemMessagePresentation | undefined }
   | {
     role: 'tool';
     callId: string;
@@ -318,9 +319,10 @@ export class ConversationManager {
   }
 
   public addSystemMessage(content: string, runtimeEvent?: RuntimeEventProvenance): void {
-    // The original remains visible immediately; only settled Jev fields decorate it.
-    void prepareSystemMessagePresentation(content, this.presentationLifetime.signal).catch(() => {});
+    const presentation = declaredNoticePresentation(content, runtimeEvent);
+    if (!presentation) void prepareSystemMessagePresentation(content, this.presentationLifetime.signal).catch(() => {});
     this.messages.push({ role: 'system', content,
+      ...(presentation ? { presentation } : {}),
       ...(runtimeEvent ? { runtimeEvent: { type: runtimeEvent.type, occurrenceId: runtimeEvent.occurrenceId } } : {}),
     });
     this._messagesRevision++;
@@ -476,7 +478,11 @@ export class ConversationManager {
     if (!stored) return false;
     this.branches.set(this.currentBranch, cloneMessages(this.messages));
     this.messages = cloneMessages(stored);
-    for (const message of this.messages) if (message.role === 'system') void prepareSystemMessagePresentation(message.content, this.presentationLifetime.signal).catch(() => {});
+    for (const message of this.messages) if (message.role === 'system') {
+      const presentation = declaredNoticePresentation(message.content, message.runtimeEvent);
+      if (presentation) message.presentation = presentation;
+      else { delete message.presentation; void prepareSystemMessagePresentation(message.content, this.presentationLifetime.signal).catch(() => {}); }
+    }
     this.currentBranch = name;
     this.streamingMessageIndex = -1;
     this._messagesRevision++;
@@ -517,7 +523,11 @@ export class ConversationManager {
     titleSource?: ConversationTitleSource | undefined;
   }): void {
     this.messages = cloneMessages(data.messages ?? []);
-    for (const message of this.messages) if (message.role === 'system') void prepareSystemMessagePresentation(message.content, this.presentationLifetime.signal).catch(() => {});
+    for (const message of this.messages) if (message.role === 'system') {
+      const presentation = declaredNoticePresentation(message.content, message.runtimeEvent);
+      if (presentation) message.presentation = presentation;
+      else { delete message.presentation; void prepareSystemMessagePresentation(message.content, this.presentationLifetime.signal).catch(() => {}); }
+    }
     this._title = typeof data.title === 'string' ? data.title : '';
     this._titleSource = data.titleSource === 'user' || data.titleSource === 'system'
       ? data.titleSource

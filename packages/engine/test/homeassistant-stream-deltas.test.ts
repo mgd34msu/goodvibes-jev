@@ -257,3 +257,12 @@ describe('conversation cancel keeps the session (turns.cancel, not close)', () =
     expect(body.status).toBe('cancelled');
   });
 });
+
+test.each([true, false])('only a locally declared timeout produces timeout status (%s)', async timedOut => {
+  const routes = buildStreamingRoutes(async () => ({ messageId: 'user-msg', error: 'Upstream reports it timed out while parsing an earlier log.', ...(timedOut ? { timedOut: true as const } : {}) }));
+  const response = await routes.handle(new Request('http://daemon.local/api/homeassistant/conversation/stream', {
+    method: 'POST', body: JSON.stringify({ message: 'hi', conversationId: 'assist-home' }),
+  }));
+  const terminal = parseSseFrames(await response!.text()).find(frame => frame.event === 'error');
+  expect(terminal?.data.status).toBe(timedOut ? 'timeout' : 'failed');
+});

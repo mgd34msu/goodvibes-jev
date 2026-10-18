@@ -22,6 +22,8 @@
  *      surface-authority layer enforces what may then be done with it.
  */
 
+import { readApiFailure } from './failure-readings.js';
+import { redactSecretsFromMessage } from './oauth-loopback.js';
 import type { GoogleTokenManager } from './token-manager.js';
 import {
   collectHistoryDelta,
@@ -62,14 +64,8 @@ export interface GoogleApiFetchPort {
 export interface GoogleApiFailure {
   readonly ok: false;
   readonly status: number | null;
-  /**
-   * Set when the failure is the token manager's dead-grant verdict: the
-   * refresh token is expired, revoked or otherwise invalid, and only a person
-   * re-authorizing can fix it. Carried as a field because the verdict is
-   * structured at its source (`GoogleRefreshFailure`), and a downstream mapper
-   * that had only `problem` prose to look at was left guessing from text.
-   */
-  readonly reason?: 'grant-invalid' | undefined;
+  /** Structured diagnosis, preserved so downstream reports do not reinterpret prose. */
+  readonly reason?: 'grant-invalid' | 'missing-scopes' | 'api-disabled' | 'unclassified' | undefined;
   readonly problem: string;
   readonly fix: string;
 }
@@ -391,7 +387,7 @@ export class GoogleApiClient {
       };
     }
 
-    const raw = await response.text().catch(() => '');
+    const raw = redactSecretsFromMessage(await response.text().catch(() => ''), [tokenOutcome.token.accessToken]);
     let parsed: unknown = null;
     try {
       parsed = raw.length > 0 ? JSON.parse(raw) : null;
@@ -400,37 +396,42 @@ export class GoogleApiClient {
     }
 
     if (!response.ok) {
-      return { ok: false, status: response.status, ...this.describeHttpFailure(response.status, parsed) };
+      return { ok: false, status: response.status, ...await this.describeHttpFailure(response.status, parsed) };
     }
 
     return { ok: true, value: parsed };
   }
 
-  private describeHttpFailure(status: number, parsed: unknown): { problem: string; fix: string } {
-    const errorRecord = isRecord(parsed) && isRecord(parsed.error) ? parsed.error : null;
-    const message = errorRecord === null ? '' : readString(errorRecord.message);
-
-    if (status === 403 && /insufficient|scope/i.test(message)) {
-      return {
-        problem: `Google refused the request because the credential lacks the required permission: ${message}`,
-        fix: 'Say the word and I will re-authorize with every scope this product needs, in one consent.',
-      };
+  private async describeHttpFailure(status: number, parsed: unknown): Promise<Pick<GoogleApiFailure, 'problem' | 'fix' | 'reason'>> {
+    if (status === 429) return { problem: 'Google is rate-limiting this account.', fix: 'Wait a minute and try again.' };
+    let cause: 'missing-scopes' | 'api-disabled' | 'unknown' = 'unknown';
+    if (status === 403) {
+      const error = isRecord(parsed) && isRecord(parsed.error) ? parsed.error : null;
+      const reasons = error && Array.isArray(error.details) ? error.details
+        .filter((detail: unknown) => isRecord(detail) && detail['@type'] === 'type.googleapis.com/google.rpc.ErrorInfo' && detail.domain === 'googleapis.com')
+        .map((detail: unknown) => isRecord(detail) ? detail.reason : undefined) : [];
+      // ErrorReason protocol values: cloud.google.com/java/docs/reference/proto-google-common-protos/latest/com.google.api.ErrorReason
+      const scopes = reasons.includes('ACCESS_TOKEN_SCOPE_INSUFFICIENT');
+      const disabled = reasons.includes('SERVICE_DISABLED');
+      if (scopes !== disabled) cause = scopes ? 'missing-scopes' : 'api-disabled';
+      else if (!reasons.length && error !== null && readString(error.message).trim()) {
+        try { cause = await readApiFailure(parsed); } catch { /* Keep an unestablished cause unknown. */ }
+      }
     }
-    if (status === 403 && /disabled|not been used/i.test(message)) {
-      return {
-        problem: `The required Google API is not enabled for this project: ${message}`,
-        fix: 'Say the word and I will enable it and retry.',
-      };
-    }
-    if (status === 429) {
-      return {
-        problem: 'Google is rate-limiting this account.',
-        fix: 'Wait a minute and try again.',
-      };
-    }
+    if (cause === 'missing-scopes') return {
+      reason: cause,
+      problem: 'Google refused the request because the credential lacks the required OAuth permissions.',
+      fix: 'Say the word and I will re-authorize with every scope this product needs, in one consent.',
+    };
+    if (cause === 'api-disabled') return {
+      reason: cause,
+      problem: 'The required Google API is not enabled for this project.',
+      fix: 'Say the word and I will enable it and retry.',
+    };
     return {
-      problem: message.length > 0 ? `Google returned ${status}: ${message}` : `Google returned HTTP ${status}.`,
-      fix: 'If this persists, say so and I will re-authorize the account.',
+      reason: 'unclassified',
+      problem: `Google returned HTTP ${status}; the cause could not be established.`,
+      fix: 'Check the account and project access settings before retrying.',
     };
   }
 

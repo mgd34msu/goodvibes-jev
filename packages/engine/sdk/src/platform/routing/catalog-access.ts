@@ -42,7 +42,7 @@ export function providerAccessFrom(readings: { readonly local: YesNoReading; rea
   if (local && plan) return undefined;
   if (local) return 'local';
   if (plan) return 'subscription';
-  if (readings.local.verdict === 'no' && readings.plan.verdict === 'no') return 'metered';
+  if (readings.local.verdict === 'no' && readings.local.outcome === 'act' && readings.plan.verdict === 'no' && readings.plan.outcome === 'act') return 'metered';
   return undefined;
 }
 

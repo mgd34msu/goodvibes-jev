@@ -376,9 +376,9 @@ export class OpenAICompatProvider implements LLMProvider {
       // Provider-specific reasoning params. The requested level is first mapped
       // onto what this exact model accepts, so a level it does not offer snaps
       // down instead of earning a provider-side 400.
-      await prepareReasoningEffort(reasoningEffort, { modelId: selectedModel, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.openai-compat.reasoning-family');
+      await prepareReasoningEffort(reasoningEffort, { provider: this.name, modelId: selectedModel, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.openai-compat.reasoning-family');
       const effortValue = resolveEffortForRequest(reasoningEffort, {
-        modelId: selectedModel,
+        provider: this.name, modelId: selectedModel,
         ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}),
       }).value;
       const extraBody: Record<string, unknown> = {};
@@ -663,7 +663,7 @@ export class OpenAICompatProvider implements LLMProvider {
           ? {}
           : {
               supportedReasoningEfforts: reasoningEffortLevels(
-                resolveReasoningEffortSpec({ modelId: this.defaultModel }),
+                resolveReasoningEffortSpec({ provider: this.name, modelId: this.defaultModel }),
               ),
             }),
         cacheStrategy: this.cacheCapability.type,

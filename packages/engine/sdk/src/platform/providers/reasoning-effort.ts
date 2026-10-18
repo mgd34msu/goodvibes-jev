@@ -270,9 +270,9 @@ export function parseReasoningOptions(
 
   if (budget && typeof budget.min === 'number') {
     // A catalog entry has no separate "can this be switched off" field, so the
-    // documented floor is the only evidence: a model that accepts a zero budget
+    // explicit toggle or documented floor decides: a model that accepts a zero budget
     // publishes min 0, and one that does not publishes its real minimum.
-    const canDisableReasoning = budget.min <= 0;
+    const canDisableReasoning = toggle !== undefined || budget.min <= 0;
     const max = typeof budget.max === 'number' ? budget.max : undefined;
     return {
       kind: 'budget_tokens',

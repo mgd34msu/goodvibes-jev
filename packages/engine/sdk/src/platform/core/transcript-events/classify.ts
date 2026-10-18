@@ -1,4 +1,5 @@
 import { prepareJudgmentResult } from '../../gate/judgment-result.js';
+import { declaredNoticePresentation } from '../../runtime/runtime-event-notices.js';
 import { systemMessagePresentation } from '../../runtime/system-message-presentation.js';
 import { captureJudgmentPort, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { assertJudgmentInput } from '../../gate/judgment-input.js';
@@ -55,7 +56,7 @@ export async function classifyTranscriptMessages(messages: readonly Conversation
   assertCurrent();
   // Preflight every complete system notice before transmitting any of them.
   // User, assistant and tool contents remain outside this presentation reading.
-  const notices = captured.filter(message => message.role === 'system');
+  const notices = captured.filter(message => message.role === 'system' && !declaredNoticePresentation(message.content, message.runtimeEvent));
   for (const message of notices) assertJudgmentInput({ content: message.content });
   const authority = notices.length ? captureJudgmentPort(systemMessagePresentation.name, { ...options, assertCurrent, prepareResultCapture: prepareJudgmentResult }) : undefined;
   lifetime.retain(assertCurrent);
@@ -105,16 +106,19 @@ export async function classifyTranscriptMessages(messages: readonly Conversation
         });
         break;
       case 'system': {
-        if (!authority) throw new TranscriptReadingUnsettledError();
-        const result = await systemMessagePresentation.run(authority.port, { content: message.content }, {
-          site: 'core.transcript-events.presentation', signal: authority.signal, beforeAttempt: authority.assertCurrent,
-        });
-        authority.assertCurrent();
-        const reading = result.readings.event;
-        if (reading.outcome !== 'act') throw new TranscriptReadingUnsettledError();
-        const kind: TranscriptEvent['kind'] = reading.choice;
-        result.recordAction(`transcript presentation:${kind}`);
-        authority.assertCurrent();
+        let kind = declaredNoticePresentation(message.content, message.runtimeEvent)?.event;
+        if (!kind) {
+          if (!authority) throw new TranscriptReadingUnsettledError();
+          const result = await systemMessagePresentation.run(authority.port, { content: message.content }, {
+            site: 'core.transcript-events.presentation', signal: authority.signal, beforeAttempt: authority.assertCurrent,
+          });
+          authority.assertCurrent();
+          const reading = result.readings.event;
+          if (reading.outcome !== 'act') throw new TranscriptReadingUnsettledError();
+          kind = reading.choice;
+          result.recordAction(`transcript presentation:${kind}`);
+          authority.assertCurrent();
+        }
         events.push({
           id: `msg-${messageIndex}-system`,
           kind,

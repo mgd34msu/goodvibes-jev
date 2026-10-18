@@ -8,7 +8,6 @@ import {
 } from '../sdk/src/platform/utils/redaction.js';
 import { exportToHTML, exportToJSON, exportToMarkdownExtended } from '../sdk/src/platform/export/session-export.js';
 import type { ExportMessage } from '../sdk/src/platform/export/markdown.js';
-import { fieldKind } from '../sdk/src/platform/utils/batteries/field-kind.js';
 import { captureStructuredCredentialReferenceConfigValue } from '../sdk/src/platform/config/structured-credential-config.js';
 import { redactionCredential } from '../sdk/src/platform/utils/batteries/redaction.js';
 
@@ -261,7 +260,7 @@ describe('canonical redaction source admission', () => {
   test('hidden native reference descriptor changes retire the retained parser capture', async () => {
     const pending = pausedPort();
     const reference = { endpoint: 'https://api.typesafe.ai', model: 'jev-1.13.0', keySource: 'env', keyName: 'SYNTHETIC_JEV_KEY' };
-    const input = { 'judgment.fallbacks': [reference], tokenCount: 7 };
+    const input = { 'judgment.fallbacks': [reference], documentId: 'A public document identifier' };
     const result = redactStructuredDataAsync(input);
     await pending.ready;
     Object.defineProperty(reference, 'rawKey', { value: 'late-hidden-private-value', enumerable: false });
@@ -298,7 +297,7 @@ describe('canonical redaction source admission', () => {
     } finally { Object.defineProperty(question, 'instructions', descriptor); }
   });
 
-  test('equal uncertain fields stay masked and are read anew for another complete source', async () => {
+  test('unknown field names stay masked across complete sources without external requests', async () => {
     const port = fakePort((name, question) => {
       if (name === 'kind' && question.type === 'choice') return choiceAnswer(question, 'other', 0.45);
       throw new Error(`No authored uncertain-field fixture for ${name}`);
@@ -307,9 +306,9 @@ describe('canonical redaction source admission', () => {
     const input = [{ unresolvedRole: 'first-private-value' }, { unresolvedRole: 'second-private-value' }];
     const expected = [{ unresolvedRole: '[REDACTED]' }, { unresolvedRole: '[REDACTED]' }];
     expect(await redactStructuredDataAsync(input)).toEqual(expected);
-    expect(port.requests).toHaveLength(1);
+    expect(port.requests).toHaveLength(0);
     expect(await redactStructuredDataAsync(input)).toEqual(expected);
-    expect(port.requests).toHaveLength(2);
+    expect(port.requests).toHaveLength(0);
     const wire = JSON.stringify(port.requests);
     expect(wire).not.toContain('first-private-value'); expect(wire).not.toContain('second-private-value');
   });
@@ -334,56 +333,14 @@ describe('canonical redaction source admission', () => {
     await settle();
   });
 
-  test('equal field readings cover local text spans without disclosing either original', async () => {
+  test('declared field roles preserve local text without field-name requests', async () => {
     const port = publicReadings();
     const input = { documentId: 'documentId=ordinary-one', nested: { documentId: 'documentId=ordinary-two' } };
     expect(await redactStructuredDataAsync(input)).toEqual(input);
     expect(port.requests.filter((request) => request.context?.battery === 'engine.redaction.field-kind'
-      && JSON.stringify(request.state) === '{"field":"documentId"}')).toHaveLength(1);
+      && JSON.stringify(request.state) === '{"field":"documentId"}')).toHaveLength(0);
     const wire = JSON.stringify(port.requests);
     expect(wire).not.toContain('ordinary-one'); expect(wire).not.toContain('ordinary-two');
-  });
-
-  test('changing a field contract retires operation-local readings before reuse', async () => {
-    const descriptor = Object.getOwnPropertyDescriptor(fieldKind.items.kind.question.criteria, 'other');
-    if (descriptor === undefined) throw new Error('Expected the declared other criterion');
-    let changed = false;
-    const port = fakePort((name, question) => {
-      if (name === 'kind' && question.type === 'choice') return choiceAnswer(question, 'other', 0.99);
-      if (name === 'lineHasCredential' || name === 'spanIsCredential' || name === 'credentialRemains') {
-        if (!changed) {
-          changed = true;
-          Object.defineProperty(fieldKind.items.kind.question.criteria, 'other', { ...descriptor, value: 'Changed contract' });
-        }
-        return noulAnswer(0.01);
-      }
-      throw new Error(`No authored contract-retirement fixture for ${name}`);
-    });
-    installJudgmentPort(port.port);
-    try {
-      expect(await redactStructuredDataAsync([{ documentId: 'documentId=ordinary-one' }, { documentId: 'ordinary-two' }]))
-        .toBe('[REDACTED]');
-      expect(changed).toBe(true);
-      expect(JSON.stringify(port.requests)).not.toContain('ordinary-two');
-    } finally { Object.defineProperty(fieldKind.items.kind.question.criteria, 'other', descriptor); }
-  });
-
-  test('cancellation drains four non-cooperating field reads before another group starts', async () => {
-    const controller = new AbortController(), ready = Promise.withResolvers<void>();
-    let calls = 0;
-    const requests: unknown[] = [];
-    const normal = publicReadings();
-    installJudgmentPort({ ...normal.port, async ask(request) {
-      requests.push(request.state);
-      if (++calls === 4) ready.resolve();
-      return new Promise<never>(() => {});
-    } });
-    const pending = redactStructuredDataAsync({ tokenCount: 7, password: 'private-one', shippingAddress: 'private-two',
-      nested: {}, body: 'private-three' }, { signal: controller.signal });
-    await ready.promise; controller.abort();
-    expect(await pending).toBe('[REDACTED]'); expect(calls).toBe(4);
-    const wire = JSON.stringify(requests);
-    for (const value of ['private-one', 'private-two', 'private-three']) expect(wire).not.toContain(value);
   });
 
   test('registered private object keys remain local and retain distinct JSON slots', async () => {

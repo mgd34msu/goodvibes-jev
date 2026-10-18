@@ -48,13 +48,9 @@ function canonicalPath(path: string): string {
     .replace(/\/+$/, '');
 }
 
+/** Only the native file-writing tool names may populate a session read waiver. */
 function isWriteTool(tool: string): boolean {
-  const name = tool.toLowerCase();
-  // Deliberately narrower than the execution ledger's route classifier: only
-  // tools that put file content on disk can grant a read waiver. Shell and
-  // browser tools are excluded, their writes did not pass through the model.
-  if (name.includes('exec') || name.includes('shell') || name.includes('bash')) return false;
-  return name.includes('write') || name.includes('edit') || name.includes('patch');
+  return tool === 'write' || tool === 'edit';
 }
 
 function collectPaths(args: Record<string, unknown>): string[] {

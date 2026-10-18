@@ -15,8 +15,6 @@ import type { ProviderHealthDomainState } from '../../store/domains/provider-hea
 import type { ModelDomainState } from '../../store/domains/model.js';
 import { enrichModelEntries, groupEntriesByProvider } from './health-enrichment.js';
 import type { ModelPickerData, ModelPickerEntry } from './types.js';
-import { modelFamilyReadings } from './model-family-readings.js';
-import { logger } from '../../../utils/logger.js';
 
 /** Options for constructing a ModelPickerDataProvider. */
 export interface ModelPickerDataProviderOptions {
@@ -71,7 +69,6 @@ export class ModelPickerDataProvider {
     this.benchmarkStore = options.benchmarkStore;
     this.providerRegistry = options.providerRegistry;
     this._snapshot = this._buildSnapshot();
-    this._readFamilies();
   }
 
   /**
@@ -98,7 +95,6 @@ export class ModelPickerDataProvider {
   public updateModels(models: readonly ModelDefinition[]): void {
     this._models = models;
     this._rebuild();
-    this._readFamilies();
   }
 
   /**
@@ -142,20 +138,6 @@ export class ModelPickerDataProvider {
   private _rebuild(): void {
     this._snapshot = this._buildSnapshot();
     this._notify();
-  }
-
-  /** Reads the family of every model not read yet, and rebuilds when any lands. */
-  private _readFamilies(): void {
-    const models = this._models;
-    void modelFamilyReadings.read(models).then(
-      (changed) => { if (changed && !this._disposed && this._models === models) this._rebuild(); },
-      () => {
-        if (!this._disposed && this._models === models) {
-          logger.warn('model picker: model family readings did not complete');
-          this._rebuild();
-        }
-      },
-    );
   }
 
   private _buildSnapshot(): ModelPickerData {

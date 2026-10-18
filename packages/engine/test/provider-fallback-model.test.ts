@@ -94,7 +94,7 @@ describe('buildFallbackModelDefinition', () => {
     expect(definition.reasoningEffort).toBeUndefined();
   });
 
-  test('takes the context window from the read family row, and the conservative window before the read', async () => {
+  test('keeps an unsized model at the fallback estimate without family inference', async () => {
     forgetModelLimitReadings();
     const { port, requests } = fakePort((_name, question, state) => choiceAnswer(question, (state as { model_id?: unknown }).model_id === 'gemini-x' ? 'gemini' : 'claude', 0.95));
     const previous = installJudgmentPort(port);
@@ -103,8 +103,9 @@ describe('buildFallbackModelDefinition', () => {
       expect(requests).toHaveLength(0);
       await readFallbackContextWindow('anthropic', 'claude-x', 'test');
       await readFallbackContextWindow('google', 'gemini-x', 'test');
-      expect(buildFallbackModelDefinition('anthropic', 'claude-x').contextWindow).toBe(200_000);
-      expect(buildFallbackModelDefinition('google', 'gemini-x').contextWindow).toBe(1_000_000);
+      expect(buildFallbackModelDefinition('anthropic', 'claude-x').contextWindow).toBe(FALLBACK_CONTEXT_WINDOW);
+      expect(buildFallbackModelDefinition('google', 'gemini-x').contextWindow).toBe(FALLBACK_CONTEXT_WINDOW);
+      expect(requests).toHaveLength(0);
     } finally {
       installJudgmentPort(previous);
       forgetModelLimitReadings();

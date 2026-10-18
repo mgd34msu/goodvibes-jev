@@ -58,7 +58,7 @@ const write = (file: string, content: string) => {
 };
 
 describe('detectProject', () => {
-  test('one manifest and one lockfile are facts; only the test runner is read', async () => {
+  test('manifest, lockfile and declared test command settle without Jev', async () => {
     write(
       'package.json',
       JSON.stringify({ name: 'shop', scripts: { test: 'vitest run' }, devDependencies: { vitest: '1' } }),
@@ -67,9 +67,8 @@ describe('detectProject', () => {
     const info = await detectProject(root);
     expect(info.type).toBe('nodejs');
     expect(info.packageManager).toBe('pnpm');
-    expect(info.testFramework).toBeUndefined(); // the fake reads 'none'
-    expect(readings.requests).toHaveLength(1);
-    expect(Object.keys(readings.requests[0]?.questions ?? {})).toEqual(['test_framework']);
+    expect(info.testFramework).toBe('vitest');
+    expect(readings.requests).toHaveLength(0);
   });
 
   test('the corepack packageManager field settles the package manager', async () => {

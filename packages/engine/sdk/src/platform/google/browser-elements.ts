@@ -1,7 +1,7 @@
 /** Purpose-grounded Google setup controls. Readings are observations, not action authorization. */
 
 import type { GoogleBrowserElement, GoogleBrowserPort } from './types.js';
-import { googleSetupControl, googleSignInPage, googleControlSnapshot, googleReadingOwner, GoogleReadingError, type GoogleReadingOptions } from './browser-readings.js';
+import { googleSetupControl, googleSignInPage, googleTwoStepPage, googleAppPasswordPage, googleControlSnapshot, admitGoogleControlMetadata, googleReadingOwner, GoogleReadingError, type GoogleReadingOptions } from './browser-readings.js';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 
@@ -210,6 +210,58 @@ export async function looksLikeGoogleSignIn(url: string, elements: readonly Goog
     current();
     return reading.verdict === 'yes';
   } catch { throw new GoogleReadingError(); }
+}
+
+/** Capture and fence the complete setup page before interpreting its state. */
+async function observeGooglePage(browser: GoogleBrowserPort, site: string, options: GoogleReadingOptions) {
+  const owner = googleReadingOwner(site, options);
+  const pageOwner = browser.captureAuthority?.();
+  const current = () => { owner.assertCurrent(); pageOwner?.assertCurrent(); };
+  current();
+  const url = await browser.currentUrl(); current();
+  const elements = googleControlSnapshot(await browser.snapshot()); current();
+  const text = await browser.readText(); current();
+  admitGoogleControlMetadata({ url, text });
+  const state = snapshotJudgmentInput({ url, elements, text });
+  if (text.length > 160_000) throw new GoogleReadingError();
+  const before = JSON.stringify(elements);
+  const currentPage = async () => {
+    current();
+    const freshUrl = await browser.currentUrl(); current();
+    const fresh = googleControlSnapshot(await (browser.verifySnapshot?.() ?? browser.snapshot())); current();
+    const freshText = await browser.readText(); current();
+    if (freshUrl !== url || JSON.stringify(fresh) !== before || freshText !== text) throw new GoogleReadingError();
+  };
+  return { state, current, currentPage, port: fencedPort(owner.port, current, currentPage), signal: owner.signal };
+}
+
+/** Read the observed setting without changing it. */
+export async function readGoogleTwoStepState(browser: GoogleBrowserPort, options: GoogleReadingOptions = {}): Promise<'on' | 'off' | 'unknown'> {
+  try {
+    const page = await observeGooglePage(browser, googleTwoStepPage.name, options);
+    const run = await googleTwoStepPage.run(page.port, page.state as never, { site: googleTwoStepPage.name, signal: page.signal });
+    await page.currentPage();
+    const { enabled, disabled } = run.readings;
+    const on = enabled.verdict === 'yes' && enabled.outcome === 'act';
+    const off = disabled.verdict === 'yes' && disabled.outcome === 'act';
+    const setting = on === off ? 'unknown' : on ? 'on' : 'off';
+    run.recordAction('Report the observed 2-Step Verification setting; no account setting was changed.');
+    page.current();
+    return setting;
+  } catch { return 'unknown'; }
+}
+
+export async function readGoogleAppPasswordState(browser: GoogleBrowserPort, label: string, options: GoogleReadingOptions = {}) {
+  const labelState = snapshotJudgmentInput({ label });
+  const page = await observeGooglePage(browser, googleAppPasswordPage.name, options);
+  const run = await googleAppPasswordPage.run(page.port, { ...(page.state as object), ...(labelState as object) },
+    { site: googleAppPasswordPage.name, signal: page.signal });
+  await page.currentPage();
+  const { twoStepRequired, labelExists } = run.readings;
+  if ([twoStepRequired, labelExists].some(reading => reading.outcome !== 'act' || reading.verdict === 'uncertain')) throw new GoogleReadingError();
+  run.recordAction('Observe app-password prerequisites and label presence; browser writes require separate control selection.');
+  page.current();
+  return { twoStepRequired: twoStepRequired.verdict === 'yes', labelExists: labelExists.verdict === 'yes' };
 }
 
 /** Best-effort DOM tag guessed from an accessible role. */

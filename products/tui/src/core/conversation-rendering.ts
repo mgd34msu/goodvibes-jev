@@ -86,7 +86,7 @@ export function renderConversationSystemMessage(
   msgIdx: number,
 ): void {
   const sysStartLine = context.history.getLineCount();
-  const sysLines = renderSystemMessage(message.content, width);
+  const sysLines = renderSystemMessage(message.content, width, message.presentation?.severity);
   context.history.addLines(sysLines);
   // Resolve navigability from the stored kind, defaulting to 'system'
   // (navigable) for messages added without an explicit kind tag.

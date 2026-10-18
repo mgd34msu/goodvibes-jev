@@ -29,7 +29,7 @@ export interface CatalogLifecycleContext {
   readonly benchmarkStore: Pick<BenchmarkStore, 'getTopBenchmarkModelIds'>;
   /** Triggers an async background catalog refresh (used by initCatalog). */
   refreshCatalog(): Promise<void>;
-  /** Starts the background routing readings a newly applied catalog needs (failover identities). */
+  /** Compatibility hook after applying the catalog; metadata indexes now resolve locally. */
   afterCatalogApplied(): void;
 }
 

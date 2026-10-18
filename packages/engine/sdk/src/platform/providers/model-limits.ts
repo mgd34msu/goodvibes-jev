@@ -6,7 +6,6 @@ import { summarizeError } from '../utils/error-display.js';
 import { TTL_24H_MS, isTtlCacheStale, validateTtlCacheEnvelope } from './json-ttl-cache.js';
 import { instrumentedFetch, fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { knownFallbackContextWindow } from './context-window-fallback.js';
-import { ModelIdentityResolver } from '../routing/model-identity.js';
 
 interface OpenRouterModelData {
   id: string;
@@ -123,35 +122,13 @@ async function fetchOpenRouterModels(): Promise<Map<string, OpenRouterModelData>
   return map;
 }
 
-/** Identity readings per OpenRouter model map, so a refreshed feed is read afresh. */
-const orIdentities = new WeakMap<Map<string, OpenRouterModelData>, ModelIdentityResolver>();
-
-function identityFor(orModels: Map<string, OpenRouterModelData>): ModelIdentityResolver {
-  let resolver = orIdentities.get(orModels);
-  if (!resolver) {
-    const candidates = [...orModels.keys()].map((id) => ({ key: id, id }));
-    resolver = new ModelIdentityResolver({ universe: 'openrouter-limits', candidates: () => candidates });
-    orIdentities.set(orModels, resolver);
-  }
-  return resolver;
-}
-
-/**
- * The OpenRouter entry for a provider's model: the exact id, then the
- * `<provider>/<model>` id OpenRouter publishes models under (both fixed
- * formats), then the entry Jev read as the same model
- * (routing.model-identity). An identity not read yet is requested and the
- * model has no OpenRouter match until it lands.
- */
+/** Exact OpenRouter ID or its documented provider/model format; otherwise unknown. */
 function findOpenRouterMatch(
   modelId: string,
   provider: string,
   orModels: Map<string, OpenRouterModelData>,
 ): OpenRouterModelData | null {
-  const exact = orModels.get(modelId) ?? orModels.get(`${provider}/${modelId}`);
-  if (exact) return exact;
-  const same = identityFor(orModels).lookup({ id: modelId, provider }, 'providers.model-limits.openrouter-identity');
-  return same === null ? null : orModels.get(same) ?? null;
+  return orModels.get(modelId) ?? orModels.get(`${provider}/${modelId}`) ?? null;
 }
 
 function buildOrMap(cache: ModelLimitsCache): Map<string, OpenRouterModelData> {
@@ -291,7 +268,7 @@ export class ModelLimitsService {
     if (reported !== undefined) return reported;
     // Never emit 0/NaN: a non-positive or non-finite window would poison
     // downstream budget math (used / contextWindow -> Infinity/NaN). Fall back to
-    // the documented family row, or the conservative default until it is read.
+    // the explicit fallback budget estimate.
     const cw = modelDef.contextWindow;
     return Number.isFinite(cw) && cw > 0
       ? Math.max(cw, acceptedContextFloor(modelDef))
@@ -302,7 +279,7 @@ export class ModelLimitsService {
    * A window a source actually states, or null for a guess or a disproven
    * ceiling. Numeric budget callers retain getContextWindowForModel; meters,
    * threshold warnings and compaction must use this nullable observation.
-   * Family readings remain estimates, even after their identity is settled.
+   * Default budgets and cross-provider consensus remain estimates.
    */
   getKnownContextWindowForModel(modelDef: ModelDefinition): number | null {
     // Other endpoints may advertise a different cap for the same model.

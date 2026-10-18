@@ -1446,6 +1446,8 @@
   },
   "dependencies": {
     "@goodvibes-jev/judgment": "workspace:*",
+    "smol-toml": "1.9.1",
+    "tar": "7.5.22",
     "undici": "7.30.0",
     "zod": "4.4.3",
     "zustand": "5.0.12"

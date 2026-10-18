@@ -248,8 +248,8 @@ describe('telemetry opt-in at the actual egress boundary', () => {
     const ownedPort = installJudgmentPort(undefined);
     try {
       const replaced = sanitizeRecord({ ...raw, payload: { prompt: privateText }, attributes: { prompt: privateText } }, 'safe');
-      expect(replaced.payload).toEqual({ prompt: '[REDACTED]' });
-      expect(replaced.attributes).toEqual({ prompt: '[REDACTED]' });
+      expect(replaced.payload).toEqual({ prompt: '[REDACTED_TEXT]' });
+      expect(replaced.attributes).toEqual({ prompt: '[REDACTED_TEXT]' });
       expect(JSON.stringify(replaced)).not.toContain(prompt);
       expect(JSON.stringify(replaced)).not.toContain('synthetic-telemetry-secret');
       expect(JSON.stringify(replaced)).not.toContain('4111 1111 1111 1111');

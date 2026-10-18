@@ -3,51 +3,12 @@ import { afterEach, expect, mock, test } from "bun:test";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
-import type { BrowserJudgmentRequest } from "@goodvibes-jev/engine/daemon-sdk";
 import { invalidateClientLifetime } from "../client-lifetime";
 import type { BeforeInstallPromptEvent, UseInstallPrompt } from "./install-prompt";
 
-type Request = BrowserJudgmentRequest<"webui.pwa.install-platform">;
-interface Pending {
-  request: Request;
-  signal: AbortSignal;
-  finish: (value: unknown) => void;
-}
-let pending: Pending[] = [];
-mock.module("../goodvibes", () => ({
-  runBrowserJudgment: (request: Request, signal: AbortSignal) =>
-    new Promise<unknown>((finish) => pending.push({ request, signal, finish })),
-}));
-const { useInstallPrompt } = await import("./install-prompt");
-function response(request: Request) {
-  return {
-    protocolVersion: 1,
-    batteryVersion: 1,
-    battery: request.battery,
-    requestId: request.requestId,
-    status: "settled",
-    value: { platform: "ios-share-menu" },
-    outcome: "act",
-    readings: {
-      platform: {
-        kind: "choice",
-        choice: "ios-share-menu",
-        confidence: 0.99,
-        probabilities: { "ios-share-menu": 0.99, other: 0.01 },
-        outcome: "act",
-      },
-    },
-    evidence: [
-      {
-        decisionId: "synthetic-platform",
-        model: "fixture",
-        requestedModel: "fixture",
-        latencyMs: 1,
-        usage: { inputTokens: 1, outputTokens: 1 },
-      },
-    ],
-  };
-}
+const transport = mock(() => { throw new Error('Platform facts must stay local'); });
+mock.module('../goodvibes', () => ({ runBrowserJudgment: transport }));
+const { useInstallPrompt } = await import('./install-prompt');
 async function settle() {
   await new Promise((resolve) => setTimeout(resolve, 0));
   flushSync(() => {});
@@ -100,72 +61,30 @@ function capturePrompt() {
 }
 afterEach(async () => {
   cleanups.splice(0).forEach((cleanup) => cleanup());
-  pending.forEach((p) => p.finish(response(p.request)));
+  for (const key of ['platform', 'maxTouchPoints'] as const) delete (navigator as unknown as Record<string, unknown>)[key];
+  transport.mockClear();
   await settle();
-  pending = [];
 });
-
-test("an actual platform reading reaches the iOS instructions affordance", async () => {
+test('desktop-mode iPad reaches iOS instructions without a host request', async () => {
+  Object.defineProperties(navigator, { platform: { value: 'MacIntel', configurable: true }, maxTouchPoints: { value: 5, configurable: true } });
   const ui = mount();
-  await waitFor(() => pending.length === 1);
-  expect(ui.el.textContent).toBe("none");
-  expect(pending[0]!.request.input).toEqual({
-    userAgent: navigator.userAgent,
-    platform: navigator.platform,
-    maxTouchPoints: navigator.maxTouchPoints ?? 0,
-  });
-  pending[0]!.finish(response(pending[0]!.request));
-  await waitFor(() => ui.el.textContent === "ios-instructions");
+  await waitFor(() => ui.el.textContent === 'ios-instructions');
+  expect(transport).not.toHaveBeenCalled();
+  flushSync(() => invalidateClientLifetime());
+  await settle(); expect(ui.el.textContent).toBe('ios-instructions');
 });
-test.each(["beforeinstallprompt", "appinstalled"] as const)(
-  "late platform result cannot override captured %s fact",
-  async (eventName) => {
-    const ui = mount();
-    await waitFor(() => pending.length === 1);
-    const reading = pending[0]!;
-    if (eventName === "beforeinstallprompt")
-      expect(capturePrompt().event.defaultPrevented).toBe(true);
-    else flushSync(() => window.dispatchEvent(new Event("appinstalled")));
-    expect(reading.signal.aborted).toBe(true);
-    reading.finish(response(reading.request));
-    await settle();
-    expect(ui.el.textContent).toBe(eventName === "beforeinstallprompt" ? "prompt" : "installed");
-  }
-);
-test("unmount aborts platform transport and removes native event listeners", async () => {
+test.each(['beforeinstallprompt', 'appinstalled'] as const)('native %s takes precedence over device instructions', async eventName => {
+  Object.defineProperties(navigator, { platform: { value: 'MacIntel', configurable: true }, maxTouchPoints: { value: 5, configurable: true } });
   const ui = mount();
-  await waitFor(() => pending.length === 1);
-  const reading = pending[0]!;
-  ui.unmount();
-  expect(reading.signal.aborted).toBe(true);
-  reading.finish(response(reading.request));
-  await settle();
-  const event = capturePrompt();
-  expect(event.event.defaultPrevented).toBe(false);
-  expect(event.prompt).not.toHaveBeenCalled();
-  expect(ui.el.textContent).toBe("");
+  if (eventName === 'beforeinstallprompt') expect(capturePrompt().event.defaultPrevented).toBe(true);
+  else flushSync(() => window.dispatchEvent(new Event('appinstalled')));
+  await settle(); expect(ui.el.textContent).toBe(eventName === 'beforeinstallprompt' ? 'prompt' : 'installed');
+  expect(transport).not.toHaveBeenCalled();
 });
-test.each([false, true])(
-  "%s settled reading is invalidated on identity replacement and late old answers stay ignored",
-  async (alreadySettled) => {
-    const ui = mount();
-    await waitFor(() => pending.length === 1);
-    const old = pending[0]!;
-    if (alreadySettled) {
-      old.finish(response(old.request));
-      await waitFor(() => ui.el.textContent === "ios-instructions");
-    }
-    flushSync(() => invalidateClientLifetime());
-    await waitFor(() => pending.length === 2);
-    if (!alreadySettled) expect(old.signal.aborted).toBe(true);
-    expect(ui.el.textContent).toBe("none");
-    old.finish(response(old.request));
-    await settle();
-    expect(ui.el.textContent).toBe("none");
-    pending[1]!.finish(response(pending[1]!.request));
-    await waitFor(() => ui.el.textContent === "ios-instructions");
-  }
-);
+test('unmount removes native event listeners', async () => {
+  const ui = mount(); ui.unmount();
+  expect(capturePrompt().event.defaultPrevented).toBe(false);
+});
 test("double prompt execution invokes the captured native prompt exactly once", async () => {
   const ui = mount();
   const event = capturePrompt();

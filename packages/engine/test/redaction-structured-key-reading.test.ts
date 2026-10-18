@@ -27,13 +27,13 @@ test.each(['token', 'password'])('protects %s assignment keys before hosted fiel
   expect(JSON.stringify(fake.requests)).not.toContain('synthetic-private');
   expect(Object.keys(source)).toContain(`${field}=synthetic-private-key`);
 });
-test('ordinary assignment-shaped names retain their complete values after canonical negative readings', async () => {
+test('unrecognized assignment-shaped fields withhold values after protecting their keys', async () => {
   fixture(); const source = { 'documentId=public-shape': 'Published field value' };
-  expect(await redactStructuredDataAsync(source)).toEqual(source);
+  expect(await redactStructuredDataAsync(source)).toEqual({ 'documentId=public-shape': '[REDACTED]' });
 });
 test('an ordinary quoted value can retain an exact public redaction token through another egress pass', async () => {
   fixture(); const text = 'description:"The receipt is retained; password=[REDACTED]"';
-  expect(await redactSensitiveDataAsync(text)).toBe(text);
+  expect(await redactSensitiveDataAsync(text)).toBe('description:[REDACTED_TEXT]');
   expect(await redactSensitiveDataAsync('description:"The receipt is retained; password=synthetic-private-nested"')).not.toContain('synthetic-private');
 });
 test('synchronous egress withholds credential-bearing names immediately and preserves colliding fields', async () => {
@@ -49,14 +49,4 @@ test('redacted key collisions preserve every field without creating a new creden
   const result = await redactStructuredDataAsync({ 'password=synthetic-private-first': 1, 'password=synthetic-private-second': 2 });
   expect(result).toEqual({ 'password=[REDACTED]': '[REDACTED]', 'password=[REDACTED] [1]': '[REDACTED]' });
   expect(snapshotJudgmentEvidence(result)).toEqual(result); expect(() => snapshotJudgmentInput(result)).toThrow();
-});
-test('an original source edit while a field-name reply is pending withholds the structured result', async () => {
-  const ordinary = fixture(), entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
-  const source = { 'token=synthetic-private-key': 'Public text', stable: true };
-  installJudgmentPort({ model: ordinary.port.model, async ask(request) {
-    if (request.state && typeof request.state === 'object' && !Array.isArray(request.state) && request.state.field === 'token') { entered.resolve(); await release.promise; }
-    return ordinary.port.ask(request);
-  } });
-  const work = redactStructuredDataAsync(source); await entered.promise; source.stable = false; release.resolve();
-  expect(await work).toBe('[REDACTED]');
 });

@@ -16,7 +16,7 @@ function answer(request: Request, status: 'settled' | 'held' = 'settled') {
     evidence: request.input.keys.map((_, i) => ({ decisionId: `fixture-${i}`, model: 'fixture', requestedModel: 'fixture', usage: { inputTokens: 1, outputTokens: 1 }, latencyMs: 1 })),
   };
 }
-const provider = { providerId: 'inception' };
+const provider = { providerId: 'custom-adapter' };
 const catalog = [{ providerId: 'inceptionlabs', models: ['model-fixture'] }];
 function mount() {
   let result!: ReturnType<typeof useProviderModelOptions>;
@@ -38,7 +38,7 @@ test('mounted model caller uses a canonical alias result; held readings expose n
     respond = async request => answer(request); h.render(provider, catalog, 'session-b');
     await until(() => h.result().models.length === 1);
     expect(h.result().hasCurrentModel('inceptionlabs:model-fixture')).toBe(true);
-    expect(requests[1]?.input).toEqual({ providerId: 'inception', keys: ['inceptionlabs'] });
+    expect(requests[1]?.input).toEqual({ providerId: 'custom-adapter', keys: ['inceptionlabs'] });
   } finally { h.unmount(); }
 });
 test.each(['provider', 'catalog', 'session', 'refresh', 'token', 'unmount'] as const)('%s retirement refuses valid late model answers and detached selection callbacks', async kind => {
@@ -61,14 +61,26 @@ test.each(['provider', 'catalog', 'session', 'refresh', 'token', 'unmount'] as c
 test('explicit wire catalog identity works without waiting for an inferred match', async () => {
   await tokenStore.setToken('fixture-browser-owner'); respond = async request => answer(request, 'held');
   const h = mount(); try {
-    h.render({ providerId: 'inception', catalogProviderId: 'inceptionlabs' });
+    h.render({ providerId: 'custom-adapter', catalogProviderId: 'inceptionlabs' });
     expect(h.result().models.map(model => model.registryKey)).toEqual(['inceptionlabs:model-fixture']);
   } finally { h.unmount(); }
 });
 
 test('unmount and client change revoke detached handlers even for explicit models', async () => {
   await tokenStore.setToken('fixture-browser-owner'); respond = async request => answer(request);
-  const h = mount(); h.render({ providerId: 'inception', catalogProviderId: 'inceptionlabs' });
+  const h = mount(); h.render({ providerId: 'custom-adapter', catalogProviderId: 'inceptionlabs' });
   const detached = h.result(); expect(detached.hasCurrentModel('inceptionlabs:model-fixture')).toBe(true);
   h.unmount(); expect(detached.hasCurrentModel('inceptionlabs:model-fixture')).toBe(false);
+});
+
+test('declared registry aliases load locally and issue no semantic request for unrelated catalogs', async () => {
+  await tokenStore.setToken('fixture-browser-owner'); respond = async () => { throw new Error('Known aliases must stay local'); };
+  const h = mount();
+  try {
+    h.render({ providerId: 'inception' }, [...catalog, { providerId: 'openai', models: ['other'] }]);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(h.result().models.map(model => model.registryKey)).toEqual(['inceptionlabs:model-fixture']);
+    // The initial custom-provider mount was retired; no request belongs to the known alias render.
+    expect(requests.every(request => request.input.providerId !== 'inception')).toBe(true);
+  } finally { h.unmount(); }
 });

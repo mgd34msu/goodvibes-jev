@@ -175,9 +175,8 @@ describe('foundation surface stability gate', () => {
     expect(providerIds.length).toBeGreaterThan(0);
     expect(providerIds).toContain(currentModel.providerId);
     expect(selectableModels.map((model) => model.selectable)).not.toContain(false);
-    // Metadata enrichment is intentionally nonblocking; join its exact catalog reads before teardown.
-    await Providers.modelFamilyReadings.read(runtimeServices.providerRegistry.listModels());
-    expect(familyReadings).toContainEqual({ id: 'mock-model', displayName: 'mock-model', provider: 'mock' });
+    // Family display metadata no longer requires a judgment.
+    expect(familyReadings).toEqual([]);
     expect(favorites.pinned).toEqual([]);
     expect(favorites.recent).toEqual([]);
     expect(runtimeMetadata.scope).toBe('all');

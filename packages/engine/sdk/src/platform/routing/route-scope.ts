@@ -34,6 +34,7 @@ export async function withinSelectedFamily(models: readonly ModelDefinition[], s
     }
   }
   const candidates = [...byModel.values()];
+  if (candidates.every(candidate => candidate.id === selected.id)) return candidates;
   const port = judgmentPort('routing.same-model-family');
   const version = port.model;
   const cache = remembered.get(port) ?? new Map<string, boolean>();
@@ -51,9 +52,9 @@ export async function withinSelectedFamily(models: readonly ModelDefinition[], s
     if (judgmentPort('routing.same-model-family') !== port || port.model !== version) throw new Error('Model family judgment configuration changed.');
     // An uncertain alternative does not broaden the user's family boundary.
     // The selected model itself always remains available in the candidate set.
-    const accepted = run.readings.same_family.verdict === 'yes';
+    const accepted = run.readings.same_family.verdict === 'yes' && run.readings.same_family.outcome === 'act';
     run.recordAction(accepted ? `include:${candidate.registryKey}` : `exclude:${candidate.registryKey}`);
-    cache.set(key, accepted);
+    if (run.readings.same_family.outcome === 'act') cache.set(key, accepted);
     return accepted;
   });
   return candidates.filter((_, index) => allowed[index]);

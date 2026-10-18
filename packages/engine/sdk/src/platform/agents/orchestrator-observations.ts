@@ -6,6 +6,7 @@ import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { assertJudgmentInput, captureOwnedJson } from '../gate/judgment-input.js';
 import type { AgentRecord } from '../tools/agent/index.js';
 import type { AgentOrchestratorRunContext } from './orchestrator-run-context.js';
+import { declaredTestRunner } from '../utils/project-test-runner.js';
 import { TEST_FRAMEWORK_OPTIONS } from '../tools/batteries/project-tooling.js';
 import { projectTestFramework, repeatStuck } from './batteries/orchestrator-observations.js';
 
@@ -87,6 +88,8 @@ export async function prepareProjectFramework(context: AgentOrchestratorRunConte
       const current = manifest(path);
       if (current.identity !== source.identity || current.text !== source.text) throw new OrchestratorObservationHeldError();
     };
+    const declared = declaredTestRunner(state);
+    if (declared !== undefined) { assertSourceCurrent(); return Object.freeze({ framework: declared, assertCurrent: owner }); }
     const authority = captureJudgmentPort('agents.project-test-framework', { signal: context.getCancellationSignal?.(record.id), assertCurrent: assertSourceCurrent });
     const run = await projectTestFramework.run(checkedPort(authority), state as never, { site: 'agents.project-test-framework', signal: authority.signal, beforeAttempt: authority.assertCurrent });
     authority.assertCurrent();

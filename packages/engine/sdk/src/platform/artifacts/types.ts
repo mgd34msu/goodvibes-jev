@@ -1,8 +1,3 @@
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { artifactKind } from './batteries/artifact-kind.js';
-import { requireActingReading } from '../types/judgment-held.js';
-import { assertJudgmentInput } from '../gate/judgment-input.js';
-
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 export type ArtifactKind = 'file' | 'image' | 'audio' | 'video' | 'document' | 'archive' | 'data';
@@ -128,28 +123,40 @@ export function guessMimeType(filename?: string): string {
   return EXTENSION_MIME_TYPES[ext] ?? 'application/octet-stream';
 }
 
-/** The decision site the artifact kind reading is logged under. */
+/** Artifact kind operation identifier. */
 export const ARTIFACT_KIND_SITE = 'artifacts.kind';
 
-/**
- * The kind of an artifact. Image, audio and video are the media type's own
- * top-level registration, from the given type or the file name's registered
- * type: code. Anything else is the `engine.artifacts.kind` reading over the
- * media type and file name; an unsettled reading holds artifact creation.
- */
+const DOCUMENT_MIME_TYPES = new Set([
+  'application/pdf', 'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.oasis.opendocument.text', 'application/vnd.oasis.opendocument.presentation',
+  'application/rtf', 'text/rtf',
+]);
+const DATA_MIME_TYPES = new Set([
+  'application/json', 'application/ld+json', 'application/xml', 'text/xml',
+  'application/yaml', 'application/x-yaml', 'text/yaml', 'text/csv', 'text/tab-separated-values',
+  'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.oasis.opendocument.spreadsheet', 'application/vnd.apache.parquet',
+  'application/vnd.sqlite3', 'application/x-sqlite3',
+]);
+const ARCHIVE_MIME_TYPES = new Set([
+  'application/zip', 'application/gzip', 'application/x-gzip', 'application/x-tar',
+  'application/x-7z-compressed', 'application/vnd.rar', 'application/x-rar-compressed',
+  'application/x-bzip2', 'application/x-xz',
+]);
+
+/** Resolve registered media types locally. Unknown types remain ordinary files. */
 export async function inferArtifactKind(mimeType: string, filename?: string): Promise<ArtifactKind> {
-  const lower = mimeType.toLowerCase();
-  for (const type of [lower, guessMimeType(filename)]) {
-    if (type.startsWith('image/')) return 'image';
-    if (type.startsWith('audio/')) return 'audio';
-    if (type.startsWith('video/')) return 'video';
-  }
-  const state = { mimeType: lower, filename: filename ?? '' };
-  assertJudgmentInput(state);
-  const run = await artifactKind.run(judgmentPort(ARTIFACT_KIND_SITE), state, { site: ARTIFACT_KIND_SITE });
-  const kind = requireActingReading(run.readings.kind).choice;
-  run.recordAction(`recorded ${kind}`);
-  return kind;
+  const declared = mimeType.split(';', 1)[0]!.trim().toLowerCase();
+  const type = !declared || declared === 'application/octet-stream' ? guessMimeType(filename) : declared;
+  if (type.startsWith('image/')) return 'image';
+  if (type.startsWith('audio/')) return 'audio';
+  if (type.startsWith('video/')) return 'video';
+  if (ARCHIVE_MIME_TYPES.has(type)) return 'archive';
+  if (DATA_MIME_TYPES.has(type) || type.endsWith('+json') || type.endsWith('+xml')) return 'data';
+  if (DOCUMENT_MIME_TYPES.has(type) || type.startsWith('text/')) return 'document';
+  return 'file';
 }
 
 export function sanitizeArtifactFilename(filename: string | undefined, fallback = 'artifact'): string {

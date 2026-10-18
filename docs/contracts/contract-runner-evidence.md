@@ -95,14 +95,14 @@ one. Startup model-listing failures contribute unavailable provider health besid
 the runtime store, including keyless local providers whose endpoints may be down.
 Configured credential identity covers both registered and catalog aliases.
 
-After eligibility filtering and before sorting benchmark facts, prepare unknown
-model identities through `routing.model-identity` with bounded concurrency and
-memoization. Exact IDs need no reading; unresolved identities remain unscored.
-Errors stop routing without a guessed match. Runtime composition and routing
-proof use the same preparation owner. Validate cold first selection, warm reuse,
-eligibility, failure, retry, cancellation and two routes sharing one identity.
-Local regression fixtures do not establish live routing quality; the live
-contract proof names its allowed provider keys explicitly.
+After eligibility filtering and before sorting benchmark facts, match exact
+model IDs, names and unambiguous canonical identities published in the model
+repository. These lookups are local and issue no Jev requests. Unknown or
+ambiguous identities remain unscored. Capture a separate stable benchmark
+snapshot for each route; retry a batch when the leaderboard changes during
+preparation. Validate first selection, refresh, cancellation and concurrent
+routes. Local regression fixtures do not establish live routing quality; the
+live contract proof names its allowed provider keys explicitly.
 
 Session turns, including resume, wait for settled catalog readiness and reject
 with the actual `TURN_ERROR` so CLI users retain the reason. A routed agent with

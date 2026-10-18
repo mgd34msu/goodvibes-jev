@@ -216,7 +216,7 @@ export class HomeAssistantConversationRoutes {
       return { ...base, status: 'running' };
     }
     if (posted.error) {
-      const timedOut = posted.error.toLowerCase().includes('timed out');
+      const timedOut = posted.timedOut === true;
       return {
         ...base,
         ok: false,

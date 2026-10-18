@@ -232,7 +232,7 @@ test('partial classification publishes confirmed models and retries pending mode
       fetchLive: async () => ({ models: ['confirmed-model'], unclassifiedModels: ['pending-model'] }) });
     expect(result.models).toEqual(['confirmed-model']);
     expect(result.removed).toEqual(['retired-model']);
-    expect(formatModelDiscoveryReport('test-provider', result)).toContain('1 awaiting Jev classification');
+    expect(formatModelDiscoveryReport('test-provider', result)).toContain('1 awaiting capability metadata');
     let calls = 0;
     const retried = await runLiveModelRefresh({ providerName: 'test-provider', cachePath,
       datedStaticModels: [], datedStaticAsOf: '2026-07-12', isConfigured: true,

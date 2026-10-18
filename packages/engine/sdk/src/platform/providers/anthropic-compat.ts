@@ -259,10 +259,10 @@ export class AnthropicCompatProvider implements LLMProvider {
         body['tools'] = toAnthropicTools(tools);
       }
 
-      await prepareReasoningEffort(reasoningEffort, { modelId: resolvedModel, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.anthropic-compat.reasoning-family');
+      await prepareReasoningEffort(reasoningEffort, { provider: this.name, modelId: resolvedModel, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.anthropic-compat.reasoning-family');
       const resolvedEffort = applyAnthropicReasoning(
         body,
-        { model: resolvedModel, reasoningEffort, ...(params.reasoningEffortSpec ? { reasoningEffortSpec: params.reasoningEffortSpec } : {}) },
+        { provider: this.name, model: resolvedModel, reasoningEffort, ...(params.reasoningEffortSpec ? { reasoningEffortSpec: params.reasoningEffortSpec } : {}) },
         Infinity,
       );
 

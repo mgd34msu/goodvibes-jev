@@ -1,8 +1,5 @@
 import type { BrowserJudgmentRequest } from '@goodvibes-jev/engine/daemon-sdk';
 import { captureChoiceAnswer } from '@goodvibes-jev/judgment/decisions';
-import { runBrowserJudgment } from '../goodvibes';
-import { getClientLifetime, isClientLifetimeCurrent, subscribeClientLifetime } from '../client-lifetime';
-import { randomUuid } from '../uuid';
 
 type Request = BrowserJudgmentRequest<'webui.pwa.install-platform'>;
 export type InstallPlatform = 'ios-share-menu' | 'other';
@@ -45,19 +42,13 @@ export function readPlatformResponse(request: Request, raw: unknown): { readonly
   return { status: 'ready', platform: reading.choice as InstallPlatform };
 }
 
+/** Installation instructions follow explicit browser platform tokens, including desktop-mode iPad. */
 export async function readInstallPlatform(input: Request['input'], signal: AbortSignal): Promise<PlatformResult> {
-  if (!input.userAgent || input.userAgent.length > 2048 || input.platform.length > 128 || signal.aborted) return { status: 'held' };
-  const lifetime = getClientLifetime(); const abort = new AbortController();
-  const cancel = () => abort.abort(); const unsubscribe = subscribeClientLifetime(cancel);
-  signal.addEventListener('abort', cancel, { once: true });
-  const isCurrent = () => !signal.aborted && !abort.signal.aborted && isClientLifetimeCurrent(lifetime);
-  try {
-    if (!isCurrent()) return { status: 'unavailable' };
-    const request: Request = { protocolVersion: 1, requestId: randomUuid(), battery: 'webui.pwa.install-platform', batteryVersion: 1, input };
-    const raw = await runBrowserJudgment(request, abort.signal);
-    if (!isCurrent()) return { status: 'unavailable' };
-    const result = readPlatformResponse(request, raw);
-    return result?.status === 'ready' ? { ...result, isCurrent } : result ?? { status: 'unavailable' };
-  } catch { return { status: 'unavailable' }; }
-  finally { unsubscribe(); signal.removeEventListener('abort', cancel); }
+  const { userAgent, platform, maxTouchPoints } = input;
+  if (typeof userAgent !== 'string' || typeof platform !== 'string' || userAgent.length > 2048 || platform.length > 128
+    || !Number.isSafeInteger(maxTouchPoints) || maxTouchPoints < 0 || signal.aborted) return { status: 'held' };
+  const appleMobile = /\b(?:iPad|iPhone|iPod)\b/.test(userAgent) || /^(?:iPad|iPhone|iPod)$/.test(platform)
+    || (platform === 'MacIntel' && maxTouchPoints > 1);
+  const isCurrent = () => !signal.aborted && input.userAgent === userAgent && input.platform === platform && input.maxTouchPoints === maxTouchPoints;
+  return { status: 'ready', platform: appleMobile ? 'ios-share-menu' : 'other', isCurrent };
 }

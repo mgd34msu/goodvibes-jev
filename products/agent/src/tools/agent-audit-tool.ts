@@ -2,7 +2,11 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
 import { createAgentHarnessTool } from './agent-harness-tool.ts';
-import { forwardHarnessCatalogCall } from './agent-harness-catalog-ingress.ts';
+import { forwardHarnessCatalogCall, harnessCatalogExecutionGuard, retainHarnessCatalogCurrent } from './agent-harness-catalog-ingress.ts';
+
+import { selectHarnessCatalog } from './agent-harness-catalog-selection.ts';
+import { captureCatalogSnapshot } from './agent-harness-catalog-ranking.ts';
+import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
 
 type AgentAuditAction = 'readiness' | 'item' | 'evidence' | 'artifact';
 
@@ -43,18 +47,20 @@ function normalizeAuditAction(value: unknown): AgentAuditAction | null {
   return null;
 }
 
-function evidenceLikeText(args: AgentAuditToolArgs): boolean {
-  const text = `${readString(args.query)}\n${readString(args.target)}`.toLowerCase();
-  return /\b(evidence|artifact|ledger|verification|live[-\s]?verification|release notes|performance snapshot)\b/.test(text);
-}
+const AUDIT_ACTIONS: readonly { readonly id: AgentAuditAction; readonly description: string }[] = [
+  { id: 'readiness', description: 'List release readiness status, gates, blockers and inventory; a mention of evidence alone does not request the evidence ledger.' },
+  { id: 'item', description: 'Inspect one specific release readiness item or gate in detail.' },
+  { id: 'evidence', description: 'List or search packaged release evidence, verification results, release notes and performance snapshots.' },
+  { id: 'artifact', description: 'Inspect the contents of one specific release evidence artifact.' },
+];
 
-function readAction(args: AgentAuditToolArgs): AgentAuditAction | null {
+function readExplicitAction(args: AgentAuditToolArgs): AgentAuditAction | null {
   const explicit = normalizeAuditAction(args.action) ?? normalizeAuditAction(args.mode);
   if (explicit) return explicit;
+  if (readString(args.action) || readString(args.mode)) return null;
   if (readString(args.artifactId)) return 'artifact';
   if (readString(args.itemId)) return 'item';
-  if (evidenceLikeText(args)) return 'evidence';
-  return 'readiness';
+  return null;
 }
 
 function compactArgs(entries: Record<string, unknown>): Record<string, unknown> {
@@ -135,9 +141,29 @@ export function createAgentAuditTool(deps: AgentAuditToolDeps): Tool {
       concurrency: 'parallel',
     },
     execute: async (rawArgs, options) => {
-      const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentAuditToolArgs;
-      const forward = (translated: Record<string, unknown>) => forwardHarnessCatalogCall(harnessTool, rawArgs, translated, options);
-      const action = readAction(args);
+      const source = captureCatalogSnapshot(rawArgs);
+      const args: AgentAuditToolArgs = source.captured;
+      const executionCurrent = harnessCatalogExecutionGuard(rawArgs, options);
+      const sourceOwner = agentResearchSourceOwner(deps.toolRegistry);
+      const current = () => {
+        executionCurrent(); source.assertCurrent(rawArgs);
+        if (agentResearchSourceOwner(deps.toolRegistry) !== sourceOwner) throw new Error('Audit source owner changed.');
+      };
+      const forward = (translated: Record<string, unknown>) => forwardHarnessCatalogCall(harnessTool, rawArgs, translated, options, current);
+      let action = readExplicitAction(args);
+      if (!action && !readString(args.action) && !readString(args.mode)) {
+        const query = readString(args.query) || readString(args.target);
+        if (!query) action = 'readiness';
+        else {
+          try {
+            const selected = await selectHarnessCatalog(AUDIT_ACTIONS, query, entry => entry,
+              { signal: options?.signal, sourceOwner, assertCurrent: current, retainCurrent: retainHarnessCatalogCurrent(rawArgs), requirePreservedSource: true },
+              'agent.audit.intent', args);
+            current();
+            action = selected?.id ?? null;
+          } catch { return error('Audit intent could not be established. Specify action:"readiness", "item", "evidence", or "artifact".'); }
+        }
+      }
       if (!action) return error('Unknown audit action. Use action:"readiness", "item", "evidence", or "artifact".');
       if (action === 'readiness') return forward(readinessArgs(args));
       if (action === 'item') return forward(itemArgs(args));

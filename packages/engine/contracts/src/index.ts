@@ -183,3 +183,5 @@ export function isPeerEndpointId(value: string): value is (typeof PEER_ENDPOINT_
 export * from './zod-schemas/index.js';
 
 export { WEBUI_CODE_LANGUAGES, type WebuiCodeLanguage } from './browser-code-languages.js';
+
+export { CATALOG_PROVIDER_NAME_ALIASES, declaredProviderCatalogId } from './provider-catalog.js';

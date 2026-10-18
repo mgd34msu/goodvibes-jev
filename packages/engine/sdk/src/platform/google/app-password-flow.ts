@@ -22,11 +22,11 @@
  */
 
 import { APP_PASSWORD_LABEL, APP_PASSWORD_URL, TWO_STEP_URL } from './setup-plan.js';
-import { describeElements, findElement, looksLikeGoogleSignIn, requireElement } from './browser-elements.js';
+import { describeElements, findElement, looksLikeGoogleSignIn, readGoogleAppPasswordState, requireElement } from './browser-elements.js';
 import { consumeGoogleElement } from './browser-elements.js';
 import { ownGoogleBrowser } from './browser-readings.js';
 import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
-import type { GoogleBrowserElement, GoogleBrowserPort } from './types.js';
+import type { GoogleBrowserPort } from './types.js';
 
 export type AppPasswordReason =
   | 'sign-in-required'
@@ -77,10 +77,6 @@ function signInNeeded(url: string): AppPasswordNeedsHuman {
   };
 }
 
-/** Best-effort match for Google's explanation that 2-Step Verification is disabled. */
-const TWO_STEP_REQUIRED_TEXT =
-  /2-step verification[^.]*(is off|required|isn.t (on|enabled))|turn on 2-step verification to (create|use) app passwords|app passwords aren.t available/i;
-
 function twoStepNeeded(): AppPasswordNeedsHuman {
   return {
     kind: 'needs-human',
@@ -88,15 +84,6 @@ function twoStepNeeded(): AppPasswordNeedsHuman {
     problem: 'This Google account does not have 2-Step Verification on, so Google does not offer app passwords at all.',
     fix: `Open ${TWO_STEP_URL}, turn on 2-Step Verification, then re-run this step.`,
   };
-}
-
-function findExistingLabelEntry(elements: readonly GoogleBrowserElement[], label: string): GoogleBrowserElement | null {
-  const wanted = label.trim().toLowerCase();
-  if (!wanted) return null;
-  return elements.find((element) => {
-    const name = element.name.trim().toLowerCase();
-    return (name.includes('delete') || name.includes('remove')) && name.includes(wanted);
-  }) ?? null;
 }
 
 function alreadyExists(label: string, pageUrl: string): AppPasswordNeedsHuman {
@@ -147,20 +134,14 @@ export async function createAppPassword(
     return signInNeeded(url);
   }
 
-  const pageText = await browser.readText();
-  if (TWO_STEP_REQUIRED_TEXT.test(pageText)) {
-    return twoStepNeeded();
-  }
-
-  const existingEntry = findExistingLabelEntry(elements, label);
-  if (existingEntry) {
-    return alreadyExists(label, pageUrl);
-  }
+  const page = await readGoogleAppPasswordState(browser, label);
+  if (page.twoStepRequired) return twoStepNeeded();
+  if (page.labelExists) return alreadyExists(label, pageUrl);
 
   const nameFieldLookup = await requireElement(elements, { role: 'textbox', purpose: 'Name the new Google app password', nameIncludes: 'app name' }, { browser });
   if (!nameFieldLookup.found) {
     const createLookup = await requireElement(elements, { role: 'button', purpose: 'Create the app password using the completed app-name form' }, { browser });
-    if (!createLookup.found) return twoStepNeeded();
+    if (!createLookup.found) return { kind: 'needs-human', reason: 'create-form-not-found', problem: 'The app-password creation form is unavailable; the page does not establish why.', fix: `Open ${pageUrl} and review the account’s app-password availability.` };
     return {
       kind: 'failed', reason: 'create-form-not-found', problem: nameFieldLookup.message,
       fix: `Open ${pageUrl} by hand, type "${label}" into the "App name" field, and click "Create".`,

@@ -98,11 +98,9 @@ export function routeBenchmarkFor(benchmarks: Pick<BenchmarkStore, 'getKnownBenc
 type RouteBenchmarks = Pick<BenchmarkStore, 'getKnownBenchmarks' | 'readBenchmarks'> & Partial<Pick<BenchmarkStore, 'onRefreshed'>>;
 
 /**
- * Resolve each eligible model's leaderboard identity before the first tier
- * shortlist is sorted. Exact names and remembered readings need no Jev call;
- * new aliases are read with bounded concurrency. A refresh retries the whole
- * batch, including aliases already read. Uncertain identity matches remain unscored; transport failures and repeated
- * refreshes are reported. Unknown benchmark metadata never vetoes routing.
+ * Capture eligible models' leaderboard facts before the tier shortlist is
+ * sorted. Published repository identities resolve locally; unknown models stay
+ * unscored. A leaderboard refresh retries the batch to keep one stable snapshot.
  */
 async function readRouteBenchmarkSnapshot(
   benchmarks: RouteBenchmarks,

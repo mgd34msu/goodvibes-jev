@@ -23,6 +23,11 @@ const labels: Readonly<Record<string, readonly string[]>> = {
 };
 export function googleSetupFixturePort() {
   return fakePort((name, question, state) => {
+    if (name === 'twoStepRequired' || name === 'labelExists') {
+      const page = state as unknown as { text: string; label: string; elements: { name: string }[] };
+      if (name === 'twoStepRequired') return noulAnswer(page.text === '2-Step Verification is off. Turn on 2-Step Verification to create app passwords.' || page.text === '2-Step Verification is off.' ? 0.99 : 0.01);
+      return noulAnswer(page.elements.some(element => element.name === `Delete ${page.label}` || element.name === `Remove ${page.label}` || element.name === `Delete ${page.label} app password`) ? 0.99 : 0.01);
+    }
     if (name === 'projectMissing' || name === 'status') {
       const text = (state as { text: string }).text;
       const pages: Record<string, readonly [boolean, string]> = {

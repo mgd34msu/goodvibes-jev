@@ -16,7 +16,7 @@ describe('context-window source labels', () => {
     [{ contextWindowProvenance: 'catalog', contextWindowOrigin: { kind: 'catalog', catalogProviderId: 'openai' } }, 'catalog: openai'],
     [{ contextWindowProvenance: 'catalog', contextWindowOrigin: { kind: 'consensus', providers: 3, agreeing: 2 } }, 'estimate from 3 providers (2 agree)'],
     [{ contextWindowProvenance: 'catalog', contextWindowOrigin: { kind: 'consensus', providers: 1, agreeing: 1 } }, 'estimate from 1 provider'],
-    [{ contextWindowProvenance: 'fallback', contextWindowOrigin: { kind: 'family_default' } }, 'family default (estimate)'],
+    [{ contextWindowProvenance: 'fallback', contextWindowOrigin: { kind: 'family_default' } }, 'default budget (estimate)'],
     [{ contextWindowProvenance: 'fallback' }, 'default (nothing states it)'],
   ] satisfies [Pick<ModelDefinition, 'contextWindowProvenance' | 'contextWindowOrigin'>, string][])('%j has an honest source label', (fields, expected) => {
     expect(describeContextWindowSource(definition(fields))).toBe(expected);

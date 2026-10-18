@@ -92,7 +92,7 @@ function buildGeminiThinkingConfig(
   params: Pick<ChatRequest, 'reasoningEffort' | 'reasoningEffortSpec'>,
 ): { config: Record<string, unknown> | undefined; level: string | undefined } {
   const { value, spec } = resolveEffortForRequest(params.reasoningEffort, {
-    modelId: model,
+    provider: 'google', modelId: model,
     ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}),
   });
   // A `fallback`-sourced spec means nothing recognises this model, so there is
@@ -329,7 +329,7 @@ export class GeminiProvider implements LLMProvider {
       // take a numeric `thinking_budget`. Google's thinking docs are explicit
       // that a request specifying both is rejected, so the resolved spec picks
       // exactly one and the other is never sent.
-      await prepareReasoningEffort(params.reasoningEffort, { modelId: model, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.gemini.reasoning-family');
+      await prepareReasoningEffort(params.reasoningEffort, { provider: this.name, modelId: model, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.gemini.reasoning-family');
       const thinking = buildGeminiThinkingConfig(model, params);
       if (thinking.config) {
         body['generationConfig'] = {

@@ -19,6 +19,7 @@
  * Verified against provider documentation on 2026-07-25.
  */
 
+import { catalogModelsForReference } from './model-catalog-facts.js';
 import { knownReasoningFamily, readReasoningFamily } from '../routing/provider-readings.js';
 import type { ReasoningFamily } from '../routing/batteries/provider.js';
 import {
@@ -27,6 +28,7 @@ import {
   budgetLevels,
   FALLBACK_REASONING_EFFORT_SPEC,
   reasoningEffortSourceRank,
+  parseReasoningOptions,
   resolveEffortForModel,
 } from './reasoning-effort.js';
 
@@ -176,7 +178,7 @@ export async function readFamilyReasoningEffortSpec(modelId: string, site: strin
  */
 export async function prepareReasoningEffort(requested: string | undefined, input: ReasoningEffortSpecRequest, site: string): Promise<void> {
   if (requested === undefined || requested === '') return;
-  const declared = input.spec;
+  const declared = input.spec?.source === 'catalog' ? input.spec : catalogReasoningSpec(input) ?? input.spec;
   if (declared && reasoningEffortSourceRank(declared.source) >= reasoningEffortSourceRank('family')) return;
   await readFamilyReasoningEffortSpec(input.modelId, site);
 }
@@ -184,8 +186,22 @@ export async function prepareReasoningEffort(requested: string | undefined, inpu
 /** What is known about one model when deciding which spec governs it. */
 export interface ReasoningEffortSpecRequest {
   readonly modelId: string;
+  /** Exact serving provider, when the adapter knows it. */
+  readonly provider?: string | undefined;
   /** A spec already attached to the model definition, when the caller has one. */
   readonly spec?: ReasoningEffortSpec | undefined;
+}
+
+/** Only consistent published controls establish an adapter's catalog spec. */
+function catalogReasoningSpec(input: ReasoningEffortSpecRequest): ReasoningEffortSpec | undefined {
+  const models = catalogModelsForReference(input.modelId, input.provider);
+  if (models.length === 0) return undefined;
+  const specs = models.map(model => parseReasoningOptions(model.reasoningOptions)
+    ?? (model.reasoning === false ? { kind: 'unavailable' as const, values: [] as const, source: 'catalog' as const,
+      note: 'The repository marks this model as non-reasoning.' } : undefined));
+  if (specs.some(spec => spec === undefined)) return undefined;
+  const first = specs[0];
+  return specs.every(spec => JSON.stringify(spec) === JSON.stringify(first)) ? first : undefined;
 }
 
 /**
@@ -200,7 +216,7 @@ export interface ReasoningEffortSpecRequest {
  * weights; a prefix does not.
  */
 export function resolveReasoningEffortSpec(input: ReasoningEffortSpecRequest): ReasoningEffortSpec {
-  const declared = input.spec;
+  const declared = input.spec?.source === 'catalog' ? input.spec : catalogReasoningSpec(input) ?? input.spec;
   if (declared && reasoningEffortSourceRank(declared.source) >= reasoningEffortSourceRank('family')) {
     return declared;
   }

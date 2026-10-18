@@ -4,8 +4,7 @@ import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { TTL_24H_MS, isTtlCacheStale, validateTtlCacheEnvelope } from './json-ttl-cache.js';
 import { instrumentedFetch, fetchWithTimeout } from '../utils/fetch-with-timeout.js';
-import { ModelIdentityResolver } from '../routing/model-identity.js';
-import { BENCHMARK_PREPARATION_ATTEMPTS } from '../routing/policy.js';
+import { knownCatalogModelIdentity } from './model-catalog-facts.js';
 
 export interface ModelBenchmarks {
   gpqa?: number | undefined;
@@ -165,26 +164,10 @@ export interface BenchmarkStoreOptions {
   readonly dir: string;
 }
 
-/** Cancel one wait without aborting the memoized identity other routes share. */
-function waitForIdentity(reading: Promise<string | null>, signal?: AbortSignal): Promise<string | null> {
-  if (signal === undefined) return reading;
-  return new Promise((resolve, reject) => {
-    const aborted = (): void => { reject(signal.reason); };
-    if (signal.aborted) aborted();
-    else signal.addEventListener('abort', aborted, { once: true });
-    void reading.then(
-      (value) => { signal.removeEventListener('abort', aborted); resolve(value); },
-      (error: unknown) => { signal.removeEventListener('abort', aborted); reject(error); },
-    );
-  });
-}
-
 export class BenchmarkStore {
   private readonly dir: string;
   private cache: BenchmarksCache | null = null;
   private nameIndex: Map<string, BenchmarkEntry> | null = null;
-  private identityResolver: ModelIdentityResolver | null = null;
-  private identityEntries: readonly BenchmarkEntry[] | null = null;
   private readonly refreshCallbacks = new Set<() => void>();
   /** The refresh initBenchmarks started, when the cache was missing or stale; settled at once otherwise. */
   private startupRefresh: Promise<void> = Promise.resolve();
@@ -248,62 +231,37 @@ export class BenchmarkStore {
 
   /**
    * The leaderboard entry for a model: an exact name or id, the same ignoring
-   * case, else the entry Jev read as the same model (routing.model-identity).
-   * An identity not read yet is requested, and the model has no entry until
-   * the reading lands.
+   * case, then an explicitly published identity. An unmatched model has no benchmark entry.
    */
   getBenchmarks(modelName: string): BenchmarkEntry | undefined {
-    return this.findBenchmarks(modelName, true);
+    return this.findBenchmarks(modelName);
   }
 
-  /** {@link getBenchmarks} without requesting a reading: for sweeps over many models. */
+  /** {@link getBenchmarks} as a synchronous lookup for sweeps over many models. */
   getKnownBenchmarks(modelName: string): BenchmarkEntry | undefined {
-    return this.findBenchmarks(modelName, false);
+    return this.findBenchmarks(modelName);
   }
 
-  /** {@link getBenchmarks}, waiting for the identity reading instead of answering without it. */
-  async readBenchmarks(modelName: string, site = 'providers.model-benchmarks.identity', signal?: AbortSignal): Promise<BenchmarkEntry | undefined> {
-    for (let attempt = 0; attempt < BENCHMARK_PREPARATION_ATTEMPTS; attempt++) {
-      signal?.throwIfAborted();
-      const known = this.findBenchmarks(modelName, false);
-      if (known) return known;
-      const entries = this.cache?.entries ?? [];
-      if (entries.length === 0) return undefined;
-      const same = await waitForIdentity(this.identity().resolve({ id: modelName }, site), signal);
-      signal?.throwIfAborted();
-      // Refresh replaces both the entries and their identity resolver. Never
-      // return a reading from the retired generation, even a remembered miss.
-      if (entries !== this.cache?.entries) continue;
-      return same === null ? undefined : entries.find((entry) => entry.modelId === same);
-    }
-    throw new Error('Benchmark leaderboard kept changing during identity preparation');
+  /** {@link getBenchmarks}, preserving the cancellation-aware async interface. */
+  async readBenchmarks(modelName: string, _site = 'providers.model-benchmarks.identity', signal?: AbortSignal): Promise<BenchmarkEntry | undefined> {
+    signal?.throwIfAborted();
+    return this.findBenchmarks(modelName);
   }
 
-  private findBenchmarks(modelName: string, request: boolean): BenchmarkEntry | undefined {
+  private findBenchmarks(modelName: string): BenchmarkEntry | undefined {
     const entries = this.cache?.entries;
     if (!entries || entries.length === 0) return undefined;
     const index = this.nameIndex ?? buildNameIndex(entries);
-
     const exact = entries.find((entry) => entry.name === modelName || entry.modelId === modelName);
     if (exact) return exact;
-
     const indexed = index.get(modelName.toLowerCase());
     if (indexed) return indexed;
 
-    const query = { id: modelName };
-    const same = request ? this.identity().lookup(query, 'providers.model-benchmarks.identity') : this.identity().known(query) ?? null;
-    return same === null ? undefined : entries.find((entry) => entry.modelId === same);
-  }
-
-  /** Identity readings over the current leaderboard, rebuilt when the leaderboard is refreshed. */
-  private identity(): ModelIdentityResolver {
-    const entries = this.cache?.entries ?? [];
-    if (!this.identityResolver || this.identityEntries !== entries) {
-      const candidates = entries.filter((entry) => entry.modelId).map((entry) => ({ key: entry.modelId, id: entry.modelId, name: entry.name }));
-      this.identityEntries = entries;
-      this.identityResolver = new ModelIdentityResolver({ universe: 'benchmarks', candidates: () => candidates });
-    }
-    return this.identityResolver;
+    const canonical = knownCatalogModelIdentity(modelName);
+    if (!canonical) return undefined;
+    const matches = entries.filter(entry =>
+      (knownCatalogModelIdentity(entry.modelId) ?? knownCatalogModelIdentity(entry.name)) === canonical);
+    return matches.length === 1 ? matches[0] : undefined;
   }
 
   getTopBenchmarkModelIds(n: number): string[] {

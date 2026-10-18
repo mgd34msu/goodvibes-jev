@@ -1,3 +1,4 @@
+import { declaredProviderCatalogId } from '@goodvibes-jev/engine/contracts';
 import { asRecord, bestId, bestTitle, firstArrayAtPath, firstString, readPath } from './object';
 import { deriveProviderStatus } from './provider-status';
 
@@ -115,10 +116,11 @@ function appendUniqueString(target: string[], value: string) {
   target.push(value);
 }
 
-/** Explicit wire identities only. Inferred relationships require a current catalog-provider reading. */
+/** Declared registry aliases and explicit wire identities; other relationships need a current reading. */
 export function providerModelSourceIds(provider: unknown): string[] {
   const providerId = bestId(provider);
   const ids: string[] = [];
+  appendUniqueString(ids, declaredProviderCatalogId(providerId) ?? '');
 
   appendUniqueString(ids, firstString(provider, ['catalogProviderId', 'canonicalProviderId', 'subscriptionProviderId', 'baseProviderId', 'modelProviderId']));
   appendUniqueString(ids, firstString(readPath(provider, ['runtime']), ['catalogProviderId', 'canonicalProviderId', 'subscriptionProviderId', 'baseProviderId', 'modelProviderId']));
@@ -174,5 +176,8 @@ export function modelOptionsForProvider(provider: unknown, modelCatalogProviders
   }
 
   if (aliasModels.length) return aliasModels;
-  return modelOptionsFromProvider(provider);
+  const declared = modelOptionsFromProvider(provider);
+  if (declared.length) return declared;
+  const catalog = modelCatalogProviders.find(candidate => bestId(candidate) === bestId(provider));
+  return catalog ? modelOptionsFromProvider(catalog) : [];
 }

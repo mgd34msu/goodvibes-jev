@@ -176,14 +176,8 @@ function refreshFn(fetchPort: GoogleFetchPort, context: GrantContext) {
       fetchPort,
     );
     if (!response.ok) {
-      // Google answers a revoked or expired grant with invalid_grant; that
-      // needs a person, whereas anything else is worth retrying.
-      const invalid = /invalid_grant|expired|revoked/i.test(response.problem);
-      if (invalid) {
-        // A dead grant gets a stated cause rather than a generic "re-run
-        // setup". Six identical retries happened because nothing here ever
-        // said WHY, so there was nothing to act on except trying again.
-        const diagnosis = diagnoseInvalidGrant({
+      if (response.reason === 'invalid-grant') {
+        const diagnosis = await diagnoseInvalidGrant({
           googleError: response.problem,
           intendedAccount: context.intendedAccount,
           signedInAccount: context.signedInAccount,

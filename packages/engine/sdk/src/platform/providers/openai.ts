@@ -156,9 +156,9 @@ export class OpenAIProvider implements LLMProvider {
     // family table recognises this model, so there is no evidence it reasons at
     // all. OpenAI serves plenty of non-reasoning models on this same endpoint
     // and rejects `reasoning_effort` on them, so silence beats a guess here.
-    await prepareReasoningEffort(params.reasoningEffort, { modelId: model, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.openai.reasoning-family');
+    await prepareReasoningEffort(params.reasoningEffort, { provider: this.name, modelId: model, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.openai.reasoning-family');
     const resolvedEffort = resolveEffortForRequest(params.reasoningEffort, {
-      modelId: model,
+      provider: this.name, modelId: model,
       ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}),
     });
     const reasoningEffort = resolvedEffort.spec.source === 'fallback'

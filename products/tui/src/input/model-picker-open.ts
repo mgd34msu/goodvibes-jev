@@ -12,7 +12,6 @@
  * land. A close or a newer open drops any load still in flight.
  */
 
-import { modelFamilyReadings } from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { ModelDefinition } from '@goodvibes-jev/engine/sdk/platform/providers';
 import type {
   EmbeddingProviderPickerEntry,
@@ -70,17 +69,6 @@ export function openModelPickerNow(deps: ModelPickerOpenDeps, mode: 'models' | '
   deps.render();
 
   const ownsCatalog = () => picker.isCatalogLoadCurrent(ticket);
-  const readFamilies = async (catalog: readonly ModelDefinition[]) => {
-    try {
-      await modelFamilyReadings.read(catalog);
-    } catch (error) {
-      if (ownsCatalog()) deps.onError(error);
-    } finally {
-      if (picker.fillCatalog(ticket, {}, false)) deps.render();
-    }
-  };
-  const families = readFamilies(models);
-
   const prefetch = (deps.prefetch?.() ?? Promise.resolve()).catch(() => {}).then(() => { if (ownsCatalog()) deps.render(); });
 
   const decorations = (async () => {
@@ -99,10 +87,9 @@ export function openModelPickerNow(deps: ModelPickerOpenDeps, mode: 'models' | '
     if (!changed) return;
     const fresh = mode === 'providers' ? { providers: deps.listProviders() } : { models: deps.listModels() };
     if (picker.fillCatalog(ticket, fresh, false)) deps.render();
-    if (ownsCatalog()) await readFamilies(fresh.models ?? deps.listModels());
   })();
 
-  return Promise.all([decorations, live, families])
+  return Promise.all([decorations, live])
     .catch((error: unknown) => deps.onError(error))
     .finally(() => {
       // Loaded or failed, the loading row goes: the picker keeps what it has.

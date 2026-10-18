@@ -257,7 +257,7 @@ describe('redactSerializedSecrets', () => {
     const swept = await redactSerializedSecrets(blob, values);
     expect(() => JSON.parse(swept)).not.toThrow();
     expect(swept).not.toContain('caldav-pw-9times');
-    expect(swept).toContain(REDACTED_VALUE);
+    expect(swept).toContain('[REDACTED]');
   });
 });
 

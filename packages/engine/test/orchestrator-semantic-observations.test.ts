@@ -73,10 +73,10 @@ describe('canonical spawn framework', () => {
     expect(observation.framework).toBe('jest');
     const prompt = buildOrchestratorSystemPrompt(f.record, undefined, { workingDirectory: f.root, projectFramework: observation });
     expect(prompt).toContain('Test framework: jest'); expect(prompt).not.toContain('Test framework: vitest');
-    expect(JSON.stringify(fake.requests[0]?.state)).toContain('full evidence');
+    expect(fake.requests).toHaveLength(0);
   });
   test('every choice, none, uncertain and absent reader are honest optional labels', async () => {
-    const f = setup(); project(f.root, { scripts: { test: 'bun test' }, dependencies: { vitest: '1' } });
+    const f = setup(); project(f.root, { scripts: { test: 'bun scripts/run-tests.ts' }, dependencies: { vitest: '1' } });
     for (const framework of ['vitest', 'jest', 'bun', 'node', 'mocha', 'ava', 'playwright', 'cypress', 'other', 'none']) {
       installJudgmentPort(semanticPort((_n, q) => choiceAnswer(q, framework, .99)).port);
       expect((await prepareProjectFramework(f.context, f.record)).framework).toBe(framework === 'none' ? undefined : framework === 'bun' ? 'bun:test' : framework);
@@ -91,7 +91,7 @@ describe('canonical spawn framework', () => {
   });
   test('large manifests and repeated-call results reach Jev without arbitrary size caps', async () => {
     const f = setup(), tail = 'z'.repeat(800_000);
-    project(f.root, { scripts: { test: 'jest' }, description: tail });
+    project(f.root, { scripts: { test: 'node scripts/check-suite.js' }, description: tail });
     const fake = semanticPort((name, q) => name === 'framework' ? choiceAnswer(q, 'jest', .99) : noulAnswer(.01)); installJudgmentPort(fake.port);
     expect((await prepareProjectFramework(f.context, f.record)).framework).toBe('jest');
     expect((await readRepeatedCalls(history([tail, 'progress']), f.context, f.record))?.stuck).toBe(false);
@@ -110,7 +110,7 @@ describe('canonical spawn framework', () => {
     for (const f of fixtures) { expect(f.executions).toBe(1); expect(f.record.status).toBe('completed'); expect(f.completed).toHaveLength(1); }
   });
   test('one spawn reading across multiple turns and real prompt use', async () => {
-    const f = setup(4, n => String(n)); project(f.root, { dependencies: { vitest: '1' }, scripts: { test: 'jest' } });
+    const f = setup(4, n => String(n)); project(f.root, { dependencies: { vitest: '1' }, scripts: { test: 'node scripts/check-suite.js' } });
     const fake = semanticPort((name, q) => name === 'framework' ? choiceAnswer(q, 'jest', .99) : noulAnswer(.01)); installJudgmentPort(fake.port);
     await runAgentTask(f.context, f.record);
     expect(f.record.status).toBe('completed'); expect(fake.requests.filter(r => r.context?.battery === 'engine.agents.project-test-framework')).toHaveLength(1);
@@ -121,7 +121,7 @@ describe('canonical spawn framework', () => {
 describe('canonical repeated-call observation and actual runner', () => {
   test('complete changing results yield no nudge despite exact repeated calls', async () => {
     const f = setup(5, n => `progress ${n}`), fake = semanticPort((_n, _q, state) => { expect(JSON.stringify(state)).toContain('progress'); return noulAnswer(.01); }); installJudgmentPort(fake.port);
-    await runAgentTask(f.context, f.record); expect(f.record.status).toBe('completed'); expect(f.executions).toBe(5); const feature = assertReadingPartition(fake.requests, Array<string>(4).fill('engine.agents.repeat-stuck'), ['agentId', 'model', 'provider', 'toolCallCount']);
+    await runAgentTask(f.context, f.record); expect(f.record.status).toBe('completed'); expect(f.executions).toBe(5); const feature = assertReadingPartition(fake.requests, Array<string>(4).fill('engine.agents.repeat-stuck'));
     for (const [index, request] of feature.entries()) {
       expect(Object.keys(request.questions)).toEqual(['stuck']);
       expect(request.state).toEqual({
@@ -170,7 +170,7 @@ describe('canonical repeated-call observation and actual runner', () => {
   });
   test('project, request and configuration source changes cannot publish late readings', async () => {
     for (const change of ['project', 'request', 'config', 'same-port']) {
-      const f = setup(), start = deferred(), release = deferred(), fake = semanticPort((_n, q) => choiceAnswer(q, 'jest', .99)); project(f.root, { scripts: { test: 'jest' } });
+      const f = setup(), start = deferred(), release = deferred(), fake = semanticPort((_n, q) => choiceAnswer(q, 'jest', .99)); project(f.root, { scripts: { test: 'node scripts/check-suite.js' } });
       let current = true;
       const installed: typeof fake.port = { model: fake.port.model, async ask(request) { if (request.context?.battery === 'engine.redaction.field-kind') return fake.port.ask(request); start.resolve(); await release.promise; return fake.port.ask(request); } };
       bindJudgmentPortAuthority(installed, () => ({ identity: f.context, assertCurrent() { if (!current) throw new Error('retired'); } }));
@@ -224,12 +224,12 @@ describe('review regressions: complete observation through tool effects', () => 
       const f = setup(), path = join(f.root, 'package.json'), fake = semanticPort((_n, q) => choiceAnswer(q, 'jest', .99));
       if (kind === 'malformed') writeFileSync(path, '{oops');
       if (kind === 'unreadable') mkdirSync(path);
-      installJudgmentPort(fake.port); await runAgentTask(f.context, f.record); assertReadingPartition(fake.requests, [], ['agentId', 'model', 'provider', 'toolCallCount']); expect(f.record.status).toBe('completed'); expect(f.completed).toHaveLength(1);
+      installJudgmentPort(fake.port); await runAgentTask(f.context, f.record); assertReadingPartition(fake.requests, []); expect(f.record.status).toBe('completed'); expect(f.completed).toHaveLength(1);
       expect(JSON.stringify(f.requests)).not.toContain('Test framework:');
     }
   });
   test('original source covers canonical recorder attachment, before any reading is retained', async () => {
-    const f = setup(), fake = semanticPort((_n, q) => choiceAnswer(q, 'jest', .99)); project(f.root, { scripts: { test: 'jest' } });
+    const f = setup(), fake = semanticPort((_n, q) => choiceAnswer(q, 'jest', .99)); project(f.root, { scripts: { test: 'node scripts/check-suite.js' } });
     let attachments = 0;
     const port: typeof fake.port = { model: fake.port.model, recorder: { recordReadings() { attachments++; }, recordAction() {} }, async ask(request) {
       const result = await fake.port.ask(request); project(f.root, { scripts: { test: 'bun test' } }); return { ...result, decisionId: 'changed-source' };
@@ -271,7 +271,7 @@ describe('review regressions: complete observation through tool effects', () => 
     const f = setup(3); const executed: unknown[] = []; f.controls.beforeTool = async args => { executed.push(args); };
     (f.context as { permissionManager?: unknown }).permissionManager = { getBackgroundAgentsMode: () => 'inherit', async checkDetailed() { return { approved: true, modifiedArgs: { job: 'authorized-effective' } }; } };
     const fake = semanticPort(() => noulAnswer(.01)); installJudgmentPort(fake.port); await runAgentTask(f.context, f.record);
-    expect(executed).toEqual(Array.from({ length: 3 }, () => ({ job: 'authorized-effective' }))); const feature = assertReadingPartition(fake.requests, ['engine.agents.repeat-stuck', 'engine.agents.repeat-stuck'], ['agentId', 'model', 'provider', 'toolCallCount']);
+    expect(executed).toEqual(Array.from({ length: 3 }, () => ({ job: 'authorized-effective' }))); const feature = assertReadingPartition(fake.requests, ['engine.agents.repeat-stuck', 'engine.agents.repeat-stuck']);
     for (const [index, request] of feature.entries()) {
       expect(Object.keys(request.questions)).toEqual(['stuck']);
       expect(request.state).toEqual({
@@ -489,12 +489,7 @@ test('prepared retirement releases only its owned projection exactly once before
   await registry.executePrepared(unrelated, () => { admissions++; }); expect(releases).toBe(2); expect(admissions).toBe(1); expect(bodies).toBe(1);
 });
 
-function assertReadingPartition(requests: ReadonlyArray<{ context?: { battery?: string }; questions: object; state: unknown }>, batteries: readonly string[], fields: readonly string[]) {
-  const diagnostic = requests.filter(request => request.context?.battery === 'engine.redaction.field-kind');
-  const feature = requests.filter(request => request.context?.battery !== 'engine.redaction.field-kind');
-  expect(requests).toHaveLength(batteries.length + fields.length);
-  expect(feature.map(request => request.context?.battery)).toEqual([...batteries]);
-  expect(diagnostic.map(request => request.state)).toEqual(fields.map(field => ({ field })));
-  for (const request of diagnostic) expect(Object.keys(request.questions)).toEqual(['kind']);
-  return feature;
+function assertReadingPartition(requests: ReadonlyArray<{ context?: { battery?: string }; questions: object; state: unknown }>, batteries: readonly string[]) {
+  expect(requests.map(request => request.context?.battery)).toEqual([...batteries]);
+  return requests;
 }

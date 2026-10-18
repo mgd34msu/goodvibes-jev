@@ -280,11 +280,11 @@ describe('createAppPassword (fake port)', () => {
     }
   });
 
-  test('reports needs-two-step when the create form is simply absent with no explanatory text', async () => {
+  test('does not invent a 2-Step prerequisite when the create form is absent', async () => {
     const port = singleStatePort(NORMAL_APP_PASSWORD_URL, [], '');
     const result = await createAppPassword(port);
     expect(result.kind).toBe('needs-human');
-    if (result.kind === 'needs-human') expect(result.reason).toBe('two-step-required');
+    if (result.kind === 'needs-human') expect(result.reason).toBe('create-form-not-found');
   });
 
   test('reports already-exists when a password with the same label is already listed, and never asks to create a duplicate', async () => {

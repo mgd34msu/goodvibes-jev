@@ -303,18 +303,7 @@ describe('ProviderRegistry model catalog cache', () => {
       expect(models.map(model => model.registryKey)).toEqual(expect.arrayContaining(native.map(model => model.registryKey)));
       expect(models.some(model => model.registryKey === 'openai:catalog-display-fixture')).toBe(true);
       expect(models).toHaveLength(native.length + 1);
-      if (enrichment === 'none') {
-        expect(fixture.requests.filter(request => Object.hasOwn(request.questions, 'route'))).toHaveLength(0);
-      } else {
-        await entered.promise;
-        const unsized = native.filter(model => model.contextWindowProvenance === 'fallback');
-        expect(unsized.length).toBeGreaterThan(0);
-        await Promise.all(unsized.map(model => readFallbackContextWindow(model.provider, model.id, 'test.registry.catalog-enrichment')));
-        const windows = fixture.requests.filter(request => Object.hasOwn(request.questions, 'route'));
-        expect(windows.length).toBeGreaterThan(0);
-        expect(windows.every(request => typeof request.state === 'object' && request.state !== null
-          && Object.hasOwn(request.state, 'provider') && Object.hasOwn(request.state, 'model_id'))).toBe(true);
-      }
+      expect(fixture.requests.filter(request => Object.hasOwn(request.questions, 'route'))).toHaveLength(0);
     } finally {
       installJudgmentPort(previous);
       forgetModelLimitReadings();
@@ -567,7 +556,7 @@ test('an identity lookup that keeps the same fallback does not retire the catalo
     const revision = registry.getModelRegistryRevision();
     const source = registry.captureProviderCatalogIds();
     await Bun.sleep(0);
-    expect(fake.requests.length).toBeGreaterThan(0);
+    expect(fake.requests.length).toBe(0);
     expect(registry.listModels()).toBe(models);
     expect(registry.getModelRegistryRevision()).toBe(revision);
     expect(() => source.assertCurrent()).not.toThrow();

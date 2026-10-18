@@ -4,6 +4,20 @@
 
 ### Fixed
 
+- Interpret ambiguous Google grant/API failures and 2-Step Verification pages
+  with Jev, preserving exact protocol reasons and reusing structured diagnoses.
+  Route implicit Agent audit intent through the protected catalog selector.
+  Add debounced, batched semantic TUI command discovery with immediate literal
+  results and cancellation of stale suggestions.
+
+- Load model metadata directly from the models.dev GitHub repository, preserving
+  inherited capabilities, canonical identities and provider-specific limits and
+  prices. Resolve model identity, context budgets and chat capability locally.
+  Group picker models from published families and consult endpoint metadata
+  before output-cap and reasoning-family interpretations.
+  Replace automatic log-field judgments with declared field roles and retain
+  the previous catalog when a repository refresh fails.
+
 - MCP dispatch now resolves confidently coherent risk-policy asks through canonical autonomous Jev admission, binds destination and server-policy evidence through final write, and exposes supported calls through the Agent facade with cancellation propagation.
 
 - Replace knowledge repair failure keyword guessing with structural causes and a

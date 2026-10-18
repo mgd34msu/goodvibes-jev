@@ -1,3 +1,5 @@
+import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
+import type { ProtectedSourceOwner } from '@goodvibes-jev/engine/sdk/platform/security';
 /**
  * The `google` tool: Gmail and Google Calendar, natively, in this process.
  *
@@ -82,7 +84,7 @@ import { rememberRefusedOutwardAction } from '../trust/outward-approvals.ts';
 import type { GoogleApiFailure, GoogleApiResult } from '@goodvibes-jev/engine/sdk/platform/google';
 import { getSessionExpectationBook } from '../agent/signup/session-expectations.ts';
 import { deliveryEvidenceFromMessage, describeDeliveryEvidence, NO_ALIAS_MAILBOXES } from '@goodvibes-jev/engine/sdk/platform/google';
-import { extractVerification } from '@goodvibes-jev/engine/sdk/platform/google';
+import { readVerificationArtifact } from '@goodvibes-jev/engine/sdk/platform/google';
 
 const GOOGLE_ACTIONS = [
   'status',
@@ -108,6 +110,7 @@ const READ_ONLY_ACTIONS = new Set<string>(['status', 'mail.list', 'mail.read', '
 const CONNECT_ACTIONS = new Set<string>(['connect.client', 'connect.clientFile']);
 
 export interface AgentGoogleToolOptions {
+  readonly getSourceOwner?: (() => ProtectedSourceOwner | undefined) | undefined;
   readonly homeDirectory: string;
   readonly configGet: (key: string) => unknown;
   readonly secretGet: (key: string) => Promise<string | null>;
@@ -549,7 +552,15 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
           );
         }
 
-        const extraction = extractVerification(candidate, match.expectation);
+        const sourceOwner = options.getSourceOwner?.();
+        const verificationCurrent = () => {
+          assertCurrent();
+          if (options.getSourceOwner?.() !== sourceOwner || getSessionExpectationBook() !== book) throw new ToolInputProjectionError('stale');
+          const current = book.matchCandidate(candidate, new Date(), { consume: false });
+          if (current.kind !== 'matched' || current.expectation.id !== match.expectation.id) throw new ToolInputProjectionError('stale');
+        };
+        const extraction = await readVerificationArtifact(candidate, match.expectation, { sourceOwner, signal: executionOptions?.signal, assertCurrent: verificationCurrent });
+        verificationCurrent();
         const artifact = extraction.artifact;
         if (artifact.kind === 'link') {
           // Single-use: the alias has now produced its one token.
@@ -678,7 +689,7 @@ const googleProjectors = new WeakMap<Tool, ReturnType<typeof createGoogleSetting
 export function agentGoogleInputProjector(tool: Tool) { return googleProjectors.get(tool); }
 export function registerAgentGoogleTool(registry: ToolRegistry, options: AgentGoogleToolOptions): void {
   if (!registry.has('google')) {
-    const tool = createAgentGoogleTool(options);
+    const tool = createAgentGoogleTool({ ...options, getSourceOwner: () => agentResearchSourceOwner(registry) });
     registry.register(tool, { inputProjection: agentGoogleInputProjector(tool) });
   }
 }

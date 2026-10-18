@@ -22,6 +22,7 @@ describe('provider access composition', () => {
     expect(providerAccessFrom({ local: no, plan: yes })).toBe('subscription');
     expect(providerAccessFrom({ local: no, plan: no })).toBe('metered');
     expect(providerAccessFrom({ local: unsure, plan: no })).toBeUndefined();
+    expect(providerAccessFrom({ local: { ...no, outcome: 'confirm' }, plan: no })).toBeUndefined();
   });
 });
 

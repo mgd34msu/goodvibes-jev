@@ -1,25 +1,18 @@
 import { existsSync, readdirSync, statSync, watch, watchFile, unwatchFile, type Stats } from 'fs';
 import type { FSWatcher } from 'fs';
 import { join, resolve } from 'path';
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { recordAction } from '@goodvibes-jev/judgment';
 import { logger } from '../utils/logger.js';
-import { rootEntryCandidate, WATCHED_CONFIG_QUERY, watchedConfig } from './batteries/watched-config.js';
 import type { FileStateCache } from './file-cache.js';
 import type { ProjectIndex } from './project-index.js';
 import type { HookDispatcher } from '../hooks/dispatcher.js';
 import type { HookEvent } from '../hooks/types.js';
 import { summarizeError } from '../utils/error-display.js';
 
-const WATCHED_CONFIG_SITE = 'state.file-watcher';
-
 /**
  * FileWatcher, watches key project files and invalidates caches on change.
  *
- * Which root files are project configuration or environment files worth
- * watching is read by Jev (`engine.state.watched-config`,
- * batteries/watched-config.ts) over the names of the regular files in the
- * project root, once per start().
+ * Watches regular project-root files, the platform directory and indexed
+ * files. Cache invalidation does not require interpreting a filename.
  *
  * Uses Node.js/Bun-native `fs.watch`. Debounces events per-file (100ms).
  * On change:
@@ -65,16 +58,16 @@ export class FileWatcher {
 
   /**
    * Start watching all registered paths.
-   * Adds the root files read as project configuration or environment files,
+   * Adds every regular project-root file,
    * and .goodvibes/**. Also watches all files currently in ProjectIndex.
    */
   async start(): Promise<void> {
     if (this.watching) return;
     this.watching = true;
 
-    let configFiles: string[];
+    let rootFiles: string[];
     try {
-      configFiles = await this.readConfigFiles();
+      rootFiles = await this.readRootFiles();
     } catch (err) {
       this.watching = false;
       throw err;
@@ -82,7 +75,7 @@ export class FileWatcher {
     // stop() ran while the root was being read.
     if (!this.watching) return;
 
-    for (const name of configFiles) {
+    for (const name of rootFiles) {
       this.addPath(join(this.projectRoot, name));
     }
 
@@ -105,12 +98,8 @@ export class FileWatcher {
     logger.debug('FileWatcher: started', { watched: this.watchedPaths.size });
   }
 
-  /**
-   * The names of the regular files in the project root read as project
-   * configuration or environment files, each on its own yes/no; only a yes
-   * the band allows acting on is watched. The action is recorded per entry.
-   */
-  private async readConfigFiles(): Promise<string[]> {
+  /** Root entries are watched as files; directories retain their separate policy. */
+  private async readRootFiles(): Promise<string[]> {
     let names: string[];
     try {
       names = readdirSync(this.projectRoot, { withFileTypes: true })
@@ -121,16 +110,7 @@ export class FileWatcher {
       logger.warn('FileWatcher: project root listing failed', { projectRoot: this.projectRoot, error: summarizeError(err) });
       return [];
     }
-    if (names.length === 0) return [];
-    const port = judgmentPort(WATCHED_CONFIG_SITE);
-    const { ranked } = await watchedConfig.rerank(port, WATCHED_CONFIG_QUERY, names.map(rootEntryCandidate), { site: WATCHED_CONFIG_SITE });
-    const watched: string[] = [];
-    for (const entry of ranked) {
-      const isConfig = entry.reading.verdict === 'yes' && entry.reading.outcome === 'act';
-      recordAction(port, entry.decisionId, isConfig ? 'watched' : 'not-watched');
-      if (isConfig) watched.push(entry.id);
-    }
-    return watched.sort();
+    return names;
   }
 
   /**

@@ -86,7 +86,7 @@ describe('OpenAICompatProvider.refreshModels (gateway live discovery)', () => {
         const headers = init?.headers as Record<string, string>;
         expect(headers['Authorization']).toBe('Bearer gsk-test-key');
         return new Response(
-          JSON.stringify({ data: [{ id: 'qwen/qwen3-32b' }, { id: 'groq/brand-new-model' }] }),
+          JSON.stringify({ data: [{ id: 'qwen/qwen3-32b', type: 'chat' }, { id: 'groq/brand-new-model', type: 'chat' }] }),
           { status: 200, headers: { 'content-type': 'application/json' } },
         );
       },
@@ -152,7 +152,7 @@ describe('OpenAICompatProvider.refreshModels (gateway live discovery)', () => {
       const cachePath = join(dir, 'groq.json');
       await withMockedFetch(
         () => new Response(
-          JSON.stringify({ data: [{ id: 'live-model-a' }, { id: 'live-model-b' }] }),
+          JSON.stringify({ data: [{ id: 'live-model-a', type: 'chat' }, { id: 'live-model-b', type: 'chat' }] }),
           { status: 200 },
         ),
         async () => {
@@ -174,22 +174,17 @@ describe('OpenAICompatProvider.refreshModels (gateway live discovery)', () => {
     });
   });
 
-  test('ids that read as non-chat models are filtered out, one reading per id', async () => {
+  test('declared non-chat models are filtered without judgment calls', async () => {
     await withMockedFetch(
       () => new Response(
-        JSON.stringify({ data: [{ id: 'chat-model' }, { id: 'text-embedding-large' }, { id: 'whisper-large-v3' }] }),
+        JSON.stringify({ data: [{ id: 'chat-model', type: 'chat' }, { id: 'text-embedding-large', type: 'embedding' }, { id: 'whisper-large-v3', type: 'transcription' }] }),
         { status: 200 },
       ),
       async () => {
         const provider = makeProvider();
         const result = await provider.refreshModels();
         expect(result.models).toEqual(['chat-model']);
-        // Diagnostic privacy readings are separate from chat-model decisions.
-        expect(chat.requests.filter((request) => 'chat' in request.questions).map((request) => request.state)).toEqual([
-          { provider: 'groq', model_id: 'chat-model' },
-          { provider: 'groq', model_id: 'text-embedding-large' },
-          { provider: 'groq', model_id: 'whisper-large-v3' },
-        ]);
+        expect(chat.requests).toHaveLength(0);
       },
     );
   });
@@ -211,13 +206,13 @@ describe('OpenAICompatProvider.refreshModels (gateway live discovery)', () => {
         const provider = makeProvider();
         const result = await provider.refreshModels();
         expect(result.models).toEqual(['mistral-large-latest', 'meta-llama/Llama-3.3-70B-Instruct-Turbo']);
-        // Only the entry whose type is not a documented chat type is read.
-        expect(chat.requests.filter((request) => 'chat' in request.questions).map((request) => (request.state as { model_id?: unknown }).model_id)).toEqual(['text-embedding-large']);
+        // Declared model types need no external judgment.
+        expect(chat.requests.filter((request) => 'chat' in request.questions).map((request) => (request.state as { model_id?: unknown }).model_id)).toEqual([]);
       },
     );
   });
 
-  test('a reading that does not settle retains the known catalog without admitting an unclassified model', async () => {
+  test('missing capability metadata retains the known list without admitting an unclassified model', async () => {
     installJudgmentPort(chatPort(() => 0.5).port);
     await withMockedFetch(
       () => new Response(JSON.stringify({ data: [{ id: 'unclear-model' }] }), { status: 200 }),
@@ -250,7 +245,7 @@ describe('AnthropicCompatProvider.refreshModels (gateway live discovery)', () =>
         const headers = init?.headers as Record<string, string>;
         expect(headers['x-api-key']).toBe('mm-test-key');
         return new Response(
-          JSON.stringify({ data: [{ id: 'MiniMax-M2.7' }, { id: 'MiniMax-M3-brand-new' }] }),
+          JSON.stringify({ data: [{ id: 'MiniMax-M2.7', type: 'chat' }, { id: 'MiniMax-M3-brand-new', type: 'chat' }] }),
           { status: 200 },
         );
       },
@@ -270,7 +265,7 @@ describe('AnthropicCompatProvider.refreshModels (gateway live discovery)', () =>
         const headers = init?.headers as Record<string, string>;
         expect(headers['Authorization']).toBe('Bearer mm-test-key');
         expect(headers['x-api-key']).toBeUndefined();
-        return new Response(JSON.stringify({ data: [{ id: 'model-x' }] }), { status: 200 });
+        return new Response(JSON.stringify({ data: [{ id: 'model-x', type: 'chat' }] }), { status: 200 });
       },
       async () => {
         const provider = makeProvider({ authHeaderMode: 'bearer' });

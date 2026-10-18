@@ -536,3 +536,5 @@ export {
 export type { GoogleReadingOptions } from './browser-readings.js';
 
 export { GoogleSetupWriteCommittedError, type GoogleMutationOwnership } from './setup-effect.js';
+
+export { readVerificationArtifact, type VerificationReadingOptions } from './verification-reading.js';

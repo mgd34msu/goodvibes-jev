@@ -59,7 +59,7 @@ test('arbitrary catalog models round-trip through the real current-schema reader
   expect(isCatalogCacheStale(fresh!)).toBe(false);
   writeModelCatalogCache([model], f.cacheDir, now - 10000, 1);
   expect(isCatalogCacheStale(loadCatalogCache(paths.catalogPath)!)).toBe(true);
-  expect(JSON.parse(readFileSync(paths.catalogPath, 'utf8')).version).toBe(5);
+  expect(JSON.parse(readFileSync(paths.catalogPath, 'utf8')).version).toBe(6);
 });
 test('benchmark fixtures load arbitrary entries and refresh only when the caller TTL expires', async () => {
   const f = fixture();
