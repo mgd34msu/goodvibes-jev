@@ -393,3 +393,42 @@ floors. The initial failures and corrected question results are retained in
 406 engine regressions, 12 daemon tests and 21 TUI tests, including private
 publication, actual file repair, cancellation, stale authority, contract
 handoffs and preserved input privacy.
+
+
+## Captured-input validation slowdown (2026-10-18)
+
+Session `user-f13dddbf` was progressing through distinct source reads, but tool
+rounds took 70–160 seconds and the TUI process used approximately 170% CPU.
+The daemon answered health checks in 7 ms and Jev checks took 100–300 ms.
+The workspace had 12,745 dependency files and an 892-file, 267 KB input receipt.
+Dependency and runtime metadata sweeps ran outside their existing captured-input
+batch, repeatedly serializing that entire receipt for individual entries.
+This also slowed unrelated work sharing the TUI's event loop.
+
+Dependency checks, Node runtime checks and registered read assertions now use
+the same bracketed batch. Every path still receives current permissions and
+file/root/alias identity checks; the full receipt and execution view are
+validated at the batch boundaries. No permission verdict is cached or waived.
+A reproduction with 892 source files and 1,024 dependencies preserved all
+3,123 permission callbacks while reducing receipt serialization from 1,054
+times to 5 per sweep: 483 ms became 28 ms. A complete captured command retained
+all 31,394 permission callbacks and fell from 4,006 ms to 1,336 ms.
+The retained CPU profiles and larger synthetic dependency sweep are under
+`.goodvibes/artifacts/jev-usage/active-stall-check/`.
+
+New regressions check that every dependency path is revalidated on each sweep
+and that receipt tampering during a permission callback still blocks delivery.
+Existing branch, revocation, cancellation, alias, containment and output tests
+remain in place. Updating now preserves the previous release when its native
+terminal or agent executable is still running, so its pinned runtime files
+remain available. The running TUI needs to be reopened to load the new code;
+normal exit preserves its contract checkpoint and session history.
+
+The larger 12,745-dependency reproduction completed a fresh 38,286-permission
+sweep in 243 ms, again with five receipt serializations. Verification combines
+246 targeted engine tests and 22 installer tests. Four existing authority
+fixtures also failed on the unchanged baseline because they expected public
+access-refusal reasons to be redacted; their exact expected diagnostics now
+match the current sanitized messages, preserving all denial and privacy checks.
+SDK, engine-test and installer type checks, all product builds, browser support,
+subpath API checks and whitespace checks pass.

@@ -5,7 +5,7 @@ import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 import { accessSync, constants, existsSync, lstatSync, realpathSync } from 'node:fs';
 import { access, chmod, copyFile, lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { assertContractInputAuthority, contractInputAuthorityRoot, registerContractInputReadAssertion } from '../../contract/input-authority.js';
+import { assertContractInputAuthority, contractInputAuthorityRoot, registerContractInputReadAssertion, withContractInputReadBatch } from '../../contract/input-authority.js';
 import type { CapturedExecAuthority } from './captured-exec.js';
 
 type Binding = Pick<CapturedExecAuthority, 'authority' | 'root' | 'readAccessFilter' | 'signal'>;
@@ -124,9 +124,11 @@ export async function admitCapturedExecNodeRuntime(
   };
   const check = async (signal: AbortSignal | undefined = binding.signal): Promise<void> => {
     signal = binding.signal && signal ? AbortSignal.any([binding.signal, signal]) : binding.signal ?? signal;
-    await assertContractInputAuthority(binding.authority, binding.root, signal);
-    await checkCapturedInputsInBatches(reads, (read, current) => checkRead(read, current), signal);
-    await assertContractInputAuthority(binding.authority, binding.root, signal);
+    await withContractInputReadBatch(binding.authority, async () => {
+      await assertContractInputAuthority(binding.authority, binding.root, signal);
+      await checkCapturedInputsInBatches(reads, (read, current) => checkRead(read, current), signal);
+      await assertContractInputAuthority(binding.authority, binding.root, signal);
+    });
   };
   const visit = async (source: string, path: string, root: string): Promise<void> => {
     const aliasStat = await lstat(source);

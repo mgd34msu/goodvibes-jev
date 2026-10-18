@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Keep dependency and runtime validation inside the existing captured-input
+  batch, avoiding full receipt serialization for every dependency entry while
+  preserving fresh permission, file identity and revocation checks. Retain an
+  installed release while a running terminal or agent still uses its runtime.
+
 - Review response drafts before publication. Give rejected answers a numbered,
   grounded fix list with explicit resolution conditions; keep drafts and review
   feedback private, and close resolved findings without requiring repeated

@@ -133,9 +133,9 @@ for (const viewKind of ['snapshot', 'member'] as const) {
           tool: 'read',
         });
         const failureState = access === 'policy-revoked'
-          ? 'Message: captured input path is [REDACTED]'
+          ? 'Message: captured input path is access-restricted'
           : access === 'concurrent'
-            ? 'Message: captured input authority is [REDACTED]'
+            ? 'Message: captured input authority is missing or revoked'
             : undefined;
         const decisionLog = new SqliteDecisionLog(':memory:');
         const judgment = fakePort((name, question, state) => {

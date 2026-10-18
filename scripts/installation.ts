@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 export const PACKAGE = 'goodvibes-jev';
@@ -37,6 +37,29 @@ export const present = (path: string): boolean => {
 export function contained(parent: string, child: string): boolean {
   const path = relative(parent, child);
   return path === '' || (path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+}
+/** Keep runtime files needed by a terminal or agent that is still running the previous release. */
+export function isReleaseInUse(release: string, procRoot = '/proc'): boolean {
+  try {
+    for (const entry of readdirSync(procRoot)) {
+      if (!/^[0-9]+$/.test(entry)) continue;
+      const directory = join(procRoot, entry);
+      try {
+        if (process.getuid && lstatSync(directory).uid !== process.getuid()) continue;
+        try { if (contained(release, readlinkSync(join(directory, 'exe')))) return true; }
+        catch (error) {
+          if (!['EACCES', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+        }
+        // Same-user service managers may protect their exe link. argv also
+        // covers an installed script running through an external interpreter.
+        for (const argument of readFileSync(join(directory, 'cmdline'), 'utf8').split('\0'))
+          if (isAbsolute(argument) && contained(release, argument)) return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && (error as NodeJS.ErrnoException).code !== 'ESRCH') return true;
+      }
+    }
+    return false;
+  } catch { return true; }
 }
 /** No installation or deletion through a symlink, including a dangling one. */
 export function plainPath(path: string): void {

@@ -4,7 +4,7 @@ import { createServer } from 'node:net';
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { COMMANDS, PACKAGE, SERVICE, assertOwnedFiles, atomicWrite, contained, dataOwner, digest, plainPath, present, quote, readDataId, readInstallation, receiptPath, run, stopService, unitPath, validateLayout, withLock, type Installation, type Layout, type Run } from './installation.ts';
+import { COMMANDS, PACKAGE, SERVICE, assertOwnedFiles, atomicWrite, contained, dataOwner, digest, isReleaseInUse, plainPath, present, quote, readDataId, readInstallation, receiptPath, run, stopService, unitPath, validateLayout, withLock, type Installation, type Layout, type Run } from './installation.ts';
 
 export interface Options extends Layout { port: number; service: boolean; runtimeDir: string; workspace?: string }
 const ROOT = resolve(import.meta.dir, '..');
@@ -134,6 +134,7 @@ async function stage(root: string, release: string, options: Options, commit: st
   }
 }
 export interface InstallHooks {
+  isReleaseInUse?: typeof isReleaseInUse;
   execute?: Run;
   build?: typeof build;
   stage?: typeof stage;
@@ -234,7 +235,11 @@ export async function install(options: Options, hooks: InstallHooks = {}): Promi
       atomicWrite(receiptPath(options), JSON.stringify(receipt, null, 2) + '\n');
       // Keep the previous release until all publication and readiness checks pass.
       if (old) {
-        try { rmSync(join(options.prefix, 'releases', old.release), { recursive: true, force: true }); }
+        try {
+          const previousRelease = join(options.prefix, 'releases', old.release);
+          if ((hooks.isReleaseInUse ?? isReleaseInUse)(previousRelease)) console.log('Previous release retained for a running terminal or agent. Reopen it to use the update.');
+          else rmSync(previousRelease, { recursive: true, force: true });
+        }
         catch { console.warn(`Update succeeded; an unused previous release remains at ${join(options.prefix, 'releases', old.release)}.`); }
       }
       console.log(`Installed GoodVibes Jev (${commit.slice(0, 12)}). Commands: ${options.binDir}`);

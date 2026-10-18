@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { install, parseOptions, preflight, wrapper, type InstallHooks, type Options, assertPortFree } from './install.ts';
-import { COMMANDS, assertOwnedFiles, atomicWrite, dataOwner, readInstallation, unitPath, uninstall, validateLayout, withLock, type Run } from './installation.ts';
+import { COMMANDS, assertOwnedFiles, atomicWrite, dataOwner, isReleaseInUse, readInstallation, unitPath, uninstall, validateLayout, withLock, type Run } from './installation.ts';
 
 let home: string;
 let previousHome: string | undefined;
@@ -101,6 +101,23 @@ describe('suite install and uninstall', () => {
     expect(after.sourceCommit).not.toBe(before.sourceCommit);
     expect(existsSync(join(options.prefix, 'releases', before.release))).toBe(false);
     expect(readFileSync(join(options.dataDir, 'user-notes'), 'utf8')).toBe('keep');
+  });
+  test('an update retains the previous runtime while a terminal still uses it', async () => {
+    await install(options, hooks);
+    const before = readInstallation(options.prefix)!;
+    await install(options, { ...hooks, build: async () => 'b'.repeat(40), isReleaseInUse: () => true });
+    expect(readInstallation(options.prefix)!.sourceCommit).toBe('b'.repeat(40));
+    expect(existsSync(join(options.prefix, 'releases', before.release, 'payload'))).toBe(true);
+  });
+  test('release use checks executable paths and treats exited processes as absent', () => {
+    const proc = join(home, 'proc'), release = join(home, 'release');
+    mkdirSync(join(proc, '1234'), { recursive: true });
+    expect(isReleaseInUse(release, proc)).toBe(false);
+    symlinkSync(join(release, 'tui/goodvibes-linux-x64'), join(proc, '1234/exe'));
+    expect(isReleaseInUse(release, proc)).toBe(true);
+    rmSync(join(proc, '1234/exe'));
+    symlinkSync('/usr/bin/sleep', join(proc, '1234/exe'));
+    expect(isReleaseInUse(release, proc)).toBe(false);
   });
   test('creates, enables and starts the service; stops and disables it before removal', async () => {
     options.service = true;

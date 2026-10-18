@@ -329,14 +329,16 @@ export async function assertContractInputReadAccess(
   signal?: AbortSignal,
 ): Promise<void> {
   if (!filter) throw new Error('captured input requires original-owner read authorization');
+  // Runtime/dependency assertions belong to this same bracketed sweep. Leaving
+  // them outside it serializes the complete receipt again for every entry.
   await withContractInputReadBatch(token, async () => {
     for (const path of stateOf(token).reads) await authorizeContractInputPath(token, path, filter, signal);
+    for (const assertion of [...stateOf(token).readAssertions]) {
+      signal?.throwIfAborted();
+      await executePolicyCheck(assertion, signal);
+      stateOf(token);
+    }
   });
-  for (const assertion of [...stateOf(token).readAssertions]) {
-    signal?.throwIfAborted();
-    await executePolicyCheck(assertion, signal);
-    stateOf(token);
-  }
   signal?.throwIfAborted();
 }
 

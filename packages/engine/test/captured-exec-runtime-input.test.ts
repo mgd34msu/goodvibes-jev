@@ -39,7 +39,7 @@ function git(root: string, ...args: string[]): void {
   const result = spawnSync('git', ['-C', root, ...args]);
   if (result.status !== 0) throw new Error(result.stderr.toString());
 }
-async function fixture(filter: (path: string) => boolean | Promise<boolean> = () => true): Promise<CapturedExecAuthority & { owner: string }> {
+async function fixture(filter: (path: string) => boolean | Promise<boolean> = () => true): Promise<CapturedExecAuthority & { owner: string; contract: Contract }> {
   const owner = mkdtempSync(join(tmpdir(), 'captured-exec-test-')); roots.push(owner);
   git(owner, 'init', '-q'); git(owner, 'config', 'user.name', 'Fixture'); git(owner, 'config', 'user.email', 'fixture@example.invalid');
   writeFileSync(join(owner, 'input.txt'), 'captured-fixture\n');
@@ -49,8 +49,9 @@ async function fixture(filter: (path: string) => boolean | Promise<boolean> = ()
   const root = contractInputPath(inputSnapshot);
   git(owner, 'worktree', 'add', '--no-checkout', '-b', `input/${inputSnapshot.id}`, root, inputSnapshot.inputCommit);
   await materializeContractInput(inputSnapshot, root);
-  const authority = await createContractInputAuthority({ projectRoot: owner, inputSnapshot } as Contract, root, { mutable: true, branch: `input/${inputSnapshot.id}` });
-  return { authority, root, owner, readAccessFilter: async (path) => filter(path) };
+  const contract = { projectRoot: owner, inputSnapshot } as Contract;
+  const authority = await createContractInputAuthority(contract, root, { mutable: true, branch: `input/${inputSnapshot.id}` });
+  return { authority, root, owner, contract, readAccessFilter: async (path) => filter(path) };
 }
 const run = (binding: CapturedExecAuthority, command: string, signal?: AbortSignal) => runCapturedCommand(binding, command, {}, binding.root, 5000, signal);
 
@@ -485,7 +486,29 @@ test.skipIf(!supported)('unused unavailable Node runtime preserves an ordinary B
     expect(absent.stdout).toBe('');
   }
 });
-for (const mutation of ['branch', 'revoke'] as const)
+test('dependency sweeps validate every path without serializing the entire receipt for each entry', async () => {
+  const checked = new Set<string>();
+  const binding = await fixture(path => { checked.add(path); return true; });
+  const modules = join(binding.owner, 'node_modules'); mkdirSync(modules);
+  for (let index = 0; index < 48; index++) writeFileSync(join(modules, `${index}.js`), 'export const value = 42;');
+  await admitCapturedExecDependency(binding, { sourceRoot: modules, targetRelativePath: 'node_modules' });
+  const snapshot = binding.contract.inputSnapshot!, files = snapshot.files;
+  let receiptReads = 0;
+  Object.defineProperty(snapshot, 'files', { enumerable: true, get() { receiptReads++; return files; } });
+  checked.clear();
+  await assertContractInputReadAccess(binding.authority, binding.readAccessFilter);
+  expect(receiptReads).toBeLessThan(20);
+  for (let index = 0; index < 48; index++) {
+    expect(checked.has(join(modules, `${index}.js`))).toBe(true);
+    expect(checked.has(join(binding.root, 'node_modules', `${index}.js`))).toBe(true);
+  }
+  // A fresh sweep must still consult the owner; this is no cache of read grants.
+  checked.clear();
+  await assertContractInputReadAccess(binding.authority, binding.readAccessFilter);
+  expect(checked.has(join(modules, '47.js'))).toBe(true);
+});
+
+for (const mutation of ['branch', 'revoke', 'receipt'] as const)
   test(`metadata sweep rechecks ${mutation} changes before provider delivery`, async () => {
     let act: (() => void) | undefined;
     const binding = await fixture(() => { const current = act; act = undefined; current?.(); return true; });
@@ -495,6 +518,7 @@ for (const mutation of ['branch', 'revoke'] as const)
     await admitCapturedExecDependency(binding, { sourceRoot: modules, targetRelativePath: 'node_modules' });
     act = mutation === 'branch'
       ? () => git(binding.root, 'switch', '-c', 'changed-during-sweep')
+      : mutation === 'receipt' ? () => { Object.defineProperty(binding.contract.inputSnapshot!, 'inputCommit', { value: '0'.repeat(40) }); }
       : () => revokeContractInputAuthority(binding.authority);
     await expect(assertContractInputReadAccess(binding.authority, binding.readAccessFilter)).rejects.toThrow();
   });

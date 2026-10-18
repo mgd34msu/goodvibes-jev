@@ -110,19 +110,21 @@ export async function admitCapturedExecDependency(
   };
   const check = async (signal: AbortSignal | undefined = binding.signal): Promise<void> => {
     signal = binding.signal && signal ? AbortSignal.any([binding.signal, signal]) : binding.signal ?? signal;
-    await checkRoot(true, signal);
-    // This metadata-only sweep never releases bytes or grants another operation.
-    // Full recorded-view/Git validation brackets it; each entry still checks
-    // the live opaque token, source-root identity, current original/alias
-    // permissions and immutable file identity. No grant survives this sweep.
-    await checkCapturedInputsInBatches(reads, (read, current) => checkRead(read, false, current), signal);
-    for (const link of workspaceLinks) {
-      if (fingerprint(await lstat(link.source, { bigint: true })) !== link.identity || await realpath(link.source) !== link.canonical)
-        throw new Error('workspace dependency link changed after admission');
-      await checkWorkspaceRead(link.captured, link.source, link.alias, signal);
-    }
-    for (const read of workspaceReads.values()) await checkWorkspaceRead(...read, signal);
-    await checkRoot(true, signal);
+    await withContractInputReadBatch(binding.authority, async () => {
+      await checkRoot(true, signal);
+      // This metadata-only sweep never releases bytes or grants another operation.
+      // Full recorded-view/Git validation brackets it; each entry still checks
+      // the live opaque token, source-root identity, current original/alias
+      // permissions and immutable file identity. No grant survives this sweep.
+      await checkCapturedInputsInBatches(reads, (read, current) => checkRead(read, false, current), signal);
+      for (const link of workspaceLinks) {
+        if (fingerprint(await lstat(link.source, { bigint: true })) !== link.identity || await realpath(link.source) !== link.canonical)
+          throw new Error('workspace dependency link changed after admission');
+        await checkWorkspaceRead(link.captured, link.source, link.alias, signal);
+      }
+      for (const read of workspaceReads.values()) await checkWorkspaceRead(...read, signal);
+      await checkRoot(true, signal);
+    });
   };
   const visit = async (source: string, alias: string, path: string, ancestors: ReadonlySet<string>): Promise<void> => {
     const canonical = await realpath(source);
