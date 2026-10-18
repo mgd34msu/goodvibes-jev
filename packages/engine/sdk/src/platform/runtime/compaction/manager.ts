@@ -381,13 +381,25 @@ export class CompactionManager {
           strategy = escalated;
         }
       } else {
-        // Already at ceiling strategy (collapse or reactive), log but continue
+        // No further strategy can repair this candidate; the quality fence below retains the original.
         logger.debug('[CompactionManager] low quality at ceiling strategy; no escalation possible', {
           sessionId: this._sessionId,
           strategy,
           score: qualityScore.score,
         });
       }
+    }
+
+    if (qualityScore.isLowQuality) {
+      work.assertCurrent();
+      this._transition('failed');
+      emitCompactionFailed(this._bus, this._ctx, {
+        sessionId: this._sessionId, strategy,
+        error: 'Compaction remained below its quality threshold after fallback; the original conversation was retained.',
+      });
+      work.assertCurrent();
+      this._transition('idle');
+      return null;
     }
 
     // ── Transition: <strategy> → boundary_commit ─────────────────────────────

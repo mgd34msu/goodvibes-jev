@@ -230,7 +230,7 @@ describe('completion hold', () => {
     expect(consumed[0]).toMatchObject({ messageId: 'u1.n1', agentId: 'agent-held', turn: 2 });
   });
 
-  test('an agent with no contractUnitId is never held and its turns are never reported', async () => {
+  test('an agent with no contractUnitId uses final-response checks without contract hooks', async () => {
     const provider = scriptedProvider([
       () => reply('', [{ id: 'call-1', name: 'nonexistent_tool', arguments: {} }]),
       () => reply('done'),
@@ -238,7 +238,10 @@ describe('completion hold', () => {
     const hooks = scriptedHooks([]);
     const record = makeRecord({ id: 'agent-free', reviewMode: 'none' });
 
-    await runAgentTask(makeContext({ workingDirectory: workDir(), runtimeBus: new RuntimeEventBus(), messageBus: new AgentMessageBus(), provider, contractHooks: hooks }), record);
+    const previous = installJudgmentPort(fakePort(() => noulAnswer(.01)).port);
+    try {
+      await runAgentTask(makeContext({ workingDirectory: workDir(), runtimeBus: new RuntimeEventBus(), messageBus: new AgentMessageBus(), provider, contractHooks: hooks }), record);
+    } finally { installJudgmentPort(previous); }
 
     expect(record.status).toBe('completed');
     expect(hooks.holdCalls).toHaveLength(0);

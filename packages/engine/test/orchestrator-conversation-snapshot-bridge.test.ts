@@ -318,7 +318,7 @@ test('native private context is revalidated at the provider post-backoff fence w
       return { goal: 'Do that.', criteria: ['Do that.'], conversationContext: [{ role: 'assistant', content: 'Private reference.' }] };
     } }, record);
     expect(sends).toBe(1); expect(fences).toBeGreaterThanOrEqual(3); expect(record.status).toBe('failed');
-    expect(record.error).toBe('Refused before judgment: [REDACTED]');
+    expect(record.error).toBe('Refused before judgment: [REDACTED_TEXT]');
     expect(record.error).not.toContain('SYNTHETIC_PRIVATE_CONTEXT');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

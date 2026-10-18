@@ -8,10 +8,11 @@
  * fail loudly rather than silently receiving an unrelated fixture answer.
  */
 import { SqliteDecisionLog, withDecisionLog, type JudgmentPort, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
-import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { forgetCredentialEnvReadings } from '../../sdk/src/platform/tools/exec/credential-env.ts';
 import { forgetGateReadings, type GateReadingTable } from './gate-readings.ts';
+import { compactionQualityPort } from './compaction-quality.ts';
 import { coreReadingsPort } from './core-readings.ts';
 import { toolReadingsPort, type ToolReadingTable } from './tool-readings.ts';
 
@@ -29,6 +30,8 @@ export function installHostedSessionReadings(options: {
     throw new Error(`hosted session admission fixture: unexpected question ${name}`);
   });
   const log = new SqliteDecisionLog(':memory:');
+  const completion = fakePort(() => noulAnswer(.01));
+  const compaction = compactionQualityPort();
   const core = coreReadingsPort({ intent: 'chat', needsPlan: false, strategy: 'single' });
   const tools = toolReadingsPort(options.tools, options.gate);
   const requests: JudgmentRequest<Questions>[] = [];
@@ -41,6 +44,8 @@ export function installHostedSessionReadings(options: {
       if (request.context?.site === 'engine.gate.autonomous-tool') return admission.port.ask(request);
       const battery = request.context?.battery;
       if (battery === 'engine.core.turn-shape' || battery === 'engine.core.execution-strategy') return core.port.ask(request);
+      if (['engine.core.response-completion', 'engine.core.execution-assurance', 'engine.core.delegation-consolidation', 'engine.agents.brief-fidelity'].includes(battery ?? '')) return completion.port.ask(request);
+      if (['engine.compaction.retention', 'engine.compaction.fidelity', 'engine.compaction.collapse-keep'].includes(battery ?? '')) return compaction.port.ask(request);
       if (battery === 'contract.request-route') return intake.port.ask(request);
       if (battery?.startsWith('engine.gate.') || battery?.startsWith('engine.tools.')) return tools.port.ask(request);
       throw new Error(`hosted session fixture: unexpected decision ${battery ?? '(unnamed)'}`);

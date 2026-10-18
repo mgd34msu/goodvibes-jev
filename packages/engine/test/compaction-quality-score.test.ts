@@ -104,18 +104,40 @@ describe('the score', () => {
     expect(score.isLowQuality).toBe(false);
   });
 
-  test('a compaction that wrote nothing claims nothing: only the rubric is asked', async () => {
+  test('a compaction that wrote nothing still checks retained obligations without a fidelity claim', async () => {
     const { port, requests } = compactionQualityPort({ substance: 2 });
     installJudgmentPort(port);
     const score = await computeQualityScore(input([TASK, FOUND, RECENT]), output([FOUND, RECENT]));
     expect(requests).toHaveLength(1);
-    expect(Object.keys(requests[0]!.questions)).toEqual(['substance']);
+    expect(Object.keys(requests[0]!.questions)).toEqual(['obligations_lost', 'required_targets_lost', 'substance']);
     expect(requests[0]!.state).toEqual({
       source: '#1 user: Fix the CSV export dropping its last row.\n\n#2 assistant: The cause is an unconditional lines.pop() in toRows.\n\n#3 user: Now add a test for it.',
       compacted: '[messages #2 to #3 of the source, unchanged]',
     });
     expect(score.signals.fidelity).toBe('none');
     expect(score.retentionScore).toBeCloseTo(2 / 3, 5);
+  });
+
+
+  test('even maximum substance and compression cannot mask a lost user obligation', async () => {
+    installJudgmentPort(compactionQualityPort({ substance: 3, obligationsLost: .99 }).port);
+    const score = await computeQualityScore(input([TASK, FOUND, RECENT]), output([SUMMARY], 1_000));
+    expect(score.retentionScore).toBe(0);
+    expect(score.score).toBe(0);
+    expect(score.isLowQuality).toBe(true);
+  });
+
+  test('uncertainty about a lost obligation cannot approve a compaction', async () => {
+    installJudgmentPort(compactionQualityPort({ substance: 3, obligationsLost: .5 }).port);
+    await expect(computeQualityScore(input([TASK, FOUND, RECENT]), output([SUMMARY], 1_000))).rejects.toThrow();
+  });
+
+  test('a missing or unsettled exact target independently refuses compaction', async () => {
+    for (const probability of [.99, .5]) {
+      installJudgmentPort(compactionQualityPort({ substance: 3, requiredTargetsLost: probability }).port);
+      if (probability === .99) expect((await computeQualityScore(input([TASK, FOUND, RECENT]), output([SUMMARY], 1_000))).retentionScore).toBe(0);
+      else await expect(computeQualityScore(input([TASK, FOUND, RECENT]), output([SUMMARY], 1_000))).rejects.toThrow();
+    }
   });
 
   test('structural failures settle retention at 0 without asking', async () => {
@@ -159,15 +181,15 @@ describe('the compaction manager', () => {
     const { port, requests } = compactionQualityPort({ substance: 0 });
     installJudgmentPort(port);
     const events: Array<{ type: string }> = [];
-    const result = await makeManager(events).compact({ messages: conversation, tokenCount: 70_000, trigger: 'manual' });
-    expect(result).not.toBeNull();
-    expect(result!.strategy).toBe('collapse');
-    expect(result!.strategySwitchReason).toContain('escalating from autocompact to collapse');
-    expect(result!.qualityScore!.isLowQuality).toBe(true);
+    const manager = makeManager(events);
+    const result = await manager.compact({ messages: conversation, tokenCount: 70_000, trigger: 'manual' });
+    expect(result).toBeNull();
+    expect(manager.lastCommit).toBeNull();
+    expect(events.map(event => event.type)).toContain('COMPACTION_FAILED');
     expect(events.map((e) => e.type)).toContain('COMPACTION_STRATEGY_SWITCH');
     // Autocompact and collapse are each read by the rubric and the fidelity
     // check; collapse first reads which messages to keep, in one request.
-    assertReadingPartition(requests, ['engine.compaction.retention', 'engine.compaction.fidelity', 'engine.compaction.collapse-keep', 'engine.compaction.retention', 'engine.compaction.fidelity'], ['sessionId', 'fromStrategy', 'toStrategy', 'score', 'grade']);
+    assertReadingPartition(requests, ['engine.compaction.retention', 'engine.compaction.fidelity', 'engine.compaction.collapse-keep', 'engine.compaction.retention', 'engine.compaction.fidelity']);
   });
 
   test('a good score commits the first strategy', async () => {
@@ -190,12 +212,7 @@ describe('the compaction manager', () => {
   });
 });
 
-function assertReadingPartition(requests: ReadonlyArray<{ context?: { battery?: string }; questions: object; state: unknown }>, batteries: readonly string[], fields: readonly string[]) {
-  const diagnostic = requests.filter(request => request.context?.battery === 'engine.redaction.field-kind');
-  const feature = requests.filter(request => request.context?.battery !== 'engine.redaction.field-kind');
-  expect(requests).toHaveLength(batteries.length + fields.length);
-  expect(feature.map(request => request.context?.battery)).toEqual([...batteries]);
-  expect(diagnostic.map(request => request.state)).toEqual(fields.map(field => ({ field })));
-  for (const request of diagnostic) expect(Object.keys(request.questions)).toEqual(['kind']);
-  return feature;
+function assertReadingPartition(requests: ReadonlyArray<{ context?: { battery?: string }; questions: object; state: unknown }>, batteries: readonly string[]) {
+  expect(requests.map(request => request.context?.battery)).toEqual([...batteries]);
+  return requests;
 }

@@ -8,6 +8,7 @@ import type { ClassificationResult } from './intent-classifier.js';
 import type { ConversationManager } from './conversation.js';
 import type { ExecutionPlan } from './execution-plan.js';
 import { ConsecutiveErrorBreaker } from './circuit-breaker.js';
+import { collectResponseDelegates, ResponseCompletionGuard } from './response-completion.js';
 import type { CacheHitTracker } from '../providers/cache-strategy.js';
 import type { ConfigManager } from '../config/manager.js';
 import { estimateConversationTokens, estimateTokens } from './context-compaction.js';
@@ -143,7 +144,7 @@ export interface OrchestratorTurnLoopContext {
   readonly hookDispatcher: HookDispatcherLike | null;
   readonly requestRender: () => void;
   readonly runtimeBus: RuntimeEventBus | null;
-  readonly agentManager: Pick<AgentManager, 'list' | 'spawn'>;
+  readonly agentManager: Pick<AgentManager, 'list' | 'spawn'> & Partial<Pick<AgentManager, 'getConversationSnapshot'>>;
   readonly configManager: Pick<ConfigManager, 'get'>;
   readonly providerRegistry: Pick<ProviderRegistry, 'require' | 'getCurrentModel' | 'getForModel' | 'getTokenLimitsForModel' | 'getContextWindowForModel' | 'recordContextWindowRejection' | 'reconcileObservedContextWindow' | 'resolveModelPricing'>;
   readonly favoritesStore?: Pick<FavoritesStore, 'recordUsage'> | undefined;
@@ -239,6 +240,7 @@ export interface OrchestratorTurnLoopContext {
   /** Deliver user messages to the selected model; do not divert them into work intake. */
   readonly directUserInput?: boolean;
   readonly turnClassification?: ClassificationResult;
+  readonly getCompletionRequirements?: (() => unknown) | undefined;
 }
 
 export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopContext): Promise<void> {
@@ -263,6 +265,8 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
   // as exceeding the context window; a second rejection surfaces as an error.
   let contextOverflowRetried = false;
   const circuitBreaker = new ConsecutiveErrorBreaker();
+  const completionGuard = new ResponseCompletionGuard({ request: context.text, conversation: context.conversation });
+  let completionCorrection = '';
   // True only for the FIRST LLM call this executeOrchestratorTurnLoop()
   // invocation makes (see the per-iteration gate below for why this is the main loop's
   // analog of the agent-runner's "new user input this turn").
@@ -427,7 +431,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
     const resolvedSystemPrompt = await resolveSystemPrompt(context.getSystemPrompt, signal);
     assertActiveTurn();
     const baseSystemPromptForCall = appendGoodVibesRuntimeAwarenessPrompt(resolvedSystemPrompt);
-    const composedBaseSystemPrompt = baseSystemPromptForCall;
+    const composedBaseSystemPrompt = baseSystemPromptForCall + (completionCorrection ? `\n\n${completionCorrection}` : '');
     const contextCompactThreshold = context.configManager.get('agents.contextCompactThreshold')
       ?? DEFAULT_PASSIVE_KNOWLEDGE_INJECTION_CONTEXT_THRESHOLD;
     if (passiveKnowledgeInjectionEnabled && newUserInputThisTurn && context.memoryRegistry) {
@@ -858,6 +862,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         circuitBreaker.recordSuccess();
       }
       continueLoop = results.continueLoop;
+      completionGuard.noteToolResults(results.results);
       continue;
     }
 
@@ -868,7 +873,29 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
     };
     // A session-mode unit's turn is held where it would complete; a nudge keeps the turn going.
     if (contractSession && await holdSessionFinalResponse({ ...context, emitterContext: (id) => context.emitterContext(id) }, contractSession, enrichedResponse)) continue;
+    let assertCompletionCurrent: (() => void) | undefined;
+    if (!contractSession) {
+      const correction = await completionGuard.check({
+        request: context.text, response: enrichedResponse.content, conversation: context.conversation,
+        tools: toolDefinitions.map(tool => tool.name),
+        requirements: context.getCompletionRequirements?.(),
+        delegated: collectResponseDelegates(context.conversation, context.agentManager),
+      }, { signal, assertCurrent: assertActiveTurn });
+      assertActiveTurn();
+      if (correction !== null) {
+        context.conversation.addAssistantMessage(enrichedResponse.content, {
+          reasoningContent: reasoningForMsg, reasoningSummary: reasoningSummaryForMsg,
+          usage: enrichedResponse.usage, model: model.displayName, provider: model.provider,
+        });
+        context.conversation.addSystemMessage(correction);
+        completionCorrection = correction;
+        context.requestRender();
+        continue;
+      }
+      assertCompletionCurrent = completionGuard.beginFinalization(enrichedResponse);
+    }
     continueLoop = await handleFinalResponseOutcome({
+      assertCompletionCurrent,
       signal,
       assertCurrent: assertActiveTurn,
       assertPostTurnCurrent: context.assertPostTurnCurrent,

@@ -2,11 +2,19 @@ import { BatteryRegistry } from '@goodvibes-jev/judgment';
 import { turnShape } from './batteries/turn-shape.js';
 import { planItemStatus } from './batteries/plan-item-status.js';
 import { executionStrategy } from './batteries/planner.js';
+import { responseCompletion } from './batteries/response-completion.js';
+import { agentBriefFidelity } from '../agents/brief-fidelity.js';
+import { delegationConsolidation } from './batteries/delegation-consolidation.js';
+import { executionAssurance } from './batteries/execution-assurance.js';
 
 export const registry = new BatteryRegistry();
 registry.register(turnShape);
 registry.register(executionStrategy);
 registry.register(planItemStatus);
+registry.register(responseCompletion);
+registry.register(agentBriefFidelity);
+registry.register(delegationConsolidation);
+registry.register(executionAssurance);
 
 // Spawned-agent observations share the canonical engine registry.
 import { projectTestFramework, repeatStuck } from '../agents/batteries/orchestrator-observations.js';

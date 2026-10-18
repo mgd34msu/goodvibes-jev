@@ -82,6 +82,7 @@ function readings(probability = 0.99) {
       { message: staleMessage, errorName: 'ProviderAttemptDeniedError', reading: { category: 'unknown', connection: 'none' } },
     ]);
   const feature = fakePort((name, question, state) => {
+    if (['false_blocker', 'unfinished', 'unsupported', 'unanswered', 'unnecessary_permission', 'implementation_presented', 'verification_claimed', 'criteria_altered', 'ineffective_fix', 'irrelevant_verification', 'weakened_criteria', 'missing_results', 'unresolved_conflict'].includes(name)) return noulAnswer(.01);
     if (name === 'included' && question.type === 'noul' && question.instructions === knowledgeScopeSelection.items.included.question.instructions) {
       const eligible = [summary, 'The release procedure has changed.'].map(sourceSummary => ({
         view: 'ordinary', candidate: { kind: 'source', content: { title: 'Release instructions', summary: sourceSummary,

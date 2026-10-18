@@ -12,8 +12,17 @@ const TEXT = '  Explain café e\u0301 🌻\nKeep this original text.\nKeep this 
 
 test('paired native hosted HTTP preserves canonical identity, finishes a real turn and never replays on inspection', async () => {
   const f = await createNativeIntakeHttpFixture({ route: 'converse' });
+  const turnErrors: string[] = [];
+  f.daemon.services.runtimeBus.on('TURN_ERROR', event => { if (event.payload.type === 'TURN_ERROR') turnErrors.push(event.payload.error); });
   const requests: { messages: { role: string; content: unknown }[]; stream?: boolean }[] = [];
+  const judgmentRequests: { model: string; questions: Record<string, { type: string }> }[] = [];
+  const previousJudgmentKey = process.env['TYPESAFE_API_KEY'];
   const server = Bun.serve({ port: 0, hostname: '127.0.0.1', async fetch(request) {
+    if (new URL(request.url).pathname === '/v1/systemone') {
+      const body = await request.json() as (typeof judgmentRequests)[number];
+      judgmentRequests.push(body);
+      return Response.json({ model: body.model, answers: Object.fromEntries(Object.keys(body.questions).map(name => [name, { type: 'noul', noul: .01 }])), usage: { input_tokens: 10, output_tokens: 5 } });
+    }
     if (new URL(request.url).pathname === '/v1/models') return Response.json({ data: [{ id: 'native-model' }] });
     const body = await request.json() as (typeof requests)[number]; requests.push(body);
     const content = 'Owned native hosted answer.';
@@ -29,6 +38,9 @@ test('paired native hosted HTTP preserves canonical identity, finishes a real tu
     return { methodId, method: route.method, path: route.path, requestBody: input, requestJson, status: response.status, body: await response.text() };
   }
   try {
+    process.env['TYPESAFE_API_KEY'] = 'synthetic-native-hosted-judgment';
+    f.daemon.services.configManager.set('judgment.endpoint', `http://127.0.0.1:${server.port}`);
+    f.daemon.services.configManager.set('judgment.keySource', 'env');
     f.daemon.services.providerRegistry.registerDiscoveredProviders([{ name: 'native-hosted-wire', host: '127.0.0.1', port: server.port!, baseURL: `http://127.0.0.1:${server.port}/v1`, models: ['native-model'], serverType: 'vllm' }]);
     f.daemon.services.configManager.set('provider.model', 'native-hosted-wire:native-model');
     const input = { requestId: 'native-hosted-http-request', inputId: 'native-hosted-http-input', text: TEXT, unsupportedSources: [] };
@@ -78,10 +90,12 @@ test('paired native hosted HTTP preserves canonical identity, finishes a real tu
     for (;;) {
       const observed = nativeHostedTurnLookupSchema.parse(JSON.parse(status.body));
       if (!('kind' in observed) && observed.state === 'completed') break;
-      if (Date.now() > deadline || (!('kind' in observed) && observed.state === 'recovery-required')) throw new Error(`Turn did not complete: ${status.body}; requests=${JSON.stringify(requests)}`);
+      if (Date.now() > deadline || (!('kind' in observed) && observed.state === 'recovery-required')) throw new Error(`Turn did not complete: ${status.body}; providerRequests=${requests.length}; errors=${JSON.stringify(turnErrors)}; judgments=${JSON.stringify(f.fake.requests.map(request => request.context?.battery))}`);
       await new Promise(resolve => setTimeout(resolve, 20)); status = await wire('workLedger.turn.status', identity);
     }
     expect(requests.some(request => request.stream && request.messages.some(message => message.role === 'user' && message.content === TEXT))).toBe(true);
+    expect(judgmentRequests).toHaveLength(1);
+    expect(Object.keys(judgmentRequests[0]!.questions).sort()).toEqual(['false_blocker', 'unfinished', 'unnecessary_permission', 'unanswered', 'unsupported'].sort());
     const count = requests.length;
     const duplicate = await wire('workLedger.turn.start', identity);
     expect(duplicate.body).toBe(status.body); expect(requests).toHaveLength(count);
@@ -127,5 +141,12 @@ test('paired native hosted HTTP preserves canonical identity, finishes a real tu
     if (directory) { mkdirSync(directory, { recursive: true });
       writeFileSync(join(directory, 'cancelled.json'), JSON.stringify({ source: 'owned loopback model; real paired DaemonServer cancellation-before-dispatch', input: cancelledInput, identity: cancelledIdentity, auth, project, capture: cancelledCapture, admit: cancelledAdmit, get: cancelledGet, absent: cancelledAbsent, cancel: cancellation, status: cancelledStatus, start: prevented }, null, 2) + '\n');
       writeFileSync(join(directory, 'completed.json'), JSON.stringify({ source: 'owned loopback model; real paired DaemonServer hosted delivery', input, identity, auth, project, capture, admit, get, absent, start, status, duplicate, attachment }, null, 2) + '\n'); }
-  } finally { await f.stop(); server.stop(true); }
+  } finally {
+    try { await f.stop(); }
+    finally {
+      server.stop(true);
+      if (previousJudgmentKey === undefined) delete process.env['TYPESAFE_API_KEY'];
+      else process.env['TYPESAFE_API_KEY'] = previousJudgmentKey;
+    }
+  }
 }, 40_000);

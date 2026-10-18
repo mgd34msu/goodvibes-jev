@@ -19,6 +19,8 @@ import type { ContractAgentHooks } from '../contract/agent-hooks.js';
 type EmitterContext = import('../runtime/emitters/index.js').EmitterContext;
 
 export interface AgentOrchestratorRunContext {
+  /** Read only the child agents referenced by this run when checking its final synthesis. */
+  readonly agentManager?: Pick<import('../tools/agent/manager.js').AgentManager, 'list' | 'getConversationSnapshot'> | undefined;
   readonly autonomousPort?: import('../tools/agent/contract-binding.js').ContractActionPort | undefined;
   /** Nonserialized source getter supplied by the native contract construction binding. */
   readonly autonomousSource?: (() => import('../permissions/autonomous.js').AutonomousToolSource) | undefined;

@@ -316,10 +316,7 @@ describe('source and conversation currentness', () => {
     const fake = compactionQualityPort(); installJudgmentPort(fake.port); const c = conversation(); const stale = context(c.host);
     stale.messages = stale.messages.slice(0, -1);
     await expect(compactConversation(c.host, registry, 'test/model', 'manual', 'test', stale)).rejects.toThrow('changed before compaction');
-    expect(fake.requests).toHaveLength(1);
-    expect(fake.requests[0]?.context?.battery).toBe('engine.redaction.field-kind');
-    expect(fake.requests[0]?.state).toEqual({ field: 'error' });
-    expect(Object.keys(fake.requests[0]!.questions)).toEqual(['kind']); expect(c.replacements).toBe(0); expect(c.lineage).toBe(0);
+    expect(fake.requests).toHaveLength(0); expect(c.replacements).toBe(0); expect(c.lineage).toBe(0);
   });
 
   test('a queued route refuses its obsolete input before calling the mutation callback', async () => {

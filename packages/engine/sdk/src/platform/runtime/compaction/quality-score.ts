@@ -16,7 +16,8 @@ import { requireActingReading, JudgmentHeldError } from '../../types/judgment-he
  *   reduction or more is a full score.
  * - retentionScore (Jev): two readings of the compaction against the
  *   conversation it replaced, asked concurrently.
- *     - `engine.compaction.retention`, a rated rubric: how much of what the
+ *     - `engine.compaction.retention`, a rated rubric plus obligation and exact-target
+ *       preservation checks: how much of what the
  *       work depends on the compacted conversation still carries. Its
  *       probability-weighted score over the levels, normalised to 0 to 1, is
  *       the substance carried.
@@ -28,6 +29,9 @@ import { requireActingReading, JudgmentHeldError } from '../../types/judgment-he
  *   the source): the substance carried, counted only to the extent the
  *   compacted conversation can be trusted. No written text means nothing is
  *   claimed and nothing is asked.
+ *   Losing an active requirement, constraint, authorization or required exact
+ *   target sets retention to zero regardless of the compression or substance
+ *   score. Unsettled preservation readings refuse the candidate.
  *   Structural facts gate the readings: an output with no messages, no
  *   tokens, or more messages than the input carries nothing a compaction
  *   should keep, so its retention is 0 without asking.
@@ -151,8 +155,11 @@ async function readRetention(
   ]);
 
   current(); requireActingReading(retention.readings.substance);
+  requireActingReading(retention.readings.obligations_lost);
+  requireActingReading(retention.readings.required_targets_lost);
   if (fidelity) requireActingReading(fidelity);
-  retention.recordAction('Use settled retention in compaction quality.');
+  const obligationsLost = retention.readings.obligations_lost.verdict === 'yes' || retention.readings.required_targets_lost.verdict === 'yes';
+  retention.recordAction(obligationsLost ? 'Reject compaction: a required obligation was lost.' : 'Use settled retention with every required obligation preserved.');
   fidelity?.recordAction('Use settled fidelity in compaction quality.');
   const substance = Math.min(1, Math.max(0, retention.readings.substance.normalized));
   const contradictionProbability = fidelity?.reading?.probabilities.contradicts ?? 0;
@@ -164,7 +171,7 @@ async function readRetention(
       messageCountSane,
       positiveTokenCount,
     },
-    retentionScore: substance * (1 - contradictionProbability),
+    retentionScore: obligationsLost ? 0 : substance * (1 - contradictionProbability),
   };
 }
 

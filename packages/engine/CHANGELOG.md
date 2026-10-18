@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- Check ordinary main and standalone-agent final responses with Jev before
+  reporting completion. Return unfinished work, unsupported claims, false
+  blockers and unnecessary approval requests to the model with a correction.
+  Check delegated scope and synthesis, relevant verification and preserved
+  success criteria; run independent completion batteries concurrently.
+  Preserve active obligations and exact targets through compaction, retaining
+  the original conversation when the final fallback still fails its checks.
+
 - Interpret ambiguous Google grant/API failures and 2-Step Verification pages
   with Jev, preserving exact protocol reasons and reusing structured diagnoses.
   Route implicit Agent audit intent through the protected catalog selector.

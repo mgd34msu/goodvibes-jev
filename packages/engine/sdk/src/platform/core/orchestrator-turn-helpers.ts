@@ -243,7 +243,6 @@ function attachAuthoritativeTaskToAgentCalls(toolCalls: readonly ToolCall[], use
     const args = call.arguments as Record<string, unknown>;
     const mode = args.mode;
     if (mode !== 'spawn' && mode !== 'batch-spawn') return call;
-    if (typeof args.parentAgentId === 'string' && args.parentAgentId.trim().length > 0) return call;
     return {
       ...call,
       arguments: {
@@ -398,6 +397,7 @@ async function handleOwnedToolResponseOutcome(args: ToolResponseOutcomeArgs): Pr
 }
 
 type FinalResponseOutcomeArgs = {
+  assertCompletionCurrent?: (() => void) | undefined;
   assertPostTurnCurrent?: (() => void) | undefined;
   signal?: AbortSignal | undefined;
   assertCurrent?: (() => void) | undefined;
@@ -421,6 +421,7 @@ type FinalResponseOutcomeArgs = {
 };
 
 export async function handleFinalResponseOutcome(args: FinalResponseOutcomeArgs): Promise<false> {
+  args.assertCompletionCurrent?.();
   args.signal?.throwIfAborted();
   args.assertCurrent?.();
   args.conversation.addAssistantMessage(args.response.content, {
@@ -431,15 +432,16 @@ export async function handleFinalResponseOutcome(args: FinalResponseOutcomeArgs)
     provider: args.providerRegistry.getCurrentModel().provider,
   });
   await handleFinalPlanOutcome(args);
+  args.assertCompletionCurrent?.();
   args.signal?.throwIfAborted();
   args.assertCurrent?.();
   if (args.runtimeBus) {
-    publishTurnTerminal(() => emitTurnCompleted(args.runtimeBus!, args.emitterContext(args.turnId), {
+    publishTurnTerminal(() => { args.assertCompletionCurrent?.(); emitTurnCompleted(args.runtimeBus!, args.emitterContext(args.turnId), {
       turnId: args.turnId,
       response: args.response.content,
       stopReason: args.response.content.trim().length > 0 ? 'completed' : 'empty_response',
       memoryRecordIds: args.memoryRecordIds,
-    }), args.onTurnTerminal);
+    }); }, args.onTurnTerminal);
   }
 
   return false;

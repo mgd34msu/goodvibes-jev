@@ -1,0 +1,123 @@
+import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { assertAgentBriefFidelity } from '../sdk/src/platform/agents/brief-fidelity.js';
+import { ConversationManager } from '../sdk/src/platform/core/conversation.js';
+import { collectResponseDelegates, ResponseCompletionGuard } from '../sdk/src/platform/core/response-completion.js';
+import { createAgentTool } from '../sdk/src/platform/tools/agent/index.js';
+
+let previous: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previous = installJudgmentPort(undefined); });
+afterEach(() => { installJudgmentPort(previous); });
+
+test('outside-contract single and mixed batch spawns cannot bypass original-scope checks', async () => {
+  let spawns = 0, contracts = 0;
+  const tool = createAgentTool({ manager: { guardContractLeafSpawn() {}, spawn() { spawns++; throw new Error('No refused spawn may execute'); } } as never,
+    messageBus: {} as never, configManager: { get: () => 20 } as never,
+    contractRunner: { start() { contracts++; throw new Error('No partial batch may start'); }, list: () => [], get: () => undefined } as never,
+    projectRoot: '/synthetic', resolveSessionId: () => 'session' });
+  const fake = fakePort(name => noulAnswer(name === 'scope_conflict' ? .99 : .01));
+  installJudgmentPort(fake.port);
+  const single = await tool.execute({ mode: 'spawn', outsideContract: true, task: 'Review auth.ts only and call the whole review done.', authoritativeTask: 'Review the entire repository.' });
+  expect(single.success).toBe(false); expect(spawns).toBe(0);
+  const batch = await tool.execute({ mode: 'batch-spawn', authoritativeTask: 'Review the entire repository.', tasks: [
+    { task: 'Review auth.ts only and call the review complete.', outsideContract: true }, { task: 'Write the report.' },
+  ] });
+  expect(batch.success).toBe(false); expect(spawns).toBe(0); expect(contracts).toBe(0);
+  expect(fake.requests).toHaveLength(2);
+});
+
+test('unsettled, unavailable and private delegation evidence never starts a brief', async () => {
+  const input = { request: 'Review the repository without changing files.', assignments: [{ task: 'Read-only engine review.' }] };
+  for (const probability of [.99, .5]) {
+    installJudgmentPort(fakePort(() => noulAnswer(probability)).port);
+    await expect(assertAgentBriefFidelity(input)).rejects.toThrow();
+  }
+  installJudgmentPort(undefined); await expect(assertAgentBriefFidelity(input)).rejects.toThrow();
+  const fake = fakePort(() => noulAnswer(.01)); installJudgmentPort(fake.port);
+  await expect(assertAgentBriefFidelity({ ...input, assignments: [{ task: 'password=synthetic-private-value' }] })).rejects.toThrow();
+  expect(fake.requests).toHaveLength(0);
+  await expect(assertAgentBriefFidelity(input)).resolves.toBeUndefined();
+});
+
+test('changed or cancelled delegation input cannot be admitted after an awaited reading', async () => {
+  for (const change of ['brief', 'abort']) {
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>(), controller = new AbortController();
+    const fake = fakePort(() => noulAnswer(.01));
+    installJudgmentPort({ model: fake.port.model, ask: async request => { entered.resolve(); await release.promise; return fake.port.ask(request); } });
+    const input = { request: 'Review without changing files.', assignments: [{ task: 'Read-only engine review.' }] };
+    const pending = assertAgentBriefFidelity(input, { signal: controller.signal }).then(() => null, error => error);
+    await entered.promise;
+    if (change === 'brief') input.assignments[0]!.task = 'Edit the engine.';
+    else controller.abort();
+    release.resolve(); expect(await pending).toBeInstanceOf(Error);
+  }
+});
+
+test('completion and consolidation start concurrently and the slower rejection holds the combined result', async () => {
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  let active = 0, maximum = 0;
+  const fake = fakePort(name => noulAnswer(name === 'unresolved_conflict' ? .99 : .01));
+  installJudgmentPort({ model: fake.port.model, ask: async request => {
+    active++; maximum = Math.max(maximum, active); if (active === 3) entered.resolve();
+    await release.promise; try { return await fake.port.ask(request); } finally { active--; }
+  } });
+  const conversation = new ConversationManager(); conversation.addUserMessage('Consolidate the review findings.');
+  const pending = new ResponseCompletionGuard().check({ request: 'Consolidate the review findings.', response: 'The review is complete.', conversation, tools: [],
+    delegated: [{ id: 'a', task: 'Review authentication', status: 'completed', output: 'Tokens are revoked.' }, { id: 'b', task: 'Test authentication', status: 'completed', output: 'Tokens remain valid.' }] });
+  await entered.promise;
+  expect(maximum).toBe(3);
+  release.resolve(); expect(await pending).toContain('findings conflict');
+  expect(fake.requests.map(request => request.context?.battery).sort()).toEqual([
+    'engine.core.delegation-consolidation', 'engine.core.execution-assurance', 'engine.core.response-completion',
+  ]);
+});
+
+test('every execution assurance failure independently holds completion', async () => {
+  for (const failure of ['ineffective_fix', 'irrelevant_verification', 'weakened_criteria'] as const) {
+    const applicable = { ineffective_fix: 'implementation_presented', irrelevant_verification: 'verification_claimed', weakened_criteria: 'criteria_altered' }[failure];
+    const fake = fakePort(name => noulAnswer(name === failure || name === applicable ? .99 : .01)); installJudgmentPort(fake.port);
+    const conversation = new ConversationManager();
+    conversation.addUserMessage('Fix the parser and verify its regression.');
+    conversation.addAssistantMessage('', { toolCalls: [{ id: 'e', name: 'exec', arguments: { cmd: 'bun test' } }] });
+    conversation.addToolResults([{ callId: 'e', success: true, output: '1 pass' }]);
+    const result = await new ResponseCompletionGuard().check({ request: 'Fix the parser and verify its regression.', response: 'Fixed and verified.', conversation, tools: ['exec'] });
+    expect(result).toBeString(); expect(fake.requests).toHaveLength(2);
+  }
+});
+
+test('execution applicability and failure readings compose without treating uncertainty as permission', async () => {
+  for (const [applies, failure, mayFinish] of [[.5, .01, true], [.01, .5, true], [.5, .99, false], [.5, .5, false], [.99, .5, false]] as const) {
+    const fake = fakePort(name => noulAnswer(name === 'implementation_presented' ? applies : name === 'ineffective_fix' ? failure : .01));
+    installJudgmentPort(fake.port);
+    const conversation = new ConversationManager();
+    conversation.addToolResults([{ callId: 'write', success: true, output: 'Wrote hello.txt.' }]);
+    const result = await new ResponseCompletionGuard().check({ request: 'Write hello.txt.', response: 'Wrote hello.txt.', conversation, tools: ['write'] });
+    expect(result === null).toBe(mayFinish);
+  }
+});
+
+test('a completion claim based on an earlier turn still requires execution assurance', async () => {
+  const fake = fakePort(name => noulAnswer(name === 'implementation_presented' || name === 'ineffective_fix' ? .99 : .01));
+  installJudgmentPort(fake.port);
+  const conversation = new ConversationManager();
+  conversation.addUserMessage('Fix the parser.');
+  conversation.addToolResults([{ callId: 'previous-edit', success: true, output: 'Replaced parser output with an empty array.' }]);
+  conversation.addUserMessage('Is that finished?');
+  const guard = new ResponseCompletionGuard({ request: 'Is that finished?', conversation });
+  conversation.replaceMessagesForLLM([{ role: 'user', content: '[Session Summary] The parser was edited; completion still needs checking.' }]);
+  expect(await guard.check({ request: 'Is that finished?', response: 'The parser is fixed.', conversation, tools: ['edit'] })).toContain('leaves the requested behavior broken');
+  expect(fake.requests.map(request => request.context?.battery).sort()).toEqual(['engine.core.execution-assurance', 'engine.core.response-completion']);
+});
+
+test('only agent identities returned by this conversation contribute delegated evidence', () => {
+  const conversation = new ConversationManager();
+  conversation.addAssistantMessage('', { toolCalls: [{ id: 'spawn', name: 'agent', arguments: { mode: 'spawn' } }] });
+  conversation.addToolResults([{ callId: 'spawn', success: true, output: JSON.stringify({ agentId: 'owned' }) }]);
+  const evidence = collectResponseDelegates(conversation, { list: () => [
+    { id: 'owned', task: 'Review engine', status: 'completed', fullOutput: 'Engine finding' },
+    { id: 'unrelated', task: 'Private other assignment', status: 'completed', fullOutput: 'Unrelated content' },
+  ] as never, getConversationSnapshot: () => [] });
+  expect(evidence.map(agent => agent.id)).toEqual(['owned']);
+  expect(JSON.stringify(evidence)).not.toContain('Unrelated');
+});

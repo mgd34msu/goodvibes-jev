@@ -734,7 +734,7 @@ test.each(['success', 'retry', 'continuation', 'policy-retry', 'file-continuatio
   const root = mkdtempSync(join(tmpdir(), 'code-authority-runner-'));
   const live = await createCanonicalLiveCodeSource();
   try {
-    installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+    installJudgmentPort(fakePort(name => noulAnswer(['false_blocker', 'unfinished', 'unsupported', 'unanswered', 'unnecessary_permission', 'implementation_presented', 'verification_claimed', 'criteria_altered', 'ineffective_fix', 'irrelevant_verification', 'weakened_criteria', 'missing_results', 'unresolved_conflict'].includes(name) ? .01 : .99)).port);
     let dispatched = 0;
     const flags = createFeatureFlagManager(); flags.enable('agent-passive-code-injection');
     const provider: LLMProvider = { name: 'fake', models: ['fake-model'], async chat(request) {

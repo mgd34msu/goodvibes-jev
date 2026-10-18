@@ -796,6 +796,7 @@ export class AgentOrchestrator {
       : undefined;
     return {
       workingDirectory: cwd,
+      agentManager: this.toolDeps?.agentManager,
       ...(autonomousSource ? { autonomousSource } : {}),
       ...(autonomousPort ? { autonomousPort } : {}),
       ...(authority || autonomousSource

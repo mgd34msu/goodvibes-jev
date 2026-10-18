@@ -91,6 +91,7 @@ describe('dependency-qualified large compaction evidence', () => {
     const ctx = context(distinctSources().map(content => ({ role: 'assistant', content })));
     ctx.messages.push({ role: 'user', content: 'Keep the API compatible.' }, { role: 'assistant', content: 'Compatibility retained; tests pass.' });
     const { port, requests } = fakePort((key, question) => {
+      if (key === 'obligations_lost' || key === 'required_targets_lost') return noulAnswer(.01);
       if (key === 'substance') return scoreAnswer(question, 3, 0.99);
       if (key === 'relation') return choiceAnswer(question, 'supports', 0.99);
       return noulAnswer(key.startsWith('dependency_') || key.startsWith('selected_c2_') ? 0.01 : 0.99);

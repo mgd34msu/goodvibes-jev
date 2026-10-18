@@ -22,8 +22,9 @@ const roots: string[] = [];
 let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => { previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-function semanticPort(answer: Parameters<typeof fakePort>[0]) {
+function semanticPort(answer: Parameters<typeof fakePort>[0], completion?: (name: string, state: unknown) => number) {
   return fakePort((name, question, state) => {
+    if (['false_blocker', 'unfinished', 'unsupported', 'unanswered', 'unnecessary_permission', 'implementation_presented', 'verification_claimed', 'criteria_altered', 'ineffective_fix', 'irrelevant_verification', 'weakened_criteria', 'missing_results', 'unresolved_conflict'].includes(name)) return noulAnswer(completion?.(name, state) ?? .01);
     if (name === 'kind') return choiceAnswer(question, 'secret', 0.99);
     if (name === 'credentialRemains') return noulAnswer(0.03);
     if (name === 'category') return choiceAnswer(question, 'unknown', 0.99);
@@ -38,7 +39,7 @@ function setup(rounds = 0, output: (n: number) => string = () => 'same result') 
   const bus = new RuntimeEventBus(), completed: unknown[] = [], streams: string[] = [];
   let readSnapshot: () => unknown[] = () => [];
   bus.on('AGENT_COMPLETED', event => { completed.push(event); });
-  const controls: { beforeTool?: (args: Record<string, unknown>) => Promise<void>; beforeRetry?: () => void; beforeDelta?: () => void; batchSize: number } = { batchSize: 1 };
+  const controls: { beforeTool?: (args: Record<string, unknown>) => Promise<void>; beforeRetry?: () => void; beforeDelta?: () => void; finalReplies?: string[]; toolName?: string; batchSize: number } = { batchSize: 1 };
   const record: AgentRecord = { id: 'agent', task: 'inspect progress', template: 'engineer', tools: ['probe'], status: 'running', startedAt: Date.now(), toolCallCount: 0, orchestrationDepth: 0, executionProtocol: 'direct', reviewMode: 'none', communicationLane: 'parent-only' };
   const tools = new ToolRegistry(); let executions = 0, chats = 0;
   tools.register({ definition: { name: 'probe', description: 'Read progress', parameters: { type: 'object', properties: {} } }, async execute(args) { executions++; await controls.beforeTool?.(args); return { success: true, output: output(executions) }; } });
@@ -46,7 +47,7 @@ function setup(rounds = 0, output: (n: number) => string = () => 'same result') 
     await request.beforeAttempt?.(); controls.beforeRetry?.(); await request.beforeAttempt?.();
     controls.beforeDelta?.(); request.onDelta?.({ content: 'visible delta' });
     requests.push(structuredClone({ messages: request.messages, systemPrompt: request.systemPrompt }));
-    return { content: chats++ < rounds ? '' : 'done', toolCalls: chats <= rounds ? Array.from({ length: controls.batchSize }, (_, i) => ({ id: `call-${chats}-${i}`, name: 'probe', arguments: { job: 'a' } })) : [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: chats <= rounds ? 'tool_call' : 'completed' };
+    return { content: chats++ < rounds ? '' : (controls.finalReplies?.shift() ?? 'done'), toolCalls: chats <= rounds ? Array.from({ length: controls.batchSize }, (_, i) => ({ id: `call-${chats}-${i}`, name: controls.toolName ?? 'probe', arguments: { job: 'a' } })) : [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: chats <= rounds ? 'tool_call' : 'completed' };
   } };
   const model = { id: 'fake', provider: 'fake', registryKey: 'fake:fake' };
   const context: AgentOrchestratorRunContext = {
@@ -97,7 +98,7 @@ describe('canonical spawn framework', () => {
     expect((await readRepeatedCalls(history([tail, 'progress']), f.context, f.record))?.stuck).toBe(false);
     expect(fake.requests.filter(r => JSON.stringify(r.state).includes(tail))).toHaveLength(2);
   });
-  test('service refresh during a tool cannot fail any already-started reviewer', async () => {
+  test('service refresh does not interrupt admitted tools but an unavailable final checker cannot approve completion', async () => {
     const fixtures = Array.from({ length: 6 }, () => setup(1));
     const entered = deferred(), release = deferred(); let count = 0;
     installJudgmentPort(semanticPort((_n, q) => choiceAnswer(q, 'jest', .99)).port);
@@ -107,7 +108,7 @@ describe('canonical spawn framework', () => {
     }
     const pending = Promise.all(fixtures.map(f => runAgentTask(f.context, f.record)));
     await entered.promise; installJudgmentPort(undefined); release.resolve(); await pending;
-    for (const f of fixtures) { expect(f.executions).toBe(1); expect(f.record.status).toBe('completed'); expect(f.completed).toHaveLength(1); }
+    for (const f of fixtures) { expect(f.executions).toBe(1); expect(f.record.status).toBe('failed'); expect(f.completed).toHaveLength(0); }
   });
   test('one spawn reading across multiple turns and real prompt use', async () => {
     const f = setup(4, n => String(n)); project(f.root, { dependencies: { vitest: '1' }, scripts: { test: 'node scripts/check-suite.js' } });
@@ -145,17 +146,17 @@ describe('canonical repeated-call observation and actual runner', () => {
   test('unavailable, uncertain and malformed advisory readings do not stop the agent', async () => {
     for (const port of [undefined, semanticPort(() => noulAnswer(.5)).port, semanticPort(() => ({ type: 'noul', noul: NaN })).port]) {
       const f = setup(5); installJudgmentPort(port); await runAgentTask(f.context, f.record);
-      expect(f.executions).toBe(5); expect(f.requests).toHaveLength(6); expect(f.record.status).toBe('completed');
+      expect(f.executions).toBe(5); expect(f.requests).toHaveLength(6); expect(f.record.status).toBe(port ? 'completed' : 'failed');
       expect(JSON.stringify(f.requests)).not.toContain('You are repeating');
     }
   });
-  test('private result tails are withheld from Jev without cancelling the task', async () => {
+  test('private result tails are withheld and unchecked completion fails visibly', async () => {
     const f = setup(5, () => 'x'.repeat(200_000) + ' password=private-value'), fake = semanticPort(() => noulAnswer(.01)); installJudgmentPort(fake.port);
     await runAgentTask(f.context, f.record);
     expect(JSON.stringify(fake.requests)).not.toContain('private-value');
     expect(JSON.stringify(fake.requests)).not.toContain('x'.repeat(200_000));
     expect(fake.requests.filter(r => r.context?.battery === 'engine.agents.repeat-stuck')).toHaveLength(0);
-    expect(f.executions).toBe(5); expect(f.record.status).toBe('completed');
+    expect(f.executions).toBe(5); expect(f.record.status).toBe('failed'); expect(f.completed).toHaveLength(0);
   });
   test('run cancellation interrupts a non-cooperating judgment without stale messages', async () => {
     const f = setup(5), start = deferred(), release = deferred(), fake = semanticPort(() => noulAnswer(.99));
@@ -301,7 +302,7 @@ describe('review regressions: complete observation through tool effects', () => 
     const f = setup(4), fake = semanticPort(() => noulAnswer(.01)); let current = true, permissions = 0;
     bindJudgmentPortAuthority(fake.port, () => ({ identity: f.context, assertCurrent() { if (!current) throw new Error('retired'); } })); installJudgmentPort(fake.port);
     (f.context as { permissionManager?: unknown }).permissionManager = { getBackgroundAgentsMode: () => 'inherit', async checkDetailed() { if (++permissions === 3) current = false; return { approved: true }; } };
-    await runAgentTask(f.context, f.record); expect(f.executions).toBe(4); expect(f.completed).toHaveLength(1); expect(f.record.status).toBe('completed');
+    await runAgentTask(f.context, f.record); expect(f.executions).toBe(4); expect(f.completed).toHaveLength(0); expect(f.record.status).toBe('failed');
   });
 });
 
@@ -362,7 +363,7 @@ describe('cancelled batch mechanical transcript closure', () => {
       await runAgentTask(f.context, f.record);
       expect(f.controller.signal.aborted).toBe(false);
       if (kind === 'config') expect(f.record.failureReason).toBe('semantic_observation_held');
-      else expect(f.record.status).toBe('completed');
+      else expect(f.record.status).toBe('failed');
       expect(JSON.stringify(f.snapshot)).not.toContain('Tool invocation cancelled');
     }
   });
@@ -490,6 +491,62 @@ test('prepared retirement releases only its owned projection exactly once before
 });
 
 function assertReadingPartition(requests: ReadonlyArray<{ context?: { battery?: string }; questions: object; state: unknown }>, batteries: readonly string[]) {
-  expect(requests.map(request => request.context?.battery)).toEqual([...batteries]);
-  return requests;
+  const observations = requests.filter(request => !['engine.core.response-completion', 'engine.core.execution-assurance', 'engine.core.delegation-consolidation'].includes(request.context?.battery ?? ''));
+  expect(observations.map(request => request.context?.battery)).toEqual([...batteries]);
+  return observations;
 }
+
+
+describe('standalone completion enforcement', () => {
+  test('a standalone coordinator must incorporate its own delegated results', async () => {
+    const f = setup(1);
+    f.record.task = 'Consolidate the engine and UI review.';
+    f.record.tools = ['agent'];
+    f.controls.toolName = 'agent';
+    f.controls.finalReplies = ['Only the engine review.', 'Both engine and UI findings.'];
+    f.tools.register({ definition: { name: 'agent', description: 'Read child result', parameters: { type: 'object', properties: {} } }, async execute() {
+      return { success: true, output: JSON.stringify({ agentId: 'child' }) };
+    } });
+    (f.context as { agentManager?: unknown }).agentManager = { list: () => [{ id: 'child', task: 'Review UI', status: 'completed', fullOutput: 'UI finding' }], getConversationSnapshot: () => [] };
+    const fake = semanticPort(() => noulAnswer(.01), (name, state) => name === 'missing_results' && (state as { response: string }).response === 'Only the engine review.' ? .99 : .01);
+    installJudgmentPort(fake.port);
+    await runAgentTask(f.context, f.record);
+    const consolidation = fake.requests.filter(request => request.context?.battery === 'engine.core.delegation-consolidation');
+    expect(consolidation).toHaveLength(2);
+    expect((consolidation[0]!.state as { delegated: { id: string }[] }).delegated.map(agent => agent.id)).toEqual(['child']);
+    expect(f.completed).toHaveLength(1);
+    expect(f.record.fullOutput).toBe('Both engine and UI findings.');
+  });
+
+  test('an honest incomplete final returns to the provider with its correction before any completed event', async () => {
+    const f = setup();
+    const partial = 'I wrote the report, but the original review is still unfinished.';
+    f.record.task = 'Finish the complete repository review and its report.';
+    f.controls.finalReplies = [partial, 'Finished the assigned review and report.'];
+    installJudgmentPort(semanticPort(() => noulAnswer(.01), (name, state) => name === 'unfinished' && (state as { response?: string }).response === partial ? .99 : .01).port);
+    await runAgentTask(f.context, f.record);
+    expect(f.requests).toHaveLength(2);
+    expect(JSON.stringify(f.requests[1])).toContain('[Response completion check]');
+    expect(f.completed).toHaveLength(1);
+    expect(f.record.fullOutput).toBe('Finished the assigned review and report.');
+  });
+
+  test('retirement during final settlement cannot publish a previously accepted completion', async () => {
+    const f = setup();
+    installJudgmentPort(semanticPort(() => noulAnswer(.01)).port);
+    (f.context as { beforeRunSettlement?: () => Promise<void> }).beforeRunSettlement = async () => { installJudgmentPort(undefined); };
+    await runAgentTask(f.context, f.record);
+    expect(f.completed).toHaveLength(0);
+    expect(f.record.status).toBe('failed');
+    expect(f.events).toContain('failed');
+  });
+
+  test('changing the actual output during settlement cannot reuse the checked draft', async () => {
+    const f = setup();
+    installJudgmentPort(semanticPort(() => noulAnswer(.01)).port);
+    (f.context as { beforeRunSettlement?: () => Promise<void> }).beforeRunSettlement = async () => { f.record.fullOutput = 'Unverified replacement output'; };
+    await runAgentTask(f.context, f.record);
+    expect(f.completed).toHaveLength(0);
+    expect(f.record.status).toBe('failed');
+  });
+});

@@ -1,3 +1,4 @@
+import { assertAgentBriefFidelity } from '../../agents/brief-fidelity.js';
 import { types as nodeTypes } from 'node:util';
 import type { Tool, ToolExecuteOptions } from '../../types/tools.js';
 import { assertCurrentToolInvocation } from '../registry.js';
@@ -370,6 +371,8 @@ export function createAgentTool(config: AgentToolConfig): Tool {
 
         let record;
         try {
+          if (input.authoritativeTask) await assertAgentBriefFidelity({ request: input.authoritativeTask, assignments: [{ task: input.task }] }, { signal, assertCurrent });
+          assertCurrent();
           record = spawnOwned(input);
         } catch (error) {
           return {
@@ -731,6 +734,12 @@ export function createAgentTool(config: AgentToolConfig): Tool {
         }
         const outsideInputs = spawnInputs.filter((spawnInput) => spawnInput.outsideContract === true);
         const contractTasks = input.tasks.filter((_, index) => spawnInputs[index]!.outsideContract !== true);
+        if (outsideInputs.length > 0 && input.authoritativeTask) {
+          try {
+            await assertAgentBriefFidelity({ request: input.authoritativeTask, assignments: input.tasks.map(task => ({ task: task.task })) }, { signal, assertCurrent });
+            assertCurrent();
+          } catch (error) { return publish({ success: false, error: summarizeError(error) }); }
+        }
 
         const batchOutput: Record<string, unknown> = { cohort: input.cohort };
         if (contractTasks.length > 0) {

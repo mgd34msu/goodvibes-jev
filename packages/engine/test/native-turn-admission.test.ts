@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { randomUUID } from 'node:crypto';
 import { createOperatorNativeConversationIntakeClient, readNativeConversationTurnPermit, revalidateNativeConversationTurnPermit, type NativeConversationIntakeResult, type NativeConversationTurnPermit } from '../sdk/src/platform/workflow/work-ledger/native-intake-client.js';
@@ -111,8 +112,8 @@ function orchestrator(chat: LLMProvider['chat'] = async () => finalResponse(), f
 }
 
 test('user prompts are visible immediately and reach the model, including queued follow-ups and attachments, without Jev admission', async () => {
-  let judgments = 0;
-  const previous = installJudgmentPort({ model: 'test', ask: async () => { judgments++; throw new Error('Jev unavailable'); } });
+  let judgments = 0, completionJudgments = 0;
+  const previous = installJudgmentPort({ model: 'test', ask: async request => { judgments++; if (request.context?.battery === 'engine.core.response-completion') completionJudgments++; throw new Error('Jev unavailable'); } });
   const arrived = deferred<void>(); const release = deferred<void>();
   const received: unknown[] = [];
   const h = orchestrator(async request => {
@@ -126,13 +127,14 @@ test('user prompts are visible immediately and reach the model, including queued
     const first = h.instance.handleUserInput(prompt);
     expect(h.conversation.getMessagesForLLM().some(message => message.role === 'user' && message.content === prompt)).toBe(true);
     await arrived.promise;
+    expect(completionJudgments).toBe(0);
     await h.instance.handleUserInput('do it');
     expect(h.instance.messageQueue.map(message => message.text)).toEqual(['do it']);
     release.resolve(); await first;
     const content = [{ type: 'text' as const, text: 'review this file\nAttached source content' }];
     await h.instance.handleUserInput('review this file', content);
     expect(received).toEqual([prompt, 'do it', content]);
-    expect(judgments).toBe(0);
+    expect(completionJudgments).toBe(3); // Completion checking follows delivery; it does not admit user input.
     expect(h.counters().intakeCalls).toBe(0);
     expect(h.counters().spawned).toBe(0);
     h.instance.setCoreServices({ memoryRegistry: { getAll: () => [{
@@ -146,6 +148,9 @@ test('user prompts are visible immediately and reach the model, including queued
 });
 
 describe('native ordinary turn through the real orchestrator', () => {
+  let previous: ReturnType<typeof installJudgmentPort>;
+  beforeEach(() => { previous = installJudgmentPort(fakePort(() => noulAnswer(.01)).port); });
+  afterEach(() => { installJudgmentPort(previous); });
   test('queues authentic exact text once, suppresses all legacy intake/plan paths, and dedups settled delivery', async () => {
     const f = fixture(); const permit = await f.permit(); const gate = deferred<void>(); let calls = 0;
     const h = orchestrator(async () => { calls++; await gate.promise; return finalResponse(); });

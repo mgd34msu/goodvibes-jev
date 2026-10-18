@@ -9,6 +9,7 @@ import { JudgmentError } from '@goodvibes-jev/judgment';
 import { JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { JudgmentInputError } from '../gate/judgment-input.js';
 import { PlannerJudgmentError } from './adaptive-planner.js';
+import { ResponseCompletionError } from './response-completion.js';
 import type { ConversationManager } from './conversation.js';
 import { resolveCompactionStrategy } from './conversation-compaction.js';
 import type { ToolRegistry } from '../tools/registry.js';
@@ -947,6 +948,19 @@ export class Orchestrator {
       nextTurnKnowledgeSequence: () => this.nextTurnKnowledgeSequence(), contractHooks: this.coreServices.contractHooks,
       contractIntake: this.contractIntake,
       directUserInput: true,
+      getCompletionRequirements: () => {
+        const lineage = getSessionLineageTracker(this.coreServices, this.ownedSessionLineageTracker);
+        const plan = isNativeConversationTurn() ? null : this.coreServices.planManager?.getActive(this.sessionId);
+        return {
+          originalTask: lineage.getOriginalTask(), lineage: lineage.getEntries(),
+          activePlan: plan ? this.coreServices.planManager!.toMarkdown(plan) : null,
+          contracts: this.contractRunner.list().filter(contract => contract.sessionId === this.sessionId).map(contract => ({
+            id: contract.id, goal: contract.originalSource?.goal ?? contract.goal, status: contract.status,
+            criteria: contract.originalSource?.criteria ?? contract.criteria.map(criterion => criterion.text),
+            units: contract.units.map(unit => ({ id: unit.id, goal: unit.goal, status: unit.status, answer: unit.answer ?? null })),
+          })),
+        };
+      },
     });
   }
 
@@ -1021,7 +1035,7 @@ export class Orchestrator {
     }
 
     const error = err instanceof Error ? err : new Error(summarizeError(err));
-    const judgmentFailed = error instanceof JudgmentError || error instanceof JudgmentPortMissingError || error instanceof JudgmentInputError || error instanceof PlannerJudgmentError;
+    const judgmentFailed = error instanceof JudgmentError || error instanceof JudgmentPortMissingError || error instanceof JudgmentInputError || error instanceof PlannerJudgmentError || error instanceof ResponseCompletionError;
     const msg = judgmentFailed ? `[Judgment] ${error.message}` : await readFormattedError(error, {
       site: 'core.orchestrator.turn-error',
       ...(error instanceof ProviderError

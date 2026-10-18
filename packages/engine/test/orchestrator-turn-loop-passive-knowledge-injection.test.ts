@@ -706,7 +706,7 @@ test.each([false, true])('tool argument stream fragments wait for owned final pr
 });
 
 test.each(['success', 'retry', 'continuation', 'policy-retry', 'file-continuation'] as const)('main loop retains per-reading authority for code %s', async mode => {
-  installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+  installJudgmentPort(fakePort(name => noulAnswer(['false_blocker', 'unfinished', 'unsupported', 'unanswered', 'unnecessary_permission', 'implementation_presented', 'verification_claimed', 'criteria_altered', 'ineffective_fix', 'irrelevant_verification', 'weakened_criteria', 'missing_results', 'unresolved_conflict'].includes(name) ? .01 : .99)).port);
   const live = await createCanonicalLiveCodeSource();
   try {
   let dispatched = 0;
@@ -718,7 +718,7 @@ test.each(['success', 'retry', 'continuation', 'policy-retry', 'file-continuatio
     if (mode === 'success') return { content: 'done', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
     if (mode === 'policy-retry') live.deny();
     else if (mode === 'file-continuation') live.mutate();
-    else installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+    else installJudgmentPort(fakePort(name => noulAnswer(['false_blocker', 'unfinished', 'unsupported', 'unanswered', 'unnecessary_permission', 'implementation_presented', 'verification_claimed', 'criteria_altered', 'ineffective_fix', 'irrelevant_verification', 'weakened_criteria', 'missing_results', 'unresolved_conflict'].includes(name) ? .01 : .99)).port);
     if (mode === 'retry' || mode === 'policy-retry') await request.beforeAttempt!();
     return { content: '', toolCalls: [{ id: 'next', name: 'nonexistent_tool', arguments: {} }], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'tool_call' };
   } };

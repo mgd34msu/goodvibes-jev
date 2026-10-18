@@ -14,6 +14,8 @@ import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 
 export interface CompactionReadings {
+  readonly obligationsLost?: number;
+  readonly requiredTargetsLost?: number;
   /** The retention level read (0 none to 3 all); default 3. */
   readonly substance?: number;
   /** Authored source positions retained by section membership readings. */
@@ -27,6 +29,8 @@ export interface CompactionReadings {
 /** A port answering both compaction readings from `readings`, recording every request. */
 export function compactionQualityPort(readings: CompactionReadings = {}) {
   return fakePort((name: string, question: Question, state) => {
+    if (name === 'obligations_lost') return noulAnswer(readings.obligationsLost ?? .01);
+    if (name === 'required_targets_lost') return noulAnswer(readings.requiredTargetsLost ?? .01);
     if (readings.selectedPositions && (name === 'selected' || name.startsWith('selected_'))) {
       const position = name === 'selected' ? (state as { candidateSourcePosition: number }).candidateSourcePosition
         : (question.instructions as { candidateSourcePosition: number }).candidateSourcePosition;

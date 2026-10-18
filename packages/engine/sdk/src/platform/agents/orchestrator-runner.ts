@@ -14,6 +14,7 @@ import { captureProjectionArgs } from '../tools/input-projection.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import { logger } from '../utils/logger.js';
 import { CIRCUIT_BREAKER_TRIPPED, ConsecutiveErrorBreaker } from '../core/circuit-breaker.js';
+import { collectResponseDelegates, ResponseCompletionGuard, ResponseCompletionError } from '../core/response-completion.js';
 import { isBillingOrCreditError, isRateLimitOrQuotaError, isContextSizeExceededError, isNetworkTransportError } from '../types/errors.js';
 import { AgentSession } from './session.js';
 import {
@@ -279,6 +280,7 @@ async function finalizeAgentRun(
   preAgentProcessIds: Set<string>,
   terminal: AgentRunTerminal,
   assertObservationCurrent?: () => void,
+  assertCompletionCurrent?: () => void,
 ): Promise<void> {
   await terminal.settle();
   terminal.assertCurrent();
@@ -286,6 +288,10 @@ async function finalizeAgentRun(
   terminal.assertCurrent();
   const statusAfterLoop = (record as { status: string }).status;
   if (statusAfterLoop !== 'failed' && statusAfterLoop !== 'cancelled') {
+    if (!record.contractUnitId || !context.contractHooks) {
+      if (!assertCompletionCurrent) throw new ResponseCompletionError('unavailable');
+      assertCompletionCurrent();
+    }
     record.status = 'completed';
   }
   record.completedAt = Date.now();
@@ -295,6 +301,7 @@ async function finalizeAgentRun(
   terminal.assertCurrent();
 
   if (context.runtimeBus && record.status !== 'failed' && statusAfterLoop !== 'cancelled') {
+    assertCompletionCurrent?.();
     context.emitAgentCompletedEvent(record.id, (record.completedAt ?? Date.now()) - record.startedAt, record.fullOutput ?? '', record.toolCallCount, record.usage);
     terminal.assertCurrent();
   }
@@ -340,7 +347,8 @@ async function handleAgentRunFailure(
   // A retry wait that saw the cancel throws to get here; the run was cancelled, not failed.
   if ((record as { status: string }).status === 'cancelled') return finishCancelledRun(context, record, session, preAgentProcessIds, undefined, terminal);
   const nativeHeld = err instanceof OrchestratorObservationHeldError;
-  const failureOwner = nativeHeld ? terminal.assertCurrent : captureOrchestratorObservationOwner(context, record);
+  const completionHeld = err instanceof ResponseCompletionError;
+  const failureOwner = nativeHeld || completionHeld ? terminal.assertCurrent : captureOrchestratorObservationOwner(context, record);
   const signal = context.getCancellationSignal?.(record.id);
   const provider = record.provider, settlement = context.beforeRunSettlement, publishFailure = context.emitAgentFailedEvent;
   const assertFailureCurrent = () => {
@@ -352,7 +360,7 @@ async function handleAgentRunFailure(
   };
   let message: string;
   try {
-    message = nativeHeld ? new OrchestratorObservationHeldError().message : (await readNormalizedError(err, {
+    message = nativeHeld ? new OrchestratorObservationHeldError().message : completionHeld ? err.message : (await readNormalizedError(err, {
       site: 'engine.agent.run-failure', signal, assertCurrent: assertFailureCurrent,
       ...(provider ? { provider } : {}),
     })).summary;
@@ -533,6 +541,9 @@ export async function runAgentTask(
     const LOOP_USER_THRESHOLD = 5;
     const CALL_HISTORY_WINDOW = 20;
     const circuitBreaker = new ConsecutiveErrorBreaker();
+    const completionGuard = new ResponseCompletionGuard({ request: record.task, conversation });
+    let completionCorrection = '';
+    let assertFinalCompletionCurrent: (() => void) | undefined;
     // Track which inter-agent messages have already been injected so a single
     // directive/broadcast is appended to the conversation exactly once (getMessages
     // returns all unexpired messages every turn until their TTL elapses).
@@ -811,7 +822,8 @@ export async function runAgentTask(
               model: activeRoute.modelId,
               messages: conversation.getMessagesForLLM(),
               tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
-              systemPrompt: appendGoodVibesRuntimeAwarenessPrompt(composeTurnSystemPrompt(systemPrompt)) + privateContextBlock,
+              systemPrompt: appendGoodVibesRuntimeAwarenessPrompt(composeTurnSystemPrompt(systemPrompt))
+                + (completionCorrection ? `\n\n${completionCorrection}` : '') + privateContextBlock,
               ...((codeAuthorityForAttempt || nativeSource || projectFramework || promptContext?.preparedKnowledgePrompt || context.beforeProviderRequest) ? { beforeAttempt: assertNativeProviderSource } : {}),
               ...(record.reasoningEffort ? { reasoningEffort: record.reasoningEffort } : {}),
               ...(cancelSignal ? { signal: cancelSignal } : {}),
@@ -971,6 +983,10 @@ export async function runAgentTask(
         // projection, history publication, progress and permission readers.
         const ingress = captureToolInputCalls(response.toolCalls).map(call => {
           const args = structuredClone(captureProjectionArgs(call.arguments, call.name));
+          if (call.name === 'agent' && (args.mode === 'spawn' || args.mode === 'batch-spawn')) {
+            args.authoritativeTask = context.autonomousSource ? captureAutonomousSource(context.autonomousSource()).goal : record.task;
+            args.parentAgentId = record.id;
+          }
           if (call.name === 'exec' || call.name === 'precision_exec') {
             if (Array.isArray(args.commands)) for (const command of args.commands as Record<string, unknown>[]) {
               command.background = false;
@@ -1014,6 +1030,7 @@ export async function runAgentTask(
           throw error;
         }
         conversation.addToolResults(results);
+        completionGuard.noteToolResults(results);
         assertToolObservationCurrent();
         reportContractTurnEnd(context, record, turn, response, results);
         assertToolObservationCurrent();
@@ -1085,7 +1102,29 @@ export async function runAgentTask(
         }
         setAgentProgress(record, `Turn ${turn} · Thinking…`, 'operator');
       } else {
+        if (!record.contractUnitId || !context.contractHooks) {
+          const correction = await completionGuard.check({ request: record.task, response: response.content, conversation,
+            tools: toolDefinitions.map(tool => tool.name),
+            delegated: context.agentManager ? collectResponseDelegates(conversation, context.agentManager) : [] },
+          { signal: context.getCancellationSignal?.(record.id), assertCurrent: terminal.assertCurrent });
+          terminal.assertCurrent();
+          if (correction !== null) {
+            conversation.addAssistantMessage(response.content, { usage: response.usage });
+            conversation.addSystemMessage(correction);
+            completionCorrection = correction;
+            setAgentProgress(record, `Turn ${turn + 1} · Finishing outstanding work…`, 'operator');
+            context.emitAgentProgress(record.id, record.progress ?? '', 'operator');
+            continue;
+          }
+          const assertCheckedDraft = completionGuard.beginFinalization(response);
+          const checkedOutput = response.content;
+          assertFinalCompletionCurrent = () => {
+            assertCheckedDraft();
+            if (record.fullOutput !== checkedOutput) throw new ResponseCompletionError('unavailable');
+          };
+        }
         continueLoop = completeOrRegenerate(record, conversation, response);
+        if (continueLoop) assertFinalCompletionCurrent = undefined;
         if (!continueLoop) {
           continueLoop = await holdContractCompletion(context, record, conversation, turn, heldNudgeIdsAwaitingTurn);
         }
@@ -1095,7 +1134,7 @@ export async function runAgentTask(
     await finalizeAgentRun(context, record, session, preAgentProcessIds, terminal, () => {
       projectFramework.assertCurrent();
       repeatObservation?.assertCurrent();
-    });
+    }, assertFinalCompletionCurrent);
   } catch (err) {
     await handleAgentRunFailure(context, record, conversation, session, preAgentProcessIds, terminal, err);
   } finally {
