@@ -89,7 +89,7 @@ export const DEFAULT_MEMORY_READINGS: Required<MemoryReadingTable> = {
 type State = Record<string, unknown>;
 
 function answer(table: Required<MemoryReadingTable>, name: string, question: Question, state: State): unknown {
-  if (['false_blocker', 'unfinished', 'unsupported', 'unanswered', 'unnecessary_permission', 'implementation_presented', 'verification_claimed', 'criteria_altered', 'ineffective_fix', 'irrelevant_verification', 'weakened_criteria', 'missing_results', 'unresolved_conflict'].includes(name)) return noulAnswer(.01);
+  if (['false_blocker', 'unfinished', 'unsupported', 'unanswered', 'unnecessary_permission', 'repetitive', 'implementation_presented', 'verification_claimed', 'criteria_altered', 'ineffective_fix', 'irrelevant_verification', 'weakened_criteria', 'missing_results', 'unresolved_conflict'].includes(name)) return noulAnswer(.01);
   if ('task' in state && 'record' in state) {
     const reading = table.relevance(state.task as string, state.write_scope as string[], state.record as RecordText);
     if (name === 'relevant') return noulAnswer(reading.relevant);

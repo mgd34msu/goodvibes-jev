@@ -33,7 +33,7 @@ const PERMISSION_BAND: YesNoBand = { yes: STAKES_BANDS.medium.confidence, no: ST
 
 export const requestShape = defineBattery({
   name: 'contract.request-shape',
-  version: 2,
+  version: 3,
   description: 'How the person asked for the work to be done: whether they forbid delegating it, ask for parallel agents, forbid changing files, or ask for several attempts to pick from.',
   accuracyFloor: 0.9,
   items: {
@@ -46,7 +46,7 @@ export const requestShape = defineBattery({
       STAKES_BANDS.low.yesNo,
     ),
     forbids_writing: yesNo(
-      'Does the user ask for read-only work, such as a code review, investigation, design, plan, or report, or explicitly forbid changing files? A code review asks for findings, not implementation, unless the user also requests fixes.',
+      'Does the user require all work to stay read-only, including its deliverables, or explicitly forbid changing any files? A review, investigation, design or plan without requested file output is read-only. But a requested artifact, saved report or other file deliverable authorizes writing that deliverable: answer NO even when production source must remain unchanged. Authorization to write a review artifact does not authorize implementing fixes. Distinguish a restriction on production edits from a prohibition on every file write.',
       PERMISSION_BAND,
     ),
     asks_for_attempts: yesNo(
@@ -55,6 +55,10 @@ export const requestShape = defineBattery({
     ),
   },
   fixtures: [
+    { name: 'full review includes its requested artifact', state: { request: 'review this codebase, in full. provide an artifact when done.' },
+      expect: { forbids_delegation: 'no', requests_parallel_agents: 'no', forbids_writing: 'no', asks_for_attempts: 'no' } },
+    { name: 'review report is writable while production remains unchanged', state: { request: 'Review the repository without implementing fixes. Save the findings to review.md; leave production source unchanged.' },
+      expect: { forbids_delegation: 'no', requests_parallel_agents: 'no', forbids_writing: 'no', asks_for_attempts: 'no' } },
     {
       name: 'do it yourself, no sub-agents',
       state: { request: "Fix the null check in src/auth/session.ts yourself, don't hand this off to sub-agents." },

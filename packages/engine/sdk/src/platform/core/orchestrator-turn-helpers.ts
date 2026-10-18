@@ -197,38 +197,41 @@ export function drainSessionNudges(args: ConsumedEmitterArgs & { readonly conver
 
 /**
  * Holds a session-mode turn where it would complete, while the runner checks
- * the unit. On a nudge, `beforeNudge` runs (the final answer joins the
- * conversation), the nudge is added as a user message, and true is returned:
- * the turn goes on with another model call. False lets the turn complete.
+ * the unit. Production keeps a rejected candidate and its nudge in private
+ * revision context. Legacy embedded callers may supply a beforeNudge callback
+ * and receive the nudge in their conversation. True requests another model
+ * call; false lets the checked answer complete.
  */
 export async function holdSessionCompletion(
   args: ConsumedEmitterArgs & { readonly conversation: ConversationManager },
   session: ContractSessionTurn,
   output: string,
   beforeNudge?: () => void,
+  privateNudge?: (message: string) => void,
 ): Promise<boolean> {
-  session.record.fullOutput = output;
-  const outcome = await session.hooks.holdCompletion(session.record);
-  if (outcome.kind !== 'continue') return false;
+  const outcome = await session.hooks.holdCompletion(session.record, output);
+  if (outcome.kind !== 'continue') { session.record.fullOutput = output; return false; }
   beforeNudge?.();
-  args.conversation.addUserMessage(outcome.message);
+  if (privateNudge) privateNudge(outcome.message);
+  else args.conversation.addUserMessage(outcome.message);
   nudgeConsumed(args, session, outcome.nudgeId);
   return true;
 }
 
-/** The final-answer hold: on a nudge the answer joins the conversation before the nudge, and the turn goes on. */
+/** Hold the candidate privately until the contract accepts it, then permit publication. */
 export function holdSessionFinalResponse(
   args: ConsumedEmitterArgs & { readonly conversation: ConversationManager; readonly providerRegistry: Pick<ProviderRegistry, 'getCurrentModel'> },
   session: ContractSessionTurn,
   response: ChatResponseWithReasoning,
+  privateNudge?: (message: string) => void,
 ): Promise<boolean> {
-  return holdSessionCompletion(args, session, response.content, () => args.conversation.addAssistantMessage(response.content, {
+  return holdSessionCompletion(args, session, response.content, privateNudge ? undefined : () => args.conversation.addAssistantMessage(response.content, {
     reasoningContent: response.reasoning || undefined,
     reasoningSummary: response.reasoningSummary || undefined,
     usage: response.usage,
     model: args.providerRegistry.getCurrentModel().displayName,
     provider: args.providerRegistry.getCurrentModel().provider,
-  }));
+  }), privateNudge);
 }
 
 /** Said to the conversation model after its agent tool call started a contract. */
@@ -256,6 +259,7 @@ type ToolResponseOutcomeArgs = {
   /** Production ingress supplies the real registry before publishing tool input. */
   toolRegistry?: ToolRegistry | undefined;
   inputProjection?: ToolInputProjectionOptions | undefined;
+  assertProgressPublicationCurrent?: (() => void) | undefined;
   onTurnTerminal?: ((publish: () => void) => void) | undefined;
   conversation: ConversationManager;
   agentManager: Pick<AgentManager, 'list' | 'spawn'>;
@@ -290,7 +294,15 @@ export async function handleToolResponseOutcome(args: ToolResponseOutcomeArgs): 
 async function handleOwnedToolResponseOutcome(args: ToolResponseOutcomeArgs): Promise<{ continueLoop: boolean; results: ToolResult[] }> {
   const toolCalls = args.response.toolCalls;
   args.setPendingToolCalls(toolCalls);
-  args.conversation.addAssistantMessage(args.response.content, {
+  let content = args.response.content;
+  try { args.assertProgressPublicationCurrent?.(); }
+  catch {
+    args.inputProjection?.signal?.throwIfAborted(); args.inputProjection?.assertCurrent?.();
+    // A stale prose review withholds only prose. Tool admission independently
+    // owns these calls and useful work must not fail because a notice arrived.
+    content = '';
+  }
+  args.conversation.addAssistantMessage(content, {
     toolCalls,
     reasoningContent: args.response.reasoning || undefined,
     reasoningSummary: args.response.reasoningSummary || undefined,
@@ -302,7 +314,7 @@ async function handleOwnedToolResponseOutcome(args: ToolResponseOutcomeArgs): Pr
   const results = await args.executeToolCalls(args.turnId, toolCalls);
   args.conversation.addToolResults(results);
   args.setPendingToolCalls([]);
-  if (args.contractSession) reportSessionToolRound(args.contractSession, { toolCalls, results, assistantText: args.response.content });
+  if (args.contractSession) reportSessionToolRound(args.contractSession, { toolCalls, results, assistantText: content });
 
   const allImages = (results as Array<ToolResult & { _images?: Array<{ path: string; base64: string; mediaType: string; description: string }> }>)
     .filter(r => Array.isArray(r._images) && r._images.length > 0)

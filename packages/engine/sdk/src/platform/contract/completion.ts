@@ -289,6 +289,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     if (contract.status !== 'judging') run.moveContract('judging');
     context.ownerProgress(run);
     const judgedCriteria = judged(contract.criteria);
+    const answer = renderContractAnswer(contract);
     if (hasDerivedAcceptanceChecks(contract.originalSource) && judgedCriteria.length === 0) throw new Error('Goal-only repair cannot complete without judged acceptance checks');
     if (judgedCriteria.length > 0) {
       const reading = await readTarget(run, {
@@ -299,11 +300,11 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         checks: contract.checks,
         baseline: contract.baseline,
         unitIds: new Set(contract.units.map((unit) => unit.id)),
-        output: deliverableOutput(contract),
-        summaries: judgedCriteria.map((criterion) => ({
+        output: answer,
+        summaries: { reports: deliverableOutput(contract), checks: judgedCriteria.map((criterion) => ({
           criterion: criterion.id,
           servedBy: contract.units.flatMap((unit) => unit.criteria).filter((served) => served.serves.includes(criterion.id)).map((served) => ({ id: served.id, text: served.text, verdict: served.status })),
-        })),
+        })) },
         trigger,
       });
       if (reading === null) return;
@@ -312,14 +313,14 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         return;
       }
     }
-    await commitDeliverable(run);
+    await commitDeliverable(run, answer);
   }
 
-  async function commitDeliverable(run: ContractRun): Promise<void> {
+  async function commitDeliverable(run: ContractRun, checkedAnswer?: string): Promise<void> {
     const { contract } = run;
     if (run.terminal) return;
     assertOwnedContractSource(contract);
-    const answer = renderContractAnswer(contract);
+    const answer = checkedAnswer ?? renderContractAnswer(contract);
     run.moveContract('committing');
     context.ownerProgress(run);
     const commit = await commitContract(run);

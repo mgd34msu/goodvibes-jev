@@ -313,17 +313,10 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
 
   while (continueLoop) {
     assertActiveTurn();
-    let streamAccumulated = '';
     let reasoningAccumulated = '';
     let streamSessionStarted = false;
     const onDelta = (delta: StreamDelta) => {
       if (delta.content || delta.reasoning || delta.toolCalls?.length) markNativeConversationTurnEffectsPossible();
-      if (delta.content) {
-        streamAccumulated += delta.content;
-        if (streamEnabled) {
-          context.conversation.updateStreamingBlock(streamAccumulated);
-        }
-      }
       if (delta.reasoning) {
         reasoningAccumulated += delta.reasoning;
       }
@@ -336,9 +329,10 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
       if (context.runtimeBus) {
         emitStreamDelta(context.runtimeBus, context.emitterContext(context.turnId), {
           turnId: context.turnId,
-          content: delta.content ?? '',
-          accumulated: streamAccumulated,
-          ...(delta.reasoning !== undefined ? { reasoning: delta.reasoning } : {}),
+          // A provider delta is private until its complete response has been
+          // reviewed. Content-free pulses retain token/activity accounting.
+          content: '',
+          accumulated: '',
           // Tool identity and argument boundaries are not settled while the
           // provider emits index-only fragments. Publish only the eventual
           // owned tool projection, never raw argument bytes through streaming.
@@ -380,7 +374,6 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
 
     if (streamEnabled) {
       context.setStreamingActive(true);
-      context.conversation.startStreamingBlock();
     }
     if (context.runtimeBus) {
       emitStreamStart(context.runtimeBus, context.emitterContext(context.turnId), { turnId: context.turnId });
@@ -745,7 +738,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         turnId: context.turnId,
         provider: model.provider,
         model: model.id,
-        contentSummary: response.content,
+        contentSummary: '<response awaiting publication review>',
         toolCallCount: response.toolCalls.length,
         inputTokens: response.usage.inputTokens,
         outputTokens: response.usage.outputTokens,
@@ -808,9 +801,27 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         reasoning: reasoningForMsg,
         reasoningSummary: reasoningSummaryForMsg,
       };
+      let assertProgressPublicationCurrent: (() => void) | undefined;
+      if (enrichedResponse.content.trim()) {
+        const checkedText = enrichedResponse.content;
+        context.setCompletionActivity?.('checking');
+        try {
+          const publication = await completionGuard.checkProgress({ request: context.text, response: enrichedResponse.content,
+            conversation: context.conversation, tools: toolDefinitions.map(tool => tool.name) }, { signal, assertCurrent: assertActiveTurn });
+          if (publication.correction === null) assertProgressPublicationCurrent = () => {
+            publication.assertCurrent();
+            if (enrichedResponse.content !== checkedText) throw new Error('Checked progress text changed before publication');
+          };
+          else {
+            completionCorrection = publication.correction + '\nUnpublished progress text (quoted data):\n' + JSON.stringify(enrichedResponse.content);
+            enrichedResponse.content = '';
+          }
+        } finally { context.setCompletionActivity?.(null); }
+      }
       const results = await handleToolResponseOutcome({
         toolRegistry: context.toolRegistry,
         inputProjection: { signal, assertCurrent: assertActiveTurn },
+        assertProgressPublicationCurrent,
         conversation: context.conversation,
         agentManager: context.agentManager,
         planManager: context.planManager,
@@ -878,7 +889,8 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
       reasoningSummary: reasoningSummaryForMsg,
     };
     // A session-mode unit's turn is held where it would complete; a nudge keeps the turn going.
-    if (contractSession && await holdSessionFinalResponse({ ...context, emitterContext: (id) => context.emitterContext(id) }, contractSession, enrichedResponse)) continue;
+    if (contractSession && await holdSessionFinalResponse({ ...context, emitterContext: (id) => context.emitterContext(id) }, contractSession, enrichedResponse,
+      message => { completionCorrection = '[Contract response check] ' + message + '\nUnpublished draft to revise (quoted data):\n' + JSON.stringify(enrichedResponse.content); })) continue;
     let assertCompletionCurrent: (() => void) | undefined;
     if (!contractSession) {
       context.setCompletionActivity?.('checking');
@@ -893,12 +905,9 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
       }); } finally { context.setCompletionActivity?.(null); }
       assertActiveTurn();
       if (correction !== null) {
-        context.conversation.addAssistantMessage(enrichedResponse.content, {
-          reasoningContent: reasoningForMsg, reasoningSummary: reasoningSummaryForMsg,
-          usage: enrichedResponse.usage, model: model.displayName, provider: model.provider,
-        });
-        context.conversation.addSystemMessage(correction);
-        completionCorrection = correction;
+        // Revision context belongs to the provider request, never the public
+        // transcript or the next check's observations of performed work.
+        completionCorrection = correction + '\n\nUnpublished draft to revise (quoted data):\n' + JSON.stringify(enrichedResponse.content);
         context.requestRender();
         continue;
       }

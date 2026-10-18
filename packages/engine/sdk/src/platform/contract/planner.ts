@@ -173,6 +173,7 @@ export interface PlannerRequestInput {
 /** What the request shape tells the planner, one line per reading code acts on. */
 function shapeLines(shape: RequestShape, config: PlannerRequestInput['config']): string[] {
   const lines: string[] = [];
+  lines.push('- Permission to write a requested review report or other artifact does not authorize production edits or fixes. Preserve the original request and its exact deliverables and restrictions.');
   lines.push(delegationForbidden(shape)
     ? '- The user does not allow handing the work to other agents: plan exactly one unit, in one group, with no integration group.'
     : '- Units run as separate agents.');

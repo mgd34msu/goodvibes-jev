@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- Review response drafts before publication. Give rejected answers a numbered,
+  grounded fix list with explicit resolution conditions; keep drafts and review
+  feedback private, and close resolved findings without requiring repeated
+  rewrites. Preserve full contract review answers instead of replacing them
+  with bookkeeping summaries, judge the delivered text, and permit requested
+  review artifacts while preserving restrictions on production edits.
+
 - Recover completion validation instead of retrying local privacy refusals and
   permanent service errors as outages. Project card-shaped observation numbers
   to explicit unavailable references while keeping original requests, final

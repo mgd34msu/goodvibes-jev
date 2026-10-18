@@ -53,12 +53,15 @@ export async function holdContractCompletion(
   conversation: ConversationManager,
   turn: number,
   nudgeIdsAwaitingTurn: string[],
+  candidateOutput?: string,
+  privateNudge?: (message: string) => void,
 ): Promise<boolean> {
   const hooks = context.contractHooks;
   if (!record.contractUnitId || !hooks || (record as { status: string }).status === 'cancelled') return false;
-  const outcome = await hooks.holdCompletion(record);
+  const outcome = await hooks.holdCompletion(record, candidateOutput);
   if (outcome.kind === 'release') return false;
-  conversation.addUserMessage(outcome.message);
+  if (privateNudge) privateNudge(outcome.message);
+  else conversation.addUserMessage(outcome.message);
   nudgeIdsAwaitingTurn.push(outcome.nudgeId);
   setAgentProgress(record, `Turn ${turn + 1} · Correcting…`, 'operator');
   context.emitAgentProgress(record.id, record.progress ?? '', 'operator');

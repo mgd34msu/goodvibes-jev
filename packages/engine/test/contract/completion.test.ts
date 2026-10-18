@@ -124,16 +124,20 @@ describe('answer and status (6.5)', () => {
     expect(record.fullOutput).not.toContain('Contract ');
   }, 20_000);
 
-  test("the deliverable judge reads the integration unit's whole final output, and code never states success in its place", async () => {
+  test('the deliverable judge reads the exact delivered answer, with the full unit report retained as evidence', async () => {
     const report = 'Wired parseCsv into convert.\n\n```json\n{"version":1,"archetype":"integrator","summary":"Wired the parser into convert.","filesCreated":[],"filesModified":["src/convert.ts"]}\n```';
-    for (const [integrationText, expected] of [[report, report], ['', '']] as const) {
+    for (const [integrationText, expected] of [[report, 'Wired parseCsv into convert.'], ['', '']] as const) {
       const outputs: unknown[] = [];
+      const reports: unknown[] = [];
       const h = use(makeHarness({
         scripts: { u1: finishes('parseCsv reads quoted fields'), u2: finishes(integrationText, 'src/convert.ts') },
         port: ({ state }) => {
           // The deliverable judge's evidence carries the per-criterion summaries; a group judge's carries its units.
           const evidence = state['evidence'] as Record<string, unknown> | undefined;
-          if (evidence !== undefined && 'criteria' in evidence && 'output' in state) outputs.push(state['output']);
+          if (evidence !== undefined && 'criteria' in evidence && 'output' in state) {
+            outputs.push(state['output']);
+            reports.push((evidence['criteria'] as { reports: unknown }).reports);
+          }
           return undefined;
         },
       }));
@@ -144,6 +148,8 @@ describe('answer and status (6.5)', () => {
         expect(output).toBe(expected);
         expect(output).not.toContain(CONTRACT_PASSED_WITHOUT_OUTPUT);
       }
+      expect(reports.every(value => value === integrationText)).toBe(true);
+      if (expected) expect(contractOf(h, id).answer).toBe(expected);
       h.dispose();
       harness = undefined;
     }
@@ -159,6 +165,11 @@ describe('answer and status (6.5)', () => {
     const review = '```json\n' + JSON.stringify({ version: 1, archetype: 'researcher', summary: 'Found one bug.', result: findings }) + '\n```';
     const reviewed = units.map(unit => unit.role === 'integration' ? { ...unit, answer: review } : unit);
     expect(renderContractAnswer({ units: reviewed, groups } as unknown as Parameters<typeof renderContractAnswer>[0])).toBe(findings);
+    const fullReview = '# Codebase review\n\nparser.ts:12 drops the final row.\n\nsettings.ts:20 dereferences null.\n\n```json\n'
+      + JSON.stringify({ version: 1, archetype: 'engineer', summary: 'Integrated the review.', filesCreated: [], filesModified: [] }) + '\n```';
+    const proseReview = units.map(unit => unit.role === 'integration' ? { ...unit, answer: fullReview } : unit);
+    expect(renderContractAnswer({ units: proseReview, groups } as unknown as Parameters<typeof renderContractAnswer>[0]))
+      .toBe('# Codebase review\n\nparser.ts:12 drops the final row.\n\nsettings.ts:20 dereferences null.');
     expect(renderContractAnswer({ units: [], groups: [] })).toBe('');
     expect(describeCommitOutcome(null, ['.goodvibes/x'], false)).toBe('commit skipped: 1 ignored path skipped');
     expect(describeCommitOutcome(null, [], true)).toBe('commit skipped: the contract changed no files');

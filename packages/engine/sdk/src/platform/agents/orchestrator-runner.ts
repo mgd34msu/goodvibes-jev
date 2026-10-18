@@ -763,7 +763,6 @@ export async function runAgentTask(
         let contextRetried = false;
         while (response === undefined) {
           terminal.assertCurrent();
-          let streamAccumulated = '';
           record.streamingContent = undefined;
 
           const onDelta = (delta: StreamDelta) => {
@@ -771,17 +770,9 @@ export async function runAgentTask(
             projectFramework.assertCurrent();
             repeatObservation?.assertCurrent();
             terminal.assertCurrent();
-            if (delta.content) {
-              streamAccumulated += delta.content;
-              // Live model output goes to streamingContent (rendered in the agent
-              // inspector / detail view) and is emitted via emitStreamDelta below.
-              // Do NOT overwrite record.progress with the raw output tail: progress
-              // is the concise one-line status surfaced as RuntimeAgent.latestProgress
-              // (e.g. the process indicator), so it must keep the last meaningful
-              // status ("Turn N · <tool>" / "Thinking…") rather than firehosing output.
-              record.streamingContent = streamAccumulated;
-            }
-            context.emitStreamDelta(record.id, delta.content ?? '', streamAccumulated);
+            // Keep provider drafts and reasoning private. Only reviewed prose
+            // and successful terminal output may become public text.
+            context.emitStreamDelta(record.id, '', '');
           };
 
           await context.beforeProviderRequest?.();
@@ -976,6 +967,24 @@ export async function runAgentTask(
       });
 
       if (response.toolCalls.length > 0) {
+        let assertProgressPublicationCurrent: (() => void) | undefined;
+        if (response.content.trim()) {
+          const checkedText = response.content;
+          const publication = await completionGuard.checkProgress({ request: record.task, response: checkedText,
+            conversation, tools: toolDefinitions.map(tool => tool.name) },
+          { signal: context.getCancellationSignal?.(record.id), assertCurrent: terminal.assertCurrent });
+          if (publication.correction === null) {
+            response = { ...response, content: checkedText };
+            assertProgressPublicationCurrent = () => {
+              publication.assertCurrent();
+              if (response?.content !== checkedText) throw new Error('Checked progress text changed before publication');
+            };
+          }
+          else {
+            completionCorrection = publication.correction + '\nUnpublished progress text (quoted data):\n' + JSON.stringify(response.content);
+            response = { ...response, content: '' };
+          }
+        }
         repeatObservation?.assertCurrent();
         const precedingRepeat = repeatObservation;
         precedingRepeat?.retainForTools();
@@ -1012,6 +1021,8 @@ export async function runAgentTask(
           try {
             batch?.assertCurrent();
             assertToolObservationCurrent();
+            try { assertProgressPublicationCurrent?.(); }
+            catch { terminal.assertCurrent(); assertToolObservationCurrent(); response = { ...response, content: '' }; }
             conversation.addAssistantMessage(response.content, { toolCalls: response.toolCalls, usage: response.usage });
             assistantPublished = true;
             results = await executeToolCalls(response.toolCalls, toolRegistry, session, turn, record, callHistory, CALL_HISTORY_WINDOW, context, assertToolObservationCurrent);
@@ -1116,9 +1127,7 @@ export async function runAgentTask(
           });
           terminal.assertCurrent();
           if (correction !== null) {
-            conversation.addAssistantMessage(response.content, { usage: response.usage });
-            conversation.addSystemMessage(correction);
-            completionCorrection = correction;
+            completionCorrection = correction + '\n\nUnpublished draft to revise (quoted data):\n' + JSON.stringify(response.content);
             setAgentProgress(record, `Turn ${turn + 1} · Finishing outstanding work…`, 'operator');
             context.emitAgentProgress(record.id, record.progress ?? '', 'operator');
             continue;
@@ -1130,11 +1139,14 @@ export async function runAgentTask(
             if (record.fullOutput !== checkedOutput) throw new ResponseCompletionError('unavailable');
           };
         }
-        continueLoop = completeOrRegenerate(record, conversation, response);
-        if (continueLoop) assertFinalCompletionCurrent = undefined;
-        if (!continueLoop) {
-          continueLoop = await holdContractCompletion(context, record, conversation, turn, heldNudgeIdsAwaitingTurn);
+        const checkedResponse = { ...response };
+        if (await holdContractCompletion(context, record, conversation, turn, heldNudgeIdsAwaitingTurn, checkedResponse.content,
+          message => { completionCorrection = '[Contract response check] ' + message + '\nUnpublished draft to revise (quoted data):\n' + JSON.stringify(checkedResponse.content); })) {
+          continueLoop = true;
+          continue;
         }
+        continueLoop = completeOrRegenerate(record, conversation, checkedResponse);
+        if (continueLoop) assertFinalCompletionCurrent = undefined;
       }
     }
 

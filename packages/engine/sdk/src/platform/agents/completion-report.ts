@@ -61,14 +61,22 @@ const JSON_FENCE = /^```json[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gm;
  * is no block. Nothing is read out of prose.
  */
 export function parseCompletionReport(rawOutput: string): CompletionReport | null {
-  let last: string | undefined;
-  for (const match of rawOutput.matchAll(JSON_FENCE)) last = match[1];
+  return parseCompletionReportParts(rawOutput)?.report ?? null;
+}
+
+/** Keep the answer outside a valid report footer; never discard it in favor of bookkeeping. */
+export function parseCompletionReportParts(rawOutput: string): { readonly report: CompletionReport; readonly body: string } | null {
+  let last: RegExpExecArray | undefined;
+  for (const match of rawOutput.matchAll(JSON_FENCE)) last = match;
   if (last === undefined) return null;
   try {
-    const parsed: unknown = JSON.parse(last);
+    const parsed: unknown = JSON.parse(last[1]!);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
     const candidate = parsed as { version?: unknown; archetype?: unknown };
-    if (candidate.version === 1 && typeof candidate.archetype === 'string') return parsed as CompletionReport;
+    if (candidate.version === 1 && typeof candidate.archetype === 'string') return {
+      report: parsed as CompletionReport,
+      body: [rawOutput.slice(0, last.index).trim(), rawOutput.slice(last.index + last[0].length).trim()].filter(Boolean).join('\n\n'),
+    };
   } catch (error) {
     logger.debug('Completion report fenced JSON parse failed', { error: summarizeError(error) });
   }

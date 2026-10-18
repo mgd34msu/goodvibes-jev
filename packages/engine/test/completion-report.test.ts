@@ -5,9 +5,9 @@
  * from prose, and an earlier block is not the report.
  */
 import { describe, expect, test } from 'bun:test';
-import { parseCompletionReport } from '../sdk/src/platform/agents/completion-report.js';
+import { parseCompletionReport, parseCompletionReportParts, type EngineerReport } from '../sdk/src/platform/agents/completion-report.js';
 
-const engineer = {
+const engineer: EngineerReport = {
   version: 1,
   archetype: 'engineer',
   summary: 'Added the parser.',
@@ -26,6 +26,13 @@ describe('parseCompletionReport', () => {
   test('reads the fenced json block', () => {
     const output = `Done.\n\n\`\`\`json\n${JSON.stringify(engineer, null, 2)}\n\`\`\`\n`;
     expect(parseCompletionReport(output) as unknown).toEqual(engineer);
+  });
+
+  test('separates only the valid final report while preserving answer prose and unrelated JSON examples', () => {
+    const body = '# Findings\n\nparser.ts:12 drops the last row.\n\n```json\n{"input":"a,b"}\n```';
+    const output = body + '\n\n```json\n' + JSON.stringify(engineer) + '\n```\n';
+    expect(parseCompletionReportParts(output)).toEqual({ body, report: engineer });
+    expect(parseCompletionReportParts(body)).toBeNull();
   });
 
   test('a bare report object in prose is not read', () => {

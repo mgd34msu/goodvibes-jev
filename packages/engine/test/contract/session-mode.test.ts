@@ -158,7 +158,7 @@ const userMessages = (conversation: ConversationManager): string[] => conversati
   .map((message) => (typeof message.content === 'string' ? message.content : JSON.stringify(message.content)));
 
 describe('session mode (6.6)', () => {
-  test('the turn is held where it would complete, nudged as a user message, and completes once the unit passes; nothing is spawned', async () => {
+  test('the turn keeps rejected drafts and completion nudges private, and publishes once the unit passes', async () => {
     const h = makeHarness({ plan: oneUnitPlan(1), scripts: {}, port: answers(noDelegation) });
     harness = h;
     const contractId = await sessionReady(h);
@@ -182,7 +182,8 @@ describe('session mode (6.6)', () => {
     expect(unit.nudges[0]).toMatchObject({ delivery: 'hold', agentId: 'turn-1' });
     expect(unit.nudges[0]!.consumedAt).toBeDefined();
     expect(unit.nudges[0]!.text).toStartWith(`Contract check ${unit.nudges[0]!.checkId.split('.k')[1]} on "CSV parser": the work does not pass yet.`);
-    expect(userMessages(conversation)).toContain(unit.nudges[0]!.text);
+    expect(userMessages(conversation)).not.toContain(unit.nudges[0]!.text);
+    expect(JSON.stringify(conversation.getMessageSnapshot())).not.toContain('[unmet] a first try');
     // The session did the work: no agent was spawned for the unit, only the owner record exists.
     expect(h.manager.list().map((record) => record.contractRole)).toEqual(['owner']);
     expect(eventsOf(h, 'CONTRACT_UNIT_SPAWNED')).toHaveLength(0);

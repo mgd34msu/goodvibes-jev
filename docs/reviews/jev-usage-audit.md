@@ -234,7 +234,7 @@ Ordinary conversation turns delivered user input directly to the model, then acc
 | `engine.core.execution-assurance` | 6 | Applicability and concerns for ineffective fixes, irrelevant verification and weakened success criteria. No coverage target or automatic requirement to add tests. |
 | `engine.compaction.retention` version 2 | 3 | Existing substance rubric plus preservation of active obligations and exact execution targets. |
 
-Completion, synthesis and execution checks run concurrently over the same captured evidence; every applicable check must settle before finalization. Rejected drafts return to the provider with a correction in its actual system prompt. The guard preserves original task and execution evidence through in-run compaction. Claims based on earlier turns still receive execution checks even when the current turn runs no tools. Three consecutive correction opportunities are allowed; another rejected final attempt fails visibly. A successful tool round resets that consecutive count. Unavailable, malformed or stale readings never silently approve completion.
+Completion, synthesis and execution checks run concurrently over the same captured evidence; every applicable check must settle before finalization. Rejected drafts return to the provider with a correction in its actual system prompt. The guard preserves original task and execution evidence through in-run compaction. Claims based on earlier turns still receive execution checks even when the current turn runs no tools. The initial three-correction cutoff was removed in the recovery correction below. Unavailable, malformed or stale readings never silently approve completion.
 
 The accepted final response is checked again through cleanup and deferred terminal publication. Changing its output, cancelling its owner or retiring the judgment port prevents a successful terminal event. Nested standalone coordinators receive the same delegated-result checks as main. Host code supplies the authoritative task and parent identity on agent-spawn calls.
 
@@ -345,3 +345,51 @@ regressions exercise timestamp/history/path observations, nested encoded JSON,
 privacy preservation, permanent-error recovery, cancellation and finalization.
 The live result is retained in
 `.goodvibes/artifacts/jev-usage/stall-recovery/live-result.json`.
+
+
+## Private response review and concrete repair (2026-10-18)
+
+The saved Spacegame session `user-7ff4945a` contains 138 messages, including
+12 rejected final drafts followed by a partial thirteenth. The model reread
+the same report 11 times instead of changing it or obtaining the missing
+execution evidence. All 36 completion-battery decisions were inspected.
+Publication preceded acceptance, and generic checker warnings and rejected
+assertions accumulated in the evidence for later checks.
+
+Three connected defects are corrected:
+
+- Main, standalone and contract responses keep provider drafts and completion
+  feedback private until accepted. Stream events preserve activity without
+  publishing draft text or reasoning. Useful interim prose has its own
+  unsupported-claim and repetition check; tools retain independent admission.
+- Each held final check receives a numbered repair item, the relevant quoted
+  source passage when Jev identifies one, an explicit correction and a
+  `resolvedWhen` condition. Confirmed defects and unresolved checks are labeled
+  separately. Current observations and the original request settle findings;
+  old rejected drafts and checker warnings cannot become proof of failure.
+  Resolved findings do not demand more polishing, additional requirements or
+  repeated execution. Wording changes suffice when the task is fulfilled and
+  the remaining problem is an inaccurate claim.
+- Contract answer rendering preserves prose accompanying an engineer completion
+  footer. The actual integration unit produced a 14,151-character review, but
+  its owner received only a 212-character summary. Deliverable judgment now
+  reads the rendered answer while retaining full unit reports as evidence.
+  Request shaping also distinguishes permission to write the requested review
+  artifact from permission to modify production source.
+
+A live `gpt-6.1-sol` / `jev-1.13.0` exercise rejected an unwritten-report claim,
+returned a concrete fix list, and let the model read both fixture source files
+and write the requested report. The second final draft passed: two drafts,
+one published answer, three actual file operations, 17,957 ms. The fixture
+requested static inspection and forbade source changes and tests; no extra
+verification work was imposed. This demonstrates convergence for that case,
+not completion of the original Spacegame review. The actual first Spacegame
+draft was also replayed: its unresolved checks returned quoted verification
+claims rather than unsupported allegations presented as proven defects.
+
+Live calibration of all six affected batteries meets their declared accuracy
+floors. The initial failures and corrected question results are retained in
+`.goodvibes/artifacts/jev-usage/response-review/`. Local verification covers
+406 engine regressions, 12 daemon tests and 21 TUI tests, including private
+publication, actual file repair, cancellation, stale authority, contract
+handoffs and preserved input privacy.

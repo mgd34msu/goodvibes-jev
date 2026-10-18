@@ -8,9 +8,10 @@
  * "Contract ctr-1a2b3c4d passed (3 of 3 criteria met...)". The answer belongs
  * to the unit that produced the deliverable: the integration unit of a
  * multi-unit plan, otherwise the plan's one unit. A structured completion
- * report contributes its result, falling back to its summary.
+ * report contributes its result, or the accompanying prose answer. Only a
+ * report without either falls back to its summary.
  */
-import { parseCompletionReport } from '../agents/completion-report.js';
+import { parseCompletionReportParts } from '../agents/completion-report.js';
 import type { Contract, ContractUnit } from './types.js';
 
 /** Said when a contract passed but its deliverable unit left no text to show. */
@@ -22,23 +23,26 @@ export function answerUnit(contract: Pick<Contract, 'units' | 'groups'>): Contra
   return planUnits.find((unit) => unit.role === 'integration') ?? (planUnits.length === 1 ? planUnits[0] : undefined);
 }
 
-/** The contract's answer: the deliverable result, its summary, or the unstructured answer. */
+/** The contract's answer: its result, accompanying prose, summary, or unstructured answer. */
 export function renderContractAnswer(contract: Pick<Contract, 'units' | 'groups'>): string {
   const raw = (answerUnit(contract)?.answer ?? '').trim();
   if (raw.length === 0) return '';
-  const report = parseCompletionReport(raw);
+  const parts = parseCompletionReportParts(raw);
+  const report = parts?.report;
   // Reviews and research carry their findings in result. Returning only the
   // summary loses the file references and evidence the caller requested.
   const result = report && 'result' in report && typeof report.result === 'string' ? report.result.trim() : '';
   if (result.length > 0) return result;
+  if (parts?.body.length) return parts.body;
   const summary = report?.summary?.trim();
   return summary !== undefined && summary.length > 0 ? summary : raw;
 }
 
 /**
  * What the deliverable judge reads as the output: the deliverable unit's final
- * output as recorded when it passed (its whole report, not the summary the
- * person is shown), then the answers of the units that fixed the deliverable.
+ * output as recorded when it passed, then the answers of the units that fixed
+ * the deliverable. These reports accompany the actual answer as evidence;
+ * they cannot substitute for a missing answer in the deliverable check.
  * Empty when nothing was recorded: the judge then reads the diff and gates
  * alone, and code never states in its evidence that the work succeeded.
  */

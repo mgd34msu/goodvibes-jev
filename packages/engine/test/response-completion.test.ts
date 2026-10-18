@@ -5,7 +5,7 @@ import type { ChatRequest, ChatResponse } from '../sdk/src/platform/providers/in
 import type { AgentRecord } from '../sdk/src/platform/tools/agent/record.js';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { JudgmentError } from '@goodvibes-jev/judgment';
 import { ConversationManager } from '../sdk/src/platform/core/conversation.js';
 import { ResponseCompletionGuard, waitForResponseDelegates } from '../sdk/src/platform/core/response-completion.js';
@@ -30,6 +30,46 @@ const answered = (failure?: string, probability = .99) => fakePort(name => noulA
 
 test('the completion battery is registered', () => {
   expect(registry.get('engine.core.response-completion')).toBeDefined();
+});
+
+test('Jev findings identify the exact rejected passage and remain private revision context', async () => {
+  const fake = fakePort((name, question) => question.type === 'choice' ? choiceAnswer(question, 'passage-0', .99)
+    : noulAnswer(name === 'unsupported' || name === 'fits_0' ? .99 : .01));
+  installJudgmentPort(fake.port);
+  const input = source('All authentication regression tests passed.');
+  const before = input.conversation.getMessageSnapshot(), guard = new ResponseCompletionGuard();
+  const correction = await guard.checkUntilAvailable(() => input);
+  expect(correction).toContain('All authentication regression tests passed.');
+  expect(correction).toContain('Obtain the relevant successful tool result');
+  expect(correction).toContain('"localization":"established"');
+  expect(input.conversation.getMessageSnapshot()).toEqual(before);
+  expect(() => guard.beginFinalization({ content: input.response })).toThrow();
+});
+
+test('historical rejected drafts and checker warnings cannot become evidence against a repaired current answer', async () => {
+  const fake = answered(); installJudgmentPort(fake.port);
+  const input = source('The requested report was written.');
+  input.conversation.addAssistantMessage('REJECTED-DRAFT: I did not write the report.');
+  input.conversation.addSystemMessage('[Response completion check] OLD-WARNING: the report has not been written.');
+  input.conversation.addAssistantMessage('', { toolCalls: [{ id: 'write', name: 'write', arguments: { path: 'review.md', content: 'Findings.' } }] });
+  input.conversation.addToolResults([{ callId: 'write', success: true, output: 'Wrote review.md.' }]);
+  const guard = new ResponseCompletionGuard({ request: input.request, conversation: input.conversation });
+  expect(await guard.check(input)).toBeNull();
+  const checks = fake.requests.filter(request => request.context?.battery?.startsWith('engine.core.'));
+  expect(JSON.stringify(checks)).not.toContain('REJECTED-DRAFT');
+  expect(JSON.stringify(checks)).not.toContain('OLD-WARNING');
+  expect(JSON.stringify(checks)).toContain('Wrote review.md.');
+  expect(JSON.stringify(checks)).toContain('Inspect every source file');
+  expect(JSON.stringify(input.conversation.toJSON())).toContain('REJECTED-DRAFT');
+});
+
+test('checked progress cannot authorize completion and its publication is bound to its exact source', async () => {
+  installJudgmentPort(answered().port);
+  const input = source('I will inspect the parser next.'), guard = new ResponseCompletionGuard();
+  const publication = await guard.checkProgress(input);
+  expect(publication.correction).toBeNull(); expect(publication.assertCurrent).not.toThrow();
+  expect(() => guard.beginFinalization({ content: input.response })).toThrow();
+  input.conversation.addUserMessage('Stop.'); expect(publication.assertCurrent).toThrow();
 });
 
 test('truthful admissions of unfinished work hold completion and retain the original request', async () => {
@@ -149,6 +189,76 @@ function loop(replies: string[]) {
   return { context, events, requests, bus, unsubscribe };
 }
 
+test('one rejected draft gives a concrete repair list, executes the repair and delivers the second draft', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'jev-private-review-')), report = join(root, 'review.md');
+  const f = loop([]), conversation = new ConversationManager();
+  const task = 'Write the completed findings to review.md.';
+  conversation.addUserMessage(task);
+  const publicEvents: unknown[] = [], requests: ChatRequest[] = [];
+  const stopDelta = f.bus.on('STREAM_DELTA', event => { publicEvents.push(event); });
+  const stopUsage = f.bus.on('LLM_RESPONSE_RECEIVED', event => { publicEvents.push(event); });
+  let wrote = false;
+  const fake = fakePort((name, question, state) => {
+    if (question.type === 'choice') return choiceAnswer(question, 'passage-0', .99);
+    if (name === 'fits_0') return noulAnswer(.99);
+    if (name === 'unfinished') return noulAnswer(wrote ? .01 : .99);
+    return noulAnswer(.01);
+  }); installJudgmentPort(fake.port);
+  const provider = { name: 'test', models: ['test'], chat: async (request: ChatRequest): Promise<ChatResponse> => {
+    requests.push(request);
+    const index = requests.length - 1;
+    if (index > 0) {
+      expect(request.systemPrompt).toContain('[Response completion check]');
+      expect(request.systemPrompt).toContain('Unpublished draft to revise');
+      expect(request.systemPrompt).toContain('resolvedWhen');
+      expect(request.systemPrompt).toContain('Fix list');
+    }
+    expect(JSON.stringify(conversation.getMessageSnapshot())).not.toContain('DRAFT_');
+    expect(JSON.stringify(conversation.toJSON())).not.toContain('[Response completion check]');
+    const content = index < 1 ? `DRAFT_${index}: The report is still unwritten; this is another summary.` : index === 1 ? '' : 'APPROVED: wrote review.md.';
+    request.onDelta?.({ content: content.slice(0, 12) });
+    request.onDelta?.({ content: content.slice(12), reasoning: 'PRIVATE_REVIEW_REASONING' });
+    expect(JSON.stringify(conversation.getMessageSnapshot())).not.toContain('DRAFT_');
+    return { content, toolCalls: index === 1 ? [{ id: 'write', name: 'write', arguments: { path: report, content: 'Completed findings.' } }] : [],
+      usage: { inputTokens: 1, outputTokens: 1 }, stopReason: index === 1 ? 'tool_call' : 'completed' };
+  } };
+  f.context.toolRegistry.register({ definition: { name: 'write', description: 'Write the report', parameters: { type: 'object' } }, execute: async () => ({ success: true }) });
+  try {
+    await executeOrchestratorTurnLoop({ ...f.context, conversation, text: task,
+      configManager: { get: (key: string) => key === 'display.stream' ? true : undefined } as never,
+      providerRegistry: { ...f.context.providerRegistry, getForModel: () => provider },
+      executeToolCalls: async (_turn, calls) => calls.map(call => {
+        writeFileSync(String(call.arguments.path), String(call.arguments.content)); wrote = true;
+        return { callId: call.id, success: true, output: 'Successfully wrote review.md.' };
+      }) });
+    expect(requests).toHaveLength(3);
+    expect(readFileSync(report, 'utf8')).toBe('Completed findings.');
+    expect(f.events).toEqual(['TURN_COMPLETED']);
+    const history = conversation.getMessageSnapshot();
+    expect(history.filter(message => message.role === 'assistant' && message.content)).toHaveLength(1);
+    expect(JSON.stringify(publicEvents)).not.toContain('DRAFT_');
+    expect(JSON.stringify(publicEvents)).not.toContain('PRIVATE_REVIEW_REASONING');
+    expect(JSON.stringify(history)).not.toContain('DRAFT_');
+    expect(JSON.stringify(history)).not.toContain('[Response completion check]');
+    expect(history.at(-1)?.content).toBe('APPROVED: wrote review.md.');
+  } finally { stopDelta(); stopUsage(); f.unsubscribe(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('unapproved progress prose is withheld while its useful tool action can still execute', async () => {
+  const f = loop([]); let wrote = false, chats = 0;
+  installJudgmentPort(fakePort((name, _question, state) => noulAnswer(name === 'unsupported' && (state as { response?: string }).response === 'UNSUPPORTED: I already wrote it.' ? .99 : .01)).port);
+  const provider = { name: 'test', models: ['test'], chat: async (): Promise<ChatResponse> => ++chats === 1
+    ? { content: 'UNSUPPORTED: I already wrote it.', toolCalls: [{ id: 'w', name: 'write', arguments: {} }], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'tool_call' }
+    : { content: 'Wrote the requested report.', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' } };
+  f.context.toolRegistry.register({ definition: { name: 'write', description: 'Write the report', parameters: { type: 'object' } }, execute: async () => ({ success: true }) });
+  try {
+    await executeOrchestratorTurnLoop({ ...f.context, providerRegistry: { ...f.context.providerRegistry, getForModel: () => provider },
+      executeToolCalls: async () => { wrote = true; return [{ callId: 'w', success: true, output: 'Wrote the report.' }]; } });
+    expect(wrote).toBe(true); expect(f.events).toEqual(['TURN_COMPLETED']);
+    expect(JSON.stringify(f.context.conversation.getMessageSnapshot())).not.toContain('UNSUPPORTED:');
+  } finally { f.unsubscribe(); }
+});
+
 test('the real direct-input main loop resumes rejected finals and emits completion only for the accepted response', async () => {
   const fake = fakePort((name, _question, request) => noulAnswer(name === 'unfinished' && JSON.stringify(request).includes('does not finish your original request')
     && !JSON.stringify(request).includes('FINISHED') ? .99 : .01));
@@ -158,7 +268,7 @@ test('the real direct-input main loop resumes rejected finals and emits completi
     await executeOrchestratorTurnLoop(f.context);
     expect(f.requests).toHaveLength(2);
     expect(f.events).toEqual(['TURN_COMPLETED']);
-    expect(f.context.conversation.getMessageSnapshot().some(m => m.role === 'system' && m.content.includes('[Response completion check]'))).toBe(true);
+    expect(f.context.conversation.getMessageSnapshot().some(m => m.role === 'system' && m.content.includes('[Response completion check]'))).toBe(false);
     expect(f.context.conversation.getMessagesForLLM().at(-1)?.content).toContain('FINISHED');
   } finally { f.unsubscribe(); }
 });

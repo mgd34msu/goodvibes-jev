@@ -547,12 +547,20 @@ describe('standalone completion enforcement', () => {
     const partial = 'I wrote the report, but the original review is still unfinished.';
     f.record.task = 'Finish the complete repository review and its report.';
     f.controls.finalReplies = [partial, 'Finished the assigned review and report.'];
+    f.controls.beforeDelta = () => {
+      expect(f.record.streamingContent).toBeUndefined();
+      expect(f.record.fullOutput).not.toBe(partial);
+      expect(JSON.stringify(f.snapshot)).not.toContain(partial);
+    };
     installJudgmentPort(semanticPort(() => noulAnswer(.01), (name, state) => name === 'unfinished' && (state as { response?: string }).response === partial ? .99 : .01).port);
     await runAgentTask(f.context, f.record);
     expect(f.requests).toHaveLength(2);
     expect(JSON.stringify(f.requests[1])).toContain('[Response completion check]');
     expect(f.completed).toHaveLength(1);
     expect(f.record.fullOutput).toBe('Finished the assigned review and report.');
+    expect(f.streams.every(content => content === '')).toBe(true);
+    expect(JSON.stringify(f.snapshot)).not.toContain(partial);
+    expect(JSON.stringify(f.snapshot)).not.toContain('[Response completion check]');
   });
 
   test('retirement during final settlement cannot publish a previously accepted completion', async () => {

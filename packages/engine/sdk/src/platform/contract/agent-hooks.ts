@@ -67,7 +67,7 @@ export interface ContractAgentHooks {
    */
   onTurnEnd(record: AgentRecord, turn: ContractTurnRecord): void;
   /** When the agent would complete. The loop awaits it before finishing. */
-  holdCompletion(record: AgentRecord): Promise<ContractHoldOutcome>;
+  holdCompletion(record: AgentRecord, candidateOutput?: string): Promise<ContractHoldOutcome>;
 }
 
 /** The hooks the core turn loop calls: the agent hooks, and binding a session's turn to a session-mode unit (design 6.6). */
@@ -165,7 +165,7 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
     void runCheck(run, unit, 'turn-end');
   }
 
-  function holdCompletion(record: AgentRecord): Promise<ContractHoldOutcome> {
+  function holdCompletion(record: AgentRecord, candidateOutput?: string): Promise<ContractHoldOutcome> {
     const found = locate(record);
     if (found === null) return Promise.resolve({ kind: 'release' });
     const { run, unit, runtime } = found;
@@ -181,7 +181,7 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
         },
       };
       run.moveUnit(unit, 'held');
-      void runCheck(run, unit, 'completion');
+      void runCheck(run, unit, 'completion', candidateOutput);
     });
   }
 

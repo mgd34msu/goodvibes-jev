@@ -697,7 +697,7 @@ test.each([false, true])('tool argument stream fragments wait for owned final pr
     if (held) await expect(executeOrchestratorTurnLoop(withBus)).rejects.toMatchObject({ problem: 'held' });
     else await executeOrchestratorTurnLoop(withBus);
     expect(projections).toBe(1); expect(executions).toBe(held ? 0 : 1);
-    expect(JSON.stringify(events)).toContain('ordinary progress');
+    expect(JSON.stringify(events)).not.toContain('ordinary progress');
     for (const secret of [raw, 'PRIVATE_PATH', 'SYNTHETIC_VALUE', 'PRIVATE_ANCHOR']) {
       expect(JSON.stringify(events)).not.toContain(secret);
       expect(JSON.stringify(context.conversation.getMessageSnapshot())).not.toContain(secret);
