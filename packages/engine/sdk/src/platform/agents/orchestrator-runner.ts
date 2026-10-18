@@ -1105,10 +1105,15 @@ export async function runAgentTask(
       } else {
         if ((!record.contractUnitId || !context.contractHooks) && !hasContractPlanConsumer(record)) {
           const completionConversation = conversation, finalResponse = response;
+          setAgentProgress(record, `Turn ${turn} · Jev is checking completion…`, 'operator');
+          context.emitAgentProgress(record.id, record.progress ?? '', 'operator');
           const correction = await completionGuard.checkUntilAvailable(() => ({ request: record.task, response: finalResponse.content, conversation: completionConversation,
             tools: toolDefinitions.map(tool => tool.name),
             delegated: context.agentManager ? collectResponseDelegates(completionConversation, context.agentManager) : [] }),
-          { signal: context.getCancellationSignal?.(record.id), assertCurrent: terminal.assertCurrent });
+          { signal: context.getCancellationSignal?.(record.id), assertCurrent: terminal.assertCurrent }, () => {
+            setAgentProgress(record, `Turn ${turn} · Waiting for Jev to reconnect…`, 'operator');
+            context.emitAgentProgress(record.id, record.progress ?? '', 'operator');
+          });
           terminal.assertCurrent();
           if (correction !== null) {
             conversation.addAssistantMessage(response.content, { usage: response.usage });

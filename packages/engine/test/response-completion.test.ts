@@ -6,6 +6,7 @@ import type { AgentRecord } from '../sdk/src/platform/tools/agent/record.js';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { JudgmentError } from '@goodvibes-jev/judgment';
 import { ConversationManager } from '../sdk/src/platform/core/conversation.js';
 import { ResponseCompletionGuard, waitForResponseDelegates } from '../sdk/src/platform/core/response-completion.js';
 import { registry } from '../sdk/src/platform/core/judgment-registry.js';
@@ -79,6 +80,25 @@ test('late protected text is refused before any request and image bytes are not 
   imageInput.conversation.addUserMessage([{ type: 'image', data: 'private-image-bytes', mediaType: 'image/png' }]);
   await new ResponseCompletionGuard().check(imageInput);
   expect(JSON.stringify(fake.requests)).not.toContain('private-image-bytes');
+});
+
+test('projected observations remain bound to their original values through final publication', async () => {
+  for (const beforeConsumption of [true, false]) {
+    const fake = answered(); installJudgmentPort(fake.port);
+    const requirements = { observation: 'password=synthetic-original-value' };
+    const input = { ...source('Finished.'), requirements }, guard = new ResponseCompletionGuard();
+    expect(await guard.check(input)).toBeNull();
+    expect(JSON.stringify(fake.requests)).not.toContain('synthetic-original-value');
+    const final = { content: input.response };
+    if (beforeConsumption) {
+      requirements.observation = 'password=synthetic-changed-value';
+      expect(() => guard.beginFinalization(final)).toThrow();
+    } else {
+      const current = guard.beginFinalization(final);
+      requirements.observation = 'password=synthetic-changed-value';
+      expect(current).toThrow();
+    }
+  }
 });
 
 test('cancellation, transcript changes and retired ports cannot release a pending completion', async () => {
@@ -218,6 +238,87 @@ test('a restored final checker can approve the same held draft without a fresh m
   expect(await pending).toBeNull();
   expect(waiting).toBe(1);
   expect(guard.beginFinalization({ content: input.response })).not.toThrow();
+});
+
+test('permanent checker errors return a repair instruction instead of retrying unchanged evidence forever', async () => {
+  for (const kind of ['invalid-request', 'rejected', 'invalid-response', 'unrecorded'] as const) {
+    const fake = answered(); let calls = 0, waits = 0;
+    installJudgmentPort({ model: fake.port.model, ask: async () => { calls++; throw new JudgmentError(kind, 'Synthetic permanent failure'); } });
+    const guard = new ResponseCompletionGuard(), input = source('Finished.');
+    const correction = await guard.checkUntilAvailable(() => input, {}, () => { waits++; });
+    expect(correction).toContain('validation failure');
+    expect(correction).toContain('Continue the original authorized task');
+    expect(calls).toBe(1); expect(waits).toBe(0);
+    expect(() => guard.beginFinalization({ content: input.response })).toThrow();
+  }
+});
+
+test('locally refused user evidence returns for repair before touching Jev and cannot approve completion', async () => {
+  const fake = answered(); installJudgmentPort(fake.port);
+  const input = source(); input.conversation.addUserMessage('password=synthetic-private-value');
+  const guard = new ResponseCompletionGuard(); let waits = 0;
+  const correction = await guard.checkUntilAvailable(() => input, {}, () => { waits++; });
+  expect(correction).toContain('evidence could not be admitted');
+  expect(fake.requests).toHaveLength(0); expect(waits).toBe(0);
+  expect(() => guard.beginFinalization({ content: input.response })).toThrow();
+});
+
+test('a permanent battery failure cancels a stuck sibling and preserves the repair reason', async () => {
+  const input = source(); input.conversation.addToolResults([{ callId: 'read', success: true, output: 'Read parser.ts.' }]);
+  const fake = answered(); let siblingSignal: AbortSignal | undefined;
+  installJudgmentPort({ model: fake.port.model, ask: async request => {
+    if (request.context?.battery === 'engine.core.execution-assurance') throw new JudgmentError('rejected', 'Synthetic HTTP 400');
+    siblingSignal = request.signal;
+    return new Promise(() => {});
+  } });
+  const guard = new ResponseCompletionGuard();
+  const correction = await guard.checkUntilAvailable(() => input, { signal: AbortSignal.timeout(500) });
+  expect(correction).toContain('service rejected the request');
+  expect(siblingSignal?.aborted).toBe(true);
+  expect(() => guard.beginFinalization({ content: input.response })).toThrow();
+});
+
+test('transport-level retries report checker waiting while completion remains held', async () => {
+  const fake = answered(); let waits = 0;
+  installJudgmentPort({ model: fake.port.model, ask: async request => {
+    request.onRetry?.({ logicalRequestId: 'retry', attempt: 1, delayMs: 1, reason: 'unavailable' } as never);
+    return fake.port.ask(request);
+  } });
+  const input = source('Finished.'), guard = new ResponseCompletionGuard();
+  expect(await guard.checkUntilAvailable(() => input, {}, () => { waits++; })).toBeNull();
+  expect(waits).toBe(1);
+});
+
+test('a permanent checker refusal returns control to the real main loop and only a fresh successful check permits completion', async () => {
+  const fake = answered(); let calls = 0;
+  installJudgmentPort({ model: fake.port.model, ask: async request => {
+    if (request.context?.battery === 'engine.core.response-completion' && ++calls === 1) throw new JudgmentError('rejected', 'Synthetic HTTP 400');
+    return fake.port.ask(request);
+  } });
+  const f = loop(['First completion draft.', 'FINISHED: repaired response.']);
+  try {
+    await executeOrchestratorTurnLoop(f.context);
+    expect(f.requests).toHaveLength(2); expect(calls).toBe(2);
+    expect(f.events).toEqual(['TURN_COMPLETED']);
+  } finally { f.unsubscribe(); }
+});
+
+test('the main loop exposes completion checking while the reader is pending and clears it on cancellation', async () => {
+  const fake = answered(), started = Promise.withResolvers<void>(), controller = new AbortController();
+  installJudgmentPort({ model: fake.port.model, ask: async request => {
+    if (request.context?.battery !== 'engine.core.response-completion') return fake.port.ask(request);
+    started.resolve(); return new Promise(() => {});
+  } });
+  const f = loop(['Finished.']), phases: ('checking' | 'waiting' | null)[] = [];
+  const pending = executeOrchestratorTurnLoop({ ...f.context, getAbortSignal: () => controller.signal,
+    setCompletionActivity: phase => { phases.push(phase); } });
+  const outcome = pending.then(value => ({ value }), error => ({ error }));
+  try {
+    await started.promise;
+    expect(phases).toEqual(['checking']); expect(f.events).toEqual([]);
+    controller.abort(); expect(await outcome).toHaveProperty('error');
+    expect(phases).toEqual(['checking', null]); expect(f.events).toEqual([]);
+  } finally { controller.abort(); await outcome; f.unsubscribe(); }
 });
 
 

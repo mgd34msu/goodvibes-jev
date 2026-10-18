@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Recover completion validation instead of retrying local privacy refusals and
+  permanent service errors as outages. Project card-shaped observation numbers
+  to explicit unavailable references while keeping original requests, final
+  drafts and execution receipts bound to their exact sources. Show completion
+  checking and Jev reconnection separately from model thinking.
+
 - Keep the original turn active across delegation and contract failures. Require
   held batches to be repaired and revalidated, validate host-owned planner
   proposals through contract plan checks, and retry failed planning attempts.

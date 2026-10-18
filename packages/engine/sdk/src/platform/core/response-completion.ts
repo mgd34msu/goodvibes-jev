@@ -1,5 +1,7 @@
-import { captureJudgmentPort, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
-import { snapshotJudgmentEvidence } from '../gate/judgment-input.js';
+import { captureJudgmentPort, JudgmentAuthorityRetiredError, JudgmentPortMissingError, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { JudgmentError } from '@goodvibes-jev/judgment';
+import { JudgmentInputError } from '../gate/judgment-input.js';
+import { CompletionEvidenceProjection } from './response-completion-evidence.js';
 import { captureStrictJudgmentJson, prepareJudgmentResult, retainStrictJudgmentJson } from '../gate/judgment-result.js';
 import type { ConversationManager, ConversationMessageSnapshot } from './conversation.js';
 import { responseCompletion } from './batteries/response-completion.js';
@@ -8,10 +10,13 @@ import { executionAssurance } from './batteries/execution-assurance.js';
 import type { AgentManager } from '../tools/agent/manager.js';
 
 export class ResponseCompletionError extends Error {
-  constructor(readonly problem: 'rejected' | 'unavailable' = 'rejected', options?: ErrorOptions) {
+  constructor(readonly problem: 'rejected' | 'unavailable' | 'invalid-evidence' | 'rejected-request' | 'invalid-response' = 'rejected', options?: ErrorOptions) {
     super(problem === 'rejected'
       ? 'The response has not established completion of the authorized work.'
-      : 'The response completion check could not be established. Completion remains held.', options);
+      : problem === 'unavailable' ? 'The response completion service is unavailable. Completion remains held.'
+      : problem === 'invalid-evidence' ? 'The completion evidence could not be admitted. Repair is required; retrying unchanged evidence cannot establish completion.'
+      : problem === 'rejected-request' ? 'The completion service rejected the request. Repair the request before retrying.'
+      : 'The completion service returned an unusable result. Completion remains held and requires recovery.', options);
     this.name = 'ResponseCompletionError';
   }
 }
@@ -65,6 +70,7 @@ export class ResponseCompletionGuard {
   private readonly initial: unknown;
   private accepted: ((response: { readonly content: string }) => (() => void)) | undefined;
   private hasToolEvidence = false;
+  private readonly evidenceProjection = new CompletionEvidenceProjection();
 
   constructor(initial?: { readonly request: string; readonly conversation: ConversationManager }) {
     // Keep original words through any compaction inside this run. This is evidence, not new authorization.
@@ -86,13 +92,18 @@ export class ResponseCompletionGuard {
     catch { throw new ResponseCompletionError('unavailable'); }
   }
 
-  async check(input: ResponseCompletionInput, options: JudgmentReadingOptions = {}): Promise<string | null> {
+  async check(input: ResponseCompletionInput, options: JudgmentReadingOptions = {}, onWaiting?: () => void): Promise<string | null> {
     this.accepted = undefined;
-    try { return await this.read(input, options); }
+    try { return await this.read(input, options, onWaiting); }
     catch (error) {
       options.signal?.throwIfAborted(); options.assertCurrent?.();
       if (error instanceof ResponseCompletionError) throw error;
-      throw new ResponseCompletionError('unavailable', { cause: error });
+      const transient = error instanceof JudgmentPortMissingError || error instanceof JudgmentAuthorityRetiredError
+        || (error instanceof JudgmentError && error.kind === 'unavailable');
+      const problem = transient ? 'unavailable' : error instanceof JudgmentInputError ? 'invalid-evidence'
+        : error instanceof JudgmentError && (error.kind === 'rejected' || error.kind === 'invalid-request') ? 'rejected-request'
+        : error instanceof JudgmentError ? 'invalid-response' : 'invalid-evidence';
+      throw new ResponseCompletionError(problem, { cause: error });
     }
   }
 
@@ -100,10 +111,24 @@ export class ResponseCompletionGuard {
   async checkUntilAvailable(input: () => ResponseCompletionInput, options: JudgmentReadingOptions = {}, onWaiting?: () => void): Promise<string | null> {
     let delay = 1_000;
     for (;;) {
-      try { return await this.check(input(), options); }
+      try {
+        const correction = await this.check(input(), options, onWaiting);
+        // Let cancellation and rendering run between rejected drafts, including
+        // when an embedded provider or reader resolves synchronously.
+        if (correction !== null) await waitForTaskRecovery(0, options.signal);
+        return correction;
+      }
       catch (error) {
         options.signal?.throwIfAborted(); options.assertCurrent?.();
-        if (!(error instanceof ResponseCompletionError) || error.problem !== 'unavailable') throw error;
+        if (!(error instanceof ResponseCompletionError)) throw error;
+        if (error.problem !== 'unavailable') {
+          await waitForTaskRecovery(0, options.signal);
+          return '[Response completion check] ' + error.message
+            + ' This is a validation failure, not permission to stop. Continue the original authorized task with the available tools. '
+            + 'Obtain relevant admissible evidence and correct the proposed response. Do not resend the same invalid request unchanged, '
+            + 'remove user requirements, invent success, or describe incomplete work as finished. Protected material must use its secure input path; '
+            + 'use redacted observations when exact private values are irrelevant. Completion still requires a fresh successful Jev check.';
+        }
         onWaiting?.();
         await waitForTaskRecovery(delay, options.signal);
         delay = Math.min(delay * 2, 10_000);
@@ -111,7 +136,7 @@ export class ResponseCompletionGuard {
     }
   }
 
-  private async read(input: ResponseCompletionInput, options: JudgmentReadingOptions): Promise<string | null> {
+  private async read(input: ResponseCompletionInput, options: JudgmentReadingOptions, onWaiting?: () => void): Promise<string | null> {
     options.signal?.throwIfAborted(); options.assertCurrent?.();
     const conversation = input.conversation, snapshot = conversation.getMessageSnapshot;
     const projectTranscript = () => completionTranscript(snapshot.call(conversation));
@@ -120,7 +145,7 @@ export class ResponseCompletionGuard {
     const source = retainStrictJudgmentJson({ request: input.request, response: input.response, transcript,
       tools: input.tools, delegated: (input.delegated ?? []).map(agent => ({ id: agent.id, task: agent.task, status: agent.status,
         output: agent.output, ...(agent.error ? { error: agent.error } : {}), evidence: completionTranscript(agent.evidence ?? []) })), requirements: input.requirements ?? null, initial: this.initial });
-    const state = snapshotJudgmentEvidence(source.snapshot);
+    const state = this.evidenceProjection.prepare(source.snapshot);
     const conversationSource = JSON.stringify(transcript);
     const current = () => {
       source.assertCurrent(); options.signal?.throwIfAborted(); options.assertCurrent?.();
@@ -129,16 +154,29 @@ export class ResponseCompletionGuard {
         || JSON.stringify(projectTranscript()) !== conversationSource) throw new Error('Response completion transcript changed.');
     };
     current();
-    const owner = captureJudgmentPort(responseCompletion.name, { ...options, assertCurrent: current, prepareResultCapture: prepareJudgmentResult });
+    const batch = new AbortController();
+    const owner = captureJudgmentPort(responseCompletion.name, { ...options,
+      signal: options.signal ? AbortSignal.any([options.signal, batch.signal]) : batch.signal,
+      assertCurrent: current, prepareResultCapture: prepareJudgmentResult });
+    const readingOptions = { signal: owner.signal, beforeAttempt: owner.assertCurrent, onRetry: () => onWaiting?.() };
+    let failure: { readonly error: unknown } | undefined;
     const checks = await Promise.allSettled([
-      responseCompletion.run(owner.port, state as never, { site: responseCompletion.name, signal: owner.signal, beforeAttempt: owner.assertCurrent }),
+      responseCompletion.run(owner.port, state as never, { ...readingOptions, site: responseCompletion.name }),
       source.snapshot.delegated.length ? delegationConsolidation.run(owner.port, state as never,
-        { site: delegationConsolidation.name, signal: owner.signal, beforeAttempt: owner.assertCurrent }) : Promise.resolve(null),
+        { ...readingOptions, site: delegationConsolidation.name }) : Promise.resolve(null),
       this.hasToolEvidence || source.snapshot.transcript.some(message => message.role === 'tool') || source.snapshot.delegated.length
         ? executionAssurance.run(owner.port, state as never,
-          { site: executionAssurance.name, signal: owner.signal, beforeAttempt: owner.assertCurrent }) : Promise.resolve(null),
-    ]);
-    for (const check of checks) if (check.status === 'rejected') throw check.reason;
+          { ...readingOptions, site: executionAssurance.name }) : Promise.resolve(null),
+    ].map(async work => {
+      try { return await work; }
+      catch (error) {
+        // Stop sibling readings, including transport retries, when this batch
+        // already cannot establish completion. Preserve the original failure.
+        if (!failure) { failure = { error }; batch.abort(); }
+        throw error;
+      }
+    }));
+    if (failure) throw failure.error;
     const run = (checks[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof responseCompletion.run>>>).value;
     const consolidation = (checks[1] as PromiseFulfilledResult<Awaited<ReturnType<typeof delegationConsolidation.run>> | null>).value;
     const execution = (checks[2] as PromiseFulfilledResult<Awaited<ReturnType<typeof executionAssurance.run>> | null>).value;

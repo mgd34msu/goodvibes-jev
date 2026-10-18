@@ -58,6 +58,7 @@ export type ThrobberActivity =
   | { readonly kind: 'tool'; readonly tool: string; readonly argument: string; readonly elapsedMs?: number }
   | { readonly kind: 'agents'; readonly count: number }
   | { readonly kind: 'contract'; readonly phrase: string }
+  | { readonly kind: 'completion'; readonly phase: 'checking' | 'waiting'; readonly elapsedMs?: number }
   | { readonly kind: 'model'; readonly phrase: string; readonly elapsedMs?: number; readonly ttftMs?: number; readonly tokenSpeed?: number };
 
 /** One frame of the throbber. */
@@ -80,6 +81,8 @@ export interface ThrobberToolCall {
 export interface ThrobberActivityInput {
   /** A main turn is running. */
   readonly turnActive: boolean;
+  /** Local completion validation is distinct from waiting for model output. */
+  readonly completionActivity?: { readonly phase: 'checking' | 'waiting'; readonly startedAtMs: number } | null;
   /** Active agents, including the interval before their results resume main. */
   readonly runningAgentCount?: number;
   /** This session's contracts, including shaping and gaps between workers. */
@@ -129,6 +132,7 @@ export function resolveThrobberActivity(input: ThrobberActivityInput): ThrobberA
   if (input.activeTool) {
     return { kind: 'tool', ...describeToolCall(input.activeTool), elapsedMs: since(input.activeTool.startedAtMs) ?? turnElapsed };
   }
+  if (input.completionActivity) return { kind: 'completion', phase: input.completionActivity.phase, elapsedMs: since(input.completionActivity.startedAtMs) };
   return {
     kind: 'model',
     phrase: input.modelPhrase,
@@ -147,6 +151,8 @@ interface ThrobberText {
 function textOf(activity: ThrobberActivity): ThrobberText {
   const elapsed = 'elapsedMs' in activity && activity.elapsedMs !== undefined ? [formatElapsed(activity.elapsedMs)] : [];
   switch (activity.kind) {
+    case 'completion':
+      return { label: activity.phase === 'waiting' ? 'Waiting for Jev to reconnect...' : 'Jev is checking completion...', subject: '', tail: elapsed };
     case 'contract':
       return { label: activity.phrase, subject: '', tail: [] };
     case 'agents':

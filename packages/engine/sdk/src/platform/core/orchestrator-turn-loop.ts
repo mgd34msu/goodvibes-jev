@@ -143,6 +143,7 @@ export interface OrchestratorTurnLoopContext {
   readonly getAbortSignal: () => AbortSignal | undefined;
   readonly hookDispatcher: HookDispatcherLike | null;
   readonly requestRender: () => void;
+  readonly setCompletionActivity?: ((phase: 'checking' | 'waiting' | null) => void) | undefined;
   readonly runtimeBus: RuntimeEventBus | null;
   readonly agentManager: Pick<AgentManager, 'list' | 'spawn'> & Partial<Pick<AgentManager, 'getConversationSnapshot'>>;
   readonly configManager: Pick<ConfigManager, 'get'>;
@@ -880,12 +881,16 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
     if (contractSession && await holdSessionFinalResponse({ ...context, emitterContext: (id) => context.emitterContext(id) }, contractSession, enrichedResponse)) continue;
     let assertCompletionCurrent: (() => void) | undefined;
     if (!contractSession) {
-      const correction = await completionGuard.checkUntilAvailable(() => ({
+      context.setCompletionActivity?.('checking');
+      let correction: string | null;
+      try { correction = await completionGuard.checkUntilAvailable(() => ({
         request: context.text, response: enrichedResponse.content, conversation: context.conversation,
         tools: toolDefinitions.map(tool => tool.name),
         requirements: context.getCompletionRequirements?.(),
         delegated: collectResponseDelegates(context.conversation, context.agentManager, intakeAgentIds),
-      }), { signal, assertCurrent: assertActiveTurn }, () => context.requestRender());
+      }), { signal, assertCurrent: assertActiveTurn }, () => {
+        context.setCompletionActivity?.('waiting'); context.requestRender();
+      }); } finally { context.setCompletionActivity?.(null); }
       assertActiveTurn();
       if (correction !== null) {
         context.conversation.addAssistantMessage(enrichedResponse.content, {

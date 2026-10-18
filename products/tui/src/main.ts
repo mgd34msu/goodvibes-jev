@@ -577,6 +577,7 @@ async function main() {
     const turnActive = orchestrator.isThinking || orchestrator.isTurnInFlight;
     const throbberActivity = resolveThrobberActivity({
       turnActive,
+      completionActivity: orchestrator.completionActivity,
       runningAgentCount,
       contracts: sessionContracts,
       compacting,

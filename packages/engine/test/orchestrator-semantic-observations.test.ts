@@ -159,7 +159,10 @@ describe('canonical repeated-call observation and actual runner', () => {
     }
   });
   test('private result tails are withheld and completion stays held until cancelled', async () => {
-    const f = setup(5, () => 'x'.repeat(200_000) + ' password=private-value'), fake = semanticPort(() => noulAnswer(.01)); installJudgmentPort(fake.port);
+    const f = setup(5, () => 'x'.repeat(200_000) + ' password=private-value');
+    const fake = semanticPort(() => noulAnswer(.01), (name, state) =>
+      name === 'unsupported' && JSON.stringify(state).includes('unavailableObservation') ? .99 : .01);
+    installJudgmentPort(fake.port);
     const pending = runAgentTask(f.context, f.record);
     await new Promise(resolve => setTimeout(resolve, 50));
     expect(f.completed).toHaveLength(0);

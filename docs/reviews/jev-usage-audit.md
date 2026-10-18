@@ -301,3 +301,47 @@ Validation for this correction: **263 engine tests across 19 files, 12 daemon te
 | [Summary](../../.goodvibes/artifacts/jev-usage/summary.json) and [full compressed inventory](../../.goodvibes/artifacts/jev-usage/full-inventory.json.gz) | Machine-readable counts and complete graph results. |
 
 The inventory uses tracked-source parsing, workspace export resolution, imported symbol aliases, generic decision parameters, dynamic selection tables, callback references and registry introspection. Runtime and tooling sources were parsed semantically; test/fixture files received a separate AST census. Source call-graph reachability includes conditional logging and error paths, while RPC/interface dispatch remains represented at its caller, registered adapter and actual decision reader. A zero count in one layer is not a claim that a declared library feature is unreachable through an external consumer.
+
+
+## Completion stall correction (2026-10-18)
+
+The later Spacegame session `user-817ad864` exposed a separate defect in the
+completion retry loop shipped in `f44fb427`. Three tool observations contained
+Luhn-valid 13-digit millisecond timestamps: agent start metadata, contract
+history and an overflow progress-file name. The local payment-card screen
+rejected that evidence before any completion battery reached Jev. The handler
+incorrectly classified every exception as service unavailability and retried
+unchanged evidence indefinitely. The screenshot's hour-long stall was this
+local retry loop, rather than a model request still generating tokens.
+
+Completion observations now receive a local projection before the existing
+strict privacy screen. Card-shaped numbers become stable opaque references;
+protected credential/card observations become explicitly unavailable evidence.
+The original user request, user messages and exact final draft remain subject
+to strict admission. Actual action arguments are unchanged, original sources
+remain bound through final publication, and unavailable evidence cannot prove
+completion. JSON numbers are screened before parsing to preserve protection
+for 19-digit values that would otherwise lose precision.
+
+Only temporary service unavailability and retired service installations enter
+the cancellable retry loop. A failed parallel battery cancels its pending siblings
+while preserving the original failure; transport retries update the visible
+Jev waiting status. Invalid evidence, rejected requests and malformed
+results return a correction to the tool-capable model, without granting a
+completion permit. Rejected drafts yield to rendering and cancellation before
+continuing. Main and standalone agents name completion checking explicitly;
+the TUI shows Jev validation or reconnection with its own elapsed time.
+
+The saved 97-message transcript was replayed through the real guard and live
+`jev-1.13.0`. Both completion and execution batteries reached the service;
+the slower response returned in 1,948 ms. The partial-review draft was held
+and received an instruction to continue the original full review. This does
+not mean the Spacegame review itself is complete. The transcript and existing
+report were backed up before the user closed the stalled session; normal
+session shutdown also preserved all 97 messages in session history. A second
+live check allowed a real file write after read-back and rejected an artifact
+claim with only a withheld observation (unsupported probability 0.92). Local
+regressions exercise timestamp/history/path observations, nested encoded JSON,
+privacy preservation, permanent-error recovery, cancellation and finalization.
+The live result is retained in
+`.goodvibes/artifacts/jev-usage/stall-recovery/live-result.json`.

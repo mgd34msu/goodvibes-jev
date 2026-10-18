@@ -6,6 +6,9 @@ All notable changes to GoodVibes TUI.
 
 ## Unreleased
 
+- Show Jev completion validation and reconnection as explicit activity above
+  the input, with their own elapsed time instead of a stalled model label.
+
 - Route owner-terminal `/workstream start` through native conversation intake and execution, preserving the exact request and source references before parsing. Keep historical contract controls separate; generic, model and nested command calls cannot mint owner input.
 
 - Add explicit shared legacy import submission, Jev reconsideration and exact-request recovery. Durable command identity precedes dispatch; live paired authority and workspace generations fence native admission. Historical completion remains reported and unverified, with legacy source records retained.

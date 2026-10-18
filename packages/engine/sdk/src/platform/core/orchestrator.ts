@@ -169,6 +169,7 @@ export interface OrchestratorOptions {
  */
 export class Orchestrator {
   public isThinking = false;
+  public completionActivity: { readonly phase: 'checking' | 'waiting'; readonly startedAtMs: number } | null = null;
   public thinkingFrame = 0;
   public usage: OrchestratorUsageTotals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   /**
@@ -697,6 +698,7 @@ export class Orchestrator {
     this.postTurnPlanOwner = {};
     if (!resume) this.followUpRuntime.cancel(true);
     this.isThinking = true;
+    this.completionActivity = null;
     this.thinkingFrame = 0; // Reset each turn so gradient starts clean and frame never grows unbounded
     this.streamingInputTokens = estimatedInputTokens ?? this.lastRequestInputTokens;
     this.streamingOutputTokens = 0;
@@ -721,6 +723,7 @@ export class Orchestrator {
     this.animInterval = null;
     this.abortController = null;
     this.isThinking = false;
+    this.completionActivity = null;
     this.streamingInputTokens = 0;
     this.streamingOutputTokens = 0;
     this.scrollToEnd(this.getViewportHeight());
@@ -918,6 +921,10 @@ export class Orchestrator {
       getAbortSignal: () => this.abortController?.signal,
       hookDispatcher: bindTurnHookDispatcher(this.hookDispatcher, this.turnHookOwner),
       requestRender: this.requestRender,
+      setCompletionActivity: phase => {
+        this.completionActivity = phase ? { phase, startedAtMs: this.completionActivity?.startedAtMs ?? Date.now() } : null;
+        this.requestRender();
+      },
       runtimeBus: this.runtimeBus,
       agentManager: this.agentManager,
       configManager,
