@@ -141,6 +141,18 @@ test('projected observations remain bound to their original values through final
   }
 });
 
+test('budgeted evidence cannot hide a changed omitted observation from the final publication fence', async () => {
+  const fake = answered(); installJudgmentPort(fake.port);
+  const input = source('The review is saved.');
+  for (let index = 0; index < 20; index++) input.conversation.addToolResults([{ callId: `source-${index}`, success: true, output: 'Observed source text. '.repeat(4_000) }]);
+  const guard = new ResponseCompletionGuard({ request: input.request, conversation: input.conversation });
+  expect(await guard.check(input)).toBeNull();
+  const changed = { messages: input.conversation.getMessageSnapshot().map(message => message.role === 'tool' && message.callId === 'source-0'
+    ? { ...message, content: 'The original observation changed after validation.' } : message) };
+  input.conversation.fromJSON(changed);
+  expect(() => guard.beginFinalization({ content: input.response })).toThrow();
+});
+
 test('cancellation, transcript changes and retired ports cannot release a pending completion', async () => {
   for (const change of ['abort', 'transcript', 'port', 'response']) {
     const started = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
@@ -350,15 +362,15 @@ test('a restored final checker can approve the same held draft without a fresh m
   expect(guard.beginFinalization({ content: input.response })).not.toThrow();
 });
 
-test('permanent checker errors return a repair instruction instead of retrying unchanged evidence forever', async () => {
+test('checker protocol and storage errors hold the same draft without requesting model repairs', async () => {
   for (const kind of ['invalid-request', 'rejected', 'invalid-response', 'unrecorded'] as const) {
     const fake = answered(); let calls = 0, waits = 0;
     installJudgmentPort({ model: fake.port.model, ask: async () => { calls++; throw new JudgmentError(kind, 'Synthetic permanent failure'); } });
     const guard = new ResponseCompletionGuard(), input = source('Finished.');
-    const correction = await guard.checkUntilAvailable(() => input, {}, () => { waits++; });
-    expect(correction).toContain('validation failure');
-    expect(correction).toContain('Continue the original authorized task');
-    expect(calls).toBe(1); expect(waits).toBe(0);
+    const controller = new AbortController();
+    const pending = guard.checkUntilAvailable(() => input, { signal: controller.signal }, () => { waits++; controller.abort(); });
+    await expect(pending).rejects.toThrow();
+    expect(calls).toBe(1); expect(waits).toBe(1);
     expect(() => guard.beginFinalization({ content: input.response })).toThrow();
   }
 });
@@ -382,8 +394,7 @@ test('a permanent battery failure cancels a stuck sibling and preserves the repa
     return new Promise(() => {});
   } });
   const guard = new ResponseCompletionGuard();
-  const correction = await guard.checkUntilAvailable(() => input, { signal: AbortSignal.timeout(500) });
-  expect(correction).toContain('service rejected the request');
+  await expect(guard.checkUntilAvailable(() => input, { signal: AbortSignal.timeout(100) })).rejects.toThrow();
   expect(siblingSignal?.aborted).toBe(true);
   expect(() => guard.beginFinalization({ content: input.response })).toThrow();
 });
@@ -399,16 +410,17 @@ test('transport-level retries report checker waiting while completion remains he
   expect(waits).toBe(1);
 });
 
-test('a permanent checker refusal returns control to the real main loop and only a fresh successful check permits completion', async () => {
+test('the real main loop recovers a checker refusal with one model draft and a fresh successful validation', async () => {
   const fake = answered(); let calls = 0;
   installJudgmentPort({ model: fake.port.model, ask: async request => {
     if (request.context?.battery === 'engine.core.response-completion' && ++calls === 1) throw new JudgmentError('rejected', 'Synthetic HTTP 400');
     return fake.port.ask(request);
   } });
-  const f = loop(['First completion draft.', 'FINISHED: repaired response.']);
+  const f = loop(['FINISHED: original response.']);
   try {
     await executeOrchestratorTurnLoop(f.context);
-    expect(f.requests).toHaveLength(2); expect(calls).toBe(2);
+    expect(f.requests).toHaveLength(1); expect(calls).toBe(2);
+    expect(f.context.conversation.getMessageSnapshot().at(-1)?.content).toBe('FINISHED: original response.');
     expect(f.events).toEqual(['TURN_COMPLETED']);
   } finally { f.unsubscribe(); }
 });

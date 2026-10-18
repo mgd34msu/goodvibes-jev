@@ -1,5 +1,6 @@
 import { JudgmentInputError, snapshotJudgmentEvidence } from '../gate/judgment-input.js';
 import { findCardNumberShapes } from '../security/card-shapes.js';
+import { fitCompletionEvidence } from './response-completion-budget.js';
 
 /** A local projection of observations, never an invocation or a replacement user request. */
 export class CompletionEvidenceProjection {
@@ -115,9 +116,10 @@ export class CompletionEvidenceProjection {
     };
     // The original request, user messages and exact proposed final remain
     // subject to the strict screen. No original action argument is rewritten.
-    return snapshotJudgmentEvidence({ ...state, evidenceProjection: {
+    const admitted = { ...state, evidenceProjection: {
       withheld: [...this.withheld],
       meaning: 'WITHHELD references contain unavailable private or card-shaped observation values. Equal references identify equal original values; different references must not be conflated. These markers cannot establish hidden contents, arithmetic or claims requiring unavailable evidence. Recover with relevant admissible observations; missing evidence never establishes completion.',
-    } });
+    } };
+    return fitCompletionEvidence(snapshotJudgmentEvidence(admitted) as typeof admitted);
   }
 }

@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { CompletionEvidenceProjection } from '../sdk/src/platform/core/response-completion-evidence.js';
 import { passesLuhn } from '../sdk/src/platform/security/card-shapes.js';
 import { snapshotJudgmentEvidence } from '../sdk/src/platform/gate/judgment-input.js';
+import { COMPLETION_EVIDENCE_CHARACTERS, CompletionEvidenceBudgetError } from '../sdk/src/platform/core/response-completion-budget.js';
 
 function checkedNumber(prefix: string): string {
   return Array.from({ length: 10 }, (_, digit) => prefix + digit).find(passesLuhn)!;
@@ -75,4 +76,33 @@ test('neither original user instructions nor the exact final draft can be rewrit
     if (change === 'initial') original.initial = { request: secret, transcript: [] };
     expect(() => new CompletionEvidenceProjection().prepare(original)).toThrow();
   }
+});
+
+test('a multi-megabyte review keeps exact requirements, recent proof and explicit failed execution receipts within the validator budget', () => {
+  const baseline = input(Array.from({ length: 150 }, (_, index) => ({ role: 'tool', callId: `read-${index}`,
+    content: JSON.stringify({ cmd: `read source-${index}.ts`, stdout: 'source bytes\n'.repeat(2_000), success: false, exit_code: 1, error: 'The review check failed.' }) })));
+  const original = { ...baseline, initial: { request: baseline.request, transcript: baseline.transcript } };
+  const correction = { role: 'user', content: 'Review only. Keep the API unchanged and deliver the report.' };
+  original.transcript.unshift(correction);
+  original.transcript.push({ role: 'tool', callId: 'report', content: 'Wrote review.md. The review contains two defects and the failing test results.' });
+  const before = JSON.stringify(original);
+  const projected = new CompletionEvidenceProjection().prepare(original) as typeof original & { evidenceBudget: { omittedObservations: number; meaning: string } };
+  expect(JSON.stringify(projected).length).toBeLessThanOrEqual(COMPLETION_EVIDENCE_CHARACTERS);
+  expect(projected.request).toBe(original.request); expect(projected.response).toBe(original.response);
+  expect(projected.transcript[0]).toEqual(correction);
+  expect(projected.transcript.at(-1)).toEqual(original.transcript.at(-1));
+  expect(projected.initial).toMatchObject({ request: original.request, transcriptSource: { field: 'transcript', messages: original.transcript.length } });
+  const first = projected.transcript[1]!.content as { omittedEvidence: boolean; observedResult: Record<string, unknown> };
+  expect(first.omittedEvidence).toBe(true);
+  expect(first.observedResult).toMatchObject({ success: false, exit_code: 1, error: 'The review check failed.' });
+  expect(projected.evidenceBudget.omittedObservations).toBeGreaterThan(0);
+  expect(projected.evidenceBudget.meaning).toContain('never infer its contents');
+  expect(JSON.stringify(original)).toBe(before);
+});
+
+test('budget fitting never clips a required user instruction or waives the privacy screen on omitted source', () => {
+  const large = 'An exact required user constraint. '.repeat(30_000);
+  expect(() => new CompletionEvidenceProjection().prepare(input([{ role: 'user', content: large }]))).toThrow(CompletionEvidenceBudgetError);
+  const original = input([{ role: 'tool', content: 'public observation '.repeat(60_000) }, { role: 'user', content: 'password=synthetic-private-value' }]);
+  expect(() => new CompletionEvidenceProjection().prepare(original)).toThrow();
 });

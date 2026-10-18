@@ -2,6 +2,7 @@ import { captureJudgmentPort, JudgmentAuthorityRetiredError, JudgmentPortMissing
 import { JudgmentError } from '@goodvibes-jev/judgment';
 import { JudgmentInputError } from '../gate/judgment-input.js';
 import { CompletionEvidenceProjection } from './response-completion-evidence.js';
+import { CompletionEvidenceBudgetError } from './response-completion-budget.js';
 import { captureStrictJudgmentJson, prepareJudgmentResult, retainStrictJudgmentJson } from '../gate/judgment-result.js';
 import type { ConversationManager, ConversationMessageSnapshot } from './conversation.js';
 import { responseCompletion } from './batteries/response-completion.js';
@@ -12,12 +13,13 @@ import { completionFindings, completionFinding } from './response-completion-fin
 import { responseProgress } from './batteries/response-progress.js';
 
 export class ResponseCompletionError extends Error {
-  constructor(readonly problem: 'rejected' | 'unavailable' | 'invalid-evidence' | 'rejected-request' | 'invalid-response' = 'rejected', options?: ErrorOptions) {
+  constructor(readonly problem: 'rejected' | 'unavailable' | 'invalid-evidence' | 'rejected-request' | 'invalid-response' | 'capacity' = 'rejected', options?: ErrorOptions) {
     super(problem === 'rejected'
       ? 'The response has not established completion of the authorized work.'
       : problem === 'unavailable' ? 'The response completion service is unavailable. Completion remains held.'
       : problem === 'invalid-evidence' ? 'The completion evidence could not be admitted. Repair is required; retrying unchanged evidence cannot establish completion.'
       : problem === 'rejected-request' ? 'The completion service rejected the request. Repair the request before retrying.'
+      : problem === 'capacity' ? 'Completion validation cannot fit the required evidence. The draft remains private while validation recovers.'
       : 'The completion service returned an unusable result. Completion remains held and requires recovery.', options);
     this.name = 'ResponseCompletionError';
   }
@@ -147,7 +149,7 @@ export class ResponseCompletionGuard {
       if (error instanceof ResponseCompletionError) throw error;
       const transient = error instanceof JudgmentPortMissingError || error instanceof JudgmentAuthorityRetiredError
         || (error instanceof JudgmentError && error.kind === 'unavailable');
-      const problem = transient ? 'unavailable' : error instanceof JudgmentInputError ? 'invalid-evidence'
+      const problem = error instanceof CompletionEvidenceBudgetError ? 'capacity' : transient ? 'unavailable' : error instanceof JudgmentInputError ? 'invalid-evidence'
         : error instanceof JudgmentError && (error.kind === 'rejected' || error.kind === 'invalid-request') ? 'rejected-request'
         : error instanceof JudgmentError ? 'invalid-response' : 'invalid-evidence';
       throw new ResponseCompletionError(problem, { cause: error });
@@ -169,7 +171,10 @@ export class ResponseCompletionGuard {
       catch (error) {
         options.signal?.throwIfAborted(); options.assertCurrent?.();
         if (!(error instanceof ResponseCompletionError)) throw error;
-        if (error.problem !== 'unavailable') {
+        // Protocol, storage and context failures are checker failures, not
+        // findings about the user's work. Keep this exact draft private and
+        // recover natively; do not send the model on another artifact/check loop.
+        if (error.problem === 'invalid-evidence') {
           await waitForTaskRecovery(0, options.signal);
           return '[Response completion check] ' + error.message
             + ' This is a validation failure, not permission to stop. Continue the original authorized task with the available tools. '

@@ -26,7 +26,7 @@ const RESOLVED_WHEN: Readonly<Record<string, string>> = {
 
 export const COMPLETION_ISSUES: Readonly<Record<string, { readonly issue: string; readonly repair: string }>> = {
   false_blocker: { issue: 'The claimed blocker does not establish that useful authorized work is impossible.', repair: 'Inspect the alleged blocker, use an available authorized remedy, and continue the original work.' },
-  unfinished: { issue: 'An authorized requirement is unfinished, or the evidence does not establish its completion.', repair: 'Identify the remaining original requirement and perform that work. Changing the summary or documenting reduced scope does not fulfill it.' },
+  unfinished: { issue: 'An authorized requirement is unfinished, or the evidence does not establish its completion.', repair: 'Name the specific remaining original requirement and perform that work. For a code review, identify and inspect the unreviewed paths or areas; rechecking artifact existence, hashes or unchanged test logs does not add inspection. Do not implement review findings or require every test to pass unless the user requested that work. Changing the summary or documenting reduced scope does not fulfill an actually missing review.' },
   unsupported: { issue: 'A factual completion or verification claim lacks supporting execution evidence.', repair: 'Obtain the relevant successful tool result or correct the unsupported claim. Do not treat an assistant assertion or a written report as proof that the underlying work happened.' },
   unanswered: { issue: 'The actual user question has not been answered.', repair: 'Answer the question directly using the available evidence; perform the necessary investigation when the answer is not yet known.' },
   unnecessary_permission: { issue: 'The draft asks permission for work already authorized.', repair: 'Perform the authorized work without asking again. Ask only for genuinely missing information or an explicitly required approval.' },
@@ -52,10 +52,14 @@ export async function completionFindings(port: JudgmentPort, evidence: unknown, 
   };
   add('current draft', state.response);
   add('current request', state.request);
+  const recentTools = new Set(state.transcript.flatMap((message, index) => message.role === 'tool' ? [index] : []).slice(-64));
   state.transcript.forEach((message, index) => {
     if (message.role === 'user') add(`user request at transcript ${index}`, typeof message.content === 'string' ? message.content : JSON.stringify(message.content));
-    if (message.role === 'tool') candidates.push({ id: `passage-${candidates.length}`, content: {
-      reference: `tool observation at transcript ${index}`, quote: typeof message.content === 'string' ? message.content : JSON.stringify(message.content),
+    // Localization identifies a passage; its context still contains the full
+    // admitted evidence. Do not duplicate hundreds of complete tool bodies and
+    // per-candidate questions into a second oversized validation request.
+    if (recentTools.has(index)) candidates.push({ id: `passage-${candidates.length}`, content: {
+      reference: `tool observation at transcript ${index} (prefix excerpt)`, quote: (typeof message.content === 'string' ? message.content : JSON.stringify(message.content)).slice(0, 1_600),
     } });
   });
   for (const agent of state.delegated) if (agent.output) add(`delegated result ${agent.id ?? 'unknown'}`, agent.output);

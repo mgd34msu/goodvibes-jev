@@ -444,3 +444,47 @@ an update and verifies that a subsequent Node command still uses the original
 release, including paths with shell metacharacters and literal user arguments.
 All 23 installer tests and their TypeScript check pass. An already running old
 launcher needs a normal quit and reopen to gain this change.
+
+## Review verification loop (2026-10-18)
+
+The same still-running session subsequently accumulated 47 failed completion
+checks with no semantic completion answer. A live reproduction sent 2.39 MB
+of evidence and received HTTP 400 with `max_tokens_exceeded`, including in
+long-context mode. The guard incorrectly converted this validator failure into
+an instruction for the model to repair the review. Repeated report reads,
+archive checks and hashes enlarged the next invalid request.
+
+Completion evidence now fits a 400,000-character envelope. Original user
+instructions, the proposed answer and acceptance criteria remain exact;
+recent observations remain complete within a reserved allowance. Older large
+observations carry explicit missing-middle references, exact excerpts and
+observed execution status/error fields. Missing contents cannot establish
+hidden success or full inspection. An identical initial-history prefix is
+referenced once. The final publication fence still checks the complete original
+source, including observations omitted from the transport. Finding localization
+also bounds candidate previews instead of duplicating hundreds of complete
+tool bodies and per-candidate questions.
+
+Protocol, provider-response, logging and context failures now hold the same
+private draft and recover in the validator. They no longer tell the model to
+rewrite an artifact or repeat the review. Actual Jev findings still return a
+numbered repair list. Review-only guidance distinguishes reported defects,
+failed checks and release risks from unfinished review work; it does not
+authorize application fixes or require every test to pass.
+
+The actual resumed history produced a 375,628-character request and the full
+guard returned a numbered finding list without HTTP 400. This was not a pass:
+the retained report itself still described scope limits, and the readings were
+unresolved. A separate live three-file review with a source defect, a failing
+test and a successfully written report was accepted by the complete guard.
+Neither result is a claim that the running Spacegame review is complete. Probe
+scripts and safe diagnostic output are retained under the ignored
+`.goodvibes/artifacts/jev-usage/review-loop-check/` directory and its engine-local
+companion. Regression tests exercise one model draft across a checker refusal,
+large resumed histories, preserved failure receipts, privacy, cancellation and
+the complete-source publication fence.
+
+All 64 targeted engine regressions pass, along with SDK and engine-test type
+checks, browser support and subpath API checks. A second live calibration with
+two explicitly unreviewed source files remained held with a confirmed,
+localized unfinished-work finding. A written report alone did not release it.

@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Bound completion evidence to Jev's context budget without clipping user
+  instructions or the proposed final answer. Recover checker protocol failures
+  using the held draft instead of sending the model into repeated review and
+  artifact verification. Keep grounded finding localization within the budget
+  and distinguish review findings from requests to fix the reviewed application.
+
 - Keep dependency and runtime validation inside the existing captured-input
   batch, avoiding full receipt serialization for every dependency entry while
   preserving fresh permission, file identity and revocation checks. Retain an
