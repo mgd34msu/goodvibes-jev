@@ -8,6 +8,8 @@
   batch, avoiding full receipt serialization for every dependency entry while
   preserving fresh permission, file identity and revocation checks. Retain an
   installed release while a running terminal or agent still uses its runtime.
+  Pin launcher runtime paths to the physical release so moving the update link
+  cannot change an active process's admitted Node runtime.
 
 - Review response drafts before publication. Give rejected answers a numbered,
   grounded fix list with explicit resolution conditions; keep drafts and review

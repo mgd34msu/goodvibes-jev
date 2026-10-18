@@ -432,3 +432,15 @@ access-refusal reasons to be redacted; their exact expected diagnostics now
 match the current sanitized messages, preserving all denial and privacy checks.
 SDK, engine-test and installer type checks, all product builds, browser support,
 subpath API checks and whitespace checks pass.
+
+The live update exposed a separate launcher fault: its PATH named
+`current/runtime`, so moving `current` changed an existing reviewer's admitted
+Node alias even though its original release remained on disk. The contract
+failed with `Node runtime input changed after admission` at 15:41 CDT; the main
+session then recovered and continued source inspection and validation directly.
+Launchers now resolve the physical release once and use it for both the product
+executable and runtime PATH. A real subprocess test holds a launcher open across
+an update and verifies that a subsequent Node command still uses the original
+release, including paths with shell metacharacters and literal user arguments.
+All 23 installer tests and their TypeScript check pass. An already running old
+launcher needs a normal quit and reopen to gain this change.

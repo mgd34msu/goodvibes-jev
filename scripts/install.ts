@@ -50,9 +50,13 @@ export function preflight(options: Options, old: Installation | undefined, execu
 }
 export function wrapper(options: Options, name: typeof COMMANDS[number], arch = process.arch): string {
   const current = join(options.prefix, 'current');
-  if (name === 'goodvibes-uninstall') return `#!/bin/sh\nexec ${quote(join(current, 'runtime/bun'))} ${quote(join(current, 'uninstall.js'))} --prefix ${quote(options.prefix)} "$@"\n`;
+  const header = '#!/bin/sh\nset -eu\n# Managed by the goodvibes-jev installer.\n';
+  // An update moves current. Keep each process and its admitted runtime on the
+  // same physical release for its entire lifetime, including subsequent execs.
+  const pinRelease = `goodvibes_release=$(CDPATH= cd ${quote(current)} && pwd -P)\n`;
+  if (name === 'goodvibes-uninstall') return `${header}${pinRelease}exec "$goodvibes_release/runtime/bun" "$goodvibes_release/uninstall.js" --prefix ${quote(options.prefix)} "$@"\n`;
   const product = name === 'goodvibes' ? 'tui' : name === 'goodvibes-agent' ? 'agent' : 'daemon';
-  return `#!/bin/sh\nset -eu\n# Managed by the goodvibes-jev installer.\nif [ -f ${quote(join(options.dataDir, 'environment'))} ]; then\n  set -a\n  . ${quote(join(options.dataDir, 'environment'))}\n  set +a\nfi\nexport GOODVIBES_HOME=${quote(options.dataDir)}\nexport GOODVIBES_DAEMON_HOME=${quote(join(options.dataDir, '.goodvibes/daemon'))}\nexport TYPESAFE_DEFAULT_MODEL=jev-latest\nexport PATH=${quote(join(current, 'runtime'))}:"$PATH"\nexec ${quote(join(current, product, `${name}-linux-${arch}`))} "$@"\n`;
+  return `${header}if [ -f ${quote(join(options.dataDir, 'environment'))} ]; then\n  set -a\n  . ${quote(join(options.dataDir, 'environment'))}\n  set +a\nfi\n${pinRelease}export GOODVIBES_HOME=${quote(options.dataDir)}\nexport GOODVIBES_DAEMON_HOME=${quote(join(options.dataDir, '.goodvibes/daemon'))}\nexport TYPESAFE_DEFAULT_MODEL=jev-latest\nexport PATH="$goodvibes_release/runtime:$PATH"\nexec "$goodvibes_release/${product}/${name}-linux-${arch}" "$@"\n`;
 }
 function switchRelease(prefix: string, release: string): void {
   const temporary = join(prefix, `current-${process.pid}`);

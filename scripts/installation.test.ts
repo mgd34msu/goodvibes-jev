@@ -229,6 +229,35 @@ describe('suite install and uninstall', () => {
     expect(result.exitCode).toBe(0);
     expect(script).toContain("'\\''");
   });
+  test('a running launcher keeps its Node runtime when current moves to a new release', async () => {
+    options = { ...options, prefix: join(home, "programs '$; x") };
+    const before = join(options.prefix, 'releases/before'), after = join(options.prefix, 'releases/after');
+    for (const [release, label] of [[before, 'before'], [after, 'after']] as const) {
+      mkdirSync(join(release, 'runtime'), { recursive: true });
+      writeFileSync(join(release, 'runtime/node'), `#!/bin/sh\nprintf '%s\\n' '${label}'\n`, { mode: 0o755 });
+    }
+    mkdirSync(join(before, 'tui'));
+    writeFileSync(join(before, `tui/goodvibes-linux-${process.arch}`),
+      '#!/bin/sh\nprintf "ready\\n"\nread -r proceed\ncommand -v node\nnode\nprintf "%s\\n" "$1"\n', { mode: 0o755 });
+    symlinkSync('releases/before', join(options.prefix, 'current'));
+    const child = Bun.spawn(['/bin/sh', '-c', wrapper(options, 'goodvibes'), 'launcher', 'literal $; argument'],
+      { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+    const reader = child.stdout.getReader();
+    try {
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe('ready\n');
+      rmSync(join(options.prefix, 'current'));
+      symlinkSync('releases/after', join(options.prefix, 'current'));
+      child.stdin.write('continue\n'); child.stdin.end();
+      let output = '';
+      for (;;) {
+        const chunk = await reader.read(); if (chunk.done) break;
+        output += new TextDecoder().decode(chunk.value);
+      }
+      expect(await child.exited).toBe(0);
+      expect(output).toBe(`${join(before, 'runtime/node')}\nbefore\nliteral $; argument\n`);
+      expect(await new Response(child.stderr).text()).toBe('');
+    } finally { reader.releaseLock(); child.kill(); await child.exited; }
+  });
 });
 
 
