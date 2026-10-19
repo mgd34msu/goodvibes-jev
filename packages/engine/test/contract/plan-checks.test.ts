@@ -59,7 +59,7 @@ test('the checks ask about the right states', async () => {
   await runPlanChecks(asPlan(validPlan()), ASK, shapeOf());
   const states = fake.requests.map((request) => request.state as Record<string, unknown>);
   expect(states).toContainEqual({ claim: 'The user requires: A CSV parser with unit tests exists', source: ASK });
-  expect(states).toContainEqual({ request: ASK });
+  expect(states).toContainEqual({ request: ASK, allCriteria: validPlan().criteria });
   expect(states).toContainEqual({ request: ASK, criterion: 'A JSON formatter with unit tests exists' });
   const unitState = states.find((state) => unitTitleOf(state) === 'CSV parser')!;
   expect(unitState['goal']).toBe(validPlan().goal);

@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Judge plan coverage across all criteria instead of requiring duplicate quotes,
+  and recognize source-read receipts and native decision records as valid ways
+  to check process requirements.
+
 - Use the intact original instructions when a bounded requirement rewrite stays
   unsettled. Continue checking the actual work and exact final answer with Jev;
   automatic host validation never requires a separate verifier or prior approval.

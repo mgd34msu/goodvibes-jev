@@ -50,12 +50,12 @@ import {
 /** The band on every part: yes side medium (a false gap costs a repair), no side high (a missed requirement is never judged). */
 export const COVERAGE_BAND: YesNoBand = { yes: STAKES_BANDS.medium.confidence, no: STAKES_BANDS.high.confidence };
 
-const UNQUOTED_QUESTION = 'Do `words`, read in `request`, ask for something, limit it, or say how it must be done?';
+const UNQUOTED_QUESTION = 'Do `words`, read in `request`, state an active requirement, limit or preference that NONE of allCriteria requires? Judge semantic coverage across the entire plan. A repeated obligation may already be covered by a criterion quoting a different phrase; its wording does not need a duplicate criterion or quote.';
 const UNQUOTED_CRITERIA = {
-  true: 'The words state a requirement, limit or preference of their own',
-  false: 'The words only join or introduce the parts of the request around them',
+  true: 'The words state an active requirement, limit or preference that the supplied criteria leave out',
+  false: 'The words add no requirement, or their requirement is already covered by the supplied criteria, including equivalent wording quoted elsewhere',
 } as const;
-const FALLS_SHORT_QUESTION = 'Does `words` ask for something that none of `criteria` requires, or set a higher standard than they do?';
+const FALLS_SHORT_QUESTION = 'Does `words` ask for something that NONE of allCriteria requires, or set a higher standard than they do? Consider the complete plan criteria together, including requirements quoted elsewhere. The local overlapping criteria identify provenance; they are not the only criteria allowed to cover these words.';
 const FALLS_SHORT_CRITERIA = {
   true: 'Part of what the words ask for is required by none of the criteria, or is held to a lower standard',
   false: 'The criteria together require everything the words ask for, at the standard they set, possibly in other words or with more detail',
@@ -351,6 +351,12 @@ const FIXTURES: readonly CoverageFixture[] = [
     expect: { uncovered: 'yes' },
   },
   {
+    name: 'a repeated instruction is already covered by the existing criterion',
+    request: 'Amend the existing review.md without creating another report. Keep that one report.',
+    criteria: criteriaOf([['same-report', 'Amend the existing review.md and produce no additional report.', 'Amend the existing review.md without creating another report']]),
+    expect: { uncovered: 'no' },
+  },
+  {
     name: 'single requirement covered',
     request: 'Fix the typo in the README heading.',
     criteria: criteriaOf([['readme-heading', 'The typo in the README heading is corrected', 'Fix the typo in the README heading']]),
@@ -386,7 +392,7 @@ const FIXTURES: readonly CoverageFixture[] = [
 
 const HEADER = {
   name: 'contract.plan-coverage',
-  version: 2,
+  version: 3,
   description: "Whether the user's request states a requirement, limit or preference the plan's contract criteria leave out: each run of the request no criterion quotes, and each quoted region against the criteria quoting it.",
   accuracyFloor: 0.9,
 } as const;
@@ -398,7 +404,7 @@ export const planCoverage: PlanCoverage = {
   async read(port, input, options = {}) {
     const layout = quoteLayout(input);
     const asked = askedParts(layout);
-    const result = await askAs(port, HEADER, 'battery', { request: layout.request }, Object.fromEntries(asked.map((part) => [part.key, part.question])), options);
+    const result = await askAs(port, HEADER, 'battery', { request: layout.request, allCriteria: input.criteria.map(({ id, text, quote }) => ({ id, text, ...(quote === undefined ? {} : { quote }) })) }, Object.fromEntries(asked.map((part) => [part.key, part.question])), options);
     const answers = result.answers as Readonly<Record<string, NoulResponse>>;
     const parts = asked.map((part): CoveragePart => ({ kind: part.kind, words: part.words, criteria: part.criteria, reading: readYesNo(answers[part.key]!, COVERAGE_BAND) }));
     recordReadings(port, result, { parts: parts.map((part) => ({ kind: part.kind, words: part.words, criteria: part.criteria.map((criterion) => criterion.id), reading: part.reading })) });

@@ -29,12 +29,12 @@ const SOLO_ASK = "Do this yourself in this session, without delegating to sub-ag
 
 export const criterionShape = defineBattery({
   name: 'contract.criterion-shape',
-  version: 2,
+  version: 3,
   description: 'Whether a contract criterion can be confirmed or refuted from the finished work, whether it can only be met by an arrangement of agents rather than by the work, and whether that arrangement is one agent working alone.',
   accuracyFloor: 0.9,
   items: {
     checkable: yesNo(
-      'Can `criterion` be confirmed or refuted from the finished work: its files, its output, or commands run against it?',
+      'Can `criterion` be confirmed or refuted from the finished work OR its captured execution evidence, including source-read receipts, the actual plan and agent arrangement, tool outcomes and native Jev decision records? Process requirements can be checkable from those records even when the final artifact alone cannot establish them. This asks whether a check is possible, not whether the criterion has already passed. Do not invent a need for an extra reviewer or prior approval of this same native check.',
       MEDIUM,
     ),
     topology_only: yesNo(
@@ -55,6 +55,8 @@ export const criterionShape = defineBattery({
     ),
   },
   fixtures: [
+    { name: 'source review is checkable from actual read receipts', state: { request: 'Review all remaining source ranges and preserve completed work.', criterion: 'Captured read receipts cover every requested remaining range without truncation, and unit results assess its connected behavior.' }, expect: { checkable: 'yes', topology_only: 'no' } },
+    { name: 'native validation has observable decision records', state: { request: 'Let the native host validate the plan and results with Jev.', criterion: 'Native Jev decision records show plan, unit and integrated-result checks; the final draft is submitted to the automatic host check.' }, expect: { checkable: 'yes' } },
     {
       name: 'flag behaviour',
       state: {
@@ -79,7 +81,7 @@ export const criterionShape = defineBattery({
     {
       name: 'one agent per package',
       state: { request: FANOUT_ASK, criterion: 'Each package is handled by its own agent, with the agents running in parallel' },
-      expect: { checkable: 'no', topology_only: 'yes', solo: 'no' },
+      expect: { checkable: 'yes', topology_only: 'yes', solo: 'no' },
     },
     {
       name: 'exact agent count',
