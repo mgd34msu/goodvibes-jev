@@ -66,7 +66,7 @@ function withReport(summary: string, report: Record<string, unknown>): string {
 
 export const unitQuality = defineBattery({
   name: 'contract.unit-quality',
-  version: 1,
+  version: 2,
   description: "Whether a unit's change leaves placeholders, weakens tests, breaks or strays beyond what it was asked, hides failures, or claims results nothing shows.",
   accuracyFloor: 0.9,
   items: {

@@ -78,7 +78,7 @@ function makeToolBus() {
 
 function makeMetrics(): StreamMetrics {
   return {
-    startTime: 0, deltaCount: 0, tokenSpeed: 0,
+    modelActive: false, startTime: 0, deltaCount: 0, tokenSpeed: 0,
     ttftMs: undefined, ttftRecorded: false,
     activeToolStartedAtMs: undefined, activeToolName: undefined, activeToolCallId: undefined,
     toolArgsByCallId: new Map(),

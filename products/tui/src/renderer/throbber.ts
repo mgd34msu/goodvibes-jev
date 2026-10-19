@@ -81,6 +81,8 @@ export interface ThrobberToolCall {
 export interface ThrobberActivityInput {
   /** A main turn is running. */
   readonly turnActive: boolean;
+  /** Main's model request is active; false while this turn waits on delegated work. */
+  readonly modelActive?: boolean;
   /** Local completion validation is distinct from waiting for model output. */
   readonly completionActivity?: { readonly phase: 'checking' | 'waiting'; readonly startedAtMs: number } | null;
   /** Active agents, including the interval before their results resume main. */
@@ -121,18 +123,23 @@ export function resolveThrobberActivity(input: ThrobberActivityInput): ThrobberA
     return { kind: 'approval', ...describeToolCall(input.pendingApproval), elapsedMs: turnElapsed };
   }
   if (input.compacting) return { kind: 'compacting', elapsedMs: since(input.compactingSinceMs) };
-  if (!input.turnActive) {
+  const delegatedActivity = (): ThrobberActivity | null => {
     const activeContracts = input.contracts?.filter(contract => CONTRACT_ACTIVITY[contract.status] !== null) ?? [];
     // Ongoing work takes precedence over a queued contract or an owner question.
     const contract = activeContracts.find(contract => contract.status !== 'queued' && contract.status !== 'awaiting-owner') ?? activeContracts[0];
     if (contract) return { kind: 'contract', phrase: CONTRACT_ACTIVITY[contract.status]! };
     if (runningAgentCount > 0) return { kind: 'agents', count: runningAgentCount };
     return null;
-  }
+  };
+  if (!input.turnActive) return delegatedActivity();
   if (input.activeTool) {
     return { kind: 'tool', ...describeToolCall(input.activeTool), elapsedMs: since(input.activeTool.startedAtMs) ?? turnElapsed };
   }
   if (input.completionActivity) return { kind: 'completion', phase: input.completionActivity.phase, elapsedMs: since(input.completionActivity.startedAtMs) };
+  if (input.modelActive === false) {
+    const delegated = delegatedActivity();
+    if (delegated) return delegated;
+  }
   return {
     kind: 'model',
     phrase: input.modelPhrase,

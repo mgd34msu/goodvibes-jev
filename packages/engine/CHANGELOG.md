@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Include actual returned source ranges in contract acceptance and quality
+  evidence for read-only reviews. Requested ranges and file totals cannot stand
+  in for returned contents, and read scope does not establish review quality.
+
 - Retry temporary provider response failures with the current agent conversation
   intact, and honor Jev's service-failure reading before cancelling a contract.
   Restore a resumed contract's original owner identity and completion events.

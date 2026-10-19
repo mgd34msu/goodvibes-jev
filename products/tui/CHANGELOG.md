@@ -6,6 +6,9 @@ All notable changes to GoodVibes TUI.
 
 ## Unreleased
 
+- Keep contract and agent activity visible while the main turn waits for delegated
+  work, instead of showing stale model latency and token-speed measurements.
+
 - Show Jev completion validation and reconnection as explicit activity above
   the input, with their own elapsed time instead of a stalled model label.
 

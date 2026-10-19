@@ -34,6 +34,7 @@ import { wireStreamEventMetrics, createStreamMetrics as createMetricsFromWiring 
 import type { WireStreamEventMetricsOptions } from '../../core/stream-event-wiring.ts';
 import { createStreamMetrics, type StreamMetrics } from '../../core/stream-metrics.ts';
 import { UIFactory } from '../../renderer/ui-factory.ts';
+import { resolveThrobberActivity } from '../../renderer/throbber.ts';
 
 // Mirrors ui-factory.ts's private THINKING_STALL_FREEZE_MS constant.
 const THINKING_STALL_FREEZE_MS = 2_500;
@@ -105,6 +106,26 @@ function makeOptions(turns: ReturnType<typeof makeBus>, tools: ReturnType<typeof
 const computeRenderStallInfo = UIFactory.computeRenderStallInfo.bind(UIFactory);
 
 describe('stall indicator vs. tool execution (integration path)', () => {
+  test('a live turn waiting on its contract does not display the ended model request', () => {
+    const turns = makeBus(), tools = makeBus(), metrics = createStreamMetrics();
+    const wire = wireStreamEventMetrics(makeOptions(turns, tools, metrics));
+    const activity = () => resolveThrobberActivity({ turnActive: true, modelActive: metrics.modelActive,
+      contracts: [{ status: 'running' }], runningAgentCount: 7, compacting: false,
+      modelPhrase: 'Waiting for model 532s...', ttftMs: 700, tokenSpeed: 43, now: Date.now() });
+    try {
+      turns.emit('STREAM_START');
+      expect(activity()?.kind).toBe('model');
+      turns.emit('STREAM_END');
+      expect(activity()).toEqual({ kind: 'contract', phrase: 'Executing the plan...' });
+      turns.emit('STREAM_START');
+      expect(activity()?.kind).toBe('model');
+      turns.emit('TURN_CANCEL', {});
+      expect(metrics.modelActive).toBe(false);
+    } finally {
+      for (const unsub of wire.unsubs) unsub();
+    }
+  });
+
   test('new metric owners stay idle and isolate tool state through both factory entrypoints', () => {
     const first = { turns: makeBus(), tools: makeBus(), metrics: createStreamMetrics() };
     const second = { turns: makeBus(), tools: makeBus(), metrics: createMetricsFromWiring() };

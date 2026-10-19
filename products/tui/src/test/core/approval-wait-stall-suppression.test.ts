@@ -48,7 +48,7 @@ function makeUnusedFeed() {
 
 function makeMetrics(): StreamMetrics {
   return {
-    startTime: 0, deltaCount: 0, tokenSpeed: 0, ttftMs: undefined, ttftRecorded: false,
+    modelActive: false, startTime: 0, deltaCount: 0, tokenSpeed: 0, ttftMs: undefined, ttftRecorded: false,
     activeToolStartedAtMs: undefined, activeToolName: undefined, activeToolCallId: undefined,
     toolArgsByCallId: new Map(),
     lastDeltaAtMs: undefined, stallEpisode: 0, reconnectAttempt: undefined, reconnectMaxAttempts: undefined,

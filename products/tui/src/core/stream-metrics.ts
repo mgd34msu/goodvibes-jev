@@ -12,6 +12,8 @@
  * render() and pass it in, so render() can read the fields without copying.
  */
 export interface StreamMetrics {
+  /** Main has an active model stream, including the wait for its first token. */
+  modelActive: boolean;
   /** Epoch ms when the most recent STREAM_START fired; 0 when idle. */
   startTime: number;
   /** Number of STREAM_DELTA events received since the last STREAM_START. */
@@ -67,6 +69,7 @@ export interface StreamMetrics {
 /** The idle initial StreamMetrics, mutated in place by wireStreamEventMetrics handlers. */
 export function createStreamMetrics(): StreamMetrics {
   return {
+    modelActive: false,
     startTime: 0, deltaCount: 0, tokenSpeed: 0, ttftMs: undefined, ttftRecorded: false,
     activeToolStartedAtMs: undefined, activeToolName: undefined, activeToolCallId: undefined,
     toolArgsByCallId: new Map(),

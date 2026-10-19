@@ -489,6 +489,7 @@ export function wireStreamEventMetrics(
   };
 
   unsubs.push(events.turns.on('STREAM_START', () => {
+    metrics.modelActive = true;
     metrics.startTime = Date.now();
     metrics.deltaCount = 0;
     metrics.tokenSpeed = 0;
@@ -498,6 +499,11 @@ export function wireStreamEventMetrics(
     metrics.stallEpisode = 0;
     metrics.reconnectAttempt = undefined;
     metrics.reconnectMaxAttempts = undefined;
+  }));
+
+  unsubs.push(events.turns.on('STREAM_END', () => {
+    metrics.modelActive = false;
+    render();
   }));
 
   unsubs.push(events.turns.on('STREAM_DELTA', () => {
@@ -536,6 +542,7 @@ export function wireStreamEventMetrics(
   // so restoring here can never undo a switch whose retry has not run yet.)
   unsubs.push(events.turns.on('TURN_COMPLETED', (event) => {
     if (currentTurnId !== undefined && event?.turnId !== undefined && event.turnId !== currentTurnId) return;
+    metrics.modelActive = false;
     settledTurnId = event?.turnId;
     invalidateErrorNotices();
     failoverVisited.clear();
@@ -544,6 +551,7 @@ export function wireStreamEventMetrics(
 
   unsubs.push(events.turns.on('TURN_CANCEL', (event) => {
     if (currentTurnId !== undefined && event?.turnId !== undefined && event.turnId !== currentTurnId) return;
+    metrics.modelActive = false;
     settledTurnId = event?.turnId;
     invalidateErrorNotices();
     failoverVisited.clear();
@@ -572,6 +580,7 @@ export function wireStreamEventMetrics(
   unsubs.push(events.turns.on('TURN_ERROR', (event) => {
     if (currentTurnId !== undefined && event.turnId !== currentTurnId) return;
     if (event.turnId !== undefined && event.turnId === settledTurnId) return;
+    metrics.modelActive = false;
     const errVal = event.error;
     const generation = noticeGeneration;
     const sessionId = options.getSessionId?.();

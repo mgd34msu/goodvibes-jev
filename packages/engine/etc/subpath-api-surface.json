@@ -21233,7 +21233,7 @@
         "commands",
         "output"
       ],
-      "text": "export interface RawUnitEvidence { readonly output: string; readonly changes: readonly FileChange[]; readonly claims?: ClaimVerificationResult | undefined; readonly gates?: readonly QualityGateResult[] | undefined; readonly commands: readonly EvidenceCommand[]; }"
+      "text": "export interface RawUnitEvidence { readonly sourceReads?: readonly SourceReadEvidence[]; readonly output: string; readonly changes: readonly FileChange[]; readonly claims?: ClaimVerificationResult | undefined; readonly gates?: readonly QualityGateResult[] | undefined; readonly commands: readonly EvidenceCommand[]; } ;; via SourceReadEvidence = export interface SourceReadEvidence { readonly path: string; readonly returnedRanges: readonly string[]; readonly returnedLines: number; }"
     },
     {
       "name": "Regression",
@@ -21600,7 +21600,7 @@
         "omitted",
         "output"
       ],
-      "text": "export interface UnitEvidence { readonly output: string; readonly changedPaths: readonly string[]; readonly diff: string; readonly omitted: readonly string[]; readonly claims?: ClaimVerificationResult | undefined; readonly gates?: readonly QualityGateResult[] | undefined; readonly commands: readonly EvidenceCommand[]; }"
+      "text": "export interface UnitEvidence { readonly sourceReads?: readonly SourceReadEvidence[]; readonly output: string; readonly changedPaths: readonly string[]; readonly diff: string; readonly omitted: readonly string[]; readonly claims?: ClaimVerificationResult | undefined; readonly gates?: readonly QualityGateResult[] | undefined; readonly commands: readonly EvidenceCommand[]; } ;; via SourceReadEvidence = export interface SourceReadEvidence { readonly path: string; readonly returnedRanges: readonly string[]; readonly returnedLines: number; }"
     },
     {
       "name": "UnitEvidenceSources",
@@ -22483,7 +22483,7 @@
     {
       "name": "ownerReply",
       "kind": "const",
-      "text": "ownerReply: import(\"@goodvibes-jev/judgment\").ReplyReader<\"reject\" | \"approve\" | \"amend\" | \"unclear\">"
+      "text": "ownerReply: import(\"@goodvibes-jev/judgment\").ReplyReader<\"reject\" | \"amend\" | \"approve\" | \"unclear\">"
     },
     {
       "name": "parseAmendment",

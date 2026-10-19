@@ -20,6 +20,8 @@ import {
   collectChanges,
   collectUnitEvidence,
   commandsFromTurns,
+  sourceReadsFromTurns,
+  judgeEvidence,
   DIFF_FILE_CAP_CHARS,
   EVIDENCE_TOKEN_BUDGET,
   evidenceTokens,
@@ -89,6 +91,26 @@ const TURNS: readonly ContractTurnRecord[] = [
 ];
 
 describe('what the agent did, from its turns', () => {
+  test('read evidence retains actual returned ranges and exposes them to both checks', async () => {
+    const turn: ContractTurnRecord = { turn: 1, assistantText: '',
+      toolCalls: [{ name: 'read', arguments: { files: [{ path: 'source.ts', range: { start: 1, end: 100 } }] } }],
+      results: [{ callId: 'read', success: true, output: JSON.stringify({ success: true, summary: { total_lines: 1000 }, files: [
+        { path: 'source.ts', extract: 'lines', lineCount: 1000, content: '    1 | first\n    2 | second\n[... omitted ...]\n   99 | last' },
+        { path: 'source.ts', extract: 'content', content: '    2 | second\n    3 | third' },
+        { path: 'outline.ts', extract: 'outline', content: '    1 | signature' },
+        { path: 'failed.ts', extract: 'lines', error: 'denied', content: '    1 | unavailable' },
+      ] }) }] };
+    const reads = sourceReadsFromTurns([turn, turn]);
+    expect(reads).toEqual([{ path: 'source.ts', returnedRanges: ['1-3', '99'], returnedLines: 4 }]);
+    expect(sourceReadsFromTurns([{ ...turn, results: [{ callId: 'read', success: false, output: turn.results[0]!.output }] }])).toEqual([]);
+    const evidence = await collectUnitEvidence(makeContract(), makeUnit({ role: 'research' }), 'completion', {
+      output: 'assessment', report: null, mustWrite: false, turns: [turn], cwd: dir,
+      configManager: noGates(), runtimeBus: new RuntimeEventBus(),
+    });
+    expect(judgeEvidence(evidence)).toMatchObject({ sourceReads: reads });
+    expect(qualityState(makeUnit(), evidence)).toMatchObject({ sourceReads: reads });
+  });
+
   test('exec calls become commands with success and all lines of output', () => {
     const commands = commandsFromTurns(TURNS);
     expect(commands).toHaveLength(1);

@@ -74,7 +74,15 @@ export interface FileChange {
   readonly diff: string;
 }
 
+/** Captured read scope only; returned contents do not establish review quality. */
+export interface SourceReadEvidence {
+  readonly path: string;
+  readonly returnedRanges: readonly string[];
+  readonly returnedLines: number;
+}
+
 export interface UnitEvidence {
+  readonly sourceReads?: readonly SourceReadEvidence[];
   /** record.fullOutput at completion; the last assistant text mid-run. */
   readonly output: string;
   readonly changedPaths: readonly string[];
@@ -89,6 +97,7 @@ export interface UnitEvidence {
 
 /** Evidence before trimming. */
 export interface RawUnitEvidence {
+  readonly sourceReads?: readonly SourceReadEvidence[];
   readonly output: string;
   readonly changes: readonly FileChange[];
   readonly claims?: ClaimVerificationResult | undefined;
@@ -97,6 +106,41 @@ export interface RawUnitEvidence {
 }
 
 // ── Commands and written paths from the agent's turns (fixed tool formats) ─────
+
+/** Count actual numbered contents, never requested ranges, file totals or previews. */
+export function sourceReadsFromTurns(turns: readonly ContractTurnRecord[]): SourceReadEvidence[] {
+  const files = new Map<string, Set<number>>();
+  for (const turn of turns) for (let index = 0; index < turn.toolCalls.length; index++) {
+    if (turn.toolCalls[index]!.name !== 'read') continue;
+    const result = turn.results[index];
+    if (!result?.success || !result.output) continue;
+    let body: { success?: boolean; files?: unknown[] };
+    try { body = JSON.parse(result.output); } catch { continue; }
+    if (body?.success !== true || !Array.isArray(body.files)) continue;
+    for (const value of body.files) {
+      if (!value || typeof value !== 'object') continue;
+      const file = value as { path?: unknown; extract?: unknown; content?: unknown; error?: unknown; binary?: unknown };
+      if (typeof file.path !== 'string' || typeof file.content !== 'string' || file.error || file.binary
+        || (file.extract !== 'content' && file.extract !== 'lines')) continue;
+      const lines = files.get(file.path) ?? new Set<number>();
+      for (const match of file.content.matchAll(/^\s*(\d+) \|/gm)) {
+        const line = Number(match[1]);
+        if (Number.isSafeInteger(line) && line > 0) lines.add(line);
+      }
+      if (lines.size) files.set(file.path, lines);
+    }
+  }
+  return [...files].map(([path, lines]) => {
+    const sorted = [...lines].sort((a, b) => a - b), returnedRanges: string[] = [];
+    for (let index = 0; index < sorted.length; index++) {
+      const start = sorted[index]!;
+      let end = start;
+      while (sorted[index + 1] === end + 1) end = sorted[++index]!;
+      returnedRanges.push(start === end ? String(start) : `${start}-${end}`);
+    }
+    return { path, returnedRanges, returnedLines: lines.size };
+  });
+}
 
 function commandText(item: unknown): string | null {
   if (item === null || typeof item !== 'object') return null;
@@ -275,7 +319,7 @@ export async function collectUnitEvidence(
       signal: sources.signal,
     })
     : undefined;
-  return trimEvidence({ output: sources.output, changes, claims, gates, commands: commandsFromTurns(sources.turns) }, unit);
+  return trimEvidence({ output: sources.output, changes, claims, gates, commands: commandsFromTurns(sources.turns), sourceReads: sourceReadsFromTurns(sources.turns) }, unit);
 }
 
 // ── What Jev reads ────────────────────────────────────────────────────────────
@@ -294,6 +338,7 @@ function gateEvidence(gates: NonNullable<UnitEvidence['gates']>): JsonValue {
 
 export function judgeEvidence(evidence: UnitEvidence): JsonValue {
   return {
+    ...sourceReadState(evidence),
     changedPaths: listedPaths(evidence.changedPaths),
     diff: evidence.diff,
     omitted: listedPaths(evidence.omitted),
@@ -318,6 +363,7 @@ export function judgeState(unit: Pick<ContractUnit, 'goal'>, evidence: UnitEvide
 /** The quality battery's state (design 4.4). */
 export function qualityState(unit: Pick<ContractUnit, 'goal' | 'brief'>, evidence: UnitEvidence): CheckState {
   return {
+    ...sourceReadState(evidence),
     goal: unit.goal,
     brief: unit.brief,
     changedPaths: listedPaths(evidence.changedPaths),
@@ -327,6 +373,14 @@ export function qualityState(unit: Pick<ContractUnit, 'goal' | 'brief'>, evidenc
     // A gate's result shows a claim such as "the tests pass" as well as a command the agent ran.
     ...(evidence.gates === undefined ? {} : { gates: gateEvidence(evidence.gates) }),
     output: evidence.output,
+  };
+}
+
+function sourceReadState(evidence: UnitEvidence): CheckState {
+  if (!evidence.sourceReads?.length) return {};
+  return {
+    sourceReads: evidence.sourceReads.map(read => ({ ...read, returnedRanges: [...read.returnedRanges] })),
+    sourceReadMeaning: 'These host-collected ranges establish which numbered source lines were actually returned by successful read tools. They do not establish semantic review quality or validate the findings. Judge the substantive work separately. This is the current native acceptance check; do not demand an earlier approval of this same check.',
   };
 }
 
@@ -362,6 +416,7 @@ function fillOrder(changes: readonly FileChange[], files: readonly string[]): Fi
 /** Assemble complete evidence without per-file, command, output or total cuts. */
 export function trimEvidence(raw: RawUnitEvidence, unit: Pick<ContractUnit, 'goal' | 'brief' | 'files'>): UnitEvidence {
   return {
+    ...(raw.sourceReads?.length ? { sourceReads: raw.sourceReads } : {}),
     output: raw.output,
     changedPaths: raw.changes.map(change => change.path),
     diff: fillOrder(raw.changes, unit.files).map(change => change.diff).join('\n\n'),
