@@ -12,6 +12,7 @@
  * the real runner does (an owner-bound spawn outside every contract).
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { withCompletionRepairContext } from '../sdk/src/platform/core/completion-repair-context.js';
 import { AgentMessageBus } from '../sdk/src/platform/agents/message-bus.js';
@@ -609,4 +610,24 @@ test('a completion repair contract retains the original ask and receives its pri
   expect(runner.starts[0]!.ask).toBe('Review the repository and deliver review.md.');
   expect(runner.starts[0]!.taskEvidence).toBe(repair);
   expect(result.output).not.toContain('parser.ts reviewed');
+});
+
+
+test('brief fidelity checks the real shared context and task-specific evidence instead of dropping them', async () => {
+  const { tool, runner, ran } = harness();
+  const fake = fakePort((name, _question, state) => {
+    const input = state as never as { context?: string; assignments: { context?: string; requiredEvidence?: string[] }[] };
+    const complete = input.context === 'Reuse the existing review.md and completed parser review.'
+      && input.assignments[0]?.context === input.context && input.assignments[0]?.requiredEvidence?.includes('Exact server source receipts.');
+    return noulAnswer(name === 'constraint_conflict' && !complete ? .99 : .01);
+  });
+  installJudgmentPort(fake.port);
+  const result = await tool.execute({ mode: 'batch-spawn', authoritativeTask: 'Continue the saved review and amend its artifact.',
+    context: 'Reuse the existing review.md and completed parser review.', requiredEvidence: ['Exact server source receipts.'],
+    tasks: [{ task: 'Inspect remaining server interactions; report to the coordinator.', outsideContract: true }] });
+  expect(result.success, result.error).toBeTrue();
+  await flush();
+  expect(ran).toHaveLength(1);
+  expect(runner.starts).toHaveLength(0);
+  expect(fake.requests).toHaveLength(1);
 });

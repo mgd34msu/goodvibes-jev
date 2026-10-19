@@ -1,3 +1,5 @@
+import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
+import { createFeatureFlagManager } from '../sdk/src/platform/runtime/feature-flags/manager.js';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { waitFor } from './_helpers/test-timeout.js';
@@ -24,7 +26,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function fixture(getSystemPrompt: NonNullable<OrchestratorOptions['getSystemPrompt']>, replies?: ChatResponse[]) {
+function fixture(getSystemPrompt: NonNullable<OrchestratorOptions['getSystemPrompt']>, replies?: ChatResponse[], identity: Pick<OrchestratorOptions, 'sessionId' | 'resolveSessionId' | 'runtimeBus' | 'flagManager'> = {}) {
   const conversation = new ConversationManager();
   const requests: ChatRequest[] = [];
   const signals: Array<AbortSignal | undefined> = [];
@@ -50,9 +52,10 @@ function fixture(getSystemPrompt: NonNullable<OrchestratorOptions['getSystemProm
   } as unknown as ProviderRegistry;
   const configManager = {
     get: (key: string) => key === 'behavior.autoCompactThreshold' ? 0 : false,
-    getCategory: () => ({}), getWorkingDirectory: () => '.',
+    getCategory: () => ({}), getWorkingDirectory: () => process.cwd(),
   } as unknown as ConfigManager;
   const orchestrator = new Orchestrator({
+    ...identity,
     conversation, toolRegistry: new ToolRegistry(), getViewportHeight: () => 10, scrollToEnd: () => {},
     permissionManager: { getMode: () => 'plan' } as unknown as PermissionManager,
     getSystemPrompt: (signal) => { signals.push(signal); return getSystemPrompt(signal); },
@@ -167,4 +170,21 @@ test('background evidence cannot restart explicitly cancelled work or mint a nat
     expect(f.requests).toHaveLength(0);
     expect(f.conversation.getMessageSnapshot().filter(message => message.role === 'assistant')).toHaveLength(0);
   }
+});
+
+
+test('resuming a surface identity moves real turn events and compaction ownership to the saved session', async () => {
+  let sessionId = 'startup-session';
+  const runtimeBus = new RuntimeEventBus(), completed: string[] = [];
+  runtimeBus.on('TURN_COMPLETED', event => { completed.push(event.sessionId ?? 'missing-session'); });
+  const f = fixture(async () => 'memory', undefined, { sessionId, resolveSessionId: () => sessionId, runtimeBus, flagManager: createFeatureFlagManager() });
+  await f.orchestrator.handleUserInput('hello before resume');
+  const previous = f.orchestrator.getCompactionManager()!;
+  expect(previous).not.toBeNull();
+  sessionId = 'saved-review-session';
+  f.conversation.resetAll();
+  await f.orchestrator.handleUserInput('hello after resume');
+  expect(completed).toEqual(['startup-session', 'saved-review-session']);
+  expect(f.orchestrator.getCompactionManager()).not.toBe(previous);
+  expect(previous.disposed).toBeTrue();
 });

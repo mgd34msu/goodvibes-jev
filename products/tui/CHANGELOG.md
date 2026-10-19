@@ -75,6 +75,9 @@ All notable changes to GoodVibes TUI.
 
 ### Fixed
 
+- Keep tool ownership and live-turn routing on the restored session when
+  resuming from the command line or session commands.
+
 - Read and command bodies keep their indentation; wrapped prose no longer
   starts one column right; long code lines wrap.
 - A finished turn stops saying working; ended processes stop counting as

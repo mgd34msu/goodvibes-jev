@@ -593,7 +593,11 @@ export async function initializeBootstrapCore(
     debugMode: false,
     systemPrompt: loadBootstrapSystemPrompt(configManager) || getConfiguredSystemPrompt(configManager) || '',
     reasoningEffort: (configManager.get('provider.reasoningEffort') as string | undefined) ?? '',
-    sessionId: userSessionId,
+    get sessionId() { return runtimeSessionIdRef.value; },
+    set sessionId(value: string) {
+      runtimeSessionIdRef.value = value;
+      services.liveSessionIdRef.value = value;
+    },
   };
   runtimeSessionIdRef.value = runtime.sessionId;
   services.liveSessionIdRef.value = runtime.sessionId; // the session an ask raised on the daemon belongs to

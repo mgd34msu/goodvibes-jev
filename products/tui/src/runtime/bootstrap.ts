@@ -234,6 +234,7 @@ export async function bootstrapRuntime(
     requestRender: () => orchestratorRefs.requestRender(),
     runtimeBus,
     sessionId: runtime.sessionId,
+    resolveSessionId: () => runtime.sessionId,
     services: {
       agentManager: services.agentManager,
       contractRunner: services.contractRunner,

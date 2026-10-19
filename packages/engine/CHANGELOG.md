@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Retain shared assignment context and evidence constraints in delegation checks
+  and contract planning instead of judging an incomplete task string.
+
+- Follow the resumed surface session identity for completion journals, runtime
+  events and compaction ownership instead of retaining a temporary startup ID.
+
 - Preserve private completion findings across restarts and contract planning.
   Revalidate repair plans before execution, retain completed work and update the
   existing artifact instead of starting another full review.

@@ -136,6 +136,14 @@ function batchTaskToSpawnInput(input: AgentInput, taskDef: NonNullable<AgentInpu
   };
 }
 
+/** The actual delivered brief, including shared or task-specific constraints. */
+function briefAssignment(input: AgentInput) {
+  return { task: input.task!, ...(input.context ? { context: input.context } : {}),
+    ...(input.successCriteria ? { successCriteria: input.successCriteria } : {}),
+    ...(input.requiredEvidence ? { requiredEvidence: input.requiredEvidence } : {}),
+    ...(input.writeScope ? { writeScope: input.writeScope } : {}) };
+}
+
 /** The ask for a batch's contract: the user's own words when the host attached them, otherwise the tasks listed. */
 function batchAsk(input: AgentInput, units: readonly ProposedUnit[]): string {
   if (input.authoritativeTask && input.authoritativeTask.trim() !== '') return input.authoritativeTask;
@@ -202,6 +210,9 @@ export function createAgentTool(config: AgentToolConfig): Tool {
   function startContract(input: AgentInput, ask: string, proposedUnits: readonly ProposedUnit[], assertCurrent: () => void, dispatch: ContractRunner['start']): StartedContract {
     config.manager.guardContractLeafSpawn(input.parentAgentId);
     const completionRepair = readCompletionRepairContext();
+    const taskEvidence = [completionRepair, input.context,
+      ...(input.tasks ?? []).flatMap(task => task.context || task.successCriteria || task.requiredEvidence || task.writeScope
+        ? [JSON.stringify(briefAssignment(batchTaskToSpawnInput(input, task)))] : [])].filter(Boolean).join('\n\n');
     const contractInput = {
       ask,
       ...(config.getSelectedModel === undefined ? {} : { selectedModel: config.getSelectedModel() }),
@@ -209,7 +220,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
       origin: 'agent-tool' as const,
       projectRoot: config.projectRoot,
       proposedUnits,
-      ...(completionRepair ? { taskEvidence: completionRepair } : {}),
+      ...(taskEvidence ? { taskEvidence } : {}),
       ...(input.parentAgentId ? { parentAgentId: input.parentAgentId } : {}),
     };
     assertCurrent();
@@ -391,7 +402,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
 
         let record;
         try {
-          if (input.authoritativeTask) await assertAgentBriefFidelity({ request: input.authoritativeTask, assignments: [{ task: input.task }], ...(completionRepair ? { repairContext: completionRepair } : {}) }, { signal, assertCurrent });
+          if (input.authoritativeTask) await assertAgentBriefFidelity({ request: input.authoritativeTask, assignments: [briefAssignment(input)], ...(input.context ? { context: input.context } : {}), ...(completionRepair ? { repairContext: completionRepair } : {}) }, { signal, assertCurrent });
           assertCurrent();
           record = spawnOwned(input);
         } catch (error) {
@@ -756,7 +767,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
         const contractTasks = input.tasks.filter((_, index) => spawnInputs[index]!.outsideContract !== true);
         if ((outsideInputs.length > 0 || heldBatch) && input.authoritativeTask) {
           try {
-            await assertAgentBriefFidelity({ request: input.authoritativeTask, assignments: input.tasks.map(task => ({ task: task.task })), ...(completionRepair ? { repairContext: completionRepair } : {}) }, { signal, assertCurrent });
+            await assertAgentBriefFidelity({ request: input.authoritativeTask, assignments: spawnInputs.map(briefAssignment), ...(input.context ? { context: input.context } : {}), ...(completionRepair ? { repairContext: completionRepair } : {}) }, { signal, assertCurrent });
             assertCurrent();
           } catch (error) { return holdBatch(input.tasks.map(task => ({ task: task.task })), error); }
           heldBatches.delete(delegationKey);

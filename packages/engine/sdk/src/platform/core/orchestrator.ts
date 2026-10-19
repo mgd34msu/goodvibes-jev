@@ -141,6 +141,8 @@ export interface OrchestratorOptions {
    * plans, and reply correlation. Defaults to a generated private id.
    */
   sessionId?: string | undefined;
+  /** Live surface identity after a saved session is resumed or forked. */
+  resolveSessionId?: (() => string) | undefined;
   /**
    * Per-turn passive-injection budget override for the main session,
    * mirroring agents/orchestrator-runner.ts's `passiveKnowledgeInjectionBudgetTokens`.
@@ -217,6 +219,8 @@ export class Orchestrator {
 
   /** Session ID for runtime and hook events. */
   private readonly sessionId: string;
+  private readonly resolveSessionId: (() => string) | undefined;
+  private get currentSessionId(): string { return this.resolveSessionId?.() ?? this.sessionId; }
 
   /**
    * Submission key for the active turn: generated per runTurn, used as the
@@ -250,7 +254,8 @@ export class Orchestrator {
   private flagManager: FeatureFlagManager | null = null;
 
   /** This session's compaction lifecycle owner (compaction-lifecycle-route.ts); dispose() releases it. */
-  private readonly compactionManager: CompactionManager | null;
+  private compactionManager: CompactionManager | null;
+  private compactionSessionId: string;
   /**
    * Tracks the last provider response's tool calls within the current turn
    * iteration so the reconciliation pass can detect unresolved calls when
@@ -297,6 +302,7 @@ export class Orchestrator {
       requestRender = null,
       runtimeBus = null,
       sessionId,
+      resolveSessionId,
       passiveKnowledgeInjectionBudgetTokens,
       passiveKnowledgeInjectionRelevanceFloor,
       services,
@@ -304,6 +310,7 @@ export class Orchestrator {
     this.passiveKnowledgeInjectionBudgetTokens = passiveKnowledgeInjectionBudgetTokens;
     this.passiveKnowledgeInjectionRelevanceFloor = passiveKnowledgeInjectionRelevanceFloor;
     this.sessionId = sessionId?.trim() || randomUUID();
+    this.resolveSessionId = resolveSessionId;
     this.conversation = conversation;
     this.getViewportHeight = getViewportHeight;
     this.scrollToEnd = scrollToEnd;
@@ -320,7 +327,8 @@ export class Orchestrator {
       : null;
     this.flagManager = flagManager; this.requestRender = requestRender ?? (() => {});
     this.runtimeBus = runtimeBus;
-    this.compactionManager = createSessionCompactionManager(this.sessionId, runtimeBus, flagManager, () => this.coreServices.providerRegistry);
+    this.compactionSessionId = this.currentSessionId;
+    this.compactionManager = createSessionCompactionManager(this.currentSessionId, runtimeBus, flagManager, () => this.coreServices.providerRegistry);
     this.agentManager = services.agentManager; this.contractRunner = services.contractRunner; this.contractIntake = services.contractIntake;
     this.followUpRuntime = new OrchestratorFollowUpRuntime({
       getThinkingState: () => ({ isThinking: this.isThinking || this.turnInFlight || this.activeNativeConversationTurn, isCompacting: this.isCompacting }),
@@ -334,7 +342,15 @@ export class Orchestrator {
   }
 
   /** This session's CompactionManager, or null when composed without a runtime bus or capability gates. */
-  public getCompactionManager(): CompactionManager | null { return this.compactionManager; }
+  public getCompactionManager(): CompactionManager | null {
+    const sessionId = this.currentSessionId;
+    if (this.compactionSessionId !== sessionId) {
+      this.compactionManager?.dispose();
+      this.compactionManager = createSessionCompactionManager(sessionId, this.runtimeBus, this.flagManager, () => this.coreServices.providerRegistry);
+      this.compactionSessionId = sessionId;
+    }
+    return this.compactionManager;
+  }
 
   public setCoreServices(services: OrchestratorCoreServices): void {
     this.coreServices = {
@@ -514,8 +530,8 @@ export class Orchestrator {
   /** Broadcast a pending-queue mutation as a runtime.session event (wire-honest). */
   private emitQueueChange(action: 'enqueued' | 'edited' | 'deleted' | 'delivered', messageId: string): void {
     if (!this.runtimeBus) return;
-    emitQueuedMessagesChanged(this.runtimeBus, createEmitterContext(this.sessionId, 'queue'), {
-      sessionId: this.sessionId, action, messageId, pendingCount: this.messageQueue.length,
+    emitQueuedMessagesChanged(this.runtimeBus, createEmitterContext(this.currentSessionId, 'queue'), {
+      sessionId: this.currentSessionId, action, messageId, pendingCount: this.messageQueue.length,
     });
   }
 
@@ -793,8 +809,8 @@ export class Orchestrator {
       // Hooks may run external commands. A later provider error cannot prove
       // replay safe once that extensibility boundary has been entered.
       if (nativeTurn && this.hookDispatcher) markNativeConversationTurnEffectsPossible();
-      const preTurnPlan = resume ? this.coreServices.planManager?.getActive(this.sessionId) ?? null : await prepareConversationForTurn(
-        this.conversation, providerRegistry, text, content, this.sessionId, this.coreServices.planManager ?? null,
+      const preTurnPlan = resume ? this.coreServices.planManager?.getActive(this.currentSessionId) ?? null : await prepareConversationForTurn(
+        this.conversation, providerRegistry, text, content, this.currentSessionId, this.coreServices.planManager ?? null,
         { ...(signal ? { signal } : {}), directUserInput: true, onMessageAdded: () => { this.turnStartMessageCount = this.conversation.getMessageCount(); } },
       );
       signal?.throwIfAborted();
@@ -835,12 +851,12 @@ export class Orchestrator {
   ): { submissionKey: string; turnId: string } | null {
     // Session, transcript position and prompt prefix identify one in-flight submission.
     const submissionIdentity = options?.nativeConversationTurnPermit ? randomUUID() : createHash('sha256')
-      .update(`${this.sessionId}:${this.conversation.getMessageCount()}:${text.slice(0, 512)}`)
+      .update(`${this.currentSessionId}:${this.conversation.getMessageCount()}:${text.slice(0, 512)}`)
       .digest('hex')
       .slice(0, 16); // 16-char prefix is sufficient for in-process dedup
     const idempotencyStore = getIdempotencyStore(this.coreServices, this.ownedIdempotencyStore);
     const submissionKey = idempotencyStore.generateKey({
-      sessionId: this.sessionId,
+      sessionId: this.currentSessionId,
       turnId: submissionIdentity,
       callId:    text.slice(0, 64), // use prompt prefix for human-readable correlation
     });
@@ -853,11 +869,11 @@ export class Orchestrator {
     if (submissionCheck.status === 'in-flight') {
       const reason = 'Duplicate turn submission rejected because an equivalent turn is already in flight.';
       logger.warn('Orchestrator: duplicate turn submission detected (in-flight), rejecting', {
-        sessionId: this.sessionId,
+        sessionId: this.currentSessionId,
         submissionKey,
       });
       if (this.runtimeBus) {
-        const ctx = createEmitterContext(this.sessionId, turnId);
+        const ctx = createEmitterContext(this.currentSessionId, turnId);
         emitTurnSubmitted(this.runtimeBus, ctx, {
           turnId,
           prompt: text,
@@ -878,11 +894,11 @@ export class Orchestrator {
     // Reserve and bind before notifying synchronous submitted-event observers.
     this.turnInFlight = true;
     this.startThinking(undefined, resume);
-    this.turnHookOwner = new TurnHookOwner(this.sessionId, turnId, this.abortController!.signal);
+    this.turnHookOwner = new TurnHookOwner(this.currentSessionId, turnId, this.abortController!.signal);
     this.turnCancellation.begin(turnId, () => this.abort());
 
     if (this.runtimeBus) {
-      emitTurnSubmitted(this.runtimeBus, createEmitterContext(this.sessionId, turnId), {
+      emitTurnSubmitted(this.runtimeBus, createEmitterContext(this.currentSessionId, turnId), {
         turnId,
         prompt: text,
         ...(options?.origin ? { origin: options.origin } : {}),
@@ -906,13 +922,13 @@ export class Orchestrator {
     // A successful finalization releases the in-flight controller but does not
     // retire this plan continuation. New turns, abort/dispose and failures do.
     const planOwner = this.postTurnPlanOwner;
-    const sessionId = this.sessionId;
+    const sessionId = this.currentSessionId;
     const signal = this.abortController?.signal;
     let blockedContracts = new Set<string>(), blockedContractsReadAt = 0;
     await executeOrchestratorTurnLoop({
       assertPostTurnCurrent: () => {
         signal?.throwIfAborted();
-        if (this.disposed || this.sessionId !== sessionId || this.postTurnPlanOwner !== planOwner) throw new Error('Plan continuation retired');
+        if (this.disposed || this.currentSessionId !== sessionId || this.postTurnPlanOwner !== planOwner) throw new Error('Plan continuation retired');
       },
       onTurnTerminal,
       conversation: this.conversation,
@@ -931,14 +947,14 @@ export class Orchestrator {
       providerRegistry,
       favoritesStore: this.coreServices.favoritesStore,
       cacheHitTracker: getCacheHitTracker(this.coreServices, this.ownedCacheHitTracker),
-      helperModel: new HelperModel({ configManager, providerRegistry, runtimeBus: this.runtimeBus, sessionId: () => this.sessionId }),
-      sessionId: this.sessionId,
+      helperModel: new HelperModel({ configManager, providerRegistry, runtimeBus: this.runtimeBus, sessionId: () => this.currentSessionId }),
+      sessionId: this.currentSessionId,
       preTurnPlan,
       planManager: isNativeConversationTurn() ? null : this.coreServices.planManager ?? null,
       text,
       content,
       turnId,
-      emitterContext: (id) => createEmitterContext(this.sessionId, id),
+      emitterContext: (id) => createEmitterContext(this.currentSessionId, id),
       executeToolCalls: (id, calls, sourceOf) => this.executeToolCalls(id, calls, sourceOf ?? (() => ({ goal: text, criteria: [] }))),
       checkContextWindowPreflight: (id, model) => this.checkContextWindowPreflight(id, model),
       normalizeUsage,
@@ -987,11 +1003,11 @@ export class Orchestrator {
       },
       getCompletionRequirements: () => {
         const lineage = getSessionLineageTracker(this.coreServices, this.ownedSessionLineageTracker);
-        const plan = isNativeConversationTurn() ? null : this.coreServices.planManager?.getActive(this.sessionId);
+        const plan = isNativeConversationTurn() ? null : this.coreServices.planManager?.getActive(this.currentSessionId);
         return {
           originalTask: lineage.getOriginalTask(), lineage: lineage.getEntries(),
           activePlan: plan ? this.coreServices.planManager!.toMarkdown(plan) : null,
-          contracts: this.contractRunner.list().filter(contract => contract.sessionId === this.sessionId).map(contract => ({
+          contracts: this.contractRunner.list().filter(contract => contract.sessionId === this.currentSessionId).map(contract => ({
             id: contract.id, goal: contract.originalSource?.goal ?? contract.goal, status: contract.status,
             criteria: contract.originalSource?.criteria ?? contract.criteria.map(criterion => criterion.text),
             units: contract.units.map(unit => ({ id: unit.id, goal: unit.goal, status: unit.status, answer: unit.answer ?? null })),
@@ -1026,9 +1042,9 @@ export class Orchestrator {
       providerRegistry,
       sessionLineageTracker: getSessionLineageTracker(this.coreServices, this.ownedSessionLineageTracker),
       runtimeBus: this.runtimeBus,
-      emitterContext: (id: string) => createEmitterContext(this.sessionId, id),
+      emitterContext: (id: string) => createEmitterContext(this.currentSessionId, id),
       hookDispatcher: bindTurnHookDispatcher(this.hookDispatcher, this.turnHookOwner),
-      sessionId: this.sessionId,
+      sessionId: this.currentSessionId,
       requestRender: this.requestRender,
       isCompacting: this.isCompacting,
       setIsCompacting: (value: boolean) => { this.setCompacting(value); },
@@ -1036,7 +1052,7 @@ export class Orchestrator {
       clearModelContextWarning: () => { this.modelContextWarning = null; },
       getSystemPrompt: this.getSystemPrompt,
       signal: this.abortController?.signal,
-      compactionManager: this.compactionManager,
+      compactionManager: this.getCompactionManager(),
     };
   }
 
@@ -1053,7 +1069,7 @@ export class Orchestrator {
         this.isStreaming = false;
         this.conversation.finalizeStreamingBlock();
         if (this.runtimeBus) {
-          emitStreamEnd(this.runtimeBus, createEmitterContext(this.sessionId, turnId), { turnId });
+          emitStreamEnd(this.runtimeBus, createEmitterContext(this.currentSessionId, turnId), { turnId });
         }
       }
       // Remove any partial LLM response, keep user message but mark it cancelled
@@ -1062,7 +1078,7 @@ export class Orchestrator {
       this.conversation.addSystemMessage('[Response cancelled]');
       this.turnCancellation.end(turnId);
       if (this.runtimeBus) {
-        emitTurnCancel(this.runtimeBus, createEmitterContext(this.sessionId, turnId), {
+        emitTurnCancel(this.runtimeBus, createEmitterContext(this.currentSessionId, turnId), {
           turnId,
           reason: 'cancelled',
           stopReason: 'cancelled',
@@ -1093,7 +1109,7 @@ export class Orchestrator {
     this._turnFailed = true;
     this.turnCancellation.end(turnId);
     if (this.runtimeBus) {
-      emitTurnError(this.runtimeBus, createEmitterContext(this.sessionId, turnId), {
+      emitTurnError(this.runtimeBus, createEmitterContext(this.currentSessionId, turnId), {
         turnId,
         error: summarizeError(error),
         stopReason: err instanceof ProviderError ? 'provider_error' : 'unexpected_error',
@@ -1201,7 +1217,7 @@ export class Orchestrator {
       configManager,
       providerRegistry,
       this.runtimeBus,
-      createEmitterContext(this.sessionId, turnId),
+      createEmitterContext(this.currentSessionId, turnId),
       this.coreServices.planManager ?? null,
     );
   }
@@ -1257,7 +1273,7 @@ export class Orchestrator {
     reconcileUnresolvedToolCalls({
       conversation: this.conversation,
       runtimeBus: this.runtimeBus,
-      emitterContext: (id) => createEmitterContext(this.sessionId, id),
+      emitterContext: (id) => createEmitterContext(this.currentSessionId, id),
       isReconciliationEnabled: () => this.isReconciliationEnabled(),
       currentSubmissionKey: this.currentSubmissionKey,
       pendingToolCalls: this._pendingToolCalls,
@@ -1275,8 +1291,8 @@ export class Orchestrator {
       permissionManager: this.permissionManager,
       hookDispatcher: bindTurnHookDispatcher(this.hookDispatcher, this.turnHookOwner),
       runtimeBus: this.runtimeBus,
-      sessionId: this.sessionId,
-      emitterContext: (id) => createEmitterContext(this.sessionId, id),
+      sessionId: this.currentSessionId,
+      emitterContext: (id) => createEmitterContext(this.currentSessionId, id),
       onToolExecuted: this.coreServices.codeIndexReindexScheduler
         ? (toolName, args, success) => this.coreServices.codeIndexReindexScheduler!.onToolExecuted(toolName, args, success)
         : undefined,
