@@ -105,7 +105,12 @@ export class CompletionVerification {
       attempts++;
       let proposed: T;
       try { proposed = admit(parse(candidate)); }
-      catch { candidate = undefined; repair = { problem: 'The proposal is not admissible JSON with the required bounded schema and known citations. Use the supplied evidence and schema.' }; continue; }
+      catch (error) {
+        candidate = undefined;
+        repair = { problem: error instanceof Error ? error.message : 'The proposal is not admissible JSON with the required bounded schema and known citations.',
+          instruction: 'Correct this specific proposal defect. Respect maxCharacters and cite only the immediate input source/node IDs.' };
+        continue;
+      }
       // Checkpoint only a schema/privacy-admitted proposal. Disk never grants
       // authority: a resumed attempt still has to qualify it with current Jev.
       this.store.rememberProposal(key, candidate);
@@ -147,11 +152,14 @@ export class CompletionVerification {
     // Facts describe these sources, not whether the CURRENT task is complete.
     // Changing a request must rerun its requirement checks, without rewriting
     // unchanged source records to fit a different task interpretation.
-    const context = { requirements: [] as readonly VerificationRequirement[], sources: wireSources, ...(focusedRequirement ? { focusedRequirement } : {}),
+    const context = { requirements: [] as readonly VerificationRequirement[], sources: wireSources, citationIds: children, ...(focusedRequirement ? { focusedRequirement } : {}),
       maxCharacters: focusedRequirement ? 6_000 : Math.min(8_000, Math.max(2_400, Math.floor(JSON.stringify(wireSources).length * .4))) };
     const key = verificationHash(['evidence-v1', context]);
     const previousKey = verificationHash(['evidence-v1', { ...context, requirements: scope }]);
-    const previous = this.store.proposals.get(previousKey);
+    const { citationIds: _citationIds, ...legacyContext } = context;
+    const previous = this.store.proposals.get(previousKey)
+      ?? this.store.proposals.get(verificationHash(['evidence-v1', legacyContext]))
+      ?? this.store.proposals.get(verificationHash(['evidence-v1', { ...legacyContext, requirements: scope }]));
     if (!this.store.proposals.has(key) && previous !== undefined) this.store.rememberProposal(key, previous);
     const operation = sources.some(source => 'summary' in source) ? 'merge' : 'evidence';
     const proposed = await this.proposal(operation, context, key, access, value => summary(value, new Set(children), context.maxCharacters), async proposed => {
@@ -252,7 +260,11 @@ export class CompletionVerification {
       this.nodes.set(retained.id, retained); return [retained];
     } catch (error) {
       access.assertCurrent();
-      if (!(error instanceof VerificationSubdivisionError) && (!(error instanceof JudgmentError) || (error.kind !== 'rejected' && error.kind !== 'invalid-request'))) throw error;
+      // An irreducible summary has already used its two private proposals.
+      // Route back to original retrieval instead of recursively drafting every
+      // possible grouping of the same child summaries.
+      if (error instanceof VerificationSubdivisionError) throw error;
+      if (!(error instanceof JudgmentError) || (error.kind !== 'rejected' && error.kind !== 'invalid-request')) throw error;
       const middle = Math.ceil(children.length / 2);
       return [...await this.merge(children.slice(0, middle), scope, access), ...await this.merge(children.slice(middle), scope, access)];
     }
@@ -269,7 +281,7 @@ export class CompletionVerification {
         return this.merge(children, scope, access);
       })).flat();
       if (JSON.stringify(next.map(node => this.compactNode(node))).length >= JSON.stringify(nodes.map(node => this.compactNode(node))).length)
-        throw new VerificationHeldError('nonreducing evidence merge');
+        throw new VerificationSubdivisionError();
       nodes = next;
     }
     return nodes;
@@ -521,8 +533,21 @@ export class CompletionVerification {
     for (const [position, source] of sources.entries()) { this.originals.set(source.id, source); this.sourceOrder.set(source.id, position); this.store.rememberSource(source); }
     const ledger = await this.ledger(sources.filter(source => source.kind === 'instruction'), access);
     const observations = sources.filter(source => source.kind !== 'answer');
-    const indexed = observations.reduce((total, source) => total + source.text.length, 0) > 250_000;
-    const overview = indexed ? this.sourceIndex(observations) : await this.evidenceTree(observations, ledger, access);
+    let indexed = observations.reduce((total, source) => total + source.text.length, 0) > 250_000;
+    let overview: VerificationReceipt[];
+    if (indexed) overview = this.sourceIndex(observations);
+    else {
+      try { overview = await this.ownedAttempt(access, local => this.evidenceTree(observations, ledger, local)); }
+      catch (error) {
+        access.assertCurrent();
+        if (!(error instanceof VerificationSubdivisionError)) throw error;
+        // A checked summary tree which cannot shrink is a retrieval problem,
+        // not a reason to regenerate the same proposals indefinitely. Retain
+        // all originals and use the same mandatory primary/history audits as
+        // the large-history path; an index never becomes completion evidence.
+        indexed = true; overview = this.sourceIndex(observations);
+      }
+    }
     const requestKey = verificationHash(full.request), previous = this.previousSources;
     const added = indexed && previous?.identity === access.identity && previous.request === requestKey ? observations.filter(source => !previous.ids.has(source.id) && source.kind === 'observation') : [];
     const recent = verificationFrames(added, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length).at(-1) ?? [];

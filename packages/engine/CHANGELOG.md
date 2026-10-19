@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Name immediate citation IDs and return concrete proposal validation errors to
+  private evidence writers. If a summary tree cannot shrink, cancel that phase
+  and retrieve audited originals instead of repeatedly generating summaries.
+
 - Resume private completion retrieval from its last retrieved source page after
   checker failures. Preserve completed requirement checks under the exact source,
   draft and authority, and cancel and drain sibling verification work before retry.

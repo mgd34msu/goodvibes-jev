@@ -24,6 +24,42 @@ const access = (port: VerificationAccess['port'], identity = {}, signal?: AbortS
 const state = (content = 'Observed source.') => ({ request: 'Review all source and write review.md.', response: 'The report is saved in review.md.', transcript: [{ role: 'tool', callId: 'read-1', content }], tools: ['read', 'write'], requirements: null, delegated: [], initial: null });
 const directory = () => { const value = mkdtempSync(join(tmpdir(), 'completion-verification-')); directories.push(value); return value; };
 
+test('invalid proposal citations receive the exact schema defect and valid immediate citation IDs', async () => {
+  let feedback: unknown;
+  const writer: VerificationWriter = async request => {
+    const proposal = await verificationWriter(request);
+    if (request.operation !== 'evidence') return proposal;
+    const context = request.context as { sources: { id: string }[]; citationIds: string[] };
+    expect(context.citationIds).toEqual(context.sources.map(source => source.id));
+    if (request.repair) { feedback = request.repair; return proposal; }
+    const value = JSON.parse(proposal);
+    value.facts[0].sources = ['nested-original-not-an-immediate-input'];
+    return JSON.stringify(value);
+  };
+  expect((await new CompletionVerification(writer).prepare(state('Exact original source. '.repeat(200)), access(good().port))).findings).toHaveLength(0);
+  expect((feedback as { problem: string }).problem).toBe('Fact needs known supporting citations');
+});
+
+test('an irreducible summary tree switches to audited original retrieval and still holds unfinished work', async () => {
+  let merges = 0;
+  const writer: VerificationWriter = async request => {
+    if (request.operation === 'merge') merges++;
+    return request.operation === 'evidence' || request.operation === 'merge' ? 'invalid summary proposal' : verificationWriter(request);
+  };
+  const fake = fakePort((name, question, input) => {
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    const current = input as never as { opened?: { sources?: unknown[] } };
+    return noulAnswer(name.startsWith('fits_') || name === 'needs_source'
+      || name === 'unfinished' && JSON.stringify(current.opened?.sources ?? []).includes('UNFINISHED-REVIEW') ? .99 : .01);
+  });
+  const result = await new CompletionVerification(writer).prepare(state('UNFINISHED-REVIEW-and-retained-original.'.repeat(4_000)), access(fake.port));
+  expect(merges).toBeGreaterThan(0); expect(merges).toBeLessThanOrEqual(6);
+  expect(result.findings).toHaveLength(1);
+  const checks = fake.requests.filter(request => request.context?.battery === 'engine.verification.requirement');
+  expect((checks[0]!.state as never as { evidence: unknown[] }).evidence).toEqual([]);
+  expect((checks.at(-1)!.state as never as { opened: { sources: unknown[] } }).opened.sources.length).toBeGreaterThan(0);
+});
+
 test('an invalid selector response resumes the exact requirement cursor without reopening earlier primary pages', async () => {
   let selections = 0;
   const fake = fakePort((name, question, input) => {
