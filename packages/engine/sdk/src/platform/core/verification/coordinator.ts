@@ -12,6 +12,7 @@ const bounded = (value: unknown, limit: number) => JSON.stringify(value).length 
 const readingEvidence = (readings: Readonly<Record<string, { verdict: string; outcome: string }>>) =>
   Object.fromEntries(Object.entries(readings).map(([aspect, reading]) => [aspect, { verdict: reading.verdict, outcome: reading.outcome }]));
 class VerificationDeferredError extends Error {}
+class VerificationScopeFallback extends Error {}
 const attemptOwner = Symbol('verification attempt owner');
 type AttemptAccess = VerificationAccess & { [attemptOwner]?: { pending: Set<Promise<unknown>> } };
 type InspectionCursor = {
@@ -90,7 +91,7 @@ export class CompletionVerification {
   }
   private async proposal<T>(operation: Parameters<VerificationWriter>[0]['operation'], context: unknown, key: string,
     access: VerificationAccess, admit: (value: Record<string, unknown>) => T,
-    qualify: (proposed: T) => Promise<unknown | null>): Promise<T> {
+    qualify: (proposed: T) => Promise<unknown | null>, originalScopeAvailable = false): Promise<T> {
     access.assertCurrent();
     const cache = this.cache(access);
     if (cache.has(key)) return cache.get(key) as T;
@@ -98,6 +99,7 @@ export class CompletionVerification {
     for (;;) {
       access.signal?.throwIfAborted(); access.assertCurrent();
       if (candidate === undefined) {
+        if (originalScopeAvailable && attempts >= 2) throw new VerificationScopeFallback();
         if ((operation === 'evidence' || operation === 'merge') && attempts >= 2) throw new VerificationSubdivisionError();
         try { candidate = await this.writer({ operation, context, repair, signal: access.signal, assertCurrent: access.assertCurrent }); }
         catch (error) { access.assertCurrent(); throw new VerificationHeldError('private proposal provider', { cause: error }); }
@@ -129,6 +131,14 @@ export class CompletionVerification {
   }
 
   private async ledger(instructions: readonly VerificationSource[], access: VerificationAccess): Promise<VerificationRequirement[]> {
+    // Rewriting is an optimization, never the source of user authority. When
+    // the exact instruction roots fit, unsettled extraction falls back to those
+    // originals instead of generating an endless series of paraphrases.
+    const userTexts = new Set(instructions.filter(source => source.messageRole === 'user' && source.completeMessage).flatMap(source => {
+      try { const value = JSON.parse(source.text); return typeof value.content === 'string' ? [value.content] : []; } catch { return []; }
+    }));
+    const originals = instructions.filter(source => !((source.reference.startsWith('current user request') || source.reference.startsWith('original request at turn entry')) && userTexts.has(source.text)));
+    const exactScopeFits = bounded(originals, VERIFICATION_OVERVIEW_CHARACTERS);
     // Large instruction histories are reduced with the same source qualification
     // as observations, then the ledger is audited against EVERY original page.
     const pages = verificationFrames(instructions, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length);
@@ -136,7 +146,7 @@ export class CompletionVerification {
     const context = { sources: source, currentRequest: instructions.filter(entry => entry.reference.startsWith('current user request')),
       granularity: 'Use independently checkable obligations: performed work and delivery of its artifact are separate requirements. Preserve explicit scope and constraints; do not turn a full-codebase request into only representative subsystem sampling or add exhaustive runtime testing unless requested.' };
     const key = verificationHash(['scope-v1', context]);
-    return this.proposal('requirements', context, key, access, value => requirements(value, new Set([...instructions.map(entry => entry.id), ...source.map(entry => entry.id)])), async proposed => {
+    try { return await this.proposal('requirements', context, key, access, value => requirements(value, new Set([...instructions.map(entry => entry.id), ...source.map(entry => entry.id)])), async proposed => {
       const runs = await ownedMapLimit(access, pages, 3, async sources => {
         const run = await verificationScope.run(access.port, { sources: sources.map(verificationWireSource), instructionOverview: source, proposed, instruction: 'Check omissions against this original page; assess invented scope against the COMPLETE instruction overview. Other original pages may support other ledger items. Do not require one page to prove all work.' } as never,
           { ...this.options(access), site: verificationScope.name });
@@ -144,7 +154,12 @@ export class CompletionVerification {
         return clean(run.readings) ? null : { sources, readings: readingEvidence(run.readings) };
       });
       return runs.every(run => run === null) ? null : runs.filter(Boolean);
-    });
+    }, exactScopeFits); }
+    catch (error) {
+      if (!(error instanceof VerificationScopeFallback)) throw error;
+      access.assertCurrent();
+      return originals.map(source => ({ id: `original-${source.id}`, text: source.text, sources: [source.id] }));
+    }
   }
 
   private async node(sources: readonly (VerificationSource | VerificationReceipt)[], scope: readonly VerificationRequirement[], access: VerificationAccess, focusedRequirement?: VerificationRequirement): Promise<VerificationReceipt> {
@@ -356,6 +371,7 @@ export class CompletionVerification {
       // authority binding instead of reopening every earlier branch.
       checkpoint();
       const state = { requirement, requirements: ledger, response, evidence: auditSources ? [] : overview.map(node => this.compactNode(node)), opened: { ...opened, sources: opened.sources.map(verificationWireSource) },
+        ...(requirement.id.startsWith('original-') ? { scopeBasis: 'These requirements retain original instruction bytes, without a generated scope rewrite. Read them in their complete original order; later corrections supersede earlier instructions, and restrictions apply from the time given. Judge the active obligations, not a historical instruction that has been withdrawn.', originalOrder: ledger.map(item => ({ id: item.id, references: item.sources.map(id => this.originals.get(id)?.reference) })) } : {}),
         previousReview, chronology: recent.length ? 'Initial opened sources are native observations added since the previous completed check of this SAME original task and authority. Evaluate whether they resolve earlier findings. Earlier failures remain historical; later observed recovery can close them. Every original page is still audited before acceptance.' : 'Source references preserve original message order. Later observed recovery may resolve an earlier failure; plans and assertions cannot.' };
       let run = await verificationRequirement.run(access.port, state as never, { ...this.options(access), site: verificationRequirement.name });
       run.recordAction(clean(run.readings) ? 'This requirement is supported; final integration and publication checks remain required.' : 'Hold this requirement; retrieve primary source for uncertainty before producing repair findings.');

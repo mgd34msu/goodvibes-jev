@@ -546,3 +546,22 @@ test('saved repair findings survive restart only for the same source history and
   expect(new ResponseCompletionGuard({ ...initial, conversation: other, verificationStore: new VerificationStore(root, 'resume-repair') }).resumedRepair()).toBe('');
   expect(new ResponseCompletionGuard({ ...initial, request: 'An unrelated task.', verificationStore: new VerificationStore(root, 'resume-repair') }).repairContext()).toBeUndefined();
 });
+
+
+test('unsettled scope paraphrases fall back to exact original instructions without approving unfinished work', async () => {
+  let drafts = 0;
+  const request = 'Review the entire codebase and write review.md. Do not modify application code.';
+  const fake = fakePort((name, question, input) => {
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    return noulAnswer(name.startsWith('fits_') || name === 'unfinished' ? .99 : name === 'lost' ? .6 : .01);
+  });
+  const writer: VerificationWriter = async input => { if(input.operation === 'requirements') drafts++; return verificationWriter(input); };
+  const result = await new CompletionVerification(writer).prepare({ ...state('server.ts remains unreviewed. '.repeat(500)), request,
+    initial: { request, transcript: [] }, transcript: [{ role: 'user', content: request }, { role: 'tool', callId: 'unfinished', content: 'server.ts remains unreviewed.' }] }, access(fake.port));
+  expect(drafts).toBe(2);
+  expect(result.findings).toHaveLength(1);
+  const checked = fake.requests.find(entry => entry.context?.battery === 'engine.verification.requirement')!.state as never as { requirement: { text: string; id: string }; scopeBasis: string };
+  expect(checked.requirement.id).toStartWith('original-');
+  expect(JSON.parse(checked.requirement.text).content).toBe(request);
+  expect(checked.scopeBasis).toContain('original instruction bytes');
+});

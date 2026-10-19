@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Use the intact original instructions when a bounded requirement rewrite stays
+  unsettled. Continue checking the actual work and exact final answer with Jev;
+  automatic host validation never requires a separate verifier or prior approval.
+
 - Keep numeric identities intact at verification source boundaries so splitting
   admitted evidence cannot manufacture a false payment-card refusal.
 

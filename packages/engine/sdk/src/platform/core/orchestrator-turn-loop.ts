@@ -452,7 +452,9 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
     const resolvedSystemPrompt = await resolveSystemPrompt(context.getSystemPrompt, signal);
     assertActiveTurn();
     const baseSystemPromptForCall = appendGoodVibesRuntimeAwarenessPrompt(resolvedSystemPrompt);
-    const composedBaseSystemPrompt = baseSystemPromptForCall + (completionCorrection ? `\n\n${completionCorrection}` : '');
+    const composedBaseSystemPrompt = baseSystemPromptForCall
+      + '\n\nFinal responses are checked privately by the host with Jev before publication. Return the final draft normally when the authorized work is done; do not search for a verification tool or spawn an agent merely to invoke this automatic check. The host returns specific corrections privately when needed. Preserve completed work and address only those corrections.'
+      + (completionCorrection ? `\n\n${completionCorrection}` : '');
     const contextCompactThreshold = context.configManager.get('agents.contextCompactThreshold')
       ?? DEFAULT_PASSIVE_KNOWLEDGE_INJECTION_CONTEXT_THRESHOLD;
     if (passiveKnowledgeInjectionEnabled && newUserInputThisTurn && context.memoryRegistry) {
