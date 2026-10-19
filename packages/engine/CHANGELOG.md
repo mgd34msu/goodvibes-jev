@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Resume private completion retrieval from its last retrieved source page after
+  checker failures. Preserve completed requirement checks under the exact source,
+  draft and authority, and cancel and drain sibling verification work before retry.
+
 - Forward each private review draft through captured execution settlement to the
   contract checker, so it can reject incomplete output and accept the repaired
   answer instead of repeatedly judging an empty report.

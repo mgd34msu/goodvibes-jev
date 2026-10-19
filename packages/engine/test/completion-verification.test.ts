@@ -24,6 +24,63 @@ const access = (port: VerificationAccess['port'], identity = {}, signal?: AbortS
 const state = (content = 'Observed source.') => ({ request: 'Review all source and write review.md.', response: 'The report is saved in review.md.', transcript: [{ role: 'tool', callId: 'read-1', content }], tools: ['read', 'write'], requirements: null, delegated: [], initial: null });
 const directory = () => { const value = mkdtempSync(join(tmpdir(), 'completion-verification-')); directories.push(value); return value; };
 
+test('an invalid selector response resumes the exact requirement cursor without reopening earlier primary pages', async () => {
+  let selections = 0;
+  const fake = fakePort((name, question, input) => {
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    const current = input as never as { opened?: { sources?: unknown[] } };
+    const proved = JSON.stringify(current.opened?.sources ?? []).includes('FINAL-PROOF');
+    return noulAnswer(name.startsWith('fits_') || name === 'needs_source' && !proved ? .99 : .01);
+  });
+  const port: VerificationAccess['port'] = { ...fake.port, async ask(request) {
+    if (request.context?.battery === 'engine.verification.source' && ++selections === 5)
+      throw new JudgmentError('invalid-response', 'Synthetic malformed selector response');
+    return fake.port.ask(request);
+  } };
+  const input = { ...state(), transcript: [
+    { role: 'tool', callId: 'original-proof', content: 'FINAL-PROOF: full requested review and report observed.' },
+    { role: 'tool', callId: 'large-history', content: 'unrelatedretaineddiagnostics'.repeat(13_000) },
+    { role: 'tool', callId: 'latest-observation', content: 'A later observation, not the requested proof.' },
+  ] };
+  const verifier = new CompletionVerification(verificationWriter), owner = access(port);
+  await expect(verifier.prepare(input, owner)).rejects.toThrow('Synthetic malformed selector response');
+  const checks = () => fake.requests.filter(request => request.context?.battery === 'engine.verification.requirement')
+    .map(request => (request.state as never as { opened: { sources: { id: string }[] } }).opened.sources.map(source => source.id));
+  const before = checks();
+  expect(before.at(-1)!.length).toBeGreaterThan(0);
+  expect((await verifier.prepare(input, owner)).findings).toHaveLength(0);
+  expect(checks()[before.length]).toEqual(before.at(-1)!);
+  expect(checks().filter(ids => JSON.stringify(ids) === JSON.stringify(before.find(ids => ids.length)!))).toHaveLength(1);
+});
+
+test('a failed parallel requirement cancels and drains its sibling before recovery can start', async () => {
+  const started = Promise.withResolvers<void>();
+  let active = false, cancelled = false;
+  const fake = good(), controller = new AbortController();
+  const port: VerificationAccess['port'] = { ...fake.port, async ask(request) {
+    if (request.context?.battery !== 'engine.verification.requirement') return fake.port.ask(request);
+    const current = request.state as never as { requirement: { text: string } };
+    if (current.requirement.text === 'Review all source.') {
+      await started.promise;
+      throw new JudgmentError('invalid-response', 'Synthetic failed parallel requirement');
+    }
+    active = true; started.resolve();
+    return new Promise((_, reject) => {
+      const abort = () => { active = false; cancelled = true; reject(request.signal!.reason); };
+      request.signal!.addEventListener('abort', abort, { once: true });
+      if (request.signal!.aborted) abort();
+    });
+  } };
+  const writer: VerificationWriter = async request => request.operation === 'requirements'
+    ? JSON.stringify({ requirements: ['Review all source.', 'Deliver review.md.'].map(text => ({ text, sources: [(request.context as { sources: { id: string }[] }).sources[0]!.id] })) })
+    : verificationWriter(request);
+  try {
+    await expect(new CompletionVerification(writer).prepare(state('Retained diagnostic.\n'.repeat(16_000)), access(port, {}, controller.signal)))
+      .rejects.toThrow('Synthetic failed parallel requirement');
+    expect(cancelled).toBeTrue(); expect(active).toBeFalse();
+  } finally { controller.abort(); }
+});
+
 test('the verifier reads every original interval, including a hidden middle, and repairs only its own lossy proposal', async () => {
   const content = 'before '.repeat(14_000) + 'HIDDEN-MIDDLE-DEFECT' + ' after'.repeat(14_000);
   let repairs = 0;
