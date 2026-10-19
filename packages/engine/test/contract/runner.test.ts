@@ -12,6 +12,8 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { readingsOf, SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import { ASK as PARALLEL_ASK, validPlan } from './plan-support.js';
 import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { DecompositionRunner } from '../../sdk/src/platform/core/plan-decomposition.js';
 import { acquireSharedTree, sharedTreeWaiters } from '../../sdk/src/platform/contract/index.js';
@@ -152,6 +154,32 @@ describe('the nudge loop', () => {
 });
 
 describe('transport retry through the failure reading', () => {
+  test('a server failure retries its unit while an independent sibling keeps its work', async () => {
+    let attempts = 0;
+    const sibling = Promise.withResolvers<void>();
+    const h = use(makeHarness({ plan: validPlan(),
+      port: ({ name, question, state }) => name === 'category' && JSON.stringify(state).includes('server_error')
+        ? choiceAnswer(question, 'service', 0.99) : undefined,
+      scripts: {
+        u1: () => ++attempts === 1
+          ? [{ text: 'provider failed', stop: { kind: 'error', message: 'server_error: temporarily unavailable' } }]
+          : [{ files: { 'src/csv.ts': 'parse\n' }, text: 'Parser complete.' }],
+        u2: () => [{ before: () => sibling.promise, files: { 'src/json.ts': 'format\n' }, text: 'Formatter complete.' }],
+        u3: () => [{ files: { 'src/convert.ts': 'convert\n' }, text: 'Integration complete.' }],
+      },
+    }));
+    const { contract } = startContract(h, { ask: PARALLEL_ASK });
+    await waitFor(() => h.store.get(contract.id)?.units[0]?.transportRetries === 1, 'the provider retry');
+    expect(h.store.get(contract.id)?.status).toBe('running');
+    sibling.resolve();
+    await waitFor(() => terminal(h, contract.id), 'the repaired contract');
+    const done = h.store.get(contract.id)!;
+    expect(done.status).toBe('passed');
+    expect(done.units.find(u => u.id === 'u1')?.agentIds).toHaveLength(2);
+    expect(done.units.find(u => u.id === 'u2')?.agentIds).toHaveLength(1);
+    expect(eventsOf(h, 'CONTRACT_CANCELLED')).toHaveLength(0);
+  });
+
   test('a transport failure is retried once with a fresh agent carrying "Previous checks", which passes', async () => {
     let agents = 0;
     let h: Harness;

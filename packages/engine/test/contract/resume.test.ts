@@ -97,6 +97,31 @@ async function ended(h: Harness, id: string): Promise<ContractView> {
 const running = (contract: ContractView) => contract.units[0]?.status === 'running' && (contract.units[0]?.checks.length ?? 0) >= 1;
 
 describe('planning starts again', () => {
+  test('resume restores the original owner and reports completion through that identity', async () => {
+    const { root, ids: [id] } = await interrupt({ plan: oneUnitPlan(1), planner: stuckPlanner, scripts: {} }, c => c.status === 'planning', 'planning');
+    const saved = JSON.parse(readFileSync(contractPath(root, id!), 'utf8')).contract as Contract;
+    const ready = Promise.withResolvers<void>();
+    const h = restart(root, { plan: oneUnitPlan(1), scripts: {
+      u1: () => [{ before: () => ready.promise, files: { 'src/csv.ts': 'parse\n' }, text: 'Parser written.' }],
+    } });
+    const completed: string[] = [];
+    h.bus.onDomain('agents', ({ payload }) => { if (payload.type === 'AGENT_COMPLETED') completed.push(payload.agentId); });
+    await h.runner.resumeAll();
+    const owner = h.manager.getStatus(saved.ownerAgentId)!;
+    expect(owner).toMatchObject({ id: saved.ownerAgentId, contractId: id, contractRole: 'owner', status: 'running' });
+    let settled = false;
+    const joined = h.manager.join(owner.id).then(() => { settled = true; });
+    await sleep(0);
+    expect(settled).toBe(false);
+    ready.resolve();
+    const done = await ended(h, id!);
+    await joined;
+    expect(done.status).toBe('passed');
+    expect(owner.status).toBe('completed');
+    expect(owner.fullOutput).toBe(done.answer);
+    expect(completed.filter(agentId => agentId === owner.id)).toEqual([owner.id]);
+  }, 30_000);
+
   test('a saved writing-unclear question resumes planning without an owner reply', async () => {
     const { root, ids: [id] } = await interrupt({ plan: oneUnitPlan(1), planner: stuckPlanner, scripts: {} }, contract => contract.status === 'planning', 'planning');
     editContract(root, id!, contract => {

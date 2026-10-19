@@ -730,7 +730,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
   }
 
   /** The owner record parents and surfaces wait on; it runs no executor. */
-  function spawnOwner(input: Omit<StartContractInput, 'proposedUnits'>, id: string): AgentRecord {
+  function spawnOwner(input: Omit<StartContractInput, 'proposedUnits'>, id: string, restoredOwnerId?: string): AgentRecord {
     return deps.agentManager.spawn(
       {
         mode: 'spawn',
@@ -740,7 +740,8 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
         ...(input.selectedModel === undefined ? {} : { model: input.selectedModel.registryKey, provider: input.selectedModel.provider }),
         ...(input.parentAgentId === undefined ? {} : { parentAgentId: input.parentAgentId }),
       },
-      { contractId: id, contractRole: 'owner', progress: `Contract ${id}: queued`, settled: reserveSettlement(id).promise },
+      { contractId: id, contractRole: 'owner', progress: `Contract ${id}: queued`, settled: reserveSettlement(id).promise,
+        ...(restoredOwnerId === undefined ? {} : { restoredOwnerId }) },
     );
   }
 
@@ -1112,7 +1113,14 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
     isLive: (contractId) => runs.has(contractId),
     adopt: (contract) => {
       deps.store.hold(contract);
-      return newRun(contract);
+      const run = newRun(contract);
+      const owner = getStatus(contract.ownerAgentId);
+      if (owner === null || (owner.contractId === contract.id && owner.contractRole === 'owner'
+        && owner.status !== 'running' && owner.status !== 'pending')) {
+        spawnOwner(contract, contract.id, contract.ownerAgentId);
+        updateOwnerProgress(run);
+      }
+      return run;
     },
     hasSlot: () => admitted.size < env.config().maxActiveContracts,
     takeSlot: (run) => { admitted.add(run.id); },

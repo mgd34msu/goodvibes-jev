@@ -75,6 +75,8 @@ export interface ContractUnitBinding {
 export interface ContractOwnerBinding {
   readonly contractId: string;
   readonly contractRole: 'owner';
+  /** Retain the contract's owner identity on host recovery; never a model input. */
+  readonly restoredOwnerId?: string | undefined;
   /** Actual contract lifetime, reserved before the owner is published. */
   readonly settled?: Promise<void> | undefined;
   /** The owner's first progress line, for operator surfaces. */

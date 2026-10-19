@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Retry temporary provider response failures with the current agent conversation
+  intact, and honor Jev's service-failure reading before cancelling a contract.
+  Restore a resumed contract's original owner identity and completion events.
+
 - Judge plan coverage across all criteria instead of requiring duplicate quotes,
   and recognize source-read receipts and native decision records as valid ways
   to check process requirements.

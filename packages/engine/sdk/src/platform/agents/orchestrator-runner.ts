@@ -18,7 +18,8 @@ import { CIRCUIT_BREAKER_TRIPPED, ConsecutiveErrorBreaker } from '../core/circui
 import { collectResponseDelegates, ResponseCompletionGuard, ResponseCompletionError } from '../core/response-completion.js';
 import { createVerificationWriter } from '../core/verification/writer.js';
 import { VerificationStore } from '../core/verification/store.js';
-import { isBillingOrCreditError, isRateLimitOrQuotaError, isContextSizeExceededError, isNetworkTransportError } from '../types/errors.js';
+import { failureEvidence, isBillingOrCreditError, isRateLimitOrQuotaError, isContextSizeExceededError, isNetworkTransportError } from '../types/errors.js';
+import { readFailure } from '@goodvibes-jev/engine/errors';
 import { AgentSession } from './session.js';
 import {
   estimateTokens,
@@ -927,6 +928,19 @@ export async function runAgentTask(
               if ((record as { status: string }).status === 'cancelled') {
                 throw new Error('Agent cancelled during rate limit retry');
               }
+            } else if (['service', 'protocol', 'timeout'].includes((await readFailure(
+              failureEvidence(chatErr instanceof Error ? chatErr : new Error(String(chatErr))),
+              'agents.orchestrator-runner.response-retry',
+            )).category)) {
+              const delayMs = NETWORK_RETRY_DELAYS_MS[Math.min(networkAttempt++, NETWORK_RETRY_DELAYS_MS.length - 1)]!;
+              const delaySec = Math.round(delayMs / 1000);
+              logger.warn(`Agent ${record.id}: provider response failed on turn ${turn}, retrying in ${delaySec}s`, {
+                error: chatErr instanceof Error ? chatErr.message : String(chatErr),
+              });
+              setAgentProgress(record, `Provider error, retrying in ${delaySec}s…`, 'owner');
+              context.emitAgentProgress(record.id, record.progress ?? '', 'owner');
+              await waitForRetry(delayMs, undefined, { signal: context.getCancellationSignal?.(record.id) });
+              if ((record as { status: string }).status === 'cancelled') throw new Error('Agent cancelled during provider retry');
             } else {
               throw chatErr;
             }

@@ -217,6 +217,21 @@ describe('agent tool spawn', () => {
     expect(runner.starts[0]).toMatchObject({ ask: 'Fix the failing date test', proposedUnits: [{ task: 'Fix the failing date test' }] });
   });
 
+  test('a recovered owner cannot replace a live or unrelated agent', () => {
+    const { manager, ran } = harness();
+    const input = { mode: 'spawn' as const, task: 'Resume checked work', template: 'orchestrator', outsideContract: true };
+    const original = manager.spawn(input, { contractId: 'ctr-recovered', contractRole: 'owner', progress: 'running' });
+    expect(() => manager.spawn(input, { contractId: 'ctr-recovered', contractRole: 'owner', progress: 'running', restoredOwnerId: original.id })).toThrow('existing agent');
+    expect(manager.getStatus(original.id)).toBe(original);
+    const recovery = harness();
+    recovery.manager.importState([{ ...original, status: 'failed' }]);
+    expect(() => recovery.manager.spawn(input, { contractId: 'ctr-unrelated', contractRole: 'owner', progress: 'running', restoredOwnerId: original.id })).toThrow('existing agent');
+    const restored = recovery.manager.spawn(input, { contractId: 'ctr-recovered', contractRole: 'owner', progress: 'resumed', restoredOwnerId: original.id });
+    expect(restored).toMatchObject({ id: original.id, status: 'running', contractId: 'ctr-recovered' });
+    expect(ran).toHaveLength(0);
+    expect(recovery.ran).toHaveLength(0);
+  });
+
   test('a failed contract start reports the actual error without admitting an agent', async () => {
     const { manager, runner, tool, ran } = harness();
     let attemptedStarts = 0;

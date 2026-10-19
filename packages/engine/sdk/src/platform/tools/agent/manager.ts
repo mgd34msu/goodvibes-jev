@@ -478,7 +478,15 @@ export class AgentManager {
       throw new Error('No contract runner is composed: a spawn that is not outside every contract starts a contract, and this AgentManager has no contract runner to start it.');
     }
 
-    const id = `agent-${crypto.randomUUID().slice(0, 8)}`;
+    const id = ownerBinding?.restoredOwnerId ?? `agent-${crypto.randomUUID().slice(0, 8)}`;
+    const assertOwnerIdentity = (): void => {
+      const existing = this.agents.get(id);
+      if (existing && (existing.contractId !== ownerBinding?.contractId || existing.contractRole !== 'owner'
+        || existing.status === 'running' || existing.status === 'pending' || this.executions.has(id))) {
+        throw new Error(`Cannot restore contract owner over an existing agent: '${id}'`);
+      }
+    };
+    assertOwnerIdentity();
     const orchestrationGraphId = input.orchestrationGraphId
       ?? parentRecord?.orchestrationGraphId
       ?? (input.cohort ? `cohort:${input.cohort}` : undefined);
@@ -545,6 +553,7 @@ export class AgentManager {
     bindContractActionSource(record, spawnBinding && 'autonomousSource' in spawnBinding ? spawnBinding.autonomousSource : undefined,
       spawnBinding && 'autonomousPort' in spawnBinding ? spawnBinding.autonomousPort : undefined);
     const reserve = () => {
+      assertOwnerIdentity();
       if (this.additionalFleetOwnership) {
         // Routing and supplied registry readers above can re-enter a sibling
         // manager. Recheck at the synchronous reservation boundary, with no

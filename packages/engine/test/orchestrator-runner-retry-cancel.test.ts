@@ -22,10 +22,12 @@ import { useFailureReadings } from './_helpers/failure-readings.ts';
 
 const NETWORK_WORDING = 'socket hang up while streaming the reply';
 const RATE_LIMIT_WORDING = 'Rate limit reached for requests per minute';
+const SERVICE_WORDING = 'OpenAI Codex API error: server_error: An error occurred while processing your request.';
 
 useFailureReadings([
   [NETWORK_WORDING, { category: 'network', transientNetwork: true, beforeResponse: true }],
   [RATE_LIMIT_WORDING, { category: 'rate_limit', rateLimited: true }],
+  [SERVICE_WORDING, { category: 'service' }],
 ]);
 
 const FAKE_MODEL: ModelDefinition = {
@@ -125,6 +127,7 @@ describe('a cancel during a retry wait', () => {
   test.each([
     ['network retry', NETWORK_WORDING],
     ['rate-limit retry', RATE_LIMIT_WORDING],
+    ['provider response retry', SERVICE_WORDING],
   ])('during the %s ends the run cancelled, with no failure event', async (_label, wording) => {
     const record = makeRecord(`ag-${wording.length}`);
     const { provider, calls } = failingProvider(wording);
@@ -153,3 +156,33 @@ describe('a cancel during a retry wait', () => {
     expect(emitted.completed).toEqual([]);
   });
 });
+
+test('a server error retries the same request without repeating completed tools', async () => {
+  const record = { ...makeRecord('ag-service-recovery'), tools: ['read_progress'] };
+  const controller = new AbortController();
+  const registry = new ToolRegistry();
+  let reads = 0;
+  registry.register({ definition: { name: 'read_progress', description: 'Read source progress', parameters: { type: 'object' } },
+    execute: async () => { reads++; return { success: true, output: 'already inspected source contents' }; } });
+  const requests: unknown[] = [];
+  const provider: LLMProvider = {
+    name: 'fake', models: ['fake-model'],
+    async chat(request) {
+      requests.push(structuredClone(request.messages));
+      if (requests.length === 1) return { content: '', toolCalls: [{ id: 'read-1', name: 'read_progress', arguments: {} }],
+        usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'tool_call' };
+      if (requests.length === 2) throw new Error(SERVICE_WORDING);
+      record.status = 'cancelled';
+      controller.abort();
+      throw new Error('Stopped after observing the recovered request');
+    },
+  };
+  const emitted: Emitted = { cancelled: [], failed: [], completed: [] };
+  await runAgentTask({ ...makeContext(dir, provider, emitted), getCancellationSignal: () => controller.signal,
+    getFullRegistry: () => registry }, record);
+  expect(requests).toHaveLength(3);
+  expect(requests[2]).toEqual(requests[1]);
+  expect(JSON.stringify(requests[2])).toContain('already inspected source contents');
+  expect(reads).toBe(1);
+  expect(emitted.failed).toEqual([]);
+}, 15_000);

@@ -7,8 +7,8 @@
  * - Failed on its turn budget or the circuit breaker: checked with trigger
  *   `agent-failed`; a nudge wakes it.
  * - Failed otherwise: Jev reads the error (`readFailure`, site
- *   `contract.transport-retry`). A transient network fault or a failure before
- *   any response is retried with a fresh agent, up to
+ *   `contract.transport-retry`). A transient provider or network failure, or a
+ *   failure before any response, is retried with a fresh agent, up to
  *   `contract.transportRetryLimit`, after `contract.transportRetryDelayMs`;
  *   anything else fails the unit and the contract (`transport` for a network
  *   fault past the limit, `other` otherwise).
@@ -23,7 +23,7 @@
  * A retry is not a stall and not a fix round: the unit keeps its checks, and
  * the fresh agent's brief carries a "Previous checks" section.
  */
-import { judgmentPort, readFailure } from '@goodvibes-jev/engine/errors';
+import { judgmentPort, readFailure, transienceFromReading } from '@goodvibes-jev/engine/errors';
 import type { AgentEvent } from '../../events/agents.js';
 import type { CommunicationEvent } from '../../events/communication.js';
 import { TURN_BUDGET_EXHAUSTED } from '../agents/turn-budget.js';
@@ -146,14 +146,15 @@ export function createUnitFailureHandling(deps: UnitFailureDeps): UnitFailureHan
 
   async function retryOrFail(run: ContractRun, unit: ContractUnit, message: string): Promise<void> {
     const runtime = run.runtime(unit);
-    let network: boolean;
+    let retryable: boolean;
     let readingIds: readonly string[];
     try {
       const signal = AbortSignal.any([run.abort.signal, runtime.abort.signal]);
       const reading = await readFailure({ message }, TRANSPORT_RETRY_SITE, run.contract.nativeSource === undefined ? undefined : {
         port: nativeContractPort(run.contract, run.env.native, judgmentPort(TRANSPORT_RETRY_SITE), signal), signal,
       });
-      network = reading.transientNetwork || reading.beforeResponse;
+      retryable = !reading.billing && (reading.transientNetwork || reading.beforeResponse
+        || (reading.category !== 'unknown' && transienceFromReading(reading).failureClass === 'retryable'));
       readingIds = reading.decisionId === undefined ? [] : [reading.decisionId];
     } catch (error) {
       if (run.terminal) return;
@@ -163,9 +164,9 @@ export function createUnitFailureHandling(deps: UnitFailureDeps): UnitFailureHan
     }
     if (run.terminal || isTerminalUnitStatus(unit.status)) return;
     const config = run.env.config();
-    if (!network || unit.transportRetries >= config.transportRetryLimit) {
-      const kind: ContractFailureKind = network ? 'transport' : 'other';
-      const why = network ? `a transport failure after ${unit.transportRetries} retr${unit.transportRetries === 1 ? 'y' : 'ies'}` : 'a failure that is not transient';
+    if (!retryable || unit.transportRetries >= config.transportRetryLimit) {
+      const kind: ContractFailureKind = retryable ? 'transport' : 'other';
+      const why = retryable ? `a transport failure after ${unit.transportRetries} retr${unit.transportRetries === 1 ? 'y' : 'ies'}` : 'a failure that is not transient';
       failUnit(run, unit, kind, `unit ${unit.id} failed with ${why}: ${message}`, readingIds);
       return;
     }
