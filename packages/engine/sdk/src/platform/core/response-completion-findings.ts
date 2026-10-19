@@ -7,6 +7,9 @@ export interface CompletionFinding {
   readonly issue: string;
   readonly repair: string;
   readonly resolvedWhen: string;
+  /** Existing results to retain and the specific delta; neither adds authority. */
+  readonly preserve?: readonly string[];
+  readonly remaining?: readonly string[];
   readonly passage?: { readonly reference: string; readonly quote: string };
   readonly localization?: 'established' | 'candidate-to-investigate' | 'unavailable';
 }

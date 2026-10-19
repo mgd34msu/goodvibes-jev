@@ -1,4 +1,5 @@
 import { nativeContractSourceData } from './native-source.js';
+import { agentBriefFidelity } from '../agents/brief-fidelity.js';
 import { hasDerivedAcceptanceChecks } from './owned-source.js';
 /**
  * The Jev checks on a plan (docs/design/contract-runner.md section 3.4), run
@@ -298,16 +299,33 @@ function totalUsage(outputs: readonly CheckOutput[]): PlanCheckUsage {
 
 /** The port every plan check reads through. */
 function planCheckOwner(options: PlanCheckOptions, evidence: object) {
-  const original = retainStrictJudgmentJson({ ...evidence, originalSource: options.originalSource });
+  const taskEvidence = options.native?.contract.taskEvidence;
+  const original = retainStrictJudgmentJson({ ...evidence, originalSource: options.originalSource, taskEvidence });
   assertJudgmentInput(original.snapshot);
   const native = options.native, signal = options.signal, nativeSource = options.nativeSource, originalSource = options.originalSource;
   const owner = captureJudgmentPort('contract.plan-checks', { signal, prepareResultCapture: prepareJudgmentResult,
     assertCurrent() {
       original.assertCurrent();
+      if (options.native?.contract.taskEvidence !== taskEvidence) throw new Error('Plan continuation evidence changed');
       if (options.native !== native || options.signal !== signal || options.nativeSource !== nativeSource || options.originalSource !== originalSource) throw new Error('Plan check ownership changed');
     } });
   return { assertCurrent: owner.assertCurrent,
     port: native === undefined ? owner.port : nativeContractPort(native.contract, native.services, owner.port, owner.signal) };
+}
+
+/** Check the actual generated plan, including when the planner broadens a
+ * focused assignment. The original requirements remain fully binding. */
+async function checkRepairContinuation(port: JudgmentPort, plan: ContractPlan, ask: string, options: PlanCheckOptions): Promise<CheckOutput> {
+  const output = emptyOutput(), repairContext = options.native?.contract.taskEvidence;
+  if (!repairContext?.includes('"kind":"completion-repair"')) return output;
+  const run = await agentBriefFidelity.run(port, { request: ask, repairContext,
+    assignments: planUnits(plan).map(unit => ({ task: [unit.title, unit.goal, unit.brief].join('\n') })) } as never,
+    { ...callOptions(agentBriefFidelity.name, options), only: ['repair_restart'] });
+  record(output, run.result.decisionId, run.result.usage);
+  const accepted = run.readings.repair_restart.verdict === 'no' && run.readings.repair_restart.outcome === 'act';
+  run.recordAction(accepted ? 'Continue only the remaining work while retaining completed results.' : 'Repair this plan before execution: account for reusable results and assign only the specific remaining work.');
+  if (!accepted) output.problems.push({ code: 'uncovered-requirement', message: 'Completion repair is not a fresh task. Identify and preserve completed inspections, findings and artifacts; establish the specific remaining work from primary receipts and assign only that work. Do not replace the existing report or require a new full review without evidence that the affected work must be reopened.' });
+  return output;
 }
 
 /**
@@ -319,13 +337,15 @@ export async function runPlanChecks(plan: ContractPlan, ask: string, shape: Requ
   const port = owner.port;
   const derived = hasDerivedAcceptanceChecks(options.originalSource);
   const checkRootMeaning = options.nativeSource === undefined && (options.originalSource === undefined || derived);
-  const [trace, coverage, shapes, units] = await Promise.all([
+  const [trace, coverage, shapes, units, continuation] = await Promise.all([
     checkRootMeaning ? checkTrace(port, plan, ask, options) : emptyOutput(),
     checkRootMeaning ? checkCoverage(port, plan, ask, options) : emptyOutput(),
     readCriterionShapes(port, plan, ask, shape, options),
     checkUnits(port, plan, options),
+    checkRepairContinuation(port, plan, ask, options),
   ]);
   owner.assertCurrent();
+  units.problems.push(...continuation.problems); units.decisionIds.push(...continuation.decisionIds); units.usages.push(...continuation.usages);
   if (derived && !plan.criteria.some(criterion => !shapes.dispositions.has(criterion.id))) {
     shapes.problems.push({ code: 'no-criteria', message: 'A goal-only source requires nonempty judged planner-derived acceptance checks; structural or absent checks cannot complete its goal.' });
   }

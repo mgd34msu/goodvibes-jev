@@ -13,6 +13,7 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { withCompletionRepairContext } from '../sdk/src/platform/core/completion-repair-context.js';
 import { AgentMessageBus } from '../sdk/src/platform/agents/message-bus.js';
 import type { ConfigManager } from '../sdk/src/platform/config/index.js';
 import type { ContractRunner, StartedContract } from '../sdk/src/platform/contract/runner.js';
@@ -597,4 +598,15 @@ describe('workflow tool contract definition', () => {
     const unknown = await tool.execute({ mode: 'start', definition: 'no_such_definition', task: 'x' });
     expect(unknown.success).toBe(false);
   });
+});
+
+
+test('a completion repair contract retains the original ask and receives its private remaining-work context', async () => {
+  const { tool, runner } = harness();
+  const repair = JSON.stringify({ kind: 'completion-repair', review: { findings: [{ preserve: ['parser.ts reviewed'], remaining: ['server.ts'] }] } });
+  const result = await withCompletionRepairContext(repair, () => tool.execute({ mode: 'batch-spawn', authoritativeTask: 'Review the repository and deliver review.md.', tasks: [{ task: 'Review server.ts only; retain the parser review.' }] }));
+  expect(result.success, result.error).toBeTrue();
+  expect(runner.starts[0]!.ask).toBe('Review the repository and deliver review.md.');
+  expect(runner.starts[0]!.taskEvidence).toBe(repair);
+  expect(result.output).not.toContain('parser.ts reviewed');
 });

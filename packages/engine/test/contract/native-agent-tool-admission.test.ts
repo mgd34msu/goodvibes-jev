@@ -194,7 +194,8 @@ for (const scenario of ['act', 'unrecorded', 'planner-act', 'review-drafts'] as 
         key: { workId: 'owning-work', criteriaId: SOURCE.criteriaId, criteriaRevision: SOURCE.criteriaRevision, attemptId: 'attempt-1' },
         binding: { sourceId: SOURCE.sourceId, inputRevision: SOURCE.inputRevision, actionId: 'start-native', actionRevision: '1',
           authorityId: 'native-owner', authorityRevision: '1', scopeId: 'project', scopeRevision: '1' },
-        input: { ask: 'A short display ask without the complete source.', nativeSource: SOURCE, sessionId: 'actual-native-tool', origin: 'cli', projectRoot: root, isolation: 'worktree' },
+        input: { ask: 'A short display ask without the complete source.', nativeSource: SOURCE, sessionId: 'actual-native-tool', origin: 'cli', projectRoot: root, isolation: 'worktree',
+          ...(scenario === 'review-drafts' ? { taskEvidence: JSON.stringify({ kind: 'completion-repair', review: { findings: [{ preserve: ['REUSE_PRIOR_REVIEW_RESULTS'], remaining: ['Inspect the captured README only.'] }] } }) } : {}) },
       });
       id = admitted.admission.contractId;
       await waitFor(() => results.length > 0 || ['failed', 'cancelled'].includes(runner.get(id!)!.status), 'actual native tool settlement', 15_000);
@@ -219,6 +220,8 @@ for (const scenario of ['act', 'unrecorded', 'planner-act', 'review-drafts'] as 
       if (scenario === 'review-drafts') {
         await waitFor(() => drafts.length >= 2, 'both private review drafts reached the contract checker', 10_000);
         expect(drafts).toEqual([incomplete, complete]);
+        expect(providerRequests.some(text => text.includes('REUSE_PRIOR_REVIEW_RESULTS'))).toBeTrue();
+        expect(bodies.some(body => JSON.stringify(body.args).includes('REUSE_PRIOR_REVIEW_RESULTS'))).toBeFalse();
         await waitFor(() => runner.get(id!)!.units[0]!.status === 'passed', 'repaired review accepted', 10_000);
         const checks = runner.get(id!)!.units[0]!.checks;
         expect(checks.map(check => check.result)).toEqual(['nudge', 'pass']);

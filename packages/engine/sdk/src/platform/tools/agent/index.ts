@@ -1,4 +1,5 @@
 import { assertAgentBriefFidelity } from '../../agents/brief-fidelity.js';
+import { readCompletionRepairContext } from '../../core/completion-repair-context.js';
 import { types as nodeTypes } from 'node:util';
 import type { Tool, ToolExecuteOptions } from '../../types/tools.js';
 import { assertCurrentToolInvocation } from '../registry.js';
@@ -200,6 +201,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
    */
   function startContract(input: AgentInput, ask: string, proposedUnits: readonly ProposedUnit[], assertCurrent: () => void, dispatch: ContractRunner['start']): StartedContract {
     config.manager.guardContractLeafSpawn(input.parentAgentId);
+    const completionRepair = readCompletionRepairContext();
     const contractInput = {
       ask,
       ...(config.getSelectedModel === undefined ? {} : { selectedModel: config.getSelectedModel() }),
@@ -207,6 +209,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
       origin: 'agent-tool' as const,
       projectRoot: config.projectRoot,
       proposedUnits,
+      ...(completionRepair ? { taskEvidence: completionRepair } : {}),
       ...(input.parentAgentId ? { parentAgentId: input.parentAgentId } : {}),
     };
     assertCurrent();
@@ -322,6 +325,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
       return { success: false, error: 'Missing required parameter: mode' };
     }
     const input = args as unknown as AgentInput;
+    const completionRepair = readCompletionRepairContext();
     if (isNativeConversationTurn() && (input.mode === 'spawn' || input.mode === 'batch-spawn')) {
       return { success: false, error: NATIVE_TURN_EXECUTION_REFUSAL };
     }
@@ -387,7 +391,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
 
         let record;
         try {
-          if (input.authoritativeTask) await assertAgentBriefFidelity({ request: input.authoritativeTask, assignments: [{ task: input.task }] }, { signal, assertCurrent });
+          if (input.authoritativeTask) await assertAgentBriefFidelity({ request: input.authoritativeTask, assignments: [{ task: input.task }], ...(completionRepair ? { repairContext: completionRepair } : {}) }, { signal, assertCurrent });
           assertCurrent();
           record = spawnOwned(input);
         } catch (error) {
@@ -752,7 +756,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
         const contractTasks = input.tasks.filter((_, index) => spawnInputs[index]!.outsideContract !== true);
         if ((outsideInputs.length > 0 || heldBatch) && input.authoritativeTask) {
           try {
-            await assertAgentBriefFidelity({ request: input.authoritativeTask, assignments: input.tasks.map(task => ({ task: task.task })) }, { signal, assertCurrent });
+            await assertAgentBriefFidelity({ request: input.authoritativeTask, assignments: input.tasks.map(task => ({ task: task.task })), ...(completionRepair ? { repairContext: completionRepair } : {}) }, { signal, assertCurrent });
             assertCurrent();
           } catch (error) { return holdBatch(input.tasks.map(task => ({ task: task.task })), error); }
           heldBatches.delete(delegationKey);

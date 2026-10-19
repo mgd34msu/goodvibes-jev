@@ -494,3 +494,19 @@ test('the planner bounds come from planner.* settings with a finite guard', () =
     maxTurns: 4, tokenCeiling: 0, wallTimeoutMs: 0,
   });
 });
+
+
+test('completion recovery revalidates the actual generated plan and preserves its original roots', async () => {
+  let reads = 0;
+  install(({ name }) => name === 'repair_restart' ? noulAnswer(++reads === 1 ? .99 : .01) : undefined);
+  const repair = JSON.stringify({ kind: 'completion-repair', review: { findings: [{ preserve: ['CSV parser completed'], remaining: ['JSON formatter and integration'] }] } });
+  const contract = shapedContract(shapeOf(), { taskEvidence: repair });
+  const { deps, requests } = harness([plannerOutput(validPlan()), plannerOutput(validPlan())]);
+  expect((await planContract(contract, deps)).kind).toBe('accepted');
+  expect(reads).toBe(2);
+  expect(requests).toHaveLength(2);
+  expect(requests[0]!.userPrompt).toContain(repair);
+  expect(requests[1]!.userPrompt).toContain('specific remaining work');
+  expect(contract.goal).toBe(validPlan().goal);
+  expect(contract.criteria.map(c => c.quote)).toEqual(validPlan().criteria.map(c => c.quote));
+});

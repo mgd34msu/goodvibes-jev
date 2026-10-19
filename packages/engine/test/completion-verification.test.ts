@@ -514,3 +514,22 @@ test('verification journal refuses symlinked directories and protected source da
   const store = new VerificationStore();
   expect(() => store.rememberSource({ id: 'bad', kind: 'observation', reference: 'tool', text: 'password=synthetic-private-value' })).toThrow();
 });
+
+
+test('saved repair findings survive restart only for the same source history and never restore approval', async () => {
+  const root = directory(), request = 'Review all source and write review.md.';
+  const conversation = new ConversationManager(); conversation.addUserMessage(request);
+  conversation.addToolResults([{ callId: 'inspection', success: true, output: 'server.ts remains unreviewed.\n'.repeat(12_000) }]);
+  const fake = fakePort((name, question) => question.type === 'choice' ? choiceAnswer(question, Object.keys(question.criteria)[0]!, .99) : noulAnswer(name.startsWith('fits_') || name === 'unfinished' ? .99 : .01));
+  installJudgmentPort(fake.port);
+  const initial = { request, conversation, verificationWriter, verificationStore: new VerificationStore(root, 'resume-repair') };
+  const first = new ResponseCompletionGuard(initial);
+  expect(await first.checkUntilAvailable(() => ({ request, conversation, response: 'The report is saved.', tools: ['read','write'] }))).toContain('Fix list');
+  const second = new ResponseCompletionGuard({ ...initial, verificationStore: new VerificationStore(root, 'resume-repair') });
+  expect(second.resumedRepair()).toContain('Fix list');
+  expect(second.repairContext()).toContain('completion-repair');
+  expect(() => second.beginFinalization({ content: 'The report is saved.' })).toThrow();
+  const other = new ConversationManager(); other.addUserMessage(request); other.addToolResults([{ callId: 'different', success: true, output: 'Different source.' }]);
+  expect(new ResponseCompletionGuard({ ...initial, conversation: other, verificationStore: new VerificationStore(root, 'resume-repair') }).resumedRepair()).toBe('');
+  expect(new ResponseCompletionGuard({ ...initial, request: 'An unrelated task.', verificationStore: new VerificationStore(root, 'resume-repair') }).repairContext()).toBeUndefined();
+});

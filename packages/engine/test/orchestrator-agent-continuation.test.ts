@@ -7,6 +7,7 @@
  * ask a contract's criteria trace to.
  */
 import { describe, expect, test } from 'bun:test';
+import { readCompletionRepairContext } from '../sdk/src/platform/core/completion-repair-context.js';
 import { ConversationManager } from '../sdk/src/platform/core/conversation.js';
 import type { ConversationMessageSnapshot } from '../sdk/src/platform/core/conversation.js';
 import { handleToolResponseOutcome } from '../sdk/src/platform/core/orchestrator-turn-helpers.js';
@@ -30,7 +31,7 @@ function createProviderRegistry() {
   };
 }
 
-async function runOutcome(input: { readonly toolCalls: ToolCall[]; readonly userText: string; readonly result: Record<string, unknown>; readonly success?: boolean; readonly onExecute?: (calls: ToolCall[]) => void }) {
+async function runOutcome(input: { readonly toolCalls: ToolCall[]; readonly userText: string; readonly completionRepair?: string; readonly result: Record<string, unknown>; readonly success?: boolean; readonly onExecute?: (calls: ToolCall[]) => void }) {
   const conversation = new ConversationManager();
   const runtimeBus = new RuntimeEventBus();
   const completions: string[] = [];
@@ -46,6 +47,7 @@ async function runOutcome(input: { readonly toolCalls: ToolCall[]; readonly user
     turnId: 'turn-1',
     response: { content: '', toolCalls: input.toolCalls, usage: undefined } as never,
     userText: input.userText,
+    completionRepair: input.completionRepair,
     executeToolCalls: async (_turnId, calls): Promise<ToolResult[]> => {
       input.onExecute?.(calls);
       return [{ callId: 'call-agent', success: input.success ?? true, output: JSON.stringify(input.result) }];
@@ -116,4 +118,16 @@ describe('the turn loop after an agent tool call', () => {
         message.role === 'assistant' && !!message.toolCalls?.length);
     expect(assistantToolCall?.toolCalls?.[0]?.arguments.authoritativeTask).toBe('make a token bucket rate limiter');
   });
+});
+
+
+test('repair context reaches execution privately and does not leak into tool arguments or another turn', async () => {
+  const repair = JSON.stringify({ kind: 'completion-repair', review: { findings: [{ check: 'unfinished', preserve: ['parser review'], remaining: ['server review'] }] } });
+  let observed: string | undefined;
+  const first = await runOutcome({ toolCalls: spawnCall('Review server.ts only.'), userText: 'Review the repository.', completionRepair: repair,
+    result: { contractStarted: true }, onExecute: calls => { observed = readCompletionRepairContext(); expect(JSON.stringify(calls)).not.toContain('parser review'); } });
+  expect(observed).toBe(repair);
+  expect(JSON.stringify(first.conversation.getMessageSnapshot())).not.toContain('parser review');
+  await runOutcome({ toolCalls: spawnCall('Unrelated task.'), userText: 'Unrelated task.', result: {}, onExecute: () => { expect(readCompletionRepairContext()).toBeUndefined(); } });
+  expect(readCompletionRepairContext()).toBeUndefined();
 });

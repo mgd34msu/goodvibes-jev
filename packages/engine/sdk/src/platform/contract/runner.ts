@@ -765,7 +765,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
       sessionId: input.sessionId,
       origin: input.origin,
       ask: input.ask,
-      ...(originalSource ? { originalSource, taskEvidence: owner.task } : input.taskEvidence === undefined ? {} : { taskEvidence: input.taskEvidence }),
+      ...(originalSource ? { originalSource, taskEvidence: [owner.task, input.taskEvidence].filter(Boolean).join('\n\n') } : input.taskEvidence === undefined ? {} : { taskEvidence: input.taskEvidence }),
       ownerAgentId: owner.id,
       ...(input.parentAgentId === undefined ? {} : { parentAgentId: input.parentAgentId }),
       projectRoot: input.projectRoot,

@@ -290,7 +290,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
       },
     }),
   });
-  let completionCorrection = '';
+  let completionCorrection = completionGuard.resumedRepair();
   let continuationEvidence = context.continuationEvidence ?? '';
   const intakeAgentIds: string[] = [];
   // True only for the FIRST LLM call this executeOrchestratorTurnLoop()
@@ -861,6 +861,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         turnId: context.turnId,
         response: enrichedResponse,
         userText: context.text,
+        completionRepair: completionGuard.repairContext(),
         executeToolCalls: (id, calls) => context.executeToolCalls(id, calls, () => {
           if (nativeTurn) {
             const source = readNativeConversationTurnActionSource();

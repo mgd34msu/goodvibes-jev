@@ -445,7 +445,9 @@ export class CompletionVerification {
         if (!finding || !checks.includes(finding.check) || seen.has(finding.check)
           || ![finding.issue, finding.repair, finding.resolvedWhen, finding.passage?.reference, finding.passage?.quote].every(text => typeof text === 'string' && !!text.trim())) throw new Error('Invalid repair findings');
         seen.add(finding.check);
-        return { check: finding.check, issue: finding.issue, repair: finding.repair, resolvedWhen: finding.resolvedWhen, passage: finding.passage! };
+        for (const field of [finding.preserve, finding.remaining]) if (field !== undefined && (!Array.isArray(field) || !field.every(text => typeof text === 'string' && !!text.trim()))) throw new Error('Preserved and remaining work must be concrete text items');
+        return { check: finding.check, issue: finding.issue, repair: finding.repair, resolvedWhen: finding.resolvedWhen, passage: finding.passage!,
+          ...(finding.preserve ? { preserve: finding.preserve } : {}), ...(finding.remaining ? { remaining: finding.remaining } : {}) };
       });
     };
     const key = verificationHash(['repairs-v1', context]);

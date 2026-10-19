@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Preserve private completion findings across restarts and contract planning.
+  Revalidate repair plans before execution, retain completed work and update the
+  existing artifact instead of starting another full review.
+
 - Name immediate citation IDs and return concrete proposal validation errors to
   private evidence writers. If a summary tree cannot shrink, cancel that phase
   and retrieve audited originals instead of repeatedly generating summaries.

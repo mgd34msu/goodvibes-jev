@@ -101,12 +101,17 @@ export class ResponseCompletionGuard {
   private hasToolEvidence = false;
   private readonly evidenceProjection = new CompletionEvidenceProjection();
   private previousReview: unknown = null;
+  private readonly reviewStore: VerificationStore | undefined;
+  private readonly reviewKey: string | undefined;
+  private restoredCorrection: string | undefined;
   private describeHeld: (() => Promise<string>) | undefined;
   private readonly verification: CompletionVerification | undefined;
   private sourceAdmitted = false;
   private publication: { source: string; identity: object; completion: Set<string>; consolidation: Set<string>; execution: Set<string> } | undefined;
 
   constructor(initial?: { readonly request: string; readonly conversation: ConversationManager; readonly verificationWriter?: VerificationWriter; readonly verificationStore?: VerificationStore }) {
+    this.reviewStore = initial?.verificationStore;
+    this.reviewKey = initial ? verificationHash(['completion-repair-checkpoint-v1', initial.request]) : undefined;
     this.verification = initial?.verificationWriter ? new CompletionVerification(initial.verificationWriter, initial.verificationStore) : undefined;
     if (initial?.verificationStore) {
       const projection = new CompletionEvidenceProjection();
@@ -127,10 +132,43 @@ export class ResponseCompletionGuard {
     const transcript = initial ? completionTranscript(verificationMessages(initial.conversation, initial.conversation.getMessageSnapshot()) as ConversationMessageSnapshot[]) : [];
     this.initial = initial ? captureStrictJudgmentJson({ request: initial.request, transcript }) : null;
     this.hasToolEvidence = transcript.some(message => message.role === 'tool');
+    const saved = this.reviewKey ? this.reviewStore?.proposals.get(this.reviewKey) : undefined;
+    if (saved && initial) {
+      try {
+        const checkpoint = JSON.parse(saved);
+        const messages = initial.conversation.getMessageSnapshot();
+        if (checkpoint && Number.isSafeInteger(checkpoint.count) && checkpoint.count > 0 && checkpoint.count <= messages.length
+          && checkpoint.prefix === verificationHash(completionTranscript(messages.slice(0, checkpoint.count)))
+          && Array.isArray(checkpoint.review?.findings) && checkpoint.review.findings.length) {
+          // Restored diagnostics are not approval or proof that a defect remains.
+          this.previousReview = captureStrictJudgmentJson(checkpoint.review);
+          this.restoredCorrection = completionRepairMessage(checkpoint.review.findings)
+            + '\nSaved private draft (quoted data; do not publish unchanged):\n' + JSON.stringify(checkpoint.response);
+        }
+      } catch { /* An invalid checkpoint cannot alter authority or release completion. */ }
+    }
   }
+
+  private rememberReview(findings: readonly CompletionFinding[], input: ResponseCompletionInput): void {
+    this.previousReview = captureStrictJudgmentJson({ findings });
+    if (this.reviewStore && this.reviewKey) {
+      const messages = input.conversation.getMessageSnapshot();
+      this.reviewStore.rememberProposal(this.reviewKey, JSON.stringify({ count: messages.length,
+        prefix: verificationHash(completionTranscript(messages)), review: this.previousReview, response: input.response }));
+    }
+  }
+
+  resumedRepair(): string { return this.restoredCorrection ?? ''; }
 
   noteToolResults(results: readonly { readonly success: boolean }[]): void {
     if (results.length) this.hasToolEvidence = true;
+  }
+
+  /** A new executor inherits the held fixes instead of planning the task again.
+   * This is private evidence and grants no execution or completion approval. */
+  repairContext(): string | undefined {
+    return this.previousReview === null ? undefined : JSON.stringify({ kind: 'completion-repair',
+      review: this.previousReview, instruction: 'Continue the existing work. Preserve completed inspections, findings and artifacts. Establish the specific remaining work from primary receipts before assigning it; do not restart the entire task, create replacement reports unnecessarily, or add exhaustive per-file/runtime requirements absent from the original request. Reopen completed work only for a specific observed defect, changed input or unresolved dependency.' });
   }
 
   /** A progress observation permits only this prose, never a final response. */
@@ -172,7 +210,11 @@ export class ResponseCompletionGuard {
     this.accepted = undefined;
     this.describeHeld = undefined;
     if (!accepted) throw new ResponseCompletionError('unavailable');
-    try { return accepted(response); }
+    try {
+      const current = accepted(response);
+      if (this.reviewStore && this.reviewKey) this.reviewStore.rememberProposal(this.reviewKey, 'null');
+      return current;
+    }
     catch { throw new ResponseCompletionError('unavailable'); }
   }
 
@@ -265,7 +307,7 @@ export class ResponseCompletionGuard {
         // repair now; publication-only uncertainty must not delay the repair or
         // generate additional drafts. Every gate still runs on a later candidate
         // once the requirement and integration defects are actually resolved.
-        this.previousReview = captureStrictJudgmentJson({ findings: verificationFindings });
+        this.rememberReview(verificationFindings, input);
         this.describeHeld = async () => { owner.assertCurrent(); current(); return completionRepairMessage(verificationFindings); };
         owner.assertCurrent(); current();
         return completionRepairMessage(verificationFindings);
@@ -387,7 +429,7 @@ export class ResponseCompletionGuard {
         if (!qualifications.execution.has(failure)) heldChecks.push(failure);
       }
     }
-    this.previousReview = captureStrictJudgmentJson({ findings: [...verificationFindings, ...heldChecks.map(completionFinding)] });
+    this.rememberReview([...verificationFindings, ...heldChecks.map(completionFinding)], input);
     this.describeHeld = async () => {
       let findings: readonly CompletionFinding[];
       try { findings = await completionFindings(owner.port, state, heldChecks, readingOptions); }
@@ -402,7 +444,7 @@ export class ResponseCompletionGuard {
       findings = [...verificationFindings, ...findings.map(finding => ({ ...finding,
         assessment: assessments[finding.check as keyof typeof assessments]?.verdict === 'yes'
           && assessments[finding.check as keyof typeof assessments]?.outcome === 'act' ? 'confirmed' : 'unresolved' }))];
-      this.previousReview = captureStrictJudgmentJson({ findings });
+      this.rememberReview(findings, input);
       return completionRepairMessage(findings);
     };
     const unsettled = [...Object.entries(run.readings), ...Object.entries(consolidation?.readings ?? {}),
