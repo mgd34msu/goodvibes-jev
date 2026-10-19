@@ -278,7 +278,8 @@ async function checkUnits(port: JudgmentPort, plan: ContractPlan, options: PlanC
         message: `Unit ${unit.id} ("${unit.title}") has role "${unit.role}", but the reading did not establish agreement with its brief; clarify the role and brief.`,
       });
     }
-    const unresolved = narrows.filter((entry) => entry.reading.probability > 0.5);
+    const unresolved = narrows.filter(entry => entry.reading.probability > 0.5
+      && !(entry.hostCovered?.verdict === 'yes' && entry.hostCovered.outcome === 'act'));
     if (unresolved.length > 0) found.push(narrowsProblem(unit, unresolved));
     run.recordAction(found.length === 0 ? 'unit accepted' : `repair: ${found.map((entry) => entry.code).join(', ')}`);
     output.problems.push(...found);

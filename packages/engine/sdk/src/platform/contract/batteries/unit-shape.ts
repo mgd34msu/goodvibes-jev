@@ -66,7 +66,7 @@ export const ROLE_BAND: ChoiceBand<UnitShapeRole> = STAKES_BANDS.medium.confiden
 export const NARROWS_BAND: YesNoBand = { yes: STAKES_BANDS.medium.confidence, no: STAKES_BANDS.medium.confidence };
 
 const ROLE_QUESTION = choice('What kind of work does `unit` do?', UNIT_SHAPE_ROLES);
-const NARROWS_QUESTION = 'Does `unit` do less than `requirement` sets (fewer substantive items, a smaller area or a weaker standard) with neither this unit nor `otherUnits` doing the rest? The actual contract host automatically validates plans and checks unit, group and deliverable acceptance with Jev. A requirement to use those native host checks does not require another worker or a self-referential criterion that this same check already passed. This describes who performs checking, never proof that a check has passed. All substantive requested work still needs coverage by the units.';
+const NARROWS_QUESTION = 'Does `unit` do less than `requirement` sets (fewer substantive items, a smaller area or a weaker standard) with neither this unit, `otherUnits`, nor the supplied actual `hostOperations` covering the rest? Match native plan-validation and acceptance requirements to hostOperations, not to worker-authored self-approval. The listed host operations describe the executing runtime, not a worker promise or a claim that an approval already passed. All substantive requested work still needs coverage by units; host checking cannot substitute for missing source review, implementation or deliverables.';
 const NARROWS_CRITERIA = {
   true: 'Some substantive requested work is covered by neither this unit nor another unit; automatic host checking cannot replace that missing work',
   false: 'The units cover the substantive requested work, while the actual host handles native planning and acceptance checks without worker self-approval',
@@ -74,6 +74,7 @@ const NARROWS_CRITERIA = {
 
 /** The question name a requirement is asked under. */
 const narrowsKey = (id: string): string => `narrows_${id}`;
+const hostKey = (id: string): string => `host_${id}`;
 
 export interface UnitShapeUnit {
   readonly title: string;
@@ -131,6 +132,8 @@ export function unitShapeInput(
 
 export interface RequirementReading extends UnitShapeRequirement {
   readonly reading: YesNoReading;
+  /** Whether the complete requirement is covered by actual runtime checking, rather than worker work. */
+  readonly hostCovered?: YesNoReading;
 }
 
 export interface UnitShapeRun {
@@ -167,7 +170,10 @@ function questionsFor(input: UnitShapeInput): Record<string, Question> {
         'Preserve every original requirement and mandatory host check; repair only defective derived criteria, never waive approval or narrow the work.',
       ],
     }, { true: 'A single derived entry has a circular prerequisite, requires this worker to execute host-only approval, or bundles independently repairable obligations.', false: 'Each derived entry describes independently checkable substantive work; required software approval behavior is valid, and actual host acceptance is performed by the runtime.' }),
-    ...Object.fromEntries(input.requirements.map((requirement) => [narrowsKey(requirement.id), noul({ question: NARROWS_QUESTION, requirement: requirement.text }, NARROWS_CRITERIA)])),
+    ...Object.fromEntries(input.requirements.flatMap(requirement => [
+      [hostKey(requirement.id), noul({ question: 'Is this ENTIRE requirement solely about the native plan-validation or acceptance operations that hostOperations actually enforces? Answer yes only when those host operations fully cover the requirement. Source review, implementation, tests requested as deliverables, and artifact creation remain worker work. A requirement to implement or change a checker is worker work. For mixed requirements that also demand substantive work, answer no. This classifies responsibility; it never asserts that work or approval has passed.', requirement: requirement.text })],
+      [narrowsKey(requirement.id), noul({ question: NARROWS_QUESTION, requirement: requirement.text }, NARROWS_CRITERIA)],
+    ])),
   };
 }
 
@@ -415,7 +421,7 @@ function assertFixture(entry: UnitShapeFixture): void {
 
 const HEADER = {
   name: 'contract.unit-shape',
-  version: 3,
+  version: 4,
   description: 'A unit’s work role, independently checkable derived acceptance criteria, and coverage of the original requirements it serves.',
   accuracyFloor: 0.9,
 } as const;
@@ -430,6 +436,13 @@ export const unitShape: UnitShape = {
     const { unit } = input;
     const state = {
       goal: input.goal,
+      hostOperations: {
+        meaning: 'Actual contract runtime responsibilities; these operations do not execute as extra worker units. No past or current approval is asserted here.',
+        beforeWork: 'The host runs Jev plan checks before accepting the plan for execution.',
+        unitCompletion: 'The host holds each worker result and invokes Jev acceptance and quality checks before the unit can pass.',
+        integration: 'The host checks completed groups and the combined deliverable with Jev before the contract can pass.',
+        source: 'contract/planner.ts, contract/agent-hooks.ts and contract/completion.ts enforce these operations.',
+      },
       ...(input.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(input.nativeSource) }),
       unit: { title: unit.title, goal: unit.goal, brief: unit.brief, criteria: [...unit.criteria] },
       otherUnits: input.otherUnits.map((other) => ({ title: other.title, goal: other.goal, criteria: [...other.criteria] })),
@@ -438,7 +451,9 @@ export const unitShape: UnitShape = {
     const answers = result.answers as Readonly<Record<string, unknown>>;
     const role = readChoice(answers['role'] as ChoiceResponse<typeof UNIT_SHAPE_ROLES>, ROLE_BAND);
     const acceptanceProblem = readYesNo(answers['acceptance_problem'] as NoulResponse, NARROWS_BAND);
-    const narrows = input.requirements.map((requirement): RequirementReading => ({ ...requirement, reading: readYesNo(answers[narrowsKey(requirement.id)] as NoulResponse, NARROWS_BAND) }));
+    const narrows = input.requirements.map((requirement): RequirementReading => ({ ...requirement,
+      hostCovered: readYesNo(answers[hostKey(requirement.id)] as NoulResponse, NARROWS_BAND),
+      reading: readYesNo(answers[narrowsKey(requirement.id)] as NoulResponse, NARROWS_BAND) }));
     recordReadings(port, result, { role, acceptanceProblem, narrows });
     return { role, acceptanceProblem, narrows, decisionId: result.decisionId, usage: result.usage, recordAction: (action) => recordAction(port, result.decisionId, action) };
   },
@@ -447,7 +462,12 @@ export const unitShape: UnitShape = {
       const { role, narrows, acceptanceProblem } = await unitShape.read(port, entry.input, run);
       const checks: FixtureCheck[] = entry.expect.role === undefined ? [] : [checkReading(entry.name, 'role', entry.expect.role, role)];
       if (entry.expect.acceptanceProblem !== undefined) checks.push(checkReading(entry.name, 'acceptance_problem', entry.expect.acceptanceProblem, acceptanceProblem));
-      for (const { id, reading } of narrows) checks.push(checkReading(entry.name, `narrows ${id}`, entry.expect.narrows![id]!, reading, 'narrows'));
+      for (const { id, reading, hostCovered } of narrows) {
+        const expected = entry.expect.narrows![id]!;
+        if (hostCovered?.verdict === 'yes' && hostCovered.outcome === 'act')
+          checks.push(checkReading(entry.name, `host ${id}`, expected === 'no' ? 'yes' : 'no', hostCovered, 'host'));
+        else checks.push(checkReading(entry.name, `narrows ${id}`, expected, reading, 'narrows'));
+      }
       return checks;
     }),
 };

@@ -9,7 +9,7 @@ import type { Question } from '@goodvibes-jev/judgment';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { quoteLayout } from '../../sdk/src/platform/contract/batteries/plan-coverage.js';
-import { EXCLUDED_TOPOLOGY_REASON, readCriterionDispositions, runPlanChecks, SESSION_MODE_REASON, unitShapeState } from '../../sdk/src/platform/contract/plan-checks.js';
+import { EXCLUDED_TOPOLOGY_REASON, readCriterionDispositions, runPlanChecks, runUnitShapeChecks, SESSION_MODE_REASON, unitShapeState } from '../../sdk/src/platform/contract/plan-checks.js';
 import type { PlanProblemCode } from '../../sdk/src/platform/contract/plan-schema.js';
 import { ASK, asPlan, planningPort, shapeOf, unitTitleOf, validPlan, type AnswerContext } from './plan-support.js';
 
@@ -71,7 +71,7 @@ test('the checks ask about the right states', async () => {
   // The requirement rides in its own narrows question, not in the state.
   expect(unitState['criteria']).toBeUndefined();
   const unitRequest = fake.requests.find((request) => unitTitleOf(request.state as Record<string, unknown>) === 'CSV parser')!;
-  expect(Object.keys(unitRequest.questions)).toEqual(['role', 'acceptance_problem', 'narrows_c1']);
+  expect(Object.keys(unitRequest.questions)).toEqual(['role', 'acceptance_problem', 'host_c1', 'narrows_c1']);
   expect(fieldOf(unitRequest.questions['narrows_c1']!, 'requirement')).toBe('A CSV parser with unit tests exists');
   const coverageRequest = fake.requests.find((request) => request.context?.site === 'contract.plan-checks.plan-coverage')!;
   expect(Object.entries(coverageRequest.questions).map(([name, question]) => [name, fieldOf(question, 'words')])).toEqual([
@@ -88,6 +88,17 @@ test('circular or inseparable derived acceptance requires plan repair before exe
   const verdict = await check(({ name, state }) => name === 'acceptance_problem' && unitTitleOf(state) === 'CSV parser' ? noulAnswer(0.98) : undefined);
   expect(problemCodes(verdict, 'not-checkable')).toEqual(['u1']);
   expect(verdict.problems[0]!.message).toContain('Preserve all original requirements');
+});
+
+test('established host responsibility covers a native-check requirement without pretending work passed', async () => {
+  const plan = validPlan();
+  plan.criteria[0]!.text = 'Have native Jev validate the plan and each unit result';
+  for (const established of [true, false]) {
+    install(({ name }) => name === 'host_c1' ? noulAnswer(established ? 0.98 : 0.6)
+      : name === 'narrows_c1' ? noulAnswer(0.9) : undefined);
+    const result = await runUnitShapeChecks(asPlan(plan));
+    expect(result.problems.some(problem => problem.code === 'narrows' && problem.targetId === 'u1')).toBe(!established);
+  }
 });
 
 describe('criterion-trace: fidelity follows the supported relation', () => {
@@ -312,7 +323,7 @@ describe('unit-shape', () => {
       name.startsWith('narrows_') && fieldOf(question, 'requirement') === 'A JSON formatter with unit tests exists' ? noulAnswer(0.8) : undefined);
     const verdict = await runPlanChecks(asPlan(plan), ASK, shapeOf());
     const wire = fake.requests.find((request) => unitTitleOf(request.state as Record<string, unknown>) === 'Wire convert')!;
-    expect(Object.keys(wire.questions)).toEqual(['role', 'acceptance_problem', 'narrows_c1', 'narrows_c2', 'narrows_c3']);
+    expect(Object.keys(wire.questions)).toEqual(['role', 'acceptance_problem', 'host_c1', 'narrows_c1', 'host_c2', 'narrows_c2', 'host_c3', 'narrows_c3']);
     expect(problemCodes(verdict, 'narrows')).toEqual(['u2', 'u3']);
     expect(verdict.problems.at(-1)!.message).toContain('contract criterion c2 (');
     expect(verdict.problems.at(-1)!.message).not.toContain('c1 (');
