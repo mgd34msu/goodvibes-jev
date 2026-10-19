@@ -1,0 +1,559 @@
+import { JudgmentError, mapLimit } from '@goodvibes-jev/judgment';
+import { snapshotJudgmentEvidence } from '../../gate/judgment-input.js';
+import { captureStrictJudgmentJson } from '../../gate/judgment-result.js';
+import { verificationEvidence, verificationIntegration, verificationRequirement, verificationScope, verificationSource, verificationRepairs, verificationAudit } from './batteries.js';
+import { VERIFICATION_FRAME_CHARACTERS, VERIFICATION_OVERVIEW_CHARACTERS, verificationFrames, verificationHash, verificationSources, verificationWireSource } from './source.js';
+import { VerificationStore } from './store.js';
+import { VerificationHeldError, VerificationSubdivisionError, type VerificationAccess, type VerificationReceipt, type VerificationRequirement, type VerificationSource, type VerificationSummary, type VerificationWriter } from './types.js';
+import type { CompletionFinding } from '../response-completion-findings.js';
+
+const clean = (readings: Readonly<Record<string, { verdict: string; outcome: string }>>) => Object.values(readings).every(reading => reading.verdict === 'no' && reading.outcome === 'act');
+const bounded = (value: unknown, limit: number) => JSON.stringify(value).length <= limit;
+const readingEvidence = (readings: Readonly<Record<string, { verdict: string; outcome: string }>>) =>
+  Object.fromEntries(Object.entries(readings).map(([aspect, reading]) => [aspect, { verdict: reading.verdict, outcome: reading.outcome }]));
+class VerificationDeferredError extends Error {}
+const parse = (text: string): Record<string, unknown> => {
+  const value: unknown = JSON.parse(text);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected one JSON object');
+  return snapshotJudgmentEvidence(value) as Record<string, unknown>;
+};
+function summary(value: Record<string, unknown>, ids: Set<string>, limit: number): VerificationSummary {
+  if (!bounded(value, limit)) throw new Error('Evidence proposal exceeds maxCharacters');
+  const facts = (input: unknown) => {
+    if (!Array.isArray(input)) throw new Error('Expected facts and concerns arrays');
+    return input.map((fact: unknown) => {
+      if (!fact || typeof fact !== 'object') throw new Error('Expected a cited fact');
+      const entry = fact as { text?: unknown; sources?: unknown };
+      if (typeof entry.text !== 'string' || !entry.text.trim() || !Array.isArray(entry.sources) || !entry.sources.length
+        || !entry.sources.every(id => typeof id === 'string' && ids.has(id))) throw new Error('Fact needs known supporting citations');
+      return { text: entry.text, sources: entry.sources as string[] };
+    });
+  };
+  return { facts: facts(value.facts), concerns: facts(value.concerns) };
+}
+function requirements(value: Record<string, unknown>, ids: Set<string>): VerificationRequirement[] {
+  if (!bounded(value, 8_000) || !Array.isArray(value.requirements) || !value.requirements.length) throw new Error('Expected a bounded nonempty requirement ledger');
+  return value.requirements.map((raw: unknown) => {
+    const item = raw as { text?: unknown; sources?: unknown } | null;
+    if (!item || typeof item.text !== 'string' || !item.text.trim() || !Array.isArray(item.sources) || !item.sources.length
+      || !item.sources.every(id => typeof id === 'string' && ids.has(id))) throw new Error('Requirement needs original instruction citations');
+    return { id: `requirement-${verificationHash(item).slice(0, 16)}`, text: item.text, sources: item.sources as string[] };
+  });
+}
+
+/** Source reduction is a checked intermediate operation, never a completion
+ * permit. Only this process's current Jev identity can qualify cached records. */
+export class CompletionVerification {
+  private readonly qualified = new WeakMap<object, Map<string, unknown>>();
+  private readonly nodes = new Map<string, VerificationReceipt>();
+  private readonly originals = new Map<string, VerificationSource>();
+  private readonly sourceOrder = new Map<string, number>();
+  private previousSources: { identity: object; request: string; ids: Set<string> } | undefined;
+  private finalEvidence: { key: string; identity: object; frontier: VerificationReceipt[]; seen: Set<string>; opened: readonly VerificationSource[]; earlier: VerificationReceipt[] } | undefined;
+  constructor(private readonly writer: VerificationWriter, readonly store = new VerificationStore()) {}
+
+  private options(access: VerificationAccess) { return { ...(access.signal ? { signal: access.signal } : {}), beforeAttempt: access.assertCurrent, ...(access.onRetry ? { onRetry: access.onRetry } : {}) }; }
+  private cache(access: VerificationAccess): Map<string, unknown> {
+    let cache = this.qualified.get(access.identity);
+    if (!cache) { cache = new Map(); this.qualified.set(access.identity, cache); }
+    return cache;
+  }
+  private async proposal<T>(operation: Parameters<VerificationWriter>[0]['operation'], context: unknown, key: string,
+    access: VerificationAccess, admit: (value: Record<string, unknown>) => T,
+    qualify: (proposed: T) => Promise<unknown | null>): Promise<T> {
+    access.assertCurrent();
+    const cache = this.cache(access);
+    if (cache.has(key)) return cache.get(key) as T;
+    let candidate = this.store.proposals.get(key), repair: unknown = null, attempts = 0;
+    for (;;) {
+      access.signal?.throwIfAborted(); access.assertCurrent();
+      if (candidate === undefined) {
+        if ((operation === 'evidence' || operation === 'merge') && attempts >= 2) throw new VerificationSubdivisionError();
+        try { candidate = await this.writer({ operation, context, repair, signal: access.signal, assertCurrent: access.assertCurrent }); }
+        catch (error) { access.assertCurrent(); throw new VerificationHeldError('private proposal provider', { cause: error }); }
+      }
+      attempts++;
+      let proposed: T;
+      try { proposed = admit(parse(candidate)); }
+      catch { candidate = undefined; repair = { problem: 'The proposal is not admissible JSON with the required bounded schema and known citations. Use the supplied evidence and schema.' }; continue; }
+      // Checkpoint only a schema/privacy-admitted proposal. Disk never grants
+      // authority: a resumed attempt still has to qualify it with current Jev.
+      this.store.rememberProposal(key, candidate);
+      const defects = await qualify(proposed);
+      access.assertCurrent();
+      if (defects === null) {
+        const captured = snapshotJudgmentEvidence(proposed) as T;
+        this.store.rememberProposal(key, candidate); cache.set(key, captured); return captured;
+      }
+      repair = { previous: proposed, defects, instruction: 'Repair this evidence proposal against the same sources. Do not redo the underlying user task or invent new requirements.' };
+      candidate = undefined;
+      // Yield even for synchronous embedded providers; cancellation and the UI
+      // must remain responsive while a verifier proposal is being repaired.
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  }
+
+  private async ledger(instructions: readonly VerificationSource[], access: VerificationAccess): Promise<VerificationRequirement[]> {
+    // Large instruction histories are reduced with the same source qualification
+    // as observations, then the ledger is audited against EVERY original page.
+    const pages = verificationFrames(instructions, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length);
+    const source = pages.length <= 1 ? instructions.map(verificationWireSource) : (await this.evidenceTree(instructions, [], access)).map(node => this.compactNode(node));
+    const context = { sources: source, currentRequest: instructions.filter(entry => entry.reference.startsWith('current user request')),
+      granularity: 'Use independently checkable obligations: performed work and delivery of its artifact are separate requirements. Preserve explicit scope and constraints; do not turn a full-codebase request into only representative subsystem sampling or add exhaustive runtime testing unless requested.' };
+    const key = verificationHash(['scope-v1', context]);
+    return this.proposal('requirements', context, key, access, value => requirements(value, new Set([...instructions.map(entry => entry.id), ...source.map(entry => entry.id)])), async proposed => {
+      const runs = await mapLimit(pages, 3, async sources => {
+        const run = await verificationScope.run(access.port, { sources: sources.map(verificationWireSource), instructionOverview: source, proposed, instruction: 'Check omissions against this original page; assess invented scope against the COMPLETE instruction overview. Other original pages may support other ledger items. Do not require one page to prove all work.' } as never,
+          { ...this.options(access), site: verificationScope.name });
+        run.recordAction(clean(run.readings) ? 'Qualify this scope page only; no completion authority.' : 'Repair the private requirement proposal against this original page.');
+        return clean(run.readings) ? null : { sources, readings: readingEvidence(run.readings) };
+      });
+      return runs.every(run => run === null) ? null : runs.filter(Boolean);
+    });
+  }
+
+  private async node(sources: readonly (VerificationSource | VerificationReceipt)[], scope: readonly VerificationRequirement[], access: VerificationAccess, focusedRequirement?: VerificationRequirement): Promise<VerificationReceipt> {
+    const children = sources.map(source => source.id), wireSources = sources.map(source => 'text' in source ? verificationWireSource(source) : source);
+    // Facts describe these sources, not whether the CURRENT task is complete.
+    // Changing a request must rerun its requirement checks, without rewriting
+    // unchanged source records to fit a different task interpretation.
+    const context = { requirements: [] as readonly VerificationRequirement[], sources: wireSources, ...(focusedRequirement ? { focusedRequirement } : {}),
+      maxCharacters: focusedRequirement ? 6_000 : Math.min(8_000, Math.max(2_400, Math.floor(JSON.stringify(wireSources).length * .4))) };
+    const key = verificationHash(['evidence-v1', context]);
+    const previousKey = verificationHash(['evidence-v1', { ...context, requirements: scope }]);
+    const previous = this.store.proposals.get(previousKey);
+    if (!this.store.proposals.has(key) && previous !== undefined) this.store.rememberProposal(key, previous);
+    const operation = sources.some(source => 'summary' in source) ? 'merge' : 'evidence';
+    const proposed = await this.proposal(operation, context, key, access, value => summary(value, new Set(children), context.maxCharacters), async proposed => {
+      const run = await verificationEvidence.run(access.port, { ...context, proposed } as never, { ...this.options(access), site: verificationEvidence.name });
+      const accepted = clean(run.readings);
+      run.recordAction(accepted ? 'Qualify only this evidence reduction against its complete identified children; retain originals for retrieval.' : 'Repair this private evidence reduction without asking the working model to repeat its task.');
+      if (accepted) return null;
+      // Broad uncertainty is not a defect and should not trigger another draft.
+      // Resolve it with smaller semantic questions over the SAME proposal:
+      // completeness per source; support and provenance per cited assertion.
+      const jobs: { aspect: keyof typeof verificationEvidence.items; target: string; state: unknown }[] = [];
+      if (run.readings.omission.verdict !== 'no' || run.readings.omission.outcome !== 'act') {
+        for (const source of context.sources) jobs.push({ aspect: 'omission', target: source.id, state: { requirements: [], ...(focusedRequirement ? { focusedRequirement } : {}), sources: [source], proposed,
+          focus: 'Judge preservation of material facts in THIS source only. Other proposal facts may cite other source pages. Do not require the source to independently finish the task.' } });
+      }
+      for (const aspect of ['unsupported', 'provenance'] as const) {
+        if (run.readings[aspect].verdict === 'no' && run.readings[aspect].outcome === 'act') continue;
+        for (const [kind, facts] of [['facts', proposed.facts], ['concerns', proposed.concerns]] as const) for (const [index, fact] of facts.entries()) jobs.push({ aspect, target: `${kind}[${index}]`,
+          state: { requirements: [], sources: context.sources.filter(source => fact.sources.includes(source.id)),
+            proposed: { facts: kind === 'facts' ? [fact] : [], concerns: kind === 'concerns' ? [fact] : [] },
+            focus: 'Judge ONLY this single cited assertion against its cited original sources, including its expressed uncertainty. Native citations preserve original identity and boundaries.' } });
+      }
+      const defects = await mapLimit(jobs, 3, async job => {
+        const key = verificationHash(['atomic-evidence-v1', job]);
+        const cache = this.cache(access);
+        if (cache.has(key)) return null;
+        const check = await verificationEvidence.run(access.port, job.state as never, { ...this.options(access), only: [job.aspect], site: verificationEvidence.name });
+        const reading = check.readings[job.aspect];
+        const accepted = reading.verdict === 'no' && reading.outcome === 'act';
+        check.recordAction(accepted ? `Qualify this source/assertion ${job.aspect} only; no completion authority.` : `Retain this specific ${job.aspect} source/assertion for private proposal repair.`);
+        access.assertCurrent();
+        if (accepted) { cache.set(key, true); return null; }
+        // Original context and previous proposal are already supplied once.
+        // Do not duplicate whole source/proposal bodies for every failed item.
+        return { aspect: job.aspect, target: job.target, reading: { verdict: reading.verdict, outcome: reading.outcome } };
+      });
+      return defects.every(defect => defect === null) ? null : defects.filter(Boolean);
+    });
+    const receipt: VerificationReceipt = { id: `e-${key.slice(0, 24)}`, summary: proposed, children, representation: 'jev-qualified',
+      sourceIds: sources.flatMap(source => 'sourceIds' in source ? source.sourceIds : [source.id]) };
+    this.nodes.set(receipt.id, receipt); return receipt;
+  }
+
+  private async page(sources: readonly VerificationSource[], scope: readonly VerificationRequirement[], access: VerificationAccess): Promise<VerificationReceipt[]> {
+    if (sources.length === 1 && sources[0]!.text.length <= 1024) {
+      // This is the exact original, not a semantic reduction or an approval.
+      // Native equality preserves every code unit; Jev still must evaluate the
+      // requirement, solution quality, integration and final response.
+      const source = sources[0]!, receipt: VerificationReceipt = { id: `e-original-${source.id}`, representation: 'exact-original',
+        summary: { facts: [{ text: `Exact quoted ${source.kind} source (${source.reference}):\n${source.text}`, sources: [source.id] }], concerns: [] },
+        children: [source.id], sourceIds: [source.id] };
+      this.nodes.set(receipt.id, receipt); return [receipt];
+    }
+    try { return [await this.node(sources, scope, access)]; }
+    catch (error) {
+      access.assertCurrent();
+      if (error instanceof VerificationSubdivisionError) {
+        // A hard-to-reduce observation does not need an exponential tree of
+        // new drafts. Keep its exact text in bounded children instead. Later
+        // Jev requirement/quality checks still have to inspect and accept it.
+        const retained: VerificationReceipt[] = [];
+        for (const source of sources) for (let offset = 0; offset < source.text.length; offset += 5_000) {
+          const text = source.text.slice(offset, offset + 5_000);
+          const original = { ...source, completeMessage: !!source.completeMessage && offset === 0 && text.length === source.text.length,
+            id: `s-${verificationHash([source.id, offset, text]).slice(0, 24)}`, reference: `${source.reference}; exact retained interval ${offset}..${offset + text.length}`, text };
+          this.originals.set(original.id, original); this.store.rememberSource(original);
+          const receipt: VerificationReceipt = { id: `e-original-${original.id}`, representation: 'exact-original',
+            summary: { facts: [{ text: `Exact quoted ${original.kind} source (${original.reference}):\n${text}`, sources: [original.id] }], concerns: [] }, children: [original.id], sourceIds: [original.id] };
+          this.nodes.set(receipt.id, receipt); retained.push(receipt);
+        }
+        return retained;
+      }
+      if (!(error instanceof VerificationSubdivisionError) && (!(error instanceof JudgmentError) || (error.kind !== 'rejected' && error.kind !== 'invalid-request'))) throw error;
+      // Native request recovery: split the SAME source, keeping every interval.
+      // No rejected transport request becomes a finding against the user's work.
+      if (sources.length > 1) {
+        const middle = Math.ceil(sources.length / 2);
+        return [...await this.page(sources.slice(0, middle), scope, access), ...await this.page(sources.slice(middle), scope, access)];
+      }
+      const original = sources[0];
+      if (!original || original.text.length < 1024) throw new VerificationHeldError('minimum source frame', { cause: error });
+      const middle = Math.ceil(original.text.length / 2);
+      const parts = [original.text.slice(0, middle), original.text.slice(middle)].map((text, index) => ({ ...original,
+        reference: `${original.reference}; native subdivision ${index + 1}/2`, completeMessage: false, text,
+        id: `s-${verificationHash([original.id, index, text]).slice(0, 24)}` }));
+      parts.forEach(part => { this.originals.set(part.id, part); this.store.rememberSource(part); });
+      return [...await this.page(parts.slice(0, 1), scope, access), ...await this.page(parts.slice(1), scope, access)];
+    }
+  }
+
+  private compactNode(node: VerificationReceipt) { return { id: node.id, summary: node.summary, ...(node.representation ? { representation: node.representation } : {}) }; }
+  private async merge(children: readonly VerificationReceipt[], scope: readonly VerificationRequirement[], access: VerificationAccess): Promise<VerificationReceipt[]> {
+    if (children.length === 1) return [...children];
+    const wire = children.map(child => ({ ...this.compactNode(child), children: [], sourceIds: [] }));
+    try {
+      const parent = await this.node(wire, scope, access);
+      const retained = { ...parent, children: children.map(child => child.id), sourceIds: children.flatMap(child => child.sourceIds) };
+      this.nodes.set(retained.id, retained); return [retained];
+    } catch (error) {
+      access.assertCurrent();
+      if (!(error instanceof VerificationSubdivisionError) && (!(error instanceof JudgmentError) || (error.kind !== 'rejected' && error.kind !== 'invalid-request'))) throw error;
+      const middle = Math.ceil(children.length / 2);
+      return [...await this.merge(children.slice(0, middle), scope, access), ...await this.merge(children.slice(middle), scope, access)];
+    }
+  }
+  private async evidenceTree(sources: readonly VerificationSource[], scope: readonly VerificationRequirement[], access: VerificationAccess): Promise<VerificationReceipt[]> {
+    const pages = verificationFrames(sources, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length);
+    let nodes = (await mapLimit(pages, 3, page => this.page(page, scope, access))).flat();
+    while (!bounded(nodes.map(node => this.compactNode(node)), VERIFICATION_OVERVIEW_CHARACTERS)) {
+      // Only bounded summaries go over the wire. Full child/source ID sets stay
+      // local, avoiding a growing duplicate index in every parent request.
+      const groups = verificationFrames(nodes.map(node => this.compactNode(node)), 18_000);
+      const next = (await mapLimit(groups, 3, async group => {
+        const children = group.map(item => this.nodes.get(item.id)!);
+        return this.merge(children, scope, access);
+      })).flat();
+      if (JSON.stringify(next.map(node => this.compactNode(node))).length >= JSON.stringify(nodes.map(node => this.compactNode(node))).length)
+        throw new VerificationHeldError('nonreducing evidence merge');
+      nodes = next;
+    }
+    return nodes;
+  }
+
+  /** A deterministic retrieval index never asserts that work was performed.
+   * Large sessions open relevant originals first, rather than writing hundreds
+   * of private summaries before they can inspect the requested deliverable. */
+  private sourceIndex(sources: readonly VerificationSource[]): VerificationReceipt[] {
+    const describe = (source: VerificationSource) => ({ referencePreviewOnly: source.reference.slice(0, 240),
+      executionPreviewOnly: source.execution ? JSON.stringify(source.execution).slice(0, 320) : null,
+      previewOnly: { beginning: source.text.slice(0, 100), end: source.text.length > 100 ? source.text.slice(-100) : '' } });
+    let nodes = verificationFrames(sources, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length).map(page => {
+      const id = `index-${verificationHash(page.map(source => source.id)).slice(0, 24)}`;
+      const receipt: VerificationReceipt = { id, representation: 'source-index', children: [], sourceIds: page.map(source => source.id),
+        summary: { facts: [{ text: JSON.stringify({ meaning: 'RETRIEVAL INDEX ONLY. Previews cannot prove completion or source contents. Open exact originals before judging.',
+          locationPreviewsOnly: [...new Set(page.flatMap(source => source.text.match(/[\w./-]+/g) ?? []).filter(path => /\.(?:md|zip|tsx?|jsonl?)$/.test(path)))].slice(0, 8).map(path => path.slice(0, 96)),
+          first: describe(page[0]!), last: describe(page.at(-1)!) }), sources: [] }], concerns: [] } };
+      this.nodes.set(id, receipt); return receipt;
+    }).reverse();
+    while (!bounded(nodes.map(node => this.compactNode(node)), VERIFICATION_OVERVIEW_CHARACTERS)) {
+      nodes = verificationFrames(nodes, 8_000, node => JSON.stringify(this.compactNode(node)).length).map(group => {
+        const id = `index-${verificationHash(group.map(node => node.id)).slice(0, 24)}`;
+        const receipt: VerificationReceipt = { id, representation: 'source-index', children: group.map(node => node.id), sourceIds: group.flatMap(node => node.sourceIds),
+          summary: { facts: [{ text: `RETRIEVAL INDEX ONLY; ordered most recent first. First indexed interval: ${group[0]!.summary.facts[0]!.text.slice(0, 900)} Last indexed interval: ${group.at(-1)!.summary.facts[0]!.text.slice(0, 900)}`, sources: [] }], concerns: [] } };
+        this.nodes.set(id, receipt); return receipt;
+      });
+    }
+    return nodes;
+  }
+
+  private async audit(requirement: VerificationRequirement, caseEvidence: unknown, sources: readonly VerificationSource[], access: VerificationAccess): Promise<VerificationSource[][]> {
+    const pages = verificationFrames(sources, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length);
+    const checks = await mapLimit(pages, 3, async page => {
+      const context = { requirement, caseEvidence, sources: page.map(verificationWireSource) };
+      const key = verificationHash(['source-audit-v1', context]), cache = this.cache(access);
+      if (cache.has(key)) return cache.get(key) ? null : page;
+      const run = await verificationAudit.run(access.port, context as never, { ...this.options(access), site: verificationAudit.name });
+      const accepted = clean(run.readings);
+      run.recordAction(accepted ? 'This complete original page has no unaccounted material counterevidence; final publication remains gated.' : 'Retrieve this exact original page before accepting the provisional requirement conclusion.');
+      access.assertCurrent(); cache.set(key, accepted);
+      return accepted ? null : page;
+    });
+    return checks.filter((page): page is VerificationSource[] => page !== null);
+  }
+
+  private async caseMemory(sources: readonly (VerificationSource | VerificationReceipt)[], requirement: VerificationRequirement, access: VerificationAccess): Promise<VerificationReceipt[]> {
+    try { return [await this.node(sources, [requirement], access, requirement)]; }
+    catch (error) {
+      access.assertCurrent();
+      if (!(error instanceof VerificationSubdivisionError) && (!(error instanceof JudgmentError) || (error.kind !== 'rejected' && error.kind !== 'invalid-request'))) throw error;
+      // An irreducible case record is retained as explicitly unqualified source
+      // locations, not retried forever or treated as evidence of success.
+      const originals = [...new Map(sources.flatMap(source => 'text' in source ? [source] : source.sourceIds.map(id => this.originals.get(id)!)).map(source => [source.id, source])).values()];
+      return this.sourceIndex(originals);
+    }
+  }
+
+  private async inspect(requirement: VerificationRequirement, ledger: readonly VerificationRequirement[], overview: readonly VerificationReceipt[], response: unknown, access: VerificationAccess, auditSources?: readonly VerificationSource[], defer = () => false, recent: readonly VerificationSource[] = [], previousReview: unknown = null) {
+    let frontier = [...overview];
+    let opened: { sources: readonly VerificationSource[]; earlier: readonly { id: string; summary: VerificationSummary }[] } = { sources: recent, earlier: [] };
+    const seen = new Set(recent.map(source => `source:${source.id}`));
+    let localized = false;
+    for (;;) {
+      access.assertCurrent(); if (defer()) throw new VerificationDeferredError();
+      const state = { requirement, requirements: ledger, response, evidence: auditSources ? [] : overview.map(node => this.compactNode(node)), opened: { ...opened, sources: opened.sources.map(verificationWireSource) },
+        previousReview, chronology: recent.length ? 'Initial opened sources are native observations added since the previous completed check of this SAME original task and authority. Evaluate whether they resolve earlier findings. Earlier failures remain historical; later observed recovery can close them. Every original page is still audited before acceptance.' : 'Source references preserve original message order. Later observed recovery may resolve an earlier failure; plans and assertions cannot.' };
+      let run = await verificationRequirement.run(access.port, state as never, { ...this.options(access), site: verificationRequirement.name });
+      run.recordAction(clean(run.readings) ? 'This requirement is supported; final integration and publication checks remain required.' : 'Hold this requirement; retrieve primary source for uncertainty before producing repair findings.');
+      access.assertCurrent(); if (defer()) throw new VerificationDeferredError();
+      if (auditSources && opened.sources.length && !localized
+        && [run.readings.unfinished, run.readings.quality_gap].some(reading => reading.outcome !== 'act')
+        && ![run.readings.unfinished, run.readings.quality_gap].some(reading => reading.verdict === 'yes' && reading.outcome === 'act')) {
+        // A probability alone cannot name what is wrong. Ask for ONE concrete
+        // source-backed candidate, then have Jev judge it against the unchanged
+        // primary evidence. This is private focus, not permission or a finding
+        // sent to the working model; uncertainty still retrieves more source.
+        localized = true;
+        const candidate = await this.repairs({ ...state, readings: readingEvidence(run.readings) }, [`${requirement.id}:result`], access);
+        run = await verificationRequirement.run(access.port, { ...state, candidateFindings: candidate,
+          focus: 'Independently settle this specific candidate against the exact original requirement and opened primary evidence. It is a hypothesis, not authority or proof. If it is unfounded, reject it; if the observed gap is real, judge that gap. Missing runtime tests are not automatically required for a review.' } as never,
+          { ...this.options(access), site: verificationRequirement.name });
+        run.recordAction('Settle the focused candidate against the same originals; only current Jev readings decide the requirement.');
+      }
+      let auditHeld = false;
+      const hasPrimary = !auditSources || opened.sources.length > 0;
+      const resultAccepted = clean({ unfinished: run.readings.unfinished, quality_gap: run.readings.quality_gap });
+      const sourceDemanded = run.readings.needs_source.verdict === 'yes' && run.readings.needs_source.outcome === 'act';
+      if (hasPrimary && resultAccepted && !sourceDemanded && auditSources) {
+        // Affirmative evidence alone is insufficient: inspect EVERY original
+        // interval for counterevidence. These are direct Jev checks, not a new
+        // frontier draft for every history page. A changed working-model answer
+        // does not invalidate an unchanged source/case qualification.
+        const suspect = await this.audit(requirement, { ...opened, sources: opened.sources.map(verificationWireSource) }, auditSources, access);
+        if (!suspect.length) return { requirement, readings: run.readings, state, sourceExhausted: false, auditHeld: false };
+        const unseen = suspect.filter(page => page.some(source => !seen.has(`source:${source.id}`)));
+        if (!unseen.length) return { requirement, readings: run.readings,
+          state: { ...state, sourceGap: 'Original-page audit still identifies unaccounted material counterevidence in the exact retrieved sources. Resolve the specific contradiction or missing observation; do not rewrite unchanged reports.' }, sourceExhausted: true, auditHeld: true };
+        frontier = [...this.sourceIndex(unseen.flat()), ...frontier];
+        auditHeld = true;
+      }
+      if (hasPrimary && !auditHeld && run.readings.needs_source.verdict === 'no' && run.readings.needs_source.outcome === 'act') return { requirement, readings: run.readings, state, sourceExhausted: false, auditHeld: false };
+      if (hasPrimary && [run.readings.unfinished, run.readings.quality_gap].some(reading => reading.verdict === 'yes' && reading.outcome === 'act'))
+        return { requirement, readings: run.readings, state, sourceExhausted: false, auditHeld: false };
+      for (;;) {
+        access.assertCurrent(); if (defer()) throw new VerificationDeferredError();
+        const candidates = [...new Map(frontier.filter(node => !seen.has(node.id)).map(node => [node.id, node])).values()].map(node => ({ id: node.id, content: this.compactNode(node) }));
+        // Retrieval is a routing decision, not another acceptance criterion.
+        // Once all originals have been inspected, an uncertain desire for more
+        // source cannot send a Jev-accepted result back for pointless repairs.
+        if (!candidates.length && resultAccepted && !sourceDemanded && !auditHeld && !auditSources)
+          return { requirement, readings: run.readings, state, sourceExhausted: false, auditHeld: false };
+        if (!candidates.length) return { requirement, readings: run.readings, state: { ...state,
+          sourceGap: 'All retained source branches were inspected. Name the specific missing admissible observation needed for this requirement; obtain that evidence with tools instead of rewriting the same report.' }, sourceExhausted: true, auditHeld };
+        const selection = await verificationSource.select(access.port, { requirement, readings: readingEvidence(run.readings), opened: { ...opened, sources: opened.sources.map(verificationWireSource) } } as never, candidates as never,
+          { ...this.options(access), site: verificationSource.name });
+        selection.recordAction('Select an existing evidence branch for native retrieval; this does not approve completion.');
+        const selected = candidates.find(candidate => candidate.id === selection.pick.choice) ?? candidates[0]!;
+        // Choosing which already-admitted local evidence to inspect is harmless.
+        // An uncertain fit can never approve completion, but must not prevent us
+        // from opening that candidate and obtaining a decisive primary reading.
+        seen.add(selected.id);
+        const node = this.nodes.get(selected.id)!;
+        const children = node.children.map(id => this.nodes.get(id)).filter((entry): entry is VerificationReceipt => !!entry);
+        if (children.length) { frontier = [...children, ...frontier.filter(entry => entry.id !== node.id)]; continue; }
+        else {
+          const sources = node.sourceIds.map(id => this.originals.get(id)!);
+          sources.forEach(source => seen.add(`source:${source.id}`));
+          // The leaf was built from a bounded frame; inspect its ORIGINAL middle,
+          // not just its summary. Retain prior retrieval as a checked case record
+          // so a later opening cannot forget evidence needed for this requirement.
+          const prior = opened.sources.length ? await this.caseMemory(opened.sources, requirement, access) : [];
+          let earlier = [...opened.earlier, ...prior.map(node => this.compactNode(node))];
+          if (!bounded(earlier, 8_000)) {
+            const merged = await this.caseMemory(earlier.map(item => this.nodes.get(item.id)!), requirement, access);
+            earlier = merged.map(node => this.compactNode(node));
+          }
+          opened = { sources, earlier };
+          break;
+        }
+      }
+    }
+  }
+
+  private async repairs(evidence: unknown, checks: readonly string[], access: VerificationAccess): Promise<readonly CompletionFinding[]> {
+    const context = { evidence, checks, maxCharacters: 8_000 };
+    const admit = (value: Record<string, unknown>): CompletionFinding[] => {
+      if (!bounded(value, 8_000) || !Array.isArray(value.findings) || value.findings.length !== checks.length) throw new Error('Expected one concrete repair per held check');
+      const seen = new Set<string>();
+      return value.findings.map((raw: unknown) => {
+        const finding = raw as CompletionFinding | null;
+        if (!finding || !checks.includes(finding.check) || seen.has(finding.check)
+          || ![finding.issue, finding.repair, finding.resolvedWhen, finding.passage?.reference, finding.passage?.quote].every(text => typeof text === 'string' && !!text.trim())) throw new Error('Invalid repair findings');
+        seen.add(finding.check);
+        return { check: finding.check, issue: finding.issue, repair: finding.repair, resolvedWhen: finding.resolvedWhen, passage: finding.passage! };
+      });
+    };
+    const key = verificationHash(['repairs-v1', context]);
+    let candidate = this.store.proposals.get(key), repair: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      access.assertCurrent();
+      if (candidate === undefined) {
+        try { candidate = await this.writer({ operation: 'findings', context, repair, signal: access.signal, assertCurrent: access.assertCurrent }); }
+        catch (error) { access.assertCurrent(); throw new VerificationHeldError('private finding provider', { cause: error }); }
+      }
+      let proposed: CompletionFinding[];
+      try { proposed = admit(parse(candidate)); }
+      catch { candidate = undefined; repair = { problem: 'Use exactly one concrete cited finding per supplied check ID, with the required bounded schema.' }; continue; }
+      const run = await verificationRepairs.run(access.port, { ...context, proposed } as never, { ...this.options(access), site: verificationRepairs.name });
+      run.recordAction(clean(run.readings) ? 'Return these specific checked repairs to the private working-model context.' : 'Repair the private fix list against the same scope, evidence and readings.');
+      if (clean(run.readings)) { this.store.rememberProposal(key, candidate); return proposed; }
+      if (Object.values(run.readings).every(reading => !(reading.verdict === 'yes' && reading.outcome === 'act'))) {
+        // This is private diagnostic guidance, not execution authority or a new
+        // acceptance requirement. An unsettled localization should prompt one
+        // precise investigation, not endless rewrites of the same fix list.
+        return proposed.map(finding => ({ ...finding, localization: 'candidate-to-investigate', issue: `Unresolved candidate: ${finding.issue}`,
+          repair: `First establish whether this specific concern is real from its primary sources. If supported: ${finding.repair} Discard it when disproven; do not add requirements.`,
+          resolvedWhen: `The original requirement is fulfilled and the cited concern is resolved or disproven. ${finding.resolvedWhen}` }));
+      }
+      repair = { proposed, readings: readingEvidence(run.readings), instruction: 'Remove invented or ineffective repairs. Give only the specific correction justified by the original requirement and primary evidence.' };
+      candidate = undefined;
+    }
+    const original = evidence as { requirement?: VerificationRequirement; requirements?: unknown };
+    const requirement = original.requirement?.text ?? JSON.stringify(original.requirements);
+    return checks.map(check => ({ check, issue: `Unresolved ${check} reading for original requirement: ${requirement}`,
+      repair: `Inspect the primary implementation or artifact implicated by this exact requirement and settle the reading: ${requirement}. Do not repeat unchanged report/hash/log checks, add work, or treat an uncertain reading as a proven defect.`,
+      resolvedWhen: 'Relevant primary observations establish the original requested result; disproven or irrelevant concerns are closed.',
+      passage: { reference: original.requirement?.sources.join(', ') ?? 'original requirements', quote: requirement }, localization: 'unavailable' }));
+  }
+
+  /** Final-gate ambiguity is resolved by opening primary evidence natively,
+   * before asking the working model to change its draft or redo any work. */
+  async openFinal(state: unknown, readings: unknown, access: VerificationAccess): Promise<boolean> {
+    const evidence = this.finalEvidence;
+    if (!evidence) return false;
+    for (;;) {
+      access.assertCurrent();
+      const candidates = [...new Map(evidence.frontier.filter(node => !evidence.seen.has(node.id)).map(node => [node.id, node])).values()].map(node => ({ id: node.id, content: this.compactNode(node) }));
+      if (!candidates.length) return false;
+      const labels = Object.fromEntries(Object.entries(readings as Record<string, Record<string, { verdict: string; outcome: string }> | null>).map(([aspect, values]) => [aspect, values ? readingEvidence(values) : null]));
+      const selected = await verificationSource.select(access.port, { requirement: 'Settle these held FINAL publication readings against the exact current draft and original request.', readings: labels, evidence: state } as never,
+        candidates as never, { ...this.options(access), site: verificationSource.name });
+      selected.recordAction('Open an existing original evidence branch for final publication inspection; do not revise the user task.');
+      const choice = candidates.find(candidate => candidate.id === selected.pick.choice) ?? candidates[0]!;
+      evidence.seen.add(choice.id);
+      const node = this.nodes.get(choice.id)!;
+      const children = node.children.map(id => this.nodes.get(id)).filter((entry): entry is VerificationReceipt => !!entry);
+      if (children.length) { evidence.frontier = [...children, ...evidence.frontier.filter(entry => entry.id !== node.id)]; continue; }
+      if (evidence.opened.length) {
+        const requirement: VerificationRequirement = { id: 'final-publication', text: 'Settle the exact current draft against the original request, required result, and held final publication readings.', sources: [] };
+        evidence.earlier.push(...await this.caseMemory(evidence.opened, requirement, access));
+        if (!bounded(evidence.earlier.map(node => this.compactNode(node)), 8_000)) evidence.earlier = await this.caseMemory(evidence.earlier, requirement, access);
+      }
+      evidence.opened = node.sourceIds.map(id => this.originals.get(id)!);
+      return true;
+    }
+  }
+
+  private originalMessages(sources: readonly VerificationSource[]) {
+    return sources.map(source => {
+      if (source.messageRole && source.completeMessage && typeof verificationWireSource(source).text === 'string') {
+        try {
+          const message = JSON.parse(source.text) as Record<string, unknown>;
+          if (message && message.role === source.messageRole) return { ...message, evidenceOrigin: 'exact retrieved original message', sourceReference: source.reference, sourceId: source.id };
+        } catch { /* Plain source text remains an exact identified source. */ }
+      }
+      return { role: 'system', content: { retrievedOriginalSource: verificationWireSource(source) } };
+    });
+  }
+
+  async prepare(full: Record<string, unknown>, access: VerificationAccess): Promise<{ state: Record<string, unknown>; findings: readonly CompletionFinding[] }> {
+    access.assertCurrent();
+    const sources = verificationSources(full);
+    for (const [position, source] of sources.entries()) { this.originals.set(source.id, source); this.sourceOrder.set(source.id, position); this.store.rememberSource(source); }
+    const ledger = await this.ledger(sources.filter(source => source.kind === 'instruction'), access);
+    const observations = sources.filter(source => source.kind !== 'answer');
+    const indexed = observations.reduce((total, source) => total + source.text.length, 0) > 250_000;
+    const overview = indexed ? this.sourceIndex(observations) : await this.evidenceTree(observations, ledger, access);
+    const requestKey = verificationHash(full.request), previous = this.previousSources;
+    const added = indexed && previous?.identity === access.identity && previous.request === requestKey ? observations.filter(source => !previous.ids.has(source.id) && source.kind === 'observation') : [];
+    const recent = verificationFrames(added, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length).at(-1) ?? [];
+    const rememberSources = () => { this.previousSources = { identity: access.identity, request: requestKey, ids: new Set(sources.map(source => source.id)) }; };
+    const key = verificationHash([sources.map(source => source.id), ledger, full.response, overview.map(node => this.compactNode(node))]);
+    if (this.finalEvidence?.key !== key || this.finalEvidence.identity !== access.identity)
+      this.finalEvidence = { key, identity: access.identity, frontier: [...overview], seen: new Set(), opened: [], earlier: [] };
+    const answer = bounded(full.response, 12_000) ? full.response : { proposedAnswer: (await this.evidenceTree(sources.filter(source => source.kind === 'answer'), ledger, access)).map(node => this.compactNode(node)),
+      meaning: 'Exact proposed answer checked in identified original answer pages. These are proposed claims, not evidence of performed work.' };
+    const casesKey = verificationHash(['requirement-checks-v1', ledger, overview.map(node => this.compactNode(node)), answer]);
+    const cache = this.cache(access);
+    let cases = cache.get(casesKey) as Awaited<ReturnType<CompletionVerification['inspect']>>[] | undefined;
+    if (!cases) {
+      let confirmedGap = false;
+      const pending = new Set<AbortController>();
+      const checked = await mapLimit(ledger, 3, async requirement => {
+        if (indexed && confirmedGap) return null;
+        const controller = new AbortController(); pending.add(controller);
+        const local = indexed ? { ...access, signal: access.signal ? AbortSignal.any([access.signal, controller.signal]) : controller.signal,
+          assertCurrent: () => { access.signal?.throwIfAborted(); access.assertCurrent(); if (controller.signal.aborted) throw new VerificationDeferredError(); } } : access;
+        try {
+          const entry = await this.inspect(requirement, ledger, overview, answer, local, indexed ? observations : undefined, () => indexed && confirmedGap, recent, full.previousReview ?? null);
+          if ([entry.readings.unfinished, entry.readings.quality_gap].some(reading => reading.verdict === 'yes' && reading.outcome === 'act')) {
+            confirmedGap = true;
+            if (indexed) for (const other of pending) if (other !== controller) other.abort(new VerificationDeferredError());
+          }
+          return entry;
+        } catch (error) {
+          access.signal?.throwIfAborted(); access.assertCurrent();
+          if (error instanceof VerificationDeferredError || indexed && confirmedGap && controller.signal.aborted) return null;
+          throw error;
+        } finally { pending.delete(controller); }
+      });
+      cases = checked.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+      access.assertCurrent(); cache.set(casesKey, captureStrictJudgmentJson(cases));
+    }
+    const findings: CompletionFinding[] = [];
+    const caseFindings = await mapLimit(cases, 3, async entry => {
+      const failed = Object.entries(entry.readings).filter(([name, reading]) => (name !== 'needs_source' || entry.sourceExhausted) && (reading.verdict !== 'no' || reading.outcome !== 'act'));
+      return failed.length || entry.auditHeld ? this.repairs({ ...entry.state, readings: readingEvidence(entry.readings) }, [`${entry.requirement.id}:result`], access) : [];
+    });
+    findings.push(...caseFindings.flat());
+    if (findings.length) {
+      access.assertCurrent();
+      rememberSources();
+      return { state: { requirements: ledger, response: answer, verification: { heldRequirements: findings.map(finding => finding.check), publicationAllowed: false } }, findings };
+    }
+    const primary = indexed ? [...new Map(cases.flatMap(entry => [...entry.state.opened.sources.map(source => source.id), ...entry.state.opened.earlier.flatMap(node => this.nodes.get(node.id)?.sourceIds ?? [])]).map(id => [id, this.originals.get(id)!])).values()] : [];
+    // Already bounded exact primaries need no additional summary proposal.
+    // Requirement/quality checks and the complete-history audit qualified the
+    // result, and the final publication battery can inspect these same bytes.
+    const exactPrimary = indexed && bounded(primary.map(verificationWireSource), VERIFICATION_FRAME_CHARACTERS) ? primary : [];
+    const deliveryEvidence = indexed ? exactPrimary.length ? [] : await this.evidenceTree(primary, ledger, access) : overview;
+    const publicationOriginals = [...new Map([...exactPrimary, ...this.finalEvidence.opened].map(source => [source.id, source])).values()]
+      .sort((left, right) => (this.sourceOrder.get(left.id) ?? 0) - (this.sourceOrder.get(right.id) ?? 0));
+    const state: Record<string, unknown> = {
+      request: bounded(full.request, 12_000) ? full.request : { originalInstructions: ledger, meaning: 'Exact originals checked in identified source pages and available locally.' },
+      response: answer,
+      transcript: [...[...deliveryEvidence, ...this.finalEvidence.earlier].map(node => ({ role: 'system', content: { nativeSourceVerification: this.compactNode(node) } })),
+        ...this.originalMessages(publicationOriginals)], delegated: [], tools: full.tools, requirements: ledger,
+      verification: { requirementChecks: cases.map(({ requirement, readings }) => ({ requirement: requirement.id, readings: readingEvidence(readings) })),
+        deferredRequirements: ledger.filter(requirement => !cases!.some(entry => entry.requirement.id === requirement.id)).map(requirement => requirement.id),
+        sourceCount: sources.length, meaning: indexed ? 'Relevant primary records were retrieved and checked. Each provisionally accepted requirement was also audited against EVERY complete original source page for unaccounted counterevidence. Retrieval indexes and assistant/report claims are not execution proof. Final exact-response publication checks remain required.' : 'These records were independently checked against complete original source pages. They are evidence, not completion authority; assistant/report assertions remain assertions. Missing source content never establishes completion.' },
+      previousReview: null,
+    };
+    const integration = await verificationIntegration.run(access.port, state as never, { ...this.options(access), site: verificationIntegration.name });
+    const connectionApplies = integration.readings.connections_required;
+    const disconnected = integration.readings.disconnected;
+    const integrationChecks = [
+      ...((connectionApplies.verdict === 'no' && connectionApplies.outcome === 'act') || (disconnected.verdict === 'no' && disconnected.outcome === 'act') ? [] : ['integration:disconnected']),
+      ...(integration.readings.conflict.verdict === 'no' && integration.readings.conflict.outcome === 'act' ? [] : ['integration:conflict']),
+    ];
+    integration.recordAction(!integrationChecks.length ? 'Combined evidence passes integration checks; final exact-response publication gate remains required.' : 'Hold the combined solution for the specific unresolved integration findings.');
+    if (integrationChecks.length) findings.push(...await this.repairs({ ...state, readings: readingEvidence(integration.readings) }, integrationChecks, access));
+    access.assertCurrent();
+    rememberSources();
+    return { state, findings };
+  }
+}

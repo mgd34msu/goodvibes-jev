@@ -9,6 +9,8 @@ import type { ConversationManager } from './conversation.js';
 import type { ExecutionPlan } from './execution-plan.js';
 import { ConsecutiveErrorBreaker } from './circuit-breaker.js';
 import { collectResponseDelegates, ResponseCompletionGuard, waitForResponseDelegates, waitForTaskRecovery } from './response-completion.js';
+import { createVerificationWriter } from './verification/writer.js';
+import { VerificationStore } from './verification/store.js';
 import type { CacheHitTracker } from '../providers/cache-strategy.js';
 import type { ConfigManager } from '../config/manager.js';
 import { estimateConversationTokens, estimateTokens } from './context-compaction.js';
@@ -146,7 +148,7 @@ export interface OrchestratorTurnLoopContext {
   readonly setCompletionActivity?: ((phase: 'checking' | 'waiting' | null) => void) | undefined;
   readonly runtimeBus: RuntimeEventBus | null;
   readonly agentManager: Pick<AgentManager, 'list' | 'spawn'> & Partial<Pick<AgentManager, 'getConversationSnapshot'>>;
-  readonly configManager: Pick<ConfigManager, 'get'>;
+  readonly configManager: Pick<ConfigManager, 'get'> & Partial<Pick<ConfigManager, 'getWorkingDirectory'>>;
   readonly providerRegistry: Pick<ProviderRegistry, 'require' | 'getCurrentModel' | 'getForModel' | 'getTokenLimitsForModel' | 'getContextWindowForModel' | 'recordContextWindowRejection' | 'reconcileObservedContextWindow' | 'resolveModelPricing'>;
   readonly favoritesStore?: Pick<FavoritesStore, 'recordUsage'> | undefined;
   readonly cacheHitTracker: Pick<CacheHitTracker, 'getMetrics'>;
@@ -268,7 +270,26 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
   // as exceeding the context window; a second rejection surfaces as an error.
   let contextOverflowRetried = false;
   const circuitBreaker = new ConsecutiveErrorBreaker();
-  const completionGuard = new ResponseCompletionGuard({ request: context.text, conversation: context.conversation });
+  let assertVerificationProvider: () => void | Promise<void> = assertActiveTurn;
+  const completionGuard = new ResponseCompletionGuard({ request: context.text, conversation: context.conversation,
+    verificationStore: new VerificationStore(context.configManager.getWorkingDirectory?.() ?? undefined, context.sessionId),
+    verificationWriter: createVerificationWriter({
+      route: () => ({ provider, model: model.id, reasoning: resolveTurnReasoning(model, context.configManager.get('provider.reasoningEffort'), context.sessionId) }),
+      beforeAttempt: () => assertVerificationProvider(),
+      onUsage: (response, durationMs) => {
+        context.usage.input += response.usage.inputTokens; context.usage.output += response.usage.outputTokens;
+        context.usage.cacheRead += response.usage.cacheReadTokens ?? 0; context.usage.cacheWrite += response.usage.cacheWriteTokens ?? 0;
+        if (context.runtimeBus) {
+          const pricing = context.providerRegistry.resolveModelPricing(model.id, model.provider);
+          const costUsdCents = computeUsageCostUsdCents(pricing, response.usage, model.provider);
+          emitLlmResponseReceived(context.runtimeBus, context.emitterContext(context.turnId), {
+            turnId: context.turnId, provider: model.provider, model: model.id, contentSummary: '<private evidence verification>', toolCallCount: 0,
+            ...response.usage, durationMs, ...(costUsdCents === null ? {} : { costUsdCents }), costSource: usageCostSource(pricing),
+          });
+        }
+      },
+    }),
+  });
   let completionCorrection = '';
   let continuationEvidence = context.continuationEvidence ?? '';
   const intakeAgentIds: string[] = [];
@@ -561,6 +582,13 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         throw new Error('Native session source changed before provider attempt');
     };
     const codeAuthorityForAttempt = assertCodeInjectionCurrent;
+    assertVerificationProvider = async () => {
+      if (codeAuthorityForAttempt) await revalidateProviderAttempt(codeAuthorityForAttempt);
+      assertActiveTurn();
+      if (capturedProviderSource) assertNativeProviderSource();
+      if (nativeTurn) await revalidateNativeConversationTurnScope();
+      assertActiveTurn();
+    };
     try {
       if (codeAuthorityForAttempt) await revalidateProviderAttempt(codeAuthorityForAttempt);
       response = await provider.chat({

@@ -14,6 +14,7 @@ import { executeOrchestratorTurnLoop, type OrchestratorTurnLoopContext } from '.
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { ToolRegistry } from '../sdk/src/platform/tools/registry.js';
 import { UNKNOWN_MODEL_PRICING } from '../sdk/src/platform/providers/model-pricing.js';
+import { verificationWriter } from './_helpers/verification.js';
 
 let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => { previous = installJudgmentPort(undefined); });
@@ -30,6 +31,30 @@ const answered = (failure?: string, probability = .99) => fakePort(name => noulA
 
 test('the completion battery is registered', () => {
   expect(registry.get('engine.core.response-completion')).toBeDefined();
+});
+
+test('compound claim uncertainty is settled against every exact answer passage without another model draft', async () => {
+  const fake = fakePort((name, _question, input) => noulAnswer(name === 'unsupported' && !(input as never as { nativeAnswerRange?: unknown }).nativeAnswerRange ? .4 : .01));
+  installJudgmentPort(fake.port);
+  const input = source('Inspected parser.ts. Wrote review.md. Application files were unchanged.');
+  const guard = new ResponseCompletionGuard();
+  expect(await guard.check(input)).toBeNull();
+  const atomic = fake.requests.filter(request => (request.state as never as { nativeAnswerRange?: unknown }).nativeAnswerRange);
+  expect(atomic.map(request => (request.state as never as { response: string }).response).join('')).toBe(input.response);
+  expect(atomic).toHaveLength(3);
+  expect(() => guard.beginFinalization({ content: input.response })).not.toThrow();
+});
+
+test('a false claim in one exact answer passage cannot be hidden by supported neighboring passages', async () => {
+  const fake = fakePort((name, _question, input) => {
+    const state = input as never as { nativeAnswerRange?: unknown; response: string };
+    return noulAnswer(name === 'unsupported' ? state.nativeAnswerRange ? state.response.includes('All tests passed') ? .99 : .01 : .4 : .01);
+  });
+  installJudgmentPort(fake.port);
+  const input = source('Inspected parser.ts. All tests passed. Wrote review.md.');
+  const guard = new ResponseCompletionGuard();
+  expect(await guard.check(input)).not.toBeNull();
+  expect(() => guard.beginFinalization({ content: input.response })).toThrow();
 });
 
 test('Jev findings identify the exact rejected passage and remain private revision context', async () => {
@@ -141,11 +166,11 @@ test('projected observations remain bound to their original values through final
   }
 });
 
-test('budgeted evidence cannot hide a changed omitted observation from the final publication fence', async () => {
-  const fake = answered(); installJudgmentPort(fake.port);
+test('hierarchical evidence cannot hide a changed original observation from the final publication fence', async () => {
+  const fake = fakePort((name, question) => question.type === 'choice' ? choiceAnswer(question, Object.keys(question.criteria)[0]!, .99) : noulAnswer(name.startsWith('fits_') ? .99 : .01)); installJudgmentPort(fake.port);
   const input = source('The review is saved.');
   for (let index = 0; index < 20; index++) input.conversation.addToolResults([{ callId: `source-${index}`, success: true, output: 'Observed source text. '.repeat(4_000) }]);
-  const guard = new ResponseCompletionGuard({ request: input.request, conversation: input.conversation });
+  const guard = new ResponseCompletionGuard({ request: input.request, conversation: input.conversation, verificationWriter });
   expect(await guard.check(input)).toBeNull();
   const changed = { messages: input.conversation.getMessageSnapshot().map(message => message.role === 'tool' && message.callId === 'source-0'
     ? { ...message, content: 'The original observation changed after validation.' } : message) };

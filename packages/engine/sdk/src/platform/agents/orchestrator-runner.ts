@@ -16,6 +16,8 @@ import type { ToolRegistry } from '../tools/registry.js';
 import { logger } from '../utils/logger.js';
 import { CIRCUIT_BREAKER_TRIPPED, ConsecutiveErrorBreaker } from '../core/circuit-breaker.js';
 import { collectResponseDelegates, ResponseCompletionGuard, ResponseCompletionError } from '../core/response-completion.js';
+import { createVerificationWriter } from '../core/verification/writer.js';
+import { VerificationStore } from '../core/verification/store.js';
 import { isBillingOrCreditError, isRateLimitOrQuotaError, isContextSizeExceededError, isNetworkTransportError } from '../types/errors.js';
 import { AgentSession } from './session.js';
 import {
@@ -26,7 +28,7 @@ import {
 import type { AgentRecord } from '../tools/agent/index.js';
 import type { LLMProvider, StreamDelta } from '../providers/interface.js';
 import type { ToolResult } from '../types/tools.js';
-import { emitCommunicationConsumed } from '../runtime/emitters/index.js';
+import { emitCommunicationConsumed, emitLlmResponseReceived } from '../runtime/emitters/index.js';
 import { maybeCompactAfterModelContextWarning, setAgentProgress, summarizeToolArgs } from './orchestrator-utils.js';
 import { assertOrchestratorKnowledgeCurrent, buildLayeredOrchestratorSystemPrompt, buildOrchestratorSystemPrompt, prepareOrchestratorPromptContext, resolveSpawnKnowledgeInjections, withOpenTierProfileBlock } from './orchestrator-prompts.js';
 import { completeOrRegenerate, recoverEmptyConversationalReply } from './conversational-reply-recovery.js';
@@ -542,7 +544,25 @@ export async function runAgentTask(
     const LOOP_USER_THRESHOLD = 5;
     const CALL_HISTORY_WINDOW = 20;
     const circuitBreaker = new ConsecutiveErrorBreaker();
-    const completionGuard = new ResponseCompletionGuard({ request: record.task, conversation });
+    let assertVerificationProvider: () => void | Promise<void> = terminal.assertCurrent;
+    const completionGuard = new ResponseCompletionGuard({ request: record.task, conversation,
+      verificationStore: new VerificationStore(context.workingDirectory, record.id),
+      verificationWriter: createVerificationWriter({
+        route: () => ({ provider: activeRoute.provider, model: activeRoute.modelId, ...(record.reasoningEffort ? { reasoning: { reasoningEffort: record.reasoningEffort } } : {}) }),
+        beforeAttempt: async () => { terminal.assertCurrent(); await assertVerificationProvider(); terminal.assertCurrent(); },
+        onUsage: (response, durationMs) => {
+          record.usage = { ...record.usage!, inputTokens: record.usage!.inputTokens + response.usage.inputTokens,
+            outputTokens: record.usage!.outputTokens + response.usage.outputTokens,
+            cacheReadTokens: (record.usage!.cacheReadTokens ?? 0) + (response.usage.cacheReadTokens ?? 0),
+            cacheWriteTokens: (record.usage!.cacheWriteTokens ?? 0) + (response.usage.cacheWriteTokens ?? 0),
+            llmCallCount: (record.usage!.llmCallCount ?? 0) + 1 };
+          if (context.runtimeBus) emitLlmResponseReceived(context.runtimeBus, context.emitterContext(record.id), {
+            turnId: record.id, provider: activeRoute.provider.name, model: activeRoute.modelId,
+            contentSummary: '<private evidence verification>', toolCallCount: 0, ...response.usage, durationMs, costSource: 'unknown',
+          });
+        },
+      }),
+    });
     let completionCorrection = '';
     let assertFinalCompletionCurrent: (() => void) | undefined;
     // Track which inter-agent messages have already been injected so a single
@@ -804,6 +824,7 @@ export async function runAgentTask(
             if (nativeSource && (!context.autonomousSource || JSON.stringify(captureAutonomousSource(context.autonomousSource())) !== JSON.stringify(nativeSource)))
               throw new Error('Native provider source changed before retry');
           };
+          assertVerificationProvider = assertNativeProviderSource;
           try {
             // Thread the agent's cancellation signal into the in-flight LLM
             // request so a cancel/kill aborts the provider call mid-stream, not
@@ -1122,7 +1143,7 @@ export async function runAgentTask(
             tools: toolDefinitions.map(tool => tool.name),
             delegated: context.agentManager ? collectResponseDelegates(completionConversation, context.agentManager) : [] }),
           { signal: context.getCancellationSignal?.(record.id), assertCurrent: terminal.assertCurrent }, () => {
-            setAgentProgress(record, `Turn ${turn} · Waiting for Jev to reconnect…`, 'operator');
+            setAgentProgress(record, `Turn ${turn} · Jev is recovering verification…`, 'operator');
             context.emitAgentProgress(record.id, record.progress ?? '', 'operator');
           });
           terminal.assertCurrent();

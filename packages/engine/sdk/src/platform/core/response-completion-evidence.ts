@@ -100,11 +100,12 @@ export class CompletionEvidenceProjection {
     return messages.map(message => message.role === 'user' ? message : this.observation(message));
   }
 
-  prepare(source: {
+  prepareFull(source: {
     readonly request: string; readonly response: string; readonly transcript: readonly Record<string, unknown>[];
     readonly tools: readonly string[]; readonly delegated: readonly Record<string, unknown>[];
     readonly requirements: unknown; readonly initial: unknown;
-  }): unknown {
+    readonly archive?: readonly { readonly messages: readonly Record<string, unknown>[] }[];
+  }) {
     this.withheld = new Set();
     const initial = source.initial as { readonly request: string; readonly transcript: readonly Record<string, unknown>[] } | null;
     const state = {
@@ -113,6 +114,7 @@ export class CompletionEvidenceProjection {
       delegated: source.delegated.map(agent => this.observation(agent)),
       requirements: this.observation(source.requirements),
       initial: initial ? { request: initial.request, transcript: this.transcript(initial.transcript) } : null,
+      ...(source.archive ? { archive: source.archive.map(history => ({ messages: this.transcript(history.messages) })) } : {}),
     };
     // The original request, user messages and exact proposed final remain
     // subject to the strict screen. No original action argument is rewritten.
@@ -120,6 +122,10 @@ export class CompletionEvidenceProjection {
       withheld: [...this.withheld],
       meaning: 'WITHHELD references contain unavailable private or card-shaped observation values. Equal references identify equal original values; different references must not be conflated. These markers cannot establish hidden contents, arithmetic or claims requiring unavailable evidence. Recover with relevant admissible observations; missing evidence never establishes completion.',
     } };
-    return fitCompletionEvidence(snapshotJudgmentEvidence(admitted) as typeof admitted);
+    return snapshotJudgmentEvidence(admitted) as typeof admitted;
+  }
+
+  prepare(source: Parameters<CompletionEvidenceProjection['prepareFull']>[0]): unknown {
+    return fitCompletionEvidence(this.prepareFull(source));
   }
 }

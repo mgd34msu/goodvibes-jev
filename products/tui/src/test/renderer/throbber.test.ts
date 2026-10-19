@@ -70,7 +70,7 @@ describe('throbber: what it names', () => {
     for (const phase of ['checking', 'waiting'] as const) {
       const activity = resolveThrobberActivity(input({ completionActivity: { phase, startedAtMs: NOW - 3_000 }, modelPhrase: 'Stalled 4069s...', ttftMs: 3_000, tokenSpeed: 76 }))!;
       const rendered = throbberText({ activity });
-      expect(rendered).toBe(phase === 'checking' ? 'Jev is checking completion... · 3s' : 'Waiting for Jev to reconnect... · 3s');
+      expect(rendered).toBe(phase === 'checking' ? 'Jev is checking completion... · 3s' : 'Jev is recovering verification... · 3s');
       expect(rendered).not.toMatch(/Stalled|tok\/s|first token/);
       expect(resolveThrobberActivity(input({ turnActive: false, completionActivity: { phase, startedAtMs: NOW } }))).toBeNull();
     }

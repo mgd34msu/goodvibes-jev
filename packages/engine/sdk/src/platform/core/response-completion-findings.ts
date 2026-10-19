@@ -50,8 +50,8 @@ export async function completionFindings(port: JudgmentPort, evidence: unknown, 
       candidates.push({ id: `passage-${candidates.length}`, content: { reference: `${reference}, line ${line + 1}`, quote } });
     }
   };
-  add('current draft', state.response);
-  add('current request', state.request);
+  add(typeof state.response === 'string' ? 'current draft' : 'qualified answer evidence; retrieve the original before treating this as an exact draft quote', typeof state.response === 'string' ? state.response : JSON.stringify(state.response));
+  add(typeof state.request === 'string' ? 'current request' : 'verified original requirement ledger', typeof state.request === 'string' ? state.request : JSON.stringify(state.request));
   const recentTools = new Set(state.transcript.flatMap((message, index) => message.role === 'tool' ? [index] : []).slice(-64));
   state.transcript.forEach((message, index) => {
     if (message.role === 'user') add(`user request at transcript ${index}`, typeof message.content === 'string' ? message.content : JSON.stringify(message.content));

@@ -4,7 +4,7 @@ Baseline revision: `51f97d0a1f345269d78a403b10473e1906e7cc22`. Reviewed working 
 
 The primary assistant reviewed the existing Jev decision/call inventory and the candidates for missing interpretation personally, without delegated agents. The subsequent screenshots exposed a completion gap that the initial placement review missed. That gap and its implemented follow-up are recorded below. Historical measurements and source inventories remain identified by their revision; they are not post-change traffic measurements.
 
-The current checkout registers **318 application/tooling decisions in 50 registries**, plus **22 foundation reference examples** in their separate registry. Four decisions were added after the initial placement revision, `1bf30e87`. Three additional explicit compatibility definitions remain outside automatic registration: field-kind, picker family and PWA platform. Their old automatic callers are removed. The ignored [placement ledger](../../.goodvibes/artifacts/jev-usage/placement-review-ledger.json) records the initial placement revision; the completion additions are enumerated separately below.
+The current checkout registers **327 application/tooling decisions in 50 registries**, plus **22 foundation reference examples** in their separate registry. Six decisions were added after the initial placement revision, `1bf30e87`, followed by seven staged-verification definitions documented below. Three additional explicit compatibility definitions remain outside automatic registration: field-kind, picker family and PWA platform. Their old automatic callers are removed. The ignored [placement ledger](../../.goodvibes/artifacts/jev-usage/placement-review-ledger.json) records the initial placement revision; the completion additions are enumerated separately below.
 
 The baseline repository defined **339 non-test named Jev decisions**: **317 application and tooling decisions** in **51 registry files**, plus **22 foundation reference examples** in one additional registry. The application decisions occupy 218 source files. Of those decisions, 227 expose fixed question inventories containing 436 questions; the remaining 90 use pattern or custom implementations whose complete question sets are constructed by their readers.
 
@@ -29,7 +29,7 @@ Each application decision appears in exactly one purpose category. Baseline/curr
 | Knowledge extraction search and answer verification | 57 | 57 | Extract facts and page content; rank sources, facts and evidence; verify answers; align entities; plan and assess repairs. |
 | Models providers and request routing | 36 | 32 | Choose model/provider/effort, read request intent/risk and interpret unresolved provider protocols; published metadata stays local. |
 | Tool arguments execution search and content analysis | 33 | 31 | Fill or repair parameters, interpret booleans, select tools, inspect code and output, rank content, and summarize pages and edits. |
-| Agent planning contracts and work orchestration | 31 | 35 | Shape work and criteria, preserve delegated scope, check fulfillment, synthesis and execution evidence, and route corrections. |
+| Agent planning contracts and work orchestration | 31 | 44 | Shape work and criteria, preserve delegated scope, qualify source evidence, check fulfillment, synthesis and integration, and route corrections. |
 | Security permissions and action admission | 26 | 26 | Read action purpose, risk, side effects and scope; screen untrusted sources; check credentials and protected actions; choose autonomous dispositions. |
 | Communication browser voice and integrations | 24 | 29 | Interpret inbound intent and replies, mail style and IMAP errors, browser identity/setup, Google setup, and voice capture failures. |
 | Agent harness records and diagnostic interpretation | 17 | 17 | Interpret externally published runtime, personal-ops, memory-provider and remote-publisher records and their schemas. |
@@ -44,9 +44,9 @@ Each application decision appears in exactly one purpose category. Baseline/curr
 | Catalog code and operational search | 6 | 6 | Search code, hooks, playbooks and ecosystem catalogs; read recommendation fit and trust cautions. |
 | Errors failures and retry interpretation | 6 | 6 | Classify ambiguous error wording, choose display payloads, interpret retry waits, and diagnose slow phases or SQLite-vector refusals. |
 | Learning and consolidation | 5 | 5 | Grade learning proposals, choose targets, align duplicates, select survivors and verify equivalence. |
-| **Application and tooling total** | **317** | **318** | |
+| **Application and tooling total** | **317** | **327** | |
 | Foundation reference examples | 22 | 22 | Foundation exercises and examples. |
-| **All registered definitions** | **339** | **340** | Three additional inactive compatibility definitions remain in source. |
+| **All registered definitions** | **339** | **349** | Three additional inactive compatibility definitions remain in source. |
 
 The baseline [complete decision catalog](../../.goodvibes/artifacts/jev-usage/all-decisions.md) lists all 339 names, descriptions, source locations, methods and fixed question counts. [Questions CSV](../../.goodvibes/artifacts/jev-usage/questions.csv) includes every fixed instruction, choice set and band exposed by these definitions. Dynamic questions remain linked to the implementation that constructs them.
 
@@ -454,7 +454,7 @@ long-context mode. The guard incorrectly converted this validator failure into
 an instruction for the model to repair the review. Repeated report reads,
 archive checks and hashes enlarged the next invalid request.
 
-Completion evidence now fits a 400,000-character envelope. Original user
+The initial recovery fitted completion evidence to a 400,000-character envelope. Original user
 instructions, the proposed answer and acceptance criteria remain exact;
 recent observations remain complete within a reserved allowance. Older large
 observations carry explicit missing-middle references, exact excerpts and
@@ -488,3 +488,109 @@ All 64 targeted engine regressions pass, along with SDK and engine-test type
 checks, browser support and subpath API checks. A second live calibration with
 two explicitly unreviewed source files remained held with a confirmed,
 localized unfinished-work finding. A written report alone did not release it.
+
+## Staged completion verification (2026-10-18)
+
+The missing-middle envelope above remains available for interim progress
+checks, which cannot authorize completion. Final checks now admit the full
+source first. Histories over 100,000 characters use the same staged verifier
+in the main turn loop and standalone agent loop:
+
+- Jev checks a proposed requirement ledger against original user instructions
+  and corrections for lost scope and invented work.
+- Histories above 250,000 source characters use a native retrieval index. Its
+  labeled previews cannot establish completion. Jev opens primary evidence for
+  the requested result first. Before accepting a requirement, it checks every
+  complete original page for unaccounted counterevidence. Clearly incomplete
+  results can be held without generating a summary for every history page.
+- A private provider call proposes bounded, cited evidence records. Jev checks
+  their support, material completeness and provenance against complete source
+  intervals. Broad uncertainty is resolved with source-by-source and
+  assertion-by-assertion questions before generating another proposal.
+- Checked records are merged in bounded groups. Original sources remain
+  available locally; raw fragments can be retained exactly without claiming
+  that a semantic reduction passed. Consecutive repeated text can use a
+  lossless run encoding, which preserves every occurrence. Different tool
+  executions, including A B A query patterns, remain distinct.
+- Jev checks the actual requested result and its quality per requirement,
+  retrieves original sources for unresolved details, and checks required
+  component connections and contradictory conclusions. A review's reported
+  application bugs or failed tests are not implementation requirements.
+- The existing completion, delegation and execution batteries still decide
+  publication. An unclear final reading opens original receipts before asking
+  the working model to revise anything. Approval remains bound to the exact
+  original source, answer, authority and cancellation lifetime.
+
+The seven added definitions are `engine.verification.scope`, `.evidence`,
+`.requirement`, `.source`, `.audit`, `.integration` and `.repairs`. Independent
+work runs with bounded concurrency. Source facts do not depend on the current
+task interpretation; requirement and counterevidence checks do. All in-memory
+qualifications are bound to current Jev authority. Changed records invalidate
+their dependent reductions. Final
+publication checks remain fresh. Persisted proposals are untrusted and must be
+qualified again after resume or authority replacement.
+
+Native compaction archives original messages before replacing them. Generated
+summary prose remains reference data, even if the provider-facing summary uses
+a user-message role. A private structured journal at
+`.goodvibes/verification/<session-id>.jsonl` stores admitted originals and
+proposal records, rather than creating review Markdown files. Original history
+entries are appended once, and subsequent position metadata preserves ordered
+state transitions. Protected observations remain explicitly unavailable; they
+cannot establish hidden success.
+
+Evidence-provider, generated-record, checker-result and transport failures stay
+inside verification with the same private answer. Rejected source frames are
+partitioned without dropping their middle. Internal evidence attempts are
+bounded before retaining exact originals or an explicitly unqualified retrieval
+index; this is not a limit on completing the user's task.
+Private repair localization gets at most two proposal attempts, then returns an
+explicit unresolved candidate or the original requirement instead of endlessly
+rewriting its own fix list. These candidates do not add user requirements or
+authorize completion. Finding IDs remain stable per requirement. Once work and
+quality are confidently accepted and all original sources inspected, uncertainty in the source-retrieval
+routing question cannot create a demand for pointless repairs. Final publication
+checks still must pass.
+
+Native source fences compare retained field and nested-argument identities
+rather than serializing the entire history for each question. They continue to
+detect mutations after the checked final message is appended. Digest identifiers
+use a reversible letter-only encoding of all SHA-256 bits, avoiding accidental
+card-number shapes without exempting source or result metadata from screening.
+Downstream verification requests use verdict/outcome labels; exact protocol
+probabilities remain in the admitted local reading and decision log.
+
+
+Confirmed requirement defects return their concrete private repair list before
+publication-only checks run. Other pending requirement checks are cancelled or
+deferred; this never grants permission to finish. On a repaired attempt, native
+observations added since the previous check are inspected first, and earlier
+findings are closed when that observed recovery satisfies their conditions.
+Each requirement is judged independently; unfinished work on another item does
+not violate a prohibition on application edits.
+
+Publication retrieval preserves original message order and explicit source
+positions. Unclear compound execution claims can be checked as exact sentence
+ranges whose concatenation equals the entire proposed answer. Settled final
+aspects are retained only for the identical admitted history, draft and current
+Jev authority while more originals are retrieved. A newly confirmed
+contradiction reopens the affected check; a changed candidate, history or
+authority starts fresh qualification. No persisted record grants publication.
+
+Live validation replayed the 1,021-message Spacegame session: the incomplete
+full-codebase review was held with one private proposal and a specific request
+to finish the unreviewed code, without demanding application fixes or an
+exhaustive passing test suite. The largest Jev request was 32,639 characters.
+A separate live synthetic repair sequence with a history over 400,000 characters
+held the first incomplete attempt, inspected the added native read/write receipts
+provided by the controlled fixture,
+audited every retained original page, and accepted the second answer. That
+sequence used one private repair proposal; the final checks recovered natively
+without another working-model draft or any user-visible intermediate response.
+
+Functionality checks pass: 148 engine tests across 12 files and 20 TUI tests,
+SDK and engine-test types, browser compatibility, API extraction and subpath
+surface checks. Judgment lint reports only the three pre-existing inactive
+compatibility definitions described above; none of the seven new definitions
+has a lint finding. The Spacegame review itself was not performed or rewritten
+by these verifier tests.

@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- Verify large completion evidence through source-backed requirement, evidence,
+  integration and publication checks. Preserve admitted originals through compaction
+  and resume, retrieve primary evidence when a reading is unclear, and reuse
+  unchanged evidence only under the current Jev authority. Keep evidence repairs
+  private, resolve broad uncertainty with smaller checks, and partition rejected
+  frames instead of asking the working model to repeat its task. Retain exact
+  source and answer fences without repeatedly serializing the entire history.
+  Return concrete work repairs before publication checks, close findings from
+  newly observed recovery, and retain settled checks for the identical draft
+  while retrieving additional original receipts. Reopen confirmed contradictions
+  and check compound claims in exact answer ranges.
+
 - Bound completion evidence to Jev's context budget without clipping user
   instructions or the proposed final answer. Recover checker protocol failures
   using the held draft instead of sending the model into repeated review and

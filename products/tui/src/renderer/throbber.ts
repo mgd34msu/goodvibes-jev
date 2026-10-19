@@ -152,7 +152,7 @@ function textOf(activity: ThrobberActivity): ThrobberText {
   const elapsed = 'elapsedMs' in activity && activity.elapsedMs !== undefined ? [formatElapsed(activity.elapsedMs)] : [];
   switch (activity.kind) {
     case 'completion':
-      return { label: activity.phase === 'waiting' ? 'Waiting for Jev to reconnect...' : 'Jev is checking completion...', subject: '', tail: elapsed };
+      return { label: activity.phase === 'waiting' ? 'Jev is recovering verification...' : 'Jev is checking completion...', subject: '', tail: elapsed };
     case 'contract':
       return { label: activity.phrase, subject: '', tail: [] };
     case 'agents':

@@ -19,6 +19,8 @@ import {
 } from './conversation-utils.js';
 import { applyDiffContent, parseDiffForApply } from './conversation-diff.js';
 import { logger } from '../utils/logger.js';
+import { archiveVerificationCompaction, forkVerificationArchive, mergeVerificationArchive, resetVerificationArchives, restoreVerificationBranch, switchVerificationArchive } from './verification/archive.js';
+import { retainStrictJudgmentJson } from '../gate/judgment-result.js';
 
 export type TokenUsage = {
   inputTokens: number;
@@ -387,6 +389,47 @@ export class ConversationManager {
     return cloneMessages(this.messages);
   }
 
+  /** Retain the actual message fields used by completion, including externally
+   * shared nested arguments. Compare identities/slots, never reserialize large
+   * source strings on every verifier question. Presentation can update freely. */
+  public captureMessageEvidence(): { snapshot: ConversationMessageSnapshot[]; native: boolean; assertCurrent: () => void; assertFinalized: (response: string) => void } {
+    const messages = this.messages, revision = this._messagesRevision, snapshot = this.getMessageSnapshot;
+    const fields = ['role', 'content', 'toolCalls', 'callId', 'outcome'] as const;
+    const captured = messages.map(message => ({ message, slots: fields.map(key => ({ key, descriptor: Object.getOwnPropertyDescriptor(message, key) })) }));
+    const nested = captured.flatMap(entry => entry.slots.flatMap(slot => {
+      if (slot.descriptor && !('value' in slot.descriptor)) throw new Error('Conversation evidence contains an accessor');
+      const value: unknown = slot.descriptor?.value;
+      return value && typeof value === 'object' ? [retainStrictJudgmentJson(value)] : [];
+    }));
+    const assertPrefix = () => {
+      if (this.messages !== messages || this.getMessageSnapshot !== snapshot || messages.length < captured.length) throw new TranscriptSourceChangedError();
+      for (let index = 0; index < captured.length; index++) {
+        const entry = captured[index]!;
+        if (messages[index] !== entry.message) throw new TranscriptSourceChangedError();
+        for (const slot of entry.slots) {
+          const current = Object.getOwnPropertyDescriptor(entry.message, slot.key), before = slot.descriptor;
+          if (!!current !== !!before || current && (!('value' in current) || !Object.is(current.value, before?.value)
+            || current.enumerable !== before?.enumerable || current.configurable !== before?.configurable || current.writable !== before?.writable)) throw new TranscriptSourceChangedError();
+        }
+      }
+      for (const source of nested) source.assertCurrent();
+    };
+    const assertCurrent = () => {
+      assertPrefix();
+      if (this._messagesRevision !== revision || messages.length !== captured.length) throw new TranscriptSourceChangedError();
+    };
+    const assertFinalized = (response: string) => {
+      assertPrefix();
+      if (messages.length === captured.length && this._messagesRevision === revision) return;
+      const final = messages[captured.length];
+      if (messages.length !== captured.length + 1 || this._messagesRevision !== revision + 1 || final?.role !== 'assistant'
+        || final.content !== response || final.toolCalls?.length) throw new TranscriptSourceChangedError();
+    };
+    assertCurrent();
+    const result = snapshot.call(this); assertCurrent();
+    return { snapshot: result, native: snapshot === nativeMessageSnapshot, assertCurrent, assertFinalized };
+  }
+
   public async getTranscriptEventIndex(options: TranscriptReadingOptions = {}) {
     const lifetime = options.lifetime ?? new TranscriptReadingLifetime();
     const revision = this._messagesRevision;
@@ -405,6 +448,7 @@ export class ConversationManager {
   public replaceMessagesForLLM(newMessages: ProviderMessage[]): void {
     const systemMessages = this.messages.filter((message) => message.role === 'system');
     const kept = restoreKeptMessages(newMessages, this.getMessagesForLLM(), this.messages);
+    archiveVerificationCompaction(this, this.getMessageSnapshot(), cloneMessages([...systemMessages, ...kept]));
     this.messages = [...systemMessages, ...kept];
     this.streamingMessageIndex = -1;
     this._messagesRevision++;
@@ -440,6 +484,7 @@ export class ConversationManager {
   }
 
   public resetAll(): void {
+    resetVerificationArchives(this);
     this.presentationLifetime.abort();
     this.presentationLifetime = new AbortController();
     this.messages = [];
@@ -457,7 +502,9 @@ export class ConversationManager {
     if (!force && this.branches.has(branchName)) {
       return branchName;
     }
-    this.branches.set(branchName, cloneMessages(this.messages));
+    const messages = cloneMessages(this.messages);
+    forkVerificationArchive(this, branchName);
+    this.branches.set(branchName, messages);
     return branchName;
   }
 
@@ -477,7 +524,9 @@ export class ConversationManager {
     const stored = this.branches.get(name);
     if (!stored) return false;
     this.branches.set(this.currentBranch, cloneMessages(this.messages));
-    this.messages = cloneMessages(stored);
+    const messages = cloneMessages(stored);
+    switchVerificationArchive(this, name);
+    this.messages = messages;
     for (const message of this.messages) if (message.role === 'system') {
       const presentation = declaredNoticePresentation(message.content, message.runtimeEvent);
       if (presentation) message.presentation = presentation;
@@ -495,6 +544,7 @@ export class ConversationManager {
     const commonLength = Math.min(this.messages.length, stored.length);
     const toAppend = stored.slice(commonLength);
     if (toAppend.length === 0) return true;
+    mergeVerificationArchive(this, name, commonLength, this.messages.length);
     this.messages.push(...cloneMessages(toAppend));
     this._messagesRevision++;
     return true;
@@ -534,9 +584,17 @@ export class ConversationManager {
       : (this._title ? 'user' : 'system');
     this.branches = restoreBranchMap(data.branches);
     this.currentBranch = data.currentBranch ?? 'main';
+    restoreVerificationBranch(this, this.currentBranch);
     this.streamingMessageIndex = -1;
     this._messagesRevision++;
   }
+}
+
+const nativeMessageSnapshot = ConversationManager.prototype.getMessageSnapshot;
+const nativeMessageEvidence = ConversationManager.prototype.captureMessageEvidence;
+/** Capture through the native implementation, even if an instance is extended. */
+export function captureConversationEvidence(conversation: ConversationManager) {
+  return nativeMessageEvidence.call(conversation);
 }
 
 export { parseDiffForApply, applyDiffContent } from './conversation-diff.js';
