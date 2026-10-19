@@ -79,9 +79,13 @@ export interface SourceReadEvidence {
   readonly path: string;
   readonly returnedRanges: readonly string[];
   readonly returnedLines: number;
+  /** Actual returned text of a declared reference input, when needed by a read-only unit. */
+  readonly returnedContent?: string;
+  readonly contentKind?: 'declared-reference' | 'cited-source';
 }
 
 export interface UnitEvidence {
+  readonly orchestration?: JsonValue;
   readonly sourceReads?: readonly SourceReadEvidence[];
   /** record.fullOutput at completion; the last assistant text mid-run. */
   readonly output: string;
@@ -97,6 +101,7 @@ export interface UnitEvidence {
 
 /** Evidence before trimming. */
 export interface RawUnitEvidence {
+  readonly orchestration?: JsonValue;
   readonly sourceReads?: readonly SourceReadEvidence[];
   readonly output: string;
   readonly changes: readonly FileChange[];
@@ -108,8 +113,10 @@ export interface RawUnitEvidence {
 // ── Commands and written paths from the agent's turns (fixed tool formats) ─────
 
 /** Count actual numbered contents, never requested ranges, file totals or previews. */
-export function sourceReadsFromTurns(turns: readonly ContractTurnRecord[]): SourceReadEvidence[] {
+export function sourceReadsFromTurns(turns: readonly ContractTurnRecord[], referencePaths: readonly string[] = [], citationText = ''): SourceReadEvidence[] {
   const files = new Map<string, Set<number>>();
+  const references = new Set(referencePaths);
+  const referenceLines = new Map<string, Map<number, string>>();
   for (const turn of turns) for (let index = 0; index < turn.toolCalls.length; index++) {
     if (turn.toolCalls[index]!.name !== 'read') continue;
     const result = turn.results[index];
@@ -123,9 +130,21 @@ export function sourceReadsFromTurns(turns: readonly ContractTurnRecord[]): Sour
       if (typeof file.path !== 'string' || typeof file.content !== 'string' || file.error || file.binary
         || (file.extract !== 'content' && file.extract !== 'lines')) continue;
       const lines = files.get(file.path) ?? new Set<number>();
-      for (const match of file.content.matchAll(/^\s*(\d+) \|/gm)) {
+      const escaped = file.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const citations = [...citationText.matchAll(new RegExp('(?<![\\w./-])' + escaped + '(?::|#L)(\\d+)(?:[-–]L?(\\d+))?', 'g'))]
+        .map(match => [Number(match[1]), Number(match[2] ?? match[1])] as const);
+      for (const row of file.content.split('\n')) {
+        const match = /^[ \t]*(\d+) \|/.exec(row);
+        if (!match) continue;
         const line = Number(match[1]);
-        if (Number.isSafeInteger(line) && line > 0) lines.add(line);
+        if (Number.isSafeInteger(line) && line > 0) {
+          lines.add(line);
+          if (references.has(file.path) || citations.some(([start, end]) => line >= start && line <= end)) {
+            const contents = referenceLines.get(file.path) ?? new Map<number, string>();
+            contents.set(line, row);
+            referenceLines.set(file.path, contents);
+          }
+        }
       }
       if (lines.size) files.set(file.path, lines);
     }
@@ -138,7 +157,10 @@ export function sourceReadsFromTurns(turns: readonly ContractTurnRecord[]): Sour
       while (sorted[index + 1] === end + 1) end = sorted[++index]!;
       returnedRanges.push(start === end ? String(start) : `${start}-${end}`);
     }
-    return { path, returnedRanges, returnedLines: lines.size };
+    const content = referenceLines.get(path);
+    return { path, returnedRanges, returnedLines: lines.size,
+      ...(content ? { returnedContent: [...content].sort(([a], [b]) => a - b).map(([, text]) => text).join('\n'),
+        contentKind: references.has(path) ? 'declared-reference' as const : 'cited-source' as const } : {}) };
   });
 }
 
@@ -296,7 +318,7 @@ export async function collectChanges(unit: Pick<ContractUnit, 'baseline'>, sourc
  * always; claims at completion and at resume; gates at every trigger but turn-end.
  */
 export async function collectUnitEvidence(
-  contract: Pick<ContractView, 'id' | 'sessionId'>,
+  contract: Pick<ContractView, 'id' | 'sessionId'> & Partial<Pick<ContractView, 'status' | 'decisions' | 'createdAt' | 'origin' | 'units' | 'proposedUnits'>>,
   unit: Pick<ContractUnit, 'id' | 'goal' | 'brief' | 'files' | 'baseline'>,
   trigger: CheckTrigger,
   sources: UnitEvidenceSources,
@@ -319,7 +341,18 @@ export async function collectUnitEvidence(
       signal: sources.signal,
     })
     : undefined;
-  return trimEvidence({ output: sources.output, changes, claims, gates, commands: commandsFromTurns(sources.turns), sourceReads: sourceReadsFromTurns(sources.turns) }, unit);
+  const planChecks = contract.decisions?.filter(decision => decision.action === 'plan-accepted' && decision.targetId === contract.id)
+    .map(decision => ({ at: decision.at, reason: decision.reason, decisionIds: [...decision.decisionIds] })) ?? [];
+  const firstUnitStartedAt = contract.decisions?.find(decision => decision.action === 'spawned' && contract.units?.some(unit => unit.id === decision.targetId))?.at;
+  return trimEvidence({ output: sources.output, changes, claims, gates, commands: commandsFromTurns(sources.turns), sourceReads: sourceReadsFromTurns(sources.turns, sources.mustWrite ? [] : unit.files, sources.output),
+    ...(planChecks.length ? { orchestration: { contractId: contract.id, ...(contract.status === undefined ? {} : { status: contract.status }), planChecks,
+      ...(contract.createdAt === undefined ? {} : { createdAt: contract.createdAt }),
+      ...(contract.origin === undefined ? {} : { origin: contract.origin }),
+      ...(firstUnitStartedAt === undefined ? {} : { firstUnitStartedAt }),
+      ...(contract.proposedUnits === undefined ? {} : { proposedUnits: contract.proposedUnits.map(unit => ({ task: unit.task, ...(unit.template === undefined ? {} : { template: unit.template }) })) }),
+      ...(contract.units === undefined ? {} : { plannedUnits: contract.units.map(unit => ({ id: unit.id, title: unit.title, goal: unit.goal, role: unit.role, brief: unit.brief,
+        criteria: unit.criteria.map(criterion => ({ id: criterion.id, text: criterion.text, serves: [...criterion.serves] })) })) }),
+      meaning: 'Host records for this current contract. Plan acceptance establishes its plan validation, not completion or approval of the unit now being checked.' } } : {}) }, unit);
 }
 
 // ── What Jev reads ────────────────────────────────────────────────────────────
@@ -338,6 +371,7 @@ function gateEvidence(gates: NonNullable<UnitEvidence['gates']>): JsonValue {
 
 export function judgeEvidence(evidence: UnitEvidence): JsonValue {
   return {
+    ...(evidence.orchestration === undefined ? {} : { orchestration: evidence.orchestration }),
     ...sourceReadState(evidence),
     changedPaths: listedPaths(evidence.changedPaths),
     diff: evidence.diff,
@@ -363,6 +397,7 @@ export function judgeState(unit: Pick<ContractUnit, 'goal'>, evidence: UnitEvide
 /** The quality battery's state (design 4.4). */
 export function qualityState(unit: Pick<ContractUnit, 'goal' | 'brief'>, evidence: UnitEvidence): CheckState {
   return {
+    ...(evidence.orchestration === undefined ? {} : { orchestration: evidence.orchestration }),
     ...sourceReadState(evidence),
     goal: unit.goal,
     brief: unit.brief,
@@ -380,7 +415,7 @@ function sourceReadState(evidence: UnitEvidence): CheckState {
   if (!evidence.sourceReads?.length) return {};
   return {
     sourceReads: evidence.sourceReads.map(read => ({ ...read, returnedRanges: [...read.returnedRanges] })),
-    sourceReadMeaning: 'These host-collected ranges establish which numbered source lines were actually returned by successful read tools. They do not establish semantic review quality or validate the findings. Judge the substantive work separately. This is the current native acceptance check; do not demand an earlier approval of this same check.',
+    sourceReadMeaning: 'These host-collected ranges establish which numbered source lines were actually returned by successful read tools. returnedContent contains only actual returned text: declared reference inputs or explicitly cited source ranges, as contentKind records; it may be a subset of returnedRanges. Read scope alone does not establish semantic review quality or validate findings. Judge the substantive work against the provided source evidence separately. This is the current native acceptance check; do not demand an earlier approval of this same check.',
   };
 }
 
@@ -416,6 +451,7 @@ function fillOrder(changes: readonly FileChange[], files: readonly string[]): Fi
 /** Assemble complete evidence without per-file, command, output or total cuts. */
 export function trimEvidence(raw: RawUnitEvidence, unit: Pick<ContractUnit, 'goal' | 'brief' | 'files'>): UnitEvidence {
   return {
+    ...(raw.orchestration === undefined ? {} : { orchestration: raw.orchestration }),
     ...(raw.sourceReads?.length ? { sourceReads: raw.sourceReads } : {}),
     output: raw.output,
     changedPaths: raw.changes.map(change => change.path),

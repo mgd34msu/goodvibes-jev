@@ -52,18 +52,18 @@ export interface Judge extends NamedDecision {
 const CRITERION_QUESTION = (criterion: string): NoulQuestion =>
   noul(
     {
-      question: 'Does `output` fail to meet `criterion`, or does `evidence` fail to show that it meets it?',
+      question: 'Does the work shown by `output` AND `evidence` fail to meet `criterion`, or lack evidence that it is met? Judge this criterion independently of other criteria and the overall goal. An actual host execution record can establish a host-owned orchestration requirement; the leaf writer need not repeat that host operation. If a requirement calls for this very native acceptance check, judge the substantive work now rather than demanding an earlier approval of this same check.',
       criterion,
     },
     {
-      true: 'The output does not meet the criterion, or nothing in the output or evidence shows that it does.',
-      false: 'The output meets the criterion, and the output or evidence shows it.',
+      true: 'The work falls short of the criterion, or the output and evidence do not establish it.',
+      false: 'The work or actual host execution meets the criterion, as established by the output and evidence together.',
     },
   );
 
-const GOAL_QUESTION: NoulQuestion = noul('Does `output` fail to achieve `goal`?', {
-  true: 'The output falls short of the goal or does something other than the goal asks.',
-  false: 'The output achieves what the goal asks.',
+const GOAL_QUESTION: NoulQuestion = noul('Does the work shown by `output` and `evidence` fail to achieve `goal`?', {
+  true: 'The work falls short of the goal or does something other than the goal asks.',
+  false: 'The work shown by the output and evidence achieves what the goal asks.',
 });
 
 /**

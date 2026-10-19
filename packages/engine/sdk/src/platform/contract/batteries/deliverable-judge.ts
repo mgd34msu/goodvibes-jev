@@ -202,7 +202,7 @@ const FIXTURES: readonly JudgeFixture[] = [
 function deliverableJudge(name: string, band: YesNoBand): Judge {
   return defineJudge({
     name,
-    version: 1,
+    version: 2,
     description: "Whether the finished deliverable meets each of the user's requirements, shown by the answer and the contract's evidence, and whether it achieves what the user asked for.",
     accuracyFloor: 0.9,
     band,

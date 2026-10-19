@@ -174,7 +174,7 @@ const FIXTURES: readonly JudgeFixture[] = [
 function groupJudge(name: string, band: YesNoBand): Judge {
   return defineJudge({
     name,
-    version: 1,
+    version: 2,
     description: "Whether a group's combined work meets each of the group's criteria, shown by its units' answers and the group's evidence, and whether it achieves the group's goal.",
     accuracyFloor: 0.9,
     band,

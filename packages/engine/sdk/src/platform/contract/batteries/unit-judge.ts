@@ -295,7 +295,7 @@ const FIXTURES: readonly JudgeFixture[] = [
 function unitJudge(name: string, band: YesNoBand): Judge {
   return defineJudge({
     name,
-    version: 2,
+    version: 3,
     description: "Whether a unit's work meets each of its acceptance criteria, shown by its output and evidence, and whether it achieves the unit's goal.",
     accuracyFloor: 0.9,
     band,

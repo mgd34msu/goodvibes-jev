@@ -21233,7 +21233,7 @@
         "commands",
         "output"
       ],
-      "text": "export interface RawUnitEvidence { readonly sourceReads?: readonly SourceReadEvidence[]; readonly output: string; readonly changes: readonly FileChange[]; readonly claims?: ClaimVerificationResult | undefined; readonly gates?: readonly QualityGateResult[] | undefined; readonly commands: readonly EvidenceCommand[]; } ;; via SourceReadEvidence = export interface SourceReadEvidence { readonly path: string; readonly returnedRanges: readonly string[]; readonly returnedLines: number; }"
+      "text": "export interface RawUnitEvidence { readonly orchestration?: JsonValue; readonly sourceReads?: readonly SourceReadEvidence[]; readonly output: string; readonly changes: readonly FileChange[]; readonly claims?: ClaimVerificationResult | undefined; readonly gates?: readonly QualityGateResult[] | undefined; readonly commands: readonly EvidenceCommand[]; } ;; via JsonValue = type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue; }; ;; SourceReadEvidence = export interface SourceReadEvidence { readonly path: string; readonly returnedRanges: readonly string[]; readonly returnedLines: number; readonly returnedContent?: string; readonly contentKind?: 'declared-reference' | 'cited-source'; }"
     },
     {
       "name": "Regression",
@@ -21600,7 +21600,7 @@
         "omitted",
         "output"
       ],
-      "text": "export interface UnitEvidence { readonly sourceReads?: readonly SourceReadEvidence[]; readonly output: string; readonly changedPaths: readonly string[]; readonly diff: string; readonly omitted: readonly string[]; readonly claims?: ClaimVerificationResult | undefined; readonly gates?: readonly QualityGateResult[] | undefined; readonly commands: readonly EvidenceCommand[]; } ;; via SourceReadEvidence = export interface SourceReadEvidence { readonly path: string; readonly returnedRanges: readonly string[]; readonly returnedLines: number; }"
+      "text": "export interface UnitEvidence { readonly orchestration?: JsonValue; readonly sourceReads?: readonly SourceReadEvidence[]; readonly output: string; readonly changedPaths: readonly string[]; readonly diff: string; readonly omitted: readonly string[]; readonly claims?: ClaimVerificationResult | undefined; readonly gates?: readonly QualityGateResult[] | undefined; readonly commands: readonly EvidenceCommand[]; } ;; via JsonValue = type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue; }; ;; SourceReadEvidence = export interface SourceReadEvidence { readonly path: string; readonly returnedRanges: readonly string[]; readonly returnedLines: number; readonly returnedContent?: string; readonly contentKind?: 'declared-reference' | 'cited-source'; }"
     },
     {
       "name": "UnitEvidenceSources",
@@ -21928,7 +21928,7 @@
     {
       "name": "collectUnitEvidence",
       "kind": "function",
-      "text": "export declare function collectUnitEvidence(contract: Pick<ContractView, 'id' | 'sessionId'>, unit: Pick<ContractUnit, 'id' | 'goal' | 'brief' | 'files' | 'baseline'>, trigger: CheckTrigger, sources: UnitEvidenceSources): Promise<UnitEvidence>; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function collectUnitEvidence(contract: Pick<ContractView, 'id' | 'sessionId'> & Partial<Pick<ContractView, 'status' | 'decisions' | 'createdAt' | 'origin' | 'units' | 'proposedUnits'>>, unit: Pick<ContractUnit, 'id' | 'goal' | 'brief' | 'files' | 'baseline'>, trigger: CheckTrigger, sources: UnitEvidenceSources): Promise<UnitEvidence>; ;; via Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "commandsFromTurns",

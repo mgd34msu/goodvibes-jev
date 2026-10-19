@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Give unit checks the current contract's actual plan-validation records, so
+  workers need not repeat host-owned planning or invent a prior approval.
+  Retain returned reference inputs and cited source text alongside read scope,
+  and judge the work and its evidence together rather than the worker's prose alone.
+
 - Include actual returned source ranges in contract acceptance and quality
   evidence for read-only reviews. Requested ranges and file totals cannot stand
   in for returned contents, and read scope does not establish review quality.

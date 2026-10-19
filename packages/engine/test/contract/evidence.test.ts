@@ -103,12 +103,21 @@ describe('what the agent did, from its turns', () => {
     const reads = sourceReadsFromTurns([turn, turn]);
     expect(reads).toEqual([{ path: 'source.ts', returnedRanges: ['1-3', '99'], returnedLines: 4 }]);
     expect(sourceReadsFromTurns([{ ...turn, results: [{ callId: 'read', success: false, output: turn.results[0]!.output }] }])).toEqual([]);
-    const evidence = await collectUnitEvidence(makeContract(), makeUnit({ role: 'research' }), 'completion', {
+    const evidence = await collectUnitEvidence(makeContract(), makeUnit({ role: 'research', files: ['source.ts'] }), 'completion', {
       output: 'assessment', report: null, mustWrite: false, turns: [turn], cwd: dir,
       configManager: noGates(), runtimeBus: new RuntimeEventBus(),
     });
     expect(judgeEvidence(evidence)).toMatchObject({ sourceReads: reads });
     expect(qualityState(makeUnit(), evidence)).toMatchObject({ sourceReads: reads });
+    expect(evidence.sourceReads?.[0]?.returnedContent).toBe('    1 | first\n    2 | second\n    3 | third\n   99 | last');
+    const cited = sourceReadsFromTurns([turn], [], 'Finding at source.ts:2-3; see source.ts#L99.');
+    expect(cited[0]).toMatchObject({ returnedRanges: ['1-3', '99'], returnedLines: 4, contentKind: 'cited-source',
+      returnedContent: '    2 | second\n    3 | third\n   99 | last' });
+    expect(sourceReadsFromTurns([turn], [], 'Unrelated foo.ts:1, sourceXts:2, other-source.ts:2')[0]?.returnedContent).toBeUndefined();
+    const unicode = { ...turn, results: [{ callId: 'read', success: true, output: JSON.stringify({ success: true, files: [
+      { path: 'unicode.ts', extract: 'lines', content: '    1 | text\u2028999 | embedded source text' },
+    ] }) }] };
+    expect(sourceReadsFromTurns([unicode])[0]?.returnedRanges).toEqual(['1']);
   });
 
   test('exec calls become commands with success and all lines of output', () => {
@@ -174,6 +183,17 @@ describe('changed paths', () => {
 describe('what each trigger collects', () => {
   const contract = makeContract();
   const sources = () => ({ output: 'Done.', report: null, mustWrite: true, turns: TURNS, cwd: dir, configManager: noGates(), runtimeBus: new RuntimeEventBus() });
+
+  test('actual plan acceptance reaches the unit checks without claiming unit completion', async () => {
+    const planned = makeContract({ id: contract.id, status: 'running', decisions: [
+      { id: 'foreign-plan', at: 122, action: 'plan-accepted', targetId: 'another-contract', reason: 'Other work', decisionIds: ['foreign-decision'] },
+      { id: 'plan-check', at: 123, action: 'plan-accepted', targetId: contract.id, reason: 'Every fresh plan check passed', decisionIds: ['native-plan-decision'] },
+    ] });
+    const evidence = await collectUnitEvidence(planned, makeUnit(), 'turn-end', sources());
+    const expected = { contractId: planned.id, status: 'running', planChecks: [{ at: 123, reason: 'Every fresh plan check passed', decisionIds: ['native-plan-decision'] }] };
+    expect(judgeEvidence(evidence)).toMatchObject({ orchestration: expected });
+    expect(qualityState(makeUnit(), evidence)).toMatchObject({ orchestration: expected });
+  });
 
   test('turn-end: no claims and no gates', async () => {
     const evidence = await collectUnitEvidence(contract, makeUnit(), 'turn-end', sources());
