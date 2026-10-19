@@ -66,10 +66,10 @@ export const ROLE_BAND: ChoiceBand<UnitShapeRole> = STAKES_BANDS.medium.confiden
 export const NARROWS_BAND: YesNoBand = { yes: STAKES_BANDS.medium.confidence, no: STAKES_BANDS.medium.confidence };
 
 const ROLE_QUESTION = choice('What kind of work does `unit` do?', UNIT_SHAPE_ROLES);
-const NARROWS_QUESTION = 'Does `unit` do less than `requirement` sets (fewer items, a smaller area or a weaker standard) with no entry of `otherUnits` doing the rest?';
+const NARROWS_QUESTION = 'Does `unit` do less than `requirement` sets (fewer substantive items, a smaller area or a weaker standard) with neither this unit nor `otherUnits` doing the rest? The actual contract host automatically validates plans and checks unit, group and deliverable acceptance with Jev. A requirement to use those native host checks does not require another worker or a self-referential criterion that this same check already passed. This describes who performs checking, never proof that a check has passed. All substantive requested work still needs coverage by the units.';
 const NARROWS_CRITERIA = {
-  true: 'Some of what the requirement asks for is done by neither the unit nor any other unit',
-  false: 'Everything the requirement asks for is done by the unit or by another unit, possibly in other words',
+  true: 'Some substantive requested work is covered by neither this unit nor another unit; automatic host checking cannot replace that missing work',
+  false: 'The units cover the substantive requested work, while the actual host handles native planning and acceptance checks without worker self-approval',
 } as const;
 
 /** The question name a requirement is asked under. */
@@ -135,6 +135,7 @@ export interface RequirementReading extends UnitShapeRequirement {
 
 export interface UnitShapeRun {
   readonly role: ChoiceReading<UnitShapeRole>;
+  readonly acceptanceProblem: YesNoReading;
   /** One reading per requirement, in order. */
   readonly narrows: readonly RequirementReading[];
   readonly decisionId: string | undefined;
@@ -146,7 +147,7 @@ export interface UnitShapeFixture {
   readonly name: string;
   readonly input: UnitShapeInput;
   /** `narrows` labels every requirement of the input by id. */
-  readonly expect: { readonly role?: UnitShapeRole; readonly narrows?: Readonly<Record<string, 'yes' | 'no'>> };
+  readonly expect: { readonly role?: UnitShapeRole; readonly narrows?: Readonly<Record<string, 'yes' | 'no'>>; readonly acceptanceProblem?: 'yes' | 'no' };
 }
 
 export interface UnitShape extends NamedDecision {
@@ -156,6 +157,16 @@ export interface UnitShape extends NamedDecision {
 function questionsFor(input: UnitShapeInput): Record<string, Question> {
   return {
     role: ROLE_QUESTION,
+    acceptance_problem: noul({
+      question: 'Examine each entry of unit.criteria separately: separate entries are already independently judged. Does any SINGLE entry make this worker’s acceptance circular, assign host-only approval to the worker, or combine independent obligations so that its rejection cannot identify a specific repair?',
+      interpretation: [
+        'A prerequisite that this very acceptance check already passed is circular. The host performs this check after the work is returned.',
+        'Requirements about the BEHAVIOR OF SOFTWARE being implemented are substantive work: implementing or testing a program that publishes only after approval is NOT circular and should read no.',
+        'Ordinary test commands and auditing existing approval records are substantive work, not host-only approval operations.',
+        'Keep naturally connected facts about one behavior together. Separate entries for read scope, semantic assessment and preservation are independently repairable and should read no.',
+        'Preserve every original requirement and mandatory host check; repair only defective derived criteria, never waive approval or narrow the work.',
+      ],
+    }, { true: 'A single derived entry has a circular prerequisite, requires this worker to execute host-only approval, or bundles independently repairable obligations.', false: 'Each derived entry describes independently checkable substantive work; required software approval behavior is valid, and actual host acceptance is performed by the runtime.' }),
     ...Object.fromEntries(input.requirements.map((requirement) => [narrowsKey(requirement.id), noul({ question: NARROWS_QUESTION, requirement: requirement.text }, NARROWS_CRITERIA)])),
   };
 }
@@ -170,7 +181,7 @@ function fixture(
   requirements: readonly string[],
   unit: UnitShapeUnit,
   otherUnits: readonly Sibling[],
-  expect: { readonly role?: UnitShapeRole; readonly narrows?: readonly Label[] },
+  expect: { readonly role?: UnitShapeRole; readonly narrows?: readonly Label[]; readonly acceptanceProblem?: Label },
 ): UnitShapeFixture {
   const ids = requirements.map((_, index) => `requirement-${index + 1}`);
   const labels = expect.narrows;
@@ -184,6 +195,7 @@ function fixture(
     },
     expect: {
       ...(expect.role === undefined ? {} : { role: expect.role }),
+      ...(expect.acceptanceProblem === undefined ? {} : { acceptanceProblem: expect.acceptanceProblem }),
       ...(labels === undefined ? {} : { narrows: Object.fromEntries(ids.map((id, index) => [id, labels[index]!])) }),
     },
   };
@@ -229,6 +241,22 @@ const EXPORT_UNITS: readonly Sibling[] = [['CSV export', 'Add CSV export', ['Rep
 const { durations, combinedDurationRequirements, version } = PROOF_PLANS;
 
 const FIXTURES: readonly UnitShapeFixture[] = [
+  fixture('current host approval is circular', 'Review assigned source', [], {
+    title: 'Source review', goal: 'Review assigned source', brief: 'Read and assess the assigned source.',
+    criteria: ['All assigned source is reviewed and this native unit acceptance check has already passed'],
+  }, [], { acceptanceProblem: 'yes' }),
+  fixture('the host performs native validation', 'Review assigned source with native Jev acceptance', ['Have native Jev validate the plan and each unit result'], {
+    title: 'Source review', goal: 'Review assigned source', brief: 'Read and assess the assigned source; return the result for automatic host checking.',
+    criteria: ['Actual returned receipts cover all assigned ranges', 'The review gives source-supported findings or concrete no-defect assessments'],
+  }, [], { role: 'research', narrows: ['no'], acceptanceProblem: 'no' }),
+  fixture('separate review obligations identify the missing work', 'Review assigned source', [], {
+    title: 'Source review', goal: 'Review assigned source', brief: 'Read and assess the assigned source; the host checks the result automatically.',
+    criteria: ['Returned read receipts cover every assigned range without truncation', 'The assessment explains connected behavior and relevant existing tests, with evidenced findings or concrete no-defect conclusions', 'Prior findings are preserved and no production files are changed'],
+  }, [], { acceptanceProblem: 'no' }),
+  fixture('testing the checker implementation is substantive work', 'Fix approval enforcement', [], {
+    title: 'Enforce approval', goal: 'Reject output before native approval', brief: 'Implement the output gate and test its rejection and acceptance behavior.',
+    criteria: ['A rejected draft never reaches successful completion', 'After the evaluator approves a completed result, the result reaches the user'],
+  }, [], { acceptanceProblem: 'no' }),
   fixture('full rename', RENAME_GOAL, RENAME_CRITERIA, {
     title: 'Rename getUser', goal: 'Rename getUser to fetchUser everywhere',
     brief: 'Find every definition, import and call of getUser anywhere in the repository and rename it to fetchUser, including tests and docs.',
@@ -387,8 +415,8 @@ function assertFixture(entry: UnitShapeFixture): void {
 
 const HEADER = {
   name: 'contract.unit-shape',
-  version: 2,
-  description: 'What kind of work a planned unit is (implement, research, design, or a review, test or verify unit), and, for each contract criterion it serves, whether it does less than the criterion sets with no other unit doing the rest.',
+  version: 3,
+  description: 'A unit’s work role, independently checkable derived acceptance criteria, and coverage of the original requirements it serves.',
   accuracyFloor: 0.9,
 } as const;
 
@@ -409,14 +437,16 @@ export const unitShape: UnitShape = {
     const result = await askAs(port, HEADER, 'battery', state, questionsFor(input), options);
     const answers = result.answers as Readonly<Record<string, unknown>>;
     const role = readChoice(answers['role'] as ChoiceResponse<typeof UNIT_SHAPE_ROLES>, ROLE_BAND);
+    const acceptanceProblem = readYesNo(answers['acceptance_problem'] as NoulResponse, NARROWS_BAND);
     const narrows = input.requirements.map((requirement): RequirementReading => ({ ...requirement, reading: readYesNo(answers[narrowsKey(requirement.id)] as NoulResponse, NARROWS_BAND) }));
-    recordReadings(port, result, { role, narrows });
-    return { role, narrows, decisionId: result.decisionId, usage: result.usage, recordAction: (action) => recordAction(port, result.decisionId, action) };
+    recordReadings(port, result, { role, acceptanceProblem, narrows });
+    return { role, acceptanceProblem, narrows, decisionId: result.decisionId, usage: result.usage, recordAction: (action) => recordAction(port, result.decisionId, action) };
   },
   checkFixtures: (port, options = {}) =>
     checkEachFixture(FIXTURES, options, async (entry, run) => {
-      const { role, narrows } = await unitShape.read(port, entry.input, run);
+      const { role, narrows, acceptanceProblem } = await unitShape.read(port, entry.input, run);
       const checks: FixtureCheck[] = entry.expect.role === undefined ? [] : [checkReading(entry.name, 'role', entry.expect.role, role)];
+      if (entry.expect.acceptanceProblem !== undefined) checks.push(checkReading(entry.name, 'acceptance_problem', entry.expect.acceptanceProblem, acceptanceProblem));
       for (const { id, reading } of narrows) checks.push(checkReading(entry.name, `narrows ${id}`, entry.expect.narrows![id]!, reading, 'narrows'));
       return checks;
     }),

@@ -129,6 +129,27 @@ describe('what the agent did, from its turns', () => {
     expect(commands[0]!.head.endsWith('out 30')).toBe(true);
   });
 
+  test('read-only evidence survives restart and combines only actual additional observations', async () => {
+    const retained = sourceReadsFromTurns([{ turn: 1, assistantText: '', toolCalls: [{ name: 'read', arguments: {} }],
+      results: [{ callId: 'old', success: true, output: JSON.stringify({ success: true, files: [
+        { path: 'source.ts', extract: 'lines', content: '    1 | first\n    2 | second' },
+      ] }) }] }], ['source.ts']);
+    const unit = makeUnit({ files: ['source.ts'], readEvidence: retained });
+    const resumed = await collectUnitEvidence(makeContract(), unit, 'resume', { cwd: dir, output: 'Review source.ts:1-3', report: null,
+      mustWrite: false, turns: [], configManager: noGates(), runtimeBus: new RuntimeEventBus() });
+    expect(resumed.sourceReads).toEqual(retained);
+    const next = await collectUnitEvidence(makeContract(), unit, 'completion', { cwd: dir, output: 'Review source.ts:1-3', report: null,
+      mustWrite: false, runtimeBus: new RuntimeEventBus(), configManager: noGates(), turns: [{ turn: 2, assistantText: '', toolCalls: [{ name: 'read', arguments: {} }],
+        results: [{ callId: 'new', success: true, output: JSON.stringify({ success: true, files: [
+          { path: 'source.ts', extract: 'lines', content: '    2 | second\n    3 | third' },
+        ] }) }] }] });
+    expect(next.sourceReads).toEqual([{ path: 'source.ts', returnedRanges: ['1-3'], returnedLines: 3,
+      returnedContent: '    1 | first\n    2 | second\n    3 | third', contentKind: 'declared-reference' }]);
+    const writing = await collectUnitEvidence(makeContract(), unit, 'resume', { cwd: dir, output: '', report: null,
+      mustWrite: true, turns: [], configManager: noGates(), runtimeBus: new RuntimeEventBus() });
+    expect(writing.sourceReads ?? []).toEqual([]);
+  });
+
   test('write and edit calls name the written paths, once each, in first-seen order', () => {
     expect(writtenPaths(TURNS)).toEqual(['src/a.ts', 'src/b.ts', 'src/c.ts']);
   });

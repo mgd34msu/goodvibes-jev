@@ -8386,6 +8386,17 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           },
           "answer": "sample",
           "lastOutput": "sample",
+          "readEvidence": [
+            {
+              "path": "sample",
+              "returnedRanges": [
+                "sample"
+              ],
+              "returnedLines": 0,
+              "returnedContent": "sample",
+              "contentKind": "declared-reference"
+            }
+          ],
           "lastReport": {
             "version": 1,
             "summary": "sample",
@@ -8602,6 +8613,17 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
               },
               "answer": "sample",
               "lastOutput": "sample",
+              "readEvidence": [
+                {
+                  "path": "sample",
+                  "returnedRanges": [
+                    "sample"
+                  ],
+                  "returnedLines": 0,
+                  "returnedContent": "sample",
+                  "contentKind": "declared-reference"
+                }
+              ],
               "lastReport": {
                 "version": 1,
                 "summary": "sample",
@@ -9400,6 +9422,17 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
               },
               "answer": "sample",
               "lastOutput": "sample",
+              "readEvidence": [
+                {
+                  "path": "sample",
+                  "returnedRanges": [
+                    "sample"
+                  ],
+                  "returnedLines": 0,
+                  "returnedContent": "sample",
+                  "contentKind": "declared-reference"
+                }
+              ],
               "lastReport": {
                 "version": 1,
                 "summary": "sample",
@@ -9616,6 +9649,17 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                   },
                   "answer": "sample",
                   "lastOutput": "sample",
+                  "readEvidence": [
+                    {
+                      "path": "sample",
+                      "returnedRanges": [
+                        "sample"
+                      ],
+                      "returnedLines": 0,
+                      "returnedContent": "sample",
+                      "contentKind": "declared-reference"
+                    }
+                  ],
                   "lastReport": {
                     "version": 1,
                     "summary": "sample",
@@ -10431,6 +10475,17 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
             },
             "answer": "sample",
             "lastOutput": "sample",
+            "readEvidence": [
+              {
+                "path": "sample",
+                "returnedRanges": [
+                  "sample"
+                ],
+                "returnedLines": 0,
+                "returnedContent": "sample",
+                "contentKind": "declared-reference"
+              }
+            ],
             "lastReport": {
               "version": 1,
               "summary": "sample",
@@ -10647,6 +10702,17 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                 },
                 "answer": "sample",
                 "lastOutput": "sample",
+                "readEvidence": [
+                  {
+                    "path": "sample",
+                    "returnedRanges": [
+                      "sample"
+                    ],
+                    "returnedLines": 0,
+                    "returnedContent": "sample",
+                    "contentKind": "declared-reference"
+                  }
+                ],
                 "lastReport": {
                   "version": 1,
                   "summary": "sample",

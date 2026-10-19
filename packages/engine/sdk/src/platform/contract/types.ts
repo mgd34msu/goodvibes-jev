@@ -319,11 +319,13 @@ export interface ContractUnit {
   /** The unit's completion summary. */
   answer?: string | undefined;
   /**
-   * The output the unit's last completion check read (its agent's final
-   * report), head and tail kept. The agent record does not survive a restart,
-   * so a check after one reads this (design 7.2).
+   * The private candidate read by the latest completion check, retained for
+   * fresh verification after restart. Its presence grants no acceptance or
+   * permission to publish; only a passed unit has a deliverable answer.
    */
   lastOutput?: string | undefined;
+  /** Captured read-only observations retained for fresh checks after restart; never an approval. */
+  readEvidence?: readonly import('./evidence.js').SourceReadEvidence[] | undefined;
   /**
    * The completion report parsed from the output of the unit's last completion
    * check, whole. `lastOutput` is capped head and tail, so a long report is cut

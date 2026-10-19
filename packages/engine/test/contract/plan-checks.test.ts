@@ -71,7 +71,7 @@ test('the checks ask about the right states', async () => {
   // The requirement rides in its own narrows question, not in the state.
   expect(unitState['criteria']).toBeUndefined();
   const unitRequest = fake.requests.find((request) => unitTitleOf(request.state as Record<string, unknown>) === 'CSV parser')!;
-  expect(Object.keys(unitRequest.questions)).toEqual(['role', 'narrows_c1']);
+  expect(Object.keys(unitRequest.questions)).toEqual(['role', 'acceptance_problem', 'narrows_c1']);
   expect(fieldOf(unitRequest.questions['narrows_c1']!, 'requirement')).toBe('A CSV parser with unit tests exists');
   const coverageRequest = fake.requests.find((request) => request.context?.site === 'contract.plan-checks.plan-coverage')!;
   expect(Object.entries(coverageRequest.questions).map(([name, question]) => [name, fieldOf(question, 'words')])).toEqual([
@@ -82,6 +82,12 @@ test('the checks ask about the right states', async () => {
   expect([...sites].sort()).toEqual([
     'contract.plan-checks.criterion-shape', 'contract.plan-checks.criterion-trace', 'contract.plan-checks.plan-coverage', 'contract.plan-checks.unit-shape',
   ]);
+});
+
+test('circular or inseparable derived acceptance requires plan repair before execution', async () => {
+  const verdict = await check(({ name, state }) => name === 'acceptance_problem' && unitTitleOf(state) === 'CSV parser' ? noulAnswer(0.98) : undefined);
+  expect(problemCodes(verdict, 'not-checkable')).toEqual(['u1']);
+  expect(verdict.problems[0]!.message).toContain('Preserve all original requirements');
 });
 
 describe('criterion-trace: fidelity follows the supported relation', () => {
@@ -306,7 +312,7 @@ describe('unit-shape', () => {
       name.startsWith('narrows_') && fieldOf(question, 'requirement') === 'A JSON formatter with unit tests exists' ? noulAnswer(0.8) : undefined);
     const verdict = await runPlanChecks(asPlan(plan), ASK, shapeOf());
     const wire = fake.requests.find((request) => unitTitleOf(request.state as Record<string, unknown>) === 'Wire convert')!;
-    expect(Object.keys(wire.questions)).toEqual(['role', 'narrows_c1', 'narrows_c2', 'narrows_c3']);
+    expect(Object.keys(wire.questions)).toEqual(['role', 'acceptance_problem', 'narrows_c1', 'narrows_c2', 'narrows_c3']);
     expect(problemCodes(verdict, 'narrows')).toEqual(['u2', 'u3']);
     expect(verdict.problems.at(-1)!.message).toContain('contract criterion c2 (');
     expect(verdict.problems.at(-1)!.message).not.toContain('c1 (');

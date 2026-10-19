@@ -13490,6 +13490,13 @@ export interface OperatorMethodOutputMap {
             };
             answer?: string;
             lastOutput?: string;
+            readEvidence?: readonly ({
+                path: string;
+                returnedRanges: readonly string[];
+                returnedLines: number;
+                returnedContent?: string;
+                contentKind?: "cited-source" | "declared-reference";
+            })[];
             lastReport?: {
                 version: 1;
                 summary?: string;
@@ -13680,6 +13687,13 @@ export interface OperatorMethodOutputMap {
                 };
                 answer?: string;
                 lastOutput?: string;
+                readEvidence?: readonly ({
+                    path: string;
+                    returnedRanges: readonly string[];
+                    returnedLines: number;
+                    returnedContent?: string;
+                    contentKind?: "cited-source" | "declared-reference";
+                })[];
                 lastReport?: {
                     version: 1;
                     summary?: string;
@@ -14600,6 +14614,13 @@ export interface OperatorMethodOutputMap {
                 };
                 answer?: string;
                 lastOutput?: string;
+                readEvidence?: readonly ({
+                    path: string;
+                    returnedRanges: readonly string[];
+                    returnedLines: number;
+                    returnedContent?: string;
+                    contentKind?: "cited-source" | "declared-reference";
+                })[];
                 lastReport?: {
                     version: 1;
                     summary?: string;
@@ -14790,6 +14811,13 @@ export interface OperatorMethodOutputMap {
                     };
                     answer?: string;
                     lastOutput?: string;
+                    readEvidence?: readonly ({
+                        path: string;
+                        returnedRanges: readonly string[];
+                        returnedLines: number;
+                        returnedContent?: string;
+                        contentKind?: "cited-source" | "declared-reference";
+                    })[];
                     lastReport?: {
                         version: 1;
                         summary?: string;
@@ -15719,6 +15747,13 @@ export interface OperatorMethodOutputMap {
                 };
                 answer?: string;
                 lastOutput?: string;
+                readEvidence?: readonly ({
+                    path: string;
+                    returnedRanges: readonly string[];
+                    returnedLines: number;
+                    returnedContent?: string;
+                    contentKind?: "cited-source" | "declared-reference";
+                })[];
                 lastReport?: {
                     version: 1;
                     summary?: string;
@@ -15909,6 +15944,13 @@ export interface OperatorMethodOutputMap {
                     };
                     answer?: string;
                     lastOutput?: string;
+                    readEvidence?: readonly ({
+                        path: string;
+                        returnedRanges: readonly string[];
+                        returnedLines: number;
+                        returnedContent?: string;
+                        contentKind?: "cited-source" | "declared-reference";
+                    })[];
                     lastReport?: {
                         version: 1;
                         summary?: string;

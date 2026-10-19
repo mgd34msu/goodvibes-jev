@@ -117,7 +117,10 @@ export function detectStall(
 
   if (limits.maxNudgesPerUnit > 0 && unit.nudges.length >= limits.maxNudgesPerUnit) return { kind: 'nudge-limit', nudges: unit.nudges.length };
 
-  const settled = unit.checks.filter((check) => check.trigger !== 'turn-end').map((check) => standingOf(unit, check));
+  const judged = unit.criteria.filter(criterion => criterion.disposition === 'judged');
+  const settled = unit.checks.filter(check => check.trigger !== 'turn-end'
+    && judged.every(criterion => criterion.readings.some(reading => reading.checkId === check.id)))
+    .map(check => standingOf(unit, check));
   if (current.trigger !== 'turn-end') settled.push(current);
   let run = 0;
   for (let index = settled.length - 1; index >= 0; index -= 1) {

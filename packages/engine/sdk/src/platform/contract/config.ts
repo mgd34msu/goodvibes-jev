@@ -67,7 +67,7 @@ export const CONTRACT_CONFIG_DEFAULTS: ContractConfig = {
   acceptanceStakes: 'high',
   midRunChecks: true,
   evidenceNudgeLimit: 0,
-  stallLimit: 0,
+  stallLimit: 3,
   maxNudgesPerUnit: 0,
   maxFixRounds: 0,
   planRepairLimit: 0,

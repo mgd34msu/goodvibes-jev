@@ -216,11 +216,11 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
     let output: string;
     try {
       const record = runtime.session?.record ?? (unit.activeAgentId === undefined ? null : deps.agentManager.getStatus(unit.activeAgentId));
-      output = given ?? (trigger === 'turn-end' ? runtime.lastAssistantText : (record?.fullOutput ?? runtime.lastAssistantText));
+      output = given ?? (trigger === 'turn-end' ? runtime.lastAssistantText : (record?.fullOutput ?? (runtime.lastAssistantText || unit.lastOutput || '')));
       // The agent's final report outlives its record only on the unit: a check after a restart reads it.
       // The report is stored whole with it: lastOutput is capped, so a long report is cut there.
       const read = parseUnitCompletionReport(output).report;
-      if (given === undefined && trigger !== 'turn-end' && output.trim().length > 0) {
+      if (trigger !== 'turn-end' && trigger !== 'resume' && output.trim().length > 0) {
         unit.lastOutput = headAndTail(output, OUTPUT_CAP_CHARS);
         if (read === null) delete unit.lastReport;
         else unit.lastReport = read;
@@ -238,6 +238,7 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
         signal,
       });
       if (check.superseded || signal.aborted) return;
+      if (!unitMustWrite(run.contract, unit)) unit.readEvidence = structuredClone(evidence.sourceReads ?? []);
       const prior = unit.checks.at(-1);
       if (run.contract.nativeSource !== undefined && prior !== undefined && prior.result !== 'pass'
         && (prior.problems?.includes('unshown') || prior.goal.verdict === 'unshown' || unit.criteria.some(criterion => criterion.status === 'unshown'))

@@ -1,5 +1,6 @@
 import { createContractInputAuthority, bindContractInputAuthority, assertContractInputAuthority } from './input-authority.js';
 import { nativeContractRoute } from './native-decisions.js';
+import { bindContractPlanConsumer } from '../tools/agent/contract-binding.js';
 /**
  * An owner's amendment (docs/design/contract-runner.md section 6.3): the
  * owner's reply read as "change what is required" goes to the planning model
@@ -205,7 +206,7 @@ export async function amendTarget(run: ContractRun, escalation: Escalation, inst
   for (let attempt = 0; config.planRepairLimit === 0 || attempt <= config.planRepairLimit; attempt += 1) {
     run.abort.signal.throwIfAborted();
     if (authority) await assertContractInputAuthority(authority, workingDirectory, run.abort.signal);
-    const result = await context.decompositionRunner.run(bindContractInputAuthority({
+    const result = await context.decompositionRunner.run(bindContractPlanConsumer(bindContractInputAuthority({
       goal: contract.ask,
       workingDir: workingDirectory,
       systemPrompt: buildAmendmentPrompt(),
@@ -215,7 +216,7 @@ export async function amendTarget(run: ContractRun, escalation: Escalation, inst
       attempt: attempt === 0 ? 'initial' : 'repair',
       route,
       signal: run.abort.signal,
-    }, authority));
+    }, authority)));
     run.abort.signal.throwIfAborted();
     if (authority) await assertContractInputAuthority(authority, workingDirectory, run.abort.signal);
     if (result.agentId !== undefined) contract.plannerAgentIds.push(result.agentId);

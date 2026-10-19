@@ -17,7 +17,7 @@ import type { ContractGroupView, ContractUnitView, ContractView, CriterionView }
 
 /** The fixed closing paragraph of every brief. */
 export const BRIEF_CHECKED_PARAGRAPH =
-  'Your work is checked against these criteria while you work and when you finish. If a check finds a problem you will receive a correction; fix it and finish again.';
+  'The native host automatically checks your actual work and evidence against these criteria when you return. You do not invoke a checker tool, grant yourself approval, or wait for prior approval of this same check. Perform the substantive work, return its result and actual evidence, then address specific host findings if returned. Preserve completed work and correct only the remaining gaps.';
 
 const READ_ONLY_LINE = 'Tools: read-only. Do not change any file; your answer is the deliverable.';
 const WRITE_LINE = 'Tools: you may read, write, edit and run commands in the working tree.';
@@ -73,7 +73,9 @@ export function buildUnitBrief(
  * retry, silence retry, a fresh agent, a respawn after a restart): the brief
  * followed by the "Previous checks" section, when there were checks.
  */
-export function briefWithPreviousChecks(brief: string, unit: Parameters<typeof buildPreviousChecks>[0]): string {
+export function briefWithPreviousChecks(brief: string, unit: Parameters<typeof buildPreviousChecks>[0] & Pick<ContractUnitView, 'lastOutput' | 'readEvidence'>): string {
   const previous = buildPreviousChecks(unit);
-  return previous.length === 0 ? brief : `${brief}\n\n${previous}`;
+  const retained = unit.lastOutput ? `Retained internal candidate (not an approval; preserve supported findings and complete only its missing work):\n${unit.lastOutput}` : '';
+  const reads = unit.readEvidence?.length ? `Host-retained read observations (not approval or a guarantee about changed source; obtain missing primary contents when needed):\n${JSON.stringify(unit.readEvidence.map(({ path, returnedRanges }) => ({ path, returnedRanges })))}` : '';
+  return [brief, previous, retained, reads].filter(Boolean).join('\n\n');
 }

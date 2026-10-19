@@ -1,5 +1,5 @@
 import { bindContractInputAuthority } from './input-authority.js';
-import { bindContractActionSource } from '../tools/agent/contract-binding.js';
+import { bindContractActionSource, bindContractPlanConsumer } from '../tools/agent/contract-binding.js';
 import { nativeContractActionSource } from './native-decisions.js';
 /**
  * Correction when nudging stalls (docs/design/contract-runner.md section 5):
@@ -213,7 +213,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
     let repair: { problems: readonly PlanProblem[]; previousPlan: string } | undefined;
     for (let attempt = 0; ; attempt += 1) {
       await input.assertCurrent();
-      const result = await context.decompositionRunner.run(bindContractInputAuthority({
+      const result = await context.decompositionRunner.run(bindContractPlanConsumer(bindContractInputAuthority({
         goal: contract.ask,
         workingDir: input.workingDirectory,
         systemPrompt: buildFixPlannerPrompt(),
@@ -222,7 +222,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
         attempt: attempt === 0 ? 'initial' : 'repair',
         route,
         signal: run.abort.signal,
-      }, input.authority));
+      }, input.authority)));
       if (result.agentId !== undefined) contract.plannerAgentIds.push(result.agentId);
       if (run.terminal) return;
       await input.assertCurrent();
@@ -272,9 +272,9 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
           run.control.fail('planning', 'Native fix planner exhausted its unchanged budget'); return;
         }
         const attempt = spendNative(contract, context.native, key);
-        const result = await context.decompositionRunner.run(bindContractActionSource(bindContractInputAuthority({ goal: contract.nativeSource!.goal, workingDir: input.workingDirectory,
+        const result = await context.decompositionRunner.run(bindContractPlanConsumer(bindContractActionSource(bindContractInputAuthority({ goal: contract.nativeSource!.goal, workingDir: input.workingDirectory,
           systemPrompt: buildFixPlannerPrompt(), userPrompt: buildFixPlannerRequest(brief, repair), bounds: readPlannerBounds(context.configManager),
-          attempt: attempt === 1 ? 'initial' : 'repair', route: route!, signal: run.abort.signal }, input.authority), sourceOf, port => nativeContractPort(contract, context.native, port, run.abort.signal)));
+          attempt: attempt === 1 ? 'initial' : 'repair', route: route!, signal: run.abort.signal }, input.authority), sourceOf, port => nativeContractPort(contract, context.native, port, run.abort.signal))));
         if (result.agentId !== undefined) contract.plannerAgentIds.push(result.agentId);
         if (run.terminal) return;
         await input.assertCurrent();

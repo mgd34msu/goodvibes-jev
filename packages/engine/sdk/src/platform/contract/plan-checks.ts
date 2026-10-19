@@ -265,8 +265,12 @@ async function checkUnits(port: JudgmentPort, plan: ContractPlan, options: PlanC
   })));
   for (const { unit, run } of runs) {
     record(output, run.decisionId, run.usage);
-    const { role, narrows } = run;
+    const { role, narrows, acceptanceProblem } = run;
     const found: PlanProblem[] = [];
+    if (acceptanceProblem.verdict === 'yes' && acceptanceProblem.outcome === 'act') {
+      found.push({ code: 'not-checkable', targetId: unit.id,
+        message: `Repair unit ${unit.id}'s derived acceptance criteria: describe independently checkable substantive work, separate independent obligations so a rejection identifies the missing repair, and remove circular prerequisites that this very host acceptance check already passed. Host-owned planning and approval operations remain mandatory host operations. Preserve all original requirements and required work.` });
+    }
     if (role.outcome === 'act' && !roleAgrees(unit.role, role.choice)) {
       found.push({
         code: 'role-mismatch',

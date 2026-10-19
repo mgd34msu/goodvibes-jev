@@ -34889,6 +34889,42 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                   "lastOutput": {
                     "type": "string"
                   },
+                  "readEvidence": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        },
+                        "returnedRanges": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "returnedLines": {
+                          "type": "number"
+                        },
+                        "returnedContent": {
+                          "type": "string"
+                        },
+                        "contentKind": {
+                          "type": "string",
+                          "enum": [
+                            "declared-reference",
+                            "cited-source"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "returnedRanges",
+                        "returnedLines"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
                   "lastReport": {
                     "oneOf": [
                       {
@@ -35925,6 +35961,42 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                         },
                         "lastOutput": {
                           "type": "string"
+                        },
+                        "readEvidence": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "returnedRanges": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "returnedLines": {
+                                "type": "number"
+                              },
+                              "returnedContent": {
+                                "type": "string"
+                              },
+                              "contentKind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared-reference",
+                                  "cited-source"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "path",
+                              "returnedRanges",
+                              "returnedLines"
+                            ],
+                            "additionalProperties": false
+                          }
                         },
                         "lastReport": {
                           "oneOf": [
@@ -41546,6 +41618,42 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                         "lastOutput": {
                           "type": "string"
                         },
+                        "readEvidence": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "returnedRanges": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "returnedLines": {
+                                "type": "number"
+                              },
+                              "returnedContent": {
+                                "type": "string"
+                              },
+                              "contentKind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared-reference",
+                                  "cited-source"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "path",
+                              "returnedRanges",
+                              "returnedLines"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
                         "lastReport": {
                           "oneOf": [
                             {
@@ -42582,6 +42690,42 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                               },
                               "lastOutput": {
                                 "type": "string"
+                              },
+                              "readEvidence": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "path": {
+                                      "type": "string"
+                                    },
+                                    "returnedRanges": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "returnedLines": {
+                                      "type": "number"
+                                    },
+                                    "returnedContent": {
+                                      "type": "string"
+                                    },
+                                    "contentKind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "declared-reference",
+                                        "cited-source"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "path",
+                                    "returnedRanges",
+                                    "returnedLines"
+                                  ],
+                                  "additionalProperties": false
+                                }
                               },
                               "lastReport": {
                                 "oneOf": [
@@ -48307,6 +48451,42 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                       "lastOutput": {
                         "type": "string"
                       },
+                      "readEvidence": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "path": {
+                              "type": "string"
+                            },
+                            "returnedRanges": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "returnedLines": {
+                              "type": "number"
+                            },
+                            "returnedContent": {
+                              "type": "string"
+                            },
+                            "contentKind": {
+                              "type": "string",
+                              "enum": [
+                                "declared-reference",
+                                "cited-source"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "path",
+                            "returnedRanges",
+                            "returnedLines"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
                       "lastReport": {
                         "oneOf": [
                           {
@@ -49343,6 +49523,42 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                             },
                             "lastOutput": {
                               "type": "string"
+                            },
+                            "readEvidence": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "path": {
+                                    "type": "string"
+                                  },
+                                  "returnedRanges": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "returnedLines": {
+                                    "type": "number"
+                                  },
+                                  "returnedContent": {
+                                    "type": "string"
+                                  },
+                                  "contentKind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "declared-reference",
+                                      "cited-source"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "path",
+                                  "returnedRanges",
+                                  "returnedLines"
+                                ],
+                                "additionalProperties": false
+                              }
                             },
                             "lastReport": {
                               "oneOf": [

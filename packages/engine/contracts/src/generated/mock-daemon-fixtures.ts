@@ -5891,6 +5891,17 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           },
           "answer": "sample",
           "lastOutput": "sample",
+          "readEvidence": [
+            {
+              "path": "sample",
+              "returnedRanges": [
+                "sample"
+              ],
+              "returnedLines": 0,
+              "returnedContent": "sample",
+              "contentKind": "declared-reference"
+            }
+          ],
           "lastReport": {
             "version": 1,
             "summary": "sample",
@@ -6107,6 +6118,17 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               },
               "answer": "sample",
               "lastOutput": "sample",
+              "readEvidence": [
+                {
+                  "path": "sample",
+                  "returnedRanges": [
+                    "sample"
+                  ],
+                  "returnedLines": 0,
+                  "returnedContent": "sample",
+                  "contentKind": "declared-reference"
+                }
+              ],
               "lastReport": {
                 "version": 1,
                 "summary": "sample",
@@ -6907,6 +6929,17 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               },
               "answer": "sample",
               "lastOutput": "sample",
+              "readEvidence": [
+                {
+                  "path": "sample",
+                  "returnedRanges": [
+                    "sample"
+                  ],
+                  "returnedLines": 0,
+                  "returnedContent": "sample",
+                  "contentKind": "declared-reference"
+                }
+              ],
               "lastReport": {
                 "version": 1,
                 "summary": "sample",
@@ -7123,6 +7156,17 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                   },
                   "answer": "sample",
                   "lastOutput": "sample",
+                  "readEvidence": [
+                    {
+                      "path": "sample",
+                      "returnedRanges": [
+                        "sample"
+                      ],
+                      "returnedLines": 0,
+                      "returnedContent": "sample",
+                      "contentKind": "declared-reference"
+                    }
+                  ],
                   "lastReport": {
                     "version": 1,
                     "summary": "sample",
@@ -7939,6 +7983,17 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
             },
             "answer": "sample",
             "lastOutput": "sample",
+            "readEvidence": [
+              {
+                "path": "sample",
+                "returnedRanges": [
+                  "sample"
+                ],
+                "returnedLines": 0,
+                "returnedContent": "sample",
+                "contentKind": "declared-reference"
+              }
+            ],
             "lastReport": {
               "version": 1,
               "summary": "sample",
@@ -8155,6 +8210,17 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                 },
                 "answer": "sample",
                 "lastOutput": "sample",
+                "readEvidence": [
+                  {
+                    "path": "sample",
+                    "returnedRanges": [
+                      "sample"
+                    ],
+                    "returnedLines": 0,
+                    "returnedContent": "sample",
+                    "contentKind": "declared-reference"
+                  }
+                ],
                 "lastReport": {
                   "version": 1,
                   "summary": "sample",

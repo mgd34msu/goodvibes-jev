@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- Keep amendment and repair planners in the host's checked proposal path,
+  reject circular or inseparable derived unit criteria before execution, and
+  explain that the host invokes acceptance automatically. Retain held review
+  candidates and read observations for fresh checks after restart, preserving
+  completed work without restoring an approval. Keep held drafts out of the
+  main transcript and route three checks without progress into recovery.
+
 - Give unit checks the current contract's actual plan-validation records, so
   workers need not repeat host-owned planning or invent a prior approval.
   Retain returned reference inputs and cited source text alongside read scope,

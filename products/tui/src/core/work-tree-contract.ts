@@ -97,7 +97,7 @@ export function projectContractTree(contract: ContractView): ContractTreeRow[] {
         ...criteriaLines(unit.criteria), ...checksLines(unit.checks),
         ...unit.nudges.map((nudge) => `${nudge.id} · ${nudge.delivery}${nudge.consumedAt === undefined ? '' : ' · consumed'}: ${nudge.text}`),
         ...(unit.failureReason ? [unit.failureReason] : []),
-        ...(unit.answer ? [unit.answer] : unit.lastOutput ? [unit.lastOutput] : []),
+        ...(unit.status === 'passed' && unit.answer ? [unit.answer] : []),
         ...(unit.attemptSelection ? [`Selection: ${unit.attemptSelection.outcome} · picked ${unit.attemptSelection.pickedId ?? 'none'} · ${unit.attemptSelection.reasons}`] : []),
       ].filter(Boolean),
     });

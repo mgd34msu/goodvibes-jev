@@ -28,6 +28,13 @@ function draw(contract: ContractView, collapse = new Map<string, boolean>(), wid
 const text = (lines: ReturnType<typeof renderAgentView>): string => lines.map((line) => line.map((cell) => cell.char).join('')).join('\n');
 
 describe('public contract projection', () => {
+  test('held drafts stay private and accepted unit answers can be displayed', () => {
+    const held = contractFixture({ units: [contractUnit({ status: 'held', lastOutput: 'PRIVATE UNAPPROVED DRAFT' })] });
+    expect(projectContractTree(held).flatMap(row => row.lines).join('\n')).not.toContain('PRIVATE UNAPPROVED DRAFT');
+    const passed = contractFixture({ units: [contractUnit({ status: 'passed', answer: 'Accepted review result' })] });
+    expect(projectContractTree(passed).flatMap(row => row.lines).join('\n')).toContain('Accepted review result');
+  });
+
   test('real contract-start results branch into their owner lane', () => {
     const turn = model(contractFixture());
     expect(turn.agentCount).toBe(1);

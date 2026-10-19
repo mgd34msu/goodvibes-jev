@@ -29,7 +29,7 @@ export const contractConfigDefaults: { contract: ContractSettings } = {
     acceptanceStakes: 'high',
     midRunChecks: true,
     evidenceNudgeLimit: 0,
-    stallLimit: 0,
+    stallLimit: 3,
     maxNudgesPerUnit: 0,
     maxFixRounds: 0,
     planRepairLimit: 0,
@@ -94,7 +94,7 @@ export const contractConfigSettings: ConfigSettingDefinition[] = [
   {
     key: 'contract.stallLimit',
     type: 'number',
-    default: 0,
+    default: 3,
     description: 'Consecutive checks without progress that mark a unit as stalled and hand it to correction; 0 disables this limit',
     ...intRange(0, Number.MAX_SAFE_INTEGER),
   },

@@ -7,6 +7,7 @@
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { hasContractPlanConsumer } from '../../sdk/src/platform/tools/agent/contract-binding.js';
 import { buildFixGroup, validateFixPlan, type ContractRouteSelector, type Criterion, type FixBrief } from '../../sdk/src/platform/contract/index.js';
 import { plannerOutput, type AnswerContext, type DraftPlan } from './plan-support.js';
 import { eventsOf, makeHarness, oneUnitPlan, startContract, waitFor, type AgentScript, type Harness } from './runner-support.js';
@@ -73,6 +74,7 @@ describe('routing a stalled unit', () => {
     expect(done.decisions.some((decision) => decision.action === 'fix-planned' && decision.targetId === 'u1')).toBe(true);
     // The fix planner saw the target, its unmet criterion and the corrections already sent.
     const prompt = planner.of('fix')[0]!.userPrompt;
+    expect(hasContractPlanConsumer(planner.of('fix')[0]!)).toBe(true);
     expect(prompt).toContain('## The part to repair (unit u1)');
     expect(prompt).toContain('[u1.c1] (unmet');
     expect(prompt).toContain('## The last corrections sent');

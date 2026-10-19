@@ -3679,7 +3679,7 @@ export const CONFIG_SCHEMA_ENTRIES: readonly ConfigSchemaEntry[] = [
   {
     "key": "contract.stallLimit",
     "type": "number",
-    "default": 0,
+    "default": 3,
     "description": "Consecutive checks without progress that mark a unit as stalled and hand it to correction; 0 disables this limit",
     "validationHint": "integer in [0, 9007199254740991]"
   },

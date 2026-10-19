@@ -6,6 +6,7 @@
  * may change; it never passes a criterion that reads unmet.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
+import { hasContractPlanConsumer } from '../../sdk/src/platform/tools/agent/contract-binding.js';
 import { SqliteDecisionLog } from '@goodvibes-jev/judgment';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { APPROVAL_REFUSED_LINE, ASK_AGAIN_LINE, NAME_AN_ATTEMPT_LINE, type EscalationReason, type OwnerReplyOutcome } from '../../sdk/src/platform/contract/index.js';
@@ -215,6 +216,7 @@ describe('owner replies (6.3)', () => {
         const s = await setup('amend');
         const outcome = await s.reply(TEXTS.amend);
         expect(outcome.action).toBe('amended');
+        for (const request of s.planner.of('amend')) expect(hasContractPlanConsumer(request)).toBe(true);
         await settle(s);
         const done = contractOf(s.h, s.contractId);
         expect(done.status).toBe('passed');

@@ -18,6 +18,13 @@ import { makeCriterion, makeUnit } from './fixtures.js';
 
 const LIMITS = { stallLimit: 3, maxNudgesPerUnit: 12 };
 
+test('checks of replaced derived criteria do not immediately stall their first fresh check', () => {
+  const unit = unitWith(['a']);
+  for (let index = 0; index < 5; index++) record(unit, 'completion', { a: 'unmet' });
+  unit.criteria = [makeCriterion({ id: 'a.refined', disposition: 'judged', readings: [] })];
+  expect(detectStall(unit, standing({}), [], LIMITS)).toBeNull();
+});
+
 function unitWith(ids: readonly string[]): ContractUnit {
   return makeUnit({ criteria: ids.map((id) => makeCriterion({ id, origin: 'derived', serves: ['c1'], quote: undefined })) });
 }

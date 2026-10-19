@@ -74,7 +74,7 @@ export interface FileChange {
   readonly diff: string;
 }
 
-/** Captured read scope only; returned contents do not establish review quality. */
+/** Captured read scope and selected returned text; scope alone proves no review quality. */
 export interface SourceReadEvidence {
   readonly path: string;
   readonly returnedRanges: readonly string[];
@@ -161,6 +161,43 @@ export function sourceReadsFromTurns(turns: readonly ContractTurnRecord[], refer
     return { path, returnedRanges, returnedLines: lines.size,
       ...(content ? { returnedContent: [...content].sort(([a], [b]) => a - b).map(([, text]) => text).join('\n'),
         contentKind: references.has(path) ? 'declared-reference' as const : 'cited-source' as const } : {}) };
+  });
+}
+
+/** Merge retained observations with new reads; no prior verdict is carried forward. */
+function mergeSourceReads(previous: readonly SourceReadEvidence[], current: readonly SourceReadEvidence[]): SourceReadEvidence[] {
+  const files = new Map<string, { ranges: [number, number][]; content: Map<number, string>; reference: boolean }>();
+  for (const read of [...previous, ...current]) {
+    if (typeof read.path !== 'string' || !Array.isArray(read.returnedRanges)) throw new Error('Invalid retained source-read evidence');
+    const file: { ranges: [number, number][]; content: Map<number, string>; reference: boolean } = files.get(read.path) ?? { ranges: [], content: new Map(), reference: false };
+    for (const range of read.returnedRanges) {
+      if (typeof range !== 'string') throw new Error('Invalid retained source-read interval');
+      const match = /^(\d+)(?:-(\d+))?$/.exec(range);
+      const start = Number(match?.[1]), end = Number(match?.[2] ?? match?.[1]);
+      if (!Number.isSafeInteger(start) || start < 1 || !Number.isSafeInteger(end) || end < start) throw new Error('Invalid retained source-read interval');
+      file.ranges.push([start, end]);
+    }
+    if (read.returnedContent !== undefined) {
+      if (typeof read.returnedContent !== 'string') throw new Error('Invalid retained source-read contents');
+      for (const row of read.returnedContent.split('\n')) {
+        const match = /^[ \t]*(\d+) \|/.exec(row), line = Number(match?.[1]);
+        if (match && file.ranges.some(([start, end]) => line >= start && line <= end)) file.content.set(line, row);
+      }
+      file.reference ||= read.contentKind === 'declared-reference';
+    }
+    files.set(read.path, file);
+  }
+  return [...files].map(([path, file]) => {
+    const ranges: [number, number][] = [];
+    for (const [start, end] of file.ranges.sort(([a], [b]) => a - b)) {
+      const last = ranges.at(-1);
+      if (last && start <= last[1] + 1) last[1] = Math.max(last[1], end);
+      else ranges.push([start, end]);
+    }
+    return { path, returnedRanges: ranges.map(([start, end]) => start === end ? String(start) : `${start}-${end}`),
+      returnedLines: ranges.reduce((sum, [start, end]) => sum + end - start + 1, 0),
+      ...(file.content.size ? { returnedContent: [...file.content].sort(([a], [b]) => a - b).map(([, row]) => row).join('\n'),
+        contentKind: file.reference ? 'declared-reference' as const : 'cited-source' as const } : {}) };
   });
 }
 
@@ -319,7 +356,7 @@ export async function collectChanges(unit: Pick<ContractUnit, 'baseline'>, sourc
  */
 export async function collectUnitEvidence(
   contract: Pick<ContractView, 'id' | 'sessionId'> & Partial<Pick<ContractView, 'status' | 'decisions' | 'createdAt' | 'origin' | 'units' | 'proposedUnits'>>,
-  unit: Pick<ContractUnit, 'id' | 'goal' | 'brief' | 'files' | 'baseline'>,
+  unit: Pick<ContractUnit, 'id' | 'goal' | 'brief' | 'files' | 'baseline' | 'readEvidence'>,
   trigger: CheckTrigger,
   sources: UnitEvidenceSources,
 ): Promise<UnitEvidence> {
@@ -344,7 +381,9 @@ export async function collectUnitEvidence(
   const planChecks = contract.decisions?.filter(decision => decision.action === 'plan-accepted' && decision.targetId === contract.id)
     .map(decision => ({ at: decision.at, reason: decision.reason, decisionIds: [...decision.decisionIds] })) ?? [];
   const firstUnitStartedAt = contract.decisions?.find(decision => decision.action === 'spawned' && contract.units?.some(unit => unit.id === decision.targetId))?.at;
-  return trimEvidence({ output: sources.output, changes, claims, gates, commands: commandsFromTurns(sources.turns), sourceReads: sourceReadsFromTurns(sources.turns, sources.mustWrite ? [] : unit.files, sources.output),
+  const currentReads = sourceReadsFromTurns(sources.turns, sources.mustWrite ? [] : unit.files, sources.output);
+  return trimEvidence({ output: sources.output, changes, claims, gates, commands: commandsFromTurns(sources.turns),
+    sourceReads: sources.mustWrite ? currentReads : mergeSourceReads(unit.readEvidence ?? [], currentReads),
     ...(planChecks.length ? { orchestration: { contractId: contract.id, ...(contract.status === undefined ? {} : { status: contract.status }), planChecks,
       ...(contract.createdAt === undefined ? {} : { createdAt: contract.createdAt }),
       ...(contract.origin === undefined ? {} : { origin: contract.origin }),

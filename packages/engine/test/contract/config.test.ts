@@ -105,7 +105,7 @@ describe('readContractConfig', () => {
   test('the dotted key wins over the category, and the category over the default', () => {
     expect(readContractConfig(reader({ stallLimit: 7 }, { stallLimit: 4 })).stallLimit).toBe(7);
     expect(readContractConfig(reader({}, { stallLimit: 4 })).stallLimit).toBe(4);
-    expect(readContractConfig(reader({})).stallLimit).toBe(0);
+    expect(readContractConfig(reader({})).stallLimit).toBe(3);
   });
 
   test('a non-finite number is skipped at each step, so a loop bound can never be NaN or Infinity', () => {

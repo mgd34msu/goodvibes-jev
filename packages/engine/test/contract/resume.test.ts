@@ -9,13 +9,13 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import type { Contract, ContractView } from '../../sdk/src/platform/contract/index.js';
 import { contractPath } from '../../sdk/src/platform/contract/index.js';
 import type { DecompositionRunner } from '../../sdk/src/platform/core/plan-decomposition.js';
 import { plannerOutput, type AnswerContext } from './plan-support.js';
 import { eventsOf, makeHarness, makeRepo, oneUnitPlan, startContract, twoUnitPlan, waitFor, type AgentScript, type Harness, type HarnessOptions } from './runner-support.js';
-import { answers, git, replyAnswers, terminal } from './steps-support.js';
+import { answers, git, judgeOf, replyAnswers, terminal } from './steps-support.js';
 
 const roots: string[] = [];
 const harnesses: Harness[] = [];
@@ -95,6 +95,46 @@ async function ended(h: Harness, id: string): Promise<ContractView> {
 }
 
 const running = (contract: ContractView) => contract.units[0]?.status === 'running' && (contract.units[0]?.checks.length ?? 0) >= 1;
+
+test('a held read-only candidate and its observed source survive restart and receive a fresh check', async () => {
+  const root = makeRepo(); roots.push(root);
+  const plan = oneUnitPlan(1);
+  plan.groups[0]!.units[0]!.role = 'research';
+  plan.groups[0]!.units[0]!.files = ['src/review.ts'];
+  mkdirSync(join(root, 'src'), { recursive: true });
+  writeFileSync(join(root, 'src/review.ts'), 'export function clamp(value, min, max) {\n  return Math.min(max, Math.max(min, value));\n}\n');
+  const first = makeHarness({ root, plan, contract: { midRunChecks: false },
+    scripts: { u1: () => [{ text: '', stop: { kind: 'hang' } }] },
+    port: context => context.name === 'role' ? choiceAnswer(context.question, 'research', 0.98)
+      : judgeOf(context) === 'unit' ? noulAnswer(0.98) : undefined });
+  harnesses.push(first);
+  const { contract } = startContract(first);
+  await waitFor(() => first.agentsOf('u1').some(id => first.manager.getStatus(id)?.status === 'running'), 'the read-only worker to start');
+  const record = first.manager.getStatus(first.agentsOf('u1')[0]!)!;
+  first.runner.hooks().onTurnEnd(record, { turn: 1, assistantText: '',
+    toolCalls: [{ name: 'read', arguments: { files: [{ path: 'src/review.ts' }] } }],
+    results: [{ callId: 'actual-read', success: true, output: JSON.stringify({ success: true, files: [{ path: 'src/review.ts', extract: 'content',
+      content: '    1 | export function clamp(value, min, max) {\n    2 |   return Math.min(max, Math.max(min, value));\n    3 | }' }] }) }] });
+  const candidate = 'Reviewed src/review.ts:1-3. For min <= max, the inner max enforces the lower bound and the outer min the upper bound; zero inside the interval stays zero. This is source analysis; no test execution or native approval is claimed.';
+  expect(await first.runner.hooks().holdCompletion(record, candidate)).toMatchObject({ kind: 'continue' });
+  expect(unitIn(first, contract.id, 'u1').lastOutput).toBe(candidate);
+  expect(unitIn(first, contract.id, 'u1').criteria[0]!.status).toBe('unmet');
+  first.dispose();
+  await first.runner.join(contract.id);
+  const resumedStates: unknown[] = [];
+  const second = restart(root, { plan, scripts: { u1: mustNotRun }, port: context => {
+    if (context.name === 'role') return choiceAnswer(context.question, 'research', 0.98);
+    if (judgeOf(context) !== 'unit') return undefined;
+    resumedStates.push(context.state);
+    const evidence = context.state['evidence'] as { sourceReads?: { returnedRanges: string[] }[] };
+    return noulAnswer(context.state['output'] === candidate && evidence.sourceReads?.[0]?.returnedRanges.join() === '1-3' ? 0.02 : 0.98);
+  } });
+  await second.runner.resumeAll();
+  expect((await ended(second, contract.id)).status).toBe('passed');
+  expect(resumedStates.length).toBeGreaterThan(0);
+  expect(unitIn(second, contract.id, 'u1').checks.at(-1)).toMatchObject({ trigger: 'resume', result: 'pass' });
+  expect(second.agentsOf('u1')).toEqual([]);
+}, 20_000);
 
 describe('planning starts again', () => {
   test('resume restores the original owner and reports completion through that identity', async () => {
