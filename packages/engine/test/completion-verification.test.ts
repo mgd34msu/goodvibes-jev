@@ -10,6 +10,7 @@ import { verificationHash, verificationSources, verificationWireSource } from '.
 import { VerificationStore } from '../sdk/src/platform/core/verification/store.js';
 import { createVerificationWriter } from '../sdk/src/platform/core/verification/writer.js';
 import { ConversationManager } from '../sdk/src/platform/core/conversation.js';
+import { snapshotJudgmentEvidence } from '../sdk/src/platform/gate/judgment-input.js';
 import { ResponseCompletionGuard } from '../sdk/src/platform/core/response-completion.js';
 import { verificationHistory, verificationMessages } from '../sdk/src/platform/core/verification/archive.js';
 import { verificationWriter } from './_helpers/verification.js';
@@ -23,6 +24,18 @@ const good = () => fakePort(() => noulAnswer(.01));
 const access = (port: VerificationAccess['port'], identity = {}, signal?: AbortSignal): VerificationAccess => ({ port, identity, ...(signal ? { signal } : {}), assertCurrent: () => signal?.throwIfAborted() });
 const state = (content = 'Observed source.') => ({ request: 'Review all source and write review.md.', response: 'The report is saved in review.md.', transcript: [{ role: 'tool', callId: 'read-1', content }], tools: ['read', 'write'], requirements: null, delegated: [], initial: null });
 const directory = () => { const value = mkdtempSync(join(tmpdir(), 'completion-verification-')); directories.push(value); return value; };
+
+test('lossless source boundaries cannot turn a long numeric identity into refused card material', () => {
+  for (const text of ['x'.repeat(11_968) + '7'.repeat(32) + '4111111111111111' + ' end', '7'.repeat(24_000) + '4111111111111111']) {
+    snapshotJudgmentEvidence({ text });
+    const sources = verificationSources({ request: text, transcript: [], delegated: [], response: '' });
+    expect(sources.map(source => source.text).join('')).toBe(text);
+    for (const source of sources) {
+      expect(JSON.stringify(source.text).length).toBeLessThanOrEqual(14_000);
+      expect(() => snapshotJudgmentEvidence({ kind: 'source', key: source.id, value: source })).not.toThrow();
+    }
+  }
+});
 
 test('invalid proposal citations receive the exact schema defect and valid immediate citation IDs', async () => {
   let feedback: unknown;

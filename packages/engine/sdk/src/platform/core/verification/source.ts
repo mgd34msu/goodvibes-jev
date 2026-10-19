@@ -17,6 +17,21 @@ export function verificationSources(state: Record<string, unknown>): Verificatio
     for (let start = 0; start < text.length;) {
       let end = Math.min(text.length, start + 12_000);
       while (JSON.stringify(text.slice(start, end)).length > VERIFICATION_FRAME_CHARACTERS / 2) end = start + Math.max(1, Math.floor((end - start) / 2));
+      // A cut inside a long numeric identity can manufacture a 13–19 digit
+      // card shape that did not exist in the admitted original. Keep ordinary
+      // runs intact. For a run larger than a frame, keep both resulting groups
+      // longer than the card limit. Every resulting source is still screened.
+      const digit = (index: number) => index >= 0 && index < text.length && text.charCodeAt(index) >= 48 && text.charCodeAt(index) <= 57;
+      if (digit(end - 1) && digit(end)) {
+        let beginning = end;
+        while (beginning > start && digit(beginning - 1)) beginning--;
+        if (beginning > start) end = beginning;
+        else {
+          let tail = 0;
+          while (tail < 20 && digit(end + tail)) tail++;
+          if (tail < 20) end -= 20 - tail;
+        }
+      }
       const label = `${reference}; ${start === 0 && end === text.length ? 'complete observation' : 'partial observation'}; characters ${start}..${end} of ${text.length}`;
       result.push({ id: `s-${verificationHash([kind, label, text.slice(start, end)]).slice(0, 24)}`, kind,
         reference: label, text: text.slice(start, end), ...(messageRole ? { messageRole, completeMessage: start === 0 && end === text.length } : {}), ...(execution ? { execution } : {}) });

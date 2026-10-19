@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- Keep numeric identities intact at verification source boundaries so splitting
+  admitted evidence cannot manufacture a false payment-card refusal.
+
 - Retain shared assignment context and evidence constraints in delegation checks
   and contract planning instead of judging an incomplete task string.
 
