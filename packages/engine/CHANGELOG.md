@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Forward each private review draft through captured execution settlement to the
+  contract checker, so it can reject incomplete output and accept the repaired
+  answer instead of repeatedly judging an empty report.
+
 - Verify large completion evidence through source-backed requirement, evidence,
   integration and publication checks. Preserve admitted originals through compaction
   and resume, retrieve primary evidence when a reading is unclear, and reuse

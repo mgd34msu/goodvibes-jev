@@ -6,7 +6,7 @@ import {
   createSystemOnePort, DEFAULT_MODEL, SqliteDecisionLog, withDecisionLog,
   type JudgmentPort, type JudgmentRequest, type Questions,
 } from '@goodvibes-jev/judgment';
-import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { ConfigManager } from '../../sdk/src/platform/config/index.js';
 import { createAgentManagerDecompositionRunner } from '../../sdk/src/platform/agents/planner-decomposition-runner.js';
@@ -40,7 +40,7 @@ const REVISED_MARKER = 'HOST_REVISED_READ_BODY';
 const TOOL_SITE = 'engine.gate.autonomous-tool';
 const readArgs = (path = 'README.md') => ({ files: [{ path }] });
 
-for (const scenario of ['act', 'unrecorded', 'planner-act'] as const) {
+for (const scenario of ['act', 'unrecorded', 'planner-act', 'review-drafts'] as const) {
   test(`actual native sub-agent tool admission ${scenario} retains source and captured authority without a secondary gate`, async () => {
     forgetGateReadings();
     const root = makeRepo();
@@ -62,13 +62,20 @@ for (const scenario of ['act', 'unrecorded', 'planner-act'] as const) {
     });
     await resumeContracts(runtime.contractRunner, root);
     const gate = gateReadingsPort();
-    const planning = runnerPort();
+    const drafts: (string | undefined)[] = [];
+    const incomplete = 'REVIEW_DRAFT_INCOMPLETE';
+    const complete = 'REVIEW_DRAFT_COMPLETE';
+    const planning = runnerPort(context => scenario === 'review-drafts' && context.name === 'role'
+      ? choiceAnswer(context.question, 'research', 0.99) : undefined);
+    const review = fakePort((_name, _question, state) => noulAnswer(
+      state !== null && typeof state === 'object' && !Array.isArray(state) && state['output'] === complete ? 0.01 : 0.95));
     const semanticRequests: JudgmentRequest<Questions>[] = [];
     const semantic = fakePort((_name, question) => choiceAnswer(question, 'act', 0.99));
     const rawPort: JudgmentPort = {
       model: planning.port.model,
       async ask(request) {
         request.signal?.throwIfAborted(); request.beforeAttempt?.();
+        if (scenario === 'review-drafts' && request.context?.site === 'contract.check.unit-judge') return review.port.ask(request);
         if (request.context?.site === TOOL_SITE) {
           semanticRequests.push(request as JudgmentRequest<Questions>);
           return semantic.port.ask(request);
@@ -105,6 +112,10 @@ for (const scenario of ['act', 'unrecorded', 'planner-act'] as const) {
           return { content: '', toolCalls: [{ id: `original-native-read-${turn}`, name: 'read', arguments: readArgs() }],
             usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'tool_call' };
         }
+        if (scenario === 'review-drafts' && (turn === 2 || turn === 3)) {
+          return { content: turn === 2 ? incomplete : complete, toolCalls: [],
+            usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
+        }
         return new Promise<never>((_resolve, reject) => {
           if (!request.signal) { reject(new Error('Actual native provider lacks its owned signal')); return; }
           if (request.signal.aborted) { reject(request.signal.reason); return; }
@@ -121,6 +132,7 @@ for (const scenario of ['act', 'unrecorded', 'planner-act'] as const) {
     plan.goal = SOURCE.goal;
     plan.criteria = SOURCE.criteria.map((text, index) => ({ id: `c${index + 1}`, text, quote: text }));
     plan.groups[0]!.units[0]!.criteria = SOURCE.criteria.map((_text, index) => ({ id: `u1.c${index + 1}`, text: `Original requirement ${index + 1} holds`, serves: [`c${index + 1}`] }));
+    if (scenario === 'review-drafts') plan.groups[0]!.units[0]!.role = 'research';
     const store = new ContractStore({ projectRoot: root, sweepIntervalMs: 0 });
     const runner = createContractRunner({
       agentManager: runtime.agentManager, messageBus: runtime.agentMessageBus, runtimeBus: bus,
@@ -153,7 +165,10 @@ for (const scenario of ['act', 'unrecorded', 'planner-act'] as const) {
     runtime.agentOrchestrator.setDependencies({
       ...runtime, permissionManager: permissions, configManager: config, workingDirectory: root,
       surfaceRoot: 'agent', workflowServices: runtime.workflow, contractRunner: runner,
-      contractHooks: { ...runner.hooks(), onTurnEnd(record, turn) { results.push(...turn.results); runner.hooks().onTurnEnd(record, turn); } },
+      contractHooks: { ...runner.hooks(),
+        onTurnEnd(record, turn) { results.push(...turn.results); runner.hooks().onTurnEnd(record, turn); },
+        holdCompletion(record, draft) { drafts.push(draft); return runner.hooks().holdCompletion(record, draft); },
+      },
     });
     let sourceBound = false; let inputBound = false; let agentId: string | undefined;
     const boundRoles: string[] = [];
@@ -201,6 +216,15 @@ for (const scenario of ['act', 'unrecorded', 'planner-act'] as const) {
       expect(boundRoles).toEqual(scenario === 'planner-act' ? ['planner', 'unit'] : ['unit']);
       expect(readFileSync(join(root, 'README.md'), 'utf8')).toBe(`${LATER_MARKER}\n`);
       expect(providerRequests.some(text => text.includes(LATER_MARKER))).toBe(false);
+      if (scenario === 'review-drafts') {
+        await waitFor(() => drafts.length >= 2, 'both private review drafts reached the contract checker', 10_000);
+        expect(drafts).toEqual([incomplete, complete]);
+        await waitFor(() => runner.get(id!)!.units[0]!.status === 'passed', 'repaired review accepted', 10_000);
+        const checks = runner.get(id!)!.units[0]!.checks;
+        expect(checks.map(check => check.result)).toEqual(['nudge', 'pass']);
+        expect(checks[0]!.evidenceDigest).not.toBe(checks[1]!.evidenceDigest);
+        expect(modelCalls).toBe(3);
+      }
     } finally {
       if (id) runner.cancel(id, 'bounded native tool fixture complete');
       runner.dispose(); if (id) await runner.join(id);

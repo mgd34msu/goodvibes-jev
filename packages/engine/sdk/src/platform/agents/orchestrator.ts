@@ -858,10 +858,10 @@ export class AgentOrchestrator {
                 logger.debug('Captured turn check stopped before execution settlement', { error: String(error) });
               });
             },
-            holdCompletion: async (record) => {
+            holdCompletion: async (record, candidateOutput) => {
               await processManager.waitOwnedBoundaries(authority, signal);
               signal?.throwIfAborted();
-              return contractHooks.holdCompletion(record);
+              return contractHooks.holdCompletion(record, candidateOutput);
             },
           }
         : contractHooks,
