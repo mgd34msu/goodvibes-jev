@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
 import { AgentManager, type AgentExecutor, type AgentFleetOwnership } from '../sdk/src/platform/tools/agent/manager.js';
+import { AgentCapacityError } from '../sdk/src/platform/tools/agent/capacity-error.js';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -54,7 +55,7 @@ test('a registry callback can admit the sibling but the outer final admission re
     additionalFleetOwnership: () => b.fleetOwnership(), providerRegistry: { listModels() { b.spawn(input); return []; } } });
   b = manager(configuration, right.executor, () => a.fleetOwnership());
   try {
-    expect(() => a.spawn(input)).toThrow('fleet.maxSize=1');
+    expect(() => a.spawn(input)).toThrow(AgentCapacityError);
     expect(a.list()).toHaveLength(0); expect(left.starts).toBe(0); expect(right.starts).toBe(1);
   } finally { left.release(); right.release(); await Promise.all(b.list().map(record => b.join(record.id))); }
 });

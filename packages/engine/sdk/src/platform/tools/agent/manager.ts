@@ -1,4 +1,5 @@
 import { bindContractInputAuthority } from '../../contract/input-authority.js';
+import { AgentCapacityError } from './capacity-error.js';
 import { bindContractActionSource, bindContractActionSignal, bindContractPlanConsumer } from './contract-binding.js';
 import type { AgentConstructionBinding } from './contract-binding.js';
 import { ArchetypeLoader } from '../../agents/archetypes.js';
@@ -442,6 +443,7 @@ export class AgentManager {
           reason: spawnDecision.reason ?? 'spawn policy rejected the child worker',
         });
       }
+      if (spawnDecision.boundCap?.key === 'fleet.maxSize') throw new AgentCapacityError(spawnDecision.reason ?? 'Fleet capacity reached');
       throw new Error(spawnDecision.reason ?? 'Spawn policy rejected the child worker');
     }
 
@@ -560,7 +562,10 @@ export class AgentManager {
         // await or published callback between this check and pending insertion.
         const admission = evaluateOrchestrationSpawn({ configManager: this.configManager!, mode: 'manual-batch',
           activeAgents: this.activeFleetCount(), requestedDepth: orchestrationDepth });
-        if (!admission.allowed) throw new Error(admission.reason ?? 'Shared fleet capacity reached');
+        if (!admission.allowed) {
+          if (admission.boundCap?.key === 'fleet.maxSize') throw new AgentCapacityError(admission.reason ?? 'Shared fleet capacity reached');
+          throw new Error(admission.reason ?? 'Shared fleet admission refused');
+        }
       }
       this.agents.set(id, record);
       return this.reserveExecution(id);

@@ -17,6 +17,7 @@ import { emptyWorkItemUsage, mergeWorkItemUsage } from '../sdk/src/platform/orch
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { createEventEnvelope } from '../sdk/src/platform/runtime/event-envelope.js';
 import type { AgentRecord } from '../sdk/src/platform/tools/agent/manager.js';
+import { AgentCapacityError } from '../sdk/src/platform/tools/agent/capacity-error.js';
 
 async function flushMicrotasks(rounds = 12): Promise<void> {
   for (let i = 0; i < rounds; i++) await Promise.resolve();
@@ -240,6 +241,37 @@ afterEach(() => {
 });
 
 describe('scheduler: pipeline flow, no pairwise binding', () => {
+  for (const race of [false, true]) test(`ordinary workstreams queue fleet saturation and resume without a failure (${race ? 'spawn race' : 'capacity probe'})`, async () => {
+    let full = true;
+    const spawn = h.agentManager.spawn.bind(h.agentManager);
+    const engine = h.makeEngine({
+      agentManager: { ...h.agentManager, spawn: (...args) => {
+        if (race && full) throw new AgentCapacityError('agent capacity reached (8/8), cap: fleet.maxSize=8');
+        return spawn(...args);
+      } },
+      fleetCapacity: () => ({ active: !race && full ? 8 : 7, maxSize: 8, capKey: 'fleet.maxSize' }),
+    });
+    const failures: OrchestrationEvent[] = [];
+    engine.on(event => { if (event.type === 'item-failed') failures.push(event); });
+    const ws = engine.createWorkstream({ title: 'ordinary contract work', phases: [enginePhase()], items: [{ id: 'queued', title: 'queued', task: 'preserve and finish' }] });
+    try {
+      engine.start(ws.id);
+      await flushMicrotasks(30);
+      expect(ws.items[0]!.state).toBe('awaiting-capacity');
+      expect(h.spawnedTasks).toEqual([]);
+      expect(failures).toEqual([]);
+      expect(ws.items[0]!.visits.size).toBe(0);
+      full = false;
+      const until = Date.now() + 2000;
+      while (h.spawnedTasks.length === 0 && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 10));
+      expect(h.spawnedTasks).toHaveLength(1);
+      h.completeAgent(ws.items[0]!.agentId!, engineerReportOutput('Finished the queued work'));
+      await flushMicrotasks(40);
+      expect(ws.items[0]!.state).toBe('passed');
+      expect(failures).toEqual([]);
+    } finally { engine.dispose(); }
+  });
+
   test('two engineers share a single second-phase slot; whichever finishes first claims it', async () => {
     const engine = h.makeEngine();
     const items: WorkItemSpec[] = [{ id: 'item-a', title: 'A', task: 'do A' }, { id: 'item-b', title: 'B', task: 'do B' }];

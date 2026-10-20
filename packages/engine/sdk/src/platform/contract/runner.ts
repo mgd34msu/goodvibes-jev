@@ -424,6 +424,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
   ])) as unknown as ContractStepsWithReplies;
 
   const checks = createUnitCheckLoop({
+    checkpoint: run => deps.store.scheduleWrite(run.id),
     findRun: (contractId) => runs.get(contractId),
     agentManager: deps.agentManager,
     messageBus: deps.messageBus,

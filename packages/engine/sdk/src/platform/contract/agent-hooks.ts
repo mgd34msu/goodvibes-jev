@@ -41,7 +41,7 @@ import { summarizeError } from '../utils/error-display.js';
 import { applySeverities, applyUnitCheck, checkSettings, readUnmetSeverities, runUnitCheck, unitMustWrite, type DecidedCheck, type UnitCheckOutcome } from './check.js';
 import type { ContractConfigReader } from './config.js';
 import { parseUnitCompletionReport } from './claims.js';
-import { collectUnitEvidence, headAndTail, OUTPUT_CAP_CHARS, type ContractTurnRecord } from './evidence.js';
+import { collectUnitEvidence, headAndTail, mergeSourceReads, sourceReadsFromTurns, OUTPUT_CAP_CHARS, type ContractTurnRecord } from './evidence.js';
 import { createNudge, dispatchNudge, type NudgeTargetState } from './nudge.js';
 import { engineItem, takeBaseline } from './group-runner.js';
 import { describeStall } from './progress.js';
@@ -98,6 +98,8 @@ export interface UnitCheckEscalations {
 }
 
 export interface UnitCheckLoopDeps {
+  /** Persist actual read observations independently of acceptance checks. */
+  readonly checkpoint?: ((run: ContractRun) => void) | undefined;
   readonly findRun: (contractId: string) => ContractRun | undefined;
   readonly agentManager: {
     getStatus(agentId: string): AgentRecord | null;
@@ -155,6 +157,13 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
     const { run, unit, runtime } = found;
     runtime.turns.push(turn);
     if (turn.assistantText.trim().length > 0) runtime.lastAssistantText = turn.assistantText;
+    if (!unitMustWrite(run.contract, unit)) {
+      const reads = sourceReadsFromTurns([turn], unit.files, runtime.lastAssistantText || unit.lastOutput || '');
+      if (reads.length > 0) {
+        unit.readEvidence = mergeSourceReads(unit.readEvidence ?? [], reads);
+        deps.checkpoint?.(run);
+      }
+    }
     deps.watchdog.touch(record.id);
     if (!turn.toolCalls.some((call) => CHANGING_TOOLS.has(call.name))) return;
     if (!run.env.config().midRunChecks || !WORKING.has(unit.status)) return;

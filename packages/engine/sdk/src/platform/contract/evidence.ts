@@ -165,7 +165,7 @@ export function sourceReadsFromTurns(turns: readonly ContractTurnRecord[], refer
 }
 
 /** Merge retained observations with new reads; no prior verdict is carried forward. */
-function mergeSourceReads(previous: readonly SourceReadEvidence[], current: readonly SourceReadEvidence[]): SourceReadEvidence[] {
+export function mergeSourceReads(previous: readonly SourceReadEvidence[], current: readonly SourceReadEvidence[]): SourceReadEvidence[] {
   const files = new Map<string, { ranges: [number, number][]; content: Map<number, string>; reference: boolean }>();
   for (const read of [...previous, ...current]) {
     if (typeof read.path !== 'string' || !Array.isArray(read.returnedRanges)) throw new Error('Invalid retained source-read evidence');

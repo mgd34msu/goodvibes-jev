@@ -97,6 +97,33 @@ async function ended(h: Harness, id: string): Promise<ContractView> {
 
 const running = (contract: ContractView) => contract.units[0]?.status === 'running' && (contract.units[0]?.checks.length ?? 0) >= 1;
 
+test('read observations are persisted before a candidate or acceptance check exists', async () => {
+  const root = makeRepo(); roots.push(root);
+  const plan = oneUnitPlan(1);
+  plan.groups[0]!.units[0]!.role = 'research';
+  const first = makeHarness({ root, plan, contract: { midRunChecks: false }, scripts: { u1: () => [{ text: '', stop: { kind: 'hang' } }] },
+    port: context => context.name === 'role' ? choiceAnswer(context.question, 'research', 0.98) : undefined });
+  harnesses.push(first);
+  const { contract } = startContract(first);
+  await waitFor(() => first.agentsOf('u1').some(id => first.manager.getStatus(id)?.status === 'running'), 'research worker');
+  const record = first.manager.getStatus(first.agentsOf('u1')[0]!)!;
+  first.runner.hooks().onTurnEnd(record, { turn: 1, assistantText: 'Inspecting the source.',
+    toolCalls: [{ name: 'read', arguments: { files: [{ path: 'src/review.ts' }] } }],
+    results: [{ callId: 'read', success: true, output: JSON.stringify({ success: true, files: [{ path: 'src/review.ts', extract: 'lines', content: '1 | const a = 1;\n2 | const b = 2;' }] }) }] });
+  await waitFor(() => {
+    const disk = JSON.parse(readFileSync(contractPath(root, contract.id), 'utf8')).contract;
+    return disk.units[0]?.readEvidence?.[0]?.returnedRanges.join() === '1-2';
+  }, 'read evidence checkpoint before completion');
+  const saved = JSON.parse(readFileSync(contractPath(root, contract.id), 'utf8')).contract;
+  expect(saved.units[0].checks).toEqual([]);
+  expect(saved.units[0].status).toBe('running');
+  expect(saved.units[0].lastOutput).toBeUndefined();
+  first.dispose();
+  await first.runner.join(contract.id);
+  const restored = JSON.parse(readFileSync(contractPath(root, contract.id), 'utf8')).contract;
+  expect(restored.units[0].readEvidence[0].returnedRanges).toEqual(['1-2']);
+});
+
 test('a held read-only candidate and its observed source survive restart and receive a fresh check', async () => {
   const root = makeRepo(); roots.push(root);
   const plan = oneUnitPlan(1);

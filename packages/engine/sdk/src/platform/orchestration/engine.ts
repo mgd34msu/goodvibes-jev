@@ -9,6 +9,7 @@
  * ticks never race a concurrent claim.
  */
 import { checkBudget } from './budget.js';
+import { AgentCapacityError } from '../tools/agent/capacity-error.js';
 import { createCancellationRegistry, type CancellationRegistry } from './cancellation.js';
 import type { ContractUnitSettlement, PhaseRunnerAgentManagerLike, WorktreeOps } from './phase-runner.js';
 import { runPhase } from './phase-runner.js';
@@ -99,7 +100,7 @@ export interface OrchestrationEngineDeps {
   readonly runWorktreeSetup?: ((worktreePath: string) => Promise<void> | void) | undefined;
   /** Optional best-of-N judge (PROPOSES a winner; never auto-picks unless the item opted in). Injectable, provider-agnostic. */
   readonly judgeAttempts?: AttemptJudge | undefined;
-  /** Live probe of the ONE fleet ceiling (fleet.maxSize) for elastic workstreams; absent = ungated (legacy). */
+  /** Live probe of the fleet ceiling for every workstream; absent = ungated. */
   readonly fleetCapacity?: FleetCapacityFn | undefined;
   /** Bounded per-task auto-retries before hard-fail (elastic fix graphs). Default 0 = off (legacy). */
   readonly maxItemRetries?: number | undefined;
@@ -569,6 +570,18 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     );
   }
 
+  let capacityRetry: ReturnType<typeof setTimeout> | undefined;
+  function retryWhenCapacityChanges(): void {
+    if (disposed || capacityRetry !== undefined) return;
+    // A terminal event can precede release of the executor's reservation.
+    // Recheck locally without another model call, visit, or failure attempt.
+    capacityRetry = setTimeout(() => {
+      capacityRetry = undefined;
+      for (const id of workstreams.keys()) tick(id);
+    }, 500);
+    capacityRetry.unref?.();
+  }
+
   function tick(workstreamId: string): void {
     if (disposed) return;
     const workstream = workstreams.get(workstreamId);
@@ -582,7 +595,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     }
     const claims = computeClaims(workstream);
     // One fleet probe per tick; claims allowed this tick count against it.
-    const fleetProbe = isElastic(workstream) && deps.fleetCapacity ? deps.fleetCapacity() : null;
+    const fleetProbe = deps.fleetCapacity?.() ?? null;
     let fleetActive = fleetProbe?.active ?? 0;
     for (const { item, phase } of claims) {
       if (disposed) return;
@@ -599,6 +612,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
           // The task stays VISIBLY ready with its reason, never a silent stall.
           item.state = 'awaiting-capacity';
           item.blockedReason = decision.reason;
+          retryWhenCapacityChanges();
           continue;
         }
         atCapNoted.delete(workstreamId);
@@ -621,13 +635,27 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
       // call join(), dispose(), kill(), or requeue this very item.
       void ownedWork.run(async () => {
         const signal = cancellation.start(item.id);
+        let capacityRefused = false;
         try {
           await runItemPhase(workstream, item, phase, signal);
         } catch (error) {
-          logger.error('orchestration engine: phase run threw before producing an outcome', {
-            workstreamId, itemId: item.id, phaseId: phase.id, error: summarizeError(error),
-          });
-          if (!requeuedInFlight.has(item.id)) failItem(workstream, item, summarizeError(error));
+          if (error instanceof AgentCapacityError && !signal.aborted && !disposed && !requeuedInFlight.has(item.id)) {
+            capacityRefused = true;
+            // Another manager may take the last slot while isolation/setup
+            // yields. Admission refusal is a queue state, never task failure.
+            item.state = 'awaiting-capacity';
+            item.blockedReason = error.message;
+            const visits = (item.visits.get(phase.id) ?? 1) - 1;
+            if (visits > 0) item.visits.set(phase.id, visits);
+            else item.visits.delete(phase.id);
+            emit({ type: 'pool-spawn-refused', workstreamId, itemId: item.id, reason: error.message });
+            retryWhenCapacityChanges();
+          } else {
+            logger.error('orchestration engine: phase run threw before producing an outcome', {
+              workstreamId, itemId: item.id, phaseId: phase.id, error: summarizeError(error),
+            });
+            if (!requeuedInFlight.has(item.id)) failItem(workstream, item, summarizeError(error));
+          }
         } finally {
           try {
             // kill marks an item failed immediately, but its executor can still
@@ -640,7 +668,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
             requeuedInFlight.delete(item.id);
             activeItems.delete(item.id);
             releasePhase();
-            if (!disposed) {
+            if (!disposed && !capacityRefused) {
               tick(workstreamId);
               const retire = retirementEvent(workstream, item.agentId);
               if (retire) emit(retire);
@@ -823,6 +851,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
   function dispose(): void {
     if (disposed) return;
     disposed = true;
+    if (capacityRetry !== undefined) clearTimeout(capacityRetry);
     unsubscribeWriter();
     listeners.clear();
   }
