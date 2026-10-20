@@ -14,6 +14,7 @@ import { stallRoute } from './batteries/stall-route.js';
 import { unitShape } from './batteries/unit-shape.js';
 import { UNIT_JUDGES } from './batteries/unit-judge.js';
 import { unitQuality } from './batteries/unit-quality.js';
+import { sourceCitationPurpose } from './batteries/source-citation-purpose.js';
 import { unmetSeverity } from './batteries/unmet-severity.js';
 import { nativeIntakeCoverage } from '../workflow/work-ledger/native-intake-decisions.js';
 
@@ -37,6 +38,7 @@ registry.register(unitShape);
 registry.register(UNIT_JUDGES.high);
 registry.register(UNIT_JUDGES.critical);
 registry.register(unitQuality);
+registry.register(sourceCitationPurpose);
 registry.register(unmetSeverity);
 
 // Correction and finishing (sections 5 and 6).

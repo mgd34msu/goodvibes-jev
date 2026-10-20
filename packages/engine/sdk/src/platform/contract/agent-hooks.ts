@@ -1,4 +1,6 @@
-import { nativeContractActionSource } from './native-decisions.js';
+import { nativeContractActionSource, nativeContractPort } from './native-decisions.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { selectSourceCitationEvidence } from './source-citation-selection.js';
 import { getContractActionSource } from '../tools/agent/contract-binding.js';
 import { assertOwnedContractSource } from './owned-source.js';
 import { hashState } from '@goodvibes-jev/judgment';
@@ -234,7 +236,7 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
         if (read === null) delete unit.lastReport;
         else unit.lastReport = read;
       }
-      const evidence = await collectUnitEvidence(run.contract, unit, trigger, {
+      let evidence = await collectUnitEvidence(run.contract, unit, trigger, {
         output,
         // A check after a restart reads the report stored on the unit (design 7.2), not the capped output.
         report: trigger === 'resume' ? (unit.lastReport ?? null) : read,
@@ -248,6 +250,10 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
       });
       if (check.superseded || signal.aborted) return;
       if (!unitMustWrite(run.contract, unit)) unit.readEvidence = structuredClone(evidence.sourceReads ?? []);
+      const selection = await selectSourceCitationEvidence(unit, evidence, nativeContractPort(run.contract, run.env.native, judgmentPort('contract.check.source-citation-purpose'), signal), signal);
+      if (check.superseded || signal.aborted) return;
+      addJudgmentUsage(run.contract.judgmentUsage, selection.usage);
+      evidence = selection.evidence;
       const prior = unit.checks.at(-1);
       if (run.contract.nativeSource !== undefined && prior !== undefined && prior.result !== 'pass'
         && (prior.problems?.includes('unshown') || prior.goal.verdict === 'unshown' || unit.criteria.some(criterion => criterion.status === 'unshown'))

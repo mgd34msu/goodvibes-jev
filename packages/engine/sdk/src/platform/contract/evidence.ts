@@ -454,7 +454,7 @@ function sourceReadState(evidence: UnitEvidence): CheckState {
   if (!evidence.sourceReads?.length) return {};
   return {
     sourceReads: evidence.sourceReads.map(read => ({ ...read, returnedRanges: [...read.returnedRanges] })),
-    sourceReadMeaning: 'These host-collected ranges establish which numbered source lines were actually returned by successful read tools. returnedContent contains only actual returned text: declared reference inputs or explicitly cited source ranges, as contentKind records; it may be a subset of returnedRanges. Read scope alone does not establish semantic review quality or validate findings. Judge the substantive work against the provided source evidence separately. This is the current native acceptance check; do not demand an earlier approval of this same check.',
+    sourceReadMeaning: 'These host-collected ranges establish which numbered source lines were actually returned by successful read tools. returnedContent contains only actual returned text: declared reference inputs or explicitly cited source ranges, as contentKind records; it may be a subset of returnedRanges. For large inputs, Jev may identify receipt-only citation paragraphs: their source quotations are omitted from this check view while the full report, all returned-range records and raw saved evidence remain intact. Substantive and mixed citation contexts retain their primary text. Read scope alone does not establish semantic review quality or validate findings; missing primary text is not proof of a substantive claim. Judge the substantive work against the provided source evidence separately. This is the current native acceptance check; do not demand an earlier approval of this same check.',
   };
 }
 
