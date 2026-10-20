@@ -25,7 +25,7 @@
  * Every choice here is code over recorded statuses; nothing is judged. The
  * checks the resumed units get are ordinary unit checks (check.ts).
  */
-import { assertContractInputObjects, assertContractInputView, assertContractExecutionView } from './input-snapshot.js';
+import { assertContractInputObjects, assertContractInputView, assertContractExecutionView, restoreContractInputDevice } from './input-snapshot.js';
 
 import { existsSync } from 'node:fs';
 import { loadWorkstreamSnapshot } from '../orchestration/persistence.js';
@@ -173,6 +173,18 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
       if (isTerminalContractStatus(contract.status)) {
         deps.store.hold(contract);
         continue;
+      }
+      if (contract.inputSnapshot !== undefined) {
+        try {
+          contract.inputSnapshot = await restoreContractInputDevice(contract.inputSnapshot);
+        } catch (error) {
+          // Do not spawn workers with an invalid input lease, or discard their
+          // retained work merely because this startup could not verify it.
+          deps.store.hold(contract);
+          skipped.push(contractId);
+          logger.warn('contract runner: input recovery held', { contractId, error: error instanceof Error ? error.message : String(error) });
+          continue;
+        }
       }
       const run = deps.adopt(contract);
       prepareResume(run);

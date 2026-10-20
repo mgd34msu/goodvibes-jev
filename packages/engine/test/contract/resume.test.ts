@@ -9,6 +9,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { uptime } from 'node:os';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import type { Contract, ContractView } from '../../sdk/src/platform/contract/index.js';
 import { contractPath } from '../../sdk/src/platform/contract/index.js';
@@ -340,6 +341,32 @@ describe('units resume at their step', () => {
     expect(done.status).toBe('passed');
     expect(h.agentsOf('u1')).toEqual([]);
     expect(done.statusBeforeOwner).toBeUndefined();
+  }, 30_000);
+
+  test('a held unit survives device renumbering with a fresh check and no repeated worker', async () => {
+    const options: Options = { plan: oneUnitPlan(1), contract: { isolation: 'worktree' }, scripts: { u1: writesThenHangs } };
+    const { root, ids: [id] } = await interrupt(options, running, 'u1 running after a check');
+    editContract(root, id!, contract => {
+      const snapshot = contract.inputSnapshot!;
+      const device = snapshot.sourceIdentity.split(':')[0]!;
+      const priorDevice = String(BigInt(device) + 100000n);
+      const replace = (value: string) => value.startsWith(`${device}:`) ? priorDevice + value.slice(device.length) : value;
+      contract.inputSnapshot = {
+        ...snapshot, capturedAt: Date.now() - uptime() * 1000 - 60000,
+        sourceIdentity: replace(snapshot.sourceIdentity),
+        gitIdentity: snapshot.gitIdentity.split('|').map(replace).join('|'),
+        files: snapshot.files.map(file => file.identity === undefined ? file : { ...file, identity: replace(file.identity) }),
+      };
+      contract.units[0]!.status = 'held';
+      contract.units[0]!.lastOutput = 'Wrote the parser in src/csv.ts.';
+    });
+    const h = restart(root, { ...options, scripts: { u1: mustNotRun } });
+    const report = await h.runner.resumeAll();
+    expect(report.resumed).toEqual([{ contractId: id!, step: 'run' }]);
+    const done = await ended(h, id!);
+    expect(done.status).toBe('passed');
+    expect(h.agentsOf('u1')).toEqual([]);
+    expect(done.units[0]!.checks.at(-1)?.trigger).toBe('resume');
   }, 30_000);
 
   test('worktree mode: a held unit passes its resume check, its item commits and merges with no agent, and the contract commits', async () => {

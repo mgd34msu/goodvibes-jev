@@ -53,7 +53,7 @@ import { emitContractEvent } from './events.js';
 import type { OwnerReplyOutcome } from './escalation.js';
 import { createGroupRunner, takeBaseline, type ContractEngineInput } from './group-runner.js';
 import { CONTRACT_RUNNER_AGENT_ID } from './nudge.js';
-import { captureContractInput, contractInputPath, materializeContractInput, assertContractInputView, assertContractExecutionView, prepareContractInputParent } from './input-snapshot.js';
+import { captureContractInput, contractInputPath, materializeContractInput, assertContractInputView, assertContractExecutionView, prepareContractInputParent, restoreContractInputDevice } from './input-snapshot.js';
 import { planContract, shapeContract, type ContractPlannerDeps, type PlanningOutcome, type ShapeOutcome } from './planner.js';
 import type { NativeContractDecisionHost, NativeContractServices } from './native-decisions.js';
 import { bindNativeContractSource, captureNativeContractSource, nativeSourceCriteria } from './native-source.js';
@@ -653,7 +653,10 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
       durableLeases.set(admission.contractId, lease);
       const contract = deserializeContract(durableAdmissions.checkpoint(admission.key));
       if (contract === null) { durableLeases.delete(admission.contractId); lease(); throw new DurableContractAdmissionError('checkpoint'); }
-      try { assertDurableCheckpoint(contract, admission); }
+      try {
+        assertDurableCheckpoint(contract, admission);
+        if (contract.inputSnapshot !== undefined) contract.inputSnapshot = await restoreContractInputDevice(contract.inputSnapshot);
+      }
       catch (error) { durableLeases.delete(admission.contractId); lease(); throw error; }
       deps.store.hold(contract);
       const run = newRun(contract);

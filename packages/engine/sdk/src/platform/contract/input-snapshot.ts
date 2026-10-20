@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, type BigIntStats, type Dirent } from 'node:fs';
 import { chmod, lstat, mkdir, mkdtemp, open, opendir, readlink, realpath, rm, symlink } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { tmpdir, uptime } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 /** Runtime state and known credential-store directories are never contract input, even when tracked. */
@@ -328,6 +328,31 @@ export async function assertContractInputOwner(snapshot: ContractInputSnapshot, 
 export async function assertContractInputGitIdentity(snapshot: ContractInputSnapshot): Promise<void> {
   if (await repositoryIdentity(snapshot.sourceRoot) !== snapshot.gitIdentity)
     throw new Error('contract input Git directory was replaced');
+}
+
+/** Device numbers can change across boots (for example on Btrfs). Rebind only
+ * that component after checking the entire original readset and captured view.
+ * This does not recapture input, reuse judgments, or accept a replacement inode.
+ */
+export async function restoreContractInputDevice(snapshot: ContractInputSnapshot, signal?: AbortSignal): Promise<ContractInputSnapshot> {
+  const current = directoryIdentity(await lstat(snapshot.sourceRoot, { bigint: true }));
+  if (current === snapshot.sourceIdentity) return snapshot;
+  const previous = /^(\d+):(\d+)$/.exec(snapshot.sourceIdentity);
+  const present = /^(\d+):(\d+)$/.exec(current);
+  if (!previous || !present || previous[2] !== present[2] || previous[1] === present[1]
+    || snapshot.capturedAt >= Date.now() - uptime() * 1000 - 5000)
+    throw new Error('contract input source root was replaced');
+  const replaceDevice = (value: string): string => value.startsWith(`${previous[1]}:`)
+    ? `${present[1]}${value.slice(previous[1]!.length)}` : value;
+  const restored: ContractInputSnapshot = {
+    ...snapshot,
+    sourceIdentity: current,
+    gitIdentity: snapshot.gitIdentity.split('|').map(replaceDevice).join('|'),
+    files: snapshot.files.map(file => file.identity === undefined ? file : { ...file, identity: replaceDevice(file.identity) }),
+  };
+  await assertContractInputOwner(restored, signal);
+  await assertContractInputView(restored, signal);
+  return restored;
 }
 
 /** Verify persisted object provenance, without recapturing today's owner tree. */
