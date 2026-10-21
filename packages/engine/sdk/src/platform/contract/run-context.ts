@@ -61,8 +61,7 @@ export interface UnitRuntime {
   check: InFlightCheck | null;
   /** A turn end arrived while a check ran: one more turn-end check follows it. */
   recheckPending: boolean;
-  /** Request failures are not failed work or acceptance verdicts. */
-  verificationRepairs?: number;
+  /** Request failures wait on verification without changing the candidate. */
   verificationRetryCancel?: () => void;
   /** The phase runner waiting for the runner to settle the unit's current agent. */
   settlement: { readonly agentId: string; readonly resolve: (outcome: ContractUnitOutcome) => void } | null;

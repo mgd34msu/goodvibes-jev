@@ -13,6 +13,7 @@ import { uptime } from 'node:os';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { JudgmentError } from '@goodvibes-jev/judgment';
 import { assertJudgmentInput } from '../../sdk/src/platform/gate/judgment-input.js';
+import { findCardNumberShapes } from '../../sdk/src/platform/security/card-shapes.js';
 import type { Contract, ContractView } from '../../sdk/src/platform/contract/index.js';
 import { contractPath } from '../../sdk/src/platform/contract/index.js';
 import type { DecompositionRunner } from '../../sdk/src/platform/core/plan-decomposition.js';
@@ -180,7 +181,10 @@ test.each(['interrupted', 'privacy-refused', 'verifier-refused'])('an %s final-a
   if (condition === 'privacy-refused') {
     expect(prompt).not.toContain('4111111111111111');
     expect(prompt).toContain('[WITHHELD:card-shaped-number]');
-    assertJudgmentInput({ prompt });
+    try { assertJudgmentInput({ prompt }); } catch (error) {
+      throw new Error('Unsafe planner-input context (all digits withheld): ' + JSON.stringify(findCardNumberShapes(prompt)
+        .map(span => prompt.slice(Math.max(0, span.startIndex - 80), span.startIndex + span.length + 80).replace(/\d/g, '#'))), { cause: error });
+    }
     assertJudgmentInput({ task: repairTask });
     expect(done.units[0]!.commandEvidence![0]!.head).toBe(privateHead);
     expect(done.units[0]!.commandEvidence![0]!.command).toBe('ls -l');
@@ -231,13 +235,14 @@ test('an interrupted fix-plan request reuses its bound proposal and obtains a fr
 });
 
 test.each([false, true])('a rejected verifier request cannot cancel a sibling or pass unchecked work (persistent=%s)', async persistent => {
+  const root = makeRepo(); roots.push(root);
   const plan = twoUnitPlan();
   const firstUnit = plan.groups[0]!.units[0]!;
   firstUnit.role = 'research';
   plan.groups[0]!.units.push({ ...firstUnit, id: 'u3', files: ['src/independent.ts'], title: 'Independent review', criteria: [{ ...firstUnit.criteria[0]!, id: 'u3.c1' }] });
   plan.groups[1]!.units[0]!.title = 'Integration fixture';
   let failures = 0;
-  const h = makeHarness({ plan, contract: { isolation: 'worktree', maxParallelUnits: 2 }, scripts: {
+  const h = makeHarness({ root, plan, contract: { isolation: 'worktree', maxParallelUnits: 2 }, scripts: {
     u1: () => [{ text: 'First private report.' }, { text: 'Repaired private report.' }, { text: 'Bounded private report.' }],
     u3: () => [{ text: 'Independent source assessment.' }],
     u2: () => [{ files: { 'src/convert.ts': 'export const convert = () => true;\n' }, text: 'Integrated the parser.' }],
@@ -248,20 +253,34 @@ test.each([false, true])('a rejected verifier request cannot cancel a sibling or
     }
     return undefined;
   } });
-  roots.push(h.root); harnesses.push(h);
+  harnesses.push(h);
   mkdirSync(join(h.root, 'src'), { recursive: true });
   writeFileSync(join(h.root, 'src/csv.ts'), 'export const parser = true;\n');
   writeFileSync(join(h.root, 'src/independent.ts'), 'export const independent = true;\n');
   const { contract } = startContract(h);
+  await waitFor(() => unitIn(h, contract.id, 'u3')?.status === 'passed' && failures === 1 && unitIn(h, contract.id, 'u1')?.status === 'held', 'only verifier-failing unit to wait');
+  expect(unitIn(h, contract.id, 'u1').lastOutput).toBe('First private report.');
+  expect(contractIn(h, contract.id).decisions.some(decision => decision.reason.includes('bounded report repair'))).toBe(false);
   if (persistent) {
-    await waitFor(() => unitIn(h, contract.id, 'u3')?.status === 'passed' && failures === 3 && unitIn(h, contract.id, 'u1')?.status === 'held', 'only verifier-failing unit to wait');
     expect(contractIn(h, contract.id).status).toBe('running');
     expect(unitIn(h, contract.id, 'u1').checks).toEqual([]);
     expect(unitIn(h, contract.id, 'u1').criteria[0]!.status).toBe('unread');
   } else {
-    expect((await ended(h, contract.id)).status).toBe('passed');
+    await sleep(300);
+    h.dispose();
+    await h.runner.join(contract.id);
+    const resumed = restart(h.root, { plan, contract: { isolation: 'worktree', maxParallelUnits: 2 }, scripts: {
+      u1: mustNotRun, u3: mustNotRun,
+      u2: () => [{ files: { 'src/convert.ts': 'export const convert = () => true;\n' }, text: 'Integrated the parser.' }],
+    }, port: context => context.name === 'role'
+      ? choiceAnswer(context.question, (context.state['unit'] as { title?: string })?.title === 'Integration fixture' ? 'implement' : 'research', 0.98)
+      : undefined });
+    await resumed.runner.resumeAll();
+    expect((await ended(resumed, contract.id)).status).toBe('passed');
     expect(failures).toBe(1);
-    expect(unitIn(h, contract.id, 'u1').checks).toHaveLength(1);
+    expect(unitIn(resumed, contract.id, 'u1').checks).toHaveLength(1);
+    expect(unitIn(resumed, contract.id, 'u1').lastOutput).toBe('First private report.');
+    expect(resumed.agentsOf('u1')).toEqual([]);
   }
   expect(eventsOf(h, 'CONTRACT_FAILED')).toEqual([]);
   expect(unitIn(h, contract.id, 'u3').status).toBe('passed');

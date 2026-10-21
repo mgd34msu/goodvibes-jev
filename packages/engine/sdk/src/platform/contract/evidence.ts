@@ -28,6 +28,7 @@ import { compareReadReferences } from './read-reference-comparison.js';
 import { commandObservation } from './command-observation.js';
 import { parseCompletionReport } from '../agents/completion-report.js';
 import { returnedReadRows } from '../tools/read/observation.js';
+import { compactJsonReference } from './json-reference.js';
 import type { ToolResult } from '../types/tools.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
@@ -569,9 +570,11 @@ function actualHostOperations(evidence: UnitEvidence): JsonValue[] {
 
 function sourceReadState(evidence: UnitEvidence): CheckState {
   if (!evidence.sourceReads?.length) return {};
+  const host = evidence.orchestration;
+  const currentFiles = host && typeof host === 'object' && !Array.isArray(host) && Array.isArray(host['currentFiles']) ? host['currentFiles'] : [];
   return {
-    sourceReads: evidence.sourceReads.map(read => ({ ...read, returnedRanges: [...read.returnedRanges] })),
-    sourceReadMeaning: 'These host-collected ranges establish which complete source lines were actually returned by successful read tools. Host-bound offsets retain plain returns as well as numbered ones; displayed line labels may be normalized from those offsets. returnedContent contains only actual returned source text: declared reference inputs or explicitly cited source ranges, as contentKind records; it may be a subset of returnedRanges. For large inputs, Jev may identify receipt-only citation paragraphs: their source quotations are omitted from this check view while the full report, all returned-range records and raw saved evidence remain intact. Substantive and mixed citation contexts retain their primary text. Read scope alone does not establish semantic review quality or validate findings; missing primary text is not proof of a substantive claim. Judge the substantive work against the provided source evidence separately. This is the current native acceptance check; do not demand an earlier approval of this same check.',
+    sourceReads: evidence.sourceReads.map(read => ({ ...compactJsonReference(read, currentFiles), returnedRanges: [...read.returnedRanges] })),
+    sourceReadMeaning: 'These host-collected ranges establish which complete source lines were actually returned by successful read tools. Host-bound offsets retain plain returns as well as numbered ones; displayed line labels may be normalized from those offsets. returnedContent carries actual retained source text, as contentKind records; it may be a subset of returnedRanges. A referenceProjection explicitly marks a byte-bound JSON view with display labels and whitespace outside string literals removed; all original tokens and literal values remain, and exact original returned text stays retained. For large inputs, Jev may identify receipt-only citation paragraphs: their source quotations are omitted from this check view while the full report, all returned-range records and raw saved evidence remain intact. Substantive and mixed citation contexts retain their primary text. Read scope alone does not establish semantic review quality or validate findings; missing primary text is not proof of a substantive claim. Judge the substantive work against the provided source evidence separately. This is the current native acceptance check; do not demand an earlier approval of this same check.',
   };
 }
 
