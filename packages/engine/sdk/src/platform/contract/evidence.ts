@@ -468,7 +468,7 @@ export async function collectUnitEvidence(
   const assignedText = unit.goal + '\n' + unit.brief;
   for (const criterion of contract.criteria ?? []) {
     const escaped = criterion.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    if (new RegExp('(?<![\\w.-])' + escaped + '(?![\\w.-])').test(assignedText)) referenced.add(criterion.id);
+    if (new RegExp('(?<![\\w.-])' + escaped + '(?![\\w-]|\\.[\\w-])').test(assignedText)) referenced.add(criterion.id);
   }
   for (const id of referenced) for (const parent of allCriteria.find(criterion => criterion.id === id)?.serves ?? []) referenced.add(parent);
   const referencedCriteria = allCriteria.filter(criterion => referenced.has(criterion.id));
@@ -484,6 +484,10 @@ export async function collectUnitEvidence(
     meaning: 'Actual host-owned requirements referenced by this unit acceptance check, including transitive references. They resolve requirement ids; they do not expand this unit into the whole contract or approve its work. Judge the assigned unit goal and criteria against their referenced obligations and actual evidence.',
   };
   const repairing = currentUnit?.criteria.some(criterion => criterion.origin === 'fix') === true;
+  const dependencyIds = new Set(currentUnit?.dependsOn ?? []);
+  for (const id of dependencyIds) for (const ancestor of contract.units?.find(planned => planned.id === id)?.dependsOn ?? []) dependencyIds.add(ancestor);
+  const referencesExecution = (id: string | undefined): boolean => id !== undefined && new RegExp('(?<![\\w.-])'
+    + id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w-]|\\.[\\w-])').test(unit.brief + '\n' + sources.output);
   const privateArtifacts = readNativePrivateReceiptArchives(contract, unit.files);
   return trimEvidence({ output: sources.output, changes, claims, gates, commands: unit.commandEvidence ?? commandsFromTurns(sources.turns),
     sourceReads: observedReads,
@@ -504,12 +508,24 @@ export async function collectUnitEvidence(
             ...(planned.checks.at(-1)!.gates === undefined ? {} : { gates: gateEvidence(planned.checks.at(-1)!.gates!) }) } : null,
           ...(planned.status === 'passed' ? { readObservations: (planned.readEvidence ?? []).map(read => ({ path: read.path,
             returnedRanges: [...read.returnedRanges], returnedLines: read.returnedLines })),
-            commands: (planned.commandEvidence ?? []).map(command => ({ ...commandObservation(command) })),
+            commands: (planned.commandEvidence ?? []).map((command, index) => {
+              const observed = commandObservation(command);
+              if (currentUnit === undefined || currentUnit.role === 'integration' || dependencyIds.has(planned.id) || referencesExecution(command.callId)) return { ...observed };
+              const { command: script, head, ...identity } = command;
+              return { ...identity, observationKind: 'retained-command-receipt-index',
+                ...('exitCode' in observed && typeof observed.exitCode === 'number'
+                  && 'executionSucceeded' in observed && typeof observed.executionSucceeded === 'boolean'
+                  ? { exitCode: observed.exitCode, executionSucceeded: observed.executionSucceeded, toolCallSucceeded: command.success } : {}),
+                commandDigest: hashState(script), commandBytes: Buffer.byteLength(script),
+                captureDigest: hashState(head), captureBytes: Buffer.byteLength(head),
+                bodySource: { storage: 'native-contract-store', contractId: contract.id, unitId: planned.id, field: 'commandEvidence', index },
+                meaning: 'Actual receipt identity and available child exit status retained; this command is outside the assigned dependency closure and its execution id is not referenced by this candidate. Command/result bodies remain unchanged at bodySource under their digests and are not supplied in this check view. Metadata or a prior pass does not prove an unshown command body, purpose or asserted verification result. Declared dependency or explicitly execution-id-referenced receipts are supplied in full.' };
+            }),
             ...(currentUnit?.role === 'integration' || (repairing && (planned.role === 'integration' || currentUnit?.dependsOn.includes(planned.id)))
               ? { acceptedAnswer: planned.answer ?? '' } : {}) } : {}) }),
         criteria: planned.criteria.map(criterion => ({ id: criterion.id, text: criterion.text, serves: [...criterion.serves],
           ...(planned.id !== unit.id && planned.status === 'passed' ? { verdict: criterion.status } : {}) })) })) }),
-      meaning: 'Host records for this current contract. The complete assigned unit brief and exact referenced requirements are supplied in requirements. Other units are represented by their goals, exact criteria, actual scoped checks, observations, commands and accepted results. Their old worker instructions remain unchanged in the owned store under briefSource and its digest; they are not this unit\'s requirements. A passed peer criterion verdict establishes only its checked scope. Plan and prior-unit acceptance do not approve the unit now being checked.' } } : {}) }, unit);
+      meaning: 'Host records for this current contract. The complete assigned unit brief and exact referenced requirements are supplied in requirements. Other units are represented by their goals, exact criteria, actual scoped checks, observations, command receipts and accepted results. Integration checks receive prior commands in full. Other checks receive full command/result bodies for their dependency closure or explicitly referenced execution ids; unrelated prior commands retain their identities, statuses and digest-bound native storage locations, not proof of unshown results. Old worker instructions remain unchanged under briefSource and its digest; they are not this unit\'s requirements. A passed peer criterion verdict establishes only its checked scope. Plan and prior-unit acceptance do not approve the unit now being checked.' } } : {}) }, unit);
 }
 
 // ── What Jev reads ────────────────────────────────────────────────────────────

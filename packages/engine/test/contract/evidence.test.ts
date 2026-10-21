@@ -242,7 +242,7 @@ describe('what each trigger collects', () => {
   });
 
   test('actual plan acceptance reaches the unit checks without claiming unit completion', async () => {
-    const current = makeUnit();
+    const current = makeUnit({ dependsOn: ['peer'], brief: 'Consume the peer archive verification receipt.' });
     const gates = [{ gate: 'artifact-preservation', passed: true, durationMs: 4, output: 'Original records and snapshots match.' }];
     const planned = makeContract({ id: contract.id, status: 'running', decisions: [
       { id: 'foreign-plan', at: 122, action: 'plan-accepted', targetId: 'another-contract', reason: 'Other work', decisionIds: ['foreign-decision'] },
@@ -303,8 +303,47 @@ describe('what each trigger collects', () => {
     expect(peer.brief).toBe(original);
   });
 
+  test('unrelated historical commands keep their failures and identities without filling a research check with their bodies', async () => {
+    const current = makeUnit({ role: 'research', dependsOn: [] });
+    const script = 'large historical verification program\n'.repeat(5_000);
+    const receipt = { agentId: 'old-worker', turn: 1, callIndex: 0, callId: 'old-execution', command: script, success: true,
+      head: JSON.stringify({ cmd: script, exit_code: 2, stdout: 'Verification did not run.', stderr: 'Permission denied.', success: false }) };
+    const peer = makeUnit({ id: 'peer', status: 'passed', commandEvidence: [receipt] });
+    const planned = makeContract({ id: contract.id, units: [current, peer], decisions: [
+      { id: 'accepted', at: 1, action: 'plan-accepted', targetId: contract.id, reason: 'Checked plan', decisionIds: ['native-plan'] },
+    ] });
+    const before = JSON.stringify(peer.commandEvidence);
+    const middle = makeUnit({ id: 'middle', status: 'passed', dependsOn: ['peer'] });
+    const collectFor = (overrides: Partial<typeof current> = {}) => {
+      const unit = { ...current, ...overrides };
+      return collectUnitEvidence({ ...planned, units: [unit, peer, middle] }, unit, 'resume', { ...sources(), turns: [], mustWrite: false });
+    };
+    const peerView = (evidence: { orchestration?: unknown }) => (evidence.orchestration as { plannedUnits: { id: string; commands: unknown[] }[] })
+      .plannedUnits.find(unit => unit.id === 'peer');
+    const evidence = await collectFor();
+    expect(peerView(evidence)).toMatchObject({ id: 'peer', commands: [{
+      observationKind: 'retained-command-receipt-index', callId: 'old-execution', success: true, toolCallSucceeded: true,
+      exitCode: 2, executionSucceeded: false, commandBytes: Buffer.byteLength(script),
+      bodySource: { contractId: planned.id, unitId: 'peer', field: 'commandEvidence', index: 0 },
+    }] });
+    expect(JSON.stringify(judgeEvidence(evidence))).not.toContain('large historical verification program');
+    expect(JSON.stringify(peer.commandEvidence)).toBe(before);
+
+    const dependency = await collectFor({ dependsOn: ['middle'] });
+    expect(peerView(dependency)).toMatchObject({ id: 'peer', commands: [{
+      command: script, head: 'Verification did not run.', stderr: 'Permission denied.', exitCode: 2, executionSucceeded: false,
+    }] });
+
+    const different = await collectFor({ brief: 'Inspect old-execution-more only.' });
+    expect(JSON.stringify(different.orchestration)).not.toContain('large historical verification program');
+    const referenced = await collectFor({ brief: 'Inspect receipt old-execution.' });
+    expect(peerView(referenced)).toMatchObject({ id: 'peer', commands: [{ command: script }] });
+    const integration = await collectFor({ brief: 'Integrate the completed work.', role: 'integration' });
+    expect(peerView(integration)).toMatchObject({ id: 'peer', commands: [{ command: script, exitCode: 2, executionSucceeded: false }] });
+  });
+
   test('an explicit original requirement reference in the assigned brief resolves to its actual text', async () => {
-    const current = makeUnit({ brief: 'Preserve the completed o1 inspection.' });
+    const current = makeUnit({ brief: 'Preserve the completed o1.' });
     const root = { ...current.criteria[0]!, id: 'o1', text: 'Inspect the original supplemental ranges.', serves: [] };
     const planned = makeContract({ id: contract.id, units: [current], criteria: [root], decisions: [
       { id: 'accepted', at: 1, action: 'plan-accepted', targetId: contract.id, reason: 'Checked plan', decisionIds: ['native-plan'] },
