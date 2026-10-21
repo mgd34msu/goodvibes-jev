@@ -50,7 +50,7 @@ import { readContractConfig } from './config.js';
 import { guarded, type Correction } from './correction.js';
 import { nativeContractPort } from './native-decisions.js';
 import { assertNativeContractSource } from './native-source.js';
-import { collectChanges, commandsFromTurns, judgeEvidence, trimEvidence, type ContractTurnRecord, type EvidenceCommand } from './evidence.js';
+import { collectChanges, commandsFromTurns, currentFileObservations, judgeEvidence, trimEvidence, type ContractTurnRecord, type EvidenceCommand } from './evidence.js';
 import { failedGates, runContractGates } from './gates.js';
 import { failureFromError, isAbortError, type ContractRun } from './run-context.js';
 import type { StepContext } from './steps.js';
@@ -216,6 +216,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       commands: evidenceUnits.flatMap<EvidenceCommand>(unit => unit.commandEvidence ?? commandsFromTurns(turnsOf(run, new Set([unit.id])))), orchestration: {
       contractId: contract.id, createdAt: contract.createdAt, origin: contract.origin, planChecks,
       continuationEvidence: contract.taskEvidence ?? '',
+      currentFiles: currentFileObservations(tree, changes.map(change => change.path)),
       privateArtifacts: readPrivateReceiptArchives(contract),
       currentValidation: {
         scope: input.scope, targetId: input.targetId, outputDigest: hashState(input.output), status: 'in-progress',

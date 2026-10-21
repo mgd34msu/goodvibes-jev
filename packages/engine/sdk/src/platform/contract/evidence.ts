@@ -17,7 +17,8 @@
  *
  * Everything here is collection and arithmetic over sizes; no judgment.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import { estimateTokens, type JsonValue } from '@goodvibes-jev/judgment';
 import { GitService } from '../git/service.js';
@@ -383,6 +384,24 @@ export async function collectChanges(unit: Pick<ContractUnit, 'baseline'>, sourc
   return writtenChanges(sources.cwd, sources.turns);
 }
 
+/** Current regular-file identity, independent of an assistant's earlier claims. */
+export function currentFileObservations(cwd: string, paths: readonly string[]): JsonValue[] {
+  return [...new Set(paths)].flatMap<JsonValue>(path => {
+    if (isAbsolute(path) || path.split('/').includes('..') || path.startsWith('.goodvibes/')) return [];
+    try {
+      const absolute = join(cwd, path);
+      if (!lstatSync(absolute).isFile()) return [];
+      const bytes = readFileSync(absolute);
+      return [{ operation: 'read-current-file', source: 'native-host-filesystem', success: true,
+        path, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'),
+        meaning: 'Actual bytes read from the current checked tree. This establishes current file identity, not semantic correctness, archive integrity, a worker execution or native approval.' }];
+    } catch (error) {
+      return [{ operation: 'read-current-file', source: 'native-host-filesystem', success: false, path,
+        error: summarizeError(error), meaning: 'Current file identity could not be established.' }];
+    }
+  });
+}
+
 /**
  * Collects a unit's complete evidence for one check: the diff
  * always; claims at completion and at resume; gates at every trigger but turn-end.
@@ -423,6 +442,8 @@ export async function collectUnitEvidence(
   return trimEvidence({ output: sources.output, changes, claims, gates, commands: unit.commandEvidence ?? commandsFromTurns(sources.turns),
     sourceReads: sources.mustWrite ? currentReads : mergeSourceReads(unit.readEvidence ?? [], currentReads),
     ...(planChecks.length ? { orchestration: { contractId: contract.id, ...(contract.status === undefined ? {} : { status: contract.status }), planChecks,
+      currentFiles: currentFileObservations(sources.cwd, [...unit.files, ...changes.map(change => change.path),
+        ...(contract.units ?? []).filter(planned => planned.status === 'passed').flatMap(planned => planned.touchedPaths ?? [])]),
       ...(privateArtifacts.length ? { privateArtifacts } : {}),
       ...(contract.createdAt === undefined ? {} : { createdAt: contract.createdAt }),
       ...(contract.origin === undefined ? {} : { origin: contract.origin }),
@@ -457,7 +478,7 @@ function gateEvidence(gates: NonNullable<UnitEvidence['gates']>): JsonValue {
 }
 
 export function judgeEvidence(evidence: UnitEvidence): JsonValue {
-  const hostOperations = privateArchiveOperations(evidence);
+  const hostOperations = actualHostOperations(evidence);
   return {
     ...(hostOperations.length ? { hostOperations } : {}),
     ...(evidence.orchestration === undefined ? {} : { orchestration: evidence.orchestration }),
@@ -485,7 +506,7 @@ export function judgeState(unit: Pick<ContractUnit, 'goal'>, evidence: UnitEvide
 
 /** The quality battery's state (design 4.4). */
 export function qualityState(unit: Pick<ContractUnit, 'goal' | 'brief'>, evidence: UnitEvidence): CheckState {
-  const hostOperations = privateArchiveOperations(evidence);
+  const hostOperations = actualHostOperations(evidence);
   return {
     ...(hostOperations.length ? { hostOperations } : {}),
     ...(evidence.orchestration === undefined ? {} : { orchestration: evidence.orchestration }),
@@ -502,13 +523,13 @@ export function qualityState(unit: Pick<ContractUnit, 'goal' | 'brief'>, evidenc
   };
 }
 
-function privateArchiveOperations(evidence: UnitEvidence): JsonValue[] {
+function actualHostOperations(evidence: UnitEvidence): JsonValue[] {
   const orchestration = evidence.orchestration;
   if (!orchestration || typeof orchestration !== 'object' || Array.isArray(orchestration)) return [];
   const archives = orchestration['privateArtifacts'];
-  if (!Array.isArray(archives)) return [];
-  return archives.flatMap(archive => archive && typeof archive === 'object' && !Array.isArray(archive)
-    && archive['kind'] === 'contract-read-receipts' && archive['hostFileRead'] ? [archive['hostFileRead']] : []);
+  const files = orchestration['currentFiles'];
+  return [...(Array.isArray(files) ? files : []), ...(Array.isArray(archives) ? archives : []).flatMap(archive => archive && typeof archive === 'object' && !Array.isArray(archive)
+    && archive['kind'] === 'contract-read-receipts' && archive['hostFileRead'] ? [archive['hostFileRead']] : [])];
 }
 
 function sourceReadState(evidence: UnitEvidence): CheckState {

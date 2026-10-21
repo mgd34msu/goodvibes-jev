@@ -226,6 +226,21 @@ describe('what each trigger collects', () => {
   const contract = makeContract();
   const sources = () => ({ output: 'Done.', report: null, mustWrite: true, turns: TURNS, cwd: dir, configManager: noGates(), runtimeBus: new RuntimeEventBus() });
 
+  test('a read-only delivery exposes fresh binary identity without claiming a worker execution', async () => {
+    const current = makeUnit({ role: 'research', files: ['artifact.zip'] });
+    const planned = makeContract({ units: [current], decisions: [{ id: 'plan', at: 1, action: 'plan-accepted',
+      targetId: contract.id, reason: 'Accepted plan', decisionIds: ['plan-receipt'] }], id: contract.id });
+    writeFileSync(join(dir, 'artifact.zip'), 'abc');
+    const read = () => collectUnitEvidence(planned, current, 'resume', { ...sources(), turns: [], mustWrite: false });
+    const evidence = await read();
+    expect(judgeEvidence(evidence)).toMatchObject({ hostOperations: [{ operation: 'read-current-file', success: true,
+      path: 'artifact.zip', bytes: 3, sha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' }] });
+    expect(qualityState(current, evidence).commands).toEqual([]);
+    writeFileSync(join(dir, 'artifact.zip'), 'abcd');
+    expect(judgeEvidence(await read())).toMatchObject({ hostOperations: [{ bytes: 4,
+      sha256: '88d4266fd4e6338d13b845fcf289579d209c897823b9217da3e161936f031589' }] });
+  });
+
   test('actual plan acceptance reaches the unit checks without claiming unit completion', async () => {
     const current = makeUnit();
     const gates = [{ gate: 'artifact-preservation', passed: true, durationMs: 4, output: 'Original records and snapshots match.' }];
