@@ -481,6 +481,9 @@ export async function readOneFile(
   const ext = extname(resolvedPath);
   const imageMode = getImageMode(fileInput, context);
 
+  // SVG is also authored text. An explicit line extraction must expose its
+  // source and actual returned ranges, rather than silently returning artwork.
+  if (ext.toLowerCase() === '.svg' && extract === 'lines') return readTextFile(target, context, fileInput);
   if (isImageFileByExt(ext)) return readImageFile(target, context, imageMode, context.maxImageSize);
   if (isArchiveFile(ext)) return readArchiveFile(target, context);
   if (isPdfFile(ext)) return readPdfFile(target, context, fileInput);

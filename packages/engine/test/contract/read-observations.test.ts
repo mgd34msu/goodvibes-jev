@@ -54,3 +54,20 @@ test('changed returned text cannot reuse an earlier observation digest', async (
   turn.results[0]!.output = JSON.stringify(body);
   expect(sourceReadsFromTurns([turn])).toEqual([]);
 });
+
+test('SVG line extraction returns bounded source receipts while ordinary SVG reads remain images', async () => {
+  writeFileSync(join(dir, 'mark.svg'), '<svg xmlns="http://www.w3.org/2000/svg">\n<title>Mark</title>\n<path d="M0 0h1v1z"/>\n</svg>\n');
+  const tool = new ReadTool(index);
+  const args = { files: [{ path: 'mark.svg', extract: 'lines', range: { start: 2, end: 3 } }], output: { include_line_numbers: false } };
+  const result = await tool.execute(args);
+  expect(result.success).toBe(true);
+  const file = JSON.parse(result.output!).files[0];
+  expect(file.image).toBeUndefined();
+  expect(file.content).toBe('<title>Mark</title>\n<path d="M0 0h1v1z"/>');
+  expect(file.readObservation).toMatchObject({ startLine: 2, completeLines: 2, truncated: false });
+  const turn = { turn: 1, assistantText: '', toolCalls: [{ name: 'read', arguments: args }], results: [{ callId: 'svg-source', ...result }] };
+  expect(sourceReadsFromTurns([turn], ['mark.svg'])).toMatchObject([{ path: 'mark.svg', returnedRanges: ['2-3'], returnedLines: 2 }]);
+  const image = await tool.execute({ files: [{ path: 'mark.svg', image_mode: 'metadata-only' }] });
+  expect(image.success).toBe(true);
+  expect(JSON.parse(image.output!).files[0]).toMatchObject({ image: true, mediaType: 'image/svg+xml' });
+});
