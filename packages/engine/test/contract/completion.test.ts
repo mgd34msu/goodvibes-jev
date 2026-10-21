@@ -6,8 +6,9 @@
  * owner record with the status line on the operator audience only.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { CONTRACT_PASSED_WITHOUT_OUTPUT, describeCommitOutcome, describeContractOutcome, renderContractAnswer } from '../../sdk/src/platform/contract/index.js';
 import { makeHarness, oneUnitPlan, startContract, twoUnitPlan, waitFor, type AgentScript, type Harness } from './runner-support.js';
 import { contractOf, finishes, git, terminal } from './steps-support.js';
@@ -33,18 +34,31 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   const observed: Record<string, unknown>[] = [];
   let integrationTask = '';
   const plan = twoUnitPlan();
+  plan.groups[0]!.units[0]!.role = 'research';
   plan.groups[0]!.criteria = [{ id: 'g1.c1', text: 'The parser implementation is coherent', serves: ['c1'] }];
+  plan.groups[1]!.criteria = [{ id: 'g2.c1', text: 'Integration retains the accepted parser read receipts', serves: ['c2'] }];
   const h = use(makeHarness({ plan,
-    scripts: { u1: finishes('The parser handles CSV.'), u2: (record, run) => {
+    scripts: { u1: record => {
+      h.runner.hooks().onTurnEnd(record, { turn: 1, assistantText: 'Read the parser input.',
+        toolCalls: [{ name: 'read', arguments: { files: [{ path: 'input.txt' }] } }],
+        results: [{ callId: 'read', success: true, output: JSON.stringify({ success: true,
+          files: [{ path: 'input.txt', extract: 'lines', content: '1 | first\n2 | second' }] }) }],
+      });
+      return [{ text: 'The existing parser handles CSV.' }];
+    }, u2: (record, run) => {
       integrationTask = record.task;
       return finishes('Convert uses the parser.', 'src/convert.ts')(record, run);
     } },
-    port: ({ state }) => {
+    port: ({ name, question, state }) => {
+      if (name === 'role' && (state['unit'] as { title?: string })?.title === 'CSV parser') return choiceAnswer(question, 'research', 0.98);
       const evidence = state['evidence'] as Record<string, unknown> | undefined;
       if (evidence && ('units' in evidence || 'criteria' in evidence)) observed.push(evidence);
       return undefined;
     },
   }));
+  mkdirSync(join(h.root, 'src'), { recursive: true });
+  writeFileSync(join(h.root, 'src/csv.ts'), 'export const parse = (text: string) => text.split(",");\n');
+  writeFileSync(join(h.root, 'input.txt'), 'first\nsecond\n');
   const id = await run(h);
   const done = contractOf(h, id);
   const accepted = done.decisions.find(decision => decision.action === 'plan-accepted' && decision.targetId === id)!;
@@ -54,6 +68,17 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   expect(integrationHost.units).toMatchObject([{ id: 'u1', status: 'passed', latestCheck: { result: 'pass' } }]);
   expect(observed.some(evidence => 'units' in evidence)).toBe(true);
   expect(observed.some(evidence => 'criteria' in evidence)).toBe(true);
+  const integrationEvidence = observed.find(evidence => Array.isArray(evidence['units']) &&
+    (evidence['units'] as { id: string }[]).some(unit => unit.id === 'u2'))!;
+  const integrationReceipts = integrationEvidence['orchestration'] as {
+    groups: { id: string; status: string; latestCheck: { result: string } | null }[];
+    units: { id: string; readObservations: unknown[] }[];
+  };
+  expect(integrationReceipts.groups).toMatchObject([{ id: 'g1', status: 'passed', latestCheck: { result: 'pass' } }]);
+  expect(integrationReceipts.groups.some(group => group.id === 'g2')).toBe(false);
+  expect(integrationReceipts.units.find(unit => unit.id === 'u1')!.readObservations).toEqual([
+    { path: 'input.txt', returnedRanges: ['1-2'], returnedLines: 2 },
+  ]);
   for (const evidence of observed) {
     const host = evidence['orchestration'] as { contractId: string; planChecks: unknown[]; firstUnitStartedAt: number; units: { id: string; status: string; latestCheck: { id: string; result: string; decisionIds: string[] } }[] };
     expect(host.contractId).toBe(id);
