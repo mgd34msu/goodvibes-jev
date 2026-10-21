@@ -71,10 +71,11 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   const integrationEvidence = observed.find(evidence => Array.isArray(evidence['units']) &&
     (evidence['units'] as { id: string }[]).some(unit => unit.id === 'u2'))!;
   const integrationReceipts = integrationEvidence['orchestration'] as {
-    groups: { id: string; status: string; latestCheck: { result: string } | null }[];
+    groups: { id: string; status: string; criteria: { id: string; text: string; verdict: string }[]; latestCheck: { result: string } | null }[];
     units: { id: string; readObservations: unknown[] }[];
   };
   expect(integrationReceipts.groups).toMatchObject([{ id: 'g1', status: 'passed', latestCheck: { result: 'pass' } }]);
+  expect(integrationReceipts.groups[0]!.criteria).toEqual([{ id: 'g1.c1', text: 'The parser implementation is coherent', verdict: 'met' }]);
   expect(integrationReceipts.groups.some(group => group.id === 'g2')).toBe(false);
   expect(integrationReceipts.units.find(unit => unit.id === 'u1')!.readObservations).toEqual([
     { path: 'input.txt', returnedRanges: ['1-2'], returnedLines: 2 },
