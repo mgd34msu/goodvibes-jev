@@ -441,7 +441,7 @@ export class ResponseCompletionGuard {
       }
       current();
       const assessments = { ...run.readings, ...consolidation?.readings, ...execution?.readings };
-      findings = [...verificationFindings, ...findings.map(finding => ({ ...finding,
+      findings = [...verificationFindings, ...findings.map((finding): CompletionFinding => ({ ...finding,
         assessment: assessments[finding.check as keyof typeof assessments]?.verdict === 'yes'
           && assessments[finding.check as keyof typeof assessments]?.outcome === 'act' ? 'confirmed' : 'unresolved' }))];
       this.rememberReview(findings, input);

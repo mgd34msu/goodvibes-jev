@@ -36,7 +36,7 @@ import { contractSourceScope } from './work-receipts.js';
 
 import { spawnSync } from 'node:child_process';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { hashState, JudgmentContextLimitError, type JsonValue, type YesNoReading } from '@goodvibes-jev/judgment';
+import { hashState, JudgmentContextLimitError, mapLimit, type JsonValue, type YesNoReading } from '@goodvibes-jev/judgment';
 import { AgentWorktree, IsolatedWorktree } from '../agents/worktree.js';
 import { excludeUntouchedLaunchResidue } from '../orchestration/dirty-guard.js';
 import { GitService } from '../git/service.js';
@@ -61,7 +61,8 @@ import type { StepContext } from './steps.js';
 import type { CheckTrigger, Contract, Criterion, CriterionReading, CriterionVerdict, NudgeKind, TreeBaseline, UnitCheck } from './types.js';
 import { addJudgmentUsage } from './usage.js';
 import { preserveDeclaredReadReceipts, readPrivateReceiptArchives, verifyPrivateReceiptPreservation } from './private-read-receipts.js';
-import { finalAnswerEvidence } from './final-answer-evidence.js';
+import { finalAnswerEvidence, finalContentEvidence } from './final-answer-evidence.js';
+import { answerClaimScopes, completeAnswerClaimCoverage, scopedClaimQuestion, type AnswerClaimReview, type AnswerClaimScope } from './final-answer-claims.js';
 
 /** Decision sites, as the decision log records them. */
 export const COMPLETION_SITES = {
@@ -108,6 +109,8 @@ interface FinalAnswerReviewReceipt {
   readonly readings: Readonly<Record<'unfinished' | 'unsupported', Pick<YesNoReading, 'probability' | 'verdict' | 'outcome'>>>;
   readonly decisionIds: readonly string[];
   readonly findings?: readonly CompletionFinding[];
+  readonly overviewUnsupported?: Pick<YesNoReading, 'probability' | 'verdict' | 'outcome'>;
+  readonly claimReviews?: readonly AnswerClaimReview[];
 }
 
 function git(cwd: string, args: readonly string[]): { readonly ok: boolean; readonly out: string; readonly err: string } {
@@ -347,7 +350,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         decisionIds: [...judgment.decisionIds],
         meaning: 'Actual just-completed native original-requirements assessment of this exact output and primary evidence. These readings establish only the requirements and work they assessed. They are not permission to publish, approval of this separate final-content review, proof of unshown execution, or acceptance of a later rewritten answer. Every requirement reading, every gate and the final-content review must all pass before owner publication.' };
       const state = { goal: input.goal, criteria: judged(input.criteria).map(criterion => criterion.text), output: evidence.output,
-        evidence: { ...fulfillmentEvidence, fulfillmentAssessment }, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) };
+        evidence: { ...finalContentEvidence(fulfillmentEvidence), fulfillmentAssessment }, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) };
       const evidenceDigest = hashState({ state, policy: { name: reviewBattery.name, version: reviewBattery.version, stakes: config().acceptanceStakes } });
       const outputDigest = hashState(evidence.output);
       const targetId = `${contract.id}.final-answer-review`;
@@ -390,8 +393,59 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
           const reviews = await readContent();
           assertOwnedContractSource(contract);
           if (run.terminal) { for (const review of reviews) review.recordAction('discarded: the contract already ended'); return null; }
-          const readings = Object.assign({}, ...reviews.map(review => review.readings)) as typeof reviews[number]['readings'];
+          const readings = Object.assign({}, ...reviews.map(review => review.readings)) as Record<'unfinished' | 'unsupported', YesNoReading>;
           if (!readings.unfinished || !readings.unsupported) throw new Error('Final-answer review is missing a required reading');
+          const overviewUnsupported = readings.unsupported;
+          let claimReviews: AnswerClaimReview[] | undefined;
+          if (criterionVerdict(overviewUnsupported) === 'unmet' && overviewUnsupported.outcome !== 'act') {
+            // Resolve a broad uncertain objection with bounded semantic work,
+            // not another full draft or another identical overall question.
+            const claimAbort = new AbortController();
+            const claimSignal = AbortSignal.any([run.abort.signal, claimAbort.signal]);
+            const inspect = async (scope: AnswerClaimScope): Promise<AnswerClaimReview[]> => {
+              claimSignal.throwIfAborted();
+              let stateHash: string | undefined;
+              const raw = judgmentPort(site);
+              const bound: typeof raw = { ...raw, ask(request) {
+                stateHash = hashState(request.state);
+                return raw.ask({ ...request, questions: { ...request.questions,
+                  unsupported: scopedClaimQuestion(reviewBattery.items.unsupported.question, scope, outputDigest) } });
+              } };
+              const review = await reviewBattery.run(meteredPort(nativeContractPort(contract, context.native, bound, claimSignal), reviewUsage),
+                { ...state, claimScope: { ...scope, text: evidence.output.slice(scope.start, scope.end) } },
+                { site, signal: claimSignal, only: ['unsupported'] });
+              assertOwnedContractSource(contract);
+              const reading = review.readings.unsupported;
+              review.recordAction(criterionVerdict(reading) === 'met' ? 'This exact passage is supported; all other passages, original requirements and publication checks remain required.' : 'Retain this exact passage and primary evidence for focused investigation; a broad suspicion is not a new drafting task.');
+              if (!stateHash || !review.result.decisionId) throw new Error('Scoped answer review has no native input/decision binding');
+              if (criterionVerdict(reading) === 'unmet' && reading.outcome !== 'act' && scope.end - scope.start > 512) {
+                const children = answerClaimScopes(evidence.output, scope.start, scope.end, Math.ceil((scope.end - scope.start) / 2));
+                if (children.length > 1) {
+                  const resolved: AnswerClaimReview[] = [];
+                  for (const child of children) resolved.push(...await inspect(child));
+                  return resolved;
+                }
+              }
+              const { probability, verdict, outcome } = reading;
+              return [{ ...scope, stateHash, decisionId: review.result.decisionId, reading: { probability, verdict, outcome } }];
+            };
+            const pending = new Set<Promise<AnswerClaimReview[]>>();
+            try {
+              claimReviews = (await mapLimit(answerClaimScopes(evidence.output), 4, async scope => {
+                const job = inspect(scope); pending.add(job);
+                try { return await job; }
+                catch (error) { claimAbort.abort(error); throw error; }
+                finally { pending.delete(job); }
+              })).flat();
+            } catch (error) {
+              claimAbort.abort(error);
+              while (pending.size) await Promise.allSettled([...pending]);
+              throw error;
+            }
+            if (!completeAnswerClaimCoverage(evidence.output, claimReviews)) throw new Error('Scoped answer checks do not cover the complete answer');
+            const worst = claimReviews.reduce((previous, current) => current.reading.probability > previous.reading.probability ? current : previous);
+            readings.unsupported = { kind: 'yes-no', ...worst.reading };
+          }
           const passed = Object.values(readings).every(reading => criterionVerdict(reading) === 'met');
           const segments = new Intl.Segmenter(undefined, { granularity: 'sentence' });
           const passages = new Map<string, { reference: string; quote: string }>();
@@ -417,6 +471,14 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
           const pendingFindings = passed ? [] : (Object.keys(readings) as ('unfinished' | 'unsupported')[])
             .filter(key => criterionVerdict(readings[key]) === 'unmet').map(async (key): Promise<CompletionFinding> => {
               const finding = completionFinding(key);
+              if (key === 'unsupported' && claimReviews) {
+                const held = claimReviews.filter(review => review.reading.probability > 0.5);
+                return { ...finding, assessment: held.every(review => review.reading.verdict === 'yes' && review.reading.outcome === 'act') ? 'confirmed' : 'unresolved',
+                  localization: 'candidate-to-investigate', passage: { reference: `current final answer at characters ${held[0]!.start}-${held[0]!.end}`,
+                    quote: evidence.output.slice(held[0]!.start, held[0]!.end) },
+                  preserve: ['All passed work, supported answer passages and unchanged artifacts.'],
+                  remaining: held.map(review => `Investigate only the factual claims at answer characters ${review.start}-${review.end}; compare the exact primary execution/source record. Correct a claim only when that evidence establishes the discrepancy. Do not redraft the whole answer or repeat completed review work.`) };
+              }
               try {
                 const selected = await responseFinding.select(
                   meteredPort(nativeContractPort(contract, context.native, judgmentPort('contract.check.final-answer-finding'), run.abort.signal), reviewUsage),
@@ -424,7 +486,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
                 );
                 const passage = passages.get(selected.pick.choice);
                 selected.recordAction('Localize a rejected final-answer finding; no publication permission is granted.');
-                return { ...finding, localization: passage ? selected.outcome === 'act' ? 'established' : 'candidate-to-investigate' : 'unavailable', ...(passage ? { passage } : {}) };
+                return { ...finding, assessment: readings[key].verdict === 'yes' && readings[key].outcome === 'act' ? 'confirmed' : 'unresolved', localization: passage ? selected.outcome === 'act' ? 'established' : 'candidate-to-investigate' : 'unavailable', ...(passage ? { passage } : {}) };
               } catch (error) {
                 run.abort.signal.throwIfAborted();
                 // A failed lookup is a verifier failure, not a new task defect.
@@ -444,7 +506,8 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
           answerReview = { schemaVersion: 2, policy: reviewPolicy, stateHash: reviewStateHash, fulfillmentDecisionIds: fulfillmentAssessment.decisionIds, evidenceDigest, outputDigest,
             passed, ...(findings.length ? { findings } : {}),
             readings: Object.fromEntries(Object.entries(readings).map(([key, { probability, verdict, outcome }]) => [key, { probability, verdict, outcome }])) as FinalAnswerReviewReceipt['readings'],
-            decisionIds: reviews.flatMap(review => review.result.decisionId ? [review.result.decisionId] : []),
+            ...(claimReviews ? { overviewUnsupported: { probability: overviewUnsupported.probability, verdict: overviewUnsupported.verdict, outcome: overviewUnsupported.outcome }, claimReviews } : {}),
+            decisionIds: [...reviews.flatMap(review => review.result.decisionId ? [review.result.decisionId] : []), ...(claimReviews?.map(review => review.decisionId) ?? [])],
           };
           run.decide('checked', targetId, JSON.stringify(answerReview), [...answerReview.decisionIds]);
           for (const review of reviews) review.recordAction(answerReview.passed ? 'final answer content passed; original-requirement readings and gates must also pass before publication' : 'final answer content rejected; publication remains held');

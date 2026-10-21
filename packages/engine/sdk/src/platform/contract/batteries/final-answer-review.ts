@@ -7,12 +7,12 @@ const CONTEXT = 'This is the native final-CONTENT gate for a staged deliverable,
 function finalAnswerReview(stakes: ContractAcceptanceStakes) {
   return defineBattery({
     name: stakes === 'high' ? 'contract.final-answer-review' : 'contract.final-answer-review.critical',
-    version: 8,
+    version: 9,
     description: 'Reviews proposed deliverable content and factual support independently of pending host acceptance and publication.',
     accuracyFloor: 0.95,
     items: {
       unfinished: yesNo(CONTEXT + 'Does the proposed answer or attached report omit or abandon a requested substantive result, narrow the requested scope, or reveal that requested project work or its deliverable is unfinished? Missing project work still fails; pending native acceptance of this exact result and its later host publication are not missing deliverable content.', UNIT_JUDGE_BANDS[stakes]),
-      unsupported: yesNo(CONTEXT + 'Does the answer make an unsupported or misleading claim about performed actions, reviewed scope, artifacts, tests or verified results?', UNIT_JUDGE_BANDS[stakes]),
+      unsupported: yesNo(CONTEXT + 'Does the answer make an unsupported or misleading claim about performed actions, reviewed scope, artifacts, tests or verified results? When claimScope is supplied, judge ONLY factual assertions in output.slice(claimScope.start, claimScope.end), whose exact text is also in claimScope.text. The complete unchanged answer and primary evidence remain context: use surrounding qualifications and matching execution receipts to interpret that passage. Do not independently flag assertions outside this scope. The host separately requires exact contiguous coverage of the entire answer before these scoped readings can qualify a broad uncertain objection. A vague overall suspicion is not evidence that this exact passage is false.', UNIT_JUDGE_BANDS[stakes]),
     },
     fixtures: [
       ...[true, false].map(complete => ({ name: complete ? 'later bounded review fills a retained historical truncation' : 'an unfilled source remainder is still unfinished', state: {

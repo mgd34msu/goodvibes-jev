@@ -7,6 +7,7 @@ import { assertDurableCheckpoint, parseDurableAdmission } from '../../contract/d
 import { assertNativeContractSource, nativeContractSourceForAdmission } from '../../contract/native-source.js';
 import { UNIT_JUDGE_BANDS } from '../../contract/batteries/unit-judge.js';
 import { FINAL_ANSWER_REVIEWS } from '../../contract/batteries/final-answer-review.js';
+import { completeAnswerClaimCoverage, scopedClaimQuestion, type AnswerClaimReview } from '../../contract/final-answer-claims.js';
 import { UNIT_QUALITY_BAND } from '../../contract/batteries/unit-quality.js';
 import { CHECK_SITES, runUnitCheck, type CheckSettings } from '../../contract/check.js';
 import { judgeState, qualityState, trimEvidence, type FileChange } from '../../contract/evidence.js';
@@ -160,20 +161,51 @@ export async function verifyNativeWorkExecution(options: {
   try { content = contentDecision ? object(JSON.parse(contentDecision.reason)) : null; } catch { /* Missing valid evidence fails below. */ }
   const contentIds = content?.['decisionIds'];
   const fulfillmentIds = content?.['fulfillmentDecisionIds'];
+  const claims = content?.['claimReviews'];
+  const claimIds = Array.isArray(claims) ? claims.map(value => object(value)?.['decisionId']) : [];
+  const overviewIds = Array.isArray(contentIds) ? contentIds.filter(id => !claimIds.includes(id)) : [];
   const contentEntries = Array.isArray(contentIds) && contentIds.every(id => typeof id === 'string')
-    ? contentIds.map(id => options.decisionLog.get(id)) : [];
+    ? overviewIds.map(id => options.decisionLog.get(id)) : [];
   const contentReadings = object(content?.['readings']);
   const contentQuestions = Array.isArray(contentIds) && contentIds.every(id => typeof id === 'string')
-    ? nativeQuestionBatches(contentIds, ['unfinished', 'unsupported'], 'contract.check.final-answer-review', options.decisionLog) : null;
+    ? nativeQuestionBatches(overviewIds, ['unfinished', 'unsupported'], 'contract.check.final-answer-review', options.decisionLog) : null;
   const battery = contentEntries[0]?.context.battery === FINAL_ANSWER_REVIEWS.critical.name ? FINAL_ANSWER_REVIEWS.critical : FINAL_ANSWER_REVIEWS.high;
+  function genuineClaims(): boolean {
+    if (!Array.isArray(claims) || !claims.length || new Set(claimIds).size !== claimIds.length
+      || !Array.isArray(contentIds) || !claimIds.every(id => typeof id === 'string' && contentIds.includes(id))
+      || !completeAnswerClaimCoverage(contract.answer ?? '', claims as AnswerClaimReview[])) return false;
+    const overview = object(content?.['overviewUnsupported']);
+    const rawOverview = contentQuestions?.get('unsupported')?.answer.noul;
+    if (typeof rawOverview !== 'number' || rawOverview <= 0.5 || overview?.['probability'] !== rawOverview
+      || readYesNo({ type: 'noul', noul: rawOverview }, battery.items.unsupported.band).outcome === 'act') return false;
+    let worst = -1;
+    for (const rawClaim of claims) {
+      const claim = object(rawClaim)!, reading = object(claim['reading']);
+      const id = claim['decisionId'] as string;
+      const entry = options.decisionLog.get(id);
+      const actual = nativeQuestionBatches([id], ['unsupported'], 'contract.check.final-answer-review', options.decisionLog)?.get('unsupported');
+      if (!actual || !entry || entry.context.battery !== battery.name || entry.context.batteryVersion !== battery.version
+        || entry.stateHash !== claim['stateHash'] || entry.stateHash === content?.['stateHash']
+        || nativeSettlementDigest(actual.question) !== nativeSettlementDigest(scopedClaimQuestion(battery.items.unsupported.question,
+          rawClaim as AnswerClaimReview, hashState(contract.answer ?? '')))) return false;
+      const raw = rawNo(actual.answer, battery.items.unsupported.band);
+      if (raw === null || reading?.['probability'] !== raw || reading['verdict'] !== 'no' || reading['outcome'] !== 'act') return false;
+      worst = Math.max(worst, raw);
+    }
+    const effective = object(contentReadings?.['unsupported']);
+    return effective?.['probability'] === worst && effective['verdict'] === 'no' && effective['outcome'] === 'act';
+  }
   const expectedIds = Array.isArray(fulfillmentIds) ? [...new Set([...fulfillmentIds, ...(Array.isArray(contentIds) ? contentIds : []), ...deliverableJudgeIds])] : [];
   if (content?.['schemaVersion'] !== 2 || content['passed'] !== true || content['outputDigest'] !== hashState(contract.answer ?? '')
     || !contentQuestions || !contentReadings || !contentEntries.length
+    || (claims !== undefined && !genuineClaims())
+    || !Array.isArray(contentIds) || new Set(contentIds).size !== contentIds.length
     || !contentEntries.every(entry => entry?.status === 'answered' && entry.context.battery === battery.name
       && entry.context.batteryVersion === battery.version && entry.stateHash === content['stateHash'])
     || !['unfinished', 'unsupported'].every(key => {
       const reading = object(contentReadings[key]); const item = battery.items[key as 'unfinished' | 'unsupported'];
       const source = contentQuestions.get(key)!;
+      if (key === 'unsupported' && claims !== undefined) return genuineClaims();
       const raw = rawNo(source.answer, item.band);
       return raw !== null && reading?.['probability'] === raw && reading['verdict'] === 'no' && reading['outcome'] === 'act'
         && nativeSettlementDigest(source.question) === nativeSettlementDigest(item.question);

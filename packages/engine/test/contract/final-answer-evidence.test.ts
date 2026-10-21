@@ -5,11 +5,30 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hashState } from '@goodvibes-jev/judgment';
 import { currentFileObservations } from '../../sdk/src/platform/contract/evidence.js';
-import { finalAnswerEvidence } from '../../sdk/src/platform/contract/final-answer-evidence.js';
+import { finalAnswerEvidence, finalContentEvidence } from '../../sdk/src/platform/contract/final-answer-evidence.js';
 import { commandObservation } from '../../sdk/src/platform/contract/command-observation.js';
 import { makeContract, makeUnit } from './fixtures.js';
 
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
+
+test('content review references previously checked read accounting while preserving all primary content, failures and scope comparisons', () => {
+  const f = fixture();
+  const reads = Array.from({ length: 500 }, (_, index) => ({ path: `src/file-${index}.ts`, returnedRanges: ['1-10'], returnedLines: 10 }));
+  f.evidence.orchestration.units[0].readObservations = reads;
+  f.evidence.orchestration.sourceReferenceComparisons = [{ missing: ['src/unread.ts:1-20'] }];
+  const primary = finalAnswerEvidence(f.contract, f.evidence, {})!.evidence;
+  const before = JSON.stringify(primary);
+  const view = finalContentEvidence(primary);
+  expect(view).toMatchObject({ commands: primary['commands'], currentArtifacts: primary['currentArtifacts'], gates: primary['gates'],
+    orchestration: { sourceReferenceComparisons: [{ missing: ['src/unread.ts:1-20'] }], units: [{ readObservations: {
+      representation: 'native-source-accounting-reference', checkedBy: 'u1.k1',
+      source: { storage: 'native-contract-store', unitId: 'u1', field: 'readEvidence' },
+    } }] } });
+  expect(JSON.stringify(view).length).toBeLessThan(before.length / 2);
+  expect(JSON.stringify(primary)).toBe(before);
+  expect(finalContentEvidence({ orchestration: { units: [{ status: 'running', readObservations: reads }] } }))
+    .toMatchObject({ orchestration: { units: [{ status: 'running', readObservations: reads }] } });
+});
 function fixture() {
   const contract = makeContract({ units: [makeUnit({ status: 'passed', answer: 'A historical draft with superseded progress.',
     checks: [{ id: 'u1.k1', at: 1, trigger: 'completion', result: 'pass', quality: {}, decisionIds: ['native-unit-check'],

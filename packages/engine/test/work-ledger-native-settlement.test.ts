@@ -110,6 +110,34 @@ test('native settlement accepts a genuine content review followed by original-re
   expect(f.harness.agentsOf('u1')).toHaveLength(1);
 });
 
+test('native settlement requires real scope-bound decisions covering the whole answer when a broad objection was uncertain', async () => {
+  const f = await fixture({ harness: { port: context => {
+    if (context.name === 'unsupported') return noulAnswer(context.state['claimScope'] ? 0.03 : 0.61);
+    return undefined;
+  } } });
+  const started = await f.host.start(f.target, f.authority);
+  const contract = await completed(f.harness, started.admission.contractId);
+  expect(contract.status).toBe('passed');
+  const content = JSON.parse(contract.decisions.findLast(decision => decision.targetId === `${contract.id}.final-answer-review`)!.reason);
+  const claimId = content.claimReviews[0].decisionId;
+  for (const mutation of ['missing', 'wrong-range', 'uncertain', 'wrong-state'] as const) {
+    await expect(verifyNativeWorkExecution({ execution: f.storage.current(f.key).record!, runner: f.harness.runner,
+      port: f.hostOptions.port, decisionLog: { get(id) {
+        const entry = f.log.get(id);
+        if (id !== claimId || entry?.status !== 'answered') return entry;
+        if (mutation === 'missing') return undefined;
+        if (mutation === 'uncertain') return { ...entry, answers: { unsupported: noulAnswer(0.4) } };
+        if (mutation === 'wrong-state') return { ...entry, stateHash: 'another-passage' as typeof entry.stateHash };
+        return { ...entry, questions: { unsupported: { type: 'noul', instructions: 'Check a different passage.' } } };
+      } }, settings: checkSettings(CONTRACT_CONFIG_DEFAULTS), readAccessFilter: async () => true,
+      signal: new AbortController().signal, assertCurrent() {} })).rejects.toThrow('genuine final-answer content review');
+  }
+  expect(f.storage.current(f.key).settlement).toBeNull();
+  const receipt = await f.host.settle(f.key, f.authority);
+  expect(receipt.attestation.outcome).toBe('verified');
+  expect(f.harness.agentsOf('u1')).toHaveLength(1);
+});
+
 test('native settlement refuses missing, failing or mismatched final-content proof despite a passed checkpoint', async () => {
   const f = await fixture(); const started = await f.host.start(f.target, f.authority);
   const contract = await completed(f.harness, started.admission.contractId);

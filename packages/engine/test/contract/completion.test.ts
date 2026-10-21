@@ -17,6 +17,7 @@ import { plannerOutput } from './plan-support.js';
 import { ReadTool } from '../../sdk/src/platform/tools/read/index.js';
 import { ProjectIndex } from '../../sdk/src/platform/state/project-index.js';
 import { contractWorkReceipts } from '../../sdk/src/platform/contract/work-receipts.js';
+import { answerClaimScopes, completeAnswerClaimCoverage } from '../../sdk/src/platform/contract/final-answer-claims.js';
 
 let harness: Harness | undefined;
 afterEach(() => {
@@ -28,6 +29,63 @@ function use(h: Harness): Harness {
   harness = h;
   return h;
 }
+
+test('an uncertain overall factual objection is resolved by exact complete answer coverage without another draft', async () => {
+  using log = new SqliteDecisionLog(':memory:');
+  const output = 'A source-supported review finding and its limitations.\n'.repeat(210);
+  let workers = 0, scoped = 0;
+  const plan = oneUnitPlan(1); plan.groups[0]!.units[0]!.role = 'research';
+  const h = use(makeHarness({ plan, decisionLog: log, scripts: { u1: () => { workers++; return [{ text: output }]; } }, port: context => {
+    if (context.name === 'role') return choiceAnswer(context.question, 'research', 0.98);
+    if (context.name === 'unsupported') {
+      const scope = context.state['claimScope'] as { start: number; end: number; text: string } | undefined;
+      if (!scope) return noulAnswer(0.61);
+      scoped++;
+      expect(scope.text).toBe((context.state['output'] as string).slice(scope.start, scope.end));
+      expect(scope.text.length).toBeLessThanOrEqual(4001);
+      return noulAnswer(0.03);
+    }
+    return undefined;
+  } }));
+  const id = await run(h), current = contractOf(h, id);
+  expect(current.status).toBe('passed'); expect(workers).toBe(1); expect(scoped).toBeGreaterThan(1);
+  const receipt = JSON.parse(current.decisions.findLast(decision => decision.targetId === `${id}.final-answer-review`)!.reason);
+  expect(receipt.overviewUnsupported.probability).toBe(0.61);
+  expect(receipt.readings.unsupported.probability).toBe(0.03);
+  expect(completeAnswerClaimCoverage(current.answer!, receipt.claimReviews)).toBe(true);
+  expect(receipt.claimReviews.length).toBe(scoped);
+  for (const claim of receipt.claimReviews) {
+    const entry = log.get(claim.decisionId)!;
+    expect(entry.stateHash).toBe(claim.stateHash);
+    expect(entry.questions).toMatchObject({ unsupported: { instructions: { claimScope: {
+      start: claim.start, end: claim.end, textDigest: claim.textDigest, outputDigest: hashState(current.answer!) } } } });
+    expect(current.checks.at(-1)!.decisionIds).toContain(claim.decisionId);
+  }
+  const scopes = answerClaimScopes(output);
+  expect(completeAnswerClaimCoverage(output, scopes.slice(1))).toBe(false);
+  expect(completeAnswerClaimCoverage(output, [...scopes, scopes[0]!])).toBe(false);
+  expect(completeAnswerClaimCoverage(output, scopes.map((scope, index) => index ? scope : { ...scope, textDigest: 'wrong-text' }))).toBe(false);
+});
+
+test.each([0.61, 0.98])('a held exact factual claim stays private and carries its real certainty (p=%s)', async probability => {
+  using log = new SqliteDecisionLog(':memory:');
+  const output = 'The parser tests passed, although the recorded test command failed.';
+  const plan = oneUnitPlan(1); plan.groups[0]!.units[0]!.role = 'research';
+  let workers = 0;
+  const h = use(makeHarness({ plan, decisionLog: log, scripts: { u1: () => { workers++; return [{ text: output }]; } }, port: context => {
+    if (context.name === 'role') return choiceAnswer(context.question, 'research', 0.98);
+    if (context.name === 'unsupported') return noulAnswer(context.state['claimScope'] ? probability : 0.61);
+    return undefined;
+  } }));
+  const { contract } = startContract(h);
+  await waitFor(() => (h.runner.get(contract.id)?.checks.length ?? 0) > 0, 'exact claim rejection');
+  const current = contractOf(h, contract.id);
+  expect(current.status).not.toBe('passed'); expect(current.commit).toBeUndefined(); expect(workers).toBe(1);
+  const receipt = JSON.parse(current.decisions.findLast(decision => decision.targetId === `${contract.id}.final-answer-review`)!.reason);
+  expect(receipt.passed).toBe(false);
+  expect(receipt.findings[0]).toMatchObject({ assessment: probability === 0.98 ? 'confirmed' : 'unresolved', passage: { quote: output } });
+  expect(receipt.findings[0].remaining[0]).toContain('Do not redraft the whole answer');
+});
 
 async function run(h: Harness): Promise<string> {
   const { contract } = startContract(h);

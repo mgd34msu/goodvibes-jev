@@ -10,6 +10,29 @@ const object = (value: JsonValue | undefined): value is JsonObject => value !== 
 const metadata = (value: JsonValue): JsonValue => object(value) && value['operation'] === 'read-current-file'
   ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'text')) : value;
 
+/** The mandatory original-requirements check receives the complete read ledger.
+ * Content review retains its actual assessment, scope comparisons, substantive
+ * reports and execution bodies. Repeating every already-checked read row here
+ * adds no content evidence and can make even a single question impossible to
+ * submit. References below are retrieval/provenance, never factual approval. */
+export function finalContentEvidence(evidence: JsonObject): JsonObject {
+  const host = evidence['orchestration'];
+  if (!object(host) || !Array.isArray(host['units'])) return evidence;
+  return { ...evidence, orchestration: { ...host, units: host['units'].map(unit => {
+    if (!object(unit) || unit['status'] !== 'passed' || typeof unit['id'] !== 'string'
+      || !object(unit['latestCheck']) || unit['latestCheck']['result'] !== 'pass'
+      || !Array.isArray(unit['latestCheck']['decisionIds']) || !unit['latestCheck']['decisionIds'].length
+      || unit['readObservations'] === undefined) return unit;
+    return { ...unit, readObservations: {
+      representation: 'native-source-accounting-reference',
+      source: { storage: 'native-contract-store', contractId: host['contractId'] ?? null, unitId: unit['id'], field: 'readEvidence' },
+      projectedObservationsDigest: hashState({ observations: unit['readObservations'] }),
+      projectedObservationsBytes: Buffer.byteLength(JSON.stringify(unit['readObservations'])),
+      checkedBy: unit['latestCheck']['id'] ?? null,
+    } };
+  }), contentAccountingMeaning: 'The separate mandatory original-requirements assessment just received the complete read accounting, including all paths, ranges and attribution. This content view keeps actual source-scope comparisons, complete substantive accepted research, current artifacts, execution receipts and the original-requirements readings. Each native-source-accounting-reference identifies retained source observations and binds their original projection. It is provenance only: a pointer, a successful read or an earlier check does not prove review quality, test execution or this answer. Missing ranges and contrary source observations in the retained comparisons still apply. No current answer, artifact, command outcome, requirement, source comparison or substantive assessment has been shortened.' } };
+}
+
 /** Keep every returned-read field while naming repeated columns only once. */
 function observationTable(value: JsonValue | undefined, check?: JsonValue): JsonValue {
   if (!Array.isArray(value) || !value.length || !value.every(read => object(read)

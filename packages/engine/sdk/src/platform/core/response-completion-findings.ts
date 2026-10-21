@@ -12,6 +12,7 @@ export interface CompletionFinding {
   readonly remaining?: readonly string[];
   readonly passage?: { readonly reference: string; readonly quote: string };
   readonly localization?: 'established' | 'candidate-to-investigate' | 'unavailable';
+  readonly assessment?: 'confirmed' | 'unresolved';
 }
 
 const RESOLVED_WHEN: Readonly<Record<string, string>> = {
