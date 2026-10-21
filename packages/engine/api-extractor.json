@@ -19,7 +19,13 @@
   "compiler": {
     "tsconfigFilePath": "<projectFolder>/sdk/tsconfig.api-extractor.json",
     "overrideTsconfig": {
+      "extends": "./sdk/tsconfig.api-extractor.json",
+      // Analyze one canonical sql.js declaration, alongside source-only ambient types.
+      "files": ["./sdk/dist/platform/types/sql-js.d.ts"],
+      "include": ["./sdk/src/platform/types/*.d.ts"],
+      "exclude": ["./sdk/src/platform/types/sql-js.d.ts"],
       "compilerOptions": {
+        "customConditions": [],
         // The old packages resolved each other through their own package.json
         // "types" conditions (./dist/*.d.ts). In the engine they are subpaths of
         // one package whose exports name source files, so the same declaration

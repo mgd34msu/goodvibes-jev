@@ -6,7 +6,10 @@
   "compiler": {
     "tsconfigFilePath": "<projectFolder>/terminal-shell/tsconfig.api-extractor.json",
     "overrideTsconfig": {
+      "extends": "./terminal-shell/tsconfig.api-extractor.json",
       "compilerOptions": {
+        "customConditions": [],
+        "types": ["node", "bun"],
         // The old packages resolved each other through their own package.json
         // "types" conditions (./dist/*.d.ts). In the engine they are subpaths of
         // one package whose exports name source files, so the same declaration
