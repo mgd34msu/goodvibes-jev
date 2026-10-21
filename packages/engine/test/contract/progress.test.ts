@@ -62,11 +62,13 @@ describe('regressions', () => {
     const unit = unitWith(['a']);
     for (const verdict of ['met', 'unmet', 'met', 'unmet'] as const) {
       record(unit, 'completion', { a: verdict });
-      unit.criteria[0]!.readings.at(-1)!.outcome = 'escalate';
+      const readings = unit.criteria[0]!.readings;
+      readings[readings.length - 1] = { ...readings.at(-1)!, outcome: 'escalate' };
     }
     expect(regressionCounts(unit)).toEqual(new Map());
     record(unit, 'completion', { a: 'met' });
-    unit.criteria[0]!.readings.at(-1)!.outcome = 'confirm';
+    const readings = unit.criteria[0]!.readings;
+    readings[readings.length - 1] = { ...readings.at(-1)!, outcome: 'confirm' };
     expect(findRegressions(unit, new Map([['a', 'unmet']]))).toEqual([]);
   });
 
