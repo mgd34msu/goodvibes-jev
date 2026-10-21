@@ -55,6 +55,41 @@ test('root projection retains actual scope calculations and repair-plan admissio
   expect(result.evidence).not.toHaveProperty('passed');
 });
 
+test('native read tables preserve every original field, range and unit attribution while avoiding repeated column names', () => {
+  const f = fixture();
+  const reads = Array.from({ length: 200 }, (_, index) => ({ path: `src/file-${index}.ts`, returnedRanges: ['1-4', '8-12'], returnedLines: 9,
+    ...(index === 0 ? { contentKind: 'declared-reference', returnedContentDigest: 'actual-retained-digest',
+      returnedContentBytes: 85, validatedByCheckId: 'u1.k1', decisionIds: ['native-unit-check'], extra: null } : {}) }));
+  f.evidence.orchestration.units[0].readObservations = reads;
+  const before = JSON.stringify(f.evidence);
+  const view = finalAnswerEvidence(f.contract, f.evidence, {})!;
+  const unit = (view.evidence['orchestration'] as { units: { id: string; readObservations: {
+    columns: string[]; rows: [string, string[], number, Record<string, unknown>?][];
+  } }[] }).units[0]!;
+  expect(unit.id).toBe('u1');
+  expect(unit.readObservations.columns).toEqual(['path', 'returnedRanges', 'returnedLines', 'additionalFields']);
+  const restored = unit.readObservations.rows.map(([path, returnedRanges, returnedLines, additionalFields]) => ({
+    path, returnedRanges, returnedLines, ...additionalFields,
+  }));
+  expect(restored).toEqual(reads);
+  expect(JSON.stringify(unit.readObservations).length).toBeLessThan(JSON.stringify(reads).length);
+  expect(JSON.stringify(f.evidence)).toBe(before);
+  expect(view.evidence['fullSourceEvidence']).toMatchObject({ digest: hashState(f.evidence) });
+});
+
+test('root criterion references resolve to complete identical unit criteria and preserve conflicting or extended values inline', () => {
+  const f = fixture();
+  const criterion = { id: 'u1.c1', text: 'Inspect all required source and return the reviewed artifact.', verdict: 'met' };
+  f.evidence.orchestration.units[0].criteria = [criterion];
+  const conflicting = { ...criterion, verdict: 'unmet' }, extended = { ...criterion, note: 'Additional evidence must not disappear.' };
+  const checks = [{ criterion: 'original-c1', servedBy: [criterion, conflicting, extended] }];
+  const view = finalAnswerEvidence(f.contract, f.evidence, { checks })!;
+  expect(view.evidence['criteria']).toEqual([{ criterion: 'original-c1', servedBy: [{ criterionRef: 'u1.c1' }, conflicting, extended] }]);
+  expect(view.evidence['orchestration']).toMatchObject({ units: [{ criteria: [criterion] }] });
+  f.evidence.orchestration.units.push({ ...f.evidence.orchestration.units[0], id: 'duplicate-conflicting-unit', criteria: [conflicting] });
+  expect(finalAnswerEvidence(f.contract, f.evidence, { checks })!.evidence['criteria']).toEqual(checks);
+});
+
 test('stale reads and unaccepted observations never replace full original evidence', () => {
   const f = fixture();
   f.evidence.orchestration.currentFiles[0].sha256 = digest('Changed.\n');

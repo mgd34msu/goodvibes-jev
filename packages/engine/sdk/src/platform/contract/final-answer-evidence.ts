@@ -8,6 +8,41 @@ const object = (value: JsonValue | undefined): value is JsonObject => value !== 
 const metadata = (value: JsonValue): JsonValue => object(value) && value['operation'] === 'read-current-file'
   ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'text')) : value;
 
+/** Keep every returned-read field while naming repeated columns only once. */
+function observationTable(value: JsonValue | undefined): JsonValue {
+  if (!Array.isArray(value) || !value.length || !value.every(read => object(read)
+    && typeof read['path'] === 'string' && Array.isArray(read['returnedRanges']) && typeof read['returnedLines'] === 'number')) return value ?? [];
+  const table = { columns: ['path', 'returnedRanges', 'returnedLines', 'additionalFields'],
+    rows: value.map(read => {
+      const record = read as JsonObject;
+      const rest = Object.fromEntries(Object.entries(record).filter(([key]) => !['path', 'returnedRanges', 'returnedLines'].includes(key)));
+      return [record['path']!, record['returnedRanges']!, record['returnedLines']!, ...(Object.keys(rest).length ? [rest] : [])];
+    }),
+    meaning: 'Lossless rows of actual returned-read observations for this unit. Expand each row using columns; additionalFields, when present, preserves every other original field unchanged. An absent fourth column means no additional fields. Ranges and attribution are unchanged. A returned read is not semantic approval or test execution.' };
+  return JSON.stringify(table).length < JSON.stringify(value).length ? table : value;
+}
+
+/** Root-to-unit links can reuse the identical criterion already supplied below. */
+function criterionLinks(value: JsonValue, units: readonly JsonObject[]): JsonValue {
+  if (!Array.isArray(value)) return value;
+  const byId = new Map<string, JsonObject | null>();
+  for (const unit of units) if (Array.isArray(unit['criteria'])) for (const criterion of unit['criteria']) {
+    if (!object(criterion) || typeof criterion['id'] !== 'string') continue;
+    const id = criterion['id'];
+    if (!byId.has(id)) byId.set(id, criterion);
+    else {
+      const previous = byId.get(id);
+      if (previous && hashState(previous) !== hashState(criterion)) byId.set(id, null);
+    }
+  }
+  return value.map(row => !object(row) || !Array.isArray(row['servedBy']) ? row : { ...row,
+    servedBy: row['servedBy'].map(criterion => {
+      if (!object(criterion) || typeof criterion['id'] !== 'string') return criterion;
+      const source = byId.get(criterion['id']);
+      return source && hashState(source) === hashState(criterion) ? { criterionRef: criterion['id'] } : criterion;
+    }) });
+}
+
 /** Current artifact text comes from an actual current host read, or an admitted,
  * previously checked read matching its bytes. Exact diffs preserve other changes.
  * Scoped native receipts compose retained work; no root is auto-passed. */
@@ -57,7 +92,7 @@ export function finalAnswerEvidence(contract: Pick<ContractView, 'ask' | 'units'
     criteria: unit['criteria'] ?? null, latestCheck: unit['latestCheck'] ?? null,
     acceptedAnswerDigest: unit['acceptedAnswerDigest'] ?? null,
     acceptedAnswerSource: { storage: 'native-contract-store', contractId: host['contractId'] ?? null, unitId: unit['id'] ?? null, field: 'answer' },
-    readObservations: unit['readObservations'] ?? [],
+    readObservations: observationTable(unit['readObservations']),
   })) : [];
   const view: JsonObject = {
     originalRequest: contract.ask,
@@ -68,7 +103,8 @@ export function finalAnswerEvidence(contract: Pick<ContractView, 'ask' | 'units'
     hostOperations: Array.isArray(evidence['hostOperations']) ? evidence['hostOperations'].map(metadata) : [],
     commands: evidence['commands'] ?? [],
     gates: evidence['gates'] ?? [],
-    criteria: object(summaries) ? summaries['checks'] ?? summaries : summaries,
+    criteria: criterionLinks(object(summaries) ? summaries['checks'] ?? summaries : summaries, units),
+    criteriaReferenceMeaning: 'A servedBy criterionRef resolves by exact id to orchestration.units[].criteria, including its complete literal text and recorded verdict. Only identical complete criterion values are referenced; conflicting or additional fields remain inline. All original root criteria remain separately supplied unchanged. These references are native evidence links, not new approval.',
     orchestration: { contractId: host['contractId'] ?? null, planChecks: host['planChecks'] ?? [],
       repairPlanAdmissions: host['repairPlanAdmissions'] ?? [], referenceOperations: host['referenceOperations'] ?? [],
       sourceReferenceComparisons: host['sourceReferenceComparisons'] ?? [], sourceJsonReferenceComparisons: host['sourceJsonReferenceComparisons'] ?? [],
