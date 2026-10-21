@@ -13,6 +13,7 @@ import {
   type PlanProblemCode,
 } from '../../sdk/src/platform/contract/plan-schema.js';
 import { PLANNER_DECOMPOSITION_TOOLS } from '../../sdk/src/platform/agents/planner-decomposition-runner.js';
+import { parseAmendment } from '../../sdk/src/platform/contract/amendment.js';
 import { ASK, asPlan, draftUnit, plannerOutput, shapeOf, singleUnitPlan, validPlan, type DraftPlan } from './plan-support.js';
 
 const LIMITS: PlanLimits = { maxUnits: 64, defaultAttempts: 1 };
@@ -30,6 +31,20 @@ function targetsOf(draft: DraftPlan, code: PlanProblemCode, shape = shapeOf(), l
 }
 
 describe('parseContractPlan', () => {
+  test('embedded report fences remain data in plans and owner amendments', () => {
+    const draft = validPlan();
+    const brief = 'Preserve this report:\n```json\n{"summary":"retained"}\n```\nComplete only missing work.';
+    draft.groups[0]!.units[0]!.brief = brief;
+    const parsed = parseContractPlan(plannerOutput(draft));
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.plan.groups[0]!.units[0]!.brief).toBe(brief);
+    const target = { title: 'Review', goal: 'Finish the review', criteria: [], serves: true };
+    const amendment = { brief, criteria: [{ text: 'Finish the assessment', serves: ['c1'] }] };
+    const amended = parseAmendment('```json\n' + JSON.stringify(amendment) + '\n```', target, new Set(['c1']));
+    expect(amended.problems).toEqual([]);
+    expect(amended.amendment?.brief).toBe(brief);
+  });
+
   test('reads the last fenced JSON block', () => {
     const text = `Draft:\n\`\`\`json\n{"goal": "old"}\n\`\`\`\nFinal:\n${plannerOutput(validPlan())}`;
     const parsed = parseContractPlan(text);

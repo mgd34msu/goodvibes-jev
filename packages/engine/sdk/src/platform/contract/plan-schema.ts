@@ -102,7 +102,8 @@ export type ParsedContractPlan =
   | { readonly ok: true; readonly plan: ContractPlan; /** The JSON text the plan was parsed from. */ readonly json: string }
   | { readonly ok: false; readonly problems: readonly PlanProblem[] };
 
-const FENCED_BLOCK = /```[ \t]*(?:json)?[ \t]*\r?\n([\s\S]*?)```/gi;
+// Fence markers inside a JSON string are data, not Markdown delimiters.
+const FENCED_BLOCK = /^[ \t]*```[ \t]*(?:json)?[ \t]*\r?\n([\s\S]*?)^[ \t]*```[ \t]*\r?$/gmi;
 
 /** The last fenced code block in `text`, or undefined when there is none. */
 export function lastFencedBlock(text: string): string | undefined {
